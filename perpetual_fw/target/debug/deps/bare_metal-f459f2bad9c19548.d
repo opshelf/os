@@ -1,7 +1,0 @@
-/Users/ethangardner/projects/perpetual_os/perpetual_fw/target/debug/deps/libbare_metal-f459f2bad9c19548.rmeta: /Users/ethangardner/.cargo/registry/src/index.crates.io-6f17d22bba15001f/bare-metal-0.2.5/src/lib.rs
-
-/Users/ethangardner/projects/perpetual_os/perpetual_fw/target/debug/deps/libbare_metal-f459f2bad9c19548.rlib: /Users/ethangardner/.cargo/registry/src/index.crates.io-6f17d22bba15001f/bare-metal-0.2.5/src/lib.rs
-
-/Users/ethangardner/projects/perpetual_os/perpetual_fw/target/debug/deps/bare_metal-f459f2bad9c19548.d: /Users/ethangardner/.cargo/registry/src/index.crates.io-6f17d22bba15001f/bare-metal-0.2.5/src/lib.rs
-
-/Users/ethangardner/.cargo/registry/src/index.crates.io-6f17d22bba15001f/bare-metal-0.2.5/src/lib.rs:
