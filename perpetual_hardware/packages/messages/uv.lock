@@ -1,0 +1,18 @@
+version = 1
+requires-python = ">=3.12"
+
+[[package]]
+name = "bindings"
+version = "0.1.0"
+source = { directory = "../../../perpetual_fw/crates/bindings" }
+
+[[package]]
+name = "messages"
+version = "0.1.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "bindings" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "bindings", directory = "../../../perpetual_fw/crates/bindings" }]

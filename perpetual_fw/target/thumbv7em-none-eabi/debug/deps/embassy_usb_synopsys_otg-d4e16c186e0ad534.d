@@ -1,0 +1,8 @@
+/Users/ethangardner/projects/perpetual_os/perpetual_fw/target/thumbv7em-none-eabi/debug/deps/libembassy_usb_synopsys_otg-d4e16c186e0ad534.rmeta: /Users/ethangardner/.cargo/git/checkouts/embassy-9312dcb0ed774b29/227e073/embassy-usb-synopsys-otg/src/lib.rs /Users/ethangardner/.cargo/git/checkouts/embassy-9312dcb0ed774b29/227e073/embassy-usb-synopsys-otg/src/fmt.rs /Users/ethangardner/.cargo/git/checkouts/embassy-9312dcb0ed774b29/227e073/embassy-usb-synopsys-otg/src/otg_v1.rs /Users/ethangardner/.cargo/git/checkouts/embassy-9312dcb0ed774b29/227e073/embassy-usb-synopsys-otg/src/../README.md
+
+/Users/ethangardner/projects/perpetual_os/perpetual_fw/target/thumbv7em-none-eabi/debug/deps/embassy_usb_synopsys_otg-d4e16c186e0ad534.d: /Users/ethangardner/.cargo/git/checkouts/embassy-9312dcb0ed774b29/227e073/embassy-usb-synopsys-otg/src/lib.rs /Users/ethangardner/.cargo/git/checkouts/embassy-9312dcb0ed774b29/227e073/embassy-usb-synopsys-otg/src/fmt.rs /Users/ethangardner/.cargo/git/checkouts/embassy-9312dcb0ed774b29/227e073/embassy-usb-synopsys-otg/src/otg_v1.rs /Users/ethangardner/.cargo/git/checkouts/embassy-9312dcb0ed774b29/227e073/embassy-usb-synopsys-otg/src/../README.md
+
+/Users/ethangardner/.cargo/git/checkouts/embassy-9312dcb0ed774b29/227e073/embassy-usb-synopsys-otg/src/lib.rs:
+/Users/ethangardner/.cargo/git/checkouts/embassy-9312dcb0ed774b29/227e073/embassy-usb-synopsys-otg/src/fmt.rs:
+/Users/ethangardner/.cargo/git/checkouts/embassy-9312dcb0ed774b29/227e073/embassy-usb-synopsys-otg/src/otg_v1.rs:
+/Users/ethangardner/.cargo/git/checkouts/embassy-9312dcb0ed774b29/227e073/embassy-usb-synopsys-otg/src/../README.md:

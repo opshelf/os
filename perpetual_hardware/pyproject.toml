@@ -1,0 +1,19 @@
+[project]
+name = "perpetual-hardware"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+	"bindings"
+]
+
+
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+
+
+[tool.uv.sources]
+bindings = { path = "../perpetual_fw/crates/bindings/" }

@@ -1,0 +1,14 @@
+/Users/ethangardner/projects/perpetual_os/perpetual_fw/target/debug/deps/libpyo3_build_config-404b272de21f3d4d.rmeta: /Users/ethangardner/.cargo/registry/src/index.crates.io-6f17d22bba15001f/pyo3-build-config-0.22.6/src/lib.rs /Users/ethangardner/.cargo/registry/src/index.crates.io-6f17d22bba15001f/pyo3-build-config-0.22.6/src/errors.rs /Users/ethangardner/.cargo/registry/src/index.crates.io-6f17d22bba15001f/pyo3-build-config-0.22.6/src/impl_.rs /Users/ethangardner/projects/perpetual_os/perpetual_fw/target/debug/build/pyo3-build-config-f2d85160bd543137/out/pyo3-build-config-file.txt /Users/ethangardner/projects/perpetual_os/perpetual_fw/target/debug/build/pyo3-build-config-f2d85160bd543137/out/pyo3-build-config.txt
+
+/Users/ethangardner/projects/perpetual_os/perpetual_fw/target/debug/deps/libpyo3_build_config-404b272de21f3d4d.rlib: /Users/ethangardner/.cargo/registry/src/index.crates.io-6f17d22bba15001f/pyo3-build-config-0.22.6/src/lib.rs /Users/ethangardner/.cargo/registry/src/index.crates.io-6f17d22bba15001f/pyo3-build-config-0.22.6/src/errors.rs /Users/ethangardner/.cargo/registry/src/index.crates.io-6f17d22bba15001f/pyo3-build-config-0.22.6/src/impl_.rs /Users/ethangardner/projects/perpetual_os/perpetual_fw/target/debug/build/pyo3-build-config-f2d85160bd543137/out/pyo3-build-config-file.txt /Users/ethangardner/projects/perpetual_os/perpetual_fw/target/debug/build/pyo3-build-config-f2d85160bd543137/out/pyo3-build-config.txt
+
+/Users/ethangardner/projects/perpetual_os/perpetual_fw/target/debug/deps/pyo3_build_config-404b272de21f3d4d.d: /Users/ethangardner/.cargo/registry/src/index.crates.io-6f17d22bba15001f/pyo3-build-config-0.22.6/src/lib.rs /Users/ethangardner/.cargo/registry/src/index.crates.io-6f17d22bba15001f/pyo3-build-config-0.22.6/src/errors.rs /Users/ethangardner/.cargo/registry/src/index.crates.io-6f17d22bba15001f/pyo3-build-config-0.22.6/src/impl_.rs /Users/ethangardner/projects/perpetual_os/perpetual_fw/target/debug/build/pyo3-build-config-f2d85160bd543137/out/pyo3-build-config-file.txt /Users/ethangardner/projects/perpetual_os/perpetual_fw/target/debug/build/pyo3-build-config-f2d85160bd543137/out/pyo3-build-config.txt
+
+/Users/ethangardner/.cargo/registry/src/index.crates.io-6f17d22bba15001f/pyo3-build-config-0.22.6/src/lib.rs:
+/Users/ethangardner/.cargo/registry/src/index.crates.io-6f17d22bba15001f/pyo3-build-config-0.22.6/src/errors.rs:
+/Users/ethangardner/.cargo/registry/src/index.crates.io-6f17d22bba15001f/pyo3-build-config-0.22.6/src/impl_.rs:
+/Users/ethangardner/projects/perpetual_os/perpetual_fw/target/debug/build/pyo3-build-config-f2d85160bd543137/out/pyo3-build-config-file.txt:
+/Users/ethangardner/projects/perpetual_os/perpetual_fw/target/debug/build/pyo3-build-config-f2d85160bd543137/out/pyo3-build-config.txt:
+
+# env-dep:CARGO_PKG_VERSION=0.22.6
+# env-dep:OUT_DIR=/Users/ethangardner/projects/perpetual_os/perpetual_fw/target/debug/build/pyo3-build-config-f2d85160bd543137/out

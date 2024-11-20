@@ -1,0 +1,1 @@
+/Users/ethangardner/projects/perpetual_os/perpetual_fw/target/debug/libbindings.dylib: /Users/ethangardner/projects/perpetual_os/perpetual_fw/crates/bindings/src/lib.rs /Users/ethangardner/projects/perpetual_os/perpetual_fw/crates/messages/src/lib.rs
