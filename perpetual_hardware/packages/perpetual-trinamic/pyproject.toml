@@ -1,0 +1,18 @@
+[project]
+name = "perpetual-trinamic"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "python-can>=4.4.2",
+    "hardware-common"
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv.sources]
+hardware-common = { workspace = true }
+
