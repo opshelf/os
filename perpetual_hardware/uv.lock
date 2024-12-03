@@ -8,6 +8,7 @@ members = [
     "perpetual-hardware",
     "perpetual-p0c",
     "perpetual-trinamic",
+    "waveshare-can",
 ]
 
 [[package]]
@@ -94,6 +95,7 @@ dependencies = [
     { name = "hardware-common" },
     { name = "pydantic" },
     { name = "python-can" },
+    { name = "waveshare-can" },
 ]
 
 [package.metadata]
@@ -101,6 +103,7 @@ requires-dist = [
     { name = "hardware-common", editable = "packages/hardware-common" },
     { name = "pydantic" },
     { name = "python-can" },
+    { name = "waveshare-can", editable = "packages/waveshare-can" },
 ]
 
 [[package]]
@@ -172,6 +175,15 @@ wheels = [
 ]
 
 [[package]]
+name = "pyserial"
+version = "3.5"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/1e/7d/ae3f0a63f41e4d2f6cb66a5b57197850f919f59e558159a4dd3a818f5082/pyserial-3.5.tar.gz", hash = "sha256:3c77e014170dfffbd816e6ffc205e9842efb10be9f58ec16d3e8675b4925cddb", size = 159125 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/07/bc/587a445451b253b285629263eb51c2d8e9bcea4fc97826266d186f96f558/pyserial-3.5-py2.py3-none-any.whl", hash = "sha256:c4451db6ba391ca6ca299fb3ec7bae67a5c55dde170964c7a14ceefec02f2cf0", size = 90585 },
+]
+
+[[package]]
 name = "python-can"
 version = "4.4.2"
 source = { registry = "https://pypi.org/simple" }
@@ -207,6 +219,21 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/df/db/f35a00659bc03fec321ba8bce9420de607a1d37f8342eee1863174c69557/typing_extensions-4.12.2.tar.gz", hash = "sha256:1a7ead55c7e559dd4dee8856e3a88b41225abfe1ce8df57b7c13915fe121ffb8", size = 85321 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/26/9f/ad63fc0248c5379346306f8668cda6e2e2e9c95e01216d2b8ffd9ff037d0/typing_extensions-4.12.2-py3-none-any.whl", hash = "sha256:04e5ca0351e0f3f85c6853954072df659d0d13fac324d0072316b67d7794700d", size = 37438 },
+]
+
+[[package]]
+name = "waveshare-can"
+version = "0.1.0"
+source = { editable = "packages/waveshare-can" }
+dependencies = [
+    { name = "pyserial" },
+    { name = "python-can" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pyserial", specifier = ">=3.5" },
+    { name = "python-can", specifier = ">=4.4.2" },
 ]
 
 [[package]]

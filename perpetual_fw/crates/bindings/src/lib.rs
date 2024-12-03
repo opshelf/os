@@ -1,4 +1,4 @@
-use messages::{RelayCommands, RelayResponses};
+use messages::relay_board::{RelayCommands, RelayResponses};
 use pyo3::prelude::*;
 
 #[pyclass]
@@ -21,12 +21,6 @@ impl RelayMessages {
         RelayCommands::ReadBits.serialize_to_frame()
     }
 }
-
-//#[pyclass]
-//pub struct RelayResponseBindings(RelayResponses);
-
-//#[pyclass]
-//RelayCommands
 
 #[pymodule]
 fn bindings(m: &Bound<'_, PyModule>) -> PyResult<()> {

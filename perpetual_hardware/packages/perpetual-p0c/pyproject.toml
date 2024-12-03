@@ -8,7 +8,8 @@ dependencies = [
 	"python-can", 
 	"hardware-common", 
 	"pydantic",
-	"waveshare-can"
+	"waveshare-can",
+	"perpetual-trinamic"
 ]
 
 [build-system]
@@ -19,15 +20,8 @@ build-backend = "hatchling.build"
 [tool.uv.sources]
 hardware-common = { workspace = true }
 waveshare-can = { workspace = true }
+perpetual-trinamic = { workspace = true }
 
-#[tool.uv.plugins.can.interface]
-#waveshare = "waveshare-can:Waveshare"
-
-#[tool.uv]
-#plugins = ["waveshare-can"]
-
-#[tool.uv.plugins."can.interface"]
-#waveshare = "waveshare-can:Waveshare"
 
 [project.entry-points.'can.interface']
 waveshare = "waveshare_can:Waveshare"

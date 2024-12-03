@@ -1,0 +1,9 @@
+- [ ] Add Utilities for Calibrating the drop off point
+- [ ] Add Utilities for Calibrating the pickup point with a shelf
+- [ ] Add Utilities for Calibrating the retraction point for a tray
+- [ ] Add an Offset for Pickup and Dropoff to the Configuration using an x/y displacement
+- [ ] Add a utility for slot depth
+- [ ] Add unique id for each slot
+- [ ] Add ability to track where a tray came from and return it to its slot
+- [ ] Add Ability to Move Trays
+- [ ] Add ability to mark a slot as occupied or not occupied
