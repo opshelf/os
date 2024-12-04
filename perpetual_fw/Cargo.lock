@@ -561,6 +561,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4ce301924b7887e9d637144fdade93f9dfff9b60981d4ac161db09720d39aa5"
 
 [[package]]
+name = "mcp23s08"
+version = "0.1.0"
+dependencies = [
+ "bitfield 0.17.0",
+ "embedded-hal 1.0.0",
+ "embedded-hal-async",
+ "paste",
+]
+
+[[package]]
 name = "memoffset"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -621,6 +631,12 @@ dependencies = [
  "cortex-m",
  "defmt",
 ]
+
+[[package]]
+name = "paste"
+version = "1.0.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
 name = "pin-project-lite"
@@ -874,6 +890,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "61c41af27dd6d1e27b1b16b489db798443478cef1f06a660c96db617ba5de3b1"
 
 [[package]]
+name = "tca9535"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.6.0",
+ "embedded-hal-async",
+]
+
+[[package]]
 name = "thiserror"
 version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -894,6 +918,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tmc5130"
+version = "0.1.0"
+dependencies = [
+ "bitfield 0.17.0",
+ "defmt",
+ "embedded-hal 1.0.0",
+ "embedded-hal-async",
+]
+
+[[package]]
 name = "tool_board"
 version = "0.1.0"
 dependencies = [
@@ -902,16 +936,20 @@ dependencies = [
  "cortex-m-rt",
  "defmt",
  "defmt-rtt",
+ "embassy-embedded-hal",
  "embassy-executor",
  "embassy-futures",
  "embassy-stm32",
  "embassy-sync",
  "embassy-time",
  "embedded-can",
+ "mcp23s08",
  "messages",
  "panic-halt",
  "panic-probe",
  "static_cell",
+ "tca9535",
+ "tmc5130",
 ]
 
 [[package]]

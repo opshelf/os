@@ -1,28 +1,64 @@
+use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice;
 use embassy_executor::Spawner;
 use embassy_stm32::can::enums::BusError;
 use embassy_stm32::can::frame::Envelope;
 use embassy_stm32::can::Frame;
 use embassy_stm32::gpio::{Input, Level, Output, Pull, Speed};
+use embassy_stm32::mode::Async;
+use embassy_stm32::spi::MODE_3;
+use embassy_stm32::time::Hertz;
 use embassy_stm32::Config;
 use embassy_stm32::{bind_interrupts, can, i2c, peripherals};
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, ThreadModeRawMutex};
 use embassy_sync::channel::Channel;
+use embassy_sync::mutex::Mutex;
+use mcp23s08::MCP23S08;
 use static_cell::StaticCell;
+use tca9535::{Port, TCA9535};
+use tmc5130::TMC5130;
 
 use crate::core;
 
+type IoI2C<'a> = embassy_stm32::i2c::I2c<'a, Async>;
+
+//pub struct ToolBoard<'a> {
+//    //pub driver_diag0: Input<'a>,
+//    //pub driver_diag1: Input<'a>,
+//    pub driver_refr: Input<'a>,
+//    pub driver_refl: Input<'a>,
+//    //pub driver_en: Output<'a>,
+//    pub actuator_limit_1: Input<'a>,
+//    pub actuator_limit_2: Input<'a>,
+//
+//    pub side_break_beam_1: Input<'a>,
+//    pub side_break_beam_2: Input<'a>,
+//
+//    pub io: TCA9535<IoI2C<'a>>,
+//    pub puller: MCP23S08<
+//        SpiDevice<CriticalSectionRawMutex, embassy_stm32::spi::Spi<'a, Async>, Output<'a>>,
+//    >,
+//    //pub trinamic:
+//    //    TMC5130<embassy_stm32::spi::Spi<'a, Async>, Output<'a>, Output<'a>, Input<'a>, Input<'a>>,
+//}
+
 pub struct ToolBoard<'a> {
-    pub driver_diag0: Input<'a>,
-    pub driver_diag1: Input<'a>,
+    //pub driver_diag0: Input<'a>,
+    //pub driver_diag1: Input<'a>,
     pub driver_refr: Input<'a>,
     pub driver_refl: Input<'a>,
-    pub driver_en: Output<'a>,
-
+    //pub driver_en: Output<'a>,
     pub actuator_limit_1: Input<'a>,
     pub actuator_limit_2: Input<'a>,
 
     pub side_break_beam_1: Input<'a>,
     pub side_break_beam_2: Input<'a>,
+
+    pub io: TCA9535<IoI2C<'a>>,
+    pub puller: MCP23S08<
+        SpiDevice<'a, CriticalSectionRawMutex, embassy_stm32::spi::Spi<'static, Async>, Output<'a>>,
+    >,
+    //pub trinamic:
+    //    TMC5130<embassy_stm32::spi::Spi<'a, Async>, Output<'a>, Output<'a>, Input<'a>, Input<'a>>,
 }
 
 bind_interrupts!(struct Irqs {
@@ -34,6 +70,8 @@ bind_interrupts!(struct Irqs {
 
 static COMMAND_CHANNEL: Channel<ThreadModeRawMutex, [u8; 8], 64> = Channel::new();
 static RESPONSE_CHANNEL: Channel<ThreadModeRawMutex, [u8; 8], 64> = Channel::new();
+static SPI_CELL: StaticCell<Mutex<CriticalSectionRawMutex, embassy_stm32::spi::Spi<'_, Async>>> =
+    StaticCell::new();
 
 #[embassy_executor::task]
 async fn can_receive_task(
@@ -98,66 +136,167 @@ impl<'a> ToolBoard<'a> {
         // IO I2C INT
 
         // let io_int = Input::new(p.PC10, Pull::None);
-        // let mut i2c_config = embassy_stm32::i2c::Config::default();
-        // i2c_config.scl_pullup = false;
-        // i2c_config.sda_pullup = false;
-        // let slot_i2c = embassy_stm32::i2c::I2c::new(
-        //     p.I2C3,
-        //     p.PC8,
-        //     p.PC9,
-        //     Irqs,
-        //     p.DMA2_CH1,
-        //     p.DMA2_CH2,
-        //     embassy_stm32::time::Hertz(100_000),
-        //     i2c_config
-        // );
+        let mut i2c_config = embassy_stm32::i2c::Config::default();
+        i2c_config.scl_pullup = false;
+        i2c_config.sda_pullup = false;
+        let slot_i2c = embassy_stm32::i2c::I2c::new(
+            p.I2C3,
+            p.PC8,
+            p.PC9,
+            Irqs,
+            p.DMA2_CH1,
+            p.DMA2_CH2,
+            embassy_stm32::time::Hertz(100_000),
+            i2c_config,
+        );
 
         // Carriage CS
         // Puller CS
         // IO SPI
-        // let puller_cs = Output::new(p.PB10, Level::High, Speed::Low);
-        // let carriage_cs = Output::new(p.PB11, Level::High, Speed::Low);
-        // let driver_cs = Output::new(p.PD2, Level::High, Speed::Low);
-        // let spi_config = embassy_stm32::spi::Config::default();
-        // let io_spi = embassy_stm32::spi::Spi::new(
-        //     p.SPI2,
-        //     p.PB13,
-        //     p.PB15,
-        //     p.PB14,
-        //     p.DMA1_CH4,
-        //     p.DMA1_CH5,
-        //     spi_config
-        // );
-
+        let puller_cs = Output::new(p.PB10, Level::High, Speed::Low);
+        let carriage_cs = Output::new(p.PB11, Level::High, Speed::Low);
+        let mut trinamic_cs = Output::new(p.PD2, Level::High, Speed::Low);
+        trinamic_cs.set_high();
+        let mut spi_2_config = embassy_stm32::spi::Config::default();
+        spi_2_config.mode = MODE_3;
+        spi_2_config.frequency = Hertz(250_000);
+        let spi_2 = embassy_stm32::spi::Spi::new(
+            p.SPI2,
+            p.PB13,
+            p.PB15,
+            p.PB14,
+            p.DMA1_CH4,
+            p.DMA1_CH5,
+            spi_2_config,
+        );
+        //let m1 = CriticalSectionRawMutex::INIT(spi_2);
+        //let spi_bus: Mutex<CriticalSectionRawMutex, embassy_stm32::spi::Spi<'_, Async> = Mutex::new(spi_2);
+        let spi_bus: Mutex<CriticalSectionRawMutex, embassy_stm32::spi::Spi<'_, Async>> =
+            Mutex::new(spi_2);
+        //let spi_cell: Mutex<CriticalSectionRawMutex, embassy_stm32::spi::Spi<'_, Async>> =
+        let spi_bus = SPI_CELL.init(spi_bus);
+        //let spi_device = SpiDevice::new(&spi_bus, puller_cs);
+        let spi_device = SpiDevice::new(spi_bus, puller_cs);
+        let puller = MCP23S08::new(spi_device);
         // EEPROM CS
+        // TRINAMIC CS
         // EEPROM SPI
-        // let puller_cs = Output::new(p.PA15, Level::High, Speed::Low);
-        // let spi_config = embassy_stm32::spi::Config::default();
-        // let eeprom_spi = embassy_stm32::spi::Spi::new(
-        //     p.SPI1,
-        //     p.PA5,
-        //     p.PA7,
-        //     p.PA6,
-        //     p.DMA1_CH6,
-        //     p.DMA1_CH7,
-        //     spi_config
-        // );
+        //let mut eeprom_cs = Output::new(p.PA15, Level::High, Speed::Low);
+        //eeprom_cs.set_high();
+        //let mut spi_2_config = embassy_stm32::spi::Config::default();
+        //spi_2_config.mode = MODE_3;
+        //spi_2_config.frequency = Hertz(250_000);
+        //let spi_2 = embassy_stm32::spi::Spi::new(
+        //    p.SPI1,
+        //    p.PA5,
+        //    p.PA7,
+        //    p.PA6,
+        //    p.DMA1_CH6,
+        //    p.DMA1_CH7,
+        //    spi_2_config,
+        //);
+        //let mut tmc5130 = TMC5130::new(spi_2, trinamic_cs, driver_en, driver_diag0, driver_diag1);
+        //tmc5130.clear_en();
 
         Self {
-            driver_diag0,
-            driver_diag1,
+            //driver_diag0,
+            //driver_diag1,
             driver_refr,
             driver_refl,
-            driver_en,
+            //driver_en,
             actuator_limit_1,
             actuator_limit_2,
             side_break_beam_1,
             side_break_beam_2,
+            io: TCA9535::new(slot_i2c, 0x20),
+            puller, //trinamic: tmc5130,
         }
     }
 
     pub async fn run(&mut self) -> ! {
+        let config = Port::from_bits(0xFFFF).unwrap();
+        let _ = self.io.write_config(config).await;
+        //let mut pos: i32 = 1000;
+        //let res = self
+        //    .trinamic
+        //    .write_u32(tmc5130::registers::Registers::V1, 10000)
+        //    .await;
+        //let res = self
+        //    .trinamic
+        //    .write_u32(tmc5130::registers::Registers::A1, 1000)
+        //    .await;
+        //let res = self
+        //    .trinamic
+        //    .write_u32(tmc5130::registers::Registers::D1, 1000)
+        //    .await;
+        let _ = self
+            .puller
+            .set_all_directions(mcp23s08::Direction::Output)
+            .await;
+        let result = self.puller.read_iodir().await;
+        defmt::info!("IODIR {:?}", result);
+        let result = self.puller.read_ipol().await;
+        defmt::info!("IPOL {:?}", result);
         loop {
+            let result = self.puller.set_gpio(255).await;
+            let result = self.puller.set_olat(255).await;
+            embassy_time::Timer::after_millis(1000).await;
+            let result = self.puller.set_gpio(0).await;
+            let result = self.puller.set_olat(0).await;
+            embassy_time::Timer::after_millis(1000).await;
+            /*
+            defmt::info!(
+                "{} {} {} {} {} {}",
+                self.driver_refr.is_high(),
+                self.driver_refl.is_high(),
+                self.actuator_limit_1.is_high(),
+                self.actuator_limit_2.is_high(),
+                self.side_break_beam_1.is_high(),
+                self.side_break_beam_2.is_high(),
+            );
+            let io_status = self
+                .io
+                .read_port(tca9535::registers::Registers::INPUT_PORT0)
+                .await;
+            let status = io_status.unwrap_or(Port::from_bits(0xAAFF).unwrap());
+            defmt::info!("{:?}", status.bits().to_be_bytes());
+            */
+            /*
+            let res = self
+                .trinamic
+                .read_register(tmc5130::registers::Registers::X_ENC)
+                .await;
+            defmt::info!("X ENC: {:?}", res);
+            let res = self
+                .trinamic
+                .read_register(tmc5130::registers::Registers::GSTAT)
+                .await;
+            defmt::info!("GSTAT: {:?}", res);
+            let res = self
+                .trinamic
+                .read_register(tmc5130::registers::Registers::GCONF)
+                .await;
+            defmt::info!("GCONF: {:?}", res);
+            let res = self
+                .trinamic
+                .read_register(tmc5130::registers::Registers::IHOLD_IRUN)
+                .await;
+            defmt::info!("IHOLD_IRUN: {:?}", res);
+            if let Ok(res) = self
+                .trinamic
+                .read_i32(tmc5130::registers::Registers::X_COMPARE)
+                .await
+            {
+                defmt::info!("Position Reached: {:?}", res);
+                if res == 0 {
+                    self.trinamic
+                        .write_i32(tmc5130::registers::Registers::XTARGET, pos)
+                        .await;
+                    pos += 1000;
+                }
+            }
+            */
+            embassy_time::Timer::after_millis(1000).await;
             //let command = COMMAND_CHANNEL.receive().await;
             //if let Some(cmd) = parse_relay_command(&command) {
             //    let response = self.handle_command(cmd);

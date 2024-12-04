@@ -1,5 +1,5 @@
 [workspace]
-members = [ "crates/messages", "crates/bindings", "crates/relay_board", "crates/tool_board"]
+members = [ "crates/messages", "crates/bindings", "crates/relay_board", "crates/tool_board", "crates/tca9535", "crates/tmc5130", "crates/mcp23s08"]
 resolver = "2"
 
 
@@ -10,3 +10,4 @@ embassy-executor = { git = "https://github.com/embassy-rs/embassy", rev = "227e0
 embassy-stm32 = { git = "https://github.com/embassy-rs/embassy", rev = "227e073fca97bcbcec42d9705e0a8ef19fc433b5" }
 embassy-sync = { git = "https://github.com/embassy-rs/embassy", rev = "227e073fca97bcbcec42d9705e0a8ef19fc433b5" }
 embassy-futures = { git = "https://github.com/embassy-rs/embassy", rev = "227e073fca97bcbcec42d9705e0a8ef19fc433b5" }
+embassy-embedded-hal = { git = "https://github.com/embassy-rs/embassy", rev = "227e073fca97bcbcec42d9705e0a8ef19fc433b5" }
