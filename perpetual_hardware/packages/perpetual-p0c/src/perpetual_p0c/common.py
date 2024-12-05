@@ -21,7 +21,7 @@ class CanMessageIds(int, Enum):
     TOOL_NODE = 6
     X_AXIS = 100
     Y_AXIS = 101
-    Z_AXIS = 105
+    Z_AXIS = 102
     INPUT_FUNNEL = 110
     OPPOSING_FUNNEL = 111
     SLOT_1 = 112
@@ -31,7 +31,10 @@ class CanMessageIds(int, Enum):
     DIVERTER = 131
     OUTPUT_TRANSFER_CONVEYOR = 132
     ACTIVE_WALL = 133
-
+    OUTPUT_CONVEYOR = 134
+    IO_IN_CONVEYOR = 135
+    IO_OUT_CONVEYOR = 136
+    OUTPUT_BOX = 137
 
 def get_bus() -> BusABC:
     return ThreadSafeBus(interface="pcan", channel="PCAN_USBBUS1", bitrate=1000000, fd=False)
