@@ -108,7 +108,7 @@ class TMCM:
         # self._connection.send(Message(
         self._connection.send(
             Message(
-                arbitration_id=message.module_address,
+                arbitration_id=int(message.module_address),
                 data=payload,
                 is_extended_id=False,
             )
