@@ -5,7 +5,7 @@ from hardware_common.stepper_motor import (
     Rotation,
 )
 from perpetual_trinamic.trinamic_axis import TrinamicStepper
-from perpetual_p0c.utils import get_usb_serial_can
+from perpetual_p0c.utils import get_can_device
 from can import Bus
 
 config = OutputBoxConfiguration(
@@ -40,7 +40,7 @@ config = OutputBoxConfiguration(
 
 
 if __name__ == '__main__':
-    usb_can = get_usb_serial_can()[0]
+    usb_can = get_can_device()
 
     with Bus(interface=usb_can.CAN_INTERFACE, channel=usb_can.CAN_CHANNEL, bitrate=usb_can.CAN_BITRATE, fd=False) as bus:
         output_box = OutputBox(bus, config)
