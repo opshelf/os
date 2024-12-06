@@ -19,21 +19,21 @@ config = OutputBoxConfiguration(
             work_current=2000,
             holding_current=0,
             homing_current=1000,
-            velocity=100,
-            acceleration=100,
+            velocity=200,
+            acceleration=200,
             max_velocity=200,
             max_acceleration=200,
             min_travel=None,
             max_travel=None,
             invert_coordinates=False,
             home_direction=Rotation.CCW,
-            homing_speed=50,
+            homing_speed=100,
         ),
         name="output_box",
         axis_type="leadscrew",
     ),
     offsets=OutputBoxOffsets(
-        door_open_position=250.0
+        door_open_position=205.0
     )
 )
 
@@ -43,7 +43,9 @@ if __name__ == '__main__':
     usb_can = get_usb_serial_can()[0]
     with Bus(interface=usb_can.CAN_INTERFACE, channel=usb_can.CAN_CHANNEL, bitrate=usb_can.CAN_BITRATE, fd=False) as bus:
         output_box = OutputBox(bus, config)
-        output_box.home()
+        #output_box.home()
+        #output_box.door.move_to_position(205)
+    
         belt = TrinamicStepper(
             bus,
             module_id=CanMessageIds.IO_OUT_CONVEYOR,

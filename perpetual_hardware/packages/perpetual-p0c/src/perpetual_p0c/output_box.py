@@ -36,6 +36,10 @@ class OutputBox:
     def offsets(self, offsets: OutputBoxOffsets) -> None:
         self._configuration.offsets = offsets
 
+    @property
+    def door(self) -> TrinamicAxis:
+        return self._door
+
     def initialize(self) -> None:
         self._door.initialize()
 

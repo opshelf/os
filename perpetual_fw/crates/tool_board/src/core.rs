@@ -1,5 +1,45 @@
 use bitfield::bitfield;
 
+pub fn get_number_of_bits(value: u8) -> u8 {
+    let mut accum = 0;
+    for i in 0..8 {
+        if value & (1 << i) != 0 {
+            accum += 1;
+        }
+    }
+    return accum;
+}
+
+pub fn valid_number_of_bits(value: u8, max_bits: u8) -> bool {
+    get_number_of_bits(value) <= max_bits
+}
+
+//pub enum MotorCommands {
+//    HomeMotor,
+//    ResetMotor,
+//    Initialize,
+//    GetMotorPosition,
+//    MoveAbsolute(i32),
+//    MoveRealtive(i32),
+//    SetMotorCurrent(u8),
+//    GetMotorStatus,
+//}
+//
+//pub enum MotorResponses {
+//    Homed,
+//    Reset,
+//    Initialized,
+//    Position(i32),
+//    MoveAbsolute(i32),
+//    MoveRelative(i32),
+//    MotorCurrent(u8),
+//    MotorStatus(u32),
+//}
+
+pub trait IntoCanFrame {
+    fn to_can_data(&self) -> [u8];
+}
+
 bitfield! {
     pub struct SlotStatus(u8);
     impl Debug;
@@ -11,28 +51,6 @@ bitfield! {
     pub slot_3, _: 2;
     pub slot_2, _: 1;
     pub slot_1, _: 0;
-}
-
-pub enum MotorCommands {
-    HomeMotor,
-    ResetMotor,
-    Initialize,
-    GetMotorPosition,
-    MoveAbsolute(i32),
-    MoveRealtive(i32),
-    SetMotorCurrent(u8),
-    GetMotorStatus,
-}
-
-pub enum MotorResponses {
-    Homed,
-    Reset,
-    Initialized,
-    Position(i32),
-    MoveAbsolute(i32),
-    MoveRelative(i32),
-    MotorCurrent(u8),
-    MotorStatus(u32),
 }
 
 bitfield! {
@@ -57,9 +75,79 @@ bitfield! {
     pub solenoid_1, _: 0;
 }
 
+bitfield! {
+    pub struct Inputs(u8);
+    impl Debug;
+    pub forward_actuator, set_forward_actuator: 5;
+    pub backward_actuator, set_backward_actuator: 4;
+    pub left_beam, set_left_beam: 3;
+    pub right_beam, set_right_beam: 2;
+    pub left_presence, set_left_presence: 1;
+    pub right_presence, set_right_presence: 0;
+}
+
+#[derive(Debug)]
+pub struct InputState {
+    pub inputs: Inputs,
+    pub slots: SlotStatus,
+}
+
+pub struct BoardState {
+    pub inputs: InputState,
+    pub puller: PullerState,
+    pub carriage: CarriageState,
+}
+
+impl BoardState {
+    pub fn to_can_data(&self) -> [u8; 4] {
+        return [
+            self.inputs.inputs.0,
+            self.inputs.slots.0,
+            self.puller.0,
+            self.carriage.0,
+        ];
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum CanCommandIds {
+    GetState = 0x01,
+    SetPullers = 0x02,
+    MaskPullers = 0x03,
+    SetCarriage = 0x05,
+    MaskCarriage = 0x06,
+}
+
+impl CanCommandIds {
+    pub fn from_u8(value: u8) -> Option<CanCommandIds> {
+        match value {
+            0x01 => Some(CanCommandIds::GetState),
+            0x02 => Some(CanCommandIds::SetPullers),
+            0x03 => Some(CanCommandIds::MaskPullers),
+            0x04 => Some(CanCommandIds::SetCarriage),
+            0x05 => Some(CanCommandIds::MaskCarriage),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum CanResponseIds {
+    Invalid = 0x00,
+    GetState = 0x01,
+    SetPullers = 0x02,
+    MaskPullers = 0x03,
+    ReadPullers = 0x04,
+    SetCarriage = 0x05,
+    MaskCarriage = 0x06,
+    ReadCarriage = 0x07,
+}
+
 pub enum PullerCommands {
     SetPullers(PullerState),
-    ReadPullers,
+    MaskPullers(PullerState),
 }
 
 pub enum PullerResponse {
@@ -68,8 +156,8 @@ pub enum PullerResponse {
 }
 
 pub enum CarriageCommands {
-    SetCarriage(PullerState),
-    ReadPullers,
+    SetCarriage(CarriageState),
+    MaskCarriage(CarriageState),
 }
 
 pub enum CarriageResponse {
@@ -78,13 +166,75 @@ pub enum CarriageResponse {
 }
 
 pub enum Messages {
-    MotorCommand(MotorCommands),
+    GetState,
     PullerCommand(PullerCommands),
     CarriageCommand(CarriageCommands),
 }
 
+impl Messages {
+    pub fn from_can_frame(frame: &[u8]) -> Option<Messages> {
+        if frame.len() < 1 {
+            return None;
+        }
+        if let Some(msg_id) = CanCommandIds::from_u8(frame[0]) {
+            if msg_id == CanCommandIds::GetState {
+                Some(Messages::GetState)
+            } else if frame.len() < 2 {
+                None
+            } else {
+                let data = frame[1] & 0b11111100;
+                if valid_number_of_bits(data, 3) {
+                    match msg_id {
+                        CanCommandIds::SetPullers => {
+                            return Some(Messages::PullerCommand(PullerCommands::SetPullers(
+                                PullerState(data),
+                            )));
+                        }
+                        CanCommandIds::MaskPullers => {
+                            return Some(Messages::PullerCommand(PullerCommands::MaskPullers(
+                                PullerState(data),
+                            )));
+                        }
+                        CanCommandIds::SetCarriage => {
+                            return Some(Messages::CarriageCommand(CarriageCommands::SetCarriage(
+                                CarriageState(data),
+                            )));
+                        }
+                        CanCommandIds::MaskCarriage => {
+                            return Some(Messages::CarriageCommand(
+                                CarriageCommands::MaskCarriage(CarriageState(data)),
+                            ));
+                        }
+                        _ => None,
+                    }
+                } else {
+                    return None;
+                }
+            }
+        } else {
+            return None;
+        }
+    }
+}
+
 pub enum Responses {
-    MotorResponse(MotorCommands),
-    PullerResponse(PullerResponse),
-    CarriageResponse(CarriageResponse),
+    State(BoardState),
+    Invalid, //PullerResponse(PullerResponse),
+             //CarriageResponse(CarriageResponse),
+}
+
+impl Responses {
+    pub fn into_can_frame(&self) -> [u8; 8] {
+        match self {
+            Self::State(board_state) => {
+                let response_data = board_state.to_can_data();
+                let mut data = [0u8; 8];
+                for (ix, byte) in response_data.into_iter().enumerate() {
+                    data[ix] = byte;
+                }
+                data
+            }
+            Self::Invalid => [0; 8],
+        }
+    }
 }

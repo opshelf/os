@@ -38,6 +38,7 @@ import {
 } from '@tanstack/react-query';
 import { getStorage, updateStorage } from '@/api';
 import GantryController from '../GantryController';
+import FunnelController from '../FunnelController';
 
 const Shelf = ({
   storageModule,
@@ -391,198 +392,16 @@ const StorageDesigner = ({
         </Button>
       </div>
       <GantryController />
+      <FunnelController />
     </div>
   );
 };
-/*
+
 const Storage = () => {
-  //const [storageModule, setStorageModule] =
-  //  useState<StorageModuleData>({
-  //    left_module: [],
-  //    right_module: [],
-  //  });
-
-  const [moduleSide, setModuleSide] =
-    useState<StorageModuleSide>('right_module');
-
-  // Access the client
-  const queryClient = useQueryClient();
-
-  // Queries
   const { isPending, isError, data, error } = useQuery({
     queryKey: ['storage'],
     queryFn: getStorage,
   });
-  // Mutations
-  const mutation = useMutation({
-    mutationFn: async () => updateStorage(storageModule),
-    onSuccess: () => {
-      // Invalidate and refetch
-      queryClient.invalidateQueries({ queryKey: ['storage'] });
-    },
-  });
-
-  let storageModule = data;
-
-  const setStorageModule = (data: StorageModuleData) => {
-    storageModule = data;
-  };
-
-  const defaultShelf = (): ShelfData => {
-    return {
-      shelf_height: 75,
-      shelf_width: 800,
-      trays: [],
-    };
-  };
-
-  const deleteShelf = (idx: number) => {
-    let newStorageModule = { ...storageModule };
-    newStorageModule[moduleSide].splice(idx, 1);
-
-    setStorageModule(newStorageModule);
-  };
-
-  const addShelf = (idx: number) => {
-    let newStorageModule = { ...storageModule };
-    newStorageModule[moduleSide].splice(idx + 1, 0, defaultShelf());
-    setStorageModule(newStorageModule);
-  };
-
-  if (isPending) {
-    return <span>Loading...</span>;
-  }
-
-  if (isError) {
-    return <span>Error: {error.message}</span>;
-  }
-
-  return (
-    <div className="flex flex-col w-full h-full items-center px-4 justify-end h-full space-y-2">
-      <div className="flex flex-col-reverse w-full">
-        {!storageModule[moduleSide].length && (
-          <Button
-            variant={'outline'}
-            className="self-center"
-            onClick={() => {
-              let newModule = { ...storageModule };
-              newModule[moduleSide] = [defaultShelf()];
-              setStorageModule(newModule);
-            }}
-          >
-            <PlusIcon />
-          </Button>
-        )}
-        {storageModule[moduleSide].map((shelf, idx) => {
-          return (
-            <div className="flex w-full items-end justify-end gap-2">
-              <Shelf
-                storageModule={storageModule}
-                shelfIdx={idx}
-                side={moduleSide}
-                updateStorageModule={setStorageModule}
-              />
-              <Popover>
-                <div className="flex items-center space-x-2 pb-2">
-                  <Button
-                    variant={'outline'}
-                    onClick={() => addShelf(idx)}
-                  >
-                    <PlusIcon />
-                  </Button>
-                  <PopoverTrigger asChild>
-                    <Button variant="secondary">
-                      <Settings />
-                    </Button>
-                  </PopoverTrigger>
-                  <Button
-                    variant="destructive"
-                    onClick={() => deleteShelf(idx)}
-                  >
-                    <MinusIcon />
-                  </Button>
-                </div>
-                <PopoverContent>
-                  <div className="flex flex-col w-full gap-y-2">
-                    <Label>Shelf Height</Label>
-                    <Select
-                      value={`${shelf.shelf_height}`}
-                      onValueChange={(value) => {
-                        let newStorageModule = { ...storageModule };
-                        let newHeight = parseInt(value);
-                        newStorageModule[moduleSide][
-                          idx
-                        ].shelf_height = newHeight;
-                        newStorageModule[moduleSide][idx].trays =
-                          newStorageModule[moduleSide][idx].trays.map(
-                            (tray) => {
-                              return {
-                                ...tray,
-                                height: Math.min(
-                                  tray.height,
-                                  newHeight
-                                ),
-                              };
-                            }
-                          );
-                        setStorageModule(newStorageModule);
-                      }}
-                    >
-                      <SelectTrigger className="w-[180px]">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="50">50(mm)</SelectItem>
-                        <SelectItem value="75">75(mm)</SelectItem>
-                        <SelectItem value="100">100(mm)</SelectItem>
-                        <SelectItem value="125">125(mm)</SelectItem>
-                        <SelectItem value="150">150(mm)</SelectItem>
-                        <SelectItem value="175">175(mm)</SelectItem>
-                        <SelectItem value="200">150(mm)</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </PopoverContent>
-              </Popover>
-            </div>
-          );
-        })}
-      </div>
-      <div className="flex items-center justify-end w-full space-x-2">
-        <Button
-          onClick={() => {
-            setModuleSide('left_module');
-          }}
-        >
-          Show Left Module
-        </Button>
-        <Button
-          onClick={() => {
-            setModuleSide('right_module');
-          }}
-        >
-          Show Right Module
-        </Button>
-        <Button>Save</Button>
-      </div>
-    </div>
-  );
-};
-*/
-
-const Storage = () => {
-  //const queryClient = useQueryClient();
-  const { isPending, isError, data, error } = useQuery({
-    queryKey: ['storage'],
-    queryFn: getStorage,
-  });
-  //const mutation = useMutation({
-  //  mutationFn: updateStorage,
-  //  onSuccess: () => {
-  //    // Invalidate and refetch
-  //    queryClient.invalidateQueries({ queryKey: ['storage'] });
-  //  },
-  //});
 
   if (isPending) {
     return <span>Loading...</span>;

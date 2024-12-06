@@ -18,14 +18,13 @@ import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { MinusIcon, PlusIcon } from 'lucide-react';
-//import { executeCommand, getOffsets, updateOffsets } from '@/api';
 import { funnelCommand } from '@/api';
-import z from 'zod';
-import {
-  FunnelSubsytemCommands,
-  FunnelBeltCommands,
-  FunnelCommands,
-} from '@/domain/funnel';
+//import z from 'zod';
+//import {
+//  FunnelSubsytemCommands,
+//  FunnelBeltCommands,
+//  FunnelCommands,
+//} from '@/domain/funnel';
 
 export type TrayConfiguration = {
   cells: number;
@@ -63,21 +62,82 @@ const Controls = ({
             onClick={async () =>
               await funnelCommand({
                 command: 'START_INLET_BELT',
-                payload: { distance: wiggleDistance },
+                payload: null,
               })
             }
           >
-            START BELT
+            START INLET
           </Button>
           <Button
             onClick={async () =>
               await funnelCommand({
                 command: 'STOP_INLET_BELT',
-                payload: { distance: wiggleDistance },
+                payload: null,
               })
             }
           >
-            STOP BELT
+            STOP INLET
+          </Button>
+          <Button
+            onClick={async () =>
+              await funnelCommand({
+                command: 'START_WALL_BELT',
+                payload: null,
+              })
+            }
+          >
+            START WALL
+          </Button>
+          <Button
+            onClick={async () =>
+              await funnelCommand({
+                command: 'STOP_WALL_BELT',
+                payload: null,
+              })
+            }
+          >
+            STOP WALL
+          </Button>
+          <Button
+            onClick={async () =>
+              await funnelCommand({
+                command: 'START_OUTPUT_BELT',
+                payload: null,
+              })
+            }
+          >
+            START OUTPUT
+          </Button>
+          <Button
+            onClick={async () =>
+              await funnelCommand({
+                command: 'STOP_OUTPUT_BELT',
+                payload: null,
+              })
+            }
+          >
+            STOP OUTPUT
+          </Button>
+
+          <Button
+            onClick={async () =>
+              await funnelCommand({
+                command: 'START_TRANSFER_BELT',
+                payload: null,
+              })
+            }
+          >
+            START TRANSFER
+          </Button>
+          <Button
+            onClick={async () =>
+              await funnelCommand({
+                command: 'STOP_TRANSFER_BELT',
+                payload: null,
+              })
+            }
+          >
+            STOP TRANSFER
           </Button>
           <Button
             onClick={async () =>
@@ -315,7 +375,7 @@ function FunnelController() {
                     } rounded`}
                     onClick={async () => {
                       setSelectedCell(cell_idx);
-                      const response = await executeFunnelCommand({
+                      const response = await funnelCommand({
                         command: 'MOVE_TO_CELL',
                         payload: {
                           tray: tray,

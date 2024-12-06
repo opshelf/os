@@ -93,6 +93,7 @@ version = "0.1.0"
 source = { editable = "packages/perpetual-p0c" }
 dependencies = [
     { name = "hardware-common" },
+    { name = "perpetual-trinamic" },
     { name = "pydantic" },
     { name = "python-can" },
     { name = "waveshare-can" },
@@ -101,6 +102,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "hardware-common", editable = "packages/hardware-common" },
+    { name = "perpetual-trinamic", editable = "packages/perpetual-trinamic" },
     { name = "pydantic" },
     { name = "python-can" },
     { name = "waveshare-can", editable = "packages/waveshare-can" },

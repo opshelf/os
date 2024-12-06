@@ -1,7 +1,6 @@
 #![no_std]
 
 use bitfield::bitfield;
-use embedded_hal::digital::OutputPin;
 use embedded_hal_async::spi::SpiDevice;
 use paste::paste;
 

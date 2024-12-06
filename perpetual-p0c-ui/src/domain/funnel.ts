@@ -33,8 +33,8 @@ const funnelSubsytemCommands = z.enum([
   'STOP_INLET_BELT',
   'START_TRANSFER_BELT',
   'STOP_TRANSFER_BELT',
-  'START_OUTLET_BELT',
-  'STOP_OUTLET_BELT',
+  'START_OUTPUT_BELT',
+  'STOP_OUTPUT_BELT',
   'START_WALL_BELT',
   'STOP_WALL_BELT',
   'WIGGLE',
@@ -55,7 +55,7 @@ export type FunnelCommands = z.infer<typeof funnelCommands>;
 export type FunnelBeltCommands = FunnelCommands & {
   command:
     | 'START_INLET_BELT'
-    | 'START_OUTLET_BELT'
+    | 'START_OUTPUT_BELT'
     | 'START_TRANSFER_BELT'
     | 'START_WALL_BELT';
   payload: { speed: number } | null;
