@@ -75,6 +75,7 @@ def get_usb_serial_can() -> List[CanConfig]:
             )
     return out
 
+
 def get_can_devices() -> CanConfig:
     pcan = check_for_pcan()
     if pcan:
