@@ -1,14 +1,15 @@
 use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice;
 use embassy_executor::Spawner;
 use embassy_stm32::can::{enums::BusError, frame::Envelope, Frame};
-use embassy_stm32::gpio::{Level, Output, Pull, Speed};
+//use embassy_stm32::gpio::{Level, Output, Pull, Speed};
+use embassy_stm32::gpio::{Level, Output, Speed};
 use embassy_stm32::mode::Async;
-use embassy_stm32::time::Hertz;
+//use embassy_stm32::time::Hertz;
 use embassy_stm32::Config;
 use embassy_stm32::{bind_interrupts, can, peripherals};
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, ThreadModeRawMutex};
 use embassy_sync::channel::Channel;
-use embassy_sync::mutex::Mutex;
+//use embassy_sync::mutex::Mutex;
 use static_cell::StaticCell;
 
 use crate::core::{BoardState, Messages, Responses};
@@ -95,7 +96,7 @@ impl<'a> IoBoard<'a> {
             wedge_2,
             wedge_3,
             actuators,
-            actuator_state: 0,
+            actuator_state: false,
             wedge_state: 0,
         }
     }
@@ -128,17 +129,17 @@ impl<'a> IoBoard<'a> {
     }
 
     fn set_wedges(&mut self, state: u8) {
-        if state & 0b1 {
+        if state & 0b1 > 0 {
             self.wedge_1.set_high();
         } else {
             self.wedge_1.set_low();
         }
-        if state & 0b01 {
+        if state & 0b01 > 0 {
             self.wedge_2.set_high();
         } else {
             self.wedge_2.set_low();
         }
-        if state & 0b001 {
+        if state & 0b001 > 0 {
             self.wedge_3.set_high();
         } else {
             self.wedge_3.set_low();
@@ -153,9 +154,9 @@ impl<'a> IoBoard<'a> {
         }
     }
 
-    pub fn handle_message(msg: Messages) -> Responses {
+    pub fn handle_message(&mut self, msg: Messages) -> Responses {
         match msg {
-            Messages::GetState => {}
+            Messages::GetState => Responses::State(self.get_state()),
             Messages::SetWedges(state) => {
                 self.set_wedges(state);
                 Responses::State(self.get_state())
@@ -177,9 +178,13 @@ impl<'a> IoBoard<'a> {
 
     pub async fn run(&mut self) -> ! {
         loop {
-            let cmd = COMMAND_CHANNEL.receive().await;
-            let response = self.handle_message(cmd);
-            RESPONSE_CHANNEL.send(response).await;
+            //let cmd = COMMAND_CHANNEL.receive().await;
+            //let response = self.handle_message(cmd);
+            //RESPONSE_CHANNEL.send(response).await;
+            self.wedge_1.set_high();
+            embassy_time::Timer::after_millis(1000).await;
+            self.wedge_1.set_low();
+            embassy_time::Timer::after_millis(1000).await;
         }
     }
 }

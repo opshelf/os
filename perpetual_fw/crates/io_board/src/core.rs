@@ -1,4 +1,5 @@
-use bitfield::bitfield;
+//use bitfield::bitfield;
+use defmt::Format;
 
 pub fn get_number_of_bits(value: u8) -> u8 {
     let mut accum = 0;
@@ -65,7 +66,9 @@ impl Messages {
         }
         if let Some(msg_id) = CanCommandIds::from_u8(frame[0]) {
             match msg_id {
-                CanCommandIds::GetState => {}
+                CanCommandIds::GetState => {
+                    return Some(Messages::GetState);
+                }
                 CanCommandIds::SetWedges => {
                     if frame.len() < 2 {
                         return None;
@@ -76,7 +79,7 @@ impl Messages {
                     if frame.len() < 2 {
                         return None;
                     }
-                    return Some(Messages::SetActuators(bool::from(frame[1])));
+                    return Some(Messages::SetActuators(frame[1] > 0));
                 }
                 CanCommandIds::ResetValves => {
                     return Some(Messages::ResetValves);
@@ -84,7 +87,6 @@ impl Messages {
                 CanCommandIds::SetAllValves => {
                     return Some(Messages::SetAllValves);
                 }
-                _ => None,
             }
         } else {
             return None;
