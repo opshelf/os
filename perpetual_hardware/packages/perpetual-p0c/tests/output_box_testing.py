@@ -32,20 +32,22 @@ config = OutputBoxConfiguration(
         name="output_box",
         axis_type="leadscrew",
     ),
-    offsets=OutputBoxOffsets(
-        door_open_position=205.0
-    )
+    offsets=OutputBoxOffsets(door_open_position=205.0),
 )
 
 
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     usb_can = get_can_device()
 
-    with Bus(interface=usb_can.CAN_INTERFACE, channel=usb_can.CAN_CHANNEL, bitrate=usb_can.CAN_BITRATE, fd=False) as bus:
+    with Bus(
+        interface=usb_can.CAN_INTERFACE,
+        channel=usb_can.CAN_CHANNEL,
+        bitrate=usb_can.CAN_BITRATE,
+        fd=False,
+    ) as bus:
         output_box = OutputBox(bus, config)
         output_box.home()
-        #output_box.door.move_to_position(205)
+        # output_box.door.move_to_position(205)
         """    
         belt = TrinamicStepper(
             bus,
@@ -86,9 +88,3 @@ if __name__ == '__main__':
                 belt.stop()
                 break
         """
-        
-
-
-        
-
-

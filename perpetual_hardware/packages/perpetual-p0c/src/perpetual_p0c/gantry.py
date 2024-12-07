@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from enum import Enum
 from typing import Optional, Any, Dict
 
-#from pharma_bot.hardware_server.commands import GantryCommands
+# from pharma_bot.hardware_server.commands import GantryCommands
 
 
 class GantryConfiguration(BaseModel):
@@ -35,19 +35,22 @@ class Commands(str, Enum):
     MOVE_RELATIVE = "MOVE_RELATIVE"
     STOP = "STOP"
 
+
 class GantryMoveCommand(BaseModel):
     position: GantryCoordinate
-    
+
+
 class GantryCommands(BaseModel):
     command: Commands
     payload: Optional[Dict[Any, Any]]
 
+
 class GantryStatus(BaseModel):
-    x_position: float 
-    y_position: float 
+    x_position: float
+    y_position: float
+
 
 class Gantry:
-
     def __init__(self, bus: BusABC, config: GantryConfiguration):
         self._config = config
         self._x_axis = TrinamicAxis(
@@ -60,7 +63,7 @@ class Gantry:
     def status(self) -> GantryStatus:
         return GantryStatus(
             x_position=self._x_axis.get_position(),
-            y_position=self._y_axis.get_position()
+            y_position=self._y_axis.get_position(),
         )
 
     def stop(self) -> None:
@@ -145,4 +148,3 @@ class Gantry:
             self.stop()
         else:
             raise Exception("Invalid Command")
-

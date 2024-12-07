@@ -35,6 +35,6 @@ def test_axis():
         time.sleep(1)
         axis1.move_to_position(100)
 
-if __name__ == '__main__':
-    test_axis()
 
+if __name__ == "__main__":
+    test_axis()

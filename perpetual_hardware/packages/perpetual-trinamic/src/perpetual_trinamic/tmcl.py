@@ -101,7 +101,6 @@ class TMCLStatus:
 
 
 class TrinamicErrorFlags:
-
     def __init__(self, value: int) -> None:
         self._value = value
         self._stall_guard_error: bool = bool(value & 0x01)
@@ -124,7 +123,6 @@ deviation_error={self.deviation_error})"
 
 
 class StatusFlags:
-
     def __init__(self, value: int) -> None:
         self._value = value
         self._stall_guard2_status: bool = bool(value & 0x01)
@@ -189,4 +187,3 @@ open_load_a={self.open_load_a},\
 open_load_b={self.open_load_b},\
 stand_still={self.stand_still},\
 )"
-

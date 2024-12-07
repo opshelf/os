@@ -1,7 +1,4 @@
-from hardware_common.stepper_motor import (
-    AbstractStepperMotor,
-    AxisCommand
-)
+from hardware_common.stepper_motor import AbstractStepperMotor, AxisCommand
 from can import BusABC
 from .tray import Tray
 from .common import CanAxisConfiguration
@@ -54,10 +51,12 @@ class FunnelStatus(BaseModel):
     slot_2: float
     slot_3: float
 
+
 class FunnelOpeningSize(int, Enum):
     OPEN_50MM = 0
     OPEN_100MM = 1
     OPEN_150MM = 2
+
 
 class Commands(str, Enum):
     HOME = "HOME"
@@ -71,16 +70,20 @@ class Commands(str, Enum):
     WIGGLE = "WIGGLE"
     INITIALIZE = "INITIALZE"
 
+
 class MoveToCellCommand(BaseModel):
     tray: Tray
     idx: int
+
 
 class FunnelCommands(BaseModel):
     command: Commands
     payload: Optional[Dict[Any, Any]]
 
+
 class WiggleCommand(BaseModel):
     wiggle: float
+
 
 class Funnel:
     def __init__(self, bus: BusABC, funnel_configuration: FunnelConfiguration):
@@ -127,7 +130,7 @@ class Funnel:
             bus,
             module_id=funnel_configuration.wall.can_id,
             configuration=funnel_configuration.wall.configuration,
-            motor_id=0
+            motor_id=0,
         )
         self._diverter = TrinamicStepper(
             bus,
@@ -135,12 +138,12 @@ class Funnel:
             configuration=funnel_configuration.diverter.configuration,
             motor_id=0,
         )
-        #self._output_transfer_conveyor = TrinamicStepper(
+        # self._output_transfer_conveyor = TrinamicStepper(
         #    bus,
         #    module_id=funnel_configuration.output_transfer_conveyor.can_id,
         #    configuration=funnel_configuration.output_transfer_conveyor.configuration,
         #    motor_id=0,
-        #)
+        # )
         self._slots_open = 0
         self._diverter_open = True
 
@@ -152,14 +155,14 @@ class Funnel:
     def wall(self) -> TrinamicStepper:
         return self._wall
 
-    #@property
-    #def output_transfer_conveyor(self) -> TrinamicStepper:
+    # @property
+    # def output_transfer_conveyor(self) -> TrinamicStepper:
     #    return self._output_transfer_conveyor
 
-    #def output_transfer_conveyor_rotate(self, speed: int = -600) -> None:
+    # def output_transfer_conveyor_rotate(self, speed: int = -600) -> None:
     #    self._output_transfer_conveyor.rotate(speed)
 
-    #def output_transfer_conveyor_stop(self) -> None:
+    # def output_transfer_conveyor_stop(self) -> None:
     #    self._output_transfer_conveyor.stop()
 
     def stop_belt(self) -> None:
@@ -167,10 +170,10 @@ class Funnel:
         self._wall.stop()
 
     def start_belt(self) -> None:
-        #self._belt.rotate(1000)
+        # self._belt.rotate(1000)
         self._belt.initialize()
         self._wall.initialize()
-        #self._belt.rotate(-2000)
+        # self._belt.rotate(-2000)
         self._belt.rotate(-1500)
         self._wall.rotate(-2000)
 
@@ -286,7 +289,7 @@ class Funnel:
             self._slot_1.move_to_position(0)
             self._slot_2.move_to_position(0)
             self._slot_3.move_to_position(0)
-        
+
         if self._diverter_open:
             if tray.cell_width <= 50:
                 self.set_diverter_opening(FunnelOpeningSize.OPEN_50MM)
@@ -332,13 +335,12 @@ class Funnel:
         self._diverter.move_revolutions(0.0)
         self.wait_for_move()
 
-
     def wiggle(self, revolutions: float = 0.2) -> None:
         curr_pos = self._diverter.get_position()
         try:
             self._diverter.move_revolutions(0)
             self._diverter.wait_for_move()
-            time.sleep(.25)
+            time.sleep(0.25)
             self._diverter.move_revolutions(curr_pos)
             self._diverter.wait_for_move()
             self._diverter.move_relative_revolutions(revolutions)
@@ -425,7 +427,11 @@ class Funnel:
         slot_2 = self._slot_2.get_position()
         slot_3 = self._slot_3.get_position()
         return FunnelStatus(
-            inlet_funnel=ipos, opposing_funnel=opos, slot_1=slot_1, slot_2=slot_2, slot_3=slot_3
+            inlet_funnel=ipos,
+            opposing_funnel=opos,
+            slot_1=slot_1,
+            slot_2=slot_2,
+            slot_3=slot_3,
         )
 
     def stop(self) -> None:

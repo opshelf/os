@@ -12,7 +12,6 @@ def test_axis():
         )
         gantry.home()
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     test_axis()
-
-

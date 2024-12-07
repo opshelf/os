@@ -1,11 +1,16 @@
 from .tmcm import TMCM
-#from .tmcl import TMCLStatus, TMCLCommand, TrinamicErrorFlags
+
+# from .tmcl import TMCLStatus, TMCLCommand, TrinamicErrorFlags
 from can import BusABC
 
-class TMCM12xx(TMCM):
 
+class TMCM12xx(TMCM):
     def __init__(
-        self, connection: BusABC, module_id: int = 1, motor_id: int = 0, max_current: int = 3000
+        self,
+        connection: BusABC,
+        module_id: int = 1,
+        motor_id: int = 0,
+        max_current: int = 3000,
     ):
         super().__init__(connection, module_id, motor_id)
         self._module_id = module_id
@@ -13,7 +18,7 @@ class TMCM12xx(TMCM):
         self._max_current = max_current
 
     @property
-    def max_current(self) -> int: 
+    def max_current(self) -> int:
         return self._max_current
 
     @max_current.setter

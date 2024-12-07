@@ -75,13 +75,14 @@ class RelayBoardMessage(BaseModel):
         byte2 |= int(self.puller_6) << 5
         return [byte1, byte2]
 
+
 class Commads(int, Enum):
     MASK_BITS = 0x01
     SET_BITS = 0x02
     READ_BITS = 0x03
 
-class ToolRelayController:
 
+class ToolRelayController:
     def __init__(self, bus: BusABC, can_id: int = 6) -> None:
         self._bus = bus
         self._can_id = can_id
@@ -100,7 +101,7 @@ class ToolRelayController:
         msg = self._bus.recv(timeout=3.0)
         if msg:
             return msg
-        raise Exception(f"No Response From Relay Module")
+        raise Exception("No Response From Relay Module")
 
     def _run_command(self, message: Message) -> Message:
         self._send_message(message)

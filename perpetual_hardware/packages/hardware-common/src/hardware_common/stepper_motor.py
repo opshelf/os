@@ -3,6 +3,7 @@ from typing import Optional, Dict, Any
 from enum import Enum
 from pydantic import BaseModel
 
+
 class StepperMotorStatus(Enum):
     ERROR = "ERROR"
     GOOD = "GOOD"
@@ -102,7 +103,6 @@ class StepperMotorConfig(BaseModel):
 
 
 class AbstractStepperMotor(ABC):
-
     @abstractmethod
     def initialize(self) -> None:
         raise NotImplementedError
@@ -152,7 +152,7 @@ class AbstractStepperMotor(ABC):
     def set_configuration(self, configuration: StepperMotorConfig) -> None:
         self._configuration = configuration
 
-    #def handle_command(self, cmd: AxisCommand) -> None:
+    # def handle_command(self, cmd: AxisCommand) -> None:
     #    if cmd.command == AxisCommands.INITIALIZE:
     #        self.initialize()
     #    elif cmd.command == AxisCommands.HOME:

@@ -1,4 +1,3 @@
-import can
 from hardware_common.stepper_motor import (
     StepperMotorConfig,
     Rotation,

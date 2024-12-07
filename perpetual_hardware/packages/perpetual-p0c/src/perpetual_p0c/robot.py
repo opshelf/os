@@ -1,7 +1,3 @@
-from hardware_common.stepper_motor import (
-    StepperMotorConfig,
-    Rotation,
-)
 from can import BusABC
 from pydantic import BaseModel
 from perpetual_p0c.gantry import GantryConfiguration, Gantry, GantryCoordinate
@@ -23,7 +19,6 @@ class RobotConfiguration(BaseModel):
 
 
 class P0Robot:
-
     def __init__(self, bus: BusABC, config: RobotConfiguration):
         self._config = config
         self._tool = Tool(bus, config.tool_configuration)
@@ -47,7 +42,7 @@ class P0Robot:
         self.funnel.home()
         self.gantry.home()
 
-    def stop(self) -> None: 
+    def stop(self) -> None:
         self.tool.stop()
         self.funnel.stop()
         self.gantry.stop()
@@ -82,7 +77,11 @@ class P0Robot:
         self._tool.wait_for_move()
 
     def receive_item(
-        self, tray: Tray, tray_location: GantryCoordinate, index: int, side: StorageModuleSide
+        self,
+        tray: Tray,
+        tray_location: GantryCoordinate,
+        index: int,
+        side: StorageModuleSide,
     ) -> None:
         self.pull_tray(tray_location, side)
         input()
@@ -90,7 +89,11 @@ class P0Robot:
         self._funnel.move_to_cell_catch(tray, index)
 
     def deposit_item(
-        self, tray: Tray, tray_location: GantryCoordinate, index: int, side: StorageModuleSide
+        self,
+        tray: Tray,
+        tray_location: GantryCoordinate,
+        index: int,
+        side: StorageModuleSide,
     ) -> None:
         self.pull_tray(tray_location, side)
         self._funnel.catch()
@@ -130,7 +133,8 @@ class P0Robot:
 
     def move_gantry_to_clear(self, tray: Tray) -> None:
         self._gantry.move(
-            self._config.output_location.x, self._config.output_location.y + tray.cell_depth
+            self._config.output_location.x,
+            self._config.output_location.y + tray.cell_depth,
         )
 
 
@@ -140,4 +144,3 @@ class P0Robot:
 #    TOOL = "TOOL"
 #    RECEIVE_ITEM
 #    DEPOSIT_ITEM
-

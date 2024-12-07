@@ -7,6 +7,7 @@ import subprocess
 
 DEFAULT_CAN_RATE = 1000000
 
+
 class SerialDeviceInfo(BaseModel):
     device: str
     name: str
@@ -32,25 +33,33 @@ class CanConfig(BaseModel):
     CAN_CHANNEL: str
     CAN_BITRATE: int
 
+
 def check_for_pcan() -> Optional[CanConfig]:
-    device_re = re.compile(b"Bus\\s+(?P<bus>\\d+)\\s+Device\\s+(?P<device>\\d+).+ID\\s(?P<id>\\w+:\\w+)\\s(?P<tag>.+)$", re.I)
+    device_re = re.compile(
+        b"Bus\\s+(?P<bus>\\d+)\\s+Device\\s+(?P<device>\\d+).+ID\\s(?P<id>\\w+:\\w+)\\s(?P<tag>.+)$",
+        re.I,
+    )
     df = subprocess.check_output("lsusb")
     devices = []
-    for i in df.split(b'\n'):
+    for i in df.split(b"\n"):
         if i:
             info = device_re.match(i)
             if info:
                 dinfo = info.groupdict()
-                dinfo['device'] = '/dev/bus/usb/%s/%s' % (dinfo.pop('bus'), dinfo.pop('device'))
+                dinfo["device"] = "/dev/bus/usb/%s/%s" % (
+                    dinfo.pop("bus"),
+                    dinfo.pop("device"),
+                )
                 devices.append(dinfo)
     for device in devices:
         if "pcan" in device["tag"].decode().lower():
             return CanConfig(
                 CAN_INTERFACE="pcan",
                 CAN_CHANNEL="PCAN_USBBUS1",
-                CAN_BITRATE=DEFAULT_CAN_RATE
+                CAN_BITRATE=DEFAULT_CAN_RATE,
             )
     return None
+
 
 def get_usb_serial_can() -> List[CanConfig]:
     out = []
@@ -60,8 +69,7 @@ def get_usb_serial_can() -> List[CanConfig]:
                 CanConfig(
                     CAN_INTERFACE="waveshare",
                     CAN_CHANNEL=port.device,
-                    CAN_BITRATE=DEFAULT_CAN_RATE
-
+                    CAN_BITRATE=DEFAULT_CAN_RATE,
                 )
             )
         if "can" in port.description.lower():
@@ -69,8 +77,7 @@ def get_usb_serial_can() -> List[CanConfig]:
                 CanConfig(
                     CAN_INTERFACE="slcan",
                     CAN_CHANNEL=port.device,
-                    CAN_BITRATE=DEFAULT_CAN_RATE
-
+                    CAN_BITRATE=DEFAULT_CAN_RATE,
                 )
             )
     return out
@@ -85,4 +92,3 @@ def get_can_devices() -> CanConfig:
         return serial_can[0]
     else:
         raise Exception("No Can Devices Available")
-

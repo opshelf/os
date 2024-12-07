@@ -3,12 +3,15 @@ from .common import CanAxisConfiguration
 from perpetual_trinamic.trinamic_axis import TrinamicAxis
 from pydantic import BaseModel
 
+
 class OutputBoxOffsets(BaseModel):
     door_open_position: float
+
 
 class OutputBoxConfiguration(BaseModel):
     door: CanAxisConfiguration
     offsets: OutputBoxOffsets
+
 
 class OutputBox:
     def __init__(self, bus: BusABC, configuration: OutputBoxConfiguration):
@@ -26,7 +29,7 @@ class OutputBox:
 
     @configuration.setter
     def configuration(self, configuration: OutputBoxConfiguration) -> None:
-        self._configuration = configuration 
+        self._configuration = configuration
 
     @property
     def offsets(self) -> OutputBoxOffsets:

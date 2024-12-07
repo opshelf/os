@@ -1,12 +1,13 @@
 from abc import ABC, abstractmethod
 from enum import Enum
 
+
 class AxisStatus(Enum):
     ERROR = "ERROR"
     GOOD = "GOOD"
 
-class AbstractAxis(ABC):
 
+class AbstractAxis(ABC):
     @abstractmethod
     def initialize(self) -> None:
         raise NotImplementedError

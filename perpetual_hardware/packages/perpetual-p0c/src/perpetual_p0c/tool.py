@@ -1,7 +1,5 @@
 from hardware_common.stepper_motor import (
     AbstractStepperMotor,
-    StepperMotorConfig,
-    Rotation,
 )
 from enum import Enum
 from can import BusABC
@@ -65,6 +63,7 @@ class ToolStatus(BaseModel):
     carriage_solenoids: int
     actuators: bool
     puller_position: float
+
 
 class Tool:
     def __init__(self, bus: BusABC, tool_configuration: ToolConfiguration):
@@ -258,20 +257,20 @@ class Tool:
         elif cmd.command == Commands.MOVE_Z:
             if cmd.payload:
                 move = MoveCommand(**cmd.payload)
-                self._puller.move_to_position(move.position) 
-            else: 
+                self._puller.move_to_position(move.position)
+            else:
                 raise Exception("Invalid Command")
         elif cmd.command == Commands.MOVE_Z_RELATIVE:
             if cmd.payload:
                 move = MoveCommand(**cmd.payload)
-                self._puller.move_to_relative_position(move.position) 
-            else: 
+                self._puller.move_to_relative_position(move.position)
+            else:
                 raise Exception("Invalid Command")
         elif cmd.command == Commands.TURN_ON_PULLER_SOLENOIDS:
             if cmd.payload:
                 solenoids = TurnOnSolenoids(**cmd.payload)
                 self.set_puller_solenoids(solenoids.solenoids, StorageModuleSide.LEFT)
-            else: 
+            else:
                 raise Exception("Invalid Command")
         elif cmd.command == Commands.TURN_OFF_PULLER_SOLENOIDS:
             self.set_solenoids_off()
@@ -279,7 +278,7 @@ class Tool:
             if cmd.payload:
                 solenoids = TurnOnSolenoids(**cmd.payload)
                 self.set_slot_bits(solenoids.solenoids)
-            else: 
+            else:
                 raise Exception("Invalid Command")
         elif cmd.command == Commands.TURN_OFF_SLOT_SOLENOIDS:
             self.set_solenoids_off()
@@ -290,11 +289,10 @@ class Tool:
         elif cmd.command == Commands.RETRACT_PULLER:
             self.retract_puller()
         elif cmd.command == Commands.EXTEND_ACTUATORS:
-           self.actuators(True) 
+            self.actuators(True)
         elif cmd.command == Commands.RETRACT_ACTUATORS:
-           self.actuators(False) 
+            self.actuators(False)
         elif cmd.command == Commands.STOP:
-           self.stop()
-        else: 
+            self.stop()
+        else:
             raise Exception("Unknown Tool Command")
-

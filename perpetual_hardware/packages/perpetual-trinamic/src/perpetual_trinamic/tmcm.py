@@ -76,8 +76,8 @@ def retry(times):
                     return func(*args, **kwargs)
                 except Exception as e:
                     print(
-                        "Exception thrown when attempting to run %s, attempt "
-                        "%d of %d" % (func, attempt, times)
+                        "Exception %s thrown when attempting to run %s, attempt "
+                        "%d of %d" % (func, attempt, times, e)
                     )
                     attempt += 1
             return func(*args, **kwargs)
@@ -88,7 +88,6 @@ def retry(times):
 
 
 class TMCM:
-
     def __init__(self, connection: BusABC, module_id: int, motor_id: int = 0) -> None:
         self._connection = connection
         self._module_id = module_id & 0xFF
@@ -203,7 +202,3 @@ class TMCM:
         if response:
             return response
         raise Exception("No Response")
-
-
-
-

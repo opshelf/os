@@ -11,7 +11,6 @@ import time
 
 
 class TrinamicStepper(TMCM12xx):
-
     def __init__(
         self,
         connection: BusABC,
@@ -219,7 +218,6 @@ class TrinamicStepper(TMCM12xx):
 
 
 class TrinamicAxis(AbstractStepperMotor, TMCM12xx):
-
     def __init__(
         self,
         connection: BusABC,
@@ -437,7 +435,6 @@ class TrinamicAxis(AbstractStepperMotor, TMCM12xx):
     def move_to_position_with_brake(self, position: float, timeout: float = 60.0) -> None:
         if self._status != StepperMotorStatus.GOOD:
             raise Exception("Status Bad")
-        t0 = time.time()
         self.init_brake_move()
         self.move_to_position(position)
         self.wait_for_brake_move()

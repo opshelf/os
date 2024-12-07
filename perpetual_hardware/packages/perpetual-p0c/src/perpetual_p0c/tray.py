@@ -13,4 +13,3 @@ class Tray(BaseModel):
         cell_width = (self.tray_size - (2 + self.cells - 1) * self.wall_size) / self.cells
         start_position = self.wall_size + cell_width * idx + self.wall_size * idx
         return (start_position, start_position + cell_width)
-
