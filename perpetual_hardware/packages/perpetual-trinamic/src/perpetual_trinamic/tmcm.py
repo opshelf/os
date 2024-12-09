@@ -20,7 +20,6 @@ class TmclReply:
     module_address: int
     command_number: int
     status: int
-    command_number: int
     value: int
 
 
@@ -57,34 +56,34 @@ class MoveType(IntEnum):
 
 
 # This Should Never Be Done but Comms are not reliable right now
-def retry(times):
-    """
-    Retry Decorator
-    Retries the wrapped function/method `times` times if the exceptions listed
-    in ``exceptions`` are thrown
-    :param times: The number of times to repeat the wrapped function/method
-    :type times: Int
-    :param Exceptions: Lists of exceptions that trigger a retry attempt
-    :type Exceptions: Tuple of Exceptions
-    """
-
-    def decorator(func):
-        def newfn(*args, **kwargs):
-            attempt = 0
-            while attempt < times:
-                try:
-                    return func(*args, **kwargs)
-                except Exception as e:
-                    print(
-                        "Exception %s thrown when attempting to run %s, attempt "
-                        "%d of %d" % (func, attempt, times, e)
-                    )
-                    attempt += 1
-            return func(*args, **kwargs)
-
-        return newfn
-
-    return decorator
+#def retry(times) -> None:
+#    """
+#    Retry Decorator
+#    Retries the wrapped function/method `times` times if the exceptions listed
+#    in ``exceptions`` are thrown
+#    :param times: The number of times to repeat the wrapped function/method
+#    :type times: Int
+#    :param Exceptions: Lists of exceptions that trigger a retry attempt
+#    :type Exceptions: Tuple of Exceptions
+#    """
+#
+#    def decorator(func):
+#        def newfn(*args, **kwargs):
+#            attempt = 0
+#            while attempt < times:
+#                try:
+#                    return func(*args, **kwargs)
+#                except Exception as e:
+#                    print(
+#                        "Exception %s thrown when attempting to run %s, attempt "
+#                        "%d of %d" % (func, attempt, times, e)
+#                    )
+#                    attempt += 1
+#            return func(*args, **kwargs)
+#
+#        return newfn
+#
+#    return decorator
 
 
 class TMCM:
@@ -101,7 +100,7 @@ class TMCM:
     def _recv_raw_message(self) -> Optional[Message]:
         return self._connection.recv(timeout=1)
 
-    def _send_message(self, message: TmclMessage) -> Optional[TmclReply]:
+    def _send_message(self, message: TmclMessage) -> TmclReply:
         payload = [message.command_number, message.type_number, message.motor_number]
         payload.extend(list(struct.pack(">i", message.value)))
         # self._connection.send(Message(
@@ -114,7 +113,8 @@ class TMCM:
         )
         return self._receive_message()
 
-    def _receive_message(self) -> Optional[TmclReply]:
+    #def _receive_message(self) -> TmclReply:
+    def _receive_message(self) -> TmclReply:
         msg = self._connection.recv(timeout=2.0)
         if msg:
             if len(msg.data) == 7:
@@ -149,29 +149,29 @@ class TMCM:
             value=value,
         )
 
-    def rotate_right(self, velocity: int) -> Optional[TmclReply]:
+    def rotate_right(self, velocity: int) -> TmclReply:
         return self._send_message(self._default_message(TMCLCommand.ROR, 0, velocity))
 
-    def rotate_left(self, velocity: int) -> Optional[TmclReply]:
+    def rotate_left(self, velocity: int) -> TmclReply:
         return self._send_message(self._default_message(TMCLCommand.ROL, 0, velocity))
 
-    def stop(self) -> Optional[TmclReply]:
+    def stop(self) -> TmclReply:
         return self._send_message(self._default_message(TMCLCommand.MST, 0, 0))
 
-    def move(self, type: MoveType, value: int) -> Optional[TmclReply]:
+    def move(self, type: MoveType, value: int) -> TmclReply:
         return self._send_message(self._default_message(TMCLCommand.MVP, type.value, value))
 
-    def move_absolute(self, value: int) -> Optional[TmclReply]:
+    def move_absolute(self, value: int) -> TmclReply:
         return self._send_message(self._default_message(TMCLCommand.MVP, MoveType.ABSOLUTE, value))
 
-    def move_relative(self, value: int) -> Optional[TmclReply]:
+    def move_relative(self, value: int) -> TmclReply:
         return self._send_message(self._default_message(TMCLCommand.MVP, MoveType.RELATIVE, value))
 
-    def set_axis_parameter(self, axis_parameter: int, value: int) -> Optional[TmclReply]:
+    def set_axis_parameter(self, axis_parameter: int, value: int) -> TmclReply:
         return self._send_message(self._default_message(TMCLCommand.SAP, axis_parameter, value))
 
-    def set_io(self, type_number: int, value: int, bank_number: int = 0) -> Optional[TmclReply]:
-        self._send_message(
+    def set_io(self, type_number: int, value: int, bank_number: int = 0) -> TmclReply:
+        return self._send_message(
             TmclMessage(
                 module_address=self._module_id,
                 command_number=TMCLCommand.SIO,
@@ -181,13 +181,11 @@ class TMCM:
             )
         )
 
-    def set_global_parameter(self, parameter: int, value: int) -> Optional[TmclReply]:
+    def set_global_parameter(self, parameter: int, value: int) -> TmclReply:
         return self._send_message(self._default_message(TMCLCommand.SGP, parameter, value))
 
-    def get_axis_parameter(self, axis_parameter: int) -> Optional[TmclReply]:
-        message = self._send_message(self._default_message(TMCLCommand.GAP, axis_parameter, 0))
-        if message:
-            return message
+    def get_axis_parameter(self, axis_parameter: int) -> TmclReply:
+        return self._send_message(self._default_message(TMCLCommand.GAP, axis_parameter, 0))
 
     def get_digital_input(self, port_number: int, bank_number: int) -> TmclReply:
         response = self._send_message(

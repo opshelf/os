@@ -2,6 +2,7 @@ import time
 from enum import Enum
 from perpetual_p0c.output_box import OutputBox, OutputBoxOffsets, OutputBoxConfiguration
 from can import Bus
+from perpetual_p0c.utils import get_can_devices
 
 # class TestState(Enum):
 #    INIITIALIZE = 0
@@ -40,7 +41,7 @@ p0_funnel_config = FunnelConfiguration(
 """
 
 if __name__ == "__main__":
-    usb_can = get_usb_serial_can()[0]
+    usb_can = get_can_devices()
     with Bus(
         interface=usb_can.CAN_INTERFACE,
         channel=usb_can.CAN_CHANNEL,

@@ -166,7 +166,7 @@ class Tool:
             )
         )
 
-    def set_slot_bits(self, bits: int):
+    def set_slot_bits(self, bits: int) -> None:
         # self._io.set_relays(GenericRelayBoardMessage(
         #        r7=False if bits & 0x01 else True,
         #        r8=False if bits & 0x02 else True,
@@ -233,9 +233,10 @@ class Tool:
         if side == StorageModuleSide.LEFT:
             self._puller.move_to_position(self.offsets.tray_pull_offset)
         else:
-            self._puller.move_to_position(
-                self._puller.configuration.max_travel - self.offsets.tray_pull_offset
-            )
+            if self._puller.configuration.max_travel:
+                self._puller.move_to_position(
+                    self._puller.configuration.max_travel - self.offsets.tray_pull_offset
+                )
         self.wait_for_move()
 
     def get_max(self) -> float:

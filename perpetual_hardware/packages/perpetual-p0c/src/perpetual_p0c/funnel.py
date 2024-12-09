@@ -181,6 +181,10 @@ class Funnel:
     def offsets(self) -> FunnelOffsets:
         return self._configuration.offsets
 
+    @offsets.setter
+    def offsets(self, offsets: FunnelOffsets) -> None:
+        self._configuration.offsets = offsets
+
     @property
     def slots(self) -> ToolRelayController:
         return self._slots
@@ -206,9 +210,6 @@ class Funnel:
     def open_all_slots(self) -> None:
         self._slots.set_relays(GenericRelayBoardMessage())
 
-    @offsets.setter
-    def offsets(self, offsets: FunnelOffsets) -> None:
-        self._configuration.offsets = offsets
 
     @property
     def inlet_funnel(self) -> AbstractStepperMotor:
@@ -481,18 +482,18 @@ class Funnel:
             self.close_slots()
             time.sleep(1)
             self.open_slots(slots_open)
-        elif cmd.command == Commands.INLET_COMMAND:
-            if cmd.payload:
-                axis_cmd = AxisCommand(**cmd.payload)
-                self.inlet_funnel.handle_command(axis_cmd)
-            else:
-                raise Exception("Invalid Command")
-        elif cmd.command == Commands.OPPOSING_FUNNEL_COMMAND:
-            if cmd.payload:
-                axis_cmd = AxisCommand(**cmd.payload)
-                self.opposing_funnel.handle_command(axis_cmd)
-            else:
-                raise Exception("Invalid Command")
+        #elif cmd.command == Commands.INLET_COMMAND:
+        #    if cmd.payload:
+        #        axis_cmd = AxisCommand(**cmd.payload)
+        #        self.inlet_funnel.handle_command(axis_cmd)
+        #    else:
+        #        raise Exception("Invalid Command")
+        #elif cmd.command == Commands.OPPOSING_FUNNEL_COMMAND:
+        #    if cmd.payload:
+        #        axis_cmd = AxisCommand(**cmd.payload)
+        #        self.opposing_funnel.handle_command(axis_cmd)
+        #    else:
+        #        raise Exception("Invalid Command")
         elif cmd.command == Commands.START_BELT:
             self.start_belt()
         elif cmd.command == Commands.STOP_BELT:

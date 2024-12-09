@@ -7,7 +7,6 @@ from pydantic import BaseModel
 from enum import Enum
 from typing import Optional, Any, Dict
 
-# from pharma_bot.hardware_server.commands import GantryCommands
 
 
 class GantryConfiguration(BaseModel):
@@ -15,7 +14,6 @@ class GantryConfiguration(BaseModel):
     x_axis_config: StepperMotorConfig
     y_axis_id: int
     y_axis_config: StepperMotorConfig
-
 
 class GantryCoordinate(BaseModel):
     x: float
@@ -26,7 +24,6 @@ class GantryCoordinate(BaseModel):
 
     def __sub__(self, rhs: "GantryCoordinate") -> "GantryCoordinate":
         return GantryCoordinate(x=self.x - rhs.x, y=self.y - rhs.y)
-
 
 class Commands(str, Enum):
     HOME = "HOME"

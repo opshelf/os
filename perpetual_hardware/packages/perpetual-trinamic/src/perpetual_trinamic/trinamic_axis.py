@@ -25,8 +25,8 @@ class TrinamicStepper(TMCM12xx):
         self._motor_id = motor_id
         self._configuration = configuration
         self._status = StepperMotorStatus.GOOD
-        self._target_position = 0
-        self._actual_position = 0
+        self._target_position = 0.0
+        self._actual_position = 0.0
         self._max_deviation = 500
         self._homing_deviation = 100
         self.initialize()
@@ -232,8 +232,8 @@ class TrinamicAxis(AbstractStepperMotor, TMCM12xx):
         self._motor_id = motor_id
         self._configuration = configuration
         self._status = StepperMotorStatus.GOOD
-        self._target_position = 0
-        self._actual_position = 0
+        self._target_position = 0.0
+        self._actual_position = 0.0
         self._max_deviation = 500
         self._homing_deviation = 100
         self.initialize()
@@ -429,7 +429,7 @@ class TrinamicAxis(AbstractStepperMotor, TMCM12xx):
         return self._configuration
 
     @configuration.setter
-    def set_configuration(self, configuration: StepperMotorConfig) -> None:
+    def configuration(self, configuration: StepperMotorConfig) -> None:
         self._configuration = configuration
 
     def move_to_position_with_brake(self, position: float, timeout: float = 60.0) -> None:

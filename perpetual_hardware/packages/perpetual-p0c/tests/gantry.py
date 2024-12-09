@@ -4,7 +4,7 @@ from can import Bus
 import time
 
 
-def test_axis():
+def test_axis() -> None:
     with Bus(interface="pcan", channel="PCAN_USBBUS1", bitrate=1000000, fd=False) as bus:
         gantry = Gantry(
             bus,

@@ -149,7 +149,8 @@ class AbstractStepperMotor(ABC):
         return self._configuration
 
     @configuration.setter
-    def set_configuration(self, configuration: StepperMotorConfig) -> None:
+    @abstractmethod
+    def configuration(self, configuration: StepperMotorConfig) -> None:
         self._configuration = configuration
 
     # def handle_command(self, cmd: AxisCommand) -> None:

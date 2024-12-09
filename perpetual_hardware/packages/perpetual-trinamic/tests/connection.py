@@ -7,7 +7,7 @@ import time
 from perpetual_trinamic.trinamic_axis import TrinamicAxis
 
 
-def test_axis():
+def test_axis() -> None:
     with Bus(interface="pcan", channel="PCAN_USBBUS1", bitrate=1000000, fd=False) as bus:
         axis1 = TrinamicAxis(
             bus,

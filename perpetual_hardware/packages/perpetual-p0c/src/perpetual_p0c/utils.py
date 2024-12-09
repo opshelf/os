@@ -47,8 +47,8 @@ def check_for_pcan() -> Optional[CanConfig]:
             if info:
                 dinfo = info.groupdict()
                 dinfo["device"] = "/dev/bus/usb/%s/%s" % (
-                    dinfo.pop("bus"),
-                    dinfo.pop("device"),
+                    dinfo.pop("bus").decode(),
+                    dinfo.pop("device").decode(),
                 )
                 devices.append(dinfo)
     for device in devices:

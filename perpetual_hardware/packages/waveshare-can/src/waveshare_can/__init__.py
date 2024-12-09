@@ -1,7 +1,7 @@
 import serial
 import struct
 from enum import Enum
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Any
 from can import Message, BusABC, CanProtocol
 import time
 
@@ -56,8 +56,9 @@ class Waveshare(BusABC):
         frame_type: CANUSB_FRAME = CANUSB_FRAME.STANDARD,
         bitrate: CANUSB_SPEED = CANUSB_SPEED.SPEED_1000000,
         # bitrate: CANUSB_SPEED = CANUSB_SPEED.SPEED_500000,
-        **kwargs,
-    ):
+
+        **kwargs: Any,
+    ) -> None:
         self._port = channel
         self._speed = bitrate
         self._frame_type = frame_type
@@ -80,7 +81,7 @@ class Waveshare(BusABC):
         time.sleep(1)
         super().__init__(channel=channel, **kwargs)
 
-    def shutdown(self):
+    def shutdown(self) -> None:
         """
         Close the serial interface.
         """
@@ -120,7 +121,7 @@ class Waveshare(BusABC):
         checksum = sum(data)
         return checksum & 0xFF
 
-    def _write(self, data: bytearray) -> Optional[int]:
+    def _write(self, data: bytearray) -> Any:
         return self._device.write(data)
 
     def format_frame(self, id: int, data: list[int]) -> bytearray:
@@ -131,7 +132,7 @@ class Waveshare(BusABC):
         frame.append(0x55)
         return bytearray(frame)
 
-    def frame_send(self, message: Message) -> Optional[int]:
+    def frame_send(self, message: Message) -> Any:
         if isinstance(message.data, list):
             return self._write(self.format_frame(message.arbitration_id, message.data))
         if isinstance(message.data, bytearray):
@@ -183,7 +184,7 @@ class Waveshare(BusABC):
         else:
             return None
 
-    def frame_receive(self):
+    def frame_receive(self) -> Optional[Message]:
         return self._read_packet()
 
     def _recv_internal(self, timeout: Optional[float]) -> Tuple[Optional[Message], bool]:
