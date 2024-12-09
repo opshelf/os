@@ -8,12 +8,12 @@ from enum import Enum
 from typing import Optional, Any, Dict
 
 
-
 class GantryConfiguration(BaseModel):
     x_axis_id: int
     x_axis_config: StepperMotorConfig
     y_axis_id: int
     y_axis_config: StepperMotorConfig
+
 
 class GantryCoordinate(BaseModel):
     x: float
@@ -24,6 +24,7 @@ class GantryCoordinate(BaseModel):
 
     def __sub__(self, rhs: "GantryCoordinate") -> "GantryCoordinate":
         return GantryCoordinate(x=self.x - rhs.x, y=self.y - rhs.y)
+
 
 class Commands(str, Enum):
     HOME = "HOME"

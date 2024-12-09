@@ -56,7 +56,7 @@ class MoveType(IntEnum):
 
 
 # This Should Never Be Done but Comms are not reliable right now
-#def retry(times) -> None:
+# def retry(times) -> None:
 #    """
 #    Retry Decorator
 #    Retries the wrapped function/method `times` times if the exceptions listed
@@ -113,7 +113,7 @@ class TMCM:
         )
         return self._receive_message()
 
-    #def _receive_message(self) -> TmclReply:
+    # def _receive_message(self) -> TmclReply:
     def _receive_message(self) -> TmclReply:
         msg = self._connection.recv(timeout=2.0)
         if msg:

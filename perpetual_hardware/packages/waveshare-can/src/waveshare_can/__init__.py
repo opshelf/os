@@ -56,7 +56,6 @@ class Waveshare(BusABC):
         frame_type: CANUSB_FRAME = CANUSB_FRAME.STANDARD,
         bitrate: CANUSB_SPEED = CANUSB_SPEED.SPEED_1000000,
         # bitrate: CANUSB_SPEED = CANUSB_SPEED.SPEED_500000,
-
         **kwargs: Any,
     ) -> None:
         self._port = channel

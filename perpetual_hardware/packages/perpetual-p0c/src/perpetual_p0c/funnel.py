@@ -210,7 +210,6 @@ class Funnel:
     def open_all_slots(self) -> None:
         self._slots.set_relays(GenericRelayBoardMessage())
 
-
     @property
     def inlet_funnel(self) -> AbstractStepperMotor:
         return self._inlet_funnel
@@ -482,13 +481,13 @@ class Funnel:
             self.close_slots()
             time.sleep(1)
             self.open_slots(slots_open)
-        #elif cmd.command == Commands.INLET_COMMAND:
+        # elif cmd.command == Commands.INLET_COMMAND:
         #    if cmd.payload:
         #        axis_cmd = AxisCommand(**cmd.payload)
         #        self.inlet_funnel.handle_command(axis_cmd)
         #    else:
         #        raise Exception("Invalid Command")
-        #elif cmd.command == Commands.OPPOSING_FUNNEL_COMMAND:
+        # elif cmd.command == Commands.OPPOSING_FUNNEL_COMMAND:
         #    if cmd.payload:
         #        axis_cmd = AxisCommand(**cmd.payload)
         #        self.opposing_funnel.handle_command(axis_cmd)
