@@ -22,47 +22,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { ToggleGroup, ToggleGroupItem } from '../ui/toggle-group';
 import z from 'zod';
-import axios from 'axios';
-
-const HOST = import.meta.env.DEV
-  ? 'http://localhost:8000/api'
-  : '/api';
-
-axios.defaults.withCredentials = false;
-
-const toolSubsytemCommands = z.enum([
-  'HOME',
-  'INITIALIZE',
-  'MOVE_Z',
-  'MOVE_Z_RELATIVE',
-  'TURN_ON_PULLER_SOLENOIDS',
-  'TURN_OFF_PULLER_SOLENOIDS',
-  'TURN_ON_SLOT_SOLENOIDS',
-  'TURN_OFF_SLOT_SOLENOIDS',
-  'RETRACT_TRAY',
-  'EXTEND_PULLER',
-  'RETRACT_PULLER',
-  'EXTEND_ACTUATORS',
-  'RETRACT_ACTUATORS',
-]);
-
-export type ToolSubsytemCommands = z.infer<
-  typeof toolSubsytemCommands
->;
-
-const toolCommands = z.object({
-  command: toolSubsytemCommands,
-  payload: z.any(),
-});
-
-export type ToolCommands = z.infer<typeof toolCommands>;
-
-export const executeToolCommand = async (command: any) => {
-  return axios.post(`${HOST}/command`, {
-    command: 'TOOL_COMMAND',
-    payload: command,
-  });
-};
+import { toolCommand } from '@/api/tool';
 
 const MoveForm = () => {
   const form = useForm<{ position: number }>({
@@ -73,7 +33,7 @@ const MoveForm = () => {
   });
 
   async function onSubmit(values: { position: number }) {
-    await executeToolCommand({ command: 'MOVE_Z', payload: values });
+    await toolCommand({ command: 'MOVE_Z', payload: values });
   }
 
   return (
@@ -114,8 +74,12 @@ const ToolController = () => {
     false,
     false,
     false,
+    false,
+    false,
   ]);
-  const [pullerSolenoids, setPullerSolenoids] = useState<number>(0);
+  const [carriageSolenoids, setCarriageSolenoids] = useState<
+    boolean[]
+  >([false, false, false]);
   const runJogCommand = async (movement: number) => {
     let defaultMove: {
       command: 'MOVE_Z_RELATIVE';
@@ -127,7 +91,7 @@ const ToolController = () => {
       },
     };
 
-    await executeToolCommand(defaultMove);
+    await toolCommand(defaultMove);
   };
 
   const boolArrayToNumber = (arr: boolean[]): number => {
@@ -146,7 +110,7 @@ const ToolController = () => {
           <div className="flex flex-col items-center space-y-2 items-stretch">
             <Button
               onClick={async () => {
-                await executeToolCommand({
+                await toolCommand({
                   command: 'HOME',
                   payload: null,
                 });
@@ -156,7 +120,7 @@ const ToolController = () => {
             </Button>
             <Button
               onClick={async () => {
-                await executeToolCommand({
+                await toolCommand({
                   command: 'INITIALIZE',
                   payload: null,
                 });
@@ -166,7 +130,7 @@ const ToolController = () => {
             </Button>
             <Button
               onClick={async () => {
-                await executeToolCommand({
+                await toolCommand({
                   command: 'STOP',
                   payload: null,
                 });
@@ -227,7 +191,7 @@ const ToolController = () => {
           <div className="flex flex-col items-center space-y-2 items-stretch">
             <Button
               onClick={async () => {
-                await executeToolCommand({
+                await toolCommand({
                   command: 'EXTEND_ACTUATORS',
                   payload: null,
                 });
@@ -237,7 +201,7 @@ const ToolController = () => {
             </Button>
             <Button
               onClick={async () => {
-                await executeToolCommand({
+                await toolCommand({
                   command: 'RETRACT_ACTUATORS',
                   payload: null,
                 });
@@ -247,7 +211,7 @@ const ToolController = () => {
             </Button>
             <Button
               onClick={async () => {
-                await executeToolCommand({
+                await toolCommand({
                   command: 'EXTEND_PULLER',
                   payload: null,
                 });
@@ -257,7 +221,7 @@ const ToolController = () => {
             </Button>
             <Button
               onClick={async () => {
-                await executeToolCommand({
+                await toolCommand({
                   command: 'RETRACT_PULLER',
                   payload: null,
                 });
@@ -267,7 +231,7 @@ const ToolController = () => {
             </Button>
             <Button
               onClick={async () => {
-                await executeToolCommand({
+                await toolCommand({
                   command: 'RETRACT_TRAY',
                   payload: null,
                 });
@@ -279,128 +243,61 @@ const ToolController = () => {
 
           <div className="flex flex-col items-center space-y-2">
             <div className="flex flex-col items-center space-y-2">
-              <span>PULLER SOLENOIDS</span>
+              <span className="text-lg font-semibold">
+                CARRIAGE SOLENOIDS
+              </span>
               <ToggleGroup type="single">
-                <ToggleGroupItem
-                  value="1"
-                  aria-label="Toggle bold"
-                  className="w-8 h-8 rounded-[50%] border"
-                  data-state={pullerSolenoids >= 1 ? 'on' : 'off'}
-                  onClick={async () => {
-                    if (pullerSolenoids == 1) {
-                      setPullerSolenoids(0);
-                      await executeToolCommand({
-                        command: 'TURN_OFF_PULLER_SOLENOIDS',
-                        payload: null,
-                      });
-                    } else {
-                      setPullerSolenoids(1);
-                      await executeToolCommand({
-                        command: 'TURN_ON_PULLER_SOLENOIDS',
-                        payload: { solenoids: 1 },
-                      });
-                    }
-                  }}
-                ></ToggleGroupItem>
-                <ToggleGroupItem
-                  value="2"
-                  aria-label="Toggle italic"
-                  className="w-8 h-8 rounded-[50%] border"
-                  data-state={pullerSolenoids >= 2 ? 'on' : 'off'}
-                  onClick={async () => {
-                    setPullerSolenoids(2);
-                    await executeToolCommand({
-                      command: 'TURN_ON_PULLER_SOLENOIDS',
-                      payload: { solenoids: 2 },
-                    });
-                  }}
-                ></ToggleGroupItem>
-                <ToggleGroupItem
-                  value="underline"
-                  aria-label="Toggle underline"
-                  className="w-8 h-8 rounded-[50%] border"
-                  data-state={pullerSolenoids >= 3 ? 'on' : 'off'}
-                  onClick={async () => {
-                    await executeToolCommand({
-                      command: 'TURN_ON_PULLER_SOLENOIDS',
-                      payload: { solenoids: 3 },
-                    });
-                    setPullerSolenoids(3);
-                  }}
-                ></ToggleGroupItem>
+                {carriageSolenoids.map((value, idx) => {
+                  return (
+                    <ToggleGroupItem
+                      value="underline"
+                      aria-label="Toggle underline"
+                      className="w-8 h-8 rounded-[50%] border"
+                      data-state={value ? 'on' : 'off'}
+                      onClick={async () => {
+                        let newSolenoids = [...carriageSolenoids];
+                        newSolenoids[idx] = !carriageSolenoids[idx];
+                        setCarriageSolenoids(newSolenoids);
+                        await toolCommand({
+                          command: 'TURN_ON_CARRIAGE_SOLENOIDS',
+                          payload: {
+                            solenoids:
+                              boolArrayToNumber(newSolenoids),
+                          },
+                        });
+                      }}
+                    />
+                  );
+                })}
               </ToggleGroup>
             </div>
             <div className="flex flex-col items-center space-y-2">
-              <span>SLOT SOLENOIDS</span>
+              <span className="text-lg font-semibold">
+                PULLER SOLENOIDS
+              </span>
               <ToggleGroup type="multiple">
-                <ToggleGroupItem
-                  value="bold"
-                  aria-label="Toggle bold"
-                  className="w-8 h-8 rounded-[50%] border"
-                  data-state={slotSolenoids[0] ? 'on' : 'off'}
-                  onClick={async () => {
-                    let newSolenoids = [...slotSolenoids];
-                    newSolenoids[0] = !slotSolenoids[0];
-                    setSlotSolenoids(newSolenoids);
-                    await executeToolCommand({
-                      command: 'TURN_ON_SLOT_SOLENOIDS',
-                      payload: {
-                        solenoids: boolArrayToNumber(newSolenoids),
-                      },
-                    });
-                  }}
-                ></ToggleGroupItem>
-                <ToggleGroupItem
-                  value="italic"
-                  aria-label="Toggle italic"
-                  className="w-8 h-8 rounded-[50%] border"
-                  data-state={slotSolenoids[1] ? 'on' : 'off'}
-                  onClick={async () => {
-                    let newSolenoids = [...slotSolenoids];
-                    newSolenoids[1] = !slotSolenoids[1];
-                    setSlotSolenoids(newSolenoids);
-                    await executeToolCommand({
-                      command: 'TURN_ON_SLOT_SOLENOIDS',
-                      payload: {
-                        solenoids: boolArrayToNumber(newSolenoids),
-                      },
-                    });
-                  }}
-                ></ToggleGroupItem>
-                <ToggleGroupItem
-                  value="underline"
-                  aria-label="Toggle underline"
-                  className="w-8 h-8 rounded-[50%] border"
-                  data-state={slotSolenoids[2] ? 'on' : 'off'}
-                  onClick={async () => {
-                    let newSolenoids = [...slotSolenoids];
-                    newSolenoids[2] = !slotSolenoids[2];
-                    setSlotSolenoids(newSolenoids);
-                    await executeToolCommand({
-                      command: 'TURN_ON_SLOT_SOLENOIDS',
-                      payload: {
-                        solenoids: boolArrayToNumber(newSolenoids),
-                      },
-                    });
-                  }}
-                ></ToggleGroupItem>
-                <ToggleGroupItem
-                  value="bold"
-                  aria-label="Toggle bold"
-                  className="w-8 h-8 rounded-[50%] border"
-                  data-state={slotSolenoids[3] ? 'on' : 'off'}
-                  onClick={async () => {
-                    let newSolenoids = [...slotSolenoids];
-                    newSolenoids[3] = !slotSolenoids[3];
-                    setSlotSolenoids(newSolenoids);
-                    await executeToolCommand({
-                      command: 'TURN_ON_SLOT_SOLENOIDS',
-                      payload: {
-                        solenoids: boolArrayToNumber(newSolenoids),
-                      },
-                    });
-                  }}
-                ></ToggleGroupItem>
+                {slotSolenoids.map((value, idx) => {
+                  return (
+                    <ToggleGroupItem
+                      value="bold"
+                      aria-label="Toggle bold"
+                      className="w-8 h-8 rounded-[50%] border"
+                      data-state={value ? 'on' : 'off'}
+                      onClick={async () => {
+                        let newSolenoids = [...slotSolenoids];
+                        newSolenoids[idx] = !slotSolenoids[idx];
+                        setSlotSolenoids(newSolenoids);
+                        await toolCommand({
+                          command: 'TURN_ON_PULLER_SOLENOIDS',
+                          payload: {
+                            solenoids:
+                              boolArrayToNumber(newSolenoids),
+                          },
+                        });
+                      }}
+                    />
+                  );
+                })}
               </ToggleGroup>
             </div>
           </div>

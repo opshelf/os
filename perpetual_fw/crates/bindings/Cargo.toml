@@ -11,3 +11,4 @@ crate-type = ["cdylib"]
 [dependencies]
 pyo3 = "0.22.0"
 messages = { path = "../messages/" }
+#io_board = { path = "../io_board/" }

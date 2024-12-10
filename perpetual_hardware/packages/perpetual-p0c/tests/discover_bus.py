@@ -28,14 +28,14 @@ def discover_bus(address_range: Optional[Tuple[int, int]] = None) -> None:
         else:
             found = []
         for id in CanMessageIds:
-            print(id.name, id.value)
+            #print(id.name, id.value)
             msg = Message(
                 arbitration_id=id.value,
                 data=[6, 1, 0, 0, 0, 0, 0],
                 is_extended_id=False,
             )
             bus.send(msg)
-            reply = bus.recv(0.1)
+            reply = bus.recv(.2)
             if reply:
                 print(f"{id.name} {id.value} {reply}")
 

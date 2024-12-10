@@ -12,7 +12,7 @@ class Coordinate(BaseModel):
 
     def __sub__(self, other: "Coordinate") -> "Coordinate":
         return Coordinate(x=self.x - other.x, y=self.y - other.y, z=self.z - other.z)
-"""
+
 class ItemType(str, Enum):
     OPTIONAL = "OPTIONAL"
     BOTTLE = "BOTTLE"
@@ -45,6 +45,7 @@ class Cell(BaseModel):
     item: Optional[CellItem]
 
 
+"""
 class Tray(BaseModel):
     cells: List[Cell]
     tray_length: float
@@ -144,6 +145,7 @@ class Trays(BaseModel):
     width: float
     height: float
     calibration_point: Optional[Coordinate]
+    empty: bool = True
 
 class Shelf(BaseModel):
     shelf_height: float

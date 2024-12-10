@@ -5,6 +5,7 @@ export const traySchema = z.object({
   width: z.number(),
   height: z.number(),
   calibration_point: toolCoordinateSchema.optional().nullable(),
+  empty: z.boolean(),
 });
 
 export const shelfSchema = z.object({

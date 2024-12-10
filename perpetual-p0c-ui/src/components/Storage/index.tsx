@@ -37,8 +37,17 @@ import {
   useQueryClient,
 } from '@tanstack/react-query';
 import { getStorage, updateStorage } from '@/api';
+import { Switch } from '../ui/switch';
+import {
+  Drawer,
+  DrawerClose,
+  DrawerContent,
+  DrawerFooter,
+  DrawerTrigger,
+  DrawerHeader,
+} from '@/components/ui/drawer';
 import GantryController from '../GantryController';
-import FunnelController from '../FunnelController';
+import ToolController from '../ToolController';
 
 const Shelf = ({
   storageModule,
@@ -56,6 +65,7 @@ const Shelf = ({
       width: 50,
       height: storageModule[side][shelfIdx].shelf_height,
       calibration_point: null,
+      empty: true,
     };
   };
 
@@ -88,10 +98,10 @@ const Shelf = ({
     >
       <div className="flex grow flex-row-reverse h-full items-end px-2 py-2 gap-2">
         {!storageModule[side][shelfIdx].trays.length && (
-          <div className="flex border bg-slate-100 rounded items-center justify-center relative h-full w-1/8">
+          <div className="flex border rounded items-center justify-center relative h-full w-1/8">
             <Button
               variant={'ghost'}
-              className="self-center"
+              className="self-center hover:bg-white"
               onClick={() => {
                 let updated = { ...storageModule };
                 updated[side][shelfIdx].trays = [defaultTray()];
@@ -106,7 +116,9 @@ const Shelf = ({
           return (
             <Popover>
               <div
-                className="flex border bg-slate-100 rounded items-center justify-center relative"
+                className={`flex border ${
+                  !tray.empty && 'bg-slate-100'
+                } rounded items-center justify-center relative`}
                 style={{
                   height: `${Math.round(
                     (tray.height / shelfHeight) * 100
@@ -120,19 +132,22 @@ const Shelf = ({
                 <div className="absolute bottom-0 left-0 w-full flex items-center justify-between px-2">
                   <Button
                     variant={'ghost'}
-                    className="px-0 mx-0"
+                    className="px-0 mx-0 hover:bg-white"
                     onClick={() => addTray(idx)}
                   >
                     <PlusIcon />
                   </Button>
                   <PopoverTrigger asChild>
-                    <Button variant={'ghost'} className="px-0 mx-0">
+                    <Button
+                      variant={'ghost'}
+                      className="px-0 mx-0 hover:bg-white"
+                    >
                       <Edit />
                     </Button>
                   </PopoverTrigger>
                   <Button
                     variant={'ghost'}
-                    className="px-0 mx-0"
+                    className="px-0 mx-0 hover:bg-white"
                     onClick={() => deleteTray(idx)}
                   >
                     <DeleteIcon />
@@ -141,6 +156,19 @@ const Shelf = ({
               </div>
               <PopoverContent>
                 <div className="flex flex-col w-full gap-y-2"></div>
+                <div className="flex gap-4 items-center">
+                  <Label>Empty</Label>
+                  <Switch
+                    value={`${tray.width}`}
+                    checked={tray.empty}
+                    onCheckedChange={(value) => {
+                      let updated = { ...storageModule };
+                      updated[side][shelfIdx].trays[idx].empty =
+                        value;
+                      updateStorageModule(updated);
+                    }}
+                  />
+                </div>
                 <Label>Tray Width</Label>
                 <Select
                   value={`${tray.width}`}
@@ -274,7 +302,7 @@ const StorageDesigner = ({
 
   return (
     <div className="flex flex-col w-full h-full items-center px-4 justify-end h-full space-y-2">
-      <span className="text-xl">
+      <span className="text-xl w-full font-semibold">
         {moduleSide === 'left_module'
           ? 'Left Module'
           : 'Right Module'}
@@ -283,7 +311,7 @@ const StorageDesigner = ({
         {!storageModule[moduleSide].length && (
           <Button
             variant={'outline'}
-            className="self-center"
+            className="self-center hover:bg-white"
             onClick={() => {
               let newModule = { ...storageModule };
               newModule[moduleSide] = [defaultShelf()];
@@ -391,8 +419,10 @@ const StorageDesigner = ({
           Save
         </Button>
       </div>
+      {/*
       <GantryController />
       <FunnelController />
+      */}
     </div>
   );
 };
@@ -411,7 +441,34 @@ const Storage = () => {
     return <span>Error: {error.message}</span>;
   }
 
-  return <StorageDesigner storageData={data} />;
+  return (
+    <Drawer>
+      <StorageDesigner storageData={data} />
+      <DrawerTrigger asChild>
+        <div className="block bg-white fixed w-12 h-12 z-20 bottom-4 left-2/4 right-2/4 drop-shadow-2xl">
+          <div className="relative h-full w-full">
+            <img
+              src="/assets/icon.png"
+              className="m-auto absolute top-0 bottom-0 left-0 right-0"
+            />
+          </div>
+        </div>
+      </DrawerTrigger>
+      <DrawerContent className="px-4">
+        <DrawerHeader>
+          <div className="flex items-start space-x-2">
+            <GantryController />
+            <ToolController />
+          </div>
+        </DrawerHeader>
+        <DrawerFooter>
+          <DrawerClose>
+            <Button variant="outline">Close</Button>
+          </DrawerClose>
+        </DrawerFooter>
+      </DrawerContent>
+    </Drawer>
+  );
 };
 
 export default Storage;

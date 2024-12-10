@@ -1,15 +1,10 @@
-use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice;
 use embassy_executor::Spawner;
 use embassy_stm32::can::{enums::BusError, frame::Envelope, Frame};
-//use embassy_stm32::gpio::{Level, Output, Pull, Speed};
 use embassy_stm32::gpio::{Level, Output, Speed};
-use embassy_stm32::mode::Async;
-//use embassy_stm32::time::Hertz;
 use embassy_stm32::Config;
 use embassy_stm32::{bind_interrupts, can, peripherals};
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, ThreadModeRawMutex};
 use embassy_sync::channel::Channel;
-//use embassy_sync::mutex::Mutex;
 use static_cell::StaticCell;
 
 use crate::core::{BoardState, Messages, Responses};
@@ -32,9 +27,6 @@ bind_interrupts!(struct Irqs {
     FDCAN1_IT1 => can::IT1InterruptHandler<peripherals::FDCAN1>;
 });
 
-//static COMMAND_CHANNEL: Channel<ThreadModeRawMutex, [u8; 8], 64> = Channel::new();
-//static RESPONSE_CHANNEL: Channel<ThreadModeRawMutex, [u8; 8], 64> = Channel::new();
-
 static COMMAND_CHANNEL: Channel<ThreadModeRawMutex, Messages, 64> = Channel::new();
 static RESPONSE_CHANNEL: Channel<ThreadModeRawMutex, Responses, 64> = Channel::new();
 
@@ -47,6 +39,7 @@ async fn can_receive_task(
         let res = can.read().await;
         if let Ok(ref e) = res {
             if *e.frame.id() == can_id {
+                defmt::info!("{:?}", e.frame.data());
                 if let Some(msg) = Messages::from_can_frame(e.frame.data()) {
                     COMMAND_CHANNEL.send(msg).await;
                     let response = RESPONSE_CHANNEL.receive().await;
@@ -66,14 +59,15 @@ async fn can_receive_task(
 impl<'a> IoBoard<'a> {
     pub fn new(can_id: embedded_can::Id, config: Config, spawner: Spawner) -> Self {
         let p = embassy_stm32::init(config);
-        let mut can = can::CanConfigurator::new(p.FDCAN1, p.PA11, p.PA12, Irqs);
+        let mut can = can::CanConfigurator::new(p.FDCAN1, p.PB8, p.PB9, Irqs);
         let mut filter = can::filter::StandardFilter::default();
         filter.filter = embassy_stm32::can::filter::FilterType::DedicatedSingle(
             embedded_can::StandardId::new(100).unwrap(),
         );
         can.properties()
             .set_standard_filter(can::filter::StandardFilterSlot::_0, filter);
-        can.set_bitrate(1_000_000);
+        //can.set_bitrate(1_000_000);
+        can.set_bitrate(500_000);
         let can_handle = can.into_normal_mode();
         static CAN_TX_CHANNEL: StaticCell<Channel<CriticalSectionRawMutex, Frame, 64>> =
             StaticCell::new();
@@ -86,10 +80,15 @@ impl<'a> IoBoard<'a> {
         );
         let _ = spawner.spawn(can_receive_task(can_id, buffered_can));
 
-        let wedge_1 = Output::new(p.PC5, Level::Low, Speed::Low);
-        let wedge_2 = Output::new(p.PC4, Level::Low, Speed::Low);
-        let wedge_3 = Output::new(p.PA10, Level::Low, Speed::Low);
-        let actuators = Output::new(p.PB3, Level::Low, Speed::Low);
+        //let wedge_1 = Output::new(p.PC5, Level::Low, Speed::Low);
+        //let wedge_2 = Output::new(p.PA10, Level::Low, Speed::Low);
+        //let wedge_3 = Output::new(p.PC4, Level::Low, Speed::Low);
+        //let actuators = Output::new(p.PB3, Level::Low, Speed::Low);
+
+        let actuators = Output::new(p.PC5, Level::Low, Speed::Low);
+        let wedge_1 = Output::new(p.PB3, Level::Low, Speed::Low);
+        let wedge_2 = Output::new(p.PA10, Level::Low, Speed::Low);
+        let wedge_3 = Output::new(p.PC4, Level::Low, Speed::Low);
 
         Self {
             wedge_1,
@@ -134,12 +133,12 @@ impl<'a> IoBoard<'a> {
         } else {
             self.wedge_1.set_low();
         }
-        if state & 0b01 > 0 {
+        if state & 0b10 > 0 {
             self.wedge_2.set_high();
         } else {
             self.wedge_2.set_low();
         }
-        if state & 0b001 > 0 {
+        if state & 0b100 > 0 {
             self.wedge_3.set_high();
         } else {
             self.wedge_3.set_low();
@@ -178,13 +177,9 @@ impl<'a> IoBoard<'a> {
 
     pub async fn run(&mut self) -> ! {
         loop {
-            //let cmd = COMMAND_CHANNEL.receive().await;
-            //let response = self.handle_message(cmd);
-            //RESPONSE_CHANNEL.send(response).await;
-            self.wedge_1.set_high();
-            embassy_time::Timer::after_millis(1000).await;
-            self.wedge_1.set_low();
-            embassy_time::Timer::after_millis(1000).await;
+            let cmd = COMMAND_CHANNEL.receive().await;
+            let response = self.handle_message(cmd);
+            RESPONSE_CHANNEL.send(response).await;
         }
     }
 }

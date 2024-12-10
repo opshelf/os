@@ -5,6 +5,9 @@ import {
 } from '@tanstack/react-query';
 import { Switch, Route } from 'wouter';
 import Header from './components/Header';
+import RobotController from './components/RobotControl';
+import SubsystemController from './components/SubsystemControl';
+import Inventory from './components/Inventory';
 
 const queryClient = new QueryClient();
 
@@ -15,7 +18,10 @@ function App() {
         <Header />
         <Switch>
           <Route path="/storage-designer" component={Storage} />
-          <Route component={Storage} />
+          <Route path="/subsystem" component={SubsystemController} />
+          <Route path="/robot" component={RobotController} />
+          <Route path="/inventory" component={Inventory} />
+          {/*<Route component={Storage} />*/}
         </Switch>
       </QueryClientProvider>
     </div>

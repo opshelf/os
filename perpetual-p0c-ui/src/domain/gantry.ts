@@ -16,6 +16,13 @@ export type GantrySubsystemCommands = {
   payload: any;
 };
 
+export const gantryStatus = z.object({
+  x_position: z.number(),
+  y_position: z.number(),
+});
+
+export type GantryStatus = z.infer<typeof gantryStatus>;
+
 export type GantryMoveCommands = GantrySubsystemCommands & {
   command: 'MOVE' | 'MOVE_RELATIVE';
   payload: GantryCoordinateSchema;

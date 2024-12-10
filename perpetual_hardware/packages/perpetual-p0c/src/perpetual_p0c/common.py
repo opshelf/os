@@ -18,6 +18,7 @@ class CanAxisConfiguration(BaseModel):
 
 class CanMessageIds(int, Enum):
     PNEUMATIC_NODE = 5
+    # IO_NODE = 5
     TOOL_NODE = 6
     X_AXIS = 100
     Y_AXIS = 101

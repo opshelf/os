@@ -78,6 +78,8 @@ async fn can_receive_task(
                 if let Some(msg) = Messages::from_can_frame(e.frame.data()) {
                     COMMAND_CHANNEL.send(msg).await;
                     let response = RESPONSE_CHANNEL.receive().await;
+                    defmt::info!("{:?}", response.into_can_frame());
+                    defmt::info!("{:?}", &response.into_can_frame());
                     can.write(Frame::new_data(can_id, &response.into_can_frame()).unwrap())
                         .await;
                 } else {
@@ -101,7 +103,8 @@ impl<'a> ToolBoard<'a> {
         );
         can.properties()
             .set_standard_filter(can::filter::StandardFilterSlot::_0, filter);
-        can.set_bitrate(1_000_000);
+        //can.set_bitrate(1_000_000);
+        can.set_bitrate(500_000);
         let can_handle = can.into_normal_mode();
         static CAN_TX_CHANNEL: StaticCell<Channel<CriticalSectionRawMutex, Frame, 64>> =
             StaticCell::new();
@@ -223,6 +226,8 @@ impl<'a> ToolBoard<'a> {
         let backward_actuator = self.actuator_limit_2.is_high();
         let left_beam = self.side_break_beam_1.is_high();
         let right_beam = self.side_break_beam_2.is_high();
+        defmt::info!("Left Beam: {}", left_beam);
+        defmt::info!("Right Beam: {}", right_beam);
         let mut inputs = Inputs(0);
 
         if right_presence {
@@ -262,13 +267,13 @@ impl<'a> ToolBoard<'a> {
     }
 
     pub async fn set_pullers(&mut self) {
-        let _ = self.puller.set_gpio(self.puller_state).await;
-        let _ = self.puller.set_olat(self.puller_state).await;
+        let _ = self.puller.set_gpio(!self.puller_state).await;
+        let _ = self.puller.set_olat(!self.puller_state).await;
     }
 
     pub async fn set_carriage(&mut self) {
-        let _ = self.carriage.set_gpio(self.carriage_state).await;
-        let _ = self.carriage.set_olat(self.carriage_state).await;
+        let _ = self.carriage.set_gpio(!self.carriage_state).await;
+        let _ = self.carriage.set_olat(!self.carriage_state).await;
     }
 
     pub async fn run(&mut self) -> ! {
@@ -291,24 +296,29 @@ impl<'a> ToolBoard<'a> {
             .puller
             .set_all_directions(mcp23s08::Direction::Output)
             .await;
-        let result = self.puller.read_iodir().await;
-        defmt::info!("IODIR {:?}", result);
-        let result = self.puller.read_ipol().await;
-        defmt::info!("IPOL {:?}", result);
-
         let _ = self
             .carriage
             .set_all_directions(mcp23s08::Direction::Output)
             .await;
-        let result = self.carriage.read_iodir().await;
-        defmt::info!("IODIR {:?}", result);
-        let result = self.carriage.read_ipol().await;
-        defmt::info!("IPOL {:?}", result);
+        //let result = self.puller.read_iodir().await;
+        //defmt::info!("IODIR {:?}", result);
+        //let result = self.puller.read_ipol().await;
+        //defmt::info!("IPOL {:?}", result);
+        self.set_pullers().await;
+        self.set_carriage().await;
 
         loop {
             let cmd = COMMAND_CHANNEL.receive().await;
             match cmd {
                 Messages::GetState => {
+                    let board_state = self.get_state().await;
+                    RESPONSE_CHANNEL.send(Responses::State(board_state)).await;
+                }
+                Messages::ResetAll => {
+                    self.puller_state = 0;
+                    self.set_pullers().await;
+                    self.carriage_state = 0;
+                    self.set_carriage().await;
                     let board_state = self.get_state().await;
                     RESPONSE_CHANNEL.send(Responses::State(board_state)).await;
                 }
@@ -341,16 +351,17 @@ impl<'a> ToolBoard<'a> {
                     RESPONSE_CHANNEL.send(Responses::State(board_state)).await;
                 }
             };
-            //defmt::info!("Running");
-            ////let _result = self.puller.set_gpio(255).await;
-            ////let _result = self.puller.set_olat(255).await;
-            //let result = self.carriage.set_gpio(255).await;
-            //defmt::info!("{:?}", result);
-            //let result = self.carriage.set_olat(255).await;
-            //defmt::info!("{:?}", result);
-            //embassy_time::Timer::after_millis(1000).await;
+
+            // defmt::info!("Setting 255");
+            // let result = self.carriage.set_gpio(255).await;
+            // defmt::info!("{:?}", result);
+            // let result = self.carriage.set_olat(255).await;
+            // defmt::info!("{:?}", result);
+            // embassy_time::Timer::after_millis(1000).await;
+
             ////let _result = self.puller.set_gpio(0).await;
             ////let _result = self.puller.set_olat(0).await;
+            //defmt::info!("Setting 0");
             //let result = self.carriage.set_gpio(0).await;
             //defmt::info!("{:?}", result);
             //let result = self.carriage.set_olat(0).await;

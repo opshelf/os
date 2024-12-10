@@ -1,6 +1,3 @@
-//use bitfield::bitfield;
-use defmt::Format;
-
 pub fn get_number_of_bits(value: u8) -> u8 {
     let mut accum = 0;
     for i in 0..8 {
@@ -53,7 +50,7 @@ pub enum Messages {
     SetAllValves,
 }
 
-#[derive(Debug, Copy, Clone, Format)]
+#[derive(Debug, Copy, Clone)]
 pub struct BoardState {
     pub wedges: u8,
     pub actuators: bool,

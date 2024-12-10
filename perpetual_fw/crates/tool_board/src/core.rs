@@ -1,4 +1,5 @@
 use bitfield::bitfield;
+use defmt::Format;
 
 pub fn get_number_of_bits(value: u8) -> u8 {
     let mut accum = 0;
@@ -35,10 +36,6 @@ pub fn valid_number_of_bits(value: u8, max_bits: u8) -> bool {
 //    MotorCurrent(u8),
 //    MotorStatus(u32),
 //}
-
-pub trait IntoCanFrame {
-    fn to_can_data(&self) -> [u8];
-}
 
 bitfield! {
     pub struct SlotStatus(u8);
@@ -115,8 +112,9 @@ pub enum CanCommandIds {
     GetState = 0x01,
     SetPullers = 0x02,
     MaskPullers = 0x03,
-    SetCarriage = 0x05,
-    MaskCarriage = 0x06,
+    SetCarriage = 0x04,
+    MaskCarriage = 0x05,
+    ResetAll = 0x06,
 }
 
 impl CanCommandIds {
@@ -127,6 +125,7 @@ impl CanCommandIds {
             0x03 => Some(CanCommandIds::MaskPullers),
             0x04 => Some(CanCommandIds::SetCarriage),
             0x05 => Some(CanCommandIds::MaskCarriage),
+            0x06 => Some(CanCommandIds::ResetAll),
             _ => None,
         }
     }
@@ -167,6 +166,7 @@ pub enum CarriageResponse {
 
 pub enum Messages {
     GetState,
+    ResetAll,
     PullerCommand(PullerCommands),
     CarriageCommand(CarriageCommands),
 }
@@ -179,6 +179,8 @@ impl Messages {
         if let Some(msg_id) = CanCommandIds::from_u8(frame[0]) {
             if msg_id == CanCommandIds::GetState {
                 Some(Messages::GetState)
+            } else if msg_id == CanCommandIds::ResetAll {
+                Some(Messages::ResetAll)
             } else if frame.len() < 2 {
                 None
             } else {
@@ -217,10 +219,15 @@ impl Messages {
     }
 }
 
+#[repr(u8)]
+pub enum ResponseIds {
+    Invalid = 0x00,
+    State = 0x01,
+}
+
 pub enum Responses {
     State(BoardState),
-    Invalid, //PullerResponse(PullerResponse),
-             //CarriageResponse(CarriageResponse),
+    Invalid,
 }
 
 impl Responses {
@@ -229,8 +236,9 @@ impl Responses {
             Self::State(board_state) => {
                 let response_data = board_state.to_can_data();
                 let mut data = [0u8; 8];
+                data[0] = ResponseIds::State as u8;
                 for (ix, byte) in response_data.into_iter().enumerate() {
-                    data[ix] = byte;
+                    data[ix + 1] = byte;
                 }
                 data
             }
