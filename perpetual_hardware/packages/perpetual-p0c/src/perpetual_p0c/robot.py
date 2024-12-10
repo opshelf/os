@@ -49,8 +49,8 @@ class P0Robot:
 
     def init(self) -> None:
         self._tool.set_slot_solenoids(0)
-        self._tool.set_puller_solenoids(0, StorageModuleSide.LEFT)
-        self._tool.set_puller_solenoids(0, StorageModuleSide.RIGHT)
+        self._tool.set_carriage_solenoids(0, StorageModuleSide.LEFT)
+        self._tool.set_carriage_solenoids(0, StorageModuleSide.RIGHT)
         self._tool.actuators(False)
         self._funnel.open_all_slots()
 
@@ -65,14 +65,14 @@ class P0Robot:
     def pull_tray(self, tray_location: GantryCoordinate, side: StorageModuleSide) -> None:
         self.move_gantry_safe(tray_location)
         self._tool.extend_puller()
-        self._tool.set_puller_solenoids(1, side)
+        self._tool.set_carriage_solenoids(1, side)
         self._tool.retract_tray(side)
 
     def place_tray(self, tray_location: GantryCoordinate, side: StorageModuleSide) -> None:
         self.move_gantry_safe(tray_location + self._config.place_offset)
         self._tool.extend_puller()
         self._tool.wait_for_move()
-        self._tool.set_puller_solenoids(0, side)
+        self._tool.set_carriage_solenoids(0, side)
         self._tool.retract_tray(side)
         self._tool.wait_for_move()
 

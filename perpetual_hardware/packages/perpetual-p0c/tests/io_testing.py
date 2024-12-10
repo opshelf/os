@@ -2,7 +2,7 @@ from perpetual_p0c import funnel
 from perpetual_p0c.configuration import p0_tool_config
 from perpetual_p0c.utils import get_can_devices
 #from perpetual_p0c.io_controller import GenericRelayBoardMessage, ToolRelayController
-from perpetual_p0c.io_board import ActuatorState, IoBoard, Wedge
+from perpetual_p0c.io_board import ActuatorState, IoController, Wedge
 from can import Bus
 import time
 
@@ -14,10 +14,7 @@ if __name__ == "__main__":
         bitrate=1000000,
         fd=False,
     ) as bus:
-        #tool = ToolRelayController(bus)
-        #print(tool.set_relays(GenericRelayBoardMessage()))
-
-        io = IoBoard(bus)
+        io = IoController(bus)
         io.reset_valves()
         while True:
             state = io.get_state()

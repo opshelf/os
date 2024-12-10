@@ -11,8 +11,8 @@ def test_axis() -> None:
     with Bus(interface="pcan", channel="PCAN_USBBUS1", bitrate=1000000, fd=False) as bus:
         axis1 = TrinamicAxis(
             bus,
-            100,
-            0,
+            module_id=100,
+            motor_id=0,
             configuration=StepperMotorConfig(
                 microsteps=16,
                 steps_per_rev=3200,

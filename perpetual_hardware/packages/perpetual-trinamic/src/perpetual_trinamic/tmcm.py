@@ -1,9 +1,10 @@
 from dataclasses import dataclass
 from enum import IntEnum
-from can import BusABC, Message
+from can import BusABC, Message, BufferedReader
 from typing import Optional
-from .tmcl import TMCLCommand
+from perpetual_trinamic.tmcl import TMCLCommand
 import struct
+import time
 
 
 @dataclass
@@ -27,32 +28,6 @@ class MoveType(IntEnum):
     ABSOLUTE = 0
     RELATIVE = 1
     COORDINATE = 2
-
-
-# class TMCLCommand:
-#    ROR                        = 1
-#    ROL                        = 2
-#    MST                        = 3
-#    MVP                         = 4
-#    SAP                        = 5
-#    GAP                        = 6
-#    SGP                        = 9
-#    GGP                        = 10
-#    STGP                       = 11
-#    RSGP                       = 12
-#    RFS                         = 13
-#    SIO                        = 14
-#    GIO                        = 15
-#
-# class TMCLStatus:
-#    SUCCESS               = 100
-#    COMMAND_LOADED        = 101
-#    WRONG_CHECKSUM        = 1
-#    INVALID_COMMAND       = 2
-#    WRONG_TYPE            = 3
-#    INVALID_VALUE         = 4
-#    EEPROM_LOCKED         = 5
-#    COMMAND_NOT_AVAILABLE = 6
 
 
 # This Should Never Be Done but Comms are not reliable right now
@@ -87,8 +62,15 @@ class MoveType(IntEnum):
 
 
 class TMCM:
-    def __init__(self, connection: BusABC, module_id: int, motor_id: int = 0) -> None:
+    def __init__(
+            self, 
+            connection: BusABC, 
+            reader: Optional[BufferedReader] = None,
+            module_id: int = 1, 
+            motor_id: int = 0
+        ) -> None:
         self._connection = connection
+        self._reader = reader
         self._module_id = module_id & 0xFF
         self._motor_id = motor_id & 0xFF
         self._sync_read = True
@@ -115,30 +97,49 @@ class TMCM:
 
     # def _receive_message(self) -> TmclReply:
     def _receive_message(self) -> TmclReply:
-        msg = self._connection.recv(timeout=2.0)
-        if msg:
-            if len(msg.data) == 7:
-                return TmclReply(
-                    module_address=msg.data[0],
-                    status=msg.data[1],
-                    command_number=msg.data[2],
-                    value=struct.unpack(">i", msg.data[3:])[0],
-                )
-            else:
-                raise Exception(f"Invalid Data Format: {msg}")
-        msg = self._connection.recv(timeout=2.0)
-        if msg:
-            if len(msg.data) == 7:
-                return TmclReply(
-                    module_address=msg.data[0],
-                    status=msg.data[1],
-                    command_number=msg.data[2],
-                    value=struct.unpack(">i", msg.data[3:])[0],
-                )
-            else:
-                raise Exception(f"Invalid Data Format: {msg}")
-        raise Exception(f"No Response From Module {self._module_id}")
-        # return None
+        if self._reader:
+            t = time.time()
+            while time.time() - t < 2.0:
+                msg = self._reader.get_message(timeout=2.0)
+                if msg:
+                    if msg.arbitration_id == self._module_id:
+                        if len(msg.data) == 7:
+                            return TmclReply(
+                                module_address=msg.data[0],
+                                status=msg.data[1],
+                                command_number=msg.data[2],
+                                value=struct.unpack(">i", msg.data[3:])[0],
+                            )
+                        else:
+                            raise Exception(f"Invalid Data Format: {msg}")
+                else:
+                    raise Exception(f"No Response From Module {self._module_id}")
+            raise Exception(f"No Response From Module {self._module_id}")
+        else:
+            msg = self._connection.recv(timeout=2.0)
+            if msg:
+                if len(msg.data) == 7:
+                    return TmclReply(
+                        module_address=msg.data[0],
+                        status=msg.data[1],
+                        command_number=msg.data[2],
+                        value=struct.unpack(">i", msg.data[3:])[0],
+                    )
+                else:
+                    raise Exception(f"Invalid Data Format: {msg}")
+            msg = self._connection.recv(timeout=2.0)
+            if msg:
+                if len(msg.data) == 7:
+                    return TmclReply(
+                        module_address=msg.data[0],
+                        status=msg.data[1],
+                        command_number=msg.data[2],
+                        value=struct.unpack(">i", msg.data[3:])[0],
+                    )
+                else:
+                    raise Exception(f"Invalid Data Format: {msg}")
+            raise Exception(f"No Response From Module {self._module_id}")
+            # return None
 
     def _default_message(self, command_number: int, type_number: int, value: int) -> TmclMessage:
         return TmclMessage(

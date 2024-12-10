@@ -59,12 +59,12 @@ class InputStatus(BaseModel):
 
 
 class IoBoard(BaseModel):
-    r1: bool
-    r2: bool
-    r3: bool
-    r4: bool
-    r5: bool
-    r6: bool
+    r1: bool = False
+    r2: bool = False
+    r3: bool = False
+    r4: bool = False
+    r5: bool = False
+    r6: bool = False
 
     @staticmethod
     def from_buffer(value: int) -> "IoBoard":

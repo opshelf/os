@@ -1,26 +1,29 @@
-from can import BusABC
+from can import BusABC, BufferedReader
 from hardware_common.stepper_motor import (
     AbstractStepperMotor,
     StepperMotorConfig,
     Rotation,
     StepperMotorStatus,
 )
-from .tmcm12xx import TMCM12xx
-from .tmcl import StatusFlags, TrinamicErrorFlags
+from perpetual_trinamic.tmcm12xx import TMCM12xx
+from perpetual_trinamic.tmcl import StatusFlags, TrinamicErrorFlags
 import time
+from typing import Optional
 
 
 class TrinamicStepper(TMCM12xx):
     def __init__(
         self,
         connection: BusABC,
-        module_id: int,
-        motor_id: int,
         configuration: StepperMotorConfig,
+        reader: Optional[BufferedReader] = None,
+        module_id: int = 1,
+        motor_id: int = 0,
         max_current: int = 3000,
     ) -> None:
-        TMCM12xx.__init__(self, connection, module_id, motor_id, max_current)
+        TMCM12xx.__init__(self, connection, reader, module_id, motor_id, max_current)
         self._connection = connection
+        self._reader = reader
         self._module_id = module_id
         self._motor_id = motor_id
         self._configuration = configuration
@@ -50,8 +53,10 @@ class TrinamicStepper(TMCM12xx):
     def safety_off(self) -> None:
         if self._configuration.external_encoder:
             self.set_external_encoder_max_deviation(0)
+            self._homing_deviation = 0
         else:
             self.set_max_encoder_deviation(0)
+            self._homing_deviation = 0
 
     def safety_on(self) -> None:
         if self._configuration.external_encoder:
@@ -221,13 +226,25 @@ class TrinamicAxis(AbstractStepperMotor, TMCM12xx):
     def __init__(
         self,
         connection: BusABC,
-        module_id: int,
-        motor_id: int,
         configuration: StepperMotorConfig,
+        reader: Optional[BufferedReader] = None,
+        module_id: int = 1,
+        motor_id: int = 0,
         max_current: int = 3000,
     ) -> None:
-        TMCM12xx.__init__(self, connection, module_id, motor_id, max_current)
+        TMCM12xx.__init__(self, connection, reader, module_id, motor_id, max_current)
         self._connection = connection
+        self._reader = reader
+        #def __init__(
+        #    self,
+        #    connection: BusABC,
+        #    module_id: int,
+        #    motor_id: int,
+        #    configuration: StepperMotorConfig,
+        #    max_current: int = 3000,
+        #) -> None:
+        #    TMCM12xx.__init__(self, connection, module_id, motor_id, max_current)
+        #    self._connection = connection
         self._module_id = module_id
         self._motor_id = motor_id
         self._configuration = configuration

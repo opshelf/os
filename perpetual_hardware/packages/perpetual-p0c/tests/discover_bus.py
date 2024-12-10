@@ -21,7 +21,7 @@ def discover_bus(address_range: Optional[Tuple[int, int]] = None) -> None:
                     is_extended_id=False,
                 )
                 bus.send(msg)
-                reply = bus.recv(0.05)
+                reply = bus.recv(0.2)
                 if reply:
                     print(i, reply)
                     found.append(i)
@@ -37,7 +37,10 @@ def discover_bus(address_range: Optional[Tuple[int, int]] = None) -> None:
             bus.send(msg)
             reply = bus.recv(.2)
             if reply:
-                print(f"{id.name} {id.value} {reply}")
+                if reply.arbitration_id == id.value:
+                    print(f"{id.name} {id.value} {reply}")
+                else:
+                    raise Exception("Invalid Response")
 
 
 if __name__ == "__main__":

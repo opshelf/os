@@ -56,7 +56,7 @@ class IoState(BaseModel):
         )
 
 
-class IoBoard:
+class IoController:
     def __init__(self, bus: BusABC, can_id: int = CanMessageIds.PNEUMATIC_NODE) -> None:
         self._bus = bus
         self._can_id = can_id

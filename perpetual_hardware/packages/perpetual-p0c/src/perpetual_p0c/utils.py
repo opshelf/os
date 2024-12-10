@@ -5,7 +5,7 @@ from typing import Any, Optional, List
 import re
 import subprocess
 
-#DEFAULT_CAN_RATE = 1000000
+# DEFAULT_CAN_RATE = 1000000
 DEFAULT_CAN_RATE = 500000
 
 

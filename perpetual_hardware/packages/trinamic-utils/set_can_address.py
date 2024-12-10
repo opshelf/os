@@ -2,7 +2,6 @@ from pytrinamic.connections import ConnectionManager
 from pytrinamic.modules import TMCM1240
 import time
 
-
 """
 X: 100
 Y: 101
@@ -35,22 +34,17 @@ class CanMessageIds(int, Enum):
 
 """
 
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     with ConnectionManager().connect() as my_interface:
-        #print(my_interface)
-        CAN_ID = 101
+        CAN_ID = 102
         module = TMCM1240(my_interface)
         print(module)
-        print(module.get_global_parameter(module.GP0.CANreceiveID, 0))
-        print(module.get_global_parameter(module.GP0.CANsendID, 0))
-        module.set_global_parameter(module.GP0.CANreceiveID, 0, CAN_ID) 
+        print("CURRENT RECEIVE ID: ", module.get_global_parameter(module.GP0.CANreceiveID, 0))
+        print("CURRENT SEND ID: ", module.get_global_parameter(module.GP0.CANsendID, 0))
+        print("CURRENT BIT RATE: ", module.get_global_parameter(module.GP0.CANBitRate, 0))
+        module.set_global_parameter(module.GP0.CANreceiveID, 0, CAN_ID)
         module.set_global_parameter(module.GP0.CANsendID, 0, CAN_ID)
-        print(module.get_global_parameter(module.GP0.CANreceiveID, 0))
-        print(module.get_global_parameter(module.GP0.CANsendID, 0))
-
-        #print(my_interface)
-        #module = TMCM1240(my_interface)
-        #module.set_global_parameter(module.GP0.SerialAddress, 0, 2)
-        #print(module.get_global_parameter(module.GP0.SerialAddress, 0))
-        #print(module)
+        module.set_global_parameter(module.GP0.CANBitRate, 0,7)
+        print("NEW RECEIVE ID: ", module.get_global_parameter(module.GP0.CANreceiveID, 0))
+        print("NEW SEND ID: ", module.get_global_parameter(module.GP0.CANsendID, 0))
+        print("NEW BIT RATE: ", module.get_global_parameter(module.GP0.CANBitRate, 0))

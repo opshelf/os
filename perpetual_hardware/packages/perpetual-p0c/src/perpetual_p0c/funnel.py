@@ -1,15 +1,12 @@
 from hardware_common.stepper_motor import AbstractStepperMotor, AxisCommand
 from can import BusABC
-from .tray import Tray
-from .common import CanAxisConfiguration
+from perpetual_p0c.tray import Tray
+from perpetual_p0c.common import CanAxisConfiguration
 from perpetual_trinamic.trinamic_axis import TrinamicAxis, TrinamicStepper
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
 from enum import Enum
-from .io_controller import (
-    ToolRelayController,
-    GenericRelayBoardMessage,
-)
+from perpetual_p0c.io_board import IoController, Wedge
 import time
 
 
@@ -22,10 +19,10 @@ class FunnelOffsets(BaseModel):
     diverter_50mm_pos: float
     diverter_100mm_pos: float
     diverter_150mm_pos: float
-    belt_speed: float = 1500
-    wall_speed: float = 1500
-    output_transfer_conveyor_speed: float = 1500
-    output_conveyor_speed: float = 1500
+    belt_speed: float = -100
+    wall_speed: float = 500
+    output_transfer_conveyor_speed: float = -100
+    output_conveyor_speed: float = -300
 
 
 class FunnelConfiguration(BaseModel):
@@ -41,7 +38,7 @@ class FunnelConfiguration(BaseModel):
     diverter: CanAxisConfiguration
     relay_board_id: int
     offsets: FunnelOffsets
-    opposing_funnel_max_travel: float = 270.0
+    opposing_funnel_max_travel: float = 217.0
 
 
 class FunnelStatus(BaseModel):
@@ -90,35 +87,35 @@ class Funnel:
         self._configuration = funnel_configuration
         self._inlet_funnel = TrinamicAxis(
             bus,
-            funnel_configuration.inlet_funnel.can_id,
-            0,
-            funnel_configuration.inlet_funnel.configuration,
+            module_id=funnel_configuration.inlet_funnel.can_id,
+            motor_id=0,
+            configuration=funnel_configuration.inlet_funnel.configuration,
         )
         self._opposing_funnel = TrinamicAxis(
             bus,
-            funnel_configuration.opposing_funnel.can_id,
-            0,
-            funnel_configuration.opposing_funnel.configuration,
+            module_id=funnel_configuration.opposing_funnel.can_id,
+            motor_id=0,
+            configuration=funnel_configuration.opposing_funnel.configuration,
         )
         self._slot_1 = TrinamicAxis(
             bus,
-            funnel_configuration.slot_1.can_id,
-            0,
-            funnel_configuration.slot_1.configuration,
+            module_id=funnel_configuration.slot_1.can_id,
+            motor_id=0,
+            configuration=funnel_configuration.slot_1.configuration,
         )
         self._slot_2 = TrinamicAxis(
             bus,
-            funnel_configuration.slot_2.can_id,
-            0,
-            funnel_configuration.slot_2.configuration,
+            module_id=funnel_configuration.slot_2.can_id,
+            motor_id=0,
+            configuration=funnel_configuration.slot_2.configuration,
         )
         self._slot_3 = TrinamicAxis(
             bus,
-            funnel_configuration.slot_3.can_id,
-            0,
-            funnel_configuration.slot_3.configuration,
+            module_id=funnel_configuration.slot_3.can_id,
+            motor_id=0,
+            configuration=funnel_configuration.slot_3.configuration,
         )
-        self._slots = ToolRelayController(bus, can_id=funnel_configuration.relay_board_id)
+        self._io = IoController(bus)
         self._belt = TrinamicStepper(
             bus,
             module_id=funnel_configuration.belt.can_id,
@@ -138,12 +135,23 @@ class Funnel:
             configuration=funnel_configuration.diverter.configuration,
             motor_id=0,
         )
-        # self._output_transfer_conveyor = TrinamicStepper(
-        #    bus,
-        #    module_id=funnel_configuration.output_transfer_conveyor.can_id,
-        #    configuration=funnel_configuration.output_transfer_conveyor.configuration,
-        #    motor_id=0,
-        # )
+        self._output_transfer_conveyor = TrinamicStepper(
+           bus,
+           module_id=funnel_configuration.output_transfer_conveyor.can_id,
+           configuration=funnel_configuration.output_transfer_conveyor.configuration,
+           motor_id=0,
+           max_current=6000
+        )
+        self._output_conveyor = TrinamicStepper(
+           bus,
+           module_id=funnel_configuration.output_conveyor.can_id,
+           configuration=funnel_configuration.output_conveyor.configuration,
+           motor_id=0,
+            max_current=6000
+        )
+        self._belt.safety_off()
+        self._wall.safety_off()
+        self._output_transfer_conveyor.safety_off()
         self._slots_open = 0
         self._diverter_open = True
 
@@ -155,27 +163,56 @@ class Funnel:
     def wall(self) -> TrinamicStepper:
         return self._wall
 
-    # @property
-    # def output_transfer_conveyor(self) -> TrinamicStepper:
-    #    return self._output_transfer_conveyor
+    @property
+    def output_transfer_conveyor(self) -> TrinamicStepper:
+       return self._output_transfer_conveyor
 
-    # def output_transfer_conveyor_rotate(self, speed: int = -600) -> None:
-    #    self._output_transfer_conveyor.rotate(speed)
+    def output_transfer_conveyor_rotate(self, speed: int = -600) -> None:
+       self._output_transfer_conveyor.rotate(speed)
 
-    # def output_transfer_conveyor_stop(self) -> None:
-    #    self._output_transfer_conveyor.stop()
+    def output_transfer_conveyor_stop(self) -> None:
+       self._output_transfer_conveyor.stop()
+
+
+    @property
+    def output_conveyor(self) -> TrinamicStepper:
+       return self._output_conveyor
+
+    def output_conveyor_rotate(self, speed: int = -600) -> None:
+       self._output_conveyor.rotate(speed)
+
+    def output_conveyor_stop(self) -> None:
+       self._output_transfer_conveyor.stop()
 
     def stop_belt(self) -> None:
         self._belt.stop()
-        self._wall.stop()
 
     def start_belt(self) -> None:
-        # self._belt.rotate(1000)
         self._belt.initialize()
+        self._belt.safety_off()
+        self._belt.rotate(int(self._configuration.offsets.belt_speed))
+
+    def stop_wall(self) -> None:
+        self._wall.stop()
+
+    def start_wall(self) -> None:
         self._wall.initialize()
-        # self._belt.rotate(-2000)
-        self._belt.rotate(-1500)
-        self._wall.rotate(-2000)
+        self._wall.rotate(int(self._configuration.offsets.wall_speed))
+
+    def stop_output(self) -> None:
+        self._output_conveyor.stop()
+
+    def start_output(self) -> None:
+        self._output_conveyor.initialize()
+        self._output_conveyor.rotate(int(self._configuration.offsets.output_conveyor_speed))
+
+    def stop_output_transfer(self) -> None:
+        self._output_transfer_conveyor.stop()
+
+    def start_output_transfer(self) -> None:
+        self._output_transfer_conveyor.initialize()
+        self._output_transfer_conveyor.safety_off()
+        self._output_transfer_conveyor.rotate(int(self._configuration.offsets.output_transfer_conveyor_speed))
 
     @property
     def offsets(self) -> FunnelOffsets:
@@ -185,9 +222,12 @@ class Funnel:
     def offsets(self, offsets: FunnelOffsets) -> None:
         self._configuration.offsets = offsets
 
+    #@property
+    #def slots(self) -> ToolRelayController:
+    #    return self._slots
     @property
-    def slots(self) -> ToolRelayController:
-        return self._slots
+    def io(self) -> IoController:
+        return self._io
 
     @property
     def slots_open(self) -> int:
@@ -195,20 +235,25 @@ class Funnel:
 
     def open_slots(self, slots: int) -> None:
         self._slots_open = slots
-        self._slots.set_relays(
-            GenericRelayBoardMessage(
-                r2=False if slots > 2 else True,
-                r3=False if slots > 1 else True,
-                r4=False if slots > 0 else True,
+        self._io.set_wedges(
+            Wedge(
+                wedge_3=False if slots > 2 else True,
+                wedge_2=False if slots > 1 else True,
+                wedge_1=False if slots > 0 else True,
             )
         )
 
     def close_slots(self) -> None:
         self._slots_open = 0
-        self._slots.set_relays(GenericRelayBoardMessage(r2=True, r3=True, r4=True))
+        #self._slots.set_relays(GenericRelayBoardMessage(r2=True, r3=True, r4=True))
+        self._io.set_wedges(Wedge(
+            wedge_1=True,
+            wedge_2=True,
+            wedge_3=True
+        ))
 
     def open_all_slots(self) -> None:
-        self._slots.set_relays(GenericRelayBoardMessage())
+        self._io.set_wedges(Wedge())
 
     @property
     def inlet_funnel(self) -> AbstractStepperMotor:
@@ -243,9 +288,15 @@ class Funnel:
     def home(self) -> None:
         self._inlet_funnel.home()
         self._opposing_funnel.home()
+
         self._slot_1.home()
         self._slot_2.home()
         self._slot_3.home()
+
+        self._slot_1.home()
+        self._slot_2.home()
+        self._slot_3.home()
+
         self._diverter.home()
 
     def wait_for_move(self) -> None:
@@ -301,16 +352,16 @@ class Funnel:
         ipos += self.offsets.funnel_cell_1_offset_x
         opos = self._configuration.opposing_funnel_max_travel - opos
         opos -= self.offsets.funnel_cell_1_offset_x
-        opos += self.offsets.funnel_min_width
+        opos -= self.offsets.funnel_min_width
         opos = min([self._configuration.opposing_funnel_max_travel, opos])
-        ipos = min([self._configuration.opposing_funnel_max_travel, ipos])
+        #ipos = min([self._configuration.inlet_funnel_max_r, ipos])
         # curr_ipos = self._inlet_funnel.get_position()
         opos = max([0, opos])
         curr_opos = self._opposing_funnel.get_position()
         # self._slot_2.move_to_position(opos-ipos)
         # self._slot_2.move_to_position(diff-5)
         # self._slot_3.move_to_position(opos-ipos)
-
+        print(opos, ipos)
         if opos >= curr_opos:
             self._opposing_funnel.move_to_position(opos)
             self._inlet_funnel.move_to_position(ipos)
@@ -442,6 +493,8 @@ class Funnel:
         self._slot_3.stop()
         self._belt.stop()
         self._wall.stop()
+        self._output_transfer_conveyor.stop_motor()
+        self._output_conveyor.stop_motor()
 
     def initialize(self) -> None:
         self._inlet_funnel.initialize()

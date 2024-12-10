@@ -18,9 +18,9 @@ class OutputBox:
         self._configuration = configuration
         self._door = TrinamicAxis(
             bus,
-            configuration.door.can_id,
-            0,
-            configuration.door.configuration,
+            module_id=configuration.door.can_id,
+            motor_id=0,
+            configuration=configuration.door.configuration,
         )
 
     @property

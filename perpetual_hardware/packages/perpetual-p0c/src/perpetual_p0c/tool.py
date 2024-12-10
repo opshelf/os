@@ -4,15 +4,12 @@ from hardware_common.stepper_motor import (
 from enum import Enum
 from can import BusABC
 from perpetual_trinamic.trinamic_axis import TrinamicAxis
-from .io_controller import (
-    GenericRelayBoardMessage,
-    ToolRelayController,
-    RelayBoardMessage,
-)
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
 from .tray import Tray
-from .common import CanAxisConfiguration, StorageModuleSide, CanMessageIds
+from .io_board import ActuatorState, IoController
+from .tool_board import ToolBoard, IoBoard
+from .common import CanAxisConfiguration, StorageModuleSide
 
 
 class ToolOffsets(BaseModel):
@@ -70,12 +67,12 @@ class Tool:
         self._configuration = tool_configuration
         self._puller = TrinamicAxis(
             bus,
-            tool_configuration.puller.can_id,
-            0,
-            tool_configuration.puller.configuration,
+            module_id=tool_configuration.puller.can_id,
+            motor_id=0,
+            configuration=tool_configuration.puller.configuration,
         )
-        self._io = ToolRelayController(bus, can_id=CanMessageIds.TOOL_NODE)
-        self._actuators = ToolRelayController(bus, can_id=CanMessageIds.PNEUMATIC_NODE)
+        self._io = IoController(bus)
+        self._tool_board = ToolBoard(bus)
         self._actuators_extended = False
         self._carriage_solenoids = 0
         self._puller_solenoids = 0
@@ -101,43 +98,33 @@ class Tool:
         return self._puller
 
     @property
-    def io(self) -> ToolRelayController:
+    def io(self) -> IoController:
         return self._io
+
+    @property
+    def tool_board(self) -> ToolBoard:
+        return self._tool_board
 
     def actuators(self, status: bool) -> None:
         if status:
             self._actuators_extended = True
-            self._actuators.set_relays(GenericRelayBoardMessage(r1=True))
+            self._io.set_actuators(ActuatorState.Extended)
         else:
             self._actuators_extended = False
-            self._actuators.set_relays(GenericRelayBoardMessage(r1=False))
+            self._io.set_actuators(ActuatorState.Retracted)
 
-    def set_puller_solenoids(self, solenoids: int, side: StorageModuleSide) -> None:
-        # """
-        # if side == "LEFT":
-        #    self._io.set_relays(GenericRelayBoardMessage(
-        #            r1=False if solenoids > 0 else True,
-        #            r2=False if solenoids > 1 else True,
-        #            r3=False if solenoids > 2 else True
-        #    ))
-        # else:
-        #    self._io.set_relays(GenericRelayBoardMessage(
-        #            r4=False if solenoids > 0 else True,
-        #            r5=False if solenoids > 1 else True,
-        #            r6=False if solenoids > 2 else True
-        #    ))
-        # """
+    def set_carriage_solenoids(self, solenoids: int, side: StorageModuleSide) -> None:
         if side == "LEFT":
-            self._io.set_relays(
-                GenericRelayBoardMessage(
+            self._tool_board.set_pullers(
+                IoBoard(
                     r1=True if solenoids > 2 else False,
                     r2=True if solenoids > 1 else False,
                     r3=True if solenoids > 0 else False,
                 )
             )
         else:
-            self._io.set_relays(
-                GenericRelayBoardMessage(
+            self._tool_board.set_pullers(
+                IoBoard(
                     r4=True if solenoids > 2 else False,
                     r5=True if solenoids > 1 else False,
                     r6=True if solenoids > 0 else False,
@@ -145,43 +132,17 @@ class Tool:
             )
 
     def set_solenoids_off(self) -> None:
-        self._io.set_relays(GenericRelayBoardMessage())
-
-    def set_slot_solenoids(self, slots: int) -> None:
-        # self._io.set_relays(GenericRelayBoardMessage(
-        #        r7=False if slots > 0 else True,
-        #        r8=False if slots > 1 else True,
-        #        r9=False if slots > 2 else True,
-        #        r10=False if slots > 3 else True
-        # ))
-        self._io.set_relays(
-            GenericRelayBoardMessage(
-                r1=True,
-                r2=True,
-                r3=True,
-                r7=True if slots > 0 else False,
-                r8=True if slots > 1 else False,
-                r9=True if slots > 2 else False,
-                r10=True if slots > 3 else False,
-            )
-        )
+        self._tool_board.reset_all()
 
     def set_slot_bits(self, bits: int) -> None:
-        # self._io.set_relays(GenericRelayBoardMessage(
-        #        r7=False if bits & 0x01 else True,
-        #        r8=False if bits & 0x02 else True,
-        #        r9=False if bits & 0x04 else True,
-        #        r10=False if bits & 0x08 else True
-        # ))
-        self._io.set_relays(
-            GenericRelayBoardMessage(
-                r1=True,
-                r2=True,
-                r3=True,
-                r7=True if bits & 0x01 else False,
-                r8=True if bits & 0x02 else False,
-                r9=True if bits & 0x04 else False,
-                r10=True if bits & 0x08 else False,
+        self._tool_board.set_pullers(
+            IoBoard(
+                r1=True if bits & 0x01 else False,
+                r2=True if bits & 0x02 else False,
+                r3=True if bits & 0x04 else False,
+                r4=True if bits & 0x08 else False,
+                r5=True if bits & 0x10 else False,
+                r6=True if bits & 0x20 else False,
             )
         )
 
@@ -216,8 +177,8 @@ class Tool:
         self.wait_for_move()
 
     def initialize(self) -> None:
-        self._io.set_relays(RelayBoardMessage())
-        self._io.set_relays(RelayBoardMessage())
+        self._io.reset_valves()
+        self._tool_board.reset_all()
         self._puller.initialize()
 
     def home(self) -> None:
@@ -270,7 +231,7 @@ class Tool:
         elif cmd.command == Commands.TURN_ON_PULLER_SOLENOIDS:
             if cmd.payload:
                 solenoids = TurnOnSolenoids(**cmd.payload)
-                self.set_puller_solenoids(solenoids.solenoids, StorageModuleSide.LEFT)
+                self.set_carriage_solenoids(solenoids.solenoids, StorageModuleSide.LEFT)
             else:
                 raise Exception("Invalid Command")
         elif cmd.command == Commands.TURN_OFF_PULLER_SOLENOIDS:

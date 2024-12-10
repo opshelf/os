@@ -1,21 +1,24 @@
-from .tmcm import TMCM
+from perpetual_trinamic.tmcm import TMCM
+from can import BusABC, BufferedReader
+from typing import Optional
 
-# from .tmcl import TMCLStatus, TMCLCommand, TrinamicErrorFlags
-from can import BusABC
 
 
 class TMCM12xx(TMCM):
     def __init__(
         self,
         connection: BusABC,
+        reader: Optional[BufferedReader] = None,
         module_id: int = 1,
         motor_id: int = 0,
         max_current: int = 3000,
     ):
-        super().__init__(connection, module_id, motor_id)
+        #TMCM12xx.__init__(self, connection, reader, module_id, motor_id, max_current)
+        super().__init__(connection, reader, module_id, motor_id)
         self._module_id = module_id
         self._motor_id = motor_id
         self._max_current = max_current
+        self._reader = reader
 
     @property
     def max_current(self) -> int:
