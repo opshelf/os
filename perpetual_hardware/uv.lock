@@ -8,6 +8,7 @@ members = [
     "perpetual-hardware",
     "perpetual-p0c",
     "perpetual-trinamic",
+    "trinamic-utils",
     "waveshare-can",
 ]
 
@@ -26,6 +27,18 @@ version = "0.1.0"
 source = { directory = "../perpetual_fw/crates/bindings" }
 
 [[package]]
+name = "canopen"
+version = "2.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "python-can" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1a/b3/733e5f98c995d7f3e82853bc5ee2f0677df6203d51d8a4387af188322523/canopen-2.3.0.tar.gz", hash = "sha256:792084a93c138d5b2a406ddd2d4eb5ce208f03bd8fda60f81ad2bb8d56c6b827", size = 101292 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/34/7f/bef6f0e7d237d00705e921a286598e15cc1b9188878ef51b9fec22484c0c/canopen-2.3.0-py3-none-any.whl", hash = "sha256:7a62274af6ded7ee85ee96f4ada3afa38bc8607a91f306dcc202c3c8cf2850d7", size = 64196 },
+]
+
+[[package]]
 name = "hardware-common"
 version = "0.1.0"
 source = { editable = "packages/hardware-common" }
@@ -37,6 +50,15 @@ dependencies = [
 requires-dist = [
     { name = "hardware-common", editable = "packages/hardware-common" },
     { name = "pydantic", specifier = ">=2.10.0" },
+]
+
+[[package]]
+name = "intelhex"
+version = "2.3.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/66/37/1e7522494557d342a24cb236e2aec5d078fac8ed03ad4b61372586406b01/intelhex-2.3.0.tar.gz", hash = "sha256:892b7361a719f4945237da8ccf754e9513db32f5628852785aea108dcd250093", size = 44513 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/97/78/79461288da2b13ed0a13deb65c4ad1428acb674b95278fa9abf1cefe62a2/intelhex-2.3.0-py2.py3-none-any.whl", hash = "sha256:87cc5225657524ec6361354be928adfd56bcf2a3dcc646c40f8f094c39c07db4", size = 50914 },
 ]
 
 [[package]]
@@ -242,6 +264,21 @@ wheels = [
 ]
 
 [[package]]
+name = "pytrinamic"
+version = "0.2.11"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "canopen" },
+    { name = "intelhex" },
+    { name = "pyserial" },
+    { name = "python-can" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f1/0f/a652cf88c82ec31b331386ea043322e1bdde704fe6759a94fb0714569188/pytrinamic-0.2.11.tar.gz", hash = "sha256:b4639d99d0e3747c3f0daaa65c29a6ec6233bc61c122afeecebeba50b11c6f6c", size = 128948 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/55/5b/1c105b3a91dce2e4b57f77a9e814cb4db465a2b20620abefdecbc5048440/pytrinamic-0.2.11-py3-none-any.whl", hash = "sha256:8a3560e23d9f29c2c882ca3ae6e2925747d9e973e202980cf9530bff46ecec89", size = 270333 },
+]
+
+[[package]]
 name = "pywin32"
 version = "308"
 source = { registry = "https://pypi.org/simple" }
@@ -253,6 +290,17 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/c7/50/b0efb8bb66210da67a53ab95fd7a98826a97ee21f1d22949863e6d588b22/pywin32-308-cp313-cp313-win_amd64.whl", hash = "sha256:fd380990e792eaf6827fcb7e187b2b4b1cede0585e3d0c9e84201ec27b9905e4", size = 6542056 },
     { url = "https://files.pythonhosted.org/packages/26/df/2b63e3e4f2df0224f8aaf6d131f54fe4e8c96400eb9df563e2aae2e1a1f9/pywin32-308-cp313-cp313-win_arm64.whl", hash = "sha256:ef313c46d4c18dfb82a2431e3051ac8f112ccee1a34f29c263c583c568db63cd", size = 7974986 },
 ]
+
+[[package]]
+name = "trinamic-utils"
+version = "0.1.0"
+source = { virtual = "packages/trinamic-utils" }
+dependencies = [
+    { name = "pytrinamic" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "pytrinamic", specifier = ">=0.2.11" }]
 
 [[package]]
 name = "typing-extensions"
