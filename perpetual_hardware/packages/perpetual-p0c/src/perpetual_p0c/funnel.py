@@ -19,10 +19,10 @@ class FunnelOffsets(BaseModel):
     diverter_50mm_pos: float
     diverter_100mm_pos: float
     diverter_150mm_pos: float
-    belt_speed: float = -100
+    belt_speed: float = 100
     wall_speed: float = 500
-    output_transfer_conveyor_speed: float = -100
-    output_conveyor_speed: float = -300
+    output_transfer_conveyor_speed: float = 100
+    output_conveyor_speed: float = 300
 
 
 class FunnelConfiguration(BaseModel):
@@ -38,7 +38,8 @@ class FunnelConfiguration(BaseModel):
     diverter: CanAxisConfiguration
     relay_board_id: int
     offsets: FunnelOffsets
-    opposing_funnel_max_travel: float = 217.0
+    opposing_funnel_max_travel: float = 325.5
+    input_funnel_max_travel: float = 400.0
 
 
 class FunnelStatus(BaseModel):
@@ -354,7 +355,7 @@ class Funnel:
         opos -= self.offsets.funnel_cell_1_offset_x
         opos -= self.offsets.funnel_min_width
         opos = min([self._configuration.opposing_funnel_max_travel, opos])
-        #ipos = min([self._configuration.inlet_funnel_max_r, ipos])
+        ipos = min([self._configuration.input_funnel_max_travel, ipos])
         # curr_ipos = self._inlet_funnel.get_position()
         opos = max([0, opos])
         curr_opos = self._opposing_funnel.get_position()
