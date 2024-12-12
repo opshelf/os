@@ -1,9 +1,16 @@
 from can import BusABC, Message
 from typing import List
 from pydantic import BaseModel
-from .common import CanMessageIds
+from perpetual_p0c.common import CanMessageIds
 from enum import Enum
 
+def reverse_bits_in_range(num: int) -> int:
+    mask = 0b111000
+    bits = (num & mask) >> 3  # Shift them to the rightmost position (LSB)
+    reversed_bits = ((bits & 0b001) << 2) | ((bits & 0b010)) | ((bits & 0b100) >> 2)
+    num &= ~mask  # Clear positions 4-6
+    num |= (reversed_bits << 3)
+    return num
 
 class CanCommandIds(int, Enum):
     GetState = 0x01
@@ -120,7 +127,7 @@ class BoardState(BaseModel):
         if len(buffer) < 5:
             raise Exception("Invalid Response")
         return BoardState(
-            carriage=IoBoard.from_buffer(buffer[4]),
+            carriage=IoBoard.from_buffer(reverse_bits_in_range(buffer[4])),
             puller=IoBoard.from_buffer(buffer[3]),
             slots=SlotStatus.from_buffer(buffer[2]),
             inputs=InputStatus.from_buffer(buffer[1]),
@@ -191,6 +198,7 @@ class ToolBoard:
     def set_carriage(self, io: IoBoard) -> BoardState:
         buffer = [CanCommandIds.SetCarriage.value]
         buffer.extend(io.to_buffer())
+        buffer[1] = reverse_bits_in_range(buffer[1])
         response = self._run_command(self.default_message(buffer))
         state = BoardState.from_buffer(response.data)
         self._state = state
@@ -199,6 +207,7 @@ class ToolBoard:
     def mask_carriage(self, io: IoBoard) -> BoardState:
         buffer = [CanCommandIds.MaskCarriage.value]
         buffer.extend(io.to_buffer())
+        buffer[1] = reverse_bits_in_range(buffer[1])
         response = self._run_command(self.default_message(buffer))
         state = BoardState.from_buffer(response.data)
         self._state = state

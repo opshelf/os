@@ -2,6 +2,7 @@ from hardware_common.stepper_motor import StepperMotorConfig
 from pydantic import BaseModel
 from enum import Enum
 from can import BusABC, ThreadSafeBus
+from utils import get_can_devices
 
 
 class StorageModuleSide(str, Enum):
@@ -39,4 +40,5 @@ class CanMessageIds(int, Enum):
 
 
 def get_bus() -> BusABC:
-    return ThreadSafeBus(interface="pcan", channel="PCAN_USBBUS1", bitrate=1000000, fd=False)
+    can_device = get_can_devices()
+    return ThreadSafeBus(interface=can_device.CAN_INTERFACE, channel=can_device.CAN_CHANNEL, bitrate=can_device.CAN_BITRATE, fd=False)

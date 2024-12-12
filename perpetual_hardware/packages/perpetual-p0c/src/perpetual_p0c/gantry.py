@@ -6,6 +6,7 @@ from perpetual_trinamic.trinamic_axis import TrinamicAxis
 from pydantic import BaseModel
 from enum import Enum
 from typing import Optional, Any, Dict
+import atexit
 
 
 class GantryConfiguration(BaseModel):
@@ -65,6 +66,10 @@ class Gantry:
             configuration=self._config.y_axis_config, 
             max_current=6000
         )
+        atexit.register(self.cleanup)
+
+    def cleanup(self) -> None: 
+        self.stop()
 
     def status(self) -> GantryStatus:
         return GantryStatus(

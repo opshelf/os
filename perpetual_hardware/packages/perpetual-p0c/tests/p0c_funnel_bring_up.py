@@ -28,24 +28,28 @@ if __name__ == "__main__":
     ) as bus:
         print(bus)
         funnel = Funnel(bus, p0_funnel_config)
-        funnel.stop()
-        funnel.home()
+        #funnel.stop()
+        #funnel.home()
         #for i in range(0, 200, 10):
         #    funnel.inlet_funnel.move_to_position(i)
         #    funnel.inlet_funnel.wait_for_move()
         #    input()
+        #for i in range(0, 200, 10):
+        #funnel.opposing_funnel.move_to_position(0)
+        #funnel.opposing_funnel.wait_for_move()
+        
+        #funnel.inlet_funnel.home()
+        #input()
 
         #funnel._opposing_funnel.home()
-        #funnel._opposing_funnel.move_to_position(217)
-        #funnel._opposing_funnel.wait_for_move()
 
+        #funnel._inlet_funnel.home()
         #funnel._inlet_funnel.move_to_position(0)
         #funnel._inlet_funnel.wait_for_move()
         #funnel.stop()
-        time.sleep(10)
-        for slot in range(0, 4):
+        for slot in range(0, 6):
             funnel.move_to_cell(Tray(cells=6,cell_width=50, cell_depth=100), slot)
-            time.sleep(10)
+            input()
         
         #funnel.slot_1.home()
         #funnel.slot_1.move_to_position(0)

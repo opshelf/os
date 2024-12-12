@@ -1,7 +1,7 @@
 from can import BusABC, Message
 from typing import List
 from pydantic import BaseModel
-from .common import CanMessageIds
+from perpetual_p0c.common import CanMessageIds
 from enum import Enum
 
 

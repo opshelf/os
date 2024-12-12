@@ -6,10 +6,11 @@ from can import BusABC
 from perpetual_trinamic.trinamic_axis import TrinamicAxis
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
-from .tray import Tray
-from .io_board import ActuatorState, IoController
-from .tool_board import ToolBoard, IoBoard
-from .common import CanAxisConfiguration, StorageModuleSide
+from perpetual_p0c.tray import Tray
+from perpetual_p0c.io_board import ActuatorState, IoController
+from perpetual_p0c.tool_board import ToolBoard, IoBoard
+from perpetual_p0c.common import CanAxisConfiguration, StorageModuleSide
+import atexit
 
 
 class ToolOffsets(BaseModel):
@@ -76,6 +77,13 @@ class Tool:
         self._actuators_extended = False
         self._carriage_solenoids = 0
         self._puller_solenoids = 0
+        atexit.register(self.cleanup)
+
+    def cleanup(self) -> None:
+        self._puller.stop()
+        self._tool_board.set_pullers(IoBoard())
+        self._tool_board.set_carriage(IoBoard())
+    
 
     def status(self) -> ToolStatus:
         return ToolStatus(
@@ -115,19 +123,19 @@ class Tool:
 
     def set_carriage_solenoids(self, solenoids: int, side: StorageModuleSide) -> None:
         if side == "LEFT":
-            self._tool_board.set_pullers(
+            self._tool_board.set_carriage(
                 IoBoard(
-                    r1=True if solenoids > 2 else False,
-                    r2=True if solenoids > 1 else False,
-                    r3=True if solenoids > 0 else False,
+                    r1=True if solenoids >= 0 else False,
+                    r2=True if solenoids >= 1 else False,
+                    r3=True if solenoids >= 2 else False,
                 )
             )
         else:
-            self._tool_board.set_pullers(
+            self._tool_board.set_carriage(
                 IoBoard(
-                    r4=True if solenoids > 2 else False,
-                    r5=True if solenoids > 1 else False,
-                    r6=True if solenoids > 0 else False,
+                    r4=True if solenoids >= 0 else False,
+                    r5=True if solenoids >= 1 else False,
+                    r6=True if solenoids >= 2 else False,
                 )
             )
 

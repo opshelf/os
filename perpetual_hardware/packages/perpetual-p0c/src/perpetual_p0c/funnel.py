@@ -2,12 +2,13 @@ from hardware_common.stepper_motor import AbstractStepperMotor, AxisCommand
 from can import BusABC
 from perpetual_p0c.tray import Tray
 from perpetual_p0c.common import CanAxisConfiguration
+from perpetual_p0c.io_board import IoController, Wedge
 from perpetual_trinamic.trinamic_axis import TrinamicAxis, TrinamicStepper
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
 from enum import Enum
-from perpetual_p0c.io_board import IoController, Wedge
 import time
+import atexit
 
 
 class FunnelOffsets(BaseModel):
@@ -38,8 +39,10 @@ class FunnelConfiguration(BaseModel):
     diverter: CanAxisConfiguration
     relay_board_id: int
     offsets: FunnelOffsets
-    opposing_funnel_max_travel: float = 325.5
-    input_funnel_max_travel: float = 400.0
+    #opposing_funnel_max_travel: float = 325.5
+    opposing_funnel_max_travel: float = 362
+    #input_funnel_max_travel: float = 400.0
+    input_funnel_max_travel: float = 370.0
 
 
 class FunnelStatus(BaseModel):
@@ -155,6 +158,29 @@ class Funnel:
         self._output_transfer_conveyor.safety_off()
         self._slots_open = 0
         self._diverter_open = True
+        atexit.register(self.cleanup)
+
+    def __enter__(self) -> "Funnel":
+        return self
+
+    def __exit__(self) -> None:
+        self.cleanup()
+
+    def cleanup(self):
+        self._inlet_funnel.stop()
+        self._opposing_funnel.stop()
+        self._slot_1.stop()
+        self._slot_2.stop()
+        self._slot_3.stop()
+        self._belt.stop()
+        self._wall.stop()
+        self._diverter.stop()
+        self._output_transfer_conveyor.stop()
+        self._output_conveyor.stop()
+        self._belt.stop()
+        self._wall.stop()
+        self._output_transfer_conveyor.stop()
+
 
     @property
     def belt(self) -> TrinamicStepper:

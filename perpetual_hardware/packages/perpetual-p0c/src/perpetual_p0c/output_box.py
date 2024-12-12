@@ -1,7 +1,8 @@
 from can import BusABC
-from .common import CanAxisConfiguration
+from perpetual_p0c.common import CanAxisConfiguration
 from perpetual_trinamic.trinamic_axis import TrinamicAxis
 from pydantic import BaseModel
+import atexit
 
 
 class OutputBoxOffsets(BaseModel):
@@ -22,6 +23,10 @@ class OutputBox:
             motor_id=0,
             configuration=configuration.door.configuration,
         )
+        atexit.register(self.cleanup)
+
+    def cleanup(self) -> None:
+        self._door.stop()
 
     @property
     def configuration(self) -> OutputBoxConfiguration:
