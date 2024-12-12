@@ -12,6 +12,22 @@ class CanCommandIds(int, Enum):
     ResetValves = 0x04
     SetAllValves = 0x05
 
+class SensorState(BaseModel):
+    output_conveyor: bool = False
+    input_conveyor: bool = False
+    output_transfer_conveyor: bool = False
+    funnel_input: bool = False
+    output_box: bool = False
+
+    @staticmethod
+    def from_buffer(value: int) -> "SensorState":
+        return SensorState(
+            output_conveyor=bool(value & 0x01),
+            input_conveyor=bool(value & 0x02),
+            output_transfer_conveyor=bool(value & 0x04),
+            funnel_input=bool(value & 0x08),
+            output_box=bool(value & 0x10),
+        )
 
 class Wedge(BaseModel):
     wedge_1: bool = False
