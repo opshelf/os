@@ -39,9 +39,9 @@ class FunnelConfiguration(BaseModel):
     diverter: CanAxisConfiguration
     relay_board_id: int
     offsets: FunnelOffsets
-    #opposing_funnel_max_travel: float = 325.5
+    # opposing_funnel_max_travel: float = 325.5
     opposing_funnel_max_travel: float = 362
-    #input_funnel_max_travel: float = 400.0
+    # input_funnel_max_travel: float = 400.0
     input_funnel_max_travel: float = 370.0
 
 
@@ -140,18 +140,18 @@ class Funnel:
             motor_id=0,
         )
         self._output_transfer_conveyor = TrinamicStepper(
-           bus,
-           module_id=funnel_configuration.output_transfer_conveyor.can_id,
-           configuration=funnel_configuration.output_transfer_conveyor.configuration,
-           motor_id=0,
-           max_current=6000
+            bus,
+            module_id=funnel_configuration.output_transfer_conveyor.can_id,
+            configuration=funnel_configuration.output_transfer_conveyor.configuration,
+            motor_id=0,
+            max_current=6000,
         )
         self._output_conveyor = TrinamicStepper(
-           bus,
-           module_id=funnel_configuration.output_conveyor.can_id,
-           configuration=funnel_configuration.output_conveyor.configuration,
-           motor_id=0,
-            max_current=6000
+            bus,
+            module_id=funnel_configuration.output_conveyor.can_id,
+            configuration=funnel_configuration.output_conveyor.configuration,
+            motor_id=0,
+            max_current=6000,
         )
         self._belt.safety_off()
         self._wall.safety_off()
@@ -166,7 +166,7 @@ class Funnel:
     def __exit__(self) -> None:
         self.cleanup()
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         self._inlet_funnel.stop()
         self._opposing_funnel.stop()
         self._slot_1.stop()
@@ -181,7 +181,6 @@ class Funnel:
         self._wall.stop()
         self._output_transfer_conveyor.stop()
 
-
     @property
     def belt(self) -> TrinamicStepper:
         return self._belt
@@ -192,24 +191,23 @@ class Funnel:
 
     @property
     def output_transfer_conveyor(self) -> TrinamicStepper:
-       return self._output_transfer_conveyor
+        return self._output_transfer_conveyor
 
     def output_transfer_conveyor_rotate(self, speed: int = -600) -> None:
-       self._output_transfer_conveyor.rotate(speed)
+        self._output_transfer_conveyor.rotate(speed)
 
     def output_transfer_conveyor_stop(self) -> None:
-       self._output_transfer_conveyor.stop()
-
+        self._output_transfer_conveyor.stop()
 
     @property
     def output_conveyor(self) -> TrinamicStepper:
-       return self._output_conveyor
+        return self._output_conveyor
 
     def output_conveyor_rotate(self, speed: int = -600) -> None:
-       self._output_conveyor.rotate(speed)
+        self._output_conveyor.rotate(speed)
 
     def output_conveyor_stop(self) -> None:
-       self._output_transfer_conveyor.stop()
+        self._output_transfer_conveyor.stop()
 
     def stop_belt(self) -> None:
         self._belt.stop()
@@ -239,7 +237,9 @@ class Funnel:
     def start_output_transfer(self) -> None:
         self._output_transfer_conveyor.initialize()
         self._output_transfer_conveyor.safety_off()
-        self._output_transfer_conveyor.rotate(int(self._configuration.offsets.output_transfer_conveyor_speed))
+        self._output_transfer_conveyor.rotate(
+            int(self._configuration.offsets.output_transfer_conveyor_speed)
+        )
 
     @property
     def offsets(self) -> FunnelOffsets:
@@ -249,8 +249,8 @@ class Funnel:
     def offsets(self, offsets: FunnelOffsets) -> None:
         self._configuration.offsets = offsets
 
-    #@property
-    #def slots(self) -> ToolRelayController:
+    # @property
+    # def slots(self) -> ToolRelayController:
     #    return self._slots
     @property
     def io(self) -> IoController:
@@ -272,12 +272,8 @@ class Funnel:
 
     def close_slots(self) -> None:
         self._slots_open = 0
-        #self._slots.set_relays(GenericRelayBoardMessage(r2=True, r3=True, r4=True))
-        self._io.set_wedges(Wedge(
-            wedge_1=True,
-            wedge_2=True,
-            wedge_3=True
-        ))
+        # self._slots.set_relays(GenericRelayBoardMessage(r2=True, r3=True, r4=True))
+        self._io.set_wedges(Wedge(wedge_1=True, wedge_2=True, wedge_3=True))
 
     def open_all_slots(self) -> None:
         self._io.set_wedges(Wedge())

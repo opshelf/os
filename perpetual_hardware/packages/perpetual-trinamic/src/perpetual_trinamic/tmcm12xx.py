@@ -3,7 +3,6 @@ from can import BusABC, BufferedReader
 from typing import Optional
 
 
-
 class TMCM12xx(TMCM):
     def __init__(
         self,
@@ -13,7 +12,7 @@ class TMCM12xx(TMCM):
         motor_id: int = 0,
         max_current: int = 3000,
     ):
-        #TMCM12xx.__init__(self, connection, reader, module_id, motor_id, max_current)
+        # TMCM12xx.__init__(self, connection, reader, module_id, motor_id, max_current)
         super().__init__(connection, reader, module_id, motor_id)
         self._module_id = module_id
         self._motor_id = motor_id

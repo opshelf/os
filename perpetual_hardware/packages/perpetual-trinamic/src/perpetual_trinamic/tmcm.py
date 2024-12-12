@@ -63,12 +63,12 @@ class MoveType(IntEnum):
 
 class TMCM:
     def __init__(
-            self, 
-            connection: BusABC, 
-            reader: Optional[BufferedReader] = None,
-            module_id: int = 1, 
-            motor_id: int = 0
-        ) -> None:
+        self,
+        connection: BusABC,
+        reader: Optional[BufferedReader] = None,
+        module_id: int = 1,
+        motor_id: int = 0,
+    ) -> None:
         self._connection = connection
         self._reader = reader
         self._module_id = module_id & 0xFF

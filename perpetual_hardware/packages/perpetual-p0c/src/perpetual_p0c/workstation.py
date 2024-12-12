@@ -16,11 +16,7 @@ class WorkstationConfiguration(BaseModel):
 
 
 class Workstation:
-    def __init__(
-        self, 
-        bus: BusABC, 
-        configuration: WorkstationConfiguration
-        ):
+    def __init__(self, bus: BusABC, configuration: WorkstationConfiguration):
         self._configuration = configuration
         self._output_box = OutputBox(bus, self._configuration.outputbox_configuration)
         self._input_belt = TrinamicAxis(
@@ -41,7 +37,7 @@ class Workstation:
         self._output_belt.stop()
         self._input_belt.stop()
 
-    def home(self):
+    def home(self) -> None:
         self.home_output()
         self.input_belt.initialize()
         self.output_belt.initialize()
@@ -49,7 +45,7 @@ class Workstation:
     @property
     def configuration(self) -> WorkstationConfiguration:
         return self._configuration
-    
+
     @configuration.setter
     def configuration(self, configuration: WorkstationConfiguration) -> None:
         self._configuration = configuration
@@ -65,7 +61,6 @@ class Workstation:
     @property
     def output_belt(self) -> TrinamicAxis:
         return self._output_belt
-
 
     def start_input_belt(self) -> None:
         self.input_belt.initialize()

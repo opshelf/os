@@ -48,7 +48,7 @@ class P0Robot:
         self.gantry.stop()
 
     def init(self) -> None:
-        self._tool.set_slot_solenoids(0)
+        self._tool.set_slot_bits(0)
         self._tool.set_carriage_solenoids(0, StorageModuleSide.LEFT)
         self._tool.set_carriage_solenoids(0, StorageModuleSide.RIGHT)
         self._tool.actuators(False)
@@ -102,7 +102,7 @@ class P0Robot:
         self.place_tray(tray_location, side)
 
     def drop_item(self, tray: Tray, index: int) -> None:
-        self._tool.set_slot_solenoids(0)
+        self._tool.set_slot_bits(0)
         self._funnel.catch()
         self._tool.set_solenoids(tray, index)
         self._tool.actuators(True)
@@ -110,7 +110,7 @@ class P0Robot:
         self.move_gantry_to_clear(tray)
         self._tool.actuators(False)
         time.sleep(2)
-        self._tool.set_slot_solenoids(0)
+        self._tool.set_slot_bits(0)
 
     def move_gantry_to_input(self, tray: Tray) -> None:
         gantry_position = self._gantry.position

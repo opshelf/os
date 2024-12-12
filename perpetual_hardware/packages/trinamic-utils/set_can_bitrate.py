@@ -40,5 +40,5 @@ if __name__ == "__main__":
     with ConnectionManager().connect() as my_interface:
         module = TMCM1240(my_interface)
         print(module.get_global_parameter(module.GP0.CANBitRate, 0))
-        module.set_global_parameter(module.GP0.CANBitRate, 0,7)
+        module.set_global_parameter(module.GP0.CANBitRate, 0, 7)
         print(module.get_global_parameter(module.GP0.CANBitRate, 0))

@@ -44,7 +44,7 @@ if __name__ == "__main__":
         print("CURRENT BIT RATE: ", module.get_global_parameter(module.GP0.CANBitRate, 0))
         module.set_global_parameter(module.GP0.CANreceiveID, 0, CAN_ID)
         module.set_global_parameter(module.GP0.CANsendID, 0, CAN_ID)
-        module.set_global_parameter(module.GP0.CANBitRate, 0,7)
+        module.set_global_parameter(module.GP0.CANBitRate, 0, 7)
         print("NEW RECEIVE ID: ", module.get_global_parameter(module.GP0.CANreceiveID, 0))
         print("NEW SEND ID: ", module.get_global_parameter(module.GP0.CANsendID, 0))
         print("NEW BIT RATE: ", module.get_global_parameter(module.GP0.CANBitRate, 0))

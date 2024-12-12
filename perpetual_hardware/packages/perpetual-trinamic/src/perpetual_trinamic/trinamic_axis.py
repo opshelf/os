@@ -98,7 +98,7 @@ class TrinamicStepper(TMCM12xx):
         self._status = StepperMotorStatus.GOOD
 
     def rotate(self, value: int) -> None:
-        if self._configuration.invert_coordinates: 
+        if self._configuration.invert_coordinates:
             if value > 0:
                 self.rotate_left(self._configuration.convert_mms_ps(value))
             else:
@@ -241,14 +241,14 @@ class TrinamicAxis(AbstractStepperMotor, TMCM12xx):
         TMCM12xx.__init__(self, connection, reader, module_id, motor_id, max_current)
         self._connection = connection
         self._reader = reader
-        #def __init__(
+        # def __init__(
         #    self,
         #    connection: BusABC,
         #    module_id: int,
         #    motor_id: int,
         #    configuration: StepperMotorConfig,
         #    max_current: int = 3000,
-        #) -> None:
+        # ) -> None:
         #    TMCM12xx.__init__(self, connection, module_id, motor_id, max_current)
         #    self._connection = connection
         self._module_id = module_id
@@ -323,7 +323,7 @@ class TrinamicAxis(AbstractStepperMotor, TMCM12xx):
         self._status = StepperMotorStatus.GOOD
 
     def rotate(self, value: int) -> None:
-        if self._configuration.invert_coordinates: 
+        if self._configuration.invert_coordinates:
             if value > 0:
                 self.rotate_left(abs(self._configuration.convert_mms_ps(value)))
             else:

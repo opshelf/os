@@ -4,13 +4,15 @@ from pydantic import BaseModel
 from perpetual_p0c.common import CanMessageIds
 from enum import Enum
 
+
 def reverse_bits_in_range(num: int) -> int:
     mask = 0b111000
     bits = (num & mask) >> 3  # Shift them to the rightmost position (LSB)
-    reversed_bits = ((bits & 0b001) << 2) | ((bits & 0b010)) | ((bits & 0b100) >> 2)
+    reversed_bits = ((bits & 0b001) << 2) | (bits & 0b010) | ((bits & 0b100) >> 2)
     num &= ~mask  # Clear positions 4-6
-    num |= (reversed_bits << 3)
+    num |= reversed_bits << 3
     return num
+
 
 class CanCommandIds(int, Enum):
     GetState = 0x01

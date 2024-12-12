@@ -53,22 +53,22 @@ class Gantry:
     def __init__(self, bus: BusABC, config: GantryConfiguration):
         self._config = config
         self._x_axis = TrinamicAxis(
-            bus, 
-            module_id=self._config.x_axis_id, 
-            motor_id=0, 
-            configuration=self._config.x_axis_config, 
-            max_current=6000
+            bus,
+            module_id=self._config.x_axis_id,
+            motor_id=0,
+            configuration=self._config.x_axis_config,
+            max_current=6000,
         )
         self._y_axis = TrinamicAxis(
-            bus, 
-            module_id=self._config.y_axis_id, 
-            motor_id=0, 
-            configuration=self._config.y_axis_config, 
-            max_current=6000
+            bus,
+            module_id=self._config.y_axis_id,
+            motor_id=0,
+            configuration=self._config.y_axis_config,
+            max_current=6000,
         )
         atexit.register(self.cleanup)
 
-    def cleanup(self) -> None: 
+    def cleanup(self) -> None:
         self.stop()
 
     def status(self) -> GantryStatus:

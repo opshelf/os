@@ -83,7 +83,6 @@ class Tool:
         self._puller.stop()
         self._tool_board.set_pullers(IoBoard())
         self._tool_board.set_carriage(IoBoard())
-    
 
     def status(self) -> ToolStatus:
         return ToolStatus(

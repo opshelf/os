@@ -41,7 +41,7 @@ def test_puller(tool: Tool) -> None:
         tool.actuators(False)
         input()
 
-def test_carriage(tool: Tool):
+def test_carriage(tool: Tool) -> None:
     for i in range(0,3):
         print(f"Left Side: {i}")
         tool.set_carriage_solenoids(i, StorageModuleSide.LEFT)

@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from typing import Any, Optional, List
 import re
 import subprocess
+from can import BusABC, ThreadSafeBus
 
 # DEFAULT_CAN_RATE = 1000000
 DEFAULT_CAN_RATE = 500000
@@ -93,3 +94,13 @@ def get_can_devices() -> CanConfig:
         return serial_can[0]
     else:
         raise Exception("No Can Devices Available")
+
+
+def get_bus() -> BusABC:
+    can_device = get_can_devices()
+    return ThreadSafeBus(
+        interface=can_device.CAN_INTERFACE,
+        channel=can_device.CAN_CHANNEL,
+        bitrate=can_device.CAN_BITRATE,
+        fd=False,
+    )

@@ -2,7 +2,6 @@ from hardware_common.stepper_motor import StepperMotorConfig
 from pydantic import BaseModel
 from enum import Enum
 from can import BusABC, ThreadSafeBus
-from utils import get_can_devices
 
 
 class StorageModuleSide(str, Enum):
@@ -37,8 +36,3 @@ class CanMessageIds(int, Enum):
     IO_IN_CONVEYOR = 135
     IO_OUT_CONVEYOR = 136
     OUTPUT_BOX = 137
-
-
-def get_bus() -> BusABC:
-    can_device = get_can_devices()
-    return ThreadSafeBus(interface=can_device.CAN_INTERFACE, channel=can_device.CAN_CHANNEL, bitrate=can_device.CAN_BITRATE, fd=False)
