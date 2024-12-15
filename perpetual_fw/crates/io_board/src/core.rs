@@ -1,3 +1,5 @@
+use defmt::Format;
+
 pub fn get_number_of_bits(value: u8) -> u8 {
     let mut accum = 0;
     for i in 0..8 {
@@ -12,7 +14,7 @@ pub fn valid_number_of_bits(value: u8, max_bits: u8) -> bool {
     get_number_of_bits(value) <= max_bits
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Format)]
 #[repr(u8)]
 pub enum CanCommandIds {
     GetState = 0x01,
@@ -20,6 +22,8 @@ pub enum CanCommandIds {
     SetActuators = 0x03,
     ResetValves = 0x04,
     SetAllValves = 0x05,
+    GetSensors = 0x06,
+    ClearState = 0x07,
 }
 
 impl CanCommandIds {
@@ -30,6 +34,8 @@ impl CanCommandIds {
             0x03 => Some(CanCommandIds::SetActuators),
             0x04 => Some(CanCommandIds::ResetValves),
             0x05 => Some(CanCommandIds::SetAllValves),
+            0x06 => Some(CanCommandIds::GetSensors),
+            0x07 => Some(CanCommandIds::ClearState),
             _ => None,
         }
     }
@@ -40,6 +46,7 @@ impl CanCommandIds {
 pub enum CanResponseIds {
     Invalid = 0x00,
     State = 0x01,
+    Sensors = 0x02,
 }
 
 pub enum Messages {
@@ -48,12 +55,47 @@ pub enum Messages {
     SetActuators(bool),
     ResetValves,
     SetAllValves,
+    GetSensors,
+    ClearState,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Format)]
 pub struct BoardState {
     pub wedges: u8,
     pub actuators: bool,
+}
+
+#[derive(Debug, Copy, Clone, Format)]
+pub struct Sensors {
+    pub output_conveyor: bool,
+    pub input_conveyor: bool,
+    pub output_transfer_conveyor: bool,
+    pub funnel_input: bool,
+    pub output_box: bool,
+}
+
+impl Sensors {
+    pub fn as_u8(&self) -> u8 {
+        let mut data = 0u8;
+        data |= (self.output_conveyor as u8) << 0;
+        data |= (self.input_conveyor as u8) << 1;
+        data |= (self.output_transfer_conveyor as u8) << 2;
+        data |= (self.funnel_input as u8) << 3;
+        data |= (self.output_box as u8) << 4;
+        data
+    }
+}
+
+impl core::default::Default for Sensors {
+    fn default() -> Sensors {
+        Self {
+            output_conveyor: false,
+            input_conveyor: false,
+            output_transfer_conveyor: false,
+            funnel_input: false,
+            output_box: false,
+        }
+    }
 }
 
 impl Messages {
@@ -65,6 +107,9 @@ impl Messages {
             match msg_id {
                 CanCommandIds::GetState => {
                     return Some(Messages::GetState);
+                }
+                CanCommandIds::GetSensors => {
+                    return Some(Messages::GetSensors);
                 }
                 CanCommandIds::SetWedges => {
                     if frame.len() < 2 {
@@ -84,6 +129,7 @@ impl Messages {
                 CanCommandIds::SetAllValves => {
                     return Some(Messages::SetAllValves);
                 }
+                CanCommandIds::ClearState => return Some(Messages::ClearState),
             }
         } else {
             return None;
@@ -93,6 +139,7 @@ impl Messages {
 
 pub enum Responses {
     State(BoardState),
+    Sensors(Option<Sensors>),
     Invalid,
 }
 
@@ -106,7 +153,23 @@ impl Responses {
                 data[2] = board_state.actuators as u8;
                 data
             }
-            Self::Invalid => [0; 8],
+            Self::Sensors(maybe_sensors) => match maybe_sensors {
+                Some(sensors) => {
+                    let mut data = [0u8; 8];
+                    data[0] = CanResponseIds::Sensors as u8;
+                    data[1] = sensors.as_u8();
+                    data[2] = 1;
+                    data
+                }
+                None => {
+                    let mut data = [0u8; 8];
+                    data[0] = CanResponseIds::Sensors as u8;
+                    data[1] = 0;
+                    data[2] = 0;
+                    data
+                }
+            },
+            Self::Invalid => [0u8; 8],
         }
     }
 }

@@ -1,13 +1,15 @@
 use embassy_executor::Spawner;
+use embassy_futures::select::Either5;
 use embassy_stm32::can::{enums::BusError, frame::Envelope, Frame};
-use embassy_stm32::gpio::{Level, Output, Speed};
+use embassy_stm32::exti::ExtiInput;
+use embassy_stm32::gpio::{Level, Output, Pull, Speed};
 use embassy_stm32::Config;
 use embassy_stm32::{bind_interrupts, can, peripherals};
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, ThreadModeRawMutex};
 use embassy_sync::channel::Channel;
 use static_cell::StaticCell;
 
-use crate::core::{BoardState, Messages, Responses};
+use crate::core::{BoardState, Messages, Responses, Sensors};
 
 pub struct IoBoard<'a> {
     // Wedge 1
@@ -29,6 +31,171 @@ bind_interrupts!(struct Irqs {
 
 static COMMAND_CHANNEL: Channel<ThreadModeRawMutex, Messages, 64> = Channel::new();
 static RESPONSE_CHANNEL: Channel<ThreadModeRawMutex, Responses, 64> = Channel::new();
+static SENSOR_CHANNEL: Channel<ThreadModeRawMutex, Sensors, 64> = Channel::new();
+
+#[embassy_executor::task]
+async fn break_beam_monitor(
+    mut input_1: ExtiInput<'static>,
+    mut input_2: ExtiInput<'static>,
+    mut input_3: ExtiInput<'static>,
+    mut input_4: ExtiInput<'static>,
+    mut input_5: ExtiInput<'static>,
+) -> ! {
+    loop {
+        let result = embassy_futures::select::select5(
+            input_1.wait_for_falling_edge(),
+            input_2.wait_for_falling_edge(),
+            input_3.wait_for_falling_edge(),
+            input_4.wait_for_falling_edge(),
+            input_5.wait_for_falling_edge(),
+        )
+        .await;
+        const DEBOUNCE: u64 = 10;
+        let beam_value = match result {
+            Either5::First(_) => {
+                //defmt::info!("Input1");
+                let t0 = embassy_time::Instant::now();
+                let mut invalid = false;
+                while (embassy_time::Instant::now() - t0).as_millis() < DEBOUNCE {
+                    if input_1.is_high() {
+                        invalid = true;
+                        break;
+                    }
+                    embassy_time::Timer::after_millis(1).await;
+                }
+                if invalid {
+                    None
+                } else {
+                    input_1.wait_for_high().await;
+                    Some(Sensors {
+                        output_conveyor: true,
+                        ..Default::default()
+                    })
+                }
+            }
+            Either5::Second(_) => {
+                //defmt::info!("Input2");
+                //input_2.wait_for_high().await;
+                //Sensors {
+                //    input_conveyor: true,
+                //    ..Default::default()
+                //}
+
+                let t0 = embassy_time::Instant::now();
+                let mut invalid = false;
+                while (embassy_time::Instant::now() - t0).as_millis() < DEBOUNCE {
+                    if input_2.is_high() {
+                        invalid = true;
+                        break;
+                    }
+                    embassy_time::Timer::after_millis(1).await;
+                }
+                if invalid {
+                    None
+                } else {
+                    input_2.wait_for_high().await;
+                    Some(Sensors {
+                        input_conveyor: true,
+                        ..Default::default()
+                    })
+                }
+            }
+            Either5::Third(_) => {
+                //defmt::info!("Input3");
+                //input_3.wait_for_high().await;
+                //Sensors {
+                //    output_transfer_conveyor: true,
+                //    ..Default::default()
+                //}
+                let t0 = embassy_time::Instant::now();
+                let mut invalid = false;
+                while (embassy_time::Instant::now() - t0).as_millis() < DEBOUNCE {
+                    if input_3.is_high() {
+                        invalid = true;
+                        break;
+                    }
+                    embassy_time::Timer::after_millis(1).await;
+                }
+                if invalid {
+                    None
+                } else {
+                    input_3.wait_for_high().await;
+                    Some(Sensors {
+                        output_transfer_conveyor: true,
+                        ..Default::default()
+                    })
+                }
+            }
+            Either5::Fourth(_) => {
+                //defmt::info!("Input4");
+                //input_4.wait_for_high().await;
+                //Sensors {
+                //    funnel_input: true,
+                //    ..Default::default()
+                //}
+                let t0 = embassy_time::Instant::now();
+                let mut invalid = false;
+                while (embassy_time::Instant::now() - t0).as_millis() < DEBOUNCE {
+                    if input_4.is_high() {
+                        invalid = true;
+                        break;
+                    }
+                    embassy_time::Timer::after_millis(1).await;
+                }
+                if invalid {
+                    None
+                } else {
+                    input_4.wait_for_high().await;
+                    Some(Sensors {
+                        funnel_input: true,
+                        ..Default::default()
+                    })
+                }
+            }
+            Either5::Fifth(_) => {
+                //defmt::info!("Input5");
+                //input_5.wait_for_high().await;
+                //Sensors {
+                //    output_box: true,
+                //    ..Default::default()
+                //}
+                let t0 = embassy_time::Instant::now();
+                let mut invalid = false;
+                while (embassy_time::Instant::now() - t0).as_millis() < DEBOUNCE {
+                    if input_5.is_high() {
+                        invalid = true;
+                        break;
+                    }
+                    embassy_time::Timer::after_millis(1).await;
+                }
+                if invalid {
+                    None
+                } else {
+                    input_5.wait_for_high().await;
+                    Some(Sensors {
+                        output_box: true,
+                        ..Default::default()
+                    })
+                }
+            }
+        };
+        defmt::info!("{:?}", beam_value);
+        // Debounce
+        if let Some(bv) = beam_value {
+            SENSOR_CHANNEL.send(bv).await;
+        }
+
+        //defmt::info!(
+        //    "{} {} {} {} {}",
+        //    input_1.is_low(),
+        //    input_2.is_low(),
+        //    input_3.is_low(),
+        //    input_4.is_low(),
+        //    input_5.is_low()
+        //);
+        //embassy_time::Timer::after_millis(100).await
+    }
+}
 
 #[embassy_executor::task]
 async fn can_receive_task(
@@ -39,7 +206,6 @@ async fn can_receive_task(
         let res = can.read().await;
         if let Ok(ref e) = res {
             if *e.frame.id() == can_id {
-                defmt::info!("{:?}", e.frame.data());
                 if let Some(msg) = Messages::from_can_frame(e.frame.data()) {
                     COMMAND_CHANNEL.send(msg).await;
                     let response = RESPONSE_CHANNEL.receive().await;
@@ -80,15 +246,29 @@ impl<'a> IoBoard<'a> {
         );
         let _ = spawner.spawn(can_receive_task(can_id, buffered_can));
 
-        //let wedge_1 = Output::new(p.PC5, Level::Low, Speed::Low);
-        //let wedge_2 = Output::new(p.PA10, Level::Low, Speed::Low);
-        //let wedge_3 = Output::new(p.PC4, Level::Low, Speed::Low);
-        //let actuators = Output::new(p.PB3, Level::Low, Speed::Low);
-
         let actuators = Output::new(p.PC5, Level::Low, Speed::Low);
         let wedge_1 = Output::new(p.PB3, Level::Low, Speed::Low);
         let wedge_2 = Output::new(p.PA10, Level::Low, Speed::Low);
         let wedge_3 = Output::new(p.PC4, Level::Low, Speed::Low);
+
+        // Output Conveyor
+        let input_1 = ExtiInput::new(p.PB10, p.EXTI10, Pull::Up);
+
+        // Input Conveyor
+        let input_2 = ExtiInput::new(p.PA8, p.EXTI8, Pull::Up);
+
+        // Output Transfer Conveyor
+        let input_3 = ExtiInput::new(p.PA9, p.EXTI9, Pull::Up);
+
+        // Funnel Input
+        let input_4 = ExtiInput::new(p.PC7, p.EXTI7, Pull::Up);
+
+        // Output Box
+        let input_5 = ExtiInput::new(p.PB6, p.EXTI6, Pull::Up);
+
+        let _ = spawner.spawn(break_beam_monitor(
+            input_1, input_2, input_3, input_4, input_5,
+        ));
 
         Self {
             wedge_1,
@@ -156,6 +336,10 @@ impl<'a> IoBoard<'a> {
     pub fn handle_message(&mut self, msg: Messages) -> Responses {
         match msg {
             Messages::GetState => Responses::State(self.get_state()),
+            Messages::GetSensors => match SENSOR_CHANNEL.try_receive() {
+                Ok(res) => Responses::Sensors(Some(res)),
+                _ => Responses::Sensors(None),
+            },
             Messages::SetWedges(state) => {
                 self.set_wedges(state);
                 Responses::State(self.get_state())
@@ -171,6 +355,10 @@ impl<'a> IoBoard<'a> {
             Messages::SetAllValves => {
                 self.set_all_valves();
                 Responses::State(self.get_state())
+            }
+            Messages::ClearState => {
+                while let Ok(_) = SENSOR_CHANNEL.try_receive() {}
+                Responses::Sensors(None)
             }
         }
     }

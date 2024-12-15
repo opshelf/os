@@ -1,5 +1,6 @@
 use bitfield::bitfield;
-use defmt::Format;
+
+const SOLENOID_BIT_MIASK: u8 = 0b00111111;
 
 pub fn get_number_of_bits(value: u8) -> u8 {
     let mut accum = 0;
@@ -184,7 +185,7 @@ impl Messages {
             } else if frame.len() < 2 {
                 None
             } else {
-                let data = frame[1] & 0b11111100;
+                let data = frame[1] & SOLENOID_BIT_MIASK;
                 if valid_number_of_bits(data, 3) {
                     match msg_id {
                         CanCommandIds::SetPullers => {

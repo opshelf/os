@@ -57,9 +57,6 @@ bind_interrupts!(struct Irqs {
     I2C3_ER => i2c::ErrorInterruptHandler<peripherals::I2C3>;
 });
 
-//static COMMAND_CHANNEL: Channel<ThreadModeRawMutex, [u8; 8], 64> = Channel::new();
-//static RESPONSE_CHANNEL: Channel<ThreadModeRawMutex, [u8; 8], 64> = Channel::new();
-
 static COMMAND_CHANNEL: Channel<ThreadModeRawMutex, Messages, 64> = Channel::new();
 static RESPONSE_CHANNEL: Channel<ThreadModeRawMutex, Responses, 64> = Channel::new();
 
@@ -78,8 +75,6 @@ async fn can_receive_task(
                 if let Some(msg) = Messages::from_can_frame(e.frame.data()) {
                     COMMAND_CHANNEL.send(msg).await;
                     let response = RESPONSE_CHANNEL.receive().await;
-                    defmt::info!("{:?}", response.into_can_frame());
-                    defmt::info!("{:?}", &response.into_can_frame());
                     can.write(Frame::new_data(can_id, &response.into_can_frame()).unwrap())
                         .await;
                 } else {
@@ -98,9 +93,9 @@ impl<'a> ToolBoard<'a> {
         let p = embassy_stm32::init(config);
         let mut can = can::CanConfigurator::new(p.FDCAN1, p.PA11, p.PA12, Irqs);
         let mut filter = can::filter::StandardFilter::default();
-        filter.filter = embassy_stm32::can::filter::FilterType::DedicatedSingle(
-            embedded_can::StandardId::new(100).unwrap(),
-        );
+        //filter.filter = embassy_stm32::can::filter::FilterType::DedicatedSingle(
+        //    embedded_can::StandardId::new(100).unwrap(),
+        //);
         can.properties()
             .set_standard_filter(can::filter::StandardFilterSlot::_0, filter);
         //can.set_bitrate(1_000_000);
@@ -193,6 +188,11 @@ impl<'a> ToolBoard<'a> {
         //    spi_2_config,
         //);
         //tmc5130.clear_en();
+        //let input_1 = Input(p.PA9, Pull::Up);
+        //let input_2 = Input(p.PC7, Pull::Up);
+        //let input_3 = Input(p.PB6, Pull::Up);
+        //let input_4 = Input(p.PA7, Pull::Up);
+        //let input_5 = Input(p.PA6, Pull::Up);
 
         Self {
             driver_refr,
@@ -226,8 +226,6 @@ impl<'a> ToolBoard<'a> {
         let backward_actuator = self.actuator_limit_2.is_high();
         let left_beam = self.side_break_beam_1.is_high();
         let right_beam = self.side_break_beam_2.is_high();
-        defmt::info!("Left Beam: {}", left_beam);
-        defmt::info!("Right Beam: {}", right_beam);
         let mut inputs = Inputs(0);
 
         if right_presence {
@@ -279,6 +277,7 @@ impl<'a> ToolBoard<'a> {
     pub async fn run(&mut self) -> ! {
         let config = Port::from_bits(0xFFFF).unwrap();
         let _ = self.io.write_config(config).await;
+
         //let mut pos: i32 = 1000;
         //let res = self
         //    .trinamic
@@ -292,14 +291,16 @@ impl<'a> ToolBoard<'a> {
         //    .trinamic
         //    .write_u32(tmc5130::registers::Registers::D1, 1000)
         //    .await;
-        let _ = self
+        let result = self
             .puller
             .set_all_directions(mcp23s08::Direction::Output)
             .await;
-        let _ = self
+        defmt::info!("Result: {:?}", result);
+        let result = self
             .carriage
             .set_all_directions(mcp23s08::Direction::Output)
             .await;
+        defmt::info!("Result: {:?}", result);
         //let result = self.puller.read_iodir().await;
         //defmt::info!("IODIR {:?}", result);
         //let result = self.puller.read_ipol().await;
@@ -340,11 +341,11 @@ impl<'a> ToolBoard<'a> {
                     match cmd {
                         crate::core::CarriageCommands::SetCarriage(value) => {
                             self.carriage_state = value.0;
-                            self.set_pullers().await;
+                            self.set_carriage().await;
                         }
                         crate::core::CarriageCommands::MaskCarriage(value) => {
                             self.carriage_state |= value.0;
-                            self.set_pullers().await;
+                            self.set_carriage().await;
                         }
                     };
                     let board_state = self.get_state().await;
@@ -352,85 +353,30 @@ impl<'a> ToolBoard<'a> {
                 }
             };
 
-            // defmt::info!("Setting 255");
-            // let result = self.carriage.set_gpio(255).await;
-            // defmt::info!("{:?}", result);
-            // let result = self.carriage.set_olat(255).await;
-            // defmt::info!("{:?}", result);
-            // embassy_time::Timer::after_millis(1000).await;
+            /*
+            defmt::info!("Setting 255");
+            let result = self.carriage.set_gpio(255).await;
+            let result = self.puller.set_gpio(255).await;
+            defmt::info!("{:?}", result);
+            let result = self.carriage.set_olat(255).await;
+            let result = self.puller.set_olat(255).await;
+            defmt::info!("{:?}", result);
 
-            ////let _result = self.puller.set_gpio(0).await;
-            ////let _result = self.puller.set_olat(0).await;
-            //defmt::info!("Setting 0");
-            //let result = self.carriage.set_gpio(0).await;
-            //defmt::info!("{:?}", result);
-            //let result = self.carriage.set_olat(0).await;
-            //defmt::info!("{:?}", result);
-            //embassy_time::Timer::after_millis(1000).await;
-            /*
-            defmt::info!(
-                "{} {} {} {} {} {}",
-                self.driver_refr.is_high(),
-                self.driver_refl.is_high(),
-                self.actuator_limit_1.is_high(),
-                self.actuator_limit_2.is_high(),
-                self.side_break_beam_1.is_high(),
-                self.side_break_beam_2.is_high(),
-            );
-            let io_status = self
-                .io
-                .read_port(tca9535::registers::Registers::INPUT_PORT0)
-                .await;
-            let status = io_status.unwrap_or(Port::from_bits(0xAAFF).unwrap());
-            defmt::info!("{:?}", status.bits().to_be_bytes());
+            // //let result = self.puller.set_gpio(255).await;
+            // //defmt::info!("{:?}", result);
+            // //let result = self.puller.set_olat(255).await;
+            // //defmt::info!("{:?}", result);
+
+            embassy_time::Timer::after_millis(1000).await;
+            defmt::info!("Setting 0");
+            let result = self.carriage.set_gpio(0).await;
+            let result = self.puller.set_gpio(0).await;
+            defmt::info!("{:?}", result);
+            let result = self.carriage.set_olat(0).await;
+            let result = self.puller.set_olat(0).await;
+            defmt::info!("{:?}", result);
+            embassy_time::Timer::after_millis(1000).await;
             */
-            /*
-            let res = self
-                .trinamic
-                .read_register(tmc5130::registers::Registers::X_ENC)
-                .await;
-            defmt::info!("X ENC: {:?}", res);
-            let res = self
-                .trinamic
-                .read_register(tmc5130::registers::Registers::GSTAT)
-                .await;
-            defmt::info!("GSTAT: {:?}", res);
-            let res = self
-                .trinamic
-                .read_register(tmc5130::registers::Registers::GCONF)
-                .await;
-            defmt::info!("GCONF: {:?}", res);
-            let res = self
-                .trinamic
-                .read_register(tmc5130::registers::Registers::IHOLD_IRUN)
-                .await;
-            defmt::info!("IHOLD_IRUN: {:?}", res);
-            if let Ok(res) = self
-                .trinamic
-                .read_i32(tmc5130::registers::Registers::X_COMPARE)
-                .await
-            {
-                defmt::info!("Position Reached: {:?}", res);
-                if res == 0 {
-                    self.trinamic
-                        .write_i32(tmc5130::registers::Registers::XTARGET, pos)
-                        .await;
-                    pos += 1000;
-                }
-            }
-            */
-            //embassy_time::Timer::after_millis(1000).await;
-            //let command = COMMAND_CHANNEL.receive().await;
-            //if let Some(cmd) = parse_relay_command(&command) {
-            //    let response = self.handle_command(cmd);
-            //    self.set_bank_1();
-            //    self.set_bank_2();
-            //    RESPONSE_CHANNEL.send(response.serialize_to_frame()).await;
-            //} else {
-            //    RESPONSE_CHANNEL
-            //        .send(RelayResponses::Invalid.serialize_to_frame())
-            //        .await;
-            //}
         }
     }
 }

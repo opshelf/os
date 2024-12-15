@@ -177,43 +177,29 @@ macro_rules! reg_reader_setter {
     };
 }
 
-//pub struct MCP23S08<SPI, CS> {
-//    pub spi: SPI,
-//    pub cs: CS,
-//}
 pub struct MCP23S08<SPI> {
     pub spi: SPI,
 }
 
-//impl<SPI, CS, E> MCP23S08<SPI, CS>
 impl<SPI, E> MCP23S08<SPI>
 where
     SPI: SpiDevice<Error = E>,
-    //CS: OutputPin,
 {
-    // pub fn new(spi: SPI, mut cs: CS) -> Self {
-    //     let _ = cs.set_high();
-    //     Self { spi, cs }
-    // }
     pub fn new(spi: SPI) -> Self {
         Self { spi }
     }
 
     pub async fn read_register(&mut self, reg: u8) -> Result<u8, E> {
-        //let _ = self.cs.set_low();
         let mut in_buffer: [u8; 3] = [0; 3];
         let out_buffer: [u8; 3] = [OpCodes::READ as u8, reg, 0x00];
         self.spi.transfer(&mut in_buffer, &out_buffer).await?;
-        //let _ = self.cs.set_high();
         return Ok(in_buffer[2]);
     }
 
     pub async fn write_register(&mut self, reg: u8, value: u8) -> Result<(), E> {
-        //let _ = self.cs.set_low();
         let mut in_buffer: [u8; 3] = [0; 3];
         let out_buffer: [u8; 3] = [OpCodes::WRITE as u8, reg, value];
         self.spi.transfer(&mut in_buffer, &out_buffer).await?;
-        //let _ = self.cs.set_high();
         Ok(())
     }
 
@@ -266,4 +252,3 @@ where
     reg_reader_setter!(gpio, GPIO, Level);
     reg_reader_setter!(olat, OLAT, Level);
 }
-
