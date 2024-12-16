@@ -1,5 +1,5 @@
 from can import BusABC, Message
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel
 from perpetual_p0c.common import CanMessageIds
 from enum import Enum
@@ -11,6 +11,13 @@ class CanCommandIds(int, Enum):
     SetActuators = 0x03
     ResetValves = 0x04
     SetAllValves = 0x05
+    GetSensors = 0x06
+
+class CanResponseIds(int, Enum):
+    Invalid = 0x00
+    State = 0x01
+    Sensors = 0x02
+
 
 class SensorState(BaseModel):
     output_conveyor: bool = False
@@ -20,14 +27,20 @@ class SensorState(BaseModel):
     output_box: bool = False
 
     @staticmethod
-    def from_buffer(value: int) -> "SensorState":
-        return SensorState(
-            output_conveyor=bool(value & 0x01),
-            input_conveyor=bool(value & 0x02),
-            output_transfer_conveyor=bool(value & 0x04),
-            funnel_input=bool(value & 0x08),
-            output_box=bool(value & 0x10),
-        )
+    def from_buffer(data: List[int] | bytearray) -> "Optional[SensorState]":
+        if len(data) < 2:
+            raise Exception("Invalid Frame")
+        elif data[2]:
+            value = data[1]
+            return SensorState(
+                output_conveyor=bool(value & 0x01),
+                input_conveyor=bool(value & 0x02),
+                output_transfer_conveyor=bool(value & 0x04),
+                funnel_input=bool(value & 0x08),
+                output_box=bool(value & 0x10),
+            )
+        else:
+            return None
 
 class Wedge(BaseModel):
     wedge_1: bool = False
@@ -141,3 +154,8 @@ class IoController:
         state = IoState.from_buffer(response.data)
         self._state = state
         return self._state
+
+    def get_sensors(self) -> Optional[SensorState]:
+        buffer = [CanCommandIds.GetSensors.value]
+        response = self._run_command(self.default_message(buffer))
+        return SensorState.from_buffer(response.data)

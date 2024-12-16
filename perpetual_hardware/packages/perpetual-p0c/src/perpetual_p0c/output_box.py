@@ -23,7 +23,7 @@ class OutputBox:
             motor_id=0,
             configuration=configuration.door.configuration,
         )
-        atexit.register(self.cleanup)
+        #atexit.register(self.cleanup)
 
     def cleanup(self) -> None:
         self._door.stop()

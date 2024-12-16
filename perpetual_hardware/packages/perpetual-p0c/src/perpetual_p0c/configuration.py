@@ -6,7 +6,90 @@ from perpetual_p0c.common import CanAxisConfiguration, CanMessageIds
 from perpetual_p0c.funnel import FunnelOffsets, FunnelConfiguration
 from perpetual_p0c.gantry import GantryConfiguration, GantryCoordinate
 from perpetual_p0c.tool import ToolOffsets, ToolConfiguration
+from perpetual_p0c.workstation import WorkstationConfiguration
+from perpetual_p0c.output_box import OutputBoxConfiguration, OutputBoxOffsets
 from perpetual_p0c.robot import RobotConfiguration
+
+
+p0_output_box_configuration = OutputBoxConfiguration(
+    door=CanAxisConfiguration(
+        can_id=CanMessageIds.OUTPUT_BOX,
+        configuration=StepperMotorConfig(
+            microsteps=16,
+            steps_per_rev=200,
+            encoder_ppr=3200,
+            steps_per_mm=266.66666,
+            work_current=2000,
+            holding_current=0,
+            homing_current=1000,
+            velocity=200,
+            acceleration=200,
+            max_velocity=200,
+            max_acceleration=200,
+            min_travel=None,
+            max_travel=None,
+            invert_coordinates=False,
+            home_direction=Rotation.CCW,
+            homing_speed=100,
+        ),
+        name="output_box",
+        axis_type="leadscrew",
+    ),
+    offsets=OutputBoxOffsets(door_open_position=205.0),
+)
+
+p0_workstation_configuration = WorkstationConfiguration(
+    outputbox_configuration=p0_output_box_configuration,
+    input_belt_configuration=CanAxisConfiguration(
+        can_id=CanMessageIds.IO_IN_CONVEYOR,
+        configuration=StepperMotorConfig(
+            microsteps=16,
+            steps_per_rev=200,
+            encoder_ppr=3200,
+            steps_per_mm=40,
+            work_current=5000,
+            holding_current=0,
+            homing_current=1000,
+            velocity=750,
+            acceleration=500,
+            max_velocity=200,
+            max_acceleration=50,
+            min_travel=None,
+            max_travel=None,
+            invert_coordinates=False,
+            home_direction=Rotation.CCW,
+            homing_speed=100,
+        ),
+        name="input_conveyor",
+        axis_type="belt",
+    ),
+    output_belt_configuration=CanAxisConfiguration(
+        can_id=CanMessageIds.IO_OUT_CONVEYOR,
+        configuration=StepperMotorConfig(
+            microsteps=16,
+            steps_per_rev=200,
+            encoder_ppr=3200,
+            steps_per_mm=40,
+            work_current=5000,
+            holding_current=0,
+            homing_current=1000,
+            velocity=100,
+            #acceleration=10,
+            acceleration=10,
+            max_velocity=200,
+            max_acceleration=200,
+            min_travel=None,
+            max_travel=None,
+            invert_coordinates=True,
+            home_direction=Rotation.CCW,
+            homing_speed=100,
+        ),
+        name="output_belt_conveyor",
+        axis_type="belt",
+    ),
+    input_belt_speed=100,
+    output_belt_speed=300
+)
 
 p0_gantry_config = GantryConfiguration(
     x_axis_id=CanMessageIds.X_AXIS,
@@ -34,11 +117,11 @@ p0_gantry_config = GantryConfiguration(
         steps_per_rev=200,
         encoder_ppr=3200,
         steps_per_mm=40,
-        work_current=4000,
-        holding_current=4000,
-        homing_current=4000,
+        work_current=5000,
+        holding_current=5000,
+        homing_current=5000,
         velocity=200,
-        acceleration=200,
+        acceleration=100,
         max_velocity=200,
         max_acceleration=200,
         min_travel=None,
@@ -257,7 +340,8 @@ p0_funnel_config = FunnelConfiguration(
     offsets=FunnelOffsets(
         funnel_min_width=0.0,
         funnel_min_height=0.0,
-        funnel_cell_1_offset_x=12.0,
+        #funnel_cell_1_offset_x=12.0,
+        funnel_cell_1_offset_x=16.0,
         funnel_cell_1_offset_y=0.0,
         catch_position=260.0,
         diverter_50mm_pos=1.2,
@@ -292,9 +376,11 @@ p0_tool_config = ToolConfiguration(
     ),
     offsets=ToolOffsets(
         tool_extend_position=480.0,
-        tool_retract_position=0.0,
+        tool_retract_position=240.0,
         tool_safe_max=345.0,
         tool_safe_min=20.0,
+        tray_pull_right=22,
+        tray_pull_left=458,
         # tray_pull_offset=22
         tray_pull_offset=20.5,
     ),

@@ -19,6 +19,8 @@ class ToolOffsets(BaseModel):
     tool_safe_min: float
     tool_safe_max: float
     tray_pull_offset: float
+    tray_pull_right: float
+    tray_pull_left: float
 
 
 class ToolConfiguration(BaseModel):
@@ -77,12 +79,12 @@ class Tool:
         self._actuators_extended = False
         self._carriage_solenoids = 0
         self._puller_solenoids = 0
-        atexit.register(self.cleanup)
+        self.set_solenoids_off()
+        #atexit.register(self.cleanup)
 
     def cleanup(self) -> None:
         self._puller.stop()
-        self._tool_board.set_pullers(IoBoard())
-        self._tool_board.set_carriage(IoBoard())
+        self.set_solenoids_off()
 
     def status(self) -> ToolStatus:
         return ToolStatus(
@@ -142,6 +144,7 @@ class Tool:
         self._tool_board.reset_all()
 
     def set_slot_bits(self, bits: int) -> None:
+        print(bits)
         self._tool_board.set_pullers(
             IoBoard(
                 r1=True if bits & 0x01 else False,
@@ -167,13 +170,30 @@ class Tool:
             bits |= 0x01 << i
         self.set_slot_bits(bits)
 
-    def extend_puller(self) -> None:
-        self._puller.move_to_position(self.offsets.tool_extend_position)
-        self.wait_for_move()
+    def extend_puller(self, side: StorageModuleSide = StorageModuleSide.RIGHT) -> None:
+        #self._puller.move_to_position(self.offsets.tool_extend_position)
+        if side == StorageModuleSide.RIGHT:
+            self._puller.move_to_position(self.offsets.tool_extend_position)
+            self.wait_for_move()
+        else:
+            self._puller.move_to_position(0)
+            self.wait_for_move()
 
-    def retract_puller(self) -> None:
-        self._puller.move_to_position(self.offsets.tool_retract_position)
-        self.wait_for_move()
+    def retract_puller(self, side: StorageModuleSide) -> None:
+        if side == StorageModuleSide.RIGHT:
+            self._puller.move_to_position(self.offsets.tray_pull_right)
+            self.wait_for_move()
+        else:
+            self._puller.move_to_position(self.offsets.tray_pull_left)
+            self.wait_for_move()
+        #self._puller.move_to_position(self.offsets.tool_retract_position)
+        #self.wait_for_move()
+
+    def puller_safe(self, side: StorageModuleSide) -> None:
+        if side == StorageModuleSide.RIGHT:
+            self.safe_max()
+        else:
+            self.safe_min()
 
     def safe_max(self) -> None:
         self._puller.move_to_position(self.offsets.tool_safe_max)
@@ -206,6 +226,14 @@ class Tool:
                     self._puller.configuration.max_travel - self.offsets.tray_pull_offset
                 )
         self.wait_for_move()
+
+    def check_tray_clear(self) -> bool:
+        state = self._tool_board.get_state()
+        return state.inputs.left_beam and state.inputs.right_beam
+
+    def check_tray_loaded(self) -> bool:
+        state = self._tool_board.get_state()
+        return state.inputs.left_beam and state.inputs.right_beam and not state.inputs.left_presence and not state.inputs.right_presence
 
     def get_max(self) -> float:
         self._puller.home()

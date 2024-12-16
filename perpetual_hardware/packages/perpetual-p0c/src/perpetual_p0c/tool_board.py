@@ -137,7 +137,7 @@ class BoardState(BaseModel):
 
 
 class ToolBoard:
-    def __init__(self, bus: BusABC, can_id: int = CanMessageIds.TOOL_NODE) -> None:
+    def __init__(self, bus: BusABC, can_id: int = CanMessageIds.TOOL_NODE.value) -> None:
         self._bus = bus
         self._can_id = can_id
         self._state = BoardState(

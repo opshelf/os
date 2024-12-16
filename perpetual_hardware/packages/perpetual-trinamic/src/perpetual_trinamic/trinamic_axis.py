@@ -9,7 +9,20 @@ from perpetual_trinamic.tmcm12xx import TMCM12xx
 from perpetual_trinamic.tmcl import StatusFlags, TrinamicErrorFlags
 import time
 from typing import Optional
+from enum import Enum
 
+
+class UserVariables(int, Enum):
+    HOMED = 0x00
+    HARD_STOPPED = 0x01
+
+class HomedStatus(int, Enum):
+    NOT_HOMED = 0x00
+    HOMED = 0x01
+
+class HardStopStatus(int, Enum):
+    NOT_HARD_STOPPED = 0x00
+    HARD_STOPPED = 0x01
 
 class TrinamicStepper(TMCM12xx):
     def __init__(
@@ -33,6 +46,13 @@ class TrinamicStepper(TMCM12xx):
         self._max_deviation = 500
         self._homing_deviation = 100
         self.initialize()
+
+
+    def home_if_errored(self): 
+        if self.get_home_status() == HomedStatus.HOMED and self.get_hard_stop_status == HardStopStatus.NOT_HARD_STOPPED:
+            pass
+        else:
+            self.home()
 
     @property
     def max_deviation(self) -> int:
@@ -109,6 +129,27 @@ class TrinamicStepper(TMCM12xx):
             else:
                 self.rotate_left(abs(self._configuration.convert_mms_ps(value)))
 
+
+    def get_home_status(self) -> HomedStatus:
+        status = self.get_user_variable(UserVariables.HOMED.value)
+        if status == HomedStatus.HOMED:
+            return HomedStatus.HOMED
+        else:
+            return HomedStatus.NOT_HOMED
+
+    def set_home_status(self, status: HomedStatus) -> None:
+        self.set_user_variable(UserVariables.HOMED.value, status.value)
+
+    def set_hard_stop_status(self, status: HardStopStatus) -> None:
+        self.set_user_variable(UserVariables.HARD_STOPPED.value, status.value)
+
+    def get_hard_stop_status(self) -> HardStopStatus:
+        status = self.get_user_variable(UserVariables.HARD_STOPPED.value)
+        if status.value == HardStopStatus.HARD_STOPPED:
+            return HardStopStatus.HARD_STOPPED
+        else:
+            return HardStopStatus.NOT_HARD_STOPPED
+
     def home(self) -> None:
         self.clear_error_flags()
         self.get_status_flags()
@@ -154,6 +195,8 @@ class TrinamicStepper(TMCM12xx):
         self._set_encoder_position(0)
         self._target_position = 0
         self._actual_position = 0
+        self.set_home_status(HomedStatus.HOMED)
+        self.set_hard_stop_status(HardStopStatus.NOT_HARD_STOPPED)
 
     def check_fault_flags(self) -> bool:
         error_flags = TrinamicErrorFlags(self.get_error_flags())
@@ -198,9 +241,11 @@ class TrinamicStepper(TMCM12xx):
         while not self.get_position_reached():
             time.sleep(0.05)
             if self.get_error_flags():
+                self.set_hard_stop_status(HardStopStatus.HARD_STOPPED)
                 raise Exception(f"Failed to move hit hard stop {self._module_id}")
             if time.time() - t0 > timeout:
                 self._status = StepperMotorStatus.ERROR
+                self.set_hard_stop_status(HardStopStatus.HARD_STOPPED)
                 raise Exception("Failed to move in time")
 
     def moving(self) -> bool:
@@ -365,7 +410,7 @@ class TrinamicAxis(AbstractStepperMotor, TMCM12xx):
             if self.get_error_flags():
                 break
             else:
-                if time.time() - t0 > 20:
+                if time.time() - t0 > 30:
                     raise Exception(f"Homing Failed {self._module_id}")
         while self.get_error_flags():
             pass
@@ -376,6 +421,8 @@ class TrinamicAxis(AbstractStepperMotor, TMCM12xx):
         self._set_encoder_position(0)
         self._target_position = 0
         self._actual_position = 0
+        self.set_home_status(HomedStatus.HOMED)
+        self.set_hard_stop_status(HardStopStatus.NOT_HARD_STOPPED)
 
     def check_fault_flags(self) -> bool:
         error_flags = TrinamicErrorFlags(self.get_error_flags())
@@ -503,3 +550,23 @@ class TrinamicAxis(AbstractStepperMotor, TMCM12xx):
         self.set_io(0, 0, 2)
         self.set_standby_current(0)
         time.sleep(0.1)
+
+    def get_home_status(self) -> HomedStatus:
+        status = self.get_user_variable(UserVariables.HOMED.value)
+        if status == HomedStatus.HOMED:
+            return HomedStatus.HOMED
+        else:
+            return HomedStatus.NOT_HOMED
+
+    def set_home_status(self, status: HomedStatus) -> None:
+        self.set_user_variable(UserVariables.HOMED.value, status.value)
+
+    def set_hard_stop_status(self, status: HardStopStatus) -> None:
+        self.set_user_variable(UserVariables.HARD_STOPPED.value, status.value)
+
+    def get_hard_stop_status(self) -> HardStopStatus:
+        status = self.get_user_variable(UserVariables.HARD_STOPPED.value)
+        if status.value == HardStopStatus.HARD_STOPPED:
+            return HardStopStatus.HARD_STOPPED
+        else:
+            return HardStopStatus.NOT_HARD_STOPPED

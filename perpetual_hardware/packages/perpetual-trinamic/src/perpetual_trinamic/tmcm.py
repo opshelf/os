@@ -189,7 +189,7 @@ class TMCM:
         return self._send_message(self._default_message(TMCLCommand.GAP, axis_parameter, 0))
 
     def get_digital_input(self, port_number: int, bank_number: int) -> TmclReply:
-        response = self._send_message(
+        return self._send_message(
             TmclMessage(
                 module_address=self._module_id,
                 command_number=TMCLCommand.GIO,
@@ -198,6 +198,25 @@ class TMCM:
                 value=0,
             )
         )
-        if response:
-            return response
-        raise Exception("No Response")
+
+    def set_user_variable(self, variable_number: int, value: int) -> TmclReply:
+        return self._send_message(
+            TmclMessage(
+                module_address=self._module_id,
+                command_number=TMCLCommand.SGP,
+                type_number=variable_number,
+                motor_number=2,
+                value=value,
+            )
+        )
+
+    def get_user_variable(self, variable_number: int) -> TmclReply:
+        return self._send_message(
+            TmclMessage(
+                module_address=self._module_id,
+                command_number=TMCLCommand.SGP,
+                type_number=variable_number,
+                motor_number=2,
+                value=0,
+            )
+        )

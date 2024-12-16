@@ -23,7 +23,8 @@ class FunnelOffsets(BaseModel):
     belt_speed: float = 100
     wall_speed: float = 500
     output_transfer_conveyor_speed: float = 100
-    output_conveyor_speed: float = 300
+    #output_conveyor_speed: float = 300
+    output_conveyor_speed: float = 250
 
 
 class FunnelConfiguration(BaseModel):
@@ -158,7 +159,7 @@ class Funnel:
         self._output_transfer_conveyor.safety_off()
         self._slots_open = 0
         self._diverter_open = True
-        atexit.register(self.cleanup)
+        #atexit.register(self.cleanup)
 
     def __enter__(self) -> "Funnel":
         return self
