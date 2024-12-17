@@ -1,33 +1,33 @@
-from dataclasses import dataclass
-from enum import IntEnum
+# from dataclasses import dataclass
+# from enum import IntEnum
 from can import BusABC, Message, BufferedReader
 from typing import Optional
-from perpetual_trinamic.tmcl import TMCLCommand
+from perpetual_trinamic.tmcl import TMCLCommand, TmclMessage, TmclReply, MoveType
 import struct
 import time
 
 
-@dataclass
-class TmclMessage:
-    module_address: int
-    command_number: int
-    type_number: int
-    motor_number: int
-    value: int
-
-
-@dataclass
-class TmclReply:
-    module_address: int
-    command_number: int
-    status: int
-    value: int
-
-
-class MoveType(IntEnum):
-    ABSOLUTE = 0
-    RELATIVE = 1
-    COORDINATE = 2
+# @dataclass
+# class TmclMessage:
+#    module_address: int
+#    command_number: int
+#    type_number: int
+#    motor_number: int
+#    value: int
+#
+#
+# @dataclass
+# class TmclReply:
+#    module_address: int
+#    command_number: int
+#    status: int
+#    value: int
+#
+#
+# class MoveType(IntEnum):
+#    ABSOLUTE = 0
+#    RELATIVE = 1
+#    COORDINATE = 2
 
 
 # This Should Never Be Done but Comms are not reliable right now

@@ -4,7 +4,7 @@ from hardware_common.stepper_motor import (
     Rotation,
 )
 import time
-from perpetual_trinamic.trinamic_axis import TrinamicAxis
+from perpetual_trinamic.trinamic_axis import HomedStatus, TrinamicAxis
 
 
 def test_axis() -> None:
@@ -32,8 +32,9 @@ def test_axis() -> None:
                 homing_speed=50,
             ),
         )
-        time.sleep(1)
-        axis1.move_to_position(100)
+        axis1.set_home_status(HomedStatus.HOMED)
+        status = axis1.get_home_status()
+        print(status)
 
 
 if __name__ == "__main__":

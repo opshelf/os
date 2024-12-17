@@ -7,10 +7,10 @@ from perpetual_trinamic.trinamic_axis import TrinamicAxis
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
 from perpetual_p0c.tray import Tray
-from perpetual_p0c.io_board import ActuatorState, IoController
+from perpetual_p0c.io_board import ActuatorState, IoController, IoState
 from perpetual_p0c.tool_board import ToolBoard, IoBoard
 from perpetual_p0c.common import CanAxisConfiguration, StorageModuleSide
-import atexit
+import time
 
 
 class ToolOffsets(BaseModel):
@@ -80,7 +80,7 @@ class Tool:
         self._carriage_solenoids = 0
         self._puller_solenoids = 0
         self.set_solenoids_off()
-        #atexit.register(self.cleanup)
+        # atexit.register(self.cleanup)
 
     def cleanup(self) -> None:
         self._puller.stop()
@@ -118,9 +118,25 @@ class Tool:
         if status:
             self._actuators_extended = True
             self._io.set_actuators(ActuatorState.Extended)
+            t0 = time.time()
+            while True:
+                if time.time() - t0 > 5:
+                    raise Exception("Failed to Extend Actuators")
+                forward_actuator = self._tool_board.get_state().inputs.forward_actuator
+                time.sleep(0.25)
+                if not forward_actuator:
+                    break
         else:
             self._actuators_extended = False
             self._io.set_actuators(ActuatorState.Retracted)
+            t0 = time.time()
+            while True:
+                if time.time() - t0 > 5:
+                    raise Exception("Failed to Retract Actuators")
+                backward_actuator = self._tool_board.get_state().inputs.backward_actuator
+                time.sleep(0.25)
+                if not backward_actuator:
+                    break
 
     def set_carriage_solenoids(self, solenoids: int, side: StorageModuleSide) -> None:
         if side == "LEFT":
@@ -171,7 +187,7 @@ class Tool:
         self.set_slot_bits(bits)
 
     def extend_puller(self, side: StorageModuleSide = StorageModuleSide.RIGHT) -> None:
-        #self._puller.move_to_position(self.offsets.tool_extend_position)
+        # self._puller.move_to_position(self.offsets.tool_extend_position)
         if side == StorageModuleSide.RIGHT:
             self._puller.move_to_position(self.offsets.tool_extend_position)
             self.wait_for_move()
@@ -186,8 +202,8 @@ class Tool:
         else:
             self._puller.move_to_position(self.offsets.tray_pull_left)
             self.wait_for_move()
-        #self._puller.move_to_position(self.offsets.tool_retract_position)
-        #self.wait_for_move()
+        # self._puller.move_to_position(self.offsets.tool_retract_position)
+        # self.wait_for_move()
 
     def puller_safe(self, side: StorageModuleSide) -> None:
         if side == StorageModuleSide.RIGHT:
@@ -233,7 +249,12 @@ class Tool:
 
     def check_tray_loaded(self) -> bool:
         state = self._tool_board.get_state()
-        return state.inputs.left_beam and state.inputs.right_beam and not state.inputs.left_presence and not state.inputs.right_presence
+        return (
+            state.inputs.left_beam
+            and state.inputs.right_beam
+            and not state.inputs.left_presence
+            and not state.inputs.right_presence
+        )
 
     def get_max(self) -> float:
         self._puller.home()
@@ -245,6 +266,25 @@ class Tool:
         position = self._puller.get_position()
         self._puller.home()
         return position
+
+    def drop_items(self, tray: Tray, idx: int) -> None:
+        if tray.cell_width <= 50.0:
+            position = (tray.cells - 1) - idx
+            self._tool_board.set_pullers(IoBoard.from_buffer(1 << position))
+            self.actuators(True)
+        elif tray.cell_width <= 105.0:
+            position = (tray.cells - 1) - idx
+            positions = 1 << (position * 2)
+            positions |= 1 << (position * 2 + 1)
+            self._tool_board.set_pullers(IoBoard.from_buffer(positions))
+            self.actuators(True)
+        else:
+            position = (tray.cells - 1) - idx
+            positions = 1 << (position * 3)
+            positions |= 1 << (position * 3 + 1)
+            positions |= 1 << (position * 3 + 2)
+            self._tool_board.set_pullers(IoBoard.from_buffer(positions))
+            self.actuators(True)
 
     def handle_command(self, cmd: ToolCommands) -> None:
         if cmd.command == Commands.HOME:
@@ -280,11 +320,11 @@ class Tool:
         elif cmd.command == Commands.TURN_OFF_SLOT_SOLENOIDS:
             self.set_solenoids_off()
         elif cmd.command == Commands.RETRACT_TRAY:
-            self.retract_tray(StorageModuleSide.LEFT)
+            self.retract_tray(StorageModuleSide.RIGHT)
         elif cmd.command == Commands.EXTEND_PULLER:
             self.extend_puller()
         elif cmd.command == Commands.RETRACT_PULLER:
-            self.retract_puller()
+            self.retract_puller(StorageModuleSide.RIGHT)
         elif cmd.command == Commands.EXTEND_ACTUATORS:
             self.actuators(True)
         elif cmd.command == Commands.RETRACT_ACTUATORS:

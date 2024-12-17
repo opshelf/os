@@ -1,3 +1,7 @@
+from dataclasses import dataclass
+from enum import IntEnum
+
+
 class TMCLCommand:
     ROR = 1
     ROL = 2
@@ -187,3 +191,26 @@ open_load_a={self.open_load_a},\
 open_load_b={self.open_load_b},\
 stand_still={self.stand_still},\
 )"
+
+
+@dataclass
+class TmclMessage:
+    module_address: int
+    command_number: int
+    type_number: int
+    motor_number: int
+    value: int
+
+
+@dataclass
+class TmclReply:
+    module_address: int
+    command_number: int
+    status: int
+    value: int
+
+
+class MoveType(IntEnum):
+    ABSOLUTE = 0
+    RELATIVE = 1
+    COORDINATE = 2

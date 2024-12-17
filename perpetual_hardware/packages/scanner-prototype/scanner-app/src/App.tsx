@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react';
 import {
   Card,
   CardContent,
@@ -8,11 +7,43 @@ import {
 import { Button } from './components/ui/button';
 import VideoOutput from './components/VideoOutput';
 import AutoReconnectSSE from './components/AutoReconnectSSE';
-import { BarCode, useBarCodeStore } from './store';
+import { BarCode, useBarCodeStore, GS1Data, UPCData } from './store';
+
+const GS1Card = ({ gs1 }: { gs1: GS1Data }) => {
+  return (
+    <Card className="w-full max-w-md">
+      <CardHeader>
+        <CardTitle>GS1</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <ul className="space-y-2">
+          <li>{`GTIN: ${gs1.gtin}`}</li>
+          <li>{`EXPIRY: ${gs1.expiry}`}</li>
+          <li>{`LOT: ${gs1.lot}`}</li>
+          <li>{`SN: ${gs1.sn}`}</li>
+        </ul>
+      </CardContent>
+    </Card>
+  );
+};
+
+const UPCACard = ({ upca }: { upca: UPCData }) => {
+  return (
+    <Card className="w-full max-w-md">
+      <CardHeader>
+        <CardTitle>UPCA</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <ul className="space-y-2">
+          <li>{`TEXT: ${upca.text}`}</li>
+        </ul>
+      </CardContent>
+    </Card>
+  );
+};
 
 export default function App() {
-  const { barcodes, addItem, removeItem, clearItems } =
-    useBarCodeStore();
+  const { barcodes, clearItems } = useBarCodeStore();
 
   return (
     <div className="flex flex-col min-h-screen p-4">
@@ -27,32 +58,20 @@ export default function App() {
         </div>
 
         {/* Right side: Display the list of barcodes */}
-        <div className="w-1/2 p-4 flex flex-col items-center">
-          <Card className="w-full max-w-md">
-            <CardHeader>
-              <CardTitle>Barcodes</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {barcodes.length > 0 ? (
-                <ul className="space-y-2">
-                  {barcodes.map((barcode: BarCode, index: number) => (
-                    <li key={index} className="border-b pb-2">
-                      <p className="font-semibold">
-                        Text: {barcode.gtin}
-                      </p>
-                      {/*
-                    <p className="text-sm text-gray-500">
-                      Format: {barcode.}
-                    </p>
-                    */}
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p>No barcodes found.</p>
-              )}
-            </CardContent>
-          </Card>
+        <div className="w-1/2 p-4 flex flex-col items-center space-y-2">
+          {barcodes.length > 0 ? (
+            <>
+              {barcodes.map((barcode: BarCode) => {
+                if ('gtin' in barcode) {
+                  return <GS1Card gs1={barcode} />;
+                } else {
+                  return <UPCACard upca={barcode} />;
+                }
+              })}
+            </>
+          ) : (
+            <p>No barcodes found.</p>
+          )}
           <div className="flex grow" />
           <Button className="w-full self-end" onClick={clearItems}>
             RESET

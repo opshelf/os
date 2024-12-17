@@ -5,10 +5,11 @@ export type GS1Data = {
   expiry: string;
   lot: string;
   sn: string;
+  text: string;
 };
 
 export type UPCData = {
-  gtin: string;
+  text: string;
 };
 
 export type BarCode = GS1Data | UPCData;
@@ -22,14 +23,17 @@ export interface BarCodeStore {
 }
 
 // Create the Zustand store
-export const useBarCodeStore = create<BarCodeStore>((set, get) => ({
+export const useBarCodeStore = create<BarCodeStore>((set) => ({
   barcodes: [],
 
   // Add an item ensuring uniqueness by `gtin`
   addBarcode: (item: BarCode) => {
     set((state: BarCodeStore) => {
       const isDuplicate = state.barcodes.some(
-        (existingItem: BarCode) => existingItem.gtin === item.gtin
+        (existingItem: BarCode) => existingItem.text === item.text
+      );
+      console.log(
+        (existingItem: BarCode) => existingItem.text === item.text
       );
       if (!isDuplicate) {
         return { barcodes: [...state.barcodes, item] };

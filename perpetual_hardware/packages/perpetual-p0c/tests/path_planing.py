@@ -18,7 +18,6 @@ class RobotConfiguration(BaseModel):
     output_location: GantryCoordinate
     input_location: GantryCoordinate
 
-
 def path_plan(coordinate: GantryCoordinate, current_coordinate: GantryCoordinate, config: RobotConfiguration) -> List[GantryCoordinate]:
     gantry_position = current_coordinate
     path: List[GantryCoordinate] = []
@@ -144,6 +143,10 @@ if __name__ == '__main__':
     print("Tray to Input")
     print(idle_to_input)
 
-
-
-
+    print("Output to Tray")
+    output_to_tray = path_plan(
+        robot_configuration.output_location,
+        idle_coordinate,
+        robot_configuration
+    )
+    print(output_to_tray)

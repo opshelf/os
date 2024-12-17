@@ -1,3 +1,4 @@
+"""
 import base64
 import time
 from fastapi import FastAPI, Request
@@ -20,14 +21,15 @@ from sse_starlette.sse import EventSourceResponse
 from pydantic import BaseModel
 import queue
 
+
 class GS1Data(BaseModel):
     gtin: str
     expiry: str
     lot: str
     sn: str
 
-class CameraDriver(threading.Thread):
 
+class CameraDriver(threading.Thread):
     def __init__(self, event_queue: queue.Queue):
         print("Camera Initialized")
         super().__init__()
@@ -103,12 +105,7 @@ class CameraDriver(threading.Thread):
                         cv2.LINE_AA,
                     )
                     barcodes = zxingcpp.read_barcodes(frame)
-                    self._event_queue.put(GS1Data(
-                        gtin="",
-                        expiry="",
-                        lot="",
-                        sn=""
-                    ))
+                    self._event_queue.put(GS1Data(gtin="", expiry="", lot="", sn=""))
                     for barcode in barcodes:
                         print(
                             "Found barcode:"
@@ -132,6 +129,7 @@ event_queue = queue.Queue()
 
 # Initialize and start the camera at startup
 camera = CameraDriver(event_queue)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -159,6 +157,7 @@ app.add_middleware(
 @app.get("/barcodes", response_class=StreamingResponse)
 async def camera_events(request: Request):
     print("Barcode Streams")
+
     async def event_generator(request: Request):
         while True:
             try:
@@ -172,8 +171,10 @@ async def camera_events(request: Request):
             except asyncio.CancelledError as e:
                 print(f"Disconnected from client (via refresh/close) {request.client}")
                 raise e
-    #return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+    # return StreamingResponse(event_generator(), media_type="text/event-stream")
     return EventSourceResponse(event_generator(request))
+
 
 @app.get("/stream", response_class=StreamingResponse)
 async def stream_sse():
@@ -185,9 +186,12 @@ async def stream_sse():
                 # Encode the frame to PNG and then base64
                 (_, buffer) = cv2.imencode(".jpg", frame)
                 buffer_frame = buffer.tobytes()
-                yield (b'--frame\r\n'b'Content-Type: image/jpeg\r\n\r\n' + buffer_frame + b'\r\n')
+                yield (b"--frame\r\n" b"Content-Type: image/jpeg\r\n\r\n" + buffer_frame + b"\r\n")
             time.sleep(0.1)
-    return StreamingResponse(event_generator(), media_type="multipart/x-mixed-replace;boundary=frame")
+
+    return StreamingResponse(
+        event_generator(), media_type="multipart/x-mixed-replace;boundary=frame"
+    )
 
 
 def generate(request: Request, camera: CameraDriver):
@@ -199,6 +203,7 @@ def generate(request: Request, camera: CameraDriver):
         time.sleep(0.1)
     print("Camera Not Alive")
 
+
 def start() -> None:
     uvicorn.run(
         "app:app",
@@ -207,3 +212,4 @@ def start() -> None:
         reload=True,
         timeout_graceful_shutdown=2,
     )
+"""

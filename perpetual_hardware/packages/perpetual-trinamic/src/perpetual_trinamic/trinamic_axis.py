@@ -16,13 +16,16 @@ class UserVariables(int, Enum):
     HOMED = 0x00
     HARD_STOPPED = 0x01
 
+
 class HomedStatus(int, Enum):
     NOT_HOMED = 0x00
     HOMED = 0x01
 
+
 class HardStopStatus(int, Enum):
     NOT_HARD_STOPPED = 0x00
     HARD_STOPPED = 0x01
+
 
 class TrinamicStepper(TMCM12xx):
     def __init__(
@@ -47,9 +50,11 @@ class TrinamicStepper(TMCM12xx):
         self._homing_deviation = 100
         self.initialize()
 
-
-    def home_if_errored(self): 
-        if self.get_home_status() == HomedStatus.HOMED and self.get_hard_stop_status == HardStopStatus.NOT_HARD_STOPPED:
+    def home_if_errored(self) -> None:
+        if (
+            self.get_home_status() == HomedStatus.HOMED
+            and self.get_hard_stop_status == HardStopStatus.NOT_HARD_STOPPED
+        ):
             pass
         else:
             self.home()
@@ -128,7 +133,6 @@ class TrinamicStepper(TMCM12xx):
                 self.rotate_right(self._configuration.convert_mms_ps(value))
             else:
                 self.rotate_left(abs(self._configuration.convert_mms_ps(value)))
-
 
     def get_home_status(self) -> HomedStatus:
         status = self.get_user_variable(UserVariables.HOMED.value)
@@ -352,6 +356,9 @@ class TrinamicAxis(AbstractStepperMotor, TMCM12xx):
         else:
             self.set_encoder_position(position)
 
+    def reset_location(self) -> None:
+        self.set_actual_position(self.get_encoder_position())
+
     def initialize(self) -> None:
         self.set_max_current(self._configuration.work_current)
         self.set_standby_current(self._configuration.holding_current)
@@ -476,6 +483,14 @@ class TrinamicAxis(AbstractStepperMotor, TMCM12xx):
                 self._status = StepperMotorStatus.ERROR
                 raise Exception(f"Failed to move in time {self._module_id}")
 
+    def poll_position_reached(self) -> bool:
+        if self.get_position_reached():
+            return True
+        else:
+            if self.get_error_flags():
+                raise Exception(f"Failed to move hit hard stop {self._module_id}")
+            return False
+
     def moving(self) -> bool:
         if self.get_position_reached():
             return True
@@ -511,6 +526,7 @@ class TrinamicAxis(AbstractStepperMotor, TMCM12xx):
     def move_to_position_with_brake(self, position: float, timeout: float = 60.0) -> None:
         if self._status != StepperMotorStatus.GOOD:
             raise Exception("Status Bad")
+        self.reset_location()
         self.init_brake_move()
         self.move_to_position(position)
         self.wait_for_brake_move()
@@ -543,11 +559,13 @@ class TrinamicAxis(AbstractStepperMotor, TMCM12xx):
 
     def init_brake_move(self) -> None:
         self.set_standby_current(self._configuration.holding_current)
-        time.sleep(0.1)
+        time.sleep(0.2)
         self.set_io(0, 1, 2)
+        time.sleep(0.2)
 
     def end_brake_move(self) -> None:
         self.set_io(0, 0, 2)
+        time.sleep(0.1)
         self.set_standby_current(0)
         time.sleep(0.1)
 

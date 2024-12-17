@@ -1,0 +1,3 @@
+- Refactor Subsystems to periodically check that they've reached their terminal locations and queue a set of operations similar to an interpreter
+- Refactor Robot to use async interface 
+- Track current Tray that is being held by the robot

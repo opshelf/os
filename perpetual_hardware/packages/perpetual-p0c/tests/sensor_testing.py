@@ -77,11 +77,11 @@ if __name__ == "__main__":
                 elif tracking == BottleTracking.WAIT_FOR_OUTPUT_TRIGGER:
                     sensors = io.get_sensors()
                     if sensors and sensors.output_box:
-                        time.sleep(.5)
-                        workstation.stop_output_belt()
+                        time.sleep(1)
                         tracking = BottleTracking.CLOSE_DOOR
                 elif tracking == BottleTracking.CLOSE_DOOR:
                     workstation.close_output()
+                    workstation.stop_output_belt()
                     tracking = BottleTracking.RESET
                 elif tracking == BottleTracking.RESET:
                     input()
@@ -92,6 +92,3 @@ if __name__ == "__main__":
                 workstation.stop_output_belt()
                 workstation.stop_input_belt()
                 break
-            #sensors = io.get_sensors()
-            #if sensors:
-            #    print(sensors)

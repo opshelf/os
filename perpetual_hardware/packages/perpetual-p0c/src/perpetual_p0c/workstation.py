@@ -24,16 +24,16 @@ class Workstation:
             module_id=self._configuration.input_belt_configuration.can_id,
             motor_id=0,
             configuration=self._configuration.input_belt_configuration.configuration,
-            max_current=6000
+            max_current=6000,
         )
         self._output_belt = TrinamicAxis(
             bus,
             module_id=self._configuration.output_belt_configuration.can_id,
             motor_id=0,
             configuration=self._configuration.output_belt_configuration.configuration,
-            max_current=6000
+            max_current=6000,
         )
-        #atexit.register(self.cleanup)
+        # atexit.register(self.cleanup)
 
     def cleanup(self) -> None:
         self._output_belt.stop()

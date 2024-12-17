@@ -12,6 +12,8 @@ class CanCommandIds(int, Enum):
     ResetValves = 0x04
     SetAllValves = 0x05
     GetSensors = 0x06
+    ResetSensors = 0x07
+
 
 class CanResponseIds(int, Enum):
     Invalid = 0x00
@@ -41,6 +43,7 @@ class SensorState(BaseModel):
             )
         else:
             return None
+
 
 class Wedge(BaseModel):
     wedge_1: bool = False
@@ -157,5 +160,10 @@ class IoController:
 
     def get_sensors(self) -> Optional[SensorState]:
         buffer = [CanCommandIds.GetSensors.value]
+        response = self._run_command(self.default_message(buffer))
+        return SensorState.from_buffer(response.data)
+
+    def reset_sensors(self) -> Optional[SensorState]:
+        buffer = [CanCommandIds.ResetSensors.value]
         response = self._run_command(self.default_message(buffer))
         return SensorState.from_buffer(response.data)

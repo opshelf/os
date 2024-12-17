@@ -1,5 +1,5 @@
 import asyncio
-from fastapi import FastAPI, Response, Request
+from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
 import cv2
 import threading
@@ -11,24 +11,75 @@ from typing import Optional, Union
 import zxingcpp
 import cv2
 from sse_starlette.sse import EventSourceResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 import queue
+import re
+from fastapi.staticfiles import StaticFiles
+from starlette.responses import RedirectResponse
+
 
 class GS1Data(BaseModel):
+    # 01
     gtin: str
-    expiry: str
+    # 10
     lot: str
+    # 17
+    expiry: str
+    # 21
     sn: str
+    # Raw Text
+    text: str
+
 
 class UPCData(BaseModel):
-    gtin: str
+    text: str
+
+
+class RawBarCode(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    text: str
+    format: zxingcpp.BarcodeFormat
+    content: zxingcpp.ContentType
 
 
 BarCode = Union[GS1Data, UPCData]
 
 
+def parse_gs1_data(text: str) -> GS1Data:
+    patterns = {
+        "gtin": r"\(01\)(\d{14})",
+        "sn": r"\(21\)([^\(]+)",
+        "expiry": r"\(17\)(\d{6})",
+        "lot": r"\(10\)([^\(]+)",
+    }
+
+    # Extract data using regex
+    data = {}
+    for key, pattern in patterns.items():
+        match = re.search(pattern, text)
+        if match:
+            data[key] = match.group(1)
+        else:
+            data[key] = None
+
+    # Create the GS1Data model
+    return GS1Data(
+        gtin=data["gtin"], lot=data["lot"], expiry=data["expiry"], sn=data["sn"], text=text
+    )
+
+
+def parse_barcode(rbc: RawBarCode) -> Optional[BarCode]:
+    if rbc.format == zxingcpp.BarcodeFormat.UPCA:
+        return UPCData(text=rbc.text)
+    elif rbc.format == zxingcpp.BarcodeFormat.DataMatrix:
+        return parse_gs1_data(rbc.text)
+    else:
+        # raise Exception("Unexpected Format")
+        return None
+
+
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncGenerator:
     try:
         yield
     except asyncio.exceptions.CancelledError as error:
@@ -37,9 +88,10 @@ async def lifespan(app: FastAPI):
         camera.release()
         print("Camera resource released.")
 
+
 app = FastAPI(lifespan=lifespan)
 
-event_queue = queue.Queue()
+event_queue: "queue.Queue[Optional[BarCode]]" = queue.Queue()
 
 
 class Camera:
@@ -47,13 +99,13 @@ class Camera:
     A class to handle video capture from a camera.
     """
 
-    def __init__(self, event_queue: queue.Queue, url: Optional[Union[str, int]] = 0) -> None:
+    def __init__(self, event_queue: queue.Queue) -> None:
         """
         Initialize the camera.
 
         :param camera_index: Index of the camera to use.
         """
-        self.cap = cv2.VideoCapture(url)
+        self.cap = cv2.VideoCapture(0)
         self.lock = threading.Lock()
         self.event_queue = event_queue
 
@@ -66,27 +118,32 @@ class Camera:
         with self.lock:
             ret, frame = self.cap.read()
             if not ret:
-                return b''
+                return b""
 
             barcodes = zxingcpp.read_barcodes(frame)
-            self.event_queue.put(GS1Data(
-                gtin="",
-                expiry="",
-                lot="",
-                sn=""
-            ))
             for barcode in barcodes:
-                print(
-                    "Found barcode:"
-                    f'\n Text:    "{barcode.text}"'
-                    f"\n Format:   {barcode.format}"
-                    f"\n Content:  {barcode.content_type}"
-                    f"\n Position: {barcode.position}"
-                )
-            ret, jpeg = cv2.imencode('.jpg', frame)
+                try:
+                    print(
+                        "Found barcode:"
+                        f'\n Text:    "{barcode.text}"'
+                        f"\n Format:   {barcode.format}"
+                        f"\n Content:  {barcode.content_type}"
+                        f"\n Position: {barcode.position}"
+                    )
+                    bc = parse_barcode(
+                        RawBarCode(
+                            text=barcode.text, format=barcode.format, content=barcode.content_type
+                        )
+                    )
+                    if bc:
+                        self.event_queue.put(bc)
+                except Exception as e:
+                    print(e)
+
+            ret, jpeg = cv2.imencode(".jpg", frame)
 
             if not ret:
-                return b''
+                return b""
 
             return jpeg.tobytes()
 
@@ -101,8 +158,7 @@ async def gen_frames() -> AsyncGenerator[bytes, None]:
         while True:
             frame = camera.get_frame()
             if frame:
-                yield (b'--frame\r\n'
-                       b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+                yield (b"--frame\r\n" b"Content-Type: image/jpeg\r\n\r\n" + frame + b"\r\n")
             else:
                 break
             await asyncio.sleep(0)
@@ -114,31 +170,42 @@ async def gen_frames() -> AsyncGenerator[bytes, None]:
 
 @app.get("/stream")
 async def video_feed() -> StreamingResponse:
-    return StreamingResponse(
-        gen_frames(),
-        media_type='multipart/x-mixed-replace; boundary=frame'
-    )
+    return StreamingResponse(gen_frames(), media_type="multipart/x-mixed-replace; boundary=frame")
+
 
 @app.get("/barcodes", response_class=StreamingResponse)
-async def camera_events(request: Request):
-    print("Barcode Streams")
-    async def event_generator(request: Request):
+async def camera_events(request: Request) -> EventSourceResponse:
+    async def event_generator(request: Request) -> AsyncGenerator:
         while True:
             try:
                 if await request.is_disconnected():
                     break
-                event = event_queue.get()
                 if not event_queue.empty():
-                    yield {"data": event.model_dump_json()}
+                    event = event_queue.get()
+                    if event:
+                        yield {"data": event.model_dump_json()}
+                    else:
+                        break
                 else:
                     await asyncio.sleep(1)
             except asyncio.CancelledError as e:
                 print(f"Disconnected from client (via refresh/close) {request.client}")
                 raise e
-    #return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+    # return StreamingResponse(event_generator(), media_type="text/event-stream")
     return EventSourceResponse(event_generator(request))
 
-async def main():
+
+app.mount("/", StaticFiles(directory="./scanner-app/dist/", html=True), name="react")
+
+
+# Redirect the root URL to the React index.html
+@app.get("/")
+async def serve_root() -> RedirectResponse:
+    return RedirectResponse(url="/")
+
+
+async def main() -> None:
     origins = ["http://localhost", "http://localhost:8080", "http://localhost:5173"]
 
     app.add_middleware(
@@ -148,14 +215,18 @@ async def main():
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    config = uvicorn.Config(app, host='0.0.0.0', port=8000,
+    config = uvicorn.Config(
+        app,
+        host="0.0.0.0",
+        port=8000,
         reload=True,
         timeout_graceful_shutdown=2,
     )
     server = uvicorn.Server(config)
     await server.serve()
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     camera = Camera(event_queue)
     try:
         asyncio.run(main())

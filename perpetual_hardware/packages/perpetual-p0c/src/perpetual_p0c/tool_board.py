@@ -182,6 +182,7 @@ class ToolBoard:
         return self._state
 
     def set_pullers(self, io: IoBoard) -> BoardState:
+        print(io)
         buffer = [CanCommandIds.SetPullers.value]
         buffer.extend(io.to_buffer())
         response = self._run_command(self.default_message(buffer))

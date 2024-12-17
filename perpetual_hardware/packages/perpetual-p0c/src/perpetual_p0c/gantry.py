@@ -5,8 +5,8 @@ from can import BusABC
 from perpetual_trinamic.trinamic_axis import TrinamicAxis
 from pydantic import BaseModel
 from enum import Enum
-from typing import Optional, Any, Dict
-#import atexit
+from typing import Optional, Any, Dict, List
+# import atexit
 
 
 class GantryConfiguration(BaseModel):
@@ -66,7 +66,7 @@ class Gantry:
             configuration=self._config.y_axis_config,
             max_current=6000,
         )
-        #atexit.register(self.cleanup)
+        # atexit.register(self.cleanup)
 
     def cleanup(self) -> None:
         self.stop()
@@ -97,6 +97,19 @@ class Gantry:
     def move_coordinate(self, coordinate: GantryCoordinate, wait: bool = True) -> None:
         self._x_axis.move_to_position(coordinate.x)
         self._y_axis.move_to_position_with_brake(coordinate.y)
+        if wait:
+            self.wait_for_move()
+            self._y_axis.reset_location()
+
+    def move_path(self, path: List[GantryCoordinate], wait: bool = True) -> None:
+        self._y_axis.init_brake_move()
+        for coordinate in path:
+            self._x_axis.move_to_position(coordinate.x)
+            self._y_axis.move_to_position(coordinate.y)
+            self._y_axis.wait_for_brake_move()
+            self._y_axis.reset_location()
+            self._x_axis.wait_for_move()
+        self._y_axis.end_brake_move()
         if wait:
             self.wait_for_move()
 

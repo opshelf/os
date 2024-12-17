@@ -20,10 +20,10 @@ class FunnelOffsets(BaseModel):
     diverter_50mm_pos: float
     diverter_100mm_pos: float
     diverter_150mm_pos: float
-    belt_speed: float = 100
+    belt_speed: float = 80
     wall_speed: float = 500
     output_transfer_conveyor_speed: float = 100
-    #output_conveyor_speed: float = 300
+    # output_conveyor_speed: float = 300
     output_conveyor_speed: float = 250
 
 
@@ -44,6 +44,7 @@ class FunnelConfiguration(BaseModel):
     opposing_funnel_max_travel: float = 362
     # input_funnel_max_travel: float = 400.0
     input_funnel_max_travel: float = 370.0
+    minimum_transfer_location: float = 325.0
 
 
 class FunnelStatus(BaseModel):
@@ -159,7 +160,7 @@ class Funnel:
         self._output_transfer_conveyor.safety_off()
         self._slots_open = 0
         self._diverter_open = True
-        #atexit.register(self.cleanup)
+        # atexit.register(self.cleanup)
 
     def __enter__(self) -> "Funnel":
         return self
@@ -176,6 +177,7 @@ class Funnel:
         self._belt.stop()
         self._wall.stop()
         self._diverter.stop()
+        self._diverter.set_standby_current(0)
         self._output_transfer_conveyor.stop()
         self._output_conveyor.stop()
         self._belt.stop()
@@ -250,9 +252,14 @@ class Funnel:
     def offsets(self, offsets: FunnelOffsets) -> None:
         self._configuration.offsets = offsets
 
-    # @property
-    # def slots(self) -> ToolRelayController:
-    #    return self._slots
+    def start_receive_item(self) -> None:
+        self.start_belt()
+        self.start_wall()
+
+    def stop_receive_item(self) -> None:
+        self.stop_belt()
+        self.stop_wall()
+
     @property
     def io(self) -> IoController:
         return self._io
@@ -270,6 +277,32 @@ class Funnel:
                 wedge_1=False if slots > 0 else True,
             )
         )
+
+    def open_tray_wedges(self, tray: Tray) -> None:
+        if tray.cell_width <= 50:
+            self._io.set_wedges(
+                Wedge(
+                    wedge_1=False,
+                    wedge_2=True,
+                    wedge_3=True,
+                )
+            )
+        elif tray.cell_width > 50 and tray.cell_width <= 105:
+            self._io.set_wedges(
+                Wedge(
+                    wedge_1=False,
+                    wedge_2=False,
+                    wedge_3=True,
+                )
+            )
+        else:
+            self._io.set_wedges(
+                Wedge(
+                    wedge_1=False,
+                    wedge_2=False,
+                    wedge_3=False,
+                )
+            )
 
     def close_slots(self) -> None:
         self._slots_open = 0
@@ -323,6 +356,17 @@ class Funnel:
 
         self._diverter.home()
 
+    def check_position_reached(self) -> bool:
+        return all(
+            [
+                self._inlet_funnel.poll_position_reached(),
+                self._opposing_funnel.poll_position_reached(),
+                self._slot_1.poll_position_reached(),
+                self._slot_2.poll_position_reached(),
+                self._slot_3.poll_position_reached(),
+            ]
+        )
+
     def wait_for_move(self) -> None:
         self._inlet_funnel.wait_for_move()
         self._opposing_funnel.wait_for_move()
@@ -330,48 +374,57 @@ class Funnel:
         self._slot_2.wait_for_move()
         self._slot_3.wait_for_move()
 
-    def move_to_cell(self, tray: Tray, idx: int) -> None:
-        self.inlet_funnel.move_to_position(0)
-        self.opposing_funnel.move_to_position(0)
-        self.return_slots()
-        self.wait_for_move()
-        position = tray.cell_width - self.offsets.funnel_min_height
-        if position >= 150:
-            position = 148
-        # self._inlet_funnel_width.move_to_position(position)
-        # self._opposing_funnel_width.move_to_position(position)
-
-        ipos, opos = tray.get_cell_position(idx)
-        diff = opos - ipos
+    def open_tray_slots(self, tray: Tray) -> None:
         if tray.cell_width <= 50:
-            self.open_slots(1)
-            # self._slot_1.move_to_position(0)
-            # self._slot_2.move_to_position(diff-5)
-            # self._slot_3.move_to_position(diff-5)
-            self._slot_1.move_to_position(diff - 5)
-            self._slot_2.move_to_position(diff - 5)
-            self._slot_3.move_to_position(0)
+            self._slot_1.move_to_position(0)
+            self._slot_2.move_to_position(tray.cell_width - 5)
+            self._slot_3.move_to_position(tray.cell_width - 5)
         elif tray.cell_width > 50 and tray.cell_width <= 105:
-            self.open_slots(2)
-            # self._slot_1.move_to_position(0)
-            # self._slot_2.move_to_position(0)
-            # self._slot_3.move_to_position(diff-5)
-            self._slot_1.move_to_position(diff - 5)
+            self._slot_1.move_to_position(0)
             self._slot_2.move_to_position(0)
-            self._slot_3.move_to_position(0)
+            self._slot_3.move_to_position(tray.cell_width - 5)
         else:
-            self.open_slots(3)
             self._slot_1.move_to_position(0)
             self._slot_2.move_to_position(0)
             self._slot_3.move_to_position(0)
 
-        if self._diverter_open:
-            if tray.cell_width <= 50:
-                self.set_diverter_opening(FunnelOpeningSize.OPEN_50MM)
-            elif tray.cell_width > 50 and tray.cell_width <= 105:
-                self.set_diverter_opening(FunnelOpeningSize.OPEN_100MM)
-            else:
-                self.set_diverter_opening(FunnelOpeningSize.OPEN_150MM)
+    def close_tray_wedges(self, tray: Tray, times: int = 1) -> None:
+        for _ in range(0, times):
+            self.close_slots()
+            time.sleep(1)
+            self.open_tray_wedges(tray)
+
+    def set_diverter_opening(self, tray: Tray) -> None:
+        if tray.cell_width <= 50:
+            self.set_diverter_size(FunnelOpeningSize.OPEN_50MM)
+        elif tray.cell_width > 50 and tray.cell_width <= 105:
+            self.set_diverter_size(FunnelOpeningSize.OPEN_100MM)
+        else:
+            self.set_diverter_size(FunnelOpeningSize.OPEN_150MM)
+
+    def move_to_cell(self, tray: Tray, idx: int) -> None:
+        # self.inlet_funnel.move_to_position(0)
+        # self.opposing_funnel.move_to_position(0)
+        self.return_slots()
+        # self.wait_for_move()
+        position = tray.cell_width - self.offsets.funnel_min_height
+        if position >= 150:
+            position = 148
+        ipos, opos = tray.get_cell_position(idx)
+        diff = opos - ipos
+        self.open_tray_slots(tray)
+        if tray.cell_width <= 50:
+            self._slot_1.move_to_position(0)
+            self._slot_2.move_to_position(diff - 5)
+            self._slot_3.move_to_position(diff - 5)
+        elif tray.cell_width > 50 and tray.cell_width <= 105:
+            self._slot_1.move_to_position(0)
+            self._slot_2.move_to_position(0)
+            self._slot_3.move_to_position(diff - 5)
+        else:
+            self._slot_1.move_to_position(0)
+            self._slot_2.move_to_position(0)
+            self._slot_3.move_to_position(0)
 
         ipos += self.offsets.funnel_cell_1_offset_x
         opos = self._configuration.opposing_funnel_max_travel - opos
@@ -379,13 +432,9 @@ class Funnel:
         opos -= self.offsets.funnel_min_width
         opos = min([self._configuration.opposing_funnel_max_travel, opos])
         ipos = min([self._configuration.input_funnel_max_travel, ipos])
-        # curr_ipos = self._inlet_funnel.get_position()
         opos = max([0, opos])
         curr_opos = self._opposing_funnel.get_position()
-        # self._slot_2.move_to_position(opos-ipos)
-        # self._slot_2.move_to_position(diff-5)
-        # self._slot_3.move_to_position(opos-ipos)
-        print(opos, ipos)
+        # print(opos, ipos)
         if opos >= curr_opos:
             self._opposing_funnel.move_to_position(opos)
             self._inlet_funnel.move_to_position(ipos)
@@ -395,7 +444,7 @@ class Funnel:
             self._opposing_funnel.move_to_position(opos)
             self.wait_for_move()
 
-    def set_diverter_opening(self, size: FunnelOpeningSize) -> None:
+    def set_diverter_size(self, size: FunnelOpeningSize) -> None:
         if size == FunnelOpeningSize.OPEN_50MM:
             self._diverter.move_revolutions(self._configuration.offsets.diverter_50mm_pos)
         elif size == FunnelOpeningSize.OPEN_100MM:
@@ -466,6 +515,14 @@ class Funnel:
         ipos = min([self._configuration.opposing_funnel_max_travel, ipos])
         opos = max([0, opos])
         curr_opos = self._opposing_funnel.get_position()
+
+        if tray.cell_width <= 50:
+            self.set_diverter_size(FunnelOpeningSize.OPEN_50MM)
+        elif tray.cell_width > 50 and tray.cell_width <= 105:
+            self.set_diverter_size(FunnelOpeningSize.OPEN_100MM)
+        else:
+            self.set_diverter_size(FunnelOpeningSize.OPEN_150MM)
+
         if opos >= curr_opos:
             self._opposing_funnel.move_to_position(opos)
             self._inlet_funnel.move_to_position(ipos)
@@ -529,18 +586,29 @@ class Funnel:
         self._belt.initialize()
         self._wall.initialize()
 
-    def catch(self) -> None:
+    # def catch(self) -> None:
+    #    self.inlet_funnel.move_to_position(0)
+    #    self.opposing_funnel.move_to_position(self.offsets.catch_position)
+    #    self.return_slots()
+
+    def catch(self, tray: Tray, idx: int) -> None:
+        max_travel = self._configuration.opposing_funnel_max_travel
+        min_travel = 250
+        conveyor_width = 205
+        # min_transfer_location = 220
+        start, _ = tray.get_cell_position(idx)
+        position = max_travel - start + conveyor_width / 2
+        position = max(position, min_travel)
+        position = min(position, max_travel)
         self.inlet_funnel.move_to_position(0)
-        self.opposing_funnel.move_to_position(self.offsets.catch_position)
+        self.inlet_funnel.wait_for_move()
+        self.opposing_funnel.move_to_position(position)
         self.return_slots()
 
-    def open_tray_slots(self, tray: Tray) -> None:
-        if tray.cell_width <= 50:
-            self.open_slots(1)
-        elif tray.cell_width > 50 and tray.cell_width <= 105:
-            self.open_slots(2)
-        else:
-            self.open_slots(3)
+    def move_to_transfer_location(self) -> None:
+        if self.opposing_funnel.get_position() < self._configuration.minimum_transfer_location:
+            self.opposing_funnel.move_to_position(self._configuration.minimum_transfer_location)
+            self.opposing_funnel.wait_for_move()
 
     def handle_command(self, cmd: FunnelCommands) -> None:
         if cmd.command == Commands.HOME:
