@@ -3,7 +3,7 @@ from perpetual_p0c.configuration import p0_funnel_config
 from can import Bus
 from perpetual_p0c.utils import get_can_devices
 import time
-from perpetual_p0c.tray import Tray
+from perpetual_p0c.storage import Tray
 
 #class Tray(BaseModel):
 #    cells: int
@@ -48,7 +48,7 @@ if __name__ == "__main__":
         #funnel._inlet_funnel.wait_for_move()
         #funnel.stop()
         for slot in range(0, 6):
-            funnel.move_to_cell(Tray(cells=6,cell_width=50, cell_depth=100), slot)
+            funnel.move_to_cell(Tray(width=50, height=100), slot)
             input()
         
         #funnel.slot_1.home()

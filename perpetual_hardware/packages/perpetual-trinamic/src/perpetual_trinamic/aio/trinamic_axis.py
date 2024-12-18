@@ -1,7 +1,7 @@
 from can import BusABC
 from can.notifier import Notifier
 from hardware_common.stepper_motor import (
-    #AbstractStepperMotor,
+    # AbstractStepperMotor,
     StepperMotorConfig,
     Rotation,
     StepperMotorStatus,
@@ -13,7 +13,7 @@ import asyncio
 import time
 
 
-#class TrinamicAxis(AbstractStepperMotor, TMCM12xx):
+# class TrinamicAxis(AbstractStepperMotor, TMCM12xx):
 class TrinamicAxis(TMCM12xx):
     def __init__(
         self,
@@ -35,7 +35,7 @@ class TrinamicAxis(TMCM12xx):
         self._actual_position = 0.0
         self._max_deviation = 500
         self._homing_deviation = 100
-        #self.initialize()
+        # self.initialize()
 
     @property
     def max_deviation(self) -> int:
@@ -262,7 +262,9 @@ class TrinamicAxis(TMCM12xx):
         await self.wait_for_brake_move()
         await self.end_brake_move()
 
-    async def move_to_relative_position_with_brake(self, position: float, timeout: float = 60.0) -> None:
+    async def move_to_relative_position_with_brake(
+        self, position: float, timeout: float = 60.0
+    ) -> None:
         if self._status != StepperMotorStatus.GOOD:
             raise Exception("Status Bad")
         await self.init_brake_move()

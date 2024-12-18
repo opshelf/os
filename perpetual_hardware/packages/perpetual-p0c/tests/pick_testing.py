@@ -1,12 +1,10 @@
-from perpetual_p0c.common import StorageModuleSide
 from perpetual_p0c.gantry import Gantry
 from perpetual_p0c.funnel import Funnel
 from perpetual_p0c.tool import Tool
 from perpetual_p0c.configuration import p0_gantry_config, p0_tool_config, p0_funnel_config
 from perpetual_p0c.tool_board import IoBoard
-from perpetual_p0c.tray import Tray
+from perpetual_p0c.storage import Tray, StorageModuleSide
 from perpetual_p0c.utils import get_bus
-from can import Bus
 import time
 
 CLEARANCE = 450
@@ -192,9 +190,9 @@ def catch_slots() -> None:
         funnel = Funnel(bus, p0_funnel_config)
         #funnel.inlet_funnel.home()
         #funnel.opposing_funnel.home()
-        tray = Tray(cells=6, cell_width=50, cell_depth=150)
+        tray = Tray(width=50, height=150)
         for i in range(0, tray.cells):
-            position = calculate_slot_position(Tray(cells=6, cell_width=50, cell_depth=150), i)
+            position = calculate_slot_position(Tray(width=50, height=150), i)
             print(position)
             funnel.opposing_funnel.move_to_position(position)
             funnel.opposing_funnel.wait_for_move()

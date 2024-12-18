@@ -2,8 +2,7 @@ from pydantic import BaseModel
 from perpetual_p0c.gantry import GantryConfiguration, Gantry, GantryCoordinate
 from perpetual_p0c.funnel import FunnelConfiguration, Funnel, FunnelOpeningSize
 from perpetual_p0c.tool import ToolConfiguration, Tool
-from perpetual_p0c.tray import Tray
-from perpetual_p0c.common import StorageModuleSide
+from perpetual_p0c.storage import CellItem, ItemType, Tray, StorageModuleSide, StorageModuleCellLocation
 from perpetual_p0c.configuration import p0_robot_config
 from perpetual_p0c.utils import get_can_devices
 from perpetual_p0c.robot import P0C
@@ -66,10 +65,68 @@ def calculate_slot_position(tray: Tray, idx: int) -> float:
     position = min(position, max_travel)
     return position
 
+tray100_location = GantryCoordinate(
+          x=115,
+          y=274
+      )
+    
+tray150_location = GantryCoordinate(
+          x=85,
+          y=24
+      )
 
 if __name__ == '__main__':
     can_bus = get_can_devices()
     robot = P0C(p0_robot_config)
+    """ 
+    robot.move_to_storage_location(
+        StorageModuleCellLocation(
+            side=StorageModuleSide.RIGHT,
+            shelf_idx=2,
+            tray_idx=0,
+            slot_idx=0
+        )
+    )
+    robot.move_to_storage_location(
+        StorageModuleCellLocation(
+            side=StorageModuleSide.RIGHT,
+            shelf_idx=2,
+            tray_idx=1,
+            slot_idx=0
+        )
+    )
+    robot.move_to_storage_location(
+        StorageModuleCellLocation(
+            side=StorageModuleSide.RIGHT,
+            shelf_idx=2,
+            tray_idx=2,
+            slot_idx=0
+        )
+    )
+    """
+    #robot.gantry.home()
+    #robot.gantry_move(
+    #    GantryCoordinate(
+    #        x=115,
+    #        y=274
+    #    )
+    #)
+    #robot.pull_tray(
+    #    GantryCoordinate(
+    #        x=115,
+    #        y=274
+    #    ),
+    #    Tray(cells=6,cell_width=100, cell_depth=150),
+    #    StorageModuleSide.RIGHT
+    #)
+    #robot.place_tray(
+    #    GantryCoordinate(
+    #        x=115,
+    #        y=274
+    #    ),
+    #    StorageModuleSide.RIGHT
+    #)
+    #robot.home()
     #robot.gantry.home()
     #robot.home()
     #robot.tool.puller.move_to_position(481.5)
@@ -111,10 +168,10 @@ if __name__ == '__main__':
 
     #robot.pull_tray(tray_2_coordinate, StorageModuleSide.RIGHT)
     #robot.place_tray(tray_2_coordinate, StorageModuleSide.RIGHT)
-    robot.tool.home()
-    for i in range(0, 10):
-        robot.pull_tray(tray_3_coordinate, StorageModuleSide.RIGHT)
-        robot.place_tray(tray_3_coordinate, StorageModuleSide.RIGHT)
+    #robot.tool.home()
+    #for i in range(0, 10):
+    #    robot.pull_tray(tray_3_coordinate, StorageModuleSide.RIGHT)
+    #    robot.place_tray(tray_3_coordinate, StorageModuleSide.RIGHT)
     #robot.place_tray(tray_1_coordinate, StorageModuleSide.RIGHT)
     #robot.home()
     #robot.gantry.move_coordinate(tray_3_coordinate)
@@ -145,6 +202,61 @@ if __name__ == '__main__':
     #    robot.funnel.slot_3.wait_for_move()
     
     #input()
+    #robot.home()
+    #robot.workstation.home()
+    #robot.funnel.start_wall()
+
+    #robot.funnel.home()
+    #input()
+    #robot.tool.home()
+    #robot.funnel.stop()
+    #robot.place_tray(
+    #        tray100_location,
+    #        StorageModuleSide.RIGHT
+    #)
+    #robot.gantry_move(GantryCoordinate(x=85,y=25))
+    #robot.home()
+    robot.store_item(
+        CellItem(
+            item_type=ItemType.BOTTLE,
+            height=90,
+            width=40,
+        )
+    )
+    robot.store_item(
+        CellItem(
+            item_type=ItemType.BOTTLE,
+            height=90,
+            width=40,
+        )
+    )
+    #robot.tool.home()
+    #for i in range(0, 10):
+    #    robot.pull_tray(
+    #        tray150_location,
+    #        Tray(width=150, height=200),
+    #        StorageModuleSide.RIGHT
+    #    )
+    #    robot.place_tray(
+    #        tray150_location,
+    #        StorageModuleSide.RIGHT
+    #    )
+     
+    #for i in range(0, 3):
+    #    robot.receive_item(
+    #        Tray(cells=3,cell_width=100, cell_depth=200),
+    #        tray100_location,
+    #        i,
+    #        StorageModuleSide.RIGHT
+    #    )
+    #for i in range(0, 3):
+    #    robot.drop_off_item(
+    #        Tray(cells=3,cell_width=100, cell_depth=200),
+    #        tray100_location,
+    #        i,
+    #        StorageModuleSide.RIGHT
+    #    )
+    #
     #for i in range(0, 3):
     #    robot.receive_item(
     #        Tray(cells=6,cell_width=50, cell_depth=200),
@@ -152,15 +264,15 @@ if __name__ == '__main__':
     #        i,
     #        StorageModuleSide.RIGHT
     #    )
-    #robot.idle()
-    #for i in range(0, 6):
+    ##robot.idle()
+    #
+    #for i in range(0, 3):
     #    robot.drop_off_item(
     #        Tray(cells=6,cell_width=50, cell_depth=200),
-    #        tray_3_coordinate,
+    #        tray_1_coordinate,
     #        i,
     #        StorageModuleSide.RIGHT
     #    )
-    
     #robot.run_input_transfer()
     
     #robot.move_gantry_to_output()

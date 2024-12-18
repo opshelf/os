@@ -66,7 +66,6 @@ class Gantry:
             configuration=self._config.y_axis_config,
             max_current=6000,
         )
-        # atexit.register(self.cleanup)
 
     def cleanup(self) -> None:
         self.stop()

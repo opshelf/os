@@ -6,10 +6,10 @@ from can import BusABC
 from perpetual_trinamic.trinamic_axis import TrinamicAxis
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
-from perpetual_p0c.tray import Tray
-from perpetual_p0c.io_board import ActuatorState, IoController, IoState
+from perpetual_p0c.storage import Tray, StorageModuleSide
+from perpetual_p0c.io_board import ActuatorState, IoController
 from perpetual_p0c.tool_board import ToolBoard, IoBoard
-from perpetual_p0c.common import CanAxisConfiguration, StorageModuleSide
+from perpetual_p0c.common import CanAxisConfiguration
 import time
 
 
@@ -153,6 +153,32 @@ class Tool:
                     r4=True if solenoids >= 0 else False,
                     r5=True if solenoids >= 1 else False,
                     r6=True if solenoids >= 2 else False,
+                )
+            )
+
+    def set_tray_solenoids(self, tray: Tray, side: StorageModuleSide) -> None:
+        slots = 1
+        if tray.cell_width >= 50 and tray.cell_width < 100:
+            slots = 1
+        if tray.cell_width >= 100 and tray.cell_width < 150:
+            slots = 2
+        if tray.cell_width >= 150 and tray.cell_width < 200:
+            slots = 3
+
+        if side == "LEFT":
+            self._tool_board.set_carriage(
+                IoBoard(
+                    r1=True if slots >= 1 else False,
+                    r2=True if slots >= 2 else False,
+                    r3=True if slots >= 3 else False,
+                )
+            )
+        else:
+            self._tool_board.set_carriage(
+                IoBoard(
+                    r4=True if slots >= 1 else False,
+                    r5=True if slots >= 2 else False,
+                    r6=True if slots >= 3 else False,
                 )
             )
 

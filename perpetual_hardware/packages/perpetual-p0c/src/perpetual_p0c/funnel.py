@@ -1,6 +1,6 @@
 from hardware_common.stepper_motor import AbstractStepperMotor, AxisCommand
 from can import BusABC
-from perpetual_p0c.tray import Tray
+from perpetual_p0c.storage import Tray
 from perpetual_p0c.common import CanAxisConfiguration
 from perpetual_p0c.io_board import IoController, Wedge
 from perpetual_trinamic.trinamic_axis import TrinamicAxis, TrinamicStepper
@@ -225,6 +225,7 @@ class Funnel:
 
     def start_wall(self) -> None:
         self._wall.initialize()
+        self._wall.safety_off()
         self._wall.rotate(int(self._configuration.offsets.wall_speed))
 
     def stop_output(self) -> None:
@@ -350,10 +351,6 @@ class Funnel:
         self._slot_2.home()
         self._slot_3.home()
 
-        self._slot_1.home()
-        self._slot_2.home()
-        self._slot_3.home()
-
         self._diverter.home()
 
     def check_position_reached(self) -> bool:
@@ -436,12 +433,12 @@ class Funnel:
         curr_opos = self._opposing_funnel.get_position()
         # print(opos, ipos)
         if opos >= curr_opos:
-            self._opposing_funnel.move_to_position(opos)
             self._inlet_funnel.move_to_position(ipos)
+            self._opposing_funnel.move_to_position(opos)
             self.wait_for_move()
         else:
-            self._inlet_funnel.move_to_position(ipos)
             self._opposing_funnel.move_to_position(opos)
+            self._inlet_funnel.move_to_position(ipos)
             self.wait_for_move()
 
     def set_diverter_size(self, size: FunnelOpeningSize) -> None:

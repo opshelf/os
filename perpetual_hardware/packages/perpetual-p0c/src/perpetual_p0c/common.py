@@ -4,11 +4,6 @@ from enum import Enum
 from can import BusABC, ThreadSafeBus
 
 
-class StorageModuleSide(str, Enum):
-    LEFT = "LEFT"
-    RIGHT = "RIGHT"
-
-
 class CanAxisConfiguration(BaseModel):
     can_id: int
     configuration: StepperMotorConfig

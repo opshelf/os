@@ -1,6 +1,6 @@
 from perpetual_p0c.configuration import p0_funnel_config
 from perpetual_p0c.funnel import FunnelConfiguration, FunnelOffsets
-from perpetual_p0c.tray import Tray
+from perpetual_p0c.storage import Tray
 
 
 def move_to_cell(configuration: FunnelConfiguration, tray: Tray, idx: int) -> None:
@@ -17,7 +17,7 @@ def move_to_cell(configuration: FunnelConfiguration, tray: Tray, idx: int) -> No
 
 if __name__ == '__main__':
     for slot in range(0, 6):
-        move_to_cell(p0_funnel_config, Tray(cells=6,cell_width=50, cell_depth=100), slot)
+        move_to_cell(p0_funnel_config, Tray(width=50, height=100, slots=[]), slot)
 
 
 

@@ -1,4 +1,4 @@
-from perpetual_p0c.common import StorageModuleSide
+from perpetual_p0c.storage import StorageModuleSide
 from perpetual_p0c.configuration import p0_tool_config
 from perpetual_p0c.utils import get_can_devices
 from perpetual_p0c.tool_board import ToolBoard, IoBoard

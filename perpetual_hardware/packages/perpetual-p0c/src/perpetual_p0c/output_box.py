@@ -2,7 +2,6 @@ from can import BusABC
 from perpetual_p0c.common import CanAxisConfiguration
 from perpetual_trinamic.trinamic_axis import TrinamicAxis
 from pydantic import BaseModel
-import atexit
 
 
 class OutputBoxOffsets(BaseModel):

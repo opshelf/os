@@ -249,4 +249,3 @@ class TrinamicStepper(TMCM12xx):
         if status:
             self._status = StepperMotorStatus.ERROR
         return self._status
-

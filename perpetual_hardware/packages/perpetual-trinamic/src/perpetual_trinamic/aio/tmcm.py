@@ -3,6 +3,7 @@ from perpetual_trinamic.tmcl import TMCLCommand, TmclMessage, TmclReply, MoveTyp
 import struct
 import asyncio
 
+
 class TMCM:
     def __init__(
         self,
@@ -76,13 +77,19 @@ class TMCM:
         return await self._send_message(self._default_message(TMCLCommand.MVP, type.value, value))
 
     async def move_absolute(self, value: int) -> TmclReply:
-        return await self._send_message(self._default_message(TMCLCommand.MVP, MoveType.ABSOLUTE, value))
+        return await self._send_message(
+            self._default_message(TMCLCommand.MVP, MoveType.ABSOLUTE, value)
+        )
 
     async def move_relative(self, value: int) -> TmclReply:
-        return await self._send_message(self._default_message(TMCLCommand.MVP, MoveType.RELATIVE, value))
+        return await self._send_message(
+            self._default_message(TMCLCommand.MVP, MoveType.RELATIVE, value)
+        )
 
     async def set_axis_parameter(self, axis_parameter: int, value: int) -> TmclReply:
-        return await self._send_message(self._default_message(TMCLCommand.SAP, axis_parameter, value))
+        return await self._send_message(
+            self._default_message(TMCLCommand.SAP, axis_parameter, value)
+        )
 
     async def set_io(self, type_number: int, value: int, bank_number: int = 0) -> TmclReply:
         return await self._send_message(

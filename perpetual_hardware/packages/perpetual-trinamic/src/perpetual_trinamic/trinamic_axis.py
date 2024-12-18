@@ -559,15 +559,14 @@ class TrinamicAxis(AbstractStepperMotor, TMCM12xx):
 
     def init_brake_move(self) -> None:
         self.set_standby_current(self._configuration.holding_current)
-        time.sleep(0.2)
+        time.sleep(0.1)
         self.set_io(0, 1, 2)
-        time.sleep(0.2)
+        time.sleep(0.1)
 
     def end_brake_move(self) -> None:
         self.set_io(0, 0, 2)
-        time.sleep(0.1)
+        time.sleep(0.2)
         self.set_standby_current(0)
-        time.sleep(0.1)
 
     def get_home_status(self) -> HomedStatus:
         status = self.get_user_variable(UserVariables.HOMED.value)

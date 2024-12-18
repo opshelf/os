@@ -1,5 +1,6 @@
 from enum import IntEnum
 
+
 class UserVariables(IntEnum):
     HOMED = 0x00
     HARD_STOPPED = 0x01
@@ -13,4 +14,3 @@ class HomedStatus(IntEnum):
 class HardStopStatus(IntEnum):
     NOT_HARD_STOPPED = 0x00
     HARD_STOPPED = 0x01
-

@@ -2,8 +2,7 @@ from pydantic import BaseModel
 from perpetual_p0c.gantry import GantryConfiguration, Gantry, GantryCoordinate
 from perpetual_p0c.funnel import FunnelConfiguration, Funnel
 from perpetual_p0c.tool import ToolConfiguration, Tool
-from perpetual_p0c.tray import Tray
-from perpetual_p0c.common import StorageModuleSide
+from perpetual_p0c.storage import Tray, StorageModuleSide
 from perpetual_p0c.configuration import p0_robot_config
 from perpetual_p0c.utils import get_can_devices
 from perpetual_p0c.robot import P0C
