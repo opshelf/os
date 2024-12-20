@@ -1,8 +1,25 @@
 from hardware_common.stepper_motor import StepperMotorConfig
 from pydantic import BaseModel
 from enum import Enum
-from can import BusABC, ThreadSafeBus
+from abc import ABC, abstractmethod
+from typing import Generic, TypeVar
 
+C = TypeVar("C")
+S = TypeVar("S")
+
+class AbstractSubsystem(ABC, Generic[C, S]):
+
+    @abstractmethod
+    def configuration(self) -> C:
+        ...
+
+    @abstractmethod
+    def set_configuration(self, configuration: C) -> None:
+        ...
+
+    @abstractmethod
+    async def status(self) -> S:
+        ...
 
 class CanAxisConfiguration(BaseModel):
     can_id: int
@@ -12,8 +29,7 @@ class CanAxisConfiguration(BaseModel):
 
 
 class CanMessageIds(int, Enum):
-    PNEUMATIC_NODE = 5
-    # IO_NODE = 5
+    IO_NODE = 5
     TOOL_NODE = 6
     X_AXIS = 100
     Y_AXIS = 101

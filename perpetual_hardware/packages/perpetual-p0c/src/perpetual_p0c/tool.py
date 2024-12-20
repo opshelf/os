@@ -80,7 +80,6 @@ class Tool:
         self._carriage_solenoids = 0
         self._puller_solenoids = 0
         self.set_solenoids_off()
-        # atexit.register(self.cleanup)
 
     def cleanup(self) -> None:
         self._puller.stop()

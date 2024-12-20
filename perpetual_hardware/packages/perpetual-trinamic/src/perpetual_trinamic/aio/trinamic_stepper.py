@@ -8,6 +8,7 @@ from hardware_common.stepper_motor import (
 )
 from perpetual_trinamic.aio.tmcm12xx import TMCM12xx
 from perpetual_trinamic.tmcl import StatusFlags, TrinamicErrorFlags
+from perpetual_can import CANBusHandler
 import time
 from perpetual_trinamic.aio.common import UserVariables, HomedStatus, HardStopStatus
 
@@ -15,16 +16,14 @@ from perpetual_trinamic.aio.common import UserVariables, HomedStatus, HardStopSt
 class TrinamicStepper(TMCM12xx):
     def __init__(
         self,
-        connection: BusABC,
+        bus: CANBusHandler,
         configuration: StepperMotorConfig,
-        notifier: Notifier,
         module_id: int = 1,
         motor_id: int = 0,
         max_current: int = 3000,
     ) -> None:
-        TMCM12xx.__init__(self, connection, notifier, module_id, motor_id, max_current)
-        self._connection = connection
-        self._notifier = notifier
+        TMCM12xx.__init__(self, bus, module_id, motor_id, max_current)
+        self._bus = bus
         self._module_id = module_id
         self._motor_id = motor_id
         self._configuration = configuration

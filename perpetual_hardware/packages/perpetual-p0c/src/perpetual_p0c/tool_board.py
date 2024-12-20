@@ -139,7 +139,7 @@ class BoardState(BaseModel):
 class ToolBoard:
     def __init__(self, bus: BusABC, can_id: int = CanMessageIds.TOOL_NODE.value) -> None:
         self._bus = bus
-        self._can_id = can_id
+        self._can_id = int(can_id)
         self._state = BoardState(
             carriage=IoBoard.from_buffer(0),
             puller=IoBoard.from_buffer(0),

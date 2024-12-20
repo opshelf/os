@@ -2,12 +2,11 @@ from pydantic import BaseModel, ValidationError, model_validator
 from enum import Enum
 from typing import Optional, List, Self, Tuple
 from perpetual_p0c.gantry import GantryCoordinate
-# from perpetual_p0c.common import StorageModuleSide
 
 
 class StorageModuleSide(str, Enum):
-    RIGHT = "RIGHT"
-    LEFT = "LEFT"
+    RIGHT = "right_module"
+    LEFT = "left_module"
 
 
 class CalibrationCoordinate(GantryCoordinate):
@@ -23,8 +22,13 @@ class CalibrationCoordinate(GantryCoordinate):
         return GantryCoordinate(x=self.x, y=self.y)
 
 
+class Dimensions(BaseModel):
+    length: float
+    width: float
+    height: float
+
+
 class ItemType(str, Enum):
-    OPTIONAL = "OPTIONAL"
     BOTTLE = "BOTTLE"
     BOX = "BOX"
 
@@ -43,10 +47,11 @@ class CellStatus(str, Enum):
 
 
 class CellItem(BaseModel):
-    item_type: ItemType
     # Width and Height are the Bounding Box of the item
-    height: float
-    width: float
+    # height: float
+    # width: float
+    dimensions: Dimensions
+    item_type: Optional[ItemType] = None
     gs1_data: Optional[GS1Data] = None
     ndc_code: Optional[str] = None
     weight: Optional[float] = None
@@ -83,7 +88,11 @@ class Tray(BaseModel):
             self.slots
         )
         start_position = self.wall_size + cell_width * idx + self.wall_size * idx
-        return (start_position, start_position + cell_width)
+        if idx > 0:
+            start_position += 5
+            return (start_position, start_position + cell_width)
+        else:
+            return (start_position, start_position + cell_width + 5)
 
     @model_validator(mode="after")
     def verify_height(self) -> Self:
@@ -190,8 +199,8 @@ class Shelf(BaseModel):
         locations = []
         while tray_idx < len(self.trays):
             if (
-                self.trays[tray_idx].width >= item.width
-                and self.trays[tray_idx].height >= item.height
+                self.trays[tray_idx].width >= item.dimensions.width
+                and self.trays[tray_idx].height >= item.dimensions.height
             ):
                 open_slot = self.trays[tray_idx].get_next_free_slot()
                 if not open_slot is None:
@@ -199,10 +208,10 @@ class Shelf(BaseModel):
             tray_idx += 1
         for location in locations:
             print(item, location)
-            if item.width <= 50:
+            if item.dimensions.width <= 50:
                 if self.trays[location.tray_idx].width == 50:
                     return location
-            elif item.width <= 100:
+            elif item.dimensions.width <= 100:
                 if self.trays[location.tray_idx].width == 100:
                     return location
             else:
@@ -213,14 +222,19 @@ class Shelf(BaseModel):
         tray_idx = 0
         while tray_idx < len(self.trays):
             if (
-                self.trays[tray_idx].width > item.width
-                and self.trays[tray_idx].height >= item.height
+                self.trays[tray_idx].width > item.dimensions.width
+                and self.trays[tray_idx].height >= item.dimensions.height
             ):
                 open_slot = self.trays[tray_idx].get_next_free_slot()
                 if open_slot:
                     return ShelfCellLocation(tray_idx=tray_idx, slot_idx=open_slot)
             tray_idx += 1
         return None
+
+
+class CellLocationData(BaseModel):
+    cell: CellItem
+    location: StorageModuleCellLocation
 
 
 class StorageGrid(BaseModel):
@@ -267,7 +281,7 @@ class StorageGrid(BaseModel):
         for cell_location in cell_locations:
             if cell_location.side == StorageModuleSide.LEFT:
                 if (
-                    item.width <= 50
+                    item.dimensions.width <= 50
                     and self.left_module[cell_location.shelf_idx]
                     .trays[cell_location.tray_idx]
                     .width
@@ -275,7 +289,7 @@ class StorageGrid(BaseModel):
                 ):
                     return cell_location
                 elif (
-                    item.width <= 100
+                    item.dimensions.width <= 100
                     and self.left_module[cell_location.shelf_idx]
                     .trays[cell_location.tray_idx]
                     .width
@@ -286,7 +300,7 @@ class StorageGrid(BaseModel):
                     return cell_location
             else:
                 if (
-                    item.width <= 50
+                    item.dimensions.width <= 50
                     and self.right_module[cell_location.shelf_idx]
                     .trays[cell_location.tray_idx]
                     .width
@@ -294,7 +308,7 @@ class StorageGrid(BaseModel):
                 ):
                     return cell_location
                 elif (
-                    item.width <= 100
+                    item.dimensions.width <= 100
                     and self.right_module[cell_location.shelf_idx]
                     .trays[cell_location.tray_idx]
                     .width
@@ -313,22 +327,6 @@ class StorageGrid(BaseModel):
             return self.right_module
         else:
             return self.left_module
-
-    # def get_next_free_coordinate(self, location: StorageModuleCellLocation) -> CalibrationCoordinate:
-    #    if location.side == StorageModuleSide.LEFT:
-    #        return self.left_module[location.shelf_idx].get_tray_location(
-    #            ShelfCellLocation(
-    #                tray_idx=location.tray_idx,
-    #                slot_idx=location.slot_idx
-    #            )
-    #        )
-    #    else:
-    #        return self.right_module[location.shelf_idx].get_tray_location(
-    #            ShelfCellLocation(
-    #                tray_idx=location.tray_idx,
-    #                slot_idx=location.slot_idx
-    #            )
-    #        )
 
     def get_tray_coordinate(
         self, location: StorageModuleTrayLocation | StorageModuleCellLocation
@@ -361,6 +359,96 @@ class StorageGrid(BaseModel):
         self.get_side(location.side)[location.shelf_idx].trays[location.tray_idx].slots[
             location.slot_idx
         ] = Cell(status=CellStatus.EMPTY, item=None)
+
+    def clear_all_items(self) -> None:
+        for shelf_idx, shelf in enumerate(self.left_module):
+            for tray_idx, tray in enumerate(shelf.trays):
+                for slot_idx, _ in enumerate(tray.slots):
+                    self.left_module[shelf_idx].trays[tray_idx].slots[slot_idx] = Cell(
+                        status=CellStatus.EMPTY, item=None
+                    )
+        for shelf_idx, shelf in enumerate(self.right_module):
+            for tray_idx, tray in enumerate(shelf.trays):
+                for slot_idx, _ in enumerate(tray.slots):
+                    self.right_module[shelf_idx].trays[tray_idx].slots[slot_idx] = Cell(
+                        status=CellStatus.EMPTY, item=None
+                    )
+
+    def get_all_items(self) -> List[StorageModuleCellLocation]:
+        items = []
+        for shelf_idx, shelf in enumerate(self.left_module):
+            for tray_idx, tray in enumerate(shelf.trays):
+                for slot_idx, slot in enumerate(tray.slots):
+                    if slot.status == CellStatus.OCCUPIED:
+                        items.append(
+                            StorageModuleCellLocation(
+                                shelf_idx=shelf_idx,
+                                tray_idx=tray_idx,
+                                side=StorageModuleSide.LEFT,
+                                slot_idx=slot_idx,
+                            )
+                        )
+        for shelf_idx, shelf in enumerate(self.right_module):
+            for tray_idx, tray in enumerate(shelf.trays):
+                for slot_idx, slot in enumerate(tray.slots):
+                    if slot.status == CellStatus.OCCUPIED:
+                        items.append(
+                            StorageModuleCellLocation(
+                                shelf_idx=shelf_idx,
+                                tray_idx=tray_idx,
+                                side=StorageModuleSide.RIGHT,
+                                slot_idx=slot_idx,
+                            )
+                        )
+        return items
+
+    def get_all_cell_data(self) -> List[CellLocationData]:
+        items: List[CellLocationData] = []
+        for shelf_idx, shelf in enumerate(self.left_module):
+            for tray_idx, tray in enumerate(shelf.trays):
+                for slot_idx, slot in enumerate(tray.slots):
+                    if slot.status == CellStatus.OCCUPIED and slot.item:
+                        items.append(
+                            CellLocationData(
+                                cell=slot.item,
+                                location=StorageModuleCellLocation(
+                                    shelf_idx=shelf_idx,
+                                    tray_idx=tray_idx,
+                                    side=StorageModuleSide.LEFT,
+                                    slot_idx=slot_idx,
+                                ),
+                            )
+                        )
+        for shelf_idx, shelf in enumerate(self.right_module):
+            for tray_idx, tray in enumerate(shelf.trays):
+                for slot_idx, slot in enumerate(tray.slots):
+                    if slot.status == CellStatus.OCCUPIED and slot.item:
+                        items.append(
+                            CellLocationData(
+                                cell=slot.item,
+                                location=StorageModuleCellLocation(
+                                    shelf_idx=shelf_idx,
+                                    tray_idx=tray_idx,
+                                    side=StorageModuleSide.RIGHT,
+                                    slot_idx=slot_idx,
+                                ),
+                            )
+                        )
+        return items
+
+    def get_all_items_gs1(self) -> List[CellItem]:
+        items: List[CellItem] = []
+        for shelf in self.left_module:
+            for tray in shelf.trays:
+                for slot in tray.slots:
+                    if slot.status == CellStatus.OCCUPIED and slot.item:
+                        items.append(slot.item)
+        for shelf in self.right_module:
+            for tray in shelf.trays:
+                for slot in tray.slots:
+                    if slot.status == CellStatus.OCCUPIED and slot.item:
+                        items.append(slot.item)
+        return items
 
     def get_item_location(self, data: GS1Data) -> StorageModuleCellLocation:
         for shelf_idx, shelf in enumerate(self.left_module):

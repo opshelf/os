@@ -66,6 +66,7 @@ class Gantry:
             configuration=self._config.y_axis_config,
             max_current=6000,
         )
+        self._y_axis.set_standby_current(0)
 
     def cleanup(self) -> None:
         self.stop()
@@ -84,6 +85,7 @@ class Gantry:
     def initialize(self) -> None:
         self._x_axis.initialize()
         self._y_axis.initialize()
+        self._y_axis.set_standby_current(0)
 
     @property
     def x_axis(self) -> TrinamicAxis:
@@ -95,22 +97,29 @@ class Gantry:
 
     def move_coordinate(self, coordinate: GantryCoordinate, wait: bool = True) -> None:
         self._x_axis.move_to_position(coordinate.x)
+        self._y_axis.safety_off()
         self._y_axis.move_to_position_with_brake(coordinate.y)
         if wait:
             self.wait_for_move()
             self._y_axis.reset_location()
 
     def move_path(self, path: List[GantryCoordinate], wait: bool = True) -> None:
-        self._y_axis.init_brake_move()
-        for coordinate in path:
-            self._x_axis.move_to_position(coordinate.x)
-            self._y_axis.move_to_position(coordinate.y)
-            self._y_axis.wait_for_brake_move()
-            self._y_axis.reset_location()
-            self._x_axis.wait_for_move()
-        self._y_axis.end_brake_move()
-        if wait:
-            self.wait_for_move()
+        position = self.position
+        try:
+            self._y_axis.init_brake_move()
+            for coordinate in path:
+                self._x_axis.move_to_position(coordinate.x)
+                self._y_axis.move_to_position(coordinate.y)
+                self._y_axis.wait_for_brake_move()
+                self._y_axis.reset_location()
+                self._x_axis.wait_for_move()
+            self._y_axis.end_brake_move()
+            if wait:
+                self.wait_for_move()
+        except Exception as e:
+            self._y_axis.end_brake_move()
+            print("Failed Path Movement: ", path, position)
+            raise e
 
     def move(self, x: float, y: float, wait: bool = True) -> None:
         self._x_axis.move_to_position(x)

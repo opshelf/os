@@ -8,6 +8,7 @@ import atexit
 from perpetual_p0c.utils import get_bus
 from typing import List, Optional
 from perpetual_p0c.workstation import Workstation, WorkstationConfiguration
+from perpetual_p0c.size_database import SizeDatabase
 from enum import Enum
 import os
 from perpetual_p0c.storage import (
@@ -57,6 +58,7 @@ class RobotConfiguration(BaseModel):
     input_location: GantryCoordinate
     state_file: str = "state.json"
     storage_file: str = "storage.json"
+    size_file: str = "sizes.json"
 
 
 class ItemStorageLocation(BaseModel):
@@ -144,15 +146,27 @@ class P0C:
         self._io = IoController(self._bus)
         self._workstation = Workstation(self._bus, config.workstation)
         self._state = RobotState(current_tray=None)
+        self._sizes = SizeDatabase()
+        self._tool.actuators(False)
         # self.save_state()
         # self.save_storage()
         self.load_state()
         self.load_storage()
+        self.load_sizes()
         atexit.register(self.shutdown)
 
     def save_state(self) -> None:
         with open(self._config.state_file, "w+") as f:
             f.write(self._state.model_dump_json())
+
+    def save_sizes(self) -> None:
+        self._sizes.save_to_file(self._config.size_file)
+
+    def load_sizes(self) -> None:
+        if os.path.exists(self._config.size_file):
+            self._sizes.load_from_file(self._config.size_file)
+        else:
+            self.save_sizes()
 
     def load_state(self) -> None:
         if os.path.exists(self._config.state_file):
@@ -179,9 +193,9 @@ class P0C:
         self._bus.shutdown()
 
     def stop(self) -> None:
+        self.gantry.stop()
         self.tool.stop()
         self.funnel.stop()
-        self.gantry.stop()
 
     @property
     def config(self) -> RobotConfiguration:
@@ -203,7 +217,24 @@ class P0C:
     def workstation(self) -> Workstation:
         return self._workstation
 
+    @property
+    def size_db(self) -> SizeDatabase:
+        return self._sizes
+
+    @property
+    def storage(self) -> StorageGrid:
+        return self._storage
+
     def home(self) -> None:
+        self._tool.actuators(False)
+        self._workstation.home()
+        self._tool.home()
+        self._funnel.home()
+        self._gantry.home()
+
+    def home_y_first(self) -> None:
+        self._tool.actuators(False)
+        self._gantry.y_axis.home_with_brake()
         self._workstation.home()
         self._tool.home()
         self._funnel.home()
@@ -216,7 +247,7 @@ class P0C:
         if gantry_position.x > self.config.gantry_safe_x:
             # Above High Clearance
             if gantry_position.y >= self.config.gantry_safe_y_high_clearance - 10:
-                if coordinate.y >= gantry_position.y - 10:
+                if coordinate.y >= self.config.gantry_safe_y_high_clearance - 10:
                     path.append(GantryCoordinate(x=coordinate.x, y=coordinate.y))
                     return path
                 else:
@@ -249,13 +280,21 @@ class P0C:
                     path.append(GantryCoordinate(x=coordinate.x, y=coordinate.y))
                     return path
                 else:
-                    path.append(GantryCoordinate(x=gantry_position.x, y=self.config.gantry_safe_y))
-                    path.append(
-                        GantryCoordinate(x=self.config.gantry_safe_x, y=self.config.gantry_safe_y)
-                    )
-                    path.append(GantryCoordinate(x=coordinate.x, y=self.config.gantry_safe_y))
-                    path.append(GantryCoordinate(x=coordinate.x, y=coordinate.y))
-                    return path
+                    if coordinate.x > self.config.gantry_safe_x:
+                        path.append(GantryCoordinate(x=coordinate.x, y=coordinate.y))
+                        return path
+                    else:
+                        path.append(
+                            GantryCoordinate(x=gantry_position.x, y=self.config.gantry_safe_y)
+                        )
+                        path.append(
+                            GantryCoordinate(
+                                x=self.config.gantry_safe_x, y=self.config.gantry_safe_y
+                            )
+                        )
+                        path.append(GantryCoordinate(x=coordinate.x, y=self.config.gantry_safe_y))
+                        path.append(GantryCoordinate(x=coordinate.x, y=coordinate.y))
+                        return path
         else:
             if coordinate.x >= self.config.gantry_safe_x:
                 if coordinate.y >= self.config.gantry_safe_y_high_clearance - 10:
@@ -276,8 +315,6 @@ class P0C:
         if self._tool.check_tray_clear():
             path = self.path_plan(coordinate)
             self.gantry.move_path(path)
-            # for coordinate in path:
-            #    self.gantry.move_coordinate(coordinate)
         else:
             raise Exception("Clear Break Beams")
 
@@ -359,7 +396,7 @@ class P0C:
         side: StorageModuleSide,
     ) -> None:
         self.funnel.diverter.set_standby_current(2000)
-        self.run_input_transfer()
+        self.run_input_transfer(tray, index)
         self.setup_receive_item(tray, tray_location, index, side)
         self.save_state()
         self._io.reset_sensors()
@@ -440,10 +477,8 @@ class P0C:
     def move_gantry_to_input_location(self) -> None:
         self.gantry_move(self.config.input_location)
 
-    def run_input_transfer(self) -> None:
-        self.funnel.return_diverter()
-        self.funnel.inlet_funnel.move_to_position(0)
-        self.funnel.inlet_funnel.wait_for_move()
+    def run_input_transfer(self, tray: Tray, idx: int) -> None:
+        self.funnel.setup_receive_item(tray, idx)
         self._io.reset_sensors()
         self.workstation.start_input_belt()
         self.funnel.start_receive_item()
@@ -456,7 +491,6 @@ class P0C:
             if sensors and sensors.input_conveyor:
                 time.sleep(1)
                 self.workstation.stop_input_belt()
-                # self.funnel.stop_receive_item()
                 break
 
     def run_storage_operation(self, operation: Operation) -> None:
@@ -509,10 +543,14 @@ class P0C:
 
     def _pull_tray(self, location: StorageModuleTrayLocation) -> None:
         if self.tool.check_tray_loaded():
+            print("Tray Loaded")
             if location == self._state.current_tray:
+                print("Loaded Tray is Target")
                 pass
             else:
+                print("Returning Current Tray")
                 self.return_current_tray()
+                self._pull_tray(location)
         else:
             if location.side == StorageModuleSide.RIGHT:
                 self.tool.safe_max()
@@ -527,6 +565,8 @@ class P0C:
             self.tool.retract_puller(location.side)
             if not self.tool.check_tray_loaded():
                 raise Exception("Failed Tray Pull")
+            self._state = RobotState(current_tray=location)
+            self.save_state()
 
     def _setup_receive_item(self, location: StorageModuleCellLocation) -> None:
         tray = self._storage.get_tray(location)
@@ -536,12 +576,10 @@ class P0C:
         self._funnel.move_to_cell(tray, location.slot_idx)
 
     def _receive_item(self, location: StorageModuleCellLocation) -> None:
-        self.funnel.diverter.set_standby_current(2000)
-        self.run_input_transfer()
-        self._setup_receive_item(location)
-        self._state = RobotState(current_tray=location.to_tray_location())
-        self.save_state()
         tray = self._storage.get_tray(location)
+        self.funnel.diverter.set_standby_current(2000)
+        self.run_input_transfer(tray, location.slot_idx)
+        self._setup_receive_item(location)
         self._io.reset_sensors()
         self.funnel.set_diverter_opening(self._storage.get_tray(location))
         self.funnel.diverter.set_standby_current(0)
@@ -579,16 +617,27 @@ class P0C:
         else:
             raise Exception("No Valid Location")
 
+    def store_item_gs1_data(self, data: GS1Data) -> None:
+        item_size = self._sizes.get_item_size(data)
+        if item_size:
+            item = CellItem(dimensions=item_size, gs1_data=data)
+            location = self._storage.get_next_free_location(item)
+            if location:
+                self._receive_item(location)
+                self._storage.store_item(location, item)
+                self.save_storage()
+            else:
+                raise Exception("No Valid Location")
+        else:
+            raise Exception("No Known Size")
+
     def retrieve_item_by_location(self, location: StorageModuleCellLocation) -> None:
         self._drop_off_item(location)
         self._storage.clear_item(location)
+        self.save_storage()
 
     def retrieve_item_by_gtin(self, data: GS1Data) -> None:
         location = self._storage.get_item_location(data)
         self._drop_off_item(location)
         self._storage.clear_item(location)
-
-    # Check for slots when dropping items
-    # Check for actuator positions when setting them to true or false
-    # Never move with actuators extended
-    # Store the Current shelf/column index in the local state
+        self.save_storage()

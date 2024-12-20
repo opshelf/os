@@ -20,7 +20,7 @@ class FunnelOffsets(BaseModel):
     diverter_50mm_pos: float
     diverter_100mm_pos: float
     diverter_150mm_pos: float
-    belt_speed: float = 80
+    belt_speed: float = 150
     wall_speed: float = 500
     output_transfer_conveyor_speed: float = 100
     # output_conveyor_speed: float = 300
@@ -408,21 +408,8 @@ class Funnel:
         if position >= 150:
             position = 148
         ipos, opos = tray.get_cell_position(idx)
-        diff = opos - ipos
         self.open_tray_slots(tray)
-        if tray.cell_width <= 50:
-            self._slot_1.move_to_position(0)
-            self._slot_2.move_to_position(diff - 5)
-            self._slot_3.move_to_position(diff - 5)
-        elif tray.cell_width > 50 and tray.cell_width <= 105:
-            self._slot_1.move_to_position(0)
-            self._slot_2.move_to_position(0)
-            self._slot_3.move_to_position(diff - 5)
-        else:
-            self._slot_1.move_to_position(0)
-            self._slot_2.move_to_position(0)
-            self._slot_3.move_to_position(0)
-
+        self.open_tray_wedges(tray)
         ipos += self.offsets.funnel_cell_1_offset_x
         opos = self._configuration.opposing_funnel_max_travel - opos
         opos -= self.offsets.funnel_cell_1_offset_x
@@ -431,7 +418,6 @@ class Funnel:
         ipos = min([self._configuration.input_funnel_max_travel, ipos])
         opos = max([0, opos])
         curr_opos = self._opposing_funnel.get_position()
-        # print(opos, ipos)
         if opos >= curr_opos:
             self._inlet_funnel.move_to_position(ipos)
             self._opposing_funnel.move_to_position(opos)
@@ -649,3 +635,21 @@ class Funnel:
                 raise Exception("Invalid Command")
         else:
             raise Exception("Invalid Command")
+
+    def setup_receive_item(self, tray: Tray, idx: int) -> None:
+        self.return_diverter()
+        self.inlet_funnel.move_to_position(0)
+        # self.return_slots()
+        position = tray.cell_width - self.offsets.funnel_min_height
+        if position >= 150:
+            position = 148
+        _, opos = tray.get_cell_position(idx)
+        self.open_tray_slots(tray)
+        self.open_tray_wedges(tray)
+        opos = self._configuration.opposing_funnel_max_travel - opos
+        opos -= self.offsets.funnel_cell_1_offset_x
+        opos -= self.offsets.funnel_min_width
+        opos = min([self._configuration.opposing_funnel_max_travel, opos])
+        opos = max([0, opos])
+        self._opposing_funnel.move_to_position(opos)
+        self.wait_for_move()

@@ -2,7 +2,7 @@ from pydantic import BaseModel
 from perpetual_p0c.gantry import GantryConfiguration, Gantry, GantryCoordinate
 from perpetual_p0c.funnel import FunnelConfiguration, Funnel, FunnelOpeningSize
 from perpetual_p0c.tool import ToolConfiguration, Tool
-from perpetual_p0c.storage import CellItem, ItemType, Tray, StorageModuleSide, StorageModuleCellLocation
+from perpetual_p0c.storage import CellItem, ItemType, StorageModuleTrayLocation, Tray, StorageModuleSide, StorageModuleCellLocation
 from perpetual_p0c.configuration import p0_robot_config
 from perpetual_p0c.utils import get_can_devices
 from perpetual_p0c.robot import P0C
@@ -78,6 +78,12 @@ tray150_location = GantryCoordinate(
 if __name__ == '__main__':
     can_bus = get_can_devices()
     robot = P0C(p0_robot_config)
+    robot._pull_tray(StorageModuleTrayLocation(
+        side=StorageModuleSide.RIGHT,
+        shelf_idx=2,
+        tray_idx=0
+    ))
+    #robot.home()
     """ 
     robot.move_to_storage_location(
         StorageModuleCellLocation(
@@ -216,20 +222,52 @@ if __name__ == '__main__':
     #)
     #robot.gantry_move(GantryCoordinate(x=85,y=25))
     #robot.home()
-    robot.store_item(
-        CellItem(
-            item_type=ItemType.BOTTLE,
-            height=90,
-            width=40,
-        )
-    )
-    robot.store_item(
-        CellItem(
-            item_type=ItemType.BOTTLE,
-            height=90,
-            width=40,
-        )
-    )
+    #robot.tool.home()
+    #robot.gantry._y_axis.home_with_brake()
+    #robot.gantry.home()
+    #robot.funnel.home()
+    #robot._storage.clear_all_items()
+    #robot.return_current_tray()
+    #robot.return_current_tray()
+    #locations = robot._storage.get_all_items()
+    #for location in locations:
+    #    robot.retrieve_item_by_location(location)
+    #robot.return_current_tray()
+    #robot._storage.clear_all_items()
+    #robot.store_item(
+    #    CellItem(
+    #        item_type=ItemType.BOTTLE,
+    #        height=90,
+    #        width=40,
+    #    )
+    #)
+    #robot.store_item(
+    #    CellItem(
+    #        item_type=ItemType.BOTTLE,
+    #        height=90,
+    #        width=40,
+    #    )
+    #)
+    #robot.store_item(
+    #    CellItem(
+    #        item_type=ItemType.BOTTLE,
+    #        height=90,
+    #        width=40,
+    #    )
+    #)
+    #robot.store_item(
+    #    CellItem(
+    #        item_type=ItemType.BOTTLE,
+    #        height=90,
+    #        width=40,
+    #    )
+    #)
+    #locations = robot._storage.get_all_items()
+    #for location in locations:
+    #    robot.retrieve_item_by_location(location)
+    #robot.home()
+    #robot.service_high()
+    #robot.tool.actuators(True)
     #robot.tool.home()
     #for i in range(0, 10):
     #    robot.pull_tray(

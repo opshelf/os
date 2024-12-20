@@ -8,10 +8,11 @@ import { Button } from './components/ui/button';
 import VideoOutput from './components/VideoOutput';
 import AutoReconnectSSE from './components/AutoReconnectSSE';
 import { BarCode, useBarCodeStore, GS1Data, UPCData } from './store';
+import DimensionForm from '@/components/DimensionForm';
 
 const GS1Card = ({ gs1 }: { gs1: GS1Data }) => {
   return (
-    <Card className="w-full max-w-md">
+    <Card className="w-full">
       <CardHeader>
         <CardTitle>GS1</CardTitle>
       </CardHeader>
@@ -68,6 +69,7 @@ export default function App() {
                   return <UPCACard upca={barcode} />;
                 }
               })}
+              <DimensionForm data={barcodes[0] as GS1Data} />
             </>
           ) : (
             <p>No barcodes found.</p>

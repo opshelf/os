@@ -50,7 +50,7 @@ async fn break_beam_monitor(
             input_5.wait_for_falling_edge(),
         )
         .await;
-        const DEBOUNCE: u64 = 10;
+        const DEBOUNCE: u64 = 2;
         let beam_value = match result {
             Either5::First(_) => {
                 //defmt::info!("Input1");
@@ -179,7 +179,6 @@ async fn break_beam_monitor(
                 }
             }
         };
-        defmt::info!("{:?}", beam_value);
         // Debounce
         if let Some(bv) = beam_value {
             SENSOR_CHANNEL.send(bv).await;
@@ -366,6 +365,7 @@ impl<'a> IoBoard<'a> {
     pub async fn run(&mut self) -> ! {
         loop {
             let cmd = COMMAND_CHANNEL.receive().await;
+            ///defmt::info!("{:?}", cmd);
             let response = self.handle_message(cmd);
             RESPONSE_CHANNEL.send(response).await;
         }

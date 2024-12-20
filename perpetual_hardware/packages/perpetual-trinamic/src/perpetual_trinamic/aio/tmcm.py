@@ -2,26 +2,24 @@ from can import AsyncBufferedReader, BusABC, Message, Notifier
 from perpetual_trinamic.tmcl import TMCLCommand, TmclMessage, TmclReply, MoveType
 import struct
 import asyncio
+from perpetual_can import CANBusHandler, AsyncFilteredReader
 
 
 class TMCM:
     def __init__(
         self,
-        connection: BusABC,
-        notifier: Notifier,
+        connection: CANBusHandler,
         module_id: int = 1,
         motor_id: int = 0,
     ) -> None:
-        self._connection = connection
-        self._reader = AsyncBufferedReader()
-        self._notifier = notifier
+        self._bus = connection
+        self._reader = AsyncFilteredReader([module_id])
+        self._bus.add_listener(self._reader)
         self._module_id = module_id & 0xFF
         self._motor_id = motor_id & 0xFF
-        self._sync_read = True
-        self._notifier.add_listener(self._reader)
 
-    def _send_raw_message(self, message: Message) -> None:
-        self._connection.send(message)
+    async def _send_raw_message(self, message: Message) -> None:
+        await self._bus.send_message(message)
 
     async def _recv_raw_message(self) -> Message:
         return await self._reader.get_message()
@@ -30,7 +28,7 @@ class TMCM:
         payload = [message.command_number, message.type_number, message.motor_number]
         payload.extend(list(struct.pack(">i", message.value)))
         # self._connection.send(Message(
-        self._connection.send(
+        await self._bus.send_message(
             Message(
                 arbitration_id=int(message.module_address),
                 data=payload,

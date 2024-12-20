@@ -11,6 +11,7 @@ dependencies = [
 	"waveshare-can",
 	"perpetual-trinamic",
 	"nats-py>=2.9.0",
+	"perpetual-can"
 ]
 
 [build-system]
@@ -21,6 +22,7 @@ build-backend = "hatchling.build"
 [tool.uv.sources]
 hardware-common = { workspace = true }
 waveshare-can = { workspace = true }
+perpetual-can = { workspace = true }
 perpetual-trinamic = { workspace = true }
 
 [tool.mypy]

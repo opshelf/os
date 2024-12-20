@@ -13,33 +13,34 @@ def test_puller(tool: Tool) -> None:
     for i in range(0,6):
         print(f"{bin(1 << i )}")
         tool.set_slot_bits(1 << i)
-        input()
         tool.actuators(True)
-        time.sleep(2)
-        print(tool.tool_board.get_state().slots)
-        input()
         tool.actuators(False)
-        input()
     for i in range(0,5):
         print(f"{bin((1 << i) | (1 << i+1) )}")
         tool.set_slot_bits((1 << i) | (1 << i+1))
-        input()
         tool.actuators(True)
-        time.sleep(2)
-        print(tool.tool_board.get_state().slots)
-        input()
         tool.actuators(False)
-        input()
     for i in range(0,4):
         print(f"{bin(1 << i | 1 << i+1 | 1 << i+2 )}")
         tool.set_slot_bits((1 << i) | (1 << i+1) | (1 << i+2) )
-        input()
         tool.actuators(True)
-        time.sleep(2)
-        print(tool.tool_board.get_state().slots)
-        input()
         tool.actuators(False)
-        input()
+
+
+#def test_puller(tool: Tool) -> None:
+#    for i in range(0,6):
+#        print(f"{bin(1 << i )}")
+#        tool.set_slot_bits(1 << i)
+#        time.sleep(.5)
+#    for i in range(0,5):
+#        print(f"{bin((1 << i) | (1 << i+1) )}")
+#        tool.set_slot_bits((1 << i) | (1 << i+1))
+#        time.sleep(.5)
+#    for i in range(0,4):
+#        print(f"{bin(1 << i | 1 << i+1 | 1 << i+2 )}")
+#        tool.set_slot_bits((1 << i) | (1 << i+1) | (1 << i+2) )
+#        time.sleep(.5)
+
 
 def test_carriage(tool: Tool) -> None:
     for i in range(0,3):
@@ -81,6 +82,9 @@ if __name__ == "__main__":
         tool = Tool(bus, p0_tool_config)
         #tool.actuators(False)
         tool.home()
+        test_puller(tool)
+        test_carriage(tool)
+        tool.tool_board.reset_all()
         #tool.puller.move_to_position(480)
         #tool.set_carriage_solenoids(1, StorageModuleSide.RIGHT)
         #tool_board = ToolBoard(bus)

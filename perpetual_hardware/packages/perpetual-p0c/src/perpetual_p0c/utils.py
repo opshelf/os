@@ -1,10 +1,12 @@
 import serial
 import serial.tools.list_ports
+import asyncio
 from pydantic import BaseModel
 from typing import Any, Optional, List
 import re
 import subprocess
 from can import BusABC, ThreadSafeBus
+from perpetual_can import CANBusHandler
 
 # DEFAULT_CAN_RATE = 1000000
 DEFAULT_CAN_RATE = 500000
@@ -104,3 +106,8 @@ def get_bus() -> BusABC:
         bitrate=can_device.CAN_BITRATE,
         fd=False,
     )
+
+
+async def get_can_bus() -> CANBusHandler:
+    can_device = get_bus()
+    return CANBusHandler(can_device, asyncio.get_event_loop())

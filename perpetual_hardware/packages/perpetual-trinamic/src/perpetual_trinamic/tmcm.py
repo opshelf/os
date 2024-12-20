@@ -95,9 +95,9 @@ class TMCM:
         )
         return self._receive_message()
 
-    # def _receive_message(self) -> TmclReply:
     def _receive_message(self) -> TmclReply:
         if self._reader:
+            print("Reader")
             t = time.time()
             while time.time() - t < 2.0:
                 msg = self._reader.get_message(timeout=2.0)
@@ -116,6 +116,7 @@ class TMCM:
                     raise Exception(f"No Response From Module {self._module_id}")
             raise Exception(f"No Response From Module {self._module_id}")
         else:
+            """
             msg = self._connection.recv(timeout=2.0)
             if msg:
                 if len(msg.data) == 7:
@@ -139,7 +140,23 @@ class TMCM:
                 else:
                     raise Exception(f"Invalid Data Format: {msg}")
             raise Exception(f"No Response From Module {self._module_id}")
+            """
             # return None
+            t0 = time.time()
+            while time.time() - t0 < 2:
+                msg = self._connection.recv(1.0)
+                if msg and msg.arbitration_id == self._module_id:
+                    if len(msg.data) == 7:
+                        return TmclReply(
+                            module_address=msg.data[0],
+                            status=msg.data[1],
+                            command_number=msg.data[2],
+                            value=struct.unpack(">i", msg.data[3:])[0],
+                        )
+                    else:
+                        raise Exception(f"Invalid Data Format: {msg}")
+
+            raise Exception(f"Module Failed to Receive Message: {self._module_id}")
 
     def _default_message(self, command_number: int, type_number: int, value: int) -> TmclMessage:
         return TmclMessage(

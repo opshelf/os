@@ -27,6 +27,9 @@ class OutputBox:
     def cleanup(self) -> None:
         self._door.stop()
 
+    def stop(self) -> None:
+        self._door.stop()
+
     @property
     def configuration(self) -> OutputBoxConfiguration:
         return self._configuration

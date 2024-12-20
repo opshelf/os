@@ -1,9 +1,5 @@
 import axios from 'axios';
 import { HOST } from './common';
-//import {
-//  GantryCoordinateSchema,
-//  ToolCoordinateSchema,
-//} from '@/domain';
 import {
   GantrySubsystemCommands,
   GantryMoveCommands,
@@ -21,8 +17,3 @@ export const gantryCommand = async (
   await axios.post(`${HOST}/gantry`, data);
 };
 
-//export const moveTool = async (
-//  data: ToolCoordinateSchema
-//): Promise<void> => {
-//  await axios.post(`${HOST}/move`, data);
-//};

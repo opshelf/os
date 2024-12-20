@@ -39,6 +39,11 @@ class Workstation:
         self._output_belt.stop()
         self._input_belt.stop()
 
+    def stop(self) -> None:
+        self._output_belt.stop()
+        self._input_belt.stop()
+        self._output_box.stop()
+
     def home(self) -> None:
         self.home_output()
         self.input_belt.initialize()

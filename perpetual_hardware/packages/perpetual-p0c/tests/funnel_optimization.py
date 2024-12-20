@@ -15,7 +15,44 @@ if __name__ == "__main__":
     ) as bus:
         funnel = Funnel(bus, p0_funnel_config)
         funnel.stop()
-        #funnel.home()
+        funnel.home()
+        #funnel._slot_1.home()
+        ##funnel._slot_3.home()
+        #funnel._slot_3.initialize()
+        #
+        #funnel._slot_3.safety_off()
+        input()
+        for i in range(0, 10):
+            funnel._slot_1.move_to_position(150)
+            funnel._slot_2.move_to_position(150)
+            funnel._slot_3.move_to_position(150)
+            funnel.wait_for_move()
+            funnel._slot_1.move_to_position(0)
+            funnel._slot_2.move_to_position(0)
+            funnel._slot_3.move_to_position(0)
+            funnel.wait_for_move()
+        #for i in range(0, 10):
+
+        #    funnel._slot_3.move_to_position(100)
+        #    funnel._slot_3.wait_for_move()
+        #    funnel._slot_3.move_to_position(0)
+        #    funnel._slot_3.wait_for_move()
+
+
+
+
+        #funnel.slot_2.home()
+        
+        #funnel._slot_2.move_relative(-10000)
+
+        #funnel.slot_3.home()
+        #funnel._slot_3.safety_off()
+        ##funnel._slot_3.set_speed(100)
+        #funnel.slot_3.move_to_position(100)
+        #funnel.slot_3.wait_for_move()
+        #funnel.slot_1.move_to_position(300)
+        #funnel.slot_2.move_to_position(300)
+        #funnel.slot_3.move_to_position(300)
         #for i in range(0, 10):
         #funnel.slot_2.move_to_position(-300)
         #funnel.slot_2.wait_for_move()

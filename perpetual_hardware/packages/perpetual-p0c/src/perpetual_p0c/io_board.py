@@ -89,9 +89,9 @@ class IoState(BaseModel):
 
 
 class IoController:
-    def __init__(self, bus: BusABC, can_id: int = CanMessageIds.PNEUMATIC_NODE) -> None:
+    def __init__(self, bus: BusABC, can_id: int = CanMessageIds.IO_NODE) -> None:
         self._bus = bus
-        self._can_id = can_id
+        self._can_id = int(can_id)
         self._state = IoState(wedges=Wedge(), actuators=ActuatorState.Retracted)
 
     @property

@@ -109,7 +109,10 @@ class TrinamicStepper(TMCM12xx):
 
     def initialize(self) -> None:
         self.set_max_current(self._configuration.work_current)
-        self.set_standby_current(self._configuration.holding_current)
+        if self._configuration.brake:
+            self.set_standby_current(0)
+        else:
+            self.set_standby_current(self._configuration.holding_current)
         self.set_microsteps(self.MicroStepResolution.MicrostepResolution16Microsteps)
         self.safety_on()
         self.set_relative_position_mode()
@@ -476,7 +479,7 @@ class TrinamicAxis(AbstractStepperMotor, TMCM12xx):
     def wait_for_move(self, timeout: float = 60.0) -> None:
         t0 = time.time()
         while not self.get_position_reached():
-            time.sleep(0.05)
+            time.sleep(0.1)
             if self.get_error_flags():
                 raise Exception(f"Failed to move hit hard stop {self._module_id}")
             if time.time() - t0 > timeout:
@@ -561,7 +564,7 @@ class TrinamicAxis(AbstractStepperMotor, TMCM12xx):
         self.set_standby_current(self._configuration.holding_current)
         time.sleep(0.1)
         self.set_io(0, 1, 2)
-        time.sleep(0.1)
+        time.sleep(0.2)
 
     def end_brake_move(self) -> None:
         self.set_io(0, 0, 2)
