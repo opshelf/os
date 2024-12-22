@@ -1,99 +1,12 @@
-from hardware_common.stepper_motor import AbstractStepperMotor
 import asyncio
-from can import BusABC
 from perpetual_p0c.storage import Tray
-from perpetual_p0c.common import CanAxisConfiguration
 from perpetual_p0c.aio.io_board import IoController, Wedge
+from perpetual_p0c.funnel import FunnelStatus, FunnelOffsets, FunnelCommands, FunnelOpeningSize, FunnelConfiguration
 from perpetual_trinamic.aio.trinamic_axis import TrinamicAxis
 from perpetual_trinamic.aio.trinamic_stepper import TrinamicStepper
-from pydantic import BaseModel
-from typing import Optional, Dict, Any
-from enum import Enum
 import time
-
 from perpetual_trinamic.aio.trinamic_axis import TrinamicAxis
 from perpetual_can import CANBusHandler
-from pydantic import BaseModel
-from enum import Enum
-from typing import Optional, Any, Dict
-
-
-class FunnelOffsets(BaseModel):
-    funnel_min_width: float
-    funnel_min_height: float
-    funnel_cell_1_offset_x: float
-    funnel_cell_1_offset_y: float
-    catch_position: float
-    diverter_50mm_pos: float
-    diverter_100mm_pos: float
-    diverter_150mm_pos: float
-    belt_speed: float = 150
-    wall_speed: float = 500
-    output_transfer_conveyor_speed: float = 100
-    # output_conveyor_speed: float = 300
-    output_conveyor_speed: float = 250
-
-
-class FunnelConfiguration(BaseModel):
-    inlet_funnel: CanAxisConfiguration
-    opposing_funnel: CanAxisConfiguration
-    slot_1: CanAxisConfiguration
-    slot_2: CanAxisConfiguration
-    slot_3: CanAxisConfiguration
-    belt: CanAxisConfiguration
-    wall: CanAxisConfiguration
-    output_transfer_conveyor: CanAxisConfiguration
-    output_conveyor: CanAxisConfiguration
-    diverter: CanAxisConfiguration
-    relay_board_id: int
-    offsets: FunnelOffsets
-    # opposing_funnel_max_travel: float = 325.5
-    opposing_funnel_max_travel: float = 362
-    # input_funnel_max_travel: float = 400.0
-    input_funnel_max_travel: float = 370.0
-    minimum_transfer_location: float = 325.0
-
-
-class FunnelStatus(BaseModel):
-    inlet_funnel: float
-    opposing_funnel: float
-    slot_1: float
-    slot_2: float
-    slot_3: float
-
-
-class FunnelOpeningSize(int, Enum):
-    OPEN_50MM = 0
-    OPEN_100MM = 1
-    OPEN_150MM = 2
-
-
-class Commands(str, Enum):
-    HOME = "HOME"
-    STOP = "STOP"
-    MOVE_TO_CELL = "MOVE_TO_CELL"
-    CLOSE_FUNNEL = "CLOSE_FUNNEL"
-    INLET_COMMAND = "INLET_COMMAND"
-    OPPOSING_FUNNEL_COMMAND = "OPPOSING_FUNNEL_COMMAND"
-    START_BELT = "START_BELT"
-    STOP_BELT = "STOP_BELT"
-    WIGGLE = "WIGGLE"
-    INITIALIZE = "INITIALZE"
-
-
-class MoveToCellCommand(BaseModel):
-    tray: Tray
-    idx: int
-
-
-class FunnelCommands(BaseModel):
-    command: Commands
-    payload: Optional[Dict[Any, Any]]
-
-
-class WiggleCommand(BaseModel):
-    wiggle: float
-
 
 class Funnel:
     def __init__(self, bus: CANBusHandler, funnel_configuration: FunnelConfiguration):
@@ -349,10 +262,13 @@ class Funnel:
     async def home(self) -> None:
         await self._inlet_funnel.home()
         await self._opposing_funnel.home()
+        #await self._slot_1.home()
+        #await self._slot_2.home()
+        #await self._slot_3.home()
 
-        await self._slot_1.home()
-        await self._slot_2.home()
-        await self._slot_3.home()
+        await self._slot_1.initialize()
+        await self._slot_2.initialize()
+        await self._slot_3.initialize()
 
         await self._diverter.home()
 
@@ -370,9 +286,9 @@ class Funnel:
     async def wait_for_move(self) -> None:
         await self._inlet_funnel.wait_for_move()
         await self._opposing_funnel.wait_for_move()
-        await self._slot_1.wait_for_move()
-        await self._slot_2.wait_for_move()
-        await self._slot_3.wait_for_move()
+        #await self._slot_1.wait_for_move()
+        #await self._slot_2.wait_for_move()
+        #await self._slot_3.wait_for_move()
 
     async def open_tray_slots(self, tray: Tray) -> None:
         if tray.cell_width <= 50:
@@ -405,7 +321,7 @@ class Funnel:
     async def move_to_cell(self, tray: Tray, idx: int) -> None:
         # self.inlet_funnel.move_to_position(0)
         # self.opposing_funnel.move_to_position(0)
-        await self.return_slots()
+        # await self.return_slots()
         # self.wait_for_move()
         position = tray.cell_width - self.offsets.funnel_min_height
         if position >= 150:
@@ -593,49 +509,6 @@ class Funnel:
                 self._configuration.minimum_transfer_location
             )
             await self.opposing_funnel.wait_for_move()
-
-    async def handle_command(self, cmd: FunnelCommands) -> None:
-        if cmd.command == Commands.HOME:
-            await self.home()
-        elif cmd.command == Commands.STOP:
-            await self.stop()
-        elif cmd.command == Commands.MOVE_TO_CELL:
-            if cmd.payload:
-                cell_cmd = MoveToCellCommand(**cmd.payload)
-                await self.move_to_cell(cell_cmd.tray, cell_cmd.idx)
-            else:
-                raise Exception("Invalid Command")
-        elif cmd.command == Commands.CLOSE_FUNNEL:
-            slots_open = self.slots_open
-            await self.close_slots()
-            time.sleep(1)
-            await self.open_slots(slots_open)
-        # elif cmd.command == Commands.INLET_COMMAND:
-        #    if cmd.payload:
-        #        axis_cmd = AxisCommand(**cmd.payload)
-        #        self.inlet_funnel.handle_command(axis_cmd)
-        #    else:
-        #        raise Exception("Invalid Command")
-        # elif cmd.command == Commands.OPPOSING_FUNNEL_COMMAND:
-        #    if cmd.payload:
-        #        axis_cmd = AxisCommand(**cmd.payload)
-        #        self.opposing_funnel.handle_command(axis_cmd)
-        #    else:
-        #        raise Exception("Invalid Command")
-        elif cmd.command == Commands.START_BELT:
-            await self.start_belt()
-        elif cmd.command == Commands.STOP_BELT:
-            await self.stop_belt()
-        elif cmd.command == Commands.INITIALIZE:
-            await self.initialize()
-        elif cmd.command == Commands.WIGGLE:
-            if cmd.payload:
-                wiggle = WiggleCommand(**cmd.payload)
-                await self.wiggle(wiggle.wiggle)
-            else:
-                raise Exception("Invalid Command")
-        else:
-            raise Exception("Invalid Command")
 
     async def setup_receive_item(self, tray: Tray, idx: int) -> None:
         await self.return_diverter()

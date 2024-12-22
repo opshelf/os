@@ -1,16 +1,6 @@
-from perpetual_p0c.common import CanAxisConfiguration
 from perpetual_can import CANBusHandler
 from perpetual_trinamic.aio.trinamic_axis import TrinamicAxis
-from pydantic import BaseModel
-
-
-class OutputBoxOffsets(BaseModel):
-    door_open_position: float
-
-
-class OutputBoxConfiguration(BaseModel):
-    door: CanAxisConfiguration
-    offsets: OutputBoxOffsets
+from perpetual_p0c.output_box import OutputBoxConfiguration, OutputBoxOffsets
 
 
 class OutputBox:

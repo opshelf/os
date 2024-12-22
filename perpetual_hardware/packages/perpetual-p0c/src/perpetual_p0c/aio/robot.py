@@ -1,15 +1,24 @@
-from pydantic import BaseModel
-from perpetual_p0c.aio.gantry import GantryConfiguration, Gantry, GantryCoordinate
-from perpetual_p0c.aio.funnel import FunnelConfiguration, Funnel
-from perpetual_p0c.aio.tool import ToolConfiguration, Tool
+from perpetual_p0c.aio.gantry import  Gantry
+from perpetual_p0c.aio.funnel import  Funnel
+from perpetual_p0c.aio.tool import Tool
 from perpetual_p0c.aio.io_board import IoController
+from perpetual_p0c.aio.workstation import Workstation
+from perpetual_p0c.gantry import GantryCoordinate
+#from perpetual_p0c.funnel import FunnelConfiguration
+#from perpetual_p0c.tool import ToolConfiguration
+#from perpetual_p0c.workstation import WorkstationConfiguration
+from perpetual_p0c.robot import (
+BottleTracking,
+RobotConfiguration,
+RobotState,
+)
+from enum import Enum
+
+
 from perpetual_can import CANBusHandler
 import time
-import atexit
 import asyncio
-from perpetual_p0c.utils import get_bus
 from typing import List, Optional
-from perpetual_p0c.aio.workstation import Workstation, WorkstationConfiguration
 from perpetual_p0c.size_database import SizeDatabase
 from enum import Enum
 import os
@@ -26,72 +35,6 @@ from perpetual_p0c.storage import (
 )
 
 
-class BottleTracking(int, Enum):
-    INITIALIZE = 0x00
-    WAIT_FOR_TRANSFER_TRIGGER = 0x01
-    START_WORKSTATION_OUTPUT = 0x02
-    WAIT_FOR_FUNNEL_OUT_TRIGGER = 0x03
-    WAIT_FOR_OUTPUT_TRIGGER = 0x04
-    CLOSE_DOOR = 0x05
-    RESET = 0x06
-
-
-class ItemTransitLocations(str, Enum):
-    INPUT_CONVEYOR = "INPUT_CONVEYOR"
-    INPUT_FUNNEL = "INPUT_FUNNEL"
-    OUTPUT_TRANSFER_CONVEYOR = "OUTPUT_TRANSFER_CONVEYOR"
-    OUTPUT_CONVEYOR = "OUTPUT_CONVEYOR"
-    WORKSTATION_CONVEYOR = "WORKSTATION_CONVEYOR"
-
-
-class RobotConfiguration(BaseModel):
-    funnel_configuration: FunnelConfiguration
-    gantry_configuration: GantryConfiguration
-    tool_configuration: ToolConfiguration
-    workstation: WorkstationConfiguration
-    gantry_safe_x: float
-    gantry_safe_y: float
-    gantry_safe_y_high_clearance: float
-    place_offset: GantryCoordinate
-    service_coordinate_high: GantryCoordinate
-    service_coordinate_low: GantryCoordinate
-    idle_coordinate: GantryCoordinate
-    output_location: GantryCoordinate
-    input_location: GantryCoordinate
-    state_file: str = "state.json"
-    storage_file: str = "storage.json"
-    size_file: str = "sizes.json"
-
-
-class ItemStorageLocation(BaseModel):
-    tray: Tray
-    index: int
-    shelf: int
-    slot: int
-    side: StorageModuleSide
-    location: GantryCoordinate
-
-
-class StorageOperationType(int, Enum):
-    STORE = 0x01
-    RETRIEVE = 0x02
-
-
-class Operation(BaseModel):
-    item_location: ItemStorageLocation
-    operation_type: StorageOperationType
-
-
-class RobotState(BaseModel):
-    current_tray: Optional[StorageModuleTrayLocation]
-
-    def clear_state(self) -> None:
-        self.current_tray = None
-
-
-class TransferOperation(BaseModel):
-    start_location: ItemTransitLocations
-    terminal_location: ItemTransitLocations
 
 
 class P0C:
@@ -185,11 +128,13 @@ class P0C:
         await self._gantry.cleanup()
         await self._funnel.cleanup()
         await self._workstation.cleanup()
+        self._bus.shutdown()
 
     async def stop(self) -> None:
         await self.gantry.stop()
         await self.tool.stop()
         await self.funnel.stop()
+        await self.workstation.stop()
 
     @property
     def config(self) -> RobotConfiguration:
@@ -228,7 +173,7 @@ class P0C:
 
     async def home_y_first(self) -> None:
         await self._tool.actuators(False)
-        await self._gantry.y_axis.home_with_brake()
+        await self._gantry.y_axis.home()
         await self._workstation.home()
         await self._tool.home()
         await self._funnel.home()
@@ -329,6 +274,7 @@ class P0C:
             time.sleep(0.25)
             await self.tool.retract_puller(side)
             if not self.tool.check_tray_loaded():
+                await self.tool.set_solenoids_off()
                 raise Exception("Failed Tray Pull")
 
     async def place_tray(self, coordinate: GantryCoordinate, side: StorageModuleSide) -> None:
@@ -541,6 +487,7 @@ class P0C:
             await asyncio.sleep(0.25)
             await self.tool.retract_puller(location.side)
             if not await self.tool.check_tray_loaded():
+                await self.tool.set_solenoids_off()
                 raise Exception("Failed Tray Pull")
             self._state = RobotState(current_tray=location)
             self.save_state()
@@ -549,14 +496,22 @@ class P0C:
         tray = self._storage.get_tray(location)
         await self._pull_tray(location.to_tray_location())
         await self.move_gantry_to_input(tray)
-        await self._funnel.return_diverter()
-        await self._funnel.move_to_cell(tray, location.slot_idx)
 
     async def _receive_item(self, location: StorageModuleCellLocation) -> None:
         tray = self._storage.get_tray(location)
         await self.funnel.diverter.set_standby_current(2000)
-        await self.run_input_transfer(tray, location.slot_idx)
-        await self._setup_receive_item(location)
+
+        #await self.run_input_transfer(tray, location.slot_idx)
+        #await self._setup_receive_item(location)
+
+        input_transfer_task = asyncio.create_task(self.run_input_transfer(tray, location.slot_idx))
+        tray_pull_task = asyncio.create_task(self._setup_receive_item(location))
+
+        await input_transfer_task
+        await tray_pull_task
+
+        await self._funnel.move_to_cell(tray, location.slot_idx)
+
         await self._io.reset_sensors()
         await self.funnel.set_diverter_opening(self._storage.get_tray(location))
         await self.funnel.diverter.set_standby_current(0)

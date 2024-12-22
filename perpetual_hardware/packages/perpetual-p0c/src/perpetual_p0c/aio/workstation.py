@@ -1,17 +1,7 @@
 from perpetual_can import CANBusHandler
-from perpetual_p0c.common import CanAxisConfiguration
 from perpetual_trinamic.aio.trinamic_axis import TrinamicAxis
-from pydantic import BaseModel
-from perpetual_p0c.aio.output_box import OutputBoxConfiguration, OutputBox
-from perpetual_p0c.common import CanAxisConfiguration
-
-
-class WorkstationConfiguration(BaseModel):
-    outputbox_configuration: OutputBoxConfiguration
-    input_belt_configuration: CanAxisConfiguration
-    output_belt_configuration: CanAxisConfiguration
-    input_belt_speed: int
-    output_belt_speed: int
+from perpetual_p0c.aio.output_box import OutputBox
+from perpetual_p0c.workstation import WorkstationConfiguration
 
 
 class Workstation:

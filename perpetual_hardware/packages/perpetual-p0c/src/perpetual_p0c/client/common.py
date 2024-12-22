@@ -1,5 +1,5 @@
 from abc import ABCMeta, abstractmethod
-
+from enum import Enum
 # from pydantic import BaseModel
 from perpetual_p0c.gantry import GantryCoordinate
 
@@ -169,8 +169,6 @@ class RobotClient(ABCMeta):
 
     def store_item(self, item: CellItem) -> None: ...
 
-    def store_item_gs1_data(self, data: GS1Data) -> None: ...
-
     def retrieve_item_by_location(self, location: StorageModuleCellLocation) -> None: ...
 
     def retrieve_item_by_gtin(self, data: GS1Data) -> None: ...
@@ -244,3 +242,13 @@ class RobotClient(ABCMeta):
         ...
 
 """
+
+
+
+class RobotStatus(int, Enum):
+    ERROR = 0x00
+    IDLE = 0x01
+    BUSY = 0x02
+    LOW_LEVEL = 0x03
+
+

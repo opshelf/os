@@ -403,7 +403,7 @@ p0_tool_config = ToolConfiguration(
         axis_type="leadscrew",
     ),
     offsets=ToolOffsets(
-        tool_extend_position=480.0,
+        tool_extend_position=481.5,
         tool_retract_position=240.0,
         tool_safe_max=345.0,
         tool_safe_min=20.0,

@@ -1,66 +1,10 @@
 import asyncio
-from enum import Enum
 from perpetual_trinamic.aio.trinamic_axis import TrinamicAxis
-from pydantic import BaseModel
-from typing import Optional, Dict, Any
 from perpetual_can import CANBusHandler
 from perpetual_p0c.storage import Tray, StorageModuleSide
 from perpetual_p0c.aio.io_board import ActuatorState, IoController
 from perpetual_p0c.aio.tool_board import ToolBoard, IoBoard
-from perpetual_p0c.common import CanAxisConfiguration
-
-
-class ToolOffsets(BaseModel):
-    tool_retract_position: float
-    tool_extend_position: float
-    tool_safe_min: float
-    tool_safe_max: float
-    tray_pull_offset: float
-    tray_pull_right: float
-    tray_pull_left: float
-
-
-class ToolConfiguration(BaseModel):
-    puller: CanAxisConfiguration
-    offsets: ToolOffsets
-
-
-class Commands(str, Enum):
-    HOME = "HOME"
-    INITIALIZE = "INITIALIZE"
-    MOVE_Z = "MOVE_Z"
-    MOVE_Z_RELATIVE = "MOVE_Z_RELATIVE"
-    TURN_ON_PULLER_SOLENOIDS = "TURN_ON_PULLER_SOLENOIDS"
-    TURN_OFF_PULLER_SOLENOIDS = "TURN_OFF_PULLER_SOLENOIDS"
-    TURN_ON_SLOT_SOLENOIDS = "TURN_ON_SLOT_SOLENOIDS"
-    TURN_OFF_SLOT_SOLENOIDS = "TURN_OFF_SLOT_SOLENOIDS"
-    RETRACT_TRAY = "RETRACT_TRAY"
-    EXTEND_PULLER = "EXTEND_PULLER"
-    RETRACT_PULLER = "RETRACT_PULLER"
-    EXTEND_ACTUATORS = "EXTEND_ACTUATORS"
-    RETRACT_ACTUATORS = "RETRACT_ACTUATORS"
-    STOP = "STOP"
-
-
-class MoveCommand(BaseModel):
-    position: float
-
-
-class TurnOnSolenoids(BaseModel):
-    solenoids: int
-
-
-class ToolCommands(BaseModel):
-    command: Commands
-    payload: Optional[Dict[Any, Any]]
-
-
-class ToolStatus(BaseModel):
-    puller_solenoids: int
-    carriage_solenoids: int
-    actuators: bool
-    puller_position: float
-
+from perpetual_p0c.tool import ToolOffsets, ToolConfiguration, ToolStatus
 
 class Tool:
     def __init__(self, bus: CANBusHandler, tool_configuration: ToolConfiguration):
