@@ -46,6 +46,9 @@ class StepperMotorConfig(BaseModel):
     max_acceleration: Optional[float]
     min_travel: Optional[float]
     max_travel: Optional[float]
+    max_encoder_deviation: int = 500
+    max_encoder_deviation_homing: int = 100
+    safety: bool = True
     invert_coordinates: bool = False
     external_encoder: bool = False
     home_direction: Rotation = Rotation.CW

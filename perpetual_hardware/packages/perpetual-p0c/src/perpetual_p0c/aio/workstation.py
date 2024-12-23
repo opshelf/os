@@ -111,7 +111,6 @@ class Workstation:
 
     async def start_input_belt(self) -> None:
         await self.input_belt.initialize()
-        await self.input_belt.safety_off()
         await self.input_belt.rotate(self._configuration.input_belt_speed)
 
     async def stop_input_belt(self) -> None:

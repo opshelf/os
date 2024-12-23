@@ -59,6 +59,7 @@ p0_workstation_configuration = WorkstationConfiguration(
             invert_coordinates=False,
             home_direction=Rotation.CCW,
             homing_speed=100,
+            safety=False
         ),
         name="input_conveyor",
         axis_type="belt",
@@ -231,6 +232,7 @@ p0_funnel_config = FunnelConfiguration(
             invert_coordinates=True,
             home_direction=Rotation.CCW,
             homing_speed=100,
+            safety=False
         ),
         name="input_conveyor",
         axis_type="belt",
@@ -254,6 +256,7 @@ p0_funnel_config = FunnelConfiguration(
             invert_coordinates=True,
             home_direction=Rotation.CCW,
             homing_speed=100,
+            safety=False
         ),
         name="input_conveyor",
         axis_type="belt",
@@ -277,6 +280,7 @@ p0_funnel_config = FunnelConfiguration(
             invert_coordinates=True,
             home_direction=Rotation.CCW,
             homing_speed=100,
+            safety=False
         ),
         name="input_conveyor",
         axis_type="belt",
@@ -300,6 +304,7 @@ p0_funnel_config = FunnelConfiguration(
             invert_coordinates=False,
             home_direction=Rotation.CCW,
             homing_speed=100,
+            safety=False
         ),
         name="input_conveyor",
         axis_type="belt",

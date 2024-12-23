@@ -29,24 +29,6 @@ class TrinamicAxis(TMCM12xx):
         self._status = StepperMotorStatus.GOOD
         self._target_position = 0.0
         self._actual_position = 0.0
-        self._max_deviation = 500
-        self._homing_deviation = 100
-
-    @property
-    def max_deviation(self) -> int:
-        return self._max_deviation
-
-    @max_deviation.setter
-    def max_deviation(self, value: int) -> None:
-        self._max_deviation = value
-
-    @property
-    def homing_deviation(self) -> int:
-        return self._homing_deviation
-
-    @homing_deviation.setter
-    def homing_deviation(self, value: int) -> None:
-        self._homing_deviation = value
 
     async def safety_off(self) -> None:
         if self._configuration.external_encoder:
@@ -56,15 +38,15 @@ class TrinamicAxis(TMCM12xx):
 
     async def safety_on(self) -> None:
         if self._configuration.external_encoder:
-            await self.set_external_encoder_max_deviation(self._max_deviation)
+            await self.set_external_encoder_max_deviation(self._configuration.max_encoder_deviation)
         else:
-            await self.set_max_encoder_deviation(self._max_deviation)
+            await self.set_max_encoder_deviation(self._configuration.max_encoder_deviation)
 
     async def homing_safety_on(self) -> None:
         if self._configuration.external_encoder:
-            await self.set_external_encoder_max_deviation(self._homing_deviation)
+            await self.set_external_encoder_max_deviation(self._configuration.max_encoder_deviation_homing)
         else:
-            await self.set_max_encoder_deviation(self._homing_deviation)
+            await self.set_max_encoder_deviation(self._configuration.max_encoder_deviation_homing)
 
     async def encoder_position(self) -> int:
         if self._configuration.external_encoder:
@@ -94,7 +76,10 @@ class TrinamicAxis(TMCM12xx):
         else:
             await self.set_standby_current(self._configuration.holding_current)
         await self.set_microsteps(self.MicroStepResolution.MicrostepResolution16Microsteps)
-        await self.safety_on()
+        if self._configuration.safety:
+            await self.safety_on()
+        else:
+            await self.safety_off()
         await self.set_relative_position_mode()
         await self.sync_position()
         await self.set_speed(self._configuration.velocity)
@@ -115,7 +100,6 @@ class TrinamicAxis(TMCM12xx):
                 await self.rotate_left(abs(self._configuration.convert_mms_ps(value)))
 
     async def home(self) -> None:
-
         if self.configuration.brake:
             await self.init_brake_move()
         await self.set_standby_current(self._configuration.holding_current)

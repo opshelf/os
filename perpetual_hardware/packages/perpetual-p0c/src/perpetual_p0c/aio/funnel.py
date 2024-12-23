@@ -177,7 +177,6 @@ class Funnel:
 
     async def start_belt(self) -> None:
         await self._belt.initialize()
-        await self._belt.safety_off()
         await self._belt.rotate(int(self._configuration.offsets.belt_speed))
 
     async def stop_wall(self) -> None:
@@ -185,7 +184,6 @@ class Funnel:
 
     async def start_wall(self) -> None:
         await self._wall.initialize()
-        await self._wall.safety_off()
         await self._wall.rotate(int(self._configuration.offsets.wall_speed))
 
     async def stop_output(self) -> None:
@@ -200,7 +198,6 @@ class Funnel:
 
     async def start_output_transfer(self) -> None:
         await self._output_transfer_conveyor.initialize()
-        await self._output_transfer_conveyor.safety_off()
         await self._output_transfer_conveyor.rotate(
             int(self._configuration.offsets.output_transfer_conveyor_speed)
         )
