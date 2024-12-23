@@ -2,6 +2,7 @@ import asyncio
 import random
 from uuid import uuid4
 from nats.aio.client import Client as NATS
+from nats.aio.msg import Msg
 from pydantic import UUID4, BaseModel, Field, Json
 from typing import Optional
 
@@ -18,7 +19,7 @@ class RobotMessage(BaseMessage):
 
 
 class RobotWorker:
-    def __init__(self, nats_url, work_queue, response_queue, emergency_queue):
+    def __init__(self, nats_url: str, work_queue: str, response_queue: str, emergency_queue: str) -> None:
         self.nats_url = nats_url
         self.work_queue = work_queue
         self.response_queue = response_queue
@@ -26,12 +27,12 @@ class RobotWorker:
         self.nc = NATS()
         self.processing = True  # Controls whether work_queue is being processed
 
-    async def connect(self):
+    async def connect(self) -> None:
         """Connect to the NATS server."""
         await self.nc.connect(servers=[self.nats_url])
         print("Connected to NATS")
 
-    async def start(self):
+    async def start(self) -> None:
         """Start the worker to listen on queues."""
         # Subscribe to work_queue
         await self.nc.subscribe(self.work_queue, cb=self.process_message)
@@ -41,7 +42,7 @@ class RobotWorker:
         await self.nc.subscribe(self.emergency_queue, cb=self.handle_emergency)
         print(f"Listening on {self.emergency_queue} for stop/resume commands...")
 
-    async def process_message(self, msg):
+    async def process_message(self, msg: Msg) -> None:
         """Process incoming messages from work_queue."""
         if not self.processing:
             print("Paused. Ignoring messages.")
@@ -53,7 +54,7 @@ class RobotWorker:
         # Publish response to response_queue
         await self.nc.publish(self.response_queue, response.encode())
 
-    async def handle_emergency(self, msg):
+    async def handle_emergency(self, msg: Msg) -> None:
         """Handle stop/resume commands from emergency_queue."""
         command = msg.data.decode().lower()
         if command == "stop":
@@ -65,13 +66,13 @@ class RobotWorker:
         else:
             print(f"Unknown command on {self.emergency_queue}: {command}")
 
-    async def close(self):
+    async def close(self) -> None:
         """Close the NATS connection."""
         await self.nc.close()
         print("Disconnected from NATS")
 
 
-async def publish_messages(nc, work_queue, emergency_queue):
+async def publish_messages(nc: NATS, work_queue: str, emergency_queue: str) -> None:
     """Simulate publishing messages independently."""
     count = 0
     while True:
@@ -93,7 +94,7 @@ async def publish_messages(nc, work_queue, emergency_queue):
         await asyncio.sleep(2)  # Delay between messages
 
 
-async def main():
+async def main() -> None:
     # Configuration
     nats_url = "nats://localhost:4222"
     work_queue = "work_queue"

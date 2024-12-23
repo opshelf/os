@@ -4,23 +4,16 @@ from perpetual_p0c.aio.tool import Tool
 from perpetual_p0c.aio.io_board import IoController
 from perpetual_p0c.aio.workstation import Workstation
 from perpetual_p0c.gantry import GantryCoordinate
-#from perpetual_p0c.funnel import FunnelConfiguration
-#from perpetual_p0c.tool import ToolConfiguration
-#from perpetual_p0c.workstation import WorkstationConfiguration
 from perpetual_p0c.robot import (
-BottleTracking,
-RobotConfiguration,
-RobotState,
+    BottleTracking,
+    RobotConfiguration,
+    RobotState,
 )
-from enum import Enum
-
-
 from perpetual_can import CANBusHandler
 import time
 import asyncio
-from typing import List, Optional
+from typing import List
 from perpetual_p0c.size_database import SizeDatabase
-from enum import Enum
 import os
 from perpetual_p0c.storage import (
     CellItem,
@@ -33,6 +26,76 @@ from perpetual_p0c.storage import (
     StorageModuleTrayLocation,
     StorageModuleSide,
 )
+from pydantic import BaseModel, Field, UUID4
+from uuid import uuid4
+from typing import Optional, Union, Literal, Annotated
+from perpetual_p0c.aio.tool import ToolCommands
+from perpetual_p0c.aio.funnel import FunnelCommands
+from perpetual_p0c.aio.workstation import WorkstationCommands
+from perpetual_p0c.aio.gantry import GantryCommands
+
+class BaseMessage(BaseModel):
+    message_id: UUID4 = Field(default_factory=uuid4)
+
+class StorePayload:
+    location: StorageModuleCellLocation
+    item: Optional[CellItem]
+
+class StoreCommand(BaseMessage):
+    command: Literal["store_item"]
+    payload: StorePayload
+
+class RetrievePayload:
+    location: StorageModuleCellLocation
+    item: Optional[CellItem]
+
+class RetrieveCommand(BaseMessage):
+    command: Literal["retrieve_item"]
+    payload: RetrievePayload 
+
+class HomeCommand(BaseMessage):
+    command: Literal["home"]
+
+class StopCommand(BaseMessage):
+    command: Literal["stop"]
+
+class PauseCommand(BaseMessage):
+    command: Literal["pause"]
+
+class InitializeCommand(BaseMessage):
+    command: Literal["initialize"]
+
+class ToolSubsystemCommand(BaseMessage):
+    command: Literal["tool_command"]
+    payload: ToolCommands 
+
+class FunnelSubsystemCommand(BaseMessage):
+    command: Literal["funnel_command"]
+    payload: FunnelCommands 
+
+class WorkstationSubsystemCommand(BaseMessage):
+    command: Literal["workstation_command"]
+    payload: WorkstationCommands
+
+class GantrySubsystemCommands(BaseMessage):
+    command: Literal["gantry_command"]
+    payload: GantryCommands
+
+
+# Union of all command models
+RobotCommands = Annotated[Union[
+    StoreCommand, 
+    RetrieveCommand, 
+    HomeCommand, 
+    StopCommand,
+    PauseCommand,
+    InitializeCommand,
+    ToolSubsystemCommand,
+    FunnelSubsystemCommand,
+    WorkstationSubsystemCommand,
+    GantrySubsystemCommands
+], Field(discriminator="command")]
+
 
 
 
@@ -92,6 +155,12 @@ class P0C:
         self._workstation = Workstation(self._bus, config.workstation)
         self._state = RobotState(current_tray=None)
         self._sizes = SizeDatabase()
+
+    async def initialize(self) -> None:
+        await self.gantry.initialize()
+        await self.funnel.initialize()
+        await self.workstation.initialize()
+        await self.tool.initialize()
 
     def save_state(self) -> None:
         with open(self._config.state_file, "w+") as f:
@@ -268,11 +337,11 @@ class P0C:
             else:
                 await self.tool.safe_min()
             await self.gantry_move(coordinate)
-            await self.tool.extend_puller(side)
+            await self.tool.extend_carriage(side)
             await self.tool.set_tray_solenoids(tray, side)
             # self.tool.set_carriage_solenoids(0, StorageModuleSide.RIGHT)
             time.sleep(0.25)
-            await self.tool.retract_puller(side)
+            await self.tool.retract_carriage(side)
             if not self.tool.check_tray_loaded():
                 await self.tool.set_solenoids_off()
                 raise Exception("Failed Tray Pull")
@@ -284,9 +353,9 @@ class P0C:
             await self.tool.puller.move_to_position(self.tool.offsets.tool_extend_position - 10)
             await self.tool.puller.wait_for_move()
             await self.tool.set_solenoids_off()
-            await self.tool.extend_puller(side)
+            await self.tool.extend_carriage(side)
             await asyncio.sleep(0.25)
-            await self.tool.puller_safe(side)
+            await self.tool.carriage_safe(side)
             if not self.tool.check_tray_clear():
                 raise Exception("Failed Tray Place")
             self._state.clear_state()
@@ -450,9 +519,9 @@ class P0C:
             await self.tool.puller.move_to_position(self.tool.offsets.tool_extend_position - 10)
             await self.tool.puller.wait_for_move()
             await self.tool.set_solenoids_off()
-            await self.tool.extend_puller(location.side)
+            await self.tool.extend_carriage(location.side)
             await asyncio.sleep(0.25)
-            await self.tool.puller_safe(location.side)
+            await self.tool.carriage_safe(location.side)
             if not await self.tool.check_tray_clear():
                 raise Exception("Failed Tray Place")
             self._state.clear_state()
@@ -482,10 +551,10 @@ class P0C:
             coordinate = self._storage.get_tray_coordinate(location)
             tray = self._storage.get_tray(location)
             await self.gantry_move(coordinate.to_gantry_coordinate())
-            await self.tool.extend_puller(location.side)
+            await self.tool.extend_carriage(location.side)
             await self.tool.set_tray_solenoids(tray, location.side)
             await asyncio.sleep(0.25)
-            await self.tool.retract_puller(location.side)
+            await self.tool.retract_carriage(location.side)
             if not await self.tool.check_tray_loaded():
                 await self.tool.set_solenoids_off()
                 raise Exception("Failed Tray Pull")
@@ -548,6 +617,9 @@ class P0C:
         else:
             raise Exception("No Valid Location")
 
+    async def store_item_by_location(self, location: StorageModuleCellLocation) -> None:
+        await self._receive_item(location)
+
     async def store_item_gs1_data(self, data: GS1Data) -> None:
         item_size = self._sizes.get_item_size(data)
         if item_size:
@@ -572,3 +644,28 @@ class P0C:
         await self._drop_off_item(location)
         self._storage.clear_item(location)
         self.save_storage()
+
+    async def handle_command(self, command: RobotCommands) -> None:
+        match command:
+            case StoreCommand(payload=payload):
+                await self.store_item_by_location(payload.location)
+            case RetrieveCommand(payload=payload):
+                await self.retrieve_item_by_location(payload.location)
+            case HomeCommand():
+                await self.home()
+            case StopCommand():
+                await self.stop()
+            case PauseCommand():
+                raise NotImplementedError()
+            case InitializeCommand():
+                await self.initialize()
+            case ToolSubsystemCommand(payload=payload):
+                await self.tool.handle_command(payload)
+            case FunnelSubsystemCommand(payload=payload):
+                await self.funnel.handle_command(payload)
+            case WorkstationSubsystemCommand(payload=payload):
+                await self.workstation.handle_command(payload)
+            case GantrySubsystemCommands(payload=payload):
+                await self.gantry.handle_command(payload)
+            case _:
+                raise Exception("Invalid Robot Command")

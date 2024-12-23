@@ -34,21 +34,21 @@ class Rotation(Enum):
 class StepperMotorConfig(BaseModel):
     microsteps: int
     steps_per_rev: int
-    encoder_ppr: Optional[int]
-    steps_per_mm: Optional[float]
     work_current: int
     holding_current: int
     homing_current: int
     velocity: float
     acceleration: int
-    max_velocity: int
-    max_acceleration: int
+    homing_speed: float
+    steps_per_mm: Optional[float]
+    encoder_ppr: Optional[int]
+    max_velocity: Optional[float]
+    max_acceleration: Optional[float]
     min_travel: Optional[float]
     max_travel: Optional[float]
     invert_coordinates: bool = False
     external_encoder: bool = False
     home_direction: Rotation = Rotation.CW
-    homing_speed: Optional[float] = None
     brake: bool = False
 
     def convert_encoder_position(self, encoder_value: int) -> float:

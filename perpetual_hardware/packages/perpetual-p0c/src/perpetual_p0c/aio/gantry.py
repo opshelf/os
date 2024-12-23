@@ -1,7 +1,41 @@
 from perpetual_trinamic.aio.trinamic_axis import TrinamicAxis
 from perpetual_can import CANBusHandler
 from perpetual_p0c.gantry import GantryCoordinate, GantryConfiguration, GantryStatus
-from typing import List
+from typing import List, Literal, Union, Annotated
+from pydantic import BaseModel, Field
+
+class ShutdownCommand(BaseModel):
+    command: Literal["shutdown"]
+
+class StopCommand(BaseModel):
+    command: Literal["stop"]
+
+class InitializeCommand(BaseModel):
+    command: Literal["initialize"]
+
+class HomeCommand(BaseModel):
+    command: Literal["home"]
+
+class HomeYFirstCommand(BaseModel):
+    command: Literal["home_y"]
+
+class MoveRelativeCommand(BaseModel):
+    command: Literal["move_relative"]
+    coordinate: GantryCoordinate
+
+class MoveCommand(BaseModel):
+    command: Literal["move"]
+    coordinate: GantryCoordinate
+
+GantryCommands = Annotated[Union[
+    ShutdownCommand,
+    StopCommand,
+    InitializeCommand,
+    HomeCommand,
+    HomeYFirstCommand,
+    MoveRelativeCommand,
+    MoveCommand
+], Field(discriminator="command")]
 
 
 class Gantry:
@@ -98,9 +132,40 @@ class Gantry:
         if not bool(limit.value):
             raise Exception("Y Axis Failed to hit homing switch")
 
+    async def home_y_first(self) -> None:
+        await self._y_axis.home()
+        limit = await self._y_axis.get_digital_input(1, 0)
+        if not bool(limit.value):
+            raise Exception("Y Axis Failed to hit homing switch")
+        await self._x_axis.home()
+        limit = await self._x_axis.get_digital_input(1, 0)
+        if not bool(limit.value):
+            raise Exception("X Axis Failed to hit homing switch")
+
+
     @property
     async def position(self) -> GantryCoordinate:
         return GantryCoordinate(
             x=await self._x_axis.get_position(),
             y=await self._y_axis.get_position(),
         )
+
+    async def handle_command(self, command: GantryCommands) -> None:
+        match command:
+            case ShutdownCommand():
+                await self.cleanup()
+            case StopCommand():
+                await self.stop()
+            case InitializeCommand():
+                await self.initialize()
+            case HomeCommand():
+                await self.home()
+            case HomeYFirstCommand():
+                await self.home_y_first()
+            case MoveRelativeCommand(coordinate=coordinate):
+                await self.move_relative(coordinate.x, coordinate.y)
+            case MoveCommand(coordinate=coordinate):
+                await self.move(coordinate.x, coordinate.y)
+            case _: 
+                raise Exception("Invalid Command")
+        

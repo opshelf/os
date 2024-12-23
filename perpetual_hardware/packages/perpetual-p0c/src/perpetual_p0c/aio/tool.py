@@ -5,6 +5,71 @@ from perpetual_p0c.storage import Tray, StorageModuleSide
 from perpetual_p0c.aio.io_board import ActuatorState, IoController
 from perpetual_p0c.aio.tool_board import ToolBoard, IoBoard
 from perpetual_p0c.tool import ToolOffsets, ToolConfiguration, ToolStatus
+from typing import Literal, Union, Annotated
+from pydantic import BaseModel, Field
+
+class ShutdownCommand(BaseModel):
+    command: Literal["shutdown"]
+
+class StopCommand(BaseModel):
+    command: Literal["stop"]
+
+class InitializeCommand(BaseModel):
+    command: Literal["initialize"]
+
+class ActuatorsCommand(BaseModel):
+    command: Literal["actuators"]
+    value: bool
+
+class CarriageSolenoidsCommand(BaseModel):
+    command: Literal["set_carriage_solenoids"]
+    tray: Tray
+    side: StorageModuleSide
+
+class PullerSolenoidsCommand(BaseModel):
+    command: Literal["set_puller_solenoids"]
+    tray: Tray
+    idx: int
+
+class SolenoidsOffCommand(BaseModel):
+    command: Literal["solenoids_off"]
+
+class SetSlotBitsCommand(BaseModel):
+    command: Literal["slot_bits"]
+    value: int
+
+class ExtendCarriageCommand(BaseModel):
+    command: Literal["extend_carriage"]
+    side: StorageModuleSide
+
+class RetractCarriageCommand(BaseModel):
+    command: Literal["retract_carriage"]
+    side: StorageModuleSide
+
+class RetractTrayCommand(BaseModel):
+    command: Literal["retract_tray"]
+    side: StorageModuleSide
+
+class DropItemsCommand(BaseModel):
+    command: Literal["drop_items"]
+    tray: Tray
+    idx: int
+
+ToolCommands = Annotated[Union[
+    ShutdownCommand,
+    StopCommand,
+    InitializeCommand,
+    ActuatorsCommand,
+    CarriageSolenoidsCommand,
+    PullerSolenoidsCommand,
+    SolenoidsOffCommand,
+    SetSlotBitsCommand,
+    ExtendCarriageCommand,
+    RetractCarriageCommand,
+    RetractTrayCommand,
+    DropItemsCommand
+], Field(discriminator="command")]
+
 
 class Tool:
     def __init__(self, bus: CANBusHandler, tool_configuration: ToolConfiguration):
@@ -147,7 +212,7 @@ class Tool:
             bits |= 0x01 << i
         await self.set_slot_bits(bits)
 
-    async def extend_puller(self, side: StorageModuleSide = StorageModuleSide.RIGHT) -> None:
+    async def extend_carriage(self, side: StorageModuleSide = StorageModuleSide.RIGHT) -> None:
         if side == StorageModuleSide.RIGHT:
             await self._puller.move_to_position(self.offsets.tool_extend_position)
             await self.wait_for_move()
@@ -155,7 +220,7 @@ class Tool:
             await self._puller.move_to_position(0)
             await self.wait_for_move()
 
-    async def retract_puller(self, side: StorageModuleSide) -> None:
+    async def retract_carriage(self, side: StorageModuleSide) -> None:
         if side == StorageModuleSide.RIGHT:
             await self._puller.move_to_position(self.offsets.tray_pull_right)
             await self.wait_for_move()
@@ -163,7 +228,7 @@ class Tool:
             await self._puller.move_to_position(self.offsets.tray_pull_left)
             await self.wait_for_move()
 
-    async def puller_safe(self, side: StorageModuleSide) -> None:
+    async def carriage_safe(self, side: StorageModuleSide) -> None:
         if side == StorageModuleSide.RIGHT:
             await self.safe_max()
         else:
@@ -243,4 +308,34 @@ class Tool:
             positions |= 1 << (position * 3 + 2)
             await self._tool_board.set_pullers(IoBoard.from_buffer(positions))
             await self.actuators(True)
+
+
+    async def handle_command(self, command: ToolCommands) -> None:
+        match command:
+            case ShutdownCommand():
+                await self.cleanup()
+            case StopCommand():
+                await self.stop()
+            case InitializeCommand():
+                await self.initialize()
+            case ActuatorsCommand(value=value):
+                await self.actuators(value)
+            case CarriageSolenoidsCommand(tray=tray, side=side):
+                await self.set_tray_solenoids(tray, side)
+            case PullerSolenoidsCommand(tray=tray, idx=idx):
+                await self.set_solenoids(tray, idx)
+            case SolenoidsOffCommand():
+                await self.set_solenoids_off()
+            case SetSlotBitsCommand(value=bits):
+                await self.set_slot_bits(bits)
+            case ExtendCarriageCommand(side=side):
+                await self.extend_carriage(side)
+            case RetractCarriageCommand(side=side):
+                await self.retract_carriage(side)
+            case RetractTrayCommand(side=side):
+                await self.retract_tray(side)
+            case DropItemsCommand(tray=tray, idx=idx):
+                await self.drop_items(tray, idx)
+            case _:
+                raise Exception("Invalid Tool Command")
 

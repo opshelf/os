@@ -2,6 +2,53 @@ from perpetual_can import CANBusHandler
 from perpetual_trinamic.aio.trinamic_axis import TrinamicAxis
 from perpetual_p0c.aio.output_box import OutputBox
 from perpetual_p0c.workstation import WorkstationConfiguration
+from typing import Literal, Union, Annotated
+from pydantic import BaseModel, Field
+
+
+class ShutdownCommand(BaseModel):
+    command: Literal["shutdown"]
+
+class StopCommand(BaseModel):
+    command: Literal["stop"]
+
+class InitializeCommand(BaseModel):
+    command: Literal["initialize"]
+
+class StartInputCommand(BaseModel):
+    command: Literal["start_input_belt"]
+
+class StopInputCommand(BaseModel):
+    command: Literal["stop_input_belt"]
+
+class StartOutputCommand(BaseModel):
+    command: Literal["start_output_belt"]
+
+class StopOutputCommand(BaseModel):
+    command: Literal["stop_output_belt"]
+
+class OpenOutputCommand(BaseModel):
+    command: Literal["open_output"]
+
+class CloseOutputCommand(BaseModel):
+    command: Literal["close_output"]
+
+class HomeOutput(BaseModel):
+    command: Literal["home_output"]
+
+WorkstationCommands = Annotated[Union[
+    ShutdownCommand,
+    StopCommand,
+    InitializeCommand,
+    StartInputCommand,
+    StopInputCommand,
+    StartOutputCommand,
+    StopOutputCommand,
+    OpenOutputCommand,
+    CloseOutputCommand,
+    HomeOutput
+], Field(discriminator="command")]
+
 
 
 class Workstation:
@@ -34,6 +81,11 @@ class Workstation:
 
     async def home(self) -> None:
         await self.home_output()
+        await self.input_belt.initialize()
+        await self.output_belt.initialize()
+
+    async def initialize(self) -> None:
+        await self.output_box.initialize()
         await self.input_belt.initialize()
         await self.output_belt.initialize()
 
@@ -80,3 +132,29 @@ class Workstation:
 
     async def home_output(self) -> None:
         await self.output_box.home()
+
+    async def handle_command(self, command: WorkstationCommands) -> None:
+        match command:
+            case ShutdownCommand():
+                await self.cleanup()
+            case StopCommand():
+                await self.stop()
+            case InitializeCommand():
+                await self.initialize()
+            case StartInputCommand():
+                await self.start_input_belt()
+            case StopInputCommand():
+                await self.stop_input_belt()
+            case StartOutputCommand():
+                await self.start_output_belt()
+            case StopOutputCommand():
+                await self.stop_output_belt()
+            case OpenOutputCommand():
+                await self.open_output()
+            case CloseOutputCommand():
+                await self.close_output()
+            case HomeOutput():
+                await self.home_output()
+            case _:
+                raise Exception("Invalid Workstation Command")
+
