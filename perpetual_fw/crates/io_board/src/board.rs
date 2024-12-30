@@ -221,6 +221,17 @@ async fn can_receive_task(
     }
 }
 
+#[embassy_executor::task]
+async fn watchdog_task(
+    mut wdg: embassy_stm32::wdg::IndependentWatchdog<'static, embassy_stm32::peripherals::IWDG>,
+) -> ! {
+    wdg.unleash();
+    loop {
+        wdg.pet();
+        embassy_time::Timer::after_millis(100).await;
+    }
+}
+
 impl<'a> IoBoard<'a> {
     pub fn new(can_id: embedded_can::Id, config: Config, spawner: Spawner) -> Self {
         let p = embassy_stm32::init(config);
@@ -231,7 +242,6 @@ impl<'a> IoBoard<'a> {
         );
         can.properties()
             .set_standard_filter(can::filter::StandardFilterSlot::_0, filter);
-        //can.set_bitrate(1_000_000);
         can.set_bitrate(500_000);
         let can_handle = can.into_normal_mode();
         static CAN_TX_CHANNEL: StaticCell<Channel<CriticalSectionRawMutex, Frame, 64>> =
@@ -243,7 +253,9 @@ impl<'a> IoBoard<'a> {
             CAN_TX_CHANNEL.init(Channel::new()),
             CAN_RX_CHANNEL.init(Channel::new()),
         );
+        let wdg = embassy_stm32::wdg::IndependentWatchdog::new(p.IWDG, 100_000);
         let _ = spawner.spawn(can_receive_task(can_id, buffered_can));
+        let _ = spawner.spawn(watchdog_task(wdg));
 
         let actuators = Output::new(p.PC5, Level::Low, Speed::Low);
         let wedge_1 = Output::new(p.PB3, Level::Low, Speed::Low);
@@ -365,7 +377,6 @@ impl<'a> IoBoard<'a> {
     pub async fn run(&mut self) -> ! {
         loop {
             let cmd = COMMAND_CHANNEL.receive().await;
-            ///defmt::info!("{:?}", cmd);
             let response = self.handle_message(cmd);
             RESPONSE_CHANNEL.send(response).await;
         }

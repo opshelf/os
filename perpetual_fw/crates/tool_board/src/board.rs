@@ -89,7 +89,9 @@ async fn can_receive_task(
 }
 
 #[embassy_executor::task]
-async fn hardware_watchdog(mut wdg: embassy_stm32::wdg::IndependentWatchdog<'static>) -> ! {
+async fn hardware_watchdog(
+    mut wdg: embassy_stm32::wdg::IndependentWatchdog<'static, embassy_stm32::peripherals::IWDG>,
+) -> ! {
     wdg.unleash();
     loop {
         wdg.pet();
@@ -101,7 +103,7 @@ impl<'a> ToolBoard<'a> {
     pub fn new(can_id: embedded_can::Id, config: Config, spawner: Spawner) -> Self {
         let p = embassy_stm32::init(config);
         let mut can = can::CanConfigurator::new(p.FDCAN1, p.PA11, p.PA12, Irqs);
-        let mut filter = can::filter::StandardFilter::default();
+        let filter = can::filter::StandardFilter::default();
         //filter.filter = embassy_stm32::can::filter::FilterType::DedicatedSingle(
         //    embedded_can::StandardId::new(100).unwrap(),
         //);
@@ -291,11 +293,11 @@ impl<'a> ToolBoard<'a> {
         let _ = embassy_time::Timer::after_millis(10).await;
         let config = Port::from_bits(0xFFFF).unwrap();
         let _ = self.io.write_config(config).await;
-        let result = self
+        let _result = self
             .puller
             .set_all_directions(mcp23s08::Direction::Output)
             .await;
-        let result = self
+        let _result = self
             .carriage
             .set_all_directions(mcp23s08::Direction::Output)
             .await;
