@@ -88,6 +88,15 @@ async fn can_receive_task(
     }
 }
 
+#[embassy_executor::task]
+async fn hardware_watchdog(mut wdg: embassy_stm32::wdg::IndependentWatchdog<'static>) -> ! {
+    wdg.unleash();
+    loop {
+        wdg.pet();
+        embassy_time::Timer::after_millis(100).await;
+    }
+}
+
 impl<'a> ToolBoard<'a> {
     pub fn new(can_id: embedded_can::Id, config: Config, spawner: Spawner) -> Self {
         let p = embassy_stm32::init(config);
@@ -110,7 +119,9 @@ impl<'a> ToolBoard<'a> {
             CAN_TX_CHANNEL.init(Channel::new()),
             CAN_RX_CHANNEL.init(Channel::new()),
         );
+        let wdg = embassy_stm32::wdg::IndependentWatchdog::new(p.IWDG, 100_000);
         let _ = spawner.spawn(can_receive_task(can_id, buffered_can));
+        let _ = spawner.spawn(hardware_watchdog(wdg));
 
         // Trinamic Driver Setup
         let driver_en = Output::new(p.PB6, Level::High, Speed::Low);
@@ -275,36 +286,19 @@ impl<'a> ToolBoard<'a> {
     }
 
     pub async fn run(&mut self) -> ! {
+        // Without a delay the chip powers on and begins running before the peripheral IO Chips are
+        // ready
+        let _ = embassy_time::Timer::after_millis(10).await;
         let config = Port::from_bits(0xFFFF).unwrap();
         let _ = self.io.write_config(config).await;
-
-        //let mut pos: i32 = 1000;
-        //let res = self
-        //    .trinamic
-        //    .write_u32(tmc5130::registers::Registers::V1, 10000)
-        //    .await;
-        //let res = self
-        //    .trinamic
-        //    .write_u32(tmc5130::registers::Registers::A1, 1000)
-        //    .await;
-        //let res = self
-        //    .trinamic
-        //    .write_u32(tmc5130::registers::Registers::D1, 1000)
-        //    .await;
         let result = self
             .puller
             .set_all_directions(mcp23s08::Direction::Output)
             .await;
-        defmt::info!("Result: {:?}", result);
         let result = self
             .carriage
             .set_all_directions(mcp23s08::Direction::Output)
             .await;
-        defmt::info!("Result: {:?}", result);
-        //let result = self.puller.read_iodir().await;
-        //defmt::info!("IODIR {:?}", result);
-        //let result = self.puller.read_ipol().await;
-        //defmt::info!("IPOL {:?}", result);
         self.set_pullers().await;
         self.set_carriage().await;
 
@@ -352,31 +346,6 @@ impl<'a> ToolBoard<'a> {
                     RESPONSE_CHANNEL.send(Responses::State(board_state)).await;
                 }
             };
-
-            /*
-            defmt::info!("Setting 255");
-            let result = self.carriage.set_gpio(255).await;
-            let result = self.puller.set_gpio(255).await;
-            defmt::info!("{:?}", result);
-            let result = self.carriage.set_olat(255).await;
-            let result = self.puller.set_olat(255).await;
-            defmt::info!("{:?}", result);
-
-            // //let result = self.puller.set_gpio(255).await;
-            // //defmt::info!("{:?}", result);
-            // //let result = self.puller.set_olat(255).await;
-            // //defmt::info!("{:?}", result);
-
-            embassy_time::Timer::after_millis(1000).await;
-            defmt::info!("Setting 0");
-            let result = self.carriage.set_gpio(0).await;
-            let result = self.puller.set_gpio(0).await;
-            defmt::info!("{:?}", result);
-            let result = self.carriage.set_olat(0).await;
-            let result = self.puller.set_olat(0).await;
-            defmt::info!("{:?}", result);
-            embassy_time::Timer::after_millis(1000).await;
-            */
         }
     }
 }

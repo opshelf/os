@@ -6,6 +6,9 @@ from perpetual_can import CANBusHandler, AsyncFilteredReader
 from enum import Enum
 
 
+
+
+
 class CanCommandIds(int, Enum):
     GetState = 0x01
     SetWedges = 0x02
