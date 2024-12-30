@@ -2,10 +2,10 @@ from pydantic import BaseModel, Field, UUID4
 from uuid import uuid4
 from typing import Optional, Union, Literal, Annotated
 from perpetual_p0c.storage import CellItem, StorageModuleCellLocation
-from perpetual_p0c.aio.tool import ToolCommands
-from perpetual_p0c.aio.funnel import FunnelCommands
-from perpetual_p0c.aio.workstation import WorkstationCommands
-from perpetual_p0c.aio.gantry import GantryCommands
+from perpetual_p0c.tool import ToolCommands
+from perpetual_p0c.funnel import FunnelCommands
+from perpetual_p0c.workstation import WorkstationCommands
+from perpetual_p0c.gantry import GantryCommands
 
 class BaseMessage(BaseModel):
     message_id: UUID4 = Field(default_factory=uuid4)

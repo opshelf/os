@@ -1,9 +1,9 @@
-from can import BusABC, Message
+from can import Message
 from typing import List, Optional
 from pydantic import BaseModel
 from perpetual_p0c.common import CanMessageIds
+from perpetual_can import CANBusHandler, AsyncFilteredReader
 from enum import Enum
-
 
 class CanCommandIds(int, Enum):
     GetState = 0x01
@@ -89,9 +89,11 @@ class IoState(BaseModel):
 
 
 class IoController:
-    def __init__(self, bus: BusABC, can_id: int = CanMessageIds.IO_NODE) -> None:
+    def __init__(self, bus: CANBusHandler, can_id: int = CanMessageIds.IO_NODE) -> None:
         self._bus = bus
         self._can_id = int(can_id)
+        self._reader = AsyncFilteredReader([int(can_id)])
+        self._bus.add_listener(self._reader)
         self._state = IoState(wedges=Wedge(), actuators=ActuatorState.Retracted)
 
     @property
@@ -105,65 +107,66 @@ class IoController:
             is_extended_id=False,
         )
 
-    def _send_message(self, message: Message) -> None:
-        self._bus.send(message)
+    async def _send_message(self, message: Message) -> None:
+        await self._bus.send_message(message)
 
-    def _receive_message(self) -> Message:
-        msg = self._bus.recv(timeout=3.0)
+    async def _receive_message(self) -> Message:
+        msg = await self._reader.get_message(2.0)
         if msg:
             return msg
         raise Exception("No Response From Relay Module")
 
-    def _run_command(self, message: Message) -> Message:
-        self._send_message(message)
-        message = self._receive_message()
+    async def _run_command(self, message: Message) -> Message:
+        await self._send_message(message)
+        message = await self._receive_message()
         if message.data[0]:
             return message
         else:
             raise Exception("Invalid Command")
 
-    def get_state(self) -> IoState:
-        response = self._run_command(self.default_message([CanCommandIds.GetState.value]))
+    async def get_state(self) -> IoState:
+        response = await self._run_command(self.default_message([CanCommandIds.GetState.value]))
         state = IoState.from_buffer(response.data)
         self._state = state
         return self._state
 
-    def set_wedges(self, wedge: Wedge) -> IoState:
+    async def set_wedges(self, wedge: Wedge) -> IoState:
         buffer = [CanCommandIds.SetWedges.value]
         buffer.extend(wedge.to_buffer())
-        response = self._run_command(self.default_message(buffer))
+        response = await self._run_command(self.default_message(buffer))
         state = IoState.from_buffer(response.data)
         self._state = state
         return self._state
 
-    def set_actuators(self, actuator_state: ActuatorState) -> IoState:
+    async def set_actuators(self, actuator_state: ActuatorState) -> IoState:
         buffer = [CanCommandIds.SetActuators.value]
         buffer.extend(actuator_state.to_buffer())
-        response = self._run_command(self.default_message(buffer))
+        response = await self._run_command(self.default_message(buffer))
         state = IoState.from_buffer(response.data)
         self._state = state
         return self._state
 
-    def reset_valves(self) -> IoState:
+    async def reset_valves(self) -> IoState:
         buffer = [CanCommandIds.ResetValves.value]
-        response = self._run_command(self.default_message(buffer))
+        response = await self._run_command(self.default_message(buffer))
         state = IoState.from_buffer(response.data)
         self._state = state
         return self._state
 
-    def set_all_valves(self) -> IoState:
+    async def set_all_valves(self) -> IoState:
         buffer = [CanCommandIds.SetAllValves.value]
-        response = self._run_command(self.default_message(buffer))
+        response = await self._run_command(self.default_message(buffer))
         state = IoState.from_buffer(response.data)
         self._state = state
         return self._state
 
-    def get_sensors(self) -> Optional[SensorState]:
+    async def get_sensors(self) -> Optional[SensorState]:
         buffer = [CanCommandIds.GetSensors.value]
-        response = self._run_command(self.default_message(buffer))
+        response = await self._run_command(self.default_message(buffer))
         return SensorState.from_buffer(response.data)
 
-    def reset_sensors(self) -> Optional[SensorState]:
+    async def reset_sensors(self) -> Optional[SensorState]:
         buffer = [CanCommandIds.ResetSensors.value]
-        response = self._run_command(self.default_message(buffer))
+        response = await self._run_command(self.default_message(buffer))
         return SensorState.from_buffer(response.data)
+

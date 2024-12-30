@@ -1,9 +1,9 @@
-from can import BusABC, Message
+from can import Message
 from typing import List
 from pydantic import BaseModel
 from perpetual_p0c.common import CanMessageIds
+from perpetual_can import CANBusHandler, AsyncFilteredReader
 from enum import Enum
-
 
 def reverse_bits_in_range(num: int) -> int:
     mask = 0b111000
@@ -137,15 +137,26 @@ class BoardState(BaseModel):
 
 
 class ToolBoard:
-    def __init__(self, bus: BusABC, can_id: int = CanMessageIds.TOOL_NODE.value) -> None:
-        self._bus = bus
+    def __init__(self, bus: CANBusHandler, can_id: int = CanMessageIds.TOOL_NODE) -> None:
         self._can_id = int(can_id)
+        self._bus = bus
+        self._reader = AsyncFilteredReader([int(can_id)])
+        self._bus.add_listener(self._reader)
         self._state = BoardState(
             carriage=IoBoard.from_buffer(0),
             puller=IoBoard.from_buffer(0),
             slots=SlotStatus.from_buffer(0),
             inputs=InputStatus.from_buffer(0),
         )
+
+    async def _send_message(self, message: Message) -> None:
+        await self._bus.send_message(message)
+
+    async def _receive_message(self) -> Message:
+        msg = await self._reader.get_message(2.0)
+        if msg:
+            return msg
+        raise Exception("No Response From Relay Module")
 
     @property
     def state(self) -> BoardState:
@@ -158,67 +169,57 @@ class ToolBoard:
             is_extended_id=False,
         )
 
-    def _send_message(self, message: Message) -> None:
-        self._bus.send(message)
-
-    def _receive_message(self) -> Message:
-        msg = self._bus.recv(timeout=3.0)
-        if msg:
-            return msg
-        raise Exception("No Response From Relay Module")
-
-    def _run_command(self, message: Message) -> Message:
-        self._send_message(message)
-        message = self._receive_message()
+    async def _run_command(self, message: Message) -> Message:
+        await self._send_message(message)
+        message = await self._receive_message()
         if message.data[0]:
             return message
         else:
             raise Exception("Invalid Command")
 
-    def get_state(self) -> BoardState:
-        response = self._run_command(self.default_message([CanCommandIds.GetState.value]))
+    async def get_state(self) -> BoardState:
+        response = await self._run_command(self.default_message([CanCommandIds.GetState.value]))
         state = BoardState.from_buffer(response.data)
         self._state = state
         return self._state
 
-    def set_pullers(self, io: IoBoard) -> BoardState:
-        print(io)
+    async def set_pullers(self, io: IoBoard) -> BoardState:
         buffer = [CanCommandIds.SetPullers.value]
         buffer.extend(io.to_buffer())
-        response = self._run_command(self.default_message(buffer))
+        response = await self._run_command(self.default_message(buffer))
         state = BoardState.from_buffer(response.data)
         self._state = state
         return self._state
 
-    def mask_pullers(self, io: IoBoard) -> BoardState:
+    async def mask_pullers(self, io: IoBoard) -> BoardState:
         buffer = [CanCommandIds.MaskPullers.value]
         buffer.extend(io.to_buffer())
-        response = self._run_command(self.default_message(buffer))
+        response = await self._run_command(self.default_message(buffer))
         state = BoardState.from_buffer(response.data)
         self._state = state
         return self._state
 
-    def set_carriage(self, io: IoBoard) -> BoardState:
+    async def set_carriage(self, io: IoBoard) -> BoardState:
         buffer = [CanCommandIds.SetCarriage.value]
         buffer.extend(io.to_buffer())
         buffer[1] = reverse_bits_in_range(buffer[1])
-        response = self._run_command(self.default_message(buffer))
+        response = await self._run_command(self.default_message(buffer))
         state = BoardState.from_buffer(response.data)
         self._state = state
         return self._state
 
-    def mask_carriage(self, io: IoBoard) -> BoardState:
+    async def mask_carriage(self, io: IoBoard) -> BoardState:
         buffer = [CanCommandIds.MaskCarriage.value]
         buffer.extend(io.to_buffer())
         buffer[1] = reverse_bits_in_range(buffer[1])
-        response = self._run_command(self.default_message(buffer))
+        response = await self._run_command(self.default_message(buffer))
         state = BoardState.from_buffer(response.data)
         self._state = state
         return self._state
 
-    def reset_all(self) -> BoardState:
+    async def reset_all(self) -> BoardState:
         buffer = [CanCommandIds.ResetAll.value]
-        response = self._run_command(self.default_message(buffer))
+        response = await self._run_command(self.default_message(buffer))
         state = BoardState.from_buffer(response.data)
         self._state = state
         return self._state

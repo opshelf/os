@@ -1,8 +1,8 @@
 from perpetual_p0c.gantry import GantryCoordinate
 from perpetual_p0c.storage import StorageModuleSide
 from perpetual_p0c.utils import get_can_bus
-from perpetual_p0c.aio.gantry import Gantry
-from perpetual_p0c.aio.tool import Tool
+from perpetual_p0c.gantry import Gantry
+from perpetual_p0c.tool import Tool
 from perpetual_p0c.configuration import p0_gantry_config, p0_tool_config
 
 import asyncio

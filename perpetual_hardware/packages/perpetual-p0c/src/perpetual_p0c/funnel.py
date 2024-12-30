@@ -1,14 +1,15 @@
-from hardware_common.stepper_motor import AbstractStepperMotor, AxisCommand
-from can import BusABC
+import asyncio
+from pydantic import BaseModel, Field
+from typing import Literal, Union, Annotated
+from perpetual_p0c.storage import Tray
+from perpetual_p0c.io_board import IoController, Wedge
+from perpetual_trinamic.aio.trinamic_axis import TrinamicAxis
+from perpetual_trinamic.aio.trinamic_stepper import TrinamicStepper
+from perpetual_can import CANBusHandler
 from perpetual_p0c.storage import Tray
 from perpetual_p0c.common import CanAxisConfiguration
-from perpetual_p0c.io_board import IoController, Wedge
-from perpetual_trinamic.trinamic_axis import TrinamicAxis, TrinamicStepper
 from pydantic import BaseModel
-from typing import Optional, Dict, Any
 from enum import Enum
-import time
-import atexit
 
 
 class FunnelOffsets(BaseModel):
@@ -23,7 +24,6 @@ class FunnelOffsets(BaseModel):
     belt_speed: float = 150
     wall_speed: float = 500
     output_transfer_conveyor_speed: float = 100
-    # output_conveyor_speed: float = 300
     output_conveyor_speed: float = 250
 
 
@@ -40,9 +40,7 @@ class FunnelConfiguration(BaseModel):
     diverter: CanAxisConfiguration
     relay_board_id: int
     offsets: FunnelOffsets
-    # opposing_funnel_max_travel: float = 325.5
     opposing_funnel_max_travel: float = 362
-    # input_funnel_max_travel: float = 400.0
     input_funnel_max_travel: float = 370.0
     minimum_transfer_location: float = 325.0
 
@@ -60,129 +58,152 @@ class FunnelOpeningSize(int, Enum):
     OPEN_100MM = 1
     OPEN_150MM = 2
 
-
-class Commands(str, Enum):
-    HOME = "HOME"
-    STOP = "STOP"
-    MOVE_TO_CELL = "MOVE_TO_CELL"
-    CLOSE_FUNNEL = "CLOSE_FUNNEL"
-    INLET_COMMAND = "INLET_COMMAND"
-    OPPOSING_FUNNEL_COMMAND = "OPPOSING_FUNNEL_COMMAND"
-    START_BELT = "START_BELT"
-    STOP_BELT = "STOP_BELT"
-    WIGGLE = "WIGGLE"
-    INITIALIZE = "INITIALZE"
-
-
 class MoveToCellCommand(BaseModel):
     tray: Tray
     idx: int
 
+class ShutdownCommand(BaseModel):
+    command: Literal["shutdown"]
 
-class FunnelCommands(BaseModel):
-    command: Commands
-    payload: Optional[Dict[Any, Any]]
+class StopCommand(BaseModel):
+    command: Literal["stop"]
 
+class InitializeCommand(BaseModel):
+    command: Literal["initialize"]
 
-class WiggleCommand(BaseModel):
-    wiggle: float
+class HomeCommand(BaseModel):
+    command: Literal["home"]
 
+class StopBeltCommand(BaseModel):
+    command: Literal["stop_belt"]
+
+class StartBeltCommand(BaseModel):
+    command: Literal["start_belt"]
+
+class StopWallCommand(BaseModel):
+    command: Literal["stop_wall"]
+
+class StartWallCommand(BaseModel):
+    command: Literal["start_wall"]
+
+class StopOutputCommand(BaseModel):
+    command: Literal["stop_output"]
+
+class StartOutputCommand(BaseModel):
+    command: Literal["start_output"]
+
+class StopOutputTransferCommand(BaseModel):
+    command: Literal["stop_output_transfer"]
+
+class StartOutputTransferCommand(BaseModel):
+    command: Literal["start_output_transfer"]
+
+class MoveToCellCommmand(BaseModel):
+    command: Literal["move_to_cell"]
+    tray: Tray
+    idx: int
+
+FunnelCommands = Annotated[Union[
+    ShutdownCommand,
+    StopCommand,
+    InitializeCommand,
+    HomeCommand,
+    StopBeltCommand,
+    StartBeltCommand,
+    StopWallCommand,
+    StartWallCommand,
+    StopOutputCommand,
+    StartOutputCommand,
+    StopOutputTransferCommand,
+    StartOutputTransferCommand, 
+    MoveToCellCommand
+], Field(discriminator="command")]
 
 class Funnel:
-    def __init__(self, bus: BusABC, funnel_configuration: FunnelConfiguration):
+    def __init__(self, bus: CANBusHandler, funnel_configuration: FunnelConfiguration):
         self._configuration = funnel_configuration
         self._inlet_funnel = TrinamicAxis(
             bus,
+            configuration=funnel_configuration.inlet_funnel.configuration,
             module_id=funnel_configuration.inlet_funnel.can_id,
             motor_id=0,
-            configuration=funnel_configuration.inlet_funnel.configuration,
         )
         self._opposing_funnel = TrinamicAxis(
             bus,
+            configuration=funnel_configuration.opposing_funnel.configuration,
             module_id=funnel_configuration.opposing_funnel.can_id,
             motor_id=0,
-            configuration=funnel_configuration.opposing_funnel.configuration,
         )
         self._slot_1 = TrinamicAxis(
             bus,
+            configuration=funnel_configuration.slot_1.configuration,
             module_id=funnel_configuration.slot_1.can_id,
             motor_id=0,
-            configuration=funnel_configuration.slot_1.configuration,
         )
         self._slot_2 = TrinamicAxis(
             bus,
+            configuration=funnel_configuration.slot_2.configuration,
             module_id=funnel_configuration.slot_2.can_id,
             motor_id=0,
-            configuration=funnel_configuration.slot_2.configuration,
         )
         self._slot_3 = TrinamicAxis(
             bus,
+            configuration=funnel_configuration.slot_3.configuration,
             module_id=funnel_configuration.slot_3.can_id,
             motor_id=0,
-            configuration=funnel_configuration.slot_3.configuration,
         )
         self._io = IoController(bus)
         self._belt = TrinamicStepper(
             bus,
-            module_id=funnel_configuration.belt.can_id,
             configuration=funnel_configuration.belt.configuration,
+            module_id=funnel_configuration.belt.can_id,
             motor_id=0,
             max_current=6000,
         )
         self._wall = TrinamicStepper(
             bus,
-            module_id=funnel_configuration.wall.can_id,
             configuration=funnel_configuration.wall.configuration,
+            module_id=funnel_configuration.wall.can_id,
             motor_id=0,
         )
         self._diverter = TrinamicStepper(
             bus,
-            module_id=funnel_configuration.diverter.can_id,
             configuration=funnel_configuration.diverter.configuration,
+            module_id=funnel_configuration.diverter.can_id,
             motor_id=0,
         )
         self._output_transfer_conveyor = TrinamicStepper(
             bus,
-            module_id=funnel_configuration.output_transfer_conveyor.can_id,
             configuration=funnel_configuration.output_transfer_conveyor.configuration,
+            module_id=funnel_configuration.output_transfer_conveyor.can_id,
             motor_id=0,
             max_current=6000,
         )
         self._output_conveyor = TrinamicStepper(
             bus,
-            module_id=funnel_configuration.output_conveyor.can_id,
             configuration=funnel_configuration.output_conveyor.configuration,
+            module_id=funnel_configuration.output_conveyor.can_id,
             motor_id=0,
             max_current=6000,
         )
-        self._belt.safety_off()
-        self._wall.safety_off()
-        self._output_transfer_conveyor.safety_off()
         self._slots_open = 0
         self._diverter_open = True
-        # atexit.register(self.cleanup)
 
-    def __enter__(self) -> "Funnel":
-        return self
-
-    def __exit__(self) -> None:
-        self.cleanup()
-
-    def cleanup(self) -> None:
-        self._inlet_funnel.stop()
-        self._opposing_funnel.stop()
-        self._slot_1.stop()
-        self._slot_2.stop()
-        self._slot_3.stop()
-        self._belt.stop()
-        self._wall.stop()
-        self._diverter.stop()
-        self._diverter.set_standby_current(0)
-        self._output_transfer_conveyor.stop()
-        self._output_conveyor.stop()
-        self._belt.stop()
-        self._wall.stop()
-        self._output_transfer_conveyor.stop()
+    async def cleanup(self) -> None:
+        await self._inlet_funnel.stop()
+        await self._opposing_funnel.stop()
+        await self._slot_1.stop()
+        await self._slot_2.stop()
+        await self._slot_3.stop()
+        await self._belt.stop()
+        await self._wall.stop()
+        await self._diverter.stop()
+        await self._diverter.set_standby_current(0)
+        await self._output_transfer_conveyor.stop()
+        await self._output_conveyor.stop()
+        await self._belt.stop()
+        await self._wall.stop()
+        await self._output_transfer_conveyor.stop()
 
     @property
     def belt(self) -> TrinamicStepper:
@@ -196,52 +217,40 @@ class Funnel:
     def output_transfer_conveyor(self) -> TrinamicStepper:
         return self._output_transfer_conveyor
 
-    def output_transfer_conveyor_rotate(self, speed: int = -600) -> None:
-        self._output_transfer_conveyor.rotate(speed)
-
-    def output_transfer_conveyor_stop(self) -> None:
-        self._output_transfer_conveyor.stop()
-
     @property
-    def output_conveyor(self) -> TrinamicStepper:
+    async def output_conveyor(self) -> TrinamicStepper:
         return self._output_conveyor
 
-    def output_conveyor_rotate(self, speed: int = -600) -> None:
-        self._output_conveyor.rotate(speed)
+    async def output_conveyor_stop(self) -> None:
+        await self._output_transfer_conveyor.stop()
 
-    def output_conveyor_stop(self) -> None:
-        self._output_transfer_conveyor.stop()
+    async def stop_belt(self) -> None:
+        await self._belt.stop()
 
-    def stop_belt(self) -> None:
-        self._belt.stop()
+    async def start_belt(self) -> None:
+        await self._belt.initialize()
+        await self._belt.rotate(int(self._configuration.offsets.belt_speed))
 
-    def start_belt(self) -> None:
-        self._belt.initialize()
-        self._belt.safety_off()
-        self._belt.rotate(int(self._configuration.offsets.belt_speed))
+    async def stop_wall(self) -> None:
+        await self._wall.stop()
 
-    def stop_wall(self) -> None:
-        self._wall.stop()
+    async def start_wall(self) -> None:
+        await self._wall.initialize()
+        await self._wall.rotate(int(self._configuration.offsets.wall_speed))
 
-    def start_wall(self) -> None:
-        self._wall.initialize()
-        self._wall.safety_off()
-        self._wall.rotate(int(self._configuration.offsets.wall_speed))
+    async def stop_output(self) -> None:
+        await self._output_conveyor.stop()
 
-    def stop_output(self) -> None:
-        self._output_conveyor.stop()
+    async def start_output(self) -> None:
+        await self._output_conveyor.initialize()
+        await self._output_conveyor.rotate(int(self._configuration.offsets.output_conveyor_speed))
 
-    def start_output(self) -> None:
-        self._output_conveyor.initialize()
-        self._output_conveyor.rotate(int(self._configuration.offsets.output_conveyor_speed))
+    async def stop_output_transfer(self) -> None:
+        await self._output_transfer_conveyor.stop()
 
-    def stop_output_transfer(self) -> None:
-        self._output_transfer_conveyor.stop()
-
-    def start_output_transfer(self) -> None:
-        self._output_transfer_conveyor.initialize()
-        self._output_transfer_conveyor.safety_off()
-        self._output_transfer_conveyor.rotate(
+    async def start_output_transfer(self) -> None:
+        await self._output_transfer_conveyor.initialize()
+        await self._output_transfer_conveyor.rotate(
             int(self._configuration.offsets.output_transfer_conveyor_speed)
         )
 
@@ -253,13 +262,13 @@ class Funnel:
     def offsets(self, offsets: FunnelOffsets) -> None:
         self._configuration.offsets = offsets
 
-    def start_receive_item(self) -> None:
-        self.start_belt()
-        self.start_wall()
+    async def start_receive_item(self) -> None:
+        await self.start_belt()
+        await self.start_wall()
 
-    def stop_receive_item(self) -> None:
-        self.stop_belt()
-        self.stop_wall()
+    async def stop_receive_item(self) -> None:
+        await self.stop_belt()
+        await self.stop_wall()
 
     @property
     def io(self) -> IoController:
@@ -269,19 +278,19 @@ class Funnel:
     def slots_open(self) -> int:
         return self._slots_open
 
-    def open_slots(self, slots: int) -> None:
-        self._slots_open = slots
-        self._io.set_wedges(
-            Wedge(
-                wedge_3=False if slots > 2 else True,
-                wedge_2=False if slots > 1 else True,
-                wedge_1=False if slots > 0 else True,
-            )
-        )
+    #async def open_slots(self, slots: int) -> None:
+    #    self._slots_open = slots
+    #    await self._io.set_wedges(
+    #        Wedge(
+    #            wedge_3=False if slots > 2 else True,
+    #            wedge_2=False if slots > 1 else True,
+    #            wedge_1=False if slots > 0 else True,
+    #        )
+    #    )
 
-    def open_tray_wedges(self, tray: Tray) -> None:
+    async def open_tray_wedges(self, tray: Tray) -> None:
         if tray.cell_width <= 50:
-            self._io.set_wedges(
+            await self._io.set_wedges(
                 Wedge(
                     wedge_1=False,
                     wedge_2=True,
@@ -289,7 +298,7 @@ class Funnel:
                 )
             )
         elif tray.cell_width > 50 and tray.cell_width <= 105:
-            self._io.set_wedges(
+            await self._io.set_wedges(
                 Wedge(
                     wedge_1=False,
                     wedge_2=False,
@@ -297,7 +306,7 @@ class Funnel:
                 )
             )
         else:
-            self._io.set_wedges(
+            await self._io.set_wedges(
                 Wedge(
                     wedge_1=False,
                     wedge_2=False,
@@ -305,111 +314,105 @@ class Funnel:
                 )
             )
 
-    def close_slots(self) -> None:
+    async def close_all_wedges(self) -> None:
         self._slots_open = 0
-        # self._slots.set_relays(GenericRelayBoardMessage(r2=True, r3=True, r4=True))
-        self._io.set_wedges(Wedge(wedge_1=True, wedge_2=True, wedge_3=True))
+        await self._io.set_wedges(Wedge(wedge_1=True, wedge_2=True, wedge_3=True))
 
-    def open_all_slots(self) -> None:
-        self._io.set_wedges(Wedge())
+    async def open_all_wedges(self) -> None:
+        await self._io.set_wedges(Wedge())
 
     @property
-    def inlet_funnel(self) -> AbstractStepperMotor:
+    def inlet_funnel(self) -> TrinamicAxis:
         return self._inlet_funnel
 
     @property
-    def opposing_funnel(self) -> AbstractStepperMotor:
+    def opposing_funnel(self) -> TrinamicAxis:
         return self._opposing_funnel
 
     @property
-    def slot_1(self) -> AbstractStepperMotor:
+    def slot_1(self) -> TrinamicAxis:
         return self._slot_1
 
     @property
-    def slot_2(self) -> AbstractStepperMotor:
+    def slot_2(self) -> TrinamicAxis:
         return self._slot_2
 
     @property
-    def slot_3(self) -> AbstractStepperMotor:
+    def slot_3(self) -> TrinamicAxis:
         return self._slot_3
 
     @property
     def diverter(self) -> TrinamicStepper:
         return self._diverter
 
-    def return_slots(self) -> None:
-        self._slot_1.move_to_position(0)
-        self._slot_2.move_to_position(0)
-        self._slot_3.move_to_position(0)
-        self.wait_for_move()
+    async def return_slots(self) -> None:
+        await self._slot_1.move_to_position(0)
+        await self._slot_2.move_to_position(0)
+        await self._slot_3.move_to_position(0)
+        await self.wait_for_move()
 
-    def home(self) -> None:
-        self._inlet_funnel.home()
-        self._opposing_funnel.home()
+    async def home(self) -> None:
+        await self._inlet_funnel.home()
+        await self._opposing_funnel.home()
+        await self._slot_1.home()
+        await self._slot_2.home()
+        await self._slot_3.home()
+        await self._diverter.home()
 
-        self._slot_1.home()
-        self._slot_2.home()
-        self._slot_3.home()
-
-        self._diverter.home()
-
-    def check_position_reached(self) -> bool:
+    async def check_position_reached(self) -> bool:
         return all(
             [
-                self._inlet_funnel.poll_position_reached(),
-                self._opposing_funnel.poll_position_reached(),
-                self._slot_1.poll_position_reached(),
-                self._slot_2.poll_position_reached(),
-                self._slot_3.poll_position_reached(),
+                await self._inlet_funnel.poll_position_reached(),
+                await self._opposing_funnel.poll_position_reached(),
+                await self._slot_1.poll_position_reached(),
+                await self._slot_2.poll_position_reached(),
+                await self._slot_3.poll_position_reached(),
             ]
         )
 
-    def wait_for_move(self) -> None:
-        self._inlet_funnel.wait_for_move()
-        self._opposing_funnel.wait_for_move()
-        self._slot_1.wait_for_move()
-        self._slot_2.wait_for_move()
-        self._slot_3.wait_for_move()
+    async def wait_for_move(self) -> None:
+        await self._inlet_funnel.wait_for_move()
+        await self._opposing_funnel.wait_for_move()
+        await self._slot_1.wait_for_move()
+        await self._slot_2.wait_for_move()
+        await self._slot_3.wait_for_move()
+        await self._diverter.wait_for_move()
 
-    def open_tray_slots(self, tray: Tray) -> None:
+    async def open_tray_slots(self, tray: Tray) -> None:
         if tray.cell_width <= 50:
-            self._slot_1.move_to_position(0)
-            self._slot_2.move_to_position(tray.cell_width - 5)
-            self._slot_3.move_to_position(tray.cell_width - 5)
+            await self._slot_1.move_to_position(0)
+            await self._slot_2.move_to_position(tray.cell_width - 5)
+            await self._slot_3.move_to_position(tray.cell_width - 5)
         elif tray.cell_width > 50 and tray.cell_width <= 105:
-            self._slot_1.move_to_position(0)
-            self._slot_2.move_to_position(0)
-            self._slot_3.move_to_position(tray.cell_width - 5)
+            await self._slot_1.move_to_position(0)
+            await self._slot_2.move_to_position(0)
+            await self._slot_3.move_to_position(tray.cell_width - 5)
         else:
-            self._slot_1.move_to_position(0)
-            self._slot_2.move_to_position(0)
-            self._slot_3.move_to_position(0)
+            await self._slot_1.move_to_position(0)
+            await self._slot_2.move_to_position(0)
+            await self._slot_3.move_to_position(0)
 
-    def close_tray_wedges(self, tray: Tray, times: int = 1) -> None:
+    async def close_tray_wedges(self, tray: Tray, times: int = 1) -> None:
         for _ in range(0, times):
-            self.close_slots()
-            time.sleep(1)
-            self.open_tray_wedges(tray)
+            await self.close_all_wedges()
+            await asyncio.sleep(1)
+            await self.open_tray_wedges(tray)
 
-    def set_diverter_opening(self, tray: Tray) -> None:
-        if tray.cell_width <= 50:
-            self.set_diverter_size(FunnelOpeningSize.OPEN_50MM)
-        elif tray.cell_width > 50 and tray.cell_width <= 105:
-            self.set_diverter_size(FunnelOpeningSize.OPEN_100MM)
+    async def set_diverter_opening(self, tray: Tray) -> None:
+        if tray.cell_width <= 50.0:
+            await self._diverter.move_revolutions(self._configuration.offsets.diverter_50mm_pos)
+        elif tray.cell_width > 50.0 and tray.cell_width <= 105.0:
+            await self._diverter.move_revolutions(self._configuration.offsets.diverter_100mm_pos)
         else:
-            self.set_diverter_size(FunnelOpeningSize.OPEN_150MM)
+            await self._diverter.move_revolutions(self._configuration.offsets.diverter_150mm_pos)
 
-    def move_to_cell(self, tray: Tray, idx: int) -> None:
-        # self.inlet_funnel.move_to_position(0)
-        # self.opposing_funnel.move_to_position(0)
-        self.return_slots()
-        # self.wait_for_move()
+    async def move_to_cell(self, tray: Tray, idx: int) -> None:
         position = tray.cell_width - self.offsets.funnel_min_height
         if position >= 150:
             position = 148
         ipos, opos = tray.get_cell_position(idx)
-        self.open_tray_slots(tray)
-        self.open_tray_wedges(tray)
+        await self.open_tray_slots(tray)
+        await self.open_tray_wedges(tray)
         ipos += self.offsets.funnel_cell_1_offset_x
         opos = self._configuration.opposing_funnel_max_travel - opos
         opos -= self.offsets.funnel_cell_1_offset_x
@@ -417,79 +420,31 @@ class Funnel:
         opos = min([self._configuration.opposing_funnel_max_travel, opos])
         ipos = min([self._configuration.input_funnel_max_travel, ipos])
         opos = max([0, opos])
-        curr_opos = self._opposing_funnel.get_position()
+        curr_opos = await self._opposing_funnel.get_position()
         if opos >= curr_opos:
-            self._inlet_funnel.move_to_position(ipos)
-            self._opposing_funnel.move_to_position(opos)
-            self.wait_for_move()
+            await self._inlet_funnel.move_to_position(ipos)
+            await self._opposing_funnel.move_to_position(opos)
+            await self.wait_for_move()
         else:
-            self._opposing_funnel.move_to_position(opos)
-            self._inlet_funnel.move_to_position(ipos)
-            self.wait_for_move()
+            await self._opposing_funnel.move_to_position(opos)
+            await self._inlet_funnel.move_to_position(ipos)
+            await self.wait_for_move()
 
-    def set_diverter_size(self, size: FunnelOpeningSize) -> None:
-        if size == FunnelOpeningSize.OPEN_50MM:
-            self._diverter.move_revolutions(self._configuration.offsets.diverter_50mm_pos)
-        elif size == FunnelOpeningSize.OPEN_100MM:
-            self._diverter.move_revolutions(self._configuration.offsets.diverter_100mm_pos)
-        elif size == FunnelOpeningSize.OPEN_150MM:
-            self._diverter.move_revolutions(self._configuration.offsets.diverter_150mm_pos)
-        else:
-            raise Exception("Invalid Opening")
-        self.wait_for_move()
+    async def return_diverter(self) -> None:
+        await self._diverter.move_revolutions(0.0)
+        await self.wait_for_move()
 
-    def return_diverter(self) -> None:
-        self._diverter.move_revolutions(0.0)
-        self.wait_for_move()
-
-    def wiggle(self, revolutions: float = 0.2) -> None:
-        curr_pos = self._diverter.get_position()
-        try:
-            self._diverter.move_revolutions(0)
-            self._diverter.wait_for_move()
-            time.sleep(0.25)
-            self._diverter.move_revolutions(curr_pos)
-            self._diverter.wait_for_move()
-            self._diverter.move_relative_revolutions(revolutions)
-            self._diverter.wait_for_move()
-            self._diverter.move_relative_revolutions(-revolutions)
-            self._diverter.wait_for_move()
-            self._diverter.move_relative_revolutions(revolutions)
-            self._diverter.wait_for_move()
-            self._diverter.move_relative_revolutions(-revolutions)
-            self._diverter.wait_for_move()
-        except Exception as e:
-            print(e)
-            self._diverter.initialize()
-            self._diverter.move_revolutions(curr_pos)
-            self._diverter.wait_for_move()
-
-    def move_to_cell_catch(self, tray: Tray, idx: int) -> None:
-        self.inlet_funnel.move_to_position(0)
-        self.opposing_funnel.move_to_position(0)
-        self.return_slots()
-        self.wait_for_move()
+    async def move_to_cell_catch(self, tray: Tray, idx: int) -> None:
+        await self.inlet_funnel.move_to_position(0)
+        await self.opposing_funnel.move_to_position(0)
+        await self.return_slots()
+        await self.wait_for_move()
         position = tray.cell_width - self.offsets.funnel_min_height
         if position >= 150:
             position = 148
         ipos, opos = tray.get_cell_position(idx)
-        diff = opos - ipos
-        slot_pos = diff - 5
-        if tray.cell_width <= 50:
-            self.open_slots(1)
-            self._slot_1.move_to_position(slot_pos)
-            self._slot_2.move_to_position(slot_pos)
-            self._slot_3.move_to_position(slot_pos)
-        elif tray.cell_width > 50 and tray.cell_width <= 105:
-            self.open_slots(2)
-            self._slot_1.move_to_position(slot_pos)
-            self._slot_2.move_to_position(slot_pos)
-            self._slot_3.move_to_position(slot_pos)
-        else:
-            self.open_slots(3)
-            self._slot_1.move_to_position(slot_pos)
-            self._slot_2.move_to_position(slot_pos)
-            self._slot_3.move_to_position(slot_pos)
+        await self.open_tray_slots(tray)
+        await self.open_tray_wedges(tray)
         ipos += self.offsets.funnel_cell_1_offset_x
         opos = self._configuration.opposing_funnel_max_travel - opos
         opos -= self.offsets.funnel_cell_1_offset_x
@@ -497,25 +452,17 @@ class Funnel:
         opos = min([self._configuration.opposing_funnel_max_travel, opos])
         ipos = min([self._configuration.opposing_funnel_max_travel, ipos])
         opos = max([0, opos])
-        curr_opos = self._opposing_funnel.get_position()
-
-        if tray.cell_width <= 50:
-            self.set_diverter_size(FunnelOpeningSize.OPEN_50MM)
-        elif tray.cell_width > 50 and tray.cell_width <= 105:
-            self.set_diverter_size(FunnelOpeningSize.OPEN_100MM)
-        else:
-            self.set_diverter_size(FunnelOpeningSize.OPEN_150MM)
-
+        curr_opos = await self._opposing_funnel.get_position()
+        await self.set_diverter_opening(tray)
         if opos >= curr_opos:
-            self._opposing_funnel.move_to_position(opos)
-            self._inlet_funnel.move_to_position(ipos)
-            self.wait_for_move()
+            await self._opposing_funnel.move_to_position(opos)
+            await self._inlet_funnel.move_to_position(ipos)
         else:
-            self._inlet_funnel.move_to_position(ipos)
-            self._opposing_funnel.move_to_position(opos)
-            self.wait_for_move()
+            await self._inlet_funnel.move_to_position(ipos)
+            await self._opposing_funnel.move_to_position(opos)
+        await self.wait_for_move()
 
-    def return_tray_slots(self, tray: Tray, idx: int) -> None:
+    async def return_tray_slots(self, tray: Tray, idx: int) -> None:
         position = tray.cell_width - self.offsets.funnel_min_height
         if position >= 150:
             position = 148
@@ -523,24 +470,24 @@ class Funnel:
         diff = opos - ipos
         slot_pos = diff - 5
         if tray.cell_width <= 50:
-            self._slot_1.move_to_position(slot_pos)
-            self._slot_2.move_to_position(slot_pos)
-            self._slot_3.move_to_position(0)
+            await self._slot_1.move_to_position(slot_pos)
+            await self._slot_2.move_to_position(slot_pos)
+            await self._slot_3.move_to_position(0)
         elif tray.cell_width > 50 and tray.cell_width <= 105:
-            self._slot_1.move_to_position(slot_pos)
-            self._slot_2.move_to_position(0)
-            self._slot_3.move_to_position(0)
+            await self._slot_1.move_to_position(slot_pos)
+            await self._slot_2.move_to_position(0)
+            await self._slot_3.move_to_position(0)
         else:
-            self._slot_1.move_to_position(0)
-            self._slot_2.move_to_position(0)
-            self._slot_3.move_to_position(0)
+            await self._slot_1.move_to_position(0)
+            await self._slot_2.move_to_position(0)
+            await self._slot_3.move_to_position(0)
 
-    def status(self) -> FunnelStatus:
-        ipos = self._inlet_funnel.get_position()
-        opos = self._opposing_funnel.get_position()
-        slot_1 = self._slot_1.get_position()
-        slot_2 = self._slot_2.get_position()
-        slot_3 = self._slot_3.get_position()
+    async def status(self) -> FunnelStatus:
+        ipos = await self._inlet_funnel.get_position()
+        opos = await self._opposing_funnel.get_position()
+        slot_1 = await self._slot_1.get_position()
+        slot_2 = await self._slot_2.get_position()
+        slot_3 = await self._slot_3.get_position()
         return FunnelStatus(
             inlet_funnel=ipos,
             opposing_funnel=opos,
@@ -549,32 +496,27 @@ class Funnel:
             slot_3=slot_3,
         )
 
-    def stop(self) -> None:
-        self._inlet_funnel.stop()
-        self._opposing_funnel.stop()
-        self._slot_1.stop()
-        self._slot_2.stop()
-        self._slot_3.stop()
-        self._belt.stop()
-        self._wall.stop()
-        self._output_transfer_conveyor.stop_motor()
-        self._output_conveyor.stop_motor()
+    async def stop(self) -> None:
+        await self._inlet_funnel.stop()
+        await self._opposing_funnel.stop()
+        await self._slot_1.stop()
+        await self._slot_2.stop()
+        await self._slot_3.stop()
+        await self._belt.stop()
+        await self._wall.stop()
+        await self._output_transfer_conveyor.stop_motor()
+        await self._output_conveyor.stop_motor()
 
-    def initialize(self) -> None:
-        self._inlet_funnel.initialize()
-        self._opposing_funnel.initialize()
-        self._slot_1.initialize()
-        self._slot_2.initialize()
-        self._slot_3.initialize()
-        self._belt.initialize()
-        self._wall.initialize()
+    async def initialize(self) -> None:
+        await self._inlet_funnel.initialize()
+        await self._opposing_funnel.initialize()
+        await self._slot_1.initialize()
+        await self._slot_2.initialize()
+        await self._slot_3.initialize()
+        await self._belt.initialize()
+        await self._wall.initialize()
 
-    # def catch(self) -> None:
-    #    self.inlet_funnel.move_to_position(0)
-    #    self.opposing_funnel.move_to_position(self.offsets.catch_position)
-    #    self.return_slots()
-
-    def catch(self, tray: Tray, idx: int) -> None:
+    async def catch(self, tray: Tray, idx: int) -> None:
         max_travel = self._configuration.opposing_funnel_max_travel
         min_travel = 250
         conveyor_width = 205
@@ -583,73 +525,64 @@ class Funnel:
         position = max_travel - start + conveyor_width / 2
         position = max(position, min_travel)
         position = min(position, max_travel)
-        self.inlet_funnel.move_to_position(0)
-        self.inlet_funnel.wait_for_move()
-        self.opposing_funnel.move_to_position(position)
-        self.return_slots()
+        await self.inlet_funnel.move_to_position(0)
+        await self.inlet_funnel.wait_for_move()
+        await self.opposing_funnel.move_to_position(position)
+        await self.return_slots()
 
-    def move_to_transfer_location(self) -> None:
-        if self.opposing_funnel.get_position() < self._configuration.minimum_transfer_location:
-            self.opposing_funnel.move_to_position(self._configuration.minimum_transfer_location)
-            self.opposing_funnel.wait_for_move()
+    async def move_to_transfer_location(self) -> None:
+        opos = await self.opposing_funnel.get_position()
+        if opos < self._configuration.minimum_transfer_location:
+            await self.opposing_funnel.move_to_position(
+                self._configuration.minimum_transfer_location
+            )
+            await self.opposing_funnel.wait_for_move()
 
-    def handle_command(self, cmd: FunnelCommands) -> None:
-        if cmd.command == Commands.HOME:
-            self.home()
-        elif cmd.command == Commands.STOP:
-            self.stop()
-        elif cmd.command == Commands.MOVE_TO_CELL:
-            if cmd.payload:
-                cell_cmd = MoveToCellCommand(**cmd.payload)
-                self.move_to_cell(cell_cmd.tray, cell_cmd.idx)
-            else:
-                raise Exception("Invalid Command")
-        elif cmd.command == Commands.CLOSE_FUNNEL:
-            slots_open = self.slots_open
-            self.close_slots()
-            time.sleep(1)
-            self.open_slots(slots_open)
-        # elif cmd.command == Commands.INLET_COMMAND:
-        #    if cmd.payload:
-        #        axis_cmd = AxisCommand(**cmd.payload)
-        #        self.inlet_funnel.handle_command(axis_cmd)
-        #    else:
-        #        raise Exception("Invalid Command")
-        # elif cmd.command == Commands.OPPOSING_FUNNEL_COMMAND:
-        #    if cmd.payload:
-        #        axis_cmd = AxisCommand(**cmd.payload)
-        #        self.opposing_funnel.handle_command(axis_cmd)
-        #    else:
-        #        raise Exception("Invalid Command")
-        elif cmd.command == Commands.START_BELT:
-            self.start_belt()
-        elif cmd.command == Commands.STOP_BELT:
-            self.stop_belt()
-        elif cmd.command == Commands.INITIALIZE:
-            self.initialize()
-        elif cmd.command == Commands.WIGGLE:
-            if cmd.payload:
-                wiggle = WiggleCommand(**cmd.payload)
-                self.wiggle(wiggle.wiggle)
-            else:
-                raise Exception("Invalid Command")
-        else:
-            raise Exception("Invalid Command")
-
-    def setup_receive_item(self, tray: Tray, idx: int) -> None:
-        self.return_diverter()
-        self.inlet_funnel.move_to_position(0)
-        # self.return_slots()
+    async def setup_receive_item(self, tray: Tray, idx: int) -> None:
+        await self.return_diverter()
+        await self.inlet_funnel.move_to_position(0)
         position = tray.cell_width - self.offsets.funnel_min_height
         if position >= 150:
             position = 148
         _, opos = tray.get_cell_position(idx)
-        self.open_tray_slots(tray)
-        self.open_tray_wedges(tray)
+        await self.open_tray_slots(tray)
+        await self.open_tray_wedges(tray)
         opos = self._configuration.opposing_funnel_max_travel - opos
         opos -= self.offsets.funnel_cell_1_offset_x
         opos -= self.offsets.funnel_min_width
         opos = min([self._configuration.opposing_funnel_max_travel, opos])
         opos = max([0, opos])
-        self._opposing_funnel.move_to_position(opos)
-        self.wait_for_move()
+        await self._opposing_funnel.move_to_position(opos)
+        await self.wait_for_move()
+
+    async def handle_command(self, command: FunnelCommands) -> None:
+        match command:
+            case ShutdownCommand():
+                await self.cleanup()
+            case StopCommand():
+                await self.stop()
+            case InitializeCommand():
+                await self.initialize()
+            case HomeCommand():
+                await self.home()
+            case StopBeltCommand():
+                await self.stop_belt()
+            case StartBeltCommand():
+                await self.start_belt()
+            case StopWallCommand():
+                await self.stop_wall()
+            case StartWallCommand():
+                await self.start_wall()
+            case StopOutputCommand():
+                await self.stop_output()
+            case StartOutputCommand():
+                await self.start_output()
+            case StopOutputTransferCommand():
+                await self.stop_output_transfer()
+            case StartOutputTransferCommand():
+                await self.start_output_transfer()
+            case MoveToCellCommmand(tray=tray, idx=idx):
+                await self.move_to_cell(tray, idx)
+            case _:
+                raise Exception("Invalid Command Exception")
+

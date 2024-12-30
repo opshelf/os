@@ -1,13 +1,13 @@
 from hardware_common.stepper_motor import (
     StepperMotorConfig,
 )
-from can import BusABC
-from perpetual_trinamic.trinamic_axis import TrinamicAxis
 from pydantic import BaseModel
 from enum import Enum
 from typing import Optional, Any, Dict, List
-# import atexit
-
+from perpetual_trinamic.aio.trinamic_axis import TrinamicAxis
+from perpetual_can import CANBusHandler
+from typing import List, Literal, Union, Annotated
+from pydantic import BaseModel, Field
 
 class GantryConfiguration(BaseModel):
     x_axis_id: int
@@ -26,66 +26,82 @@ class GantryCoordinate(BaseModel):
     def __sub__(self, rhs: "GantryCoordinate") -> "GantryCoordinate":
         return GantryCoordinate(x=self.x - rhs.x, y=self.y - rhs.y)
 
-
-class Commands(str, Enum):
-    HOME = "HOME"
-    INITIALIZE = "INITIALIZE"
-    MOVE = "MOVE"
-    MOVE_RELATIVE = "MOVE_RELATIVE"
-    STOP = "STOP"
-
-
 class GantryMoveCommand(BaseModel):
     position: GantryCoordinate
-
-
-class GantryCommands(BaseModel):
-    command: Commands
-    payload: Optional[Dict[Any, Any]]
-
 
 class GantryStatus(BaseModel):
     x_position: float
     y_position: float
 
+class ShutdownCommand(BaseModel):
+    command: Literal["shutdown"]
+
+class StopCommand(BaseModel):
+    command: Literal["stop"]
+
+class InitializeCommand(BaseModel):
+    command: Literal["initialize"]
+
+class HomeCommand(BaseModel):
+    command: Literal["home"]
+
+class HomeYFirstCommand(BaseModel):
+    command: Literal["home_y"]
+
+class MoveRelativeCommand(BaseModel):
+    command: Literal["move_relative"]
+    coordinate: GantryCoordinate
+
+class MoveCommand(BaseModel):
+    command: Literal["move"]
+    coordinate: GantryCoordinate
+
+GantryCommands = Annotated[Union[
+    ShutdownCommand,
+    StopCommand,
+    InitializeCommand,
+    HomeCommand,
+    HomeYFirstCommand,
+    MoveRelativeCommand,
+    MoveCommand
+], Field(discriminator="command")]
+
 
 class Gantry:
-    def __init__(self, bus: BusABC, config: GantryConfiguration):
+    def __init__(self, bus: CANBusHandler, config: GantryConfiguration):
         self._config = config
         self._x_axis = TrinamicAxis(
             bus,
+            self._config.x_axis_config,
             module_id=self._config.x_axis_id,
             motor_id=0,
-            configuration=self._config.x_axis_config,
             max_current=6000,
         )
         self._y_axis = TrinamicAxis(
             bus,
+            self._config.y_axis_config,
             module_id=self._config.y_axis_id,
             motor_id=0,
-            configuration=self._config.y_axis_config,
             max_current=6000,
         )
-        self._y_axis.set_standby_current(0)
 
-    def cleanup(self) -> None:
-        self.stop()
+    async def cleanup(self) -> None:
+        await self.stop()
 
-    def status(self) -> GantryStatus:
+    async def status(self) -> GantryStatus:
         return GantryStatus(
-            x_position=self._x_axis.get_position(),
-            y_position=self._y_axis.get_position(),
+            x_position=await self._x_axis.get_position(),
+            y_position=await self._y_axis.get_position(),
         )
 
-    def stop(self) -> None:
-        self._x_axis.stop()
-        self._y_axis.stop()
-        self._y_axis.end_brake_move()
+    async def stop(self) -> None:
+        await self._x_axis.stop()
+        await self._y_axis.stop()
+        await self._y_axis.end_brake_move()
 
-    def initialize(self) -> None:
-        self._x_axis.initialize()
-        self._y_axis.initialize()
-        self._y_axis.set_standby_current(0)
+    async def initialize(self) -> None:
+        await self._x_axis.initialize()
+        await self._y_axis.initialize()
 
     @property
     def x_axis(self) -> TrinamicAxis:
@@ -95,89 +111,91 @@ class Gantry:
     def y_axis(self) -> TrinamicAxis:
         return self._y_axis
 
-    def move_coordinate(self, coordinate: GantryCoordinate, wait: bool = True) -> None:
-        self._x_axis.move_to_position(coordinate.x)
-        self._y_axis.safety_off()
-        self._y_axis.move_to_position_with_brake(coordinate.y)
+    async def move_coordinate(self, coordinate: GantryCoordinate, wait: bool = True) -> None:
+        await self._x_axis.move_to_position(coordinate.x)
+        await self._y_axis.move_to_position(coordinate.y)
         if wait:
-            self.wait_for_move()
-            self._y_axis.reset_location()
+            await self.wait_for_move()
+            await self._y_axis.reset_location()
 
-    def move_path(self, path: List[GantryCoordinate], wait: bool = True) -> None:
-        position = self.position
+    async def move_path(self, path: List[GantryCoordinate], wait: bool = True) -> None:
+        position = await self.position
         try:
-            self._y_axis.init_brake_move()
+            await self._y_axis.init_brake_move()
             for coordinate in path:
-                self._x_axis.move_to_position(coordinate.x)
-                self._y_axis.move_to_position(coordinate.y)
-                self._y_axis.wait_for_brake_move()
-                self._y_axis.reset_location()
-                self._x_axis.wait_for_move()
-            self._y_axis.end_brake_move()
+                await self._x_axis.move_to_position(coordinate.x)
+                await self._y_axis.move_to_position(coordinate.y, override_brake=True)
+                await self._y_axis.wait_for_move()
+                await self._x_axis.wait_for_move()
             if wait:
-                self.wait_for_move()
+                await self.wait_for_move()
         except Exception as e:
-            self._y_axis.end_brake_move()
             print("Failed Path Movement: ", path, position)
             raise e
+        finally:
+            await self._y_axis.end_brake_move()
 
-    def move(self, x: float, y: float, wait: bool = True) -> None:
-        self._x_axis.move_to_position(x)
-        self._y_axis.move_to_position_with_brake(y)
+    async def move(self, x: float, y: float, wait: bool = True) -> None:
+        await self._x_axis.move_to_position(x)
+        await self._y_axis.move_to_position(y)
         if wait:
-            self.wait_for_move()
+            await self.wait_for_move()
 
-    def move_relative(self, x: float, y: float, wait: bool = True) -> None:
-        self._x_axis.move_to_relative_position(x)
-        self._y_axis.move_to_relative_position_with_brake(y)
+    async def move_relative(self, x: float, y: float, wait: bool = True) -> None:
+        await self._x_axis.move_to_relative_position(x)
+        await self._y_axis.move_to_relative_position(y)
         if wait:
-            self.wait_for_move()
+            await self.wait_for_move()
 
-    def wait_for_move(self, timeout: float = 60) -> None:
-        self._y_axis.wait_for_brake_move(timeout)
-        self._x_axis.wait_for_move(timeout)
+    async def wait_for_move(self, timeout: float = 60) -> None:
+        await self._y_axis.wait_for_move(timeout)
+        await self._x_axis.wait_for_move(timeout)
 
-    def home(self) -> None:
-        self._x_axis.home()
-        if not bool(self._x_axis.get_digital_input(1, 0).value):
-            raise Exception("Failed to hit homing switch")
-        self._y_axis.home_with_brake()
-        if not bool(self._y_axis.get_digital_input(1, 0).value):
-            raise Exception("Failed to hit homing switch")
+    async def home(self) -> None:
+        await self._x_axis.home()
+        limit = await self._x_axis.get_digital_input(1, 0)
+        if not bool(limit.value):
+            raise Exception("X Axis Failed to hit homing switch")
+        await self._y_axis.home()
+        limit = await self._y_axis.get_digital_input(1, 0)
+        if not bool(limit.value):
+            raise Exception("Y Axis Failed to hit homing switch")
 
-    def idle(self) -> None:
-        self._x_axis.move_to_position(1)
-        self._y_axis.move_to_position_with_brake(1)
-        self.wait_for_move()
+    async def home_y_first(self) -> None:
+        await self._y_axis.home()
+        limit = await self._y_axis.get_digital_input(1, 0)
+        if not bool(limit.value):
+            raise Exception("Y Axis Failed to hit homing switch")
+        await self._x_axis.home()
+        limit = await self._x_axis.get_digital_input(1, 0)
+        if not bool(limit.value):
+            raise Exception("X Axis Failed to hit homing switch")
 
-    def y_safe(self) -> None:
-        self._y_axis.move_to_position_with_brake(1)
 
     @property
-    def position(self) -> GantryCoordinate:
+    async def position(self) -> GantryCoordinate:
         return GantryCoordinate(
-            x=self._x_axis.get_position(),
-            y=self._y_axis.get_position(),
+            x=await self._x_axis.get_position(),
+            y=await self._y_axis.get_position(),
         )
 
-    def handle_command(self, cmd: GantryCommands) -> None:
-        if cmd.command == Commands.HOME:
-            self.home()
-        elif cmd.command == Commands.INITIALIZE:
-            self.initialize()
-        elif cmd.command == Commands.MOVE:
-            if cmd.payload:
-                coordinate = GantryCoordinate(**cmd.payload)
-                self.move(coordinate.x, coordinate.y)
-            else:
+    async def handle_command(self, command: GantryCommands) -> None:
+        match command:
+            case ShutdownCommand():
+                await self.cleanup()
+            case StopCommand():
+                await self.stop()
+            case InitializeCommand():
+                await self.initialize()
+            case HomeCommand():
+                await self.home()
+            case HomeYFirstCommand():
+                await self.home_y_first()
+            case MoveRelativeCommand(coordinate=coordinate):
+                await self.move_relative(coordinate.x, coordinate.y)
+            case MoveCommand(coordinate=coordinate):
+                await self.move(coordinate.x, coordinate.y)
+            case _: 
                 raise Exception("Invalid Command")
-        elif cmd.command == Commands.MOVE_RELATIVE:
-            if cmd.payload:
-                coordinate = GantryCoordinate(**cmd.payload)
-                self.move_relative(coordinate.x, coordinate.y)
-            else:
-                raise Exception("Invalid Command")
-        elif cmd.command == Commands.STOP:
-            self.stop()
-        else:
-            raise Exception("Invalid Command")
+        
+

@@ -1,17 +1,12 @@
-from hardware_common.stepper_motor import (
-    AbstractStepperMotor,
-)
-from enum import Enum
-from can import BusABC
-from perpetual_trinamic.trinamic_axis import TrinamicAxis
-from pydantic import BaseModel
-from typing import Optional, Dict, Any
+import asyncio
+from perpetual_trinamic.aio.trinamic_axis import TrinamicAxis
+from perpetual_can import CANBusHandler
 from perpetual_p0c.storage import Tray, StorageModuleSide
+from perpetual_p0c.common import CanAxisConfiguration
 from perpetual_p0c.io_board import ActuatorState, IoController
 from perpetual_p0c.tool_board import ToolBoard, IoBoard
-from perpetual_p0c.common import CanAxisConfiguration
-import time
-
+from typing import Literal, Union, Annotated
+from pydantic import BaseModel, Field
 
 class ToolOffsets(BaseModel):
     tool_retract_position: float
@@ -27,37 +22,6 @@ class ToolConfiguration(BaseModel):
     puller: CanAxisConfiguration
     offsets: ToolOffsets
 
-
-class Commands(str, Enum):
-    HOME = "HOME"
-    INITIALIZE = "INITIALIZE"
-    MOVE_Z = "MOVE_Z"
-    MOVE_Z_RELATIVE = "MOVE_Z_RELATIVE"
-    TURN_ON_PULLER_SOLENOIDS = "TURN_ON_PULLER_SOLENOIDS"
-    TURN_OFF_PULLER_SOLENOIDS = "TURN_OFF_PULLER_SOLENOIDS"
-    TURN_ON_SLOT_SOLENOIDS = "TURN_ON_SLOT_SOLENOIDS"
-    TURN_OFF_SLOT_SOLENOIDS = "TURN_OFF_SLOT_SOLENOIDS"
-    RETRACT_TRAY = "RETRACT_TRAY"
-    EXTEND_PULLER = "EXTEND_PULLER"
-    RETRACT_PULLER = "RETRACT_PULLER"
-    EXTEND_ACTUATORS = "EXTEND_ACTUATORS"
-    RETRACT_ACTUATORS = "RETRACT_ACTUATORS"
-    STOP = "STOP"
-
-
-class MoveCommand(BaseModel):
-    position: float
-
-
-class TurnOnSolenoids(BaseModel):
-    solenoids: int
-
-
-class ToolCommands(BaseModel):
-    command: Commands
-    payload: Optional[Dict[Any, Any]]
-
-
 class ToolStatus(BaseModel):
     puller_solenoids: int
     carriage_solenoids: int
@@ -65,8 +29,72 @@ class ToolStatus(BaseModel):
     puller_position: float
 
 
+
+class ShutdownCommand(BaseModel):
+    command: Literal["shutdown"]
+
+class StopCommand(BaseModel):
+    command: Literal["stop"]
+
+class InitializeCommand(BaseModel):
+    command: Literal["initialize"]
+
+class ActuatorsCommand(BaseModel):
+    command: Literal["actuators"]
+    value: bool
+
+class CarriageSolenoidsCommand(BaseModel):
+    command: Literal["set_carriage_solenoids"]
+    tray: Tray
+    side: StorageModuleSide
+
+class PullerSolenoidsCommand(BaseModel):
+    command: Literal["set_puller_solenoids"]
+    tray: Tray
+    idx: int
+
+class SolenoidsOffCommand(BaseModel):
+    command: Literal["solenoids_off"]
+
+class SetSlotBitsCommand(BaseModel):
+    command: Literal["slot_bits"]
+    value: int
+
+class ExtendCarriageCommand(BaseModel):
+    command: Literal["extend_carriage"]
+    side: StorageModuleSide
+
+class RetractCarriageCommand(BaseModel):
+    command: Literal["retract_carriage"]
+    side: StorageModuleSide
+
+class RetractTrayCommand(BaseModel):
+    command: Literal["retract_tray"]
+    side: StorageModuleSide
+
+class DropItemsCommand(BaseModel):
+    command: Literal["drop_items"]
+    tray: Tray
+    idx: int
+
+ToolCommands = Annotated[Union[
+    ShutdownCommand,
+    StopCommand,
+    InitializeCommand,
+    ActuatorsCommand,
+    CarriageSolenoidsCommand,
+    PullerSolenoidsCommand,
+    SolenoidsOffCommand,
+    SetSlotBitsCommand,
+    ExtendCarriageCommand,
+    RetractCarriageCommand,
+    RetractTrayCommand,
+    DropItemsCommand
+], Field(discriminator="command")]
+
+
 class Tool:
-    def __init__(self, bus: BusABC, tool_configuration: ToolConfiguration):
+    def __init__(self, bus: CANBusHandler, tool_configuration: ToolConfiguration):
         self._configuration = tool_configuration
         self._puller = TrinamicAxis(
             bus,
@@ -79,18 +107,18 @@ class Tool:
         self._actuators_extended = False
         self._carriage_solenoids = 0
         self._puller_solenoids = 0
-        self.set_solenoids_off()
 
-    def cleanup(self) -> None:
-        self._puller.stop()
-        self.set_solenoids_off()
+    async def cleanup(self) -> None:
+        await self._puller.stop()
+        await self.set_solenoids_off()
 
-    def status(self) -> ToolStatus:
+    async def status(self) -> ToolStatus:
+        puller_position = await self._puller.get_position()
         return ToolStatus(
             puller_solenoids=self._carriage_solenoids,
             carriage_solenoids=self._puller_solenoids,
             actuators=self._actuators_extended,
-            puller_position=self._puller.get_position(),
+            puller_position=puller_position,
         )
 
     @property
@@ -102,7 +130,7 @@ class Tool:
         self._configuration.offsets = offsets
 
     @property
-    def puller(self) -> AbstractStepperMotor:
+    def puller(self) -> TrinamicAxis:
         return self._puller
 
     @property
@@ -113,33 +141,29 @@ class Tool:
     def tool_board(self) -> ToolBoard:
         return self._tool_board
 
-    def actuators(self, status: bool) -> None:
+    async def actuators(self, status: bool) -> None:
         if status:
+            await self._io.set_actuators(ActuatorState.Extended)
+            async with asyncio.timeout(5):
+                while True:
+                    state = await self._tool_board.get_state()
+                    if not state.inputs.forward_actuator:
+                        break
+                    await asyncio.sleep(0.25)
             self._actuators_extended = True
-            self._io.set_actuators(ActuatorState.Extended)
-            t0 = time.time()
-            while True:
-                if time.time() - t0 > 5:
-                    raise Exception("Failed to Extend Actuators")
-                forward_actuator = self._tool_board.get_state().inputs.forward_actuator
-                time.sleep(0.25)
-                if not forward_actuator:
-                    break
         else:
+            await self._io.set_actuators(ActuatorState.Retracted)
+            async with asyncio.timeout(5):
+                while True:
+                    state = await self._tool_board.get_state()
+                    if not state.inputs.backward_actuator:
+                        break
+                    await asyncio.sleep(0.25)
             self._actuators_extended = False
-            self._io.set_actuators(ActuatorState.Retracted)
-            t0 = time.time()
-            while True:
-                if time.time() - t0 > 5:
-                    raise Exception("Failed to Retract Actuators")
-                backward_actuator = self._tool_board.get_state().inputs.backward_actuator
-                time.sleep(0.25)
-                if not backward_actuator:
-                    break
 
-    def set_carriage_solenoids(self, solenoids: int, side: StorageModuleSide) -> None:
+    async def set_carriage_solenoids(self, solenoids: int, side: StorageModuleSide) -> None:
         if side == "LEFT":
-            self._tool_board.set_carriage(
+            await self._tool_board.set_carriage(
                 IoBoard(
                     r1=True if solenoids >= 0 else False,
                     r2=True if solenoids >= 1 else False,
@@ -147,7 +171,7 @@ class Tool:
                 )
             )
         else:
-            self._tool_board.set_carriage(
+            await self._tool_board.set_carriage(
                 IoBoard(
                     r4=True if solenoids >= 0 else False,
                     r5=True if solenoids >= 1 else False,
@@ -155,7 +179,7 @@ class Tool:
                 )
             )
 
-    def set_tray_solenoids(self, tray: Tray, side: StorageModuleSide) -> None:
+    async def set_tray_solenoids(self, tray: Tray, side: StorageModuleSide) -> None:
         slots = 1
         if tray.cell_width >= 50 and tray.cell_width < 100:
             slots = 1
@@ -165,7 +189,7 @@ class Tool:
             slots = 3
 
         if side == "LEFT":
-            self._tool_board.set_carriage(
+            await self._tool_board.set_carriage(
                 IoBoard(
                     r1=True if slots >= 1 else False,
                     r2=True if slots >= 2 else False,
@@ -173,7 +197,7 @@ class Tool:
                 )
             )
         else:
-            self._tool_board.set_carriage(
+            await self._tool_board.set_carriage(
                 IoBoard(
                     r4=True if slots >= 1 else False,
                     r5=True if slots >= 2 else False,
@@ -181,12 +205,11 @@ class Tool:
                 )
             )
 
-    def set_solenoids_off(self) -> None:
-        self._tool_board.reset_all()
+    async def set_solenoids_off(self) -> None:
+        await self._tool_board.reset_all()
 
-    def set_slot_bits(self, bits: int) -> None:
-        print(bits)
-        self._tool_board.set_pullers(
+    async def set_slot_bits(self, bits: int) -> None:
+        await self._tool_board.set_pullers(
             IoBoard(
                 r1=True if bits & 0x01 else False,
                 r2=True if bits & 0x02 else False,
@@ -197,7 +220,7 @@ class Tool:
             )
         )
 
-    def set_solenoids(self, tray: Tray, index: int) -> None:
+    async def set_solenoids(self, tray: Tray, index: int) -> None:
         slots = 1
         if tray.cell_width >= 50 and tray.cell_width < 100:
             slots = 1
@@ -209,71 +232,68 @@ class Tool:
         bits = 0x00
         for i in range(start, start + slots):
             bits |= 0x01 << i
-        self.set_slot_bits(bits)
+        await self.set_slot_bits(bits)
 
-    def extend_puller(self, side: StorageModuleSide = StorageModuleSide.RIGHT) -> None:
-        # self._puller.move_to_position(self.offsets.tool_extend_position)
+    async def extend_carriage(self, side: StorageModuleSide = StorageModuleSide.RIGHT) -> None:
         if side == StorageModuleSide.RIGHT:
-            self._puller.move_to_position(self.offsets.tool_extend_position)
-            self.wait_for_move()
+            await self._puller.move_to_position(self.offsets.tool_extend_position)
+            await self.wait_for_move()
         else:
-            self._puller.move_to_position(0)
-            self.wait_for_move()
+            await self._puller.move_to_position(0)
+            await self.wait_for_move()
 
-    def retract_puller(self, side: StorageModuleSide) -> None:
+    async def retract_carriage(self, side: StorageModuleSide) -> None:
         if side == StorageModuleSide.RIGHT:
-            self._puller.move_to_position(self.offsets.tray_pull_right)
-            self.wait_for_move()
+            await self._puller.move_to_position(self.offsets.tray_pull_right)
+            await self.wait_for_move()
         else:
-            self._puller.move_to_position(self.offsets.tray_pull_left)
-            self.wait_for_move()
-        # self._puller.move_to_position(self.offsets.tool_retract_position)
-        # self.wait_for_move()
+            await self._puller.move_to_position(self.offsets.tray_pull_left)
+            await self.wait_for_move()
 
-    def puller_safe(self, side: StorageModuleSide) -> None:
+    async def carriage_safe(self, side: StorageModuleSide) -> None:
         if side == StorageModuleSide.RIGHT:
-            self.safe_max()
+            await self.safe_max()
         else:
-            self.safe_min()
+            await self.safe_min()
 
-    def safe_max(self) -> None:
-        self._puller.move_to_position(self.offsets.tool_safe_max)
-        self.wait_for_move()
+    async def safe_max(self) -> None:
+        await self._puller.move_to_position(self.offsets.tool_safe_max)
+        await self.wait_for_move()
 
-    def safe_min(self) -> None:
-        self._puller.move_to_position(self.offsets.tool_safe_min)
-        self.wait_for_move()
+    async def safe_min(self) -> None:
+        await self._puller.move_to_position(self.offsets.tool_safe_min)
+        await self.wait_for_move()
 
-    def initialize(self) -> None:
-        self._io.reset_valves()
-        self._tool_board.reset_all()
-        self._puller.initialize()
+    async def initialize(self) -> None:
+        await self._io.reset_valves()
+        await self._tool_board.reset_all()
+        await self._puller.initialize()
 
-    def home(self) -> None:
-        self._puller.home()
+    async def home(self) -> None:
+        await self._puller.home()
 
-    def wait_for_move(self) -> None:
-        self._puller.wait_for_move()
+    async def wait_for_move(self) -> None:
+        await self._puller.wait_for_move()
 
-    def stop(self) -> None:
-        self._puller.stop()
+    async def stop(self) -> None:
+        await self._puller.stop()
 
-    def retract_tray(self, side: StorageModuleSide) -> None:
+    async def retract_tray(self, side: StorageModuleSide) -> None:
         if side == StorageModuleSide.LEFT:
-            self._puller.move_to_position(self.offsets.tray_pull_offset)
+            await self._puller.move_to_position(self.offsets.tray_pull_offset)
         else:
             if self._puller.configuration.max_travel:
-                self._puller.move_to_position(
+                await self._puller.move_to_position(
                     self._puller.configuration.max_travel - self.offsets.tray_pull_offset
                 )
-        self.wait_for_move()
+        await self.wait_for_move()
 
-    def check_tray_clear(self) -> bool:
-        state = self._tool_board.get_state()
+    async def check_tray_clear(self) -> bool:
+        state = await self._tool_board.get_state()
         return state.inputs.left_beam and state.inputs.right_beam
 
-    def check_tray_loaded(self) -> bool:
-        state = self._tool_board.get_state()
+    async def check_tray_loaded(self) -> bool:
+        state = await self._tool_board.get_state()
         return (
             state.inputs.left_beam
             and state.inputs.right_beam
@@ -281,80 +301,62 @@ class Tool:
             and not state.inputs.right_presence
         )
 
-    def get_max(self) -> float:
-        self._puller.home()
-        self._puller.move_to_position(1000)
+    async def get_max(self) -> float:
+        await self._puller.home()
+        await self._puller.move_to_position(1000)
         try:
-            self._puller.wait_for_move()
+            await self._puller.wait_for_move()
         except Exception as _:
             pass
-        position = self._puller.get_position()
-        self._puller.home()
+        position = await self._puller.get_position()
+        await self._puller.home()
         return position
 
-    def drop_items(self, tray: Tray, idx: int) -> None:
+    async def drop_items(self, tray: Tray, idx: int) -> None:
         if tray.cell_width <= 50.0:
             position = (tray.cells - 1) - idx
-            self._tool_board.set_pullers(IoBoard.from_buffer(1 << position))
-            self.actuators(True)
+            await self._tool_board.set_pullers(IoBoard.from_buffer(1 << position))
+            await self.actuators(True)
         elif tray.cell_width <= 105.0:
             position = (tray.cells - 1) - idx
             positions = 1 << (position * 2)
             positions |= 1 << (position * 2 + 1)
-            self._tool_board.set_pullers(IoBoard.from_buffer(positions))
-            self.actuators(True)
+            await self._tool_board.set_pullers(IoBoard.from_buffer(positions))
+            await self.actuators(True)
         else:
             position = (tray.cells - 1) - idx
             positions = 1 << (position * 3)
             positions |= 1 << (position * 3 + 1)
             positions |= 1 << (position * 3 + 2)
-            self._tool_board.set_pullers(IoBoard.from_buffer(positions))
-            self.actuators(True)
+            await self._tool_board.set_pullers(IoBoard.from_buffer(positions))
+            await self.actuators(True)
 
-    def handle_command(self, cmd: ToolCommands) -> None:
-        if cmd.command == Commands.HOME:
-            self.home()
-        elif cmd.command == Commands.INITIALIZE:
-            self.initialize()
-        elif cmd.command == Commands.MOVE_Z:
-            if cmd.payload:
-                move = MoveCommand(**cmd.payload)
-                self._puller.move_to_position(move.position)
-            else:
-                raise Exception("Invalid Command")
-        elif cmd.command == Commands.MOVE_Z_RELATIVE:
-            if cmd.payload:
-                move = MoveCommand(**cmd.payload)
-                self._puller.move_to_relative_position(move.position)
-            else:
-                raise Exception("Invalid Command")
-        elif cmd.command == Commands.TURN_ON_PULLER_SOLENOIDS:
-            if cmd.payload:
-                solenoids = TurnOnSolenoids(**cmd.payload)
-                self.set_carriage_solenoids(solenoids.solenoids, StorageModuleSide.LEFT)
-            else:
-                raise Exception("Invalid Command")
-        elif cmd.command == Commands.TURN_OFF_PULLER_SOLENOIDS:
-            self.set_solenoids_off()
-        elif cmd.command == Commands.TURN_ON_SLOT_SOLENOIDS:
-            if cmd.payload:
-                solenoids = TurnOnSolenoids(**cmd.payload)
-                self.set_slot_bits(solenoids.solenoids)
-            else:
-                raise Exception("Invalid Command")
-        elif cmd.command == Commands.TURN_OFF_SLOT_SOLENOIDS:
-            self.set_solenoids_off()
-        elif cmd.command == Commands.RETRACT_TRAY:
-            self.retract_tray(StorageModuleSide.RIGHT)
-        elif cmd.command == Commands.EXTEND_PULLER:
-            self.extend_puller()
-        elif cmd.command == Commands.RETRACT_PULLER:
-            self.retract_puller(StorageModuleSide.RIGHT)
-        elif cmd.command == Commands.EXTEND_ACTUATORS:
-            self.actuators(True)
-        elif cmd.command == Commands.RETRACT_ACTUATORS:
-            self.actuators(False)
-        elif cmd.command == Commands.STOP:
-            self.stop()
-        else:
-            raise Exception("Unknown Tool Command")
+
+    async def handle_command(self, command: ToolCommands) -> None:
+        match command:
+            case ShutdownCommand():
+                await self.cleanup()
+            case StopCommand():
+                await self.stop()
+            case InitializeCommand():
+                await self.initialize()
+            case ActuatorsCommand(value=value):
+                await self.actuators(value)
+            case CarriageSolenoidsCommand(tray=tray, side=side):
+                await self.set_tray_solenoids(tray, side)
+            case PullerSolenoidsCommand(tray=tray, idx=idx):
+                await self.set_solenoids(tray, idx)
+            case SolenoidsOffCommand():
+                await self.set_solenoids_off()
+            case SetSlotBitsCommand(value=bits):
+                await self.set_slot_bits(bits)
+            case ExtendCarriageCommand(side=side):
+                await self.extend_carriage(side)
+            case RetractCarriageCommand(side=side):
+                await self.retract_carriage(side)
+            case RetractTrayCommand(side=side):
+                await self.retract_tray(side)
+            case DropItemsCommand(tray=tray, idx=idx):
+                await self.drop_items(tray, idx)
+            case _:
+                raise Exception("Invalid Tool Command")

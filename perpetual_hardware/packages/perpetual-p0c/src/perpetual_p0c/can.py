@@ -54,6 +54,4 @@ class FilteredAsyncReader(AsyncBufferedReader):
             return await self.buffer.get()
         else:
             async with asyncio.timeout(timeout):
- 
-            bus.notifier,
-              return await self.buffer.get()
+                return await self.buffer.get()

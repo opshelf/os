@@ -1,4 +1,4 @@
-from perpetual_p0c.aio.robot import P0C
+from perpetual_p0c.robot import P0C
 import asyncio
 from perpetual_p0c.storage import CellItem, Dimensions, StorageModuleCellLocation, StorageModuleSide, StorageModuleTrayLocation
 from perpetual_p0c.utils import get_can_bus

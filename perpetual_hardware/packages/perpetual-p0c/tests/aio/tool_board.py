@@ -1,6 +1,6 @@
 
 from perpetual_p0c.utils import get_can_bus
-from perpetual_p0c.aio.tool_board import ToolBoard
+from perpetual_p0c.tool_board import ToolBoard
 
 import asyncio
 #from my_async_module import my_async_function

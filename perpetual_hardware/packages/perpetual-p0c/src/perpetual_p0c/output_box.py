@@ -1,20 +1,46 @@
-from can import BusABC
+from typing import Annotated, Literal, Union
+from perpetual_can import CANBusHandler
+from perpetual_trinamic.aio.trinamic_axis import TrinamicAxis
 from perpetual_p0c.common import CanAxisConfiguration
-from perpetual_trinamic.trinamic_axis import TrinamicAxis
-from pydantic import BaseModel
-
+from pydantic import BaseModel, Field
 
 class OutputBoxOffsets(BaseModel):
     door_open_position: float
-
 
 class OutputBoxConfiguration(BaseModel):
     door: CanAxisConfiguration
     offsets: OutputBoxOffsets
 
+class ShutdownCommand(BaseModel):
+    command: Literal["shutdown"]
+
+class StopCommand(BaseModel):
+    command: Literal["stop"]
+
+class InitializeCommand(BaseModel):
+    command: Literal["initialize"]
+
+class OpenCommand(BaseModel):
+    command: Literal["open"]
+
+class CloseCommand(BaseModel):
+    command: Literal["close"]
+
+class HomeCommand(BaseModel):
+    command: Literal["home"]
+
+
+OutputBoxCommands = Annotated[Union[
+    ShutdownCommand,
+    StopCommand,
+    InitializeCommand,
+    OpenCommand,
+    CloseCommand,
+    HomeCommand
+], Field(discriminator="command")]
 
 class OutputBox:
-    def __init__(self, bus: BusABC, configuration: OutputBoxConfiguration):
+    def __init__(self, bus: CANBusHandler, configuration: OutputBoxConfiguration):
         self._configuration = configuration
         self._door = TrinamicAxis(
             bus,
@@ -22,13 +48,12 @@ class OutputBox:
             motor_id=0,
             configuration=configuration.door.configuration,
         )
-        # atexit.register(self.cleanup)
 
-    def cleanup(self) -> None:
-        self._door.stop()
+    async def cleanup(self) -> None:
+        await self._door.stop()
 
-    def stop(self) -> None:
-        self._door.stop()
+    async def stop(self) -> None:
+        await self._door.stop()
 
     @property
     def configuration(self) -> OutputBoxConfiguration:
@@ -50,16 +75,35 @@ class OutputBox:
     def door(self) -> TrinamicAxis:
         return self._door
 
-    def initialize(self) -> None:
-        self._door.initialize()
+    async def initialize(self) -> None:
+        await self._door.initialize()
 
-    def home(self) -> None:
-        self._door.home()
+    async def home(self) -> None:
+        await self._door.home()
 
-    def open(self) -> None:
-        self._door.move_to_position(self._configuration.offsets.door_open_position)
-        self._door.wait_for_move()
+    async def open(self) -> None:
+        await self._door.move_to_position(self._configuration.offsets.door_open_position)
+        await self._door.wait_for_move()
 
-    def close(self) -> None:
-        self._door.move_to_position(0)
-        self._door.wait_for_move()
+    async def close(self) -> None:
+        await self._door.move_to_position(0)
+        await self._door.wait_for_move()
+
+    async def handle_command(self, command: OutputBoxCommands) -> None:
+        match command:
+            case ShutdownCommand():
+                await self.cleanup()
+            case StopCommand():
+                await self.stop()
+            case InitializeCommand():
+                await self.initialize()
+            case OpenCommand():
+                await self.open()
+            case CloseCommand():
+                await self.close()
+            case HomeCommand():
+                await self.home()
+            case _:
+                raise Exception("Invalid Command")
+
+

@@ -1,16 +1,13 @@
 from pydantic import BaseModel
-from perpetual_p0c.gantry import GantryConfiguration, Gantry, GantryCoordinate
-from perpetual_p0c.funnel import FunnelConfiguration, Funnel
-from perpetual_p0c.tool import ToolConfiguration, Tool
+from perpetual_p0c.gantry import GantryConfiguration, Gantry, GantryCoordinate, GantryCommands
+from perpetual_p0c.funnel import FunnelConfiguration, Funnel, FunnelCommands
+from perpetual_p0c.tool import ToolConfiguration, Tool, ToolCommands
 from perpetual_p0c.io_board import IoController
-import time
-import atexit
-from perpetual_p0c.utils import get_bus
-from typing import List, Optional
-from perpetual_p0c.workstation import Workstation, WorkstationConfiguration
+from perpetual_p0c.workstation import Workstation, WorkstationConfiguration, WorkstationCommands
 from perpetual_p0c.size_database import SizeDatabase
 from enum import Enum
 import os
+import time
 from perpetual_p0c.storage import (
     CellItem,
     GS1Data,
@@ -22,6 +19,12 @@ from perpetual_p0c.storage import (
     StorageModuleTrayLocation,
     StorageModuleSide,
 )
+from perpetual_can import CANBusHandler
+import asyncio
+import os
+from pydantic import BaseModel, Field, UUID4
+from uuid import uuid4
+from typing import Optional, Union, Literal, Annotated, List
 
 
 class BottleTracking(int, Enum):
@@ -87,14 +90,71 @@ class RobotState(BaseModel):
         self.current_tray = None
 
 
-class TransferOperation(BaseModel):
-    start_location: ItemTransitLocations
-    terminal_location: ItemTransitLocations
+class BaseMessage(BaseModel):
+    message_id: UUID4 = Field(default_factory=uuid4)
 
+class StorePayload:
+    location: StorageModuleCellLocation
+    item: Optional[CellItem]
+
+class StoreCommand(BaseMessage):
+    command: Literal["store_item"]
+    payload: StorePayload
+
+class RetrievePayload:
+    location: StorageModuleCellLocation
+    item: Optional[CellItem]
+
+class RetrieveCommand(BaseMessage):
+    command: Literal["retrieve_item"]
+    payload: RetrievePayload 
+
+class HomeCommand(BaseMessage):
+    command: Literal["home"]
+
+class StopCommand(BaseMessage):
+    command: Literal["stop"]
+
+class PauseCommand(BaseMessage):
+    command: Literal["pause"]
+
+class InitializeCommand(BaseMessage):
+    command: Literal["initialize"]
+
+class ToolSubsystemCommand(BaseMessage):
+    command: Literal["tool_command"]
+    payload: ToolCommands 
+
+class FunnelSubsystemCommand(BaseMessage):
+    command: Literal["funnel_command"]
+    payload: FunnelCommands 
+
+class WorkstationSubsystemCommand(BaseMessage):
+    command: Literal["workstation_command"]
+    payload: WorkstationCommands
+
+class GantrySubsystemCommands(BaseMessage):
+    command: Literal["gantry_command"]
+    payload: GantryCommands
+
+
+# Union of all command models
+RobotCommands = Annotated[Union[
+    StoreCommand, 
+    RetrieveCommand, 
+    HomeCommand, 
+    StopCommand,
+    PauseCommand,
+    InitializeCommand,
+    ToolSubsystemCommand,
+    FunnelSubsystemCommand,
+    WorkstationSubsystemCommand,
+    GantrySubsystemCommands
+], Field(discriminator="command")]
 
 class P0C:
-    def __init__(self, config: RobotConfiguration):
-        self._bus = get_bus()
+    def __init__(self, bus: CANBusHandler, config: RobotConfiguration):
+        self._bus = bus
         self._storage = StorageGrid(
             left_module=[],
             right_module=[
@@ -147,13 +207,12 @@ class P0C:
         self._workstation = Workstation(self._bus, config.workstation)
         self._state = RobotState(current_tray=None)
         self._sizes = SizeDatabase()
-        self._tool.actuators(False)
-        # self.save_state()
-        # self.save_storage()
-        self.load_state()
-        self.load_storage()
-        self.load_sizes()
-        atexit.register(self.shutdown)
+
+    async def initialize(self) -> None:
+        await self.gantry.initialize()
+        await self.funnel.initialize()
+        await self.workstation.initialize()
+        await self.tool.initialize()
 
     def save_state(self) -> None:
         with open(self._config.state_file, "w+") as f:
@@ -185,17 +244,18 @@ class P0C:
     def save_storage(self) -> None:
         self._storage.save_to_file(self._config.storage_file)
 
-    def shutdown(self) -> None:
-        self._tool.cleanup()
-        self._gantry.cleanup()
-        self._funnel.cleanup()
-        self._workstation.cleanup()
+    async def shutdown(self) -> None:
+        await self._tool.cleanup()
+        await self._gantry.cleanup()
+        await self._funnel.cleanup()
+        await self._workstation.cleanup()
         self._bus.shutdown()
 
-    def stop(self) -> None:
-        self.gantry.stop()
-        self.tool.stop()
-        self.funnel.stop()
+    async def stop(self) -> None:
+        await self.gantry.stop()
+        await self.tool.stop()
+        await self.funnel.stop()
+        await self.workstation.stop()
 
     @property
     def config(self) -> RobotConfiguration:
@@ -225,23 +285,23 @@ class P0C:
     def storage(self) -> StorageGrid:
         return self._storage
 
-    def home(self) -> None:
-        self._tool.actuators(False)
-        self._workstation.home()
-        self._tool.home()
-        self._funnel.home()
-        self._gantry.home()
+    async def home(self) -> None:
+        await self._tool.actuators(False)
+        await self._workstation.home()
+        await self._tool.home()
+        await self._funnel.home()
+        await self._gantry.home()
 
-    def home_y_first(self) -> None:
-        self._tool.actuators(False)
-        self._gantry.y_axis.home_with_brake()
-        self._workstation.home()
-        self._tool.home()
-        self._funnel.home()
-        self._gantry.home()
+    async def home_y_first(self) -> None:
+        await self._tool.actuators(False)
+        await self._gantry.y_axis.home()
+        await self._workstation.home()
+        await self._tool.home()
+        await self._funnel.home()
+        await self._gantry.home()
 
-    def path_plan(self, coordinate: GantryCoordinate) -> List[GantryCoordinate]:
-        gantry_position = self.gantry.position
+    async def path_plan(self, coordinate: GantryCoordinate) -> List[GantryCoordinate]:
+        gantry_position = await self.gantry.position
         path: List[GantryCoordinate] = []
         # Target is beyod safe x
         if gantry_position.x > self.config.gantry_safe_x:
@@ -310,40 +370,44 @@ class P0C:
                 path.append(coordinate)
                 return path
 
-    def gantry_move(self, coordinate: GantryCoordinate) -> None:
-        self.tool.actuators(False)
-        if self._tool.check_tray_clear():
-            path = self.path_plan(coordinate)
-            self.gantry.move_path(path)
+    async def gantry_move(self, coordinate: GantryCoordinate) -> None:
+        await self.tool.actuators(False)
+        tray_clear = await self._tool.check_tray_clear()
+        if tray_clear:
+            path = await self.path_plan(coordinate)
+            await self.gantry.move_path(path)
         else:
             raise Exception("Clear Break Beams")
 
-    def pull_tray(self, coordinate: GantryCoordinate, tray: Tray, side: StorageModuleSide) -> None:
-        if self.tool.check_tray_loaded():
+    async def pull_tray(self, coordinate: GantryCoordinate, tray: Tray, side: StorageModuleSide) -> None:
+        tray_loaded = await self.tool.check_tray_loaded()
+        if tray_loaded: 
             raise Exception("The tool is blocked from pulling a tray")
         else:
             if side == StorageModuleSide.RIGHT:
-                self.tool.safe_max()
+                await self.tool.safe_max()
             else:
-                self.tool.safe_min()
-            self.gantry_move(coordinate)
-            self.tool.extend_puller(side)
-            self.tool.set_tray_solenoids(tray, side)
+                await self.tool.safe_min()
+            await self.gantry_move(coordinate)
+            await self.tool.extend_carriage(side)
+            await self.tool.set_tray_solenoids(tray, side)
             # self.tool.set_carriage_solenoids(0, StorageModuleSide.RIGHT)
-            time.sleep(0.25)
-            self.tool.retract_puller(side)
+            await asyncio.sleep(0.25)
+            await self.tool.retract_carriage(side)
             if not self.tool.check_tray_loaded():
+                await self.tool.set_solenoids_off()
                 raise Exception("Failed Tray Pull")
 
-    def place_tray(self, coordinate: GantryCoordinate, side: StorageModuleSide) -> None:
-        if self.tool.check_tray_loaded():
-            self.gantry_move(coordinate + self._config.place_offset)
-            self.tool.puller.move_to_position(self.tool.offsets.tool_extend_position - 10)
-            self.tool.puller.wait_for_move()
-            self.tool.set_solenoids_off()
-            self.tool.extend_puller(side)
-            time.sleep(0.25)
-            self.tool.puller_safe(side)
+    async def place_tray(self, coordinate: GantryCoordinate, side: StorageModuleSide) -> None:
+        tray_loaded = await self.tool.check_tray_loaded()
+        if tray_loaded: 
+            await self.gantry_move(coordinate + self._config.place_offset)
+            await self.tool.puller.move_to_position(self.tool.offsets.tool_extend_position - 10)
+            await self.tool.puller.wait_for_move()
+            await self.tool.set_solenoids_off()
+            await self.tool.extend_carriage(side)
+            await asyncio.sleep(0.25)
+            await self.tool.carriage_safe(side)
             if not self.tool.check_tray_clear():
                 raise Exception("Failed Tray Place")
             self._state.clear_state()
@@ -351,279 +415,270 @@ class P0C:
         else:
             raise Exception("No Tray is Loaded")
 
-    def move_gantry_to_input(self, tray: Tray) -> None:
+    async def move_gantry_to_input(self, tray: Tray) -> None:
         input = self.config.input_location.copy()
         input.y -= tray.cell_depth
-        self.gantry_move(input)
+        await self.gantry_move(input)
 
-    def move_gantry_to_output(self) -> None:
-        self.gantry_move(self.config.output_location)
+    async def move_gantry_to_output(self) -> None:
+        await self.gantry_move(self.config.output_location)
 
-    def service_high(self) -> None:
-        self.gantry_move(self.config.service_coordinate_high)
+    async def service_high(self) -> None:
+        await self.gantry_move(self.config.service_coordinate_high)
 
-    def service_low(self) -> None:
-        self.gantry_move(self.config.service_coordinate_low)
+    async def service_low(self) -> None:
+        await self.gantry_move(self.config.service_coordinate_low)
 
-    def idle(self) -> None:
-        self.gantry_move(self.config.idle_coordinate)
+    async def idle(self) -> None:
+        await self.gantry_move(self.config.idle_coordinate)
 
-    def move_gantry_to_clear(self, tray: Tray) -> None:
-        self.gantry_move(
+    async def move_gantry_to_clear(self, tray: Tray) -> None:
+        await self.gantry_move(
             GantryCoordinate(
                 x=self._config.output_location.x,
                 y=self._config.output_location.y + tray.cell_depth,
             )
         )
 
-    def setup_receive_item(
+    async def setup_receive_item(
         self,
         tray: Tray,
         tray_location: GantryCoordinate,
         index: int,
         side: StorageModuleSide,
     ) -> None:
-        self.pull_tray(tray_location, tray, side)
-        self.move_gantry_to_input(tray)
-        self._funnel.return_diverter()
-        self._funnel.move_to_cell(tray, index)
+        await self.pull_tray(tray_location, tray, side)
+        await self.move_gantry_to_input(tray)
+        await self._funnel.return_diverter()
+        await self._funnel.move_to_cell(tray, index)
 
-    def receive_item(
+    async def receive_item(
         self,
         tray: Tray,
         tray_location: GantryCoordinate,
         index: int,
         side: StorageModuleSide,
     ) -> None:
-        self.funnel.diverter.set_standby_current(2000)
-        self.run_input_transfer(tray, index)
-        self.setup_receive_item(tray, tray_location, index, side)
+        await self.funnel.diverter.set_standby_current(2000)
+        await self.run_input_transfer(tray, index)
+        await self.setup_receive_item(tray, tray_location, index, side)
         self.save_state()
-        self._io.reset_sensors()
-        self.funnel.set_diverter_opening(tray)
-        self.funnel.diverter.set_standby_current(0)
+        await self._io.reset_sensors()
+        await self.funnel.set_diverter_opening(tray)
+        await self.funnel.diverter.set_standby_current(0)
         t0 = time.time()
-        while True:
-            if time.time() - t0 > 10:
-                self.funnel.stop_receive_item()
-                self.place_tray(tray_location, side)
-                raise Exception("Failed to Receive Item")
-            sensors = self._io.get_sensors()
-            if sensors and sensors.funnel_input:
-                time.sleep(2)
-                self.funnel.close_tray_wedges(tray)
-                self.funnel.stop_receive_item()
-                break
+        async with asyncio.timeout(10):
+            while True:
+                if time.time() - t0 > 10:
+                    await self.funnel.stop_receive_item()
+                    await self.place_tray(tray_location, side)
+                    raise Exception("Failed to Receive Item")
+                sensors = await self._io.get_sensors()
+                if sensors and sensors.funnel_input:
+                    await asyncio.sleep(2)
+                    await self.funnel.close_tray_wedges(tray)
+                    await self.funnel.stop_receive_item()
+                    break
 
             time.sleep(0.1)
-        self.place_tray(tray_location, side)
+        await self.place_tray(tray_location, side)
 
-    def drop_off_item(
+    async def drop_off_item(
         self,
         tray: Tray,
         tray_location: GantryCoordinate,
         index: int,
         side: StorageModuleSide,
     ) -> None:
-        self.pull_tray(tray_location, tray, side)
-        self.move_gantry_to_output()
-        self.funnel.catch(tray, index)
-        self.tool.drop_items(tray, index)
-        self.funnel.move_to_transfer_location()
-        self.move_gantry_to_clear(tray)
-        self.run_output_transfer()
-        self.place_tray(tray_location, side)
+        await self.pull_tray(tray_location, tray, side)
+        await self.move_gantry_to_output()
+        await self.funnel.catch(tray, index)
+        await self.tool.drop_items(tray, index)
+        await self.funnel.move_to_transfer_location()
+        await self.move_gantry_to_clear(tray)
+        await self.run_output_transfer()
+        await self.place_tray(tray_location, side)
 
-    def run_output_transfer(self) -> None:
-        self._io.reset_sensors()
+    async def run_output_transfer(self) -> None:
+        await self._io.reset_sensors()
         tracking = BottleTracking.INITIALIZE
-        t0 = time.time()
-        while True:
-            if tracking == BottleTracking.INITIALIZE:
-                self.funnel.start_output_transfer()
-                self.funnel.start_output()
-                self.workstation.open_output()
-                tracking = BottleTracking.WAIT_FOR_TRANSFER_TRIGGER
-            elif tracking == BottleTracking.WAIT_FOR_TRANSFER_TRIGGER:
-                sensors = self._io.get_sensors()
-                if sensors and sensors.output_transfer_conveyor:
-                    time.sleep(1)
-                    self.funnel.stop_output_transfer()
-                    tracking = BottleTracking.START_WORKSTATION_OUTPUT
-            elif tracking == BottleTracking.START_WORKSTATION_OUTPUT:
-                self.workstation.start_output_belt()
-                tracking = BottleTracking.WAIT_FOR_FUNNEL_OUT_TRIGGER
-            elif tracking == BottleTracking.WAIT_FOR_FUNNEL_OUT_TRIGGER:
-                sensors = self._io.get_sensors()
-                if sensors and sensors.output_conveyor:
-                    time.sleep(1)
-                    self.funnel.stop_output()
-                    tracking = BottleTracking.WAIT_FOR_OUTPUT_TRIGGER
-            elif tracking == BottleTracking.WAIT_FOR_OUTPUT_TRIGGER:
-                sensors = self._io.get_sensors()
-                if sensors and sensors.output_box:
-                    time.sleep(1)
-                    tracking = BottleTracking.CLOSE_DOOR
-            elif tracking == BottleTracking.CLOSE_DOOR:
-                self.workstation.close_output()
-                self.workstation.stop_output_belt()
-                tracking = BottleTracking.RESET
-            elif tracking == BottleTracking.RESET:
-                break
-            time.sleep(0.1)
-            if time.time() - t0 > 20:
-                raise Exception("Failed to Transfer Item")
+        async with asyncio.timeout(20):
+            while True:
+                if tracking == BottleTracking.INITIALIZE:
+                    await self.funnel.start_output_transfer()
+                    await self.funnel.start_output()
+                    await self.workstation.open_output()
+                    tracking = BottleTracking.WAIT_FOR_TRANSFER_TRIGGER
+                elif tracking == BottleTracking.WAIT_FOR_TRANSFER_TRIGGER:
+                    sensors = await self._io.get_sensors()
+                    if sensors and sensors.output_transfer_conveyor:
+                        await asyncio.sleep(1)
+                        await self.funnel.stop_output_transfer()
+                        tracking = BottleTracking.START_WORKSTATION_OUTPUT
+                elif tracking == BottleTracking.START_WORKSTATION_OUTPUT:
+                    await self.workstation.start_output_belt()
+                    tracking = BottleTracking.WAIT_FOR_FUNNEL_OUT_TRIGGER
+                elif tracking == BottleTracking.WAIT_FOR_FUNNEL_OUT_TRIGGER:
+                    sensors = await self._io.get_sensors()
+                    if sensors and sensors.output_conveyor:
+                        await asyncio.sleep(1)
+                        await self.funnel.stop_output()
+                        tracking = BottleTracking.WAIT_FOR_OUTPUT_TRIGGER
+                elif tracking == BottleTracking.WAIT_FOR_OUTPUT_TRIGGER:
+                    sensors = await self._io.get_sensors()
+                    if sensors and sensors.output_box:
+                        await asyncio.sleep(1)
+                        tracking = BottleTracking.CLOSE_DOOR
+                elif tracking == BottleTracking.CLOSE_DOOR:
+                    await self.workstation.close_output()
+                    await self.workstation.stop_output_belt()
+                    tracking = BottleTracking.RESET
+                elif tracking == BottleTracking.RESET:
+                    break
+                await asyncio.sleep(0.1)
 
-    def move_gantry_to_input_location(self) -> None:
-        self.gantry_move(self.config.input_location)
+    async def move_gantry_to_input_location(self) -> None:
+        await self.gantry_move(self.config.input_location)
 
-    def run_input_transfer(self, tray: Tray, idx: int) -> None:
-        self.funnel.setup_receive_item(tray, idx)
-        self._io.reset_sensors()
-        self.workstation.start_input_belt()
-        self.funnel.start_receive_item()
-        t0 = time.time()
-        while True:
-            if time.time() - t0 > 10:
-                raise Exception("Failed to Transfer Item")
-            sensors = self._io.get_sensors()
-            time.sleep(0.25)
-            if sensors and sensors.input_conveyor:
-                time.sleep(1)
-                self.workstation.stop_input_belt()
-                break
+    async def run_input_transfer(self, tray: Tray, idx: int) -> None:
+        await self.funnel.setup_receive_item(tray, idx)
+        await self._io.reset_sensors()
+        await self.workstation.start_input_belt()
+        await self.funnel.start_receive_item()
+        async with asyncio.timeout(10):
+            while True:
+                sensors = await self._io.get_sensors()
+                await asyncio.sleep(0.25)
+                if sensors and sensors.input_conveyor:
+                    await asyncio.sleep(1)
+                    await self.workstation.stop_input_belt()
+                    break
 
-    def run_storage_operation(self, operation: Operation) -> None:
-        if operation.operation_type == StorageOperationType.STORE:
-            self.receive_item(
-                operation.item_location.tray,
-                operation.item_location.location,
-                operation.item_location.index,
-                operation.item_location.side,
-            )
-        else:
-            self.drop_off_item(
-                operation.item_location.tray,
-                operation.item_location.location,
-                operation.item_location.index,
-                operation.item_location.side,
-            )
-
-    def move_to_storage_location(self, location: StorageModuleCellLocation) -> None:
+    async def move_to_storage_location(self, location: StorageModuleCellLocation) -> None:
         coordinate = self._storage.get_coordinate(location)
-        self.gantry_move(
+        await self.gantry_move(
             GantryCoordinate(
                 x=coordinate.x,
                 y=coordinate.y,
             )
         )
 
-    def _place_tray(self, location: StorageModuleCellLocation | StorageModuleTrayLocation) -> None:
-        if self.tool.check_tray_loaded():
+    async def _place_tray(self, location: StorageModuleCellLocation | StorageModuleTrayLocation) -> None:
+        tray_loaded = await self.tool.check_tray_loaded()
+        if tray_loaded:
             coordinate = self._storage.get_tray_coordinate(location).to_gantry_coordinate()
-            self.gantry_move(coordinate + self._config.place_offset)
-            self.tool.puller.move_to_position(self.tool.offsets.tool_extend_position - 10)
-            self.tool.puller.wait_for_move()
-            self.tool.set_solenoids_off()
-            self.tool.extend_puller(location.side)
-            time.sleep(0.25)
-            self.tool.puller_safe(location.side)
-            if not self.tool.check_tray_clear():
+            await self.gantry_move(coordinate + self._config.place_offset)
+            await self.tool.puller.move_to_position(self.tool.offsets.tool_extend_position - 10)
+            await self.tool.puller.wait_for_move()
+            await self.tool.set_solenoids_off()
+            await self.tool.extend_carriage(location.side)
+            await asyncio.sleep(0.25)
+            await self.tool.carriage_safe(location.side)
+            if not await self.tool.check_tray_clear():
                 raise Exception("Failed Tray Place")
             self._state.clear_state()
             self.save_state()
         else:
             raise Exception("No Tray is Loaded")
 
-    def return_current_tray(self) -> None:
+    async def return_current_tray(self) -> None:
         if self._state.current_tray:
-            self._place_tray(self._state.current_tray)
+            await self._place_tray(self._state.current_tray)
         else:
             raise Exception("Tray Currently Held But No Known Location to Place it")
 
-    def _pull_tray(self, location: StorageModuleTrayLocation) -> None:
-        if self.tool.check_tray_loaded():
-            print("Tray Loaded")
+    async def _pull_tray(self, location: StorageModuleTrayLocation) -> None:
+        tray_loaded = await self.tool.check_tray_loaded()
+        if tray_loaded:
             if location == self._state.current_tray:
-                print("Loaded Tray is Target")
                 pass
             else:
-                print("Returning Current Tray")
-                self.return_current_tray()
-                self._pull_tray(location)
+                await self.return_current_tray()
+                await self._pull_tray(location)
         else:
             if location.side == StorageModuleSide.RIGHT:
-                self.tool.safe_max()
+                await self.tool.safe_max()
             else:
-                self.tool.safe_min()
+                await self.tool.safe_min()
             coordinate = self._storage.get_tray_coordinate(location)
             tray = self._storage.get_tray(location)
-            self.gantry_move(coordinate.to_gantry_coordinate())
-            self.tool.extend_puller(location.side)
-            self.tool.set_tray_solenoids(tray, location.side)
-            time.sleep(0.25)
-            self.tool.retract_puller(location.side)
-            if not self.tool.check_tray_loaded():
+            await self.gantry_move(coordinate.to_gantry_coordinate())
+            await self.tool.extend_carriage(location.side)
+            await self.tool.set_tray_solenoids(tray, location.side)
+            await asyncio.sleep(0.25)
+            await self.tool.retract_carriage(location.side)
+            if not await self.tool.check_tray_loaded():
+                await self.tool.set_solenoids_off()
                 raise Exception("Failed Tray Pull")
             self._state = RobotState(current_tray=location)
             self.save_state()
 
-    def _setup_receive_item(self, location: StorageModuleCellLocation) -> None:
+    async def _setup_receive_item(self, location: StorageModuleCellLocation) -> None:
         tray = self._storage.get_tray(location)
-        self._pull_tray(location.to_tray_location())
-        self.move_gantry_to_input(tray)
-        self._funnel.return_diverter()
-        self._funnel.move_to_cell(tray, location.slot_idx)
+        await self._pull_tray(location.to_tray_location())
+        await self.move_gantry_to_input(tray)
 
-    def _receive_item(self, location: StorageModuleCellLocation) -> None:
+    async def _receive_item(self, location: StorageModuleCellLocation) -> None:
         tray = self._storage.get_tray(location)
-        self.funnel.diverter.set_standby_current(2000)
-        self.run_input_transfer(tray, location.slot_idx)
-        self._setup_receive_item(location)
-        self._io.reset_sensors()
-        self.funnel.set_diverter_opening(self._storage.get_tray(location))
-        self.funnel.diverter.set_standby_current(0)
+        await self.funnel.diverter.set_standby_current(2000)
+
+        #await self.run_input_transfer(tray, location.slot_idx)
+        #await self._setup_receive_item(location)
+
+        input_transfer_task = asyncio.create_task(self.run_input_transfer(tray, location.slot_idx))
+        tray_pull_task = asyncio.create_task(self._setup_receive_item(location))
+
+        await input_transfer_task
+        await tray_pull_task
+
+        await self._funnel.move_to_cell(tray, location.slot_idx)
+
+        await self._io.reset_sensors()
+        await self.funnel.set_diverter_opening(self._storage.get_tray(location))
+        await self.funnel.diverter.set_standby_current(0)
         t0 = time.time()
         while True:
             if time.time() - t0 > 10:
-                self.funnel.stop_receive_item()
-                self._place_tray(location)
+                await self.funnel.stop_receive_item()
+                await self._place_tray(location)
                 raise Exception("Failed to Receive Item")
-            sensors = self._io.get_sensors()
+            sensors = await self._io.get_sensors()
             if sensors and sensors.funnel_input:
-                time.sleep(2)
-                self.funnel.close_tray_wedges(tray)
-                self.funnel.stop_receive_item()
+                await asyncio.sleep(2)
+                await self.funnel.close_tray_wedges(tray)
+                await self.funnel.stop_receive_item()
                 break
+            await asyncio.sleep(0.1)
 
-            time.sleep(0.1)
-
-    def _drop_off_item(self, location: StorageModuleCellLocation) -> None:
-        self._pull_tray(location.to_tray_location())
-        self.move_gantry_to_output()
+    async def _drop_off_item(self, location: StorageModuleCellLocation) -> None:
+        await self._pull_tray(location.to_tray_location())
+        await self.move_gantry_to_output()
         tray = self._storage.get_tray(location)
-        self.funnel.catch(tray, location.slot_idx)
-        self.tool.drop_items(tray, location.slot_idx)
-        self.funnel.move_to_transfer_location()
-        self.move_gantry_to_clear(tray)
-        self.run_output_transfer()
+        await self.funnel.catch(tray, location.slot_idx)
+        await self.tool.drop_items(tray, location.slot_idx)
+        await self.funnel.move_to_transfer_location()
+        await self.move_gantry_to_clear(tray)
+        await self.run_output_transfer()
 
-    def store_item(self, item: CellItem) -> None:
+    async def store_item(self, item: CellItem) -> None:
         location = self._storage.get_next_free_location(item)
         if location:
-            self._receive_item(location)
+            await self._receive_item(location)
             self._storage.store_item(location, item)
             self.save_storage()
         else:
             raise Exception("No Valid Location")
 
-    def store_item_gs1_data(self, data: GS1Data) -> None:
+    async def store_item_by_location(self, location: StorageModuleCellLocation) -> None:
+        await self._receive_item(location)
+
+    async def store_item_gs1_data(self, data: GS1Data) -> None:
         item_size = self._sizes.get_item_size(data)
         if item_size:
             item = CellItem(dimensions=item_size, gs1_data=data)
             location = self._storage.get_next_free_location(item)
             if location:
-                self._receive_item(location)
+                await self._receive_item(location)
                 self._storage.store_item(location, item)
                 self.save_storage()
             else:
@@ -631,13 +686,39 @@ class P0C:
         else:
             raise Exception("No Known Size")
 
-    def retrieve_item_by_location(self, location: StorageModuleCellLocation) -> None:
-        self._drop_off_item(location)
+    async def retrieve_item_by_location(self, location: StorageModuleCellLocation) -> None:
+        await self._drop_off_item(location)
         self._storage.clear_item(location)
         self.save_storage()
 
-    def retrieve_item_by_gtin(self, data: GS1Data) -> None:
+    async def retrieve_item_by_gtin(self, data: GS1Data) -> None:
         location = self._storage.get_item_location(data)
-        self._drop_off_item(location)
+        await self._drop_off_item(location)
         self._storage.clear_item(location)
         self.save_storage()
+
+    async def handle_command(self, command: RobotCommands) -> None:
+        match command:
+            case StoreCommand(payload=payload):
+                await self.store_item_by_location(payload.location)
+            case RetrieveCommand(payload=payload):
+                await self.retrieve_item_by_location(payload.location)
+            case HomeCommand():
+                await self.home()
+            case StopCommand():
+                await self.stop()
+            case PauseCommand():
+                raise NotImplementedError()
+            case InitializeCommand():
+                await self.initialize()
+            case ToolSubsystemCommand(payload=payload):
+                await self.tool.handle_command(payload)
+            case FunnelSubsystemCommand(payload=payload):
+                await self.funnel.handle_command(payload)
+            case WorkstationSubsystemCommand(payload=payload):
+                await self.workstation.handle_command(payload)
+            case GantrySubsystemCommands(payload=payload):
+                await self.gantry.handle_command(payload)
+            case _:
+                raise Exception("Invalid Robot Command")
+

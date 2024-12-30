@@ -1,11 +1,13 @@
 import asyncio
 from can.notifier import Notifier
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Type, TypeVar
 
 from can.bus import BusABC
 from can.listener import AsyncBufferedReader, Listener
 from can.message import Message
+from inspect import Traceback
 
+E = TypeVar("E", bound=BaseException)
 
 class CANBusHandler:
     def __init__(self, bus: BusABC, loop: asyncio.AbstractEventLoop):
@@ -17,6 +19,29 @@ class CANBusHandler:
     @property
     def bus(self) -> BusABC:
         return self._bus
+
+
+    def __aenter__(self) -> "CANBusHandler":
+        return self
+
+    def __aexit__(self,
+        exc_type: Optional[Type[E]],
+        exc_val: Optional[E],
+        exc_tb: Optional[Traceback],
+        ) -> None:
+        print(exc_type, exc_val, exc_tb)
+        self.shutdown()
+
+    def __enter__(self) -> "CANBusHandler":
+        return self
+
+    def __exit__(self,
+        exc_type: Optional[Type[E]],
+        exc_val: Optional[E],
+        exc_tb: Optional[Traceback],
+        ) -> None:
+        print(exc_type, exc_val, exc_tb)
+        self.shutdown()
 
     async def send_message(self, message: Message, timeout: Optional[float] = None) -> None:
         """Send a CAN message."""
