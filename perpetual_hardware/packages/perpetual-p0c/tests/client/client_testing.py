@@ -25,6 +25,7 @@ class RobotWorker:
         self.response_queue = response_queue
         self.emergency_queue = emergency_queue
         self.nc = NATS()
+        self.js = self.nc.jetstream()
         self.processing = True  # Controls whether work_queue is being processed
 
     async def connect(self) -> None:
