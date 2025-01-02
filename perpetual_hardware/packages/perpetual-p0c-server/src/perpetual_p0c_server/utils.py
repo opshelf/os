@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from pathlib import Path
 
+
 def get_base_models(file_path: str) -> List[str]:
     with open(file_path, "r") as file:
         tree = ast.parse(file.read())
@@ -19,6 +20,7 @@ def get_base_models(file_path: str) -> List[str]:
                 elif isinstance(base, ast.Attribute) and base.attr == "BaseModel":
                     base_models.append(node.name)
     return base_models
+
 
 def load_models_and_get_json_schema(file_path: Path) -> Optional[Dict[str, Any]]:
     module_name = file_path.stem
@@ -35,10 +37,11 @@ def load_models_and_get_json_schema(file_path: Path) -> Optional[Dict[str, Any]]
             return schemas
     return None
 
-#from pathlib import Path
+
+# from pathlib import Path
 #
-#file_path = Path("your_python_file.py")
-#schemas = load_models_and_get_json_schema(file_path)
-#print("JSON Schemas for BaseModel subclasses:")
-#for model_name, schema in schemas.items():
+# file_path = Path("your_python_file.py")
+# schemas = load_models_and_get_json_schema(file_path)
+# print("JSON Schemas for BaseModel subclasses:")
+# for model_name, schema in schemas.items():
 #    print(f"{model_name}: {schema}")

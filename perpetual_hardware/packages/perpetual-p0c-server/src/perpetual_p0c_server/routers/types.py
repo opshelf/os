@@ -2,6 +2,7 @@ from pydantic import BaseModel
 from enum import Enum
 from typing import Optional, List, Tuple
 
+
 class Coordinate(BaseModel):
     x: float
     y: float
@@ -12,6 +13,7 @@ class Coordinate(BaseModel):
 
     def __sub__(self, other: "Coordinate") -> "Coordinate":
         return Coordinate(x=self.x - other.x, y=self.y - other.y, z=self.z - other.z)
+
 
 class ItemType(str, Enum):
     OPTIONAL = "OPTIONAL"
@@ -141,16 +143,19 @@ class Shelf(BaseModel):
         )
 """
 
+
 class Trays(BaseModel):
     width: float
     height: float
     calibration_point: Optional[Coordinate]
     empty: bool = True
 
+
 class Shelf(BaseModel):
     shelf_height: float
     shelf_width: float
     trays: List[Trays]
+
 
 class StorageGrid(BaseModel):
     left_module: List[Shelf]

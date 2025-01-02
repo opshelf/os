@@ -7,24 +7,28 @@ router = APIRouter()
 
 
 @router.get("/sizes")
-async def get_size_data(size_database: SizeDatabase= Depends(get_size_db)) -> SizeDatabase:
+async def get_size_data(size_database: SizeDatabase = Depends(get_size_db)) -> SizeDatabase:
     return size_database
+
 
 @router.put("/sizes")
 async def add_size_item(
-    gs1_data: GS1Data,
-    dimensions: Dimensions,
-    size_database: SizeDatabase= Depends(get_size_db)
+    gs1_data: GS1Data, dimensions: Dimensions, size_database: SizeDatabase = Depends(get_size_db)
 ) -> SizeDatabase:
     size_database.add_item_size(gs1_data, dimensions)
     size_database.save()
     return size_database
 
+
 @router.delete("/sizes")
 async def remove_item(
-    gs1_data: GS1Data,
-    size_database: SizeDatabase= Depends(get_size_db)
+    gs1_data: GS1Data, size_database: SizeDatabase = Depends(get_size_db)
 ) -> SizeDatabase:
     size_database.remove_item_size(gs1_data)
     size_database.save()
+    return size_database
+
+
+@router.get("/sizes/:item_size")
+async def get_item_size(size_database: SizeDatabase = Depends(get_size_db)) -> SizeDatabase:
     return size_database

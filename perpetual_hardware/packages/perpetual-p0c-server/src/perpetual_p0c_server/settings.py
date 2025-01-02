@@ -1,14 +1,18 @@
 from pydantic import BaseModel
 
+
 class StorageSettings(BaseModel):
     filename: str = "storage.json"
+
 
 class SizeDatabaseSettings(BaseModel):
     filename: str = "sizes.json"
 
+
 class Settings(BaseModel):
     storage: StorageSettings
     sizes: SizeDatabaseSettings
+
 
 def get_settings() -> Settings:
     with open("settings.json", "r") as f:

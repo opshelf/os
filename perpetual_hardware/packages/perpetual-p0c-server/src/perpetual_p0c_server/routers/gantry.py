@@ -9,5 +9,3 @@ router = APIRouter()
 async def gantry(command: GantryCommands) -> SuccessResponse:
     print(command)
     return SuccessResponse()
-
-

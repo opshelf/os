@@ -63,6 +63,7 @@ class RobotConfiguration(BaseModel):
     storage_file: str = "storage.json"
     size_file: str = "sizes.json"
 
+
 class RobotState(BaseModel):
     current_tray: Optional[StorageModuleTrayLocation]
 
@@ -113,11 +114,14 @@ class PauseCommand(BaseMessage):
 class InitializeCommand(BaseMessage):
     command: Literal["initialize"]
 
+
 class ReturnCurrentTray(BaseMessage):
     command: Literal["return_current_tray"]
 
-#class  PullTray(BaseMessage):
+
+# class  PullTray(BaseMessage):
 #    command: Literal["return_current_tray"]
+
 
 class ToolSubsystemCommand(BaseMessage):
     command: Literal["tool_command"]
@@ -153,7 +157,7 @@ RobotCommands = Annotated[
         FunnelSubsystemCommand,
         WorkstationSubsystemCommand,
         GantrySubsystemCommands,
-        ReturnCurrentTray
+        ReturnCurrentTray,
     ],
     Field(discriminator="command"),
 ]

@@ -33,4 +33,3 @@ class SizeDatabase(BaseModel):
 
     def save(self) -> None:
         self.save_to_file(self.filename)
-

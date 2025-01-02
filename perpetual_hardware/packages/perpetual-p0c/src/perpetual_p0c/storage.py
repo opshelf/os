@@ -101,7 +101,11 @@ class Tray(BaseModel):
     @model_validator(mode="after")
     def verify_calibration_point(self) -> Self:
         if self.calibration_point:
-            if self.calibration_point.x < 0.1 and self.calibration_point.y < 0.1 and self.calibration_point.z < 0.1:
+            if (
+                self.calibration_point.x < 0.1
+                and self.calibration_point.y < 0.1
+                and self.calibration_point.z < 0.1
+            ):
                 self.calibration_point = None
         return self
 
@@ -423,10 +427,10 @@ class StorageGrid(BaseModel):
                     if slot.status == CellStatus.EMPTY:
                         locations.append(
                             StorageModuleCellLocation(
-                                    shelf_idx=shelf_idx,
-                                    tray_idx=tray_idx,
-                                    side=StorageModuleSide.LEFT,
-                                    slot_idx=slot_idx,
+                                shelf_idx=shelf_idx,
+                                tray_idx=tray_idx,
+                                side=StorageModuleSide.LEFT,
+                                slot_idx=slot_idx,
                             )
                         )
         for shelf_idx, shelf in enumerate(self.right_module):
@@ -435,14 +439,13 @@ class StorageGrid(BaseModel):
                     if slot.status == CellStatus.EMPTY:
                         locations.append(
                             StorageModuleCellLocation(
-                                    shelf_idx=shelf_idx,
-                                    tray_idx=tray_idx,
-                                    side=StorageModuleSide.RIGHT,
-                                    slot_idx=slot_idx,
+                                shelf_idx=shelf_idx,
+                                tray_idx=tray_idx,
+                                side=StorageModuleSide.RIGHT,
+                                slot_idx=slot_idx,
                             )
                         )
         return locations
-
 
     def get_all_cell_data(self) -> List[CellLocationData]:
         items: List[CellLocationData] = []

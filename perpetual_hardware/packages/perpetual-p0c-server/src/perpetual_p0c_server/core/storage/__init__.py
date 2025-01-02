@@ -5,6 +5,7 @@ from perpetual_p0c_server.settings import get_settings
 
 storage_module: Optional[StorageGrid] = None
 
+
 def init_file_storage() -> None:
     global storage_module
     settings = get_settings()
@@ -17,8 +18,8 @@ def init_file_storage() -> None:
             f.write(default_grid.model_dump_json())
             storage_module = default_grid
 
+
 def get_storage() -> StorageGrid:
     if storage_module:
         return storage_module
     raise ValueError("Storage Module was Not Initialized")
-
