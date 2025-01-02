@@ -93,48 +93,61 @@ class RobotState(BaseModel):
 class BaseMessage(BaseModel):
     message_id: UUID4 = Field(default_factory=uuid4)
 
+
 class StorePayload:
     location: StorageModuleCellLocation
     item: Optional[CellItem]
+
 
 class StoreCommand(BaseMessage):
     command: Literal["store_item"]
     payload: StorePayload
 
+
 class RetrievePayload:
     location: StorageModuleCellLocation
     item: Optional[CellItem]
 
+
 class RetrieveCommand(BaseMessage):
     command: Literal["retrieve_item"]
-    payload: RetrievePayload 
+    payload: RetrievePayload
+
 
 class HomeCommand(BaseMessage):
     command: Literal["home"]
 
+
 class HomeYFirstCommand(BaseMessage):
     command: Literal["home_y_first"]
+
 
 class StopCommand(BaseMessage):
     command: Literal["stop"]
 
+
 class PauseCommand(BaseMessage):
     command: Literal["pause"]
+
 
 class InitializeCommand(BaseMessage):
     command: Literal["initialize"]
 
+
 class ToolSubsystemCommand(BaseMessage):
     command: Literal["tool_command"]
-    payload: ToolCommands 
+    payload: ToolCommands
+
 
 class FunnelSubsystemCommand(BaseMessage):
     command: Literal["funnel_command"]
-    payload: FunnelCommands 
+    payload: FunnelCommands
+
 
 class WorkstationSubsystemCommand(BaseMessage):
     command: Literal["workstation_command"]
     payload: WorkstationCommands
+
 
 class GantrySubsystemCommands(BaseMessage):
     command: Literal["gantry_command"]
@@ -142,24 +155,27 @@ class GantrySubsystemCommands(BaseMessage):
 
 
 # Union of all command models
-RobotCommands = Annotated[Union[
-    StoreCommand, 
-    RetrieveCommand, 
-    HomeCommand, 
-    HomeYFirstCommand, 
-    StopCommand,
-    PauseCommand,
-    InitializeCommand,
-    ToolSubsystemCommand,
-    FunnelSubsystemCommand,
-    WorkstationSubsystemCommand,
-    GantrySubsystemCommands
-], Field(discriminator="command")]
+RobotCommands = Annotated[
+    Union[
+        StoreCommand,
+        RetrieveCommand,
+        HomeCommand,
+        HomeYFirstCommand,
+        StopCommand,
+        PauseCommand,
+        InitializeCommand,
+        ToolSubsystemCommand,
+        FunnelSubsystemCommand,
+        WorkstationSubsystemCommand,
+        GantrySubsystemCommands,
+    ],
+    Field(discriminator="command"),
+]
 
 
-
-#class BaseMessage(BaseModel):
+# class BaseMessage(BaseModel):
 #    message_id: UUID4 = Field(default_factory=uuid4)
+
 
 class ResponseStatus(str, Enum):
     STARTING = "STARTING"
@@ -167,30 +183,30 @@ class ResponseStatus(str, Enum):
     INTERRUPTED = "INTERRUPTED"
     FAILED = "FAILED"
 
+
 class BaseResponse(BaseMessage):
     status: ResponseStatus
+
 
 class ErrorResponse(BaseResponse):
     detail: str
     command: RobotCommands
 
+
 class AckResponse(BaseResponse):
     message: str
     command: RobotCommands
 
+
 class StorageResponse(BaseResponse):
     command: StoreCommand
+
 
 class RetrieveResponse(BaseResponse):
     command: RetrieveCommand
 
-RobotResponses = Union[
-    ErrorResponse,
-    AckResponse,
-    StorageResponse,
-    RetrieveResponse,
-    ErrorResponse
-]
+
+RobotResponses = Union[ErrorResponse, AckResponse, StorageResponse, RetrieveResponse, ErrorResponse]
 
 
 class P0C:
@@ -420,9 +436,11 @@ class P0C:
         else:
             raise Exception("Clear Break Beams")
 
-    async def pull_tray(self, coordinate: GantryCoordinate, tray: Tray, side: StorageModuleSide) -> None:
+    async def pull_tray(
+        self, coordinate: GantryCoordinate, tray: Tray, side: StorageModuleSide
+    ) -> None:
         tray_loaded = await self.tool.check_tray_loaded()
-        if tray_loaded: 
+        if tray_loaded:
             raise Exception("The tool is blocked from pulling a tray")
         else:
             if side == StorageModuleSide.RIGHT:
@@ -441,7 +459,7 @@ class P0C:
 
     async def place_tray(self, coordinate: GantryCoordinate, side: StorageModuleSide) -> None:
         tray_loaded = await self.tool.check_tray_loaded()
-        if tray_loaded: 
+        if tray_loaded:
             await self.gantry_move(coordinate + self._config.place_offset)
             await self.tool.puller.move_to_position(self.tool.offsets.tool_extend_position - 10)
             await self.tool.puller.wait_for_move()
@@ -604,7 +622,9 @@ class P0C:
             )
         )
 
-    async def _place_tray(self, location: StorageModuleCellLocation | StorageModuleTrayLocation) -> None:
+    async def _place_tray(
+        self, location: StorageModuleCellLocation | StorageModuleTrayLocation
+    ) -> None:
         tray_loaded = await self.tool.check_tray_loaded()
         if tray_loaded:
             coordinate = self._storage.get_tray_coordinate(location).to_gantry_coordinate()
@@ -663,8 +683,8 @@ class P0C:
         tray = self._storage.get_tray(location)
         await self.funnel.diverter.set_standby_current(2000)
 
-        #await self.run_input_transfer(tray, location.slot_idx)
-        #await self._setup_receive_item(location)
+        # await self.run_input_transfer(tray, location.slot_idx)
+        # await self._setup_receive_item(location)
 
         input_transfer_task = asyncio.create_task(self.run_input_transfer(tray, location.slot_idx))
         tray_pull_task = asyncio.create_task(self._setup_receive_item(location))
@@ -748,70 +768,51 @@ class P0C:
                 )
             case RetrieveCommand(payload=payload):
                 await self.retrieve_item_by_location(payload.location)
-                return RetrieveResponse(
-                    status=ResponseStatus.COMPLETED,
-                    command=command
-                )
+                return RetrieveResponse(status=ResponseStatus.COMPLETED, command=command)
             case HomeCommand():
                 await self.home()
                 return AckResponse(
-                    status=ResponseStatus.COMPLETED,
-                    message="homed",
-                    command=command
+                    status=ResponseStatus.COMPLETED, message="homed", command=command
                 )
             case HomeYFirstCommand():
                 await self.home_y_first()
                 return AckResponse(
-                    status=ResponseStatus.COMPLETED,
-                    message="homed",
-                    command=command
+                    status=ResponseStatus.COMPLETED, message="homed", command=command
                 )
             case StopCommand():
                 await self.stop()
                 return AckResponse(
-                    status=ResponseStatus.COMPLETED,
-                    message="stopped",
-                    command=command
+                    status=ResponseStatus.COMPLETED, message="stopped", command=command
                 )
             case PauseCommand():
                 raise NotImplementedError()
             case InitializeCommand():
                 await self.initialize()
                 return AckResponse(
-                    status=ResponseStatus.COMPLETED,
-                    message="initialized",
-                    command=command
+                    status=ResponseStatus.COMPLETED, message="initialized", command=command
                 )
             case ToolSubsystemCommand(payload=payload):
                 await self.tool.handle_command(payload)
-                return AckResponse(
-                    status=ResponseStatus.COMPLETED,
-                    message="tool",
-                    command=command
-                )
+                return AckResponse(status=ResponseStatus.COMPLETED, message="tool", command=command)
             case FunnelSubsystemCommand(payload=payload):
                 await self.funnel.handle_command(payload)
                 return AckResponse(
-                    status=ResponseStatus.COMPLETED,
-                    message="funnel",
-                    command=command
+                    status=ResponseStatus.COMPLETED, message="funnel", command=command
                 )
             case WorkstationSubsystemCommand(payload=payload):
                 await self.workstation.handle_command(payload)
                 return AckResponse(
-                    status=ResponseStatus.COMPLETED,
-                    message="workstation",
-                    command=command
+                    status=ResponseStatus.COMPLETED, message="workstation", command=command
                 )
             case GantrySubsystemCommands(payload=payload):
                 await self.gantry.handle_command(payload)
                 return AckResponse(
-                    status=ResponseStatus.COMPLETED,
-                    message="gantry",
-                    command=command
+                    status=ResponseStatus.COMPLETED, message="gantry", command=command
                 )
             case _:
                 raise Exception("Invalid Robot Command")
+
+
 """
 Store Item
     Store Item and Hold Tray if Multiple Storages are Queued and incoming item size optimally fits in the tray

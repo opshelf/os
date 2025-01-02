@@ -5,6 +5,7 @@ from perpetual_p0c.common import CanMessageIds
 from perpetual_can import CANBusHandler, AsyncFilteredReader
 from enum import Enum
 
+
 class CanCommandIds(int, Enum):
     GetState = 0x01
     SetWedges = 0x02
@@ -169,4 +170,3 @@ class IoController:
         buffer = [CanCommandIds.ResetSensors.value]
         response = await self._run_command(self.default_message(buffer))
         return SensorState.from_buffer(response.data)
-

@@ -9,6 +9,7 @@ from perpetual_can import CANBusHandler
 from typing import List, Literal, Union, Annotated
 from pydantic import BaseModel, Field
 
+
 class GantryConfiguration(BaseModel):
     x_axis_id: int
     x_axis_config: StepperMotorConfig
@@ -26,45 +27,58 @@ class GantryCoordinate(BaseModel):
     def __sub__(self, rhs: "GantryCoordinate") -> "GantryCoordinate":
         return GantryCoordinate(x=self.x - rhs.x, y=self.y - rhs.y)
 
+
 class GantryMoveCommand(BaseModel):
     position: GantryCoordinate
+
 
 class GantryStatus(BaseModel):
     x_position: float
     y_position: float
 
+
 class ShutdownCommand(BaseModel):
     command: Literal["shutdown"]
+
 
 class StopCommand(BaseModel):
     command: Literal["stop"]
 
+
 class InitializeCommand(BaseModel):
     command: Literal["initialize"]
+
 
 class HomeCommand(BaseModel):
     command: Literal["home"]
 
+
 class HomeYFirstCommand(BaseModel):
     command: Literal["home_y"]
+
 
 class MoveRelativeCommand(BaseModel):
     command: Literal["move_relative"]
     coordinate: GantryCoordinate
 
+
 class MoveCommand(BaseModel):
     command: Literal["move"]
     coordinate: GantryCoordinate
 
-GantryCommands = Annotated[Union[
-    ShutdownCommand,
-    StopCommand,
-    InitializeCommand,
-    HomeCommand,
-    HomeYFirstCommand,
-    MoveRelativeCommand,
-    MoveCommand
-], Field(discriminator="command")]
+
+GantryCommands = Annotated[
+    Union[
+        ShutdownCommand,
+        StopCommand,
+        InitializeCommand,
+        HomeCommand,
+        HomeYFirstCommand,
+        MoveRelativeCommand,
+        MoveCommand,
+    ],
+    Field(discriminator="command"),
+]
 
 
 class Gantry:
@@ -171,7 +185,6 @@ class Gantry:
         if not bool(limit.value):
             raise Exception("X Axis Failed to hit homing switch")
 
-
     @property
     async def position(self) -> GantryCoordinate:
         return GantryCoordinate(
@@ -195,7 +208,5 @@ class Gantry:
                 await self.move_relative(coordinate.x, coordinate.y)
             case MoveCommand(coordinate=coordinate):
                 await self.move(coordinate.x, coordinate.y)
-            case _: 
+            case _:
                 raise Exception("Invalid Command")
-        
-

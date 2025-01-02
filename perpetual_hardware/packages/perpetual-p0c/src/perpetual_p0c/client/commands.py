@@ -7,48 +7,61 @@ from perpetual_p0c.funnel import FunnelCommands
 from perpetual_p0c.workstation import WorkstationCommands
 from perpetual_p0c.gantry import GantryCommands
 
+
 class BaseMessage(BaseModel):
     message_id: UUID4 = Field(default_factory=uuid4)
+
 
 class StorePayload:
     location: StorageModuleCellLocation
     item: Optional[CellItem]
 
+
 class StoreCommand(BaseMessage):
     command: Literal["store_item"]
     payload: StorePayload
+
 
 class RetrievePayload:
     location: StorageModuleCellLocation
     item: Optional[CellItem]
 
+
 class RetrieveCommand(BaseMessage):
     command: Literal["retrieve_item"]
-    location: RetrievePayload 
+    location: RetrievePayload
+
 
 class HomeCommand(BaseMessage):
     command: Literal["home"]
 
+
 class StopCommand(BaseMessage):
     command: Literal["stop"]
+
 
 class PauseCommand(BaseMessage):
     command: Literal["pause"]
 
+
 class InitializeCommand(BaseMessage):
     command: Literal["initialize"]
 
+
 class ToolSubsystemCommand(BaseMessage):
     command: Literal["tool_command"]
-    payload: ToolCommands 
+    payload: ToolCommands
+
 
 class FunnelSubsystemCommand(BaseMessage):
     command: Literal["funnel_command"]
-    payload: FunnelCommands 
+    payload: FunnelCommands
+
 
 class WorkstationSubsystemCommand(BaseMessage):
     command: Literal["workstation_command"]
     payload: WorkstationCommands
+
 
 class GantrySubsystemCommands(BaseMessage):
     command: Literal["gantry_command"]
@@ -56,18 +69,21 @@ class GantrySubsystemCommands(BaseMessage):
 
 
 # Union of all command models
-RobotCommands = Annotated[Union[
-    StoreCommand, 
-    RetrieveCommand, 
-    HomeCommand, 
-    StopCommand,
-    PauseCommand,
-    InitializeCommand,
-    ToolSubsystemCommand,
-    FunnelSubsystemCommand,
-    WorkstationSubsystemCommand,
-    GantrySubsystemCommands
-], Field(discriminator="command")]
+RobotCommands = Annotated[
+    Union[
+        StoreCommand,
+        RetrieveCommand,
+        HomeCommand,
+        StopCommand,
+        PauseCommand,
+        InitializeCommand,
+        ToolSubsystemCommand,
+        FunnelSubsystemCommand,
+        WorkstationSubsystemCommand,
+        GantrySubsystemCommands,
+    ],
+    Field(discriminator="command"),
+]
 
 """
 High Level Queues are:

@@ -1,24 +1,26 @@
 from perpetual_p0c.robot import P0C, RobotConfiguration, RobotCommands
-#from abc import ABC, abstractmethod
+
+# from abc import ABC, abstractmethod
 from perpetual_can import CANBusHandler
 import asyncio
 from nats.aio.client import Client as NATS
-#from nats.aio.msg import Msg
-#from asyncio.queues import Queue
+
+# from nats.aio.msg import Msg
+# from asyncio.queues import Queue
 from typing import Optional
 
 
 class RobotWorker:
-
-    def __init__(self, 
-        bus: CANBusHandler, 
+    def __init__(
+        self,
+        bus: CANBusHandler,
         configuration: RobotConfiguration,
-        ) -> None:
+    ) -> None:
         self._robot = P0C(bus, configuration)
         self._bus = bus
         self._nc = NATS()
         self._work_queue_name = "commands"
-        self._response_queue_name = "events" 
+        self._response_queue_name = "events"
         self._emergency_queue_name = "emergency"
         self._nats_url = "nats://localhost:4222"
         self._current_task: Optional[asyncio.Task[None]] = None
@@ -29,11 +31,13 @@ class RobotWorker:
     async def connect(self) -> None:
         await self._nc.connect(servers=[self._nats_url])
 
-    #async def start(self) -> None:
+    # async def start(self) -> None:
     #    # Subscribe to work_queue
     #    await self._nc.subscribe(self._work_queue, cb=self.process_message)
     #    # Subscribe to emergency_queue
     #    await self._nc.subscribe(self._emergency_queue, cb=self.handle_emergency)
+
+
 """
 class RobotWorker:
     def __init__(self, nats_url: str, work_queue: str, response_queue: str, emergency_queue: str) -> None:
@@ -137,8 +141,3 @@ if __name__ == "__main__":
     asyncio.run(main())
 
 """
-
-
-
-
-

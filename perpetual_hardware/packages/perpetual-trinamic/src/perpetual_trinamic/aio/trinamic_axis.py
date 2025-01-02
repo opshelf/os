@@ -44,7 +44,9 @@ class TrinamicAxis(TMCM12xx):
 
     async def homing_safety_on(self) -> None:
         if self._configuration.external_encoder:
-            await self.set_external_encoder_max_deviation(self._configuration.max_encoder_deviation_homing)
+            await self.set_external_encoder_max_deviation(
+                self._configuration.max_encoder_deviation_homing
+            )
         else:
             await self.set_max_encoder_deviation(self._configuration.max_encoder_deviation_homing)
 
@@ -172,7 +174,9 @@ class TrinamicAxis(TMCM12xx):
         self._actual_position = self._configuration.convert_encoder_position(position)
         return self._actual_position
 
-    async def move_to_position(self, position: float, override_brake: Optional[bool] = False) -> None:
+    async def move_to_position(
+        self, position: float, override_brake: Optional[bool] = False
+    ) -> None:
         if self._status != StepperMotorStatus.GOOD:
             raise Exception("Status Bad")
         if self.configuration.brake and not override_brake:
@@ -188,7 +192,9 @@ class TrinamicAxis(TMCM12xx):
             self._target_position = position
             await self.move_absolute(position)
 
-    async def move_to_relative_position(self, position: float, override_brake: Optional[bool] = False) -> None:
+    async def move_to_relative_position(
+        self, position: float, override_brake: Optional[bool] = False
+    ) -> None:
         if self._status != StepperMotorStatus.GOOD:
             raise Exception("Status Bad")
         if self.configuration.brake and not override_brake:
@@ -211,7 +217,6 @@ class TrinamicAxis(TMCM12xx):
             else:
                 self._target_position = 0
                 await self.move_to_position(0)
-
 
     async def wait_for_move(self, timeout: float = 60.0) -> None:
         if self.configuration.brake:

@@ -8,6 +8,7 @@ from perpetual_p0c.tool_board import ToolBoard, IoBoard
 from typing import Literal, Union, Annotated
 from pydantic import BaseModel, Field
 
+
 class ToolOffsets(BaseModel):
     tool_retract_position: float
     tool_extend_position: float
@@ -22,6 +23,7 @@ class ToolConfiguration(BaseModel):
     puller: CanAxisConfiguration
     offsets: ToolOffsets
 
+
 class ToolStatus(BaseModel):
     puller_solenoids: int
     carriage_solenoids: int
@@ -29,68 +31,82 @@ class ToolStatus(BaseModel):
     puller_position: float
 
 
-
 class ShutdownCommand(BaseModel):
     command: Literal["shutdown"]
+
 
 class StopCommand(BaseModel):
     command: Literal["stop"]
 
+
 class InitializeCommand(BaseModel):
     command: Literal["initialize"]
+
 
 class ActuatorsCommand(BaseModel):
     command: Literal["actuators"]
     value: bool
+
 
 class CarriageSolenoidsCommand(BaseModel):
     command: Literal["set_carriage_solenoids"]
     tray: Tray
     side: StorageModuleSide
 
+
 class PullerSolenoidsCommand(BaseModel):
     command: Literal["set_puller_solenoids"]
     tray: Tray
     idx: int
 
+
 class SolenoidsOffCommand(BaseModel):
     command: Literal["solenoids_off"]
+
 
 class SetSlotBitsCommand(BaseModel):
     command: Literal["slot_bits"]
     value: int
 
+
 class ExtendCarriageCommand(BaseModel):
     command: Literal["extend_carriage"]
     side: StorageModuleSide
+
 
 class RetractCarriageCommand(BaseModel):
     command: Literal["retract_carriage"]
     side: StorageModuleSide
 
+
 class RetractTrayCommand(BaseModel):
     command: Literal["retract_tray"]
     side: StorageModuleSide
+
 
 class DropItemsCommand(BaseModel):
     command: Literal["drop_items"]
     tray: Tray
     idx: int
 
-ToolCommands = Annotated[Union[
-    ShutdownCommand,
-    StopCommand,
-    InitializeCommand,
-    ActuatorsCommand,
-    CarriageSolenoidsCommand,
-    PullerSolenoidsCommand,
-    SolenoidsOffCommand,
-    SetSlotBitsCommand,
-    ExtendCarriageCommand,
-    RetractCarriageCommand,
-    RetractTrayCommand,
-    DropItemsCommand
-], Field(discriminator="command")]
+
+ToolCommands = Annotated[
+    Union[
+        ShutdownCommand,
+        StopCommand,
+        InitializeCommand,
+        ActuatorsCommand,
+        CarriageSolenoidsCommand,
+        PullerSolenoidsCommand,
+        SolenoidsOffCommand,
+        SetSlotBitsCommand,
+        ExtendCarriageCommand,
+        RetractCarriageCommand,
+        RetractTrayCommand,
+        DropItemsCommand,
+    ],
+    Field(discriminator="command"),
+]
 
 
 class Tool:
@@ -330,7 +346,6 @@ class Tool:
             positions |= 1 << (position * 3 + 2)
             await self._tool_board.set_pullers(IoBoard.from_buffer(positions))
             await self.actuators(True)
-
 
     async def handle_command(self, command: ToolCommands) -> None:
         match command:

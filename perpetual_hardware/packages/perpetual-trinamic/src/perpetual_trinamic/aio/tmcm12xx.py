@@ -1,6 +1,7 @@
 from perpetual_trinamic.aio.tmcm import TMCM
 from perpetual_can import CANBusHandler
 
+
 class TMCM12xx(TMCM):
     def __init__(
         self,

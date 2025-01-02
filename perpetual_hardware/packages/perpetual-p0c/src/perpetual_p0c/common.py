@@ -7,19 +7,17 @@ from typing import Generic, TypeVar
 C = TypeVar("C")
 S = TypeVar("S")
 
+
 class AbstractSubsystem(ABC, Generic[C, S]):
+    @abstractmethod
+    def configuration(self) -> C: ...
 
     @abstractmethod
-    def configuration(self) -> C:
-        ...
+    def set_configuration(self, configuration: C) -> None: ...
 
     @abstractmethod
-    def set_configuration(self, configuration: C) -> None:
-        ...
+    async def status(self) -> S: ...
 
-    @abstractmethod
-    async def status(self) -> S:
-        ...
 
 class CanAxisConfiguration(BaseModel):
     can_id: int

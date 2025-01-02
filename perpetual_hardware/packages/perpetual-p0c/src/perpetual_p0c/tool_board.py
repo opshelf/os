@@ -5,6 +5,7 @@ from perpetual_p0c.common import CanMessageIds
 from perpetual_can import CANBusHandler, AsyncFilteredReader
 from enum import Enum
 
+
 def reverse_bits_in_range(num: int) -> int:
     mask = 0b111000
     bits = (num & mask) >> 3  # Shift them to the rightmost position (LSB)

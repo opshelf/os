@@ -58,66 +58,85 @@ class FunnelOpeningSize(int, Enum):
     OPEN_100MM = 1
     OPEN_150MM = 2
 
+
 class MoveToCellCommand(BaseModel):
     tray: Tray
     idx: int
 
+
 class ShutdownCommand(BaseModel):
     command: Literal["shutdown"]
+
 
 class StopCommand(BaseModel):
     command: Literal["stop"]
 
+
 class InitializeCommand(BaseModel):
     command: Literal["initialize"]
+
 
 class HomeCommand(BaseModel):
     command: Literal["home"]
 
+
 class StopBeltCommand(BaseModel):
     command: Literal["stop_belt"]
+
 
 class StartBeltCommand(BaseModel):
     command: Literal["start_belt"]
 
+
 class StopWallCommand(BaseModel):
     command: Literal["stop_wall"]
+
 
 class StartWallCommand(BaseModel):
     command: Literal["start_wall"]
 
+
 class StopOutputCommand(BaseModel):
     command: Literal["stop_output"]
+
 
 class StartOutputCommand(BaseModel):
     command: Literal["start_output"]
 
+
 class StopOutputTransferCommand(BaseModel):
     command: Literal["stop_output_transfer"]
 
+
 class StartOutputTransferCommand(BaseModel):
     command: Literal["start_output_transfer"]
+
 
 class MoveToCellCommmand(BaseModel):
     command: Literal["move_to_cell"]
     tray: Tray
     idx: int
 
-FunnelCommands = Annotated[Union[
-    ShutdownCommand,
-    StopCommand,
-    InitializeCommand,
-    HomeCommand,
-    StopBeltCommand,
-    StartBeltCommand,
-    StopWallCommand,
-    StartWallCommand,
-    StopOutputCommand,
-    StartOutputCommand,
-    StopOutputTransferCommand,
-    StartOutputTransferCommand, 
-    MoveToCellCommand
-], Field(discriminator="command")]
+
+FunnelCommands = Annotated[
+    Union[
+        ShutdownCommand,
+        StopCommand,
+        InitializeCommand,
+        HomeCommand,
+        StopBeltCommand,
+        StartBeltCommand,
+        StopWallCommand,
+        StartWallCommand,
+        StopOutputCommand,
+        StartOutputCommand,
+        StopOutputTransferCommand,
+        StartOutputTransferCommand,
+        MoveToCellCommand,
+    ],
+    Field(discriminator="command"),
+]
+
 
 class Funnel:
     def __init__(self, bus: CANBusHandler, funnel_configuration: FunnelConfiguration):
@@ -278,7 +297,7 @@ class Funnel:
     def slots_open(self) -> int:
         return self._slots_open
 
-    #async def open_slots(self, slots: int) -> None:
+    # async def open_slots(self, slots: int) -> None:
     #    self._slots_open = slots
     #    await self._io.set_wedges(
     #        Wedge(
@@ -585,4 +604,3 @@ class Funnel:
                 await self.move_to_cell(tray, idx)
             case _:
                 raise Exception("Invalid Command Exception")
-

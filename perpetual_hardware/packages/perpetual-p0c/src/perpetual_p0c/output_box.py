@@ -4,40 +4,45 @@ from perpetual_trinamic.aio.trinamic_axis import TrinamicAxis
 from perpetual_p0c.common import CanAxisConfiguration
 from pydantic import BaseModel, Field
 
+
 class OutputBoxOffsets(BaseModel):
     door_open_position: float
+
 
 class OutputBoxConfiguration(BaseModel):
     door: CanAxisConfiguration
     offsets: OutputBoxOffsets
 
+
 class ShutdownCommand(BaseModel):
     command: Literal["shutdown"]
+
 
 class StopCommand(BaseModel):
     command: Literal["stop"]
 
+
 class InitializeCommand(BaseModel):
     command: Literal["initialize"]
+
 
 class OpenCommand(BaseModel):
     command: Literal["open"]
 
+
 class CloseCommand(BaseModel):
     command: Literal["close"]
+
 
 class HomeCommand(BaseModel):
     command: Literal["home"]
 
 
-OutputBoxCommands = Annotated[Union[
-    ShutdownCommand,
-    StopCommand,
-    InitializeCommand,
-    OpenCommand,
-    CloseCommand,
-    HomeCommand
-], Field(discriminator="command")]
+OutputBoxCommands = Annotated[
+    Union[ShutdownCommand, StopCommand, InitializeCommand, OpenCommand, CloseCommand, HomeCommand],
+    Field(discriminator="command"),
+]
+
 
 class OutputBox:
     def __init__(self, bus: CANBusHandler, configuration: OutputBoxConfiguration):
@@ -105,5 +110,3 @@ class OutputBox:
                 await self.home()
             case _:
                 raise Exception("Invalid Command")
-
-

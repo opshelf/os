@@ -9,6 +9,7 @@ from inspect import Traceback
 
 E = TypeVar("E", bound=BaseException)
 
+
 class CANBusHandler:
     def __init__(self, bus: BusABC, loop: asyncio.AbstractEventLoop):
         self._bus = bus
@@ -20,26 +21,27 @@ class CANBusHandler:
     def bus(self) -> BusABC:
         return self._bus
 
-
     def __aenter__(self) -> "CANBusHandler":
         return self
 
-    def __aexit__(self,
+    def __aexit__(
+        self,
         exc_type: Optional[Type[E]],
         exc_val: Optional[E],
         exc_tb: Optional[Traceback],
-        ) -> None:
+    ) -> None:
         print(exc_type, exc_val, exc_tb)
         self.shutdown()
 
     def __enter__(self) -> "CANBusHandler":
         return self
 
-    def __exit__(self,
+    def __exit__(
+        self,
         exc_type: Optional[Type[E]],
         exc_val: Optional[E],
         exc_tb: Optional[Traceback],
-        ) -> None:
+    ) -> None:
         print(exc_type, exc_val, exc_tb)
         self.shutdown()
 

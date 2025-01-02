@@ -1,5 +1,6 @@
 from abc import ABCMeta, abstractmethod
 from enum import Enum
+
 # from pydantic import BaseModel
 from perpetual_p0c.gantry import GantryCoordinate
 
@@ -244,11 +245,8 @@ class RobotClient(ABCMeta):
 """
 
 
-
 class RobotStatus(int, Enum):
     ERROR = 0x00
     IDLE = 0x01
     BUSY = 0x02
     LOW_LEVEL = 0x03
-
-

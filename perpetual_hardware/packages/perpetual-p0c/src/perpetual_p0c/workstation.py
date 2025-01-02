@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from perpetual_p0c.common import CanAxisConfiguration
 from perpetual_p0c.output_box import OutputBoxConfiguration
 
+
 class WorkstationConfiguration(BaseModel):
     outputbox_configuration: OutputBoxConfiguration
     input_belt_configuration: CanAxisConfiguration
@@ -13,49 +14,62 @@ class WorkstationConfiguration(BaseModel):
     input_belt_speed: int
     output_belt_speed: int
 
+
 class ShutdownCommand(BaseModel):
     command: Literal["shutdown"]
+
 
 class StopCommand(BaseModel):
     command: Literal["stop"]
 
+
 class InitializeCommand(BaseModel):
     command: Literal["initialize"]
+
 
 class StartInputCommand(BaseModel):
     command: Literal["start_input_belt"]
 
+
 class StopInputCommand(BaseModel):
     command: Literal["stop_input_belt"]
+
 
 class StartOutputCommand(BaseModel):
     command: Literal["start_output_belt"]
 
+
 class StopOutputCommand(BaseModel):
     command: Literal["stop_output_belt"]
+
 
 class OpenOutputCommand(BaseModel):
     command: Literal["open_output"]
 
+
 class CloseOutputCommand(BaseModel):
     command: Literal["close_output"]
+
 
 class HomeOutput(BaseModel):
     command: Literal["home_output"]
 
-WorkstationCommands = Annotated[Union[
-    ShutdownCommand,
-    StopCommand,
-    InitializeCommand,
-    StartInputCommand,
-    StopInputCommand,
-    StartOutputCommand,
-    StopOutputCommand,
-    OpenOutputCommand,
-    CloseOutputCommand,
-    HomeOutput
-], Field(discriminator="command")]
 
+WorkstationCommands = Annotated[
+    Union[
+        ShutdownCommand,
+        StopCommand,
+        InitializeCommand,
+        StartInputCommand,
+        StopInputCommand,
+        StartOutputCommand,
+        StopOutputCommand,
+        OpenOutputCommand,
+        CloseOutputCommand,
+        HomeOutput,
+    ],
+    Field(discriminator="command"),
+]
 
 
 class Workstation:
@@ -163,4 +177,3 @@ class Workstation:
                 await self.home_output()
             case _:
                 raise Exception("Invalid Workstation Command")
-

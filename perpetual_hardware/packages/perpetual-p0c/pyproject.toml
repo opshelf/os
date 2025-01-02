@@ -11,7 +11,9 @@ dependencies = [
 	"waveshare-can",
 	"perpetual-trinamic",
 	"nats-py>=2.9.0",
-	"perpetual-can"
+	"perpetual-can",
+	"opencv-python>=4.10.0.84",
+	"zxing-cpp>=2.2.0",
 ]
 
 [build-system]
