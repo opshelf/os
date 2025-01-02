@@ -1,0 +1,8 @@
+{ 
+    "storage": { 
+        "file_name": "storage.json" 
+    },
+    "sizes": { 
+        "file_name": "sizes.json" 
+    }
+}

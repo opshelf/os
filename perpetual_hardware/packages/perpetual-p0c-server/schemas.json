@@ -1,0 +1,534 @@
+{
+    "Cell": {
+        "$defs": {
+            "CellItem": {
+                "properties": {
+                    "item_type": {
+                        "$ref": "#/$defs/ItemType"
+                    },
+                    "gs1_data": {
+                        "anyOf": [
+                            {
+                                "$ref": "#/$defs/GS1Data"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ]
+                    },
+                    "weight": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Weight"
+                    },
+                    "height": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Height"
+                    },
+                    "width": {
+                        "anyOf": [
+                            {
+                                "type": "number"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Width"
+                    }
+                },
+                "required": [
+                    "item_type",
+                    "gs1_data",
+                    "weight",
+                    "height",
+                    "width"
+                ],
+                "title": "CellItem",
+                "type": "object"
+            },
+            "CellStatus": {
+                "enum": [
+                    "OCCUPIED",
+                    "EMPTY",
+                    "BLOCKED"
+                ],
+                "title": "CellStatus",
+                "type": "string"
+            },
+            "GS1Data": {
+                "properties": {
+                    "gtin": {
+                        "title": "Gtin",
+                        "type": "string"
+                    },
+                    "expiry": {
+                        "title": "Expiry",
+                        "type": "string"
+                    },
+                    "lot": {
+                        "title": "Lot",
+                        "type": "string"
+                    },
+                    "sn": {
+                        "title": "Sn",
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "gtin",
+                    "expiry",
+                    "lot",
+                    "sn"
+                ],
+                "title": "GS1Data",
+                "type": "object"
+            },
+            "ItemType": {
+                "enum": [
+                    "OPTIONAL",
+                    "BOTTLE",
+                    "BOTTLE"
+                ],
+                "title": "ItemType",
+                "type": "string"
+            }
+        },
+        "properties": {
+            "status": {
+                "$ref": "#/$defs/CellStatus"
+            },
+            "item": {
+                "anyOf": [
+                    {
+                        "$ref": "#/$defs/CellItem"
+                    },
+                    {
+                        "type": "null"
+                    }
+                ]
+            }
+        },
+        "required": [
+            "status",
+            "item"
+        ],
+        "title": "Cell",
+        "type": "object"
+    },
+    "CellItem": {
+        "$defs": {
+            "GS1Data": {
+                "properties": {
+                    "gtin": {
+                        "title": "Gtin",
+                        "type": "string"
+                    },
+                    "expiry": {
+                        "title": "Expiry",
+                        "type": "string"
+                    },
+                    "lot": {
+                        "title": "Lot",
+                        "type": "string"
+                    },
+                    "sn": {
+                        "title": "Sn",
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "gtin",
+                    "expiry",
+                    "lot",
+                    "sn"
+                ],
+                "title": "GS1Data",
+                "type": "object"
+            },
+            "ItemType": {
+                "enum": [
+                    "OPTIONAL",
+                    "BOTTLE",
+                    "BOTTLE"
+                ],
+                "title": "ItemType",
+                "type": "string"
+            }
+        },
+        "properties": {
+            "item_type": {
+                "$ref": "#/$defs/ItemType"
+            },
+            "gs1_data": {
+                "anyOf": [
+                    {
+                        "$ref": "#/$defs/GS1Data"
+                    },
+                    {
+                        "type": "null"
+                    }
+                ]
+            },
+            "weight": {
+                "anyOf": [
+                    {
+                        "type": "number"
+                    },
+                    {
+                        "type": "null"
+                    }
+                ],
+                "title": "Weight"
+            },
+            "height": {
+                "anyOf": [
+                    {
+                        "type": "number"
+                    },
+                    {
+                        "type": "null"
+                    }
+                ],
+                "title": "Height"
+            },
+            "width": {
+                "anyOf": [
+                    {
+                        "type": "number"
+                    },
+                    {
+                        "type": "null"
+                    }
+                ],
+                "title": "Width"
+            }
+        },
+        "required": [
+            "item_type",
+            "gs1_data",
+            "weight",
+            "height",
+            "width"
+        ],
+        "title": "CellItem",
+        "type": "object"
+    },
+    "Coordinate": {
+        "properties": {
+            "x": {
+                "title": "X",
+                "type": "number"
+            },
+            "y": {
+                "title": "Y",
+                "type": "number"
+            },
+            "z": {
+                "title": "Z",
+                "type": "number"
+            }
+        },
+        "required": [
+            "x",
+            "y",
+            "z"
+        ],
+        "title": "Coordinate",
+        "type": "object"
+    },
+    "GS1Data": {
+        "properties": {
+            "gtin": {
+                "title": "Gtin",
+                "type": "string"
+            },
+            "expiry": {
+                "title": "Expiry",
+                "type": "string"
+            },
+            "lot": {
+                "title": "Lot",
+                "type": "string"
+            },
+            "sn": {
+                "title": "Sn",
+                "type": "string"
+            }
+        },
+        "required": [
+            "gtin",
+            "expiry",
+            "lot",
+            "sn"
+        ],
+        "title": "GS1Data",
+        "type": "object"
+    },
+    "Shelf": {
+        "$defs": {
+            "Coordinate": {
+                "properties": {
+                    "x": {
+                        "title": "X",
+                        "type": "number"
+                    },
+                    "y": {
+                        "title": "Y",
+                        "type": "number"
+                    },
+                    "z": {
+                        "title": "Z",
+                        "type": "number"
+                    }
+                },
+                "required": [
+                    "x",
+                    "y",
+                    "z"
+                ],
+                "title": "Coordinate",
+                "type": "object"
+            },
+            "Trays": {
+                "properties": {
+                    "width": {
+                        "title": "Width",
+                        "type": "number"
+                    },
+                    "height": {
+                        "title": "Height",
+                        "type": "number"
+                    },
+                    "calibration_point": {
+                        "anyOf": [
+                            {
+                                "$ref": "#/$defs/Coordinate"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ]
+                    },
+                    "empty": {
+                        "default": true,
+                        "title": "Empty",
+                        "type": "boolean"
+                    }
+                },
+                "required": [
+                    "width",
+                    "height",
+                    "calibration_point"
+                ],
+                "title": "Trays",
+                "type": "object"
+            }
+        },
+        "properties": {
+            "shelf_height": {
+                "title": "Shelf Height",
+                "type": "number"
+            },
+            "shelf_width": {
+                "title": "Shelf Width",
+                "type": "number"
+            },
+            "trays": {
+                "items": {
+                    "$ref": "#/$defs/Trays"
+                },
+                "title": "Trays",
+                "type": "array"
+            }
+        },
+        "required": [
+            "shelf_height",
+            "shelf_width",
+            "trays"
+        ],
+        "title": "Shelf",
+        "type": "object"
+    },
+    "StorageGrid": {
+        "$defs": {
+            "Coordinate": {
+                "properties": {
+                    "x": {
+                        "title": "X",
+                        "type": "number"
+                    },
+                    "y": {
+                        "title": "Y",
+                        "type": "number"
+                    },
+                    "z": {
+                        "title": "Z",
+                        "type": "number"
+                    }
+                },
+                "required": [
+                    "x",
+                    "y",
+                    "z"
+                ],
+                "title": "Coordinate",
+                "type": "object"
+            },
+            "Shelf": {
+                "properties": {
+                    "shelf_height": {
+                        "title": "Shelf Height",
+                        "type": "number"
+                    },
+                    "shelf_width": {
+                        "title": "Shelf Width",
+                        "type": "number"
+                    },
+                    "trays": {
+                        "items": {
+                            "$ref": "#/$defs/Trays"
+                        },
+                        "title": "Trays",
+                        "type": "array"
+                    }
+                },
+                "required": [
+                    "shelf_height",
+                    "shelf_width",
+                    "trays"
+                ],
+                "title": "Shelf",
+                "type": "object"
+            },
+            "Trays": {
+                "properties": {
+                    "width": {
+                        "title": "Width",
+                        "type": "number"
+                    },
+                    "height": {
+                        "title": "Height",
+                        "type": "number"
+                    },
+                    "calibration_point": {
+                        "anyOf": [
+                            {
+                                "$ref": "#/$defs/Coordinate"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ]
+                    },
+                    "empty": {
+                        "default": true,
+                        "title": "Empty",
+                        "type": "boolean"
+                    }
+                },
+                "required": [
+                    "width",
+                    "height",
+                    "calibration_point"
+                ],
+                "title": "Trays",
+                "type": "object"
+            }
+        },
+        "properties": {
+            "left_module": {
+                "items": {
+                    "$ref": "#/$defs/Shelf"
+                },
+                "title": "Left Module",
+                "type": "array"
+            },
+            "right_module": {
+                "items": {
+                    "$ref": "#/$defs/Shelf"
+                },
+                "title": "Right Module",
+                "type": "array"
+            }
+        },
+        "required": [
+            "left_module",
+            "right_module"
+        ],
+        "title": "StorageGrid",
+        "type": "object"
+    },
+    "Trays": {
+        "$defs": {
+            "Coordinate": {
+                "properties": {
+                    "x": {
+                        "title": "X",
+                        "type": "number"
+                    },
+                    "y": {
+                        "title": "Y",
+                        "type": "number"
+                    },
+                    "z": {
+                        "title": "Z",
+                        "type": "number"
+                    }
+                },
+                "required": [
+                    "x",
+                    "y",
+                    "z"
+                ],
+                "title": "Coordinate",
+                "type": "object"
+            }
+        },
+        "properties": {
+            "width": {
+                "title": "Width",
+                "type": "number"
+            },
+            "height": {
+                "title": "Height",
+                "type": "number"
+            },
+            "calibration_point": {
+                "anyOf": [
+                    {
+                        "$ref": "#/$defs/Coordinate"
+                    },
+                    {
+                        "type": "null"
+                    }
+                ]
+            },
+            "empty": {
+                "default": true,
+                "title": "Empty",
+                "type": "boolean"
+            }
+        },
+        "required": [
+            "width",
+            "height",
+            "calibration_point"
+        ],
+        "title": "Trays",
+        "type": "object"
+    }
+}

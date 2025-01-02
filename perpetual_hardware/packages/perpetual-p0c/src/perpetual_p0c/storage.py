@@ -48,8 +48,6 @@ class CellStatus(str, Enum):
 
 class CellItem(BaseModel):
     # Width and Height are the Bounding Box of the item
-    # height: float
-    # width: float
     dimensions: Dimensions
     item_type: Optional[ItemType] = None
     gs1_data: Optional[GS1Data] = None
@@ -99,6 +97,13 @@ class Tray(BaseModel):
         if self.width <= self.height:
             return self
         raise ValidationError("Invalid Tray Height width must be less than or equal to the height")
+
+    @model_validator(mode="after")
+    def verify_calibration_point(self) -> Self:
+        if self.calibration_point:
+            if self.calibration_point.x < 0.1 and self.calibration_point.y < 0.1 and self.calibration_point.z < 0.1:
+                self.calibration_point = None
+        return self
 
     @model_validator(mode="after")
     def verify_slots(self) -> Self:
@@ -207,7 +212,6 @@ class Shelf(BaseModel):
                     locations.append(ShelfCellLocation(tray_idx=tray_idx, slot_idx=open_slot))
             tray_idx += 1
         for location in locations:
-            print(item, location)
             if item.dimensions.width <= 50:
                 if self.trays[location.tray_idx].width == 50:
                     return location
@@ -240,10 +244,19 @@ class CellLocationData(BaseModel):
 class StorageGrid(BaseModel):
     left_module: List[Shelf]
     right_module: List[Shelf]
+    filename: str = "storage.json"
 
     def save_to_file(self, filename: str) -> None:
         with open(filename, "w+") as f:
             f.write(self.model_dump_json())
+
+    def save(self) -> None:
+        self.save_to_file(self.filename)
+
+    def update(self, updates: "StorageGrid") -> None:
+        for key, value in updates.dict().items():
+            setattr(self, key, value)
+        self.save()
 
     # @staticmethod
     # def load_from_file(filename: str) -> "StorageGrid":
@@ -401,6 +414,35 @@ class StorageGrid(BaseModel):
                             )
                         )
         return items
+
+    def get_all_free_cells(self) -> List[StorageModuleCellLocation]:
+        locations: List[StorageModuleCellLocation] = []
+        for shelf_idx, shelf in enumerate(self.left_module):
+            for tray_idx, tray in enumerate(shelf.trays):
+                for slot_idx, slot in enumerate(tray.slots):
+                    if slot.status == CellStatus.EMPTY:
+                        locations.append(
+                            StorageModuleCellLocation(
+                                    shelf_idx=shelf_idx,
+                                    tray_idx=tray_idx,
+                                    side=StorageModuleSide.LEFT,
+                                    slot_idx=slot_idx,
+                            )
+                        )
+        for shelf_idx, shelf in enumerate(self.right_module):
+            for tray_idx, tray in enumerate(shelf.trays):
+                for slot_idx, slot in enumerate(tray.slots):
+                    if slot.status == CellStatus.EMPTY:
+                        locations.append(
+                            StorageModuleCellLocation(
+                                    shelf_idx=shelf_idx,
+                                    tray_idx=tray_idx,
+                                    side=StorageModuleSide.RIGHT,
+                                    slot_idx=slot_idx,
+                            )
+                        )
+        return locations
+
 
     def get_all_cell_data(self) -> List[CellLocationData]:
         items: List[CellLocationData] = []

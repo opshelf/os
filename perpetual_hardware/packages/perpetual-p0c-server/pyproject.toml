@@ -1,0 +1,16 @@
+[project]
+name = "perpetual-p0c-server"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.6",
+    "nats-py>=2.9.0",
+    "pydantic>=2.10.0",
+    "perpetual-p0c",
+    "uvicorn>=0.32.1",
+]
+
+[tool.uv.sources]
+perpetual-p0c = { workspace = true }
