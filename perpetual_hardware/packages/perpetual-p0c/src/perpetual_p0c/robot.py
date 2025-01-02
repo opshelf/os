@@ -119,8 +119,14 @@ class ReturnCurrentTray(BaseMessage):
     command: Literal["return_current_tray"]
 
 
-# class  PullTray(BaseMessage):
-#    command: Literal["return_current_tray"]
+class PullTrayCommand(BaseMessage):
+    command: Literal["pull_tray"]
+    payload: StorageModuleTrayLocation
+
+
+class PlaceTrayCommand(BaseMessage):
+    command: Literal["place_tray"]
+    payload: StorageModuleTrayLocation | StorageModuleCellLocation
 
 
 class ToolSubsystemCommand(BaseMessage):
@@ -158,6 +164,8 @@ RobotCommands = Annotated[
         WorkstationSubsystemCommand,
         GantrySubsystemCommands,
         ReturnCurrentTray,
+        PullTrayCommand,
+        PlaceTrayCommand
     ],
     Field(discriminator="command"),
 ]
@@ -541,7 +549,10 @@ class P0C:
         else:
             raise Exception("Tray Currently Held But No Known Location to Place it")
 
-    async def pull_tray(self, location: StorageModuleTrayLocation) -> None:
+    async def pull_tray(
+            self, 
+            location: StorageModuleTrayLocation
+        ) -> None:
         tray_loaded = await self.tool.check_tray_loaded()
         if tray_loaded:
             if location == self._state.current_tray:
@@ -575,8 +586,6 @@ class P0C:
     async def receive_item(self, location: StorageModuleCellLocation) -> None:
         tray = self._storage.get_tray(location)
         await self.funnel.diverter.set_standby_current(2000)
-        # await self.run_input_transfer(tray, location.slot_idx)
-        # await self._setup_receive_item(location)
         input_transfer_task = asyncio.create_task(self.run_input_transfer(tray, location.slot_idx))
         tray_pull_task = asyncio.create_task(self.setup_receive_item(location))
         await input_transfer_task
@@ -657,6 +666,16 @@ class P0C:
             case RetrieveCommand(payload=payload):
                 await self.retrieve_item_by_location(payload.location)
                 return RetrieveResponse(status=ResponseStatus.COMPLETED, command=command)
+            case PlaceTrayCommand(payload=payload):
+                await self.place_tray(payload)
+                return AckResponse(
+                    status=ResponseStatus.COMPLETED, message="Tray Placed", command=command
+                )
+            case PullTrayCommand(payload=payload):
+                await self.pull_tray(payload)
+                return AckResponse(
+                    status=ResponseStatus.COMPLETED, message="Tray Pulled", command=command
+                )
             case HomeCommand():
                 await self.home()
                 return AckResponse(
