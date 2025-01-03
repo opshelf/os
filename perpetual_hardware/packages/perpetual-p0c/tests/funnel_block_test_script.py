@@ -51,7 +51,29 @@ async def main() -> None:
             await slot2.wait_for_move()
             await slot3.wait_for_move()
 
+async def slot_1_test() -> None:
+    can_bus = await get_can_bus()
+    slot1 = TrinamicAxis(
+        can_bus,
+        p0_funnel_config.slot_3.configuration,
+        module_id=p0_funnel_config.slot_3.can_id,
+
+    )
+    await slot1.home()
+    #await slot1.safety_off()
+    #for _ in range(0, 11):
+    #    await slot1.move_to_relative_position(10)
+    #    await slot1.wait_for_move()
+    #await slot1.home()
+    #for i in range(0, 11):
+    #    await slot1.move_to_position(30*i)
+    #    await slot1.wait_for_move()
+    #print("Press Enter to Move Wall Blocks in Increments of 30mm 10 times.")
+    #for i in range(0, 11):
+    #    await slot1.move_to_position(15*i)
+    #    await slot1.wait_for_move()
 
 if __name__ == "__main__":
     asyncio.run(main())
+    #asyncio.run(slot_1_test())
 

@@ -75,7 +75,7 @@ class BaseMessage(BaseModel):
     message_id: UUID4 = Field(default_factory=uuid4)
 
 
-class StorePayload:
+class StorePayload(BaseModel):
     location: StorageModuleCellLocation
     item: Optional[CellItem]
 
@@ -85,7 +85,7 @@ class StoreCommand(BaseMessage):
     payload: StorePayload
 
 
-class RetrievePayload:
+class RetrievePayload(BaseModel):
     location: StorageModuleCellLocation
     item: Optional[CellItem]
 
@@ -170,11 +170,6 @@ RobotCommands = Annotated[
     Field(discriminator="command"),
 ]
 
-
-# class BaseMessage(BaseModel):
-#    message_id: UUID4 = Field(default_factory=uuid4)
-
-
 class ResponseStatus(str, Enum):
     STARTING = "STARTING"
     COMPLETED = "COMPLETED"
@@ -256,10 +251,10 @@ class P0C:
         )
         self._config = config
         self._tool = Tool(self._bus, config.tool_configuration)
-        self._funnel = Funnel(self._bus, config.funnel_configuration)
         self._gantry = Gantry(self._bus, config.gantry_configuration)
         self._io = IoController(self._bus)
         self._workstation = Workstation(self._bus, config.workstation)
+        self._funnel = Funnel(self._bus, config.funnel_configuration)
         self._state = RobotState(current_tray=None)
         self._sizes = SizeDatabase()
 

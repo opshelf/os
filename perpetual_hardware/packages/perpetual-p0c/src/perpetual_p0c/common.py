@@ -9,6 +9,7 @@ S = TypeVar("S")
 
 
 class AbstractSubsystem(ABC, Generic[C, S]):
+
     @abstractmethod
     def configuration(self) -> C: ...
 
