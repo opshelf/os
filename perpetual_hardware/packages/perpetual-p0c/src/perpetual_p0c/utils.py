@@ -87,9 +87,10 @@ def get_usb_serial_can() -> List[CanConfig]:
             )
     return out
 
+
 def check_for_socket_can() -> Optional[CanConfig]:
-    #can_devices = ["can0", "can1"]
-    #for device in can_devices:
+    # can_devices = ["can0", "can1"]
+    # for device in can_devices:
     #    try:
     #        can_socket = socket.socket(socket.AF_CAN, socket.SOCK_RAW, socket.CAN_RAW)
     #        can_socket.bind((device,))
@@ -102,7 +103,6 @@ def check_for_socket_can() -> Optional[CanConfig]:
     #    except Exception as _:
     #        pass
     return None
-
 
 
 def get_can_devices() -> CanConfig:

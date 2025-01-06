@@ -1,4 +1,5 @@
 from pydantic import BaseModel
+from abc import abstractmethod, ABCMeta
 from perpetual_p0c.gantry import GantryConfiguration, Gantry, GantryCoordinate, GantryCommands
 from perpetual_p0c.funnel import FunnelConfiguration, Funnel, FunnelCommands
 from perpetual_p0c.tool import ToolConfiguration, Tool, ToolCommands
@@ -165,10 +166,11 @@ RobotCommands = Annotated[
         GantrySubsystemCommands,
         ReturnCurrentTray,
         PullTrayCommand,
-        PlaceTrayCommand
+        PlaceTrayCommand,
     ],
     Field(discriminator="command"),
 ]
+
 
 class ResponseStatus(str, Enum):
     STARTING = "STARTING"
@@ -202,7 +204,20 @@ class RetrieveResponse(BaseResponse):
 RobotResponses = Union[ErrorResponse, AckResponse, StorageResponse, RetrieveResponse, ErrorResponse]
 
 
-class P0C:
+class AbstractRobot(metaclass=ABCMeta):
+    @abstractmethod
+    async def handle_command(self, command: RobotCommands) -> RobotResponses: ...
+
+    @property
+    @abstractmethod
+    def storage(self) -> StorageGrid: ...
+
+    @storage.setter
+    @abstractmethod
+    def storage(self, storage: StorageGrid) -> None: ...
+
+
+class P0C(AbstractRobot):
     def __init__(self, bus: CANBusHandler, config: RobotConfiguration):
         self._bus = bus
         self._storage = StorageGrid(
@@ -340,6 +355,10 @@ class P0C:
     @property
     def storage(self) -> StorageGrid:
         return self._storage
+
+    @storage.setter
+    def storage(self, storage: StorageGrid) -> None:
+        self._storage = storage
 
     async def home(self) -> None:
         await self._tool.actuators(False)
@@ -550,10 +569,7 @@ class P0C:
         else:
             raise Exception("Tray Currently Held But No Known Location to Place it")
 
-    async def pull_tray(
-            self, 
-            location: StorageModuleTrayLocation
-        ) -> None:
+    async def pull_tray(self, location: StorageModuleTrayLocation) -> None:
         tray_loaded = await self.tool.check_tray_loaded()
         if tray_loaded:
             if location == self._state.current_tray:
@@ -623,8 +639,8 @@ class P0C:
         location = self._storage.get_next_free_location(item)
         if location:
             await self.receive_item(location)
-            self._storage.store_item(location, item)
-            self.save_storage()
+            # self._storage.store_item(location, item)
+            # self.save_storage()
         else:
             raise Exception("No Valid Location")
 
@@ -638,8 +654,8 @@ class P0C:
             location = self._storage.get_next_free_location(item)
             if location:
                 await self.receive_item(location)
-                self._storage.store_item(location, item)
-                self.save_storage()
+                # self._storage.store_item(location, item)
+                # self.save_storage()
             else:
                 raise Exception("No Valid Location")
         else:
@@ -647,13 +663,13 @@ class P0C:
 
     async def retrieve_item_by_location(self, location: StorageModuleCellLocation) -> None:
         await self.drop_off_item(location)
-        self._storage.clear_item(location)
+        # self._storage.clear_item(location)
         self.save_storage()
 
     async def retrieve_item_by_gtin(self, data: GS1Data) -> None:
         location = self._storage.get_item_location(data)
         await self.drop_off_item(location)
-        self._storage.clear_item(location)
+        # self._storage.clear_item(location)
         self.save_storage()
 
     async def handle_command(self, command: RobotCommands) -> RobotResponses:

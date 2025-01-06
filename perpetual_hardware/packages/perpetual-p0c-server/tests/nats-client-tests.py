@@ -1,15 +1,15 @@
 import asyncio
-import nats
 import random
-from nats.aio.client import Client as NATS
-from nats.js.api import DeliverPolicy, StreamConfig
+from nats.aio.client import Client as NATS, Msg
 from nats.errors import TimeoutError
 from typing import Optional
 from nats.js import JetStreamContext
+from nats.js.api import RawStreamMsg
 from perpetual_p0c.robot import RobotCommands, RobotResponses, StoreCommand, RetrieveCommand, ResponseStatus, StorageResponse, RetrieveResponse, StorePayload
 from perpetual_p0c.storage import StorageModuleCellLocation, StorageModuleSide
-from pydantic import parse_obj_as
+from pydantic import TypeAdapter, parse_obj_as
 import json
+from typing import List
 
 class Robot:
 
@@ -82,7 +82,7 @@ class Robot:
 
 
 class RobotWorker:
-    def __init__(self, nats_url, work_queue, response_queue, emergency_queue):
+    def __init__(self, nats_url: str, work_queue: str, response_queue: str, emergency_queue: str) -> None:
         self.nats_url = nats_url
         self.work_queue = work_queue
         self.response_queue = response_queue
@@ -94,19 +94,19 @@ class RobotWorker:
         self.js: Optional[JetStreamContext] = None
         self.work_consumer: Optional[JetStreamContext.PullSubscription] = None
 
-    async def connect(self):
+    async def connect(self) -> None:
         """Connect to the NATS server."""
         await self.nc.connect(servers=[self.nats_url])
         self.js = self.nc.jetstream()
         await self.js.add_stream(name="storage-module", subjects=["commands", "events"])
-        streams = await self.js.streams_info()
         self.work_consumer = await self.js.pull_subscribe(
             "commands",
             durable="commands",
         )
         print("Connected to NATS")
 
-    async def start(self):
+    async def start(self) -> None:
+        adapter = TypeAdapter[RobotCommands](RobotCommands)
         """Start the worker to listen on queues."""
         # Subscribe to work_queue
         if not self.work_consumer is None:
@@ -116,39 +116,40 @@ class RobotWorker:
                     msg = await self.work_consumer.fetch(timeout=1)
                     if len(msg) > 0:
                         print(msg[0].data.decode())
-                        cmd = parse_obj_as(RobotCommands, json.loads(msg[0].data.decode()))
+                        cmd = adapter.validate_json(msg[0].data.decode())
                         print(cmd)
                         response = await self.robot.handle_command(cmd)
                         print(response)
-                        await self.js.publish(
-                            "events",
-                            response.model_dump_json().encode()
-                        )
+                        if self.js:
+                            await self.js.publish(
+                                "events",
+                                response.model_dump_json().encode()
+                            )
                         await msg[0].ack()
                     await asyncio.sleep(.5)
                 except TimeoutError:
                     pass
             print("Done Listening")
 
-    async def close(self):
+    async def close(self) -> None:
         """Close the NATS connection."""
         await self.nc.close()
         print("Disconnected from NATS")
 
-    def stop(self):
+    def stop(self) -> None:
         """Close the NATS connection."""
         self.processing = False
         print("Disconnected from NATS")
 
 
 class RobotClient:
-    def __init__(self, nats_url: str, subject: str, stream_name: str):
+    def __init__(self, nats_url: str, subject: str, stream_name: str) -> None:
         self.nats_url = nats_url
         self.subject = subject
         self.stream_name = stream_name
         self.nc = NATS()
 
-    async def connect(self):
+    async def connect(self) -> None:
         """Connect to the NATS server."""
         await self.nc.connect(servers=[self.nats_url])
         self.js = self.nc.jetstream()
@@ -156,10 +157,10 @@ class RobotClient:
         # Ensure the stream exists
         # await self.js.add_stream(StreamConfig(name=self.stream_name, subjects=[self.subject]))
 
-    async def publish(self, cmd: RobotCommands):
+    async def publish(self, cmd: RobotCommands) -> None:
         await self.js.publish(self.subject, cmd.model_dump_json().encode())
 
-    async def get_all_messages(self):
+    async def get_all_messages(self) -> List[RawStreamMsg]:
         streams = await self.js.streams_info()
         for stream in streams:
             print(stream)
@@ -172,7 +173,7 @@ class RobotClient:
             messages.append(msg)
         return messages
 
-async def main():
+async def main() -> None:
     # Configuration
     nats_url = "nats://localhost:4222"
     work_queue = "storage-module"
@@ -193,7 +194,7 @@ async def main():
     )
     await robot.connect()
     await client.connect()
-    async def publisher():
+    async def publisher() -> None:
         print("publisher started")
         for _ in range(0, 10):
             await client.publish(

@@ -9,7 +9,11 @@ from perpetual_p0c.robot import RobotCommands, RobotResponses
 
 
 class RobotClient(AbstractRobotClient):
-    def __init__(self, command_queue: asyncio.Queue[RobotCommands], emergency_command: Callable[[RobotCommands], Coroutine[Any, Any, None]]):
+    def __init__(
+        self,
+        command_queue: asyncio.Queue[RobotCommands],
+        emergency_command: Callable[[RobotCommands], Coroutine[Any, Any, None]],
+    ):
         self._command_queue = command_queue
         self._emergency_command = emergency_command
 
@@ -21,7 +25,7 @@ class RobotClient(AbstractRobotClient):
         await self._emergency_command(command)
 
     async def get_queued_commands(self) -> List[RobotCommands]:
-        return list(self._command_queue._queue) #type: ignore
+        return list(self._command_queue._queue)  # type: ignore
 
     async def handle_response(self, response: RobotResponses) -> None:
         print(f"Handling response: {response}")
@@ -39,17 +43,19 @@ class RobotWorker(AbstractRobotWorker):
 
         # Client shares the same queues
         self.client = RobotClient(self._command_queue, self.emergency_command)
-        self._robot = robot 
+        self._robot = robot
         self._current_command: Optional[RobotCommands] = None
         self._worker_task: Optional[asyncio.Task] = None
         self._current_task: Optional[asyncio.Task] = None
         self.running = False
 
     @classmethod
-    async def get_instance(cls, bus: CANBusHandler, configuration: RobotConfiguration) -> "RobotWorker":
+    async def get_instance(
+        cls, bus: CANBusHandler, configuration: RobotConfiguration
+    ) -> "RobotWorker":
         if cls._instance is None:
             robot = await P0C.build(bus, configuration)
-            #await robot.initialize()
+            # await robot.initialize()
             cls._instance = cls(robot)
         return cls._instance
 
@@ -64,7 +70,7 @@ class RobotWorker(AbstractRobotWorker):
                     self._current_command = command
                     print(f"Processing command: {command}")
                     self._current_task = asyncio.create_task(self._robot.handle_command(command))
-                    #await self._robot.handle_command(command)
+                    # await self._robot.handle_command(command)
                     self._current_command = None
                 else:
                     if self._current_task and self._current_task.done():
@@ -97,4 +103,3 @@ class RobotWorker(AbstractRobotWorker):
                 self._worker_task.cancel()
                 await self._worker_task
             print("RobotWorker shut down.")
-

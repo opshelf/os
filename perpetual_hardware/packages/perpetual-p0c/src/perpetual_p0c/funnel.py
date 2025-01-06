@@ -58,6 +58,7 @@ class FunnelOpeningSize(int, Enum):
     OPEN_100MM = 1
     OPEN_150MM = 2
 
+
 class ShutdownCommand(BaseModel):
     command: Literal["shutdown"]
 
@@ -292,14 +293,14 @@ class Funnel:
         return self._slots_open
 
     async def open_slots(self, slots: int) -> None:
-       self._slots_open = slots
-       await self._io.set_wedges(
-           Wedge(
-               wedge_3=False if slots > 2 else True,
-               wedge_2=False if slots > 1 else True,
-               wedge_1=False if slots > 0 else True,
-           )
-       )
+        self._slots_open = slots
+        await self._io.set_wedges(
+            Wedge(
+                wedge_3=False if slots > 2 else True,
+                wedge_2=False if slots > 1 else True,
+                wedge_1=False if slots > 0 else True,
+            )
+        )
 
     async def open_tray_wedges(self, tray: Tray) -> None:
         if tray.cell_width <= 50:
@@ -502,9 +503,9 @@ class Funnel:
         slot_2 = await self._slot_2.get_position()
         slot_3 = await self._slot_3.get_position()
 
-        slot_1 = 0 
-        slot_2 = 0 
-        slot_3 = 0 
+        slot_1 = 0
+        slot_2 = 0
+        slot_3 = 0
         return FunnelStatus(
             inlet_funnel=ipos,
             opposing_funnel=opos,

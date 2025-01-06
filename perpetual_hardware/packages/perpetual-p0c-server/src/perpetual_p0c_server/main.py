@@ -2,24 +2,27 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from perpetual_p0c_server.core.storage import init_file_storage
 from perpetual_p0c_server.core.sizes import init_file_sizes
-from perpetual_p0c_server.routers import storage, gantry, sizes
+from perpetual_p0c_server.core.robot import init_robot_worker, stop_robot_worker
+from perpetual_p0c_server.routers import storage, gantry, sizes, robot
 from contextlib import asynccontextmanager
+from perpetual_p0c_server.core.printer import PrintWorker, MockPrinter
 from typing import AsyncGenerator
-# from perpetual_p0c_server.utils import get_base_models, load_models_and_get_json_schema
-# import os
-# import json
-# from pathlib import Path
-# file_path = Path("your_python_file.py")
-# from .dependencies import get_query_token, get_token_header
-# app = FastAPI(dependencies=[Depends(get_query_token)])
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     print(app.title)
+    await init_robot_worker(True)
+    mock_printer = MockPrinter()
+    print_worker = PrintWorker(
+        mock_printer, "nats://localhost:4222", "printer_queue", "printer_event_queue"
+    )
+    await print_worker.connect()
     init_file_storage()
     init_file_sizes()
     yield
+    await stop_robot_worker()
+    await print_worker.close()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -36,8 +39,8 @@ app.add_middleware(
 
 app.include_router(storage.router, prefix="/api/storage")
 app.include_router(sizes.router, prefix="/api/sizes")
-app.include_router(gantry.router, prefix="/api")
-
+app.include_router(gantry.router, prefix="/api/gantry")
+app.include_router(robot.router, prefix="/api/robot")
 # def save_schemas_to_files():
 #    file_path = "./app/routers/types.py"
 #    models = get_base_models(file_path)
