@@ -7,6 +7,7 @@ import re
 import subprocess
 from can import BusABC, ThreadSafeBus
 from perpetual_can import CANBusHandler
+import socket
 
 # DEFAULT_CAN_RATE = 1000000
 DEFAULT_CAN_RATE = 500000
@@ -86,6 +87,23 @@ def get_usb_serial_can() -> List[CanConfig]:
             )
     return out
 
+def check_for_socket_can() -> Optional[CanConfig]:
+    #can_devices = ["can0", "can1"]
+    #for device in can_devices:
+    #    try:
+    #        can_socket = socket.socket(socket.AF_CAN, socket.SOCK_RAW, socket.CAN_RAW)
+    #        can_socket.bind((device,))
+    #        can_socket.close()
+    #        return CanConfig(
+    #            CAN_INTERFACE="socketcan",
+    #            CAN_CHANNEL=device,
+    #            CAN_BITRATE=500000
+    #        )
+    #    except Exception as _:
+    #        pass
+    return None
+
+
 
 def get_can_devices() -> CanConfig:
     pcan = check_for_pcan()
@@ -94,6 +112,9 @@ def get_can_devices() -> CanConfig:
     serial_can = get_usb_serial_can()
     if len(serial_can):
         return serial_can[0]
+    socket_can = check_for_socket_can()
+    if socket_can:
+        return socket_can
     else:
         raise Exception("No Can Devices Available")
 

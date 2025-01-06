@@ -77,7 +77,7 @@ class BaseMessage(BaseModel):
 
 class StorePayload(BaseModel):
     location: StorageModuleCellLocation
-    item: Optional[CellItem]
+    item: Optional[CellItem] = None
 
 
 class StoreCommand(BaseMessage):
@@ -257,6 +257,12 @@ class P0C:
         self._funnel = Funnel(self._bus, config.funnel_configuration)
         self._state = RobotState(current_tray=None)
         self._sizes = SizeDatabase()
+
+    @classmethod
+    async def build(cls, bus: CANBusHandler, config: RobotConfiguration) -> "P0C":
+        instance = cls(bus, config)
+        await instance.initialize()
+        return instance
 
     async def initialize(self) -> None:
         await self.gantry.initialize()

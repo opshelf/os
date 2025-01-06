@@ -386,7 +386,7 @@ const StorageDesigner = ({
                         <SelectItem value="125">125(mm)</SelectItem>
                         <SelectItem value="150">150(mm)</SelectItem>
                         <SelectItem value="175">175(mm)</SelectItem>
-                        <SelectItem value="200">150(mm)</SelectItem>
+                        <SelectItem value="200">200(mm)</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -440,6 +440,8 @@ const Storage = () => {
   if (isError) {
     return <span>Error: {error.message}</span>;
   }
+
+  console.log(data);
 
   return (
     <Drawer>

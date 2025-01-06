@@ -7,10 +7,44 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import {
+  useQueries,
+  useMutation,
+  useQueryClient,
+} from '@tanstack/react-query';
+import { getFreeCells, getItems } from '@/api';
 
 const Inventory = () => {
+  const { data, error, pending } = useQueries({
+    queries: [
+      {
+        queryKey: ['items'],
+        queryFn: getItems,
+      },
+      {
+        queryKey: ['free_cells'],
+        queryFn: getFreeCells,
+      },
+    ],
+    combine: (results) => {
+      return {
+        data: results.map((result) => result.data),
+        pending: results.some((result) => result.isPending),
+        error: results.some((result) => result.isError),
+      };
+    },
+  });
+
+  if (pending) {
+    return <span>Loading...</span>;
+  }
+
+  if (error) {
+    return <span>Error Fetching Inventory</span>;
+  }
+
   return (
-    <div>
+    <div className="flex flex-col w-full">
       <Table>
         <TableCaption>A list of your recent invoices.</TableCaption>
         <TableHeader>

@@ -135,6 +135,7 @@ class TrinamicAxis(TMCM12xx):
                 break
             else:
                 if time.time() - t0 > 30:
+                    await self.stop()
                     raise Exception(f"Homing Failed {self._module_id}")
         while await self.get_error_flags():
             pass

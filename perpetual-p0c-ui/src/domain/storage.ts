@@ -19,24 +19,70 @@ export const storageModuleSchema = z.object({
   right_module: z.array(shelfSchema),
 });
 
-//export type Tray = {
-//  width: number;
-//  height: number;
-//  calibration_point: number | null;
-//};
+export const dimensionSchema = z.object({
+  length: z.number(),
+  width: z.number(),
+  height: z.number(),
+});
 
-//export type ShelfData = {
-//  shelf_height: number;
-//  shelf_width: number;
-//  trays: Tray[];
-//};
+export const itemTypeSchema = z.enum(['BOTTLE', 'BOX']);
+export const storageModuleSideSchema = z.enum([
+  'left_module',
+  'right_module',
+]);
 
-//export type StorageModuleData = {
-//  left_module: ShelfData[];
-//  right_module: ShelfData[];
-//};
+export const cellStatusSchema = z.enum([
+  'OCCUPIED',
+  'EMPTY',
+  'BLOCKED',
+]);
+
+export const gs1Schema = z.object({
+  gtin: z.string(),
+  expiry: z.string(),
+  lot: z.string(),
+  sn: z.string(),
+});
+
+export const cellItemSchema = z.object({
+  dimensions: dimensionSchema,
+  item_type: itemTypeSchema.optional().nullable(),
+  gs1_data: gs1Schema.optional().nullable(),
+  ndc_code: z.string().optional().nullable(),
+  weight: z.number().optional().nullable(),
+});
+
+export const storageModuleCellLocationSchema = z.object({
+  side: storageModuleSideSchema,
+  shelf_idx: z.number().int(),
+  tray_idx: z.number().int(),
+  slot_idx: z.number().int(),
+});
+
+export const storageModuleTrayLocationSchema = z.object({
+  side: storageModuleSideSchema,
+  shelf_idx: z.number().int(),
+  tray_idx: z.number().int(),
+});
+
+export const cellLocationDataSchema = z.object({
+  cell: cellItemSchema,
+  location: storageModuleCellLocationSchema,
+});
 
 export type Tray = z.infer<typeof traySchema>;
 export type ShelfData = z.infer<typeof shelfSchema>;
 export type StorageModuleData = z.infer<typeof storageModuleSchema>;
 export type StorageModuleSide = keyof StorageModuleData;
+export type Dimension = z.infer<typeof dimensionSchema>;
+export type ItemType = z.infer<typeof itemTypeSchema>;
+export type CellStatus = z.infer<typeof cellStatusSchema>;
+export type GS1 = z.infer<typeof gs1Schema>;
+export type CellItem = z.infer<typeof cellItemSchema>;
+export type StorageModuleCellLocation = z.infer<
+  typeof storageModuleCellLocationSchema
+>;
+export type StorageModuleTrayLocationSchema = z.infer<
+  typeof storageModuleTrayLocationSchema
+>;
+export type CellLocationData = z.infer<typeof cellLocationDataSchema>;

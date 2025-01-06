@@ -10,6 +10,7 @@ async def main() -> None:
     #await robot.stop()
     await robot.initialize()
     await robot.home()
+    input()
     idx = 0
     while True:
         await robot.pull_tray(

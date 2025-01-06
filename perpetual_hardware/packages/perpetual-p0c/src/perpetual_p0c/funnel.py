@@ -147,24 +147,24 @@ class Funnel:
             module_id=funnel_configuration.opposing_funnel.can_id,
             motor_id=0,
         )
-        #self._slot_1 = TrinamicAxis(
-        #    bus,
-        #    configuration=funnel_configuration.slot_1.configuration,
-        #    module_id=funnel_configuration.slot_1.can_id,
-        #    motor_id=0,
-        #)
-        #self._slot_2 = TrinamicAxis(
-        #    bus,
-        #    configuration=funnel_configuration.slot_2.configuration,
-        #    module_id=funnel_configuration.slot_2.can_id,
-        #    motor_id=0,
-        #)
-        #self._slot_3 = TrinamicAxis(
-        #    bus,
-        #    configuration=funnel_configuration.slot_3.configuration,
-        #    module_id=funnel_configuration.slot_3.can_id,
-        #    motor_id=0,
-        #)
+        self._slot_1 = TrinamicAxis(
+            bus,
+            configuration=funnel_configuration.slot_1.configuration,
+            module_id=funnel_configuration.slot_1.can_id,
+            motor_id=0,
+        )
+        self._slot_2 = TrinamicAxis(
+            bus,
+            configuration=funnel_configuration.slot_2.configuration,
+            module_id=funnel_configuration.slot_2.can_id,
+            motor_id=0,
+        )
+        self._slot_3 = TrinamicAxis(
+            bus,
+            configuration=funnel_configuration.slot_3.configuration,
+            module_id=funnel_configuration.slot_3.can_id,
+            motor_id=0,
+        )
         self._io = IoController(bus)
         self._belt = TrinamicStepper(
             bus,
@@ -185,13 +185,13 @@ class Funnel:
             module_id=funnel_configuration.diverter.can_id,
             motor_id=0,
         )
-        #self._output_transfer_conveyor = TrinamicStepper(
-        #    bus,
-        #    configuration=funnel_configuration.output_transfer_conveyor.configuration,
-        #    module_id=funnel_configuration.output_transfer_conveyor.can_id,
-        #    motor_id=0,
-        #    max_current=6000,
-        #)
+        self._output_transfer_conveyor = TrinamicStepper(
+            bus,
+            configuration=funnel_configuration.output_transfer_conveyor.configuration,
+            module_id=funnel_configuration.output_transfer_conveyor.can_id,
+            motor_id=0,
+            max_current=6000,
+        )
         self._output_conveyor = TrinamicStepper(
             bus,
             configuration=funnel_configuration.output_conveyor.configuration,
@@ -205,18 +205,18 @@ class Funnel:
     async def cleanup(self) -> None:
         await self._inlet_funnel.stop()
         await self._opposing_funnel.stop()
-        #await self._slot_1.stop()
-        #await self._slot_2.stop()
-        #await self._slot_3.stop()
+        await self._slot_1.stop()
+        await self._slot_2.stop()
+        await self._slot_3.stop()
         await self._belt.stop()
         await self._wall.stop()
         await self._diverter.stop()
         await self._diverter.set_standby_current(0)
-        #await self._output_transfer_conveyor.stop()
+        await self._output_transfer_conveyor.stop()
         await self._output_conveyor.stop()
         await self._belt.stop()
         await self._wall.stop()
-        #await self._output_transfer_conveyor.stop()
+        await self._output_transfer_conveyor.stop()
 
     @property
     def belt(self) -> TrinamicStepper:
@@ -226,16 +226,16 @@ class Funnel:
     def wall(self) -> TrinamicStepper:
         return self._wall
 
-    #@property
-    #def output_transfer_conveyor(self) -> TrinamicStepper:
-    #    return self._output_transfer_conveyor
+    @property
+    def output_transfer_conveyor(self) -> TrinamicStepper:
+        return self._output_transfer_conveyor
 
     @property
     async def output_conveyor(self) -> TrinamicStepper:
         return self._output_conveyor
 
-    #async def output_conveyor_stop(self) -> None:
-    #    await self._output_transfer_conveyor.stop()
+    async def output_conveyor_stop(self) -> None:
+        await self._output_transfer_conveyor.stop()
 
     async def stop_belt(self) -> None:
         await self._belt.stop()
@@ -259,15 +259,13 @@ class Funnel:
         await self._output_conveyor.rotate(int(self._configuration.offsets.output_conveyor_speed))
 
     async def stop_output_transfer(self) -> None:
-        pass
-        #await self._output_transfer_conveyor.stop()
+        await self._output_transfer_conveyor.stop()
 
     async def start_output_transfer(self) -> None:
-        pass
-        #await self._output_transfer_conveyor.initialize()
-        #await self._output_transfer_conveyor.rotate(
-        #    int(self._configuration.offsets.output_transfer_conveyor_speed)
-        #)
+        await self._output_transfer_conveyor.initialize()
+        await self._output_transfer_conveyor.rotate(
+            int(self._configuration.offsets.output_transfer_conveyor_speed)
+        )
 
     @property
     def offsets(self) -> FunnelOffsets:
@@ -293,15 +291,15 @@ class Funnel:
     def slots_open(self) -> int:
         return self._slots_open
 
-    # async def open_slots(self, slots: int) -> None:
-    #    self._slots_open = slots
-    #    await self._io.set_wedges(
-    #        Wedge(
-    #            wedge_3=False if slots > 2 else True,
-    #            wedge_2=False if slots > 1 else True,
-    #            wedge_1=False if slots > 0 else True,
-    #        )
-    #    )
+    async def open_slots(self, slots: int) -> None:
+       self._slots_open = slots
+       await self._io.set_wedges(
+           Wedge(
+               wedge_3=False if slots > 2 else True,
+               wedge_2=False if slots > 1 else True,
+               wedge_1=False if slots > 0 else True,
+           )
+       )
 
     async def open_tray_wedges(self, tray: Tray) -> None:
         if tray.cell_width <= 50:
@@ -344,34 +342,34 @@ class Funnel:
     def opposing_funnel(self) -> TrinamicAxis:
         return self._opposing_funnel
 
-    #@property
-    #def slot_1(self) -> TrinamicAxis:
-    #    return self._slot_1
+    @property
+    def slot_1(self) -> TrinamicAxis:
+        return self._slot_1
 
-    #@property
-    #def slot_2(self) -> TrinamicAxis:
-    #    return self._slot_2
+    @property
+    def slot_2(self) -> TrinamicAxis:
+        return self._slot_2
 
-    #@property
-    #def slot_3(self) -> TrinamicAxis:
-    #    return self._slot_3
+    @property
+    def slot_3(self) -> TrinamicAxis:
+        return self._slot_3
 
     @property
     def diverter(self) -> TrinamicStepper:
         return self._diverter
 
     async def return_slots(self) -> None:
-        #await self._slot_1.move_to_position(0)
-        #await self._slot_2.move_to_position(0)
-        #await self._slot_3.move_to_position(0)
+        await self._slot_1.move_to_position(0)
+        await self._slot_2.move_to_position(0)
+        await self._slot_3.move_to_position(0)
         await self.wait_for_move()
 
     async def home(self) -> None:
-        #await self._inlet_funnel.home()
-        #await self._opposing_funnel.home()
-        #await self._slot_1.home()
-        #await self._slot_2.home()
-        #await self._slot_3.home()
+        await self._inlet_funnel.home()
+        await self._opposing_funnel.home()
+        await self._slot_1.home()
+        await self._slot_2.home()
+        await self._slot_3.home()
         await self._diverter.home()
 
     async def check_position_reached(self) -> bool:
@@ -379,34 +377,33 @@ class Funnel:
             [
                 await self._inlet_funnel.poll_position_reached(),
                 await self._opposing_funnel.poll_position_reached(),
-                #await self._slot_1.poll_position_reached(),
-                #await self._slot_2.poll_position_reached(),
-                #await self._slot_3.poll_position_reached(),
+                await self._slot_1.poll_position_reached(),
+                await self._slot_2.poll_position_reached(),
+                await self._slot_3.poll_position_reached(),
             ]
         )
 
     async def wait_for_move(self) -> None:
         await self._inlet_funnel.wait_for_move()
         await self._opposing_funnel.wait_for_move()
-        #await self._slot_1.wait_for_move()
-        #await self._slot_2.wait_for_move()
-        #await self._slot_3.wait_for_move()
+        await self._slot_1.wait_for_move()
+        await self._slot_2.wait_for_move()
+        await self._slot_3.wait_for_move()
         await self._diverter.wait_for_move()
 
     async def open_tray_slots(self, tray: Tray) -> None:
-        print(tray)
-        #if tray.cell_width <= 50:
-        #    await self._slot_1.move_to_position(0)
-        #    await self._slot_2.move_to_position(tray.cell_width - 5)
-        #    await self._slot_3.move_to_position(tray.cell_width - 5)
-        #elif tray.cell_width > 50 and tray.cell_width <= 105:
-        #    await self._slot_1.move_to_position(0)
-        #    await self._slot_2.move_to_position(0)
-        #    await self._slot_3.move_to_position(tray.cell_width - 5)
-        #else:
-        #    await self._slot_1.move_to_position(0)
-        #    await self._slot_2.move_to_position(0)
-        #    await self._slot_3.move_to_position(0)
+        if tray.cell_width <= 50:
+            await self._slot_1.move_to_position(0)
+            await self._slot_2.move_to_position(tray.cell_width - 5)
+            await self._slot_3.move_to_position(tray.cell_width - 5)
+        elif tray.cell_width > 50 and tray.cell_width <= 105:
+            await self._slot_1.move_to_position(0)
+            await self._slot_2.move_to_position(0)
+            await self._slot_3.move_to_position(tray.cell_width - 5)
+        else:
+            await self._slot_1.move_to_position(0)
+            await self._slot_2.move_to_position(0)
+            await self._slot_3.move_to_position(0)
 
     async def close_tray_wedges(self, tray: Tray, times: int = 1) -> None:
         for _ in range(0, times):
@@ -485,25 +482,25 @@ class Funnel:
         ipos, opos = tray.get_cell_position(idx)
         diff = opos - ipos
         slot_pos = diff - 5
-        #if tray.cell_width <= 50:
-        #    await self._slot_1.move_to_position(slot_pos)
-        #    await self._slot_2.move_to_position(slot_pos)
-        #    await self._slot_3.move_to_position(0)
-        #elif tray.cell_width > 50 and tray.cell_width <= 105:
-        #    await self._slot_1.move_to_position(slot_pos)
-        #    await self._slot_2.move_to_position(0)
-        #    await self._slot_3.move_to_position(0)
-        #else:
-        #    await self._slot_1.move_to_position(0)
-        #    await self._slot_2.move_to_position(0)
-        #    await self._slot_3.move_to_position(0)
+        if tray.cell_width <= 50:
+            await self._slot_1.move_to_position(slot_pos)
+            await self._slot_2.move_to_position(slot_pos)
+            await self._slot_3.move_to_position(0)
+        elif tray.cell_width > 50 and tray.cell_width <= 105:
+            await self._slot_1.move_to_position(slot_pos)
+            await self._slot_2.move_to_position(0)
+            await self._slot_3.move_to_position(0)
+        else:
+            await self._slot_1.move_to_position(0)
+            await self._slot_2.move_to_position(0)
+            await self._slot_3.move_to_position(0)
 
     async def status(self) -> FunnelStatus:
         ipos = await self._inlet_funnel.get_position()
         opos = await self._opposing_funnel.get_position()
-        #slot_1 = await self._slot_1.get_position()
-        #slot_2 = await self._slot_2.get_position()
-        #slot_3 = await self._slot_3.get_position()
+        slot_1 = await self._slot_1.get_position()
+        slot_2 = await self._slot_2.get_position()
+        slot_3 = await self._slot_3.get_position()
 
         slot_1 = 0 
         slot_2 = 0 
@@ -519,20 +516,20 @@ class Funnel:
     async def stop(self) -> None:
         await self._inlet_funnel.stop()
         await self._opposing_funnel.stop()
-        #await self._slot_1.stop()
-        #await self._slot_2.stop()
-        #await self._slot_3.stop()
+        await self._slot_1.stop()
+        await self._slot_2.stop()
+        await self._slot_3.stop()
         await self._belt.stop()
         await self._wall.stop()
-        #await self._output_transfer_conveyor.stop_motor()
+        await self._output_transfer_conveyor.stop_motor()
         await self._output_conveyor.stop_motor()
 
     async def initialize(self) -> None:
         await self._inlet_funnel.initialize()
         await self._opposing_funnel.initialize()
-        #await self._slot_1.initialize()
-        #await self._slot_2.initialize()
-        #await self._slot_3.initialize()
+        await self._slot_1.initialize()
+        await self._slot_2.initialize()
+        await self._slot_3.initialize()
         await self._belt.initialize()
         await self._wall.initialize()
 

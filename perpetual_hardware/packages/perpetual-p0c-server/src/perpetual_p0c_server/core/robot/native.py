@@ -48,8 +48,8 @@ class RobotWorker(AbstractRobotWorker):
     @classmethod
     async def get_instance(cls, bus: CANBusHandler, configuration: RobotConfiguration) -> "RobotWorker":
         if cls._instance is None:
-            robot = P0C(bus, configuration)
-            await robot.initialize()
+            robot = await P0C.build(bus, configuration)
+            #await robot.initialize()
             cls._instance = cls(robot)
         return cls._instance
 
@@ -67,7 +67,7 @@ class RobotWorker(AbstractRobotWorker):
                     #await self._robot.handle_command(command)
                     self._current_command = None
                 else:
-                    if self._current_task and self._current_task.done:
+                    if self._current_task and self._current_task.done():
                         self._current_task = None
                     await asyncio.sleep(0.05)
 
