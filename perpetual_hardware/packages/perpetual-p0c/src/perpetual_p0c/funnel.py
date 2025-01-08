@@ -40,7 +40,7 @@ class FunnelConfiguration(BaseModel):
     diverter: CanAxisConfiguration
     relay_board_id: int
     offsets: FunnelOffsets
-    #opposing_funnel_max_travel: float = 362
+    # opposing_funnel_max_travel: float = 362
     opposing_funnel_max_travel: float = 340
     input_funnel_max_travel: float = 370.0
     minimum_transfer_location: float = 325.0

@@ -114,9 +114,7 @@ class RobotWorker(AbstractRobotWorker):
                         msg = await self.work_consumer.fetch(timeout=1)
                         # Msg will be a list greater than one or it will give a timeout error
                         cmd = adapter.validate_json(msg[0].data.decode())
-                        self._current_task = asyncio.create_task(
-                            self._robot.handle_command(cmd)
-                        )
+                        self._current_task = asyncio.create_task(self._robot.handle_command(cmd))
                         self._msg = msg[0]
                         self._current_command = cmd
                     else:
@@ -147,7 +145,7 @@ class RobotWorker(AbstractRobotWorker):
                         await self._msg.ack()
                     self._msg = None
                     self._current_task = None
-                    #self._robot.handle_command(ReturnCurrentTray())
+                    # self._robot.handle_command(ReturnCurrentTray())
         except Exception as e:
             print("Process Commands Error: ", e)
             if self._msg:

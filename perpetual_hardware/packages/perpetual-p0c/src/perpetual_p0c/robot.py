@@ -671,10 +671,7 @@ class P0C(AbstractRobot):
         match command:
             case StoreCommand(payload=payload):
                 await self.store_item_by_location(payload.location)
-                return StorageResponse(
-                    status=ResponseStatus.COMPLETED,
-                    command=command
-                )
+                return StorageResponse(status=ResponseStatus.COMPLETED, command=command)
             case RetrieveCommand(payload=payload):
                 await self.retrieve_item_by_location(payload.location)
                 return RetrieveResponse(status=ResponseStatus.COMPLETED, command=command)
