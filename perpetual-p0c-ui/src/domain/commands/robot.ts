@@ -12,7 +12,7 @@ import { toolCommandsSchema } from './tool';
 
 const storePayloadSchema = z.object({
   location: storageModuleCellLocationSchema,
-  item: cellItemSchema.optional(),
+  item: cellItemSchema.optional().nullable(),
 });
 
 export const storeCommandSchema = baseMessageSchema.extend({
@@ -22,7 +22,7 @@ export const storeCommandSchema = baseMessageSchema.extend({
 
 const retrievePayloadSchema = z.object({
   location: storageModuleCellLocationSchema,
-  item: cellItemSchema.optional(),
+  item: cellItemSchema.optional().nullable(),
 });
 
 export const retrieveCommandSchema = baseMessageSchema.extend({
@@ -56,7 +56,7 @@ export const returnCurrentTraySchema = baseMessageSchema.extend({
 
 export const pullTrayCommandSchema = baseMessageSchema.extend({
   command: z.literal('pull_tray'),
-  payload: storageModuleCellLocationSchema,
+  payload: storageModuleTrayLocationSchema,
 });
 
 export const placeTrayCommandSchema = baseMessageSchema.extend({

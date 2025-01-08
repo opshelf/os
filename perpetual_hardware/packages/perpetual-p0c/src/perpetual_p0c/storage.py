@@ -241,7 +241,7 @@ class Shelf(BaseModel):
 
 
 class CellLocationData(BaseModel):
-    cell: CellItem
+    cell: Optional[CellItem]
     location: StorageModuleCellLocation
 
 
@@ -367,7 +367,7 @@ class StorageGrid(BaseModel):
                 ShelfCellLocation(tray_idx=location.tray_idx, slot_idx=location.slot_idx)
             )
 
-    def store_item(self, location: StorageModuleCellLocation, item: CellItem) -> None:
+    def store_item(self, location: StorageModuleCellLocation, item: Optional[CellItem]) -> None:
         self.get_side(location.side)[location.shelf_idx].trays[location.tray_idx].slots[
             location.slot_idx
         ] = Cell(status=CellStatus.OCCUPIED, item=item)
@@ -452,7 +452,8 @@ class StorageGrid(BaseModel):
         for shelf_idx, shelf in enumerate(self.left_module):
             for tray_idx, tray in enumerate(shelf.trays):
                 for slot_idx, slot in enumerate(tray.slots):
-                    if slot.status == CellStatus.OCCUPIED and slot.item:
+                    # if slot.status == CellStatus.OCCUPIED and slot.item:
+                    if slot.status == CellStatus.OCCUPIED:
                         items.append(
                             CellLocationData(
                                 cell=slot.item,
@@ -467,7 +468,8 @@ class StorageGrid(BaseModel):
         for shelf_idx, shelf in enumerate(self.right_module):
             for tray_idx, tray in enumerate(shelf.trays):
                 for slot_idx, slot in enumerate(tray.slots):
-                    if slot.status == CellStatus.OCCUPIED and slot.item:
+                    # if slot.status == CellStatus.OCCUPIED and slot.item:
+                    if slot.status == CellStatus.OCCUPIED:
                         items.append(
                             CellLocationData(
                                 cell=slot.item,

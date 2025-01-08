@@ -66,6 +66,7 @@ const Shelf = ({
       height: storageModule[side][shelfIdx].shelf_height,
       calibration_point: null,
       empty: true,
+      slots: [],
     };
   };
 

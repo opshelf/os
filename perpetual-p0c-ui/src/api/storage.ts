@@ -8,6 +8,7 @@ import {
   storageModuleCellLocationSchema,
   CellLocationData,
   cellLocationDataSchema,
+  CellItem,
 } from '@/domain';
 
 export const updateStorage = async (
@@ -33,5 +34,26 @@ export const getFreeCells = async (): Promise<
 
 export const getItems = async (): Promise<CellLocationData[]> => {
   const response = await axios.get(`${HOST}/storage/items`);
+  return z.array(cellLocationDataSchema).parse(response.data);
+};
+
+export const addItem = async (data: {
+  location: StorageModuleCellLocation;
+  item: CellItem | null;
+}): Promise<CellLocationData[]> => {
+  const response = await axios.post(`${HOST}/storage/add_item`, data);
+  //return storageModuleSchema.parse(response.data);
+  return z.array(cellLocationDataSchema).parse(response.data);
+};
+
+export const removeItem = async (
+  cellLocation: StorageModuleCellLocation
+): Promise<CellLocationData[]> => {
+  const response = await axios.delete(`${HOST}/storage/delete_item`, {
+    data: {
+      location: cellLocation,
+    },
+  });
+  //return storageModuleSchema.parse(response.data);
   return z.array(cellLocationDataSchema).parse(response.data);
 };

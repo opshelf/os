@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Slider } from '@/components/ui/slider';
 import {
   Card,
@@ -39,6 +39,7 @@ const Controls = ({
   tray: TrayConfiguration;
   idx: number;
 }) => {
+  console.log(tray, idx);
   const [wiggleDistance, setWiggleDistance] = useState(0.2);
   return (
     <Card className="grow">
@@ -208,7 +209,7 @@ const Controls = ({
   );
 };
 
-const Conveyor = () => {
+export const Conveyor = () => {
   return (
     <Card className="">
       <CardHeader>

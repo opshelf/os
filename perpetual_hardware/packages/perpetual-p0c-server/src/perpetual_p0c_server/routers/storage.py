@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 from perpetual_p0c.storage import CellItem, CellLocationData, StorageGrid, StorageModuleCellLocation
 from perpetual_p0c_server.core.storage import get_storage
-from typing import List
+from typing import List, Optional
 
 router = APIRouter()
 
@@ -34,10 +34,14 @@ async def get_locations(
 
 @router.post("/add_item")
 async def store_item(
-    location: StorageModuleCellLocation, item: CellItem, storage: StorageGrid = Depends(get_storage)
+    location: StorageModuleCellLocation,
+    item: Optional[CellItem] = None,
+    storage: StorageGrid = Depends(get_storage),
 ) -> List[CellLocationData]:
+    print("Storing at ", location, item)
     storage.store_item(location, item)
     storage.save()
+    print(storage)
     return storage.get_all_cell_data()
 
 

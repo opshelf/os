@@ -83,7 +83,20 @@ async def slot_1_test() -> None:
     #    await slot1.move_to_position(15*i)
     #    await slot1.wait_for_move()
 
+async def slot_2_test() -> None:
+    can_bus = await get_can_bus()
+    slot1 = TrinamicAxis(
+        can_bus,
+        p0_funnel_config.slot_2.configuration,
+        module_id=p0_funnel_config.slot_2.can_id,
+    )
+    await slot1.initialize()
+    await slot1.home()
+    await slot1.safety_off()
+    await slot1.move_to_position(165)
+
 if __name__ == "__main__":
     #asyncio.run(main())
-    asyncio.run(slot_1_test())
+    #asyncio.run(slot_1_test())
+    asyncio.run(slot_2_test())
 

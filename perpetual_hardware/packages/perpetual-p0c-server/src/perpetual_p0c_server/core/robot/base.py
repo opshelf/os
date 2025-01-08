@@ -26,3 +26,9 @@ class AbstractRobotWorker(metaclass=ABCMeta):
 
     @abstractmethod
     async def shutdown(self) -> None: ...
+
+    @abstractmethod
+    async def start(self) -> None: ...
+
+    @abstractmethod
+    async def clear_commands(self) -> None: ...

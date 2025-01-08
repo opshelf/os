@@ -1,24 +1,6 @@
 import z from 'zod';
 import { toolCoordinateSchema } from './movement';
 
-export const traySchema = z.object({
-  width: z.number(),
-  height: z.number(),
-  calibration_point: toolCoordinateSchema.optional().nullable(),
-  empty: z.boolean(),
-});
-
-export const shelfSchema = z.object({
-  shelf_height: z.number(),
-  shelf_width: z.number(),
-  trays: z.array(traySchema),
-});
-
-export const storageModuleSchema = z.object({
-  left_module: z.array(shelfSchema),
-  right_module: z.array(shelfSchema),
-});
-
 export const dimensionSchema = z.object({
   length: z.number(),
   width: z.number(),
@@ -52,6 +34,30 @@ export const cellItemSchema = z.object({
   weight: z.number().optional().nullable(),
 });
 
+export const cellData = z.object({
+  status: cellStatusSchema,
+  item: cellItemSchema.optional().nullable(),
+});
+
+export const traySchema = z.object({
+  width: z.number(),
+  height: z.number(),
+  calibration_point: toolCoordinateSchema.optional().nullable(),
+  empty: z.boolean(),
+  slots: z.array(cellData),
+});
+
+export const shelfSchema = z.object({
+  shelf_height: z.number(),
+  shelf_width: z.number(),
+  trays: z.array(traySchema),
+});
+
+export const storageModuleSchema = z.object({
+  left_module: z.array(shelfSchema),
+  right_module: z.array(shelfSchema),
+});
+
 export const storageModuleCellLocationSchema = z.object({
   side: storageModuleSideSchema,
   shelf_idx: z.number().int(),
@@ -66,7 +72,7 @@ export const storageModuleTrayLocationSchema = z.object({
 });
 
 export const cellLocationDataSchema = z.object({
-  cell: cellItemSchema,
+  cell: cellItemSchema.nullable().optional(),
   location: storageModuleCellLocationSchema,
 });
 

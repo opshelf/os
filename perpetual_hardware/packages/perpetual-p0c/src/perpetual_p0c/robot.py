@@ -280,6 +280,7 @@ class P0C(AbstractRobot):
         return instance
 
     async def initialize(self) -> None:
+        self.load_state()
         await self.gantry.initialize()
         await self.funnel.initialize()
         await self.workstation.initialize()
@@ -639,8 +640,6 @@ class P0C(AbstractRobot):
         location = self._storage.get_next_free_location(item)
         if location:
             await self.receive_item(location)
-            # self._storage.store_item(location, item)
-            # self.save_storage()
         else:
             raise Exception("No Valid Location")
 
@@ -654,8 +653,6 @@ class P0C(AbstractRobot):
             location = self._storage.get_next_free_location(item)
             if location:
                 await self.receive_item(location)
-                # self._storage.store_item(location, item)
-                # self.save_storage()
             else:
                 raise Exception("No Valid Location")
         else:
@@ -663,13 +660,11 @@ class P0C(AbstractRobot):
 
     async def retrieve_item_by_location(self, location: StorageModuleCellLocation) -> None:
         await self.drop_off_item(location)
-        # self._storage.clear_item(location)
         self.save_storage()
 
     async def retrieve_item_by_gtin(self, data: GS1Data) -> None:
         location = self._storage.get_item_location(data)
         await self.drop_off_item(location)
-        # self._storage.clear_item(location)
         self.save_storage()
 
     async def handle_command(self, command: RobotCommands) -> RobotResponses:
@@ -677,8 +672,8 @@ class P0C(AbstractRobot):
             case StoreCommand(payload=payload):
                 await self.store_item_by_location(payload.location)
                 return StorageResponse(
-                    **command.model_dump(),
                     status=ResponseStatus.COMPLETED,
+                    command=command
                 )
             case RetrieveCommand(payload=payload):
                 await self.retrieve_item_by_location(payload.location)
@@ -692,6 +687,11 @@ class P0C(AbstractRobot):
                 await self.pull_tray(payload)
                 return AckResponse(
                     status=ResponseStatus.COMPLETED, message="Tray Pulled", command=command
+                )
+            case ReturnCurrentTray():
+                await self.return_current_tray()
+                return AckResponse(
+                    status=ResponseStatus.COMPLETED, message="Tray Returned", command=command
                 )
             case HomeCommand():
                 await self.home()

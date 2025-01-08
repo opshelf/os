@@ -94,7 +94,10 @@ class TrinamicStepper(TMCM12xx):
         await self.set_max_current(self._configuration.work_current)
         await self.set_standby_current(self._configuration.holding_current)
         await self.set_microsteps(self.MicroStepResolution.MicrostepResolution16Microsteps)
-        await self.safety_on()
+        if self._configuration.safety:
+            await self.safety_on()
+        else:
+            await self.safety_off()
         await self.set_relative_position_mode()
         self._target_position = await self.get_position()
         position = await self.encoder_position()
@@ -223,7 +226,7 @@ class TrinamicStepper(TMCM12xx):
 
     async def wait_for_move(self, timeout: float = 60.0) -> None:
         t0 = time.time()
-        while not self.get_position_reached():
+        while not await self.get_position_reached():
             time.sleep(0.05)
             if await self.get_error_flags():
                 await self.set_hard_stop_status(HardStopStatus.HARD_STOPPED)
