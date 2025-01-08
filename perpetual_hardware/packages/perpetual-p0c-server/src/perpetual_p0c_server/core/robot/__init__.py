@@ -13,7 +13,7 @@ async def init_robot_worker(mock: bool) -> None:
     global robot_worker
     if mock:
         mock_robot = MockRobot(p0_robot_config)
-        robot_worker = await Robot_worker_workerWorker.get_instance(mock_robot)
+        robot_worker = await RobotWorker.get_instance(mock_robot)
         await robot_worker.connect()
         await robot_worker.start()
     else:
