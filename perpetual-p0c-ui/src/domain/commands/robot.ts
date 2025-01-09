@@ -54,6 +54,15 @@ export const returnCurrentTraySchema = baseMessageSchema.extend({
   command: z.literal('return_current_tray'),
 });
 
+export const idlePositionCommandSchema = baseMessageSchema.extend({
+  command: z.literal('idle_position'),
+});
+
+export const serviceHighPositionCommandSchema =
+  baseMessageSchema.extend({
+    command: z.literal('service_high_position'),
+  });
+
 export const pullTrayCommandSchema = baseMessageSchema.extend({
   command: z.literal('pull_tray'),
   payload: storageModuleTrayLocationSchema,
@@ -101,6 +110,8 @@ export const robotCommandsSchema = z.discriminatedUnion('command', [
   returnCurrentTraySchema,
   pullTrayCommandSchema,
   placeTrayCommandSchema,
+  idlePositionCommandSchema,
+  serviceHighPositionCommandSchema,
   // Subsystem Commands
   toolSubsystemCommandSchema,
   funnelSubsystemCommandSchema,
@@ -124,6 +135,13 @@ export type ReturnCurrentTray = z.infer<
 >;
 export type PullTrayCommand = z.infer<typeof pullTrayCommandSchema>;
 export type PlaceTrayCommand = z.infer<typeof placeTrayCommandSchema>;
+
+export type IdlePositionCommand = z.infer<
+  typeof idlePositionCommandSchema
+>;
+export type ServiceHighPositionCommand = z.infer<
+  typeof serviceHighPositionCommandSchema
+>;
 export type ToolSubsystemCommand = z.infer<
   typeof toolSubsystemCommandSchema
 >;

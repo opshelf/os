@@ -5,6 +5,7 @@ import {
   CardHeader,
   CardTitle,
 } from '../ui/card';
+import { RobotController as Robot } from '@/domain/robot';
 import { CellSelectionForm } from '../CellLocationForm';
 import { Label } from '../ui/label';
 import { PullTrayCommand } from '@/domain/commands/robot';
@@ -23,9 +24,11 @@ import {
   GrabIcon,
   HomeIcon,
   LoaderIcon,
+  LocateIcon,
   RotateCcwIcon,
   // ReplaceIcon,
   StopCircleIcon,
+  WrenchIcon,
 } from 'lucide-react';
 import {
   Select,
@@ -345,6 +348,8 @@ const RobotController = () => {
     queryFn: getStorage,
   });
 
+  const robot = new Robot(robotCommand);
+
   if (isPending) {
     return <span>Loading...</span>;
   }
@@ -358,10 +363,7 @@ const RobotController = () => {
       <div className="flex space-x-4">
         <Button
           onClick={async () => {
-            await robotCommand({
-              ...createBaseMessage(),
-              command: 'home',
-            });
+            await robot.home();
           }}
         >
           <HomeIcon />
@@ -369,10 +371,7 @@ const RobotController = () => {
         </Button>
         <Button
           onClick={async () => {
-            await robotCommand({
-              ...createBaseMessage(),
-              command: 'home_y_first',
-            });
+            await robot.homeYFirst();
           }}
         >
           <HomeIcon />
@@ -380,10 +379,7 @@ const RobotController = () => {
         </Button>
         <Button
           onClick={async () => {
-            await robotCommand({
-              ...createBaseMessage(),
-              command: 'initialize',
-            });
+            await robot.initialize();
           }}
         >
           <LoaderIcon />
@@ -391,14 +387,27 @@ const RobotController = () => {
         </Button>
         <Button
           onClick={async () => {
-            await robotCommand({
-              ...createBaseMessage(),
-              command: 'return_current_tray',
-            });
+            await robot.returnCurrentTray();
           }}
         >
           <CornerDownLeft />
           Return Tray
+        </Button>
+        <Button
+          onClick={async () => {
+            await robot.idlePositionCommand();
+          }}
+        >
+          <LocateIcon />
+          Idle
+        </Button>
+        <Button
+          onClick={async () => {
+            await robot.serviceHighPosition();
+          }}
+        >
+          <WrenchIcon />
+          Service High Position
         </Button>
         <div className="grow" />
         <Button

@@ -7,9 +7,20 @@ import {
 import { BaseMessage } from '@/domain/commands/funnel';
 import { v4 as uuidv4 } from 'uuid';
 import z from 'zod';
+import { GS1 } from '@/domain';
 
 export const createBaseMessage = (): BaseMessage => {
   return { message_id: uuidv4() };
+};
+
+export const storeCommand = async (gs1: GS1): Promise<void> => {
+  const response = await axios.post(`${HOST}/robot/events`, {
+    kind: 'storing_requested',
+    payload: {
+      gs1: gs1.raw_text,
+    },
+  });
+  console.log(response.data);
 };
 
 export const robotCommand = async (

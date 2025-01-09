@@ -10,6 +10,7 @@ import SubsystemController from './components/SubsystemControl';
 import Inventory from './components/Inventory';
 import AxisControl from './components/AxisControl';
 import SizeDatabase from './components/SizeDatabase';
+import ScannerEventSSE from './components/ScannerEvent';
 
 const queryClient = new QueryClient();
 
@@ -28,6 +29,7 @@ function App() {
           {/*<Route component={Storage} />*/}
         </Switch>
       </QueryClientProvider>
+      <ScannerEventSSE />
     </div>
   );
 }

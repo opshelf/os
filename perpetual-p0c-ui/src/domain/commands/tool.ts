@@ -1,67 +1,60 @@
 import z from 'zod';
 import { traySchema, storageModuleSideSchema } from '../storage';
-import { baseMessageSchema } from './base';
 
-export const toolShutdownCommandSchema = baseMessageSchema.extend({
+export const toolShutdownCommandSchema = z.object({
   command: z.literal('shutdown'),
 });
 
-export const toolStopCommandSchema = baseMessageSchema.extend({
+export const toolStopCommandSchema = z.object({
   command: z.literal('stop'),
 });
 
-export const toolInitializeCommandSchema = baseMessageSchema.extend({
+export const toolInitializeCommandSchema = z.object({
   command: z.literal('initialize'),
 });
 
-export const toolActuatorsCommandSchema = baseMessageSchema.extend({
+export const toolActuatorsCommandSchema = z.object({
   command: z.literal('actuators'),
   value: z.boolean(),
 });
 
-export const toolCarriageSolenoidsCommandSchema =
-  baseMessageSchema.extend({
-    command: z.literal('set_carriage_solenoids'),
-    tray: traySchema,
-    side: storageModuleSideSchema,
-  });
+export const toolCarriageSolenoidsCommandSchema = z.object({
+  command: z.literal('set_carriage_solenoids'),
+  tray: traySchema,
+  side: storageModuleSideSchema,
+});
 
-export const toolPullerSolenoidsCommandSchema =
-  baseMessageSchema.extend({
-    command: z.literal('set_puller_solenoids'),
-    tray: traySchema,
-    idx: z.number(),
-  });
+export const toolPullerSolenoidsCommandSchema = z.object({
+  command: z.literal('set_puller_solenoids'),
+  tray: traySchema,
+  idx: z.number(),
+});
 
-export const toolSolenoidsOffCommandSchema = baseMessageSchema.extend(
-  {
-    command: z.literal('solenoids_off'),
-  }
-);
+export const toolSolenoidsOffCommandSchema = z.object({
+  command: z.literal('solenoids_off'),
+});
 
-export const toolSetSlotBitsCommandSchema = baseMessageSchema.extend({
+export const toolSetSlotBitsCommandSchema = z.object({
   command: z.literal('slot_bits'),
   value: z.number(),
 });
 
-export const toolExtendCarriageCommandSchema =
-  baseMessageSchema.extend({
-    command: z.literal('extend_carriage'),
-    side: storageModuleSideSchema,
-  });
+export const toolExtendCarriageCommandSchema = z.object({
+  command: z.literal('extend_carriage'),
+  side: storageModuleSideSchema,
+});
 
-export const toolRetractCarriageCommandSchema =
-  baseMessageSchema.extend({
-    command: z.literal('retract_carriage'),
-    side: storageModuleSideSchema,
-  });
+export const toolRetractCarriageCommandSchema = z.object({
+  command: z.literal('retract_carriage'),
+  side: storageModuleSideSchema,
+});
 
-export const toolRetractTrayCommandSchema = baseMessageSchema.extend({
+export const toolRetractTrayCommandSchema = z.object({
   command: z.literal('retract_tray'),
   side: storageModuleSideSchema,
 });
 
-export const toolDropItemsCommandSchema = baseMessageSchema.extend({
+export const toolDropItemsCommandSchema = z.object({
   command: z.literal('drop_items'),
   tray: traySchema,
   idx: z.number(),

@@ -51,7 +51,7 @@ export const removeItem = async (
 ): Promise<CellLocationData[]> => {
   const response = await axios.delete(`${HOST}/storage/delete_item`, {
     data: {
-      location: cellLocation,
+      ...cellLocation,
     },
   });
   //return storageModuleSchema.parse(response.data);

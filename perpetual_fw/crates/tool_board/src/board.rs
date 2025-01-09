@@ -121,7 +121,7 @@ impl<'a> ToolBoard<'a> {
             CAN_TX_CHANNEL.init(Channel::new()),
             CAN_RX_CHANNEL.init(Channel::new()),
         );
-        let wdg = embassy_stm32::wdg::IndependentWatchdog::new(p.IWDG, 100_000);
+        let wdg = embassy_stm32::wdg::IndependentWatchdog::new(p.IWDG, 500_000);
         let _ = spawner.spawn(can_receive_task(can_id, buffered_can));
         let _ = spawner.spawn(hardware_watchdog(wdg));
 

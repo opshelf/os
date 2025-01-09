@@ -32,6 +32,8 @@ import {
   GantryCoordinateSchema,
 } from '@/domain';
 import { GantryMoveCommands } from '@/domain/gantry';
+import { RobotController } from '@/domain/robot';
+import { robotCommand } from '@/api/robot';
 
 const MoveForm = () => {
   const form = useForm<GantryCoordinateSchema>({
@@ -112,21 +114,21 @@ const GantryController = () => {
     y_jog: 5,
   });
 
+  const robot = new RobotController(robotCommand);
+
   const runJogCommand = async (axis: 'x' | 'y', movement: number) => {
-    let defaultMove: GantryMoveCommands = {
-      command: 'MOVE_RELATIVE',
-      payload: {
-        x: 0,
-        y: 0,
-      },
+    let defaultMove = {
+      x: 0,
+      y: 0,
     };
     if (axis == 'x') {
-      defaultMove['payload'][axis] = movement;
+      defaultMove[axis] = movement;
     }
     if (axis == 'y') {
-      defaultMove['payload'][axis] = movement;
+      defaultMove[axis] = movement;
     }
-    await moveGantry(defaultMove);
+    //await moveGantry(defaultMove);
+    await robot.gantry.gantryMoveRelativeCommand(defaultMove);
   };
 
   return (

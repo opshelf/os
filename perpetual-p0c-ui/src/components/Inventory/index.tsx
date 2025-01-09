@@ -32,6 +32,9 @@ import {
 } from '@/domain';
 import { CellSelectionForm } from '../CellLocationForm';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
+import { useStateStore } from '@/store';
+import { GS1 } from '@/domain';
+import DimensionForm from '../DimensionForm';
 
 const InventoryTable = ({ data }: { data: CellLocationData[] }) => {
   return (
@@ -41,7 +44,7 @@ const InventoryTable = ({ data }: { data: CellLocationData[] }) => {
         <TableRow>
           <TableHead className="w-[100px]">Side</TableHead>
           <TableHead className="w-[100px]">Shelf</TableHead>
-          <TableHead className="w-[100px]">Slot</TableHead>
+          <TableHead className="w-[100px]">Tray</TableHead>
           <TableHead className="w-[100px]">Cell</TableHead>
           <TableHead>Action</TableHead>
         </TableRow>
@@ -56,10 +59,10 @@ const InventoryTable = ({ data }: { data: CellLocationData[] }) => {
               <TableCell>{data.location.shelf_idx}</TableCell>
               <TableCell>{data.location.tray_idx}</TableCell>
               <TableCell>{data.location.slot_idx}</TableCell>
-              <TableCell>
+              <TableCell className="space-x-2">
                 <Button
                   onClick={async () => {
-                    robotCommand({
+                    await robotCommand({
                       ...createBaseMessage(),
                       command: 'retrieve_item',
                       payload: {
@@ -70,6 +73,14 @@ const InventoryTable = ({ data }: { data: CellLocationData[] }) => {
                   }}
                 >
                   Retrieve Item
+                </Button>
+                <Button
+                  variant={'destructive'}
+                  onClick={async () => {
+                    await removeItem(data.location);
+                  }}
+                >
+                  Remove Item
                 </Button>
               </TableCell>
             </TableRow>
@@ -92,7 +103,7 @@ const FreeCellsTable = ({
         <TableRow>
           <TableHead className="w-[100px]">Side</TableHead>
           <TableHead className="w-[100px]">Shelf</TableHead>
-          <TableHead className="w-[100px]">Slot</TableHead>
+          <TableHead className="w-[100px]">Tray</TableHead>
           <TableHead className="w-[100px]">Cell</TableHead>
           <TableHead>Action</TableHead>
         </TableRow>
@@ -165,6 +176,48 @@ const AddInventoryForm = ({
                 Add Item
               </Button>
             )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+};
+
+const GS1Card = ({ gs1 }: { gs1: GS1 }) => {
+  const { addGs1 } = useStateStore();
+  return (
+    <Card className="w-fit">
+      <CardHeader>
+        <CardTitle>GS1</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        <ul className="space-y-2">
+          <li>{`GTIN: ${gs1.gtin}`}</li>
+          <li>{`EXPIRY: ${gs1.expiry}`}</li>
+          <li>{`LOT: ${gs1.lot}`}</li>
+          <li>{`SN: ${gs1.sn}`}</li>
+        </ul>
+        <Button onClick={() => addGs1(null)}>Clear</Button>
+      </CardContent>
+    </Card>
+  );
+};
+
+const ScannerAddForm = () => {
+  const { gs1 } = useStateStore();
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Add Item to Inventory </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        <Label className="text-xl">Store in Location</Label>
+        <div className="flex space-x-2">
+          {gs1 !== null && (
+            <>
+              <GS1Card gs1={gs1} />
+              <DimensionForm data={gs1} />
+            </>
+          )}
         </div>
       </CardContent>
     </Card>
@@ -251,6 +304,7 @@ const Inventory = () => {
               addMutation.mutate({ location, item: null });
             }}
           />
+          <ScannerAddForm />
         </>
       )}
     </div>

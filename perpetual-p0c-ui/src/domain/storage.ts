@@ -24,6 +24,7 @@ export const gs1Schema = z.object({
   expiry: z.string(),
   lot: z.string(),
   sn: z.string(),
+  raw_text: z.string(),
 });
 
 export const cellItemSchema = z.object({
