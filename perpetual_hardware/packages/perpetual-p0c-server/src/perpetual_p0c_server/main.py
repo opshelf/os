@@ -9,20 +9,23 @@ from perpetual_p0c_server.routers import storage, gantry, sizes, robot, scanner,
 from contextlib import asynccontextmanager
 from perpetual_p0c_server.core.printer import PrintWorker, MockPrinter
 from typing import AsyncGenerator
+from perpetual_p0c_server.settings import get_settings
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    settings = get_settings()
     print(app.title)
-    mock_printer = MockPrinter()
-    #tp_printer = ThermalPrinter()
+    p = MockPrinter()
+    if settings.printer.enabled:
+        p = ThermalPrinter()
     print_worker = PrintWorker(
-        mock_printer, "nats://localhost:4222", "printer_queue", "printer_event_queue"
+        p, "nats://localhost:4222", "printer_queue", "printer_event_queue"
     )
     await print_worker.connect()
     init_file_storage()
     init_file_sizes()
-    await init_scanner_worker(False)
-    await init_robot_worker(False)
+    await init_scanner_worker(settings.scanner.enabled)
+    await init_robot_worker(settings.robot.enabled)
     yield
     await stop_robot_worker()
     await stop_scanner_worker()

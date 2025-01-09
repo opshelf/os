@@ -4,5 +4,14 @@
     },
     "sizes": { 
         "file_name": "size.json" 
+    },
+    "printer": {
+        "enabled": false
+    },
+    "scanner": {
+        "enabled": false
+    },
+    "robot": {
+        "enabled": true
     }
 }

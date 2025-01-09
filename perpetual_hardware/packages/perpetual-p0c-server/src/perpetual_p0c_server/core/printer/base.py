@@ -29,7 +29,7 @@ class ThermalPrinter(AbstractPrinter):
 
     def _print(self, filename: str, payload: LabelPrintPayload) -> None:
         create_prescription_label(payload)
-        command = ["lp", "-d", self._printer_name, "/Users/ethangardner/projects/perpetual_os/perpetual_hardware/packages/perpetual-p0c-server/" + filename, "-o", "fit-to-page", "-o", "landscape"]
+        command = ["lp", "-d", self._printer_name, filename, "-o", "fit-to-page"]
         result = subprocess.run(command, capture_output=True, text=True)
         print(result)
         if result.returncode != 0:

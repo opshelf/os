@@ -6,16 +6,9 @@ from .utils import get_waveshare_port
 
 scanner_worker: Optional[ScannerWorker] = None
 
-async def init_scanner_worker(mock: bool) -> None:
+async def init_scanner_worker(enabled: bool) -> None:
     global scanner_worker
-    if mock:
-        scanner_worker = ScannerWorker(
-            MockScanner(),
-            "nats://localhost:4222",
-            "scanner",
-            "scanner_events"
-        )
-    else:
+    if enabled:
         port = get_waveshare_port()
         if port:
             scanner_worker = ScannerWorker(
@@ -31,6 +24,13 @@ async def init_scanner_worker(mock: bool) -> None:
             await scanner_worker.start()
         else:
             raise Exception("Unable to get scanner port")
+    else:
+        scanner_worker = ScannerWorker(
+            MockScanner(),
+            "nats://localhost:4222",
+            "scanner",
+            "scanner_events"
+        )
 
 
 async def stop_scanner_worker() -> None:

@@ -10,19 +10,19 @@ from perpetual_p0c_server.core.storage import get_storage
 robot_worker: Optional[AbstractRobotWorker] = None
 
 
-async def init_robot_worker(mock: bool) -> None:
+async def init_robot_worker(enabled: bool) -> None:
     global robot_worker
-    if mock:
-        mock_robot = MockRobot(p0_robot_config)
-        robot_worker = await RobotWorker.get_instance(mock_robot)
-        await robot_worker.connect()
-        await robot_worker.start()
-    else:
+    if enabled:
         can_bus = await get_can_bus()
         robot = await P0C.build(can_bus, p0_robot_config)
         robot_worker = await RobotWorker.get_instance(robot)
         storage = get_storage()
         await robot_worker.set_storage(storage)
+        await robot_worker.connect()
+        await robot_worker.start()
+    else:
+        mock_robot = MockRobot(p0_robot_config)
+        robot_worker = await RobotWorker.get_instance(mock_robot)
         await robot_worker.connect()
         await robot_worker.start()
 
