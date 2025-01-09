@@ -409,7 +409,7 @@ p0_robot_config = RobotConfiguration(
     gantry_safe_x=320,
     gantry_safe_y=100,
     gantry_safe_y_high_clearance=1100,
-    place_offset=GantryCoordinate(x=0, y=6),
+    place_offset=GantryCoordinate(x=0, y=8),
     output_location=GantryCoordinate(x=660, y=1100),
     # input_location=GantryCoordinate(x=676,y=288),
     #input_location=GantryCoordinate(x=678, y=585),

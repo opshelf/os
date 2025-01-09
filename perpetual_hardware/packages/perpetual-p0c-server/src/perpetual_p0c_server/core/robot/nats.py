@@ -213,10 +213,14 @@ class RobotWorker(AbstractRobotWorker):
                                 case _:
                                     print("Fell Through: ", self._current_command)
                                     if self._current_command:
-                                     await self._js.publish(
-                                         self._nats_config.event_queue,
-                                         self._current_task.result().model_dump_json().encode(),
-                                     )
+                                        await self._js.publish(
+                                            self._nats_config.event_queue,
+                                            self._current_task.result().model_dump_json().encode(),
+                                        )
+                                    else:
+                                        print(self._current_task)
+                                        #print(self._current_task.result())
+                                        #print(self._current_task.exception())
 
                             self._current_task = None
                             self._current_command = None

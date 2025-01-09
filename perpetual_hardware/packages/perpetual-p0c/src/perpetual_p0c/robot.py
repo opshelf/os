@@ -499,7 +499,6 @@ class P0C(AbstractRobot):
         )
 
     async def run_output_transfer(self) -> None:
-        await self._io.reset_sensors()
         tracking = BottleTracking.INITIALIZE
         async with asyncio.timeout(20):
             while True:
@@ -546,8 +545,8 @@ class P0C(AbstractRobot):
     async def run_input_transfer(self, tray: Tray, idx: int) -> None:
         await self.funnel.setup_receive_item(tray, idx)
         await self._io.reset_sensors()
-        await self.workstation.start_input_belt()
         await self.funnel.start_receive_item()
+        await self.workstation.start_input_belt()
         try:
             async with asyncio.timeout(10):
                 while True:
@@ -637,6 +636,7 @@ class P0C(AbstractRobot):
 
     async def receive_item(self, location: StorageModuleCellLocation) -> None:
         tray = self._storage.get_tray(location)
+        await self.funnel.initialize()
         await self.funnel.diverter.set_standby_current(2000)
         input_transfer_task = asyncio.create_task(self.run_input_transfer(tray, location.slot_idx))
         tray_pull_task = asyncio.create_task(self.setup_receive_item(location))
@@ -668,6 +668,7 @@ class P0C(AbstractRobot):
         await pull_tray_task
         await funnel_catch_task
         await self.move_gantry_to_output()
+        await self._io.reset_sensors()
         await self.tool.drop_items(tray, location.slot_idx)
         await self.funnel.move_to_transfer_location()
         await self.move_gantry_to_clear(tray)

@@ -396,17 +396,17 @@ class Funnel:
 
     async def open_tray_slots(self, tray: Tray) -> None:
         if tray.cell_width <= 50:
-            await self._slot_1.move_to_position(0)
+            await self._slot_1.move_to_position(self._configuration.offsets.slot_gap_size*2)
             await self._slot_2.move_to_position(tray.cell_width - self._configuration.offsets.slot_gap_size)
             await self._slot_3.move_to_position(tray.cell_width - self._configuration.offsets.slot_gap_size)
         elif tray.cell_width > 50 and tray.cell_width <= 105:
-            await self._slot_1.move_to_position(0)
-            await self._slot_2.move_to_position(0)
+            await self._slot_1.move_to_position(self._configuration.offsets.slot_gap_size*2)
+            await self._slot_2.move_to_position(self._configuration.offsets.slot_gap_size*2)
             await self._slot_3.move_to_position(tray.cell_width - self._configuration.offsets.slot_gap_size)
         else:
-            await self._slot_1.move_to_position(0)
-            await self._slot_2.move_to_position(0)
-            await self._slot_3.move_to_position(0)
+            await self._slot_1.move_to_position(self._configuration.offsets.slot_gap_size*2)
+            await self._slot_2.move_to_position(self._configuration.offsets.slot_gap_size*2)
+            await self._slot_3.move_to_position(self._configuration.offsets.slot_gap_size*2)
 
     async def close_tray_wedges(self, tray: Tray, times: int = 1) -> None:
         for _ in range(0, times):
@@ -415,6 +415,7 @@ class Funnel:
             await self.open_tray_wedges(tray)
 
     async def set_diverter_opening(self, tray: Tray) -> None:
+        await self._diverter.initialize()
         if tray.cell_width <= 50.0:
             await self._diverter.move_revolutions(self._configuration.offsets.diverter_50mm_pos)
         elif tray.cell_width > 50.0 and tray.cell_width <= 105.0:
@@ -429,6 +430,7 @@ class Funnel:
         ipos, opos = tray.get_cell_position(idx)
         await self.open_tray_slots(tray)
         await self.open_tray_wedges(tray)
+        await self.wait_for_move()
         ipos += self.offsets.funnel_cell_1_offset_x
         opos = self._configuration.opposing_funnel_max_travel - opos
         opos -= self.offsets.funnel_cell_1_offset_x
@@ -569,6 +571,7 @@ class Funnel:
         if position >= 150:
             position = 148
         _, opos = tray.get_cell_position(idx)
+        await self.wait_for_move()
         await self.open_tray_slots(tray)
         await self.open_tray_wedges(tray)
         await self.wait_for_move()

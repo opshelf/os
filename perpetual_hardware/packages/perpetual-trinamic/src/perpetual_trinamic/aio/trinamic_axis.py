@@ -230,11 +230,11 @@ class TrinamicAxis(TMCM12xx):
                     self._status = StepperMotorStatus.ERROR
                     await self.end_brake_move()
                     raise Exception(f"Failed to move in time {self._module_id}")
-                await asyncio.sleep(0.05)
+                await asyncio.sleep(0.1)
         else:
             t0 = time.time()
             while not await self.get_position_reached():
-                await asyncio.sleep(0.05)
+                await asyncio.sleep(0.1)
                 if await self.get_error_flags():
                     raise Exception(f"Failed to move hit hard stop {self._module_id}")
                 if time.time() - t0 > timeout:
