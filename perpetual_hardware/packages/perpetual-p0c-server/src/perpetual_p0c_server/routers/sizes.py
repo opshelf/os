@@ -2,6 +2,8 @@ from fastapi import APIRouter, Depends
 from perpetual_p0c.size_database import SizeDatabase
 from perpetual_p0c_server.core.sizes import get_size_db
 from perpetual_p0c.storage import GS1Data, Dimensions
+import base64
+from typing import Optional
 
 router = APIRouter()
 
@@ -29,6 +31,15 @@ async def remove_item(
     return size_database
 
 
-@router.get("/sizes/:item_size")
-async def get_item_size(size_database: SizeDatabase = Depends(get_size_db)) -> SizeDatabase:
-    return size_database
+@router.get("/sizes/{item}")
+async def get_item_size(
+        item: str,
+        size_database: SizeDatabase = Depends(get_size_db)
+    ) -> Optional[Dimensions]:
+    decoded = base64.b64decode(item)
+    data = GS1Data.model_validate_json(decoded)
+    print(data)
+    dimensions = size_database.get_item_size(data)
+    print(dimensions)
+    print(size_database.items)
+    return dimensions

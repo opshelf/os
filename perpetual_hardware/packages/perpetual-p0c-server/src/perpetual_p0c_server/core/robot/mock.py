@@ -2,6 +2,7 @@ from perpetual_p0c.robot import (
     AbstractRobot,
     RobotConfiguration,
     RobotCommands,
+    RobotState,
     StoreCommand,
     RetrieveCommand,
     RetrieveResponse,
@@ -18,6 +19,11 @@ class MockRobot(AbstractRobot):
     def __init__(self, config: RobotConfiguration) -> None:
         self._storage = StorageGrid(left_module=[], right_module=[])
         self._config = config
+        self._state = RobotState()
+
+    @property
+    def state(self) -> RobotState:
+        return self._state
 
     @property
     def storage(self) -> StorageGrid:

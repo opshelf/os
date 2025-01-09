@@ -8,6 +8,8 @@ import subprocess
 from can import BusABC, ThreadSafeBus
 from perpetual_can import CANBusHandler
 import socket
+import errno
+from typing import Tuple
 
 # DEFAULT_CAN_RATE = 1000000
 DEFAULT_CAN_RATE = 500000
@@ -87,21 +89,41 @@ def get_usb_serial_can() -> List[CanConfig]:
             )
     return out
 
+def is_can_available(interface: str) -> Tuple[bool, str]:
+    try:
+        sock = socket.socket(socket.PF_CAN, socket.SOCK_RAW, socket.CAN_RAW)
+    except AttributeError:
+        return False, "CAN socket support not available in the kernel"
+    try:
+        sock.bind((interface,))
+        available = True
+        message = f"CAN interface {interface} is available and accessible"
+    except socket.error as e:
+        available = False
+        if e.errno == errno.ENODEV:
+            message = f"CAN interface {interface} does not exist"
+        elif e.errno == errno.EACCES:
+            message = f"Permission denied to access CAN interface {interface}"
+        elif e.errno == errno.ENETDOWN:
+            message = f"CAN interface {interface} is down"
+        else:
+            message = f"Error checking CAN interface {interface}: {str(e)}"
+    finally:
+        sock.close()
+    return available, message
 
-def check_for_socket_can() -> Optional[CanConfig]:
-    # can_devices = ["can0", "can1"]
-    # for device in can_devices:
-    #    try:
-    #        can_socket = socket.socket(socket.AF_CAN, socket.SOCK_RAW, socket.CAN_RAW)
-    #        can_socket.bind((device,))
-    #        can_socket.close()
-    #        return CanConfig(
-    #            CAN_INTERFACE="socketcan",
-    #            CAN_CHANNEL=device,
-    #            CAN_BITRATE=500000
-    #        )
-    #    except Exception as _:
-    #        pass
+def check_socket_can() -> Optional[CanConfig]:
+    interfaces = [
+        'can0', 'can1',
+    ]
+    for interface in interfaces:
+        available, _ = is_can_available(interface)
+        if available:
+            return CanConfig(
+                CAN_INTERFACE="socketcan",
+                CAN_CHANNEL=interface,
+                CAN_BITRATE=500000
+            )
     return None
 
 
@@ -109,12 +131,12 @@ def get_can_devices() -> CanConfig:
     pcan = check_for_pcan()
     if pcan:
         return pcan
+    socket_can = check_socket_can()
+    if socket_can:
+        return socket_can
     serial_can = get_usb_serial_can()
     if len(serial_can):
         return serial_can[0]
-    socket_can = check_for_socket_can()
-    if socket_can:
-        return socket_can
     else:
         raise Exception("No Can Devices Available")
 

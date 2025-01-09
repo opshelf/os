@@ -1,7 +1,8 @@
-from pydantic import BaseModel, ValidationError, model_validator
+from pydantic import BaseModel, ValidationError, model_validator, field_validator, Field
 from enum import Enum
 from typing import Optional, List, Self, Tuple
 from perpetual_p0c.gantry import GantryCoordinate
+import re
 
 
 class StorageModuleSide(str, Enum):
@@ -34,10 +35,31 @@ class ItemType(str, Enum):
 
 
 class GS1Data(BaseModel):
-    gtin: str
-    expiry: str
-    lot: str
-    sn: str
+    #gtin: str
+    #expiry: str
+    #lot: str
+    #sn: str
+    #raw_text: str = ""
+
+    gtin: str = Field(..., pattern=r"^\d{14}$", description="GTIN (N14)")
+    lot: str = Field(..., max_length=20, description="Batch or Lot Number (X..20)")
+    expiry: str = Field(..., pattern=r"^\d{6}$", description="Expiration Date (YYMMDD)")
+    sn: str = Field(..., max_length=20, description="Serial Number (X..20)")
+    raw_text: str = Field(..., description="The raw GS1 text")
+
+    @field_validator("expiry")
+    def validate_expiration_date(cls, value: str) -> str:
+        if value:
+            if not re.match(r"^\d{6}$", value):
+                raise ValueError("Expiration date must be in YYMMDD format.")
+        return value
+
+    @field_validator("gtin")
+    def validate_gtin(cls, value:  str) -> str:
+        if value and len(value) != 14:
+            raise ValueError("GTIN must be exactly 14 numeric digits.")
+        return value
+
 
 
 class CellStatus(str, Enum):
@@ -215,6 +237,7 @@ class Shelf(BaseModel):
                 if not open_slot is None:
                     locations.append(ShelfCellLocation(tray_idx=tray_idx, slot_idx=open_slot))
             tray_idx += 1
+        print(locations)
         for location in locations:
             if item.dimensions.width <= 50:
                 if self.trays[location.tray_idx].width == 50:
@@ -521,3 +544,63 @@ class StorageGrid(BaseModel):
                                 slot_idx=slot_idx,
                             )
         raise Exception("No Item Found")
+
+    def find_best_slot_for_item(self, item: CellItem) -> Optional[StorageModuleCellLocation]:
+        possible_slots: List[Tuple[StorageModuleCellLocation, float]] = []
+        # Check left module
+        for shelf_idx, shelf in enumerate(self.left_module):
+            for tray_idx, tray in enumerate(shelf.trays):
+                if not tray.empty:
+                    for slot_idx, slot in enumerate(tray.slots):
+                        if slot.status == CellStatus.EMPTY:
+                            # Ensure the slot dimensions fit the item
+                            if (
+                                tray.width >= item.dimensions.width
+                                and tray.height >= item.dimensions.height
+                            ):
+                                # Calculate unused space as a "score" for optimization
+                                unused_space = (
+                                    tray.width * tray.height
+                                    - item.dimensions.width * item.dimensions.height
+                                )
+                                possible_slots.append((
+                                    StorageModuleCellLocation(
+                                        side=StorageModuleSide.LEFT,
+                                        shelf_idx=shelf_idx,
+                                        tray_idx=tray_idx,
+                                        slot_idx=slot_idx,
+                                    ),
+                                    unused_space,
+                                ))
+
+        # Check right module
+        for shelf_idx, shelf in enumerate(self.right_module):
+            for tray_idx, tray in enumerate(shelf.trays):
+                if not tray.empty:
+                    for slot_idx, slot in enumerate(tray.slots):
+                        if slot.status == CellStatus.EMPTY:
+                            # Ensure the slot dimensions fit the item
+                            if (
+                                tray.width >= item.dimensions.width
+                                and tray.height >= item.dimensions.height
+                            ):
+                                # Calculate unused space as a "score" for optimization
+                                unused_space = (
+                                    tray.width * tray.height
+                                    - item.dimensions.width * item.dimensions.height
+                                )
+                                possible_slots.append((
+                                    StorageModuleCellLocation(
+                                        side=StorageModuleSide.RIGHT,
+                                        shelf_idx=shelf_idx,
+                                        tray_idx=tray_idx,
+                                        slot_idx=slot_idx,
+                                    ),
+                                    unused_space,
+                                ))
+
+        # Sort by unused space (ascending), so the best match is first
+        possible_slots.sort(key=lambda x: x[1])
+
+        # Return the best match (first in the sorted list), or None if no matches
+        return possible_slots[0][0] if possible_slots else None

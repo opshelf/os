@@ -10,6 +10,10 @@ dependencies = [
     "pydantic>=2.10.0",
     "perpetual-p0c",
     "uvicorn>=0.32.1",
+    "pyserial-asyncio>=0.6",
+    "pillow>=11.1.0",
+    "pylibdmtx>=0.1.10",
+    "setuptools>=75.8.0",
 ]
 
 [tool.uv.sources]

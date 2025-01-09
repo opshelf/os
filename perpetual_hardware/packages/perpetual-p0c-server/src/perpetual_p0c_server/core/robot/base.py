@@ -1,11 +1,13 @@
 from abc import ABCMeta, abstractmethod
-from typing import List
+from typing import List, Union
 from perpetual_p0c.robot import RobotCommands, RobotResponses
+from perpetual_p0c.storage import StorageGrid
+from perpetual_p0c_server.core.events import StorageEvents
 
 
 class AbstractRobotClient(metaclass=ABCMeta):
     @abstractmethod
-    async def send_command(self, command: RobotCommands) -> None: ...
+    async def send_command(self, command: Union[RobotCommands, StorageEvents]) -> None: ...
 
     @abstractmethod
     async def send_emergency_command(self, command: RobotCommands) -> None: ...
@@ -32,3 +34,9 @@ class AbstractRobotWorker(metaclass=ABCMeta):
 
     @abstractmethod
     async def clear_commands(self) -> None: ...
+
+    @abstractmethod
+    async def set_storage(self, storage: StorageGrid) -> None: ...
+
+    @abstractmethod
+    async def get_storage(self) -> StorageGrid: ...

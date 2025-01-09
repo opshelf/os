@@ -31,5 +31,13 @@ perpetual-trinamic = { workspace = true }
 follow_imports = "normal"
 plugins = ['pydantic.mypy']
 
+[[tool.mypy.overrides]]
+module = "pylibdmtx.*"
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = "serial_asyncio.*"
+ignore_errors = true
+
 [project.entry-points.'can.interface']
 waveshare = "waveshare_can:Waveshare"

@@ -6,7 +6,7 @@ class StorageSettings(BaseModel):
 
 
 class SizeDatabaseSettings(BaseModel):
-    filename: str = "sizes.json"
+    filename: str = "size.json"
 
 
 class Settings(BaseModel):

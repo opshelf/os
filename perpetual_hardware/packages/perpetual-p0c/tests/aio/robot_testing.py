@@ -16,12 +16,23 @@ async def main() -> None:
         await robot.funnel.output_transfer_conveyor.wait_for_move()
     """
 
-    input()
-    await robot.home()
-    input()
-    await robot.funnel.opposing_funnel.move_to_position(340)
-    await robot.funnel.opposing_funnel.wait_for_move()
-    input()
+    #input()
+    #await robot.home()
+    #input()
+    #await robot.service_high()
+    #await robot.funnel.opposing_funnel.move_to_position(340)
+    #await robot.funnel.opposing_funnel.wait_for_move()
+    #input()
+    await robot.funnel.opposing_funnel.home()
+    while True:
+        await robot.funnel.opposing_funnel.move_to_position(340)
+        await robot.funnel.opposing_funnel.wait_for_move()
+        await robot.funnel.opposing_funnel.move_to_position(0)
+        await robot.funnel.opposing_funnel.wait_for_move()
+    #while True:
+    #    tray_loaded = await robot.tool.check_tray_loaded()
+    #    print(tray_loaded)
+    #    await asyncio.sleep(.1)
     """
     try:
         await robot.run_output_transfer()

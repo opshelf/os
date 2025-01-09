@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends
 from perpetual_p0c.storage import CellItem, CellLocationData, StorageGrid, StorageModuleCellLocation
+from perpetual_p0c_server.core.robot.base import AbstractRobotWorker
 from perpetual_p0c_server.core.storage import get_storage
+from perpetual_p0c_server.core.robot import get_robot_worker
 from typing import List, Optional
 
 router = APIRouter()
@@ -13,15 +15,15 @@ async def get_storage_data(storage_grid: StorageGrid = Depends(get_storage)) -> 
 
 @router.put("/storage")
 async def update_storage(
-    updates: StorageGrid, storage: StorageGrid = Depends(get_storage)
+    updates: StorageGrid, storage: StorageGrid = Depends(get_storage), worker: AbstractRobotWorker = Depends(get_robot_worker)
 ) -> StorageGrid:
     storage.update(updates)
+    await worker.set_storage(updates)
     return storage
 
 
 @router.get("/items")
 async def get_items(storage: StorageGrid = Depends(get_storage)) -> List[CellLocationData]:
-    print(storage.get_all_cell_data())
     return storage.get_all_cell_data()
 
 
@@ -38,7 +40,6 @@ async def store_item(
     item: Optional[CellItem] = None,
     storage: StorageGrid = Depends(get_storage),
 ) -> List[CellLocationData]:
-    print("Storing at ", location, item)
     storage.store_item(location, item)
     storage.save()
     print(storage)

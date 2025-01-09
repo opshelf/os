@@ -1,25 +1,32 @@
 from nats.aio.msg import Msg
 from nats.js.errors import NotFoundError
+from perpetual_p0c.storage import CellItem, StorageGrid
+
+from perpetual_p0c_server.core.scanner.waveshare import GS1Parser
+from perpetual_p0c_server.core.sizes import get_size_db
 from .base import AbstractRobotClient, AbstractRobotWorker
-from perpetual_p0c.robot import AbstractRobot, ReturnCurrentTray, StoreCommand, RetrieveCommand
+from perpetual_p0c.robot import AbstractRobot, RetrievePayload, ReturnCurrentTray, StopCommand, StoreCommand, RetrieveCommand, StorePayload
 import asyncio
-from typing import List, Optional
+from typing import List, Optional, Union
 from perpetual_p0c.robot import RobotCommands, RobotResponses
 from nats.aio.client import Client as NATS
 from pydantic import BaseModel, TypeAdapter
 from nats.errors import TimeoutError
 from perpetual_p0c_server.core.storage import get_storage
-
+from perpetual_p0c_server.core.events import  MessagePayload, StorageEvents, RetrievalRequestedEvent, RetrievalFailedEvent, RetrievalCompletedEvent, StoringRequestedEvent, StoringFailedEvent, StoringCompletedEvent, InputPlacedEvent
 
 class RobotNatsConfiguration(BaseModel):
     nats_url: str = "nats://localhost:4222"
     stream_name: str = "robot"
-    command_queue: str = "commmands"
+    command_queue: str = "commands"
     event_queue: str = "events"
 
 
 NATS_CONFIG = RobotNatsConfiguration()
 
+RobotEvents = Union[RobotCommands, StorageEvents]
+RobotEventAdapter = TypeAdapter[RobotEvents](RobotEvents)
+RobotCommandAdapter = TypeAdapter[RobotCommands](RobotCommands)
 
 class RobotClient(AbstractRobotClient):
     def __init__(self, nats_config: RobotNatsConfiguration):
@@ -31,7 +38,7 @@ class RobotClient(AbstractRobotClient):
         await self._nc.connect(servers=[self._nats_config.nats_url])
         self._js = self._nc.jetstream()
 
-    async def send_command(self, command: RobotCommands) -> None:
+    async def send_command(self, command: RobotEvents) -> None:
         if self._js:
             await self._js.publish(
                 self._nats_config.command_queue, command.model_dump_json().encode()
@@ -51,8 +58,11 @@ class RobotClient(AbstractRobotClient):
         messages: List[RobotCommands] = []
         # Iterate over all available messages
         adapter = TypeAdapter[RobotCommands](RobotCommands)
+        print(consumer_info)
+        print("Num Pending: ", consumer_info.num_pending)
         for seq in range(consumer_info.num_pending if consumer_info.num_pending else 0):
             try:
+                print(seq)
                 msg = await self._js.get_msg(self._nats_config.stream_name, seq + 1)
                 if msg.data:
                     messages.append(adapter.validate_json(msg.data.decode()))
@@ -106,34 +116,108 @@ class RobotWorker(AbstractRobotWorker):
         return self._client
 
     async def process_commands(self) -> None:
-        adapter = TypeAdapter[RobotCommands](RobotCommands)
+        #adapter = TypeAdapter[RobotCommands](RobotCommands)
         try:
             while self._running:
                 try:
                     if self._current_task is None:
                         msg = await self.work_consumer.fetch(timeout=1)
                         # Msg will be a list greater than one or it will give a timeout error
-                        cmd = adapter.validate_json(msg[0].data.decode())
-                        self._current_task = asyncio.create_task(self._robot.handle_command(cmd))
-                        self._msg = msg[0]
-                        self._current_command = cmd
+                        #cmd = adapter.validate_json(msg[0].data.decode())
+                        cmd = RobotEventAdapter.validate_json(msg[0].data.decode())
+                        print(cmd)
+                        match cmd:
+                            case StoringRequestedEvent(payload=payload):
+                                size_db = get_size_db()
+                                storage = get_storage()
+                                gs1 = GS1Parser.parse_gs1_to_model(payload.gs1)
+                                item_size = size_db.get_item_size(gs1)
+                                if item_size:
+                                    item = CellItem(
+                                        dimensions=item_size,
+                                        gs1_data=gs1
+                                    )
+                                    location = storage.find_best_slot_for_item(item)
+                                    if location:
+                                        store_cmd = StoreCommand(
+                                            payload=StorePayload(
+                                                location=location, 
+                                                item=item
+                                            )
+                                        )
+                                        self._current_task = asyncio.create_task(self._robot.handle_command(store_cmd))
+                                        self._msg = msg[0]
+                                        self._current_command = store_cmd
+                                    else:
+                                        await self._js.publish(
+                                            self._nats_config.event_queue,
+                                            StoringFailedEvent(payload=MessagePayload(message="No Valid Storage Location")).model_dump_json().encode(),
+                                        )
+                                else:
+                                    await self._js.publish(
+                                        self._nats_config.event_queue,
+                                        StoringFailedEvent(payload=MessagePayload(message="Item not in Size Database")).model_dump_json().encode(),
+                                    )
+                            case RetrievalRequestedEvent(payload=payload):
+                                retrieve = RetrieveCommand(payload=RetrievePayload(
+                                                           location=payload.location, item=None))
+                                self._current_task = asyncio.create_task(self._robot.handle_command(retrieve))
+                                self._msg = msg[0]
+                                self._current_command = retrieve
+                            case RetrieveCommand(payload=payload):
+                                self._current_task = asyncio.create_task(self._robot.handle_command(cmd))
+                                self._msg = msg[0]
+                                self._current_command = cmd
+                            case InputPlacedEvent():
+                                pass
+                            case StoringCompletedEvent():
+                                pass
+                            case StoringFailedEvent():
+                                pass
+                            case RetrievalCompletedEvent():
+                                pass
+                            case RetrievalFailedEvent():
+                                pass
+                            case _:
+                                self._current_task = asyncio.create_task(self._robot.handle_command(cmd))
+                                self._current_cmd = cmd
+                                self._msg = msg[0]
                     else:
                         if self._current_task and self._current_task.done():
+                            print("Current Command: ", self._current_command)
                             match self._current_command:
                                 case StoreCommand(payload=payload):
-                                    storage = get_storage()
-                                    storage.store_item(payload.location, payload.item)
-                                    storage.save()
+                                    print("Store Command Done")
+                                    if self._current_task.result():
+                                        storage = get_storage()
+                                        storage.store_item(payload.location, payload.item)
+                                        storage.save()
+                                        await self._js.publish(
+                                            self._nats_config.event_queue,
+                                            StoringCompletedEvent(payload=payload.location).model_dump_json().encode(),
+                                        )
+                                    else:
+                                        await self._js.publish(
+                                            self._nats_config.event_queue,
+                                            StoringFailedEvent(payload=MessagePayload(message=str("Failed Storage"))).model_dump_json().encode(),
+                                        )
                                 case RetrieveCommand(payload=payload):
+                                    print("Retrieve Command Done")
                                     storage = get_storage()
                                     storage.clear_item(payload.location)
                                     storage.save()
+                                    await self._js.publish(
+                                        self._nats_config.event_queue,
+                                        RetrievalCompletedEvent().model_dump_json().encode(),
+                                    )
                                 case _:
-                                    pass
-                            await self._js.publish(
-                                self._nats_config.event_queue,
-                                self._current_task.result().model_dump_json().encode(),
-                            )
+                                    print("Fell Through: ", self._current_command)
+                                    if self._current_command:
+                                     await self._js.publish(
+                                         self._nats_config.event_queue,
+                                         self._current_task.result().model_dump_json().encode(),
+                                     )
+
                             self._current_task = None
                             self._current_command = None
                             if self._msg:
@@ -143,15 +227,29 @@ class RobotWorker(AbstractRobotWorker):
                 except (TimeoutError, asyncio.CancelledError) as e:
                     if self._msg:
                         await self._msg.ack()
+                    if self._robot.state:
+                        await self._robot.handle_command(ReturnCurrentTray())
                     self._msg = None
                     self._current_task = None
-                    # self._robot.handle_command(ReturnCurrentTray())
         except Exception as e:
             print("Process Commands Error: ", e)
+            match self._current_command:
+                case StoreCommand(payload=payload):
+                    await self._js.publish(
+                        self._nats_config.event_queue,
+                        StoringFailedEvent(payload=MessagePayload(message=str(e))).model_dump_json().encode(),
+                    )
+                case RetrieveCommand(payload=payload):
+                    await self._js.publish(
+                        self._nats_config.event_queue,
+                        RetrievalFailedEvent(payload=MessagePayload(message=str(e))).model_dump_json().encode(),
+                    )
             if self._msg:
                 await self._msg.ack()
             self._running = False
-            self._worker_task = None
+            self._current_task = None
+            await self._robot.handle_command(StopCommand())
+            #self._worker_task = None
             self._msg = None
 
     async def start(self) -> None:
@@ -159,6 +257,7 @@ class RobotWorker(AbstractRobotWorker):
             self._running = True
             if self._worker_task:
                 self._worker_task.cancel()
+            print("Restarting Worker")
             self._worker_task = asyncio.create_task(self.process_commands())
             print("RobotWorker started.")
 
@@ -180,8 +279,16 @@ class RobotWorker(AbstractRobotWorker):
             if self._worker_task:
                 self._worker_task.cancel()
                 await self._worker_task
+            await self._robot.handle_command(StopCommand())
             print("RobotWorker shut down.")
 
     async def clear_commands(self) -> None:
         if self._js:
             await self._js.purge_stream(self._nats_config.stream_name)
+
+    async def get_storage(self) -> StorageGrid:
+        return self._robot.storage
+
+    async def set_storage(self, storage: StorageGrid) -> None:
+        self._robot.storage = storage
+

@@ -2,29 +2,34 @@ from abc import abstractmethod, ABCMeta
 import subprocess
 from nats.aio.client import Client as NATS
 from nats.aio.msg import Msg
+from pydantic import TypeAdapter
+from perpetual_p0c_server.core.events import LabelPrintEvent, LabelPrintPayload, LabelPrintingCompletedEvent, LabelPrintingFailedEvent, MessagePayload, UiEvents
 import json
+from .label_maker import create_prescription_label
 
 
 class AbstractPrinter(metaclass=ABCMeta):
-    def print(self, filename: str) -> None:
-        self._print(filename)
+    def print(self, filename: str, payload: LabelPrintPayload) -> None:
+        self._print(filename, payload)
 
     @abstractmethod
-    def _print(self, filename: str) -> None: ...
+    def _print(self, filename: str, payload: LabelPrintPayload) -> None: ...
 
 
 class MockPrinter(AbstractPrinter):
-    def _print(self, filename: str) -> None:
-        print("printed", filename)
+    def _print(self, filename: str, payload: LabelPrintPayload) -> None:
+        print("printed", filename, payload)
         return None
 
 
 class ThermalPrinter(AbstractPrinter):
+    #def __init__(self, printer_name: str = "ThermalPrinter") -> None:
     def __init__(self, printer_name: str = "ThermalPrinter") -> None:
         self._printer_name = printer_name
 
-    def _print(self, filename: str) -> None:
-        command = ["lp", "-d", self._printer_name, filename, "-o", "fit-to-page", "-o", "landscape"]
+    def _print(self, filename: str, payload: LabelPrintPayload) -> None:
+        create_prescription_label(payload)
+        command = ["lp", "-d", self._printer_name, "/Users/ethangardner/projects/perpetual_os/perpetual_hardware/packages/perpetual-p0c-server/" + filename, "-o", "fit-to-page", "-o", "landscape"]
         result = subprocess.run(command, capture_output=True, text=True)
         print(result)
         if result.returncode != 0:
@@ -52,11 +57,26 @@ class PrintWorker:
         await self._nc.subscribe(self._printer_work_queue, cb=self.handle_print)
 
     async def handle_print(self, msg: Msg) -> None:
-        print("Received", msg)
-        self._printer.print("~/Downloads/mock_label.pdf")
-        await self._nc.publish(
-            self._printer_event_queue, json.dumps({"message": "Label Printed"}).encode()
-        )
+        event_adapter = TypeAdapter[UiEvents](UiEvents)
+        try:
+            print(msg.data.decode())
+            event = event_adapter.validate_json(msg.data.decode())
+            print(event)
+            match event:
+                case LabelPrintEvent(payload=payload):
+                    print(payload)
+                    #self._printer.print("~/Downloads/mock_label.pdf", payload)
+                    self._printer.print("prescription_label.png", payload)
+                    await self._nc.publish(
+                        self._printer_event_queue, LabelPrintingCompletedEvent().model_dump_json().encode()
+                    )
+                case _:
+                    pass
+        except Exception as e:
+            await self._nc.publish(
+                self._printer_event_queue, LabelPrintingFailedEvent(payload=MessagePayload(message=str(e))).model_dump_json().encode()
+            )
+
 
     async def close(self) -> None:
         await self._nc.close()
