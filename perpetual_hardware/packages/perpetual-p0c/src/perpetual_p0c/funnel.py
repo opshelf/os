@@ -440,10 +440,12 @@ class Funnel:
         opos = max([0, opos])
         curr_opos = await self._opposing_funnel.get_position()
         if opos >= curr_opos:
+            print(f"Move To Cell Opposing: {opos} Input: {ipos} Great Opos")
             await self._inlet_funnel.move_to_position(ipos)
             await self._opposing_funnel.move_to_position(opos)
             await self.wait_for_move()
         else:
+            print(f"Move To Cell Opposing: {opos} Input: {ipos} Less Opos")
             await self._opposing_funnel.move_to_position(opos)
             await self._inlet_funnel.move_to_position(ipos)
             await self.wait_for_move()
@@ -476,9 +478,11 @@ class Funnel:
         curr_opos = await self._opposing_funnel.get_position()
         await self.set_diverter_opening(tray)
         if opos >= curr_opos:
+            print(f"Move To Cell Opposing: {opos} Input: {ipos} Greater Opos")
             await self._opposing_funnel.move_to_position(opos)
             await self._inlet_funnel.move_to_position(ipos)
         else:
+            print(f"Move To Cell Opposing: {opos} Input: {ipos} Less Opos")
             await self._inlet_funnel.move_to_position(ipos)
             await self._opposing_funnel.move_to_position(opos)
         await self.wait_for_move()
@@ -580,6 +584,7 @@ class Funnel:
         opos -= self.offsets.funnel_min_width
         opos = min([self._configuration.opposing_funnel_max_travel, opos])
         opos = max([0, opos])
+        print("Setup Receive Item Opposing Funnel Position: ", opos)
         await self._opposing_funnel.move_to_position(opos)
         await self.wait_for_move()
 

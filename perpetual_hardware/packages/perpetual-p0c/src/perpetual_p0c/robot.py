@@ -661,7 +661,7 @@ class P0C(AbstractRobot):
                 break
             await asyncio.sleep(0.1)
 
-    async def drop_off_item(self, location: StorageModuleCellLocation) -> None:
+    async def drop_off_item(self, location: StorageModuleCellLocation, keep_tray: bool = True) -> None:
         tray = self._storage.get_tray(location)
         pull_tray_task = asyncio.create_task(self.pull_tray(location.to_tray_location()))
         funnel_catch_task = asyncio.create_task(self.funnel.catch(tray, location.slot_idx))
@@ -672,7 +672,13 @@ class P0C(AbstractRobot):
         await self.tool.drop_items(tray, location.slot_idx)
         await self.funnel.move_to_transfer_location()
         await self.move_gantry_to_clear(tray)
-        await self.run_output_transfer()
+        if keep_tray:
+            await self.run_output_transfer()
+        else:
+            transfer_task = asyncio.create_task(self.run_output_transfer())
+            return_task = asyncio.create_task(self.return_current_tray())
+            await transfer_task
+            await return_task
 
     async def store_item(self, item: CellItem) -> None:
         location = self._storage.get_next_free_location(item)
