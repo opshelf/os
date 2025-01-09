@@ -37,9 +37,18 @@ def create_prescription_label(
     img = Image.new("RGB", (width, height), background_color)
     draw = ImageDraw.Draw(img, "RGBA")
     # Load fonts (You may need to adjust font paths)
-    font_extra_bold = ImageFont.truetype("Arial Unicode.ttf", 40)
-    font_bold = ImageFont.truetype("Arial Unicode.ttf", 32)
-    font_regular = ImageFont.truetype("Arial Unicode.ttf", 24)
+    from sys import platform
+    if platform == "linux" or platform == "linux2":
+        font_extra_bold = ImageFont.truetype("Lato-Medium.ttf", 40)
+        font_bold = ImageFont.truetype("Lato-Medium.ttf", 32)
+        font_regular = ImageFont.truetype("Lato-Medium.ttf", 24)
+    elif platform == "darwin":
+        font_extra_bold = ImageFont.truetype("Arial Unicode.ttf", 40)
+        font_bold = ImageFont.truetype("Arial Unicode.ttf", 32)
+        font_regular = ImageFont.truetype("Arial Unicode.ttf", 24)
+    else:
+        raise Exception("Invalid Platform")
+
 
     # Layout
     padding = 20
