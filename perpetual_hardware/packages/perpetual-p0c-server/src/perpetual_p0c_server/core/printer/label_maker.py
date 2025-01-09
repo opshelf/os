@@ -3,14 +3,14 @@ from pylibdmtx.pylibdmtx import encode
 import os
 from perpetual_p0c_server.core.events import LabelPrintPayload
 
-font_paths = []
-
-# macOS
-font_paths.extend(os.listdir("/System/Library/Fonts"))
-font_paths.extend(os.listdir("/Library/Fonts"))
-
-# Filter for TrueType fonts
-font_paths = [font for font in font_paths if font.endswith(".ttf")]
+#font_paths = []
+#
+## macOS
+#font_paths.extend(os.listdir("/System/Library/Fonts"))
+#font_paths.extend(os.listdir("/Library/Fonts"))
+#
+## Filter for TrueType fonts
+#font_paths = [font for font in font_paths if font.endswith(".ttf")]
 
 def create_prescription_label(
     label_data: LabelPrintPayload

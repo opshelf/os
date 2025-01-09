@@ -13,10 +13,10 @@ from typing import AsyncGenerator
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     print(app.title)
-    #mock_printer = MockPrinter()
-    tp_printer = ThermalPrinter()
+    mock_printer = MockPrinter()
+    #tp_printer = ThermalPrinter()
     print_worker = PrintWorker(
-        tp_printer, "nats://localhost:4222", "printer_queue", "printer_event_queue"
+        mock_printer, "nats://localhost:4222", "printer_queue", "printer_event_queue"
     )
     await print_worker.connect()
     init_file_storage()
