@@ -38,12 +38,12 @@ async def stream_sse() -> EventSourceResponse:
     SSE endpoint that streams NATS messages to the client.
     """
     stop_event = asyncio.Event()
+
     async def event_generator() -> AsyncGenerator:
         try:
             async for message in nats_consumer(stop_event):
                 yield {"data": message}
         finally:
             stop_event.set()
+
     return EventSourceResponse(event_generator())
-
-

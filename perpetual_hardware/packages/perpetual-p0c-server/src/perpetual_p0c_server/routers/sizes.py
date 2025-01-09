@@ -33,13 +33,10 @@ async def remove_item(
 
 @router.get("/sizes/{item}")
 async def get_item_size(
-        item: str,
-        size_database: SizeDatabase = Depends(get_size_db)
-    ) -> Optional[Dimensions]:
+    item: str, size_database: SizeDatabase = Depends(get_size_db)
+) -> Optional[Dimensions]:
     decoded = base64.b64decode(item)
     data = GS1Data.model_validate_json(decoded)
-    print(data)
     dimensions = size_database.get_item_size(data)
-    print(dimensions)
-    print(size_database.items)
+    print(data)
     return dimensions

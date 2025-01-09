@@ -5,7 +5,6 @@ from typing import Optional
 
 
 class MockScanner(AbstractScanner):
-    
     async def initialize(self) -> None:
         pass
 

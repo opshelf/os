@@ -3,7 +3,14 @@ import subprocess
 from nats.aio.client import Client as NATS
 from nats.aio.msg import Msg
 from pydantic import TypeAdapter
-from perpetual_p0c_server.core.events import LabelPrintEvent, LabelPrintPayload, LabelPrintingCompletedEvent, LabelPrintingFailedEvent, MessagePayload, UiEvents
+from perpetual_p0c_server.core.events import (
+    LabelPrintEvent,
+    LabelPrintPayload,
+    LabelPrintingCompletedEvent,
+    LabelPrintingFailedEvent,
+    MessagePayload,
+    UiEvents,
+)
 import json
 from .label_maker import create_prescription_label
 
@@ -23,7 +30,7 @@ class MockPrinter(AbstractPrinter):
 
 
 class ThermalPrinter(AbstractPrinter):
-    #def __init__(self, printer_name: str = "ThermalPrinter") -> None:
+    # def __init__(self, printer_name: str = "ThermalPrinter") -> None:
     def __init__(self, printer_name: str = "ThermalPrinter") -> None:
         self._printer_name = printer_name
 
@@ -65,18 +72,21 @@ class PrintWorker:
             match event:
                 case LabelPrintEvent(payload=payload):
                     print(payload)
-                    #self._printer.print("~/Downloads/mock_label.pdf", payload)
+                    # self._printer.print("~/Downloads/mock_label.pdf", payload)
                     self._printer.print("prescription_label.png", payload)
                     await self._nc.publish(
-                        self._printer_event_queue, LabelPrintingCompletedEvent().model_dump_json().encode()
+                        self._printer_event_queue,
+                        LabelPrintingCompletedEvent().model_dump_json().encode(),
                     )
                 case _:
                     pass
         except Exception as e:
             await self._nc.publish(
-                self._printer_event_queue, LabelPrintingFailedEvent(payload=MessagePayload(message=str(e))).model_dump_json().encode()
+                self._printer_event_queue,
+                LabelPrintingFailedEvent(payload=MessagePayload(message=str(e)))
+                .model_dump_json()
+                .encode(),
             )
-
 
     async def close(self) -> None:
         await self._nc.close()

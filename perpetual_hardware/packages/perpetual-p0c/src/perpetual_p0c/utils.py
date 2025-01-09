@@ -89,9 +89,10 @@ def get_usb_serial_can() -> List[CanConfig]:
             )
     return out
 
+
 def is_can_available(interface: str) -> Tuple[bool, str]:
     try:
-        sock = socket.socket(socket.PF_CAN, socket.SOCK_RAW, socket.CAN_RAW)
+        sock = socket.socket(socket.PF_CAN, socket.SOCK_RAW, socket.CAN_RAW) #type: ignore
     except AttributeError:
         return False, "CAN socket support not available in the kernel"
     try:
@@ -112,18 +113,16 @@ def is_can_available(interface: str) -> Tuple[bool, str]:
         sock.close()
     return available, message
 
+
 def check_socket_can() -> Optional[CanConfig]:
     interfaces = [
-        'can0', 'can1',
+        "can0",
+        "can1",
     ]
     for interface in interfaces:
         available, _ = is_can_available(interface)
         if available:
-            return CanConfig(
-                CAN_INTERFACE="socketcan",
-                CAN_CHANNEL=interface,
-                CAN_BITRATE=500000
-            )
+            return CanConfig(CAN_INTERFACE="socketcan", CAN_CHANNEL=interface, CAN_BITRATE=500000)
     return None
 
 

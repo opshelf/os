@@ -35,11 +35,11 @@ class ItemType(str, Enum):
 
 
 class GS1Data(BaseModel):
-    #gtin: str
-    #expiry: str
-    #lot: str
-    #sn: str
-    #raw_text: str = ""
+    # gtin: str
+    # expiry: str
+    # lot: str
+    # sn: str
+    # raw_text: str = ""
 
     gtin: str = Field(..., pattern=r"^\d{14}$", description="GTIN (N14)")
     lot: str = Field(..., max_length=20, description="Batch or Lot Number (X..20)")
@@ -55,11 +55,10 @@ class GS1Data(BaseModel):
         return value
 
     @field_validator("gtin")
-    def validate_gtin(cls, value:  str) -> str:
+    def validate_gtin(cls, value: str) -> str:
         if value and len(value) != 14:
             raise ValueError("GTIN must be exactly 14 numeric digits.")
         return value
-
 
 
 class CellStatus(str, Enum):
@@ -563,15 +562,17 @@ class StorageGrid(BaseModel):
                                     tray.width * tray.height
                                     - item.dimensions.width * item.dimensions.height
                                 )
-                                possible_slots.append((
-                                    StorageModuleCellLocation(
-                                        side=StorageModuleSide.LEFT,
-                                        shelf_idx=shelf_idx,
-                                        tray_idx=tray_idx,
-                                        slot_idx=slot_idx,
-                                    ),
-                                    unused_space,
-                                ))
+                                possible_slots.append(
+                                    (
+                                        StorageModuleCellLocation(
+                                            side=StorageModuleSide.LEFT,
+                                            shelf_idx=shelf_idx,
+                                            tray_idx=tray_idx,
+                                            slot_idx=slot_idx,
+                                        ),
+                                        unused_space,
+                                    )
+                                )
 
         # Check right module
         for shelf_idx, shelf in enumerate(self.right_module):
@@ -589,15 +590,17 @@ class StorageGrid(BaseModel):
                                     tray.width * tray.height
                                     - item.dimensions.width * item.dimensions.height
                                 )
-                                possible_slots.append((
-                                    StorageModuleCellLocation(
-                                        side=StorageModuleSide.RIGHT,
-                                        shelf_idx=shelf_idx,
-                                        tray_idx=tray_idx,
-                                        slot_idx=slot_idx,
-                                    ),
-                                    unused_space,
-                                ))
+                                possible_slots.append(
+                                    (
+                                        StorageModuleCellLocation(
+                                            side=StorageModuleSide.RIGHT,
+                                            shelf_idx=shelf_idx,
+                                            tray_idx=tray_idx,
+                                            slot_idx=slot_idx,
+                                        ),
+                                        unused_space,
+                                    )
+                                )
 
         # Sort by unused space (ascending), so the best match is first
         possible_slots.sort(key=lambda x: x[1])

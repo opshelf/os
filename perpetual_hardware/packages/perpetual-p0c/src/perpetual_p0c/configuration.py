@@ -412,7 +412,7 @@ p0_robot_config = RobotConfiguration(
     place_offset=GantryCoordinate(x=0, y=8),
     output_location=GantryCoordinate(x=660, y=1100),
     # input_location=GantryCoordinate(x=676,y=288),
-    #input_location=GantryCoordinate(x=678, y=585),
+    # input_location=GantryCoordinate(x=678, y=585),
     input_location=GantryCoordinate(x=676, y=585),
     service_coordinate_high=GantryCoordinate(x=100, y=1100),
     service_coordinate_low=GantryCoordinate(x=100, y=200),

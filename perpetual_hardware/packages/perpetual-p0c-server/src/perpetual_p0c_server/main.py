@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from perpetual_p0c_server.core.printer.base import ThermalPrinter
+from perpetual_p0c_server.core.printer.base import AbstractPrinter, ThermalPrinter
 from perpetual_p0c_server.core.storage import init_file_storage
 from perpetual_p0c_server.core.sizes import init_file_sizes
 from perpetual_p0c_server.core.robot import init_robot_worker, stop_robot_worker
@@ -11,16 +11,15 @@ from perpetual_p0c_server.core.printer import PrintWorker, MockPrinter
 from typing import AsyncGenerator
 from perpetual_p0c_server.settings import get_settings
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     settings = get_settings()
     print(app.title)
-    p = MockPrinter()
+    p: AbstractPrinter = MockPrinter()
     if settings.printer.enabled:
         p = ThermalPrinter()
-    print_worker = PrintWorker(
-        p, "nats://localhost:4222", "printer_queue", "printer_event_queue"
-    )
+    print_worker = PrintWorker(p, "nats://localhost:4222", "printer_queue", "printer_event_queue")
     await print_worker.connect()
     init_file_storage()
     init_file_sizes()
@@ -52,7 +51,6 @@ app.include_router(scanner.router, prefix="/api/scanner")
 app.include_router(printer.router, prefix="/api/printer")
 
 
-
 # def save_schemas_to_files():
 #    file_path = "./app/routers/types.py"
 #    models = get_base_models(file_path)
@@ -78,4 +76,5 @@ async def main() -> None:
 if __name__ == "__main__":
     import uvicorn
     import asyncio
+
     asyncio.run(main())

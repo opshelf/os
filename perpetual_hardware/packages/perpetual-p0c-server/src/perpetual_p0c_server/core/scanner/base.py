@@ -84,9 +84,12 @@ class ScannerWorker:
                 if result:
                     print(result)
                     await self._nc.publish(self._scanner_queue, result.model_dump_json().encode())
-                    await self._nc.publish(self._scanner_queue, 
-                                           LabelScannedEvent(payload=GS1Raw(gs1=result.raw_text)).model_dump_json().encode()
-                                           )
+                    await self._nc.publish(
+                        self._scanner_queue,
+                        LabelScannedEvent(payload=GS1Raw(gs1=result.raw_text))
+                        .model_dump_json()
+                        .encode(),
+                    )
             except asyncio.CancelledError:
                 pass
 
@@ -106,4 +109,3 @@ class ScannerWorker:
     async def close(self) -> None:
         await self._nc.close()
         await self._scanner.shutdown()
-

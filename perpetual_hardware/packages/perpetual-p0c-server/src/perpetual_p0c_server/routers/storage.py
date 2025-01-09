@@ -15,7 +15,9 @@ async def get_storage_data(storage_grid: StorageGrid = Depends(get_storage)) -> 
 
 @router.put("/storage")
 async def update_storage(
-    updates: StorageGrid, storage: StorageGrid = Depends(get_storage), worker: AbstractRobotWorker = Depends(get_robot_worker)
+    updates: StorageGrid,
+    storage: StorageGrid = Depends(get_storage),
+    worker: AbstractRobotWorker = Depends(get_robot_worker),
 ) -> StorageGrid:
     storage.update(updates)
     await worker.set_storage(updates)

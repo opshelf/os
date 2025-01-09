@@ -153,8 +153,10 @@ class GantrySubsystemCommands(BaseMessage):
 class IdlePositionCommand(BaseMessage):
     command: Literal["idle_position"] = "idle_position"
 
+
 class ServiceHighPositionCommand(BaseMessage):
     command: Literal["service_high_position"] = "service_high_position"
+
 
 # Union of all command models
 RobotCommands = Annotated[
@@ -174,7 +176,7 @@ RobotCommands = Annotated[
         PullTrayCommand,
         PlaceTrayCommand,
         IdlePositionCommand,
-        ServiceHighPositionCommand
+        ServiceHighPositionCommand,
     ],
     Field(discriminator="command"),
 ]
@@ -213,7 +215,6 @@ RobotResponses = Union[ErrorResponse, AckResponse, StorageResponse, RetrieveResp
 
 
 class AbstractRobot(metaclass=ABCMeta):
-
     @abstractmethod
     async def handle_command(self, command: RobotCommands) -> RobotResponses: ...
 
@@ -228,7 +229,6 @@ class AbstractRobot(metaclass=ABCMeta):
     @property
     @abstractmethod
     def state(self) -> RobotState: ...
-
 
 
 class P0C(AbstractRobot):
@@ -562,8 +562,6 @@ class P0C(AbstractRobot):
             await self.funnel.stop_receive_item()
             raise Exception("Failed to See Input Break Beams Trigger")
 
-
-
     async def move_to_storage_location(self, location: StorageModuleCellLocation) -> None:
         coordinate = self._storage.get_coordinate(location)
         await self.gantry_move(
@@ -600,8 +598,8 @@ class P0C(AbstractRobot):
                 await self.place_tray(self._state.current_tray)
             else:
                 self._state.clear_state()
-        #else:
-        #    raise Exception("Tray Currently Held But No Known Location to Place it")
+        else:
+           raise Exception("Tray Currently Held But No Known Location to Place it")
 
     async def pull_tray(self, location: StorageModuleTrayLocation) -> None:
         tray_loaded = await self.tool.check_tray_loaded()
@@ -661,7 +659,9 @@ class P0C(AbstractRobot):
                 break
             await asyncio.sleep(0.1)
 
-    async def drop_off_item(self, location: StorageModuleCellLocation, keep_tray: bool = True) -> None:
+    async def drop_off_item(
+        self, location: StorageModuleCellLocation, keep_tray: bool = True
+    ) -> None:
         tray = self._storage.get_tray(location)
         pull_tray_task = asyncio.create_task(self.pull_tray(location.to_tray_location()))
         funnel_catch_task = asyncio.create_task(self.funnel.catch(tray, location.slot_idx))
@@ -788,12 +788,13 @@ class P0C(AbstractRobot):
                 raise Exception("Invalid Robot Command")
 
     async def handle_command(self, command: RobotCommands) -> RobotResponses:
-        try: 
-            response =  await self._handle_command(command)
+        try:
+            response = await self._handle_command(command)
             return response
         except Exception as e:
             print(e)
             raise e
+
 
 """
 Store Item

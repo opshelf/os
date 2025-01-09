@@ -1,12 +1,14 @@
-#import serial
+# import serial
 from typing import Optional
 from perpetual_p0c.storage import GS1Data
 import asyncio
 from pydantic import ValidationError
 import serial_asyncio
-#from pydantic import ValidationError
+
+# from pydantic import ValidationError
 from typing import Optional
 from .base import AbstractScanner
+
 
 class GS1Parser:
     AI_FORMATS = {
@@ -23,11 +25,11 @@ class GS1Parser:
         while idx < len(raw_string):
             if ord(raw_string[idx]) == 29:
                 idx += 1
-                code = raw_string[idx:idx+2]
+                code = raw_string[idx : idx + 2]
                 idx += 2
-                #print(code)
+                # print(code)
                 if code == "01":
-                    parsed_data["gtin"] = raw_string[idx:idx+14]
+                    parsed_data["gtin"] = raw_string[idx : idx + 14]
                     idx += 14
                 elif code == "10":
                     batch_number = ""
@@ -40,7 +42,7 @@ class GS1Parser:
                             idx += 1
                     parsed_data["lot"] = batch_number
                 elif code == "17":
-                    parsed_data["expiry"] = raw_string[idx:idx+6]
+                    parsed_data["expiry"] = raw_string[idx : idx + 6]
                     idx += 6
                 elif code == "21":
                     serial_number = ""
@@ -55,11 +57,11 @@ class GS1Parser:
                 else:
                     idx += 1
             else:
-                code = raw_string[idx:idx+2]
+                code = raw_string[idx : idx + 2]
                 idx += 2
-                #print("Not 29", code)
+                # print("Not 29", code)
                 if code == "01":
-                    parsed_data["gtin"] = raw_string[idx:idx+14]
+                    parsed_data["gtin"] = raw_string[idx : idx + 14]
                     idx += 14
                 elif code == "10":
                     batch_number = ""
@@ -72,7 +74,7 @@ class GS1Parser:
                             idx += 1
                     parsed_data["lot"] = batch_number
                 elif code == "17":
-                    parsed_data["expiry"] = raw_string[idx:idx+6]
+                    parsed_data["expiry"] = raw_string[idx : idx + 6]
                     idx += 6
                 elif code == "21":
                     serial_number = ""
@@ -99,14 +101,13 @@ class WaveshareScanner(AbstractScanner):
 
     async def initialize(self) -> None:
         self.reader, self.writer = await serial_asyncio.open_serial_connection(
-            url=self.port,
-            baudrate=self.baudrate
+            url=self.port, baudrate=self.baudrate
         )
 
     async def read(self) -> bytes:
         if not self.reader:
             raise ConnectionError("Serial connection is not established. Call connect() first.")
-        data = await self.reader.readuntil(b'\r')
+        data = await self.reader.readuntil(b"\r")
         return data
 
     async def scan(self) -> Optional[GS1Data]:
@@ -126,4 +127,3 @@ class WaveshareScanner(AbstractScanner):
         if self.writer:
             self.writer.close()
             await self.writer.wait_closed()
-
