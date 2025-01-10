@@ -85,7 +85,7 @@ class ScannerWorker:
                     print(result)
                     await self._nc.publish(self._scanner_queue, result.model_dump_json().encode())
                     await self._nc.publish(
-                        self._scanner_queue,
+                        self._scanner_events,
                         LabelScannedEvent(payload=GS1Raw(gs1=result.raw_text))
                         .model_dump_json()
                         .encode(),

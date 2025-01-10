@@ -9,6 +9,7 @@ async def main() -> None:
     robot = P0C(can_bus, p0_robot_config)
     await robot.initialize()
     await robot.stop()
+    await robot.home()
     """
     await robot.funnel.start_output_transfer()
     while True:

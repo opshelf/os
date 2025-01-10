@@ -24,8 +24,8 @@ class LabelSettings(BaseModel):
     logo_file: str = "./perpetual-logo-vector.jpg"
     width: int = 800
     height: int = 600
-    background_color = "white"
-    text_color = "black"
+    background_color: str = "white"
+    text_color: str = "black"
     font_extra_bold: FontSetting = FontSetting(size=40, name="Lato-Medium.ttf")
     font_bold: FontSetting = FontSetting(size=32, name="Lato-Medium.ttf")
     font_regular: FontSetting = FontSetting(size=24, name="Lato-Medium.ttf")

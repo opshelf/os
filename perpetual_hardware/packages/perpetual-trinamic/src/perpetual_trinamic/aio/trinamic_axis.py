@@ -87,7 +87,7 @@ class TrinamicAxis(TMCM12xx):
         await self.set_speed(self._configuration.velocity)
         await self.set_acceleration(self._configuration.acceleration)
         await self.clear_error_flags()
-        await self.clear_status_flags()
+        #await self.clear_status_flags()
         self._status = StepperMotorStatus.GOOD
 
     async def rotate(self, value: int) -> None:

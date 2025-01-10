@@ -15,7 +15,9 @@ dependencies = [
     "pylibdmtx>=0.1.10",
     "setuptools>=75.8.0",
     "sse-starlette>=2.1.3",
+    "perpetual-label-maker"
 ]
 
 [tool.uv.sources]
 perpetual-p0c = { workspace = true }
+perpetual-label-maker = { workspace = true }

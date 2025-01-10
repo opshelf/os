@@ -139,6 +139,7 @@ class RobotWorker(AbstractRobotWorker):
                         msg = await self.work_consumer.fetch(timeout=1)
                         # Msg will be a list greater than one or it will give a timeout error
                         # cmd = adapter.validate_json(msg[0].data.decode())
+                        print(msg[0].data.decode())
                         cmd = RobotEventAdapter.validate_json(msg[0].data.decode())
                         print(cmd)
                         match cmd:
@@ -249,7 +250,7 @@ class RobotWorker(AbstractRobotWorker):
                                         print(self._current_task)
                                         # print(self._current_task.result())
                                         # print(self._current_task.exception())
-
+                            print("Assigning Curernt Task to None and Command to None")
                             self._current_task = None
                             self._current_command = None
                             if self._msg:

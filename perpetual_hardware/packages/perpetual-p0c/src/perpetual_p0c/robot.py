@@ -88,7 +88,7 @@ class StoreCommand(BaseMessage):
 
 class RetrievePayload(BaseModel):
     location: StorageModuleCellLocation
-    item: Optional[CellItem]
+    item: Optional[CellItem] = None
 
 
 class RetrieveCommand(BaseMessage):
@@ -598,8 +598,8 @@ class P0C(AbstractRobot):
                 await self.place_tray(self._state.current_tray)
             else:
                 self._state.clear_state()
-        else:
-            raise Exception("Tray Currently Held But No Known Location to Place it")
+            #else:
+            #raise Exception("Tray Currently Held But No Known Location to Place it")
 
     async def pull_tray(self, location: StorageModuleTrayLocation) -> None:
         tray_loaded = await self.tool.check_tray_loaded()
