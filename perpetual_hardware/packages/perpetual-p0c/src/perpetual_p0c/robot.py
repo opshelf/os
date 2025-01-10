@@ -599,7 +599,7 @@ class P0C(AbstractRobot):
             else:
                 self._state.clear_state()
         else:
-           raise Exception("Tray Currently Held But No Known Location to Place it")
+            raise Exception("Tray Currently Held But No Known Location to Place it")
 
     async def pull_tray(self, location: StorageModuleTrayLocation) -> None:
         tray_loaded = await self.tool.check_tray_loaded()

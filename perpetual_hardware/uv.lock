@@ -11,6 +11,7 @@ members = [
     "hardware-common",
     "perpetual-can",
     "perpetual-hardware",
+    "perpetual-label-maker",
     "perpetual-p0c",
     "perpetual-p0c-server",
     "perpetual-trinamic",
@@ -464,6 +465,27 @@ requires-dist = [{ name = "bindings", directory = "../perpetual_fw/crates/bindin
 
 [package.metadata.requires-dev]
 dev = [{ name = "mypy" }]
+
+[[package]]
+name = "perpetual-label-maker"
+version = "0.1.0"
+source = { editable = "packages/perpetual-label-maker" }
+dependencies = [
+    { name = "nats-py", marker = "python_full_version >= '3.12'" },
+    { name = "pillow", marker = "python_full_version >= '3.12'" },
+    { name = "pydantic", marker = "python_full_version >= '3.12'" },
+    { name = "pylibdmtx", marker = "python_full_version >= '3.12'" },
+    { name = "setuptools", marker = "python_full_version >= '3.12'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "nats-py", specifier = ">=2.9.0" },
+    { name = "pillow", specifier = ">=11.1.0" },
+    { name = "pydantic", specifier = ">=2.10.0" },
+    { name = "pylibdmtx", specifier = ">=0.1.10" },
+    { name = "setuptools", specifier = ">=75.8.0" },
+]
 
 [[package]]
 name = "perpetual-p0c"
