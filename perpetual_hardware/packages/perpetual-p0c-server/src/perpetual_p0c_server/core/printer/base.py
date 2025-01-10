@@ -11,8 +11,7 @@ from perpetual_p0c_server.core.events import (
     MessagePayload,
     UiEvents,
 )
-import json
-from .label_maker import create_prescription_label
+from .label_maker import LabelInformation, LabelMaker
 
 
 class AbstractPrinter(metaclass=ABCMeta):
@@ -30,12 +29,12 @@ class MockPrinter(AbstractPrinter):
 
 
 class ThermalPrinter(AbstractPrinter):
-    # def __init__(self, printer_name: str = "ThermalPrinter") -> None:
     def __init__(self, printer_name: str = "ThermalPrinter") -> None:
         self._printer_name = printer_name
+        self._label_maker = LabelMaker()
 
-    def _print(self, filename: str, payload: LabelPrintPayload) -> None:
-        create_prescription_label(payload)
+    def _print(self, filename: str, payload: LabelPrintPayload, label_information: LabelInformation = LabelInformation()) -> None:
+        self._label_maker.create_label(payload, label_information)
         command = ["lp", "-d", self._printer_name, filename, "-o", "fit-to-page"]
         result = subprocess.run(command, capture_output=True, text=True)
         print(result)
