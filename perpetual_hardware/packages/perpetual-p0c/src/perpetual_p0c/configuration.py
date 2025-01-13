@@ -366,7 +366,7 @@ p0_funnel_config = FunnelConfiguration(
 )
 
 p0_tool_config = ToolConfiguration(
-    puller=CanAxisConfiguration(
+    carriage=CanAxisConfiguration(
         can_id=CanMessageIds.Z_AXIS,
         configuration=StepperMotorConfig(
             microsteps=16,
@@ -413,7 +413,7 @@ p0_robot_config = RobotConfiguration(
     output_location=GantryCoordinate(x=660, y=1100),
     # input_location=GantryCoordinate(x=676,y=288),
     # input_location=GantryCoordinate(x=678, y=585),
-    input_location=GantryCoordinate(x=676, y=585),
+    input_location=GantryCoordinate(x=676, y=590),
     service_coordinate_high=GantryCoordinate(x=100, y=1100),
     service_coordinate_low=GantryCoordinate(x=100, y=200),
     idle_coordinate=GantryCoordinate(x=100, y=100),

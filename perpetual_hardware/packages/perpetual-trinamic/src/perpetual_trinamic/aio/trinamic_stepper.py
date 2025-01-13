@@ -225,6 +225,14 @@ class TrinamicStepper(TMCM12xx):
             position = self._configuration.convert_revolutions_to_steps(position)
             await self.move_relative(position)
 
+    @property
+    def configuration(self) -> StepperMotorConfig:
+        return self._configuration
+
+    @configuration.setter
+    def configuration(self, config: StepperMotorConfig) -> None:
+        self._configuration = config
+
     async def wait_for_move(self, timeout: float = 60.0) -> None:
         t0 = time.time()
         while not await self.get_position_reached():

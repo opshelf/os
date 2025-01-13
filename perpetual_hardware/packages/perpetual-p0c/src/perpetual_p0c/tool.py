@@ -2,7 +2,7 @@ import asyncio
 from perpetual_trinamic.aio.trinamic_axis import TrinamicAxis
 from perpetual_can import CANBusHandler
 from perpetual_p0c.storage import Tray, StorageModuleSide
-from perpetual_p0c.common import CanAxisConfiguration
+from perpetual_p0c.common import CanAxisConfiguration, AbstractSubsystem
 from perpetual_p0c.io_board import ActuatorState, IoController
 from perpetual_p0c.tool_board import ToolBoard, IoBoard
 from typing import Literal, Union, Annotated
@@ -20,7 +20,7 @@ class ToolOffsets(BaseModel):
 
 
 class ToolConfiguration(BaseModel):
-    puller: CanAxisConfiguration
+    carriage: CanAxisConfiguration
     offsets: ToolOffsets
 
 
@@ -89,6 +89,16 @@ class DropItemsCommand(BaseModel):
     tray: Tray
     idx: int
 
+class HomeToolCommand(BaseModel):
+    command: Literal["home"]
+
+class CarriageMoveAbsolute(BaseModel):
+    command: Literal["carriage_absolute"]
+    position: float
+
+class CarriageMoveRelative(BaseModel):
+    command: Literal["carriage_relative"]
+    position: float
 
 ToolCommands = Annotated[
     Union[
@@ -104,38 +114,61 @@ ToolCommands = Annotated[
         RetractCarriageCommand,
         RetractTrayCommand,
         DropItemsCommand,
+        HomeToolCommand,
+        CarriageMoveAbsolute,
+        CarriageMoveRelative,
     ],
     Field(discriminator="command"),
 ]
 
+#class AbstractSubsystem(ABC, Generic[C, S]):
+#    @abstractmethod
+#    def configuration(self) -> C: ...
+#
+#    @abstractmethod
+#    def set_configuration(self, configuration: C) -> None: ...
+#
+#    @abstractmethod
+#    async def status(self) -> S: ...
 
-class Tool:
+class Tool(AbstractSubsystem[ToolConfiguration, ToolStatus]):
     def __init__(self, bus: CANBusHandler, tool_configuration: ToolConfiguration):
         self._configuration = tool_configuration
-        self._puller = TrinamicAxis(
+        self._carriage = TrinamicAxis(
             bus,
-            module_id=tool_configuration.puller.can_id,
+            module_id=tool_configuration.carriage.can_id,
             motor_id=0,
-            configuration=tool_configuration.puller.configuration,
+            configuration=tool_configuration.carriage.configuration,
         )
         self._io = IoController(bus)
         self._tool_board = ToolBoard(bus)
         self._actuators_extended = False
         self._carriage_solenoids = 0
-        self._puller_solenoids = 0
+        self._carriage_solenoids = 0
 
     async def cleanup(self) -> None:
-        await self._puller.stop()
+        await self._carriage.stop()
         await self.set_solenoids_off()
 
     async def status(self) -> ToolStatus:
-        puller_position = await self._puller.get_position()
+        puller_position = await self._carriage.get_position()
+        state = await self._tool_board.get_state()
         return ToolStatus(
-            puller_solenoids=self._carriage_solenoids,
-            carriage_solenoids=self._puller_solenoids,
-            actuators=self._actuators_extended,
+            puller_solenoids=state.puller.to_int(),
+            carriage_solenoids=state.carriage.to_int(),
+            actuators=not state.inputs.forward_actuator,
             puller_position=puller_position,
         )
+
+    @property
+    async def configuration(self) -> ToolConfiguration:
+        return self._configuration
+
+    async def set_configuration(self, configuration: ToolConfiguration) -> None:
+        self._configuration = configuration
+        self._carriage.configuration = configuration.carriage.configuration
+        await self._carriage.initialize()
+
 
     @property
     def offsets(self) -> ToolOffsets:
@@ -146,8 +179,8 @@ class Tool:
         self._configuration.offsets = offsets
 
     @property
-    def puller(self) -> TrinamicAxis:
-        return self._puller
+    def carriage(self) -> TrinamicAxis:
+        return self._carriage
 
     @property
     def io(self) -> IoController:
@@ -252,18 +285,18 @@ class Tool:
 
     async def extend_carriage(self, side: StorageModuleSide = StorageModuleSide.RIGHT) -> None:
         if side == StorageModuleSide.RIGHT:
-            await self._puller.move_to_position(self.offsets.tool_extend_position)
+            await self._carriage.move_to_position(self.offsets.tool_extend_position)
             await self.wait_for_move()
         else:
-            await self._puller.move_to_position(0)
+            await self._carriage.move_to_position(0)
             await self.wait_for_move()
 
     async def retract_carriage(self, side: StorageModuleSide) -> None:
         if side == StorageModuleSide.RIGHT:
-            await self._puller.move_to_position(self.offsets.tray_pull_right)
+            await self._carriage.move_to_position(self.offsets.tray_pull_right)
             await self.wait_for_move()
         else:
-            await self._puller.move_to_position(self.offsets.tray_pull_left)
+            await self._carriage.move_to_position(self.offsets.tray_pull_left)
             await self.wait_for_move()
 
     async def carriage_safe(self, side: StorageModuleSide) -> None:
@@ -273,34 +306,34 @@ class Tool:
             await self.safe_min()
 
     async def safe_max(self) -> None:
-        await self._puller.move_to_position(self.offsets.tool_safe_max)
+        await self._carriage.move_to_position(self.offsets.tool_safe_max)
         await self.wait_for_move()
 
     async def safe_min(self) -> None:
-        await self._puller.move_to_position(self.offsets.tool_safe_min)
+        await self._carriage.move_to_position(self.offsets.tool_safe_min)
         await self.wait_for_move()
 
     async def initialize(self) -> None:
         await self._io.reset_valves()
         await self._tool_board.reset_all()
-        await self._puller.initialize()
+        await self._carriage.initialize()
 
     async def home(self) -> None:
-        await self._puller.home()
+        await self._carriage.home()
 
     async def wait_for_move(self) -> None:
-        await self._puller.wait_for_move()
+        await self._carriage.wait_for_move()
 
     async def stop(self) -> None:
-        await self._puller.stop()
+        await self._carriage.stop()
 
     async def retract_tray(self, side: StorageModuleSide) -> None:
         if side == StorageModuleSide.LEFT:
-            await self._puller.move_to_position(self.offsets.tray_pull_offset)
+            await self._carriage.move_to_position(self.offsets.tray_pull_offset)
         else:
-            if self._puller.configuration.max_travel:
-                await self._puller.move_to_position(
-                    self._puller.configuration.max_travel - self.offsets.tray_pull_offset
+            if self._carriage.configuration.max_travel:
+                await self._carriage.move_to_position(
+                    self._carriage.configuration.max_travel - self.offsets.tray_pull_offset
                 )
         await self.wait_for_move()
 
@@ -318,14 +351,14 @@ class Tool:
         )
 
     async def get_max(self) -> float:
-        await self._puller.home()
-        await self._puller.move_to_position(1000)
+        await self._carriage.home()
+        await self._carriage.move_to_position(1000)
         try:
-            await self._puller.wait_for_move()
+            await self._carriage.wait_for_move()
         except Exception as _:
             pass
-        position = await self._puller.get_position()
-        await self._puller.home()
+        position = await self._carriage.get_position()
+        await self._carriage.home()
         return position
 
     async def drop_items(self, tray: Tray, idx: int) -> None:
@@ -373,5 +406,11 @@ class Tool:
                 await self.retract_tray(side)
             case DropItemsCommand(tray=tray, idx=idx):
                 await self.drop_items(tray, idx)
+            case HomeToolCommand():
+                await self.home()
+            case CarriageMoveAbsolute(position=position):
+                await self._carriage.move_to_position(position)
+            case CarriageMoveRelative(position=position):
+                await self._carriage.move_to_relative_position(position)
             case _:
                 raise Exception("Invalid Tool Command")

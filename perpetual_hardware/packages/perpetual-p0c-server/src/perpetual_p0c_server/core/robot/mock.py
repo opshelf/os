@@ -16,9 +16,9 @@ import asyncio
 
 
 class MockRobot(AbstractRobot):
-    def __init__(self, config: RobotConfiguration) -> None:
+    def __init__(self, configuration: RobotConfiguration) -> None:
         self._storage = StorageGrid(left_module=[], right_module=[])
-        self._config = config
+        self._configuration = configuration
         self._state = RobotState()
 
     @property
@@ -32,6 +32,13 @@ class MockRobot(AbstractRobot):
     @storage.setter
     def storage(self, storage: StorageGrid) -> None:
         self._storage = storage
+
+    @property
+    def configuration(self) -> RobotConfiguration:
+        return self._configuration
+
+    async def set_configuration(self, configuration: RobotConfiguration) -> None:
+        self._configuration = configuration
 
     async def handle_command(self, command: RobotCommands) -> RobotResponses:
         match command:

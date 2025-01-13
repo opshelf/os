@@ -97,6 +97,16 @@ class IoBoard(BaseModel):
         byte1 |= int(self.r6) << 5
         return [byte1]
 
+    def to_int(self) -> int:
+        byte1 = 0
+        byte1 |= int(self.r1) << 0
+        byte1 |= int(self.r2) << 1
+        byte1 |= int(self.r3) << 2
+        byte1 |= int(self.r4) << 3
+        byte1 |= int(self.r5) << 4
+        byte1 |= int(self.r6) << 5
+        return byte1
+
 
 class Wedge(BaseModel):
     wedge_1: bool = False

@@ -1,13 +1,15 @@
 from typing import Annotated, Literal, Union
 from perpetual_can import CANBusHandler
 from perpetual_trinamic.aio.trinamic_axis import TrinamicAxis
-from perpetual_p0c.common import CanAxisConfiguration
+from perpetual_p0c.common import AbstractSubsystem, CanAxisConfiguration
 from pydantic import BaseModel, Field
 
 
 class OutputBoxOffsets(BaseModel):
     door_open_position: float
 
+class OutputBoxStatus(BaseModel):
+    door_position: float
 
 class OutputBoxConfiguration(BaseModel):
     door: CanAxisConfiguration
@@ -44,7 +46,7 @@ OutputBoxCommands = Annotated[
 ]
 
 
-class OutputBox:
+class OutputBox(AbstractSubsystem[OutputBoxConfiguration, OutputBoxStatus]):
     def __init__(self, bus: CANBusHandler, configuration: OutputBoxConfiguration):
         self._configuration = configuration
         self._door = TrinamicAxis(
@@ -61,12 +63,19 @@ class OutputBox:
         await self._door.stop()
 
     @property
-    def configuration(self) -> OutputBoxConfiguration:
+    async def configuration(self) -> OutputBoxConfiguration:
         return self._configuration
 
-    @configuration.setter
-    def configuration(self, configuration: OutputBoxConfiguration) -> None:
+    async def set_configuration(self, configuration: OutputBoxConfiguration) -> None:
         self._configuration = configuration
+        self._door.configuration = self._configuration.door.configuration
+        await self.initialize()
+
+    async def status(self) -> OutputBoxStatus:
+        position = await self._door.get_position()
+        return OutputBoxStatus(
+            door_position=position
+        )
 
     @property
     def offsets(self) -> OutputBoxOffsets:

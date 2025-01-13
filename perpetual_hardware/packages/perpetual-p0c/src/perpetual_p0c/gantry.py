@@ -9,6 +9,8 @@ from perpetual_can import CANBusHandler
 from typing import List, Literal, Union, Annotated
 from pydantic import BaseModel, Field
 
+from perpetual_p0c.common import AbstractSubsystem
+
 
 class GantryConfiguration(BaseModel):
     x_axis_id: int
@@ -81,20 +83,20 @@ GantryCommands = Annotated[
 ]
 
 
-class Gantry:
+class Gantry(AbstractSubsystem[GantryConfiguration, GantryStatus]):
     def __init__(self, bus: CANBusHandler, config: GantryConfiguration):
-        self._config = config
+        self._configuration = config
         self._x_axis = TrinamicAxis(
             bus,
-            self._config.x_axis_config,
-            module_id=self._config.x_axis_id,
+            self._configuration.x_axis_config,
+            module_id=self._configuration.x_axis_id,
             motor_id=0,
             max_current=6000,
         )
         self._y_axis = TrinamicAxis(
             bus,
-            self._config.y_axis_config,
-            module_id=self._config.y_axis_id,
+            self._configuration.y_axis_config,
+            module_id=self._configuration.y_axis_id,
             motor_id=0,
             max_current=6000,
         )
@@ -107,6 +109,16 @@ class Gantry:
             x_position=await self._x_axis.get_position(),
             y_position=await self._y_axis.get_position(),
         )
+
+    @property
+    async def configuration(self) -> GantryConfiguration:
+        return self._configuration
+
+    async def set_configuration(self, configuration: GantryConfiguration) -> None:
+        self._configuration = configuration
+        self._x_axis.configuration = self._configuration.x_axis_config
+        self._y_axis.configuration = self._configuration.y_axis_config
+        await self.initialize()
 
     async def stop(self) -> None:
         await self._x_axis.stop()
