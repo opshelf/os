@@ -365,7 +365,6 @@ class P0C(AbstractRobot):
         await self._funnel.set_configuration(self._configuration.funnel_configuration)
         await self._workstation.set_configuration(self._configuration.workstation)
 
-
     @property
     def gantry(self) -> Gantry:
         return self._gantry
@@ -422,30 +421,43 @@ class P0C(AbstractRobot):
                 else:
                     if coordinate.x < self._configuration.gantry_safe_x:
                         path.append(
-                            GantryCoordinate(x=self._configuration.gantry_safe_x, y=gantry_position.y)
+                            GantryCoordinate(
+                                x=self._configuration.gantry_safe_x, y=gantry_position.y
+                            )
                         )
                         path.append(GantryCoordinate(x=coordinate.x, y=coordinate.y))
                         return path
                     else:
                         path.append(
-                            GantryCoordinate(x=self._configuration.gantry_safe_x, y=gantry_position.y)
+                            GantryCoordinate(
+                                x=self._configuration.gantry_safe_x, y=gantry_position.y
+                            )
                         )
                         path.append(
                             GantryCoordinate(
-                                x=self._configuration.gantry_safe_x, y=self._configuration.gantry_safe_y
+                                x=self._configuration.gantry_safe_x,
+                                y=self._configuration.gantry_safe_y,
                             )
                         )
-                        path.append(GantryCoordinate(x=coordinate.x, y=self._configuration.gantry_safe_y))
+                        path.append(
+                            GantryCoordinate(x=coordinate.x, y=self._configuration.gantry_safe_y)
+                        )
                         path.append(GantryCoordinate(x=coordinate.x, y=coordinate.y))
                         return path
             # Below High Clearance
             else:
                 if coordinate.y >= self._configuration.input_location.y + 10:
-                    path.append(GantryCoordinate(x=gantry_position.x, y=self._configuration.gantry_safe_y))
                     path.append(
-                        GantryCoordinate(x=self._configuration.gantry_safe_x, y=self._configuration.gantry_safe_y)
+                        GantryCoordinate(x=gantry_position.x, y=self._configuration.gantry_safe_y)
                     )
-                    path.append(GantryCoordinate(x=self._configuration.gantry_safe_x, y=coordinate.y))
+                    path.append(
+                        GantryCoordinate(
+                            x=self._configuration.gantry_safe_x, y=self._configuration.gantry_safe_y
+                        )
+                    )
+                    path.append(
+                        GantryCoordinate(x=self._configuration.gantry_safe_x, y=coordinate.y)
+                    )
                     path.append(GantryCoordinate(x=coordinate.x, y=coordinate.y))
                     return path
                 else:
@@ -454,14 +466,19 @@ class P0C(AbstractRobot):
                         return path
                     else:
                         path.append(
-                            GantryCoordinate(x=gantry_position.x, y=self._configuration.gantry_safe_y)
+                            GantryCoordinate(
+                                x=gantry_position.x, y=self._configuration.gantry_safe_y
+                            )
                         )
                         path.append(
                             GantryCoordinate(
-                                x=self._configuration.gantry_safe_x, y=self._configuration.gantry_safe_y
+                                x=self._configuration.gantry_safe_x,
+                                y=self._configuration.gantry_safe_y,
                             )
                         )
-                        path.append(GantryCoordinate(x=coordinate.x, y=self._configuration.gantry_safe_y))
+                        path.append(
+                            GantryCoordinate(x=coordinate.x, y=self._configuration.gantry_safe_y)
+                        )
                         path.append(GantryCoordinate(x=coordinate.x, y=coordinate.y))
                         return path
         else:
@@ -471,8 +488,12 @@ class P0C(AbstractRobot):
                     path.append(GantryCoordinate(x=coordinate.x, y=coordinate.y))
                     return path
                 else:
-                    path.append(GantryCoordinate(x=gantry_position.x, y=self._configuration.gantry_safe_y))
-                    path.append(GantryCoordinate(x=coordinate.x, y=self._configuration.gantry_safe_y))
+                    path.append(
+                        GantryCoordinate(x=gantry_position.x, y=self._configuration.gantry_safe_y)
+                    )
+                    path.append(
+                        GantryCoordinate(x=coordinate.x, y=self._configuration.gantry_safe_y)
+                    )
                     path.append(GantryCoordinate(x=coordinate.x, y=coordinate.y))
                     return path
             else:
@@ -527,7 +548,7 @@ class P0C(AbstractRobot):
                     sensors = await self._io.get_sensors()
                     if sensors and sensors.output_transfer_conveyor:
                         print("Got Output Transfer")
-                        await asyncio.sleep(.25)
+                        await asyncio.sleep(0.25)
                         await self.funnel.stop_output_transfer()
                         tracking = BottleTracking.START_WORKSTATION_OUTPUT
                 elif tracking == BottleTracking.START_WORKSTATION_OUTPUT:
@@ -537,14 +558,14 @@ class P0C(AbstractRobot):
                     sensors = await self._io.get_sensors()
                     if sensors and sensors.output_conveyor:
                         print("Got Output Sensor")
-                        await asyncio.sleep(.25)
+                        await asyncio.sleep(0.25)
                         await self.funnel.stop_output()
                         tracking = BottleTracking.WAIT_FOR_OUTPUT_TRIGGER
                 elif tracking == BottleTracking.WAIT_FOR_OUTPUT_TRIGGER:
                     sensors = await self._io.get_sensors()
                     if sensors and sensors.output_box:
                         print("Got Door Sensor")
-                        await asyncio.sleep(.25)
+                        await asyncio.sleep(0.25)
                         tracking = BottleTracking.CLOSE_DOOR
                 elif tracking == BottleTracking.CLOSE_DOOR:
                     await self.workstation.close_output()
@@ -592,7 +613,7 @@ class P0C(AbstractRobot):
         if tray_loaded:
             coordinate = self._storage.get_tray_coordinate(location).to_gantry_coordinate()
             await self.gantry_move(coordinate + self._configuration.place_offset)
-            await self.tool.carriage.move_to_position(self.tool.offsets.tool_extend_position - 10)
+            await self.tool.carriage.move_to_position(self.tool.configuration.tool_extend_position - 10)
             await self.tool.carriage.wait_for_move()
             await self.tool.set_solenoids_off()
             await self.tool.extend_carriage(location.side)
@@ -612,8 +633,8 @@ class P0C(AbstractRobot):
                 await self.place_tray(self._state.current_tray)
             else:
                 self._state.clear_state()
-            #else:
-            #raise Exception("Tray Currently Held But No Known Location to Place it")
+            # else:
+            # raise Exception("Tray Currently Held But No Known Location to Place it")
 
     async def pull_tray(self, location: StorageModuleTrayLocation) -> None:
         tray_loaded = await self.tool.check_tray_loaded()
@@ -667,7 +688,7 @@ class P0C(AbstractRobot):
                 raise Exception("Failed to Receive Item")
             sensors = await self._io.get_sensors()
             if sensors and sensors.funnel_input:
-                await asyncio.sleep(.5)
+                await asyncio.sleep(0.5)
                 await self.funnel.close_tray_wedges(tray)
                 await self.funnel.stop_receive_item()
                 break

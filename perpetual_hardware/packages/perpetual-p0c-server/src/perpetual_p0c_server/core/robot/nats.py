@@ -9,6 +9,7 @@ from perpetual_p0c.robot import (
     AbstractRobot,
     RetrievePayload,
     ReturnCurrentTray,
+    RobotConfiguration,
     StopCommand,
     StoreCommand,
     RetrieveCommand,
@@ -328,3 +329,11 @@ class RobotWorker(AbstractRobotWorker):
 
     async def set_storage(self, storage: StorageGrid) -> None:
         self._robot.storage = storage
+
+    async def set_configuration(self, configuration: RobotConfiguration) -> None:
+        await self._robot.set_configuration(configuration)
+
+    def get_configuration(self) -> RobotConfiguration:
+        return self._robot.configuration
+
+

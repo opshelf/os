@@ -1,22 +1,15 @@
-from hardware_common.stepper_motor import (
-    StepperMotorConfig,
-)
 from pydantic import BaseModel
-from enum import Enum
-from typing import Optional, Any, Dict, List
-from perpetual_trinamic.aio.trinamic_axis import TrinamicAxis
+from perpetual_trinamic.aio.trinamic_axis import AxisStatus, TrinamicAxis
 from perpetual_can import CANBusHandler
 from typing import List, Literal, Union, Annotated
 from pydantic import BaseModel, Field
 
-from perpetual_p0c.common import AbstractSubsystem
+from perpetual_p0c.common import AbstractSubsystem, CanAxisConfiguration
 
 
 class GantryConfiguration(BaseModel):
-    x_axis_id: int
-    x_axis_config: StepperMotorConfig
-    y_axis_id: int
-    y_axis_config: StepperMotorConfig
+    x_axis: CanAxisConfiguration
+    y_axis: CanAxisConfiguration
 
 
 class GantryCoordinate(BaseModel):
@@ -35,8 +28,8 @@ class GantryMoveCommand(BaseModel):
 
 
 class GantryStatus(BaseModel):
-    x_position: float
-    y_position: float
+    x_axis: AxisStatus
+    y_axis: AxisStatus
 
 
 class ShutdownCommand(BaseModel):
@@ -88,15 +81,15 @@ class Gantry(AbstractSubsystem[GantryConfiguration, GantryStatus]):
         self._configuration = config
         self._x_axis = TrinamicAxis(
             bus,
-            self._configuration.x_axis_config,
-            module_id=self._configuration.x_axis_id,
+            self._configuration.x_axis.configuration,
+            module_id=self._configuration.x_axis.can_id,
             motor_id=0,
             max_current=6000,
         )
         self._y_axis = TrinamicAxis(
             bus,
-            self._configuration.y_axis_config,
-            module_id=self._configuration.y_axis_id,
+            self._configuration.y_axis.configuration,
+            module_id=self._configuration.y_axis.can_id,
             motor_id=0,
             max_current=6000,
         )
@@ -106,12 +99,12 @@ class Gantry(AbstractSubsystem[GantryConfiguration, GantryStatus]):
 
     async def status(self) -> GantryStatus:
         return GantryStatus(
-            x_position=await self._x_axis.get_position(),
-            y_position=await self._y_axis.get_position(),
+            x_position=await self._x_axis.status(),
+            y_position=await self._y_axis.status(),
         )
 
     @property
-    async def configuration(self) -> GantryConfiguration:
+    def configuration(self) -> GantryConfiguration:
         return self._configuration
 
     async def set_configuration(self, configuration: GantryConfiguration) -> None:

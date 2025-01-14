@@ -26,9 +26,9 @@ class AxisCommand(BaseModel):
     payload: Optional[Dict[Any, Any]]
 
 
-class Rotation(Enum):
-    CW = 0
-    CCW = 1
+class Rotation(str, Enum):
+    CW = "CW"
+    CCW = "CCW"
 
 
 class StepperMotorConfig(BaseModel):

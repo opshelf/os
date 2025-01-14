@@ -1,6 +1,6 @@
 from abc import ABCMeta, abstractmethod
 from typing import List, Union
-from perpetual_p0c.robot import RobotCommands, RobotResponses
+from perpetual_p0c.robot import RobotCommands, RobotConfiguration, RobotResponses
 from perpetual_p0c.storage import StorageGrid
 from perpetual_p0c_server.core.events import StorageEvents
 
@@ -40,3 +40,9 @@ class AbstractRobotWorker(metaclass=ABCMeta):
 
     @abstractmethod
     async def get_storage(self) -> StorageGrid: ...
+
+    @abstractmethod
+    def get_configuration(self) -> RobotConfiguration: ...
+
+    @abstractmethod
+    async def set_configuration(self, configuration: RobotConfiguration) -> None: ...

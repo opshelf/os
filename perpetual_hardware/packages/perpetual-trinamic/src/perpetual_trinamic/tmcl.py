@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from enum import IntEnum
+from pydantic import BaseModel
 
 
 class TMCLCommand:
@@ -104,40 +105,55 @@ class TMCLStatus:
     COMMAND_NOT_AVAILABLE = 6
 
 
-class TrinamicErrorFlags:
+class TrinamicErrorFlags(BaseModel):
+
+    stall_guard_error: bool
+    deviation_error: bool
+
     def __init__(self, value: int) -> None:
         self._value = value
-        self._stall_guard_error: bool = bool(value & 0x01)
-        self._deviation_error: bool = bool(value & 0x02)
+        self.stall_guard_error: bool = bool(value & 0x01)
+        self.deviation_error: bool = bool(value & 0x02)
 
-    @property
-    def stall_guard_error(self) -> bool:
-        return self._stall_guard_error
+    #@property
+    #def stall_guard_error(self) -> bool:
+    #    return self._stall_guard_error
 
-    @property
-    def deviation_error(self) -> bool:
-        return self._deviation_error
+    #@property
+    #def deviation_error(self) -> bool:
+    #    return self._deviation_error
 
     def is_fault(self) -> bool:
         return self.stall_guard_error or self.deviation_error
 
+    """
     def __repr__(self) -> str:
         return f"ErrorFlags(stall_guard={self.stall_guard_error},\
 deviation_error={self.deviation_error})"
+    """
 
+class StatusFlags(BaseModel):
+    stall_guard2_status: bool
+    over_temperature: bool
+    over_temperature_pre_warning: bool
+    short_to_ground_a: bool
+    short_to_ground_b: bool
+    open_load_a: bool
+    open_load_b: bool
+    stand_still: bool
 
-class StatusFlags:
     def __init__(self, value: int) -> None:
         self._value = value
-        self._stall_guard2_status: bool = bool(value & 0x01)
-        self._over_temperature: bool = bool(value & 0x02)
-        self._over_temperature_pre_warning: bool = bool(value & 0x04)
-        self._short_to_ground_a: bool = bool(value & 0x08)
-        self._short_to_ground_b: bool = bool(value & 0x10)
-        self._open_load_a: bool = bool(value & 0x20)
-        self._open_load_b: bool = bool(value & 0x40)
-        self._stand_still: bool = bool(value & 0x80)
-
+        self.stall_guard2_status: bool = bool(value & 0x01)
+        self.over_temperature: bool = bool(value & 0x02)
+        self.over_temperature_pre_warning: bool = bool(value & 0x04)
+        self.short_to_ground_a: bool = bool(value & 0x08)
+        self.short_to_ground_b: bool = bool(value & 0x10)
+        self.open_load_a: bool = bool(value & 0x20)
+        self.open_load_b: bool = bool(value & 0x40)
+        self.stand_still: bool = bool(value & 0x80)
+    
+    """
     @property
     def stall_guard2_status(self) -> bool:
         return self._stall_guard2_status
@@ -169,7 +185,7 @@ class StatusFlags:
     @property
     def stand_still(self) -> bool:
         return self._stand_still
-
+    """
     def is_fault(self) -> bool:
         return (
             self.open_load_b
@@ -180,6 +196,7 @@ class StatusFlags:
             or self.stall_guard2_status
         )
 
+    """
     def __repr__(self) -> str:
         return f"StatusFlags(\
 stall_guard2_status={self.stall_guard2_status},\
@@ -192,6 +209,7 @@ open_load_b={self.open_load_b},\
 stand_still={self.stand_still},\
 )"
 
+    """
 
 @dataclass
 class TmclMessage:

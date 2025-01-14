@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends
-from perpetual_p0c.robot import RobotCommands
+from perpetual_p0c.robot import RobotCommands, RobotConfiguration
 from perpetual_p0c_server.core.robot.base import AbstractRobotClient, AbstractRobotWorker
 from perpetual_p0c_server.routers.common import SuccessResponse
 from perpetual_p0c_server.core.robot import get_robot_client, get_robot_worker
@@ -52,3 +52,7 @@ async def clear_robot_commands(
 async def commands(client: AbstractRobotClient = Depends(get_robot_client)) -> List[RobotCommands]:
     commands = await client.get_queued_commands()
     return commands
+
+@router.get("/configuration")
+async def configuration(worker: AbstractRobotWorker = Depends(get_robot_worker)) -> RobotConfiguration:
+    return worker.get_configuration()

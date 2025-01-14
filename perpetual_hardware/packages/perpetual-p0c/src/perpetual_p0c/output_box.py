@@ -1,19 +1,16 @@
 from typing import Annotated, Literal, Union
 from perpetual_can import CANBusHandler
-from perpetual_trinamic.aio.trinamic_axis import TrinamicAxis
+from perpetual_trinamic.aio.trinamic_axis import AxisStatus, TrinamicAxis
 from perpetual_p0c.common import AbstractSubsystem, CanAxisConfiguration
 from pydantic import BaseModel, Field
 
-
-class OutputBoxOffsets(BaseModel):
-    door_open_position: float
-
 class OutputBoxStatus(BaseModel):
-    door_position: float
+    door_status: AxisStatus
+
 
 class OutputBoxConfiguration(BaseModel):
     door: CanAxisConfiguration
-    offsets: OutputBoxOffsets
+    door_open_position: float
 
 
 class ShutdownCommand(BaseModel):
@@ -63,7 +60,7 @@ class OutputBox(AbstractSubsystem[OutputBoxConfiguration, OutputBoxStatus]):
         await self._door.stop()
 
     @property
-    async def configuration(self) -> OutputBoxConfiguration:
+    def configuration(self) -> OutputBoxConfiguration:
         return self._configuration
 
     async def set_configuration(self, configuration: OutputBoxConfiguration) -> None:
@@ -72,18 +69,8 @@ class OutputBox(AbstractSubsystem[OutputBoxConfiguration, OutputBoxStatus]):
         await self.initialize()
 
     async def status(self) -> OutputBoxStatus:
-        position = await self._door.get_position()
-        return OutputBoxStatus(
-            door_position=position
-        )
-
-    @property
-    def offsets(self) -> OutputBoxOffsets:
-        return self._configuration.offsets
-
-    @offsets.setter
-    def offsets(self, offsets: OutputBoxOffsets) -> None:
-        self._configuration.offsets = offsets
+        status = await self._door.status()
+        return OutputBoxStatus(door_status=status)
 
     @property
     def door(self) -> TrinamicAxis:
@@ -96,7 +83,7 @@ class OutputBox(AbstractSubsystem[OutputBoxConfiguration, OutputBoxStatus]):
         await self._door.home()
 
     async def open(self) -> None:
-        await self._door.move_to_position(self._configuration.offsets.door_open_position)
+        await self._door.move_to_position(self._configuration.door_open_position)
         await self._door.wait_for_move()
 
     async def close(self) -> None:

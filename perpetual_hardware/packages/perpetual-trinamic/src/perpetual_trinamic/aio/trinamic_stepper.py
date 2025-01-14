@@ -11,7 +11,14 @@ from perpetual_trinamic.tmcl import StatusFlags, TrinamicErrorFlags
 from perpetual_can import CANBusHandler
 import time
 from perpetual_trinamic.aio.common import UserVariables, HomedStatus, HardStopStatus
+from pydantic import BaseModel
 
+class StepperStatus(BaseModel):
+    status_flags: StatusFlags 
+    error_flags: TrinamicErrorFlags
+    position: float
+    homed: HomedStatus
+    hard_stopped: HardStopStatus
 
 class TrinamicStepper(TMCM12xx):
     def __init__(
@@ -104,7 +111,7 @@ class TrinamicStepper(TMCM12xx):
         await self.set_actual_position(position)
         await self.set_target_position(position)
         await self.clear_error_flags()
-        #await self.clear_status_flags()
+        # await self.clear_status_flags()
         self._status = StepperMotorStatus.GOOD
 
     async def rotate(self, value: int) -> None:
@@ -260,3 +267,17 @@ class TrinamicStepper(TMCM12xx):
         if status:
             self._status = StepperMotorStatus.ERROR
         return self._status
+
+    async def status(self) -> StepperStatus:
+        home_status = await self.get_home_status()
+        hard_stop_status = await self.get_hard_stop_status()
+        position = await self.get_position()
+        status_flags = await self.get_status_flags()
+        error_flags = await self.get_error_flags()
+        return AxisStatus(
+            status_flags=StatusFlags(status_flags),
+            error_flags=TrinamicErrorFlags(error_flags),
+            position=position,
+            homed=home_status,
+            hard_stopped=hard_stop_status
+        )

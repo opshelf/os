@@ -3,30 +3,13 @@ from pydantic import BaseModel, Field
 from typing import Literal, Union, Annotated
 from perpetual_p0c.storage import Tray
 from perpetual_p0c.io_board import IoController, Wedge
-from perpetual_trinamic.aio.trinamic_axis import TrinamicAxis
+from perpetual_trinamic.aio.trinamic_axis import AxisStatus, TrinamicAxis
 from perpetual_trinamic.aio.trinamic_stepper import TrinamicStepper
 from perpetual_can import CANBusHandler
 from perpetual_p0c.storage import Tray
 from perpetual_p0c.common import AbstractSubsystem, CanAxisConfiguration
 from pydantic import BaseModel
 from enum import Enum
-
-
-class FunnelOffsets(BaseModel):
-    funnel_min_width: float
-    funnel_min_height: float
-    funnel_cell_1_offset_x: float
-    funnel_cell_1_offset_y: float
-    catch_position: float
-    diverter_50mm_pos: float
-    diverter_100mm_pos: float
-    diverter_150mm_pos: float
-    belt_speed: float = 150
-    wall_speed: float = 500
-    output_transfer_conveyor_speed: float = 100
-    output_conveyor_speed: float = 250
-    slot_gap_size: float = 10.0
-
 
 class FunnelConfiguration(BaseModel):
     inlet_funnel: CanAxisConfiguration
@@ -39,20 +22,41 @@ class FunnelConfiguration(BaseModel):
     output_transfer_conveyor: CanAxisConfiguration
     output_conveyor: CanAxisConfiguration
     diverter: CanAxisConfiguration
-    relay_board_id: int
-    offsets: FunnelOffsets
     # opposing_funnel_max_travel: float = 362
+    funnel_min_width: float
+    funnel_cell_1_offset_x: float
+    catch_position: float
+    diverter_50mm_pos: float
+    diverter_100mm_pos: float
+    diverter_150mm_pos: float
+    relay_board_id: int
+    belt_speed: float = 150
+    wall_speed: float = 500
+    output_transfer_conveyor_speed: float = 100
+    output_conveyor_speed: float = 250
+    slot_gap_size: float = 10.0
     opposing_funnel_max_travel: float = 340
     input_funnel_max_travel: float = 370.0
     minimum_transfer_location: float = 325.0
 
 
 class FunnelStatus(BaseModel):
-    inlet_funnel: float
-    opposing_funnel: float
-    slot_1: float
-    slot_2: float
-    slot_3: float
+    inlet_funnel: AxisStatus
+    opposing_funnel: AxisStatus
+    slot_1: AxisStatus
+    slot_2: AxisStatus
+    slot_3: AxisStatus
+    #self._inlet_funnel = TrinamicAxis(
+    #self._opposing_funnel = TrinamicAxis(
+    #self._slot_1 = TrinamicAxis(
+    #self._slot_2 = TrinamicAxis(
+    #self._slot_3 = TrinamicAxis(
+    #self._belt = TrinamicStepper(
+    #self._wall = TrinamicStepper(
+    #self._diverter = TrinamicStepper(
+    #self._output_transfer_conveyor = TrinamicStepper(
+    #self._output_conveyor = TrinamicStepper(
+
 
 
 class FunnelOpeningSize(int, Enum):
@@ -245,21 +249,21 @@ class Funnel(AbstractSubsystem[FunnelConfiguration, FunnelStatus]):
 
     async def start_belt(self) -> None:
         await self._belt.initialize()
-        await self._belt.rotate(int(self._configuration.offsets.belt_speed))
+        await self._belt.rotate(int(self._configuration.belt_speed))
 
     async def stop_wall(self) -> None:
         await self._wall.stop()
 
     async def start_wall(self) -> None:
         await self._wall.initialize()
-        await self._wall.rotate(int(self._configuration.offsets.wall_speed))
+        await self._wall.rotate(int(self._configuration.wall_speed))
 
     async def stop_output(self) -> None:
         await self._output_conveyor.stop()
 
     async def start_output(self) -> None:
         await self._output_conveyor.initialize()
-        await self._output_conveyor.rotate(int(self._configuration.offsets.output_conveyor_speed))
+        await self._output_conveyor.rotate(int(self._configuration.output_conveyor_speed))
 
     async def stop_output_transfer(self) -> None:
         await self._output_transfer_conveyor.stop()
@@ -267,11 +271,11 @@ class Funnel(AbstractSubsystem[FunnelConfiguration, FunnelStatus]):
     async def start_output_transfer(self) -> None:
         await self._output_transfer_conveyor.initialize()
         await self._output_transfer_conveyor.rotate(
-            int(self._configuration.offsets.output_transfer_conveyor_speed)
+            int(self._configuration.output_transfer_conveyor_speed)
         )
-    
+
     @property
-    async def configuration(self) -> FunnelConfiguration:
+    def configuration(self) -> FunnelConfiguration:
         return self._configuration
 
     async def set_configuration(self, configuration: FunnelConfiguration) -> None:
@@ -284,14 +288,6 @@ class Funnel(AbstractSubsystem[FunnelConfiguration, FunnelStatus]):
         self._belt.configuration = self._configuration.belt.configuration
         self._wall.configuration = self._configuration.wall.configuration
         await self.initialize()
-
-    @property
-    def offsets(self) -> FunnelOffsets:
-        return self._configuration.offsets
-
-    @offsets.setter
-    def offsets(self, offsets: FunnelOffsets) -> None:
-        self._configuration.offsets = offsets
 
     async def start_receive_item(self) -> None:
         await self.start_belt()
@@ -411,23 +407,23 @@ class Funnel(AbstractSubsystem[FunnelConfiguration, FunnelStatus]):
 
     async def open_tray_slots(self, tray: Tray) -> None:
         if tray.cell_width <= 50:
-            await self._slot_1.move_to_position(self._configuration.offsets.slot_gap_size * 2)
+            await self._slot_1.move_to_position(self._configuration.slot_gap_size * 2)
             await self._slot_2.move_to_position(
-                tray.cell_width - self._configuration.offsets.slot_gap_size
+                tray.cell_width - self._configuration.slot_gap_size
             )
             await self._slot_3.move_to_position(
-                tray.cell_width - self._configuration.offsets.slot_gap_size
+                tray.cell_width - self._configuration.slot_gap_size
             )
         elif tray.cell_width > 50 and tray.cell_width <= 105:
-            await self._slot_1.move_to_position(self._configuration.offsets.slot_gap_size * 2)
-            await self._slot_2.move_to_position(self._configuration.offsets.slot_gap_size * 2)
+            await self._slot_1.move_to_position(self._configuration.slot_gap_size * 2)
+            await self._slot_2.move_to_position(self._configuration.slot_gap_size * 2)
             await self._slot_3.move_to_position(
-                tray.cell_width - self._configuration.offsets.slot_gap_size
+                tray.cell_width - self._configuration.slot_gap_size
             )
         else:
-            await self._slot_1.move_to_position(self._configuration.offsets.slot_gap_size * 2)
-            await self._slot_2.move_to_position(self._configuration.offsets.slot_gap_size * 2)
-            await self._slot_3.move_to_position(self._configuration.offsets.slot_gap_size * 2)
+            await self._slot_1.move_to_position(self._configuration.slot_gap_size * 2)
+            await self._slot_2.move_to_position(self._configuration.slot_gap_size * 2)
+            await self._slot_3.move_to_position(self._configuration.slot_gap_size * 2)
 
     async def close_tray_wedges(self, tray: Tray, times: int = 1) -> None:
         for _ in range(0, times):
@@ -438,24 +434,24 @@ class Funnel(AbstractSubsystem[FunnelConfiguration, FunnelStatus]):
     async def set_diverter_opening(self, tray: Tray) -> None:
         await self._diverter.initialize()
         if tray.cell_width <= 50.0:
-            await self._diverter.move_revolutions(self._configuration.offsets.diverter_50mm_pos)
+            await self._diverter.move_revolutions(self._configuration.diverter_50mm_pos)
         elif tray.cell_width > 50.0 and tray.cell_width <= 105.0:
-            await self._diverter.move_revolutions(self._configuration.offsets.diverter_100mm_pos)
+            await self._diverter.move_revolutions(self._configuration.diverter_100mm_pos)
         else:
-            await self._diverter.move_revolutions(self._configuration.offsets.diverter_150mm_pos)
+            await self._diverter.move_revolutions(self._configuration.diverter_150mm_pos)
 
     async def move_to_cell(self, tray: Tray, idx: int) -> None:
-        position = tray.cell_width - self.offsets.funnel_min_height
+        position = tray.cell_width
         if position >= 150:
             position = 148
         ipos, opos = tray.get_cell_position(idx)
         await self.open_tray_slots(tray)
         await self.open_tray_wedges(tray)
         await self.wait_for_move()
-        ipos += self.offsets.funnel_cell_1_offset_x
+        ipos += self._configuration.funnel_cell_1_offset_x
         opos = self._configuration.opposing_funnel_max_travel - opos
-        opos -= self.offsets.funnel_cell_1_offset_x
-        opos -= self.offsets.funnel_min_width
+        opos -= self._configuration.funnel_cell_1_offset_x
+        opos -= self._configuration.funnel_min_width
         opos = min([self._configuration.opposing_funnel_max_travel, opos])
         ipos = min([self._configuration.input_funnel_max_travel, ipos])
         opos = max([0, opos])
@@ -483,16 +479,16 @@ class Funnel(AbstractSubsystem[FunnelConfiguration, FunnelStatus]):
         await self.opposing_funnel.move_to_position(0)
         await self.return_slots()
         await self.wait_for_move()
-        position = tray.cell_width - self.offsets.funnel_min_height
+        position = tray.cell_width
         if position >= 150:
             position = 148
         ipos, opos = tray.get_cell_position(idx)
         await self.open_tray_slots(tray)
         await self.open_tray_wedges(tray)
-        ipos += self.offsets.funnel_cell_1_offset_x
+        ipos += self._configuration.funnel_cell_1_offset_x
         opos = self._configuration.opposing_funnel_max_travel - opos
-        opos -= self.offsets.funnel_cell_1_offset_x
-        opos += self.offsets.funnel_min_width
+        opos -= self._configuration.funnel_cell_1_offset_x
+        opos += self._configuration.funnel_min_width
         opos = min([self._configuration.opposing_funnel_max_travel, opos])
         ipos = min([self._configuration.opposing_funnel_max_travel, ipos])
         opos = max([0, opos])
@@ -509,12 +505,12 @@ class Funnel(AbstractSubsystem[FunnelConfiguration, FunnelStatus]):
         await self.wait_for_move()
 
     async def return_tray_slots(self, tray: Tray, idx: int) -> None:
-        position = tray.cell_width - self.offsets.funnel_min_height
+        position = tray.cell_width - self._configuration
         if position >= 150:
             position = 148
         ipos, opos = tray.get_cell_position(idx)
         diff = opos - ipos
-        slot_pos = diff - self._configuration.offsets.slot_gap_size
+        slot_pos = diff - self._configuration.slot_gap_size
         if tray.cell_width <= 50:
             await self._slot_1.move_to_position(slot_pos)
             await self._slot_2.move_to_position(slot_pos)
@@ -529,15 +525,11 @@ class Funnel(AbstractSubsystem[FunnelConfiguration, FunnelStatus]):
             await self._slot_3.move_to_position(0)
 
     async def status(self) -> FunnelStatus:
-        ipos = await self._inlet_funnel.get_position()
-        opos = await self._opposing_funnel.get_position()
-        slot_1 = await self._slot_1.get_position()
-        slot_2 = await self._slot_2.get_position()
-        slot_3 = await self._slot_3.get_position()
-
-        slot_1 = 0
-        slot_2 = 0
-        slot_3 = 0
+        ipos = await self._inlet_funnel.status()
+        opos = await self._opposing_funnel.status()
+        slot_1 = await self._slot_1.status()
+        slot_2 = await self._slot_2.status()
+        slot_3 = await self._slot_3.status()
         return FunnelStatus(
             inlet_funnel=ipos,
             opposing_funnel=opos,
@@ -592,39 +584,22 @@ class Funnel(AbstractSubsystem[FunnelConfiguration, FunnelStatus]):
     async def setup_receive_item(self, tray: Tray, idx: int) -> None:
         await self.return_diverter()
         await self.inlet_funnel.move_to_position(0)
-        position = tray.cell_width - self.offsets.funnel_min_height
+        position = tray.cell_width
         if position >= 150:
             position = 148
         _, opos = tray.get_cell_position(idx)
         await self.return_slots()
-        #await self.open_tray_slots(tray)
+        # await self.open_tray_slots(tray)
         await self.open_tray_wedges(tray)
         await self.wait_for_move()
         opos = self._configuration.opposing_funnel_max_travel - opos
-        opos -= self.offsets.funnel_cell_1_offset_x
-        opos -= self.offsets.funnel_min_width
+        opos -= self._configuration.funnel_cell_1_offset_x
+        opos -= self._configuration.funnel_min_width
         opos = min([self._configuration.opposing_funnel_max_travel, opos])
         opos = max([0, opos])
         print("Setup Receive Item Opposing Funnel Position: ", opos)
         await self._opposing_funnel.move_to_position(opos)
         await self.wait_for_move()
-
-
-        #position = tray.cell_width - self.offsets.funnel_min_height
-        #if position >= 150:
-        #    position = 148
-        #ipos, opos = tray.get_cell_position(idx)
-        #await self.open_tray_slots(tray)
-        #await self.open_tray_wedges(tray)
-        #await self.wait_for_move()
-        #ipos += self.offsets.funnel_cell_1_offset_x
-        #opos = self._configuration.opposing_funnel_max_travel - opos
-        #opos -= self.offsets.funnel_cell_1_offset_x
-        #opos -= self.offsets.funnel_min_width
-        #opos = min([self._configuration.opposing_funnel_max_travel, opos])
-        #ipos = min([self._configuration.input_funnel_max_travel, ipos])
-        #opos = max([0, opos])
-        #curr_opos = await self._opposing_funnel.get_position()
 
     async def handle_command(self, command: FunnelCommands) -> None:
         match command:

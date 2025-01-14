@@ -3,11 +3,11 @@ from hardware_common.stepper_motor import (
     Rotation,
 )
 from perpetual_p0c.common import CanAxisConfiguration, CanMessageIds
-from perpetual_p0c.funnel import FunnelOffsets, FunnelConfiguration
+from perpetual_p0c.funnel import FunnelConfiguration
 from perpetual_p0c.gantry import GantryConfiguration, GantryCoordinate
-from perpetual_p0c.tool import ToolOffsets, ToolConfiguration
+from perpetual_p0c.tool import  ToolConfiguration
 from perpetual_p0c.workstation import WorkstationConfiguration
-from perpetual_p0c.output_box import OutputBoxConfiguration, OutputBoxOffsets
+from perpetual_p0c.output_box import OutputBoxConfiguration
 from perpetual_p0c.robot import RobotConfiguration
 
 
@@ -35,7 +35,7 @@ p0_output_box_configuration = OutputBoxConfiguration(
         name="output_box",
         axis_type="leadscrew",
     ),
-    offsets=OutputBoxOffsets(door_open_position=205.0),
+    door_open_position=205.0,
 )
 
 p0_workstation_configuration = WorkstationConfiguration(
@@ -93,51 +93,52 @@ p0_workstation_configuration = WorkstationConfiguration(
 )
 
 p0_gantry_config = GantryConfiguration(
-    x_axis_id=CanMessageIds.X_AXIS,
-    x_axis_config=StepperMotorConfig(
-        microsteps=16,
-        steps_per_rev=200,
-        encoder_ppr=3200,
-        steps_per_mm=40,
-        work_current=5000,
-        holding_current=0,
-        homing_current=4000,
-        velocity=750,
-        acceleration=500,
-        max_velocity=200,
-        max_acceleration=200,
-        min_travel=None,
-        max_travel=None,
-        invert_coordinates=True,
-        home_direction=Rotation.CW,
-        homing_speed=100,
+    x_axis=CanAxisConfiguration(
+        can_id=CanMessageIds.X_AXIS,
+        configuration=StepperMotorConfig(
+            microsteps=16,
+            steps_per_rev=200,
+            encoder_ppr=3200,
+            steps_per_mm=40,
+            work_current=5000,
+            holding_current=0,
+            homing_current=4000,
+            velocity=750,
+            acceleration=500,
+            max_velocity=200,
+            max_acceleration=200,
+            min_travel=None,
+            max_travel=None,
+            invert_coordinates=True,
+            home_direction=Rotation.CW,
+            homing_speed=100,
+        ),
+        name="x_axis",
+        axis_type="linear_axis",
     ),
-    y_axis_id=CanMessageIds.Y_AXIS,
-    y_axis_config=StepperMotorConfig(
-        microsteps=16,
-        steps_per_rev=200,
-        encoder_ppr=3200,
-        steps_per_mm=40,
-        # work_current=5000,
-        # holding_current=5000,
-        # homing_current=4000,
-        work_current=5000,
-        holding_current=5000,
-        homing_current=5000,
-        # work_current=6000,
-        # holding_current=6000,
-        # homing_current=6000,
-        # velocity=150,
-        velocity=150,
-        acceleration=50,
-        max_velocity=200,
-        max_acceleration=200,
-        min_travel=None,
-        max_travel=None,
-        invert_coordinates=False,
-        home_direction=Rotation.CCW,
-        homing_speed=50,
-        brake=True,
+    y_axis=CanAxisConfiguration(
+        can_id=CanMessageIds.Y_AXIS,
+        configuration=StepperMotorConfig(
+            microsteps=16,
+            steps_per_rev=200,
+            encoder_ppr=3200,
+            steps_per_mm=40,
+            work_current=5000,
+            holding_current=5000,
+            homing_current=5000,
+            velocity=150,
+            acceleration=50,
+            max_velocity=200,
+            max_acceleration=200,
+            min_travel=None,
+            max_travel=None,
+            invert_coordinates=False,
+            home_direction=Rotation.CCW,
+            homing_speed=50,
+            brake=True,
+        ),
+        name="y_axis",
+        axis_type="linear_axis",
     ),
 )
 
@@ -352,17 +353,12 @@ p0_funnel_config = FunnelConfiguration(
         axis_type="leadscrew",
     ),
     relay_board_id=CanMessageIds.IO_NODE,
-    offsets=FunnelOffsets(
-        funnel_min_width=0.0,
-        funnel_min_height=0.0,
-        # funnel_cell_1_offset_x=12.0,
-        funnel_cell_1_offset_x=16.0,
-        funnel_cell_1_offset_y=0.0,
-        catch_position=260.0,
-        diverter_50mm_pos=0.85,
-        diverter_100mm_pos=1.5,
-        diverter_150mm_pos=2.2,
-    ),
+    funnel_min_width=0.0,
+    funnel_cell_1_offset_x=16.0,
+    catch_position=260.0,
+    diverter_50mm_pos=0.85,
+    diverter_100mm_pos=1.5,
+    diverter_150mm_pos=2.2,
 )
 
 p0_tool_config = ToolConfiguration(
@@ -389,16 +385,13 @@ p0_tool_config = ToolConfiguration(
         name="z_axis",
         axis_type="leadscrew",
     ),
-    offsets=ToolOffsets(
-        tool_extend_position=481.5,
-        tool_retract_position=240.0,
-        tool_safe_max=345.0,
-        tool_safe_min=20.0,
-        tray_pull_right=22,
-        tray_pull_left=458,
-        # tray_pull_offset=22
-        tray_pull_offset=20.5,
-    ),
+    tool_extend_position=481.5,
+    tool_retract_position=240.0,
+    tool_safe_max=345.0,
+    tool_safe_min=20.0,
+    tray_pull_right=22,
+    tray_pull_left=458,
+    tray_pull_offset=20.5,
 )
 
 p0_robot_config = RobotConfiguration(

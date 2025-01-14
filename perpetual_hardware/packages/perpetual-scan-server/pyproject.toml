@@ -1,0 +1,21 @@
+[project]
+name = "perpetual-scan-server"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.6",
+    "nats-py>=2.9.0",
+    "pydantic>=2.10.0",
+    "uvicorn>=0.32.1",
+    "pyserial-asyncio>=0.6",
+    "perpetual-p0c-server"
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv.sources]
+perpetual-p0c-server = { workspace = true }

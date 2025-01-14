@@ -18,6 +18,10 @@ dependencies = [
     "perpetual-label-maker"
 ]
 
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [tool.uv.sources]
 perpetual-p0c = { workspace = true }
 perpetual-label-maker = { workspace = true }

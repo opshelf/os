@@ -2,6 +2,7 @@ from perpetual_can import CANBusHandler
 from perpetual_trinamic.aio.trinamic_axis import TrinamicAxis
 from perpetual_p0c.output_box import OutputBox, OutputBoxStatus
 from typing import Literal, Union, Annotated
+from perpetual_trinamic.aio.trinamic_stepper import StepperStatus
 from pydantic import BaseModel, Field
 from perpetual_p0c.common import AbstractSubsystem, CanAxisConfiguration
 from perpetual_p0c.output_box import OutputBoxConfiguration
@@ -14,9 +15,11 @@ class WorkstationConfiguration(BaseModel):
     input_belt_speed: int
     output_belt_speed: int
 
+
 class WorkstationStatus(BaseModel):
     output_box: OutputBoxStatus
-
+    input_belt: StepperStatus
+    output_belt: StepperStatus
 
 
 class ShutdownCommand(BaseModel):
@@ -115,21 +118,21 @@ class Workstation(AbstractSubsystem[WorkstationConfiguration, WorkstationStatus]
         await self.output_belt.initialize()
 
     @property
-    async def configuration(self) -> WorkstationConfiguration:
+    def configuration(self) -> WorkstationConfiguration:
         return self._configuration
 
     async def set_configuration(self, configuration: WorkstationConfiguration) -> None:
         self._configuration = configuration
-        self._output_belt.configuration = self._configuration.output_belt_configuration.configuration
+        self._output_belt.configuration = (
+            self._configuration.output_belt_configuration.configuration
+        )
         self._input_belt.configuration = self._configuration.input_belt_configuration.configuration
         await self._output_box.set_configuration(self._configuration.outputbox_configuration)
         await self.initialize()
 
     async def status(self) -> WorkstationStatus:
         output_box_status = await self.output_box.status()
-        return WorkstationStatus(
-            output_box=output_box_status
-        )
+        return WorkstationStatus(output_box=output_box_status)
 
     @property
     def output_box(self) -> OutputBox:

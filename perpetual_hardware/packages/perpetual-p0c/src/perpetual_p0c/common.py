@@ -9,11 +9,10 @@ S = TypeVar("S")
 
 
 class AbstractSubsystem(ABC, Generic[C, S]):
-    
     @property
     @abstractmethod
-    async def configuration(self) -> C: ...
-    
+    def configuration(self) -> C: ...
+
     @abstractmethod
     async def set_configuration(self, configuration: C) -> None: ...
 

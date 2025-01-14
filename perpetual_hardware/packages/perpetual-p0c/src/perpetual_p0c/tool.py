@@ -1,5 +1,5 @@
 import asyncio
-from perpetual_trinamic.aio.trinamic_axis import TrinamicAxis
+from perpetual_trinamic.aio.trinamic_axis import AxisStatus, TrinamicAxis
 from perpetual_can import CANBusHandler
 from perpetual_p0c.storage import Tray, StorageModuleSide
 from perpetual_p0c.common import CanAxisConfiguration, AbstractSubsystem
@@ -9,7 +9,8 @@ from typing import Literal, Union, Annotated
 from pydantic import BaseModel, Field
 
 
-class ToolOffsets(BaseModel):
+class ToolConfiguration(BaseModel):
+    carriage: CanAxisConfiguration
     tool_retract_position: float
     tool_extend_position: float
     tool_safe_min: float
@@ -19,16 +20,11 @@ class ToolOffsets(BaseModel):
     tray_pull_left: float
 
 
-class ToolConfiguration(BaseModel):
-    carriage: CanAxisConfiguration
-    offsets: ToolOffsets
-
-
 class ToolStatus(BaseModel):
     puller_solenoids: int
     carriage_solenoids: int
     actuators: bool
-    puller_position: float
+    carriage_status: AxisStatus
 
 
 class ShutdownCommand(BaseModel):
@@ -89,16 +85,20 @@ class DropItemsCommand(BaseModel):
     tray: Tray
     idx: int
 
+
 class HomeToolCommand(BaseModel):
     command: Literal["home"]
+
 
 class CarriageMoveAbsolute(BaseModel):
     command: Literal["carriage_absolute"]
     position: float
 
+
 class CarriageMoveRelative(BaseModel):
     command: Literal["carriage_relative"]
     position: float
+
 
 ToolCommands = Annotated[
     Union[
@@ -121,15 +121,6 @@ ToolCommands = Annotated[
     Field(discriminator="command"),
 ]
 
-#class AbstractSubsystem(ABC, Generic[C, S]):
-#    @abstractmethod
-#    def configuration(self) -> C: ...
-#
-#    @abstractmethod
-#    def set_configuration(self, configuration: C) -> None: ...
-#
-#    @abstractmethod
-#    async def status(self) -> S: ...
 
 class Tool(AbstractSubsystem[ToolConfiguration, ToolStatus]):
     def __init__(self, bus: CANBusHandler, tool_configuration: ToolConfiguration):
@@ -151,32 +142,23 @@ class Tool(AbstractSubsystem[ToolConfiguration, ToolStatus]):
         await self.set_solenoids_off()
 
     async def status(self) -> ToolStatus:
-        puller_position = await self._carriage.get_position()
+        carriage_status = await self._carriage.status()
         state = await self._tool_board.get_state()
         return ToolStatus(
             puller_solenoids=state.puller.to_int(),
             carriage_solenoids=state.carriage.to_int(),
             actuators=not state.inputs.forward_actuator,
-            puller_position=puller_position,
+            carriage_status=carriage_status,
         )
 
     @property
-    async def configuration(self) -> ToolConfiguration:
+    def configuration(self) -> ToolConfiguration:
         return self._configuration
 
     async def set_configuration(self, configuration: ToolConfiguration) -> None:
         self._configuration = configuration
         self._carriage.configuration = configuration.carriage.configuration
         await self._carriage.initialize()
-
-
-    @property
-    def offsets(self) -> ToolOffsets:
-        return self._configuration.offsets
-
-    @offsets.setter
-    def offsets(self, offsets: ToolOffsets) -> None:
-        self._configuration.offsets = offsets
 
     @property
     def carriage(self) -> TrinamicAxis:
@@ -285,7 +267,7 @@ class Tool(AbstractSubsystem[ToolConfiguration, ToolStatus]):
 
     async def extend_carriage(self, side: StorageModuleSide = StorageModuleSide.RIGHT) -> None:
         if side == StorageModuleSide.RIGHT:
-            await self._carriage.move_to_position(self.offsets.tool_extend_position)
+            await self._carriage.move_to_position(self._configuration.tool_extend_position)
             await self.wait_for_move()
         else:
             await self._carriage.move_to_position(0)
@@ -293,10 +275,10 @@ class Tool(AbstractSubsystem[ToolConfiguration, ToolStatus]):
 
     async def retract_carriage(self, side: StorageModuleSide) -> None:
         if side == StorageModuleSide.RIGHT:
-            await self._carriage.move_to_position(self.offsets.tray_pull_right)
+            await self._carriage.move_to_position(self._configuration.tray_pull_right)
             await self.wait_for_move()
         else:
-            await self._carriage.move_to_position(self.offsets.tray_pull_left)
+            await self._carriage.move_to_position(self._configuration.tray_pull_left)
             await self.wait_for_move()
 
     async def carriage_safe(self, side: StorageModuleSide) -> None:
@@ -306,11 +288,11 @@ class Tool(AbstractSubsystem[ToolConfiguration, ToolStatus]):
             await self.safe_min()
 
     async def safe_max(self) -> None:
-        await self._carriage.move_to_position(self.offsets.tool_safe_max)
+        await self._carriage.move_to_position(self._configuration.tool_safe_max)
         await self.wait_for_move()
 
     async def safe_min(self) -> None:
-        await self._carriage.move_to_position(self.offsets.tool_safe_min)
+        await self._carriage.move_to_position(self._configuration.tool_safe_min)
         await self.wait_for_move()
 
     async def initialize(self) -> None:
@@ -329,11 +311,11 @@ class Tool(AbstractSubsystem[ToolConfiguration, ToolStatus]):
 
     async def retract_tray(self, side: StorageModuleSide) -> None:
         if side == StorageModuleSide.LEFT:
-            await self._carriage.move_to_position(self.offsets.tray_pull_offset)
+            await self._carriage.move_to_position(self._configuration.tray_pull_offset)
         else:
             if self._carriage.configuration.max_travel:
                 await self._carriage.move_to_position(
-                    self._carriage.configuration.max_travel - self.offsets.tray_pull_offset
+                    self._carriage.configuration.max_travel - self._configuration.tray_pull_offset
                 )
         await self.wait_for_move()
 
