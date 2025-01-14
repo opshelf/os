@@ -63,21 +63,23 @@ export const CellSelectionForm = ({
   // Dynamic updates for dependent selections (shelf, tray, cell)
   useEffect(() => {
     if (shelf !== null && data[side][shelf]?.trays.length === 0) {
+      //@ts-ignore
       setLocationData((prev: IntermediateData) => ({
         ...prev,
         tray: null,
         cell: null,
-      }));
+      })); //@ts-ignore
     }
     if (
       shelf !== null &&
       tray !== null &&
       data[side][shelf]?.trays[tray]?.slots.length === 0
     ) {
+      //@ts-ignore
       setLocationData((prev: IntermediateData) => ({
         ...prev,
         cell: null,
-      }));
+      })); //@ts-ignore
     }
   }, [side, shelf, tray, data]);
 

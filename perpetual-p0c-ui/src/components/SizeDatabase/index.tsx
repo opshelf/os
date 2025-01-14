@@ -9,8 +9,6 @@ import {
 } from '@/components/ui/table';
 import {
   useQueries,
-  useMutation,
-  useQueryClient,
 } from '@tanstack/react-query';
 import { getFreeCells, getItems } from '@/api';
 
@@ -42,6 +40,7 @@ const Inventory = () => {
   if (error) {
     return <span>Error Fetching Inventory</span>;
   }
+  console.log(data)
 
   return (
     <div className="flex flex-col w-full">
