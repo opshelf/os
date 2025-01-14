@@ -1,16 +1,7 @@
 import axios from 'axios';
 import { HOST } from './common';
 import z from 'zod';
-import { Dimension, dimensionSchema, GS1, gs1Schema } from '@/domain';
-//import {
-//  storageModuleSchema,
-//  StorageModuleData,
-//  StorageModuleCellLocation,
-//  storageModuleCellLocationSchema,
-//  CellLocationData,
-//  cellLocationDataSchema,
-//  CellItem,
-//} from '@/domain';
+import { Dimension, dimensionSchema, GS1 } from '@/domain';
 
 export const updateSizes = async (
   data: GS1,

@@ -91,3 +91,63 @@ export type WorkstationHomeOutputCommand = z.infer<
 export type WorkstationCommands = z.infer<
   typeof workstationCommandsSchema
 >;
+
+export class Workstation {
+  sendWorkstationCommand: (
+    workstationCommand: WorkstationCommands
+  ) => Promise<void>;
+
+  constructor(
+    sendWorkstationCommand: (
+      workstationCommand: WorkstationCommands
+    ) => Promise<void>
+  ) {
+    this.sendWorkstationCommand = sendWorkstationCommand;
+  }
+
+  async workstationShutdownCommand(): Promise<void> {
+    await this.sendWorkstationCommand({ command: 'shutdown' });
+  }
+
+  async workstationStopCommand(): Promise<void> {
+    await this.sendWorkstationCommand({ command: 'stop' });
+  }
+
+  async workstationInitializeCommand(): Promise<void> {
+    await this.sendWorkstationCommand({ command: 'initialize' });
+  }
+
+  async workstationStartInputCommand(): Promise<void> {
+    await this.sendWorkstationCommand({
+      command: 'start_input_belt',
+    });
+  }
+
+  async workstationStopInputCommand(): Promise<void> {
+    await this.sendWorkstationCommand({ command: 'stop_input_belt' });
+  }
+
+  async workstationStartOutputCommand(): Promise<void> {
+    await this.sendWorkstationCommand({
+      command: 'start_output_belt',
+    });
+  }
+
+  async workstationStopOutputCommand(): Promise<void> {
+    await this.sendWorkstationCommand({
+      command: 'stop_output_belt',
+    });
+  }
+
+  async workstationOpenOutputCommand(): Promise<void> {
+    await this.sendWorkstationCommand({ command: 'open_output' });
+  }
+
+  async workstationCloseOutputCommand(): Promise<void> {
+    await this.sendWorkstationCommand({ command: 'close_output' });
+  }
+
+  async workstationHomeOutputCommand(): Promise<void> {
+    await this.sendWorkstationCommand({ command: 'home_output' });
+  }
+}

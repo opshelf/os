@@ -102,43 +102,58 @@ export type MoveToCellCommand = z.infer<
 export type FunnelCommands = z.infer<typeof funnelCommandsSchema>;
 
 export class Funnel {
-  shutdownCommand(): ShutdownCommand {
-    return { command: 'shutdown' };
+  sendFunnelCommand: (funnelCommand: FunnelCommands) => Promise<void>;
+  constructor(
+    sendFunnelCommand: (
+      funnelCommand: FunnelCommands
+    ) => Promise<void>
+  ) {
+    this.sendFunnelCommand = sendFunnelCommand;
   }
-  stopCommand(): StopCommand {
-    return { command: 'stop' };
+
+  async shutdownCommand(): Promise<void> {
+    await this.sendFunnelCommand({ command: 'shutdown' });
   }
-  initializeCommand(): InitializeCommand {
-    return { command: 'initialize' };
+  async stopCommand(): Promise<void> {
+    await this.sendFunnelCommand({ command: 'stop' });
   }
-  homeCommand(): HomeCommand {
-    return { command: 'home' };
+  async initializeCommand(): Promise<void> {
+    await this.sendFunnelCommand({ command: 'initialize' });
   }
-  stopBeltCommand(): StopBeltCommand {
-    return { command: 'stop_belt' };
+  async homeCommand(): Promise<void> {
+    await this.sendFunnelCommand({ command: 'home' });
   }
-  startBeltCommand(): StartBeltCommand {
-    return { command: 'start_belt' };
+  async stopBeltCommand(): Promise<void> {
+    await this.sendFunnelCommand({ command: 'stop_belt' });
   }
-  stopWallCommand(): StopWallCommand {
-    return { command: 'stop_wall' };
+  async startBeltCommand(): Promise<void> {
+    await this.sendFunnelCommand({ command: 'start_belt' });
   }
-  startWallCommand(): StartWallCommand {
-    return { command: 'start_wall' };
+  async stopWallCommand(): Promise<void> {
+    await this.sendFunnelCommand({ command: 'stop_wall' });
   }
-  stopOutputCommand(): StopOutputCommand {
-    return { command: 'stop_output' };
+  async startWallCommand(): Promise<void> {
+    await this.sendFunnelCommand({ command: 'start_wall' });
   }
-  startOutputCommand(): StartOutputCommand {
-    return { command: 'start_output' };
+  async stopOutputCommand(): Promise<void> {
+    await this.sendFunnelCommand({ command: 'stop_output' });
   }
-  stopOutputTransferCommand(): StopOutputTransferCommand {
-    return { command: 'stop_output_transfer' };
+  async startOutputCommand(): Promise<void> {
+    await this.sendFunnelCommand({ command: 'start_output' });
   }
-  startOutputTransferCommand(): StartOutputTransferCommand {
-    return { command: 'start_output_transfer' };
+  async stopOutputTransferCommand(): Promise<void> {
+    await this.sendFunnelCommand({ command: 'stop_output_transfer' });
   }
-  moveToCellCommand(tray: Tray, idx: number): MoveToCellCommand {
-    return { command: 'move_to_cell', tray, idx };
+  async startOutputTransferCommand(): Promise<void> {
+    await this.sendFunnelCommand({
+      command: 'start_output_transfer',
+    });
+  }
+  async moveToCellCommand(tray: Tray, idx: number): Promise<void> {
+    await this.sendFunnelCommand({
+      command: 'move_to_cell',
+      tray,
+      idx,
+    });
   }
 }

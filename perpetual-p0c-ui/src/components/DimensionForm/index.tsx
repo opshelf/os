@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { z } from 'zod';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 //import axios from 'axios';
@@ -19,20 +18,9 @@ import {
   CardTitle,
 } from '../ui/card';
 import { GS1 } from '@/domain/storage';
-import {
-  getSizes,
-  updateSizes,
-  getSize,
-  deleteSize,
-} from '@/api/sizes';
+import { updateSizes, getSize } from '@/api/sizes';
 import { storeCommand } from '@/api/robot';
 import { print } from '@/api/printer';
-
-//const formSchema = z.object({
-//  height: z.number().min(0),
-//  width: z.number().min(0),
-//  length: z.number().min(0),
-//});
 
 export default function DimensionForm({ data }: { data: GS1 }) {
   const [itemType, setItemState] = useState<'bottle' | 'box'>(

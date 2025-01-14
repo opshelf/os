@@ -250,6 +250,7 @@ const Shelf = ({
                     updateStorageModule(updated);
                   }}
                   move={moveToToolPoint}
+                  point={tray.calibration_point}
                 />
               </PopoverContent>
             </Popover>

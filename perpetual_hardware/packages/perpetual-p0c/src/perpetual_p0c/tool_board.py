@@ -174,6 +174,8 @@ class ToolBoard:
         return self._state
 
     def default_message(self, data: List[int]) -> Message:
+        while len(data) < 8:
+            data.append(0)
         return Message(
             arbitration_id=self._can_id,
             data=data,

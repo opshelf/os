@@ -1,8 +1,7 @@
 from perpetual_can import CANBusHandler
-from perpetual_trinamic.aio.trinamic_axis import TrinamicAxis
+from perpetual_trinamic.aio.trinamic_axis import TrinamicAxis, AxisStatus
 from perpetual_p0c.output_box import OutputBox, OutputBoxStatus
 from typing import Literal, Union, Annotated
-from perpetual_trinamic.aio.trinamic_stepper import StepperStatus
 from pydantic import BaseModel, Field
 from perpetual_p0c.common import AbstractSubsystem, CanAxisConfiguration
 from perpetual_p0c.output_box import OutputBoxConfiguration
@@ -18,8 +17,8 @@ class WorkstationConfiguration(BaseModel):
 
 class WorkstationStatus(BaseModel):
     output_box: OutputBoxStatus
-    input_belt: StepperStatus
-    output_belt: StepperStatus
+    input_belt: AxisStatus
+    output_belt: AxisStatus
 
 
 class ShutdownCommand(BaseModel):
@@ -132,7 +131,7 @@ class Workstation(AbstractSubsystem[WorkstationConfiguration, WorkstationStatus]
 
     async def status(self) -> WorkstationStatus:
         output_box_status = await self.output_box.status()
-        return WorkstationStatus(output_box=output_box_status)
+        return WorkstationStatus(output_box=output_box_status, input_belt=await self.input_belt.status(), output_belt=await self.output_belt.status())
 
     @property
     def output_box(self) -> OutputBox:

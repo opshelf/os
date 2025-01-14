@@ -4,6 +4,7 @@ from perpetual_trinamic.aio.trinamic_axis import AxisStatus, TrinamicAxis
 from perpetual_p0c.common import AbstractSubsystem, CanAxisConfiguration
 from pydantic import BaseModel, Field
 
+
 class OutputBoxStatus(BaseModel):
     door_status: AxisStatus
 

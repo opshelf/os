@@ -22,9 +22,12 @@ import {
 import { Input } from '@/components/ui/input';
 import { ToggleGroup, ToggleGroupItem } from '../ui/toggle-group';
 import z from 'zod';
-import { toolCommand } from '@/api/tool';
+import { RobotController } from '@/domain/robot';
+import { robotCommand } from '@/api/robot';
 
 const MoveForm = () => {
+  const robot = new RobotController(robotCommand);
+
   const form = useForm<{ position: number }>({
     resolver: zodResolver(z.object({ position: z.number().min(0) })),
     defaultValues: {
@@ -33,7 +36,7 @@ const MoveForm = () => {
   });
 
   async function onSubmit(values: { position: number }) {
-    await toolCommand({ command: 'MOVE_Z', payload: values });
+    await robot.tool.toolCarriageMoveAbsolute(values.position);
   }
 
   return (
@@ -68,6 +71,8 @@ const MoveForm = () => {
 };
 
 const ToolController = () => {
+  const robot = new RobotController(robotCommand);
+
   const [jog, setJog] = useState<number>(5);
   const [slotSolenoids, setSlotSolenoids] = useState<boolean[]>([
     false,
@@ -77,21 +82,12 @@ const ToolController = () => {
     false,
     false,
   ]);
-  const [carriageSolenoids, setCarriageSolenoids] = useState<
-    boolean[]
-  >([false, false, false]);
-  const runJogCommand = async (movement: number) => {
-    let defaultMove: {
-      command: 'MOVE_Z_RELATIVE';
-      payload: { position: number };
-    } = {
-      command: 'MOVE_Z_RELATIVE',
-      payload: {
-        position: movement,
-      },
-    };
+  //const [carriageSolenoids, setCarriageSolenoids] = useState<
+  //  boolean[]
+  //>([false, false, false, false, false, false]);
 
-    await toolCommand(defaultMove);
+  const runJogCommand = async (movement: number) => {
+    await robot.tool.toolCarriageMoveRelative(movement);
   };
 
   const boolArrayToNumber = (arr: boolean[]): number => {
@@ -110,30 +106,21 @@ const ToolController = () => {
           <div className="flex flex-col items-center space-y-2 items-stretch">
             <Button
               onClick={async () => {
-                await toolCommand({
-                  command: 'HOME',
-                  payload: null,
-                });
+                await robot.tool.toolHomeCommand();
               }}
             >
               HOME
             </Button>
             <Button
               onClick={async () => {
-                await toolCommand({
-                  command: 'INITIALIZE',
-                  payload: null,
-                });
+                await robot.tool.toolInitializeCommand();
               }}
             >
               INITIALIZE
             </Button>
             <Button
               onClick={async () => {
-                await toolCommand({
-                  command: 'STOP',
-                  payload: null,
-                });
+                await robot.tool.toolStopCommand();
               }}
             >
               STOP
@@ -191,57 +178,48 @@ const ToolController = () => {
           <div className="flex flex-col items-center space-y-2 items-stretch">
             <Button
               onClick={async () => {
-                await toolCommand({
-                  command: 'EXTEND_ACTUATORS',
-                  payload: null,
-                });
+                await robot.tool.toolActuatorsCommand(true);
               }}
             >
-              EXTEND
+              EXTEND PULLERS
             </Button>
             <Button
               onClick={async () => {
-                await toolCommand({
-                  command: 'RETRACT_ACTUATORS',
-                  payload: null,
-                });
+                await robot.tool.toolActuatorsCommand(false);
               }}
             >
-              RETRACT
+              RETRACT PULLERS
             </Button>
             <Button
               onClick={async () => {
-                await toolCommand({
-                  command: 'EXTEND_PULLER',
-                  payload: null,
-                });
+                await robot.tool.toolExtendCarriageCommand(
+                  'right_module'
+                );
               }}
             >
-              EXTEND PULLER
+              EXTEND CARRIAGE
             </Button>
             <Button
               onClick={async () => {
-                await toolCommand({
-                  command: 'RETRACT_PULLER',
-                  payload: null,
-                });
+                await robot.tool.toolRetractCarriageCommand(
+                  'right_module'
+                );
               }}
             >
-              RETRACT PULLER
+              RETRACT CARRIAGE
             </Button>
             <Button
               onClick={async () => {
-                await toolCommand({
-                  command: 'RETRACT_TRAY',
-                  payload: null,
-                });
+                await robot.tool.toolRetractTrayCommand(
+                  'right_module'
+                );
               }}
             >
               RETRACT TRAY
             </Button>
           </div>
-
           <div className="flex flex-col items-center space-y-2">
+            {/*
             <div className="flex flex-col items-center space-y-2">
               <span className="text-lg font-semibold">
                 CARRIAGE SOLENOIDS
@@ -258,19 +236,14 @@ const ToolController = () => {
                         let newSolenoids = [...carriageSolenoids];
                         newSolenoids[idx] = !carriageSolenoids[idx];
                         setCarriageSolenoids(newSolenoids);
-                        await toolCommand({
-                          command: 'TURN_ON_CARRIAGE_SOLENOIDS',
-                          payload: {
-                            solenoids:
-                              boolArrayToNumber(newSolenoids),
-                          },
-                        });
+                        await robot.tool.toolCarriageSolenoidsCommand('right_module')
                       }}
                     />
                   );
                 })}
               </ToggleGroup>
             </div>
+            */}
             <div className="flex flex-col items-center space-y-2">
               <span className="text-lg font-semibold">
                 PULLER SOLENOIDS
@@ -287,13 +260,9 @@ const ToolController = () => {
                         let newSolenoids = [...slotSolenoids];
                         newSolenoids[idx] = !slotSolenoids[idx];
                         setSlotSolenoids(newSolenoids);
-                        await toolCommand({
-                          command: 'TURN_ON_PULLER_SOLENOIDS',
-                          payload: {
-                            solenoids:
-                              boolArrayToNumber(newSolenoids),
-                          },
-                        });
+                        await robot.tool.toolSetSlotBitsCommand(
+                          boolArrayToNumber(newSolenoids)
+                        );
                       }}
                     />
                   );

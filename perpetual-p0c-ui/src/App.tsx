@@ -11,6 +11,7 @@ import Inventory from './components/Inventory';
 import AxisControl from './components/AxisControl';
 import SizeDatabase from './components/SizeDatabase';
 import ScannerEventSSE from './components/ScannerEvent';
+import RobotConfiguration from './components/RobotConfiguration';
 
 const queryClient = new QueryClient();
 
@@ -26,6 +27,7 @@ function App() {
           <Route path="/inventory" component={Inventory} />
           <Route path="/low-level" component={AxisControl} />
           <Route path="/sizes" component={SizeDatabase} />
+          <Route path="/settings" component={RobotConfiguration} />
           {/*<Route component={Storage} />*/}
         </Switch>
       </QueryClientProvider>

@@ -23,7 +23,6 @@ import {
 } from '@/api';
 import { CellLocationData, StorageModuleSide } from '@/domain';
 import { createBaseMessage, robotCommand } from '@/api/robot';
-import { v4 as uuidv4 } from 'uuid';
 import { Switch } from '../ui/switch';
 import { Label } from '../ui/label';
 import {
@@ -261,15 +260,15 @@ const Inventory = () => {
     },
   });
 
-  const deleteMutation = useMutation({
-    mutationFn: removeItem,
-    onSuccess: () => {
-      // Invalidate and refetch
-      queryClient.invalidateQueries({
-        queryKey: ['items', 'free_cells', 'storage'],
-      });
-    },
-  });
+  //const deleteMutation = useMutation({
+  //  mutationFn: removeItem,
+  //  onSuccess: () => {
+  //    // Invalidate and refetch
+  //    queryClient.invalidateQueries({
+  //      queryKey: ['items', 'free_cells', 'storage'],
+  //    });
+  //  },
+  //});
 
   const [showFreeCells, setShowFreeCells] = useState<boolean>(false);
 

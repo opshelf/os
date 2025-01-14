@@ -4,12 +4,12 @@ import {
   RobotCommands,
   robotCommandsSchema,
 } from '@/domain/commands/robot';
-import { BaseMessage } from '@/domain/commands/funnel';
+import { BaseMessageSchema } from '@/domain/commands/base';
 import { v4 as uuidv4 } from 'uuid';
 import z from 'zod';
 import { GS1 } from '@/domain';
 
-export const createBaseMessage = (): BaseMessage => {
+export const createBaseMessage = (): BaseMessageSchema => {
   return { message_id: uuidv4() };
 };
 
@@ -45,4 +45,9 @@ export const clearCommands = async () => {
 export const getCommands = async (): Promise<RobotCommands[]> => {
   const response = await axios.get(`${HOST}/robot/commands`);
   return z.array(robotCommandsSchema).parse(response.data);
+};
+
+export const getConfiguration = async (): Promise<any> => {
+  const response = await axios.get(`${HOST}/robot/configuration`);
+  return response.data;
 };

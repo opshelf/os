@@ -1,5 +1,10 @@
 import z from 'zod';
-import { traySchema, storageModuleSideSchema } from '../storage';
+import {
+  traySchema,
+  storageModuleSideSchema,
+  StorageModuleSide,
+  Tray,
+} from '../storage';
 
 export const toolShutdownCommandSchema = z.object({
   command: z.literal('shutdown'),
@@ -60,6 +65,20 @@ export const toolDropItemsCommandSchema = z.object({
   idx: z.number(),
 });
 
+export const toolHomeCommandSchema = z.object({
+  command: z.literal('home'),
+});
+
+export const toolCarriageMoveAbsoluteSchema = z.object({
+  command: z.literal('carriage_absolute'),
+  position: z.number(),
+});
+
+export const toolCarriageMoveRelativeSchema = z.object({
+  command: z.literal('carriage_relative'),
+  position: z.number(),
+});
+
 // ToolCommands schema
 export const toolCommandsSchema = z.discriminatedUnion('command', [
   toolShutdownCommandSchema,
@@ -74,6 +93,9 @@ export const toolCommandsSchema = z.discriminatedUnion('command', [
   toolRetractCarriageCommandSchema,
   toolRetractTrayCommandSchema,
   toolDropItemsCommandSchema,
+  toolHomeCommandSchema,
+  toolCarriageMoveAbsoluteSchema,
+  toolCarriageMoveRelativeSchema,
 ]);
 
 // Exported types
@@ -111,4 +133,107 @@ export type ToolRetractTrayCommand = z.infer<
 export type ToolDropItemsCommand = z.infer<
   typeof toolDropItemsCommandSchema
 >;
+
+export type ToolHomeCommand = z.infer<typeof toolHomeCommandSchema>;
+export type ToolCarriageMoveAbsolute = z.infer<
+  typeof toolCarriageMoveAbsoluteSchema
+>;
+export type ToolCarriageMoveRelative = z.infer<
+  typeof toolCarriageMoveRelativeSchema
+>;
+
 export type ToolCommands = z.infer<typeof toolCommandsSchema>;
+
+export class Tool {
+  sendToolCommand: (toolCommand: ToolCommands) => Promise<void>;
+
+  constructor(
+    sendToolCommand: (toolCommand: ToolCommands) => Promise<void>
+  ) {
+    this.sendToolCommand = sendToolCommand;
+  }
+
+  async toolShutdownCommand(): Promise<void> {
+    await this.sendToolCommand({ command: 'shutdown' });
+  }
+
+  async toolStopCommand(): Promise<void> {
+    await this.sendToolCommand({ command: 'stop' });
+  }
+
+  async toolInitializeCommand(): Promise<void> {
+    await this.sendToolCommand({ command: 'initialize' });
+  }
+
+  async toolActuatorsCommand(value: boolean): Promise<void> {
+    await this.sendToolCommand({ command: 'actuators', value });
+  }
+
+  async toolCarriageSolenoidsCommand(
+    tray: Tray,
+    side: StorageModuleSide
+  ): Promise<void> {
+    await this.sendToolCommand({
+      command: 'set_carriage_solenoids',
+      tray,
+      side,
+    });
+  }
+
+  async toolPullerSolenoidsCommand(
+    tray: Tray,
+    idx: number
+  ): Promise<void> {
+    await this.sendToolCommand({
+      command: 'set_puller_solenoids',
+      tray,
+      idx,
+    });
+  }
+
+  async toolSolenoidsOffCommand(): Promise<void> {
+    await this.sendToolCommand({ command: 'solenoids_off' });
+  }
+
+  async toolSetSlotBitsCommand(value: number): Promise<void> {
+    await this.sendToolCommand({ command: 'slot_bits', value });
+  }
+
+  async toolExtendCarriageCommand(
+    side: StorageModuleSide
+  ): Promise<void> {
+    await this.sendToolCommand({ command: 'extend_carriage', side });
+  }
+
+  async toolRetractCarriageCommand(
+    side: StorageModuleSide
+  ): Promise<void> {
+    await this.sendToolCommand({ command: 'retract_carriage', side });
+  }
+
+  async toolRetractTrayCommand(
+    side: StorageModuleSide
+  ): Promise<void> {
+    await this.sendToolCommand({ command: 'retract_tray', side });
+  }
+
+  async toolDropItemsCommand(tray: Tray, idx: number): Promise<void> {
+    await this.sendToolCommand({ command: 'drop_items', tray, idx });
+  }
+
+  async toolHomeCommand(): Promise<void> {
+    await this.sendToolCommand({ command: 'home' });
+  }
+  async toolCarriageMoveAbsolute(position: number): Promise<void> {
+    await this.sendToolCommand({
+      command: 'carriage_absolute',
+      position,
+    });
+  }
+  async toolCarriageMoveRelative(position: number): Promise<void> {
+    await this.sendToolCommand({
+      command: 'carriage_relative',
+      position,
+    });
+  }
+}

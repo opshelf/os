@@ -12,8 +12,9 @@ import asyncio
 import time
 from pydantic import BaseModel
 
+
 class AxisStatus(BaseModel):
-    status_flags: StatusFlags 
+    status_flags: StatusFlags
     error_flags: TrinamicErrorFlags
     position: float
     homed: HomedStatus
@@ -321,7 +322,7 @@ class TrinamicAxis(TMCM12xx):
             return HardStopStatus.HARD_STOPPED
         else:
             return HardStopStatus.NOT_HARD_STOPPED
-    
+
     async def status(self) -> AxisStatus:
         home_status = await self.get_home_status()
         hard_stop_status = await self.get_hard_stop_status()
@@ -333,5 +334,5 @@ class TrinamicAxis(TMCM12xx):
             error_flags=TrinamicErrorFlags(error_flags),
             position=position,
             homed=home_status,
-            hard_stopped=hard_stop_status
+            hard_stopped=hard_stop_status,
         )

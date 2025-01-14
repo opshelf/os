@@ -4,6 +4,7 @@ import {
   BoxIcon,
   DatabaseIcon,
   JoystickIcon,
+  SettingsIcon,
 } from 'lucide-react';
 import { Link } from 'wouter';
 import {
@@ -63,6 +64,16 @@ const Header = () => {
               </TooltipTrigger>
               <TooltipContent>
                 <p>Subsystem Controller</p>
+              </TooltipContent>
+            </Tooltip>
+          </Link>
+          <Link to="/settings">
+            <Tooltip>
+              <TooltipTrigger>
+                <SettingsIcon className="w-8 h-8" />
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Robot Configuration</p>
               </TooltipContent>
             </Tooltip>
           </Link>

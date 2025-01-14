@@ -99,8 +99,8 @@ class Gantry(AbstractSubsystem[GantryConfiguration, GantryStatus]):
 
     async def status(self) -> GantryStatus:
         return GantryStatus(
-            x_position=await self._x_axis.status(),
-            y_position=await self._y_axis.status(),
+            x_axis=await self._x_axis.status(),
+            y_axis=await self._y_axis.status(),
         )
 
     @property
@@ -109,8 +109,8 @@ class Gantry(AbstractSubsystem[GantryConfiguration, GantryStatus]):
 
     async def set_configuration(self, configuration: GantryConfiguration) -> None:
         self._configuration = configuration
-        self._x_axis.configuration = self._configuration.x_axis_config
-        self._y_axis.configuration = self._configuration.y_axis_config
+        self._x_axis.configuration = self._configuration.x_axis.configuration
+        self._y_axis.configuration = self._configuration.y_axis.configuration
         await self.initialize()
 
     async def stop(self) -> None:

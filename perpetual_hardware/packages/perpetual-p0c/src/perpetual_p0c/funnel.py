@@ -11,6 +11,7 @@ from perpetual_p0c.common import AbstractSubsystem, CanAxisConfiguration
 from pydantic import BaseModel
 from enum import Enum
 
+
 class FunnelConfiguration(BaseModel):
     inlet_funnel: CanAxisConfiguration
     opposing_funnel: CanAxisConfiguration
@@ -46,17 +47,16 @@ class FunnelStatus(BaseModel):
     slot_1: AxisStatus
     slot_2: AxisStatus
     slot_3: AxisStatus
-    #self._inlet_funnel = TrinamicAxis(
-    #self._opposing_funnel = TrinamicAxis(
-    #self._slot_1 = TrinamicAxis(
-    #self._slot_2 = TrinamicAxis(
-    #self._slot_3 = TrinamicAxis(
-    #self._belt = TrinamicStepper(
-    #self._wall = TrinamicStepper(
-    #self._diverter = TrinamicStepper(
-    #self._output_transfer_conveyor = TrinamicStepper(
-    #self._output_conveyor = TrinamicStepper(
-
+    # self._inlet_funnel = TrinamicAxis(
+    # self._opposing_funnel = TrinamicAxis(
+    # self._slot_1 = TrinamicAxis(
+    # self._slot_2 = TrinamicAxis(
+    # self._slot_3 = TrinamicAxis(
+    # self._belt = TrinamicStepper(
+    # self._wall = TrinamicStepper(
+    # self._diverter = TrinamicStepper(
+    # self._output_transfer_conveyor = TrinamicStepper(
+    # self._output_conveyor = TrinamicStepper(
 
 
 class FunnelOpeningSize(int, Enum):
@@ -140,7 +140,7 @@ FunnelCommands = Annotated[
 
 
 class Funnel(AbstractSubsystem[FunnelConfiguration, FunnelStatus]):
-    def __init__(self, bus: CANBusHandler, funnel_configuration: FunnelConfiguration):
+    def __init__(self, bus: CANBusHandler, funnel_configuration: FunnelConfiguration, io: IoController):
         self._configuration = funnel_configuration
         self._inlet_funnel = TrinamicAxis(
             bus,
@@ -172,7 +172,8 @@ class Funnel(AbstractSubsystem[FunnelConfiguration, FunnelStatus]):
             module_id=funnel_configuration.slot_3.can_id,
             motor_id=0,
         )
-        self._io = IoController(bus)
+        #self._io = IoController(bus)
+        self._io = io
         self._belt = TrinamicStepper(
             bus,
             configuration=funnel_configuration.belt.configuration,
@@ -255,6 +256,8 @@ class Funnel(AbstractSubsystem[FunnelConfiguration, FunnelStatus]):
         await self._wall.stop()
 
     async def start_wall(self) -> None:
+        print(self._wall.configuration)
+        print(self._configuration.wall_speed)
         await self._wall.initialize()
         await self._wall.rotate(int(self._configuration.wall_speed))
 
@@ -408,18 +411,12 @@ class Funnel(AbstractSubsystem[FunnelConfiguration, FunnelStatus]):
     async def open_tray_slots(self, tray: Tray) -> None:
         if tray.cell_width <= 50:
             await self._slot_1.move_to_position(self._configuration.slot_gap_size * 2)
-            await self._slot_2.move_to_position(
-                tray.cell_width - self._configuration.slot_gap_size
-            )
-            await self._slot_3.move_to_position(
-                tray.cell_width - self._configuration.slot_gap_size
-            )
+            await self._slot_2.move_to_position(tray.cell_width - self._configuration.slot_gap_size)
+            await self._slot_3.move_to_position(tray.cell_width - self._configuration.slot_gap_size)
         elif tray.cell_width > 50 and tray.cell_width <= 105:
             await self._slot_1.move_to_position(self._configuration.slot_gap_size * 2)
             await self._slot_2.move_to_position(self._configuration.slot_gap_size * 2)
-            await self._slot_3.move_to_position(
-                tray.cell_width - self._configuration.slot_gap_size
-            )
+            await self._slot_3.move_to_position(tray.cell_width - self._configuration.slot_gap_size)
         else:
             await self._slot_1.move_to_position(self._configuration.slot_gap_size * 2)
             await self._slot_2.move_to_position(self._configuration.slot_gap_size * 2)
@@ -505,7 +502,7 @@ class Funnel(AbstractSubsystem[FunnelConfiguration, FunnelStatus]):
         await self.wait_for_move()
 
     async def return_tray_slots(self, tray: Tray, idx: int) -> None:
-        position = tray.cell_width - self._configuration
+        position = tray.cell_width
         if position >= 150:
             position = 148
         ipos, opos = tray.get_cell_position(idx)

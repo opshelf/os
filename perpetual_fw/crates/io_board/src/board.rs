@@ -182,7 +182,6 @@ async fn break_beam_monitor(
 
         // Debounce
         if let Some(bv) = beam_value {
-            defmt::info!("{:?}", bv);
             SENSOR_CHANNEL.send(bv).await;
         }
 
@@ -208,10 +207,18 @@ async fn can_receive_task(
         if let Ok(ref e) = res {
             if *e.frame.id() == can_id {
                 if let Some(msg) = Messages::from_can_frame(e.frame.data()) {
+                    let t0 = embassy_time::Instant::now();
                     COMMAND_CHANNEL.send(msg).await;
                     let response = RESPONSE_CHANNEL.receive().await;
+                    embassy_time::Timer::after_millis(2).await;
                     can.write(Frame::new_data(can_id, &response.into_can_frame()).unwrap())
                         .await;
+                    match response {
+                        Responses::Sensors(state) => {
+                            defmt::info!("Sent: {:?}", state);
+                        }
+                        _ => (),
+                    };
                 } else {
                     can.write(
                         Frame::new_data(can_id, &Responses::Invalid.into_can_frame()).unwrap(),
@@ -236,6 +243,7 @@ async fn watchdog_task(
 
 impl<'a> IoBoard<'a> {
     pub fn new(can_id: embedded_can::Id, config: Config, spawner: Spawner) -> Self {
+        defmt::info!("Resetting");
         let p = embassy_stm32::init(config);
         let mut can = can::CanConfigurator::new(p.FDCAN1, p.PB8, p.PB9, Irqs);
         let mut filter = can::filter::StandardFilter::default();
@@ -370,7 +378,8 @@ impl<'a> IoBoard<'a> {
                 Responses::State(self.get_state())
             }
             Messages::ClearState => {
-                while let Ok(_) = SENSOR_CHANNEL.try_receive() {}
+                while let Ok(sensors) = SENSOR_CHANNEL.try_receive() {}
+                defmt::info!("Done");
                 Responses::Sensors(None)
             }
         }

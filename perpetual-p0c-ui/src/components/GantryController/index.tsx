@@ -31,7 +31,6 @@ import {
   gantryCoordinateSchema,
   GantryCoordinateSchema,
 } from '@/domain';
-import { GantryMoveCommands } from '@/domain/gantry';
 import { RobotController } from '@/domain/robot';
 import { robotCommand } from '@/api/robot';
 

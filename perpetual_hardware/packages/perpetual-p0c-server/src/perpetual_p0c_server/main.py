@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 from perpetual_p0c_server.core.printer import PrintWorker, MockPrinter
 from typing import AsyncGenerator
 from perpetual_p0c_server.settings import get_settings
+import uvicorn
 
 
 @asynccontextmanager
@@ -66,20 +67,25 @@ app.include_router(printer.router, prefix="/api/printer")
 # schemas = load_models_and_get_json_schema(Path("./app/routers/types.py"))
 # with open("./schemas.json", "w") as f:
 #    json.dump(schemas, f, indent=4)
-async def main() -> None:
-    config = uvicorn.Config(
-        app,
+def start() -> None:
+    #config = uvicorn.Config(
+    #    app,
+    #    host="0.0.0.0",
+    #    port=8000,
+    #    reload=True,
+    #    timeout_graceful_shutdown=2,  # Graceful shutdown timeout in seconds
+    #)
+    #server = uvicorn.Server(config)
+    #await server.serve()
+    uvicorn.run(
+        "perpetual_p0c_server.main:app",
         host="0.0.0.0",
         port=8000,
         reload=True,
-        timeout_graceful_shutdown=2,  # Graceful shutdown timeout in seconds
+        timeout_graceful_shutdown=2,
     )
-    server = uvicorn.Server(config)
-    await server.serve()
 
 
-if __name__ == "__main__":
-    import uvicorn
-    import asyncio
-
-    asyncio.run(main())
+#if __name__ == "__main__":
+#    import asyncio
+#    asyncio.run(main())

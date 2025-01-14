@@ -43,7 +43,7 @@ export const cellData = z.object({
 export const traySchema = z.object({
   width: z.number(),
   height: z.number(),
-  calibration_point: toolCoordinateSchema.optional().nullable(),
+  calibration_point: toolCoordinateSchema.nullable(),
   empty: z.boolean(),
   slots: z.array(cellData),
 });
@@ -86,6 +86,7 @@ export type ItemType = z.infer<typeof itemTypeSchema>;
 export type CellStatus = z.infer<typeof cellStatusSchema>;
 export type GS1 = z.infer<typeof gs1Schema>;
 export type CellItem = z.infer<typeof cellItemSchema>;
+export type CellData = z.infer<typeof cellData>;
 export type StorageModuleCellLocation = z.infer<
   typeof storageModuleCellLocationSchema
 >;

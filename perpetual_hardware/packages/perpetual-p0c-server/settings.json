@@ -9,9 +9,9 @@
         "enabled": false
     },
     "scanner": {
-        "enabled": false
+        "enabled": true
     },
     "robot": {
-        "enabled": false
+        "enabled": true
     }
 }

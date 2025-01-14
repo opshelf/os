@@ -8,9 +8,12 @@ import {
   StorageModuleCellLocation,
   StorageModuleTrayLocationSchema,
 } from './storage';
-import { ToolCommands } from './commands/tool';
-import { FunnelCommands } from './commands/funnel';
-import { WorkstationCommands } from './commands/workstation';
+import { Tool, ToolCommands } from './commands/tool';
+import { Funnel, FunnelCommands } from './commands/funnel';
+import {
+  Workstation,
+  WorkstationCommands,
+} from './commands/workstation';
 import { Gantry, GantryCommands } from './commands/gantry';
 
 export const createBaseMessage = (): BaseMessageSchema => {
@@ -29,12 +32,22 @@ export type SubsystemStatus = z.infer<typeof subsystemStatus>;
 export class RobotController {
   sendCommand: (command: RobotCommands) => Promise<void>;
   gantry: Gantry;
+  funnel: Funnel;
+  tool: Tool;
+  workstation: Workstation;
   constructor(
     sendCommand: (command: RobotCommands) => Promise<void>
   ) {
     this.sendCommand = sendCommand;
     this.gantryCommand = this.gantryCommand.bind(this);
     this.gantry = new Gantry(this.gantryCommand);
+    this.funnelCommand = this.funnelCommand.bind(this);
+    this.funnel = new Funnel(this.funnelCommand);
+
+    this.toolCommand = this.toolCommand.bind(this);
+    this.tool = new Tool(this.toolCommand);
+    this.workstationCommand = this.workstationCommand.bind(this);
+    this.workstation = new Workstation(this.workstationCommand);
   }
 
   async storeItem(

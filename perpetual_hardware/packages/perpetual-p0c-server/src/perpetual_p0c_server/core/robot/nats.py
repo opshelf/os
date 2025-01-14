@@ -335,5 +335,3 @@ class RobotWorker(AbstractRobotWorker):
 
     def get_configuration(self) -> RobotConfiguration:
         return self._robot.configuration
-
-

@@ -78,33 +78,6 @@ export class Gantry {
   ) {
     this.sendGantryCommand = sendGantryCommand;
   }
-  /*
-  gantryShutdownCommand(): GantryShutdownCommand {
-    return { command: 'shutdown' };
-  }
-  gantryStopCommand(): GantryStopCommand {
-    return { command: 'stop' };
-  }
-  gantryInitializeCommand(): GantryInitializeCommand {
-    return { command: 'initialize' };
-  }
-  gantryHomeCommand(): GantryHomeCommand {
-    return { command: 'home' };
-  }
-  gantryHomeYFirstCommand(): GantryHomeYFirstCommand {
-    return { command: 'home_y' };
-  }
-  gantryMoveCommand(
-    coordinate: GantryCoordinateSchema
-  ): GantryMoveCommand {
-    return { command: 'move', coordinate };
-  }
-  gantryMoveRelativeCommand(
-    coordinate: GantryCoordinateSchema
-  ): GantryMoveRelativeCommand {
-    return { command: 'move_relative', coordinate };
-  }
-  */
   async gantryShutdownCommand(): Promise<void> {
     await this.sendGantryCommand({ command: 'shutdown' });
   }

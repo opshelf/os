@@ -25,3 +25,8 @@ build-backend = "hatchling.build"
 [tool.uv.sources]
 perpetual-p0c = { workspace = true }
 perpetual-label-maker = { workspace = true }
+
+
+#[tool.uv.scripts]
+[project.scripts]
+start = "perpetual_p0c_server.main:start"

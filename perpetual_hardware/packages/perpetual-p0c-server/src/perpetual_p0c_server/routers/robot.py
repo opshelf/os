@@ -53,6 +53,9 @@ async def commands(client: AbstractRobotClient = Depends(get_robot_client)) -> L
     commands = await client.get_queued_commands()
     return commands
 
+
 @router.get("/configuration")
-async def configuration(worker: AbstractRobotWorker = Depends(get_robot_worker)) -> RobotConfiguration:
+async def configuration(
+    worker: AbstractRobotWorker = Depends(get_robot_worker),
+) -> RobotConfiguration:
     return worker.get_configuration()

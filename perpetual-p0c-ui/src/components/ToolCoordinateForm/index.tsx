@@ -1,5 +1,6 @@
 import { Button } from '@/components/ui/button';
 import { useForm } from 'react-hook-form';
+import { useMemo } from 'react';
 import {
   Form,
   FormControl,
@@ -25,17 +26,31 @@ export type ToolCoordinateSchema = z.infer<
 export const ToolCoordinateForm = ({
   success,
   move,
+  point,
 }: {
   success: (toolCoordiante: ToolCoordinateSchema) => void;
   move: (toolCoordiante: ToolCoordinateSchema) => Promise<void>;
+  point: ToolCoordinateSchema | null;
 }) => {
+  console.log(point);
   const form = useForm<ToolCoordinateSchema>({
     resolver: zodResolver(toolCoordinateSchema),
-    defaultValues: {
-      x: 0,
-      y: 0,
-      z: 0,
-    },
+    //defaultValues: {
+    //  x: 0,
+    //  y: 0,
+    //  z: 0,
+    //},
+    defaultValues: useMemo(() => {
+      if (point !== null) {
+        return point;
+      } else {
+        return {
+          x: 0,
+          y: 0,
+          z: 0,
+        };
+      }
+    }, [point]),
   });
 
   async function onSubmit(values: ToolCoordinateSchema) {

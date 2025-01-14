@@ -290,7 +290,7 @@ class P0C(AbstractRobot):
         self._gantry = Gantry(self._bus, configuration.gantry_configuration)
         self._io = IoController(self._bus)
         self._workstation = Workstation(self._bus, configuration.workstation)
-        self._funnel = Funnel(self._bus, configuration.funnel_configuration)
+        self._funnel = Funnel(self._bus, configuration.funnel_configuration, self._io)
         self._state = RobotState(current_tray=None)
         self._sizes = SizeDatabase()
 
@@ -581,12 +581,15 @@ class P0C(AbstractRobot):
     async def run_input_transfer(self, tray: Tray, idx: int) -> None:
         await self.funnel.setup_receive_item(tray, idx)
         await self._io.reset_sensors()
+        print("Sensors Reset")
         await self.funnel.start_receive_item()
         await self.workstation.start_input_belt()
+        print("Belt Started")
         try:
             async with asyncio.timeout(10):
                 while True:
                     sensors = await self._io.get_sensors()
+                    print(f"Input Transfer: {sensors}")
                     if sensors and sensors.input_conveyor:
                         break
                     await asyncio.sleep(0.25)
@@ -613,7 +616,9 @@ class P0C(AbstractRobot):
         if tray_loaded:
             coordinate = self._storage.get_tray_coordinate(location).to_gantry_coordinate()
             await self.gantry_move(coordinate + self._configuration.place_offset)
-            await self.tool.carriage.move_to_position(self.tool.configuration.tool_extend_position - 10)
+            await self.tool.carriage.move_to_position(
+                self.tool.configuration.tool_extend_position - 10
+            )
             await self.tool.carriage.wait_for_move()
             await self.tool.set_solenoids_off()
             await self.tool.extend_carriage(location.side)
@@ -679,20 +684,49 @@ class P0C(AbstractRobot):
         await self._io.reset_sensors()
         await self.funnel.set_diverter_opening(self._storage.get_tray(location))
         await self.funnel.diverter.set_standby_current(0)
-        t0 = time.time()
-        while True:
-            if time.time() - t0 > 10:
-                await self.funnel.stop_receive_item()
-                await self.place_tray(location)
-                print("Failed to Receive Item into Funnel within Ten Seconds")
-                raise Exception("Failed to Receive Item")
-            sensors = await self._io.get_sensors()
-            if sensors and sensors.funnel_input:
-                await asyncio.sleep(0.5)
-                await self.funnel.close_tray_wedges(tray)
-                await self.funnel.stop_receive_item()
-                break
-            await asyncio.sleep(0.1)
+        try:
+            async with asyncio.timeout(10):
+                while True:
+                    sensors = await self._io.get_sensors()
+                    print(f"Receive Item: {sensors}")
+                    if sensors and sensors.funnel_input:
+                        await asyncio.sleep(0.5)
+                        break
+                    await asyncio.sleep(.25)
+            await self.funnel.close_tray_wedges(tray)
+            await self.funnel.stop_receive_item()
+        except asyncio.TimeoutError:
+            await self.funnel.stop_receive_item()
+            await self.place_tray(location)
+            print("Failed to Receive Item into Funnel within Ten Seconds")
+            raise Exception("Failed to Receive Item into Funnel within 10 seconds")
+        #try:
+        #    async with asyncio.timeout(10):
+        #        while True:
+        #            sensors = await self._io.get_sensors()
+        #            if sensors and sensors.input_conveyor:
+        #                break
+        #            await asyncio.sleep(0.25)
+        #    await asyncio.sleep(1)
+        #    await self.workstation.stop_input_belt()
+        #except asyncio.TimeoutError:
+        #    await self.workstation.stop_input_belt()
+        #    await self.funnel.stop_receive_item()
+        #    raise Exception("Failed to See Input Break Beams Trigger")
+        #t0 = time.time()
+        #while True:
+        #    if time.time() - t0 > 10:
+        #        await self.funnel.stop_receive_item()
+        #        await self.place_tray(location)
+        #        print("Failed to Receive Item into Funnel within Ten Seconds")
+        #        raise Exception("Failed to Receive Item")
+        #    sensors = await self._io.get_sensors()
+        #    if sensors and sensors.funnel_input:
+        #        await asyncio.sleep(0.5)
+        #        await self.funnel.close_tray_wedges(tray)
+        #        await self.funnel.stop_receive_item()
+        #        break
+        #    await asyncio.sleep(0.25)
 
     async def drop_off_item(
         self, location: StorageModuleCellLocation, keep_tray: bool = True

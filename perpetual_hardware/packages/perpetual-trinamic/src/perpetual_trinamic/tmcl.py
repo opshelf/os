@@ -106,7 +106,6 @@ class TMCLStatus:
 
 
 class TrinamicErrorFlags(BaseModel):
-
     stall_guard_error: bool
     deviation_error: bool
 
@@ -115,12 +114,12 @@ class TrinamicErrorFlags(BaseModel):
         self.stall_guard_error: bool = bool(value & 0x01)
         self.deviation_error: bool = bool(value & 0x02)
 
-    #@property
-    #def stall_guard_error(self) -> bool:
+    # @property
+    # def stall_guard_error(self) -> bool:
     #    return self._stall_guard_error
 
-    #@property
-    #def deviation_error(self) -> bool:
+    # @property
+    # def deviation_error(self) -> bool:
     #    return self._deviation_error
 
     def is_fault(self) -> bool:
@@ -131,6 +130,7 @@ class TrinamicErrorFlags(BaseModel):
         return f"ErrorFlags(stall_guard={self.stall_guard_error},\
 deviation_error={self.deviation_error})"
     """
+
 
 class StatusFlags(BaseModel):
     stall_guard2_status: bool
@@ -152,7 +152,7 @@ class StatusFlags(BaseModel):
         self.open_load_a: bool = bool(value & 0x20)
         self.open_load_b: bool = bool(value & 0x40)
         self.stand_still: bool = bool(value & 0x80)
-    
+
     """
     @property
     def stall_guard2_status(self) -> bool:
@@ -186,6 +186,7 @@ class StatusFlags(BaseModel):
     def stand_still(self) -> bool:
         return self._stand_still
     """
+
     def is_fault(self) -> bool:
         return (
             self.open_load_b
@@ -210,6 +211,7 @@ stand_still={self.stand_still},\
 )"
 
     """
+
 
 @dataclass
 class TmclMessage:

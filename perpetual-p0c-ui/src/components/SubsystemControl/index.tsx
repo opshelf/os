@@ -1,6 +1,7 @@
 import GantryController from '../GantryController';
 import FunnelController from '../FunnelController';
 import ToolController from '../ToolController';
+import WorkstationController from '../WorkstationController';
 
 const SubsystemController = () => {
   return (
@@ -8,6 +9,7 @@ const SubsystemController = () => {
       <GantryController />
       <FunnelController />
       <ToolController />
+      <WorkstationController />
     </div>
   );
 };

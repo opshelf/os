@@ -102,6 +102,8 @@ class IoController:
         return self._state
 
     def default_message(self, data: List[int]) -> Message:
+        while len(data) < 8:
+            data.append(0)
         return Message(
             arbitration_id=self._can_id,
             data=data,
@@ -164,7 +166,8 @@ class IoController:
     async def get_sensors(self) -> Optional[SensorState]:
         buffer = [CanCommandIds.GetSensors.value]
         response = await self._run_command(self.default_message(buffer))
-        return SensorState.from_buffer(response.data)
+        state = SensorState.from_buffer(response.data)
+        return state
 
     async def reset_sensors(self) -> Optional[SensorState]:
         buffer = [CanCommandIds.ResetSensors.value]

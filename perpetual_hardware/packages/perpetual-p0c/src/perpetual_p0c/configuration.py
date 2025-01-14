@@ -5,7 +5,7 @@ from hardware_common.stepper_motor import (
 from perpetual_p0c.common import CanAxisConfiguration, CanMessageIds
 from perpetual_p0c.funnel import FunnelConfiguration
 from perpetual_p0c.gantry import GantryConfiguration, GantryCoordinate
-from perpetual_p0c.tool import  ToolConfiguration
+from perpetual_p0c.tool import ToolConfiguration
 from perpetual_p0c.workstation import WorkstationConfiguration
 from perpetual_p0c.output_box import OutputBoxConfiguration
 from perpetual_p0c.robot import RobotConfiguration
