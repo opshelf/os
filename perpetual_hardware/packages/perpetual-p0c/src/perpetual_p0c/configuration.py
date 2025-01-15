@@ -112,6 +112,7 @@ p0_gantry_config = GantryConfiguration(
             invert_coordinates=True,
             home_direction=Rotation.CW,
             homing_speed=100,
+            max_encoder_deviation=1000
         ),
         name="x_axis",
         axis_type="linear_axis",
@@ -136,6 +137,7 @@ p0_gantry_config = GantryConfiguration(
             home_direction=Rotation.CCW,
             homing_speed=50,
             brake=True,
+            max_encoder_deviation=1000
         ),
         name="y_axis",
         axis_type="linear_axis",
