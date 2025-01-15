@@ -536,6 +536,7 @@ class P0C(AbstractRobot):
 
     async def run_output_transfer(self) -> None:
         tracking = BottleTracking.INITIALIZE
+        belt_shutoff_delay = 1
         async with asyncio.timeout(20):
             while True:
                 if tracking == BottleTracking.INITIALIZE:
@@ -548,7 +549,7 @@ class P0C(AbstractRobot):
                     sensors = await self._io.get_sensors()
                     if sensors and sensors.output_transfer_conveyor:
                         print("Got Output Transfer")
-                        await asyncio.sleep(0.25)
+                        await asyncio.sleep(belt_shutoff_delay)
                         await self.funnel.stop_output_transfer()
                         tracking = BottleTracking.START_WORKSTATION_OUTPUT
                 elif tracking == BottleTracking.START_WORKSTATION_OUTPUT:
@@ -558,7 +559,7 @@ class P0C(AbstractRobot):
                     sensors = await self._io.get_sensors()
                     if sensors and sensors.output_conveyor:
                         print("Got Output Sensor")
-                        await asyncio.sleep(0.25)
+                        await asyncio.sleep(belt_shutoff_delay)
                         await self.funnel.stop_output()
                         tracking = BottleTracking.WAIT_FOR_OUTPUT_TRIGGER
                 elif tracking == BottleTracking.WAIT_FOR_OUTPUT_TRIGGER:
