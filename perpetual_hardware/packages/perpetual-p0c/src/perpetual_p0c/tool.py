@@ -325,6 +325,7 @@ class Tool(AbstractSubsystem[ToolConfiguration, ToolStatus]):
 
     async def check_tray_loaded(self) -> bool:
         state = await self._tool_board.get_state()
+        print("Tray Loaded Check: ", state)
         return (
             state.inputs.left_beam
             and state.inputs.right_beam

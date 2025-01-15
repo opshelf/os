@@ -53,3 +53,6 @@ class MockRobot(AbstractRobot):
                 return RetrieveResponse(status=ResponseStatus.COMPLETED, command=command)
             case _:
                 raise Exception("Invalid Robot Command")
+
+    def holding_tray(self) -> bool:
+        return False

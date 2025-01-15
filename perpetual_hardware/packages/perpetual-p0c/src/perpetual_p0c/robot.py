@@ -237,6 +237,8 @@ class AbstractRobot(metaclass=ABCMeta):
     @abstractmethod
     async def set_configuration(self, configuration: RobotConfiguration) -> None: ...
 
+    @abstractmethod
+    def holding_tray(self) -> bool: ...
 
 class P0C(AbstractRobot):
     def __init__(self, bus: CANBusHandler, configuration: RobotConfiguration):
@@ -596,6 +598,7 @@ class P0C(AbstractRobot):
                     await asyncio.sleep(0.25)
             await asyncio.sleep(1)
             await self.workstation.stop_input_belt()
+            print("Input Transfer Compplete")
         except asyncio.TimeoutError:
             await self.workstation.stop_input_belt()
             await self.funnel.stop_receive_item()
@@ -635,6 +638,9 @@ class P0C(AbstractRobot):
         else:
             raise Exception("No Tray is Loaded")
 
+    def holding_tray(self) -> bool:
+        return self._state.current_tray is None
+
     async def return_current_tray(self) -> None:
         if self._state.current_tray:
             tray_loaded = await self.tool.check_tray_loaded()
@@ -666,16 +672,19 @@ class P0C(AbstractRobot):
             await asyncio.sleep(0.25)
             await self.tool.retract_carriage(location.side)
             if not await self.tool.check_tray_loaded():
-                await self.tool.set_solenoids_off()
                 print("Tray Pull Failure")
+                await self.tool.set_solenoids_off()
                 raise Exception("Failed Tray Pull")
+            print("Saving State")
             self._state = RobotState(current_tray=location)
             self.save_state()
 
     async def setup_receive_item(self, location: StorageModuleCellLocation) -> None:
         tray = self._storage.get_tray(location)
         await self.pull_tray(location.to_tray_location())
+        print("Tray Pulled")
         await self.move_gantry_to_input(tray)
+        print("Gantry Moved to Input")
 
     async def receive_item(self, location: StorageModuleCellLocation) -> None:
         tray = self._storage.get_tray(location)

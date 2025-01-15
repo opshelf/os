@@ -263,7 +263,7 @@ class RobotWorker(AbstractRobotWorker):
                 except (TimeoutError, asyncio.CancelledError) as e:
                     if self._msg:
                         await self._msg.ack()
-                    if self._robot.state:
+                    if self._robot.state.current_tray:
                         await self._robot.handle_command(ReturnCurrentTray())
                     self._msg = None
                     self._current_task = None
