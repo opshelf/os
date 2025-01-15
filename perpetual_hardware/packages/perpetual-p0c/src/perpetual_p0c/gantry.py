@@ -148,8 +148,7 @@ class Gantry(AbstractSubsystem[GantryConfiguration, GantryStatus]):
                 await self._y_axis.move_to_position(coordinate.y, override_brake=True)
                 await self._y_axis.wait_for_move()
                 await self._x_axis.wait_for_move()
-            if wait:
-                await self.wait_for_move()
+                print("path finished")
         except Exception as e:
             x_pos = await self._x_axis.get_position()
             x_enc = await self._x_axis.get_encoder_position()
