@@ -24,7 +24,7 @@ const AxisForm = ({ fieldName }: { fieldName: string }) => {
                 <Input
                   type="number"
                   {...field}
-                  {...form.register('microsteps', {
+                  {...form.register(`${fieldName}.microsteps`, {
                     valueAsNumber: true,
                   })}
                 />
@@ -43,7 +43,7 @@ const AxisForm = ({ fieldName }: { fieldName: string }) => {
                 <Input
                   type="number"
                   {...field}
-                  {...form.register('steps_per_rev', {
+                  {...form.register(`${fieldName}steps_per_rev`, {
                     valueAsNumber: true,
                   })}
                 />
@@ -84,7 +84,7 @@ const AxisForm = ({ fieldName }: { fieldName: string }) => {
                 <Input
                   type="number"
                   {...field}
-                  {...form.register('steps_per_mm', {
+                  {...form.register(`${fieldName}.steps_per_mm`, {
                     valueAsNumber: true,
                   })}
                 />
@@ -105,7 +105,7 @@ const AxisForm = ({ fieldName }: { fieldName: string }) => {
                 <Input
                   type="number"
                   {...field}
-                  {...form.register('work_current', {
+                  {...form.register(`${fieldName}.work_current`, {
                     valueAsNumber: true,
                   })}
                 />
@@ -124,7 +124,7 @@ const AxisForm = ({ fieldName }: { fieldName: string }) => {
                 <Input
                   type="number"
                   {...field}
-                  {...form.register('holding_current', {
+                  {...form.register(`${fieldName}holding_current`, {
                     valueAsNumber: true,
                   })}
                 />
@@ -143,7 +143,7 @@ const AxisForm = ({ fieldName }: { fieldName: string }) => {
                 <Input
                   type="number"
                   {...field}
-                  {...form.register('homing_current', {
+                  {...form.register(`${fieldName}.homing_current`, {
                     valueAsNumber: true,
                   })}
                 />
@@ -164,7 +164,7 @@ const AxisForm = ({ fieldName }: { fieldName: string }) => {
                 <Input
                   type="number"
                   {...field}
-                  {...form.register('velocity', {
+                  {...form.register(`${fieldName}.velocity`, {
                     valueAsNumber: true,
                   })}
                 />
@@ -183,7 +183,7 @@ const AxisForm = ({ fieldName }: { fieldName: string }) => {
                 <Input
                   type="number"
                   {...field}
-                  {...form.register('acceleration', {
+                  {...form.register(`${fieldName}.acceleration`, {
                     valueAsNumber: true,
                   })}
                 />
@@ -295,7 +295,7 @@ const AxisForm = ({ fieldName }: { fieldName: string }) => {
                   className="w-fit"
                   {...field}
                   value={`${field.value}`}
-                  {...form.register(`homing_speed`, {
+                  {...form.register(`${fieldName}.homing_speed`, {
                     valueAsNumber: true,
                     setValueAs: (v) =>
                       v === '' ? null : parseInt(v),
