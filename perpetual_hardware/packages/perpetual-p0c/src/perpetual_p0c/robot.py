@@ -705,33 +705,6 @@ class P0C(AbstractRobot):
             await self.place_tray(location)
             print("Failed to Receive Item into Funnel within Ten Seconds")
             raise Exception("Failed to Receive Item into Funnel within 10 seconds")
-        #try:
-        #    async with asyncio.timeout(10):
-        #        while True:
-        #            sensors = await self._io.get_sensors()
-        #            if sensors and sensors.input_conveyor:
-        #                break
-        #            await asyncio.sleep(0.25)
-        #    await asyncio.sleep(1)
-        #    await self.workstation.stop_input_belt()
-        #except asyncio.TimeoutError:
-        #    await self.workstation.stop_input_belt()
-        #    await self.funnel.stop_receive_item()
-        #    raise Exception("Failed to See Input Break Beams Trigger")
-        #t0 = time.time()
-        #while True:
-        #    if time.time() - t0 > 10:
-        #        await self.funnel.stop_receive_item()
-        #        await self.place_tray(location)
-        #        print("Failed to Receive Item into Funnel within Ten Seconds")
-        #        raise Exception("Failed to Receive Item")
-        #    sensors = await self._io.get_sensors()
-        #    if sensors and sensors.funnel_input:
-        #        await asyncio.sleep(0.5)
-        #        await self.funnel.close_tray_wedges(tray)
-        #        await self.funnel.stop_receive_item()
-        #        break
-        #    await asyncio.sleep(0.25)
 
     async def drop_off_item(
         self, location: StorageModuleCellLocation, keep_tray: bool = True
@@ -864,9 +837,10 @@ class P0C(AbstractRobot):
     async def handle_command(self, command: RobotCommands) -> RobotResponses:
         try:
             response = await self._handle_command(command)
+            print("Handle Command Response: ", response)
             return response
         except Exception as e:
-            print(e)
+            print("Handle Command Exception: ", e)
             raise e
 
 

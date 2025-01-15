@@ -211,6 +211,7 @@ class RobotWorker(AbstractRobotWorker):
                                 case StoreCommand(payload=payload):
                                     print("Store Command Done")
                                     if self._current_task.result():
+                                        print("Success Result: ", self._current_task.result())
                                         storage = get_storage()
                                         storage.store_item(payload.location, payload.item)
                                         storage.save()
@@ -221,6 +222,7 @@ class RobotWorker(AbstractRobotWorker):
                                             .encode(),
                                         )
                                     else:
+                                        print("Failed Result: ", self._current_task)
                                         await self._js.publish(
                                             self._nats_config.event_queue,
                                             StoringFailedEvent(
