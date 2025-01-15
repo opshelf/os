@@ -123,7 +123,7 @@ ToolCommands = Annotated[
 
 
 class Tool(AbstractSubsystem[ToolConfiguration, ToolStatus]):
-    def __init__(self, bus: CANBusHandler, tool_configuration: ToolConfiguration):
+    def __init__(self, bus: CANBusHandler, tool_configuration: ToolConfiguration, io: IoController):
         self._configuration = tool_configuration
         self._carriage = TrinamicAxis(
             bus,
@@ -131,7 +131,7 @@ class Tool(AbstractSubsystem[ToolConfiguration, ToolStatus]):
             motor_id=0,
             configuration=tool_configuration.carriage.configuration,
         )
-        self._io = IoController(bus)
+        self._io = io
         self._tool_board = ToolBoard(bus)
         self._actuators_extended = False
         self._carriage_solenoids = 0

@@ -102,3 +102,13 @@ class AsyncFilteredReader(AsyncBufferedReader):
         else:
             async with asyncio.timeout(timeout):
                 return await self.buffer.get()
+
+
+    async def clear_buffer(self) -> None:
+        while not self.buffer.empty():
+          self.buffer.get_nowait()
+          self.buffer.task_done()
+
+    def get_buffered_messages(self) -> int:
+        return self.buffer.qsize()
+

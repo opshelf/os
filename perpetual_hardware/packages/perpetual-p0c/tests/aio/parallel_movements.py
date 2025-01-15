@@ -1,4 +1,5 @@
 from perpetual_p0c.gantry import GantryCoordinate
+from perpetual_p0c.io_board import IoController
 from perpetual_p0c.storage import StorageModuleSide
 from perpetual_p0c.utils import get_can_bus
 from perpetual_p0c.gantry import Gantry
@@ -10,7 +11,8 @@ import asyncio
 async def main() -> None:
     can_bus = await get_can_bus()
     gantry = Gantry(can_bus, p0_gantry_config)
-    tool = Tool(can_bus, p0_tool_config)
+    io = IoController(can_bus)
+    tool = Tool(can_bus, p0_tool_config, io)
     await tool.home()
     await gantry.home()
 

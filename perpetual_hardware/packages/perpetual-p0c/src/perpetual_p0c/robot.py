@@ -286,11 +286,11 @@ class P0C(AbstractRobot):
             ],
         )
         self._configuration = configuration
-        self._tool = Tool(self._bus, configuration.tool_configuration)
-        self._gantry = Gantry(self._bus, configuration.gantry_configuration)
         self._io = IoController(self._bus)
+        self._gantry = Gantry(self._bus, configuration.gantry_configuration)
         self._workstation = Workstation(self._bus, configuration.workstation)
         self._funnel = Funnel(self._bus, configuration.funnel_configuration, self._io)
+        self._tool = Tool(self._bus, configuration.tool_configuration, self._io)
         self._state = RobotState(current_tray=None)
         self._sizes = SizeDatabase()
 

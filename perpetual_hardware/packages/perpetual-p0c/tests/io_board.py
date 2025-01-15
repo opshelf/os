@@ -10,7 +10,7 @@ from perpetual_p0c.workstation import Workstation
 async def main() -> None:
     can_bus = await get_can_bus()
     controller = IoController(can_bus)
-    funnel = Funnel(can_bus, p0_funnel_config)
+    funnel = Funnel(can_bus, p0_funnel_config, controller)
     workstation = Workstation(can_bus, p0_workstation_configuration)
     await funnel.initialize()
     #await funnel.start_receive_item()
