@@ -151,7 +151,7 @@ class Gantry(AbstractSubsystem[GantryConfiguration, GantryStatus]):
             if wait:
                 await self.wait_for_move()
         except Exception as e:
-            print("Failed Path Movement: ", path, position)
+            print("Failed Path Movement: ", path, position, e)
             raise e
         finally:
             await self._y_axis.end_brake_move()
