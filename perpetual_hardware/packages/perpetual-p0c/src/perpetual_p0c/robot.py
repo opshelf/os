@@ -599,6 +599,9 @@ class P0C(AbstractRobot):
             await self.workstation.stop_input_belt()
             await self.funnel.stop_receive_item()
             raise Exception("Failed to See Input Break Beams Trigger")
+        except Exception as e:
+            print("Run Input Transfer Failure: ", e)
+            raise e
 
     async def move_to_storage_location(self, location: StorageModuleCellLocation) -> None:
         coordinate = self._storage.get_coordinate(location)
@@ -663,6 +666,7 @@ class P0C(AbstractRobot):
             await self.tool.retract_carriage(location.side)
             if not await self.tool.check_tray_loaded():
                 await self.tool.set_solenoids_off()
+                print("Tray Pull Failure")
                 raise Exception("Failed Tray Pull")
             self._state = RobotState(current_tray=location)
             self.save_state()
