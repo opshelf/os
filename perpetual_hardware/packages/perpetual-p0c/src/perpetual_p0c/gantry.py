@@ -151,7 +151,19 @@ class Gantry(AbstractSubsystem[GantryConfiguration, GantryStatus]):
             if wait:
                 await self.wait_for_move()
         except Exception as e:
+            x_pos = await self._x_axis.get_position()
+            x_enc = await self._x_axis.get_encoder_position()
+            x_actual = await self._x_axis.get_actual_position()
+            x_target = await self._x_axis.get_target_position()
+
+            y_pos = await self._y_axis.get_position()
+            y_enc = await self._y_axis.get_encoder_position()
+            y_actual = await self._y_axis.get_actual_position()
+            y_target = await self._y_axis.get_target_position()
+
             print("Failed Path Movement: ", path, position, e)
+            print(f"X POS: {x_pos} ENC: {x_enc} ACTUAL: {x_actual} TARGET: {x_target}")
+            print(f"Y POS: {y_pos} ENC: {y_enc} ACTUAL: {y_actual} TARGET: {y_target}")
             raise e
         finally:
             await self._y_axis.end_brake_move()
