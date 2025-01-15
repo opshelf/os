@@ -74,3 +74,6 @@ export const robotConfigurationSchema = z.object({
   output_location: gantryCoordinateSchema,
   input_location: gantryCoordinateSchema,
 });
+export type RobotConfiguration = z.infer<
+  typeof robotConfigurationSchema
+>;

@@ -59,3 +59,12 @@ async def configuration(
     worker: AbstractRobotWorker = Depends(get_robot_worker),
 ) -> RobotConfiguration:
     return worker.get_configuration()
+
+@router.post("/configuration")
+async def set_configuration(
+    configuration: RobotConfiguration,
+    worker: AbstractRobotWorker = Depends(get_robot_worker),
+) -> SuccessResponse:
+    await worker.set_configuration(configuration)
+    return SuccessResponse()
+

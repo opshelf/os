@@ -183,6 +183,7 @@ async fn break_beam_monitor(
         // Debounce
         if let Some(bv) = beam_value {
             SENSOR_CHANNEL.send(bv).await;
+            embassy_time::Timer::after_millis(50).await;
         }
 
         //defmt::info!(

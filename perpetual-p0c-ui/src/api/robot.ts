@@ -8,6 +8,7 @@ import { BaseMessageSchema } from '@/domain/commands/base';
 import { v4 as uuidv4 } from 'uuid';
 import z from 'zod';
 import { GS1 } from '@/domain';
+import { RobotConfiguration } from '@/domain/configuration';
 
 export const createBaseMessage = (): BaseMessageSchema => {
   return { message_id: uuidv4() };
@@ -49,5 +50,15 @@ export const getCommands = async (): Promise<RobotCommands[]> => {
 
 export const getConfiguration = async (): Promise<any> => {
   const response = await axios.get(`${HOST}/robot/configuration`);
+  return response.data;
+};
+
+export const setConfiguration = async (
+  configuration: RobotConfiguration
+): Promise<any> => {
+  const response = await axios.post(
+    `${HOST}/robot/configuration`,
+    configuration
+  );
   return response.data;
 };

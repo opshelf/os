@@ -113,7 +113,6 @@ class TrinamicStepper(TMCM12xx):
         await self.set_actual_position(position)
         await self.set_target_position(position)
         await self.clear_error_flags()
-        # await self.clear_status_flags()
         self._status = StepperMotorStatus.GOOD
 
     async def rotate(self, value: int) -> None:

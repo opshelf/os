@@ -467,7 +467,6 @@ class Funnel(AbstractSubsystem[FunnelConfiguration, FunnelStatus]):
         await self.wait_for_move()
 
     async def return_diverter(self) -> None:
-        await self._diverter.initialize()
         await self._diverter.move_revolutions(0.0)
         await self.wait_for_move()
 

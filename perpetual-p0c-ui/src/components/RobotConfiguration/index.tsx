@@ -9,7 +9,7 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from '../ui/accordion';
-import { getConfiguration } from '@/api/robot';
+import { getConfiguration, setConfiguration } from '@/api/robot';
 import { useQuery } from '@tanstack/react-query';
 import {
   Form,
@@ -90,10 +90,10 @@ const ConfigurationEditor = ({
     }, [configuration]),
   });
 
-  function onSubmit(
+  async function onSubmit(
     values: z.infer<typeof robotConfigurationSchema>
   ) {
-    console.log(values);
+    await setConfiguration(values);
   }
 
   return (
