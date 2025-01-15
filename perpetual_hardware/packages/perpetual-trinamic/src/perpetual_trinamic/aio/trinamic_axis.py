@@ -233,7 +233,9 @@ class TrinamicAxis(TMCM12xx):
         if self.configuration.brake:
             t0 = time.time()
             while not await self.get_position_reached():
-                if await self.get_error_flags():
+                error_flags = await self.get_error_flags()
+                if error_flags:
+                    print(f"{self._module_id}", TrinamicErrorFlags(error_flags))
                     await self.end_brake_move()
                     raise Exception(f"Failed to move hit hard stop {self._module_id}")
                 if time.time() - t0 > timeout:
