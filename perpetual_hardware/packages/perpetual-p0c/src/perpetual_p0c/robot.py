@@ -698,6 +698,7 @@ class P0C(AbstractRobot):
         await self.move_gantry_to_input(tray)
         print("Gantry Moved to Input")
 
+
     async def receive_item(self, location: StorageModuleCellLocation) -> None:
         tray = self._storage.get_tray(location)
         await self.funnel.initialize()

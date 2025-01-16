@@ -180,7 +180,7 @@ class Tool(AbstractSubsystem[ToolConfiguration, ToolStatus]):
                     state = await self._tool_board.get_state()
                     if not state.inputs.forward_actuator:
                         break
-                    await asyncio.sleep(0.25)
+                    await asyncio.sleep(0.5)
             self._actuators_extended = True
         else:
             await self._io.set_actuators(ActuatorState.Retracted)
@@ -189,7 +189,7 @@ class Tool(AbstractSubsystem[ToolConfiguration, ToolStatus]):
                     state = await self._tool_board.get_state()
                     if not state.inputs.backward_actuator:
                         break
-                    await asyncio.sleep(0.25)
+                    await asyncio.sleep(0.5)
             self._actuators_extended = False
 
     async def set_carriage_solenoids(self, solenoids: int, side: StorageModuleSide) -> None:
