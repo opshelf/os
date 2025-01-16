@@ -72,7 +72,8 @@ class TrinamicAxis(TMCM12xx):
             await self.set_encoder_position(position)
 
     async def reset_location(self) -> None:
-        await self.set_actual_position(await self.get_encoder_position())
+        encoder_position = await self.get_encoder_position() 
+        await self.set_actual_position(encoder_position)
 
     async def sync_position(self) -> None:
         position = await self.get_encoder_position()
@@ -189,6 +190,7 @@ class TrinamicAxis(TMCM12xx):
         self, position: float, override_brake: Optional[bool] = False
     ) -> None:
         if self._status != StepperMotorStatus.GOOD:
+            print("Status Bad")
             raise Exception("Status Bad")
         if self.configuration.brake and not override_brake:
             await self.reset_location()

@@ -67,7 +67,7 @@ class StepperMotorConfig(BaseModel):
     def convert_position_to_pulses(self, position: float) -> int:
         if self.max_travel and position > self.max_travel:
             raise MaxTravelLimitError
-        if self.min_travel and position > self.min_travel:
+        if self.min_travel and position < self.min_travel:
             raise MinTravelLimitError
         if self.steps_per_mm:
             steps = position * self.steps_per_mm
