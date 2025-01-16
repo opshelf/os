@@ -247,6 +247,7 @@ class TrinamicAxis(TMCM12xx):
                         await self.end_brake_move()
                         raise Exception(f"Failed to move hit hard stop {self._module_id}")
                     if time.time() - t0 > timeout:
+                        print(f"Failed to Move in Time")
                         self._status = StepperMotorStatus.ERROR
                         await self.end_brake_move()
                         raise Exception(f"Failed to move in time {self._module_id}")
@@ -259,10 +260,12 @@ class TrinamicAxis(TMCM12xx):
                 print(f"No Brake {self._module_id} Position Reached {position_reached}")
                 while not position_reached:
                     error_flags = await self.get_error_flags()
+                    print(f"{error_flags}")
                     if error_flags:
                         print(f"{self._module_id}", TrinamicErrorFlags(value=error_flags))
                         raise Exception(f"Failed to move hit hard stop {self._module_id}")
                     if time.time() - t0 > timeout:
+                        print(f"Failed to Move in Time")
                         self._status = StepperMotorStatus.ERROR
                         raise Exception(f"Failed to move in time {self._module_id}")
                     await asyncio.sleep(0.1)
