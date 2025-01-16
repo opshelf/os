@@ -680,7 +680,9 @@ class P0C(AbstractRobot):
             self.save_state()
 
     async def setup_receive_item(self, location: StorageModuleCellLocation) -> None:
+        print(f"Pulling Tray From Location: {location}")
         tray = self._storage.get_tray(location)
+        print(f"Pulling Tray {tray}")
         await self.pull_tray(location.to_tray_location())
         print("Tray Pulled")
         await self.move_gantry_to_input(tray)
@@ -691,13 +693,21 @@ class P0C(AbstractRobot):
         await self.funnel.initialize()
         await self.funnel.diverter.set_standby_current(2000)
         input_transfer_task = asyncio.create_task(self.run_input_transfer(tray, location.slot_idx))
+        print("Input Transfer Task Started")
         tray_pull_task = asyncio.create_task(self.setup_receive_item(location))
+        print("Tray Pull Task Started")
         await input_transfer_task
+        print("Input Transfer Task Finished")
         await tray_pull_task
+        print("Tray Pull Task Finished")
         await self._funnel.move_to_cell(tray, location.slot_idx)
+        print("Funnel Moved to Cell")
         await self._io.reset_sensors()
+        print("Receive Item IO Sensors Reset")
         await self.funnel.set_diverter_opening(self._storage.get_tray(location))
+        print("Diverter Openening Set")
         await self.funnel.diverter.set_standby_current(0)
+        print("Starting Funnel Input")
         try:
             async with asyncio.timeout(10):
                 while True:

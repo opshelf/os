@@ -167,7 +167,7 @@ class ToolBoard:
         msg = await self._reader.get_message(2.0)
         if msg:
             return msg
-        raise Exception("No Response From Relay Module")
+        raise Exception("No Response From Tool Board")
 
     @property
     def state(self) -> BoardState:
