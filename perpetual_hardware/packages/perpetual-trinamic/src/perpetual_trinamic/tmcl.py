@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from enum import IntEnum
-from pydantic import BaseModel, field_validator, value
+from pydantic import BaseModel, field_validator
 
 
 class TMCLCommand:
