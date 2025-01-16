@@ -147,7 +147,9 @@ class Gantry(AbstractSubsystem[GantryConfiguration, GantryStatus]):
             await self._x_axis.sync_position()
             print("Positions Synced")
             await self._y_axis.init_brake_move()
-            for coordinate in path:
+            print("Brake set")
+            for ix, coordinate in enumerate(path):
+                print(f"Moving to {coordinate} {ix}")
                 await self._x_axis.move_to_position(coordinate.x)
                 await self._y_axis.move_to_position(coordinate.y, override_brake=True)
                 await self._y_axis.wait_for_move()
