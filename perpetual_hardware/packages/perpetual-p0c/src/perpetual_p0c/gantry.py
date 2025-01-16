@@ -139,7 +139,9 @@ class Gantry(AbstractSubsystem[GantryConfiguration, GantryStatus]):
 
     async def move_path(self, path: List[GantryCoordinate]) -> None:
         try:
+            print("Getting Position")
             position = await self.position
+            print(f"Got Position {position}")
             print("Syncing Position's")
             await self._y_axis.sync_position()
             await self._x_axis.sync_position()
