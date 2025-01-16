@@ -16,9 +16,6 @@ class CANBusHandler:
         self._bus = bus
         self._lock = asyncio.Lock()  # Lock to ensure safe access to the CAN bus
         self._loop = loop
-        #self._print_listener = can.Printer()
-        #self._notifier = Notifier(bus, [self._print_listener], loop=loop)
-        #self._print_listener = can.Printer()
         self._notifier = Notifier(bus, [], loop=loop)
 
     @property
@@ -52,26 +49,16 @@ class CANBusHandler:
     async def send_message(self, message: Message, timeout: Optional[float] = None) -> None:
         """Send a CAN message."""
         async with self._lock:
-            try:
-                self._bus.send(message, timeout)
-            except Exception as e:
-                print("Send Error: ", e)
-                await asyncio.sleep(.5)
-                raise e
+            self._bus.send(message, timeout)
 
     async def recv_message(self, timeout: Optional[float] = None) -> Optional[Message]:
         """Receive a CAN message."""
         async with self._lock:
-            try:
-                message = self._bus.recv(timeout)
-                if message is None:
-                    print("No Message Received")
-                    await asyncio.sleep(.25)
-                return message
-            except Exception as e:
-                print("Receive Error: ", e)
-                await asyncio.sleep(.5)
-                raise e
+            message = self._bus.recv(timeout)
+            if message is None:
+                print("No Message Received")
+                await asyncio.sleep(.25)
+            return message
 
     def add_listener(self, listener: Listener) -> None:
         self._notifier.add_listener(listener)
