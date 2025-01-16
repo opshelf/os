@@ -235,38 +235,43 @@ class TrinamicAxis(TMCM12xx):
                 await self.move_to_position(0)
 
     async def wait_for_move(self, timeout: float = 60.0) -> None:
-        if self.configuration.brake:
-            t0 = time.time()
-            position_reached = await self.get_position_reached()
-            print(f"Brake {self._module_id} Position Reached {position_reached}")
-            while not position_reached:
-                error_flags = await self.get_error_flags()
-                if error_flags:
-                    print(f"{self._module_id}", TrinamicErrorFlags(value=error_flags))
-                    await self.end_brake_move()
-                    raise Exception(f"Failed to move hit hard stop {self._module_id}")
-                if time.time() - t0 > timeout:
-                    self._status = StepperMotorStatus.ERROR
-                    await self.end_brake_move()
-                    raise Exception(f"Failed to move in time {self._module_id}")
-                await asyncio.sleep(0.1)
+        try:
+            if self.configuration.brake:
+                t0 = time.time()
                 position_reached = await self.get_position_reached()
-            print(f"{self._module_id} Position Reached {position_reached} Done")
-        else:
-            t0 = time.time()
-            position_reached = await self.get_position_reached()
-            print(f"No Brake {self._module_id} Position Reached {position_reached}")
-            while not position_reached:
-                error_flags = await self.get_error_flags()
-                if error_flags:
-                    print(f"{self._module_id}", TrinamicErrorFlags(value=error_flags))
-                    raise Exception(f"Failed to move hit hard stop {self._module_id}")
-                if time.time() - t0 > timeout:
-                    self._status = StepperMotorStatus.ERROR
-                    raise Exception(f"Failed to move in time {self._module_id}")
-                await asyncio.sleep(0.1)
+                print(f"Brake {self._module_id} Position Reached {position_reached}")
+                while not position_reached:
+                    error_flags = await self.get_error_flags()
+                    if error_flags:
+                        print(f"{self._module_id}", TrinamicErrorFlags(value=error_flags))
+                        await self.end_brake_move()
+                        raise Exception(f"Failed to move hit hard stop {self._module_id}")
+                    if time.time() - t0 > timeout:
+                        self._status = StepperMotorStatus.ERROR
+                        await self.end_brake_move()
+                        raise Exception(f"Failed to move in time {self._module_id}")
+                    await asyncio.sleep(0.1)
+                    position_reached = await self.get_position_reached()
+                print(f"{self._module_id} Position Reached {position_reached} Done")
+            else:
+                t0 = time.time()
                 position_reached = await self.get_position_reached()
-            print(f"{self._module_id} Position Reached {position_reached} Done")
+                print(f"No Brake {self._module_id} Position Reached {position_reached}")
+                while not position_reached:
+                    error_flags = await self.get_error_flags()
+                    if error_flags:
+                        print(f"{self._module_id}", TrinamicErrorFlags(value=error_flags))
+                        raise Exception(f"Failed to move hit hard stop {self._module_id}")
+                    if time.time() - t0 > timeout:
+                        self._status = StepperMotorStatus.ERROR
+                        raise Exception(f"Failed to move in time {self._module_id}")
+                    await asyncio.sleep(0.1)
+                    position_reached = await self.get_position_reached()
+                print(f"{self._module_id} Position Reached {position_reached} Done")
+        except Exception as e:
+            print(f"Wait for Move Exception: {e}")
+            raise e
+
 
     async def poll_position_reached(self) -> bool:
         if await self.get_position_reached():
