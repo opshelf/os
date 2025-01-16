@@ -193,7 +193,6 @@ class TrinamicAxis(TMCM12xx):
             print("Status Bad")
             raise Exception("Status Bad")
         if self.configuration.brake and not override_brake:
-            await self.reset_location()
             await self.init_brake_move()
             position = self._configuration.convert_position_to_pulses(position)
             self._target_position = position

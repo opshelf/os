@@ -150,11 +150,17 @@ class Gantry(AbstractSubsystem[GantryConfiguration, GantryStatus]):
             print("Brake set")
             for ix, coordinate in enumerate(path):
                 print(f"Moving to {coordinate} {ix}")
+                print("Y Axis Moving to position")
                 await self._x_axis.move_to_position(coordinate.x)
+                print("Y Axis Moving to position")
                 await self._y_axis.move_to_position(coordinate.y, override_brake=True)
+                print("Y Axis Move Check")
                 await self._y_axis.wait_for_move()
+                print("Y Axis Move Done")
+                print("X Axis Move Check")
                 await self._x_axis.wait_for_move()
-                print("path finished")
+                print("X Axis Move Done")
+            print("path finished")
         except Exception as e:
             x_pos = await self._x_axis.get_position()
             x_enc = await self._x_axis.get_encoder_position()
