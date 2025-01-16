@@ -150,7 +150,7 @@ class Gantry(AbstractSubsystem[GantryConfiguration, GantryStatus]):
             print("Brake set")
             for ix, coordinate in enumerate(path):
                 print(f"Moving to {coordinate} {ix}")
-                print("Y Axis Moving to position")
+                print("X Axis Moving to position")
                 await self._x_axis.move_to_position(coordinate.x)
                 print("Y Axis Moving to position")
                 await self._y_axis.move_to_position(coordinate.y, override_brake=True)

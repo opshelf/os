@@ -195,14 +195,18 @@ class TrinamicAxis(TMCM12xx):
         if self.configuration.brake and not override_brake:
             await self.init_brake_move()
             position = self._configuration.convert_position_to_pulses(position)
+            print(f"Target Postion: {position}")
             self._target_position = position
             await self.move_absolute(position)
+            print(f"Sent Absolute Move")
             await self.wait_for_move()
             await self.end_brake_move()
         else:
             position = self._configuration.convert_position_to_pulses(position)
+            print(f"Target Postion: {position}")
             self._target_position = position
             await self.move_absolute(position)
+            print(f"Sent Absolute Move")
 
     async def move_to_relative_position(
         self, position: float, override_brake: Optional[bool] = False
@@ -247,7 +251,6 @@ class TrinamicAxis(TMCM12xx):
         else:
             t0 = time.time()
             while not await self.get_position_reached():
-                await asyncio.sleep(0.1)
                 error_flags = await self.get_error_flags()
                 if error_flags:
                     print(f"{self._module_id}", TrinamicErrorFlags(error_flags))
@@ -255,6 +258,7 @@ class TrinamicAxis(TMCM12xx):
                 if time.time() - t0 > timeout:
                     self._status = StepperMotorStatus.ERROR
                     raise Exception(f"Failed to move in time {self._module_id}")
+                await asyncio.sleep(0.1)
 
     async def poll_position_reached(self) -> bool:
         if await self.get_position_reached():
