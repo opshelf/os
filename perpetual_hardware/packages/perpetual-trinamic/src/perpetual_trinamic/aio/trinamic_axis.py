@@ -240,7 +240,7 @@ class TrinamicAxis(TMCM12xx):
             while not await self.get_position_reached():
                 error_flags = await self.get_error_flags()
                 if error_flags:
-                    print(f"{self._module_id}", TrinamicErrorFlags(error_flags))
+                    print(f"{self._module_id}", TrinamicErrorFlags(value=error_flags))
                     await self.end_brake_move()
                     raise Exception(f"Failed to move hit hard stop {self._module_id}")
                 if time.time() - t0 > timeout:
@@ -253,7 +253,7 @@ class TrinamicAxis(TMCM12xx):
             while not await self.get_position_reached():
                 error_flags = await self.get_error_flags()
                 if error_flags:
-                    print(f"{self._module_id}", TrinamicErrorFlags(error_flags))
+                    print(f"{self._module_id}", TrinamicErrorFlags(value=error_flags))
                     raise Exception(f"Failed to move hit hard stop {self._module_id}")
                 if time.time() - t0 > timeout:
                     self._status = StepperMotorStatus.ERROR
@@ -340,7 +340,7 @@ class TrinamicAxis(TMCM12xx):
         error_flags = await self.get_error_flags()
         return AxisStatus(
             status_flags=StatusFlags(status_flags),
-            error_flags=TrinamicErrorFlags(error_flags),
+            error_flags=TrinamicErrorFlags(value=error_flags),
             position=position,
             homed=home_status,
             hard_stopped=hard_stop_status,

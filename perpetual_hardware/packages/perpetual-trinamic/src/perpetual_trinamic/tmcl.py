@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from enum import IntEnum
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator, value
 
 
 class TMCLCommand:
@@ -104,23 +104,20 @@ class TMCLStatus:
     EEPROM_LOCKED = 5
     COMMAND_NOT_AVAILABLE = 6
 
-
 class TrinamicErrorFlags(BaseModel):
-    stall_guard_error: bool
-    deviation_error: bool
+    value: int
+    stall_guard_error: bool = Field(default=False)
+    deviation_error: bool = Field(default=False)
 
-    def __init__(self, value: int) -> None:
-        self._value = value
-        self.stall_guard_error: bool = bool(value & 0x01)
-        self.deviation_error: bool = bool(value & 0x02)
+    @field_validator("stall_guard_error", mode="before")
+    def set_stall_guard_error(cls, v, info):
+        raw_value = info.data.get("value", 0)
+        return bool(raw_value & 0x01)
 
-    # @property
-    # def stall_guard_error(self) -> bool:
-    #    return self._stall_guard_error
-
-    # @property
-    # def deviation_error(self) -> bool:
-    #    return self._deviation_error
+    @field_validator("deviation_error", mode="before")
+    def set_deviation_error(cls, v, info):
+        raw_value = info.data.get("value", 0)
+        return bool(raw_value & 0x02)
 
     def is_fault(self) -> bool:
         return self.stall_guard_error or self.deviation_error
