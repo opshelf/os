@@ -50,6 +50,7 @@ class CANBusHandler:
     async def send_message(self, message: Message, timeout: Optional[float] = None) -> None:
         """Send a CAN message."""
         async with self._lock:
+            print(message)
             self._bus.send(message, timeout)
 
     async def recv_message(self, timeout: Optional[float] = None) -> Optional[Message]:
