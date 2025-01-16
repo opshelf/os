@@ -242,8 +242,9 @@ class TrinamicAxis(TMCM12xx):
                 print(f"Brake {self._module_id} Position Reached {position_reached}")
                 while not position_reached:
                     error_flags = await self.get_error_flags()
-                    if error_flags:
-                        print(f"{self._module_id}", TrinamicErrorFlags(value=error_flags))
+                    flags = TrinamicErrorFlags(value=error_flags)
+                    if flags.deviation_error:
+                        print(f"{self._module_id}", flags)
                         await self.end_brake_move()
                         raise Exception(f"Failed to move hit hard stop {self._module_id}")
                     if time.time() - t0 > timeout:
@@ -260,9 +261,9 @@ class TrinamicAxis(TMCM12xx):
                 print(f"No Brake {self._module_id} Position Reached {position_reached}")
                 while not position_reached:
                     error_flags = await self.get_error_flags()
-                    print(f"{error_flags}")
-                    if error_flags:
-                        print(f"{self._module_id}", TrinamicErrorFlags(value=error_flags))
+                    flags = TrinamicErrorFlags(value=error_flags)
+                    if flags.deviation_error:
+                        print(f"{self._module_id}", flags)
                         raise Exception(f"Failed to move hit hard stop {self._module_id}")
                     if time.time() - t0 > timeout:
                         print(f"Failed to Move in Time")

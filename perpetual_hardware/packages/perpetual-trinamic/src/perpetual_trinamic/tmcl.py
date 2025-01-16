@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from enum import IntEnum
-from pydantic import BaseModel, field_validator, Field
+from pydantic import BaseModel, model_validator, Field
+from typing import Self
 
 
 class TMCLCommand:
@@ -109,15 +110,13 @@ class TrinamicErrorFlags(BaseModel):
     stall_guard_error: bool = Field(default=False)
     deviation_error: bool = Field(default=False)
 
-    @field_validator("stall_guard_error", mode="before")
-    def set_stall_guard_error(cls, v, info):
-        raw_value = info.data.get("value", 0)
-        return bool(raw_value & 0x01)
 
-    @field_validator("deviation_error", mode="before")
-    def set_deviation_error(cls, v, info):
-        raw_value = info.data.get("value", 0)
-        return bool(raw_value & 0x02)
+    @model_validator(mode='after')
+    def set_error_flags(self) -> Self:
+        self.stall_guard_error = bool(self.value & 0x01)
+        self.deviation_error = bool(self.value & 0x02)
+        return self
+
 
     def is_fault(self) -> bool:
         return self.stall_guard_error or self.deviation_error
