@@ -662,18 +662,28 @@ class P0C(AbstractRobot):
         else:
             if location.side == StorageModuleSide.RIGHT:
                 await self.tool.safe_max()
+                print("Tool at safe max")
             else:
                 await self.tool.safe_min()
+                print("Tool at safe min")
             coordinate = self._storage.get_tray_coordinate(location)
+            print(f"Moving to Coordinate: {coordinate}")
             tray = self._storage.get_tray(location)
+            print(f"Getting Tray: {tray}")
             await self.gantry_move(coordinate.to_gantry_coordinate())
+            print(f"Gantry Move Tray Pull Complete")
             await self.tool.extend_carriage(location.side)
+            print(f"Carriage Extended")
             await self.tool.set_tray_solenoids(tray, location.side)
+            print(f"Tray Solenoids Set")
             await asyncio.sleep(0.25)
+            print(f"Slept")
             await self.tool.retract_carriage(location.side)
+            print(f"Carriage Retracted")
             if not await self.tool.check_tray_loaded():
                 print("Tray Pull Failure")
                 await self.tool.set_solenoids_off()
+                print("Solenoids Set Off")
                 raise Exception("Failed Tray Pull")
             print("Saving State")
             self._state = RobotState(current_tray=location)
