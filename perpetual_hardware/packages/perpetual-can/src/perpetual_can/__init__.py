@@ -16,7 +16,8 @@ class CANBusHandler:
         self._bus = bus
         self._lock = asyncio.Lock()  # Lock to ensure safe access to the CAN bus
         self._loop = loop
-        self._notifier = Notifier(bus, [], loop=loop)
+        self._printer = can.Printer()
+        self._notifier = Notifier(bus, [self._printer], loop=loop)
 
     @property
     def bus(self) -> BusABC:
