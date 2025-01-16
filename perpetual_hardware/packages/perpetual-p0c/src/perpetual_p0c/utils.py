@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from typing import Any, Optional, List
 import re
 import subprocess
-from can import BusABC, ThreadSafeBus
+from can import BusABC, Bus
 from perpetual_can import CANBusHandler
 import socket
 import errno
@@ -142,7 +142,7 @@ def get_can_devices() -> CanConfig:
 
 def get_bus() -> BusABC:
     can_device = get_can_devices()
-    return ThreadSafeBus(
+    return Bus(
         interface=can_device.CAN_INTERFACE,
         channel=can_device.CAN_CHANNEL,
         bitrate=can_device.CAN_BITRATE,
