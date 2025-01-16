@@ -138,10 +138,12 @@ class Gantry(AbstractSubsystem[GantryConfiguration, GantryStatus]):
             await self._y_axis.reset_location()
 
     async def move_path(self, path: List[GantryCoordinate]) -> None:
-        position = await self.position
-        await self._y_axis.sync_position()
-        await self._x_axis.sync_position()
         try:
+            position = await self.position
+            print("Syncing Position's")
+            await self._y_axis.sync_position()
+            await self._x_axis.sync_position()
+            print("Positions Synced")
             await self._y_axis.init_brake_move()
             for coordinate in path:
                 await self._x_axis.move_to_position(coordinate.x)
