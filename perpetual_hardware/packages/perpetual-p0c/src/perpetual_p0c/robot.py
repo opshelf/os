@@ -595,7 +595,7 @@ class P0C(AbstractRobot):
                     print(f"Input Transfer: {sensors}")
                     if sensors and sensors.input_conveyor:
                         break
-                    await asyncio.sleep(0.25)
+                    await asyncio.sleep(0.5)
             await asyncio.sleep(1)
             await self.workstation.stop_input_belt()
             print("Input Transfer Compplete")
