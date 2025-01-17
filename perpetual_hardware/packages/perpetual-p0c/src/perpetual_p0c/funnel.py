@@ -294,7 +294,7 @@ class Funnel(AbstractSubsystem[FunnelConfiguration, FunnelStatus]):
 
     async def start_receive_item(self) -> None:
         await self.start_belt()
-        #await self.start_wall()
+        await self.start_wall()
 
     async def stop_receive_item(self) -> None:
         await self.stop_belt()
