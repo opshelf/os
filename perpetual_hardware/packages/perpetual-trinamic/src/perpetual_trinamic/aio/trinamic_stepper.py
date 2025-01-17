@@ -116,7 +116,6 @@ class TrinamicStepper(TMCM12xx):
         self._status = StepperMotorStatus.GOOD
 
     async def rotate(self, value: int) -> None:
-        print(value, self._configuration.invert_coordinates, self._configuration.convert_mms_ps(value))
         if self._configuration.invert_coordinates:
             if value > 0:
                 await self.rotate_left(self._configuration.convert_mms_ps(value))

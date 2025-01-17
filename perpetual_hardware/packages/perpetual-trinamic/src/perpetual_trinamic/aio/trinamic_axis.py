@@ -190,23 +190,18 @@ class TrinamicAxis(TMCM12xx):
         self, position: float, override_brake: Optional[bool] = False
     ) -> None:
         if self._status != StepperMotorStatus.GOOD:
-            print("Status Bad")
             raise Exception("Status Bad")
         if self.configuration.brake and not override_brake:
             await self.init_brake_move()
             position = self._configuration.convert_position_to_pulses(position)
-            print(f"Target Postion: {position}")
             self._target_position = position
             await self.move_absolute(position)
-            print(f"Sent Absolute Move")
             await self.wait_for_move()
             await self.end_brake_move()
         else:
             position = self._configuration.convert_position_to_pulses(position)
-            print(f"Target Postion: {position}")
             self._target_position = position
             await self.move_absolute(position)
-            print(f"Sent Absolute Move")
 
     async def move_to_relative_position(
         self, position: float, override_brake: Optional[bool] = False
@@ -235,46 +230,34 @@ class TrinamicAxis(TMCM12xx):
                 await self.move_to_position(0)
 
     async def wait_for_move(self, timeout: float = 60.0) -> None:
-        try:
-            if self.configuration.brake:
-                t0 = time.time()
+        if self.configuration.brake:
+            t0 = time.time()
+            position_reached = await self.get_position_reached()
+            while not position_reached:
+                error_flags = await self.get_error_flags()
+                flags = TrinamicErrorFlags(value=error_flags)
+                if flags.deviation_error:
+                    await self.end_brake_move()
+                    raise Exception(f"Failed to move hit hard stop {self._module_id}")
+                if time.time() - t0 > timeout:
+                    self._status = StepperMotorStatus.ERROR
+                    await self.end_brake_move()
+                    raise Exception(f"Failed to move in time {self._module_id}")
+                await asyncio.sleep(0.5)
                 position_reached = await self.get_position_reached()
-                print(f"Brake {self._module_id} Position Reached {position_reached}")
-                while not position_reached:
-                    error_flags = await self.get_error_flags()
-                    flags = TrinamicErrorFlags(value=error_flags)
-                    if flags.deviation_error:
-                        print(f"{self._module_id}", flags)
-                        await self.end_brake_move()
-                        raise Exception(f"Failed to move hit hard stop {self._module_id}")
-                    if time.time() - t0 > timeout:
-                        print(f"Failed to Move in Time")
-                        self._status = StepperMotorStatus.ERROR
-                        await self.end_brake_move()
-                        raise Exception(f"Failed to move in time {self._module_id}")
-                    await asyncio.sleep(0.5)
-                    position_reached = await self.get_position_reached()
-                print(f"{self._module_id} Position Reached {position_reached} Done")
-            else:
-                t0 = time.time()
+        else:
+            t0 = time.time()
+            position_reached = await self.get_position_reached()
+            while not position_reached:
+                error_flags = await self.get_error_flags()
+                flags = TrinamicErrorFlags(value=error_flags)
+                if flags.deviation_error:
+                    raise Exception(f"Failed to move hit hard stop {self._module_id}")
+                if time.time() - t0 > timeout:
+                    self._status = StepperMotorStatus.ERROR
+                    raise Exception(f"Failed to move in time {self._module_id}")
+                await asyncio.sleep(0.5)
                 position_reached = await self.get_position_reached()
-                print(f"No Brake {self._module_id} Position Reached {position_reached}")
-                while not position_reached:
-                    error_flags = await self.get_error_flags()
-                    flags = TrinamicErrorFlags(value=error_flags)
-                    if flags.deviation_error:
-                        print(f"{self._module_id}", flags)
-                        raise Exception(f"Failed to move hit hard stop {self._module_id}")
-                    if time.time() - t0 > timeout:
-                        print(f"Failed to Move in Time")
-                        self._status = StepperMotorStatus.ERROR
-                        raise Exception(f"Failed to move in time {self._module_id}")
-                    await asyncio.sleep(0.5)
-                    position_reached = await self.get_position_reached()
-                print(f"{self._module_id} Position Reached {position_reached} Done")
-        except Exception as e:
-            print(f"Wait for Move Exception: {e}")
-            raise e
 
 
     async def poll_position_reached(self) -> bool:
