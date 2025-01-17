@@ -1,9 +1,32 @@
 from can import AsyncBufferedReader, BusABC, Message, Notifier
-from perpetual_trinamic.tmcl import TMCLCommand, TmclMessage, TmclReply, MoveType
+from perpetual_trinamic.tmcl import TMCLCommand, TMCLStatus, TmclMessage, TmclReply, MoveType
 import struct
 import asyncio
 from perpetual_can import CANBusHandler, AsyncFilteredReader
 
+class TmclCommandLoaded(Exception):
+    """Tmcl Command Loaded"""
+
+class TmclWrongChecksum(Exception):
+    """Tmcl Wrong Checksum"""
+
+class TmclInvalidCommand(Exception):
+    """Tmcl Invalid Command"""
+
+class TmclWrongType(Exception):
+    """Tmcl Wrong Type"""
+
+class TmclInvalidValue(Exception):
+    """Tmcl Invalid Value"""
+
+class TmclEepromLocked(Exception):
+    """Tmcl Eeprom Locked"""
+
+class TmclCommandNotAvailable(Exception):
+    """Tmcl Command Not Available"""
+
+class UnknownTmclResponse(Exception):
+    """Tmcl Unknown Response"""
 
 class TMCM:
     def __init__(
@@ -35,7 +58,26 @@ class TMCM:
                 is_extended_id=False,
             )
         )
-        return await self._receive_message()
+        msg = await self._receive_message()
+        match msg.status:
+            case TMCLStatus.SUCCESS:
+                return msg
+            case TMCLStatus.COMMAND_LOADED:
+                raise TmclCommandLoaded()
+            case TMCLStatus.WRONG_CHECKSUM:
+                raise TmclWrongChecksum()
+            case TMCLStatus.INVALID_COMMAND:
+                raise TmclInvalidCommand()
+            case TMCLStatus.WRONG_TYPE:
+                raise TmclWrongType()
+            case TMCLStatus.INVALID_VALUE:
+                raise TmclInvalidValue()
+            case TMCLStatus.EEPROM_LOCKED:
+                raise TmclEepromLocked()
+            case TMCLStatus.COMMAND_NOT_AVAILABLE:
+                raise TmclCommandNotAvailable()
+            case _:
+                raise UnknownTmclResponse()
 
     async def _receive_message(self) -> TmclReply:
         async with asyncio.timeout(2.0):
