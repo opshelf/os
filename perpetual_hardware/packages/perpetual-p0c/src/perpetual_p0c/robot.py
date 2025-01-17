@@ -714,11 +714,9 @@ class P0C(AbstractRobot):
         await input_transfer_task
         print("Input Transfer Task Finished")
         await tray_pull_task
+        #print("Input Transfer Task", input_transfer_task)
+        #print("Tray Pull Task", tray_pull_task)
         """
-
-
-        print("Input Transfer Task", input_transfer_task)
-        print("Tray Pull Task", tray_pull_task)
         print("Tray Pull Task Finished")
         await self._funnel.move_to_cell(tray, location.slot_idx)
         print("Funnel Moved to Cell")
