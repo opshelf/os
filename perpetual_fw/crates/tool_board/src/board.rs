@@ -75,6 +75,7 @@ async fn can_receive_task(
                 if let Some(msg) = Messages::from_can_frame(e.frame.data()) {
                     COMMAND_CHANNEL.send(msg).await;
                     let response = RESPONSE_CHANNEL.receive().await;
+                    embassy_time::Timer::after_millis(2).await;
                     can.write(Frame::new_data(can_id, &response.into_can_frame()).unwrap())
                         .await;
                 } else {
@@ -82,6 +83,7 @@ async fn can_receive_task(
                         Frame::new_data(can_id, &Responses::Invalid.into_can_frame()).unwrap(),
                     )
                     .await;
+                    embassy_time::Timer::after_millis(2).await;
                 }
             }
         }
@@ -290,7 +292,7 @@ impl<'a> ToolBoard<'a> {
     pub async fn run(&mut self) -> ! {
         // Without a delay the chip powers on and begins running before the peripheral IO Chips are
         // ready
-        let _ = embassy_time::Timer::after_millis(10).await;
+        let _ = embassy_time::Timer::after_millis(100).await;
         let config = Port::from_bits(0xFFFF).unwrap();
         let _ = self.io.write_config(config).await;
         let _result = self
@@ -301,6 +303,19 @@ impl<'a> ToolBoard<'a> {
             .carriage
             .set_all_directions(mcp23s08::Direction::Output)
             .await;
+
+        let _ = embassy_time::Timer::after_millis(100).await;
+        let config = Port::from_bits(0xFFFF).unwrap();
+        let _ = self.io.write_config(config).await;
+        let _result = self
+            .puller
+            .set_all_directions(mcp23s08::Direction::Output)
+            .await;
+        let _result = self
+            .carriage
+            .set_all_directions(mcp23s08::Direction::Output)
+            .await;
+
         self.set_pullers().await;
         self.set_carriage().await;
 

@@ -7,6 +7,7 @@ use embassy_stm32::Config;
 use embassy_stm32::{bind_interrupts, can, peripherals};
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, ThreadModeRawMutex};
 use embassy_sync::channel::Channel;
+use embedded_can::StandardId;
 use static_cell::StaticCell;
 
 use crate::core::{BoardState, Messages, Responses, Sensors};
@@ -183,7 +184,7 @@ async fn break_beam_monitor(
         // Debounce
         if let Some(bv) = beam_value {
             SENSOR_CHANNEL.send(bv).await;
-            embassy_time::Timer::after_millis(50).await;
+            embassy_time::Timer::after_millis(100);
         }
 
         //defmt::info!(
@@ -203,6 +204,7 @@ async fn can_receive_task(
     can_id: embedded_can::Id,
     mut can: embassy_stm32::can::BufferedCan<'static, 64, 64>,
 ) -> ! {
+    let can_response_id = embedded_can::Id::Standard(StandardId::new(7).unwrap());
     loop {
         let res = can.read().await;
         if let Ok(ref e) = res {
@@ -211,18 +213,14 @@ async fn can_receive_task(
                     let t0 = embassy_time::Instant::now();
                     COMMAND_CHANNEL.send(msg).await;
                     let response = RESPONSE_CHANNEL.receive().await;
-                    embassy_time::Timer::after_millis(2).await;
-                    can.write(Frame::new_data(can_id, &response.into_can_frame()).unwrap())
-                        .await;
-                    match response {
-                        Responses::Sensors(state) => {
-                            defmt::info!("Sent: {:?}", state);
-                        }
-                        _ => (),
-                    };
+                    can.write(
+                        Frame::new_data(can_response_id, &response.into_can_frame()).unwrap(),
+                    )
+                    .await;
                 } else {
                     can.write(
-                        Frame::new_data(can_id, &Responses::Invalid.into_can_frame()).unwrap(),
+                        Frame::new_data(can_response_id, &Responses::Invalid.into_can_frame())
+                            .unwrap(),
                     )
                     .await;
                 }
