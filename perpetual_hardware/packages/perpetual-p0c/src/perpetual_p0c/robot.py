@@ -586,7 +586,7 @@ class P0C(AbstractRobot):
         await self._io.reset_sensors()
         print("Sensors Reset")
         await self.funnel.start_receive_item()
-        #await self.workstation.start_input_belt()
+        await self.workstation.start_input_belt()
         print("Belt Started")
         try:
             async with asyncio.timeout(10):
