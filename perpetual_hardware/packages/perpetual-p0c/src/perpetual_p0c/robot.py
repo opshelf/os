@@ -703,6 +703,10 @@ class P0C(AbstractRobot):
         tray = self._storage.get_tray(location)
         await self.funnel.initialize()
         await self.funnel.diverter.set_standby_current(2000)
+        await self.run_input_transfer(tray, location.slot_idx)
+        await self.setup_receive_item(location)
+
+        """
         input_transfer_task = asyncio.create_task(self.run_input_transfer(tray, location.slot_idx))
         print("Input Transfer Task Started")
         tray_pull_task = asyncio.create_task(self.setup_receive_item(location))
@@ -710,6 +714,9 @@ class P0C(AbstractRobot):
         await input_transfer_task
         print("Input Transfer Task Finished")
         await tray_pull_task
+        """
+
+
         print("Input Transfer Task", input_transfer_task)
         print("Tray Pull Task", tray_pull_task)
         print("Tray Pull Task Finished")
