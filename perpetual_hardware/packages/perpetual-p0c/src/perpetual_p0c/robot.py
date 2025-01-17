@@ -734,7 +734,7 @@ class P0C(AbstractRobot):
                     if sensors and sensors.funnel_input:
                         await asyncio.sleep(0.5)
                         break
-                    await asyncio.sleep(.25)
+                    await asyncio.sleep(.5)
             await self.funnel.close_tray_wedges(tray)
             await self.funnel.stop_receive_item()
         except asyncio.TimeoutError:
