@@ -201,26 +201,23 @@ async fn break_beam_monitor(
 
 #[embassy_executor::task]
 async fn can_receive_task(
-    can_id: embedded_can::Id,
+    receive_id: embedded_can::Id,
+    reply_id: embedded_can::Id,
     mut can: embassy_stm32::can::BufferedCan<'static, 64, 64>,
 ) -> ! {
-    let can_response_id = embedded_can::Id::Standard(StandardId::new(7).unwrap());
     loop {
         let res = can.read().await;
         if let Ok(ref e) = res {
-            if *e.frame.id() == can_id {
+            if *e.frame.id() == receive_id {
                 if let Some(msg) = Messages::from_can_frame(e.frame.data()) {
                     let t0 = embassy_time::Instant::now();
                     COMMAND_CHANNEL.send(msg).await;
                     let response = RESPONSE_CHANNEL.receive().await;
-                    can.write(
-                        Frame::new_data(can_response_id, &response.into_can_frame()).unwrap(),
-                    )
-                    .await;
+                    can.write(Frame::new_data(reply_id, &response.into_can_frame()).unwrap())
+                        .await;
                 } else {
                     can.write(
-                        Frame::new_data(can_response_id, &Responses::Invalid.into_can_frame())
-                            .unwrap(),
+                        Frame::new_data(reply_id, &Responses::Invalid.into_can_frame()).unwrap(),
                     )
                     .await;
                 }
@@ -241,7 +238,12 @@ async fn watchdog_task(
 }
 
 impl<'a> IoBoard<'a> {
-    pub fn new(can_id: embedded_can::Id, config: Config, spawner: Spawner) -> Self {
+    pub fn new(
+        can_receive_id: embedded_can::Id,
+        can_reply_id: embedded_can::Id,
+        config: Config,
+        spawner: Spawner,
+    ) -> Self {
         defmt::info!("Resetting");
         let p = embassy_stm32::init(config);
         let mut can = can::CanConfigurator::new(p.FDCAN1, p.PB8, p.PB9, Irqs);
@@ -263,7 +265,7 @@ impl<'a> IoBoard<'a> {
             CAN_RX_CHANNEL.init(Channel::new()),
         );
         let wdg = embassy_stm32::wdg::IndependentWatchdog::new(p.IWDG, 500_000);
-        let _ = spawner.spawn(can_receive_task(can_id, buffered_can));
+        let _ = spawner.spawn(can_receive_task(can_receive_id, can_reply_id, buffered_can));
         let _ = spawner.spawn(watchdog_task(wdg));
 
         let actuators = Output::new(p.PC5, Level::Low, Speed::Low);

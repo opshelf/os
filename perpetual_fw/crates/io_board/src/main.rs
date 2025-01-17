@@ -13,8 +13,9 @@ pub mod core;
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     let config = init();
-    let can_id = embedded_can::Id::Standard(StandardId::new(5).unwrap());
-    let mut io = board::IoBoard::new(can_id, config, spawner);
+    let can_receive_id = embedded_can::Id::Standard(StandardId::new(200).unwrap());
+    let can_reply_id = embedded_can::Id::Standard(StandardId::new(201).unwrap());
+    let mut io = board::IoBoard::new(can_receive_id, can_reply_id, config, spawner);
     io.run().await;
 }
 

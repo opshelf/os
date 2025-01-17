@@ -92,8 +92,8 @@ class IoState(BaseModel):
 class IoController:
     def __init__(self, bus: CANBusHandler, can_id: int = CanMessageIds.IO_NODE) -> None:
         self._bus = bus
-        self._can_id = int(can_id)
-        self._reader = AsyncFilteredReader([7])
+        self._can_id = int(200)
+        self._reader = AsyncFilteredReader([201])
         self._bus.add_listener(self._reader)
         self._state = IoState(wedges=Wedge(), actuators=ActuatorState.Retracted)
 
