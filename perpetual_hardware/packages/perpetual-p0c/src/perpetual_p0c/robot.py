@@ -582,11 +582,11 @@ class P0C(AbstractRobot):
         await self.gantry_move(self._configuration.input_location)
 
     async def run_input_transfer(self, tray: Tray, idx: int) -> None:
-        await self.funnel.setup_receive_item(tray, idx)
+        #await self.funnel.setup_receive_item(tray, idx)
         await self._io.reset_sensors()
         print("Sensors Reset")
-        await self.funnel.start_receive_item()
-        await self.workstation.start_input_belt()
+        #await self.funnel.start_receive_item()
+        #await self.workstation.start_input_belt()
         print("Belt Started")
         try:
             async with asyncio.timeout(10):
