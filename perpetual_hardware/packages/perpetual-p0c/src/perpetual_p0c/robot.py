@@ -585,7 +585,7 @@ class P0C(AbstractRobot):
         await self.funnel.setup_receive_item(tray, idx)
         await self._io.reset_sensors()
         print("Sensors Reset")
-        #await self.funnel.start_receive_item()
+        await self.funnel.start_receive_item()
         #await self.workstation.start_input_belt()
         print("Belt Started")
         try:
