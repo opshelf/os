@@ -6,27 +6,75 @@ from perpetual_can import CANBusHandler, AsyncFilteredReader
 
 class TmclCommandLoaded(Exception):
     """Tmcl Command Loaded"""
+    def __init__(self, value: TmclReply) -> None:
+        self._value = value
+
+    def __str__(self) -> str:
+        return f"{self.__class__.__name__} {self._value}"
 
 class TmclWrongChecksum(Exception):
     """Tmcl Wrong Checksum"""
+    def __init__(self, value: TmclReply) -> None:
+        self._value = value
+
+    def __str__(self) -> str:
+        return f"{self.__class__.__name__} {self._value}"
 
 class TmclInvalidCommand(Exception):
     """Tmcl Invalid Command"""
+    def __init__(self, value: TmclReply) -> None:
+        self._value = value
+
+    def __str__(self) -> str:
+        return f"{self.__class__.__name__} {self._value}"
 
 class TmclWrongType(Exception):
     """Tmcl Wrong Type"""
+    def __init__(self, value: TmclReply) -> None:
+        self._value = value
+
+    def __str__(self) -> str:
+        return f"{self.__class__.__name__} {self._value}"
 
 class TmclInvalidValue(Exception):
     """Tmcl Invalid Value"""
+    def __init__(self, value: TmclReply) -> None:
+        self._value = value
+
+    def __str__(self) -> str:
+        return f"{self.__class__.__name__} {self._value}"
 
 class TmclEepromLocked(Exception):
     """Tmcl Eeprom Locked"""
+    def __init__(self, value: TmclReply) -> None:
+        self._value = value
+
+    def __str__(self) -> str:
+        return f"{self.__class__.__name__} {self._value}"
 
 class TmclCommandNotAvailable(Exception):
     """Tmcl Command Not Available"""
+    def __init__(self, value: TmclReply) -> None:
+        self._value = value
+
+    def __str__(self) -> str:
+        return f"{self.__class__.__name__} {self._value}"
 
 class UnknownTmclResponse(Exception):
     """Tmcl Unknown Response"""
+    def __init__(self, value: TmclReply) -> None:
+        self._value = value
+
+    def __str__(self) -> str:
+        return f"{self.__class__.__name__} {self._value}"
+
+class TmclInvalidChecksum(Exception):
+    """Tmcl Invalid Checksum in Response"""
+    def __init__(self, value: TmclReply) -> None:
+        self._value = value
+
+    def __str__(self) -> str:
+        return f"{self.__class__.__name__} {self._value}"
 
 class TMCM:
     def __init__(
@@ -59,25 +107,26 @@ class TMCM:
             )
         )
         msg = await self._receive_message()
+
         match msg.status:
             case TMCLStatus.SUCCESS:
                 return msg
             case TMCLStatus.COMMAND_LOADED:
-                raise TmclCommandLoaded()
+                raise TmclCommandLoaded(msg)
             case TMCLStatus.WRONG_CHECKSUM:
-                raise TmclWrongChecksum()
+                raise TmclWrongChecksum(msg)
             case TMCLStatus.INVALID_COMMAND:
-                raise TmclInvalidCommand()
+                raise TmclInvalidCommand(msg)
             case TMCLStatus.WRONG_TYPE:
-                raise TmclWrongType()
+                raise TmclWrongType(msg)
             case TMCLStatus.INVALID_VALUE:
-                raise TmclInvalidValue()
+                raise TmclInvalidValue(msg)
             case TMCLStatus.EEPROM_LOCKED:
-                raise TmclEepromLocked()
+                raise TmclEepromLocked(msg)
             case TMCLStatus.COMMAND_NOT_AVAILABLE:
-                raise TmclCommandNotAvailable()
+                raise TmclCommandNotAvailable(msg)
             case _:
-                raise UnknownTmclResponse()
+                raise UnknownTmclResponse(msg)
 
     async def _receive_message(self) -> TmclReply:
         async with asyncio.timeout(2.0):
