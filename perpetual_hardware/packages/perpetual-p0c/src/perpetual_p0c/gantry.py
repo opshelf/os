@@ -143,8 +143,12 @@ class Gantry(AbstractSubsystem[GantryConfiguration, GantryStatus]):
             position = await self.position
             print(f"Got Position {position}")
             print("Syncing Position's")
+            await self._y_axis.safety_off()
+            await self._x_axis.safety_off()
             await self._y_axis.sync_position()
             await self._x_axis.sync_position()
+            await self._y_axis.safety_on()
+            await self._x_axis.safety_on()
             print("Positions Synced")
             await self._y_axis.init_brake_move()
             print("Brake set")
@@ -162,6 +166,7 @@ class Gantry(AbstractSubsystem[GantryConfiguration, GantryStatus]):
                 print("X Axis Move Done")
             print("path finished")
         except Exception as e:
+            print("Failed", e)
             x_pos = await self._x_axis.get_position()
             x_enc = await self._x_axis.get_encoder_position()
             x_actual = await self._x_axis.get_actual_position()
@@ -172,7 +177,7 @@ class Gantry(AbstractSubsystem[GantryConfiguration, GantryStatus]):
             y_actual = await self._y_axis.get_actual_position()
             y_target = await self._y_axis.get_target_position()
 
-            print("Failed Path Movement: ", path, position, e)
+            print("Failed Path Movement: ", path, e)
             print(f"X POS: {x_pos} ENC: {x_enc} ACTUAL: {x_actual} TARGET: {x_target}")
             print(f"Y POS: {y_pos} ENC: {y_enc} ACTUAL: {y_actual} TARGET: {y_target}")
             raise e
