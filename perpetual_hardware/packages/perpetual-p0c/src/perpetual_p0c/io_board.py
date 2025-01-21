@@ -123,27 +123,16 @@ class IoController:
             return msg
         raise Exception("No Response From Relay Module")
 
-    # async def _run_command(self, message: Message) -> Message:
-    #    await self._send_message(message)
-    #    message = await self._receive_message()
-    #    if message.data[0]:
-    #        return message
-    #    else:
-    #        raise Exception("Invalid Command")
-
     async def _run_command(self, message: Message) -> Message:
-        """Exlcusively Lock the Bus during Transmission as we await an Ack from the device. Without this bus contention seems to produce error frames in socket can"""
+        #await self._send_message(message)
+        #message = await self._receive_message()
+        #if message.data[0]:
+        #    return message
+        #else:
+        #    raise Exception("Invalid Command")
+        message = await self._bus.send_ack_message(message, self._reader, 1.0)
+        return message
 
-        async def send_and_receive() -> Message:
-            await self._bus.send_message(message)
-            msg = await self._bus.recv_message()
-            if msg:
-                return msg
-            else:
-                raise IoBoardNoMessageReceived()
-
-        msg = await self._bus.lock_and_execute(send_and_receive)
-        return msg
 
     async def get_state(self) -> IoState:
         response = await self._run_command(self.default_message([CanCommandIds.GetState.value]))

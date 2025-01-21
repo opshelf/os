@@ -15,10 +15,12 @@ async def main() -> None:
     workstation = Workstation(can_bus, p0_workstation_configuration)
     #tool = ToolBoard(can_bus)
 
+
     await funnel.stop()
     await workstation.stop()
     input()
     await funnel.initialize()
+    await workstation.initialize()
     #await funnel.start_receive_item()
     await funnel.start_belt()
     await workstation.start_input_belt()
