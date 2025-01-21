@@ -5,7 +5,7 @@ import asyncio
 
 
 async def main() -> None:
-    can_bus = await get_bus()
+    can_bus = get_bus()
     counter = {}
     while True:
         msg = can_bus.recv()
