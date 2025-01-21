@@ -113,12 +113,58 @@ class TMCM:
 
     async def _recv_raw_message(self) -> Message:
         return await self._reader.get_message()
-
-    """
-    async def _send_message(self, message: TmclMessage) -> TmclReply:
+    
+    def tmcl_to_can_message(self, message: TmclMessage) -> Message:
         payload = [message.command_number, message.type_number, message.motor_number]
         payload.extend(list(struct.pack(">i", message.value)))
-        # self._connection.send(Message(
+        return Message(
+                arbitration_id=int(message.module_address),
+                data=payload,
+                is_extended_id=False,
+        )
+
+    async def _send_exclusive_ack_message(self, message: TmclMessage) -> TmclReply:
+        can_msg = self.tmcl_to_can_message(message)
+        msg = await self._bus.send_ack_message(can_msg, self._reader,1.0)
+        if msg.arbitration_id == self._module_id:
+            if msg.is_error_frame:
+                raise Exception(f"Encountered Error Frame on {self._module_id}: {msg}")
+            if len(msg.data) == 7:
+                reply = TmclReply(
+                    module_address=msg.data[0],
+                    status=msg.data[1],
+                    command_number=msg.data[2],
+                    value=struct.unpack(">i", msg.data[3:])[0],
+                )
+                match reply.status:
+                    case TMCLStatus.SUCCESS:
+                        return reply
+                    case TMCLStatus.COMMAND_LOADED:
+                        raise TmclCommandLoaded(reply)
+                    case TMCLStatus.WRONG_CHECKSUM:
+                        raise TmclWrongChecksum(reply)
+                    case TMCLStatus.INVALID_COMMAND:
+                        raise TmclInvalidCommand(reply)
+                    case TMCLStatus.WRONG_TYPE:
+                        raise TmclWrongType(reply)
+                    case TMCLStatus.INVALID_VALUE:
+                        raise TmclInvalidValue(reply)
+                    case TMCLStatus.EEPROM_LOCKED:
+                        raise TmclEepromLocked(reply)
+                    case TMCLStatus.COMMAND_NOT_AVAILABLE:
+                        raise TmclCommandNotAvailable(reply)
+                    case _:
+                        raise UnknownTmclResponse(reply)
+            else:
+                raise Exception(f"Invalid Data Format: {msg}")
+        else:
+            raise Exception(f"Invalid Module Response {self._module_id}")
+
+    async def _send_message(self, message: TmclMessage) -> TmclReply:
+        response = await self._send_exclusive_ack_message(message)
+        """
+        payload = [message.command_number, message.type_number, message.motor_number]
+        payload.extend(list(struct.pack(">i", message.value)))
         await self._bus.send_message(
             Message(
                 arbitration_id=int(message.module_address),
@@ -126,32 +172,35 @@ class TMCM:
                 is_extended_id=False,
             )
         )
-        msg = await self._receive_message()
-
-        match msg.status:
+        reply = await self._receive_message()
+        match reply.status:
             case TMCLStatus.SUCCESS:
-                return msg
+                return reply
             case TMCLStatus.COMMAND_LOADED:
-                raise TmclCommandLoaded(msg)
+                raise TmclCommandLoaded(reply)
             case TMCLStatus.WRONG_CHECKSUM:
-                raise TmclWrongChecksum(msg)
+                raise TmclWrongChecksum(reply)
             case TMCLStatus.INVALID_COMMAND:
-                raise TmclInvalidCommand(msg)
+                raise TmclInvalidCommand(reply)
             case TMCLStatus.WRONG_TYPE:
-                raise TmclWrongType(msg)
+                raise TmclWrongType(reply)
             case TMCLStatus.INVALID_VALUE:
-                raise TmclInvalidValue(msg)
+                raise TmclInvalidValue(reply)
             case TMCLStatus.EEPROM_LOCKED:
-                raise TmclEepromLocked(msg)
+                raise TmclEepromLocked(reply)
             case TMCLStatus.COMMAND_NOT_AVAILABLE:
-                raise TmclCommandNotAvailable(msg)
+                raise TmclCommandNotAvailable(reply)
             case _:
-                raise UnknownTmclResponse(msg)
-    """
+                raise UnknownTmclResponse(reply)
+        """
+        return response
+
 
     async def _receive_message(self) -> TmclReply:
         msg = await self._reader.get_message(2.0)
         if msg.arbitration_id == self._module_id:
+            if msg.is_error_frame:
+                raise Exception(f"Encountered Error Frame on {self._module_id}: {msg}")
             if len(msg.data) == 7:
                 return TmclReply(
                     module_address=msg.data[0],
@@ -172,49 +221,6 @@ class TMCM:
             motor_number=self._motor_id,
             value=value,
         )
-
-    async def _send_message(self, message: TmclMessage) -> TmclReply:
-        """Exlcusively Lock the Bus during Transmission as we await an Ack from the device. Without this bus contention seems to produce error frames in socket can"""
-
-        async def send_and_receive() -> Message:
-            payload = [message.command_number, message.type_number, message.motor_number]
-            payload.extend(list(struct.pack(">i", message.value)))
-            # Send the message
-            await self._bus.send_message(
-                Message(
-                    arbitration_id=int(message.module_address),
-                    data=payload,
-                    is_extended_id=False,
-                )
-            )
-            # Wait for the response
-            msg = await self._bus.recv_message()
-            if msg:
-                return msg
-            else:
-                raise Exception(f"No Message Received from Trinamic Module: {self._module_id}")
-
-        msg = await self._bus.lock_and_execute(send_and_receive)
-        # Handle the response
-        match msg.status:
-            case TMCLStatus.SUCCESS:
-                return msg
-            case TMCLStatus.COMMAND_LOADED:
-                raise TmclCommandLoaded(msg)
-            case TMCLStatus.WRONG_CHECKSUM:
-                raise TmclWrongChecksum(msg)
-            case TMCLStatus.INVALID_COMMAND:
-                raise TmclInvalidCommand(msg)
-            case TMCLStatus.WRONG_TYPE:
-                raise TmclWrongType(msg)
-            case TMCLStatus.INVALID_VALUE:
-                raise TmclInvalidValue(msg)
-            case TMCLStatus.EEPROM_LOCKED:
-                raise TmclEepromLocked(msg)
-            case TMCLStatus.COMMAND_NOT_AVAILABLE:
-                raise TmclCommandNotAvailable(msg)
-            case _:
-                raise UnknownTmclResponse(msg)
 
     async def rotate_right(self, velocity: int) -> TmclReply:
         return await self._send_message(self._default_message(TMCLCommand.ROR, 0, velocity))
