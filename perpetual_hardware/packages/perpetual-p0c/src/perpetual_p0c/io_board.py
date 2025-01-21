@@ -131,6 +131,8 @@ class IoController:
         #else:
         #    raise Exception("Invalid Command")
         message = await self._bus.send_ack_message(message, self._reader, 1.0)
+        if message.is_error_frame:
+            raise Exception("Io Board Encoutered Error Frame")
         return message
 
 
