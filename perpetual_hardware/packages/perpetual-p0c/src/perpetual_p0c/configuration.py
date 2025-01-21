@@ -11,9 +11,9 @@ from perpetual_p0c.output_box import OutputBoxConfiguration
 from perpetual_p0c.robot import RobotConfiguration
 
 
-p0_output_box_configuration = OutputBoxConfiguration(
+p0_output_box_1_configuration = OutputBoxConfiguration(
     door=CanAxisConfiguration(
-        can_id=CanMessageIds.OUTPUT_BOX,
+        can_id=CanMessageIds.OUTPUT_BOX_1,
         configuration=StepperMotorConfig(
             microsteps=16,
             steps_per_rev=200,
@@ -38,8 +38,64 @@ p0_output_box_configuration = OutputBoxConfiguration(
     door_open_position=205.0,
 )
 
+p0_output_box_2_configuration = OutputBoxConfiguration(
+    door=CanAxisConfiguration(
+        can_id=CanMessageIds.OUTPUT_BOX_2,
+        configuration=StepperMotorConfig(
+            microsteps=16,
+            steps_per_rev=400,
+            encoder_ppr=3200,
+            steps_per_mm=266.66666,
+            work_current=2000,
+            holding_current=0,
+            homing_current=1000,
+            velocity=200,
+            acceleration=200,
+            max_velocity=200,
+            max_acceleration=200,
+            min_travel=None,
+            max_travel=None,
+            invert_coordinates=False,
+            home_direction=Rotation.CCW,
+            homing_speed=100,
+        ),
+        name="output_box",
+        axis_type="leadscrew",
+    ),
+    door_open_position=205.0,
+)
+
+p0_output_box_3_configuration = OutputBoxConfiguration(
+    door=CanAxisConfiguration(
+        can_id=CanMessageIds.OUTPUT_BOX_3,
+        configuration=StepperMotorConfig(
+            microsteps=16,
+            steps_per_rev=400,
+            encoder_ppr=3200,
+            steps_per_mm=266.66666,
+            work_current=2000,
+            holding_current=0,
+            homing_current=1000,
+            velocity=200,
+            acceleration=200,
+            max_velocity=200,
+            max_acceleration=200,
+            min_travel=None,
+            max_travel=None,
+            invert_coordinates=False,
+            home_direction=Rotation.CCW,
+            homing_speed=100,
+        ),
+        name="output_box",
+        axis_type="leadscrew",
+    ),
+    door_open_position=205.0,
+)
+
 p0_workstation_configuration = WorkstationConfiguration(
-    outputbox_configuration=p0_output_box_configuration,
+    outputbox_1_configuration=p0_output_box_1_configuration,
+    outputbox_2_configuration=p0_output_box_2_configuration,
+    outputbox_3_configuration=p0_output_box_3_configuration,
     input_belt_configuration=CanAxisConfiguration(
         can_id=CanMessageIds.IO_IN_CONVEYOR,
         configuration=StepperMotorConfig(
@@ -354,7 +410,6 @@ p0_funnel_config = FunnelConfiguration(
         name="slot_3",
         axis_type="leadscrew",
     ),
-    relay_board_id=CanMessageIds.IO_NODE,
     funnel_min_width=0.0,
     funnel_cell_1_offset_x=16.0,
     catch_position=260.0,

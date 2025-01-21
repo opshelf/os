@@ -168,7 +168,7 @@ class TrinamicAxis(TMCM12xx):
             await self.end_brake_move()
 
     async def check_fault_flags(self) -> bool:
-        error_flags = TrinamicErrorFlags(await self.get_error_flags())
+        error_flags = TrinamicErrorFlags(value=await self.get_error_flags())
         status_flags = StatusFlags(await self.get_status_flags())
         return error_flags.is_fault() or status_flags.is_fault()
 

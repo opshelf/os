@@ -6,9 +6,10 @@ from pydantic import BaseModel, Field
 from perpetual_p0c.common import AbstractSubsystem, CanAxisConfiguration
 from perpetual_p0c.output_box import OutputBoxConfiguration
 
-
 class WorkstationConfiguration(BaseModel):
-    outputbox_configuration: OutputBoxConfiguration
+    outputbox_1_configuration: OutputBoxConfiguration
+    outputbox_2_configuration: OutputBoxConfiguration
+    outputbox_3_configuration: OutputBoxConfiguration
     input_belt_configuration: CanAxisConfiguration
     output_belt_configuration: CanAxisConfiguration
     input_belt_speed: int
@@ -81,7 +82,9 @@ WorkstationCommands = Annotated[
 class Workstation(AbstractSubsystem[WorkstationConfiguration, WorkstationStatus]):
     def __init__(self, bus: CANBusHandler, configuration: WorkstationConfiguration):
         self._configuration = configuration
-        self._output_box = OutputBox(bus, self._configuration.outputbox_configuration)
+        self._output_box_1 = OutputBox(bus, self._configuration.outputbox_1_configuration)
+        self._output_box_2 = OutputBox(bus, self._configuration.outputbox_2_configuration)
+        self._output_box_3 = OutputBox(bus, self._configuration.outputbox_3_configuration)
         self._input_belt = TrinamicAxis(
             bus,
             module_id=self._configuration.input_belt_configuration.can_id,
@@ -104,17 +107,23 @@ class Workstation(AbstractSubsystem[WorkstationConfiguration, WorkstationStatus]
     async def stop(self) -> None:
         await self._output_belt.stop()
         await self._input_belt.stop()
-        await self._output_box.stop()
+        await self._output_box_1.stop()
+        await self._output_box_2.stop()
+        await self._output_box_3.stop()
 
     async def home(self) -> None:
-        await self.home_output()
-        await self.input_belt.initialize()
-        await self.output_belt.initialize()
+        await self._output_box_1.home()
+        await self._output_box_2.home()
+        await self._output_box_3.home()
+        await self._input_belt.initialize()
+        await self._output_belt.initialize()
 
     async def initialize(self) -> None:
-        await self.output_box.initialize()
-        await self.input_belt.initialize()
-        await self.output_belt.initialize()
+        await self._output_box_1.initialize()
+        await self._output_box_2.initialize()
+        await self._output_box_3.initialize()
+        await self._input_belt.initialize()
+        await self._output_belt.initialize()
 
     @property
     def configuration(self) -> WorkstationConfiguration:
@@ -126,20 +135,46 @@ class Workstation(AbstractSubsystem[WorkstationConfiguration, WorkstationStatus]
             self._configuration.output_belt_configuration.configuration
         )
         self._input_belt.configuration = self._configuration.input_belt_configuration.configuration
-        await self._output_box.set_configuration(self._configuration.outputbox_configuration)
+        await self._output_box_1.set_configuration(self._configuration.outputbox_1_configuration)
+        await self._output_box_2.set_configuration(self._configuration.outputbox_2_configuration)
+        await self._output_box_3.set_configuration(self._configuration.outputbox_3_configuration)
         await self.initialize()
 
     async def status(self) -> WorkstationStatus:
-        output_box_status = await self.output_box.status()
+        output_box_status = await self._output_box_1.status()
         return WorkstationStatus(
             output_box=output_box_status,
             input_belt=await self.input_belt.status(),
             output_belt=await self.output_belt.status(),
         )
 
+    async def setup_output_boxes(self, idx: int) -> None:
+        if idx == 0:
+            await self._output_box_1.open()
+            await self._output_box_2.close()
+            await self._output_box_3.close()
+        elif idx == 1:
+            await self._output_box_1.close()
+            await self._output_box_2.open()
+            await self._output_box_3.close()
+        elif idx == 2:
+            await self._output_box_1.close()
+            await self._output_box_2.close()
+            await self._output_box_3.open()
+        else:
+            raise Exception("Invalid Output Box")
+
     @property
-    def output_box(self) -> OutputBox:
-        return self._output_box
+    def output_box_1(self) -> OutputBox:
+        return self._output_box_1
+
+    @property
+    def output_box_2(self) -> OutputBox:
+        return self._output_box_1
+
+    @property
+    def output_box_3(self) -> OutputBox:
+        return self._output_box_1
 
     @property
     def input_belt(self) -> TrinamicAxis:
@@ -163,14 +198,35 @@ class Workstation(AbstractSubsystem[WorkstationConfiguration, WorkstationStatus]
     async def stop_output_belt(self) -> None:
         await self.output_belt.stop()
 
-    async def open_output(self) -> None:
-        await self.output_box.open()
+    async def open_output(self, idx: int = 0) -> None:
+        if idx == 0:
+            await self._output_box_1.open()
+        elif idx == 1:
+            await self._output_box_2.open()
+        elif idx == 2:
+            await self._output_box_3.open()
+        else:
+            raise Exception("Invalid Output Box")
 
-    async def close_output(self) -> None:
-        await self.output_box.close()
+    async def close_output(self, idx: int = 0) -> None:
+        if idx == 0:
+            await self._output_box_1.close()
+        elif idx == 1:
+            await self._output_box_2.close()
+        elif idx == 2:
+            await self._output_box_3.close()
+        else:
+            raise Exception("Invalid Output Box")
 
-    async def home_output(self) -> None:
-        await self.output_box.home()
+    async def home_output(self, idx: int = 0) -> None:
+        if idx == 0:
+            await self._output_box_1.home()
+        elif idx == 1:
+            await self._output_box_2.home()
+        elif idx == 2:
+            await self._output_box_3.home()
+        else:
+            raise Exception("Invalid Output Box")
 
     async def handle_command(self, command: WorkstationCommands) -> None:
         match command:

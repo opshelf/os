@@ -288,6 +288,7 @@ class P0C(AbstractRobot):
                 ),
             ],
         )
+        self._output_box: int = 0
         self._configuration = configuration
         self._io = IoController(self._bus)
         self._gantry = Gantry(self._bus, configuration.gantry_configuration)
@@ -542,7 +543,7 @@ class P0C(AbstractRobot):
             )
         )
 
-    async def run_output_transfer(self) -> None:
+    async def run_output_transfer(self, output_idx: int = 0) -> None:
         tracking = BottleTracking.INITIALIZE
         belt_shutoff_delay = 1
         async with asyncio.timeout(20):
@@ -551,7 +552,7 @@ class P0C(AbstractRobot):
                     print("Initialized")
                     await self.funnel.start_output_transfer()
                     await self.funnel.start_output()
-                    await self.workstation.open_output()
+                    await self.workstation.setup_output_boxes(output_idx)
                     tracking = BottleTracking.WAIT_FOR_TRANSFER_TRIGGER
                 elif tracking == BottleTracking.WAIT_FOR_TRANSFER_TRIGGER:
                     sensors = await self._io.get_sensors()
@@ -572,12 +573,26 @@ class P0C(AbstractRobot):
                         tracking = BottleTracking.WAIT_FOR_OUTPUT_TRIGGER
                 elif tracking == BottleTracking.WAIT_FOR_OUTPUT_TRIGGER:
                     sensors = await self._io.get_sensors()
-                    if sensors and sensors.output_box:
-                        print("Got Door Sensor")
-                        await asyncio.sleep(0.25)
-                        tracking = BottleTracking.CLOSE_DOOR
+                    if sensors:
+                        if output_idx == 0:
+                            if sensors and sensors.output_box_1:
+                                print("Got Door Sensor")
+                                await asyncio.sleep(0.25)
+                                tracking = BottleTracking.CLOSE_DOOR
+                        elif output_idx == 1:
+                            if sensors and sensors.output_box_2:
+                                print("Got Door Sensor")
+                                await asyncio.sleep(0.25)
+                                tracking = BottleTracking.CLOSE_DOOR
+                        elif output_idx == 2:
+                            if sensors and sensors.output_box_3:
+                                print("Got Door Sensor")
+                                await asyncio.sleep(0.25)
+                                tracking = BottleTracking.CLOSE_DOOR
+                        else:
+                            raise Exception("Invalid Output Box")
                 elif tracking == BottleTracking.CLOSE_DOOR:
-                    await self.workstation.close_output()
+                    await self.workstation.close_output(output_idx)
                     await self.workstation.stop_output_belt()
                     tracking = BottleTracking.RESET
                 elif tracking == BottleTracking.RESET:
@@ -761,12 +776,15 @@ class P0C(AbstractRobot):
         await self.funnel.move_to_transfer_location()
         await self.move_gantry_to_clear(tray)
         if keep_tray:
-            await self.run_output_transfer()
+            await self.run_output_transfer(self._output_box)
         else:
-            transfer_task = asyncio.create_task(self.run_output_transfer())
+            transfer_task = asyncio.create_task(self.run_output_transfer(self._output_box))
             return_task = asyncio.create_task(self.return_current_tray())
             await transfer_task
             await return_task
+        self._output_box += 1
+        if self._output_box > 2:
+            self._output_box = 0
 
     async def store_item(self, item: CellItem) -> None:
         location = self._storage.get_next_free_location(item)

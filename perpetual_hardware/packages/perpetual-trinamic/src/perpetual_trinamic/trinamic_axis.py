@@ -206,7 +206,7 @@ class TrinamicStepper(TMCM12xx):
         self.set_hard_stop_status(HardStopStatus.NOT_HARD_STOPPED)
 
     def check_fault_flags(self) -> bool:
-        error_flags = TrinamicErrorFlags(self.get_error_flags())
+        error_flags = TrinamicErrorFlags(value=self.get_error_flags())
         status_flags = StatusFlags(self.get_status_flags())
         return error_flags.is_fault() or status_flags.is_fault()
 
@@ -435,7 +435,7 @@ class TrinamicAxis(AbstractStepperMotor, TMCM12xx):
         self.set_hard_stop_status(HardStopStatus.NOT_HARD_STOPPED)
 
     def check_fault_flags(self) -> bool:
-        error_flags = TrinamicErrorFlags(self.get_error_flags())
+        error_flags = TrinamicErrorFlags(value=self.get_error_flags())
         status_flags = StatusFlags(self.get_status_flags())
         return error_flags.is_fault() or status_flags.is_fault()
 

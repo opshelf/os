@@ -1,3 +1,4 @@
+from typing import Dict
 from perpetual_p0c.utils import get_bus
 from perpetual_p0c.configuration import p0_funnel_config, p0_workstation_configuration
 
@@ -6,7 +7,7 @@ import asyncio
 
 async def main() -> None:
     can_bus = get_bus()
-    counter = {}
+    counter: Dict[int, int] = {}
     while True:
         msg = can_bus.recv()
         if msg and msg.is_error_frame:

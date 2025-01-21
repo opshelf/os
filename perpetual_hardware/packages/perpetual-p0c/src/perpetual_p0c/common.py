@@ -28,7 +28,9 @@ class CanAxisConfiguration(BaseModel):
 
 
 class CanMessageIds(int, Enum):
-    IO_NODE = 5
+    #IO_NODE = 5
+    IO_NODE_SEND = 200
+    IO_NODE_RECEIVE = 200
     TOOL_NODE = 6
     X_AXIS = 100
     Y_AXIS = 101
@@ -45,4 +47,6 @@ class CanMessageIds(int, Enum):
     OUTPUT_CONVEYOR = 134
     IO_IN_CONVEYOR = 135
     IO_OUT_CONVEYOR = 136
-    OUTPUT_BOX = 137
+    OUTPUT_BOX_1 = 137
+    OUTPUT_BOX_2 = 138
+    OUTPUT_BOX_3 = 139

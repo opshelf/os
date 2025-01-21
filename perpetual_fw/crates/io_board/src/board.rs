@@ -1,5 +1,6 @@
 use embassy_executor::Spawner;
 use embassy_futures::select::Either5;
+use embassy_stm32::can::filter::StandardFilterSlot;
 use embassy_stm32::can::{enums::BusError, frame::Envelope, Frame};
 use embassy_stm32::exti::ExtiInput;
 use embassy_stm32::gpio::{Level, Output, Pull, Speed};
@@ -205,6 +206,7 @@ async fn can_receive_task(
     reply_id: embedded_can::Id,
     mut can: embassy_stm32::can::BufferedCan<'static, 64, 64>,
 ) -> ! {
+    let mut idx = 0;
     loop {
         let res = can.read().await;
         if let Ok(ref e) = res {
@@ -213,6 +215,8 @@ async fn can_receive_task(
                     let t0 = embassy_time::Instant::now();
                     COMMAND_CHANNEL.send(msg).await;
                     let response = RESPONSE_CHANNEL.receive().await;
+                    defmt::info!("{:?}", idx);
+                    idx += 1;
                     can.write(Frame::new_data(reply_id, &response.into_can_frame()).unwrap())
                         .await;
                 } else {
@@ -222,6 +226,8 @@ async fn can_receive_task(
                     .await;
                 }
             }
+        } else {
+            defmt::info!("{:?}", e.frame.id());
         }
     }
 }
@@ -249,10 +255,15 @@ impl<'a> IoBoard<'a> {
         let mut can = can::CanConfigurator::new(p.FDCAN1, p.PB8, p.PB9, Irqs);
         let mut filter = can::filter::StandardFilter::default();
         filter.filter = embassy_stm32::can::filter::FilterType::DedicatedSingle(
-            embedded_can::StandardId::new(100).unwrap(),
+            embedded_can::StandardId::new(200).unwrap(),
         );
         can.properties()
             .set_standard_filter(can::filter::StandardFilterSlot::_0, filter);
+        //for slot_num in 0..28 {
+        //    can.properties()
+        //        .set_standard_filter(StandardFilterSlot::from(slot_num as u8), filter);
+        //}
+
         can.set_bitrate(500_000);
         let can_handle = can.into_normal_mode();
         static CAN_TX_CHANNEL: StaticCell<Channel<CriticalSectionRawMutex, Frame, 64>> =

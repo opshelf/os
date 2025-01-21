@@ -31,7 +31,9 @@ class SensorState(BaseModel):
     input_conveyor: bool = False
     output_transfer_conveyor: bool = False
     funnel_input: bool = False
-    output_box: bool = False
+    output_box_1: bool = False
+    output_box_2: bool = False
+    output_box_3: bool = False
 
     @staticmethod
     def from_buffer(data: List[int] | bytearray) -> "Optional[SensorState]":
@@ -44,7 +46,9 @@ class SensorState(BaseModel):
                 input_conveyor=bool(value & 0x02),
                 output_transfer_conveyor=bool(value & 0x04),
                 funnel_input=bool(value & 0x08),
-                output_box=bool(value & 0x10),
+                output_box_1=bool(value & 0x10),
+                output_box_2=bool(value & 0x20),
+                output_box_3=bool(value & 0x40),
             )
         else:
             return None
@@ -94,10 +98,13 @@ class IoState(BaseModel):
 
 
 class IoController:
-    def __init__(self, bus: CANBusHandler, can_id: int = CanMessageIds.IO_NODE) -> None:
+    def __init__(self, bus: CANBusHandler, 
+                 can_send_id: int = CanMessageIds.IO_NODE_SEND,
+                 can_reply_id: int = CanMessageIds.IO_NODE_RECEIVE
+    ) -> None:
         self._bus = bus
-        self._can_id = int(200)
-        self._reader = AsyncFilteredReader([201])
+        self._can_id = int(can_send_id)
+        self._reader = AsyncFilteredReader([int(can_reply_id)])
         self._bus.add_listener(self._reader)
         self._state = IoState(wedges=Wedge(), actuators=ActuatorState.Retracted)
 

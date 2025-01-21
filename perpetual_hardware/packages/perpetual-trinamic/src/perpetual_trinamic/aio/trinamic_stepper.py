@@ -196,7 +196,7 @@ class TrinamicStepper(TMCM12xx):
         await self.set_hard_stop_status(HardStopStatus.NOT_HARD_STOPPED)
 
     async def check_fault_flags(self) -> bool:
-        error_flags = TrinamicErrorFlags(await self.get_error_flags())
+        error_flags = TrinamicErrorFlags(value=await self.get_error_flags())
         status_flags = StatusFlags(await self.get_status_flags())
         return error_flags.is_fault() or status_flags.is_fault()
 
@@ -277,7 +277,7 @@ class TrinamicStepper(TMCM12xx):
         error_flags = await self.get_error_flags()
         return StepperStatus(
             status_flags=StatusFlags(status_flags),
-            error_flags=TrinamicErrorFlags(error_flags),
+            error_flags=TrinamicErrorFlags(value=error_flags),
             position=position,
             homed=home_status,
             hard_stopped=hard_stop_status,
