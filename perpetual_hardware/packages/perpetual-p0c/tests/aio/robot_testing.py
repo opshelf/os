@@ -1,3 +1,4 @@
+from perpetual_trinamic.aio.common import HomedStatus
 from perpetual_p0c.robot import P0C
 import asyncio
 from perpetual_p0c.storage import CellItem, Dimensions, StorageModuleCellLocation, StorageModuleSide, StorageModuleTrayLocation, Tray, CalibrationCoordinate
@@ -7,16 +8,20 @@ from perpetual_p0c.configuration import p0_robot_config
 async def main() -> None:
     can_bus = await get_can_bus()
     robot = P0C(can_bus, p0_robot_config)
-    await robot.initialize()
-    await robot.stop()
-    await robot.home()
+    await robot.funnel.inlet_funnel.set_home_status(HomedStatus.HOMED)
+    status = await robot.funnel.inlet_funnel.get_home_status()
+    #await robot.initialize()
+    #await robot.stop()
+    #await robot.home()
+    #await robot.idle()
+
     """
     await robot.funnel.start_output_transfer()
     while True:
         #await asyncio.sleep(5)
         await robot.funnel.output_transfer_conveyor.wait_for_move()
     """
-
+    input()
     #input()
     #await robot.home()
     #input()
