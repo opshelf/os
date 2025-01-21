@@ -5,6 +5,7 @@ from perpetual_p0c.tool_board import ToolBoard
 from perpetual_p0c.configuration import p0_funnel_config, p0_workstation_configuration
 
 import asyncio
+import time
 
 from perpetual_p0c.workstation import Workstation
 
@@ -26,10 +27,11 @@ async def main() -> None:
     await workstation.start_input_belt()
     idx = 0
     state = False
+    t0 = time.time()
     while True:
         sensors = await controller.get_sensors()
-        if sensors:
-            print(sensors)
+        #if sensors:
+        #    print(sensors)
         #sensors = await tool.get_state()
         #if sensors:
         #    print(sensors)
@@ -37,13 +39,17 @@ async def main() -> None:
         if idx % 1000 == 0:
             idx = 0
             if not state:
+                print(time.time() - t0)
                 await funnel.stop()
                 await workstation.stop()
                 state = True
+                t0 = time.time()
             else:
+                print(time.time() - t0)
                 await funnel.start_receive_item()
                 await workstation.start_input_belt()
                 state = False
+                t0 = time.time()
 
 
 
