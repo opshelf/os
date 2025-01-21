@@ -162,7 +162,6 @@ class TMCM:
 
     async def _send_message(self, message: TmclMessage) -> TmclReply:
         response = await self._send_exclusive_ack_message(message)
-        print(message, response)
         """
         payload = [message.command_number, message.type_number, message.motor_number]
         payload.extend(list(struct.pack(">i", message.value)))

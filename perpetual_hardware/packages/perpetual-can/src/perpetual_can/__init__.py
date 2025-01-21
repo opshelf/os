@@ -44,10 +44,10 @@ class CANBusHandler:
         self._bus = bus
         self._lock = asyncio.Lock()  # Lock to ensure safe access to the CAN bus
         self._loop = loop
-        # self._printer = can.Printer()
-        # self._notifier = Notifier(bus, [self._printer], loop=loop)
-        self._notifier = Notifier(bus, [], loop=loop)
-        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
+        self._printer = can.Printer()
+        self._notifier = Notifier(bus, [self._printer], loop=loop)
+        #self._notifier = Notifier(bus, [], loop=loop)
+        #self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
 
     @property
     def bus(self) -> BusABC:
