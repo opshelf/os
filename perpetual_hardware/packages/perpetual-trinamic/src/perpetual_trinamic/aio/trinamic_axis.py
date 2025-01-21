@@ -322,7 +322,7 @@ class TrinamicAxis(TMCM12xx):
 
     async def get_home_status(self) -> HomedStatus:
         status = await self.get_user_variable(UserVariables.HOMED.value)
-        if status == HomedStatus.HOMED:
+        if status.value == HomedStatus.HOMED:
             return HomedStatus.HOMED
         else:
             return HomedStatus.NOT_HOMED
