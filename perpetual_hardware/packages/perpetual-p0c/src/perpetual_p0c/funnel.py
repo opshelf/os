@@ -140,7 +140,9 @@ FunnelCommands = Annotated[
 
 
 class Funnel(AbstractSubsystem[FunnelConfiguration, FunnelStatus]):
-    def __init__(self, bus: CANBusHandler, funnel_configuration: FunnelConfiguration, io: IoController):
+    def __init__(
+        self, bus: CANBusHandler, funnel_configuration: FunnelConfiguration, io: IoController
+    ):
         self._configuration = funnel_configuration
         self._inlet_funnel = TrinamicAxis(
             bus,
@@ -172,7 +174,7 @@ class Funnel(AbstractSubsystem[FunnelConfiguration, FunnelStatus]):
             module_id=funnel_configuration.slot_3.can_id,
             motor_id=0,
         )
-        #self._io = IoController(bus)
+        # self._io = IoController(bus)
         self._io = io
         self._belt = TrinamicStepper(
             bus,
@@ -256,8 +258,6 @@ class Funnel(AbstractSubsystem[FunnelConfiguration, FunnelStatus]):
         await self._wall.stop()
 
     async def start_wall(self) -> None:
-        print(self._wall.configuration)
-        print(self._configuration.wall_speed)
         await self._wall.initialize()
         await self._wall.rotate(int(self._configuration.wall_speed))
 
@@ -293,7 +293,7 @@ class Funnel(AbstractSubsystem[FunnelConfiguration, FunnelStatus]):
         await self.initialize()
 
     async def start_receive_item(self) -> None:
-        #await self.start_belt()
+        await self.start_belt()
         await self.start_wall()
 
     async def stop_receive_item(self) -> None:

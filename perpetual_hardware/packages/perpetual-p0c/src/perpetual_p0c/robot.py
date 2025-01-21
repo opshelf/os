@@ -240,6 +240,7 @@ class AbstractRobot(metaclass=ABCMeta):
     @abstractmethod
     def holding_tray(self) -> bool: ...
 
+
 class P0C(AbstractRobot):
     def __init__(self, bus: CANBusHandler, configuration: RobotConfiguration):
         self._bus = bus
@@ -698,13 +699,12 @@ class P0C(AbstractRobot):
         await self.move_gantry_to_input(tray)
         print("Gantry Moved to Input")
 
-
     async def receive_item(self, location: StorageModuleCellLocation) -> None:
         tray = self._storage.get_tray(location)
         await self.funnel.initialize()
         await self.funnel.diverter.set_standby_current(2000)
-        #await self.run_input_transfer(tray, location.slot_idx)
-        #await self.setup_receive_item(location)
+        # await self.run_input_transfer(tray, location.slot_idx)
+        # await self.setup_receive_item(location)
 
         input_transfer_task = asyncio.create_task(self.run_input_transfer(tray, location.slot_idx))
         print("Input Transfer Task Started")
@@ -733,7 +733,7 @@ class P0C(AbstractRobot):
                     if sensors and sensors.funnel_input:
                         await asyncio.sleep(0.5)
                         break
-                    await asyncio.sleep(.5)
+                    await asyncio.sleep(0.5)
             await self.funnel.close_tray_wedges(tray)
             await self.funnel.stop_receive_item()
         except asyncio.TimeoutError:

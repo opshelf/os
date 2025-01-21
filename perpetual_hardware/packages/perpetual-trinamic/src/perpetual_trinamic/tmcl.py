@@ -105,18 +105,17 @@ class TMCLStatus:
     EEPROM_LOCKED = 5
     COMMAND_NOT_AVAILABLE = 6
 
+
 class TrinamicErrorFlags(BaseModel):
     value: int
     stall_guard_error: bool = Field(default=False)
     deviation_error: bool = Field(default=False)
 
-
-    @model_validator(mode='after')
+    @model_validator(mode="after")
     def set_error_flags(self) -> Self:
         self.stall_guard_error = bool(self.value & 0x01)
         self.deviation_error = bool(self.value & 0x02)
         return self
-
 
     def is_fault(self) -> bool:
         return self.stall_guard_error or self.deviation_error

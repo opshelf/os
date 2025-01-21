@@ -4,77 +4,96 @@ import struct
 import asyncio
 from perpetual_can import CANBusHandler, AsyncFilteredReader
 
+
 class TmclCommandLoaded(Exception):
     """Tmcl Command Loaded"""
+
     def __init__(self, value: TmclReply) -> None:
         self._value = value
 
     def __str__(self) -> str:
         return f"{self.__class__.__name__} {self._value}"
+
 
 class TmclWrongChecksum(Exception):
     """Tmcl Wrong Checksum"""
+
     def __init__(self, value: TmclReply) -> None:
         self._value = value
 
     def __str__(self) -> str:
         return f"{self.__class__.__name__} {self._value}"
+
 
 class TmclInvalidCommand(Exception):
     """Tmcl Invalid Command"""
+
     def __init__(self, value: TmclReply) -> None:
         self._value = value
 
     def __str__(self) -> str:
         return f"{self.__class__.__name__} {self._value}"
+
 
 class TmclWrongType(Exception):
     """Tmcl Wrong Type"""
+
     def __init__(self, value: TmclReply) -> None:
         self._value = value
 
     def __str__(self) -> str:
         return f"{self.__class__.__name__} {self._value}"
+
 
 class TmclInvalidValue(Exception):
     """Tmcl Invalid Value"""
+
     def __init__(self, value: TmclReply) -> None:
         self._value = value
 
     def __str__(self) -> str:
         return f"{self.__class__.__name__} {self._value}"
+
 
 class TmclEepromLocked(Exception):
     """Tmcl Eeprom Locked"""
+
     def __init__(self, value: TmclReply) -> None:
         self._value = value
 
     def __str__(self) -> str:
         return f"{self.__class__.__name__} {self._value}"
+
 
 class TmclCommandNotAvailable(Exception):
     """Tmcl Command Not Available"""
+
     def __init__(self, value: TmclReply) -> None:
         self._value = value
 
     def __str__(self) -> str:
         return f"{self.__class__.__name__} {self._value}"
+
 
 class UnknownTmclResponse(Exception):
     """Tmcl Unknown Response"""
+
     def __init__(self, value: TmclReply) -> None:
         self._value = value
 
     def __str__(self) -> str:
         return f"{self.__class__.__name__} {self._value}"
+
 
 class TmclInvalidChecksum(Exception):
     """Tmcl Invalid Checksum in Response"""
+
     def __init__(self, value: TmclReply) -> None:
         self._value = value
 
     def __str__(self) -> str:
         return f"{self.__class__.__name__} {self._value}"
+
 
 class TMCM:
     def __init__(
@@ -95,6 +114,7 @@ class TMCM:
     async def _recv_raw_message(self) -> Message:
         return await self._reader.get_message()
 
+    """
     async def _send_message(self, message: TmclMessage) -> TmclReply:
         payload = [message.command_number, message.type_number, message.motor_number]
         payload.extend(list(struct.pack(">i", message.value)))
@@ -127,22 +147,22 @@ class TMCM:
                 raise TmclCommandNotAvailable(msg)
             case _:
                 raise UnknownTmclResponse(msg)
+    """
 
     async def _receive_message(self) -> TmclReply:
-        async with asyncio.timeout(2.0):
-            msg = await self._reader.get_message()
-            if msg.arbitration_id == self._module_id:
-                if len(msg.data) == 7:
-                    return TmclReply(
-                        module_address=msg.data[0],
-                        status=msg.data[1],
-                        command_number=msg.data[2],
-                        value=struct.unpack(">i", msg.data[3:])[0],
-                    )
-                else:
-                    raise Exception(f"Invalid Data Format: {msg}")
+        msg = await self._reader.get_message(2.0)
+        if msg.arbitration_id == self._module_id:
+            if len(msg.data) == 7:
+                return TmclReply(
+                    module_address=msg.data[0],
+                    status=msg.data[1],
+                    command_number=msg.data[2],
+                    value=struct.unpack(">i", msg.data[3:])[0],
+                )
             else:
-                raise Exception(f"Invalid Module Response {self._module_id}")
+                raise Exception(f"Invalid Data Format: {msg}")
+        else:
+            raise Exception(f"Invalid Module Response {self._module_id}")
 
     def _default_message(self, command_number: int, type_number: int, value: int) -> TmclMessage:
         return TmclMessage(
@@ -152,6 +172,49 @@ class TMCM:
             motor_number=self._motor_id,
             value=value,
         )
+
+    async def _send_message(self, message: TmclMessage) -> TmclReply:
+        """Exlcusively Lock the Bus during Transmission as we await an Ack from the device. Without this bus contention seems to produce error frames in socket can"""
+
+        async def send_and_receive() -> Message:
+            payload = [message.command_number, message.type_number, message.motor_number]
+            payload.extend(list(struct.pack(">i", message.value)))
+            # Send the message
+            await self._bus.send_message(
+                Message(
+                    arbitration_id=int(message.module_address),
+                    data=payload,
+                    is_extended_id=False,
+                )
+            )
+            # Wait for the response
+            msg = await self._bus.recv_message()
+            if msg:
+                return msg
+            else:
+                raise Exception(f"No Message Received from Trinamic Module: {self._module_id}")
+
+        msg = await self._bus.lock_and_execute(send_and_receive)
+        # Handle the response
+        match msg.status:
+            case TMCLStatus.SUCCESS:
+                return msg
+            case TMCLStatus.COMMAND_LOADED:
+                raise TmclCommandLoaded(msg)
+            case TMCLStatus.WRONG_CHECKSUM:
+                raise TmclWrongChecksum(msg)
+            case TMCLStatus.INVALID_COMMAND:
+                raise TmclInvalidCommand(msg)
+            case TMCLStatus.WRONG_TYPE:
+                raise TmclWrongType(msg)
+            case TMCLStatus.INVALID_VALUE:
+                raise TmclInvalidValue(msg)
+            case TMCLStatus.EEPROM_LOCKED:
+                raise TmclEepromLocked(msg)
+            case TMCLStatus.COMMAND_NOT_AVAILABLE:
+                raise TmclCommandNotAvailable(msg)
+            case _:
+                raise UnknownTmclResponse(msg)
 
     async def rotate_right(self, velocity: int) -> TmclReply:
         return await self._send_message(self._default_message(TMCLCommand.ROR, 0, velocity))

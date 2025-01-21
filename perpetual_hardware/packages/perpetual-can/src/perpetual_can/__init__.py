@@ -6,7 +6,10 @@ from can.bus import BusABC
 from can.listener import AsyncBufferedReader, Listener
 from can.message import Message
 from inspect import Traceback
-import can
+import logging
+
+log = logging.getLogger(__name__)
+
 
 E = TypeVar("E", bound=BaseException)
 
@@ -16,8 +19,9 @@ class CANBusHandler:
         self._bus = bus
         self._lock = asyncio.Lock()  # Lock to ensure safe access to the CAN bus
         self._loop = loop
-        self._printer = can.Printer()
-        self._notifier = Notifier(bus, [self._printer], loop=loop)
+        # self._printer = can.Printer()
+        # self._notifier = Notifier(bus, [self._printer], loop=loop)
+        self._notifier = Notifier(bus, [], loop=loop)
 
     @property
     def bus(self) -> BusABC:
@@ -59,8 +63,13 @@ class CANBusHandler:
             message = self._bus.recv(timeout)
             if message is None:
                 print("No Message Received")
-                await asyncio.sleep(.25)
+                await asyncio.sleep(0.25)
             return message
+
+    async def lock_and_execute(self, coro: callable, *args, **kwargs) -> Any:
+        """Lock the bus and execute a coroutine."""
+        async with self._lock:
+            return await coro(*args, **kwargs)
 
     def add_listener(self, listener: Listener) -> None:
         self._notifier.add_listener(listener)
@@ -74,6 +83,10 @@ class CANBusHandler:
     @property
     def notifier(self) -> Notifier:
         return self._notifier
+
+    @property
+    def get_lock(self) -> asyncio.Lock:
+        return self._lock
 
 
 class AsyncFilteredReader(AsyncBufferedReader):
@@ -92,12 +105,10 @@ class AsyncFilteredReader(AsyncBufferedReader):
             async with asyncio.timeout(timeout):
                 return await self.buffer.get()
 
-
     async def clear_buffer(self) -> None:
         while not self.buffer.empty():
-          self.buffer.get_nowait()
-          self.buffer.task_done()
+            self.buffer.get_nowait()
+            self.buffer.task_done()
 
     def get_buffered_messages(self) -> int:
         return self.buffer.qsize()
-

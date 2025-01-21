@@ -13,13 +13,14 @@ async def main() -> None:
     controller = IoController(can_bus)
     funnel = Funnel(can_bus, p0_funnel_config, controller)
     workstation = Workstation(can_bus, p0_workstation_configuration)
-    tool = ToolBoard(can_bus)
+    #tool = ToolBoard(can_bus)
 
     await funnel.stop()
     await workstation.stop()
     input()
     await funnel.initialize()
-    await funnel.start_receive_item()
+    #await funnel.start_receive_item()
+    await funnel.start_belt()
     await workstation.start_input_belt()
     idx = 0
     state = False
@@ -27,11 +28,11 @@ async def main() -> None:
         sensors = await controller.get_sensors()
         if sensors:
             print(sensors)
-        sensors = await tool.get_state()
-        if sensors:
-            print(sensors)
+        #sensors = await tool.get_state()
+        #if sensors:
+        #    print(sensors)
         idx += 1
-        if idx % 500 == 0:
+        if idx % 1000 == 0:
             idx = 0
             if not state:
                 await funnel.stop()

@@ -72,7 +72,7 @@ class TrinamicAxis(TMCM12xx):
             await self.set_encoder_position(position)
 
     async def reset_location(self) -> None:
-        encoder_position = await self.get_encoder_position() 
+        encoder_position = await self.get_encoder_position()
         await self.set_actual_position(encoder_position)
 
     async def sync_position(self) -> None:
@@ -258,7 +258,6 @@ class TrinamicAxis(TMCM12xx):
                     raise Exception(f"Failed to move in time {self._module_id}")
                 await asyncio.sleep(0.5)
                 position_reached = await self.get_position_reached()
-
 
     async def poll_position_reached(self) -> bool:
         if await self.get_position_reached():

@@ -131,7 +131,11 @@ class Workstation(AbstractSubsystem[WorkstationConfiguration, WorkstationStatus]
 
     async def status(self) -> WorkstationStatus:
         output_box_status = await self.output_box.status()
-        return WorkstationStatus(output_box=output_box_status, input_belt=await self.input_belt.status(), output_belt=await self.output_belt.status())
+        return WorkstationStatus(
+            output_box=output_box_status,
+            input_belt=await self.input_belt.status(),
+            output_belt=await self.output_belt.status(),
+        )
 
     @property
     def output_box(self) -> OutputBox:

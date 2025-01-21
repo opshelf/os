@@ -60,6 +60,7 @@ async def configuration(
 ) -> RobotConfiguration:
     return worker.get_configuration()
 
+
 @router.post("/configuration")
 async def set_configuration(
     configuration: RobotConfiguration,
@@ -67,4 +68,3 @@ async def set_configuration(
 ) -> SuccessResponse:
     await worker.set_configuration(configuration)
     return SuccessResponse()
-

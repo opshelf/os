@@ -68,15 +68,15 @@ app.include_router(printer.router, prefix="/api/printer")
 # with open("./schemas.json", "w") as f:
 #    json.dump(schemas, f, indent=4)
 def start() -> None:
-    #config = uvicorn.Config(
+    # config = uvicorn.Config(
     #    app,
     #    host="0.0.0.0",
     #    port=8000,
     #    reload=True,
     #    timeout_graceful_shutdown=2,  # Graceful shutdown timeout in seconds
-    #)
-    #server = uvicorn.Server(config)
-    #await server.serve()
+    # )
+    # server = uvicorn.Server(config)
+    # await server.serve()
     uvicorn.run(
         "perpetual_p0c_server.main:app",
         host="0.0.0.0",
@@ -86,6 +86,6 @@ def start() -> None:
     )
 
 
-#if __name__ == "__main__":
+# if __name__ == "__main__":
 #    import asyncio
 #    asyncio.run(main())
