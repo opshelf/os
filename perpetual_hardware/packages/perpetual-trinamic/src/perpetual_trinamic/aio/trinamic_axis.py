@@ -13,6 +13,10 @@ import time
 from pydantic import BaseModel
 
 
+class HomingRequiredError(Exception):
+    """In order to perform an absolute move you must first home the axis"""
+
+
 class AxisStatus(BaseModel):
     status_flags: StatusFlags
     error_flags: TrinamicErrorFlags
@@ -38,6 +42,7 @@ class TrinamicAxis(TMCM12xx):
         self._status = StepperMotorStatus.GOOD
         self._target_position = 0.0
         self._actual_position = 0.0
+        self._homed_status = HomedStatus.NOT_HOMED
 
     async def safety_off(self) -> None:
         if self._configuration.external_encoder:
@@ -191,6 +196,10 @@ class TrinamicAxis(TMCM12xx):
     ) -> None:
         if self._status != StepperMotorStatus.GOOD:
             raise Exception("Status Bad")
+        if self._home_status == HomedStatus.NOT_HOMED:
+            self._home_status = await self.get_home_status()
+            if self._home_status == HomedStatus.NOT_HOMED:
+                raise HomingRequiredError()
         if self.configuration.brake and not override_brake:
             await self.init_brake_move()
             position = self._configuration.convert_position_to_pulses(position)
