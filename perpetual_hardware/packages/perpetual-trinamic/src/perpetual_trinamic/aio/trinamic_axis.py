@@ -42,7 +42,7 @@ class TrinamicAxis(TMCM12xx):
         self._status = StepperMotorStatus.GOOD
         self._target_position = 0.0
         self._actual_position = 0.0
-        self._homed_status = HomedStatus.NOT_HOMED
+        self._home_status = HomedStatus.NOT_HOMED
 
     async def safety_off(self) -> None:
         if self._configuration.external_encoder:
