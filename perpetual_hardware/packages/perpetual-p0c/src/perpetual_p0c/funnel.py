@@ -251,14 +251,14 @@ class Funnel(AbstractSubsystem[FunnelConfiguration, FunnelStatus]):
         await self._belt.stop()
 
     async def start_belt(self) -> None:
-        await self._belt.initialize()
+        #await self._belt.initialize()
         await self._belt.rotate(int(self._configuration.belt_speed))
 
     async def stop_wall(self) -> None:
         await self._wall.stop()
 
     async def start_wall(self) -> None:
-        await self._wall.initialize()
+        #await self._wall.initialize()
         await self._wall.rotate(int(self._configuration.wall_speed))
 
     async def stop_output(self) -> None:
