@@ -162,6 +162,7 @@ class TMCM:
 
     async def _send_message(self, message: TmclMessage) -> TmclReply:
         response = await self._send_exclusive_ack_message(message)
+        print(message, response)
         """
         payload = [message.command_number, message.type_number, message.motor_number]
         payload.extend(list(struct.pack(">i", message.value)))
@@ -278,6 +279,7 @@ class TMCM:
         )
 
     async def set_user_variable(self, variable_number: int, value: int) -> TmclReply:
+        print(variable_number, value)
         return await self._send_message(
             TmclMessage(
                 module_address=self._module_id,
@@ -289,6 +291,7 @@ class TMCM:
         )
 
     async def get_user_variable(self, variable_number: int) -> TmclReply:
+        print(variable_number)
         return await self._send_message(
             TmclMessage(
                 module_address=self._module_id,

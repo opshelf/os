@@ -196,10 +196,10 @@ class TrinamicAxis(TMCM12xx):
     ) -> None:
         if self._status != StepperMotorStatus.GOOD:
             raise Exception("Status Bad")
-        if self._home_status == HomedStatus.NOT_HOMED:
-            self._home_status = await self.get_home_status()
-            if self._home_status == HomedStatus.NOT_HOMED:
-                raise HomingRequiredError()
+        #if self._home_status == HomedStatus.NOT_HOMED:
+        #    self._home_status = await self.get_home_status()
+        #    if self._home_status == HomedStatus.NOT_HOMED:
+        #        raise HomingRequiredError()
         if self.configuration.brake and not override_brake:
             await self.init_brake_move()
             position = self._configuration.convert_position_to_pulses(position)
