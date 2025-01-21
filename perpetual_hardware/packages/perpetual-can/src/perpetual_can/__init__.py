@@ -8,6 +8,7 @@ from can.message import Message
 from inspect import Traceback
 import logging
 import concurrent.futures
+import can
 
 log = logging.getLogger(__name__)
 
@@ -47,7 +48,7 @@ class CANBusHandler:
         self._printer = can.Printer()
         self._notifier = Notifier(bus, [self._printer], loop=loop)
         #self._notifier = Notifier(bus, [], loop=loop)
-        #self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
+        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
 
     @property
     def bus(self) -> BusABC:
