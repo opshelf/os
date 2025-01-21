@@ -305,10 +305,15 @@ class P0C(AbstractRobot):
 
     async def initialize(self) -> None:
         self.load_state()
+        print("State Loaded")
         await self.gantry.initialize()
+        print("Gantry Initialized")
         await self.funnel.initialize()
+        print("Funnel Initialized")
         await self.workstation.initialize()
+        print("Workstation Initialized")
         await self.tool.initialize()
+        print("Tool Initialized")
 
     def save_state(self) -> None:
         with open(self._configuration.state_file, "w+") as f:
