@@ -1,14 +1,13 @@
 from pydantic import BaseModel
 from abc import abstractmethod, ABCMeta
-from perpetual_p0c.gantry import GantryConfiguration, Gantry, GantryCoordinate, GantryCommands
-from perpetual_p0c.funnel import FunnelConfiguration, Funnel, FunnelCommands
-from perpetual_p0c.tool import ToolConfiguration, Tool, ToolCommands
+from perpetual_p0c.gantry import GantryConfiguration, Gantry, GantryCoordinate, GantryCommands, GantryStatus
+from perpetual_p0c.funnel import FunnelConfiguration, Funnel, FunnelCommands, FunnelStatus
+from perpetual_p0c.tool import ToolConfiguration, Tool, ToolCommands, ToolStatus
 from perpetual_p0c.io_board import IoController
-from perpetual_p0c.workstation import Workstation, WorkstationConfiguration, WorkstationCommands
+from perpetual_p0c.workstation import Workstation, WorkstationConfiguration, WorkstationCommands, WorkstationStatus
 from perpetual_p0c.size_database import SizeDatabase
 from enum import Enum
 import os
-import time
 from perpetual_p0c.storage import (
     CellItem,
     GS1Data,
@@ -63,6 +62,12 @@ class RobotConfiguration(BaseModel):
     state_file: str = "state.json"
     storage_file: str = "storage.json"
     size_file: str = "sizes.json"
+
+class RobotStatus(BaseModel):
+    gantry_status: GantryStatus
+    workstation_status: WorkstationStatus
+    funnel_status: FunnelStatus
+    tool_status: ToolStatus
 
 
 class RobotState(BaseModel):
@@ -816,6 +821,18 @@ class P0C(AbstractRobot):
         location = self._storage.get_item_location(data)
         await self.drop_off_item(location)
         self.save_storage()
+
+    async def status(self) -> RobotStatus:
+        gantry_status = await self._gantry.status()
+        workstation_status = await self._workstation.status()
+        funnel_status = await self._funnel.status()
+        tool_status = await self._tool.status()
+        return RobotStatus(
+            gantry_status = gantry_status,
+            workstation_status = workstation_status,
+            funnel_status = funnel_status,
+            tool_status = tool_status
+        )
 
     async def _handle_command(self, command: RobotCommands) -> RobotResponses:
         match command:
