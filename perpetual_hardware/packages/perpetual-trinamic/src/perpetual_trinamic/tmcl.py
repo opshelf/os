@@ -128,25 +128,32 @@ deviation_error={self.deviation_error})"
 
 
 class StatusFlags(BaseModel):
-    stall_guard2_status: bool
-    over_temperature: bool
-    over_temperature_pre_warning: bool
-    short_to_ground_a: bool
-    short_to_ground_b: bool
-    open_load_a: bool
-    open_load_b: bool
-    stand_still: bool
+    value: int
+    stall_guard2_status: bool = Field(default=False)
+    over_temperature: bool = Field(default=False)
+    over_temperature_pre_warning: bool = Field(default=False)
+    short_to_ground_a: bool = Field(default=False)
+    short_to_ground_b: bool = Field(default=False)
+    open_load_a: bool = Field(default=False)
+    open_load_b: bool = Field(default=False)
+    stand_still: bool = Field(default=False)
 
-    def __init__(self, value: int) -> None:
-        self._value = value
-        self.stall_guard2_status: bool = bool(value & 0x01)
-        self.over_temperature: bool = bool(value & 0x02)
-        self.over_temperature_pre_warning: bool = bool(value & 0x04)
-        self.short_to_ground_a: bool = bool(value & 0x08)
-        self.short_to_ground_b: bool = bool(value & 0x10)
-        self.open_load_a: bool = bool(value & 0x20)
-        self.open_load_b: bool = bool(value & 0x40)
-        self.stand_still: bool = bool(value & 0x80)
+    @model_validator(mode="after")
+    def set_status_flags(self) -> Self:
+        self._value = self.value
+        self.stall_guard2_status: bool = bool(self.value & 0x01)
+        self.over_temperature: bool = bool(self.value & 0x02)
+        self.over_temperature_pre_warning: bool = bool(self.value & 0x04)
+        self.short_to_ground_a: bool = bool(self.value & 0x08)
+        self.short_to_ground_b: bool = bool(self.value & 0x10)
+        self.open_load_a: bool = bool(self.value & 0x20)
+        self.open_load_b: bool = bool(self.value & 0x40)
+        self.stand_still: bool = bool(self.value & 0x80)
+        self.stall_guard_error = bool(self.value & 0x01)
+        self.deviation_error = bool(self.value & 0x02)
+        return self
+
+
 
     """
     @property

@@ -169,7 +169,7 @@ class TrinamicAxis(TMCM12xx):
 
     async def check_fault_flags(self) -> bool:
         error_flags = TrinamicErrorFlags(value=await self.get_error_flags())
-        status_flags = StatusFlags(await self.get_status_flags())
+        status_flags = StatusFlags(value=await self.get_status_flags())
         return error_flags.is_fault() or status_flags.is_fault()
 
     async def clear_error_flags(self) -> None:
@@ -179,7 +179,7 @@ class TrinamicAxis(TMCM12xx):
 
     async def clear_status_flags(self) -> None:
         while True:
-            status_flags = StatusFlags(await self.get_status_flags())
+            status_flags = StatusFlags(value=await self.get_status_flags())
             if status_flags.is_fault():
                 pass
             else:
@@ -347,7 +347,7 @@ class TrinamicAxis(TMCM12xx):
         status_flags = await self.get_status_flags()
         error_flags = await self.get_error_flags()
         return AxisStatus(
-            status_flags=StatusFlags(status_flags),
+            status_flags=StatusFlags(value=status_flags),
             error_flags=TrinamicErrorFlags(value=error_flags),
             position=position,
             homed=home_status,
