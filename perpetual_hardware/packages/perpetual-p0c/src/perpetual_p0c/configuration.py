@@ -10,7 +10,6 @@ from perpetual_p0c.workstation import WorkstationConfiguration
 from perpetual_p0c.output_box import OutputBoxConfiguration
 from perpetual_p0c.robot import RobotConfiguration
 
-
 p0_output_box_1_configuration = OutputBoxConfiguration(
     door=CanAxisConfiguration(
         can_id=CanMessageIds.OUTPUT_BOX_1,
@@ -18,12 +17,12 @@ p0_output_box_1_configuration = OutputBoxConfiguration(
             microsteps=16,
             steps_per_rev=200,
             encoder_ppr=3200,
-            steps_per_mm=266.66666,
+            steps_per_mm=400.0,
             work_current=2000,
             holding_current=0,
-            homing_current=1000,
-            velocity=200,
-            acceleration=200,
+            homing_current=1500,
+            velocity=100,
+            acceleration=100,
             max_velocity=200,
             max_acceleration=200,
             min_travel=None,
@@ -35,7 +34,7 @@ p0_output_box_1_configuration = OutputBoxConfiguration(
         name="output_box",
         axis_type="leadscrew",
     ),
-    door_open_position=205.0,
+    door_open_position=200.0,
 )
 
 p0_output_box_2_configuration = OutputBoxConfiguration(
@@ -48,9 +47,9 @@ p0_output_box_2_configuration = OutputBoxConfiguration(
             steps_per_mm=400.0,
             work_current=2000,
             holding_current=0,
-            homing_current=1000,
-            velocity=200,
-            acceleration=200,
+            homing_current=1500,
+            velocity=100,
+            acceleration=100,
             max_velocity=200,
             max_acceleration=200,
             min_travel=None,
@@ -62,7 +61,7 @@ p0_output_box_2_configuration = OutputBoxConfiguration(
         name="output_box",
         axis_type="leadscrew",
     ),
-    door_open_position=205.0,
+    door_open_position=200.0,
 )
 
 p0_output_box_3_configuration = OutputBoxConfiguration(
@@ -70,14 +69,14 @@ p0_output_box_3_configuration = OutputBoxConfiguration(
         can_id=CanMessageIds.OUTPUT_BOX_3,
         configuration=StepperMotorConfig(
             microsteps=16,
-            steps_per_rev=400,
+            steps_per_rev=200,
             encoder_ppr=3200,
-            steps_per_mm=266.66666,
+            steps_per_mm=400.0,
             work_current=2000,
             holding_current=0,
-            homing_current=1000,
-            velocity=200,
-            acceleration=200,
+            homing_current=1500,
+            velocity=100,
+            acceleration=100,
             max_velocity=200,
             max_acceleration=200,
             min_travel=None,
@@ -89,7 +88,7 @@ p0_output_box_3_configuration = OutputBoxConfiguration(
         name="output_box",
         axis_type="leadscrew",
     ),
-    door_open_position=205.0,
+    door_open_position=200.0,
 )
 
 p0_workstation_configuration = WorkstationConfiguration(

@@ -1,6 +1,6 @@
 from abc import ABCMeta, abstractmethod
 from PIL import Image, ImageDraw, ImageFont
-from pylibdmtx.pylibdmtx import encode
+from pylibdmtx.pylibdmtx import encode 
 from perpetual_p0c_server.core.events import LabelPrintPayload
 from pydantic import BaseModel
 

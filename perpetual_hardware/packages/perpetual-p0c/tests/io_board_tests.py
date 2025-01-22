@@ -13,18 +13,18 @@ async def main() -> None:
     can_bus = await get_can_bus()
     controller = IoController(can_bus)
     funnel = Funnel(can_bus, p0_funnel_config, controller)
-    workstation = Workstation(can_bus, p0_workstation_configuration)
+    #workstation = Workstation(can_bus, p0_workstation_configuration)
     #tool = ToolBoard(can_bus)
 
 
     await funnel.stop()
-    await workstation.stop()
+    #await workstation.stop()
     input()
     await funnel.initialize()
-    await workstation.initialize()
+    #await workstation.initialize()
     #await funnel.start_receive_item()
     await funnel.start_belt()
-    await workstation.start_input_belt()
+    #await workstation.start_input_belt()
     idx = 0
     state = False
     t0 = time.time()
@@ -41,13 +41,13 @@ async def main() -> None:
             if not state:
                 print(time.time() - t0)
                 await funnel.stop()
-                await workstation.stop()
+                #await workstation.stop()
                 state = True
                 t0 = time.time()
             else:
                 print(time.time() - t0)
                 await funnel.start_receive_item()
-                await workstation.start_input_belt()
+                #await workstation.start_input_belt()
                 state = False
                 t0 = time.time()
 
