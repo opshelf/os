@@ -1,6 +1,7 @@
 use embassy_executor::Spawner;
 use embassy_futures::select::Either5;
-use embassy_stm32::can::filter::StandardFilterSlot;
+use embassy_stm32::can::filter::StandardFilter;
+//use embassy_stm32::can::filter::StandardFilterSlot;
 use embassy_stm32::can::{enums::BusError, frame::Envelope, Frame};
 use embassy_stm32::exti::ExtiInput;
 use embassy_stm32::gpio::{Level, Output, Pull, Speed};
@@ -8,7 +9,7 @@ use embassy_stm32::Config;
 use embassy_stm32::{bind_interrupts, can, peripherals};
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, ThreadModeRawMutex};
 use embassy_sync::channel::Channel;
-use embedded_can::StandardId;
+//use embedded_can::StandardId;
 use static_cell::StaticCell;
 
 use crate::core::{BoardState, Messages, Responses, Sensors};
@@ -34,6 +35,56 @@ bind_interrupts!(struct Irqs {
 static COMMAND_CHANNEL: Channel<ThreadModeRawMutex, Messages, 64> = Channel::new();
 static RESPONSE_CHANNEL: Channel<ThreadModeRawMutex, Responses, 64> = Channel::new();
 static SENSOR_CHANNEL: Channel<ThreadModeRawMutex, Sensors, 64> = Channel::new();
+
+#[embassy_executor::task]
+async fn workstation_monitor(
+    input_6: embassy_stm32::gpio::Input<'static>,
+    input_7: embassy_stm32::gpio::Input<'static>,
+    input_8: embassy_stm32::gpio::Input<'static>,
+    input_9: embassy_stm32::gpio::Input<'static>,
+    input_10: embassy_stm32::gpio::Input<'static>,
+) -> ! {
+    /* Output Box 2: input 9 */
+    const DEBOUNCE: u64 = 2;
+    defmt::info!("{:?}", input_6.is_low());
+    defmt::info!("{:?}", input_7.is_low());
+    defmt::info!("{:?}", input_8.is_low());
+    defmt::info!("{:?}", input_9.is_low());
+    defmt::info!("{:?}", input_10.is_low());
+    loop {
+        if input_9.is_low() {
+            let t0 = embassy_time::Instant::now();
+            let mut invalid = false;
+            while (embassy_time::Instant::now() - t0).as_millis() < DEBOUNCE {
+                if input_9.is_high() {
+                    invalid = true;
+                    break;
+                }
+                let _ = embassy_time::Timer::after_millis(1).await;
+            }
+            if !invalid {
+                SENSOR_CHANNEL
+                    .send(Sensors {
+                        output_box_2: true,
+                        ..Default::default()
+                    })
+                    .await;
+                let _ = embassy_time::Timer::after_millis(100).await;
+            }
+        } else {
+            let _ = embassy_time::Timer::after_millis(10).await;
+        }
+        //defmt::info!(
+        //    "6: {} 7: {} 8: {} 9: {} 10: {}",
+        //    input_6.is_low(),
+        //    input_7.is_low(),
+        //    input_8.is_low(),
+        //    input_9.is_low(),
+        //    input_10.is_low()
+        //);
+        //embassy_time::Timer::after_millis(100).await
+    }
+}
 
 #[embassy_executor::task]
 async fn break_beam_monitor(
@@ -63,7 +114,7 @@ async fn break_beam_monitor(
                         invalid = true;
                         break;
                     }
-                    embassy_time::Timer::after_millis(1).await;
+                    let _ = embassy_time::Timer::after_millis(1).await;
                 }
                 if invalid {
                     None
@@ -175,7 +226,7 @@ async fn break_beam_monitor(
                 } else {
                     input_5.wait_for_high().await;
                     Some(Sensors {
-                        output_box: true,
+                        output_box_1: true,
                         ..Default::default()
                     })
                 }
@@ -185,7 +236,7 @@ async fn break_beam_monitor(
         // Debounce
         if let Some(bv) = beam_value {
             SENSOR_CHANNEL.send(bv).await;
-            embassy_time::Timer::after_millis(100);
+            let _ = embassy_time::Timer::after_millis(100).await;
         }
 
         //defmt::info!(
@@ -206,17 +257,13 @@ async fn can_receive_task(
     reply_id: embedded_can::Id,
     mut can: embassy_stm32::can::BufferedCan<'static, 64, 64>,
 ) -> ! {
-    let mut idx = 0;
     loop {
         let res = can.read().await;
         if let Ok(ref e) = res {
             if *e.frame.id() == receive_id {
                 if let Some(msg) = Messages::from_can_frame(e.frame.data()) {
-                    let t0 = embassy_time::Instant::now();
                     COMMAND_CHANNEL.send(msg).await;
                     let response = RESPONSE_CHANNEL.receive().await;
-                    defmt::info!("{:?}", idx);
-                    idx += 1;
                     can.write(Frame::new_data(reply_id, &response.into_can_frame()).unwrap())
                         .await;
                 } else {
@@ -226,8 +273,6 @@ async fn can_receive_task(
                     .await;
                 }
             }
-        } else {
-            defmt::info!("{:?}", e.frame.id());
         }
     }
 }
@@ -239,7 +284,7 @@ async fn watchdog_task(
     wdg.unleash();
     loop {
         wdg.pet();
-        embassy_time::Timer::after_millis(100).await;
+        let _ = embassy_time::Timer::after_millis(100).await;
     }
 }
 
@@ -253,15 +298,27 @@ impl<'a> IoBoard<'a> {
         defmt::info!("Resetting");
         let p = embassy_stm32::init(config);
         let mut can = can::CanConfigurator::new(p.FDCAN1, p.PB8, p.PB9, Irqs);
-        let mut filter = can::filter::StandardFilter::default();
-        filter.filter = embassy_stm32::can::filter::FilterType::DedicatedSingle(
-            embedded_can::StandardId::new(200).unwrap(),
-        );
+        //let mut filter = can::filter::StandardFilter::default();
+        //let mut filter = can::filter::StandardFilter::accept_all_into_fifo0();
+        //filter.filter = embassy_stm32::can::filter::FilterType::DedicatedSingle(
+        //    embedded_can::StandardId::new(200).unwrap(),
+        //);
+        let filter: StandardFilter = embassy_stm32::can::filter::Filter {
+            filter: can::filter::FilterType::DedicatedSingle(
+                embedded_can::StandardId::new(200).unwrap(),
+            ),
+            action: embassy_stm32::can::filter::Action::StoreInFifo1,
+        };
         can.properties()
+            //.set_standard_filter(can::filter::StandardFilterSlot::_0, filter);
             .set_standard_filter(can::filter::StandardFilterSlot::_0, filter);
-        //for slot_num in 0..28 {
-        //    can.properties()
-        //        .set_standard_filter(StandardFilterSlot::from(slot_num as u8), filter);
+        //for slot_num in 1..28 {
+        //    let mut f = can::filter::StandardFilter::reject_all();
+        //    can.properties().set_standard_filter(
+        //        //StandardFilterSlot::from(slot_num as u8),
+        //        StandardFilterSlot::from(slot_num as u8),
+        //        filter,
+        //    );
         //}
 
         can.set_bitrate(500_000);
@@ -299,8 +356,29 @@ impl<'a> IoBoard<'a> {
         // Output Box
         let input_5 = ExtiInput::new(p.PB6, p.EXTI6, Pull::Up);
 
+        /*
+        PB5
+        PB4
+        PA7
+        PA6
+        PA5
+        */
+        //let input_6 = ExtiInput::new(p.PB5,  p.EXTI6, Pull::Up);
+        //let input_7 = ExtiInput::new(p.PB4,  p.EXTI6, Pull::Up);
+        //let input_8 = ExtiInput::new(p.PA7,  p.EXTI6, Pull::Up);
+        //let input_9 = ExtiInput::new(p.PA6,  p.EXTI6, Pull::Up);
+        //let input_10 = ExtiInput::new(p.PA5, p.EXTI6, Pull::Up);
+        let input_6 = embassy_stm32::gpio::Input::new(p.PB5, Pull::Up);
+        let input_7 = embassy_stm32::gpio::Input::new(p.PB4, Pull::Up);
+        let input_8 = embassy_stm32::gpio::Input::new(p.PA7, Pull::Up);
+        let input_9 = embassy_stm32::gpio::Input::new(p.PA6, Pull::Up);
+        let input_10 = embassy_stm32::gpio::Input::new(p.PA5, Pull::Up);
+
         let _ = spawner.spawn(break_beam_monitor(
             input_1, input_2, input_3, input_4, input_5,
+        ));
+        let _ = spawner.spawn(workstation_monitor(
+            input_6, input_7, input_8, input_9, input_10,
         ));
 
         Self {
@@ -390,7 +468,7 @@ impl<'a> IoBoard<'a> {
                 Responses::State(self.get_state())
             }
             Messages::ClearState => {
-                while let Ok(sensors) = SENSOR_CHANNEL.try_receive() {}
+                while let Ok(_) = SENSOR_CHANNEL.try_receive() {}
                 defmt::info!("Done");
                 Responses::Sensors(None)
             }

@@ -71,7 +71,9 @@ pub struct Sensors {
     pub input_conveyor: bool,
     pub output_transfer_conveyor: bool,
     pub funnel_input: bool,
-    pub output_box: bool,
+    pub output_box_1: bool,
+    pub output_box_2: bool,
+    pub output_box_3: bool,
 }
 
 impl Sensors {
@@ -81,7 +83,9 @@ impl Sensors {
         data |= (self.input_conveyor as u8) << 1;
         data |= (self.output_transfer_conveyor as u8) << 2;
         data |= (self.funnel_input as u8) << 3;
-        data |= (self.output_box as u8) << 4;
+        data |= (self.output_box_1 as u8) << 4;
+        data |= (self.output_box_2 as u8) << 5;
+        data |= (self.output_box_3 as u8) << 6;
         data
     }
 }
@@ -93,7 +97,9 @@ impl core::default::Default for Sensors {
             input_conveyor: false,
             output_transfer_conveyor: false,
             funnel_input: false,
-            output_box: false,
+            output_box_1: false,
+            output_box_2: false,
+            output_box_3: false,
         }
     }
 }
