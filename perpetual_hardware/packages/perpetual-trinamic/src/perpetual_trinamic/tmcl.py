@@ -149,8 +149,6 @@ class StatusFlags(BaseModel):
         self.open_load_a: bool = bool(self.value & 0x20)
         self.open_load_b: bool = bool(self.value & 0x40)
         self.stand_still: bool = bool(self.value & 0x80)
-        self.stall_guard_error = bool(self.value & 0x01)
-        self.deviation_error = bool(self.value & 0x02)
         return self
 
 
