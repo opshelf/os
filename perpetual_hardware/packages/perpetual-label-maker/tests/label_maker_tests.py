@@ -135,6 +135,7 @@ if __name__ == '__main__':
     )
     """
     printer.print(
+        "label.png",
         LabelPrintPayload(
             gs1=get_gs1("0"),
             order_id="0",
@@ -143,6 +144,7 @@ if __name__ == '__main__':
         label_1
     )
     printer.print(
+        "label.png",
         LabelPrintPayload(
             gs1=get_gs1("1"),
             order_id="1",
@@ -151,6 +153,7 @@ if __name__ == '__main__':
         label_2
     )
     printer.print(
+        "label.png",
         LabelPrintPayload(
             gs1=get_gs1("2"),
             order_id="2",
@@ -159,6 +162,7 @@ if __name__ == '__main__':
         label_3
     )
     printer.print(
+        "label.png",
         LabelPrintPayload(
             gs1=get_gs1("3"),
             order_id="3",

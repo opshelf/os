@@ -47,6 +47,7 @@ class ThermalPrinter(AbstractPrinter):
     def __init__(self, printer_name: str = "ThermalPrinter") -> None:
         self._printer_name = printer_name
         self._label_maker = LabelMaker()
+        super(AbstractPrinter, self).__init__()
 
     def _print(
         self,
