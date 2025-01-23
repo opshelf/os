@@ -45,7 +45,7 @@ class PrintWorker:
             match event:
                 case LabelPrintEvent(payload=payload):
                     print(payload)
-                    self._printer.print("prescription_label.png", payload)
+                    self._printer.print(payload)
                     await self._nc.publish(
                         self.settings.printer_event_queue,
                         LabelPrintingCompletedEvent().model_dump_json().encode(),

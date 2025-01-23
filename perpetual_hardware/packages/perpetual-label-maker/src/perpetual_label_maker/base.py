@@ -17,16 +17,14 @@ from .label_maker import LabelInformation, LabelMaker
 class AbstractPrinter(metaclass=ABCMeta):
     def print(
         self,
-        filename: str,
         payload: LabelPrintPayload,
         label_information: LabelInformation = LabelInformation(),
     ) -> None:
-        self._print(filename, payload, label_information)
+        self._print(payload, label_information)
 
     @abstractmethod
     def _print(
         self,
-        filename: str,
         payload: LabelPrintPayload,
         label_information: LabelInformation = LabelInformation(),
     ) -> None: ...
@@ -35,11 +33,10 @@ class AbstractPrinter(metaclass=ABCMeta):
 class MockPrinter(AbstractPrinter):
     def _print(
         self,
-        filename: str,
         payload: LabelPrintPayload,
         label_information: LabelInformation = LabelInformation(),
     ) -> None:
-        print("printed", filename, payload)
+        print("printed", payload, label_information)
         return None
 
 
@@ -51,12 +48,11 @@ class ThermalPrinter(AbstractPrinter):
 
     def _print(
         self,
-        filename: str,
         payload: LabelPrintPayload,
         label_information: LabelInformation = LabelInformation(),
     ) -> None:
         self._label_maker.create_label(payload, label_information)
-        command = ["lp", "-d", self._printer_name, filename, "-o", "fit-to-page"]
+        command = ["lp", "-d", self._printer_name, self._label_maker.settings.output_file, "-o", "fit-to-page"]
         result = subprocess.run(command, capture_output=True, text=True)
         print(result)
         if result.returncode != 0:
@@ -92,7 +88,7 @@ class PrintWorker:
             match event:
                 case LabelPrintEvent(payload=payload):
                     print(payload)
-                    self._printer.print("prescription_label.png", payload)
+                    self._printer.print(payload)
                     await self._nc.publish(
                         self._printer_event_queue,
                         LabelPrintingCompletedEvent().model_dump_json().encode(),
