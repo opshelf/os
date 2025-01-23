@@ -4,7 +4,7 @@ from typing import Literal, Union, Annotated
 from perpetual_p0c.storage import Tray
 from perpetual_p0c.io_board import IoController, Wedge
 from perpetual_trinamic.aio.trinamic_axis import AxisStatus, TrinamicAxis
-from perpetual_trinamic.aio.trinamic_stepper import TrinamicStepper
+from perpetual_trinamic.aio.trinamic_stepper import TrinamicStepper, StepperStatus
 from perpetual_can import CANBusHandler
 from perpetual_p0c.storage import Tray
 from perpetual_p0c.common import AbstractSubsystem, CanAxisConfiguration
@@ -46,16 +46,11 @@ class FunnelStatus(BaseModel):
     slot_1: AxisStatus
     slot_2: AxisStatus
     slot_3: AxisStatus
-    # self._inlet_funnel = TrinamicAxis(
-    # self._opposing_funnel = TrinamicAxis(
-    # self._slot_1 = TrinamicAxis(
-    # self._slot_2 = TrinamicAxis(
-    # self._slot_3 = TrinamicAxis(
-    # self._belt = TrinamicStepper(
-    # self._wall = TrinamicStepper(
-    # self._diverter = TrinamicStepper(
-    # self._output_transfer_conveyor = TrinamicStepper(
-    # self._output_conveyor = TrinamicStepper(
+    belt: StepperStatus
+    wall: StepperStatus
+    diverter: StepperStatus
+    output_transfer_conveyor: StepperStatus
+    output_conveyor: StepperStatus
 
 
 class FunnelOpeningSize(int, Enum):
@@ -525,12 +520,24 @@ class Funnel(AbstractSubsystem[FunnelConfiguration, FunnelStatus]):
         slot_1 = await self._slot_1.status()
         slot_2 = await self._slot_2.status()
         slot_3 = await self._slot_3.status()
+
+        belt = await self._belt.status()
+        wall = await self._wall.status()
+        diverter = await self._diverter.status()
+        output_transfer_conveyor = await self._output_transfer_conveyor.status()
+        output_conveyor = await self._output_conveyor.status()
+
         return FunnelStatus(
             inlet_funnel=ipos,
             opposing_funnel=opos,
             slot_1=slot_1,
             slot_2=slot_2,
             slot_3=slot_3,
+            belt=belt,
+            wall=wall,
+            diverter=diverter,
+            output_transfer_conveyor=output_transfer_conveyor,
+            output_conveyor=output_conveyor,
         )
 
     async def stop(self) -> None:
