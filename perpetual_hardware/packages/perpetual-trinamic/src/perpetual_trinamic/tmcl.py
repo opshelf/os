@@ -120,12 +120,6 @@ class TrinamicErrorFlags(BaseModel):
     def is_fault(self) -> bool:
         return self.stall_guard_error or self.deviation_error
 
-    """
-    def __repr__(self) -> str:
-        return f"ErrorFlags(stall_guard={self.stall_guard_error},\
-deviation_error={self.deviation_error})"
-    """
-
 
 class StatusFlags(BaseModel):
     value: int
@@ -151,42 +145,6 @@ class StatusFlags(BaseModel):
         self.stand_still: bool = bool(self.value & 0x80)
         return self
 
-
-
-    """
-    @property
-    def stall_guard2_status(self) -> bool:
-        return self._stall_guard2_status
-
-    @property
-    def over_temperature(self) -> bool:
-        return self._over_temperature
-
-    @property
-    def over_temperature_pre_warning(self) -> bool:
-        return self._over_temperature_pre_warning
-
-    @property
-    def short_to_ground_a(self) -> bool:
-        return self._short_to_ground_a
-
-    @property
-    def short_to_ground_b(self) -> bool:
-        return self._short_to_ground_b
-
-    @property
-    def open_load_a(self) -> bool:
-        return self._open_load_a
-
-    @property
-    def open_load_b(self) -> bool:
-        return self._open_load_b
-
-    @property
-    def stand_still(self) -> bool:
-        return self._stand_still
-    """
-
     def is_fault(self) -> bool:
         return (
             self.open_load_b
@@ -196,21 +154,6 @@ class StatusFlags(BaseModel):
             or self.over_temperature
             or self.stall_guard2_status
         )
-
-    """
-    def __repr__(self) -> str:
-        return f"StatusFlags(\
-stall_guard2_status={self.stall_guard2_status},\
-overtemperature={self.over_temperature},\
-overtempertaure_pre_warning={self.over_temperature_pre_warning},\
-short_to_ground_a={self.short_to_ground_a},\
-short_to_ground_b={self.short_to_ground_b},\
-open_load_a={self.open_load_a},\
-open_load_b={self.open_load_b},\
-stand_still={self.stand_still},\
-)"
-
-    """
 
 
 @dataclass

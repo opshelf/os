@@ -22,10 +22,9 @@ class LabelSettings(BaseModel):
     font_regular: FontSetting = FontSetting(size=24, name="Lato-Medium.ttf")
     # Mac
     # TODO: make this detected by the system
-    #font_extra_bold: FontSetting = FontSetting(size=40, name="Arial Unicode.ttf")
-    #font_bold: FontSetting = FontSetting(size=32, name="Arial Unicode.ttf")
-    #font_regular: FontSetting = FontSetting(size=24, name="Arial Unicode.ttf")
-
+    # font_extra_bold: FontSetting = FontSetting(size=40, name="Arial Unicode.ttf")
+    # font_bold: FontSetting = FontSetting(size=32, name="Arial Unicode.ttf")
+    # font_regular: FontSetting = FontSetting(size=24, name="Arial Unicode.ttf")
 
 
 class LabelInformation(BaseModel):

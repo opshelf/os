@@ -196,7 +196,7 @@ class TrinamicAxis(TMCM12xx):
     ) -> None:
         if self._status != StepperMotorStatus.GOOD:
             raise Exception("Status Bad")
-        #if self._home_status == HomedStatus.NOT_HOMED:
+        # if self._home_status == HomedStatus.NOT_HOMED:
         #    self._home_status = await self.get_home_status()
         #    if self._home_status == HomedStatus.NOT_HOMED:
         #        raise HomingRequiredError()

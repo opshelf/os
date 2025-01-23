@@ -183,8 +183,8 @@ class ToolBoard:
         )
 
     async def _run_command(self, message: Message) -> Message:
-        #await self._send_message(message)
-        #message = await self._receive_message()
+        # await self._send_message(message)
+        # message = await self._receive_message()
         message = await self._bus.send_ack_message(message, self._reader, 1.0)
         if message.is_error_frame:
             raise Exception("Tool Encoutered Error Frame")

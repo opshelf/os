@@ -34,6 +34,7 @@ from perpetual_p0c_server.core.events import (
     InputPlacedEvent,
 )
 
+
 class RobotNatsConfiguration(BaseModel):
     nats_url: str = "nats://localhost:4222"
     stream_name: str = "robot"

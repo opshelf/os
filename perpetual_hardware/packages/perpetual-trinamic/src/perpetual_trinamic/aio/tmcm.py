@@ -113,19 +113,19 @@ class TMCM:
 
     async def _recv_raw_message(self) -> Message:
         return await self._reader.get_message()
-    
+
     def tmcl_to_can_message(self, message: TmclMessage) -> Message:
         payload = [message.command_number, message.type_number, message.motor_number]
         payload.extend(list(struct.pack(">i", message.value)))
         return Message(
-                arbitration_id=int(message.module_address),
-                data=payload,
-                is_extended_id=False,
+            arbitration_id=int(message.module_address),
+            data=payload,
+            is_extended_id=False,
         )
 
     async def _send_exclusive_ack_message(self, message: TmclMessage) -> TmclReply:
         can_msg = self.tmcl_to_can_message(message)
-        msg = await self._bus.send_ack_message(can_msg, self._reader,1.0)
+        msg = await self._bus.send_ack_message(can_msg, self._reader, 1.0)
         if msg.arbitration_id == self._module_id:
             if msg.is_error_frame:
                 raise Exception(f"Encountered Error Frame on {self._module_id}: {msg}")
@@ -194,7 +194,6 @@ class TMCM:
                 raise UnknownTmclResponse(reply)
         """
         return response
-
 
     async def _receive_message(self) -> TmclReply:
         msg = await self._reader.get_message(2.0)

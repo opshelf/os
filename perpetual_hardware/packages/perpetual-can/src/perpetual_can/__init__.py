@@ -15,6 +15,7 @@ log = logging.getLogger(__name__)
 
 E = TypeVar("E", bound=BaseException)
 
+
 class AsyncFilteredReader(AsyncBufferedReader):
     def __init__(self, filters: List[int], **kwargs: Any) -> None:
         AsyncBufferedReader.__init__(self, **kwargs)
@@ -47,7 +48,7 @@ class CANBusHandler:
         self._loop = loop
         self._printer = can.Printer()
         self._notifier = Notifier(bus, [self._printer], loop=loop)
-        #self._notifier = Notifier(bus, [], loop=loop)
+        # self._notifier = Notifier(bus, [], loop=loop)
         self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
 
     @property
@@ -78,19 +79,12 @@ class CANBusHandler:
         print(exc_type, exc_val, exc_tb)
         self.shutdown()
 
-    async def send_ack_message(self, 
-        message: Message, 
-        reader: AsyncFilteredReader, 
-        timeout: Optional[float] = None
-        ) -> Message:
+    async def send_ack_message(
+        self, message: Message, reader: AsyncFilteredReader, timeout: Optional[float] = None
+    ) -> Message:
         """Send a CAN message and lock the bus until the expected_id is received."""
         async with self._lock:
-            await self._loop.run_in_executor(
-                self._executor,
-                self._bus.send,
-                message,
-                timeout
-            )
+            await self._loop.run_in_executor(self._executor, self._bus.send, message, timeout)
             async with asyncio.timeout(1.0):
                 msg = await reader.get_message()
                 return msg
@@ -104,17 +98,11 @@ class CANBusHandler:
                 await asyncio.sleep(0.25)
             return message
 
-
     async def send_message(self, message: Message, timeout: Optional[float] = None) -> None:
         """Send a CAN message."""
         async with self._lock:
-            await self._loop.run_in_executor(
-                self._executor,
-                self._bus.send,
-                message,
-                timeout
-            )
-            #self._bus.send(message, timeout)
+            await self._loop.run_in_executor(self._executor, self._bus.send, message, timeout)
+            # self._bus.send(message, timeout)
 
     def add_listener(self, listener: Listener) -> None:
         self._notifier.add_listener(listener)
@@ -132,5 +120,3 @@ class CANBusHandler:
     @property
     def lock(self) -> asyncio.Lock:
         return self._lock
-
-

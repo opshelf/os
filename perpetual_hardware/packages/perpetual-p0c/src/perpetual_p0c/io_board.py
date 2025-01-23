@@ -98,9 +98,11 @@ class IoState(BaseModel):
 
 
 class IoController:
-    def __init__(self, bus: CANBusHandler, 
-                 can_send_id: int = CanMessageIds.IO_NODE_SEND,
-                 can_reply_id: int = CanMessageIds.IO_NODE_RECEIVE
+    def __init__(
+        self,
+        bus: CANBusHandler,
+        can_send_id: int = CanMessageIds.IO_NODE_SEND,
+        can_reply_id: int = CanMessageIds.IO_NODE_RECEIVE,
     ) -> None:
         self._bus = bus
         self._can_id = int(can_send_id)
@@ -131,17 +133,16 @@ class IoController:
         raise Exception("No Response From Relay Module")
 
     async def _run_command(self, message: Message) -> Message:
-        #await self._send_message(message)
-        #message = await self._receive_message()
-        #if message.data[0]:
+        # await self._send_message(message)
+        # message = await self._receive_message()
+        # if message.data[0]:
         #    return message
-        #else:
+        # else:
         #    raise Exception("Invalid Command")
         message = await self._bus.send_ack_message(message, self._reader, 1.0)
         if message.is_error_frame:
             raise Exception("Io Board Encoutered Error Frame")
         return message
-
 
     async def get_state(self) -> IoState:
         response = await self._run_command(self.default_message([CanCommandIds.GetState.value]))

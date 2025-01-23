@@ -28,7 +28,7 @@ class CanAxisConfiguration(BaseModel):
 
 
 class CanMessageIds(int, Enum):
-    #IO_NODE = 5
+    # IO_NODE = 5
     IO_NODE_SEND = 200
     IO_NODE_RECEIVE = 201
     TOOL_NODE = 6
