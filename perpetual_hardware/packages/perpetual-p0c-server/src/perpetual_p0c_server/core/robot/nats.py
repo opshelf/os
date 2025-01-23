@@ -267,8 +267,8 @@ class RobotWorker(AbstractRobotWorker):
                         await self._robot.handle_command(ReturnCurrentTray())
                     self._msg = None
                     self._current_task = None
-                    status = await self._robot.status()
-                    print(status)
+                    #status = await self._robot.status()
+                    #print(status)
         except Exception as e:
             print("Process Commands Error: ", e)
             match self._current_command:
