@@ -253,7 +253,7 @@ class RobotWorker(AbstractRobotWorker):
                                         print(self._current_task)
                                         # print(self._current_task.result())
                                         # print(self._current_task.exception())
-                            print("Assigning Curernt Task to None and Command to None")
+                            print("Assigning Current Task to None and Command to None")
                             self._current_task = None
                             self._current_command = None
                             if self._msg:

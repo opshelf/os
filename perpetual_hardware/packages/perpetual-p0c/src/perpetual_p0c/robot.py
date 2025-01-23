@@ -794,14 +794,17 @@ class P0C(AbstractRobot):
         await self.move_gantry_to_clear(tray)
         if keep_tray:
             await self.run_output_transfer(self._output_box)
+            self._output_box += 1
+            if self._output_box > 2:
+                self._output_box = 0
         else:
             transfer_task = asyncio.create_task(self.run_output_transfer(self._output_box))
             return_task = asyncio.create_task(self.return_current_tray())
             await transfer_task
             await return_task
-        self._output_box += 1
-        if self._output_box > 2:
-            self._output_box = 0
+            self._output_box += 1
+            if self._output_box > 2:
+                self._output_box = 0
 
     async def store_item(self, item: CellItem) -> None:
         location = self._storage.get_next_free_location(item)
