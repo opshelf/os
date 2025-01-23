@@ -18,7 +18,9 @@ class WorkstationConfiguration(BaseModel):
 
 
 class WorkstationStatus(BaseModel):
-    output_box: OutputBoxStatus
+    output_box_1: OutputBoxStatus
+    output_box_2: OutputBoxStatus
+    output_box_3: OutputBoxStatus
     input_belt: AxisStatus
     output_belt: AxisStatus
 
@@ -142,9 +144,13 @@ class Workstation(AbstractSubsystem[WorkstationConfiguration, WorkstationStatus]
         await self.initialize()
 
     async def status(self) -> WorkstationStatus:
-        output_box_status = await self._output_box_1.status()
+        output_box_1_status = await self._output_box_1.status()
+        output_box_2_status = await self._output_box_2.status()
+        output_box_3_status = await self._output_box_3.status()
         return WorkstationStatus(
-            output_box=output_box_status,
+            output_box_1=output_box_1_status,
+            output_box_2=output_box_2_status,
+            output_box_3=output_box_3_status,
             input_belt=await self.input_belt.status(),
             output_belt=await self.output_belt.status(),
         )

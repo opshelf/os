@@ -207,7 +207,7 @@ class TrinamicStepper(TMCM12xx):
 
     def check_fault_flags(self) -> bool:
         error_flags = TrinamicErrorFlags(value=self.get_error_flags())
-        status_flags = StatusFlags(self.get_status_flags())
+        status_flags = StatusFlags(value=self.get_status_flags())
         return error_flags.is_fault() or status_flags.is_fault()
 
     def clear_error_flags(self) -> None:
@@ -217,7 +217,7 @@ class TrinamicStepper(TMCM12xx):
 
     def clear_status_flags(self) -> None:
         while True:
-            status_flags = StatusFlags(self.get_status_flags())
+            status_flags = StatusFlags(value=self.get_status_flags())
             if status_flags.is_fault():
                 pass
             else:
@@ -436,7 +436,7 @@ class TrinamicAxis(AbstractStepperMotor, TMCM12xx):
 
     def check_fault_flags(self) -> bool:
         error_flags = TrinamicErrorFlags(value=self.get_error_flags())
-        status_flags = StatusFlags(self.get_status_flags())
+        status_flags = StatusFlags(value=self.get_status_flags())
         return error_flags.is_fault() or status_flags.is_fault()
 
     def clear_error_flags(self) -> None:
@@ -446,7 +446,7 @@ class TrinamicAxis(AbstractStepperMotor, TMCM12xx):
 
     def clear_status_flags(self) -> None:
         while True:
-            status_flags = StatusFlags(self.get_status_flags())
+            status_flags = StatusFlags(value=self.get_status_flags())
             if status_flags.is_fault():
                 pass
             else:
