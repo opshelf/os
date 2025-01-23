@@ -72,6 +72,8 @@ class LabelMaker(AbstractLabelMaker):
     def create_label(
         self, label_data: LabelPrintPayload, information: LabelInformation = LabelInformation()
     ) -> None:
+        print(label_data)
+        print(information)
         img = Image.new(
             "RGB", (self.settings.width, self.settings.height), self.settings.background_color
         )
