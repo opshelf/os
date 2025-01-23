@@ -5,16 +5,16 @@ from .label_maker import LabelInformation, LabelMaker
 
 
 class AbstractPrinter(metaclass=ABCMeta):
-    def print(self, filename: str, payload: LabelPrintPayload) -> None:
-        self._print(filename, payload)
+    def print(self, filename: str, payload: LabelPrintPayload, label_information: LabelInformation = LabelInformation()) -> None:
+        self._print(filename, payload, label_information)
 
     @abstractmethod
-    def _print(self, filename: str, payload: LabelPrintPayload) -> None: ...
+    def _print(self, filename: str, payload: LabelPrintPayload, label_information: LabelInformation = LabelInformation()) -> None: ...
 
 
 class MockPrinter(AbstractPrinter):
-    def _print(self, filename: str, payload: LabelPrintPayload) -> None:
-        print("printed", filename, payload)
+    def _print(self, filename: str, payload: LabelPrintPayload, label_information: LabelInformation = LabelInformation()) -> None:
+        print("printed", filename, payload, label_information)
         return None
 
 
