@@ -6,7 +6,7 @@
         "file_name": "size.json" 
     },
     "printer": {
-        "enabled": false
+        "enabled": true
     },
     "scanner": {
         "enabled": true
