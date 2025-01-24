@@ -1,9 +1,13 @@
 from perpetual_p0c.robot import (
     AbstractRobot,
+    AckResponse,
+    InitializeCommand,
     RobotConfiguration,
     RobotCommands,
     RobotState,
     StoreCommand,
+    StopCommand,
+    HomeCommand,
     RetrieveCommand,
     RetrieveResponse,
     StorageResponse,
@@ -45,12 +49,33 @@ class MockRobot(AbstractRobot):
             case StoreCommand():
                 await asyncio.sleep(random.random() * 10)
                 return StorageResponse(
-                    **command.model_dump(),
                     status=ResponseStatus.COMPLETED,
+                    command=command,
                 )
             case RetrieveCommand():
                 await asyncio.sleep(random.random() * 10)
                 return RetrieveResponse(status=ResponseStatus.COMPLETED, command=command)
+            case HomeCommand():
+                await asyncio.sleep(random.random() * 20)
+                return AckResponse(
+                    command=command,
+                        message="homed",
+                    status=ResponseStatus.COMPLETED,
+                )
+            case StopCommand():
+                await asyncio.sleep(random.random() * 2)
+                return AckResponse(
+                    command=command,
+                    message="stopped",
+                    status=ResponseStatus.COMPLETED,
+                )
+            case InitializeCommand():
+                await asyncio.sleep(random.random() * 2)
+                return AckResponse(
+                    command=command,
+                    message="initialize",
+                    status=ResponseStatus.COMPLETED,
+                )
             case _:
                 raise Exception("Invalid Robot Command")
 

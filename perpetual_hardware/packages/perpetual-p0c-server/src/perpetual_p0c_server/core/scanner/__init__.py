@@ -23,6 +23,8 @@ async def init_scanner_worker(enabled: bool) -> None:
         scanner_worker = ScannerWorker(
             MockScanner(), "nats://localhost:4222", "scanner", "scanner_events"
         )
+        await scanner_worker.connect()
+        await scanner_worker.start()
 
 
 async def stop_scanner_worker() -> None:

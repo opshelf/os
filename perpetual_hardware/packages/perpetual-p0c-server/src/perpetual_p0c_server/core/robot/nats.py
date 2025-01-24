@@ -84,6 +84,7 @@ class RobotClient(AbstractRobotClient):
                     messages.append(adapter.validate_json(msg.data.decode()))
             except NotFoundError:
                 pass
+        print(len(messages))
         return messages
 
     async def handle_response(self, response: RobotResponses) -> None:
@@ -202,16 +203,13 @@ class RobotWorker(AbstractRobotWorker):
                                 self._current_task = asyncio.create_task(
                                     self._robot.handle_command(cmd)
                                 )
-                                self._current_cmd = cmd
+                                self._current_command = cmd
                                 self._msg = msg[0]
                     else:
                         if self._current_task and self._current_task.done():
-                            print("Current Command: ", self._current_command)
                             match self._current_command:
                                 case StoreCommand(payload=payload):
-                                    print("Store Command Done")
                                     if self._current_task.result():
-                                        print("Success Result: ", self._current_task.result())
                                         storage = get_storage()
                                         storage.store_item(payload.location, payload.item)
                                         storage.save()
@@ -234,7 +232,6 @@ class RobotWorker(AbstractRobotWorker):
                                             .encode(),
                                         )
                                 case RetrieveCommand(payload=payload):
-                                    print("Retrieve Command Done")
                                     storage = get_storage()
                                     storage.clear_item(payload.location)
                                     storage.save()
@@ -243,17 +240,18 @@ class RobotWorker(AbstractRobotWorker):
                                         RetrievalCompletedEvent().model_dump_json().encode(),
                                     )
                                 case _:
-                                    print("Fell Through: ", self._current_command)
                                     if self._current_command:
                                         await self._js.publish(
                                             self._nats_config.event_queue,
                                             self._current_task.result().model_dump_json().encode(),
                                         )
                                     else:
+                                        print("No Current Command")
+                                        print("Fell Through: ", self._current_command)
+                                        print("Fell Through: ", self._current_task)
                                         print(self._current_task)
                                         # print(self._current_task.result())
                                         # print(self._current_task.exception())
-                            print("Assigning Current Task to None and Command to None")
                             self._current_task = None
                             self._current_command = None
                             if self._msg:
@@ -267,8 +265,6 @@ class RobotWorker(AbstractRobotWorker):
                         await self._robot.handle_command(ReturnCurrentTray())
                     self._msg = None
                     self._current_task = None
-                    #status = await self._robot.status()
-                    #print(status)
         except Exception as e:
             print("Process Commands Error: ", e)
             match self._current_command:
@@ -291,7 +287,6 @@ class RobotWorker(AbstractRobotWorker):
             self._running = False
             self._current_task = None
             await self._robot.handle_command(StopCommand())
-            # self._worker_task = None
             self._msg = None
 
     async def start(self) -> None:
@@ -299,9 +294,7 @@ class RobotWorker(AbstractRobotWorker):
             self._running = True
             if self._worker_task:
                 self._worker_task.cancel()
-            print("Restarting Worker")
             self._worker_task = asyncio.create_task(self.process_commands())
-            print("RobotWorker started.")
 
     async def emergency_command(self, command: RobotCommands) -> None:
         print("Emergency Command: ", command)

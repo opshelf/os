@@ -6,12 +6,12 @@
         "file_name": "size.json" 
     },
     "printer": {
-        "enabled": true
+        "enabled": false
     },
     "scanner": {
-        "enabled": true
+        "enabled": false
     },
     "robot": {
-        "enabled": true
+        "enabled": false
     }
 }
