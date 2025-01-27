@@ -35,6 +35,7 @@ async def main() -> None:
         baudrate=115200,
         loop=asyncio.get_event_loop()
     )
+    await conn.initialize()
     door = TrinamicDoor(
         conn,
         door_config
