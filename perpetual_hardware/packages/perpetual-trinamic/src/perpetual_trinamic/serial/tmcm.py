@@ -114,7 +114,6 @@ class TMCM:
         )
 
     async def set_user_variable(self, variable_number: int, value: int) -> TmclReply:
-        print(variable_number, value)
         return await self._send_message(
             TmclMessage(
                 module_address=self._module_id,
@@ -126,7 +125,6 @@ class TMCM:
         )
 
     async def get_user_variable(self, variable_number: int) -> TmclReply:
-        print(variable_number)
         return await self._send_message(
             TmclMessage(
                 module_address=self._module_id,
