@@ -1,98 +1,21 @@
-from can import AsyncBufferedReader, BusABC, Message, Notifier
-from perpetual_trinamic.tmcl import TMCLCommand, TMCLStatus, TmclMessage, TmclReply, MoveType
+from can import Message
+from perpetual_trinamic.tmcl import (
+    TMCLCommand,
+    TMCLStatus,
+    TmclMessage,
+    TmclReply,
+    MoveType,
+    TmclCommandLoaded,
+    TmclWrongChecksum,
+    TmclInvalidCommand,
+    TmclWrongType,
+    TmclInvalidValue,
+    TmclEepromLocked,
+    TmclCommandNotAvailable,
+    UnknownTmclResponse,
+)
 import struct
-import asyncio
 from perpetual_can import CANBusHandler, AsyncFilteredReader
-
-
-class TmclCommandLoaded(Exception):
-    """Tmcl Command Loaded"""
-
-    def __init__(self, value: TmclReply) -> None:
-        self._value = value
-
-    def __str__(self) -> str:
-        return f"{self.__class__.__name__} {self._value}"
-
-
-class TmclWrongChecksum(Exception):
-    """Tmcl Wrong Checksum"""
-
-    def __init__(self, value: TmclReply) -> None:
-        self._value = value
-
-    def __str__(self) -> str:
-        return f"{self.__class__.__name__} {self._value}"
-
-
-class TmclInvalidCommand(Exception):
-    """Tmcl Invalid Command"""
-
-    def __init__(self, value: TmclReply) -> None:
-        self._value = value
-
-    def __str__(self) -> str:
-        return f"{self.__class__.__name__} {self._value}"
-
-
-class TmclWrongType(Exception):
-    """Tmcl Wrong Type"""
-
-    def __init__(self, value: TmclReply) -> None:
-        self._value = value
-
-    def __str__(self) -> str:
-        return f"{self.__class__.__name__} {self._value}"
-
-
-class TmclInvalidValue(Exception):
-    """Tmcl Invalid Value"""
-
-    def __init__(self, value: TmclReply) -> None:
-        self._value = value
-
-    def __str__(self) -> str:
-        return f"{self.__class__.__name__} {self._value}"
-
-
-class TmclEepromLocked(Exception):
-    """Tmcl Eeprom Locked"""
-
-    def __init__(self, value: TmclReply) -> None:
-        self._value = value
-
-    def __str__(self) -> str:
-        return f"{self.__class__.__name__} {self._value}"
-
-
-class TmclCommandNotAvailable(Exception):
-    """Tmcl Command Not Available"""
-
-    def __init__(self, value: TmclReply) -> None:
-        self._value = value
-
-    def __str__(self) -> str:
-        return f"{self.__class__.__name__} {self._value}"
-
-
-class UnknownTmclResponse(Exception):
-    """Tmcl Unknown Response"""
-
-    def __init__(self, value: TmclReply) -> None:
-        self._value = value
-
-    def __str__(self) -> str:
-        return f"{self.__class__.__name__} {self._value}"
-
-
-class TmclInvalidChecksum(Exception):
-    """Tmcl Invalid Checksum in Response"""
-
-    def __init__(self, value: TmclReply) -> None:
-        self._value = value
-
-    def __str__(self) -> str:
-        return f"{self.__class__.__name__} {self._value}"
 
 
 class TMCM:

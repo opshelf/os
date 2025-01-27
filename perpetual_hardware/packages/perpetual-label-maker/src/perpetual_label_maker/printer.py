@@ -5,15 +5,21 @@ from .label_maker import LabelInformation, LabelMaker
 
 
 class AbstractPrinter(metaclass=ABCMeta):
-    def print(self, payload: LabelPrintPayload, label_information: LabelInformation = LabelInformation()) -> None:
+    def print(
+        self, payload: LabelPrintPayload, label_information: LabelInformation = LabelInformation()
+    ) -> None:
         self._print(payload, label_information)
 
     @abstractmethod
-    def _print(self, payload: LabelPrintPayload, label_information: LabelInformation = LabelInformation()) -> None: ...
+    def _print(
+        self, payload: LabelPrintPayload, label_information: LabelInformation = LabelInformation()
+    ) -> None: ...
 
 
 class MockPrinter(AbstractPrinter):
-    def _print(self, payload: LabelPrintPayload, label_information: LabelInformation = LabelInformation()) -> None:
+    def _print(
+        self, payload: LabelPrintPayload, label_information: LabelInformation = LabelInformation()
+    ) -> None:
         print("printed", payload, label_information)
         return None
 
@@ -29,7 +35,14 @@ class ThermalPrinter(AbstractPrinter):
         label_information: LabelInformation = LabelInformation(),
     ) -> None:
         self._label_maker.create_label(payload, label_information)
-        command = ["lp", "-d", self._printer_name, self._label_maker.settings.output_file, "-o", "fit-to-page"]
+        command = [
+            "lp",
+            "-d",
+            self._printer_name,
+            self._label_maker.settings.output_file,
+            "-o",
+            "fit-to-page",
+        ]
         result = subprocess.run(command, capture_output=True, text=True)
         print(result)
         if result.returncode != 0:

@@ -16,7 +16,7 @@ async def nats_consumer(stop_event: asyncio.Event) -> AsyncGenerator[str, None]:
 
     async def message_handler(msg: Msg) -> None:
         await message_queue.put(msg.data.decode())
-    
+
     sub: Optional[Subscription] = None
     try:
         await nats_client.connect("nats://localhost:4222")

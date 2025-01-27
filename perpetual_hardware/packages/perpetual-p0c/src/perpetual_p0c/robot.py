@@ -257,6 +257,9 @@ class AbstractRobot(metaclass=ABCMeta):
     @abstractmethod
     def holding_tray(self) -> bool: ...
 
+    @abstractmethod
+    async def status(self) -> Optional[RobotStatus]: ...
+
 
 class P0C(AbstractRobot):
     def __init__(self, bus: CANBusHandler, configuration: RobotConfiguration):
@@ -834,7 +837,7 @@ class P0C(AbstractRobot):
         await self.drop_off_item(location)
         self.save_storage()
 
-    async def status(self) -> RobotStatus:
+    async def status(self) -> Optional[RobotStatus]:
         gantry_status = await self._gantry.status()
         workstation_status = await self._workstation.status()
         funnel_status = await self._funnel.status()

@@ -5,7 +5,7 @@ from hardware_common.stepper_motor import (
 )
 from perpetual_trinamic.aio.tmcm12xx import TMCM12xx
 from perpetual_trinamic.tmcl import StatusFlags, TrinamicErrorFlags
-from perpetual_trinamic.aio.common import UserVariables, HomedStatus, HardStopStatus
+from perpetual_trinamic.common import UserVariables, HomedStatus, HardStopStatus
 from perpetual_can import CANBusHandler
 from typing import Optional
 import asyncio

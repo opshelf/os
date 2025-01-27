@@ -52,7 +52,14 @@ class ThermalPrinter(AbstractPrinter):
         label_information: LabelInformation = LabelInformation(),
     ) -> None:
         self._label_maker.create_label(payload, label_information)
-        command = ["lp", "-d", self._printer_name, self._label_maker.settings.output_file, "-o", "fit-to-page"]
+        command = [
+            "lp",
+            "-d",
+            self._printer_name,
+            self._label_maker.settings.output_file,
+            "-o",
+            "fit-to-page",
+        ]
         result = subprocess.run(command, capture_output=True, text=True)
         print(result)
         if result.returncode != 0:

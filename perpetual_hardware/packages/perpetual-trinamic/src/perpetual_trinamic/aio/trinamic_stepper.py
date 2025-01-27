@@ -1,7 +1,4 @@
-from can.notifier import Notifier
-from can import BusABC
 from hardware_common.stepper_motor import (
-    AbstractStepperMotor,
     StepperMotorConfig,
     Rotation,
     StepperMotorStatus,
@@ -10,7 +7,7 @@ from perpetual_trinamic.aio.tmcm12xx import TMCM12xx
 from perpetual_trinamic.tmcl import StatusFlags, TrinamicErrorFlags
 from perpetual_can import CANBusHandler
 import time
-from perpetual_trinamic.aio.common import UserVariables, HomedStatus, HardStopStatus
+from perpetual_trinamic.common import UserVariables, HomedStatus, HardStopStatus
 from pydantic import BaseModel
 
 

@@ -1,3 +1,4 @@
+from nats import connect
 from nats.aio.msg import Msg
 from nats.js.errors import NotFoundError
 from perpetual_p0c.storage import CellItem, Dimensions, StorageGrid
@@ -10,6 +11,7 @@ from perpetual_p0c.robot import (
     RetrievePayload,
     ReturnCurrentTray,
     RobotConfiguration,
+    RobotStatus,
     StopCommand,
     StoreCommand,
     RetrieveCommand,
@@ -40,6 +42,7 @@ class RobotNatsConfiguration(BaseModel):
     stream_name: str = "robot"
     command_queue: str = "commands"
     event_queue: str = "events"
+    status_queue: str = "status"
 
 
 NATS_CONFIG = RobotNatsConfiguration()
@@ -47,6 +50,12 @@ NATS_CONFIG = RobotNatsConfiguration()
 RobotEvents = Union[RobotCommands, StorageEvents]
 RobotEventAdapter = TypeAdapter[RobotEvents](RobotEvents)
 RobotCommandAdapter = TypeAdapter[RobotCommands](RobotCommands)
+
+
+class WorkerStatus(BaseModel):
+    robot_status: Optional[RobotStatus]
+    running: bool
+    current_command: Optional[RobotCommands]
 
 
 class RobotClient(AbstractRobotClient):
@@ -133,7 +142,6 @@ class RobotWorker(AbstractRobotWorker):
         return self._client
 
     async def process_commands(self) -> None:
-        # adapter = TypeAdapter[RobotCommands](RobotCommands)
         try:
             while self._running:
                 try:
@@ -163,6 +171,16 @@ class RobotWorker(AbstractRobotWorker):
                                     )
                                     self._msg = msg[0]
                                     self._current_command = store_cmd
+                                    await self._nc.publish(
+                                        self._nats_config.status_queue,
+                                        WorkerStatus(
+                                            robot_status=None,
+                                            running=True,
+                                            current_command=store_cmd,
+                                        )
+                                        .model_dump_json()
+                                        .encode(),
+                                    )
                                 else:
                                     await self._js.publish(
                                         self._nats_config.event_queue,
@@ -183,12 +201,28 @@ class RobotWorker(AbstractRobotWorker):
                                 )
                                 self._msg = msg[0]
                                 self._current_command = retrieve
+                                await self._nc.publish(
+                                    self._nats_config.status_queue,
+                                    WorkerStatus(
+                                        robot_status=None, running=True, current_command=retrieve
+                                    )
+                                    .model_dump_json()
+                                    .encode(),
+                                )
                             case RetrieveCommand(payload=payload):
                                 self._current_task = asyncio.create_task(
                                     self._robot.handle_command(cmd)
                                 )
                                 self._msg = msg[0]
                                 self._current_command = cmd
+                                await self._nc.publish(
+                                    self._nats_config.status_queue,
+                                    WorkerStatus(
+                                        robot_status=None, running=True, current_command=cmd
+                                    )
+                                    .model_dump_json()
+                                    .encode(),
+                                )
                             case InputPlacedEvent():
                                 pass
                             case StoringCompletedEvent():
@@ -205,6 +239,14 @@ class RobotWorker(AbstractRobotWorker):
                                 )
                                 self._current_command = cmd
                                 self._msg = msg[0]
+                                await self._nc.publish(
+                                    self._nats_config.status_queue,
+                                    WorkerStatus(
+                                        robot_status=None, running=True, current_command=cmd
+                                    )
+                                    .model_dump_json()
+                                    .encode(),
+                                )
                     else:
                         if self._current_task and self._current_task.done():
                             match self._current_command:
@@ -245,6 +287,7 @@ class RobotWorker(AbstractRobotWorker):
                                             self._nats_config.event_queue,
                                             self._current_task.result().model_dump_json().encode(),
                                         )
+
                                     else:
                                         print("No Current Command")
                                         print("Fell Through: ", self._current_command)
@@ -257,7 +300,7 @@ class RobotWorker(AbstractRobotWorker):
                             if self._msg:
                                 await self._msg.ack()
                                 self._msg = None
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(0.05)
                 except (TimeoutError, asyncio.CancelledError) as e:
                     if self._msg:
                         await self._msg.ack()
@@ -265,6 +308,13 @@ class RobotWorker(AbstractRobotWorker):
                         await self._robot.handle_command(ReturnCurrentTray())
                     self._msg = None
                     self._current_task = None
+                    status = await self._robot.status()
+                    await self._nc.publish(
+                        self._nats_config.status_queue,
+                        WorkerStatus(robot_status=status, running=True, current_command=None)
+                        .model_dump_json()
+                        .encode(),
+                    )
         except Exception as e:
             print("Process Commands Error: ", e)
             match self._current_command:
@@ -288,6 +338,7 @@ class RobotWorker(AbstractRobotWorker):
             self._current_task = None
             await self._robot.handle_command(StopCommand())
             self._msg = None
+            self._status = WorkerStatus(robot_status=None, running=False, current_command=None)
 
     async def start(self) -> None:
         if not self._running:
@@ -295,6 +346,7 @@ class RobotWorker(AbstractRobotWorker):
             if self._worker_task:
                 self._worker_task.cancel()
             self._worker_task = asyncio.create_task(self.process_commands())
+            self._status = WorkerStatus(robot_status=None, running=True, current_command=None)
 
     async def emergency_command(self, command: RobotCommands) -> None:
         print("Emergency Command: ", command)
@@ -316,6 +368,7 @@ class RobotWorker(AbstractRobotWorker):
                 await self._worker_task
             await self._robot.handle_command(StopCommand())
             print("RobotWorker shut down.")
+            self._status = WorkerStatus(robot_status=None, running=False, current_command=None)
 
     async def clear_commands(self) -> None:
         if self._js:

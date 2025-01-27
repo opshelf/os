@@ -1,3 +1,4 @@
+from typing import Optional
 from perpetual_p0c.robot import (
     AbstractRobot,
     AckResponse,
@@ -5,6 +6,7 @@ from perpetual_p0c.robot import (
     RobotConfiguration,
     RobotCommands,
     RobotState,
+    RobotStatus,
     StoreCommand,
     StopCommand,
     HomeCommand,
@@ -59,7 +61,7 @@ class MockRobot(AbstractRobot):
                 await asyncio.sleep(random.random() * 20)
                 return AckResponse(
                     command=command,
-                        message="homed",
+                    message="homed",
                     status=ResponseStatus.COMPLETED,
                 )
             case StopCommand():
@@ -81,3 +83,6 @@ class MockRobot(AbstractRobot):
 
     def holding_tray(self) -> bool:
         return False
+
+    async def status(self) -> Optional[RobotStatus]:
+        return None

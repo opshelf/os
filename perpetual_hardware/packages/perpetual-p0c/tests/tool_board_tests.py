@@ -1,5 +1,5 @@
 from perpetual_p0c.utils import get_can_bus
-from perpetual_p0c.tool_board import ToolBoard
+from perpetual_p0c.tool_board import IoBoard, ToolBoard
 import asyncio
 
 async def main() -> None:
@@ -9,6 +9,21 @@ async def main() -> None:
         sensors = await tool.get_state()
         if sensors:
             print(sensors)
+        await asyncio.sleep(1)
+        await tool.set_carriage(IoBoard(
+            r1=True
+        ))
+        await asyncio.sleep(1)
+        await tool.set_carriage(IoBoard(
+            r2=True
+        ))
+        await asyncio.sleep(1)
+        await tool.set_carriage(IoBoard(
+            r2=True
+        ))
+        await tool.set_carriage(IoBoard(
+        ))
+        await asyncio.sleep(10)
 
 
 

@@ -1,7 +1,9 @@
 from dataclasses import dataclass
 from enum import IntEnum
+from can import Message
 from pydantic import BaseModel, model_validator, Field
-from typing import Self
+from typing import Self, List
+import struct
 
 
 class TMCLCommand:
@@ -164,6 +166,25 @@ class TmclMessage:
     motor_number: int
     value: int
 
+    def into_can_message(self) -> Message:
+        payload = [self.command_number, self.type_number, self.motor_number]
+        payload.extend(list(struct.pack(">i", self.value)))
+        return Message(
+            arbitration_id=int(self.module_address),
+            data=payload,
+            is_extended_id=False,
+        )
+
+    def into_serial_buffer(self) -> List[int]:
+        payload = [self.module_address, self.command_number, self.type_number, self.motor_number]
+        payload.extend(list(struct.pack(">i", self.value)))
+        checksum = 0
+        for d in payload:
+            checksum += d
+        checksum &= 0xFF
+        payload.append(checksum)
+        return payload
+
 
 @dataclass
 class TmclReply:
@@ -173,7 +194,113 @@ class TmclReply:
     value: int
 
 
+    @staticmethod
+    def from_serial_buffer(data: List[int] | bytearray | bytes) -> "TmclReply":
+        if len(data) != 9:
+            raise Exception("Invalid Data Length")
+        checksum = TmclReply.calculate_checksum(data[:-1])
+        if checksum != data[-1]:
+            raise Exception("Invalid Checksum in Reception")
+        payload = bytearray(data[4:8])
+        return TmclReply(
+            module_address=data[1],
+            command_number=data[3],
+            status=data[2],
+            value=struct.unpack(">i", payload)[0],
+        )
+
+    @staticmethod
+    def calculate_checksum(data: List[int] | bytearray | bytes) -> int:
+        checksum = 0
+        for d in data:
+            checksum += d
+        checksum &= 0xFF
+        return checksum
+
 class MoveType(IntEnum):
     ABSOLUTE = 0
     RELATIVE = 1
     COORDINATE = 2
+
+
+# TODO: REFACTOR TO USE SINGLE BASE EXCEPTION FOR INVALID COMMANDS
+
+
+class TmclCommandLoaded(Exception):
+    """Tmcl Command Loaded"""
+
+    def __init__(self, value: TmclReply) -> None:
+        self._value = value
+
+    def __str__(self) -> str:
+        return f"{self.__class__.__name__} {self._value}"
+
+
+class TmclWrongChecksum(Exception):
+    """Tmcl Wrong Checksum"""
+
+    def __init__(self, value: TmclReply) -> None:
+        self._value = value
+
+    def __str__(self) -> str:
+        return f"{self.__class__.__name__} {self._value}"
+
+
+class TmclInvalidCommand(Exception):
+    """Tmcl Invalid Command"""
+
+    def __init__(self, value: TmclReply) -> None:
+        self._value = value
+
+    def __str__(self) -> str:
+        return f"{self.__class__.__name__} {self._value}"
+
+
+class TmclWrongType(Exception):
+    """Tmcl Wrong Type"""
+
+    def __init__(self, value: TmclReply) -> None:
+        self._value = value
+
+    def __str__(self) -> str:
+        return f"{self.__class__.__name__} {self._value}"
+
+
+class TmclInvalidValue(Exception):
+    """Tmcl Invalid Value"""
+
+    def __init__(self, value: TmclReply) -> None:
+        self._value = value
+
+    def __str__(self) -> str:
+        return f"{self.__class__.__name__} {self._value}"
+
+
+class TmclEepromLocked(Exception):
+    """Tmcl Eeprom Locked"""
+
+    def __init__(self, value: TmclReply) -> None:
+        self._value = value
+
+    def __str__(self) -> str:
+        return f"{self.__class__.__name__} {self._value}"
+
+
+class TmclCommandNotAvailable(Exception):
+    """Tmcl Command Not Available"""
+
+    def __init__(self, value: TmclReply) -> None:
+        self._value = value
+
+    def __str__(self) -> str:
+        return f"{self.__class__.__name__} {self._value}"
+
+
+class UnknownTmclResponse(Exception):
+    """Tmcl Unknown Response"""
+
+    def __init__(self, value: TmclReply) -> None:
+        self._value = value
+
+    def __str__(self) -> str:
+        return f"{self.__class__.__name__} {self._value}"

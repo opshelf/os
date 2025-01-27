@@ -1,4 +1,4 @@
-from perpetual_trinamic.aio.common import HomedStatus
+from perpetual_trinamic.common import HomedStatus
 from perpetual_p0c.robot import P0C
 import asyncio
 from perpetual_p0c.storage import CellItem, Dimensions, StorageModuleCellLocation, StorageModuleSide, StorageModuleTrayLocation, Tray, CalibrationCoordinate
