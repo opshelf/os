@@ -42,9 +42,10 @@ def get_usb_serial() -> List[UsbInfo]:
         ports.append(UsbInfo(**data))
     return ports
 
+def get_port() -> UsbInfo:
+    for port in get_usb_serial():
+        if port.description and "Trinamic" in port.description:
+            return port
+    raise Exception("No Device Found")
 
-#def get_waveshare_port() -> Optional[str]:
-#    for port in get_usb_serial():
-#        if port.description and "USBKey" in port.description:
-#            return port.device.replace("/dev/cu", "/dev/tty")
-#    return None
+

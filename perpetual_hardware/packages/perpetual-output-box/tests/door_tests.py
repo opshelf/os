@@ -1,6 +1,7 @@
 import asyncio
 from perpetual_output_box.controller import TrinamicUsbConnection, TrinamicDoor, DoorConfiguration
 from hardware_common.stepper_motor import StepperMotorConfig, Rotation
+from perpetual_output_box.utils import get_port
 
 async def main() -> None:
     stepper_config=StepperMotorConfig(
@@ -28,8 +29,9 @@ async def main() -> None:
         module_id=1,
         motor_id=0
     )
+    port = get_port()
     conn = TrinamicUsbConnection(
-        port="/dev/ttyAMA0", 
+        port=port.device, 
         baudrate=115200,
         loop=asyncio.get_event_loop()
     )
