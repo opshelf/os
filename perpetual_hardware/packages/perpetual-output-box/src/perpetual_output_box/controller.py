@@ -74,7 +74,7 @@ class TrinamicDoor(AbstractDoor):
 class RpiIO(AbstractIO):
 
     def __init__(self, 
-        chip_name: str ='gpiochip0', 
+        chip_name: str ='/dev/gpiochip0', 
         door_pin: int = 5, 
         banner_pin: int = 17, 
         lock_pin: int = 22
