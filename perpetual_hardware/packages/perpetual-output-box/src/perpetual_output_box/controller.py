@@ -7,7 +7,13 @@ import asyncio
 import serial_asyncio
 from typing import Optional
 import concurrent.futures
-import gpiod #type: ignore
+#import sys
+#if sys.platform == "linux":
+#    from perpetual_output_box.mock_io import 
+#else:
+#    from perpetual_output_box.mock_io import MockIO
+#    import gpiod #type: ignore
+#    from gpiod.line import Direction, Value #type: ignore
 
 
 class TrinamicUsbConnection(TrinamicTransporter):
@@ -69,79 +75,6 @@ class TrinamicDoor(AbstractDoor):
 
     async def home(self) -> None:
         await self._axis.home()
-
-
-class RpiIO(AbstractIO):
-
-    def __init__(self, 
-        chip_name: str ='/dev/gpiochip0', 
-        door_pin: int = 5, 
-        banner_pin: int = 17, 
-        lock_pin: int = 22
-        ) -> None:
-        self._chip = gpiod.Chip(chip_name)
-        self._door_pin = door_pin
-        self._banner_pin = banner_pin
-        self._lock_pin = lock_pin
-
-        self._door_line = None
-        self._banner_line = None
-        self._lock_line = None
-        self._setup_gpio()
-
-    def _setup_gpio(self) -> None:
-        """Configure input and output lines"""
-        try:
-            # Configure input pins with pull-up
-            input_req = gpiod.line_request()
-            input_req.consumer = "banner"
-            input_req.request_type = gpiod.line_request.DIRECTION_INPUT
-
-            self._banner_line = self._chip.get_line(self._banner_pin)
-            self._banner_line.request(input_req)
-
-            input_req = gpiod.line_request()
-            input_req.consumer = "door"
-            input_req.request_type = gpiod.line_request.DIRECTION_INPUT
-
-            self._door_line = self._chip.get_line(self._door_pin)
-            self._door_line.request(input_req)
-
-            output_req = gpiod.line_request()
-            output_req.consumer = "lock"
-            output_req.request_type = gpiod.line_request.DIRECTION_OUTPUT
-
-            self._lock_line = self._chip.get_line(self._lock_pin)
-            self._lock_line.request(output_req, default_val=0)
-
-        except Exception as e:
-            self.close()
-            raise RuntimeError(f"GPIO setup failed: {str(e)}")
-
-    def get_door_sensor(self) -> bool: 
-        if self._door_line:
-            return self._door_line.get_value()
-        raise Exception("Door Line not Initialized")
-
-    def get_break_beam_sensor(self) -> bool: 
-        if self._banner_line:
-            return self._banner_line.get_value()
-        raise Exception("Banner Line not Initialized")
-
-    def set_door_locked(self, door_locked: bool) -> None:
-        if self._lock_line:
-            self._lock_line.set_value(1 if door_locked else 0)
-        raise Exception("Lock Line not Initialized")
-
-    def close(self):
-        if self._door_line:
-            self._door_line.release()
-        if self._banner_line:
-            self._banner_line.release()
-        if self._lock_line:
-            self._lock_line.release()
-        self._chip.close()
-
 
 class OutputBox:
 

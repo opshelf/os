@@ -1,4 +1,4 @@
-from perpetual_output_box.controller import RpiIO
+from perpetual_output_box.rpi_io import RpiIO
 import time
 
 
