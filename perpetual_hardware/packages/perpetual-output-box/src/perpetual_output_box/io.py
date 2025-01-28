@@ -1,6 +1,7 @@
 from abc import ABCMeta, abstractmethod
 
 from hardware_common.stepper_motor import StepperMotorConfig
+from perpetual_trinamic.serial.trinamic_axis import AxisStatus
 from pydantic import BaseModel
 
 
@@ -20,6 +21,9 @@ class AbstractIO(metaclass=ABCMeta):
     def get_break_beam_sensor(self) -> bool: ...
 
     @abstractmethod
+    def get_lock(self) -> bool: ...
+
+    @abstractmethod
     def set_door_locked(self, door_locked: bool) -> None: ...
 
 
@@ -35,3 +39,6 @@ class AbstractDoor(metaclass=ABCMeta):
 
     @abstractmethod
     async def home(self) -> None: ...
+
+    @abstractmethod
+    async def status(self) -> AxisStatus: ...

@@ -45,6 +45,7 @@ async fn workstation_monitor(
     input_10: embassy_stm32::gpio::Input<'static>,
 ) -> ! {
     /* Output Box 2: input 9 */
+    /* Output Box 3: input 6 */
     const DEBOUNCE: u64 = 2;
     defmt::info!("{:?}", input_6.is_low());
     defmt::info!("{:?}", input_7.is_low());
@@ -71,9 +72,28 @@ async fn workstation_monitor(
                     .await;
                 let _ = embassy_time::Timer::after_millis(100).await;
             }
-        } else {
-            let _ = embassy_time::Timer::after_millis(10).await;
         }
+        if input_6.is_low() {
+            let t0 = embassy_time::Instant::now();
+            let mut invalid = false;
+            while (embassy_time::Instant::now() - t0).as_millis() < DEBOUNCE {
+                if input_6.is_high() {
+                    invalid = true;
+                    break;
+                }
+                let _ = embassy_time::Timer::after_millis(1).await;
+            }
+            if !invalid {
+                SENSOR_CHANNEL
+                    .send(Sensors {
+                        output_box_3: true,
+                        ..Default::default()
+                    })
+                    .await;
+                let _ = embassy_time::Timer::after_millis(100).await;
+            }
+        }
+        let _ = embassy_time::Timer::after_millis(10).await;
         //defmt::info!(
         //    "6: {} 7: {} 8: {} 9: {} 10: {}",
         //    input_6.is_low(),
@@ -273,6 +293,12 @@ async fn can_receive_task(
                     .await;
                 }
             }
+            //else {
+            //    match e.frame.id() {
+            //        embedded_can::Id::Standard(s) => defmt::info!("{}", s.as_raw()),
+            //        _ => (),
+            //    }
+            //}
         }
     }
 }
@@ -307,19 +333,28 @@ impl<'a> IoBoard<'a> {
             filter: can::filter::FilterType::DedicatedSingle(
                 embedded_can::StandardId::new(200).unwrap(),
             ),
-            action: embassy_stm32::can::filter::Action::StoreInFifo1,
+            action: embassy_stm32::can::filter::Action::StoreInFifo0,
         };
         can.properties()
             //.set_standard_filter(can::filter::StandardFilterSlot::_0, filter);
             .set_standard_filter(can::filter::StandardFilterSlot::_0, filter);
-        //for slot_num in 1..28 {
-        //    let mut f = can::filter::StandardFilter::reject_all();
-        //    can.properties().set_standard_filter(
-        //        //StandardFilterSlot::from(slot_num as u8),
-        //        StandardFilterSlot::from(slot_num as u8),
-        //        filter,
-        //    );
-        //}
+
+        can.config().set_automatic_retransmit(true);
+        can.config()
+            .set_global_filter(embassy_stm32::can::config::GlobalFilter {
+                handle_standard_frames: can::config::NonMatchingFilter::Reject,
+                handle_extended_frames: can::config::NonMatchingFilter::Reject,
+                reject_remote_standard_frames: false,
+                reject_remote_extended_frames: false,
+            });
+        for slot_num in 1..28 {
+            let mut f = can::filter::StandardFilter::reject_all();
+            can.properties().set_standard_filter(
+                //StandardFilterSlot::from(slot_num as u8),
+                embassy_stm32::can::filter::StandardFilterSlot::from(slot_num as u8),
+                f,
+            );
+        }
 
         can.set_bitrate(500_000);
         let can_handle = can.into_normal_mode();

@@ -1,80 +1,33 @@
-from perpetual_trinamic.base import TrinamicTransporter
-from perpetual_trinamic.tmcl import TmclReply, TmclMessage
-from perpetual_output_box.io import AbstractIO, AbstractDoor, DoorConfiguration
-from perpetual_trinamic.serial.trinamic_axis import TrinamicAxis
-from typing import Optional
+from perpetual_trinamic.serial.trinamic_axis import AxisStatus
+from pydantic import BaseModel
+from perpetual_output_box.io import AbstractIO, AbstractDoor
+from perpetual_output_box.door import DoorConfiguration
 import asyncio
-import serial_asyncio
-from typing import Optional
-import concurrent.futures
-#import sys
-#if sys.platform == "linux":
-#    from perpetual_output_box.mock_io import 
-#else:
-#    from perpetual_output_box.mock_io import MockIO
-#    import gpiod #type: ignore
-#    from gpiod.line import Direction, Value #type: ignore
+from enum import Enum
+
+class DoorState(str, Enum):
+    OPEN = "OPEN"
+    CLOSED = "CLOSED"
+
+class LockState(str, Enum):
+    LOCKED = "LOCKED"
+    UNLOCKED = "UNLOCKED"
+
+class BreakBeamState(str, Enum):
+    OBSTRUCTED = "OBSTRUCTED"
+    UNOBSTRUCTED = "UNOBSTRUCTED"
 
 
-class TrinamicUsbConnection(TrinamicTransporter):
-
-    def __init__(self, port: str, baudrate: int, loop: asyncio.AbstractEventLoop) -> None:
-        self._port = port
-        self._baudrate = baudrate
-        self._reader: Optional[asyncio.StreamReader] = None
-        self._writer: Optional[asyncio.StreamWriter] = None
-        self._loop = loop
-        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
-
-    async def initialize(self) -> None:
-        self._reader, self._writer = await serial_asyncio.open_serial_connection(
-            url=self._port, baudrate=self._baudrate
-        )
-
-    async def read(self) -> bytes:
-        if not self._reader:
-            raise ConnectionError("Serial connection is not established. Call connect() first.")
-        data = await self._reader.readexactly(9)
-        return data
-
-    async def shutdown(self) -> None:
-        if self._writer:
-            self._writer.close()
-            await self._writer.wait_closed()
-
-    async def send_message(
-        self, message: TmclMessage, timeout: Optional[float] = 1.0
-    ) -> TmclReply: 
-        if not self._writer:
-            raise ConnectionError("Serial connection is not established. Call connect() first.")
-        await self._loop.run_in_executor(self._executor, self._writer.write, bytes(message.into_serial_buffer()))
-        # TODO: FLUSH BUFFER ON FAILED READ
-        async with asyncio.timeout(timeout):
-            raw_reply = await self.read()
-            return TmclReply.from_serial_buffer(raw_reply)
+class OutputBoxConfiguration(BaseModel):
+    door_configuration: DoorConfiguration
 
 
-class TrinamicDoor(AbstractDoor):
+class OutputBoxStatus(BaseModel):
+    door_state: DoorState
+    break_beam_state: BreakBeamState
+    lock_state: LockState
+    door: AxisStatus
 
-    def __init__(self, transport: TrinamicTransporter, configuration: DoorConfiguration) -> None:
-        self._transport = transport
-        self._configuration = configuration
-        self._axis = TrinamicAxis(transport, configuration.axis_configuration, configuration.module_id, configuration.motor_id) 
-
-    async def initialize(self) -> None:
-        await self._axis.initialize()
-
-    async def open_door(self) -> None: 
-        await self._axis.move_to_position(self._configuration.open_position)
-
-    async def close_door(self) -> None:
-        await self._axis.move_to_position(self._configuration.closed_position)
-
-    async def axis(self) -> TrinamicAxis:
-        return self._axis
-
-    async def home(self) -> None:
-        await self._axis.home()
 
 class OutputBox:
 
@@ -89,3 +42,82 @@ class OutputBox:
     @property
     def io(self) -> AbstractIO:
         return self._io
+
+    async def initialize(self) -> None:
+        await self.initialize()
+
+    async def receive_item(self) -> None:
+        await self._door.open_door()
+        await self.lock_door()
+        beam_obstructed = False
+        try:
+            async with asyncio.timeout(20):
+                while True:
+                    door_state = await self.get_door_state()
+                    beam_state = await self.get_break_beam_state()
+                    if door_state == DoorState.OPEN:
+                        raise Exception("Door Was Opened")
+                    if beam_state == BreakBeamState.OBSTRUCTED:
+                        beam_obstructed = True
+                    if beam_obstructed and beam_state == BreakBeamState.UNOBSTRUCTED:
+                        break
+                    await asyncio.sleep(0.01)
+            await asyncio.sleep(0.5)
+            await self.close_door()
+            await self.unlock_door()
+        except asyncio.TimeoutError:
+            await self.close_door()
+            await self.unlock_door()
+
+    async def status(self) -> OutputBoxStatus:
+        door_state = await self.get_door_state()
+        break_beam_state = await self.get_break_beam_state()
+        door_status = await self._door.status()
+        lock_state = await self.get_lock_state()
+        return OutputBoxStatus(
+            door_state=door_state,
+            break_beam_state=break_beam_state,
+            door=door_status,
+            lock_state=lock_state
+        )
+
+    async def close_door(self) -> None:
+        await self._door.close_door()
+
+    async def lock_door(self) -> None:
+        self._io.set_door_locked(True)
+
+    async def unlock_door(self) -> None:
+        self._io.set_door_locked(False)
+
+    async def get_lock_state(self) -> LockState:
+        """PNP NO OUTPUT"""
+        door_sensor = self._io.get_lock()
+        if door_sensor:
+            return LockState.LOCKED
+        else:
+            return LockState.UNLOCKED
+
+    async def get_door_state(self) -> DoorState:
+        """PNP NO OUTPUT"""
+        door_sensor = self._io.get_door_sensor()
+        if door_sensor:
+            return DoorState.CLOSED
+        else:
+            return DoorState.OPEN
+
+    async def get_break_beam_state(self) -> BreakBeamState:
+        """NPN NO OUTPUT"""
+        beam_sensor = self._io.get_break_beam_sensor()
+        if beam_sensor:
+            return BreakBeamState.UNOBSTRUCTED
+        else:
+            return BreakBeamState.OBSTRUCTED
+
+    
+    async def handle_command(self, command: OutputBoxCommand) -> OutputBoxEvent:
+
+
+
+
+

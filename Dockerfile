@@ -1,8 +1,20 @@
-FROM python:3.12-slim-bookworm
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
-
+FROM ghcr.io/astral-sh/uv:alpine
+RUN apk update
+RUN apk add --no-cache bash
+RUN apk add curl
+RUN apk add --no-cache python3~=3.12
+# RUN curl https://sh.rustup.rs -sSf | bash -s -- -y
+RUN apk add --no-cache rust cargo
+# RUN echo 'source $HOME/.cargo/env' >> $HOME/.bashrc
+RUN apk add maturin
 ADD . /app
-
-WORKDIR /app
-RUN cd perpetual_hardware
+WORKDIR /app/perpetual_hardware
+ENV PATH=/root/.local/bin:$PATH
+RUN echo 'export "PATH=$PATH:my_path"' >> /etc/profile
 RUN uv sync --frozen
+WORKDIR /app/perpetual_hardware/packages/perpetual-p0c-server
+EXPOSE 8000
+EXPOSE 4222
+EXPOSE 8222
+ENTRYPOINT ["uv", "run", "start"]
+

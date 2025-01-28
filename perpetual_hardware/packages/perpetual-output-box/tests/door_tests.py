@@ -1,5 +1,5 @@
 import asyncio
-from perpetual_output_box.controller import TrinamicUsbConnection, TrinamicDoor, DoorConfiguration
+from perpetual_output_box.door import TrinamicUsbConnection, TrinamicDoor, DoorConfiguration
 from hardware_common.stepper_motor import StepperMotorConfig, Rotation
 from perpetual_output_box.utils import get_port
 

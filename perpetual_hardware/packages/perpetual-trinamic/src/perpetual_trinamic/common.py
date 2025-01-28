@@ -14,3 +14,5 @@ class HomedStatus(IntEnum):
 class HardStopStatus(IntEnum):
     NOT_HARD_STOPPED = 0x00
     HARD_STOPPED = 0x01
+
+

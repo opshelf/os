@@ -43,6 +43,12 @@ class RpiIO(AbstractIO):
             return True
         return False
 
+    def get_lock(self) -> bool: 
+        value = self._request.get_value(self._lock_pin)
+        if value == Value.ACTIVE:
+            return True
+        return False
+
     def set_door_locked(self, door_locked: bool) -> None:
         self._request.set_value(self._lock_pin, Value.ACTIVE if door_locked else Value.INACTIVE)
 
