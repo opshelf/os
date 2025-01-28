@@ -5,6 +5,7 @@ from perpetual_p0c_server.core.events import GS1Raw, LabelScannedEvent
 from pydantic import BaseModel
 from enum import Enum
 from nats.aio.client import Client as NATS
+from typing import Optional, List
 import asyncio
 
 
@@ -60,13 +61,13 @@ class AbstractScanner(metaclass=ABCMeta):
 class ScannerWorker:
     def __init__(
         self,
-        scanner: AbstractScanner,
+        scanners: List[AbstractScanner],
         nats_url: str,
         scanner_event_queue: str,
         scanner_events_queue: str,
     ) -> None:
         self._nats_url = nats_url
-        self._scanner = scanner
+        self._scanners = scanners
         self._scanner_queue = scanner_event_queue
         self._scanner_events = scanner_events_queue
         self._nc = NATS()
@@ -75,12 +76,23 @@ class ScannerWorker:
 
     async def connect(self) -> None:
         await self._nc.connect(servers=[self._nats_url])
-        await self._scanner.initialize()
+        for scanner in self._scanners:
+            await scanner.initialize()
+
+
+    async def initiate_scan_wait(self) -> Optional[GS1Data]:
+        tasks = [asyncio.create_task(scanner.scan()) for scanner in self._scanners]
+        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        first_result = done.pop().result()
+        for task in pending:
+            task.cancel()
+        return first_result
+
 
     async def run(self) -> None:
         while self._running:
             try:
-                result = await self._scanner.scan()
+                result = await self.initiate_scan_wait()
                 if result:
                     print(result)
                     await self._nc.publish(self._scanner_queue, result.model_dump_json().encode())
@@ -108,4 +120,5 @@ class ScannerWorker:
 
     async def close(self) -> None:
         await self._nc.close()
-        await self._scanner.shutdown()
+        for scanner in self._scanners:
+            await scanner.shutdown()
