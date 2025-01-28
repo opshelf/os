@@ -218,7 +218,9 @@ const ConfigurationEditor = ({
           <AccordionItem value="outputbox">
             <AccordionTrigger>Output Box</AccordionTrigger>
             <AccordionContent>
-              <OutputBoxConfigurationEditor fieldName="workstation.outputbox_configuration" />
+              <OutputBoxConfigurationEditor fieldName="workstation.outputbox_1_configuration" />
+              <OutputBoxConfigurationEditor fieldName="workstation.outputbox_2_configuration" />
+              <OutputBoxConfigurationEditor fieldName="workstation.outputbox_3_configuration" />
             </AccordionContent>
           </AccordionItem>
         </Accordion>

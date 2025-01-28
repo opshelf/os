@@ -449,7 +449,7 @@ const Storage = () => {
     <Drawer>
       <StorageDesigner storageData={data} />
       <DrawerTrigger asChild>
-        <div className="block bg-white fixed w-12 h-12 z-20 bottom-4 left-2/4 right-2/4 drop-shadow-2xl">
+        <div className="block bg-white fixed w-12 h-12 z-20 bottom-10 left-2/4 right-2/4 drop-shadow-2xl">
           <div className="relative h-full w-full">
             <img
               src="/assets/icon.png"

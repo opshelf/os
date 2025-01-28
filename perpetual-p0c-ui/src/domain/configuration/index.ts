@@ -19,7 +19,6 @@ export const funnelConfigurationSchema = z.object({
   diverter_50mm_pos: z.number(),
   diverter_100mm_pos: z.number(),
   diverter_150mm_pos: z.number(),
-  relay_board_id: z.number(),
   belt_speed: z.number(),
   wall_speed: z.number(),
   output_transfer_conveyor_speed: z.number(),
@@ -36,7 +35,9 @@ export const outputBoxConfigurationSchema = z.object({
 });
 
 export const workstationConfigurationSchema = z.object({
-  outputbox_configuration: outputBoxConfigurationSchema,
+  outputbox_1_configuration: outputBoxConfigurationSchema,
+  outputbox_2_configuration: outputBoxConfigurationSchema,
+  outputbox_3_configuration: outputBoxConfigurationSchema,
   input_belt_configuration: axisSchema,
   output_belt_configuration: axisSchema,
   input_belt_speed: z.number(),
