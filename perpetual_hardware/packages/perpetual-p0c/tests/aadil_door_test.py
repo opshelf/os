@@ -29,7 +29,7 @@ async def main() -> None:
             max_acceleration=200,
             min_travel=None,
             max_travel=None,
-            invert_coordinates=False,
+            invert_coordinates=True,
             home_direction=Rotation.CW,
             homing_speed=100,
         ),

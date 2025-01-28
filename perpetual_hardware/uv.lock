@@ -451,6 +451,8 @@ source = { editable = "packages/perpetual-trinamic" }
 dependencies = [
     { name = "hardware-common", marker = "(platform_machine != 'aarch64' and python_full_version >= '3.12') or (platform_system != 'Linux' and python_full_version >= '3.12') or platform_system == 'Darwin' or (platform_machine == 'aarch64' and platform_system == 'Linux')" },
     { name = "perpetual-can", marker = "(platform_machine != 'aarch64' and python_full_version >= '3.12') or (platform_system != 'Linux' and python_full_version >= '3.12') or platform_system == 'Darwin' or (platform_machine == 'aarch64' and platform_system == 'Linux')" },
+    { name = "pyserial", marker = "(platform_machine != 'aarch64' and python_full_version >= '3.12') or (platform_system != 'Linux' and python_full_version >= '3.12') or platform_system == 'Darwin' or (platform_machine == 'aarch64' and platform_system == 'Linux')" },
+    { name = "pyserial-asyncio", marker = "(platform_machine != 'aarch64' and python_full_version >= '3.12') or (platform_system != 'Linux' and python_full_version >= '3.12') or platform_system == 'Darwin' or (platform_machine == 'aarch64' and platform_system == 'Linux')" },
     { name = "python-can", marker = "(platform_machine != 'aarch64' and python_full_version >= '3.12') or (platform_system != 'Linux' and python_full_version >= '3.12') or platform_system == 'Darwin' or (platform_machine == 'aarch64' and platform_system == 'Linux')" },
 ]
 
@@ -458,6 +460,8 @@ dependencies = [
 requires-dist = [
     { name = "hardware-common", editable = "packages/hardware-common" },
     { name = "perpetual-can", editable = "packages/perpetual-can" },
+    { name = "pyserial", specifier = ">=3.5" },
+    { name = "pyserial-asyncio", specifier = ">=0.6" },
     { name = "python-can", specifier = ">=4.4.2" },
 ]
 
