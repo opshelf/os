@@ -612,7 +612,7 @@ class P0C(AbstractRobot):
                         else:
                             raise Exception("Invalid Output Box")
                 elif tracking == BottleTracking.CLOSE_DOOR:
-                    await self.workstation.close_output(output_idx)
+                    await self.workstation.close_output(output_idx+1)
                     await self.workstation.stop_output_belt()
                     tracking = BottleTracking.RESET
                 elif tracking == BottleTracking.RESET:
