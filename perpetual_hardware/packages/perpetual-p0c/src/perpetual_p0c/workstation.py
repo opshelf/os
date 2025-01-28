@@ -227,9 +227,9 @@ class Workstation(AbstractSubsystem[WorkstationConfiguration, WorkstationStatus]
 
     async def close_output(self, idx: int = 0) -> None:
         if idx == 0:
-            await self._output_box_1.open()
-            await self._output_box_2.open()
-            await self._output_box_3.open()
+            await self._output_box_1.close()
+            await self._output_box_2.close()
+            await self._output_box_3.close()
         elif idx == 1:
             await self._output_box_1.close()
         elif idx == 2:
