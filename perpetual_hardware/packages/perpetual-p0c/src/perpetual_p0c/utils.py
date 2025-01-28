@@ -153,3 +153,30 @@ def get_bus() -> BusABC:
 async def get_can_bus() -> CANBusHandler:
     can_device = get_bus()
     return CANBusHandler(can_device, asyncio.get_event_loop())
+
+def get_usb_serial() -> List[SerialDeviceInfo]:
+    ports = []
+    for port in serial.tools.list_ports.comports():
+        data = {
+            "description": port.description,
+            "device": port.device,
+            "hwid": port.hwid,
+            "interface": port.interface,
+            "location": port.location,
+            "manufacturer": port.manufacturer,
+            "name": port.name,
+            "pid": port.pid,
+            "product": port.product,
+            "serial_number": port.serial_number,
+            "vid": port.vid,
+        }
+        ports.append(SerialDeviceInfo(**data))
+    return ports
+
+def get_trinamic_usb() -> SerialDeviceInfo:
+    for port in get_usb_serial():
+        if port.description and "Trinamic" in port.description:
+            return port
+    raise Exception("No Device Found")
+
+

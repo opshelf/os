@@ -6,7 +6,6 @@ from pydantic import BaseModel, Field
 from perpetual_p0c.common import AbstractSubsystem, CanAxisConfiguration
 from perpetual_p0c.output_box import OutputBoxConfiguration
 
-
 class WorkstationConfiguration(BaseModel):
     outputbox_1_configuration: OutputBoxConfiguration
     outputbox_2_configuration: OutputBoxConfiguration
@@ -23,6 +22,10 @@ class WorkstationStatus(BaseModel):
     output_box_3: OutputBoxStatus
     input_belt: AxisStatus
     output_belt: AxisStatus
+
+
+class OutputBoxIdentifier(BaseModel):
+    output_box_id: int
 
 
 class ShutdownCommand(BaseModel):
@@ -55,14 +58,17 @@ class StopOutputCommand(BaseModel):
 
 class OpenOutputCommand(BaseModel):
     command: Literal["open_output"]
+    payload: OutputBoxIdentifier
 
 
 class CloseOutputCommand(BaseModel):
     command: Literal["close_output"]
+    payload: OutputBoxIdentifier
 
 
 class HomeOutput(BaseModel):
     command: Literal["home_output"]
+    payload: OutputBoxIdentifier
 
 
 WorkstationCommands = Annotated[
@@ -251,11 +257,11 @@ class Workstation(AbstractSubsystem[WorkstationConfiguration, WorkstationStatus]
                 await self.start_output_belt()
             case StopOutputCommand():
                 await self.stop_output_belt()
-            case OpenOutputCommand():
-                await self.open_output()
-            case CloseOutputCommand():
-                await self.close_output()
-            case HomeOutput():
-                await self.home_output()
+            case OpenOutputCommand(payload=payload):
+                await self.open_output(payload.output_box_id)
+            case CloseOutputCommand(payload=payload):
+                await self.close_output(payload.output_box_id)
+            case HomeOutput(payload=payload):
+                await self.home_output(payload.output_box_id)
             case _:
                 raise Exception("Invalid Workstation Command")
