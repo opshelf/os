@@ -214,19 +214,27 @@ class Workstation(AbstractSubsystem[WorkstationConfiguration, WorkstationStatus]
     async def open_output(self, idx: int = 0) -> None:
         if idx == 0:
             await self._output_box_1.open()
-        elif idx == 1:
             await self._output_box_2.open()
+            await self._output_box_3.open()
+        elif idx == 1:
+            await self._output_box_1.open()
         elif idx == 2:
+            await self._output_box_2.open()
+        elif idx == 3:
             await self._output_box_3.open()
         else:
             raise Exception("Invalid Output Box")
 
     async def close_output(self, idx: int = 0) -> None:
         if idx == 0:
-            await self._output_box_1.close()
+            await self._output_box_1.open()
+            await self._output_box_2.open()
+            await self._output_box_3.open()
         elif idx == 1:
-            await self._output_box_2.close()
+            await self._output_box_1.close()
         elif idx == 2:
+            await self._output_box_2.close()
+        elif idx == 3:
             await self._output_box_3.close()
         else:
             raise Exception("Invalid Output Box")
@@ -234,9 +242,13 @@ class Workstation(AbstractSubsystem[WorkstationConfiguration, WorkstationStatus]
     async def home_output(self, idx: int = 0) -> None:
         if idx == 0:
             await self._output_box_1.home()
-        elif idx == 1:
             await self._output_box_2.home()
+            await self._output_box_3.home()
+        if idx == 1:
+            await self._output_box_1.home()
         elif idx == 2:
+            await self._output_box_2.home()
+        elif idx == 3:
             await self._output_box_3.home()
         else:
             raise Exception("Invalid Output Box")
