@@ -183,11 +183,11 @@ class Workstation(AbstractSubsystem[WorkstationConfiguration, WorkstationStatus]
 
     @property
     def output_box_2(self) -> OutputBox:
-        return self._output_box_1
+        return self._output_box_2
 
     @property
     def output_box_3(self) -> OutputBox:
-        return self._output_box_1
+        return self._output_box_3
 
     @property
     def input_belt(self) -> TrinamicAxis:
@@ -244,7 +244,7 @@ class Workstation(AbstractSubsystem[WorkstationConfiguration, WorkstationStatus]
             await self._output_box_1.home()
             await self._output_box_2.home()
             await self._output_box_3.home()
-        if idx == 1:
+        elif idx == 1:
             await self._output_box_1.home()
         elif idx == 2:
             await self._output_box_2.home()
