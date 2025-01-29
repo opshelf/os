@@ -1,7 +1,7 @@
 FROM ghcr.io/astral-sh/uv:alpine
 RUN apk update
 RUN apk add --no-cache bash
-RUN apk add curl
+RUN apk add curl make cmake libc-dev libffi-dev g++ python3-dev openssl-dev libdmtx libdmtx-libs
 RUN apk add --no-cache python3~=3.12
 # RUN curl https://sh.rustup.rs -sSf | bash -s -- -y
 RUN apk add --no-cache rust cargo
@@ -16,5 +16,5 @@ WORKDIR /app/perpetual_hardware/packages/perpetual-p0c-server
 EXPOSE 8000
 EXPOSE 4222
 EXPOSE 8222
-ENTRYPOINT ["uv", "run", "start"]
+CMD ["uv", "run", "start"]
 

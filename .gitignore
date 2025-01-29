@@ -8,3 +8,15 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Mac Files
+**/.DS_Store
+.DS_Store
+
+# Application Files
+settings.json
+storage.json
+state.json
+schemas.json
+
+

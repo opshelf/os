@@ -421,10 +421,6 @@ const StorageDesigner = ({
           Save
         </Button>
       </div>
-      {/*
-      <GantryController />
-      <FunnelController />
-      */}
     </div>
   );
 };

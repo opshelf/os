@@ -280,14 +280,10 @@ class StorageGrid(BaseModel):
         self.save_to_file(self.filename)
 
     def update(self, updates: "StorageGrid") -> None:
-        for key, value in updates.dict().items():
-            setattr(self, key, value)
+        self.left_module = updates.left_module.copy()
+        self.right_module = updates.right_module.copy()
         self.save()
 
-    # @staticmethod
-    # def load_from_file(filename: str) -> "StorageGrid":
-    #    with open(filename, "r") as f:
-    #        return Self.model_valiate_json(f.read())
 
     def get_next_free_location(self, item: CellItem) -> Optional[StorageModuleCellLocation]:
         left_shelves: List[StorageModuleCellLocation] = []

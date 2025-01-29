@@ -18,13 +18,14 @@ const Footer = () => {
             Robot Disconnected
           </div>
         )}
+        {robotStatus?.current_command && (
+          <div className="flex items-center justify-center absolute left-1/2 transform -translate-x-1/2">
+            <p className="font-semibold mr-2">Current Command:</p>
+            <p>Homing</p>
+          </div>
+        )}
 
-        <div className="flex items-center justify-center absolute left-1/2 transform -translate-x-1/2">
-          <p className="font-semibold mr-2">Current Command:</p>
-          <p>Homing</p>
-        </div>
-
-        {robotStatus !== null ? (
+        {robotStatus?.running ? (
           <div className="flex items-center absolute right-0">
             <CirclePlay className="w-4 h-4 mr-2" />
             Robot Running

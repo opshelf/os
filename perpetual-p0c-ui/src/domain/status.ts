@@ -97,7 +97,7 @@ export type RobotStatus = z.infer<typeof robotStatusSchema>;
 export const workerStatusSchema = z.object({
   robot_status: robotStatusSchema.nullable(),
   current_command: robotCommandsSchema.nullable(),
-  connected: z.boolean(),
+  running: z.boolean(),
 });
 
 export type WorkerStatus = z.infer<typeof workerStatusSchema>;

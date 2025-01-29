@@ -1,10 +1,10 @@
 import { create } from 'zustand';
 import { GS1 } from '@/domain';
-import { RobotStatus } from '@/domain/status';
+import { WorkerStatus } from '@/domain/status';
 
 interface State {
-  robotStatus: RobotStatus | null;
-  setStatus: (status: RobotStatus) => void;
+  robotStatus: WorkerStatus | null;
+  setStatus: (status: WorkerStatus) => void;
   gs1: GS1 | null;
   addGs1: (gs1: GS1 | null) => void;
 }
@@ -12,7 +12,7 @@ interface State {
 export const useStateStore = create<State>((set) => ({
   robotStatus: null,
   gs1: null,
-  setStatus: (status: RobotStatus) =>
+  setStatus: (status: WorkerStatus) =>
     set(() => ({ robotStatus: status })),
   addGs1: (gs1: GS1 | null) => set(() => ({ gs1 })),
 }));

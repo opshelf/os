@@ -27,5 +27,5 @@ perpetual-trinamic = { workspace = true }
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[project.scripts]
-start = "perpetual_output_box.main:start"
+#[project.scripts]
+#start = "perpetual_output_box.main:start"
