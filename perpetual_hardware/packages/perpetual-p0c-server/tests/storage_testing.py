@@ -45,11 +45,6 @@ if __name__ == '__main__':
                 ),
             ],
         )
-    location = storage.find_best_slot_for_item(CellItem(
-        dimensions=Dimensions(
-            width=45,
-            length=45,
-            height=100
-        )
-    ))
-    print(location)
+    storage.update(storage)
+    serialized = storage.model_dump_json()
+    deserialized = StorageGrid.model_validate_json(serialized)

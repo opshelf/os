@@ -44,7 +44,6 @@ async def store_item(
 ) -> List[CellLocationData]:
     storage.store_item(location, item)
     storage.save()
-    print(storage)
     return storage.get_all_cell_data()
 
 

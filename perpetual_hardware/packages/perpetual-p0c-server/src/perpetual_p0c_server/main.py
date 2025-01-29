@@ -11,26 +11,40 @@ from perpetual_p0c_server.core.printer import PrintWorker, MockPrinter
 from typing import AsyncGenerator
 from perpetual_p0c_server.settings import get_settings
 import uvicorn
+import logging
+import sys
+
+root = logging.getLogger()
+root.setLevel(logging.DEBUG)
+
+handler = logging.StreamHandler(sys.stdout)
+handler.setLevel(logging.DEBUG)
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+handler.setFormatter(formatter)
+root.addHandler(handler)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    logging.info(f"{app.title}")
     settings = get_settings()
-    print(app.title)
+    logging.info(f"settings: {settings}")
     p: AbstractPrinter = MockPrinter()
     if settings.printer.enabled:
+        logging.info(f"Printer Enabled Setting Up Printer")
         p = ThermalPrinter()
     print_worker = PrintWorker(p, "nats://localhost:4222", "printer_queue", "printer_event_queue")
+    logging.info(f"Print Worker Connecting")
     await print_worker.connect()
-    print("Printer Initialized")
+    logging.info("Printer Initialized")
     init_file_storage()
-    print("Storage Initialized")
+    logging.info("Storage Initialized")
     init_file_sizes()
-    print("Sizes Initialized")
+    logging.info("Sizes Initialized")
     await init_scanner_worker(settings.scanner.enabled)
-    print("Scanner Enabled")
+    logging.info("Scanner Enabled")
     await init_robot_worker(settings.robot.enabled)
-    print("Robot Enabled")
+    logging.info("Robot Enabled")
     yield
     await stop_robot_worker()
     await stop_scanner_worker()
@@ -56,27 +70,7 @@ app.include_router(robot.router, prefix="/api/robot")
 app.include_router(scanner.router, prefix="/api/scanner")
 app.include_router(printer.router, prefix="/api/printer")
 
-
-# def save_schemas_to_files():
-#    file_path = "./app/routers/types.py"
-#    models = get_base_models(file_path)
-#    for model in models:
-#        print(model.model_json_schema)
-#
-# save_schemas_to_files()
-# schemas = load_models_and_get_json_schema(Path("./app/routers/types.py"))
-# with open("./schemas.json", "w") as f:
-#    json.dump(schemas, f, indent=4)
 def start() -> None:
-    # config = uvicorn.Config(
-    #    app,
-    #    host="0.0.0.0",
-    #    port=8000,
-    #    reload=True,
-    #    timeout_graceful_shutdown=2,  # Graceful shutdown timeout in seconds
-    # )
-    # server = uvicorn.Server(config)
-    # await server.serve()
     uvicorn.run(
         "perpetual_p0c_server.main:app",
         host="0.0.0.0",
@@ -86,6 +80,3 @@ def start() -> None:
     )
 
 
-# if __name__ == "__main__":
-#    import asyncio
-#    asyncio.run(main())
