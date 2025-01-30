@@ -1,21 +1,24 @@
 from perpetual_trinamic.serial.trinamic_axis import AxisStatus
 from pydantic import BaseModel
-from perpetual_output_box.io import AbstractIO, AbstractDoor
-from perpetual_output_box.door import DoorConfiguration
+from perpetual_output_box.drivers.base import (
+    AbstractIO,
+    AbstractDoor,
+    DoorState,
+    LockState,
+    BreakBeamState,
+    DoorConfiguration,
+)
+from perpetual_output_box.events import (
+    OutputBoxCommands,
+    SetLockCommand,
+    OpenDoorCommand,
+    CloseDoorCommand,
+    InitializeCommand,
+    StopCommand,
+    HomeCommand,
+    ReceiveItemCommand,
+)
 import asyncio
-from enum import Enum
-
-class DoorState(str, Enum):
-    OPEN = "OPEN"
-    CLOSED = "CLOSED"
-
-class LockState(str, Enum):
-    LOCKED = "LOCKED"
-    UNLOCKED = "UNLOCKED"
-
-class BreakBeamState(str, Enum):
-    OBSTRUCTED = "OBSTRUCTED"
-    UNOBSTRUCTED = "UNOBSTRUCTED"
 
 
 class OutputBoxConfiguration(BaseModel):
@@ -30,7 +33,6 @@ class OutputBoxStatus(BaseModel):
 
 
 class OutputBox:
-
     def __init__(self, door: AbstractDoor, io: AbstractIO) -> None:
         self._door = door
         self._io = io
@@ -78,46 +80,45 @@ class OutputBox:
             door_state=door_state,
             break_beam_state=break_beam_state,
             door=door_status,
-            lock_state=lock_state
+            lock_state=lock_state,
         )
 
     async def close_door(self) -> None:
         await self._door.close_door()
 
     async def lock_door(self) -> None:
-        self._io.set_door_locked(True)
+        await self._io.set_door_locked(LockState.LOCKED)
 
     async def unlock_door(self) -> None:
-        self._io.set_door_locked(False)
+        await self._io.set_door_locked(LockState.UNLOCKED)
 
     async def get_lock_state(self) -> LockState:
-        """PNP NO OUTPUT"""
-        door_sensor = self._io.get_lock()
-        if door_sensor:
-            return LockState.LOCKED
-        else:
-            return LockState.UNLOCKED
+        lock_state = await self._io.get_lock()
+        return lock_state
 
     async def get_door_state(self) -> DoorState:
-        """PNP NO OUTPUT"""
-        door_sensor = self._io.get_door_sensor()
-        if door_sensor:
-            return DoorState.CLOSED
-        else:
-            return DoorState.OPEN
+        door_sensor = await self._io.get_door_sensor()
+        return door_sensor
 
     async def get_break_beam_state(self) -> BreakBeamState:
-        """NPN NO OUTPUT"""
-        beam_sensor = self._io.get_break_beam_sensor()
-        if beam_sensor:
-            return BreakBeamState.UNOBSTRUCTED
-        else:
-            return BreakBeamState.OBSTRUCTED
+        beam_sensor = await self._io.get_break_beam_sensor()
+        return beam_sensor
 
-    
-    async def handle_command(self, command: OutputBoxCommand) -> OutputBoxEvent:
-
-
-
-
-
+    async def handle_command(self, command: OutputBoxCommands) -> None:
+        match command:
+            case SetLockCommand(payload=payload):
+                await self._io.set_door_locked(payload)
+            case OpenDoorCommand():
+                await self._door.open_door()
+            case CloseDoorCommand():
+                await self._door.close_door()
+            case InitializeCommand():
+                await self.initialize()
+            case StopCommand():
+                await self._door.stop()
+            case HomeCommand():
+                await self._door.home()
+            case ReceiveItemCommand(payload=payload):
+                await self.receive_item()
+            case _:
+                raise Exception("Invalid Output Command")

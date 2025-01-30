@@ -1,12 +1,23 @@
 from nats.js import JetStreamContext
 from pydantic import BaseModel
 from perpetual_output_box.controller import OutputBox, OutputBoxConfiguration, OutputBoxStatus
+from perpetual_output_box.events import (
+    OutputBoxCommands,
+    OutputBoxEvents,
+    SetLockCommand,
+    OpenDoorCommand,
+    CloseDoorCommand,
+    InitializeCommand,
+    StopCommand,
+    HomeCommand,
+    ReceiveItemCommand,
+)
+
 from nats.aio.msg import Msg
 import asyncio
 from typing import Optional
 from nats.aio.client import Client as NATS
-from pydantic import BaseModel
-#from nats.errors import TimeoutError
+from pydantic import BaseModel, TypeAdapter
 
 
 class WorkerConfig(BaseModel):
@@ -16,20 +27,19 @@ class WorkerConfig(BaseModel):
     output_box_configuration: OutputBoxConfiguration
 
 
-class OutputBoxCommands(BaseModel):
-    command: str
-
 class WorkerStatus(BaseModel):
     output_box_status: Optional[OutputBoxStatus]
     running: bool
     current_command: Optional[OutputBoxCommands]
 
+
+OutputBoxCommandAdapter = TypeAdapter[OutputBoxCommands](OutputBoxCommands)
+
+
 class OutputBoxWorker:
     _instance: Optional["OutputBoxWorker"] = None
 
-    def __init__(
-        self, outputbox: OutputBox, config: WorkerConfig
-    ):
+    def __init__(self, outputbox: OutputBox, config: WorkerConfig):
         if OutputBoxWorker._instance is not None:
             raise RuntimeError("OutputBoxWorker is a singleton. Use `get_instance()` to access it.")
         self._output_box = outputbox
@@ -45,20 +55,22 @@ class OutputBoxWorker:
     async def connect(self) -> None:
         """Connect to the NATS server."""
         await self._nc.connect(servers=[self._config.nats_url])
-        #self._js = self._nc.jetstream()
-        #await self._nc.add_stream(
+        # self._js = self._nc.jetstream()
+        # await self._nc.add_stream(
         #    name=f"workstation_{self._config.workstation_id}.output_box_{self._config.output_box_id}",
         #    subjects=[
-        #        self._nats_config.command_queue, 
+        #        self._nats_config.command_queue,
         #        self._nats_config.event_queue
         #    ],
-        #)
-        #self.work_consumer = await self._js.pull_subscribe(
+        # )
+        # self.work_consumer = await self._js.pull_subscribe(
         #    self._nats_config.command_queue, durable=self._nats_config.command_queue
-        #)
+        # )
 
     @classmethod
-    async def get_instance(cls, output_box: OutputBox, worker_config: WorkerConfig) -> "OutputBoxWorker":
+    async def get_instance(
+        cls, output_box: OutputBox, worker_config: WorkerConfig
+    ) -> "OutputBoxWorker":
         if cls._instance is None:
             cls._instance = cls(output_box, worker_config)
         return cls._instance
@@ -68,7 +80,42 @@ class OutputBoxWorker:
             while self._running:
                 try:
                     if self._current_task is None:
-                        pass
+                        msg = await self.work_consumer.fetch(timeout=1)
+                        print(msg[0].data.decode())
+                        cmd = OutputBoxCommandAdapter.validate_json(msg[0].data.decode())
+                        print(cmd)
+                    else:
+                        if self._current_task and self._current_task.done():
+                            match self._current_command:
+                                # case StoreCommand(payload=payload):
+                                #     await self._js.publish(
+                                #         self._nats_config.event_queue,
+                                #         StoringCompletedEvent(payload=payload.location)
+                                #         .model_dump_json()
+                                #         .encode(),
+                                #     )
+                                # case RetrieveCommand(payload=payload):
+                                #    await self._js.publish(
+                                #        self._nats_config.event_queue,
+                                #        RetrievalCompletedEvent().model_dump_json().encode(),
+                                #    )
+                                case _:
+                                    if self._current_command:
+                                        await self._js.publish(
+                                            self._nats_config.event_queue,
+                                            self._current_task.result().model_dump_json().encode(),
+                                        )
+
+                                    else:
+                                        print("No Current Command")
+                                        print("Fell Through: ", self._current_command)
+                                        print("Fell Through: ", self._current_task)
+                                        print(self._current_task)
+                            self._current_task = None
+                            self._current_command = None
+                            if self._msg:
+                                await self._msg.ack()
+                                self._msg = None
                     await asyncio.sleep(1)
                 except Exception as e:
                     print(e)
@@ -97,8 +144,8 @@ class OutputBoxWorker:
         if self._js:
             await self._js.purge_stream(f"workstaton_{self._config.workstation_id}")
 
-    #async def set_configuration(self, configuration: RobotConfiguration) -> None:
+    # async def set_configuration(self, configuration: RobotConfiguration) -> None:
     #    await self._robot.set_configuration(configuration)
 
-    #def get_configuration(self) -> RobotConfiguration:
+    # def get_configuration(self) -> RobotConfiguration:
     #    return self._robot.configuration

@@ -99,6 +99,64 @@ export const gantrySubsystemCommandsSchema = baseMessageSchema.extend(
   }
 );
 
+export const axisHomeCommandSchema = z.object({
+  command: z.literal('home'),
+});
+export type AxisHomeCommand = z.infer<typeof axisHomeCommandSchema>;
+
+export const axisInitializeCommandSchema = z.object({
+  command: z.literal('initialize'),
+});
+export type AxisInitializeCommand = z.infer<
+  typeof axisInitializeCommandSchema
+>;
+
+export const axisMoveRelativeCommandSchema = z.object({
+  command: z.literal('move_relative'),
+  position: z.number(),
+});
+export type AxisMoveRelativeCommand = z.infer<
+  typeof axisMoveRelativeCommandSchema
+>;
+
+export const axisMoveAbsoluteCommandSchema = z.object({
+  command: z.literal('move_absolute'),
+  position: z.number(),
+});
+export type AxisMoveAbsoluteCommand = z.infer<
+  typeof axisMoveAbsoluteCommandSchema
+>;
+
+export const axisStopCommandSchema = z.object({
+  command: z.literal('stop'),
+});
+export type AxisStopCommand = z.infer<typeof axisStopCommandSchema>;
+
+export const axisCommandsSchema = z.discriminatedUnion('command', [
+  axisHomeCommandSchema,
+  axisInitializeCommandSchema,
+  axisMoveRelativeCommandSchema,
+  axisMoveAbsoluteCommandSchema,
+  axisStopCommandSchema,
+]);
+export type AxisCommands = z.infer<typeof axisCommandsSchema>;
+
+export const axisCommandPayloadSchema = z.object({
+  axis_id: z.number(),
+  command: axisCommandsSchema,
+});
+export type AxisCommandPayload = z.infer<
+  typeof axisCommandPayloadSchema
+>;
+
+export const lowLevelAxisCommandsSchema = baseMessageSchema.extend({
+  command: z.literal('axis_command'),
+  payload: axisCommandPayloadSchema,
+});
+export type LowLevelAxisCommands = z.infer<
+  typeof lowLevelAxisCommandsSchema
+>;
+
 export const robotCommandsSchema = z.discriminatedUnion('command', [
   storeCommandSchema,
   retrieveCommandSchema,
@@ -112,6 +170,7 @@ export const robotCommandsSchema = z.discriminatedUnion('command', [
   placeTrayCommandSchema,
   idlePositionCommandSchema,
   serviceHighPositionCommandSchema,
+  lowLevelAxisCommandsSchema,
   // Subsystem Commands
   toolSubsystemCommandSchema,
   funnelSubsystemCommandSchema,

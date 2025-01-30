@@ -42,7 +42,7 @@ class RobotNatsConfiguration(BaseModel):
     stream_name: str = "robot"
     command_queue: str = "commands"
     event_queue: str = "events"
-    status_queue: str = "status"
+    status_queue: str = "robot.status"
 
 
 NATS_CONFIG = RobotNatsConfiguration()
@@ -289,12 +289,7 @@ class RobotWorker(AbstractRobotWorker):
                                         )
 
                                     else:
-                                        print("No Current Command")
-                                        print("Fell Through: ", self._current_command)
-                                        print("Fell Through: ", self._current_task)
-                                        print(self._current_task)
-                                        # print(self._current_task.result())
-                                        # print(self._current_task.exception())
+                                        raise Exception("Command Should Always be set")
                             self._current_task = None
                             self._current_command = None
                             if self._msg:
@@ -350,10 +345,6 @@ class RobotWorker(AbstractRobotWorker):
 
     async def emergency_command(self, command: RobotCommands) -> None:
         print("Emergency Command: ", command)
-        # if self._current_task:
-        #    self._current_task.cancel()
-        # response = await self._robot.handle_command(command)
-        # print(command, response)
         raise NotImplemented
 
     async def queue_command(self, command: RobotCommands) -> None:

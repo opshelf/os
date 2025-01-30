@@ -42,10 +42,9 @@ def get_usb_serial() -> List[UsbInfo]:
         ports.append(UsbInfo(**data))
     return ports
 
+
 def get_port() -> UsbInfo:
     for port in get_usb_serial():
         if port.description and "Trinamic" in port.description:
             return port
     raise Exception("No Device Found")
-
-

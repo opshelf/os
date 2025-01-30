@@ -48,11 +48,6 @@ wheels = [
 ]
 
 [[package]]
-name = "bindings"
-version = "0.1.0"
-source = { directory = "../perpetual_fw/crates/bindings" }
-
-[[package]]
 name = "canopen"
 version = "2.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -129,10 +124,7 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [
-    { name = "hardware-common", editable = "packages/hardware-common" },
-    { name = "pydantic", specifier = ">=2.10.0" },
-]
+requires-dist = [{ name = "pydantic", specifier = ">=2.10.0" }]
 
 [[package]]
 name = "idna"
@@ -231,9 +223,6 @@ requires-dist = [{ name = "python-can" }]
 name = "perpetual-hardware"
 version = "0.1.0"
 source = { virtual = "." }
-dependencies = [
-    { name = "bindings" },
-]
 
 [package.dev-dependencies]
 dev = [
@@ -241,7 +230,6 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "bindings", directory = "../perpetual_fw/crates/bindings" }]
 
 [package.metadata.requires-dev]
 dev = [{ name = "mypy" }]

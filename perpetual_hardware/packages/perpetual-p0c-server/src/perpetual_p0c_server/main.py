@@ -15,11 +15,11 @@ import logging
 import sys
 
 root = logging.getLogger()
-root.setLevel(logging.DEBUG)
+root.setLevel(logging.INFO)
 
 handler = logging.StreamHandler(sys.stdout)
 handler.setLevel(logging.DEBUG)
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 handler.setFormatter(formatter)
 root.addHandler(handler)
 
@@ -70,6 +70,7 @@ app.include_router(robot.router, prefix="/api/robot")
 app.include_router(scanner.router, prefix="/api/scanner")
 app.include_router(printer.router, prefix="/api/printer")
 
+
 def start() -> None:
     uvicorn.run(
         "perpetual_p0c_server.main:app",
@@ -78,5 +79,3 @@ def start() -> None:
         reload=True,
         timeout_graceful_shutdown=2,
     )
-
-

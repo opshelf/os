@@ -12,6 +12,7 @@ import {
 import { Input } from '@/components/ui/input';
 import z from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
+import { useStateStore } from '@/store';
 
 const toolCoordinateSchema = z.object({
   x: z.number(),
@@ -32,14 +33,12 @@ export const ToolCoordinateForm = ({
   move: (toolCoordiante: ToolCoordinateSchema) => Promise<void>;
   point: ToolCoordinateSchema | null;
 }) => {
-  console.log(point);
+  const { robotStatus } = useStateStore();
+
+  const gantryStatus = robotStatus?.robot_status?.gantry_status;
+
   const form = useForm<ToolCoordinateSchema>({
     resolver: zodResolver(toolCoordinateSchema),
-    //defaultValues: {
-    //  x: 0,
-    //  y: 0,
-    //  z: 0,
-    //},
     defaultValues: useMemo(() => {
       if (point !== null) {
         return point;
@@ -130,12 +129,27 @@ export const ToolCoordinateForm = ({
           )}
         />
         <div className="flex gap-2">
-          <Button type="button" className="w-full" onClick={onMove}>
-            Move
-          </Button>
-          <Button type="button" className="w-full">
-            Load
-          </Button>
+          {gantryStatus !== undefined && (
+            <>
+              <Button
+                type="button"
+                className="w-full"
+                onClick={onMove}
+              >
+                Move
+              </Button>
+              <Button
+                type="button"
+                className="w-full"
+                onClick={() => {
+                  form.setValue('x', gantryStatus.x_axis.position);
+                  form.setValue('y', gantryStatus.y_axis.position);
+                }}
+              >
+                Load
+              </Button>
+            </>
+          )}
           <Button type="submit" className="w-full">
             Save
           </Button>

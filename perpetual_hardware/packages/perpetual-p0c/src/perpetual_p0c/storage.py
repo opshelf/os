@@ -284,7 +284,6 @@ class StorageGrid(BaseModel):
         self.right_module = updates.right_module.copy()
         self.save()
 
-
     def get_next_free_location(self, item: CellItem) -> Optional[StorageModuleCellLocation]:
         left_shelves: List[StorageModuleCellLocation] = []
         for ix, shelf in enumerate(self.left_module):

@@ -5,6 +5,7 @@ import {
   DatabaseIcon,
   JoystickIcon,
   SettingsIcon,
+  Move3DIcon,
 } from 'lucide-react';
 import { Link } from 'wouter';
 import {
@@ -22,11 +23,6 @@ const Header = () => {
       </Link>
       <TooltipProvider>
         <div className="flex grow justify-end space-x-8">
-          {/*
-        <Link to="/control">
-          <JoystickIcon className="w-8 h-8" />
-        </Link>
-        */}
           <Link to="/storage-designer">
             <Tooltip>
               <TooltipTrigger>
@@ -74,6 +70,16 @@ const Header = () => {
               </TooltipTrigger>
               <TooltipContent>
                 <p>Robot Configuration</p>
+              </TooltipContent>
+            </Tooltip>
+          </Link>
+          <Link to="/move">
+            <Tooltip>
+              <TooltipTrigger>
+                <Move3DIcon className="w-8 h-8" />
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Axis Manipulation</p>
               </TooltipContent>
             </Tooltip>
           </Link>

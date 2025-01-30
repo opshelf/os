@@ -33,12 +33,13 @@ class CanMessageIds(int, Enum):
     OUTPUT_BOX = 137
     OUTPUT_BOX_2 = 138
     OUTPUT_BOX_3 = 139
+    TRANSFER_WALL = 140
 
 """
 
 if __name__ == "__main__":
     with ConnectionManager().connect() as my_interface:
-        CAN_ID = 137
+        CAN_ID = 140
         module = TMCM1240(my_interface)
         print(module)
         print("CURRENT RECEIVE ID: ", module.get_global_parameter(module.GP0.CANreceiveID, 0))

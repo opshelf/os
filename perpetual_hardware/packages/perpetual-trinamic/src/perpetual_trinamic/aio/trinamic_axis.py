@@ -218,25 +218,33 @@ class TrinamicAxis(TMCM12xx):
         if self._status != StepperMotorStatus.GOOD:
             raise Exception("Status Bad")
         if self.configuration.brake and not override_brake:
-            if self._target_position + position >= 0:
-                await self.reset_location()
-                await self.init_brake_move()
-                self._target_position = self._target_position + position
-                position = self._configuration.convert_position_to_pulses(position)
-                await self.move_relative(position)
-                await self.wait_for_move()
-                await self.end_brake_move()
-            else:
-                self._target_position = 0
-                await self.move_to_position(0)
+            await self.reset_location()
+            await self.init_brake_move()
+            position = self._configuration.convert_position_to_pulses(position)
+            await self.move_relative(position)
+            await self.wait_for_move()
+            await self.end_brake_move()
+            #if self._target_position + position >= 0:
+            #    await self.reset_location()
+            #    await self.init_brake_move()
+            #    self._target_position = self._target_position + position
+            #    position = self._configuration.convert_position_to_pulses(position)
+            #    await self.move_relative(position)
+            #    await self.wait_for_move()
+            #    await self.end_brake_move()
+            #else:
+            #    self._target_position = 0
+            #    await self.move_to_position(0)
         else:
-            if self._target_position + position >= 0:
-                self._target_position = self._target_position + position
-                position = self._configuration.convert_position_to_pulses(position)
-                await self.move_relative(position)
-            else:
-                self._target_position = 0
-                await self.move_to_position(0)
+            position = self._configuration.convert_position_to_pulses(position)
+            await self.move_relative(position)
+            #if self._target_position + position >= 0:
+            #    self._target_position = self._target_position + position
+            #    position = self._configuration.convert_position_to_pulses(position)
+            #    await self.move_relative(position)
+            #else:
+            #    self._target_position = 0
+            #    await self.move_to_position(0)
 
     async def wait_for_move(self, timeout: float = 60.0) -> None:
         if self.configuration.brake:

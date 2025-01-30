@@ -6,6 +6,7 @@ import {
   ArrowDown,
   ArrowUp,
 } from 'lucide-react';
+import { useStateStore } from '@/store';
 import {
   Select,
   SelectContent,
@@ -26,7 +27,7 @@ import {
   FormMessage,
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
-import { gantryCommand, moveGantry } from '@/api';
+import { gantryCommand } from '@/api';
 import {
   gantryCoordinateSchema,
   GantryCoordinateSchema,
@@ -43,11 +44,10 @@ const MoveForm = () => {
     },
   });
 
+  const robot = new RobotController(robotCommand);
+
   async function onSubmit(values: GantryCoordinateSchema) {
-    await moveGantry({
-      command: 'MOVE',
-      payload: values,
-    });
+    await robot.gantry.gantryMoveCommand(values);
   }
 
   return (
@@ -115,6 +115,10 @@ const GantryController = () => {
 
   const robot = new RobotController(robotCommand);
 
+  const { robotStatus } = useStateStore();
+
+  const gantryStatus = robotStatus?.robot_status?.gantry_status;
+
   const runJogCommand = async (axis: 'x' | 'y', movement: number) => {
     let defaultMove = {
       x: 0,
@@ -126,14 +130,13 @@ const GantryController = () => {
     if (axis == 'y') {
       defaultMove[axis] = movement;
     }
-    //await moveGantry(defaultMove);
     await robot.gantry.gantryMoveRelativeCommand(defaultMove);
   };
 
   return (
     <Card className="flex flex-col px-4 py-4 space-y-4 w-fit">
       <CardTitle>Gantry Control</CardTitle>
-      <CardContent className="px-0">
+      <CardContent className="px-0 relative">
         <div className="flex space-x-8 w-full">
           <div className="flex flex-col items-center space-y-2 items-stretch">
             <Button
@@ -261,6 +264,12 @@ const GantryController = () => {
             <MoveForm />
           </div>
         </div>
+        {gantryStatus !== undefined && (
+          <div className="flex w-full space-x-4 absolute bottom-0">
+            <p>X Position: {gantryStatus.x_axis.position}</p>
+            <p>Y Position: {gantryStatus.y_axis.position}</p>
+          </div>
+        )}
       </CardContent>
     </Card>
   );

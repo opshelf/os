@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from perpetual_p0c.common import AbstractSubsystem, CanAxisConfiguration
 from perpetual_p0c.output_box import OutputBoxConfiguration
 
+
 class WorkstationConfiguration(BaseModel):
     outputbox_1_configuration: OutputBoxConfiguration
     outputbox_2_configuration: OutputBoxConfiguration

@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { RobotController } from '@/domain/robot';
+import { robotCommand } from '@/api/robot';
 import {
   CrosshairIcon,
   DeleteIcon,
@@ -60,6 +62,8 @@ const Shelf = ({
   side: StorageModuleSide;
   updateStorageModule: (storageModule: StorageModuleData) => void;
 }) => {
+  const robot = new RobotController(robotCommand);
+
   const defaultTray = (): Tray => {
     return {
       width: 50,
@@ -83,7 +87,7 @@ const Shelf = ({
   };
 
   const moveToToolPoint = async (point: ToolCoordinateSchema) => {
-    console.log(point);
+    robot.gantry.gantryMoveCommand(point);
   };
 
   const shelfHeight = storageModule[side][shelfIdx].shelf_height;

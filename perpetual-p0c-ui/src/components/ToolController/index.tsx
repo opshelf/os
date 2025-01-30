@@ -24,10 +24,10 @@ import { ToggleGroup, ToggleGroupItem } from '../ui/toggle-group';
 import z from 'zod';
 import { RobotController } from '@/domain/robot';
 import { robotCommand } from '@/api/robot';
+import { useStateStore } from '@/store';
 
 const MoveForm = () => {
   const robot = new RobotController(robotCommand);
-
   const form = useForm<{ position: number }>({
     resolver: zodResolver(z.object({ position: z.number().min(0) })),
     defaultValues: {
@@ -97,11 +97,14 @@ const ToolController = () => {
     }
     return out;
   };
+  const { robotStatus } = useStateStore();
+
+  const toolStatus = robotStatus?.robot_status?.tool_status;
 
   return (
     <Card className="flex flex-col px-4 py-4 space-y-4 w-fit">
       <CardTitle>Tool Control</CardTitle>
-      <CardContent className="px-0">
+      <CardContent className="px-0 relative">
         <div className="flex space-x-8 w-full">
           <div className="flex flex-col items-center space-y-2 items-stretch">
             <Button
@@ -171,7 +174,7 @@ const ToolController = () => {
           </div>
           <div className="flex flex-col items-center space-y-2 items-stretch">
             <span className="text-xl w-full text-center">
-              Absolute Move (mm)
+              Move (mm)
             </span>
             <MoveForm />
           </div>
@@ -270,6 +273,13 @@ const ToolController = () => {
               </ToggleGroup>
             </div>
           </div>
+        </div>
+        <div className="flex w-full abosolute bottom-0">
+          {toolStatus !== undefined && (
+            <p>
+              Tool Position: {toolStatus.carriage_status.position}
+            </p>
+          )}
         </div>
       </CardContent>
     </Card>

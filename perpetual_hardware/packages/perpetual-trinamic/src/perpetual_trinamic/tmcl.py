@@ -193,7 +193,6 @@ class TmclReply:
     status: int
     value: int
 
-
     @staticmethod
     def from_serial_buffer(data: List[int] | bytearray | bytes) -> "TmclReply":
         if len(data) != 9:
@@ -216,6 +215,7 @@ class TmclReply:
             checksum += d
         checksum &= 0xFF
         return checksum
+
 
 class MoveType(IntEnum):
     ABSOLUTE = 0

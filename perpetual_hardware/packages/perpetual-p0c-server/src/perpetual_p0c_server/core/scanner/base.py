@@ -79,7 +79,6 @@ class ScannerWorker:
         for scanner in self._scanners:
             await scanner.initialize()
 
-
     async def initiate_scan_wait(self) -> Optional[GS1Data]:
         tasks = [asyncio.create_task(scanner.scan()) for scanner in self._scanners]
         done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
@@ -87,7 +86,6 @@ class ScannerWorker:
         for task in pending:
             task.cancel()
         return first_result
-
 
     async def run(self) -> None:
         while self._running:

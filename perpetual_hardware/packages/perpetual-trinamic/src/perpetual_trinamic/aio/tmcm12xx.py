@@ -77,7 +77,7 @@ class TMCM12xx(TMCM):
         await self.set_axis_parameter(self.AP.MaxEncoderDeviation, max_deviation)
 
     async def set_relative_position_mode(self) -> None:
-        await self.set_axis_parameter(self.AP.RelativePositioningOption, 1)
+        await self.set_axis_parameter(self.AP.RelativePositioningOption, 0)
 
     async def set_external_encoder_resolution(self, resolution: int) -> None:
         await self.set_axis_parameter(self.AP.ExternalEncoderResolution, resolution)

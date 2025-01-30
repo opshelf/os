@@ -13,6 +13,8 @@ import SizeDatabase from './components/SizeDatabase';
 import ScannerEventSSE from './components/ScannerEvent';
 import RobotConfiguration from './components/RobotConfiguration';
 import Footer from './components/Footer';
+import AxisController from './components/AxisController';
+import StatusEventSSE from './components/StatusEvent';
 
 const queryClient = new QueryClient();
 
@@ -28,6 +30,7 @@ function App() {
               path="/subsystem"
               component={SubsystemController}
             />
+            <Route path="/move" component={AxisController} />
             <Route path="/robot" component={RobotController} />
             <Route path="/inventory" component={Inventory} />
             <Route path="/low-level" component={AxisControl} />
@@ -36,6 +39,7 @@ function App() {
           </Switch>
         </QueryClientProvider>
         <ScannerEventSSE />
+        <StatusEventSSE />
       </div>
       <Footer />
     </>

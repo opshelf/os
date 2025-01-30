@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import { BaseMessageSchema } from './commands/base';
-import { RobotCommands } from './commands/robot';
+import { AxisCommandPayload, RobotCommands } from './commands/robot';
 import {
   CellItem,
   StorageModuleCellLocation,
@@ -169,6 +169,14 @@ export class RobotController {
     await this.sendCommand({
       ...createBaseMessage(),
       command: 'service_high_position',
+    });
+  }
+
+  async lowLevelAxisCommand(payload: AxisCommandPayload) {
+    await this.sendCommand({
+      ...createBaseMessage(),
+      command: 'axis_command',
+      payload: payload,
     });
   }
 }

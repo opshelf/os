@@ -8,7 +8,6 @@ import {
 import { RobotController as Robot } from '@/domain/robot';
 import { CellSelectionForm } from '../CellLocationForm';
 import { Label } from '../ui/label';
-import { PullTrayCommand } from '@/domain/commands/robot';
 import { getStorage } from '@/api';
 import { StorageModuleSide } from '@/domain';
 import {
@@ -19,6 +18,7 @@ import {
 } from '@/api/robot';
 import { Button } from '../ui/button';
 import {
+  ArchiveRestoreIcon,
   CornerDownLeft,
   EraserIcon,
   GrabIcon,
@@ -26,124 +26,57 @@ import {
   LoaderIcon,
   LocateIcon,
   RotateCcwIcon,
-  // ReplaceIcon,
   StopCircleIcon,
   WrenchIcon,
 } from 'lucide-react';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectValue,
-  SelectTrigger,
-} from '../ui/select';
+import { TraySelectionForm } from '../TrayLocationForm';
 import { StorageModuleData } from '@/domain';
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import CommandList from '../CommandList';
+import { RobotController as RobotControllerApi } from '@/domain/robot';
 
 const PullTrayForm = ({ data }: { data: StorageModuleData }) => {
-  const [side, setSide] = useState<StorageModuleSide>('right_module');
-  const [shelf, setShelf] = useState<number | null>(1);
-  const [tray, setTray] = useState<number | null>(0);
+  const [locationData, setLocationData] = useState<{
+    side: StorageModuleSide;
+    shelf: number | null;
+    tray: number | null;
+  }>({
+    side: 'right_module',
+    shelf: null,
+    tray: null,
+  });
+
+  const robot = new RobotControllerApi(robotCommand);
 
   const pull = async () => {
-    if (shelf !== null && tray !== null) {
-      let command: PullTrayCommand = {
-        ...createBaseMessage(),
-        command: 'pull_tray',
-        payload: {
-          side,
-          shelf_idx: shelf,
-          tray_idx: tray,
-        },
-      };
-      await robotCommand(command);
+    if (locationData.shelf !== null && locationData.tray !== null) {
+      await robot.pullTray({
+        side: locationData.side,
+        shelf_idx: locationData.shelf,
+        tray_idx: locationData.tray,
+      });
     }
   };
+
   return (
     <Card className="w-fit">
       <CardHeader>
         <CardTitle>Pull Tray</CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col space-y-2 items-start">
-        <Label className="text-lg">Side</Label>
-        <Select
-          value={side}
-          onValueChange={(value) => {
-            setSide(value as StorageModuleSide);
-            if (data[value as StorageModuleSide].length) {
-              setShelf(0);
-            } else {
-              setShelf(null);
-            }
-          }}
-        >
-          <SelectTrigger className="w-32">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="left_module">Left Module</SelectItem>
-            <SelectItem value="right_module">Right Module</SelectItem>
-          </SelectContent>
-        </Select>
-        {data[side].length > 0 && (
-          <>
-            <Label className="text-lg">Shelf</Label>
-            <Select
-              value={`${shelf}`}
-              onValueChange={(value) => setShelf(parseInt(value))}
-            >
-              <SelectTrigger className="w-32">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {data[side].map((_, shelf_idx) => {
-                  return (
-                    <SelectItem
-                      value={`${shelf_idx}`}
-                      key={`${shelf_idx}-pull-shelf`}
-                    >
-                      {`${shelf_idx}`}
-                    </SelectItem>
-                  );
-                })}
-              </SelectContent>
-            </Select>
-            {shelf !== null && data[side][shelf].trays.length > 0 && (
-              <>
-                <Label className="text-lg">Tray</Label>
-                <Select
-                  value={`${tray}`}
-                  onValueChange={(value) => setTray(parseInt(value))}
-                >
-                  <SelectTrigger className="w-32">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {shelf &&
-                      data[side][shelf].trays.map((_, trayIdx) => {
-                        return (
-                          <SelectItem
-                            value={`${trayIdx}`}
-                            key={`${trayIdx}-pull-tray`}
-                          >
-                            {`${trayIdx}`}
-                          </SelectItem>
-                        );
-                      })}
-                  </SelectContent>
-                </Select>
-              </>
-            )}
-          </>
-        )}
-        {shelf !== null && tray !== null && (
-          <Button onClick={async () => await pull()}>
-            <GrabIcon />
-            Pull Tray
-          </Button>
-        )}
+        <TraySelectionForm
+          data={data}
+          locationData={locationData}
+          setLocationData={setLocationData}
+        />
+        {locationData.shelf !== null &&
+          locationData.tray !== null && (
+            <Button onClick={async () => await pull()}>
+              <GrabIcon />
+              Pull Tray
+            </Button>
+          )}
       </CardContent>
       <CardFooter></CardFooter>
     </Card>
@@ -195,6 +128,7 @@ const StoreForm = ({ data }: { data: StorageModuleData }) => {
                   });
                 }}
               >
+                <ArchiveRestoreIcon />
                 Add Item
               </Button>
             )}
@@ -204,144 +138,6 @@ const StoreForm = ({ data }: { data: StorageModuleData }) => {
   );
 };
 
-/*
-<Button>
-  <ReplaceIcon />
-  Pull Tray
-</Button>
-class StorePayload(BaseModel):
-    location: StorageModuleCellLocation
-    item: Optional[CellItem] = None
-
-
-class StoreCommand(BaseMessage):
-    command: Literal["store_item"]
-    payload: StorePayload
-
-
-class RetrievePayload(BaseModel):
-    location: StorageModuleCellLocation
-    item: Optional[CellItem]
-
-
-class RetrieveCommand(BaseMessage):
-    command: Literal["retrieve_item"]
-    payload: RetrievePayload
-
-*/
-/*
-const StoreItemForm = ({ data }: { data: StorageModuleData }) => {
-  const [side, setSide] = useState<StorageModuleSide>('right_module');
-  const [shelf, setShelf] = useState<number | null>(null);
-  const [tray, setTray] = useState<number | null>(null);
-  const [cell, setCell] = useState<number | null>(null);
-
-  //const pull = async () => {
-  //  if (shelf && tray) {
-  //    let command: PullTrayCommand = {
-  //      ...createBaseMessage(),
-  //      command: 'pull_tray',
-  //      payload: {
-  //        side,
-  //        shelf_idx: shelf,
-  //        tray_idx: tray,
-  //      },
-  //    };
-  //    await robotCommand(command);
-  //  }
-  //};
-
-  return (
-    <Card className="w-fit">
-      <CardHeader>
-        <CardTitle>Store Item</CardTitle>
-      </CardHeader>
-      <CardContent className="flex flex-col space-y-2 items-start">
-        <Label className="text-lg">Side</Label>
-        <Select
-          value={side}
-          onValueChange={(value) => {
-            setSide(value as StorageModuleSide);
-            if (data[value as StorageModuleSide].length) {
-              setShelf(0);
-            } else {
-              setShelf(null);
-            }
-          }}
-        >
-          <SelectTrigger className="w-32">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="left_module">Left Module</SelectItem>
-            <SelectItem value="right_module">Right Module</SelectItem>
-          </SelectContent>
-        </Select>
-        {data[side].length > 0 && (
-          <>
-            <Label className="text-lg">Shelf</Label>
-            <Select
-              value={`${shelf}`}
-              onValueChange={(value) => setShelf(parseInt(value))}
-            >
-              <SelectTrigger className="w-32">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {data[side].map((_, shelf_idx) => {
-                  return (
-                    <SelectItem
-                      value={`${shelf_idx}`}
-                      key={`${shelf_idx}-pull-shelf`}
-                    >
-                      {shelf_idx}
-                    </SelectItem>
-                  );
-                })}
-              </SelectContent>
-            </Select>
-            {shelf !== null && data[side][shelf].trays.length > 0 && (
-              <>
-                <Label className="text-lg">Tray</Label>
-                <Select
-                  value={`${tray}`}
-                  onValueChange={(value) => setTray(parseInt(value))}
-                >
-                  <SelectTrigger className="w-32">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {shelf &&
-                      data[side][shelf].trays.map((_, trayIdx) => {
-                        return (
-                          <SelectItem
-                            value={`${trayIdx}`}
-                            key={`${trayIdx}-pull-tray`}
-                          >
-                            {trayIdx}
-                          </SelectItem>
-                        );
-                      })}
-                  </SelectContent>
-                </Select>
-              </>
-            )}
-          </>
-        )}
-        {shelf !== null && tray !== null && (
-          <Button>
-            <BetweenHorizonalStartIcon />
-            Pull Tray
-          </Button>
-        )}
-      </CardContent>
-      <CardFooter></CardFooter>
-    </Card>
-  );
-};
-
-const RetrieveItemForm = () => {};
-*/
 const RobotController = () => {
   const { isPending, isError, data, error } = useQuery({
     queryKey: ['storage'],

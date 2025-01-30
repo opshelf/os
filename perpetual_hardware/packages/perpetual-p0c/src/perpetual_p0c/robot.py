@@ -17,6 +17,7 @@ from perpetual_p0c.workstation import (
     WorkstationStatus,
 )
 from perpetual_p0c.size_database import SizeDatabase
+from perpetual_trinamic.aio.trinamic_axis import TrinamicAxis
 from enum import Enum
 import os
 from perpetual_p0c.storage import (
@@ -33,9 +34,10 @@ from perpetual_p0c.storage import (
 from perpetual_can import CANBusHandler
 import asyncio
 import os
+import logging
 from pydantic import BaseModel, Field, UUID4
 from uuid import uuid4
-from typing import Optional, Union, Literal, Annotated, List
+from typing import Optional, Union, Literal, Annotated, List, Dict
 
 
 class BottleTracking(int, Enum):
@@ -174,6 +176,42 @@ class IdlePositionCommand(BaseMessage):
 class ServiceHighPositionCommand(BaseMessage):
     command: Literal["service_high_position"] = "service_high_position"
 
+class AxisHomeCommand(BaseModel):
+    command: Literal["home"] = "home"
+
+class AxisInitializeCommand(BaseModel):
+    command: Literal["initialize"] = "initialize"
+
+class AxisMoveRelativeCommand(BaseModel):
+    command: Literal["move_relative"] = "move_relative"
+    position: float
+
+class AxisMoveAbsoluteCommand(BaseModel):
+    command: Literal["move_absolute"] = "move_absolute"
+    position: float
+
+class AxisStopCommand(BaseModel):
+    command: Literal["stop"] = "stop"
+
+AxisCommands = Annotated[
+    Union[
+        AxisHomeCommand,
+        AxisInitializeCommand,
+        AxisMoveRelativeCommand,
+        AxisMoveAbsoluteCommand,
+        AxisStopCommand
+    ],
+    Field(discriminator="command"),
+]
+
+class AxisPayload(BaseModel):
+    axis_id: int
+    command: AxisCommands
+
+class LowLevelAxisCommand(BaseMessage):
+    command: Literal["axis_command"] = "axis_command"
+    payload: AxisPayload
+
 
 # Union of all command models
 RobotCommands = Annotated[
@@ -194,6 +232,7 @@ RobotCommands = Annotated[
         PlaceTrayCommand,
         IdlePositionCommand,
         ServiceHighPositionCommand,
+        LowLevelAxisCommand
     ],
     Field(discriminator="command"),
 ]
@@ -326,15 +365,15 @@ class P0C(AbstractRobot):
 
     async def initialize(self) -> None:
         self.load_state()
-        print("State Loaded")
+        logging.info("State Loaded")
         await self.gantry.initialize()
-        print("Gantry Initialized")
+        logging.info("Gantry Initialized")
         await self.funnel.initialize()
-        print("Funnel Initialized")
+        logging.info("Funnel Initialized")
         await self.workstation.initialize()
-        print("Workstation Initialized")
+        logging.info("Workstation Initialized")
         await self.tool.initialize()
-        print("Tool Initialized")
+        logging.info("Tool Initialized")
 
     def save_state(self) -> None:
         with open(self._configuration.state_file, "w+") as f:
@@ -569,7 +608,7 @@ class P0C(AbstractRobot):
         async with asyncio.timeout(20):
             while True:
                 if tracking == BottleTracking.INITIALIZE:
-                    print("Initialized")
+                    logging.info("Initialized")
                     await self.funnel.start_output_transfer()
                     await self.funnel.start_output()
                     await self.workstation.setup_output_boxes(output_idx)
@@ -577,7 +616,7 @@ class P0C(AbstractRobot):
                 elif tracking == BottleTracking.WAIT_FOR_TRANSFER_TRIGGER:
                     sensors = await self._io.get_sensors()
                     if sensors and sensors.output_transfer_conveyor:
-                        print("Got Output Transfer")
+                        logging.info("Got Output Transfer")
                         await asyncio.sleep(belt_shutoff_delay)
                         await self.funnel.stop_output_transfer()
                         tracking = BottleTracking.START_WORKSTATION_OUTPUT
@@ -587,7 +626,7 @@ class P0C(AbstractRobot):
                 elif tracking == BottleTracking.WAIT_FOR_FUNNEL_OUT_TRIGGER:
                     sensors = await self._io.get_sensors()
                     if sensors and sensors.output_conveyor:
-                        print("Got Output Sensor")
+                        logging.info("Got Output Sensor")
                         await asyncio.sleep(belt_shutoff_delay)
                         await self.funnel.stop_output()
                         tracking = BottleTracking.WAIT_FOR_OUTPUT_TRIGGER
@@ -596,23 +635,23 @@ class P0C(AbstractRobot):
                     if sensors:
                         if output_idx == 0:
                             if sensors and sensors.output_box_1:
-                                print("Got Door Sensor")
+                                logging.info("Got Door Sensor")
                                 await asyncio.sleep(0.25)
                                 tracking = BottleTracking.CLOSE_DOOR
                         elif output_idx == 1:
                             if sensors and sensors.output_box_2:
-                                print("Got Door Sensor")
+                                logging.info("Got Door Sensor")
                                 await asyncio.sleep(0.25)
                                 tracking = BottleTracking.CLOSE_DOOR
                         elif output_idx == 2:
                             if sensors and sensors.output_box_3:
-                                print("Got Door Sensor")
+                                logging.info("Got Door Sensor")
                                 await asyncio.sleep(0.25)
                                 tracking = BottleTracking.CLOSE_DOOR
                         else:
                             raise Exception("Invalid Output Box")
                 elif tracking == BottleTracking.CLOSE_DOOR:
-                    await self.workstation.close_output(output_idx+1)
+                    await self.workstation.close_output(output_idx + 1)
                     await self.workstation.stop_output_belt()
                     tracking = BottleTracking.RESET
                 elif tracking == BottleTracking.RESET:
@@ -625,27 +664,27 @@ class P0C(AbstractRobot):
     async def run_input_transfer(self, tray: Tray, idx: int) -> None:
         await self.funnel.setup_receive_item(tray, idx)
         await self._io.reset_sensors()
-        print("Sensors Reset")
+        logging.info("Sensors Reset")
         await self.funnel.start_receive_item()
         await self.workstation.start_input_belt()
-        print("Belt Started")
+        logging.info("Belt Started")
         try:
             async with asyncio.timeout(10):
                 while True:
                     sensors = await self._io.get_sensors()
-                    print(f"Input Transfer: {sensors}")
+                    logging.info(f"Input Transfer: {sensors}")
                     if sensors and sensors.input_conveyor:
                         break
                     await asyncio.sleep(0.5)
             await asyncio.sleep(1)
             await self.workstation.stop_input_belt()
-            print("Input Transfer Compplete")
+            logging.info("Input Transfer Compplete")
         except asyncio.TimeoutError:
             await self.workstation.stop_input_belt()
             await self.funnel.stop_receive_item()
             raise Exception("Failed to See Input Break Beams Trigger")
         except Exception as e:
-            print("Run Input Transfer Failure: ", e)
+            logging.error(f"Run Input Transfer Failure: {e}")
             raise e
 
     async def move_to_storage_location(self, location: StorageModuleCellLocation) -> None:
@@ -703,41 +742,25 @@ class P0C(AbstractRobot):
         else:
             if location.side == StorageModuleSide.RIGHT:
                 await self.tool.safe_max()
-                print("Tool at safe max")
             else:
                 await self.tool.safe_min()
-                print("Tool at safe min")
             coordinate = self._storage.get_tray_coordinate(location)
-            print(f"Moving to Coordinate: {coordinate}")
             tray = self._storage.get_tray(location)
-            print(f"Getting Tray: {tray}")
             await self.gantry_move(coordinate.to_gantry_coordinate())
-            print(f"Gantry Move Tray Pull Complete")
             await self.tool.extend_carriage(location.side)
-            print(f"Carriage Extended")
             await self.tool.set_tray_solenoids(tray, location.side)
-            print(f"Tray Solenoids Set")
             await asyncio.sleep(0.25)
-            print(f"Slept")
             await self.tool.retract_carriage(location.side)
-            print(f"Carriage Retracted")
             if not await self.tool.check_tray_loaded():
-                print("Tray Pull Failure")
                 await self.tool.set_solenoids_off()
-                print("Solenoids Set Off")
                 raise Exception("Failed Tray Pull")
-            print("Saving State")
             self._state = RobotState(current_tray=location)
             self.save_state()
 
     async def setup_receive_item(self, location: StorageModuleCellLocation) -> None:
-        print(f"Pulling Tray From Location: {location}")
         tray = self._storage.get_tray(location)
-        print(f"Pulling Tray {tray}")
         await self.pull_tray(location.to_tray_location())
-        print("Tray Pulled")
         await self.move_gantry_to_input(tray)
-        print("Gantry Moved to Input")
 
     async def receive_item(self, location: StorageModuleCellLocation) -> None:
         tray = self._storage.get_tray(location)
@@ -747,29 +770,17 @@ class P0C(AbstractRobot):
         # await self.setup_receive_item(location)
 
         input_transfer_task = asyncio.create_task(self.run_input_transfer(tray, location.slot_idx))
-        print("Input Transfer Task Started")
         tray_pull_task = asyncio.create_task(self.setup_receive_item(location))
-        print("Tray Pull Task Started")
         await input_transfer_task
-        print("Input Transfer Task Finished")
         await tray_pull_task
-        print("Input Transfer Task", input_transfer_task)
-        print("Tray Pull Task", tray_pull_task)
-
-        print("Tray Pull Task Finished")
         await self._funnel.move_to_cell(tray, location.slot_idx)
-        print("Funnel Moved to Cell")
         await self._io.reset_sensors()
-        print("Receive Item IO Sensors Reset")
         await self.funnel.set_diverter_opening(self._storage.get_tray(location))
-        print("Diverter Openening Set")
         await self.funnel.diverter.set_standby_current(0)
-        print("Starting Funnel Input")
         try:
             async with asyncio.timeout(10):
                 while True:
                     sensors = await self._io.get_sensors()
-                    print(f"Receive Item: {sensors}")
                     if sensors and sensors.funnel_input:
                         await asyncio.sleep(0.5)
                         break
@@ -779,7 +790,7 @@ class P0C(AbstractRobot):
         except asyncio.TimeoutError:
             await self.funnel.stop_receive_item()
             await self.place_tray(location)
-            print("Failed to Receive Item into Funnel within Ten Seconds")
+            logging.error("Failed to Receive Item into Funnel within Ten Seconds")
             raise Exception("Failed to Receive Item into Funnel within 10 seconds")
 
     async def drop_off_item(
@@ -922,26 +933,48 @@ class P0C(AbstractRobot):
                 return AckResponse(
                     status=ResponseStatus.COMPLETED, message="service high", command=command
                 )
+            case LowLevelAxisCommand(payload=payload):
+                axes: Dict[int, TrinamicAxis] = {
+                    100: self._gantry.x_axis,
+                    101: self._gantry.y_axis,
+                    102: self._tool.carriage,
+                    110: self._funnel.inlet_funnel,
+                    111: self._funnel.opposing_funnel,
+                    112: self._funnel.slot_1,
+                    113: self._funnel.slot_2,
+                    114: self._funnel.slot_3,
+                    137: self._workstation.output_box_1.door,
+                    138: self._workstation.output_box_2.door,
+                    139: self._workstation.output_box_3.door,
+                }
+                axis = axes.get(payload.axis_id)
+                if axis:
+                    match payload.command:
+                        case AxisHomeCommand():
+                            await axis.home()
+                        case AxisInitializeCommand():
+                            await axis.initialize()
+                        case AxisMoveRelativeCommand(position=position):
+                            await axis.move_to_relative_position(position)
+                        case AxisMoveAbsoluteCommand(position=position):
+                            await axis.move_to_position(position)
+                        case AxisStopCommand():
+                            await axis.stop()
+                        case _:
+                            raise Exception("Invalid Axis Command")
+                else:
+                    raise Exception(f"Invalid Axis ID: {payload.axis_id}")
+                return AckResponse(
+                    status=ResponseStatus.COMPLETED, message="service high", command=command
+                )
             case _:
                 raise Exception("Invalid Robot Command")
 
     async def handle_command(self, command: RobotCommands) -> RobotResponses:
         try:
             response = await self._handle_command(command)
-            print("Handle Command Response: ", response)
+            logging.info(f"Handle Command Response: {response}")
             return response
         except Exception as e:
-            print("Handle Command Exception: ", e)
+            logging.error(f"Handle Command Exception: {e}")
             raise e
-
-
-"""
-Store Item
-    Store Item and Hold Tray if Multiple Storages are Queued and incoming item size optimally fits in the tray
-    Store Item and Return Tray if Empty
-
-Deposit Item
-    Deposit Item Then Start Output Flow
-        Hold Tray if Item in Current Tray should be dispensed as well
-        Return tray in parallel
-"""

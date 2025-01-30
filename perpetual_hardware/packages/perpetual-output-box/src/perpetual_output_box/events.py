@@ -1,41 +1,84 @@
+from asyncio import Lock
 from pydantic import BaseModel, UUID4, Field
 from uuid import uuid4
-from typing import Literal
+from typing import Annotated, Literal, Union
+from perpetual_output_box.drivers.base import LockState
+
 
 class OutputBoxPayload(BaseModel):
     output_box_id: int
 
+
+class OutputBoxMessage(BaseModel):
+    message: str
+
+
 class BaseOutputCommand(BaseModel):
-    command_id: UUID4 = Field(default_factory=uuid4)
+    message_id: UUID4 = Field(default_factory=uuid4)
+
 
 class BaseOutputEvent(BaseModel):
-    command_id: UUID4 = Field(default_factory=uuid4)
+    message_id: UUID4 = Field(default_factory=uuid4)
+
 
 class ReceiveItemCommand(BaseOutputCommand):
-    kind: Literal["receive_item_command"] = "receive_item_command"
+    command: Literal["receive_item_command"] = "receive_item_command"
     payload: str
 
 
 class StopCommand(BaseOutputCommand):
-    kind: Literal["stop"] = "stop"
+    command: Literal["stop"] = "stop"
 
 
 class HomeCommand(BaseOutputCommand):
-    kind: Literal["home"] = "home"
+    command: Literal["home"] = "home"
 
 
 class InitializeCommand(BaseOutputCommand):
-    kind: Literal["initialize"] = "initialize"
+    command: Literal["initialize"] = "initialize"
 
 
 class OpenDoorCommand(BaseOutputCommand):
-    kind: Literal["open_door"] = "open_door"
-    payload: bool
+    command: Literal["open_door"] = "open_door"
+
+
+class CloseDoorCommand(BaseOutputCommand):
+    command: Literal["close_door"] = "close_door"
 
 
 class SetLockCommand(BaseOutputCommand):
-    kind: Literal["set_lock"] = "set_lock"
-    payload: bool
+    command: Literal["set_lock"] = "set_lock"
+    payload: LockState
+
+
+class ItemReceivedEvent(BaseOutputEvent):
+    kind: Literal["item_received"] = "item_received"
+    payload: OutputBoxPayload
+
+
+class FailedToReceiveItemEvent(BaseOutputEvent):
+    kind: Literal["item_receive_failed"] = "item_receive_failed"
+    payload: OutputBoxMessage
+
+
+OutputBoxCommands = Annotated[
+    Union[
+        SetLockCommand,
+        OpenDoorCommand,
+        CloseDoorCommand,
+        InitializeCommand,
+        StopCommand,
+        HomeCommand,
+        ReceiveItemCommand,
+    ],
+    Field(discriminator="command"),
+]
+
+OutputBoxEvents = Annotated[
+    Union[ItemReceivedEvent, FailedToReceiveItemEvent],
+    Field(discriminator="kind"),
+]
+
 
 """
 Commands:

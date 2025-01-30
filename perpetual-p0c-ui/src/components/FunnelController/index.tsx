@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button';
 import { robotCommand } from '@/api/robot';
 import { RobotController } from '@/domain/robot';
 import { CellData, Tray } from '@/domain';
+import { useStateStore } from '@/store';
 
 const Controls = ({
   tray,
@@ -212,6 +213,9 @@ function FunnelController() {
 
   const [selectedCell, setSelectedCell] = useState(0);
   const robot = new RobotController(robotCommand);
+  const { robotStatus } = useStateStore();
+
+  const funnelStatus = robotStatus?.robot_status?.funnel_status;
 
   useEffect(() => {
     if (selectedCell >= tray.slots.length) {
@@ -222,7 +226,7 @@ function FunnelController() {
   return (
     <Card className="flex flex-col px-4 py-4 space-y-4 w-fit">
       <CardTitle>Funnel Control</CardTitle>
-      <CardContent className="px-0">
+      <CardContent className="px-0 relative">
         <div className="flex items-stretch space-x-4">
           <Controls tray={tray} setTray={setTray} />
         </div>
@@ -257,6 +261,23 @@ function FunnelController() {
                 );
               })}
           </div>
+        </div>
+        <div className="flex w-full absolute bottom-0 space-x-4">
+          {funnelStatus !== undefined && (
+            <>
+              <p>
+                Inlet Funnel: {funnelStatus.inlet_funnel.position}
+              </p>
+              <p>
+                Opposing Funnel:{' '}
+                {funnelStatus.opposing_funnel.position}
+              </p>
+              <p>Slot 1: {funnelStatus.slot_1.position}</p>
+              <p>Slot 2: {funnelStatus.slot_2.position}</p>
+              <p>Slot 3: {funnelStatus.slot_3.position}</p>
+              <p>Diverter: {funnelStatus.diverter.position}</p>
+            </>
+          )}
         </div>
       </CardContent>
     </Card>

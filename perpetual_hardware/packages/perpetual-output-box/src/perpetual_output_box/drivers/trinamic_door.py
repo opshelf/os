@@ -1,6 +1,6 @@
 from perpetual_trinamic.base import TrinamicTransporter
 from perpetual_trinamic.tmcl import TmclReply, TmclMessage
-from perpetual_output_box.io import AbstractDoor, DoorConfiguration
+from perpetual_output_box.drivers.base import AbstractDoor, DoorConfiguration
 from perpetual_trinamic.serial.trinamic_axis import AxisStatus, TrinamicAxis
 from typing import Optional
 import asyncio
@@ -8,8 +8,8 @@ import serial_asyncio
 from typing import Optional
 import concurrent.futures
 
-class TrinamicUsbConnection(TrinamicTransporter):
 
+class TrinamicUsbConnection(TrinamicTransporter):
     def __init__(self, port: str, baudrate: int, loop: asyncio.AbstractEventLoop) -> None:
         self._port = port
         self._baudrate = baudrate
@@ -34,12 +34,12 @@ class TrinamicUsbConnection(TrinamicTransporter):
             self._writer.close()
             await self._writer.wait_closed()
 
-    async def send_message(
-        self, message: TmclMessage, timeout: Optional[float] = 1.0
-    ) -> TmclReply: 
+    async def send_message(self, message: TmclMessage, timeout: Optional[float] = 1.0) -> TmclReply:
         if not self._writer:
             raise ConnectionError("Serial connection is not established. Call connect() first.")
-        await self._loop.run_in_executor(self._executor, self._writer.write, bytes(message.into_serial_buffer()))
+        await self._loop.run_in_executor(
+            self._executor, self._writer.write, bytes(message.into_serial_buffer())
+        )
         # TODO: FLUSH BUFFER ON FAILED READ
         async with asyncio.timeout(timeout):
             raw_reply = await self.read()
@@ -47,16 +47,28 @@ class TrinamicUsbConnection(TrinamicTransporter):
 
 
 class TrinamicDoor(AbstractDoor):
-
     def __init__(self, transport: TrinamicTransporter, configuration: DoorConfiguration) -> None:
         self._transport = transport
         self._configuration = configuration
-        self._axis = TrinamicAxis(transport, configuration.axis_configuration, configuration.module_id, configuration.motor_id) 
+        self._axis = TrinamicAxis(
+            transport,
+            configuration.axis_configuration,
+            configuration.module_id,
+            configuration.motor_id,
+        )
+
+    async def set_configuration(self, configuration: DoorConfiguration) -> None:
+        self._configuration = configuration
+        await self.initialize()
+
+    @property
+    async def configuration(self) -> DoorConfiguration:
+        return self._configuration
 
     async def initialize(self) -> None:
         await self._axis.initialize()
 
-    async def open_door(self) -> None: 
+    async def open_door(self) -> None:
         await self._axis.move_to_position(self._configuration.open_position)
         await self._axis.wait_for_move()
 
@@ -69,6 +81,9 @@ class TrinamicDoor(AbstractDoor):
 
     async def home(self) -> None:
         await self._axis.home()
+
+    async def stop(self) -> None:
+        await self._axis.stop()
 
     async def status(self) -> AxisStatus:
         return await self._axis.status()

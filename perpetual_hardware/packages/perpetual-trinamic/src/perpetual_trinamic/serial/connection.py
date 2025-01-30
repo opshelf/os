@@ -5,8 +5,8 @@ from typing import Optional
 import concurrent.futures
 from perpetual_trinamic.tmcl import TmclReply, TmclMessage
 
-class TrinamicUsbConnection(TrinamicTransporter):
 
+class TrinamicUsbConnection(TrinamicTransporter):
     def __init__(self, port: str, baudrate: int, loop: asyncio.AbstractEventLoop) -> None:
         self._port = port
         self._baudrate = baudrate
@@ -16,11 +16,12 @@ class TrinamicUsbConnection(TrinamicTransporter):
         self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
 
     @classmethod
-    async def build(cls, port: str, baudrate: int, loop: asyncio.AbstractEventLoop) -> "TrinamicUsbConnection":
+    async def build(
+        cls, port: str, baudrate: int, loop: asyncio.AbstractEventLoop
+    ) -> "TrinamicUsbConnection":
         instance = cls(port, baudrate, loop)
         await instance.initialize()
         return instance
-
 
     async def initialize(self) -> None:
         self._reader, self._writer = await serial_asyncio.open_serial_connection(
@@ -38,12 +39,12 @@ class TrinamicUsbConnection(TrinamicTransporter):
             self._writer.close()
             await self._writer.wait_closed()
 
-    async def send_message(
-        self, message: TmclMessage, timeout: Optional[float] = 1.0
-    ) -> TmclReply: 
+    async def send_message(self, message: TmclMessage, timeout: Optional[float] = 1.0) -> TmclReply:
         if not self._writer:
             raise ConnectionError("Serial connection is not established. Call connect() first.")
-        await self._loop.run_in_executor(self._executor, self._writer.write, bytes(message.into_serial_buffer()))
+        await self._loop.run_in_executor(
+            self._executor, self._writer.write, bytes(message.into_serial_buffer())
+        )
         # TODO: FLUSH BUFFER ON FAILED READ
         async with asyncio.timeout(timeout):
             raw_reply = await self.read()

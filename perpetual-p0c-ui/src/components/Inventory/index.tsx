@@ -34,11 +34,19 @@ import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { useStateStore } from '@/store';
 import { GS1 } from '@/domain';
 import DimensionForm from '../DimensionForm';
+import { ScrollArea } from '../ui/scroll-area';
 
 const InventoryTable = ({ data }: { data: CellLocationData[] }) => {
+  if (data.length === 0) {
+    return (
+      <div className="flex w-full items-center justify-center py-4">
+        Not Items in Inventory
+      </div>
+    );
+  }
   return (
     <Table>
-      <TableCaption>A list of your recent invoices.</TableCaption>
+      <TableCaption>Inventory Data</TableCaption>
       <TableHeader>
         <TableRow>
           <TableHead className="w-[100px]">Side</TableHead>
@@ -96,35 +104,36 @@ const FreeCellsTable = ({
   cells: StorageModuleCellLocation[];
 }) => {
   return (
-    <Table>
-      <TableCaption>A list of your recent invoices.</TableCaption>
-      <TableHeader>
-        <TableRow>
-          <TableHead className="w-[100px]">Side</TableHead>
-          <TableHead className="w-[100px]">Shelf</TableHead>
-          <TableHead className="w-[100px]">Tray</TableHead>
-          <TableHead className="w-[100px]">Cell</TableHead>
-          <TableHead>Action</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {cells.map((cell) => {
-          return (
-            <TableRow>
-              <TableCell className="font-medium">
-                {cell.side}
-              </TableCell>
-              <TableCell>{cell.shelf_idx}</TableCell>
-              <TableCell>{cell.tray_idx}</TableCell>
-              <TableCell>{cell.slot_idx}</TableCell>
-              <TableCell>
-                <Button>Store Item</Button>
-              </TableCell>
-            </TableRow>
-          );
-        })}
-      </TableBody>
-    </Table>
+    <ScrollArea className="flex w-full h-[800px] relative">
+      <Table className="w-full">
+        <TableHeader>
+          <TableRow>
+            <TableHead className="w-[100px]">Side</TableHead>
+            <TableHead className="w-[100px]">Shelf</TableHead>
+            <TableHead className="w-[100px]">Tray</TableHead>
+            <TableHead className="w-[100px]">Cell</TableHead>
+            <TableHead>Action</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {cells.map((cell) => {
+            return (
+              <TableRow>
+                <TableCell className="font-medium">
+                  {cell.side}
+                </TableCell>
+                <TableCell>{cell.shelf_idx}</TableCell>
+                <TableCell>{cell.tray_idx}</TableCell>
+                <TableCell>{cell.slot_idx}</TableCell>
+                <TableCell>
+                  <Button>Store Item</Button>
+                </TableCell>
+              </TableRow>
+            );
+          })}
+        </TableBody>
+      </Table>
+    </ScrollArea>
   );
 };
 
@@ -204,22 +213,22 @@ const GS1Card = ({ gs1 }: { gs1: GS1 }) => {
 const ScannerAddForm = () => {
   const { gs1 } = useStateStore();
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Add Item to Inventory </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-2">
-        <Label className="text-xl">Store in Location</Label>
-        <div className="flex space-x-2">
-          {gs1 !== null && (
-            <>
+    <>
+      {gs1 !== null && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Add Scanned Item to Inventory </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            <Label className="text-xl">Store in Location</Label>
+            <div className="flex space-x-2">
               <GS1Card gs1={gs1} />
               <DimensionForm data={gs1} />
-            </>
-          )}
-        </div>
-      </CardContent>
-    </Card>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+    </>
   );
 };
 
@@ -297,13 +306,15 @@ const Inventory = () => {
       ) : (
         <>
           <InventoryTable data={data[0] as CellLocationData[]} />
-          <AddInventoryForm
-            data={data[2] as StorageModuleData}
-            handleAdd={(location: StorageModuleCellLocation) => {
-              addMutation.mutate({ location, item: null });
-            }}
-          />
-          <ScannerAddForm />
+          <div className="flex items-start space-x-2">
+            <AddInventoryForm
+              data={data[2] as StorageModuleData}
+              handleAdd={(location: StorageModuleCellLocation) => {
+                addMutation.mutate({ location, item: null });
+              }}
+            />
+            <ScannerAddForm />
+          </div>
         </>
       )}
     </div>
