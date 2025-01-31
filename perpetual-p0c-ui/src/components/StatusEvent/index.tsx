@@ -19,7 +19,20 @@ const StatusEventSSE = () => {
         try {
           const data = JSON.parse(event.data);
           const status = workerStatusSchema.parse(data);
-          useStateStore.getState().setStatus(status);
+          if (status.robot_status !== null) {
+            useStateStore.getState().setStatus(status);
+          } else {
+            let currentStatus = useStateStore.getState().robotStatus;
+            if (currentStatus !== null) {
+              let update = {
+                ...status,
+                robot_status: currentStatus.robot_status,
+              };
+              useStateStore.getState().setStatus(update);
+            } else {
+              useStateStore.getState().setStatus(status);
+            }
+          }
         } catch (err) {
           console.error(err);
         }
