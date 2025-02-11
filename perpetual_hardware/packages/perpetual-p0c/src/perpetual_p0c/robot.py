@@ -176,22 +176,28 @@ class IdlePositionCommand(BaseMessage):
 class ServiceHighPositionCommand(BaseMessage):
     command: Literal["service_high_position"] = "service_high_position"
 
+
 class AxisHomeCommand(BaseModel):
     command: Literal["home"] = "home"
 
+
 class AxisInitializeCommand(BaseModel):
     command: Literal["initialize"] = "initialize"
+
 
 class AxisMoveRelativeCommand(BaseModel):
     command: Literal["move_relative"] = "move_relative"
     position: float
 
+
 class AxisMoveAbsoluteCommand(BaseModel):
     command: Literal["move_absolute"] = "move_absolute"
     position: float
 
+
 class AxisStopCommand(BaseModel):
     command: Literal["stop"] = "stop"
+
 
 AxisCommands = Annotated[
     Union[
@@ -199,14 +205,16 @@ AxisCommands = Annotated[
         AxisInitializeCommand,
         AxisMoveRelativeCommand,
         AxisMoveAbsoluteCommand,
-        AxisStopCommand
+        AxisStopCommand,
     ],
     Field(discriminator="command"),
 ]
 
+
 class AxisPayload(BaseModel):
     axis_id: int
     command: AxisCommands
+
 
 class LowLevelAxisCommand(BaseMessage):
     command: Literal["axis_command"] = "axis_command"
@@ -232,7 +240,7 @@ RobotCommands = Annotated[
         PlaceTrayCommand,
         IdlePositionCommand,
         ServiceHighPositionCommand,
-        LowLevelAxisCommand
+        LowLevelAxisCommand,
     ],
     Field(discriminator="command"),
 ]

@@ -12,7 +12,6 @@ from sse_starlette.sse import EventSourceResponse
 from nats.aio.client import Client as NATS
 
 
-
 RobotEvents = Union[RobotCommands, StorageEvents]
 
 router = APIRouter()
@@ -74,6 +73,7 @@ async def set_configuration(
 ) -> SuccessResponse:
     await worker.set_configuration(configuration)
     return SuccessResponse()
+
 
 async def nats_consumer(stop_event: asyncio.Event) -> AsyncGenerator[str, None]:
     nats_client = NATS()

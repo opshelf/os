@@ -224,7 +224,7 @@ class TrinamicAxis(TMCM12xx):
             await self.move_relative(position)
             await self.wait_for_move()
             await self.end_brake_move()
-            #if self._target_position + position >= 0:
+            # if self._target_position + position >= 0:
             #    await self.reset_location()
             #    await self.init_brake_move()
             #    self._target_position = self._target_position + position
@@ -232,17 +232,17 @@ class TrinamicAxis(TMCM12xx):
             #    await self.move_relative(position)
             #    await self.wait_for_move()
             #    await self.end_brake_move()
-            #else:
+            # else:
             #    self._target_position = 0
             #    await self.move_to_position(0)
         else:
             position = self._configuration.convert_position_to_pulses(position)
             await self.move_relative(position)
-            #if self._target_position + position >= 0:
+            # if self._target_position + position >= 0:
             #    self._target_position = self._target_position + position
             #    position = self._configuration.convert_position_to_pulses(position)
             #    await self.move_relative(position)
-            #else:
+            # else:
             #    self._target_position = 0
             #    await self.move_to_position(0)
 

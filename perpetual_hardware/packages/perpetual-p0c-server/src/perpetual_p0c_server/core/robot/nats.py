@@ -1,8 +1,7 @@
-from nats import connect
 from nats.aio.msg import Msg
+from nats import errors as nats_errors
 from nats.js.errors import NotFoundError
 from perpetual_p0c.storage import CellItem, Dimensions, StorageGrid
-
 from perpetual_p0c_server.core.scanner.waveshare import GS1Parser
 from perpetual_p0c_server.core.sizes import get_size_db
 from .base import AbstractRobotClient, AbstractRobotWorker
@@ -22,7 +21,6 @@ from typing import List, Optional, Union
 from perpetual_p0c.robot import RobotCommands, RobotResponses
 from nats.aio.client import Client as NATS
 from pydantic import BaseModel, TypeAdapter
-from nats.errors import TimeoutError
 from perpetual_p0c_server.core.storage import get_storage
 from perpetual_p0c_server.core.events import (
     MessagePayload,
@@ -296,7 +294,7 @@ class RobotWorker(AbstractRobotWorker):
                                 await self._msg.ack()
                                 self._msg = None
                     await asyncio.sleep(0.05)
-                except (TimeoutError, asyncio.CancelledError) as e:
+                except (nats_errors.TimeoutError, asyncio.CancelledError) as e:
                     if self._msg:
                         await self._msg.ack()
                     if self._robot.state.current_tray:
