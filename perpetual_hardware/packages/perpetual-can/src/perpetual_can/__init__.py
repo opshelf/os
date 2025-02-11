@@ -10,6 +10,7 @@ import logging
 import concurrent.futures
 import can
 
+
 log = logging.getLogger(__name__)
 
 
@@ -40,6 +41,13 @@ class AsyncFilteredReader(AsyncBufferedReader):
     def get_buffered_messages(self) -> int:
         return self.buffer.qsize()
 
+class ErrorReporter(AsyncBufferedReader):
+    def __init__(self, **kwargs: Any) -> None:
+        AsyncBufferedReader.__init__(self, **kwargs)
+
+    def on_message_received(self, msg: Message) -> None:
+        if msg.is_error_frame:
+            print("error: ", msg)
 
 class CANBusHandler:
     def __init__(self, bus: BusABC, loop: asyncio.AbstractEventLoop):
@@ -48,7 +56,8 @@ class CANBusHandler:
         self._loop = loop
         # self._printer = can.Printer()
         # self._notifier = Notifier(bus, [self._printer], loop=loop)
-        self._notifier = Notifier(bus, [], loop=loop)
+        self._error_reader = ErrorReporter()
+        self._notifier = Notifier(bus, [self._error_reader], loop=loop)
         self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
 
     @property
