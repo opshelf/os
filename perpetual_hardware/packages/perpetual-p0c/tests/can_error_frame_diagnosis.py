@@ -12,6 +12,7 @@ async def main() -> None:
     robot = P0C(can_bus, p0_robot_config)
     await robot.initialize()
     await robot.home()
+    await robot.idle()
     with open("storage.json") as f:
         storage_module = StorageGrid.model_validate_json(f.read())
         robot.storage = storage_module
