@@ -868,7 +868,7 @@ class P0C(AbstractRobot):
             tool_status=tool_status,
         )
 
-    async def _handle_command(self, command: RobotCommands) -> RobotResponses:
+    async def handle_command(self, command: RobotCommands) -> RobotResponses:
         match command:
             case StoreCommand(payload=payload):
                 await self.store_item_by_location(payload.location)
@@ -978,11 +978,3 @@ class P0C(AbstractRobot):
             case _:
                 raise Exception("Invalid Robot Command")
 
-    async def handle_command(self, command: RobotCommands) -> RobotResponses:
-        try:
-            response = await self._handle_command(command)
-            logging.info(f"Handle Command Response: {response}")
-            return response
-        except Exception as e:
-            logging.error(f"Handle Command Exception: {e}")
-            raise e
