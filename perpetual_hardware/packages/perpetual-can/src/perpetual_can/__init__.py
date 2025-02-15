@@ -23,6 +23,8 @@ class AsyncFilteredReader(AsyncBufferedReader):
         self._filters = filters
 
     def on_message_received(self, msg: Message) -> None:
+        if msg.is_error_frame:
+            print("error: ", msg)
         if not self._is_stopped and msg.arbitration_id in self._filters:
             self.buffer.put_nowait(msg)
 

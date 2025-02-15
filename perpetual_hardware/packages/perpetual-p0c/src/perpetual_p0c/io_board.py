@@ -133,12 +133,6 @@ class IoController:
         raise Exception("No Response From Relay Module")
 
     async def _run_command(self, message: Message) -> Message:
-        # await self._send_message(message)
-        # message = await self._receive_message()
-        # if message.data[0]:
-        #    return message
-        # else:
-        #    raise Exception("Invalid Command")
         message = await self._bus.send_ack_message(message, self._reader, 1.0)
         if message.is_error_frame:
             raise Exception("Io Board Encoutered Error Frame")

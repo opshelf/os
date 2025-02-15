@@ -49,10 +49,22 @@ def get_waveshare_port() -> Optional[str]:
             return port.device.replace("/dev/cu", "/dev/tty")
     return None
 
+def get_symcode_port() -> Optional[str]:
+    for port in get_usb_serial():
+        if port.description and 'Barcode' in port.description:
+            return port.device.replace("/dev/cu", "/dev/tty")
+    return None
 
 def get_waveshare_ports() -> List[str]:
     scanners = []
     for port in get_usb_serial():
         if port.description and "USBKey" in port.description:
+            scanners.append(port.device.replace("/dev/cu", "/dev/tty"))
+    return scanners
+
+def get_symcode_ports() -> List[str]:
+    scanners = []
+    for port in get_usb_serial():
+        if port.description and 'Barcode' in port.description:
             scanners.append(port.device.replace("/dev/cu", "/dev/tty"))
     return scanners

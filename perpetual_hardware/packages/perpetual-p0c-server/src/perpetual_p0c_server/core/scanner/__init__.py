@@ -1,8 +1,9 @@
 from typing import Optional, List
 from perpetual_p0c_server.core.scanner.base import AbstractScanner, ScannerWorker
 from perpetual_p0c_server.core.scanner.mock import MockScanner
+from perpetual_p0c_server.core.scanner.symcode import SymcodeScanner
 from perpetual_p0c_server.core.scanner.waveshare import WaveshareScanner
-from .utils import get_waveshare_ports
+from .utils import get_symcode_ports, get_waveshare_ports
 
 scanner_worker: Optional[ScannerWorker] = None
 
@@ -10,9 +11,12 @@ scanner_worker: Optional[ScannerWorker] = None
 async def init_scanner_worker(enabled: bool) -> None:
     global scanner_worker
     if enabled:
-        ports = get_waveshare_ports()
-        if len(ports):
-            scanners: List[AbstractScanner] = [WaveshareScanner(port, 9600) for port in ports]
+        waveshare_ports = get_waveshare_ports()
+        symcode_ports = get_symcode_ports()
+        if len(waveshare_ports) or len(symcode_ports):
+            waveshare_scanners: List[AbstractScanner] = [WaveshareScanner(port, 9600) for port in waveshare_ports]
+            symcode_scanners: List[AbstractScanner] = [SymcodeScanner(port, 115200) for port in symcode_ports]
+            scanners = waveshare_scanners + symcode_scanners
             scanner_worker = ScannerWorker(
                 scanners, "nats://localhost:4222", "scanner", "scanner_events"
             )
