@@ -55,16 +55,6 @@ const AxisStatusDisplay = ({
       <span className="text-md font-semibold w-32 text-left">
         Id: {axisId}
       </span>
-      {/*
-      <div className="flex items-center">
-        <div className="w-4 h-4 border px-1 py-1 bg-red-100 mr-2" />
-        <p>Hard Stopped</p>
-      </div>
-      <div className="flex items-center">
-        <div className="w-4 h-4 border px-1 py-1 bg-red-100 mr-2" />
-        <p>Homed</p>
-      </div>
-      */}
       <div className="flex items-center">
         <div className="w-4 h-4 border px-1 py-1 bg-red-100 mr-2" />
         <p>Safety On</p>

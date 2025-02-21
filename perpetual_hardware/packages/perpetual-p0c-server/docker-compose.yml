@@ -1,25 +1,3 @@
-#version: "3"
-#services:
-#  nats:
-#    image: nats
-#    ports:
-#      - "4222:4222"
-#    command: "-c /etc/nats/nats.conf -js"
-#    #command: "-js"
-#    #networks: ["nats"]
-#    volumes:
-#      - ./infra/nats/:/etc/nats
-#    networks:
-#      - host
-#
-#networks:
-#  host:
-#    name: host
-#    external: true
-#networks:
-#  nats:
-#    name: nats
-
 version: "3.9"
 services:
   nats:

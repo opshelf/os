@@ -43,6 +43,7 @@ class AsyncFilteredReader(AsyncBufferedReader):
     def get_buffered_messages(self) -> int:
         return self.buffer.qsize()
 
+
 class ErrorReporter(AsyncBufferedReader):
     def __init__(self, **kwargs: Any) -> None:
         AsyncBufferedReader.__init__(self, **kwargs)
@@ -50,6 +51,7 @@ class ErrorReporter(AsyncBufferedReader):
     def on_message_received(self, msg: Message) -> None:
         if msg.is_error_frame:
             print("error: ", msg)
+
 
 class CANBusHandler:
     def __init__(self, bus: BusABC, loop: asyncio.AbstractEventLoop):

@@ -5,7 +5,7 @@ import { HOST } from '@/api/common';
 
 const StatusEventSSE = () => {
   const [reconnectAttempts, setReconnectAttempts] = useState(0);
-  const maxReconnectAttempts = 10;
+  const maxReconnectAttempts = 1000;
   const reconnectInterval = 3000; // 3 seconds
 
   useEffect(() => {

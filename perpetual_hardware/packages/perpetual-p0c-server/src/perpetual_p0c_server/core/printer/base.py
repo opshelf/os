@@ -12,6 +12,7 @@ from perpetual_p0c_server.core.events import (
     UiEvents,
 )
 from .label_maker import LabelInformation, LabelMaker
+import logging
 
 
 class AbstractPrinter(metaclass=ABCMeta):

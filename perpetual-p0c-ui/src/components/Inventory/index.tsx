@@ -7,6 +7,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { useToast } from '@/hooks/use-toast';
 import { Button } from '../ui/button';
 import { useState } from 'react';
 import {
@@ -36,7 +37,13 @@ import { GS1 } from '@/domain';
 import DimensionForm from '../DimensionForm';
 import { ScrollArea } from '../ui/scroll-area';
 
-const InventoryTable = ({ data }: { data: CellLocationData[] }) => {
+const InventoryTable = ({
+  data,
+  deleteItem,
+}: {
+  data: CellLocationData[];
+  deleteItem: (location: StorageModuleCellLocation) => void;
+}) => {
   if (data.length === 0) {
     return (
       <div className="flex w-full items-center justify-center py-4">
@@ -83,9 +90,7 @@ const InventoryTable = ({ data }: { data: CellLocationData[] }) => {
                 </Button>
                 <Button
                   variant={'destructive'}
-                  onClick={async () => {
-                    await removeItem(data.location);
-                  }}
+                  onClick={() => deleteItem(data.location)}
                 >
                   Remove Item
                 </Button>
@@ -258,26 +263,31 @@ const Inventory = () => {
   });
 
   const queryClient = useQueryClient();
+  const { toast } = useToast();
 
   const addMutation = useMutation({
     mutationFn: addItem,
     onSuccess: () => {
-      // Invalidate and refetch
-      queryClient.invalidateQueries({
-        queryKey: ['items', 'free_cells', 'storage'],
+      queryClient.invalidateQueries({ queryKey: ['items'] });
+      queryClient.invalidateQueries({ queryKey: ['free_cells'] });
+      queryClient.invalidateQueries({ queryKey: ['storage'] });
+      toast({
+        description: 'Item added to storage',
       });
     },
   });
 
-  //const deleteMutation = useMutation({
-  //  mutationFn: removeItem,
-  //  onSuccess: () => {
-  //    // Invalidate and refetch
-  //    queryClient.invalidateQueries({
-  //      queryKey: ['items', 'free_cells', 'storage'],
-  //    });
-  //  },
-  //});
+  const deleteMutation = useMutation({
+    mutationFn: removeItem,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['items'] });
+      queryClient.invalidateQueries({ queryKey: ['free_cells'] });
+      queryClient.invalidateQueries({ queryKey: ['storage'] });
+      toast({
+        description: 'Item remove from storage',
+      });
+    },
+  });
 
   const [showFreeCells, setShowFreeCells] = useState<boolean>(false);
 
@@ -298,6 +308,28 @@ const Inventory = () => {
           checked={showFreeCells}
           onCheckedChange={setShowFreeCells}
         />
+        <Button
+          onClick={() => {
+            for (const location of data[0] as CellLocationData[]) {
+              deleteMutation.mutate(location.location);
+            }
+            for (var tray_idx = 0; tray_idx < 3; tray_idx++) {
+              for (var slot_idx = 0; slot_idx < 3; slot_idx++) {
+                addMutation.mutate({
+                  location: {
+                    side: 'right_module',
+                    shelf_idx: 1,
+                    tray_idx,
+                    slot_idx,
+                  },
+                  item: null,
+                });
+              }
+            }
+          }}
+        >
+          Initialize Demo State
+        </Button>
       </div>
       {showFreeCells ? (
         <FreeCellsTable
@@ -305,7 +337,12 @@ const Inventory = () => {
         />
       ) : (
         <>
-          <InventoryTable data={data[0] as CellLocationData[]} />
+          <InventoryTable
+            data={data[0] as CellLocationData[]}
+            deleteItem={(location: StorageModuleCellLocation) => {
+              deleteMutation.mutate(location);
+            }}
+          />
           <div className="flex items-start space-x-2">
             <AddInventoryForm
               data={data[2] as StorageModuleData}

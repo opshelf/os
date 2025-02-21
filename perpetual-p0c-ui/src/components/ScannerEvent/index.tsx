@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useStateStore } from '../../store';
 import { gs1Schema } from '@/domain';
+import { HOST } from '@/api/common';
 
 const ScannerEventSSE = () => {
   const [reconnectAttempts, setReconnectAttempts] = useState(0);
-  const maxReconnectAttempts = 10;
+  const maxReconnectAttempts = 1000;
   const reconnectInterval = 3000; // 3 seconds
 
   useEffect(() => {
@@ -12,9 +13,7 @@ const ScannerEventSSE = () => {
     let reconnectTimeout: any = null;
 
     const connect = () => {
-      eventSource = new EventSource(
-        `http://localhost:8000/api/scanner/scans`
-      );
+      eventSource = new EventSource(`${HOST}/scanner/scans`);
 
       eventSource.onmessage = (event) => {
         try {

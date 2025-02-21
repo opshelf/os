@@ -1,12 +1,14 @@
 FROM ghcr.io/astral-sh/uv:alpine
-RUN apk update
-RUN apk add --no-cache bash
-RUN apk add curl make cmake libc-dev libffi-dev g++ python3-dev openssl-dev libdmtx libdmtx-libs
-RUN apk add --no-cache python3~=3.12
-# RUN curl https://sh.rustup.rs -sSf | bash -s -- -y
-RUN apk add --no-cache rust cargo
-# RUN echo 'source $HOME/.cargo/env' >> $HOME/.bashrc
-RUN apk add maturin
+# RUN apk update
+# RUN apk add --no-cache bash
+# RUN apk add curl make cmake libc-dev libffi-dev g++ python3-dev openssl-dev libdmtx libdmtx-libs
+# RUN apk add --no-cache python3~=3.12
+# RUN apk add --no-cache rust cargo
+# RUN apk add maturin
+
+RUN apk update && \
+    apk add --no-cache bash curl make cmake libc-dev libffi-dev g++ python3-dev openssl-dev libdmtx libdmtx-libs python3~=3.12 rust cargo maturin
+
 ADD . /app
 WORKDIR /app/perpetual_hardware
 ENV PATH=/root/.local/bin:$PATH

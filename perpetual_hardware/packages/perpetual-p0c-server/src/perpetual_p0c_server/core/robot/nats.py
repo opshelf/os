@@ -5,6 +5,7 @@ from perpetual_p0c.storage import CellItem, Dimensions, StorageGrid
 from perpetual_p0c_server.core.scanner.waveshare import GS1Parser
 from perpetual_p0c_server.core.sizes import get_size_db
 from .base import AbstractRobotClient, AbstractRobotWorker
+import logging
 from perpetual_p0c.robot import (
     AbstractRobot,
     RetrievePayload,
@@ -33,10 +34,10 @@ from perpetual_p0c_server.core.events import (
     StoringCompletedEvent,
     InputPlacedEvent,
 )
+from perpetual_p0c_server.settings import get_settings
 
 
 class RobotNatsConfiguration(BaseModel):
-    nats_url: str = "nats://localhost:4222"
     stream_name: str = "robot"
     command_queue: str = "commands"
     event_queue: str = "events"
@@ -63,7 +64,7 @@ class RobotClient(AbstractRobotClient):
         self._js = self._nc.jetstream()
 
     async def connect(self) -> None:
-        await self._nc.connect(servers=[self._nats_config.nats_url])
+        await self._nc.connect(servers=[get_settings().nats.connection_string()])
         self._js = self._nc.jetstream()
 
     async def send_command(self, command: RobotEvents) -> None:
@@ -82,7 +83,6 @@ class RobotClient(AbstractRobotClient):
             self._nats_config.stream_name, self._nats_config.command_queue
         )
         messages: List[RobotCommands] = []
-        # Iterate over all available messages
         adapter = TypeAdapter[RobotCommands](RobotCommands)
         for seq in range(consumer_info.num_pending if consumer_info.num_pending else 0):
             try:
@@ -91,11 +91,7 @@ class RobotClient(AbstractRobotClient):
                     messages.append(adapter.validate_json(msg.data.decode()))
             except NotFoundError:
                 pass
-        print(len(messages))
         return messages
-
-    async def handle_response(self, response: RobotResponses) -> None:
-        raise NotImplemented
 
 
 class RobotWorker(AbstractRobotWorker):
@@ -119,7 +115,7 @@ class RobotWorker(AbstractRobotWorker):
 
     async def connect(self) -> None:
         """Connect to the NATS server."""
-        await self._nc.connect(servers=[self._nats_config.nats_url])
+        await self._nc.connect(servers=[get_settings().nats.connection_string()])
         self._js = self._nc.jetstream()
         await self._js.add_stream(
             name=self._nats_config.stream_name,
@@ -147,9 +143,8 @@ class RobotWorker(AbstractRobotWorker):
                         msg = await self.work_consumer.fetch(timeout=1)
                         # Msg will be a list greater than one or it will give a timeout error
                         # cmd = adapter.validate_json(msg[0].data.decode())
-                        print(msg[0].data.decode())
                         cmd = RobotEventAdapter.validate_json(msg[0].data.decode())
-                        print(cmd)
+                        logging.info(cmd)
                         match cmd:
                             case StoringRequestedEvent(payload=payload):
                                 size_db = get_size_db()
@@ -260,7 +255,7 @@ class RobotWorker(AbstractRobotWorker):
                                             .encode(),
                                         )
                                     else:
-                                        print("Failed Result: ", self._current_task)
+                                        logging.error("Failed Result: ", self._current_task)
                                         await self._js.publish(
                                             self._nats_config.event_queue,
                                             StoringFailedEvent(
@@ -309,7 +304,7 @@ class RobotWorker(AbstractRobotWorker):
                         .encode(),
                     )
         except Exception as e:
-            print("Process Commands Error: ", e)
+            logging.error("Process Commands Error: ", e)
             match self._current_command:
                 case StoreCommand(payload=payload):
                     await self._js.publish(
@@ -340,14 +335,6 @@ class RobotWorker(AbstractRobotWorker):
                 self._worker_task.cancel()
             self._worker_task = asyncio.create_task(self.process_commands())
             self._status = WorkerStatus(robot_status=None, running=True, current_command=None)
-
-    async def emergency_command(self, command: RobotCommands) -> None:
-        print("Emergency Command: ", command)
-        raise NotImplemented
-
-    async def queue_command(self, command: RobotCommands) -> None:
-        print("Queue Command: ", command)
-        raise NotImplemented
 
     async def shutdown(self) -> None:
         if self._running:

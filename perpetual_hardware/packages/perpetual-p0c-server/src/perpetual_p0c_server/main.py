@@ -33,8 +33,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     if settings.printer.enabled:
         logging.info(f"Printer Enabled Setting Up Printer")
         p = ThermalPrinter()
-    print_worker = PrintWorker(p, "nats://localhost:4222", "printer_queue", "printer_event_queue")
-    logging.info(f"Print Worker Connecting")
+    print_worker = PrintWorker(p, settings.nats.connection_string(), "printer_queue", "printer_event_queue")
+    logging.info(f"Print Worker Connecting: {settings.nats.connection_string()}")
     await print_worker.connect()
     logging.info("Printer Initialized")
     init_file_storage()

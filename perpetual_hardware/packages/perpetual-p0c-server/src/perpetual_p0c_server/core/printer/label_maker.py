@@ -20,8 +20,8 @@ class FontSetting(BaseModel):
 
 
 class LabelSettings(BaseModel):
-    output_file: str = "prescription_label.png"
-    logo_file: str = "./perpetual-logo-vector.jpg"
+    output_file: str = "./data/prescription_label.png"
+    logo_file: str = "./data/perpetual-logo-vector.jpg"
     width: int = 800
     height: int = 600
     background_color: str = "white"

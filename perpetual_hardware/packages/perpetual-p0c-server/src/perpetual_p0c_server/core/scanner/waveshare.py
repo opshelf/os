@@ -10,6 +10,7 @@ from typing import Optional
 from .base import AbstractScanner
 from .gs1_parser import GS1Parser
 
+
 class WaveshareScanner(AbstractScanner):
     def __init__(self, port: str, baudrate: int) -> None:
         self.port = port

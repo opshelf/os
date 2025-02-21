@@ -98,7 +98,7 @@ export const CellSelectionForm = ({
           })
         }
       >
-        <SelectTrigger className="w-32">
+        <SelectTrigger className="w-48">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -125,7 +125,7 @@ export const CellSelectionForm = ({
           })
         }
       >
-        <SelectTrigger className="w-32">
+        <SelectTrigger className="w-48">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -148,7 +148,7 @@ export const CellSelectionForm = ({
           setLocationData({ ...locationData, cell: parseInt(value) })
         }
       >
-        <SelectTrigger className="w-32">
+        <SelectTrigger className="w-48">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -171,7 +171,7 @@ export const CellSelectionForm = ({
           handleSideChange(value as StorageModuleSide)
         }
       >
-        <SelectTrigger className="w-32">
+        <SelectTrigger className="w-48">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>

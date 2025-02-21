@@ -1,0 +1,31 @@
+version: "3.9"
+services:
+  nats:
+    image: nats:latest
+    container_name: nats
+    ports:
+      - "4222:4222"     # NATS client port (can be removed if only internal access is needed)
+      - "6222:6222"     # NATS cluster port (if you're using clustering)
+      - "8222:8222"     # NATS HTTP monitoring port
+      - "8080:8080"     # WebSocket port
+    volumes:
+      - ./perpetual_hardware/packages/perpetual-p0c-server/infra/:/etc/nats/
+    command: ["-js", "-config", "/etc/nats/nats.conf"]
+    networks:  # Define the network and add NATS to it
+      - my-network
+
+  web:
+    build:
+      dockerfile: ./Dockerfile
+    volumes:
+      - ./perpetual_hardware/packages/perpetual-p0c-server/data/:/app/perpetual_hardware/packages/perpetual-p0c-server/data/
+    ports:
+      - "8000:8000"
+    depends_on:  # Ensure NATS starts first
+      - nats
+    networks:  # Add your web service to the same network
+      - my-network
+
+networks:  # Define the network at the top level
+  my-network:
+

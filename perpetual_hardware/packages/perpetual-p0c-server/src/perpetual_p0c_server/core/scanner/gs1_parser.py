@@ -1,5 +1,6 @@
 from perpetual_p0c.storage import GS1Data
 
+
 class GS1Parser:
     AI_FORMATS = {
         "01": {"name": "gtin", "format": "N14"},  # GTIN

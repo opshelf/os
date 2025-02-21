@@ -7,7 +7,6 @@ import {
 } from '../ui/card';
 import { RobotController as Robot } from '@/domain/robot';
 import { CellSelectionForm } from '../CellLocationForm';
-import { Label } from '../ui/label';
 import { getStorage } from '@/api';
 import { StorageModuleSide } from '@/domain';
 import {
@@ -60,7 +59,7 @@ const PullTrayForm = ({ data }: { data: StorageModuleData }) => {
   };
 
   return (
-    <Card className="w-fit">
+    <Card className="w-72">
       <CardHeader>
         <CardTitle>Pull Tray</CardTitle>
       </CardHeader>
@@ -96,12 +95,11 @@ const StoreForm = ({ data }: { data: StorageModuleData }) => {
     cell: null,
   });
   return (
-    <Card>
+    <Card className="w-72">
       <CardHeader>
         <CardTitle>Store Item</CardTitle>
       </CardHeader>
       <CardContent className="space-y-2">
-        <Label className="text-xl">Store in Location</Label>
         <div className="flex flex-col space-y-2">
           <CellSelectionForm
             data={data}

@@ -15,16 +15,10 @@ class AbstractRobotClient(metaclass=ABCMeta):
     @abstractmethod
     async def get_queued_commands(self) -> List[RobotCommands]: ...
 
-    @abstractmethod
-    async def handle_response(self, response: RobotResponses) -> None: ...
-
 
 class AbstractRobotWorker(metaclass=ABCMeta):
     @abstractmethod
     async def get_client(self) -> AbstractRobotClient: ...
-
-    @abstractmethod
-    async def queue_command(self, command: RobotCommands) -> None: ...
 
     @abstractmethod
     async def shutdown(self) -> None: ...

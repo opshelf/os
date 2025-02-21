@@ -10,6 +10,7 @@ from nats.aio.msg import Msg
 from nats.aio.subscription import Subscription
 from sse_starlette.sse import EventSourceResponse
 from nats.aio.client import Client as NATS
+from perpetual_p0c_server.settings import get_settings
 
 
 RobotEvents = Union[RobotCommands, StorageEvents]
@@ -84,7 +85,7 @@ async def nats_consumer(stop_event: asyncio.Event) -> AsyncGenerator[str, None]:
 
     sub: Optional[Subscription] = None
     try:
-        await nats_client.connect("nats://localhost:4222")
+        await nats_client.connect(get_settings().nats.connection_string())
         sub = await nats_client.subscribe("robot.status", cb=message_handler)
 
         while not stop_event.is_set():

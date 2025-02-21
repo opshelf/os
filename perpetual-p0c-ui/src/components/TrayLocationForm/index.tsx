@@ -95,7 +95,7 @@ export const TraySelectionForm = ({
           })
         }
       >
-        <SelectTrigger className="w-32">
+        <SelectTrigger className="w-48">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -121,7 +121,7 @@ export const TraySelectionForm = ({
           })
         }
       >
-        <SelectTrigger className="w-32">
+        <SelectTrigger className="w-48">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -144,7 +144,7 @@ export const TraySelectionForm = ({
           handleSideChange(value as StorageModuleSide)
         }
       >
-        <SelectTrigger className="w-32">
+        <SelectTrigger className="w-48">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
