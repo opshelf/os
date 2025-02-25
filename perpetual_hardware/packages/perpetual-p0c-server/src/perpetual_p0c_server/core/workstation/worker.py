@@ -71,7 +71,7 @@ class WorkstationWorker:
             subjects=[self._nats_config.command_queue, self._nats_config.event_queue],
         )
         self.work_consumer = await self._js.pull_subscribe(
-            self._nats_config.command_queue, durable=self._nats_config.command_queue
+            self._nats_config.command_queue, durable=f"{self._nats_config.stream_name}_{self._nats_config.command_queue}"
         )
         await self._client.connect()
 
