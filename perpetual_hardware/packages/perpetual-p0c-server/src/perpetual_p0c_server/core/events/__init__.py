@@ -3,7 +3,6 @@ from perpetual_p0c.robot import RetrievePayload
 from pydantic import BaseModel, Field
 from perpetual_p0c.storage import Dimensions, StorageModuleCellLocation
 
-
 class GS1Raw(BaseModel):
     gs1: str
 
@@ -15,10 +14,6 @@ class MessagePayload(BaseModel):
 class StoringRequestedEvent(BaseModel):
     kind: Literal["storing_requested"] = "storing_requested"
     payload: GS1Raw
-
-
-# class RetrievalPayload(BaseModel):
-#    location: StorageModuleCellLocation
 
 
 class RetrievalRequestedEvent(BaseModel):
@@ -81,6 +76,24 @@ class LabelPrintingFailedEvent(BaseModel):
     payload: MessagePayload
 
 
+DoorState = Annotated[Literal["open", "close"], str]
+
+class OutputDoorEventPayload(BaseModel):
+    output_box: int
+    state: DoorState
+
+class OutputDoorEvent(BaseModel):
+    kind: Literal["output_door"] = "output_door"
+    payload: OutputDoorEventPayload
+
+class InputDoorEventPayload(BaseModel):
+    state: DoorState
+
+class InputDoorEvent(BaseModel):
+    kind: Literal["input_door"] = "input_door"
+    payload: InputDoorEventPayload
+
+
 UiEvents = Annotated[
     Union[
         StoringRequestedEvent,
@@ -115,3 +128,12 @@ StorageEvents = Annotated[
     ],
     Field(discriminator="kind"),
 ]
+
+WorkstationEvents = Annotated[
+    Union[
+        OutputDoorEvent,
+        InputDoorEvent
+    ],
+    Field(discriminator="kind"),
+]
+

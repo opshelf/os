@@ -5,7 +5,8 @@ from perpetual_p0c_server.core.storage import init_file_storage
 from perpetual_p0c_server.core.sizes import init_file_sizes
 from perpetual_p0c_server.core.robot import init_robot_worker, stop_robot_worker
 from perpetual_p0c_server.core.scanner import init_scanner_worker, stop_scanner_worker
-from perpetual_p0c_server.routers import storage, gantry, sizes, robot, scanner, printer
+from perpetual_p0c_server.core.workstation import init_workstation_worker, stop_workstation_worker
+from perpetual_p0c_server.routers import storage, gantry, sizes, robot, scanner, printer, workstation
 from contextlib import asynccontextmanager
 from perpetual_p0c_server.core.printer import PrintWorker, MockPrinter
 from typing import AsyncGenerator
@@ -45,9 +46,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logging.info("Scanner Enabled")
     await init_robot_worker(settings.robot.enabled)
     logging.info("Robot Enabled")
+    logging.info("Workstaton Enabled")
+    await init_workstation_worker()
     yield
     await stop_robot_worker()
     await stop_scanner_worker()
+    await stop_workstation_worker()
     await print_worker.close()
 
 
@@ -69,6 +73,7 @@ app.include_router(gantry.router, prefix="/api/gantry")
 app.include_router(robot.router, prefix="/api/robot")
 app.include_router(scanner.router, prefix="/api/scanner")
 app.include_router(printer.router, prefix="/api/printer")
+app.include_router(workstation.router, prefix="/api/workstation")
 
 
 def start() -> None:

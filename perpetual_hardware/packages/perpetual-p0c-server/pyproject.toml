@@ -15,7 +15,9 @@ dependencies = [
     "pylibdmtx>=0.1.10",
     "setuptools>=75.8.0",
     "sse-starlette>=2.1.3",
-    "perpetual-label-maker"
+    "perpetual-label-maker",
+    "perpetual-waveshare"
+
 ]
 
 [build-system]
@@ -25,8 +27,8 @@ build-backend = "hatchling.build"
 [tool.uv.sources]
 perpetual-p0c = { workspace = true }
 perpetual-label-maker = { workspace = true }
+perpetual-waveshare = { workspace = true }
 
 
-#[tool.uv.scripts]
 [project.scripts]
 start = "perpetual_p0c_server.main:start"

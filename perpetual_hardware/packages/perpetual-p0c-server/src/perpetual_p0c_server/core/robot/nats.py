@@ -21,9 +21,10 @@ import asyncio
 from typing import List, Optional, Union
 from perpetual_p0c.robot import RobotCommands, RobotResponses
 from nats.aio.client import Client as NATS
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel, TypeAdapter, ValidationError
 from perpetual_p0c_server.core.storage import get_storage
 from perpetual_p0c_server.core.events import (
+    InputDoorEvent,
     MessagePayload,
     StorageEvents,
     RetrievalRequestedEvent,
@@ -33,6 +34,7 @@ from perpetual_p0c_server.core.events import (
     StoringFailedEvent,
     StoringCompletedEvent,
     InputPlacedEvent,
+    WorkstationEvents,
 )
 from perpetual_p0c_server.settings import get_settings
 
@@ -289,7 +291,7 @@ class RobotWorker(AbstractRobotWorker):
                                 await self._msg.ack()
                                 self._msg = None
                     await asyncio.sleep(0.05)
-                except (nats_errors.TimeoutError, asyncio.CancelledError) as e:
+                except (nats_errors.TimeoutError, asyncio.CancelledError, ValidationError) as e:
                     if self._msg:
                         await self._msg.ack()
                     if self._robot.state.current_tray:
