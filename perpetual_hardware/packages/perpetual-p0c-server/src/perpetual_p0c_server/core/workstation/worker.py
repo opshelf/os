@@ -14,10 +14,10 @@ from perpetual_p0c_server.settings import get_settings
 from .base import AbstractWorkstation
 
 class WorkstationNatsConfiguration(BaseModel):
-    stream_name: str = "robot"
+    stream_name: str = "workstation"
     command_queue: str = "commands"
     event_queue: str = "events"
-    status_queue: str = "robot.status"
+    status_queue: str = "workstation.status"
 
 
 NATS_CONFIG = WorkstationNatsConfiguration()
