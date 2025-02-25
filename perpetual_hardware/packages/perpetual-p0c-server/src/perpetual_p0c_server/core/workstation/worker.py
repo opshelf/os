@@ -68,7 +68,10 @@ class WorkstationWorker:
         self._js = self._nc.jetstream()
         await self._js.add_stream(
             name=self._nats_config.stream_name,
-            subjects=[self._nats_config.command_queue, self._nats_config.event_queue],
+            subjects=[
+                f"{self._nats_config.stream_name}.{self._nats_config.command_queue}", 
+                f"{self._nats_config.stream_name}.{self._nats_config.event_queue}"
+            ],
         )
         self.work_consumer = await self._js.pull_subscribe(
             self._nats_config.command_queue, durable=f"{self._nats_config.stream_name}_{self._nats_config.command_queue}"
