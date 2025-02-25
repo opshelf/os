@@ -4,7 +4,7 @@ import logging
 import asyncio
 from typing import Optional
 from nats.aio.client import Client as NATS
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel, TypeAdapter, ValidationError
 from perpetual_p0c_server.core.events import (
     InputDoorEvent,
     OutputDoorEvent,
@@ -93,12 +93,13 @@ class WorkstationWorker:
                 try:
                     if self._current_task is None:
                         msg = await self.work_consumer.fetch(timeout=1)
+                        self._msg = msg[0]
+                        print(msg[0].data.decode())
                         cmd = WorkstationEventAdapter.validate_json(msg[0].data.decode())
                         logging.info(cmd)
                         self._current_task = asyncio.create_task(
                             self._workstation.handle_command(cmd)
                         )
-                        self._msg = msg[0]
                         self._current_command = cmd
                     else:
                         if self._current_task and self._current_task.done():
@@ -118,7 +119,7 @@ class WorkstationWorker:
                                 await self._msg.ack()
                                 self._msg = None
                     await asyncio.sleep(0.05)
-                except (nats_errors.TimeoutError, asyncio.CancelledError) as e:
+                except (nats_errors.TimeoutError, asyncio.CancelledError, ValidationError) as e:
                     if self._msg:
                         await self._msg.ack()
                     self._msg = None
