@@ -1,5 +1,5 @@
 [workspace]
-members = [ "crates/messages", "crates/bindings", "crates/relay_board", "crates/tool_board", "crates/tca9535", "crates/tmc5130", "crates/mcp23s08", "crates/io_board"]
+members = [ "crates/messages", "crates/bindings", "crates/relay_board", "crates/tool_board", "crates/tca9535", "crates/tmc5130", "crates/mcp23s08", "crates/io_board", "crates/workstation_board", "crates/waveshare_digital"]
 resolver = "2"
 
 

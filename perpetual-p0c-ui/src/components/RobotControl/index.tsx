@@ -9,6 +9,9 @@ import { RobotController as Robot } from '@/domain/robot';
 import { CellSelectionForm } from '../CellLocationForm';
 import { getStorage } from '@/api';
 import { StorageModuleSide } from '@/domain';
+import { HOST } from '@/api/common';
+import axios from 'axios';
+import { toast } from '@/hooks/use-toast';
 import {
   robotCommand,
   createBaseMessage,
@@ -38,8 +41,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '../ui/dropdown-menu';
 const PullTrayForm = ({ data }: { data: StorageModuleData }) => {
@@ -137,6 +138,61 @@ const StoreForm = ({ data }: { data: StorageModuleData }) => {
                 Add Item
               </Button>
             )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+};
+
+const WorkstationControl = () => {
+  const setOutput = async (idx: number, state: 'open' | 'close') => {
+    await axios.post(`${HOST}/workstation/events`, {
+      kind: 'output_door',
+      payload: {
+        output_box: idx,
+        state,
+      },
+    });
+    toast({
+      description: `${state} output box ${idx + 1}`,
+    });
+  };
+
+  const setInput = async (state: 'open' | 'close') => {
+    await axios.post(`${HOST}/workstation/events`, {
+      kind: 'input_door',
+      payload: {
+        state,
+      },
+    });
+    toast({
+      description: `${state} input`,
+    });
+  };
+
+  return (
+    <Card className="w-72">
+      <CardHeader>
+        <CardTitle>Workstation</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        <div className="grid grid-cols-2 gap-2 items-stretch">
+          <Button onClick={() => setInput('open')}>Open Input</Button>
+          <Button onClick={() => setInput('close')}>
+            Close Input
+          </Button>
+          <Button onClick={() => setOutput(0, 'open')}>Open 1</Button>
+          <Button onClick={() => setOutput(0, 'close')}>
+            Close 1
+          </Button>
+          <Button onClick={() => setOutput(1, 'open')}>Open 2</Button>
+          <Button onClick={() => setOutput(1, 'close')}>
+            Close 2
+          </Button>
+          <Button onClick={() => setOutput(2, 'open')}>Open 3</Button>
+          <Button onClick={() => setOutput(2, 'close')}>
+            Close 3
+          </Button>
         </div>
       </CardContent>
     </Card>
@@ -258,56 +314,6 @@ const RobotController = () => {
             </Button>
           </>
         )}
-        {/*
-        <Button
-          onClick={async () => {
-            await robot.home();
-          }}
-        >
-          <HomeIcon />
-          Home
-        </Button>
-        <Button
-          onClick={async () => {
-            await robot.homeYFirst();
-          }}
-        >
-          <HomeIcon />
-          Home Y First
-        </Button>
-        <Button
-          onClick={async () => {
-            await robot.initialize();
-          }}
-        >
-          <LoaderIcon />
-          Initialize
-        </Button>
-        <Button
-          onClick={async () => {
-            await robot.returnCurrentTray();
-          }}
-        >
-          <CornerDownLeft />
-          Return Tray
-        </Button>
-        <Button
-          onClick={async () => {
-            await robot.idlePositionCommand();
-          }}
-        >
-          <LocateIcon />
-          Idle
-        </Button>
-        <Button
-          onClick={async () => {
-            await robot.serviceHighPosition();
-          }}
-        >
-          <WrenchIcon />
-          Service High Position
-        </Button>
-        */}
         <div className="grow" />
         <Button
           variant={'outline'}
@@ -340,9 +346,10 @@ const RobotController = () => {
           Stop
         </Button>
       </div>
-      <div className="flex space-x-4">
+      <div className="flex gap-4 flex-wrap">
         <PullTrayForm data={data} />
         <StoreForm data={data} />
+        <WorkstationControl />
       </div>
       <CommandList />
     </div>

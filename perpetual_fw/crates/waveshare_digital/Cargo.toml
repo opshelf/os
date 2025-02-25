@@ -1,0 +1,11 @@
+[package]
+name = "waveshare_digital"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+defmt = { version = "0.3.10", optional = true }
+modbus-core = "0.1.1"
+
+[features]
+defmt = ["dep:defmt"]

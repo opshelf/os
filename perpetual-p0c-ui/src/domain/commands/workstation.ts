@@ -29,8 +29,8 @@ export const workstationStopOutputCommandSchema = z.object({
 });
 
 export const outputBoxIdentifierSchema = z.object({
-  output_box_id: z.number()
-})
+  output_box_id: z.number(),
+});
 
 export const workstationOpenOutputCommandSchema = z.object({
   command: z.literal('open_output'),
@@ -147,14 +147,23 @@ export class Workstation {
   }
 
   async workstationOpenOutputCommand(id: number): Promise<void> {
-    await this.sendWorkstationCommand({ command: 'open_output', payload: { output_box_id: id } });
+    await this.sendWorkstationCommand({
+      command: 'open_output',
+      payload: { output_box_id: id },
+    });
   }
 
   async workstationCloseOutputCommand(id: number): Promise<void> {
-    await this.sendWorkstationCommand({ command: 'close_output', payload: { output_box_id: id } });
+    await this.sendWorkstationCommand({
+      command: 'close_output',
+      payload: { output_box_id: id },
+    });
   }
 
   async workstationHomeOutputCommand(id: number): Promise<void> {
-    await this.sendWorkstationCommand({ command: 'home_output', payload: { output_box_id: id } });
+    await this.sendWorkstationCommand({
+      command: 'home_output',
+      payload: { output_box_id: id },
+    });
   }
 }
