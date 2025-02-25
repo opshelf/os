@@ -50,22 +50,22 @@ class OutputBoxWorker:
         self._config = config
         self._nc = NATS()
         self._msg: Optional[Msg] = None
-        self._js: Optional[JetStreamContext] = None
+        #self._js: Optional[JetStreamContext] = None
 
     async def connect(self) -> None:
         """Connect to the NATS server."""
         await self._nc.connect(servers=[self._config.nats_url])
-        # self._js = self._nc.jetstream()
-        # await self._nc.add_stream(
-        #    name=f"workstation_{self._config.workstation_id}.output_box_{self._config.output_box_id}",
-        #    subjects=[
-        #        self._nats_config.command_queue,
-        #        self._nats_config.event_queue
-        #    ],
-        # )
-        # self.work_consumer = await self._js.pull_subscribe(
-        #    self._nats_config.command_queue, durable=self._nats_config.command_queue
-        # )
+        self._js = self._nc.jetstream()
+        await self._js.add_stream(
+           name=f"workstation_{self._config.workstation_id}.output_box_{self._config.output_box_id}",
+           subjects=[
+               "commands",
+               "events" 
+           ],
+        )
+        self.work_consumer = await self._js.pull_subscribe(
+           "commands", durable="commands"
+        )
 
     @classmethod
     async def get_instance(

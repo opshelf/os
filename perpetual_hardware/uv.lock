@@ -20,6 +20,7 @@ members = [
     "perpetual-p0c-server",
     "perpetual-scan-server",
     "perpetual-trinamic",
+    "perpetual-waveshare",
     "trinamic-utils",
     "waveshare-can",
 ]
@@ -395,6 +396,23 @@ requires-dist = [
 ]
 
 [[package]]
+name = "perpetual-waveshare"
+version = "0.1.0"
+source = { editable = "packages/perpetual-waveshare" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "pymodbus" },
+    { name = "pyserial" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pydantic", specifier = ">=2.10.0" },
+    { name = "pymodbus", specifier = ">=3.8.6" },
+    { name = "pyserial", specifier = ">=3.5" },
+]
+
+[[package]]
 name = "pillow"
 version = "11.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -493,6 +511,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/b3/c7/49c464cbee2a7ee33132db45ee01cf52403ae1c49267d53e735726cee55d/pylibdmtx-0.1.10-py2.py3-none-any.whl", hash = "sha256:ab73df28b64b3f5e29f22e6937b93967eb77ae7fcd5be381e1142f5a7268eb9e", size = 23191 },
     { url = "https://files.pythonhosted.org/packages/b9/57/74d28fba3205a76cd3e4c16d693da54b21a10df6a28fb688f7100c153d15/pylibdmtx-0.1.10-py2.py3-none-win32.whl", hash = "sha256:2adb8dd71bd138159f6433dafd8eec7420eef97aaf8e51cf0f4fdd976f109962", size = 58108 },
     { url = "https://files.pythonhosted.org/packages/c1/4b/d3fb82bd33d3b8bc0143f17c69660f99f830bd7326d0a09c3c1e1cc01771/pylibdmtx-0.1.10-py2.py3-none-win_amd64.whl", hash = "sha256:e8b0140ab5f473c67fa4335333994a99ea9f683888ae892b1af2dc045560331b", size = 65735 },
+]
+
+[[package]]
+name = "pymodbus"
+version = "3.8.6"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/47/3a/a6958507d6f9c0c50f11cd299b056161c10f3cef7c227b44bc183a7e7854/pymodbus-3.8.6.tar.gz", hash = "sha256:7689b56cc3ad05a594e1486e772abb9d9646c01737935df492db04455680baf6", size = 162341 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/84/23/8f30f094b4a00428bd3c28dd3b6a2b3715164ab85520673e197bd4bba2e7/pymodbus-3.8.6-py3-none-any.whl", hash = "sha256:b82373295fb98c9a9bf9338235240a8b2e97bcc49c0d833168cade7ba2fa90e6", size = 164366 },
 ]
 
 [[package]]
