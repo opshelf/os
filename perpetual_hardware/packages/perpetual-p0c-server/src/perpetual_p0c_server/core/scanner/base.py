@@ -89,7 +89,7 @@ class ScannerWorker:
         first_result = done.pop().result()
         for task in pending:
             task.cancel()
-       return first_result
+        return first_result
 
     async def run(self) -> None:
         while self._running:
