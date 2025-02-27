@@ -34,7 +34,7 @@ class Detector:
         _, binary = cv2.threshold(closing, 100, 255, cv2.THRESH_OTSU)
         contours, _ = cv2.findContours(binary, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
         MIN_CONTOUR_AREA = 10000    # Adjust based on your use case
-        MAX_CONTOUR_AREA = 500000
+        MAX_CONTOUR_AREA = 300000
         filtered_contours = [cnt for cnt in contours if MIN_CONTOUR_AREA < cv2.contourArea(cnt) < MAX_CONTOUR_AREA]
         cv2.drawContours(frame, filtered_contours, -1, (0,255,0), 3)
         is_present = len(filtered_contours) > 0 or (score * 100) < 85.0
