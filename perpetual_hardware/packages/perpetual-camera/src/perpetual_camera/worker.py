@@ -66,7 +66,6 @@ class CameraWorker:
 
 
     def receive_camera_frame(self, frame: np.ndarray) -> None:
-        print("Camera Frame Received")
         self._current_frame = frame
         is_present, similarity, _ = self._detector.item_present(self._baseline_image, frame)
         self._similarities.append(similarity)

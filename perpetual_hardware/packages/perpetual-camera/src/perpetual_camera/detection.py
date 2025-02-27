@@ -27,7 +27,6 @@ class Detector:
         prepared_frame = self.prepare_image(frame)
         prepared_baseline = self.prepare_image(baseline)
         score, _ = structural_similarity(prepared_baseline, prepared_frame, full=True)
-        print("Similarity Score: {:.3f}%".format(score * 100))
         diff = 255 - cv2.absdiff(prepared_baseline, prepared_frame)
         kernel = np.ones((12, 12), np.uint8)
         closing = cv2.morphologyEx(diff, cv2.MORPH_CLOSE, kernel)
