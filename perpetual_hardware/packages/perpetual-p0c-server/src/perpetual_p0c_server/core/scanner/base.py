@@ -1,11 +1,11 @@
 from abc import ABCMeta, abstractmethod
 from typing import Optional, Literal
 from perpetual_p0c.storage import GS1Data
-from perpetual_p0c_server.core.events import GS1Raw, LabelScannedEvent
+from perpetual_p0c_server.core.events import GS1Raw, LabelScannedEvent, LabelScannedPayload
 from pydantic import BaseModel
 from enum import Enum
 from nats.aio.client import Client as NATS
-from typing import Optional, List
+from typing import Optional, List, Tuple
 import asyncio
 
 
@@ -48,11 +48,15 @@ class BarCodeWithImage(BaseBarCode):
 
 
 class AbstractScanner(metaclass=ABCMeta):
+    
+    @abstractmethod
+    def location(self) -> str: ...
+
     @abstractmethod
     async def shutdown(self) -> None: ...
 
     @abstractmethod
-    async def scan(self) -> Optional[GS1Data]: ...
+    async def scan(self) -> Optional[Tuple[GS1Data, str]]: ...
 
     @abstractmethod
     async def initialize(self) -> None: ...
@@ -79,7 +83,7 @@ class ScannerWorker:
         for scanner in self._scanners:
             await scanner.initialize()
 
-    async def initiate_scan_wait(self) -> Optional[GS1Data]:
+    async def initiate_scan_wait(self) -> Optional[Tuple[GS1Data, str]]:
         tasks = [asyncio.create_task(scanner.scan()) for scanner in self._scanners]
         done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         first_result = done.pop().result()
@@ -93,10 +97,12 @@ class ScannerWorker:
                 result = await self.initiate_scan_wait()
                 if result:
                     print(result)
-                    await self._nc.publish(self._scanner_queue, result.model_dump_json().encode())
                     await self._nc.publish(
                         self._scanner_events,
-                        LabelScannedEvent(payload=GS1Raw(gs1=result.raw_text))
+                        LabelScannedEvent(payload=LabelScannedPayload(
+                                    gs1=result[0].raw_text, 
+                                    location=result[1])
+                        )
                         .model_dump_json()
                         .encode(),
                     )

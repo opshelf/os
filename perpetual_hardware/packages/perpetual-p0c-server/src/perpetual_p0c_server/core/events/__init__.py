@@ -1,4 +1,4 @@
-from typing import Literal, Any, Dict, Annotated, Union
+from typing import Literal, Any, Dict, Annotated, Union, Optional
 from perpetual_p0c.robot import RetrievePayload
 from pydantic import BaseModel, Field
 from perpetual_p0c.storage import Dimensions, StorageModuleCellLocation
@@ -6,6 +6,9 @@ from perpetual_p0c.storage import Dimensions, StorageModuleCellLocation
 class GS1Raw(BaseModel):
     gs1: str
 
+class LabelScannedPayload(BaseModel):
+    gs1: str
+    location: Optional[str] = None
 
 class MessagePayload(BaseModel):
     message: str
@@ -34,7 +37,7 @@ class LabelPrintEvent(BaseModel):
 
 class LabelScannedEvent(BaseModel):
     kind: Literal["label_scanned"] = "label_scanned"
-    payload: GS1Raw
+    payload: LabelScannedPayload
 
 
 class DimensionsPayload(Dimensions):
@@ -78,16 +81,20 @@ class LabelPrintingFailedEvent(BaseModel):
 
 DoorState = Annotated[Literal["open", "close"], str]
 
+
 class OutputDoorEventPayload(BaseModel):
     output_box: int
     state: DoorState
+
 
 class OutputDoorEvent(BaseModel):
     kind: Literal["output_door"] = "output_door"
     payload: OutputDoorEventPayload
 
+
 class InputDoorEventPayload(BaseModel):
     state: DoorState
+
 
 class InputDoorEvent(BaseModel):
     kind: Literal["input_door"] = "input_door"
@@ -130,10 +137,6 @@ StorageEvents = Annotated[
 ]
 
 WorkstationEvents = Annotated[
-    Union[
-        OutputDoorEvent,
-        InputDoorEvent
-    ],
+    Union[OutputDoorEvent, InputDoorEvent],
     Field(discriminator="kind"),
 ]
-

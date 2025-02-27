@@ -6,14 +6,24 @@ from perpetual_p0c_server.core.sizes import init_file_sizes
 from perpetual_p0c_server.core.robot import init_robot_worker, stop_robot_worker
 from perpetual_p0c_server.core.scanner import init_scanner_worker, stop_scanner_worker
 from perpetual_p0c_server.core.workstation import init_workstation_worker, stop_workstation_worker
-from perpetual_p0c_server.routers import storage, gantry, sizes, robot, scanner, printer, workstation
+from perpetual_p0c_server.routers import (
+    storage,
+    gantry,
+    sizes,
+    robot,
+    scanner,
+    printer,
+    workstation,
+)
 from contextlib import asynccontextmanager
 from perpetual_p0c_server.core.printer import PrintWorker, MockPrinter
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional
 from perpetual_p0c_server.settings import get_settings
 import uvicorn
 import logging
 import sys
+from perpetual_camera.worker import CameraWorker
+from perpetual_camera.async_reader import AsyncCameraReader
 
 root = logging.getLogger()
 root.setLevel(logging.INFO)
@@ -25,6 +35,13 @@ handler.setFormatter(formatter)
 root.addHandler(handler)
 
 
+async def initalize_camera_worker(nats_url: str) -> Optional[CameraWorker]:
+    reader = AsyncCameraReader()
+    worker = CameraWorker(reader, nats_url)
+    return worker
+
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logging.info(f"{app.title}")
@@ -34,10 +51,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     if settings.printer.enabled:
         logging.info(f"Printer Enabled Setting Up Printer")
         p = ThermalPrinter()
-    print_worker = PrintWorker(p, settings.nats.connection_string(), "printer_queue", "printer_event_queue")
+    print_worker = PrintWorker(
+        p, settings.nats.connection_string(), "printer_queue", "printer_event_queue"
+    )
     logging.info(f"Print Worker Connecting: {settings.nats.connection_string()}")
     await print_worker.connect()
     logging.info("Printer Initialized")
+
+    logging.info(f"Camera Initializing")
+    camera_worker = None
+    if settings.camera.enabled:
+        camera_worker = await initalize_camera_worker(settings.nats.connection_string())
+        if camera_worker:
+            await camera_worker.start()
+            logging.info(f"Camera Initializied")
     init_file_storage()
     logging.info("Storage Initialized")
     init_file_sizes()
@@ -53,6 +80,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await stop_scanner_worker()
     await stop_workstation_worker()
     await print_worker.close()
+    if camera_worker:
+        await camera_worker.stop()
 
 
 app = FastAPI(lifespan=lifespan)

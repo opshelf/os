@@ -65,6 +65,7 @@ class PrintWorker:
         self._processing = True
 
     async def connect(self) -> None:
+        print(self._nats_url)
         await self._nc.connect(servers=[self._nats_url])
         await self._nc.subscribe(self._printer_work_queue, cb=self.handle_print)
 

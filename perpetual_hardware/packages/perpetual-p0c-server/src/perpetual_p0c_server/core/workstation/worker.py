@@ -5,13 +5,10 @@ import asyncio
 from typing import Optional
 from nats.aio.client import Client as NATS
 from pydantic import BaseModel, TypeAdapter, ValidationError
-from perpetual_p0c_server.core.events import (
-    InputDoorEvent,
-    OutputDoorEvent,
-    WorkstationEvents
-)
+from perpetual_p0c_server.core.events import InputDoorEvent, OutputDoorEvent, WorkstationEvents
 from perpetual_p0c_server.settings import get_settings
 from .base import AbstractWorkstation
+
 
 class WorkstationNatsConfiguration(BaseModel):
     stream_name: str = "workstation"
@@ -43,14 +40,19 @@ class WorkstationClient:
         else:
             raise Exception("Client Connection Never Initialized")
 
+
 class WorkstationWorker:
     _instance: Optional["WorkstationWorker"] = None
 
     def __init__(
-        self, workstation: AbstractWorkstation, nats_config: WorkstationNatsConfiguration = WorkstationNatsConfiguration()
+        self,
+        workstation: AbstractWorkstation,
+        nats_config: WorkstationNatsConfiguration = WorkstationNatsConfiguration(),
     ):
         if WorkstationWorker._instance is not None:
-            raise RuntimeError("WorkstationWorker is a singleton. Use `get_instance()` to access it.")
+            raise RuntimeError(
+                "WorkstationWorker is a singleton. Use `get_instance()` to access it."
+            )
         self._command_queue: asyncio.Queue[WorkstationEvents] = asyncio.Queue()
         self._client = WorkstationClient(nats_config)
         self._workstation = workstation
@@ -69,12 +71,13 @@ class WorkstationWorker:
         await self._js.add_stream(
             name=self._nats_config.stream_name,
             subjects=[
-                f"{self._nats_config.stream_name}.{self._nats_config.command_queue}", 
-                f"{self._nats_config.stream_name}.{self._nats_config.event_queue}"
+                f"{self._nats_config.stream_name}.{self._nats_config.command_queue}",
+                f"{self._nats_config.stream_name}.{self._nats_config.event_queue}",
             ],
         )
         self.work_consumer = await self._js.pull_subscribe(
-            self._nats_config.command_queue, durable=f"{self._nats_config.stream_name}_{self._nats_config.command_queue}"
+            self._nats_config.command_queue,
+            durable=f"{self._nats_config.stream_name}_{self._nats_config.command_queue}",
         )
         await self._client.connect()
 
@@ -146,5 +149,3 @@ class WorkstationWorker:
                 self._worker_task.cancel()
                 await self._worker_task
             print("WorkstationWorker shut down.")
-
-

@@ -85,11 +85,24 @@ export type WorkstationStatus = z.infer<
   typeof workstationStatusSchema
 >;
 
+export const sensorStatusSchema = z.object({
+  output_conveyor: z.boolean(),
+  input_conveyor: z.boolean(),
+  output_transfer_conveyor: z.boolean(),
+  funnel_input: z.boolean(),
+  output_box_1: z.boolean(),
+  output_box_2: z.boolean(),
+  output_box_3: z.boolean(),
+});
+
+export type SensorStatus = z.infer<typeof sensorStatusSchema>;
+
 export const robotStatusSchema = z.object({
   gantry_status: gantryStatusSchema,
   workstation_status: workstationStatusSchema,
   funnel_status: funnelStatusSchema,
   tool_status: toolStatusSchema,
+  sensor_status: sensorStatusSchema.nullable(),
 });
 
 export type RobotStatus = z.infer<typeof robotStatusSchema>;

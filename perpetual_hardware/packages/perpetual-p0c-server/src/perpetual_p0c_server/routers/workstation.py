@@ -6,6 +6,7 @@ from perpetual_p0c_server.core.workstation import get_workstation_client
 
 router = APIRouter()
 
+
 @router.post("/events")
 async def robot_events(
     command: WorkstationEvents, client: WorkstationClient = Depends(get_workstation_client)

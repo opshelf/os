@@ -44,4 +44,3 @@ def get_modbus_port() -> Optional[str]:
         if port.description and "FT232R" in port.description:
             return port.device.replace("/dev/cu", "/dev/tty")
     return None
-

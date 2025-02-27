@@ -1,8 +1,8 @@
 import logging
 from .base import AbstractWorkstation
 
-class MockWorkstation(AbstractWorkstation):
 
+class MockWorkstation(AbstractWorkstation):
     async def close_all_outputs(self) -> None:
         pass
 
@@ -20,7 +20,5 @@ class MockWorkstation(AbstractWorkstation):
     async def open_input(self) -> None:
         pass
 
-    async def close_input(self) -> None: 
+    async def close_input(self) -> None:
         pass
-
-

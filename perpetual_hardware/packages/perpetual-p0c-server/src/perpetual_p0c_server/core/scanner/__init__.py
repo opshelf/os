@@ -16,10 +16,10 @@ async def init_scanner_worker(enabled: bool) -> None:
         symcode_ports = get_symcode_ports()
         if len(waveshare_ports) or len(symcode_ports):
             waveshare_scanners: List[AbstractScanner] = [
-                WaveshareScanner(port, 9600) for port in waveshare_ports
+                WaveshareScanner(port, 9600, "desk") for port in waveshare_ports
             ]
             symcode_scanners: List[AbstractScanner] = [
-                SymcodeScanner(port, 115200) for port in symcode_ports
+                SymcodeScanner(port, 115200, "input") for port in symcode_ports
             ]
             scanners = waveshare_scanners + symcode_scanners
             scanner_worker = ScannerWorker(

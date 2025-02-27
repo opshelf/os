@@ -1,13 +1,9 @@
 from abc import abstractmethod, ABCMeta
-from perpetual_p0c_server.core.events import (
-    InputDoorEvent,
-    OutputDoorEvent,
-    WorkstationEvents
-)
+from perpetual_p0c_server.core.events import InputDoorEvent, OutputDoorEvent, WorkstationEvents
 import logging
 
-class AbstractWorkstation(metaclass=ABCMeta):
 
+class AbstractWorkstation(metaclass=ABCMeta):
     @abstractmethod
     async def close_all_outputs(self) -> None: ...
 
@@ -41,4 +37,3 @@ class AbstractWorkstation(metaclass=ABCMeta):
                     await self.close_output(payload.output_box)
             case _:
                 raise Exception("Invalid Workstation Command")
-

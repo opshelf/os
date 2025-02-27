@@ -9,7 +9,7 @@ from perpetual_p0c.gantry import (
 )
 from perpetual_p0c.funnel import FunnelConfiguration, Funnel, FunnelCommands, FunnelStatus
 from perpetual_p0c.tool import ToolConfiguration, Tool, ToolCommands, ToolStatus
-from perpetual_p0c.io_board import IoController
+from perpetual_p0c.io_board import IoController, SensorState
 from perpetual_p0c.workstation import (
     Workstation,
     WorkstationConfiguration,
@@ -82,6 +82,7 @@ class RobotStatus(BaseModel):
     workstation_status: WorkstationStatus
     funnel_status: FunnelStatus
     tool_status: ToolStatus
+    sensor_status: Optional[SensorState]
 
 
 class RobotState(BaseModel):
@@ -108,6 +109,7 @@ class StoreCommand(BaseMessage):
 class RetrievePayload(BaseModel):
     location: StorageModuleCellLocation
     item: Optional[CellItem] = None
+    output_box: Optional[int] = None
 
 
 class RetrieveCommand(BaseMessage):
@@ -273,6 +275,7 @@ class StorageResponse(BaseResponse):
 
 class RetrieveResponse(BaseResponse):
     command: RetrieveCommand
+    output_box: Optional[int] = None
 
 
 RobotResponses = Union[ErrorResponse, AckResponse, StorageResponse, RetrieveResponse, ErrorResponse]
@@ -803,7 +806,7 @@ class P0C(AbstractRobot):
 
     async def drop_off_item(
         self, location: StorageModuleCellLocation, keep_tray: bool = True
-    ) -> None:
+    ) -> int:
         tray = self._storage.get_tray(location)
         pull_tray_task = asyncio.create_task(self.pull_tray(location.to_tray_location()))
         funnel_catch_task = asyncio.create_task(self.funnel.catch(tray, location.slot_idx))
@@ -821,9 +824,7 @@ class P0C(AbstractRobot):
             return_task = asyncio.create_task(self.return_current_tray())
             await transfer_task
             await return_task
-        self._output_box += 1
-        if self._output_box > 2:
-            self._output_box = 0
+        return self._output_box
 
     async def store_item(self, item: CellItem) -> None:
         location = self._storage.get_next_free_location(item)
@@ -847,25 +848,35 @@ class P0C(AbstractRobot):
         else:
             raise Exception("No Known Size")
 
-    async def retrieve_item_by_location(self, location: StorageModuleCellLocation) -> None:
-        await self.drop_off_item(location)
+    async def retrieve_item_by_location(self, location: StorageModuleCellLocation) -> int:
+        output_box_id = await self.drop_off_item(location)
+        self._output_box += 1
+        if self._output_box > 2:
+            self._output_box = 0
         self.save_storage()
+        return output_box_id
 
-    async def retrieve_item_by_gtin(self, data: GS1Data) -> None:
+    async def retrieve_item_by_gtin(self, data: GS1Data) -> int:
         location = self._storage.get_item_location(data)
-        await self.drop_off_item(location)
+        output_box_id = await self.drop_off_item(location)
+        self._output_box += 1
+        if self._output_box > 2:
+            self._output_box = 0
         self.save_storage()
+        return output_box_id
 
     async def status(self) -> Optional[RobotStatus]:
         gantry_status = await self._gantry.status()
         workstation_status = await self._workstation.status()
         funnel_status = await self._funnel.status()
         tool_status = await self._tool.status()
+        sensor_status = await self._io.get_sensors()
         return RobotStatus(
             gantry_status=gantry_status,
             workstation_status=workstation_status,
             funnel_status=funnel_status,
             tool_status=tool_status,
+            sensor_status=sensor_status
         )
 
     async def handle_command(self, command: RobotCommands) -> RobotResponses:
@@ -874,8 +885,12 @@ class P0C(AbstractRobot):
                 await self.store_item_by_location(payload.location)
                 return StorageResponse(status=ResponseStatus.COMPLETED, command=command)
             case RetrieveCommand(payload=payload):
-                await self.retrieve_item_by_location(payload.location)
-                return RetrieveResponse(status=ResponseStatus.COMPLETED, command=command)
+                if payload.output_box is None:
+                    pass
+                else: 
+                    self._output_box = payload.output_box
+                output_box = await self.retrieve_item_by_location(payload.location)
+                return RetrieveResponse(status=ResponseStatus.COMPLETED, command=command, output_box=output_box)
             case PlaceTrayCommand(payload=payload):
                 await self.place_tray(payload)
                 return AckResponse(

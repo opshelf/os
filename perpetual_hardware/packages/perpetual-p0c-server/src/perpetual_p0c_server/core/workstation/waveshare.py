@@ -1,9 +1,9 @@
 import logging
 from .base import AbstractWorkstation
-from perpetual_waveshare.relay import RelayController,Action
+from perpetual_waveshare.relay import RelayController, Action
+
 
 class ModbusWorkstation(AbstractWorkstation):
-
     def __init__(self, relay_controller: RelayController) -> None:
         self._relay_controller = relay_controller
 
@@ -24,5 +24,5 @@ class ModbusWorkstation(AbstractWorkstation):
     async def open_input(self) -> None:
         await self._relay_controller.set_channel(3, Action.On)
 
-    async def close_input(self) -> None: 
+    async def close_input(self) -> None:
         await self._relay_controller.set_channel(3, Action.Off)

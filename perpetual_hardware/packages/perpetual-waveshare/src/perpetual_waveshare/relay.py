@@ -2,7 +2,7 @@ from typing import List, Self
 import pymodbus.client as ModbusClient
 from pymodbus.framer import FramerType
 from pydantic import BaseModel
-#from typing import Optional
+# from typing import Optional
 
 from enum import IntEnum
 
@@ -52,14 +52,15 @@ class RelayState(BaseModel):
             relay_4=bool(data & 0x10),
             relay_5=bool(data & 0x20),
             relay_6=bool(data & 0x40),
-            relay_7=bool(data & 0x80)
+            relay_7=bool(data & 0x80),
         )
 
 
 class RelayController:
-
     def __init__(self, port: str, baudrate: int, address: int = 1) -> None:
-        self._client = ModbusClient.AsyncModbusSerialClient(port, framer=FramerType.RTU, baudrate=baudrate) 
+        self._client = ModbusClient.AsyncModbusSerialClient(
+            port, framer=FramerType.RTU, baudrate=baudrate
+        )
         self._address = address
 
     def set_address(self, address: int) -> None:
@@ -74,21 +75,29 @@ class RelayController:
     async def close_channel(self, channel: int) -> None:
         await self.set_channel(channel, Action.On)
 
-    async def set_channel(self, channel: int, action: Action) -> None: 
+    async def set_channel(self, channel: int, action: Action) -> None:
         if channel > 7:
             raise Exception("Invalid Channel")
-        await self._client.write_coil(OutputRegisterBases.OutputChannel + channel, action == Action.On, slave=self._address)
+        await self._client.write_coil(
+            OutputRegisterBases.OutputChannel + channel, action == Action.On, slave=self._address
+        )
 
-    async def set_channels(self, channel: int, actions: List[Action]) -> None: 
+    async def set_channels(self, channel: int, actions: List[Action]) -> None:
         for ix, action in enumerate(actions):
             if channel + ix > 7:
                 raise Exception("Invalid Channel")
-            await self._client.write_coil(OutputRegisterBases.OutputChannel + channel + ix, action == Action.On, slave=self._address)
+            await self._client.write_coil(
+                OutputRegisterBases.OutputChannel + channel + ix,
+                action == Action.On,
+                slave=self._address,
+            )
 
-    async def read_channels(self) -> RelayState: 
-        response = await self._client.read_coils(InputRegisterBases.InputChannels, count=8, slave=self._address)
+    async def read_channels(self) -> RelayState:
+        response = await self._client.read_coils(
+            InputRegisterBases.InputChannels, count=8, slave=self._address
+        )
         data = 0
         for ix, bit in enumerate(response.bits):
-            if bit: 
+            if bit:
                 data |= 0x01 << ix
         return RelayState.from_buffer(data)

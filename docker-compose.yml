@@ -9,7 +9,7 @@ services:
       - "8222:8222"     # NATS HTTP monitoring port
       - "8080:8080"     # WebSocket port
     volumes:
-      - ./perpetual_hardware/packages/perpetual-p0c-server/infra/:/etc/nats/
+      - ./perpetual_hardware/packages/perpetual-p0c-server/infra/nats/:/etc/nats/
     command: ["-js", "-config", "/etc/nats/nats.conf"]
     networks:  # Define the network and add NATS to it
       - my-network

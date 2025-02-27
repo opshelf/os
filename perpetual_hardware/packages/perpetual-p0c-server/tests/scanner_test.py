@@ -13,7 +13,7 @@ def get_symcode_scanner_port() -> Optional[UsbInfo]:
 async def main() -> None:
     port = get_symcode_scanner_port()
     if port:
-        scanner = SymcodeScanner(port.device, 115200)
+        scanner = SymcodeScanner(port.device, 115200, "input")
         await scanner.initialize()
         while True:
             result = await scanner.scan()

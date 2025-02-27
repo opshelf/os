@@ -20,6 +20,8 @@ class ScannerSettings(BaseModel):
 class RobotSettings(BaseModel):
     enabled: bool = False
 
+class CameraSettings(BaseModel):
+    enabled: bool = False
 
 class NatsSettings(BaseModel):
     domain: str = "localhost"
@@ -36,6 +38,7 @@ class Settings(BaseModel):
     scanner: ScannerSettings
     robot: RobotSettings
     nats: NatsSettings
+    camera: CameraSettings
 
 
 def get_settings() -> Settings:
