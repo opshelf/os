@@ -63,6 +63,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     if settings.camera.enabled:
         camera_worker = await initalize_camera_worker(settings.nats.connection_string())
         if camera_worker:
+            await camera_worker.connect()
             await camera_worker.start()
             logging.info(f"Camera Initializied")
     init_file_storage()
