@@ -82,7 +82,7 @@ class CameraWorker:
 
     async def connect(self) -> None:
         await self._nc.connect(servers=[self._nats_url])
-        self._sub = await self._nc.subscribe("scanner_events", cb=self.scan_detected_handler)
+        self._sub = await self._nc.subscribe("scanner", cb=self.scan_detected_handler)
         self._camera.start()
 
     async def run(self) -> None:
