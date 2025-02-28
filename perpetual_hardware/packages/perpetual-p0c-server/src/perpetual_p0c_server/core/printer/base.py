@@ -79,7 +79,7 @@ class PrintWorker:
                 case LabelPrintEvent(payload=payload):
                     print(payload)
                     # self._printer.print("~/Downloads/mock_label.pdf", payload)
-                    self._printer.print("prescription_label.png", payload)
+                    self._printer.print("./data/prescription_label.png", payload)
                     await self._nc.publish(
                         self._printer_event_queue,
                         LabelPrintingCompletedEvent().model_dump_json().encode(),
