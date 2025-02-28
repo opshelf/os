@@ -60,6 +60,7 @@ class CameraWorker:
             if evt.payload.location == "input":
                 self._gs1 = GS1Raw(gs1=evt.payload.gs1)
                 self._scan_received_time = time.time()
+                self._expecting_input = True
                 logging.info(f"{self._gs1}")
         except ValidationError as e:
             print(e)
@@ -88,6 +89,8 @@ class CameraWorker:
     async def run(self) -> None:
         while self._running:
             try:
+                if self._expecting_input:
+                    print(self._similarities, self._item_present)
                 if self._expecting_input and self._item_present and self.stable_images() and self._gs1:
                     logging.info("Item Present Sent")
                     await self._nc.publish(
