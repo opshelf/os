@@ -89,6 +89,7 @@ class CameraWorker:
         while self._running:
             try:
                 if self._expecting_input and self._item_present and self.stable_images() and self._gs1:
+                    logging.info("Item Present Sent")
                     await self._nc.publish(
                         self._camera_events_queue,
                         ItemPresenceEvent(
