@@ -69,7 +69,7 @@ class CameraWorker:
     def receive_camera_frame(self, frame: np.ndarray) -> None:
         self._current_frame = frame
         is_present, similarity, _ = self._detector.item_present(self._baseline_image, frame)
-        self._similarities.append(similarity)
+        self._similarities.append(similarity*100)
         self._item_present = is_present
 
 
