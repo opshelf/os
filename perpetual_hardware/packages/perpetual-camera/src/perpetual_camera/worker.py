@@ -44,7 +44,7 @@ class CameraWorker:
         self._detector = Detector()
         self._current_frame: Optional[np.ndarray] = None
         self._baseline_image = self._detector.get_baseline_image()
-        self._similarities: Deque[float] = deque(maxlen=30) 
+        self._similarities: Deque[float] = deque(maxlen=90) 
         self._item_present: bool = False
         self._expecting_input = False
         self._gs1: Optional[GS1Raw] = None
