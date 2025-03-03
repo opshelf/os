@@ -309,7 +309,7 @@ class RobotWorker(AbstractRobotWorker):
                         .encode(),
                     )
         except Exception as e:
-            logging.error("Process Commands Error: ", e)
+            logging.error(f"Process Commands Error:  {e}")
             match self._current_command:
                 case StoreCommand(payload=payload):
                     await self._js.publish(
