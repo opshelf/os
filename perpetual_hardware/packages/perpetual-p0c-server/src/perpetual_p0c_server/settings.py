@@ -1,9 +1,7 @@
 from pydantic import BaseModel
 
-
 class StorageSettings(BaseModel):
     filename: str = "data/storage.json"
-
 
 class SizeDatabaseSettings(BaseModel):
     filename: str = "data/size.json"

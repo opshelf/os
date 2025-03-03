@@ -274,14 +274,12 @@ class Tool(AbstractSubsystem[ToolConfiguration, ToolStatus]):
             await self.wait_for_move()
 
     async def retract_carriage(self, side: StorageModuleSide) -> None:
-        print("retracting Carriage")
         if side == StorageModuleSide.RIGHT:
             await self._carriage.move_to_position(self._configuration.tray_pull_right)
             await self.wait_for_move()
         else:
             await self._carriage.move_to_position(self._configuration.tray_pull_left)
             await self.wait_for_move()
-        print("Carriage Retracted")
 
     async def carriage_safe(self, side: StorageModuleSide) -> None:
         if side == StorageModuleSide.RIGHT:
@@ -327,7 +325,6 @@ class Tool(AbstractSubsystem[ToolConfiguration, ToolStatus]):
 
     async def check_tray_loaded(self) -> bool:
         state = await self._tool_board.get_state()
-        print("Tray Loaded Check: ", state)
         return (
             state.inputs.left_beam
             and state.inputs.right_beam

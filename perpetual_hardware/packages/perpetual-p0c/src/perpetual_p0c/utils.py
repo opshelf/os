@@ -127,12 +127,12 @@ def check_socket_can() -> Optional[CanConfig]:
 
 
 def get_can_devices() -> CanConfig:
-    pcan = check_for_pcan()
-    if pcan:
-        return pcan
     socket_can = check_socket_can()
     if socket_can:
         return socket_can
+    pcan = check_for_pcan()
+    if pcan:
+        return pcan
     serial_can = get_usb_serial_can()
     if len(serial_can):
         return serial_can[0]

@@ -3,6 +3,7 @@ from perpetual_trinamic.aio.trinamic_axis import AxisStatus, TrinamicAxis
 from perpetual_can import CANBusHandler
 from typing import List, Literal, Union, Annotated
 from pydantic import BaseModel, Field
+import logging
 
 from perpetual_p0c.common import AbstractSubsystem, CanAxisConfiguration
 
@@ -139,34 +140,20 @@ class Gantry(AbstractSubsystem[GantryConfiguration, GantryStatus]):
 
     async def move_path(self, path: List[GantryCoordinate]) -> None:
         try:
-            print("Getting Position")
             position = await self.position
-            print(f"Got Position {position}")
-            print("Syncing Position's")
             await self._y_axis.safety_off()
             await self._x_axis.safety_off()
             await self._y_axis.sync_position()
             await self._x_axis.sync_position()
             await self._y_axis.safety_on()
             await self._x_axis.safety_on()
-            print("Positions Synced")
             await self._y_axis.init_brake_move()
-            print("Brake set")
             for ix, coordinate in enumerate(path):
-                print(f"Moving to {coordinate} {ix}")
-                print("X Axis Moving to position")
                 await self._x_axis.move_to_position(coordinate.x)
-                print("Y Axis Moving to position")
                 await self._y_axis.move_to_position(coordinate.y, override_brake=True)
-                print("Y Axis Move Check")
                 await self._y_axis.wait_for_move()
-                print("Y Axis Move Done")
-                print("X Axis Move Check")
                 await self._x_axis.wait_for_move()
-                print("X Axis Move Done")
-            print("path finished")
         except Exception as e:
-            print("Failed", e)
             x_pos = await self._x_axis.get_position()
             x_enc = await self._x_axis.get_encoder_position()
             x_actual = await self._x_axis.get_actual_position()
@@ -177,9 +164,9 @@ class Gantry(AbstractSubsystem[GantryConfiguration, GantryStatus]):
             y_actual = await self._y_axis.get_actual_position()
             y_target = await self._y_axis.get_target_position()
 
-            print("Failed Path Movement: ", path, e)
-            print(f"X POS: {x_pos} ENC: {x_enc} ACTUAL: {x_actual} TARGET: {x_target}")
-            print(f"Y POS: {y_pos} ENC: {y_enc} ACTUAL: {y_actual} TARGET: {y_target}")
+            logging.error("Failed Path Movement: ", path, e)
+            logging.error(f"X POS: {x_pos} ENC: {x_enc} ACTUAL: {x_actual} TARGET: {x_target}")
+            logging.error(f"Y POS: {y_pos} ENC: {y_enc} ACTUAL: {y_actual} TARGET: {y_target}")
             raise e
         finally:
             await self._y_axis.end_brake_move()
