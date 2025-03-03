@@ -76,7 +76,7 @@ class CameraWorker:
     def stable_images(self) -> bool:
         min_sim = min(self._similarities)
         max_sim = max(self._similarities)
-        if max_sim - min_sim > 5:
+        if max_sim - min_sim > 10:
             return False
         else:
             return True
