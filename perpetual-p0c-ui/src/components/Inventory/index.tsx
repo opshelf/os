@@ -10,6 +10,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '../ui/button';
 import { useState } from 'react';
+import GS1Label from '../GS1Label/';
 import {
   useQueries,
   useMutation,
@@ -350,6 +351,7 @@ const Inventory = () => {
                 addMutation.mutate({ location, item: null });
               }}
             />
+            <GS1Label />
             <ScannerAddForm />
           </div>
         </>
