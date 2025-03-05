@@ -876,7 +876,7 @@ class P0C(AbstractRobot):
             workstation_status=workstation_status,
             funnel_status=funnel_status,
             tool_status=tool_status,
-            sensor_status=sensor_status
+            sensor_status=sensor_status,
         )
 
     async def handle_command(self, command: RobotCommands) -> RobotResponses:
@@ -887,10 +887,12 @@ class P0C(AbstractRobot):
             case RetrieveCommand(payload=payload):
                 if payload.output_box is None:
                     pass
-                else: 
+                else:
                     self._output_box = payload.output_box
                 output_box = await self.retrieve_item_by_location(payload.location)
-                return RetrieveResponse(status=ResponseStatus.COMPLETED, command=command, output_box=output_box)
+                return RetrieveResponse(
+                    status=ResponseStatus.COMPLETED, command=command, output_box=output_box
+                )
             case PlaceTrayCommand(payload=payload):
                 await self.place_tray(payload)
                 return AckResponse(

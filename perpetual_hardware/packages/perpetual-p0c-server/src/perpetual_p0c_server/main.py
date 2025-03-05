@@ -41,7 +41,6 @@ async def initalize_camera_worker(nats_url: str) -> Optional[CameraWorker]:
     return worker
 
 
-
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logging.info(f"{app.title}")

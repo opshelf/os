@@ -48,7 +48,6 @@ class BarCodeWithImage(BaseBarCode):
 
 
 class AbstractScanner(metaclass=ABCMeta):
-    
     @abstractmethod
     def location(self) -> str: ...
 
@@ -99,9 +98,8 @@ class ScannerWorker:
                     print(result)
                     await self._nc.publish(
                         self._scanner_events,
-                        LabelScannedEvent(payload=LabelScannedPayload(
-                                    gs1=result[0].raw_text, 
-                                    location=result[1])
+                        LabelScannedEvent(
+                            payload=LabelScannedPayload(gs1=result[0].raw_text, location=result[1])
                         )
                         .model_dump_json()
                         .encode(),

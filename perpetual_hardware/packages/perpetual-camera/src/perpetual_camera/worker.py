@@ -12,12 +12,19 @@ from pydantic import BaseModel
 import logging
 import time
 
+class Stats(BaseModel):
+    max_sim: float
+    min_sim: float
+
+
 class GS1Raw(BaseModel):
     gs1: str
+
 
 class LabelScannedEventPayload(BaseModel):
     gs1: str
     location: Optional[str] = None
+
 
 class LabelScannedEvent(BaseModel):
     kind: Literal["label_scanned"] = "label_scanned"
@@ -44,7 +51,7 @@ class CameraWorker:
         self._detector = Detector()
         self._current_frame: Optional[np.ndarray] = None
         self._baseline_image = self._detector.get_baseline_image()
-        self._similarities: Deque[float] = deque(maxlen=90) 
+        self._similarities: Deque[float] = deque(maxlen=90)
         self._item_present: bool = False
         self._expecting_input = False
         self._gs1: Optional[GS1Raw] = None
@@ -52,6 +59,20 @@ class CameraWorker:
         self._scan_received_time = time.time()
         self._camera.add_callback(self.receive_camera_frame)
 
+    @property
+    def current_frame(self) -> Optional[np.ndarray]:
+        return self._current_frame
+
+    @property
+    def baseline_image(self) -> Optional[np.ndarray]:
+        return self._baseline_image
+
+    def save_baseline_image(self) -> None:
+        if self._current_frame is None:
+            raise Exception("No Frame Available")
+        else:
+            self._detector.save_baseline_image(self._current_frame)
+            self._baseline_image = self._current_frame
 
     async def scan_detected_handler(self, msg: Msg) -> None:
         try:
@@ -65,21 +86,28 @@ class CameraWorker:
         except ValidationError as e:
             print(e)
 
-
     def receive_camera_frame(self, frame: np.ndarray) -> None:
         self._current_frame = frame
-        is_present, similarity, _ = self._detector.item_present(self._baseline_image, frame)
-        self._similarities.append(similarity*100)
-        self._item_present = is_present
-
+        if self._baseline_image is None:
+            pass
+        else:
+            is_present, similarity, _ = self._detector.item_present(self._baseline_image, frame)
+            self._similarities.append(similarity * 100)
+            self._item_present = is_present
 
     def stable_images(self) -> bool:
         min_sim = min(self._similarities)
         max_sim = max(self._similarities)
-        if max_sim - min_sim > 10:
+        if max_sim - min_sim < 10:
             return False
         else:
             return True
+
+    def stats(self) -> Stats:
+        min_sim = min(self._similarities)
+        max_sim = max(self._similarities)
+        return Stats(min_sim=min_sim, max_sim=max_sim)
+
 
     async def connect(self) -> None:
         await self._nc.connect(servers=[self._nats_url])
@@ -91,22 +119,23 @@ class CameraWorker:
             try:
                 if self._expecting_input:
                     print(self._similarities, self._item_present)
-                if self._expecting_input and self._item_present and self.stable_images() and self._gs1:
+                if (
+                    self._expecting_input
+                    and self._item_present
+                    and self.stable_images()
+                    and self._gs1
+                ):
                     logging.info("Item Present Sent")
                     await self._nc.publish(
                         self._camera_events_queue,
-                        ItemPresenceEvent(
-                            payload=self._gs1
-                        )
-                        .model_dump_json()
-                        .encode(),
+                        ItemPresenceEvent(payload=self._gs1).model_dump_json().encode(),
                     )
                     self._expecting_input = False
                     self._gs1 = None
                     if time.time() - self._scan_received_time > 10:
                         self._expecting_input = False
                         self._gs1 = None
-                await asyncio.sleep(.1)
+                await asyncio.sleep(0.1)
             except asyncio.CancelledError:
                 pass
 
