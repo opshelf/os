@@ -34,7 +34,8 @@ class WorkstationClient:
     async def send_command(self, command: WorkstationEvents) -> None:
         if self._js:
             await self._js.publish(
-                f"{self._nats_config.stream_name}.{self._nats_config.command_queue}", command.model_dump_json().encode()
+                f"{self._nats_config.stream_name}.{self._nats_config.command_queue}",
+                command.model_dump_json().encode(),
             )
         else:
             raise Exception("Client Connection Never Initialized")

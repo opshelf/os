@@ -3,12 +3,15 @@ from perpetual_p0c.robot import RetrievePayload
 from pydantic import BaseModel, Field
 from perpetual_p0c.storage import Dimensions, StorageModuleCellLocation
 
+
 class GS1Raw(BaseModel):
     gs1: str
+
 
 class LabelScannedPayload(BaseModel):
     gs1: str
     location: Optional[str] = None
+
 
 class MessagePayload(BaseModel):
     message: str

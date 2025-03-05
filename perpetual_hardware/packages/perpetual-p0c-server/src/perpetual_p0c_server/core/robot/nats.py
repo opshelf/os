@@ -275,9 +275,11 @@ class RobotWorker(AbstractRobotWorker):
                                     response = self._current_task.result()
                                     await self._js.publish(
                                         self._nats_config.event_queue,
-                                        RetrievalCompletedEvent(payload={
-                                            'output_box': response.output_box
-                                        }).model_dump_json().encode(),
+                                        RetrievalCompletedEvent(
+                                            payload={"output_box": response.output_box}
+                                        )
+                                        .model_dump_json()
+                                        .encode(),
                                     )
                                 case _:
                                     if self._current_command:

@@ -17,7 +17,6 @@ class SymcodeScanner(AbstractScanner):
         self.reader: Optional[asyncio.StreamReader] = None
         self.writer: Optional[asyncio.StreamWriter] = None
 
-
     def location(self) -> str:
         return self._location
 
