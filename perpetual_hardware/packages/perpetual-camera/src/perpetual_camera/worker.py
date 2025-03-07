@@ -12,6 +12,7 @@ from pydantic import BaseModel
 import logging
 import time
 
+
 class Stats(BaseModel):
     max_sim: float
     min_sim: float
@@ -34,6 +35,7 @@ class LabelScannedEvent(BaseModel):
 class ItemPresenceEvent(BaseModel):
     kind: Literal["input_item_detected"] = "input_item_detected"
     payload: GS1Raw
+
 
 class CameraWorker:
     def __init__(
@@ -107,7 +109,6 @@ class CameraWorker:
         min_sim = min(self._similarities)
         max_sim = max(self._similarities)
         return Stats(min_sim=min_sim, max_sim=max_sim)
-
 
     async def connect(self) -> None:
         await self._nc.connect(servers=[self._nats_url])
