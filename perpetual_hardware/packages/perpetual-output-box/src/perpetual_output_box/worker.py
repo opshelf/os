@@ -82,30 +82,12 @@ class OutputBoxWorker:
                     else:
                         if self._current_task and self._current_task.done():
                             match self._current_command:
-                                # case StoreCommand(payload=payload):
-                                #     await self._js.publish(
-                                #         self._nats_config.event_queue,
-                                #         StoringCompletedEvent(payload=payload.location)
-                                #         .model_dump_json()
-                                #         .encode(),
-                                #     )
-                                # case RetrieveCommand(payload=payload):
-                                #    await self._js.publish(
-                                #        self._nats_config.event_queue,
-                                #        RetrievalCompletedEvent().model_dump_json().encode(),
-                                #    )
                                 case _:
                                     if self._current_command:
                                         await self._js.publish(
-                                            self._nats_config.event_queue,
+                                            f"workstation_{self._config.workstation_id}.output_box_{self._config.output_box_id}.events",
                                             self._current_task.result().model_dump_json().encode(),
                                         )
-
-                                    else:
-                                        print("No Current Command")
-                                        print("Fell Through: ", self._current_command)
-                                        print("Fell Through: ", self._current_task)
-                                        print(self._current_task)
                             self._current_task = None
                             self._current_command = None
                             if self._msg:
