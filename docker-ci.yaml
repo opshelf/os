@@ -1,0 +1,29 @@
+version: "3.9"
+services:
+  nats:
+    image: nats:latest
+    container_name: nats
+    ports:
+      - "4222:4222"     # NATS client port (can be removed if only internal access is needed)
+      - "6222:6222"     # NATS cluster port (if you're using clustering)
+      - "8222:8222"     # NATS HTTP monitoring port
+      - "8080:8080"     # WebSocket port
+    volumes:
+      - ./perpetual_hardware/packages/perpetual-p0c-server/infra/nats/:/etc/nats/
+    command: ["-js", "-config", "/etc/nats/nats.conf"]
+    network_mode: "host"
+
+
+  web:
+    image: ghcr.io/perpetual-so/p0c-server:latest
+    volumes:
+      - ./perpetual_hardware/packages/perpetual-p0c-server/data/:/app/perpetual_hardware/packages/perpetual-p0c-server/data/
+      - /dev/:/dev/
+    ports:
+      - "8000:8000"
+    privileged: true
+    depends_on:  # Ensure NATS starts first
+      - nats
+    network_mode: "host"
+    mounts:
+
