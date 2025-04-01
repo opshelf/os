@@ -47,6 +47,10 @@ class TrinamicAxis(TMCM12xx):
     async def safety_off(self) -> None:
         if self._configuration.external_encoder:
             await self.set_external_encoder_max_deviation(0)
+            if self._configuration.encoder_ppr:
+                await self.set_external_encoder_resolution(self._configuration.encoder_ppr)
+            else:
+                raise Exception("External Encoder should have a valid PPR")
         else:
             await self.set_max_encoder_deviation(0)
 
@@ -81,7 +85,7 @@ class TrinamicAxis(TMCM12xx):
         await self.set_actual_position(encoder_position)
 
     async def sync_position(self) -> None:
-        position = await self.get_encoder_position()
+        position = await self.encoder_position()
         await self.set_actual_position(position)
         await self.set_target_position(position)
         self._target_position = position
@@ -218,7 +222,7 @@ class TrinamicAxis(TMCM12xx):
         if self._status != StepperMotorStatus.GOOD:
             raise Exception("Status Bad")
         if self.configuration.brake and not override_brake:
-            await self.reset_location()
+            #await self.reset_location()
             await self.init_brake_move()
             position = self._configuration.convert_position_to_pulses(position)
             await self.move_relative(position)
