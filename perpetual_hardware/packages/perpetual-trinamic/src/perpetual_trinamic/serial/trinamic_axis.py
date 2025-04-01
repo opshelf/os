@@ -53,6 +53,10 @@ class TrinamicAxis(TMCM12xx):
     async def safety_on(self) -> None:
         if self._configuration.external_encoder:
             await self.set_external_encoder_max_deviation(self._configuration.max_encoder_deviation)
+            if self._configuration.encoder_ppr:
+                await self.set_external_encoder_resolution(self._configuration.encoder_ppr)
+            else:
+                raise Exception("External Encoder should have a valid PPR")
         else:
             await self.set_max_encoder_deviation(self._configuration.max_encoder_deviation)
 
@@ -81,7 +85,7 @@ class TrinamicAxis(TMCM12xx):
         await self.set_actual_position(encoder_position)
 
     async def sync_position(self) -> None:
-        position = await self.get_encoder_position()
+        position = await self.encoder_position()
         await self.set_actual_position(position)
         await self.set_target_position(position)
         self._target_position = position
@@ -219,7 +223,7 @@ class TrinamicAxis(TMCM12xx):
             raise Exception("Status Bad")
         if self.configuration.brake and not override_brake:
             if self._target_position + position >= 0:
-                await self.reset_location()
+                #await self.reset_location()
                 await self.init_brake_move()
                 self._target_position = self._target_position + position
                 position = self._configuration.convert_position_to_pulses(position)
@@ -254,6 +258,7 @@ class TrinamicAxis(TMCM12xx):
                     raise Exception(f"Failed to move in time {self._module_id}")
                 await asyncio.sleep(0.5)
                 position_reached = await self.get_position_reached()
+            print("Success")
         else:
             t0 = time.time()
             position_reached = await self.get_position_reached()
@@ -314,11 +319,13 @@ class TrinamicAxis(TMCM12xx):
         await self.set_io(0, 1, 2)
         await asyncio.sleep(0.2)
 
+
     async def end_brake_move(self) -> None:
         await self.set_io(0, 0, 2)
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.2)
         await self.set_standby_current(0)
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.2)
+
 
     async def get_home_status(self) -> HomedStatus:
         status = await self.get_user_variable(UserVariables.HOMED.value)

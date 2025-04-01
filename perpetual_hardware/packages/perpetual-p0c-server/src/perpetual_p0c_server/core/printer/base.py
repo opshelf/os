@@ -40,10 +40,13 @@ class ThermalPrinter(AbstractPrinter):
         payload: LabelPrintPayload,
         label_information: LabelInformation = LabelInformation(),
     ) -> None:
+        print("Label")
         self._label_maker.create_label(payload, label_information)
+        print("Label Created")
         command = ["lp", "-d", self._printer_name, filename, "-o", "fit-to-page"]
+        logging.info(command)
         result = subprocess.run(command, capture_output=True, text=True)
-        print(result)
+        logging.info(result)
         if result.returncode != 0:
             raise Exception(f"Print failed: {result.stderr}")
         return None

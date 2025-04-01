@@ -26,4 +26,4 @@ build-backend = "hatchling.build"
 perpetual-camera = { workspace = true }
 
 [project.scripts]
-start = "perpetual_io_detection.main:start"
+detection_start = "perpetual_io_detection.main:start"
