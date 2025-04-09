@@ -136,9 +136,11 @@ async def main() -> None:
     await zaxis.initialize()
     await zaxis.home()
     await zaxis.move_to_position(0)
+    
 
 
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    #asyncio.run(main())
+    asyncio.run(gripper_test())

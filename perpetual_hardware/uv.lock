@@ -17,6 +17,7 @@ members = [
     "perpetual-hardware",
     "perpetual-io-detection",
     "perpetual-label-maker",
+    "perpetual-os1",
     "perpetual-output-box",
     "perpetual-p0c",
     "perpetual-p0c-server",
@@ -391,6 +392,31 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.10.0" },
     { name = "pylibdmtx", specifier = ">=0.1.10" },
     { name = "setuptools", specifier = ">=75.8.0" },
+]
+
+[[package]]
+name = "perpetual-os1"
+version = "0.1.0"
+source = { editable = "packages/perpetual-os1" }
+dependencies = [
+    { name = "hardware-common" },
+    { name = "nats-py" },
+    { name = "perpetual-can" },
+    { name = "perpetual-trinamic" },
+    { name = "pydantic" },
+    { name = "python-can" },
+    { name = "waveshare-can" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "hardware-common", editable = "packages/hardware-common" },
+    { name = "nats-py", specifier = ">=2.9.0" },
+    { name = "perpetual-can", editable = "packages/perpetual-can" },
+    { name = "perpetual-trinamic", editable = "packages/perpetual-trinamic" },
+    { name = "pydantic" },
+    { name = "python-can" },
+    { name = "waveshare-can", editable = "packages/waveshare-can" },
 ]
 
 [[package]]

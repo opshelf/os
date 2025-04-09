@@ -25,5 +25,4 @@ services:
     depends_on:  # Ensure NATS starts first
       - nats
     network_mode: "host"
-    mounts:
 

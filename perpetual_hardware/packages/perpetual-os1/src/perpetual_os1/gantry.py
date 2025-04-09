@@ -125,7 +125,6 @@ class Gantry(AbstractSubsystem[GantryConfiguration, GantryStatus]):
         await self._x_axis.set_pullup_resistors(0)
         await self._y_axis.set_pullup_resistors(0)
 
-
     @property
     def x_axis(self) -> TrinamicAxis:
         return self._x_axis
@@ -191,12 +190,12 @@ class Gantry(AbstractSubsystem[GantryConfiguration, GantryStatus]):
 
     async def home(self) -> None:
         await self._x_axis.home()
-        #limit = await self._x_axis.get_digital_input(1, 0)
-        #if not bool(limit.value):
+        # limit = await self._x_axis.get_digital_input(1, 0)
+        # if not bool(limit.value):
         #    raise Exception("X Axis Failed to hit homing switch")
         await self._y_axis.home()
-        #limit = await self._y_axis.get_digital_input(1, 0)
-        #if not bool(limit.value):
+        # limit = await self._y_axis.get_digital_input(1, 0)
+        # if not bool(limit.value):
         #    raise Exception("Y Axis Failed to hit homing switch")
 
     async def home_y_first(self) -> None:
