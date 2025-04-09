@@ -57,6 +57,10 @@ class TrinamicAxis(TMCM12xx):
     async def safety_on(self) -> None:
         if self._configuration.external_encoder:
             await self.set_external_encoder_max_deviation(self._configuration.max_encoder_deviation)
+            if self._configuration.encoder_ppr:
+                await self.set_external_encoder_resolution(self._configuration.encoder_ppr)
+            else:
+                raise Exception("External Encoder should have a valid PPR")
         else:
             await self.set_max_encoder_deviation(self._configuration.max_encoder_deviation)
 
@@ -65,6 +69,10 @@ class TrinamicAxis(TMCM12xx):
             await self.set_external_encoder_max_deviation(
                 self._configuration.max_encoder_deviation_homing
             )
+            if self._configuration.encoder_ppr:
+                await self.set_external_encoder_resolution(self._configuration.encoder_ppr)
+            else:
+                raise Exception("External Encoder should have a valid PPR")
         else:
             await self.set_max_encoder_deviation(self._configuration.max_encoder_deviation_homing)
 
@@ -127,6 +135,11 @@ class TrinamicAxis(TMCM12xx):
         await self.set_standby_current(self._configuration.holding_current)
         await self.clear_error_flags()
         await self.get_status_flags()
+        #print(
+        #    await self.get_actual_position(),
+        #    await self.get_target_position(),
+        #    await self.encoder_position()
+        #)
         await self.set_actual_position(0)
         await self.set_target_position(0)
         await self._set_encoder_position(0)

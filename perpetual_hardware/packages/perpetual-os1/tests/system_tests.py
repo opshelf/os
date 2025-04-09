@@ -4,7 +4,7 @@ from perpetual_os1.common import CanMessageIds, CanAxisConfiguration
 from hardware_common.stepper_motor import StepperMotorConfig, Rotation
 from perpetual_os1.gantry import GantryConfiguration, GantryCoordinate, Gantry
 from perpetual_trinamic.aio.trinamic_axis import TrinamicAxis
-from perpetual_os1.configuration import gantry_configuration, z_axis_configuration, gripper_configuration
+from perpetual_os1.configuration import gantry_configuration, z_axis_configuration, gripper_axis_configuration
 
 
 async def set_jaw_size( axis: TrinamicAxis, size: float) -> None:
@@ -129,8 +129,8 @@ async def main() -> None:
     )
     gripper = TrinamicAxis(
         can_bus,
-        configuration=gripper_configuration.configuration,
-        module_id=gripper_configuration.can_id,
+        configuration=gripper_axis_configuration.configuration,
+        module_id=gripper_axis_configuration.can_id,
     )
     z_axis= TrinamicAxis(
         can_bus,

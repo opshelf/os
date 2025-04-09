@@ -4,6 +4,9 @@ import { defineConfig } from 'vite';
 import checker from 'vite-plugin-checker';
 
 export default defineConfig({
+  server: {
+    host: '0.0.0.0'
+  },
   plugins: [
     checker({
       typescript: true,
