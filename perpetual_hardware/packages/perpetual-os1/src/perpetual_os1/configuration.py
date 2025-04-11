@@ -52,7 +52,7 @@ y_axis = CanAxisConfiguration(
         homing_speed=50,
         brake=True,
         external_encoder=True,
-    ),
+   ),
     name="y_axis",
     axis_type="linear_axis",
 )
