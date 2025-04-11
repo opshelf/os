@@ -7,6 +7,25 @@ from typing import Generic, TypeVar
 C = TypeVar("C")
 S = TypeVar("S")
 
+class RobotNatsConfiguration(BaseModel):
+    stream_name: str = "robot"
+    command_queue: str = "commands"
+    event_queue: str = "events"
+    status_queue: str = "robot.status"
+
+    # New request topics
+    get_storage_subject: str = "robot.get_storage"
+    set_storage_subject: str = "robot.set_storage"
+    get_config_subject: str = "robot.get_configuration"
+    set_config_subject: str = "robot.set_configuration"
+    get_status_subject: str = "robot.get_status"
+
+    domain: str = "localhost"
+    port: int = 4222
+
+    def connection_string(self) -> str:
+        return f"nats://{self.domain}:{self.port}"
+
 
 class AbstractSubsystem(ABC, Generic[C, S]):
     @property

@@ -1,7 +1,7 @@
 from pydantic import BaseModel, ValidationError, model_validator, field_validator, Field
 from enum import Enum
 from typing import Optional, List, Self, Tuple
-from perpetual_p0c.gantry import GantryCoordinate
+from perpetual_os1.gantry import GantryCoordinate
 import re
 
 
@@ -224,6 +224,12 @@ class StorageGrid(BaseModel):
             return self.right_module
         else:
             return self.left_module
+
+    def get_cell(self, location: StorageModuleCellLocation) -> Cell:
+        if location.side == StorageModuleSide.LEFT:
+            return self.left_module[location.shelf_idx].cells[location.cell_idx]
+        else:
+            return self.right_module[location.shelf_idx].cells[location.cell_idx]
 
     def get_cell_coordinate(self, location: StorageModuleCellLocation) -> CalibrationCoordinate:
         if location.side == StorageModuleSide.LEFT:

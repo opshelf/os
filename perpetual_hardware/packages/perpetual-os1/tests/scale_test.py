@@ -22,12 +22,12 @@ tray_3 = GantryCoordinate(
 
 async def pick_up_item(robot: Robot, coordinate: GantryCoordinate, width: float) -> None:
     await robot.grab_box(coordinate, width)
-    await robot.drop_off_item(width)
+    await robot.drop_off_item()
     await robot.place_box(coordinate, width)
 
 async def drop_off_item(robot: Robot, coordinate: GantryCoordinate, width: float) -> None:
     await robot.grab_box(coordinate, width)
-    await robot.pickup_item(width)
+    await robot.pickup_item()
     await robot.place_box(coordinate, width)
 
 async def main() -> None:
