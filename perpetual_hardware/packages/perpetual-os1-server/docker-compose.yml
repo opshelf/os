@@ -1,0 +1,13 @@
+version: "3.9"
+services:
+  nats:
+    image: nats:latest
+    container_name: nats-server
+    ports:
+      - "4222:4222"      # NATS client port
+      - "6222:6222"      # NATS cluster port
+      - "8222:8222"      # NATS HTTP monitoring port
+      - "8080:8080"      # WebSocket port (configured in the config file)
+    volumes:
+      - ./infra/nats/:/etc/nats/
+    command: ["-js", "-config", "/etc/nats/nats.conf"]

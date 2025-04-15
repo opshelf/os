@@ -18,10 +18,12 @@ members = [
     "perpetual-io-detection",
     "perpetual-label-maker",
     "perpetual-os1",
+    "perpetual-os1-server",
     "perpetual-output-box",
     "perpetual-p0c",
     "perpetual-p0c-server",
     "perpetual-print-worker",
+    "perpetual-scale",
     "perpetual-scan-server",
     "perpetual-trinamic",
     "perpetual-waveshare",
@@ -421,6 +423,11 @@ requires-dist = [
 ]
 
 [[package]]
+name = "perpetual-os1-server"
+version = "0.1.0"
+source = { editable = "packages/perpetual-os1-server" }
+
+[[package]]
 name = "perpetual-output-box"
 version = "0.1.0"
 source = { editable = "packages/perpetual-output-box" }
@@ -524,12 +531,12 @@ name = "perpetual-print-worker"
 version = "0.1.0"
 source = { editable = "packages/perpetual-print-worker" }
 dependencies = [
-    { name = "fastapi", marker = "(platform_machine != 'aarch64' and python_full_version >= '3.12') or (platform_system != 'Linux' and python_full_version >= '3.12') or platform_system == 'Darwin' or (platform_machine == 'aarch64' and platform_system == 'Linux')" },
-    { name = "nats-py", marker = "(platform_machine != 'aarch64' and python_full_version >= '3.12') or (platform_system != 'Linux' and python_full_version >= '3.12') or platform_system == 'Darwin' or (platform_machine == 'aarch64' and platform_system == 'Linux')" },
-    { name = "pillow", marker = "(platform_machine != 'aarch64' and python_full_version >= '3.12') or (platform_system != 'Linux' and python_full_version >= '3.12') or platform_system == 'Darwin' or (platform_machine == 'aarch64' and platform_system == 'Linux')" },
-    { name = "pydantic", marker = "(platform_machine != 'aarch64' and python_full_version >= '3.12') or (platform_system != 'Linux' and python_full_version >= '3.12') or platform_system == 'Darwin' or (platform_machine == 'aarch64' and platform_system == 'Linux')" },
-    { name = "pylibdmtx", marker = "(platform_machine != 'aarch64' and python_full_version >= '3.12') or (platform_system != 'Linux' and python_full_version >= '3.12') or platform_system == 'Darwin' or (platform_machine == 'aarch64' and platform_system == 'Linux')" },
-    { name = "uvicorn", marker = "(platform_machine != 'aarch64' and python_full_version >= '3.12') or (platform_system != 'Linux' and python_full_version >= '3.12') or platform_system == 'Darwin' or (platform_machine == 'aarch64' and platform_system == 'Linux')" },
+    { name = "fastapi" },
+    { name = "nats-py" },
+    { name = "pillow" },
+    { name = "pydantic" },
+    { name = "pylibdmtx" },
+    { name = "uvicorn" },
 ]
 
 [package.metadata]
@@ -540,6 +547,23 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.10.0" },
     { name = "pylibdmtx", specifier = ">=0.1.10" },
     { name = "uvicorn", specifier = ">=0.32.1" },
+]
+
+[[package]]
+name = "perpetual-scale"
+version = "0.1.0"
+source = { editable = "packages/perpetual-scale" }
+dependencies = [
+    { name = "nats-py" },
+    { name = "pydantic" },
+    { name = "pyserial-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "nats-py", specifier = ">=2.9.0" },
+    { name = "pydantic", specifier = ">=2.10.0" },
+    { name = "pyserial-asyncio", specifier = ">=0.6" },
 ]
 
 [[package]]

@@ -206,7 +206,7 @@ class Robot:
         await self.move(self._configuration.pickup_location)
 
     async def drop_off_item(self) -> None:
-        await self.move(self._configuration.pickup_location)
+        await self.move(self._configuration.pickup_location + self._configuration.place_offset)
         await self._tool.extend()
         await self.unsafe_move(
             self._configuration.pickup_location + self._configuration.pickup_location_offset
