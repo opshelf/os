@@ -15,7 +15,6 @@ class GripperConfiguration(BaseModel):
 class GripperStatus(BaseModel):
     axis: AxisStatus
 
-
 class Gripper(AbstractSubsystem[GripperConfiguration, GripperStatus]):
     def __init__(self, bus: CANBusHandler, configuration: GripperConfiguration) -> None:
         self._configuration = configuration
@@ -31,7 +30,9 @@ class Gripper(AbstractSubsystem[GripperConfiguration, GripperStatus]):
 
     async def status(self) -> GripperStatus:
         status = await self._axis.status()
-        return GripperStatus(axis=status)
+        return GripperStatus(
+            axis=status
+        )
 
     async def stop(self) -> None:
         await self._axis.stop()

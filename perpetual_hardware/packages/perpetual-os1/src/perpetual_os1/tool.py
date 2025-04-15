@@ -125,6 +125,7 @@ class Tool(AbstractSubsystem[ToolConfiguration, ToolStatus]):
     async def setup_box_grab(self, width: float) -> None:
         await self.gripper.axis.safety_off()
         await self.gripper.set_jaw_size(width - self._configuration.gripper.compression)
+        #await self.gripper.close_jaw()
         await self.gripper.initialize()
 
     async def setup_box_drop(self, width: float) -> None:

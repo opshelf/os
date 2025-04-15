@@ -114,7 +114,7 @@ gripper_configuration = GripperConfiguration(
     axis=gripper_axis_configuration,
     minimum_gripper_width=0,
     maximum_gripper_width=150,
-    compression=3,
+    compression=5,
     gap=2,
 )
 
@@ -133,6 +133,6 @@ robot_configuration = RobotConfiguration(
     idle_position=GantryCoordinate(x=20, y=20),
     place_offset=GantryCoordinate(x=0, y=5),
     # pickup_location=GantryCoordinate(x=540,y=396),
-    pickup_location=GantryCoordinate(x=730, y=395),
+    pickup_location=GantryCoordinate(x=795, y=470),
     pickup_location_offset=GantryCoordinate(x=0, y=200),
 )

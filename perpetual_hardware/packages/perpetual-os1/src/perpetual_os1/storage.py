@@ -83,11 +83,11 @@ class Shelf(BaseModel):
                 cal_idx = 1
                 while cal_idx <= location:
                     if self.cells[cal_idx].dimensions.width == 50:
-                        x_value += 70.0
+                        x_value += 71.0
                     elif self.cells[cal_idx].dimensions.width == 100:
-                        x_value += 120.0
+                        x_value += 121.0
                     else:
-                        x_value += 170.0
+                        x_value += 166.0
                     cal_idx += 1
                 cal_point.x = x_value
                 return cal_point
