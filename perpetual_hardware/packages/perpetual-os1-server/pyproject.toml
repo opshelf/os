@@ -7,8 +7,29 @@ authors = [
     { name = "emgardner", email = "gardner.ethan10@gmail.com" }
 ]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "fastapi>=0.115.6",
+    "nats-py>=2.9.0",
+    "pydantic>=2.10.0",
+    "perpetual-os1",
+    "uvicorn>=0.32.1",
+    "pyserial-asyncio>=0.6",
+    "setuptools>=75.8.0",
+    "sse-starlette>=2.1.3",
+    "perpetual-barcode-scanner",
+    "perpetual-waveshare",
+]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.uv.sources]
+perpetual-os1 = { workspace = true }
+perpetual-waveshare = { workspace = true }
+perpetual-barcode-scanner = { workspace = true } 
+#perpetual-label-maker = { workspace = true }
+#perpetual-camera = { workspace = true }
+
+[project.scripts]
+start = "perpetual_os1_server.main:start"
