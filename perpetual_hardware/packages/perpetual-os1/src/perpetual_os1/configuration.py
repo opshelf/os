@@ -1,8 +1,7 @@
 from perpetual_os1.common import CanMessageIds, CanAxisConfiguration
 from hardware_common.stepper_motor import StepperMotorConfig, Rotation
 from perpetual_os1.gantry import GantryConfiguration, GantryCoordinate, Gantry
-from perpetual_os1.tool import ToolConfiguration
-from perpetual_os1.gripper import GripperConfiguration
+from perpetual_os1.tool import ToolConfiguration, GripperConfiguration
 from perpetual_os1.robot import RobotConfiguration
 
 
@@ -110,20 +109,14 @@ z_axis_configuration = CanAxisConfiguration(
 )
 
 
-gripper_configuration = GripperConfiguration(
-    axis=gripper_axis_configuration,
-    minimum_gripper_width=0,
-    maximum_gripper_width=150,
-    compression=5,
-    gap=2,
-)
+gripper_configuration = GripperConfiguration()
 
 tool_configuration = ToolConfiguration(
     gripper=gripper_configuration,
     z_axis=z_axis_configuration,
     tool_shelf_offset=7.0,
     tool_retracted_offset=1.0,
-    tool_extension_offset=161,
+    tool_extension_offset=165,
 )
 
 robot_configuration = RobotConfiguration(

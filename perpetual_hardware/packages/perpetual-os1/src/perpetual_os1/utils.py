@@ -1,3 +1,4 @@
+from pymodbus.client.serial import AsyncModbusSerialClient
 import serial
 import serial.tools.list_ports
 import asyncio
@@ -180,3 +181,20 @@ def get_trinamic_usb() -> SerialDeviceInfo:
         if port.description and "Trinamic" in port.description:
             return port
     raise Exception("No Device Found")
+
+
+def probe_modbus_client() -> Optional[AsyncModbusSerialClient]:
+    ports = get_usb_serial()
+    for port in ports:
+        if port.serial_number == "B001K430":
+            return AsyncModbusSerialClient(port.device, baudrate=115200, timeout=1)
+    return None
+
+async def get_modbus_client() -> AsyncModbusSerialClient:
+    client = probe_modbus_client()
+    if client:
+        await client.connect()
+        return client
+    raise Exception("No Modbus Client Found")
+
+

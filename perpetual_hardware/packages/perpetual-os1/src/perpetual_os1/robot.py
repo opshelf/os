@@ -1,4 +1,5 @@
 from pydantic import BaseModel, Field
+from pymodbus.client.serial import AsyncModbusSerialClient
 from perpetual_os1.gantry import GantryConfiguration, Gantry, GantryCoordinate
 from perpetual_os1.storage import Cell, StorageGrid, StorageModuleCellLocation
 from perpetual_os1.tool import Tool, ToolConfiguration
@@ -116,10 +117,12 @@ class RobotStatus(BaseModel):
 
 
 class Robot:
-    def __init__(self, bus: CANBusHandler, configuration: RobotConfiguration) -> None:
+    def __init__(self, bus: CANBusHandler, client: AsyncModbusSerialClient, configuration: RobotConfiguration) -> None:
         self._configuration = configuration
         self._gantry = Gantry(bus, self._configuration.gantry)
-        self._tool = Tool(bus, self._configuration.tool)
+        self._tool = Tool(bus, client, self._configuration.tool)
+        self._bus = bus
+        self._client = client
         self._storage = StorageGrid(left_module=[], right_module=[])
 
     @property

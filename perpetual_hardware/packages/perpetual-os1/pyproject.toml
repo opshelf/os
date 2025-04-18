@@ -14,7 +14,8 @@ dependencies = [
 	"waveshare-can",
 	"perpetual-trinamic",
 	"nats-py>=2.9.0",
-	"perpetual-can"
+	"perpetual-can",
+	"pymodbus>=3.8.6",
 ]
 
 [build-system]
