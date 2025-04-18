@@ -1,7 +1,11 @@
-
+import GantryController from "../GantryController";
 
 const RobotController = () => {
-	return <></>
-}
+  return (
+    <div>
+      <GantryController />
+    </div>
+  );
+};
 
 export default RobotController;
