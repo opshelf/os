@@ -1,14 +1,12 @@
-from typing import Optional, Tuple
-from perpetual_p0c.storage import GS1Data
+from typing import Optional
 import asyncio
-from pydantic import ValidationError
 import serial_asyncio
 from typing import Optional
 from .base import AbstractScanner
 
 
 class SymcodeScanner(AbstractScanner):
-    def __init__(self, port: str, baudrate: int, location: str) -> None:
+    def __init__(self, port: str, baudrate: int) -> None:
         self.port = port
         self.baudrate = baudrate
         self.reader: Optional[asyncio.StreamReader] = None
@@ -25,10 +23,14 @@ class SymcodeScanner(AbstractScanner):
         data = await self.reader.readuntil(b"\r")
         return data
 
-    async def scan(self) -> str:
+    async def scan(self) -> Optional[str]:
         data = await self.read()
         decoded_data = data.decode().strip()
-        return decoded_data
+        if len(decoded_data) == 12:
+            return decoded_data
+        else:
+            print(f"Failed Code: {decoded_data}")
+            return None
 
 
     async def shutdown(self) -> None:

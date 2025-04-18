@@ -1,5 +1,4 @@
-from abc import ABCMeta, abstractmethod
-from typing import Optional, Literal, 
+from typing import Optional, Literal
 from nats.aio.client import Client as NATS
 import asyncio
 from perpetual_barcode_scanner.base import AbstractScanner
@@ -31,7 +30,7 @@ class ScannerWorker:
         while self._running:
             try:
                 result = await self._scanner.scan()
-                if result:
+                if result is not None:
                     print(result)
                     await self._nc.publish(
                         self._scanner_queue,

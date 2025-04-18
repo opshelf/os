@@ -10,10 +10,14 @@ requires-python = ">=3.12"
 dependencies = [
     "nats-py>=2.9.0",
     "pydantic>=2.10.0",
-    "pyserial-asyncio>=0.6"
+    "pyserial-asyncio>=0.6",
+    "perpetual-usb-utils"
 ]
 
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.uv.sources]
+perpetual-usb-utils = { workspace = true }
