@@ -428,6 +428,7 @@ dependencies = [
     { name = "perpetual-can" },
     { name = "perpetual-trinamic" },
     { name = "pydantic" },
+    { name = "pymodbus" },
     { name = "python-can" },
     { name = "waveshare-can" },
 ]
@@ -439,6 +440,7 @@ requires-dist = [
     { name = "perpetual-can", editable = "packages/perpetual-can" },
     { name = "perpetual-trinamic", editable = "packages/perpetual-trinamic" },
     { name = "pydantic" },
+    { name = "pymodbus", specifier = ">=3.8.6" },
     { name = "python-can" },
     { name = "waveshare-can", editable = "packages/waveshare-can" },
 ]
