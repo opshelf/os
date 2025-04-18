@@ -1,6 +1,6 @@
 import asyncio
 from perpetual_scale import ScaleWorker
-from perpetual_scale.ruishan import SerialScale  # or wherever your SerialScale is
+from perpetual_scale.ruishan import SerialScale  
 
 async def main():
     scale = SerialScale("/dev/ttyUSB0", baudrate=9600)
