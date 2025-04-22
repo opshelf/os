@@ -4,8 +4,11 @@ from enum import Enum
 from abc import ABC, abstractmethod
 from typing import Generic, TypeVar
 
+
+
 C = TypeVar("C")
 S = TypeVar("S")
+
 
 class RobotNatsConfiguration(BaseModel):
     stream_name: str = "robot"
@@ -13,7 +16,6 @@ class RobotNatsConfiguration(BaseModel):
     event_queue: str = "events"
     status_queue: str = "robot.status"
 
-    # New request topics
     get_storage_subject: str = "robot.get_storage"
     set_storage_subject: str = "robot.set_storage"
     get_config_subject: str = "robot.get_configuration"
