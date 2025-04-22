@@ -4,6 +4,7 @@ from pylibdmtx.pylibdmtx import encode
 from perpetual_p0c_server.core.events import LabelPrintPayload
 from pydantic import BaseModel
 
+
 class FontSetting(BaseModel):
     size: int
     name: str

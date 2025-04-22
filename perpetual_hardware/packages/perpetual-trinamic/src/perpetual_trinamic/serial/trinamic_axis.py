@@ -223,7 +223,7 @@ class TrinamicAxis(TMCM12xx):
             raise Exception("Status Bad")
         if self.configuration.brake and not override_brake:
             if self._target_position + position >= 0:
-                #await self.reset_location()
+                # await self.reset_location()
                 await self.init_brake_move()
                 self._target_position = self._target_position + position
                 position = self._configuration.convert_position_to_pulses(position)
@@ -319,13 +319,11 @@ class TrinamicAxis(TMCM12xx):
         await self.set_io(0, 1, 2)
         await asyncio.sleep(0.2)
 
-
     async def end_brake_move(self) -> None:
         await self.set_io(0, 0, 2)
         await asyncio.sleep(0.2)
         await self.set_standby_current(0)
         await asyncio.sleep(0.2)
-
 
     async def get_home_status(self) -> HomedStatus:
         status = await self.get_user_variable(UserVariables.HOMED.value)

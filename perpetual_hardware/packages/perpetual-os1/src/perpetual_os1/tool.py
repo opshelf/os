@@ -1,7 +1,8 @@
 from perpetual_can import CANBusHandler
 from pydantic import BaseModel, Field
 from pymodbus.client.serial import AsyncModbusSerialClient
-#from perpetual_os1.gripper import GripperConfiguration, Gripper
+
+# from perpetual_os1.gripper import GripperConfiguration, Gripper
 from perpetual_os1.gripper.homwing import HomwingGripper
 from perpetual_os1.common import CanAxisConfiguration, AbstractSubsystem
 from perpetual_trinamic.aio.trinamic_axis import AxisStatus, TrinamicAxis
@@ -9,6 +10,7 @@ from pydantic import BaseModel
 from typing import Literal, Annotated, Union
 
 from perpetual_os1.gripper.homwing.core import ExecuteControlMovement
+
 
 class GripperConfiguration(BaseModel):
     min_width: float = 20.0
@@ -25,7 +27,7 @@ class ToolConfiguration(BaseModel):
 
 
 class ToolStatus(BaseModel):
-    #gripper: AxisStatus
+    # gripper: AxisStatus
     z_axis: AxisStatus
 
 
@@ -56,6 +58,22 @@ class SetJawSizeCommand(BaseModel):
     size: float
 
 
+class ExtendGripperCommand(BaseModel):
+    command: Literal["extend_gripper"]
+
+
+class RetractGripperCommand(BaseModel):
+    command: Literal["retract_gripper"]
+
+class OpenGripperCommand(BaseModel):
+    command: Literal["open_gripper"]
+
+class CloseGripperCommand(BaseModel):
+    command: Literal["close_gripper"]
+
+class PrepareGripperCommand(BaseModel):
+    command: Literal["prepare_gripper"]
+
 ToolCommands = Annotated[
     Union[
         StopCommand,
@@ -64,6 +82,11 @@ ToolCommands = Annotated[
         MoveCommand,
         MoveRelativeCommand,
         SetJawSizeCommand,
+        ExtendGripperCommand,
+        RetractGripperCommand,  
+        OpenGripperCommand,
+        CloseGripperCommand,
+        PrepareGripperCommand
     ],
     Field(discriminator="command"),
 ]
@@ -81,9 +104,11 @@ ToolResponse = Union[ToolCommandSuccessful, ToolCommandError]
 
 
 class Tool(AbstractSubsystem[ToolConfiguration, ToolStatus]):
-    def __init__(self, bus: CANBusHandler, client: AsyncModbusSerialClient,configuration: ToolConfiguration) -> None:
+    def __init__(
+        self, bus: CANBusHandler, client: AsyncModbusSerialClient, configuration: ToolConfiguration
+    ) -> None:
         self._configuration = configuration
-        #self._gripper = Gripper(bus, self._configuration.gripper)
+        # self._gripper = Gripper(bus, self._configuration.gripper)
         self._gripper = HomwingGripper(client, 9)
         self._z_axis = TrinamicAxis(
             bus,
@@ -110,8 +135,6 @@ class Tool(AbstractSubsystem[ToolConfiguration, ToolStatus]):
 
     async def status(self) -> ToolStatus:
         z_axis = await self._z_axis.status()
-        #gripper = await self._gripper.axis.status()
-        #return ToolStatus(gripper=gripper, z_axis=z_axis)
         return ToolStatus(z_axis=z_axis)
 
     async def stop(self) -> None:
@@ -128,27 +151,30 @@ class Tool(AbstractSubsystem[ToolConfiguration, ToolStatus]):
         await self._gripper.wait_for_activation()
 
     async def set_jaw_size(self, width: float) -> None:
-        value = int((1 - ((width - self._configuration.gripper.min_width)/(self._configuration.gripper.max_width-self._configuration.gripper.min_width))) * 255.0)
-        print("Jaw Size: ", value)
-        await self._gripper.execute_control_movement(ExecuteControlMovement(
-            speed=255,
-            force=255,
-            position=max(0,min(
-                value,
-                255
-            ))
-        ))
+        value = int(
+            (
+                1
+                - (
+                    (width - self._configuration.gripper.min_width)
+                    / (
+                        self._configuration.gripper.max_width
+                        - self._configuration.gripper.min_width
+                    )
+                )
+            )
+            * 255.0
+        )
+        await self._gripper.execute_control_movement(
+            ExecuteControlMovement(speed=255, force=255, position=max(0, min(value, 255)))
+        )
 
     async def setup_box_pick(self) -> None:
-        #await self.set_jaw_size(width + self._configuration.gripper.gap)
         await self.set_jaw_size(28.0)
 
     async def setup_box_grab(self) -> None:
-        #await self.set_jaw_size(width - self._configuration.gripper.compression)
         await self.set_jaw_size(40.0)
 
     async def setup_box_drop(self) -> None:
-        #await self.set_jaw_size(width + self._configuration.gripper.gap)
         await self.set_jaw_size(20.0)
 
     async def grab_box(self) -> None:
@@ -194,6 +220,21 @@ class Tool(AbstractSubsystem[ToolConfiguration, ToolStatus]):
                 return ToolCommandSuccessful()
             case SetJawSizeCommand(size=size):
                 await self.set_jaw_size(size)
+                return ToolCommandSuccessful()
+            case ExtendGripperCommand():
+                await self.extend()
+                return ToolCommandSuccessful()
+            case RetractGripperCommand():
+                await self.retract_z()
+                return ToolCommandSuccessful()
+            case OpenGripperCommand():
+                await self.setup_box_grab()
+                return ToolCommandSuccessful()
+            case CloseGripperCommand():
+                await self.setup_box_drop()
+                return ToolCommandSuccessful()
+            case PrepareGripperCommand():
+                await self.setup_box_pick()
                 return ToolCommandSuccessful()
             case _:
                 raise Exception("Invalid Tool Command")

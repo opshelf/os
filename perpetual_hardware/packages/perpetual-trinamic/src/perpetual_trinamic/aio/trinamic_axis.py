@@ -135,11 +135,11 @@ class TrinamicAxis(TMCM12xx):
         await self.set_standby_current(self._configuration.holding_current)
         await self.clear_error_flags()
         await self.get_status_flags()
-        #print(
+        # print(
         #    await self.get_actual_position(),
         #    await self.get_target_position(),
         #    await self.encoder_position()
-        #)
+        # )
         await self.set_actual_position(0)
         await self.set_target_position(0)
         await self._set_encoder_position(0)
@@ -235,7 +235,7 @@ class TrinamicAxis(TMCM12xx):
         if self._status != StepperMotorStatus.GOOD:
             raise Exception("Status Bad")
         if self.configuration.brake and not override_brake:
-            #await self.reset_location()
+            # await self.reset_location()
             await self.init_brake_move()
             position = self._configuration.convert_position_to_pulses(position)
             await self.move_relative(position)

@@ -9,14 +9,18 @@ from pydantic import BaseModel, Field
 from typing import Union, Annotated, Literal
 from perpetual_os1.gantry import GantryCoordinate
 
+
 class StopCommand(BaseModel):
     command: Literal["stop"] = "stop"
+
 
 class InitializeCommand(BaseModel):
     command: Literal["initialize"] = "initialize"
 
+
 class HomeCommand(BaseModel):
     command: Literal["home"] = "home"
+
 
 
 class UnsafeMoveCommand(BaseModel):
@@ -31,6 +35,7 @@ class MoveCommand(BaseModel):
 
 class IdleCommand(BaseModel):
     command: Literal["idle"] = "idle"
+
 
 
 class GrabBoxCommand(BaseModel):
@@ -49,12 +54,15 @@ class MoveToPickupLocationCommand(BaseModel):
     command: Literal["move_to_pickup_location"] = "move_to_pickup_location"
 
 
+
 class DropOffItemCommand(BaseModel):
     command: Literal["drop_off_item"] = "drop_off_item"
 
 
+
 class PickupItemCommand(BaseModel):
     command: Literal["pickup_item"] = "pickup_item"
+
 
 
 class GrabCellCommand(BaseModel):
@@ -105,15 +113,18 @@ RobotCommands = Annotated[
         GantryCommand,
         ToolCommand
     ],
-    Field(discriminator="command")
+    Field(discriminator="command"),
 ]
+
 
 # Define response types
 class RobotCommandSuccessful(BaseModel):
     message: Literal["success"] = "success"
 
+
 class RobotCommandError(BaseModel):
     error: str
+
 
 RobotResponse = Union[RobotCommandSuccessful, RobotCommandError]
 
@@ -143,7 +154,9 @@ class RobotStatus(BaseModel):
 
 
 class Robot:
-    def __init__(self, bus: CANBusHandler, client: AsyncModbusSerialClient, configuration: RobotConfiguration) -> None:
+    def __init__(
+        self, bus: CANBusHandler, client: AsyncModbusSerialClient, configuration: RobotConfiguration
+    ) -> None:
         self._configuration = configuration
         self._gantry = Gantry(bus, self._configuration.gantry)
         self._tool = Tool(bus, client, self._configuration.tool)
@@ -176,7 +189,6 @@ class Robot:
     async def stop(self) -> None:
         await self._gantry.stop()
         await self._tool.stop()
-
 
     async def initialize(self) -> None:
         await self._gantry.set_configuration(self._configuration.gantry)
@@ -223,13 +235,13 @@ class Robot:
     async def idle(self) -> None:
         await self.move(self._configuration.idle_position)
 
-    async def grab_box(self, coordinate: GantryCoordinate, width: float) -> None:
+    async def grab_box(self, coordinate: GantryCoordinate) -> None:
         await self.move(coordinate)
-        await self._tool.grab_box(width)
+        await self._tool.grab_box()
 
-    async def place_box(self, coordinate: GantryCoordinate, width: float) -> None:
+    async def place_box(self, coordinate: GantryCoordinate) -> None:
         await self.move(coordinate + self._configuration.place_offset)
-        await self._tool.place_box(width)
+        await self._tool.place_box()
 
     async def move_to_pickup_location(self) -> None:
         await self.move(self._configuration.pickup_location)
@@ -258,7 +270,6 @@ class Robot:
         await self.move(coordinate + self._configuration.place_offset)
         await self._tool.place_box()
 
-
     async def grab_cell(self, location: StorageModuleCellLocation) -> None:
         coordinate = self._storage.get_cell_coordinate(location)
         cell = self._storage.get_cell(location)
@@ -268,7 +279,6 @@ class Robot:
         coordinate = self._storage.get_cell_coordinate(location)
         cell = self._storage.get_cell(location)
         await self._place_cell(coordinate.to_gantry_coordinate(), cell)
-
 
     async def store_item(self, location: StorageModuleCellLocation) -> None:
         await self.grab_cell(location)
@@ -301,10 +311,10 @@ class Robot:
                 await self.idle()
                 return RobotCommandSuccessful()
             case GrabBoxCommand(coordinate=coord, width=width):
-                await self.grab_box(coord, width)
+                await self.grab_box(coord)
                 return RobotCommandSuccessful()
             case PlaceBoxCommand(coordinate=coord, width=width):
-                await self.place_box(coord, width)
+                await self.place_box(coord)
                 return RobotCommandSuccessful()
             case MoveToPickupLocationCommand():
                 await self.move_to_pickup_location()
