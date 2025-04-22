@@ -3,22 +3,18 @@ from typing import Optional
 from nats.aio.client import Client as NATS
 from nats.aio.msg import Msg
 from nats import errors as nats_errors
-from nats.js.errors import NotFoundError
-from pydantic import BaseModel, TypeAdapter
+from pydantic import TypeAdapter
 from perpetual_os1.robot import (
     RobotConfiguration,
     Robot,
     RobotCommands,
     RobotResponse,
-    StopCommand
+    StopCommand,
+    WorkerStatus
 )
+from perpetual_os1.robot_client import RobotClient
 from perpetual_os1.storage import StorageGrid
 from perpetual_os1.common import RobotNatsConfiguration
-
-class WorkerStatus(BaseModel):
-    robot_status: Optional[str]
-    running: bool
-    current_command: Optional[RobotCommands]
 
 RobotCommandAdapter = TypeAdapter[RobotCommands](RobotCommands)
 
@@ -37,19 +33,12 @@ class RobotWorker:
         self._msg: Optional[Msg] = None
         self._running = False
         self._nats_config = nats_config
+        self._client = RobotClient(nats_config)
         self._nc = NATS()
 
-#    async def connect(self) -> None:
-#        await self._nc.connect(servers=[self._nats_config.connection_string()])
-#        self._js = self._nc.jetstream()
-#        await self._js.add_stream(
-#            name=self._nats_config.stream_name,
-#            subjects=[self._nats_config.command_queue, self._nats_config.event_queue],
-#        )
-#        self.work_consumer = await self._js.pull_subscribe(
-#            self._nats_config.command_queue, durable=self._nats_config.command_queue
-#        )
-#
+    def get_client(self) -> RobotClient:
+        return self._client
+
     async def connect(self) -> None:
         await self._nc.connect(servers=[self._nats_config.connection_string()])
         self._js = self._nc.jetstream()
@@ -65,6 +54,7 @@ class RobotWorker:
                 self._nats_config.get_status_subject,
             ],
         )
+        await self._client.connect()
     
         self.work_consumer = await self._js.pull_subscribe(
             self._nats_config.command_queue, durable=self._nats_config.command_queue

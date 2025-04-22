@@ -1,68 +1,88 @@
 from pydantic import BaseModel, Field
 from pymodbus.client.serial import AsyncModbusSerialClient
-from perpetual_os1.gantry import GantryConfiguration, Gantry, GantryCoordinate
+from perpetual_os1.gantry import GantryCommands, GantryConfiguration, Gantry, GantryCoordinate
 from perpetual_os1.storage import Cell, StorageGrid, StorageModuleCellLocation
-from perpetual_os1.tool import Tool, ToolConfiguration
+from perpetual_os1.tool import Tool, ToolCommands, ToolConfiguration
 from perpetual_can import CANBusHandler
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel, Field
 from typing import Union, Annotated, Literal
 from perpetual_os1.gantry import GantryCoordinate
 
 class StopCommand(BaseModel):
-    command: Literal["stop"] = Field(default="stop")
+    command: Literal["stop"] = "stop"
 
 class InitializeCommand(BaseModel):
-    command: Literal["initialize"] = Field(default="initialize")
+    command: Literal["initialize"] = "initialize"
 
 class HomeCommand(BaseModel):
-    command: Literal["home"] = Field(default="home")
+    command: Literal["home"] = "home"
+
 
 class UnsafeMoveCommand(BaseModel):
-    command: Literal["unsafe_move"] = Field(default="unsafe_move")
+    command: Literal["unsafe_move"] = "unsafe_move"
     coordinate: GantryCoordinate
+
 
 class MoveCommand(BaseModel):
-    command: Literal["move"] = Field(default="move")
+    command: Literal["move"] = "move"
     coordinate: GantryCoordinate
+
 
 class IdleCommand(BaseModel):
-    command: Literal["idle"] = Field(default="idle")
+    command: Literal["idle"] = "idle"
+
 
 class GrabBoxCommand(BaseModel):
-    command: Literal["grab_box"] = Field(default="grab_box")
+    command: Literal["grab_box"] = "grab_box"
     coordinate: GantryCoordinate
     width: float
+
 
 class PlaceBoxCommand(BaseModel):
-    command: Literal["place_box"] = Field(default="place_box")
+    command: Literal["place_box"] = "place_box"
     coordinate: GantryCoordinate
     width: float
 
+
 class MoveToPickupLocationCommand(BaseModel):
-    command: Literal["move_to_pickup_location"] = Field(default="move_to_pickup_location")
+    command: Literal["move_to_pickup_location"] = "move_to_pickup_location"
+
 
 class DropOffItemCommand(BaseModel):
-    command: Literal["drop_off_item"] = Field(default="drop_off_item")
+    command: Literal["drop_off_item"] = "drop_off_item"
+
 
 class PickupItemCommand(BaseModel):
-    command: Literal["pickup_item"] = Field(default="pickup_item")
+    command: Literal["pickup_item"] = "pickup_item"
+
 
 class GrabCellCommand(BaseModel):
-    command: Literal["grab_cell"] = Field(default="grab_cell")
+    command: Literal["grab_cell"] = "grab_cell"
     location: StorageModuleCellLocation
+
 
 class PlaceCellCommand(BaseModel):
-    command: Literal["place_cell"] = Field(default="place_cell")
+    command: Literal["place_cell"] = "place_cell"
     location: StorageModuleCellLocation
+
 
 class StoreItemCommand(BaseModel):
-    command: Literal["store_item"] = Field(default="store_item")
+    command: Literal["store_item"] = "store_item"
     location: StorageModuleCellLocation
 
+
 class RetrieveItemCommand(BaseModel):
-    command: Literal["retrieve_item"] = Field(default="retrieve_item")
+    command: Literal["retrieve_item"] = "retrieve_item"
     location: StorageModuleCellLocation
+
+class GantryCommand(BaseModel):
+    command: Literal["gantry_command"] = "gantry_command"
+    payload: GantryCommands
+
+class ToolCommand(BaseModel):
+    command: Literal["tool_command"] = "tool_command"
+    payload: ToolCommands
 
 # Create a union of all Robot commands using a discriminator field
 RobotCommands = Annotated[
@@ -82,6 +102,8 @@ RobotCommands = Annotated[
         PlaceCellCommand,
         StoreItemCommand,
         RetrieveItemCommand,
+        GantryCommand,
+        ToolCommand
     ],
     Field(discriminator="command")
 ]
@@ -95,6 +117,10 @@ class RobotCommandError(BaseModel):
 
 RobotResponse = Union[RobotCommandSuccessful, RobotCommandError]
 
+class WorkerStatus(BaseModel):
+    robot_status: Optional[str]
+    running: bool
+    current_command: Optional[RobotCommands]
 
 class RobotConfiguration(BaseModel):
     tool: ToolConfiguration
@@ -226,11 +252,11 @@ class Robot:
 
     async def _grab_cell(self, coordinate: GantryCoordinate, cell: Cell) -> None:
         await self.move(coordinate)
-        await self._tool.grab_box(cell.dimensions.width)
+        await self._tool.grab_box()
 
     async def _place_cell(self, coordinate: GantryCoordinate, cell: Cell) -> None:
         await self.move(coordinate + self._configuration.place_offset)
-        await self._tool.place_box(cell.dimensions.width)
+        await self._tool.place_box()
 
 
     async def grab_cell(self, location: StorageModuleCellLocation) -> None:
@@ -300,6 +326,12 @@ class Robot:
                 return RobotCommandSuccessful()
             case RetrieveItemCommand(location=loc):
                 await self.retrieve_item(loc)
+                return RobotCommandSuccessful()
+            case GantryCommand(payload=payload):
+                await self._gantry.handle_command(payload)
+                return RobotCommandSuccessful()
+            case ToolCommand(payload=payload):
+                await self._tool.handle_command(payload)
                 return RobotCommandSuccessful()
             case _:
                 return RobotCommandError(error="Invalid Robot Command")

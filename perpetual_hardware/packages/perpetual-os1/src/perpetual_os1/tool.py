@@ -129,6 +129,7 @@ class Tool(AbstractSubsystem[ToolConfiguration, ToolStatus]):
 
     async def set_jaw_size(self, width: float) -> None:
         value = int((1 - ((width - self._configuration.gripper.min_width)/(self._configuration.gripper.max_width-self._configuration.gripper.min_width))) * 255.0)
+        print("Jaw Size: ", value)
         await self._gripper.execute_control_movement(ExecuteControlMovement(
             speed=255,
             force=255,
@@ -150,7 +151,7 @@ class Tool(AbstractSubsystem[ToolConfiguration, ToolStatus]):
         #await self.set_jaw_size(width + self._configuration.gripper.gap)
         await self.set_jaw_size(20.0)
 
-    async def grab_box(self, width: float) -> None:
+    async def grab_box(self) -> None:
         await self.setup_box_pick()
         await self.extend()
         await self.setup_box_grab()
@@ -165,9 +166,9 @@ class Tool(AbstractSubsystem[ToolConfiguration, ToolStatus]):
         await self.z_axis.move_to_position(self._configuration.tool_retracted_offset)
         await self.z_axis.wait_for_move()
 
-    async def place_box(self, width: float) -> None:
-        await self.setup_box_drop()
+    async def place_box(self) -> None:
         await self.extend()
+        await self.setup_box_drop()
         await self.retract_z()
 
     async def extend(self) -> None:

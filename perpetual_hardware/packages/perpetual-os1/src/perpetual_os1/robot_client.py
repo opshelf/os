@@ -5,9 +5,9 @@ from pydantic import TypeAdapter
 from perpetual_os1.robot import (
     RobotConfiguration,
     RobotCommands,
+    WorkerStatus
 )
 from perpetual_os1.storage import StorageGrid
-from perpetual_os1.robot_worker import WorkerStatus
 from perpetual_os1.common import RobotNatsConfiguration
 
 class RobotClient:
@@ -21,6 +21,7 @@ class RobotClient:
 
     async def connect(self) -> None:
         await self._nc.connect(servers=[self._config.connection_string()])
+        self._js = self._nc.jetstream()
 
     async def disconnect(self) -> None:
         await self._nc.drain()
@@ -55,6 +56,7 @@ class RobotClient:
         if self._js is None:
             raise RuntimeError("JetStream context not initialized")
         await self._js.publish(
+            #f"{self._config.stream_name}.{self._config.command_queue}",
             self._config.command_queue,
             command.model_dump_json().encode()
         )

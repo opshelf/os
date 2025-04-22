@@ -133,30 +133,21 @@ const GantryController = () => {
           <div className="flex flex-col items-center space-y-2 items-stretch">
             <Button
               onClick={async () => {
-                await gantryCommand({
-                  command: "HOME",
-                  payload: null,
-                });
+                await robot.gantry.gantryHomeCommand();
               }}
             >
               HOME
             </Button>
             <Button
               onClick={async () => {
-                await gantryCommand({
-                  command: "INITIALIZE",
-                  payload: null,
-                });
+                await robot.gantry.gantryInitializeCommand();
               }}
             >
               INITIALIZE
             </Button>
             <Button
               onClick={async () => {
-                await gantryCommand({
-                  command: "STOP",
-                  payload: null,
-                });
+                await robot.gantry.gantryStopCommand();
               }}
             >
               STOP

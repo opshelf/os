@@ -2,11 +2,11 @@ import { GantryCoordinateSchema } from "./movement";
 import z from "zod";
 
 export const gantryCommands = z.enum([
-  "HOME",
-  "INITIALIZE",
-  "MOVE",
-  "MOVE_RELATIVE",
-  "STOP",
+  "home",
+  "initialize",
+  "move",
+  "move_relative",
+  "stop",
 ]);
 
 export type GantryCommands = z.infer<typeof gantryCommands>;

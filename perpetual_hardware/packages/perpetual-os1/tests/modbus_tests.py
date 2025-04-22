@@ -137,11 +137,23 @@ async def main() -> None:
     robot = Robot(bus, client, robot_configuration)
     await robot.initialize()
     robot.set_storage(storage_grid)
-    location = robot.get_storage().get_cell_coordinate(StorageModuleCellLocation(shelf_idx=0, cell_idx=0, side=StorageModuleSide.LEFT)).to_gantry_coordinate()
-    await robot.home()
-    await robot.move(location)
-    #await robot.tool.setup_box_pick()
-    #await robot.tool.extend()
+    #location = robot.get_storage().get_cell_coordinate(StorageModuleCellLocation(shelf_idx=0, cell_idx=0, side=StorageModuleSide.LEFT)).to_gantry_coordinate()
+    #await robot.home()
+    #await robot.tool.home()
+    #await robot.move(location)
+    #await robot.tool.set_jaw_size(20)
+    #await robot.tool.retract_z()
+    ##await robot.tool.setup_box_pick()
+    ##await robot.tool.extend()
+    #await robot.tool.grab_box()
+    #await robot.tool.place_box()
+    for i in range(0, 3):
+        await robot.grab_cell(StorageModuleCellLocation(shelf_idx=0, cell_idx=i, side=StorageModuleSide.LEFT))
+        if i == 2:
+            await robot.place_cell(StorageModuleCellLocation(shelf_idx=0, cell_idx=0, side=StorageModuleSide.LEFT))
+        else:
+            await robot.place_cell(StorageModuleCellLocation(shelf_idx=0, cell_idx=i+1, side=StorageModuleSide.LEFT))
+    
 
     #await robot.home()
     #for i in range(20, 41):

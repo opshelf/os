@@ -449,6 +449,32 @@ requires-dist = [
 name = "perpetual-os1-server"
 version = "0.1.0"
 source = { editable = "packages/perpetual-os1-server" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "nats-py" },
+    { name = "perpetual-barcode-scanner" },
+    { name = "perpetual-os1" },
+    { name = "perpetual-waveshare" },
+    { name = "pydantic" },
+    { name = "pyserial-asyncio" },
+    { name = "setuptools" },
+    { name = "sse-starlette" },
+    { name = "uvicorn" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = ">=0.115.6" },
+    { name = "nats-py", specifier = ">=2.9.0" },
+    { name = "perpetual-barcode-scanner", editable = "packages/perpetual-barcode-scanner" },
+    { name = "perpetual-os1", editable = "packages/perpetual-os1" },
+    { name = "perpetual-waveshare", editable = "packages/perpetual-waveshare" },
+    { name = "pydantic", specifier = ">=2.10.0" },
+    { name = "pyserial-asyncio", specifier = ">=0.6" },
+    { name = "setuptools", specifier = ">=75.8.0" },
+    { name = "sse-starlette", specifier = ">=2.1.3" },
+    { name = "uvicorn", specifier = ">=0.32.1" },
+]
 
 [[package]]
 name = "perpetual-output-box"
