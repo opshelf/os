@@ -24,6 +24,7 @@ storage_grid = StorageGrid(
                         height=100,
                         width=145
                     )
+                    
                 ),
                 Cell(
                     status=CellStatus.EMPTY,

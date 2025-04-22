@@ -1,5 +1,6 @@
 from enum import IntEnum
 
+
 class ControlRegisters(IntEnum):
     CONTROL = 0x03E8
     POSITION = 0x03E9

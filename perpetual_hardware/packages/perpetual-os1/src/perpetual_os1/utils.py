@@ -190,11 +190,10 @@ def probe_modbus_client() -> Optional[AsyncModbusSerialClient]:
             return AsyncModbusSerialClient(port.device, baudrate=115200, timeout=1)
     return None
 
+
 async def get_modbus_client() -> AsyncModbusSerialClient:
     client = probe_modbus_client()
     if client:
         await client.connect()
         return client
     raise Exception("No Modbus Client Found")
-
-

@@ -20,8 +20,10 @@ class ScannerSettings(BaseModel):
 class RobotSettings(BaseModel):
     enabled: bool = False
 
+
 class CameraSettings(BaseModel):
     enabled: bool = False
+
 
 class NatsSettings(BaseModel):
     domain: str = "localhost"

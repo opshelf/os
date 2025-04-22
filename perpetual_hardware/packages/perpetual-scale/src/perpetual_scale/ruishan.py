@@ -2,6 +2,7 @@ import asyncio
 import serial_asyncio
 from perpetual_scale.core import AbstractScale
 
+
 class SerialScale(AbstractScale):
     def __init__(self, port: str = "/dev/ttyUSB0", baudrate: int = 9600, timeout: float = 0.2):
         self._port = port
@@ -30,10 +31,7 @@ class SerialScale(AbstractScale):
         try:
             line = await asyncio.wait_for(self._reader.readline(), timeout=self._timeout)
             response = line.decode().rstrip()
-            filtered = ''.join(
-                c for c in response
-                if not c.isspace() and not c.isalpha()
-            )
+            filtered = "".join(c for c in response if not c.isspace() and not c.isalpha())
             return float(filtered)
         except asyncio.TimeoutError:
             raise TimeoutError("Timed out while reading from scale")

@@ -7,6 +7,7 @@ from typing import Generic, TypeVar
 C = TypeVar("C")
 S = TypeVar("S")
 
+
 class RobotNatsConfiguration(BaseModel):
     stream_name: str = "robot"
     command_queue: str = "commands"
