@@ -8,13 +8,16 @@ import asyncio
 import datetime
 from perpetual_scale.core import AbstractScale
 
+
 class ScaleReadPayload(BaseModel):
     timestamp: datetime.datetime = Field(default_factory=lambda: datetime.datetime.now())
     weight: float
 
+
 class ScaleReadEvent(BaseModel):
     kind: Literal["scale_read"] = "scale_read"
     payload: ScaleReadPayload
+
 
 class ScaleWorker:
     def __init__(
@@ -42,9 +45,7 @@ class ScaleWorker:
                 if result:
                     await self._nc.publish(
                         self._scale_events,
-                        ScaleReadEvent(
-                            payload=ScaleReadPayload(weight=result)
-                        )
+                        ScaleReadEvent(payload=ScaleReadPayload(weight=result))
                         .model_dump_json()
                         .encode(),
                     )

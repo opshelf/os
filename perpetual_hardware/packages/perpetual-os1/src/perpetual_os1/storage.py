@@ -2,7 +2,6 @@ from pydantic import BaseModel, ValidationError, model_validator, field_validato
 from enum import Enum
 from typing import Optional, List, Self, Tuple
 from perpetual_os1.gantry import GantryCoordinate
-import re
 
 
 class StorageModuleSide(str, Enum):
@@ -45,6 +44,7 @@ class Cell(BaseModel):
     item: Optional[CellItem]
     calibration_point: Optional[CalibrationCoordinate]
     dimensions: Dimensions
+    empty: bool = False
 
     def clear(self) -> None:
         self.status = CellStatus.EMPTY

@@ -11,10 +11,12 @@ from typing import Tuple
 from perpetual_can import CANBusHandler
 from can import BusABC
 
+
 class CanConfig(BaseModel):
     CAN_INTERFACE: str
     CAN_CHANNEL: str
     CAN_BITRATE: int
+
 
 DEFAULT_CAN_RATE = 500000
 
@@ -37,6 +39,7 @@ class UsbDeviceInfo(BaseModel):
     id: str
     tag: str
     device: str
+
 
 def check_for_pcan() -> Optional[CanConfig]:
     device_re = re.compile(

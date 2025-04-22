@@ -21,16 +21,18 @@ formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(messag
 handler.setFormatter(formatter)
 root.addHandler(handler)
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logging.info(f"{app.title}")
     settings = get_settings()
     logging.info(f"settings: {settings}")
-    await init_robot_worker()
+    #await init_robot_worker()
     logging.info("Robot Enabled")
     logging.info("Workstaton Enabled")
     yield
-    await stop_robot_worker()
+    logging.info("Shutting Down")
+    #await stop_robot_worker()
 
 
 app = FastAPI(lifespan=lifespan)

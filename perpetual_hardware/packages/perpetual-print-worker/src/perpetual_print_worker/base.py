@@ -11,7 +11,7 @@ from perpetual_print_worker.events import (
     MessagePayload,
 )
 from .label_maker import LabelInformation, LabelMaker
-#import logging
+# import logging
 
 
 class AbstractPrinter(metaclass=ABCMeta):
@@ -117,4 +117,3 @@ class PrintClient:
 
     async def close(self) -> None:
         await self._nc.close()
-
