@@ -23,11 +23,11 @@ async def init_scale_worker() -> None:
 async def stop_scale_worker() -> None:
     global robot_worker
     if scale_worker:
-        await scale_worker.shutdown()
+        await scale_worker.close()
 
 
 
-async def get_scale_worker() -> RobotWorker:
+async def get_scale_worker() -> ScaleWorker:
     if scale_worker:
         return scale_worker
     raise ValueError("Scale Worker was Not Initialized")

@@ -3,6 +3,15 @@ import asyncio
 import serial_asyncio
 from typing import Optional
 from .base import AbstractScanner
+from perpetual_usb_utils import SerialDeviceInfo, get_usb_serial
+
+
+def get_symcode_port() -> SerialDeviceInfo:
+    ports = get_usb_serial()
+    for port in ports:
+        if "barcode" in port.description.lower():
+            return port
+    raise Exception("No Barcode Scanner Present")
 
 
 class SymcodeScanner(AbstractScanner):

@@ -2,9 +2,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from perpetual_os1_server.core.robot import init_robot_worker, stop_robot_worker
 from perpetual_os1_server.core.scale import init_scale_worker, stop_scale_worker
+from perpetual_os1_server.core.scanner import init_scanner_worker, stop_scanner_worker
 from perpetual_os1_server.routers import (
     gantry,
     robot,
+    scale,
+    scanner
 )
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
@@ -32,12 +35,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logging.info("Robot Enabled")
     await init_scale_worker()
     logging.info("Scale Enabled")
+    await init_scanner_worker()
+    logging.info("Scanner Enabled")
     yield
     logging.info("Shutting Down")
     await stop_robot_worker()
     logging.info("Robot Shutdown")
     await stop_scale_worker()
     logging.info("Scale Shutdown")
+    await stop_scanner_worker()
+    logging.info("Scanner Shutdown")
 
 
 app = FastAPI(lifespan=lifespan)
@@ -52,6 +59,8 @@ app.add_middleware(
 
 app.include_router(gantry.router, prefix="/api")
 app.include_router(robot.router, prefix="/api/robot")
+app.include_router(scale.router, prefix="/api/scale")
+app.include_router(scanner.router, prefix="/api/scanner")
 
 
 def start() -> None:

@@ -1,8 +1,9 @@
 import asyncio
 from perpetual_scale import ScaleWorker
-from perpetual_scale.ruishan import SerialScale  
+from perpetual_scale.ruishan import SerialScale  , get_scale_port
 
 async def main():
+    port = get_scale_port()
     scale = SerialScale("/dev/ttyUSB0", baudrate=9600)
     #scale = SerialScale("/dev/ttyACM0", baudrate=9600)
     nats_url = "nats://localhost:4222"

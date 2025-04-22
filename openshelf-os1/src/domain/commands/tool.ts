@@ -37,7 +37,7 @@ export const toolGripperMoveRelativeSchema = z.object({
 
 export const toolGripperJawSizeSchema = z.object({
   command: z.literal('set_jaw_size'),
-  position: z.number(),
+  size: z.number(),
 });
 
 export const toolGripperOpenSchema = z.object({
@@ -126,7 +126,9 @@ export class Tool {
   }
 
   async toolHomeCommand(): Promise<void> {
-    await this.sendToolCommand({ command: 'home' });
+    await this.sendToolCommand({
+      command: 'home'
+    });
   }
 
   async toolExtendGripperCommand(): Promise<void> {
@@ -148,8 +150,8 @@ export class Tool {
     });
   }
 
-  async toolSetJawSize(position: number): Promise<void> {
-    await this.sendToolCommand({ command: 'set_jaw_size', position });
+  async toolSetJawSize(size: number): Promise<void> {
+    await this.sendToolCommand({ command: 'set_jaw_size', size });
   }
 
   async toolOpenGripper(): Promise<void> {

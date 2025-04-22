@@ -60,8 +60,8 @@ class StepperMotorConfig(BaseModel):
             steps_per_rev = self.microsteps * self.steps_per_rev
             steps = revolutions * steps_per_rev
             if self.invert_coordinates:
-                return round((steps / self.steps_per_mm) * -1, 3)
-            return round(steps / self.steps_per_mm, 3)
+                return round((steps / self.steps_per_mm)*(self.encoder_ppr/steps_per_rev) * -1, 3)
+            return round((steps / self.steps_per_mm)*(self.encoder_ppr/steps_per_rev), 3)
         raise NotImplementedError
 
     def convert_position_to_pulses(self, position: float) -> int:

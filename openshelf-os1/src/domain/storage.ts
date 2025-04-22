@@ -1,16 +1,26 @@
-import z from 'zod';
-import { toolCoordinateSchema } from './movement';
+import z from "zod";
+import { toolCoordinateSchema } from "./movement";
+
+export const barcodeEventSchema = z.object({
+  kind: z.literal("label_scanned"),
+  payload: z.string().length(12),
+});
+
+export type BarcodeEventSchema = z.infer<typeof barcodeEventSchema>;
+
+export const scaleEventSchema = z.object({
+  kind: z.literal("scale_read"),
+  payload: z.object({
+    weight: z.number(),
+    timestamp: z.string(),
+  }),
+});
+
+export type ScaleEventSchema = z.infer<typeof scaleEventSchema>;
 
 // Enums
-export const storageModuleSideSchema = z.enum([
-  'left_module',
-  'right_module',
-]);
-export const cellStatusSchema = z.enum([
-  'OCCUPIED',
-  'EMPTY',
-  'BLOCKED',
-]);
+export const storageModuleSideSchema = z.enum(["left_module", "right_module"]);
+export const cellStatusSchema = z.enum(["OCCUPIED", "EMPTY", "BLOCKED"]);
 
 // Shared dimension model
 export const dimensionSchema = z.object({
@@ -62,9 +72,7 @@ export const cellLocationDataSchema = z.object({
 });
 
 // Type exports
-export type StorageModuleSide = z.infer<
-  typeof storageModuleSideSchema
->;
+export type StorageModuleSide = z.infer<typeof storageModuleSideSchema>;
 export type CellStatus = z.infer<typeof cellStatusSchema>;
 export type Dimension = z.infer<typeof dimensionSchema>;
 export type CellItem = z.infer<typeof cellItemSchema>;

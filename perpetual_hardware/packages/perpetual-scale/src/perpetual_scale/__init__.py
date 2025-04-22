@@ -41,8 +41,7 @@ class ScaleWorker:
         while self._running:
             try:
                 result = await self._scale.read()
-                print(result)
-                if result:
+                if result is not None:
                     await self._nc.publish(
                         self._scale_events,
                         ScaleReadEvent(payload=ScaleReadPayload(weight=result))

@@ -1,6 +1,8 @@
 import z from 'zod';
 import { gantryCoordinateSchema } from '../movement';
 import { storageModuleCellLocationSchema } from '../storage';
+import { gantryCommandsSchema } from './gantry';
+import { toolCommandsSchema } from './tool';
 
 // Individual command schemas
 export const stopCommandSchema = z.object({
@@ -73,6 +75,17 @@ export const retrieveItemCommandSchema = z.object({
   location: storageModuleCellLocationSchema,
 });
 
+export const gantryCommandSchema = z.object({
+  command: z.literal('gantry_command'),
+  payload: gantryCommandsSchema,
+});
+
+export const toolCommandSchema = z.object({
+  command: z.literal('tool_command'),
+  payload: toolCommandsSchema,
+});
+
+
 // Full RobotCommand discriminated union
 export const robotCommandsSchema = z.discriminatedUnion('command', [
   stopCommandSchema,
@@ -90,6 +103,8 @@ export const robotCommandsSchema = z.discriminatedUnion('command', [
   placeCellCommandSchema,
   storeItemCommandSchema,
   retrieveItemCommandSchema,
+  gantryCommandSchema,
+  toolCommandSchema
 ]);
 
 // Type exports

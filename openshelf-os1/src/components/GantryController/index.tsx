@@ -22,7 +22,6 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { gantryCommand } from "@/api";
 import { gantryCoordinateSchema, GantryCoordinateSchema } from "@/domain";
 import { RobotController } from "@/domain/robot";
 import { robotCommand } from "@/api/robot";
@@ -39,7 +38,7 @@ const MoveForm = () => {
   const robot = new RobotController(robotCommand);
 
   async function onSubmit(values: GantryCoordinateSchema) {
-    await robot.gantry.gantryMoveCommand(values);
+    await robot.move(values);
   }
 
   return (
@@ -109,7 +108,7 @@ const GantryController = () => {
 
   const { robotStatus } = useStateStore();
 
-  const gantryStatus = robotStatus?.robot_status?.gantry_status;
+  const gantryStatus = robotStatus?.robot_status?.gantry;
 
   const runJogCommand = async (axis: "x" | "y", movement: number) => {
     let defaultMove = {
