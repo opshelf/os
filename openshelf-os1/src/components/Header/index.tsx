@@ -6,21 +6,21 @@ import {
   // 	JoystickIcon,
   // 	SettingsIcon,
   // 	Move3DIcon,
-} from "lucide-react";
-import { Link } from "wouter";
+} from 'lucide-react';
+import { Link } from 'wouter';
 import {
   Tooltip,
   TooltipProvider,
   TooltipContent,
   TooltipTrigger,
-} from "../ui/tooltip";
+} from '../ui/tooltip';
 
 const Header = () => {
   return (
     <div className="flex w-full items-center py-4">
       <TooltipProvider>
         <div className="flex grow justify-end space-x-8">
-          <Link to="/storage-designer">
+          <Link to="/storage">
             <Tooltip>
               <TooltipTrigger>
                 <BoxIcon className="w-8 h-8" />

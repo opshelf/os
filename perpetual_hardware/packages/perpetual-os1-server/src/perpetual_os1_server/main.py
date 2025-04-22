@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from perpetual_os1_server.core.robot import init_robot_worker, stop_robot_worker
+from perpetual_os1_server.core.scale import init_scale_worker, stop_scale_worker
 from perpetual_os1_server.routers import (
     gantry,
     robot,
@@ -27,12 +28,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logging.info(f"{app.title}")
     settings = get_settings()
     logging.info(f"settings: {settings}")
-    #await init_robot_worker()
+    await init_robot_worker()
     logging.info("Robot Enabled")
-    logging.info("Workstaton Enabled")
+    await init_scale_worker()
+    logging.info("Scale Enabled")
     yield
     logging.info("Shutting Down")
-    #await stop_robot_worker()
+    await stop_robot_worker()
+    logging.info("Robot Shutdown")
+    await stop_scale_worker()
+    logging.info("Scale Shutdown")
 
 
 app = FastAPI(lifespan=lifespan)

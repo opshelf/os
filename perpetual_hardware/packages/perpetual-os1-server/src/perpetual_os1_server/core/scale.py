@@ -1,0 +1,33 @@
+from typing import Optional
+from perpetual_scale import ScaleWorker
+from perpetual_scale.ruishan import SerialScale  
+import logging
+
+scale_worker: Optional[ScaleWorker] = None
+
+
+async def init_scale_worker() -> None:
+    global scale_worker
+    logging.info("Initialize Scale")
+    scale = SerialScale("/dev/ttyUSB0", baudrate=9600)
+    nats_url = "nats://localhost:4222"
+    scale_event_queue = "scale.events"
+    worker = ScaleWorker(scale, nats_url, scale_event_queue)
+    await worker.connect()
+    logging.info("Scale Connected")
+    await worker.start()
+    logging.info("Scale Started")
+    scale_worker = worker
+
+
+async def stop_scale_worker() -> None:
+    global robot_worker
+    if scale_worker:
+        await scale_worker.shutdown()
+
+
+
+async def get_scale_worker() -> RobotWorker:
+    if scale_worker:
+        return scale_worker
+    raise ValueError("Scale Worker was Not Initialized")
