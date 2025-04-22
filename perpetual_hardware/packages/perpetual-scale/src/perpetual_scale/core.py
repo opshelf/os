@@ -1,7 +1,7 @@
 from abc import ABCMeta, abstractmethod
 
-class AbstractScale(metaclass=ABCMeta):
 
+class AbstractScale(metaclass=ABCMeta):
     @abstractmethod
     async def shutdown(self) -> None: ...
 
@@ -10,4 +10,3 @@ class AbstractScale(metaclass=ABCMeta):
 
     @abstractmethod
     async def initialize(self) -> None: ...
-

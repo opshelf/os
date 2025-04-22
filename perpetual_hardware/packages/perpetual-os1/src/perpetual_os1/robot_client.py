@@ -10,6 +10,7 @@ from perpetual_os1.robot import (
 from perpetual_os1.storage import StorageGrid
 from perpetual_os1.common import RobotNatsConfiguration
 
+
 class RobotClient:
     def __init__(self, config: RobotNatsConfiguration):
         self._config = config
@@ -55,9 +56,4 @@ class RobotClient:
     async def send_command(self, command: RobotCommands) -> None:
         if self._js is None:
             raise RuntimeError("JetStream context not initialized")
-        await self._js.publish(
-            #f"{self._config.stream_name}.{self._config.command_queue}",
-            self._config.command_queue,
-            command.model_dump_json().encode()
-        )
-
+        await self._js.publish(self._config.command_queue, command.model_dump_json().encode())

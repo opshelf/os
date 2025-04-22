@@ -1,6 +1,6 @@
 import asyncio
 from perpetual_os1.storage import Cell, Shelf, StorageGrid, CellStatus, Dimensions, CalibrationCoordinate, StorageModuleCellLocation, StorageModuleSide
-from perpetual_os1.utils import get_can_bus
+from perpetual_os1.utils import get_can_bus, get_modbus_client
 from perpetual_os1.common import CanMessageIds, CanAxisConfiguration
 from hardware_common.stepper_motor import StepperMotorConfig, Rotation
 from perpetual_os1.gantry import GantryConfiguration, GantryCoordinate, Gantry
@@ -29,22 +29,22 @@ shelf_1_offset = GantryCoordinate(x=121, y=-1)
 shelf_2_offset = GantryCoordinate(x=71, y=-1)
 
 async def pick_shelf_1(robot: Robot, index: int = 0) -> None:
-    await robot.grab_box(shelf_0_tray_0 + GantryCoordinate(x=shelf_0_offset.x*index, y=shelf_0_offset.y*index), 145)
+    await robot.grab_box(shelf_0_tray_0 + GantryCoordinate(x=shelf_0_offset.x*index, y=shelf_0_offset.y*index))
 
 async def place_shelf_1(robot: Robot, index: int = 0) -> None:
-    await robot.place_box(shelf_0_tray_0 + GantryCoordinate(x=shelf_0_offset.x*index, y=shelf_0_offset.y*index), 145)
+    await robot.place_box(shelf_0_tray_0 + GantryCoordinate(x=shelf_0_offset.x*index, y=shelf_0_offset.y*index))
 
 async def pick_shelf_2(robot: Robot, index: int = 0) -> None:
-    await robot.grab_box(shelf_1_tray_0 + GantryCoordinate(x=shelf_1_offset.x*index, y=shelf_1_offset.y*index), 100)
+    await robot.grab_box(shelf_1_tray_0 + GantryCoordinate(x=shelf_1_offset.x*index, y=shelf_1_offset.y*index))
 
 async def place_shelf_2(robot: Robot, index: int = 0) -> None:
-    await robot.place_box(shelf_1_tray_0 + GantryCoordinate(x=shelf_1_offset.x*index, y=shelf_1_offset.y*index), 100)
+    await robot.place_box(shelf_1_tray_0 + GantryCoordinate(x=shelf_1_offset.x*index, y=shelf_1_offset.y*index))
 
 async def pick_shelf_3(robot: Robot, index: int = 0) -> None:
-    await robot.grab_box(shelf_2_tray_0 + GantryCoordinate(x=shelf_2_offset.x*index, y=shelf_2_offset.y*index), 50)
+    await robot.grab_box(shelf_2_tray_0 + GantryCoordinate(x=shelf_2_offset.x*index, y=shelf_2_offset.y*index))
 
 async def place_shelf_3(robot: Robot, index: int = 0) -> None:
-    await robot.place_box(shelf_2_tray_0 + GantryCoordinate(x=shelf_2_offset.x*index, y=shelf_2_offset.y*index), 50)
+    await robot.place_box(shelf_2_tray_0 + GantryCoordinate(x=shelf_2_offset.x*index, y=shelf_2_offset.y*index))
 
 
 storage_grid = StorageGrid(
@@ -191,7 +191,8 @@ async def storage_grid_test(robot: Robot) -> None:
 
 async def main() -> None:
     can_bus = await get_can_bus()
-    robot = Robot(can_bus, robot_configuration)
+    modbus = await get_modbus_client()
+    robot = Robot(can_bus, modbus, robot_configuration)
     robot.set_storage(storage_grid)
     await robot.initialize()
     #await robot.home()

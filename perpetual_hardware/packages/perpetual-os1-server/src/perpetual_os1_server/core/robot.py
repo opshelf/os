@@ -5,7 +5,14 @@ from perpetual_os1.configuration import robot_configuration
 from perpetual_os1.robot_worker import RobotWorker
 from perpetual_os1.robot_client import RobotClient
 from perpetual_os1.robot import Robot
-from perpetual_os1.storage import Cell, Shelf, StorageGrid, CellStatus, Dimensions, CalibrationCoordinate
+from perpetual_os1.storage import (
+    Cell,
+    Shelf,
+    StorageGrid,
+    CellStatus,
+    Dimensions,
+    CalibrationCoordinate,
+)
 import logging
 
 robot_worker: Optional[RobotWorker] = None
@@ -20,38 +27,22 @@ storage_grid = StorageGrid(
                 Cell(
                     status=CellStatus.EMPTY,
                     item=None,
-                    calibration_point= CalibrationCoordinate(
-                        x=199,
-                        y=394,
-                        z=0
-                    ),
-                    dimensions=Dimensions(
-                        length=145,
-                        height=100,
-                        width=145
-                    )
+                    calibration_point=CalibrationCoordinate(x=199, y=394, z=0),
+                    dimensions=Dimensions(length=145, height=100, width=145),
                 ),
                 Cell(
                     status=CellStatus.EMPTY,
                     item=None,
                     calibration_point=None,
-                    dimensions=Dimensions(
-                        length=145,
-                        height=100,
-                        width=145
-                    )
+                    dimensions=Dimensions(length=145, height=100, width=145),
                 ),
                 Cell(
                     status=CellStatus.EMPTY,
                     item=None,
                     calibration_point=None,
-                    dimensions=Dimensions(
-                        length=145,
-                        height=100,
-                        width=145
-                    )
-                )
-            ]
+                    dimensions=Dimensions(length=145, height=100, width=145),
+                ),
+            ],
         ),
         Shelf(
             shelf_height=200,
@@ -60,38 +51,22 @@ storage_grid = StorageGrid(
                 Cell(
                     status=CellStatus.EMPTY,
                     item=None,
-                    calibration_point= CalibrationCoordinate(
-                        x=178,
-                        y=870,
-                        z=0
-                    ),
-                    dimensions=Dimensions(
-                        length=100,
-                        height=100,
-                        width=100
-                    )
+                    calibration_point=CalibrationCoordinate(x=178, y=870, z=0),
+                    dimensions=Dimensions(length=100, height=100, width=100),
                 ),
                 Cell(
                     status=CellStatus.EMPTY,
                     item=None,
                     calibration_point=None,
-                    dimensions=Dimensions(
-                        length=100,
-                        height=100,
-                        width=100
-                    )
+                    dimensions=Dimensions(length=100, height=100, width=100),
                 ),
                 Cell(
                     status=CellStatus.EMPTY,
                     item=None,
                     calibration_point=None,
-                    dimensions=Dimensions(
-                        length=100,
-                        height=100,
-                        width=100
-                    )
-                )
-            ]
+                    dimensions=Dimensions(length=100, height=100, width=100),
+                ),
+            ],
         ),
         Shelf(
             shelf_height=200,
@@ -100,41 +75,25 @@ storage_grid = StorageGrid(
                 Cell(
                     status=CellStatus.EMPTY,
                     item=None,
-                    calibration_point= CalibrationCoordinate(
-                        x=152,
-                        y=1148,
-                        z=0
-                    ),
-                    dimensions=Dimensions(
-                        length=50,
-                        height=50,
-                        width=50
-                    )
+                    calibration_point=CalibrationCoordinate(x=152, y=1148, z=0),
+                    dimensions=Dimensions(length=50, height=50, width=50),
                 ),
                 Cell(
                     status=CellStatus.EMPTY,
                     item=None,
                     calibration_point=None,
-                    dimensions=Dimensions(
-                        length=50,
-                        height=50,
-                        width=50
-                    )
+                    dimensions=Dimensions(length=50, height=50, width=50),
                 ),
                 Cell(
                     status=CellStatus.EMPTY,
                     item=None,
                     calibration_point=None,
-                    dimensions=Dimensions(
-                        length=50,
-                        height=50,
-                        width=50
-                    )
-                )
-            ]
-        )
+                    dimensions=Dimensions(length=50, height=50, width=50),
+                ),
+            ],
+        ),
     ],
-    right_module=[]
+    right_module=[],
 )
 
 

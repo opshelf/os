@@ -32,7 +32,6 @@ class SymcodeScanner(AbstractScanner):
             print(f"Failed Code: {decoded_data}")
             return None
 
-
     async def shutdown(self) -> None:
         if self.writer:
             self.writer.close()

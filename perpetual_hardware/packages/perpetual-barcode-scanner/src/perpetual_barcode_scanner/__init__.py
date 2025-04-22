@@ -4,9 +4,11 @@ import asyncio
 from perpetual_barcode_scanner.base import AbstractScanner
 from pydantic import BaseModel
 
+
 class LabelScannedEvent(BaseModel):
     kind: Literal["label_scanned"] = "label_scanned"
     payload: str
+
 
 class ScannerWorker:
     def __init__(
@@ -34,11 +36,7 @@ class ScannerWorker:
                     print(result)
                     await self._nc.publish(
                         self._scanner_queue,
-                        LabelScannedEvent(
-                            payload=result
-                        )
-                        .model_dump_json()
-                        .encode(),
+                        LabelScannedEvent(payload=result).model_dump_json().encode(),
                     )
             except asyncio.CancelledError:
                 pass

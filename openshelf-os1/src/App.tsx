@@ -6,6 +6,7 @@ import { Switch, Route } from 'wouter';
 import { Toaster } from './components/ui/sonner';
 import Header from '@/components/Header';
 import RobotController from '@/components/RobotController';
+import StorageBuilder from './components/StorageBuilder';
 // import SubsystemController from './components/SubsystemControl';
 // import Inventory from './components/Inventory';
 // import AxisControl from './components/AxisControl';
@@ -25,8 +26,8 @@ function App() {
         <QueryClientProvider client={queryClient}>
           <Header />
           <Switch>
+            <Route path="/storage" component={StorageBuilder} />
             {/*
-            <Route path="/storage-designer" component={Storage} />
             <Route
               path="/subsystem"
               component={SubsystemController}

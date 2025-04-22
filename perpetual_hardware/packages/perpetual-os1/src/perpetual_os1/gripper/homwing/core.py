@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field
 from enum import IntEnum
 
+
 class ControlRegister(BaseModel):
     """
     The electric gripper shall be enabled before controlling.
@@ -73,6 +74,7 @@ class ExecuteControlMovement(BaseModel):
     speed: int
     position: int
 
+
 class GSTA(IntEnum):
     RESET_OR_INSPECTION = 0
     ACTIVATING = 1
@@ -93,9 +95,7 @@ class GripperStatus(BaseModel):
     gMODE: bool = Field(
         False, description="Bit 2 - Operating mode (0=param control, 1=no-param mode)"
     )
-    gGTO: bool = Field(
-        False, description="Bit 3 - Action status (0=stop/reset, 1=going to target)"
-    )
+    gGTO: bool = Field(False, description="Bit 3 - Action status (0=stop/reset, 1=going to target)")
     gSTA: GSTA = Field(..., description="Bits 4-5 - Current status")
     gOBJ: GOBJ = Field(..., description="Bits 6-7 - Object detection state")
 
@@ -112,20 +112,12 @@ class GripperStatus(BaseModel):
 
 
 class GripperFaultStatus(BaseModel):
-    control_command_error: bool = Field(
-        False, description="Bit 0 - Control command error"
-    )
-    communication_fault: bool = Field(
-        False, description="Bit 1 - Communication fault within 1s"
-    )
+    control_command_error: bool = Field(False, description="Bit 0 - Control command error")
+    communication_fault: bool = Field(False, description="Bit 1 - Communication fault within 1s")
     overcurrent_fault: bool = Field(False, description="Bit 2 - Current abnormality")
-    voltage_fault: bool = Field(
-        False, description="Bit 3 - Voltage abnormality (outside 20V–30V)"
-    )
+    voltage_fault: bool = Field(False, description="Bit 3 - Voltage abnormality (outside 20V–30V)")
     enabling_fault: bool = Field(False, description="Bit 4 - Enabling error")
-    overtemperature_fault: bool = Field(
-        False, description="Bit 5 - Overtemperature (≥85°C)"
-    )
+    overtemperature_fault: bool = Field(False, description="Bit 5 - Overtemperature (≥85°C)")
     self_fault: bool = Field(False, description="Bit 6 - Product self-fault")
 
     @classmethod
@@ -154,5 +146,3 @@ class SpeedForce(BaseModel):
 class FaultPosition(BaseModel):
     fault: GripperFaultStatus
     position: int
-
-

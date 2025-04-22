@@ -1,9 +1,18 @@
 from perpetual_os1.gripper.homwing.registers import ControlRegisters, StatusRegisters
 from pymodbus.client.serial import AsyncModbusSerialClient
 from typing import List
-from perpetual_os1.gripper.homwing.core import ExecuteControlMovement, GripperStatus, GripperFaultStatus, VoltageTemperature, SpeedForce, FaultPosition, ControlRegister, GOBJ, GSTA
+from perpetual_os1.gripper.homwing.core import (
+    ExecuteControlMovement,
+    GripperStatus,
+    GripperFaultStatus,
+    VoltageTemperature,
+    SpeedForce,
+    FaultPosition,
+    ControlRegister,
+    GOBJ,
+    GSTA,
+)
 import asyncio
-
 
 
 class HomwingGripper:
@@ -56,9 +65,7 @@ class HomwingGripper:
 
     async def read_voltage_temperature(self) -> VoltageTemperature:
         result = await self._read_voltage_temperature()
-        return VoltageTemperature(
-            voltage=result[0] & 0xFF, temperature=result[0] >> 8 & 0xFF
-        )
+        return VoltageTemperature(voltage=result[0] & 0xFF, temperature=result[0] >> 8 & 0xFF)
 
     async def _read_voltage_temperature(self) -> List[int]:
         result = await self._client.read_input_registers(
@@ -73,32 +80,38 @@ class HomwingGripper:
         return result.registers
 
     async def write_control_register(self, control: ControlRegister) -> None:
-        await self._client.write_registers(ControlRegisters.CONTROL, [control.to_u8()], slave=self._address)
+        await self._client.write_registers(
+            ControlRegisters.CONTROL, [control.to_u8()], slave=self._address
+        )
 
     async def clear_control_register(self) -> None:
-        await self.write_control_register(ControlRegister(
-            enable=False,
-            mode=False,
-            move_to_targret=False,
-            automatic_inspection=False,
-            automatic_patrol_inspection=False
-        ))
+        await self.write_control_register(
+            ControlRegister(
+                enable=False,
+                mode=False,
+                move_to_targret=False,
+                automatic_inspection=False,
+                automatic_patrol_inspection=False,
+            )
+        )
 
     async def activate(self) -> None:
-        await self.write_control_register(ControlRegister(
-            enable=True,
-            mode=False,
-            move_to_targret=False,
-            automatic_inspection=False,
-            automatic_patrol_inspection=False
-        ))
+        await self.write_control_register(
+            ControlRegister(
+                enable=True,
+                mode=False,
+                move_to_targret=False,
+                automatic_inspection=False,
+                automatic_patrol_inspection=False,
+            )
+        )
 
     async def wait_for_move(self) -> None:
         while True:
             result = await self.read_gripper_status()
             if result.gOBJ != GOBJ.MOVING_TO_POSITION:
                 break
-            await asyncio.sleep(.1)
+            await asyncio.sleep(0.1)
 
     async def move_to_position(self, position: int) -> None:
         await self._set_target_position(position)
@@ -126,27 +139,31 @@ class HomwingGripper:
         await self.execute_move()
 
     async def stop(self) -> None:
-        await self.write_control_register(ControlRegister(
-            enable=True,
-            mode=False,
-            move_to_targret=False,
-            automatic_inspection=False,
-            automatic_patrol_inspection=False
-        ))
+        await self.write_control_register(
+            ControlRegister(
+                enable=True,
+                mode=False,
+                move_to_targret=False,
+                automatic_inspection=False,
+                automatic_patrol_inspection=False,
+            )
+        )
 
     async def execute_move(self) -> None:
-        await self.write_control_register(ControlRegister(
-            enable=True,
-            mode=False,
-            move_to_targret=True,
-            automatic_inspection=False,
-            automatic_patrol_inspection=False
-        ))
-    
+        await self.write_control_register(
+            ControlRegister(
+                enable=True,
+                mode=False,
+                move_to_targret=True,
+                automatic_inspection=False,
+                automatic_patrol_inspection=False,
+            )
+        )
+
     async def wait_for_activation(self) -> None:
         async with asyncio.timeout(5):
             while True:
                 result = await self.read_gripper_status()
                 if result.gSTA == GSTA.ACTIVATED:
                     break
-                await asyncio.sleep(.1)
+                await asyncio.sleep(0.1)

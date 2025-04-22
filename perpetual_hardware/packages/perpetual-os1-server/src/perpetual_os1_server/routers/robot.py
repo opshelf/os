@@ -23,14 +23,6 @@ async def robot_commands(
     return SuccessResponse()
 
 
-#@router.post("/events")
-#async def robot_events(
-#    command: StorageEvents, client: RobotClient = Depends(get_robot_client)
-#) -> SuccessResponse:
-#    await client.send_command(command)
-#    return SuccessResponse()
-
-
 @router.post("/start")
 async def start_robot(worker: RobotWorker = Depends(get_robot_worker)) -> SuccessResponse:
     await worker.start()
@@ -49,12 +41,6 @@ async def clear_robot_commands(
 ) -> SuccessResponse:
     await worker.clear_commands()
     return SuccessResponse()
-
-
-#@router.get("/commands")
-#async def commands(client: RobotClient = Depends(get_robot_client)) -> List[RobotCommands]:
-#    commands = await client.get_queued_commands()
-#    return commands
 
 
 @router.get("/configuration")
