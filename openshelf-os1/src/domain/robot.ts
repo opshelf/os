@@ -130,10 +130,16 @@ export class RobotController {
   }
 
   async toolCommand(command: ToolCommands) {
-    await this.sendCommand(command as RobotCommands);
+    await this.sendCommand({
+      command: "tool_command",
+      payload: command
+    });
   }
 
   async gantryCommand(command: GantryCommands) {
-    await this.sendCommand(command as RobotCommands);
+    await this.sendCommand({
+      command: "gantry_command",
+      payload: command
+    });
   }
 }

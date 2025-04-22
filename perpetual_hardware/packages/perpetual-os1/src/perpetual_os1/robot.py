@@ -1,13 +1,15 @@
 from pydantic import BaseModel, Field
 from pymodbus.client.serial import AsyncModbusSerialClient
-from perpetual_os1.gantry import GantryCommands, GantryConfiguration, Gantry, GantryCoordinate
+from perpetual_os1 import gantry
+from perpetual_os1.gantry import GantryCommands, GantryConfiguration, Gantry, GantryCoordinate, GantryStatus
 from perpetual_os1.storage import Cell, StorageGrid, StorageModuleCellLocation
-from perpetual_os1.tool import Tool, ToolCommands, ToolConfiguration
+from perpetual_os1.tool import Tool, ToolCommands, ToolConfiguration, ToolStatus
 from perpetual_can import CANBusHandler
 from typing import List, Optional
 from pydantic import BaseModel, Field
 from typing import Union, Annotated, Literal
 from perpetual_os1.gantry import GantryCoordinate
+from perpetual_waveshare.digital import DigitalIOController
 
 
 class StopCommand(BaseModel):
@@ -143,14 +145,16 @@ class RobotConfiguration(BaseModel):
     pickup_location_offset: GantryCoordinate
 
 
+
+class RobotState(BaseModel):
+    current_cell: Optional[StorageModuleCellLocation] = None
+
+
 class RobotStatus(BaseModel):
-    tool: ToolConfiguration
-    gantry: GantryConfiguration
-    y_safe: float
-    idle_position: GantryCoordinate
-    place_offset: GantryCoordinate
-    pickup_location: GantryCoordinate
-    pickup_location_offset: GantryCoordinate
+    tool: ToolStatus
+    gantry: GantryStatus
+    storage: StorageGrid
+    state: RobotState
 
 
 class Robot:
@@ -160,9 +164,15 @@ class Robot:
         self._configuration = configuration
         self._gantry = Gantry(bus, self._configuration.gantry)
         self._tool = Tool(bus, client, self._configuration.tool)
+        self._io = DigitalIOController(client)
         self._bus = bus
         self._client = client
         self._storage = StorageGrid(left_module=[], right_module=[])
+        self._state = RobotState()
+
+    @property
+    def state(self) -> RobotState:
+        return self._state
 
     @property
     def configuration(self) -> RobotConfiguration:
@@ -273,12 +283,18 @@ class Robot:
     async def grab_cell(self, location: StorageModuleCellLocation) -> None:
         coordinate = self._storage.get_cell_coordinate(location)
         cell = self._storage.get_cell(location)
+        self._state = RobotState(current_cell=location)
         await self._grab_cell(coordinate.to_gantry_coordinate(), cell)
 
     async def place_cell(self, location: StorageModuleCellLocation) -> None:
         coordinate = self._storage.get_cell_coordinate(location)
         cell = self._storage.get_cell(location)
+        self._state = RobotState(current_cell=None)
         await self._place_cell(coordinate.to_gantry_coordinate(), cell)
+
+    async def return_cell(self) -> None:
+        if self._state.current_cell is not None:
+            await self.place_cell(self._state.current_cell)
 
     async def store_item(self, location: StorageModuleCellLocation) -> None:
         await self.grab_cell(location)
@@ -289,6 +305,16 @@ class Robot:
         await self.grab_cell(location)
         await self.drop_off_item()
         await self.place_cell(location)
+
+    async def status(self) -> RobotStatus:
+        gantry_status = await self._gantry.status()
+        tool_status = await self._tool.status()
+        return RobotStatus(
+            gantry=gantry_status,
+            tool=tool_status,
+            storage=self._storage,
+            state=self._state
+        )
 
     async def handle_command(self, command: RobotCommands) -> RobotResponse:
         match command:

@@ -1,5 +1,9 @@
 import { z } from "zod";
 import { robotCommandsSchema } from "./commands/robot";
+import {
+  storageModuleCellLocationSchema,
+  storageModuleSchema,
+} from "./storage";
 
 export const statusFlagsSchema = z.object({
   value: z.number(),
@@ -40,10 +44,10 @@ export const stepperStatusSchema = z.object({
 export type StepperStatus = z.infer<typeof stepperStatusSchema>;
 
 export const toolStatusSchema = z.object({
-  puller_solenoids: z.number(),
-  carriage_solenoids: z.number(),
-  actuators: z.boolean(),
-  carriage_status: axisStatusSchema,
+  //puller_solenoids: z.number(),
+  //carriage_solenoids: z.number(),
+  //actuators: z.boolean(),
+  z_axis: axisStatusSchema,
 });
 export type ToolStatus = z.infer<typeof toolStatusSchema>;
 
@@ -93,12 +97,15 @@ export const sensorStatusSchema = z.object({
 
 export type SensorStatus = z.infer<typeof sensorStatusSchema>;
 
+export const robotStateSchema = z.object({
+  current_cell: storageModuleCellLocationSchema.nullable(),
+});
+
 export const robotStatusSchema = z.object({
-  gantry_status: gantryStatusSchema,
-  workstation_status: workstationStatusSchema,
-  funnel_status: funnelStatusSchema,
-  tool_status: toolStatusSchema,
-  sensor_status: sensorStatusSchema.nullable(),
+  gantry: gantryStatusSchema,
+  tool: toolStatusSchema,
+  state: robotStateSchema,
+  storage: storageModuleSchema,
 });
 
 export type RobotStatus = z.infer<typeof robotStatusSchema>;

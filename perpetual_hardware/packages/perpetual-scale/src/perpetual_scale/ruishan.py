@@ -1,7 +1,15 @@
 import asyncio
 import serial_asyncio
 from perpetual_scale.core import AbstractScale
+from perpetual_usb_utils import get_usb_serial, SerialDeviceInfo
 
+
+def get_scale_port() -> SerialDeviceInfo:
+    ports = get_usb_serial()
+    for port in ports:
+        if port.serial_number == "B001XSSJ":
+            return port
+    raise Exception("No Scale Port Found")
 
 class SerialScale(AbstractScale):
     def __init__(self, port: str = "/dev/ttyUSB0", baudrate: int = 9600, timeout: float = 0.2):
@@ -30,8 +38,10 @@ class SerialScale(AbstractScale):
             raise RuntimeError("Scale not initialized")
         try:
             line = await asyncio.wait_for(self._reader.readline(), timeout=self._timeout)
+            print(line)
             response = line.decode().rstrip()
             filtered = "".join(c for c in response if not c.isspace() and not c.isalpha())
             return float(filtered)
         except asyncio.TimeoutError:
-            raise TimeoutError("Timed out while reading from scale")
+            pass
+            #raise TimeoutError("Timed out while reading from scale")

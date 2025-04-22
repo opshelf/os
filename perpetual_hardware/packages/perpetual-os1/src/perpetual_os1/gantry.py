@@ -48,11 +48,6 @@ class InitializeCommand(BaseModel):
 class HomeCommand(BaseModel):
     command: Literal["home"]
 
-
-#class HomeYFirstCommand(BaseModel):
-#    command: Literal["home_y"] = "home_y"
-
-
 class MoveRelativeCommand(BaseModel):
     command: Literal["move_relative"]
     coordinate: GantryCoordinate
@@ -139,6 +134,7 @@ class Gantry(AbstractSubsystem[GantryConfiguration, GantryStatus]):
             await self.wait_for_move()
 
     async def move_path(self, path: List[GantryCoordinate]) -> None:
+        print(path)
         try:
             await self._y_axis.safety_off()
             await self._x_axis.safety_off()

@@ -16,6 +16,7 @@ dependencies = [
 	"nats-py>=2.9.0",
 	"perpetual-can",
 	"pymodbus>=3.8.6",
+	"perpetual-waveshare"
 ]
 
 [build-system]
@@ -27,6 +28,7 @@ hardware-common = { workspace = true }
 waveshare-can = { workspace = true }
 perpetual-can = { workspace = true }
 perpetual-trinamic = { workspace = true }
+perpetual-waveshare = { workspace = true }
 
 [tool.mypy]
 follow_imports = "normal"

@@ -1,21 +1,19 @@
-import {
-  QueryClient,
-  QueryClientProvider,
-} from '@tanstack/react-query';
-import { Switch, Route } from 'wouter';
-import { Toaster } from './components/ui/sonner';
-import Header from '@/components/Header';
-import RobotController from '@/components/RobotController';
-import StorageBuilder from './components/StorageBuilder';
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { Switch, Route } from "wouter";
+import { Toaster } from "@/components/ui/sonner";
+import Header from "@/components/Header";
+import RobotController from "@/components/RobotController";
+import StorageBuilder from "@/components/StorageBuilder";
+import ScaleEventSSE from "@/components/ScaleEvent";
 // import SubsystemController from './components/SubsystemControl';
 // import Inventory from './components/Inventory';
 // import AxisControl from './components/AxisControl';
 // import SizeDatabase from './components/SizeDatabase';
-// import ScannerEventSSE from './components/ScannerEvent';
+import ScannerEventSSE from "./components/ScannerEvent";
 // import RobotConfiguration from './components/RobotConfiguration';
-// import Footer from './components/Footer';
+import Footer from "@/components/Footer";
 // import AxisController from './components/AxisController';
-// import StatusEventSSE from './components/StatusEvent';
+import RobotStatusEventSSE from "@/components/RobotStatusEvent";
 
 const queryClient = new QueryClient();
 
@@ -46,11 +44,12 @@ function App() {
         <ScannerEventSSE />
         <StatusEventSSE />
         */}
+        <ScaleEventSSE />
+        <ScannerEventSSE />
+        <RobotStatusEventSSE />
+        <Footer />
         <Toaster />
       </div>
-      {/*
-      <Footer />
-      */}
     </>
   );
 }
