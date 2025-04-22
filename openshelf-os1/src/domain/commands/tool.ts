@@ -1,139 +1,105 @@
-/*
-class ToolStatus(BaseModel):
-    gripper: AxisStatus
-    z_axis: AxisStatus
+import z from 'zod';
 
-
-class StopCommand(BaseModel):
-    command: Literal["stop"]
-
-
-class InitializeCommand(BaseModel):
-    command: Literal["initialize"]
-
-
-class HomeCommand(BaseModel):
-    command: Literal["home"]
-
-
-class MoveCommand(BaseModel):
-    command: Literal["move"]
-    position: float
-
-
-class MoveRelativeCommand(BaseModel):
-    command: Literal["move_relative"]
-    position: float
-
-
-class SetJawSizeCommand(BaseModel):
-    command: Literal["set_jaw_size"]
-    size: float
-
-
-ToolCommands = Annotated[
-    Union[
-        StopCommand,
-        InitializeCommand,
-        HomeCommand,
-        MoveCommand,
-        MoveRelativeCommand,
-        SetJawSizeCommand,
-    ],
-    Field(discriminator="command"),
-]
-*/
-
-import z from "zod";
-import {
-  traySchema,
-  storageModuleSideSchema,
-  StorageModuleSide,
-  Tray,
-} from "../storage";
-
+// Command Schemas
 export const toolShutdownCommandSchema = z.object({
-  command: z.literal("shutdown"),
+  command: z.literal('shutdown'),
 });
 
 export const toolStopCommandSchema = z.object({
-  command: z.literal("stop"),
+  command: z.literal('stop'),
 });
 
 export const toolInitializeCommandSchema = z.object({
-  command: z.literal("initialize"),
+  command: z.literal('initialize'),
 });
 
-export const toolExtendCarriageCommandSchema = z.object({
-  command: z.literal("extend_carriage"),
-  side: storageModuleSideSchema,
+export const toolExtendGripperCommandSchema = z.object({
+  command: z.literal('extend_gripper'),
 });
 
-export const toolRetractCarriageCommandSchema = z.object({
-  command: z.literal("retract_carriage"),
-  side: storageModuleSideSchema,
-});
-
-export const toolRetractTrayCommandSchema = z.object({
-  command: z.literal("retract_tray"),
-  side: storageModuleSideSchema,
-});
-
-export const toolDropItemsCommandSchema = z.object({
-  command: z.literal("drop_items"),
-  tray: traySchema,
-  idx: z.number(),
+export const toolRetractGripperCommandSchema = z.object({
+  command: z.literal('retract_gripper'),
 });
 
 export const toolHomeCommandSchema = z.object({
-  command: z.literal("home"),
+  command: z.literal('home'),
 });
 
-export const toolCarriageMoveAbsoluteSchema = z.object({
-  command: z.literal("carriage_absolute"),
+export const toolGripperMoveAbsoluteSchema = z.object({
+  command: z.literal('move'),
   position: z.number(),
 });
 
-export const toolCarriageMoveRelativeSchema = z.object({
-  command: z.literal("carriage_relative"),
+export const toolGripperMoveRelativeSchema = z.object({
+  command: z.literal('move_relative'),
   position: z.number(),
+});
+
+export const toolGripperJawSizeSchema = z.object({
+  command: z.literal('set_jaw_size'),
+  position: z.number(),
+});
+
+export const toolGripperOpenSchema = z.object({
+  command: z.literal('open_gripper'),
+});
+
+export const toolGripperCloseSchema = z.object({
+  command: z.literal('close_gripper'),
+});
+
+export const toolGripperPrepareSchema = z.object({
+  command: z.literal('prepare_gripper'),
 });
 
 // ToolCommands schema
-export const toolCommandsSchema = z.discriminatedUnion("command", [
+export const toolCommandsSchema = z.discriminatedUnion('command', [
   toolShutdownCommandSchema,
   toolStopCommandSchema,
   toolInitializeCommandSchema,
-  toolExtendCarriageCommandSchema,
-  toolRetractCarriageCommandSchema,
-  toolRetractTrayCommandSchema,
-  toolDropItemsCommandSchema,
   toolHomeCommandSchema,
-  toolCarriageMoveAbsoluteSchema,
-  toolCarriageMoveRelativeSchema,
+  toolExtendGripperCommandSchema,
+  toolRetractGripperCommandSchema,
+  toolGripperMoveAbsoluteSchema,
+  toolGripperMoveRelativeSchema,
+  toolGripperJawSizeSchema,
+  toolGripperOpenSchema,
+  toolGripperCloseSchema,
+  toolGripperPrepareSchema,
 ]);
 
 // Exported types
-export type ToolShutdownCommand = z.infer<typeof toolShutdownCommandSchema>;
+export type ToolShutdownCommand = z.infer<
+  typeof toolShutdownCommandSchema
+>;
 export type ToolStopCommand = z.infer<typeof toolStopCommandSchema>;
-export type ToolInitializeCommand = z.infer<typeof toolInitializeCommandSchema>;
-export type ToolExtendCarriageCommand = z.infer<
-  typeof toolExtendCarriageCommandSchema
+export type ToolInitializeCommand = z.infer<
+  typeof toolInitializeCommandSchema
 >;
-export type ToolRetractCarriageCommand = z.infer<
-  typeof toolRetractCarriageCommandSchema
->;
-export type ToolRetractTrayCommand = z.infer<
-  typeof toolRetractTrayCommandSchema
->;
-export type ToolDropItemsCommand = z.infer<typeof toolDropItemsCommandSchema>;
-
 export type ToolHomeCommand = z.infer<typeof toolHomeCommandSchema>;
-export type ToolCarriageMoveAbsolute = z.infer<
-  typeof toolCarriageMoveAbsoluteSchema
+export type ToolExtendGripperCommand = z.infer<
+  typeof toolExtendGripperCommandSchema
 >;
-export type ToolCarriageMoveRelative = z.infer<
-  typeof toolCarriageMoveRelativeSchema
+export type ToolRetractGripperCommand = z.infer<
+  typeof toolRetractGripperCommandSchema
+>;
+export type ToolGripperMoveAbsoluteCommand = z.infer<
+  typeof toolGripperMoveAbsoluteSchema
+>;
+export type ToolGripperMoveRelativeCommand = z.infer<
+  typeof toolGripperMoveRelativeSchema
+>;
+export type ToolGripperJawSizeCommand = z.infer<
+  typeof toolGripperJawSizeSchema
+>;
+export type ToolGripperOpenCommand = z.infer<
+  typeof toolGripperOpenSchema
+>;
+export type ToolGripperCloseCommand = z.infer<
+  typeof toolGripperCloseSchema
+>;
+export type ToolGripperPrepareCommand = z.infer<
+  typeof toolGripperPrepareSchema
 >;
 
 export type ToolCommands = z.infer<typeof toolCommandsSchema>;
@@ -141,51 +107,64 @@ export type ToolCommands = z.infer<typeof toolCommandsSchema>;
 export class Tool {
   sendToolCommand: (toolCommand: ToolCommands) => Promise<void>;
 
-  constructor(sendToolCommand: (toolCommand: ToolCommands) => Promise<void>) {
+  constructor(
+    sendToolCommand: (toolCommand: ToolCommands) => Promise<void>
+  ) {
     this.sendToolCommand = sendToolCommand;
   }
 
   async toolShutdownCommand(): Promise<void> {
-    await this.sendToolCommand({ command: "shutdown" });
+    await this.sendToolCommand({ command: 'shutdown' });
   }
 
   async toolStopCommand(): Promise<void> {
-    await this.sendToolCommand({ command: "stop" });
+    await this.sendToolCommand({ command: 'stop' });
   }
 
   async toolInitializeCommand(): Promise<void> {
-    await this.sendToolCommand({ command: "initialize" });
-  }
-
-  async toolExtendCarriageCommand(side: StorageModuleSide): Promise<void> {
-    await this.sendToolCommand({ command: "extend_carriage", side });
-  }
-
-  async toolRetractCarriageCommand(side: StorageModuleSide): Promise<void> {
-    await this.sendToolCommand({ command: "retract_carriage", side });
-  }
-
-  async toolRetractTrayCommand(side: StorageModuleSide): Promise<void> {
-    await this.sendToolCommand({ command: "retract_tray", side });
-  }
-
-  async toolDropItemsCommand(tray: Tray, idx: number): Promise<void> {
-    await this.sendToolCommand({ command: "drop_items", tray, idx });
+    await this.sendToolCommand({ command: 'initialize' });
   }
 
   async toolHomeCommand(): Promise<void> {
-    await this.sendToolCommand({ command: "home" });
+    await this.sendToolCommand({ command: 'home' });
   }
-  async toolCarriageMoveAbsolute(position: number): Promise<void> {
+
+  async toolExtendGripperCommand(): Promise<void> {
+    await this.sendToolCommand({ command: 'extend_gripper' });
+  }
+
+  async toolRetractGripperCommand(): Promise<void> {
+    await this.sendToolCommand({ command: 'retract_gripper' });
+  }
+
+  async toolMoveGripperAbsolute(position: number): Promise<void> {
+    await this.sendToolCommand({ command: 'move', position });
+  }
+
+  async toolMoveGripperRelative(position: number): Promise<void> {
     await this.sendToolCommand({
-      command: "carriage_absolute",
+      command: 'move_relative',
       position,
     });
   }
-  async toolCarriageMoveRelative(position: number): Promise<void> {
+
+  async toolSetJawSize(position: number): Promise<void> {
+    await this.sendToolCommand({ command: 'set_jaw_size', position });
+  }
+
+  async toolOpenGripper(): Promise<void> {
+    await this.sendToolCommand({ command: 'open_gripper' });
+  }
+
+  async toolCloseGripper(): Promise<void> {
     await this.sendToolCommand({
-      command: "carriage_relative",
-      position,
+      command: 'close_gripper',
+    });
+  }
+
+  async toolPrepareGripper(): Promise<void> {
+    await this.sendToolCommand({
+      command: 'prepare_gripper',
     });
   }
 }
