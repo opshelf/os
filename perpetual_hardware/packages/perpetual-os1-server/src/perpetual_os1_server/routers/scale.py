@@ -5,7 +5,7 @@ from nats.aio.msg import Msg
 from nats.aio.subscription import Subscription
 from sse_starlette.sse import EventSourceResponse
 from nats.aio.client import Client as NATS
-from perpetual_p0c_server.settings import get_settings
+from perpetual_os1_server.settings import get_settings
 
 
 router = APIRouter()

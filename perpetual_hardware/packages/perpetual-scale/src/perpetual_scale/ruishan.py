@@ -38,7 +38,6 @@ class SerialScale(AbstractScale):
             raise RuntimeError("Scale not initialized")
         try:
             line = await asyncio.wait_for(self._reader.readline(), timeout=self._timeout)
-            print(line)
             response = line.decode().rstrip()
             filtered = "".join(c for c in response if not c.isspace() and not c.isalpha())
             return float(filtered)

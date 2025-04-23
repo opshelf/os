@@ -100,8 +100,9 @@ class RobotWorker:
                         command = RobotCommandAdapter.validate_json(msg.data.decode())
                         self._current_command = command
                         self._msg = msg
+                        robot_status = await self._robot.status()
                         status = WorkerStatus(
-                            robot_status=None, running=True, current_command=command
+                            robot_status=robot_status, running=True, current_command=command
                         )
                         await self._nc.publish(
                             self._nats_config.status_queue, status.model_dump_json().encode()

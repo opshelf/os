@@ -17,7 +17,6 @@ const RobotStatusEventSSE = () => {
 
       eventSource.onmessage = (event) => {
         try {
-          console.log(event.data);
           const data = JSON.parse(event.data);
           const status = workerStatusSchema.parse(data);
           useStateStore.getState().setStatus(status);

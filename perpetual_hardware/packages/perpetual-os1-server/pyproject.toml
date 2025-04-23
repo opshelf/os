@@ -18,7 +18,8 @@ dependencies = [
     "sse-starlette>=2.1.3",
     "perpetual-barcode-scanner",
     "perpetual-waveshare",
-    "perpetual-scale"
+    "perpetual-scale",
+    "python-barcode>=0.15.1",
 ]
 
 [build-system]

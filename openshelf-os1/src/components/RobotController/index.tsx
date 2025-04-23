@@ -6,8 +6,18 @@ import { useStateStore } from "@/store";
 import { useState } from "react";
 import { Card, CardContent } from "../ui/card";
 import { Button } from "../ui/button";
-import { robotCommand } from "@/api/robot";
+import { robotCommand, startWorker, clearCommands } from "@/api/robot";
 import { RobotController as Controller } from "@/domain/robot";
+import {
+  RotateCcwIcon,
+  EraserIcon,
+  StopCircleIcon,
+  HomeIcon,
+  LocateIcon,
+  WeightIcon,
+  LoaderIcon,
+} from "lucide-react";
+import DimensionForm from "../DimensionsForm";
 
 /*
 Store Item
@@ -18,9 +28,7 @@ Home
 Stop
 Idle
 Initialize
-
 Start Worker
-
 */
 
 const RobotController = () => {
@@ -40,6 +48,66 @@ const RobotController = () => {
 
   return (
     <div className="flex flex-col space-y-2">
+      <div className="flex space-x-2">
+        <Button
+          onClick={async () => {
+            await robot.home();
+          }}
+        >
+          <HomeIcon />
+          Home
+        </Button>
+        <Button
+          onClick={async () => {
+            await robot.idlePositionCommand();
+          }}
+        >
+          <LocateIcon />
+          Idle
+        </Button>
+        <Button
+          onClick={async () => {
+            await robot.moveToPickupLocation();
+          }}
+        >
+          <WeightIcon />
+          Move to Pickup
+        </Button>
+        <Button
+          onClick={async () => {
+            await robot.initialize();
+          }}
+        >
+          <LoaderIcon />
+          Initialize
+        </Button>
+        <Button
+          onClick={async () => {
+            await robot.stop();
+          }}
+          variant={"destructive"}
+        >
+          <StopCircleIcon /> Stop
+        </Button>
+        <Button
+          variant={"outline"}
+          onClick={async () => {
+            await startWorker();
+          }}
+        >
+          <RotateCcwIcon />
+          Restart
+        </Button>
+        <Button
+          variant={"secondary"}
+          onClick={async () => {
+            await clearCommands();
+          }}
+        >
+          <EraserIcon />
+          Clear Commands
+        </Button>
+      </div>
       <div className="flex space-x-2">
         {robotStatus !== null && robotStatus.robot_status !== null && (
           <Card>
@@ -149,30 +217,10 @@ const RobotController = () => {
             </CardContent>
           </Card>
         )}
-        <Button
-          onClick={async () => {
-            await robot.home();
-          }}
-        >
-          Home
-        </Button>
-        <Button
-          onClick={async () => {
-            await robot.idlePositionCommand();
-          }}
-        >
-          Idle
-        </Button>
-        <Button
-          onClick={async () => {
-            await robot.moveToPickupLocation();
-          }}
-        >
-          Move to Pickup
-        </Button>
       </div>
       <GantryController />
       <ToolController />
+      <DimensionForm />
     </div>
   );
 };

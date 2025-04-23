@@ -11,7 +11,6 @@ from perpetual_print_worker.events import (
     MessagePayload,
 )
 from .label_maker import LabelInformation, LabelMaker
-# import logging
 
 
 class AbstractPrinter(metaclass=ABCMeta):

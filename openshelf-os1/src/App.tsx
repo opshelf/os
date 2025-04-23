@@ -20,7 +20,7 @@ const queryClient = new QueryClient();
 function App() {
   return (
     <>
-      <div className="flex flex-col min-h-screen px-4">
+      <div className="flex flex-col min-h-screen px-4 mb-18">
         <QueryClientProvider client={queryClient}>
           <Header />
           <Switch>
