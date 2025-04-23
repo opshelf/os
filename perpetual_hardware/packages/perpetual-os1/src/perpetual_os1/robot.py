@@ -155,6 +155,7 @@ class RobotStatus(BaseModel):
     gantry: GantryStatus
     storage: StorageGrid
     state: RobotState
+    light_curtain: bool
 
 
 class Robot:
@@ -309,11 +310,13 @@ class Robot:
     async def status(self) -> RobotStatus:
         gantry_status = await self._gantry.status()
         tool_status = await self._tool.status()
+        curtain = await self._io.read_channels()
         return RobotStatus(
             gantry=gantry_status,
             tool=tool_status,
             storage=self._storage,
-            state=self._state
+            state=self._state,
+            light_curtain=curtain.ch0
         )
 
     async def handle_command(self, command: RobotCommands) -> RobotResponse:
