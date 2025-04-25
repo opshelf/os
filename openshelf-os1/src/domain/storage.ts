@@ -70,7 +70,15 @@ export const cellLocationDataSchema = z.object({
   cell: cellItemSchema.nullable().optional(),
   location: storageModuleCellLocationSchema,
 });
+// Size Information
+export const itemInformationSchema = z.object({
+  size: dimensionSchema,
+  data: z.any(),
+});
 
+export const sizeDatabaseSchema = z.object({
+  items: z.record(z.string().length(12), itemInformationSchema),
+});
 // Type exports
 export type StorageModuleSide = z.infer<typeof storageModuleSideSchema>;
 export type CellStatus = z.infer<typeof cellStatusSchema>;
@@ -83,3 +91,6 @@ export type StorageModuleCellLocation = z.infer<
   typeof storageModuleCellLocationSchema
 >;
 export type CellLocationData = z.infer<typeof cellLocationDataSchema>;
+
+export type ItemInformation = z.infer<typeof itemInformationSchema>;
+export type SizeDatabase = z.infer<typeof sizeDatabaseSchema>;

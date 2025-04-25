@@ -1,4 +1,3 @@
-from enum import auto
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from perpetual_os1_server.core.automatic import AutomaticStorage
@@ -10,7 +9,8 @@ from perpetual_os1_server.routers import (
     robot,
     scale,
     scanner,
-    printer
+    printer,
+    sizes
 )
 from perpetual_os1_server.core.sizes import init_file_sizes
 from contextlib import asynccontextmanager
@@ -36,25 +36,25 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logging.info(f"{app.title}")
     settings = get_settings()
     logging.info(f"settings: {settings}")
-    await init_robot_worker()
+    #await init_robot_worker()
     logging.info("Robot Enabled")
-    await init_scale_worker()
+    #await init_scale_worker()
     logging.info("Scale Enabled")
-    await init_scanner_worker()
+    #await init_scanner_worker()
     logging.info("Scanner Enabled")
     init_file_sizes()
     auto_storage = AutomaticStorage()
-    await auto_storage.connect()
+    #await auto_storage.connect()
     asyncio.create_task(auto_storage.run())
     yield
     logging.info("Shutting Down")
-    await stop_robot_worker()
+    #await stop_robot_worker()
     logging.info("Robot Shutdown")
-    await stop_scale_worker()
+    #await stop_scale_worker()
     logging.info("Scale Shutdown")
-    await stop_scanner_worker()
+    #await stop_scanner_worker()
     logging.info("Scanner Shutdown")
-    await auto_storage.close()
+    #await auto_storage.close()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -72,6 +72,7 @@ app.include_router(robot.router, prefix="/api/robot")
 app.include_router(scale.router, prefix="/api/scale")
 app.include_router(scanner.router, prefix="/api/scanner")
 app.include_router(printer.router, prefix="/api/print")
+app.include_router(sizes.router, prefix="/api/sizes")
 
 
 def start() -> None:
