@@ -48,6 +48,7 @@ class InitializeCommand(BaseModel):
 class HomeCommand(BaseModel):
     command: Literal["home"]
 
+
 class MoveRelativeCommand(BaseModel):
     command: Literal["move_relative"]
     coordinate: GantryCoordinate

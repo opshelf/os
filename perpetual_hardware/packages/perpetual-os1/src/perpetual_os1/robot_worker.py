@@ -5,7 +5,14 @@ from nats.aio.msg import Msg
 from nats import errors as nats_errors
 from nats.js.errors import NotFoundError
 from pydantic import BaseModel, TypeAdapter
-from perpetual_os1.robot import RobotConfiguration, Robot, RobotCommands, RobotResponse, RobotStatus, StopCommand
+from perpetual_os1.robot import (
+    RobotConfiguration,
+    Robot,
+    RobotCommands,
+    RobotResponse,
+    RobotStatus,
+    StopCommand,
+)
 from perpetual_os1.storage import StorageGrid
 from perpetual_os1.common import RobotNatsConfiguration
 from perpetual_os1.robot_client import RobotClient
@@ -136,7 +143,9 @@ class RobotWorker:
                 self._msg = None
             except Exception as e:
                 robot_status = await self._robot.status()
-                error_status = WorkerStatus(robot_status=robot_status, running=True, current_command=None)
+                error_status = WorkerStatus(
+                    robot_status=robot_status, running=True, current_command=None
+                )
                 await self._nc.publish(
                     self._nats_config.event_queue, error_status.model_dump_json().encode()
                 )

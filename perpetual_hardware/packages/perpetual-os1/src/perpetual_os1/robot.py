@@ -1,6 +1,12 @@
 from pydantic import BaseModel, Field
 from pymodbus.client.serial import AsyncModbusSerialClient
-from perpetual_os1.gantry import GantryCommands, GantryConfiguration, Gantry, GantryCoordinate, GantryStatus
+from perpetual_os1.gantry import (
+    GantryCommands,
+    GantryConfiguration,
+    Gantry,
+    GantryCoordinate,
+    GantryStatus,
+)
 from perpetual_os1.storage import Cell, StorageGrid, StorageModuleCellLocation, CellItem
 from perpetual_os1.tool import Tool, ToolCommands, ToolConfiguration, ToolStatus
 from perpetual_can import CANBusHandler
@@ -23,7 +29,6 @@ class HomeCommand(BaseModel):
     command: Literal["home"] = "home"
 
 
-
 class UnsafeMoveCommand(BaseModel):
     command: Literal["unsafe_move"] = "unsafe_move"
     coordinate: GantryCoordinate
@@ -36,7 +41,6 @@ class MoveCommand(BaseModel):
 
 class IdleCommand(BaseModel):
     command: Literal["idle"] = "idle"
-
 
 
 class GrabBoxCommand(BaseModel):
@@ -55,18 +59,18 @@ class MoveToPickupLocationCommand(BaseModel):
     command: Literal["move_to_pickup_location"] = "move_to_pickup_location"
 
 
-
 class DropOffItemCommand(BaseModel):
     command: Literal["drop_off_item"] = "drop_off_item"
-
 
 
 class PickupItemCommand(BaseModel):
     command: Literal["pickup_item"] = "pickup_item"
 
+
 class GrabCellCommand(BaseModel):
     command: Literal["grab_cell"] = "grab_cell"
     location: StorageModuleCellLocation
+
 
 class PlaceCellCommand(BaseModel):
     command: Literal["place_cell"] = "place_cell"
@@ -82,9 +86,11 @@ class RetrieveItemCommand(BaseModel):
     command: Literal["retrieve_item"] = "retrieve_item"
     location: StorageModuleCellLocation
 
+
 class GantryCommand(BaseModel):
     command: Literal["gantry_command"] = "gantry_command"
     payload: GantryCommands
+
 
 class ToolCommand(BaseModel):
     command: Literal["tool_command"] = "tool_command"
@@ -94,7 +100,6 @@ class ToolCommand(BaseModel):
 class StoreItemRequested(BaseModel):
     command: Literal["store_item_request"] = "store_item_request"
     item: CellItem
-
 
 
 # Create a union of all Robot commands using a discriminator field
@@ -117,7 +122,7 @@ RobotCommands = Annotated[
         RetrieveItemCommand,
         GantryCommand,
         ToolCommand,
-        StoreItemRequested
+        StoreItemRequested,
     ],
     Field(discriminator="command"),
 ]
@@ -131,6 +136,7 @@ class RobotCommandSuccessful(BaseModel):
 class RobotCommandError(BaseModel):
     error: str
 
+
 class RobotItemStoredResponse(BaseModel):
     message: Literal["success"] = "success"
     location: StorageModuleCellLocation
@@ -138,10 +144,12 @@ class RobotItemStoredResponse(BaseModel):
 
 RobotResponse = Union[RobotCommandSuccessful, RobotCommandError, RobotItemStoredResponse]
 
+
 class WorkerStatus(BaseModel):
     robot_status: Optional[str]
     running: bool
     current_command: Optional[RobotCommands]
+
 
 class RobotConfiguration(BaseModel):
     tool: ToolConfiguration
@@ -151,7 +159,6 @@ class RobotConfiguration(BaseModel):
     place_offset: GantryCoordinate
     pickup_location: GantryCoordinate
     pickup_location_offset: GantryCoordinate
-
 
 
 class RobotState(BaseModel):
@@ -267,7 +274,7 @@ class Robot:
 
     async def drop_off_item(self) -> None:
         await self.move(self._configuration.pickup_location + self._configuration.place_offset)
-        await self._tool.extend()
+        await self._tool.extend_pickup()
         await self.unsafe_move(
             self._configuration.pickup_location + self._configuration.pickup_location_offset
         )
@@ -277,7 +284,7 @@ class Robot:
         await self.move(
             self._configuration.pickup_location + self._configuration.pickup_location_offset
         )
-        await self._tool.extend()
+        await self._tool.extend_pickup()
         await self.unsafe_move(self._configuration.pickup_location)
         await self._tool.retract_z()
 
@@ -324,7 +331,7 @@ class Robot:
             tool=tool_status,
             storage=self._storage,
             state=self._state,
-            light_curtain=curtain.ch0
+            light_curtain=curtain.ch0,
         )
 
     async def handle_command(self, command: RobotCommands) -> RobotResponse:
@@ -376,6 +383,7 @@ class Robot:
             case RetrieveItemCommand(location=loc):
                 await self.retrieve_item(loc)
                 self._storage.clear_item(loc)
+                self._storage.save()
                 return RobotCommandSuccessful()
             case GantryCommand(payload=payload):
                 await self._gantry.handle_command(payload)
@@ -389,6 +397,7 @@ class Robot:
                 if location:
                     await self.store_item(location)
                     self._storage.store_item(location, item)
+                    self._storage.save()
                     return RobotItemStoredResponse(location=location)
                 print("Error")
                 return RobotCommandError(error="No Valid Storage Location")

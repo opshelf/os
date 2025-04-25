@@ -2,11 +2,7 @@ from typing import Optional
 from nats.js.client import JetStreamContext
 from nats.aio.client import Client as NATS
 from pydantic import TypeAdapter
-from perpetual_os1.robot import (
-    RobotConfiguration,
-    RobotCommands,
-    WorkerStatus
-)
+from perpetual_os1.robot import RobotConfiguration, RobotCommands, WorkerStatus
 from perpetual_os1.storage import StorageGrid
 from perpetual_os1.common import RobotNatsConfiguration
 

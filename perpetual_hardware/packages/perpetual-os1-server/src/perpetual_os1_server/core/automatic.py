@@ -22,6 +22,7 @@ class AutomaticStorage:
         self._scanner_sub: Optional[Subscription] = None
         self._scale_sub: Optional[Subscription] = None
         self._status_sub: Optional[Subscription] = None
+        self._scale_threshold: float = 20.0
 
     async def scan_handler(self, msg: Msg) -> None:
         evt = LabelScannedEvent.model_validate_json(msg.data.decode())
@@ -42,7 +43,13 @@ class AutomaticStorage:
 
     async def run(self) -> None:
         while True:
-            if self._scan and self._status and self._scale_weight and self._status.robot_status:
+            if (
+                self._scan
+                and self._status
+                and self._scale_weight
+                and self._scale_weight > self._scale_threshold
+                and self._status.robot_status
+            ):
                 print(self._scan, self._status.robot_status.light_curtain, self._scale_weight)
                 size_db = get_size_db()
                 print(size_db)
@@ -55,7 +62,7 @@ class AutomaticStorage:
                                 dimensions=data.size,
                                 data=data.data,
                                 weight=self._scale_weight,
-                                upca=self._scan
+                                upca=self._scan,
                             )
                         )
                     )
