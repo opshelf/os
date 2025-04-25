@@ -5,7 +5,6 @@ from abc import ABC, abstractmethod
 from typing import Generic, TypeVar
 
 
-
 C = TypeVar("C")
 S = TypeVar("S")
 

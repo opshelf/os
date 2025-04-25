@@ -24,6 +24,7 @@ class ToolConfiguration(BaseModel):
     tool_shelf_offset: float
     tool_retracted_offset: float
     tool_extension_offset: float
+    tool_pickup_extension: float
 
 
 class ToolStatus(BaseModel):
@@ -65,14 +66,18 @@ class ExtendGripperCommand(BaseModel):
 class RetractGripperCommand(BaseModel):
     command: Literal["retract_gripper"]
 
+
 class OpenGripperCommand(BaseModel):
     command: Literal["open_gripper"]
+
 
 class CloseGripperCommand(BaseModel):
     command: Literal["close_gripper"]
 
+
 class PrepareGripperCommand(BaseModel):
     command: Literal["prepare_gripper"]
+
 
 ToolCommands = Annotated[
     Union[
@@ -83,10 +88,10 @@ ToolCommands = Annotated[
         MoveRelativeCommand,
         SetJawSizeCommand,
         ExtendGripperCommand,
-        RetractGripperCommand,  
+        RetractGripperCommand,
         OpenGripperCommand,
         CloseGripperCommand,
-        PrepareGripperCommand
+        PrepareGripperCommand,
     ],
     Field(discriminator="command"),
 ]
@@ -199,6 +204,10 @@ class Tool(AbstractSubsystem[ToolConfiguration, ToolStatus]):
 
     async def extend(self) -> None:
         await self.z_axis.move_to_position(self._configuration.tool_extension_offset)
+        await self.z_axis.wait_for_move()
+
+    async def extend_pickup(self) -> None:
+        await self.z_axis.move_to_position(self._configuration.tool_pickup_extension)
         await self.z_axis.wait_for_move()
 
     async def handle_command(self, command: ToolCommands) -> ToolResponse:

@@ -117,6 +117,7 @@ tool_configuration = ToolConfiguration(
     tool_shelf_offset=7.0,
     tool_retracted_offset=1.0,
     tool_extension_offset=158,
+    tool_pickup_extension=152,
 )
 
 robot_configuration = RobotConfiguration(
@@ -126,6 +127,6 @@ robot_configuration = RobotConfiguration(
     idle_position=GantryCoordinate(x=20, y=20),
     place_offset=GantryCoordinate(x=0, y=2),
     # pickup_location=GantryCoordinate(x=540,y=396),
-    pickup_location=GantryCoordinate(x=732.025, y=475),
+    pickup_location=GantryCoordinate(x=733.25, y=475),
     pickup_location_offset=GantryCoordinate(x=0, y=250),
 )

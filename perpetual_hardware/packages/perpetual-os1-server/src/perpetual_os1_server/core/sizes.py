@@ -6,7 +6,6 @@ from typing import Optional
 from perpetual_os1_server.settings import get_settings
 
 
-
 class ItemInformation(BaseModel):
     size: Dimensions
     data: Json

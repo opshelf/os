@@ -11,6 +11,7 @@ def get_scale_port() -> SerialDeviceInfo:
             return port
     raise Exception("No Scale Port Found")
 
+
 class SerialScale(AbstractScale):
     def __init__(self, port: str = "/dev/ttyUSB0", baudrate: int = 9600, timeout: float = 0.2):
         self._port = port
@@ -43,4 +44,4 @@ class SerialScale(AbstractScale):
             return float(filtered)
         except asyncio.TimeoutError:
             pass
-            #raise TimeoutError("Timed out while reading from scale")
+            # raise TimeoutError("Timed out while reading from scale")

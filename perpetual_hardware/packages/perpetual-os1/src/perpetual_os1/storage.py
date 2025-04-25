@@ -6,6 +6,7 @@ from perpetual_os1.gantry import GantryCoordinate
 
 type Json = Dict[str, Union[str, int, float, Mapping, Iterable]]
 
+
 class StorageModuleSide(str, Enum):
     RIGHT = "right_module"
     LEFT = "left_module"
