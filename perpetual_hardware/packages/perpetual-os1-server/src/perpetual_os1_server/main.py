@@ -4,14 +4,7 @@ from perpetual_os1_server.core.automatic import AutomaticStorage
 from perpetual_os1_server.core.robot import init_robot_worker, stop_robot_worker
 from perpetual_os1_server.core.scale import init_scale_worker, stop_scale_worker
 from perpetual_os1_server.core.scanner import init_scanner_worker, stop_scanner_worker
-from perpetual_os1_server.routers import (
-    gantry,
-    robot,
-    scale,
-    scanner,
-    printer,
-    sizes
-)
+from perpetual_os1_server.routers import gantry, robot, scale, scanner, printer, sizes
 from perpetual_os1_server.core.sizes import init_file_sizes
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
@@ -36,25 +29,25 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logging.info(f"{app.title}")
     settings = get_settings()
     logging.info(f"settings: {settings}")
-    #await init_robot_worker()
+    # await init_robot_worker()
     logging.info("Robot Enabled")
-    #await init_scale_worker()
+    # await init_scale_worker()
     logging.info("Scale Enabled")
-    #await init_scanner_worker()
+    # await init_scanner_worker()
     logging.info("Scanner Enabled")
     init_file_sizes()
     auto_storage = AutomaticStorage()
-    #await auto_storage.connect()
+    # await auto_storage.connect()
     asyncio.create_task(auto_storage.run())
     yield
     logging.info("Shutting Down")
-    #await stop_robot_worker()
+    # await stop_robot_worker()
     logging.info("Robot Shutdown")
-    #await stop_scale_worker()
+    # await stop_scale_worker()
     logging.info("Scale Shutdown")
-    #await stop_scanner_worker()
+    # await stop_scanner_worker()
     logging.info("Scanner Shutdown")
-    #await auto_storage.close()
+    # await auto_storage.close()
 
 
 app = FastAPI(lifespan=lifespan)

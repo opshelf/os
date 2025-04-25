@@ -1,31 +1,27 @@
 from pydantic import BaseModel
-from perpetual_os1.storage import Dimensions
+from perpetual_os1.storage import Dimensions, Json
 from typing import Dict, Iterable, Optional, Union, Mapping
 import os
 from typing import Optional
 from perpetual_os1_server.settings import get_settings
 
 
-type Json = Dict[str, Union[str, int, float, Mapping, Iterable]]
 
 class ItemInformation(BaseModel):
     size: Dimensions
     data: Json
 
+
 class SizeDatabase(BaseModel):
     items: Dict[str, ItemInformation] = {}
     filename: str = "size.json"
 
-
     def get_item_size(self, data: str) -> Optional[ItemInformation]:
-            return self.items.get(data)
+        return self.items.get(data)
 
     def add_item_size(self, upca: str, data: Json, dimensions: Dimensions) -> None:
         print(data, dimensions)
-        self.items[upca] = ItemInformation(
-            size=dimensions,
-            data=data
-        )
+        self.items[upca] = ItemInformation(size=dimensions, data=data)
         print(self.items)
 
     def remove_item_size(self, upca: str) -> None:
@@ -42,7 +38,6 @@ class SizeDatabase(BaseModel):
 
     def save(self) -> None:
         self.save_to_file(self.filename)
-
 
 
 size_database: Optional[SizeDatabase] = None

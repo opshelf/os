@@ -4,8 +4,8 @@ from nats.aio.msg import Msg
 from nats.aio.subscription import Subscription
 from nats.aio.client import Client as NATS
 from perpetual_barcode_scanner import LabelScannedEvent
-from perpetual_os1.robot import StoreItemCommand
-from perpetual_os1.storage import StorageModuleCellLocation, StorageModuleSide
+from perpetual_os1.robot import StoreItemRequested
+from perpetual_os1.storage import CellItem
 from perpetual_scale import ScaleReadEvent
 from perpetual_os1.robot_worker import WorkerStatus
 from perpetual_os1_server.core.robot import get_robot_client
@@ -14,8 +14,6 @@ from perpetual_os1_server.settings import get_settings
 
 
 class AutomaticStorage:
-
-
     def __init__(self) -> None:
         self._client = NATS()
         self._scale_weight: Optional[float] = None
@@ -51,13 +49,16 @@ class AutomaticStorage:
                 data = size_db.get_item_size(self._scan)
                 if data and not self._status.robot_status.light_curtain:
                     client = await get_robot_client()
-                    await client.send_command(StoreItemCommand(
-                        location=StorageModuleCellLocation(
-                            side=StorageModuleSide.LEFT,
-                            shelf_idx=0,
-                            cell_idx=0
+                    await client.send_command(
+                        StoreItemRequested(
+                            item=CellItem(
+                                dimensions=data.size,
+                                data=data.data,
+                                weight=self._scale_weight,
+                                upca=self._scan
+                            )
                         )
-                    ))
+                    )
                     self._scan = None
 
                 print(data)
@@ -71,6 +72,3 @@ class AutomaticStorage:
         if not self._status_sub is None:
             await self._status_sub.unsubscribe()
         await self._client.close()
-
-
-

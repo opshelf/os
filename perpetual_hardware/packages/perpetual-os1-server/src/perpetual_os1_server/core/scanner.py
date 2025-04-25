@@ -27,7 +27,6 @@ async def stop_scanner_worker() -> None:
         await scanner_worker.close()
 
 
-
 async def get_scanner_worker() -> ScannerWorker:
     if scanner_worker:
         return scanner_worker

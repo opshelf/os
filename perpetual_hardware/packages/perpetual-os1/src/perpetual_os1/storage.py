@@ -1,8 +1,10 @@
 from pydantic import BaseModel, ValidationError, model_validator, field_validator, Field
 from enum import Enum
-from typing import Optional, List, Self, Tuple
+from typing import Optional, List, Self, Tuple, Mapping, Iterable, Union, Dict
 from perpetual_os1.gantry import GantryCoordinate
 
+
+type Json = Dict[str, Union[str, int, float, Mapping, Iterable]]
 
 class StorageModuleSide(str, Enum):
     RIGHT = "right_module"
@@ -37,6 +39,8 @@ class CellStatus(str, Enum):
 class CellItem(BaseModel):
     weight: Optional[float] = None
     dimensions: Dimensions
+    data: Optional[Json] = None
+    upca: Optional[str] = None
 
 
 class Cell(BaseModel):
