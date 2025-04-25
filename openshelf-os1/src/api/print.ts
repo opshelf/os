@@ -11,3 +11,7 @@ export const print = async (
     item: data,
   });
 };
+
+export const printUpca = async (upca: string): Promise<void> => {
+  await axios.post(`${HOST}/print/${upca}`);
+};

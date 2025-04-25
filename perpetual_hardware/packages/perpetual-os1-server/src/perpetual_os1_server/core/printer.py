@@ -1,6 +1,4 @@
 import random
-
-from click import echo
 import barcode
 from barcode.writer import ImageWriter
 from PIL import Image, ImageDraw, ImageFont
