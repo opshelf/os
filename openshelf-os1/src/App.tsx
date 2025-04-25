@@ -8,6 +8,7 @@ import ScaleEventSSE from "@/components/ScaleEvent";
 import SizeDatabase from "./components/SizeDatabase";
 import ScannerEventSSE from "./components/ScannerEvent";
 import Footer from "@/components/Footer";
+import Inventory from "@/components/Inventory";
 import RobotStatusEventSSE from "@/components/RobotStatusEvent";
 
 const queryClient = new QueryClient();
@@ -19,6 +20,7 @@ function App() {
         <QueryClientProvider client={queryClient}>
           <Header />
           <Switch>
+            <Route path="/inventory" component={Inventory} />
             <Route path="/storage" component={StorageBuilder} />
             <Route path="/sizes" component={SizeDatabase} />
             <Route component={RobotController} />

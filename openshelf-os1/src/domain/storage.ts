@@ -33,6 +33,8 @@ export const dimensionSchema = z.object({
 export const cellItemSchema = z.object({
   dimensions: dimensionSchema,
   weight: z.number().optional(),
+  upca: z.string().optional(),
+  data: z.any().optional(),
 });
 
 // Cell schema

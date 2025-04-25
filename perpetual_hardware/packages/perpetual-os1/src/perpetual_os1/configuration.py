@@ -125,8 +125,8 @@ robot_configuration = RobotConfiguration(
     gantry=gantry_configuration,
     y_safe=10.0,
     idle_position=GantryCoordinate(x=20, y=20),
-    place_offset=GantryCoordinate(x=0, y=2),
+    place_offset=GantryCoordinate(x=0, y=3),
     # pickup_location=GantryCoordinate(x=540,y=396),
-    pickup_location=GantryCoordinate(x=733.25, y=475),
+    pickup_location=GantryCoordinate(x=733.25, y=473),
     pickup_location_offset=GantryCoordinate(x=0, y=250),
 )
