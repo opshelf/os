@@ -1,6 +1,6 @@
 from typing import Optional
 from perpetual_scale import ScaleWorker
-from perpetual_scale.ruishan import SerialScale  
+from perpetual_scale.ruishan import SerialScale
 import logging
 
 scale_worker: Optional[ScaleWorker] = None
@@ -24,7 +24,6 @@ async def stop_scale_worker() -> None:
     global robot_worker
     if scale_worker:
         await scale_worker.close()
-
 
 
 async def get_scale_worker() -> ScaleWorker:

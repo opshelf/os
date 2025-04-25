@@ -1,8 +1,7 @@
 from pydantic import BaseModel, Field
 from pymodbus.client.serial import AsyncModbusSerialClient
-from perpetual_os1 import gantry
 from perpetual_os1.gantry import GantryCommands, GantryConfiguration, Gantry, GantryCoordinate, GantryStatus
-from perpetual_os1.storage import Cell, StorageGrid, StorageModuleCellLocation
+from perpetual_os1.storage import Cell, StorageGrid, StorageModuleCellLocation, CellItem
 from perpetual_os1.tool import Tool, ToolCommands, ToolConfiguration, ToolStatus
 from perpetual_can import CANBusHandler
 from typing import List, Optional
@@ -65,12 +64,9 @@ class DropOffItemCommand(BaseModel):
 class PickupItemCommand(BaseModel):
     command: Literal["pickup_item"] = "pickup_item"
 
-
-
 class GrabCellCommand(BaseModel):
     command: Literal["grab_cell"] = "grab_cell"
     location: StorageModuleCellLocation
-
 
 class PlaceCellCommand(BaseModel):
     command: Literal["place_cell"] = "place_cell"
@@ -94,6 +90,13 @@ class ToolCommand(BaseModel):
     command: Literal["tool_command"] = "tool_command"
     payload: ToolCommands
 
+
+class StoreItemRequested(BaseModel):
+    command: Literal["store_item_request"] = "store_item_request"
+    item: CellItem
+
+
+
 # Create a union of all Robot commands using a discriminator field
 RobotCommands = Annotated[
     Union[
@@ -113,7 +116,8 @@ RobotCommands = Annotated[
         StoreItemCommand,
         RetrieveItemCommand,
         GantryCommand,
-        ToolCommand
+        ToolCommand,
+        StoreItemRequested
     ],
     Field(discriminator="command"),
 ]
@@ -127,8 +131,12 @@ class RobotCommandSuccessful(BaseModel):
 class RobotCommandError(BaseModel):
     error: str
 
+class RobotItemStoredResponse(BaseModel):
+    message: Literal["success"] = "success"
+    location: StorageModuleCellLocation
 
-RobotResponse = Union[RobotCommandSuccessful, RobotCommandError]
+
+RobotResponse = Union[RobotCommandSuccessful, RobotCommandError, RobotItemStoredResponse]
 
 class WorkerStatus(BaseModel):
     robot_status: Optional[str]
@@ -362,9 +370,11 @@ class Robot:
                 return RobotCommandSuccessful()
             case StoreItemCommand(location=loc):
                 await self.store_item(loc)
-                return RobotCommandSuccessful()
+                self._storage.store_item(loc, None)
+                return RobotItemStoredResponse(location=loc)
             case RetrieveItemCommand(location=loc):
                 await self.retrieve_item(loc)
+                self._storage.clear_item(loc)
                 return RobotCommandSuccessful()
             case GantryCommand(payload=payload):
                 await self._gantry.handle_command(payload)
@@ -372,5 +382,12 @@ class Robot:
             case ToolCommand(payload=payload):
                 await self._tool.handle_command(payload)
                 return RobotCommandSuccessful()
+            case StoreItemRequested(item=item):
+                location = self._storage.get_next_free_location(item)
+                if location:
+                    await self.store_item(location)
+                    self._storage.store_item(location, item)
+                    return RobotItemStoredResponse(location=location)
+                return RobotCommandError(error="No Valid Storage Location")
             case _:
                 return RobotCommandError(error="Invalid Robot Command")

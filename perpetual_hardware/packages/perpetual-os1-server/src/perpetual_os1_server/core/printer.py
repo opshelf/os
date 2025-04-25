@@ -5,11 +5,13 @@ from PIL import Image, ImageDraw, ImageFont
 from pydantic import BaseModel
 from typing import List, Tuple, Optional
 
+
 def create_barcode(filename: str) -> Tuple[str, str]:
     upca = generate_random_upca()
     upc = barcode.get("upc", upca, writer=ImageWriter())
     filename = upc.save(filename.split(".")[0])
     return upca, filename
+
 
 def calculate_upc_check_digit(digits: List[str]) -> int:
     odd_sum = sum(int(digits[i]) for i in range(0, 11, 2))
@@ -18,10 +20,11 @@ def calculate_upc_check_digit(digits: List[str]) -> int:
     check_digit = (10 - (total % 10)) % 10
     return check_digit
 
+
 def generate_random_upca() -> str:
     digits = [str(random.randint(0, 9)) for _ in range(11)]
     check_digit = calculate_upc_check_digit(digits)
-    upc_code = ''.join(digits) + str(check_digit)
+    upc_code = "".join(digits) + str(check_digit)
     return upc_code
 
 
@@ -31,8 +34,8 @@ class LabelConfiguration(BaseModel):
     output_path: str = "label.png"
     attributes: List[Tuple[str, str]] = [
         ("Name:", "Some Chemical"),
-        ("Expiration:",  "2025-12-31"),
-        ("Received:", "2025-04-04")
+        ("Expiration:", "2025-12-31"),
+        ("Received:", "2025-04-04"),
     ]
     upca: Optional[str] = None
     label_size: Tuple[int, int] = (500, 350)
@@ -52,18 +55,18 @@ def create_label(configuration: LabelConfiguration) -> str:
     except IOError:
         raise Exception("Error: Barcode image not found.")
     logo = logo.resize((200, 200))
-    left   = 0 
-    upper  = 50
-    right  = 200
-    lower  = 150
+    left = 0
+    upper = 50
+    right = 200
+    lower = 150
     box = (left, upper, right, lower)
     logo_cropped = logo.crop(box)
 
     barcode = barcode.resize((300, 150))
-    left   = 40
-    upper  = 15
-    right  = 260
-    lower  = 135
+    left = 40
+    upper = 15
+    right = 260
+    lower = 135
     box = (left, upper, right, lower)
     cropped = barcode.crop(box)
 
@@ -84,5 +87,3 @@ def create_label(configuration: LabelConfiguration) -> str:
         text_y += line_spacing
     label.save(configuration.output_path)
     return upc
-
-
