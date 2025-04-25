@@ -328,6 +328,7 @@ class Robot:
         )
 
     async def handle_command(self, command: RobotCommands) -> RobotResponse:
+        print(command)
         match command:
             case StopCommand():
                 await self.stop()
@@ -383,11 +384,13 @@ class Robot:
                 await self._tool.handle_command(payload)
                 return RobotCommandSuccessful()
             case StoreItemRequested(item=item):
-                location = self._storage.get_next_free_location(item)
+                location = self._storage.find_best_slot_for_item(item)
+                print(location)
                 if location:
                     await self.store_item(location)
                     self._storage.store_item(location, item)
                     return RobotItemStoredResponse(location=location)
+                print("Error")
                 return RobotCommandError(error="No Valid Storage Location")
             case _:
                 return RobotCommandError(error="Invalid Robot Command")
