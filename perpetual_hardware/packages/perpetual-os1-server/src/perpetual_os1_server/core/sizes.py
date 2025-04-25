@@ -51,7 +51,7 @@ def init_file_sizes() -> None:
             size_database = SizeDatabase.model_validate_json(f.read())
     else:
         with open(settings.sizes.filename, "w+") as f:
-            default_size_db = SizeDatabase()
+            default_size_db = SizeDatabase(filename=settings.sizes.filename)
             f.write(default_size_db.model_dump_json())
             size_database = default_size_db
 

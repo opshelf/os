@@ -1,6 +1,6 @@
 from typing import Optional
 from perpetual_scale import ScaleWorker
-from perpetual_scale.ruishan import SerialScale
+from perpetual_scale.ruishan import SerialScale, get_scale_port
 import logging
 
 scale_worker: Optional[ScaleWorker] = None
@@ -9,7 +9,8 @@ scale_worker: Optional[ScaleWorker] = None
 async def init_scale_worker() -> None:
     global scale_worker
     logging.info("Initialize Scale")
-    scale = SerialScale("/dev/ttyUSB0", baudrate=9600)
+    port = get_scale_port()
+    scale = SerialScale(port.device, baudrate=9600)
     nats_url = "nats://localhost:4222"
     scale_event_queue = "scale.events"
     worker = ScaleWorker(scale, nats_url, scale_event_queue)
