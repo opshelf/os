@@ -1,10 +1,10 @@
-import { v4 as uuidv4 } from 'uuid';
-import { BaseMessageSchema } from './commands/base';
-import { RobotCommands } from './commands/robot';
-import { CellItem, StorageModuleCellLocation } from './storage';
-import { Tool, ToolCommands } from './commands/tool';
-import { Gantry, GantryCommands } from './commands/gantry';
-import { GantryCoordinateSchema } from './movement';
+import { v4 as uuidv4 } from "uuid";
+import { BaseMessageSchema } from "./commands/base";
+import { RobotCommands } from "./commands/robot";
+import { CellItem, StorageModuleCellLocation } from "./storage";
+import { Tool, ToolCommands } from "./commands/tool";
+import { Gantry, GantryCommands } from "./commands/gantry";
+import { GantryCoordinateSchema } from "./movement";
 
 export const createBaseMessage = (): BaseMessageSchema => {
   return { message_id: uuidv4() };
@@ -15,9 +15,7 @@ export class RobotController {
   gantry: Gantry;
   tool: Tool;
 
-  constructor(
-    sendCommand: (command: RobotCommands) => Promise<void>
-  ) {
+  constructor(sendCommand: (command: RobotCommands) => Promise<void>) {
     this.sendCommand = sendCommand;
     this.gantryCommand = this.gantryCommand.bind(this);
     this.gantry = new Gantry(this.gantryCommand);
@@ -28,62 +26,62 @@ export class RobotController {
 
   async storeItem(
     location: StorageModuleCellLocation,
-    _item: CellItem | null = null
+    _item: CellItem | null = null,
   ) {
     await this.sendCommand({
-      command: 'store_item',
+      command: "store_item",
       location,
     });
   }
 
   async retrieveItem(location: StorageModuleCellLocation) {
     await this.sendCommand({
-      command: 'retrieve_item',
+      command: "retrieve_item",
       location,
     });
   }
 
   async home() {
     await this.sendCommand({
-      command: 'home',
+      command: "home",
     });
   }
 
   async stop() {
     await this.sendCommand({
-      command: 'stop',
+      command: "stop",
     });
   }
 
   async initialize() {
     await this.sendCommand({
-      command: 'initialize',
+      command: "initialize",
     });
   }
 
   async idlePositionCommand() {
     await this.sendCommand({
-      command: 'idle',
+      command: "idle",
     });
   }
 
   async unsafeMove(coordinate: GantryCoordinateSchema) {
     await this.sendCommand({
-      command: 'unsafe_move',
+      command: "unsafe_move",
       coordinate,
     });
   }
 
   async move(coordinate: GantryCoordinateSchema) {
     await this.sendCommand({
-      command: 'move',
+      command: "move",
       coordinate,
     });
   }
 
   async grabBox(coordinate: GantryCoordinateSchema, width: number) {
     await this.sendCommand({
-      command: 'grab_box',
+      command: "grab_box",
       coordinate,
       width,
     });
@@ -91,7 +89,7 @@ export class RobotController {
 
   async placeBox(coordinate: GantryCoordinateSchema, width: number) {
     await this.sendCommand({
-      command: 'place_box',
+      command: "place_box",
       coordinate,
       width,
     });
@@ -99,32 +97,38 @@ export class RobotController {
 
   async moveToPickupLocation() {
     await this.sendCommand({
-      command: 'move_to_pickup_location',
+      command: "move_to_pickup_location",
     });
   }
 
   async dropOffItem() {
     await this.sendCommand({
-      command: 'drop_off_item',
+      command: "drop_off_item",
     });
   }
 
   async pickupItem() {
     await this.sendCommand({
-      command: 'pickup_item',
+      command: "pickup_item",
+    });
+  }
+
+  async returnCell() {
+    await this.sendCommand({
+      command: "return_cell",
     });
   }
 
   async grabCell(location: StorageModuleCellLocation) {
     await this.sendCommand({
-      command: 'grab_cell',
+      command: "grab_cell",
       location,
     });
   }
 
   async placeCell(location: StorageModuleCellLocation) {
     await this.sendCommand({
-      command: 'place_cell',
+      command: "place_cell",
       location,
     });
   }
@@ -132,14 +136,14 @@ export class RobotController {
   async toolCommand(command: ToolCommands) {
     await this.sendCommand({
       command: "tool_command",
-      payload: command
+      payload: command,
     });
   }
 
   async gantryCommand(command: GantryCommands) {
     await this.sendCommand({
       command: "gantry_command",
-      payload: command
+      payload: command,
     });
   }
 }

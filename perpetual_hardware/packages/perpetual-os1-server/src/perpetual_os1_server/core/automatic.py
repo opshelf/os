@@ -1,5 +1,5 @@
 import asyncio
-from typing import Optional
+from typing import Deque, Optional
 from nats.aio.msg import Msg
 from nats.aio.subscription import Subscription
 from nats.aio.client import Client as NATS
@@ -11,18 +11,21 @@ from perpetual_os1.robot_worker import WorkerStatus
 from perpetual_os1_server.core.robot import get_robot_client
 from perpetual_os1_server.core.sizes import get_size_db
 from perpetual_os1_server.settings import get_settings
+from collections import deque
 
 
 class AutomaticStorage:
     def __init__(self) -> None:
         self._client = NATS()
+        self._scale_weights: Deque[float] = deque(maxlen=10)
         self._scale_weight: Optional[float] = None
+        self._stable: bool = False
         self._scan: Optional[str] = None
         self._status: Optional[WorkerStatus] = None
         self._scanner_sub: Optional[Subscription] = None
         self._scale_sub: Optional[Subscription] = None
         self._status_sub: Optional[Subscription] = None
-        self._scale_threshold: float = 20.0
+        self._scale_threshold: float = 10.0
 
     async def scan_handler(self, msg: Msg) -> None:
         evt = LabelScannedEvent.model_validate_json(msg.data.decode())
@@ -31,6 +34,15 @@ class AutomaticStorage:
     async def scale_handler(self, msg: Msg) -> None:
         evt = ScaleReadEvent.model_validate_json(msg.data.decode())
         self._scale_weight = evt.payload.weight
+        self._scale_weights.append(evt.payload.weight)
+        savg = sum(self._scale_weights)/len(self._scale_weights)
+        smax = abs(max(self._scale_weights) - savg)
+        smin = abs(min(self._scale_weights) - savg)
+        peak = max(smax, smin)
+        if savg > 0.0 and peak/savg < .05:
+            self._stable = True
+        else:
+            self._stable = False
 
     async def status_handler(self, msg: Msg) -> None:
         self._status = WorkerStatus.model_validate_json(msg.data.decode())
@@ -49,6 +61,7 @@ class AutomaticStorage:
                 and self._scale_weight
                 and self._scale_weight > self._scale_threshold
                 and self._status.robot_status
+                and self._stable
             ):
                 print(self._scan, self._status.robot_status.light_curtain, self._scale_weight)
                 size_db = get_size_db()

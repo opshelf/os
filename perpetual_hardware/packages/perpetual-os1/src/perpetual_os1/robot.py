@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from typing import Union, Annotated, Literal
 from perpetual_os1.gantry import GantryCoordinate
 from perpetual_waveshare.digital import DigitalIOController
+import os
 
 
 class StopCommand(BaseModel):
@@ -101,6 +102,9 @@ class StoreItemRequested(BaseModel):
     command: Literal["store_item_request"] = "store_item_request"
     item: CellItem
 
+class ReturnCellCommand(BaseModel):
+    command: Literal["return_cell"] = "return_cell"
+
 
 # Create a union of all Robot commands using a discriminator field
 RobotCommands = Annotated[
@@ -123,6 +127,7 @@ RobotCommands = Annotated[
         GantryCommand,
         ToolCommand,
         StoreItemRequested,
+        ReturnCellCommand
     ],
     Field(discriminator="command"),
 ]
@@ -159,6 +164,7 @@ class RobotConfiguration(BaseModel):
     place_offset: GantryCoordinate
     pickup_location: GantryCoordinate
     pickup_location_offset: GantryCoordinate
+    state_file: str = "state.json"
 
 
 class RobotState(BaseModel):
@@ -185,6 +191,7 @@ class Robot:
         self._client = client
         self._storage = StorageGrid(left_module=[], right_module=[])
         self._state = RobotState()
+        self.load_state()
 
     @property
     def state(self) -> RobotState:
@@ -301,16 +308,37 @@ class Robot:
         cell = self._storage.get_cell(location)
         self._state = RobotState(current_cell=location)
         await self._grab_cell(coordinate.to_gantry_coordinate(), cell)
+        self.set_current_cell(location)
 
     async def place_cell(self, location: StorageModuleCellLocation) -> None:
         coordinate = self._storage.get_cell_coordinate(location)
         cell = self._storage.get_cell(location)
         self._state = RobotState(current_cell=None)
         await self._place_cell(coordinate.to_gantry_coordinate(), cell)
+        self.clear_current_cell()
 
     async def return_cell(self) -> None:
         if self._state.current_cell is not None:
             await self.place_cell(self._state.current_cell)
+
+    def save_state(self) -> None:
+        with open(self._configuration.state_file, "w+") as f:
+            f.write(self._state.model_dump_json())
+
+    def load_state(self) -> None:
+        if os.path.exists(self._configuration.state_file):
+            with open(self._configuration.state_file) as f:
+                self._state = RobotState.model_validate_json(f.read())
+        else:
+            self.save_state()
+
+    def set_current_cell(self, cell: StorageModuleCellLocation) -> None:
+        self._state.current_cell = cell
+        self.save_state()
+
+    def clear_current_cell(self) -> None:
+        self._state.current_cell = None
+        self.save_state()
 
     async def store_item(self, location: StorageModuleCellLocation) -> None:
         await self.grab_cell(location)
@@ -390,6 +418,9 @@ class Robot:
                 return RobotCommandSuccessful()
             case ToolCommand(payload=payload):
                 await self._tool.handle_command(payload)
+                return RobotCommandSuccessful()
+            case ReturnCellCommand():
+                await self.return_cell()
                 return RobotCommandSuccessful()
             case StoreItemRequested(item=item):
                 location = self._storage.find_best_slot_for_item(item)

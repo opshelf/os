@@ -16,20 +16,9 @@ import {
   LocateIcon,
   WeightIcon,
   LoaderIcon,
+  CornerDownLeft,
 } from "lucide-react";
 import DimensionForm from "../DimensionsForm";
-
-/*
-Store Item
-Retrieve Item
-Return Cell
-Go to Output
-Home
-Stop
-Idle
-Initialize
-Start Worker
-*/
 
 const RobotController = () => {
   const { robotStatus } = useStateStore();
@@ -80,6 +69,13 @@ const RobotController = () => {
         >
           <LoaderIcon />
           Initialize
+        </Button>
+        <Button
+          onClick={async () => {
+            await robot.returnCell();
+          }}
+        >
+          <CornerDownLeft /> Return Cell
         </Button>
         <Button
           onClick={async () => {

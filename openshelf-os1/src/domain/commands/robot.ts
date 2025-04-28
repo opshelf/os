@@ -1,93 +1,96 @@
-import z from 'zod';
-import { gantryCoordinateSchema } from '../movement';
-import { storageModuleCellLocationSchema } from '../storage';
-import { gantryCommandsSchema } from './gantry';
-import { toolCommandsSchema } from './tool';
+import z from "zod";
+import { gantryCoordinateSchema } from "../movement";
+import { storageModuleCellLocationSchema } from "../storage";
+import { gantryCommandsSchema } from "./gantry";
+import { toolCommandsSchema } from "./tool";
 
 // Individual command schemas
 export const stopCommandSchema = z.object({
-  command: z.literal('stop'),
+  command: z.literal("stop"),
 });
 
 export const initializeCommandSchema = z.object({
-  command: z.literal('initialize'),
+  command: z.literal("initialize"),
 });
 
 export const homeCommandSchema = z.object({
-  command: z.literal('home'),
+  command: z.literal("home"),
 });
 
 export const unsafeMoveCommandSchema = z.object({
-  command: z.literal('unsafe_move'),
+  command: z.literal("unsafe_move"),
   coordinate: gantryCoordinateSchema,
 });
 
 export const moveCommandSchema = z.object({
-  command: z.literal('move'),
+  command: z.literal("move"),
   coordinate: gantryCoordinateSchema,
 });
 
 export const idleCommandSchema = z.object({
-  command: z.literal('idle'),
+  command: z.literal("idle"),
 });
 
 export const grabBoxCommandSchema = z.object({
-  command: z.literal('grab_box'),
+  command: z.literal("grab_box"),
   coordinate: gantryCoordinateSchema,
   width: z.number(),
 });
 
 export const placeBoxCommandSchema = z.object({
-  command: z.literal('place_box'),
+  command: z.literal("place_box"),
   coordinate: gantryCoordinateSchema,
   width: z.number(),
 });
 
 export const moveToPickupLocationCommandSchema = z.object({
-  command: z.literal('move_to_pickup_location'),
+  command: z.literal("move_to_pickup_location"),
 });
 
 export const dropOffItemCommandSchema = z.object({
-  command: z.literal('drop_off_item'),
+  command: z.literal("drop_off_item"),
 });
 
 export const pickupItemCommandSchema = z.object({
-  command: z.literal('pickup_item'),
+  command: z.literal("pickup_item"),
 });
 
 export const grabCellCommandSchema = z.object({
-  command: z.literal('grab_cell'),
+  command: z.literal("grab_cell"),
   location: storageModuleCellLocationSchema,
 });
 
 export const placeCellCommandSchema = z.object({
-  command: z.literal('place_cell'),
+  command: z.literal("place_cell"),
   location: storageModuleCellLocationSchema,
 });
 
 export const storeItemCommandSchema = z.object({
-  command: z.literal('store_item'),
+  command: z.literal("store_item"),
   location: storageModuleCellLocationSchema,
 });
 
 export const retrieveItemCommandSchema = z.object({
-  command: z.literal('retrieve_item'),
+  command: z.literal("retrieve_item"),
   location: storageModuleCellLocationSchema,
 });
 
 export const gantryCommandSchema = z.object({
-  command: z.literal('gantry_command'),
+  command: z.literal("gantry_command"),
   payload: gantryCommandsSchema,
 });
 
 export const toolCommandSchema = z.object({
-  command: z.literal('tool_command'),
+  command: z.literal("tool_command"),
   payload: toolCommandsSchema,
 });
 
+export const returnCellCommandSchema = z.object({
+  command: z.literal("return_cell"),
+});
 
 // Full RobotCommand discriminated union
-export const robotCommandsSchema = z.discriminatedUnion('command', [
+export const robotCommandsSchema = z.discriminatedUnion("command", [
   stopCommandSchema,
   initializeCommandSchema,
   homeCommandSchema,
@@ -104,7 +107,8 @@ export const robotCommandsSchema = z.discriminatedUnion('command', [
   storeItemCommandSchema,
   retrieveItemCommandSchema,
   gantryCommandSchema,
-  toolCommandSchema
+  toolCommandSchema,
+  returnCellCommandSchema,
 ]);
 
 // Type exports
@@ -112,7 +116,7 @@ export type RobotCommands = z.infer<typeof robotCommandsSchema>;
 
 // Responses
 export const robotCommandSuccessSchema = z.object({
-  message: z.literal('success'),
+  message: z.literal("success"),
 });
 
 export const robotCommandErrorSchema = z.object({
