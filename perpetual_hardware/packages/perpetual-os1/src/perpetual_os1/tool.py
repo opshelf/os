@@ -177,7 +177,7 @@ class Tool(AbstractSubsystem[ToolConfiguration, ToolStatus]):
         await self.set_jaw_size(28.0)
 
     async def setup_box_grab(self) -> None:
-        await self.set_jaw_size(40.0)
+        await self.set_jaw_size(39.0)
 
     async def setup_box_drop(self) -> None:
         await self.set_jaw_size(20.0)
@@ -188,6 +188,9 @@ class Tool(AbstractSubsystem[ToolConfiguration, ToolStatus]):
         await self.setup_box_grab()
         await self.z_axis.move_to_position(self._configuration.tool_retracted_offset)
         await self.z_axis.wait_for_move()
+        sf = await self.gripper.read_speed_force()
+        if sf.force < 240:
+            raise Exception("Failed to Grip Box")
 
     async def extend_box(self, width: float) -> None:
         await self.z_axis.move_to_position(width + self._configuration.tool_shelf_offset)

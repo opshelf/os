@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from perpetual_os1_server.core.printer import create_label, LabelConfiguration
+from perpetual_os1_server.core.printer import create_barcode_upca, create_label, LabelConfiguration
 from perpetual_os1.storage import Dimensions, Json
 from perpetual_os1_server.core.sizes import get_size_db, SizeDatabase
 
@@ -40,7 +40,10 @@ async def print_upca(upca: str, size_database: SizeDatabase = Depends(get_size_d
     item_information = size_database.get_item_size(upca)
     if item_information is None:
         raise HTTPException(status_code=404, detail=f"Item with UPC-A '{upca}' not found")
-
+    config = LabelConfiguration(
+        upca=upca
+    )
+    upca = create_label(config)
     command = [
         "lpr",
         "-o",

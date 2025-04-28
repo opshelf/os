@@ -50,7 +50,7 @@ y_axis = CanAxisConfiguration(
         home_direction=Rotation.CCW,
         homing_speed=50,
         brake=True,
-        external_encoder=True,
+        external_encoder=True
     ),
     name="y_axis",
     axis_type="linear_axis",

@@ -27,7 +27,13 @@ storage_grid = StorageGrid(
                 Cell(
                     status=CellStatus.EMPTY,
                     item=None,
-                    calibration_point=CalibrationCoordinate(x=199, y=394, z=0),
+                    calibration_point=CalibrationCoordinate(x=33, y=394, z=0),
+                    dimensions=Dimensions(length=145, height=200, width=145),
+                ),
+                Cell(
+                    status=CellStatus.EMPTY,
+                    item=None,
+                    calibration_point=None,
                     dimensions=Dimensions(length=145, height=200, width=145),
                 ),
                 Cell(
@@ -51,20 +57,26 @@ storage_grid = StorageGrid(
                 Cell(
                     status=CellStatus.EMPTY,
                     item=None,
-                    calibration_point=CalibrationCoordinate(x=178, y=870, z=0),
-                    dimensions=Dimensions(length=100, height=100, width=100),
+                    calibration_point=CalibrationCoordinate(x=57, y=870, z=0),
+                    dimensions=Dimensions(length=100, height=200, width=100),
                 ),
                 Cell(
                     status=CellStatus.EMPTY,
                     item=None,
                     calibration_point=None,
-                    dimensions=Dimensions(length=100, height=100, width=100),
+                    dimensions=Dimensions(length=100, height=200, width=100),
                 ),
                 Cell(
                     status=CellStatus.EMPTY,
                     item=None,
                     calibration_point=None,
-                    dimensions=Dimensions(length=100, height=100, width=100),
+                    dimensions=Dimensions(length=100, height=200, width=100),
+                ),
+                Cell(
+                    status=CellStatus.EMPTY,
+                    item=None,
+                    calibration_point=None,
+                    dimensions=Dimensions(length=100, height=200, width=100),
                 ),
             ],
         ),
@@ -75,7 +87,19 @@ storage_grid = StorageGrid(
                 Cell(
                     status=CellStatus.EMPTY,
                     item=None,
-                    calibration_point=CalibrationCoordinate(x=152, y=1148, z=0),
+                    calibration_point=CalibrationCoordinate(x=10, y=1148, z=0),
+                    dimensions=Dimensions(length=50, height=50, width=50),
+                ),
+                Cell(
+                    status=CellStatus.EMPTY,
+                    item=None,
+                    calibration_point=None,
+                    dimensions=Dimensions(length=50, height=50, width=50),
+                ),
+                Cell(
+                    status=CellStatus.EMPTY,
+                    item=None,
+                    calibration_point=None,
                     dimensions=Dimensions(length=50, height=50, width=50),
                 ),
                 Cell(

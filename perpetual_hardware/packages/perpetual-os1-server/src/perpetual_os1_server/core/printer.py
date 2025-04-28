@@ -5,6 +5,11 @@ from PIL import Image, ImageDraw, ImageFont
 from pydantic import BaseModel
 from typing import List, Tuple, Optional
 
+def create_barcode_upca(filename: str, upca: str) -> Tuple[str, str]:
+    upc = barcode.get("upc", upca, writer=ImageWriter())
+    filename = upc.save(filename.split(".")[0])
+    return upca, filename
+
 
 def create_barcode(filename: str) -> Tuple[str, str]:
     upca = generate_random_upca()
@@ -40,12 +45,13 @@ class LabelConfiguration(BaseModel):
     upca: Optional[str] = None
     label_size: Tuple[int, int] = (500, 350)
 
-
 def create_label(configuration: LabelConfiguration) -> str:
     label = Image.new("RGB", configuration.label_size, "white")
     draw = ImageDraw.Draw(label)
-
-    upc, _ = create_barcode(configuration.barcode_path)
+    if configuration.upca:
+        upc, _ = create_barcode_upca(configuration.barcode_path, configuration.upca)
+    else:
+        upc, _ = create_barcode(configuration.barcode_path)
     try:
         logo = Image.open(configuration.logo_path)
     except IOError:

@@ -88,12 +88,19 @@ async def main() -> None:
     robot = Robot(can_bus, modbus, robot_configuration)
     robot.set_storage(storage_grid)
     await robot.initialize()
-    #await robot.grab_cell(StorageModuleCellLocation(side=StorageModuleSide.LEFT, cell_idx=0, shelf_idx=2))
+    print(await robot.tool.gripper.read_speed_force())
+    await robot.return_cell()
+    print(await robot.tool.gripper.read_speed_force())
+    await robot.tool.setup_box_pick()
+    await robot.tool.gripper.wait_for_move()
+    print(await robot.tool.gripper.read_speed_force())
+    await robot.grab_cell(StorageModuleCellLocation(side=StorageModuleSide.LEFT, cell_idx=0, shelf_idx=2))
+    print(await robot.tool.gripper.read_speed_force())
     #await robot.move_to_pickup_location()
-    await robot.move(
-        GantryCoordinate(x=733.25, y=480),
-    )
-    await robot.tool.z_axis.move_to_position(152)
+    #await robot.move(
+    #    GantryCoordinate(x=733.25, y=480),
+    #)
+    #await robot.tool.z_axis.move_to_position(152)
 
 
 
