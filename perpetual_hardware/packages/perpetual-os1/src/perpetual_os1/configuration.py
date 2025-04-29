@@ -1,6 +1,6 @@
 from perpetual_os1.common import CanMessageIds, CanAxisConfiguration
 from hardware_common.stepper_motor import StepperMotorConfig, Rotation
-from perpetual_os1.gantry import GantryConfiguration, GantryCoordinate, Gantry
+from perpetual_os1.gantry import GantryConfiguration, GantryCoordinate
 from perpetual_os1.tool import ToolConfiguration, GripperConfiguration
 from perpetual_os1.robot import RobotConfiguration
 
