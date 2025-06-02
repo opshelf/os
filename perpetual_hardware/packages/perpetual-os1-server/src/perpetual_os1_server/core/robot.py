@@ -88,37 +88,41 @@ storage_grid = StorageGrid(
                     status=CellStatus.EMPTY,
                     item=None,
                     calibration_point=CalibrationCoordinate(x=10, y=1148, z=0),
-                    dimensions=Dimensions(length=50, height=50, width=50),
+                    dimensions=Dimensions(length=50, height=100, width=50),
                 ),
                 Cell(
                     status=CellStatus.EMPTY,
                     item=None,
                     calibration_point=None,
-                    dimensions=Dimensions(length=50, height=50, width=50),
+                    dimensions=Dimensions(length=50, height=100, width=50),
                 ),
                 Cell(
                     status=CellStatus.EMPTY,
                     item=None,
                     calibration_point=None,
-                    dimensions=Dimensions(length=50, height=50, width=50),
+                    dimensions=Dimensions(length=50, height=100, width=50),
                 ),
                 Cell(
                     status=CellStatus.EMPTY,
                     item=None,
                     calibration_point=None,
-                    dimensions=Dimensions(length=50, height=50, width=50),
+                    dimensions=Dimensions(length=50, height=100, width=50),
                 ),
                 Cell(
                     status=CellStatus.EMPTY,
                     item=None,
                     calibration_point=None,
-                    dimensions=Dimensions(length=50, height=50, width=50),
+                    dimensions=Dimensions(length=50, height=100, width=50),
                 ),
             ],
         ),
     ],
     right_module=[],
 )
+
+def load_storage_from_file(filename: str) -> StorageGrid:
+    with open(filename) as f:
+        return StorageGrid.model_validate_json(f.read())
 
 
 async def init_robot_worker() -> None:
@@ -128,6 +132,7 @@ async def init_robot_worker() -> None:
     client = await get_modbus_client()
     logging.info("Got Bus")
     robot = Robot(can_bus, client, robot_configuration)
+    storage_grid = load_storage_from_file("storage.json")
     robot.set_storage(storage_grid)
     await robot.initialize()
     logging.info("Built Robot")

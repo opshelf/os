@@ -1,5 +1,6 @@
 from perpetual_os1.common import CanMessageIds, CanAxisConfiguration
 from hardware_common.stepper_motor import StepperMotorConfig, Rotation
+from perpetual_os1.door import DoorConfiguration
 from perpetual_os1.gantry import GantryConfiguration, GantryCoordinate
 from perpetual_os1.tool import ToolConfiguration, GripperConfiguration
 from perpetual_os1.robot import RobotConfiguration
@@ -50,7 +51,7 @@ y_axis = CanAxisConfiguration(
         home_direction=Rotation.CCW,
         homing_speed=50,
         brake=True,
-        external_encoder=True
+        external_encoder=True,
     ),
     name="y_axis",
     axis_type="linear_axis",
@@ -108,6 +109,35 @@ z_axis_configuration = CanAxisConfiguration(
     axis_type="leadscrew",
 )
 
+door_axis_configuration = CanAxisConfiguration(
+    can_id=CanMessageIds.DOOR.value,
+    configuration=StepperMotorConfig(
+        microsteps=16,
+        steps_per_rev=200,
+        encoder_ppr=3200,
+        steps_per_mm=266.667,
+        work_current=2000,
+        holding_current=0,
+        homing_current=3000,
+        velocity=1000,
+        acceleration=1000,
+        max_velocity=200,
+        max_acceleration=50,
+        min_travel=None,
+        max_travel=None,
+        invert_coordinates=False,
+        home_direction=Rotation.CCW,
+        homing_speed=50,
+        brake=True
+    ),
+    name="door",
+    axis_type="leadscrew",
+)
+
+door_configuration = DoorConfiguration(
+    axis=door_axis_configuration, open_position=155.0, close_position=1.0
+)
+
 
 gripper_configuration = GripperConfiguration()
 
@@ -123,6 +153,7 @@ tool_configuration = ToolConfiguration(
 robot_configuration = RobotConfiguration(
     tool=tool_configuration,
     gantry=gantry_configuration,
+    door=door_configuration,
     y_safe=10.0,
     idle_position=GantryCoordinate(x=20, y=20),
     place_offset=GantryCoordinate(x=0, y=3),

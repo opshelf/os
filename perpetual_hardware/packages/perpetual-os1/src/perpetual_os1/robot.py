@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field
 from pymodbus.client.serial import AsyncModbusSerialClient
+from perpetual_os1.door import Door, DoorConfiguration
 from perpetual_os1.gantry import (
     GantryCommands,
     GantryConfiguration,
@@ -81,6 +82,7 @@ class PlaceCellCommand(BaseModel):
 class StoreItemCommand(BaseModel):
     command: Literal["store_item"] = "store_item"
     location: StorageModuleCellLocation
+    item: Optional[CellItem]
 
 
 class RetrieveItemCommand(BaseModel):
@@ -101,6 +103,7 @@ class ToolCommand(BaseModel):
 class StoreItemRequested(BaseModel):
     command: Literal["store_item_request"] = "store_item_request"
     item: CellItem
+
 
 class ReturnCellCommand(BaseModel):
     command: Literal["return_cell"] = "return_cell"
@@ -127,7 +130,7 @@ RobotCommands = Annotated[
         GantryCommand,
         ToolCommand,
         StoreItemRequested,
-        ReturnCellCommand
+        ReturnCellCommand,
     ],
     Field(discriminator="command"),
 ]
@@ -159,6 +162,7 @@ class WorkerStatus(BaseModel):
 class RobotConfiguration(BaseModel):
     tool: ToolConfiguration
     gantry: GantryConfiguration
+    door: DoorConfiguration
     y_safe: float
     idle_position: GantryCoordinate
     place_offset: GantryCoordinate
@@ -187,6 +191,7 @@ class Robot:
         self._gantry = Gantry(bus, self._configuration.gantry)
         self._tool = Tool(bus, client, self._configuration.tool)
         self._io = DigitalIOController(client)
+        self._door = Door(bus, self._configuration.door)
         self._bus = bus
         self._client = client
         self._storage = StorageGrid(left_module=[], right_module=[])
@@ -228,10 +233,12 @@ class Robot:
         await self._tool.set_configuration(self._configuration.tool)
         await self._gantry.initialize()
         await self._tool.initialize()
+        await self._door.initialize()
 
     async def home(self) -> None:
         await self._tool.home()
         await self._gantry.home()
+        await self._door.home()
 
     async def unsafe_move(self, coordinate: GantryCoordinate) -> None:
         await self._gantry.move_coordinate(coordinate, True)
@@ -281,19 +288,23 @@ class Robot:
 
     async def drop_off_item(self) -> None:
         await self.move(self._configuration.pickup_location + self._configuration.place_offset)
+        await self._door.open_door()
         await self._tool.extend_pickup()
         await self.unsafe_move(
             self._configuration.pickup_location + self._configuration.pickup_location_offset
         )
         await self._tool.retract_z()
+        await self._door.close_door()
 
     async def pickup_item(self) -> None:
         await self.move(
             self._configuration.pickup_location + self._configuration.pickup_location_offset
         )
+        await self._door.open_door()
         await self._tool.extend_pickup()
         await self.unsafe_move(self._configuration.pickup_location)
         await self._tool.retract_z()
+        await self._door.close_door()
 
     async def _grab_cell(self, coordinate: GantryCoordinate, cell: Cell) -> None:
         await self.move(coordinate)
@@ -404,9 +415,9 @@ class Robot:
             case PlaceCellCommand(location=loc):
                 await self.place_cell(loc)
                 return RobotCommandSuccessful()
-            case StoreItemCommand(location=loc):
+            case StoreItemCommand(location=loc, item=item):
                 await self.store_item(loc)
-                self._storage.store_item(loc, None)
+                self._storage.store_item(loc, item)
                 return RobotItemStoredResponse(location=loc)
             case RetrieveItemCommand(location=loc):
                 await self.retrieve_item(loc)

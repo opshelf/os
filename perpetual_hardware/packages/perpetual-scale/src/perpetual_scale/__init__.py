@@ -50,6 +50,8 @@ class ScaleWorker:
                     )
             except asyncio.CancelledError:
                 pass
+            except Exception as e:
+                print(e)
 
     async def start(self) -> None:
         if not self._running:

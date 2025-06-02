@@ -1,5 +1,15 @@
 from perpetual_os1.robot import Robot
-from perpetual_os1.storage import StorageModuleCellLocation, StorageModuleSide, StorageGrid, Shelf, Cell, CellStatus, Dimensions, CalibrationCoordinate, GantryCoordinate
+from perpetual_os1.storage import (
+    StorageModuleCellLocation,
+    StorageModuleSide,
+    StorageGrid,
+    Shelf,
+    Cell,
+    CellStatus,
+    Dimensions,
+    CalibrationCoordinate,
+    GantryCoordinate,
+)
 from perpetual_os1.utils import get_can_bus, get_modbus_client
 from perpetual_os1.configuration import robot_configuration
 import asyncio
@@ -82,6 +92,8 @@ storage_grid = StorageGrid(
     ],
     right_module=[],
 )
+
+
 async def main() -> None:
     can_bus = await get_can_bus()
     modbus = await get_modbus_client()
@@ -89,20 +101,21 @@ async def main() -> None:
     robot.set_storage(storage_grid)
     await robot.initialize()
     print(await robot.tool.gripper.read_speed_force())
-    await robot.return_cell()
-    print(await robot.tool.gripper.read_speed_force())
-    await robot.tool.setup_box_pick()
-    await robot.tool.gripper.wait_for_move()
-    print(await robot.tool.gripper.read_speed_force())
-    await robot.grab_cell(StorageModuleCellLocation(side=StorageModuleSide.LEFT, cell_idx=0, shelf_idx=2))
-    print(await robot.tool.gripper.read_speed_force())
-    #await robot.move_to_pickup_location()
-    #await robot.move(
-    #    GantryCoordinate(x=733.25, y=480),
+    #await robot.return_cell()
+    #print(await robot.tool.gripper.read_speed_force())
+    #await robot.tool.setup_box_pick()
+    #await robot.tool.gripper.wait_for_move()
+    #print(await robot.tool.gripper.read_speed_force())
+    #await robot.grab_cell(
+    #    StorageModuleCellLocation(side=StorageModuleSide.LEFT, cell_idx=0, shelf_idx=2)
     #)
-    #await robot.tool.z_axis.move_to_position(152)
+    #print(await robot.tool.gripper.read_speed_force())
+    # await robot.move_to_pickup_location()
+    # await robot.move(
+    #    GantryCoordinate(x=733.25, y=480),
+    # )
+    # await robot.tool.z_axis.move_to_position(152)
 
 
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     asyncio.run(main())
