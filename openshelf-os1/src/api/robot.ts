@@ -2,9 +2,10 @@ import axios from "axios";
 import { HOST } from "./common";
 import { RobotCommands, robotCommandsSchema } from "@/domain/commands/robot";
 import { BaseMessageSchema } from "@/domain/commands/base";
+import { RobotConfiguration } from "@/domain/configuration";
+import { StorageModuleData } from "@/domain";
 import { v4 as uuidv4 } from "uuid";
 import z from "zod";
-import { GS1 } from "@/domain";
 // import { RobotConfiguration } from "@/domain/configuration";
 
 export const createBaseMessage = (): BaseMessageSchema => {
@@ -45,12 +46,17 @@ export const getConfiguration = async (): Promise<any> => {
   return response.data;
 };
 
-// export const setConfiguration = async (
-//   configuration: RobotConfiguration,
-// ): Promise<any> => {
-//   const response = await axios.post(
-//     `${HOST}/robot/configuration`,
-//     configuration,
-//   );
-//   return response.data;
-// };
+export const setConfiguration = async (
+  configuration: RobotConfiguration,
+): Promise<any> => {
+  const response = await axios.post(
+    `${HOST}/robot/configuration`,
+    configuration,
+  );
+  return response.data;
+};
+
+export const setStorage = async (storage: StorageModuleData) => {
+  const response = await axios.post(`${HOST}/robot/storage`, storage);
+  return response.data;
+};

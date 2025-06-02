@@ -1,5 +1,15 @@
 from perpetual_os1.robot import Robot
-from perpetual_os1.storage import StorageModuleCellLocation, StorageModuleSide, StorageGrid, Shelf, Cell, CellStatus, Dimensions, CalibrationCoordinate, GantryCoordinate
+from perpetual_os1.storage import (
+    StorageModuleCellLocation,
+    StorageModuleSide,
+    StorageGrid,
+    Shelf,
+    Cell,
+    CellStatus,
+    Dimensions,
+    CalibrationCoordinate,
+    GantryCoordinate,
+)
 from perpetual_os1.utils import get_can_bus, get_modbus_client
 from perpetual_os1.configuration import robot_configuration
 import asyncio
@@ -82,6 +92,8 @@ storage_grid = StorageGrid(
     ],
     right_module=[],
 )
+
+
 async def main() -> None:
     can_bus = await get_can_bus()
     modbus = await get_modbus_client()
@@ -96,7 +108,7 @@ async def main() -> None:
         load = await robot.gantry.y_axis.get_axis_parameter(206)
         print(load)
         position_reached = await robot.gantry.y_axis.get_position_reached()
-        #await asyncio.sleep(0.1)
+        # await asyncio.sleep(0.1)
     await robot.gantry.y_axis.end_brake_move()
     await robot.gantry.y_axis.init_brake_move()
     await robot.gantry.y_axis.move_to_position(0, override_brake=True)
@@ -105,11 +117,9 @@ async def main() -> None:
         load = await robot.gantry.y_axis.get_axis_parameter(206)
         print(load)
         position_reached = await robot.gantry.y_axis.get_position_reached()
-        #await asyncio.sleep(0.1)
+        # await asyncio.sleep(0.1)
     await robot.gantry.y_axis.end_brake_move()
 
 
-
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     asyncio.run(main())

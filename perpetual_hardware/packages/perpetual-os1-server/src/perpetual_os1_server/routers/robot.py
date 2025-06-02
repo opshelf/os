@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 from perpetual_os1.robot import RobotCommands, RobotConfiguration
 from perpetual_os1.robot_worker import RobotWorker
 from perpetual_os1.robot_client import RobotClient
+from perpetual_os1.storage import StorageGrid
 from perpetual_os1_server.routers.common import SuccessResponse
 from perpetual_os1_server.core.robot import get_robot_client, get_robot_worker
 from typing import List, AsyncGenerator, Optional
@@ -57,6 +58,17 @@ async def set_configuration(
 ) -> SuccessResponse:
     await worker.set_configuration(configuration)
     return SuccessResponse()
+
+
+@router.post("/storage")
+async def set_storage(
+    storage: StorageGrid,
+    worker: RobotWorker = Depends(get_robot_worker),
+) -> SuccessResponse:
+    await worker.set_storage(storage)
+    return SuccessResponse()
+
+
 
 
 async def nats_consumer(stop_event: asyncio.Event) -> AsyncGenerator[str, None]:

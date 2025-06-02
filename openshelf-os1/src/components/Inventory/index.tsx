@@ -11,6 +11,7 @@ import { useStateStore } from "@/store"; // your zustand store
 import { Button } from "../ui/button";
 import { RobotController } from "@/domain/robot";
 import { robotCommand } from "@/api/robot";
+import { setStorage } from "@/api/robot";
 
 const StorageCells = () => {
   const robotStatus = useStateStore((state) => state.robotStatus);
@@ -84,7 +85,25 @@ const StorageCells = () => {
                   >
                     Retrieve
                   </Button>
-                  <Button variant={"destructive"}>Delete</Button>
+                  <Button
+                    variant={"destructive"}
+                    onClick={async () => {
+                      console.log(storage);
+                      let newStorage = { ...storage };
+                      newStorage[location.side][location.shelfIdx].cells[
+                        location.cellIdx
+                      ] = {
+                        ...newStorage[location.side][location.shelfIdx].cells[
+                          location.cellIdx
+                        ],
+                        status: "EMPTY",
+                        item: null,
+                      };
+                      await setStorage(storage);
+                    }}
+                  >
+                    Delete
+                  </Button>
                 </div>
               </TableCell>
             </TableRow>
