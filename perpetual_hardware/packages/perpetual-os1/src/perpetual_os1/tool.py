@@ -8,6 +8,7 @@ from perpetual_os1.common import CanAxisConfiguration, AbstractSubsystem
 from perpetual_trinamic.aio.trinamic_axis import AxisStatus, TrinamicAxis
 from pydantic import BaseModel
 from typing import Literal, Annotated, Union
+from perpetual_os1.storage import StorageModuleSide
 
 from perpetual_os1.gripper.homwing.core import ExecuteControlMovement
 
@@ -21,6 +22,7 @@ class GripperConfiguration(BaseModel):
 class ToolConfiguration(BaseModel):
     gripper: GripperConfiguration
     z_axis: CanAxisConfiguration
+    rotation: CanAxisConfiguration
     tool_shelf_offset: float
     tool_retracted_offset: float
     tool_extension_offset: float
@@ -113,17 +115,25 @@ class Tool(AbstractSubsystem[ToolConfiguration, ToolStatus]):
         self, bus: CANBusHandler, client: AsyncModbusSerialClient, configuration: ToolConfiguration
     ) -> None:
         self._configuration = configuration
-        # self._gripper = Gripper(bus, self._configuration.gripper)
         self._gripper = HomwingGripper(client, 9)
         self._z_axis = TrinamicAxis(
             bus,
             configuration=self._configuration.z_axis.configuration,
             module_id=self._configuration.z_axis.can_id,
         )
+        self._rotation = TrinamicAxis(
+            bus,
+            configuration=self._configuration.rotation.configuration,
+            module_id=self._configuration.rotation.can_id,
+        )
 
     @property
     def z_axis(self) -> TrinamicAxis:
         return self._z_axis
+
+    @property
+    def rotation(self) -> TrinamicAxis:
+        return self._rotation
 
     @property
     def gripper(self) -> HomwingGripper:
@@ -133,9 +143,26 @@ class Tool(AbstractSubsystem[ToolConfiguration, ToolStatus]):
     def configuration(self) -> ToolConfiguration:
         return self._configuration
 
+
+    async def rotate_to_side(self, side: StorageModuleSide) -> None:
+        if side == StorageModuleSide.RIGHT:
+            await self._rotation.move_to_position(0)
+            await self._rotation.wait_for_move()
+        else:
+            await self._rotation.move_to_position(
+                (self._rotation.configuration.steps_per_rev *
+                self._rotation.configuration.microsteps *
+                50.0 *
+                0.5 
+                )/self._rotation.configuration.steps_per_mm
+            )
+            await self._rotation.wait_for_move()
+
+
     async def set_configuration(self, configuration: ToolConfiguration) -> None:
         self._configuration = configuration
         self._z_axis.configuration = self._configuration.z_axis.configuration
+        self._rotation.configuration = self._configuration.rotation.configuration
         await self.initialize()
 
     async def status(self) -> ToolStatus:
@@ -146,12 +173,17 @@ class Tool(AbstractSubsystem[ToolConfiguration, ToolStatus]):
         await self._z_axis.stop()
 
     async def home(self) -> None:
+        await self._rotation.home()
         await self._z_axis.home()
         await self._gripper.activate()
         await self._gripper.wait_for_activation()
+        await self.setup_box_drop()
 
     async def initialize(self) -> None:
         await self._z_axis.initialize()
+        await self._z_axis.set_pullup_resistors(0)
+        await self._rotation.initialize()
+        await self._rotation.set_pullup_resistors(0)
         await self._gripper.activate()
         await self._gripper.wait_for_activation()
 

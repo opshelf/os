@@ -51,5 +51,5 @@ class CanMessageIds(int, Enum):
     X_AXIS = 100
     Y_AXIS = 101
     Z_AXIS = 110
-    GRIPPER = 111
+    ROTATION = 111
     DOOR = 120

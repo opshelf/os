@@ -129,6 +129,19 @@ class DigitalIOController:
                 data |= 0x01 << ix
         return IoBankState.from_buffer(data)
 
+    async def read_output_channels(self) -> IoBankState:
+        response = await self._client.read_coils(
+            OutputRegisterBases.OutputChannel ,
+            count=8,
+            slave=self._address
+        )
+        data = 0
+        for ix, bit in enumerate(response.bits):
+            if bit:
+                data |= 0x01 << ix
+        return IoBankState.from_buffer(data)
+
+
     async def set_device_address(self, address: int) -> None:
         if address > 255:
             raise Exception("Invalid Address Requested")

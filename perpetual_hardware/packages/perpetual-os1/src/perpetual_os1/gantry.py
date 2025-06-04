@@ -117,7 +117,7 @@ class Gantry(AbstractSubsystem[GantryConfiguration, GantryStatus]):
     async def initialize(self) -> None:
         await self._x_axis.initialize()
         await self._y_axis.initialize()
-        await self._x_axis.set_pullup_resistors(0)
+        #await self._x_axis.set_pullup_resistors(0)
         await self._y_axis.set_pullup_resistors(0)
 
     @property

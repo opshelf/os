@@ -28,7 +28,14 @@ async def main() -> None:
     modbus = await get_modbus_client()
     robot = Robot(can_bus, modbus, robot_configuration)
     await robot.initialize()
-    await robot.home()
+    for i in range(0, 4):
+        await robot._io.set_channel_off(i)
+        await asyncio.sleep(1)
+        await robot._io.set_channel_on(i)
+        await asyncio.sleep(1)
+        
+
+    #await robot.home()
 
 
 if __name__ == "__main__":

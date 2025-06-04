@@ -17,9 +17,8 @@ import logging
 
 robot_worker: Optional[RobotWorker] = None
 
-
 storage_grid = StorageGrid(
-    left_module=[
+    right_module=[
         Shelf(
             shelf_height=200,
             shelf_width=1000,
@@ -27,7 +26,13 @@ storage_grid = StorageGrid(
                 Cell(
                     status=CellStatus.EMPTY,
                     item=None,
-                    calibration_point=CalibrationCoordinate(x=33, y=394, z=0),
+                    calibration_point=CalibrationCoordinate(x=293, y=410, z=0),
+                    dimensions=Dimensions(length=145, height=200, width=145),
+                ),
+                Cell(
+                    status=CellStatus.EMPTY,
+                    item=None,
+                    calibration_point=None,
                     dimensions=Dimensions(length=145, height=200, width=145),
                 ),
                 Cell(
@@ -57,7 +62,7 @@ storage_grid = StorageGrid(
                 Cell(
                     status=CellStatus.EMPTY,
                     item=None,
-                    calibration_point=CalibrationCoordinate(x=57, y=870, z=0),
+                    calibration_point=CalibrationCoordinate(x=271.5, y=680, z=0),
                     dimensions=Dimensions(length=100, height=200, width=100),
                 ),
                 Cell(
@@ -87,37 +92,37 @@ storage_grid = StorageGrid(
                 Cell(
                     status=CellStatus.EMPTY,
                     item=None,
-                    calibration_point=CalibrationCoordinate(x=10, y=1148, z=0),
-                    dimensions=Dimensions(length=50, height=100, width=50),
+                    calibration_point=CalibrationCoordinate(x=246.5, y=885, z=0),
+                    dimensions=Dimensions(length=50, height=200, width=50),
                 ),
                 Cell(
                     status=CellStatus.EMPTY,
                     item=None,
                     calibration_point=None,
-                    dimensions=Dimensions(length=50, height=100, width=50),
+                    dimensions=Dimensions(length=50, height=200, width=50),
                 ),
                 Cell(
                     status=CellStatus.EMPTY,
                     item=None,
                     calibration_point=None,
-                    dimensions=Dimensions(length=50, height=100, width=50),
+                    dimensions=Dimensions(length=50, height=200, width=50),
                 ),
                 Cell(
                     status=CellStatus.EMPTY,
                     item=None,
                     calibration_point=None,
-                    dimensions=Dimensions(length=50, height=100, width=50),
+                    dimensions=Dimensions(length=50, height=200, width=50),
                 ),
                 Cell(
                     status=CellStatus.EMPTY,
                     item=None,
                     calibration_point=None,
-                    dimensions=Dimensions(length=50, height=100, width=50),
+                    dimensions=Dimensions(length=50, height=200, width=50),
                 ),
             ],
         ),
     ],
-    right_module=[],
+    left_module=[],
 )
 
 def load_storage_from_file(filename: str) -> StorageGrid:
@@ -132,7 +137,7 @@ async def init_robot_worker() -> None:
     client = await get_modbus_client()
     logging.info("Got Bus")
     robot = Robot(can_bus, client, robot_configuration)
-    storage_grid = load_storage_from_file("storage.json")
+    #storage_grid = load_storage_from_file("storage.json")
     robot.set_storage(storage_grid)
     await robot.initialize()
     logging.info("Built Robot")

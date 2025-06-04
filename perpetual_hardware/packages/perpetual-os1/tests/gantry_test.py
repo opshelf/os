@@ -64,43 +64,11 @@ async def main() -> None:
         gantry_configuration,
     )
     await gantry.initialize()
-    #await gantry.y_axis.move_to_position(10000)
-    await gantry.home()
-    """
-    await gantry.y_axis.safety_off()
-    await gantry.y_axis.move_relative(3200)
-    input()
-    print(await gantry.y_axis.get_external_encoder_postion())
-    await gantry.y_axis.move_relative(3200)
-    input()
-    print(await gantry.y_axis.get_external_encoder_postion())
-    await gantry.y_axis.move_relative(3200)
-    input()
-    print(await gantry.y_axis.get_external_encoder_postion())
-    await gantry.y_axis.move_relative(3200)
-    input()
-    print(await gantry.y_axis.get_external_encoder_postion())
-    """
-    #await gantry.y_axis.end_brake_move()
-    #print(await gantry.y_axis.get_external_encoder_postion())
-    #try:
-    #await gantry.move(10, 10)
-    #except Exception as e:
-    #    print(e)
-    #print(await gantry.y_axis.get_external_encoder_postion())
-    #try:
-    #    await gantry.move(10, 10)
-    #except Exception as e:
-    #    print(e)
-    #print(await gantry.y_axis.get_position())
-    #await gantry.move(425, 600)
-    """
-    for _ in range(0, 5):
-        await gantry.move(10, 10)
-        await gantry.move(850, 1250)
-        await gantry.move(10, 1250)
-        await gantry.move(10, 10)
-    """
+    #await gantry.home()
+    await gantry.x_axis.home()
+    #await gantry.x_axis.move_to_relative_position(200)
+    #await gantry.y_axis.move_to_relative_position(200)
+    #await gantry.wait_for_move()
 
 
 if __name__ == "__main__":
