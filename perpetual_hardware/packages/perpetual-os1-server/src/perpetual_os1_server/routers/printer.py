@@ -59,3 +59,27 @@ async def print_upca(upca: str, size_database: SizeDatabase = Depends(get_size_d
         raise Exception(f"Print failed: {result.stderr}")
 
     return {"message": "success"}
+
+
+@router.post("/custom/{upca}")
+async def print_custom(upca: str, pr: PrintRequest, size_database: SizeDatabase = Depends(get_size_db)):
+    size_database.add_item_size(upca, pr.item, pr.dimensions)
+    size_database.save()
+    config = LabelConfiguration(
+        upca=upca
+    )
+    create_label(config)
+    command = [
+        "lpr",
+        "-o",
+        "media=Custom3x2",
+        "-o",
+        "fit-to-page",
+        "-o",
+        "orientation-requested=1",
+        LabelConfiguration().output_path,
+    ]
+    result = subprocess.run(command, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise Exception(f"Print failed: {result.stderr}")
+    return {"message": "success"}

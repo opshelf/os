@@ -8,7 +8,7 @@ from perpetual_os1.gantry import (
     GantryCoordinate,
     GantryStatus,
 )
-from perpetual_os1.storage import Cell, StorageGrid, StorageModuleCellLocation, CellItem
+from perpetual_os1.storage import Cell, StorageGrid, StorageModuleCellLocation, CellItem, StorageModuleSide
 from perpetual_os1.tool import Tool, ToolCommands, ToolConfiguration, ToolStatus
 from perpetual_can import CANBusHandler
 from typing import List, Optional
@@ -17,6 +17,7 @@ from typing import Union, Annotated, Literal
 from perpetual_os1.gantry import GantryCoordinate
 from perpetual_waveshare.digital import DigitalIOController
 import os
+import asyncio
 
 
 class StopCommand(BaseModel):
@@ -210,6 +211,7 @@ class Robot:
         self._configuration = configuration
         await self.initialize()
 
+
     @property
     def gantry(self) -> Gantry:
         return self._gantry
@@ -236,6 +238,7 @@ class Robot:
         await self._door.initialize()
 
     async def home(self) -> None:
+        await self.retract_stage()
         await self._tool.home()
         await self._gantry.home()
         await self._door.home()
@@ -245,6 +248,7 @@ class Robot:
 
     async def move(self, coordinate: GantryCoordinate) -> None:
         await self._tool.retract_z()
+        await self.retract_stage()
         current_position = await self._gantry.position
         move_path = self.calculate_move_path(current_position, coordinate)
         await self._gantry.move_path(move_path)
@@ -289,11 +293,13 @@ class Robot:
     async def drop_off_item(self) -> None:
         await self.move(self._configuration.pickup_location + self._configuration.place_offset)
         await self._door.open_door()
+        await self.extend_stage()
         await self._tool.extend_pickup()
         await self.unsafe_move(
             self._configuration.pickup_location + self._configuration.pickup_location_offset
         )
         await self._tool.retract_z()
+        await self.retract_stage()
         await self._door.close_door()
 
     async def pickup_item(self) -> None:
@@ -301,18 +307,24 @@ class Robot:
             self._configuration.pickup_location + self._configuration.pickup_location_offset
         )
         await self._door.open_door()
+        await self.extend_stage()
         await self._tool.extend_pickup()
         await self.unsafe_move(self._configuration.pickup_location)
         await self._tool.retract_z()
+        await self.retract_stage()
         await self._door.close_door()
 
     async def _grab_cell(self, coordinate: GantryCoordinate, cell: Cell) -> None:
         await self.move(coordinate)
+        await self.extend_stage()
         await self._tool.grab_box()
+        await self.retract_stage()
 
     async def _place_cell(self, coordinate: GantryCoordinate, cell: Cell) -> None:
         await self.move(coordinate + self._configuration.place_offset)
+        await self.extend_stage()
         await self._tool.place_box()
+        await self.retract_stage()
 
     async def grab_cell(self, location: StorageModuleCellLocation) -> None:
         coordinate = self._storage.get_cell_coordinate(location)
@@ -364,14 +376,24 @@ class Robot:
     async def status(self) -> RobotStatus:
         gantry_status = await self._gantry.status()
         tool_status = await self._tool.status()
-        curtain = await self._io.read_channels()
+        #curtain = await self._io.read_channels()
         return RobotStatus(
             gantry=gantry_status,
             tool=tool_status,
             storage=self._storage,
             state=self._state,
-            light_curtain=curtain.ch0,
+            light_curtain=False,
         )
+
+    async def extend_stage(self) -> None:
+        await self._io.set_channel_off(4)
+        await asyncio.sleep(3)
+
+    async def retract_stage(self) -> None:
+        status = await self._io.read_output_channels()
+        if status.ch4:
+            await self._io.set_channel_on(4)
+            await asyncio.sleep(3)
 
     async def handle_command(self, command: RobotCommands) -> RobotResponse:
         print(command)

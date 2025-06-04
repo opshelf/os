@@ -85,6 +85,10 @@ class TMCM12xx(TMCM):
     async def set_external_encoder_max_deviation(self, max_deviation: int) -> None:
         await self.set_axis_parameter(self.AP.ExternalEncoderMaxDeviation, max_deviation)
 
+    async def get_external_encoder_max_deviation(self) -> int:
+        result = await self.get_axis_parameter(self.AP.ExternalEncoderMaxDeviation)
+        return result.value
+
     async def set_external_encoder_position(self, position: int) -> None:
         await self.set_axis_parameter(self.AP.ExternalEncoderPosition, position)
 
@@ -94,7 +98,7 @@ class TMCM12xx(TMCM):
     async def set_outputs(self, value: int) -> None:
         await self.set_io(1, value)
 
-    async def get_external_encoder_postion(self) -> int:
+    async def get_external_encoder_position(self) -> int:
         reply = await self.get_axis_parameter(self.AP.ExternalEncoderPosition)
         return reply.value
 

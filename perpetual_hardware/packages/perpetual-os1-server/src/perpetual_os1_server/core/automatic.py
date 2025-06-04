@@ -65,8 +65,8 @@ class AutomaticStorage:
             ):
                 print(self._scan, self._status.robot_status.light_curtain, self._scale_weight)
                 size_db = get_size_db()
-                print(size_db)
                 data = size_db.get_item_size(self._scan)
+                print(data)
                 if data and not self._status.robot_status.light_curtain:
                     client = await get_robot_client()
                     await client.send_command(
@@ -80,6 +80,8 @@ class AutomaticStorage:
                         )
                     )
                     self._scan = None
+                else:
+                    print("Data Doesn't Exist")
 
                 print(data)
             await asyncio.sleep(1)

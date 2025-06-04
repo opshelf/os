@@ -7,6 +7,7 @@ from hardware_common.stepper_motor import StepperMotorConfig, Rotation
 
 door_axis_configuration = CanAxisConfiguration(
     can_id=CanMessageIds.DOOR.value,
+    #can_id=CanMessageIds.Z_AXIS.value,
     configuration=StepperMotorConfig(
         microsteps=16,
         steps_per_rev=200,
@@ -20,7 +21,7 @@ door_axis_configuration = CanAxisConfiguration(
         max_velocity=200,
         max_acceleration=50,
         min_travel=None,
-        max_travel=None,
+        max_travel=337.52,
         invert_coordinates=False,
         home_direction=Rotation.CCW,
         homing_speed=50,
@@ -33,7 +34,7 @@ door_axis_configuration = CanAxisConfiguration(
 )
 
 door_configuration = DoorConfiguration(
-    axis=door_axis_configuration, open_position=155.0, close_position=1.0
+    axis=door_axis_configuration, open_position=335.0, close_position=1.0
 )
 
 
@@ -43,10 +44,20 @@ async def main() -> None:
     await door.initialize()
     await door.axis.set_pullup_resistors(0)
     await door.home()
+    for i in range(0, 2):
+        await door.open_door()
+        await door.close_door()
+
+    #await door.axis.init_brake_move()
+    #await door.axis.safety_off()
+    #await door.axis.move_to_relative_position(100, override_brake=True)
+    #input()
+    #await door.axis.end_brake_move()
     #await door.axis.init_brake_move()
     #await door.axis.safety_off()
     #await asyncio.sleep(1)
-    #await door.axis.move_relative(1000)
+    #await door.axis.safety_off()
+    #await door.axis.move_to_position(-100)
     #input()
     ##await door.axis.move_relative(-1000)
     #await door.axis.end_brake_move()
