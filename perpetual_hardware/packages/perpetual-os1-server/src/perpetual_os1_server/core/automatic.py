@@ -4,7 +4,7 @@ from nats.aio.msg import Msg
 from nats.aio.subscription import Subscription
 from nats.aio.client import Client as NATS
 from perpetual_barcode_scanner import LabelScannedEvent
-from perpetual_os1.robot import StoreItemRequested
+from perpetual_os1.robot import StoreItemCommand
 from perpetual_os1.storage import CellItem
 from perpetual_scale import ScaleReadEvent
 from perpetual_os1.robot_worker import WorkerStatus
@@ -69,17 +69,24 @@ class AutomaticStorage:
                 print(data)
                 if data and not self._status.robot_status.light_curtain:
                     client = await get_robot_client()
-                    await client.send_command(
-                        StoreItemRequested(
-                            item=CellItem(
-                                dimensions=data.size,
-                                data=data.data,
-                                weight=self._scale_weight,
-                                upca=self._scan,
+                    storage = await client.get_storage()
+                    item = CellItem(
+                        dimensions=data.size,
+                        data=data.data,
+                        weight=self._scale_weight,
+                        upca=self._scan,
+                    )
+                    location = storage.find_best_slot_for_item(item)
+                    if location:
+                        await client.send_command(
+                            StoreItemCommand(
+                                location=location,
+                                item=item
                             )
                         )
-                    )
-                    self._scan = None
+                        self._scan = None
+                    else:
+                        print("No valid storage location found")
                 else:
                     print("Data Doesn't Exist")
 
