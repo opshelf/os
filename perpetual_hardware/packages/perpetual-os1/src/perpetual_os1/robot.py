@@ -101,9 +101,6 @@ class ToolCommand(BaseModel):
     payload: ToolCommands
 
 
-class StoreItemRequested(BaseModel):
-    command: Literal["store_item_request"] = "store_item_request"
-    item: CellItem
 
 
 class ReturnCellCommand(BaseModel):
@@ -130,7 +127,6 @@ RobotCommands = Annotated[
         RetrieveItemCommand,
         GantryCommand,
         ToolCommand,
-        StoreItemRequested,
         ReturnCellCommand,
     ],
     Field(discriminator="command"),
@@ -455,15 +451,5 @@ class Robot:
             case ReturnCellCommand():
                 await self.return_cell()
                 return RobotCommandSuccessful()
-            case StoreItemRequested(item=item):
-                location = self._storage.find_best_slot_for_item(item)
-                print(location)
-                if location:
-                    await self.store_item(location)
-                    self._storage.store_item(location, item)
-                    self._storage.save()
-                    return RobotItemStoredResponse(location=location)
-                print("Error")
-                return RobotCommandError(error="No Valid Storage Location")
             case _:
                 return RobotCommandError(error="Invalid Robot Command")
