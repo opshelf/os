@@ -237,8 +237,11 @@ class Tool(AbstractSubsystem[ToolConfiguration, ToolStatus]):
         await self.setup_box_drop()
         await self.retract_z()
 
+    async def place_box_no_retract(self) -> None:
+        await self.extend()
+
     async def extend(self) -> None:
-        await self.z_axis.move_to_position(self._configuration.tool_extension_offset)
+        await self.z_axis.move_to_position(self._configuration.tool_extension_offset + .5)
         await self.z_axis.wait_for_move()
 
     async def extend_pickup(self) -> None:

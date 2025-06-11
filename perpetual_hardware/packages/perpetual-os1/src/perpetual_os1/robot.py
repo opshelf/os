@@ -323,7 +323,10 @@ class Robot:
     async def _place_cell(self, coordinate: GantryCoordinate, cell: Cell) -> None:
         await self.move(coordinate + self._configuration.place_offset)
         await self.extend_stage()
-        await self._tool.place_box()
+        await self._tool.place_box_no_retract()
+        await self.unsafe_move(coordinate)
+        await self._tool.setup_box_drop()
+        await self._tool.retract_z()
         await self.retract_stage()
 
     async def grab_cell(self, location: StorageModuleCellLocation) -> None:

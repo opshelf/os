@@ -53,3 +53,4 @@ class CanMessageIds(int, Enum):
     Z_AXIS = 110
     ROTATION = 111
     DOOR = 120
+    CURTAIN = 121

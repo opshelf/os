@@ -31,17 +31,31 @@ async def main() -> None:
     robot = Robot(can_bus, modbus, robot_configuration)
     await robot.initialize()
     robot.set_storage(storage_grid)
+    await robot.home()
+    #await robot.tool.home()
+    #await robot.tool.rotate_to_side(StorageModuleSide.RIGHT)
+    #await robot.tool.rotate_to_side(StorageModuleSide.LEFT)
+    #await robot.move(GantryCoordinate(x=310.0, y=741))
+    #await robot.extend_stage()
+    #await robot.tool.extend()
+    #await robot.tool.setup_box_pick()
+
+    input()
+    #await robot.extend_stage()
+    #input()
+    #await robot.retract_stage()
+    #input()
     #await robot.home()
-    await robot.store_item(StorageModuleCellLocation(
-        side=StorageModuleSide.RIGHT,
-        shelf_idx=0,
-        cell_idx=0
-    ))
-    await robot.retrieve_item(StorageModuleCellLocation(
-        side=StorageModuleSide.RIGHT,
-        shelf_idx=0,
-        cell_idx=0
-    ))
+    #await robot.store_item(StorageModuleCellLocation(
+    #    side=StorageModuleSide.RIGHT,
+    #    shelf_idx=0,
+    #    cell_idx=0
+    #))
+    #await robot.retrieve_item(StorageModuleCellLocation(
+    #    side=StorageModuleSide.RIGHT,
+    #    shelf_idx=0,
+    #    cell_idx=0
+    #))
     #await robot._door.open_door()
     #await robot.move(GantryCoordinate(x=10, y=489))
 
@@ -59,6 +73,10 @@ async def main() -> None:
     #for i in range(0, 4):
     #    await robot._grab_cell(GantryCoordinate(x=271.5+i*111, y=680), Cell(status=CellStatus.EMPTY, item=None, calibration_point=None, dimensions=Dimensions(length=100, width=100, height=10)))
     #    await robot._place_cell(GantryCoordinate(x=271.5+i*111, y=680), Cell(status=CellStatus.EMPTY, item=None, calibration_point=None, dimensions=Dimensions(length=100, width=100, height=100)))
+
+    #for i in range(0, 10):
+    #    await robot._grab_cell(GantryCoordinate(x=271.5, y=680), Cell(status=CellStatus.EMPTY, item=None, calibration_point=None, dimensions=Dimensions(length=100, width=100, height=10)))
+    #    await robot._place_cell(GantryCoordinate(x=271.5, y=680), Cell(status=CellStatus.EMPTY, item=None, calibration_point=None, dimensions=Dimensions(length=100, width=100, height=100)))
 
     #for i in range(0, 5):
     #    await robot._grab_cell(GantryCoordinate(x=293+156*i, y=410), Cell(status=CellStatus.EMPTY, item=None, calibration_point=None, dimensions=Dimensions(length=150, width=150, height=100)))
