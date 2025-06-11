@@ -211,7 +211,7 @@ class TrinamicAxis(TMCM12xx):
         return self._actual_position
 
     async def move_to_position(
-        self, position: float, override_brake: Optional[bool] = False
+        self, position: float, *, override_brake: Optional[bool] = False
     ) -> None:
         if self._status != StepperMotorStatus.GOOD:
             raise Exception("Status Bad")

@@ -92,7 +92,37 @@ storage_grid = StorageGrid(
                 Cell(
                     status=CellStatus.EMPTY,
                     item=None,
-                    calibration_point=CalibrationCoordinate(x=246.5, y=885, z=0),
+                    calibration_point=CalibrationCoordinate(x=249.5, y=885, z=0),
+                    dimensions=Dimensions(length=50, height=200, width=50),
+                ),
+                Cell(
+                    status=CellStatus.EMPTY,
+                    item=None,
+                    calibration_point=None,
+                    dimensions=Dimensions(length=50, height=200, width=50),
+                ),
+                Cell(
+                    status=CellStatus.EMPTY,
+                    item=None,
+                    calibration_point=None,
+                    dimensions=Dimensions(length=50, height=200, width=50),
+                ),
+                Cell(
+                    status=CellStatus.EMPTY,
+                    item=None,
+                    calibration_point=None,
+                    dimensions=Dimensions(length=50, height=200, width=50),
+                ),
+                Cell(
+                    status=CellStatus.EMPTY,
+                    item=None,
+                    calibration_point=None,
+                    dimensions=Dimensions(length=50, height=200, width=50),
+                ),
+                Cell(
+                    status=CellStatus.EMPTY,
+                    item=None,
+                    calibration_point=None,
                     dimensions=Dimensions(length=50, height=200, width=50),
                 ),
                 Cell(
@@ -137,7 +167,7 @@ async def init_robot_worker() -> None:
     client = await get_modbus_client()
     logging.info("Got Bus")
     robot = Robot(can_bus, client, robot_configuration)
-    #storage_grid = load_storage_from_file("storage.json")
+    storage_grid = load_storage_from_file("storage.json")
     robot.set_storage(storage_grid)
     await robot.initialize()
     logging.info("Built Robot")

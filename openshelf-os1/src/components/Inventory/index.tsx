@@ -23,13 +23,13 @@ const StorageCells = () => {
   }
 
   const extractNonEmptyCells = (moduleSide: "left_module" | "right_module") => {
-    return storage[moduleSide].flatMap((shelf, shelfIdx) =>
-      shelf.cells
-        .map((cell, cellIdx) => ({
+    return storage[moduleSide].flatMap(
+      (shelf, shelfIdx) =>
+        shelf.cells.map((cell, cellIdx) => ({
           cell,
           location: { side: moduleSide, shelfIdx, cellIdx },
-        }))
-        .filter(({ cell }) => cell.status !== "EMPTY" && !cell.empty),
+        })),
+      // .filter(({ cell }) => cell.status !== "EMPTY" && !cell.empty),
     );
   };
 
