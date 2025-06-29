@@ -46,7 +46,9 @@ async def main() -> None:
     await door.home()
     for i in range(0, 2):
         await door.open_door()
+        input()
         await door.close_door()
+        input()
 
     #await door.axis.init_brake_move()
     #await door.axis.safety_off()

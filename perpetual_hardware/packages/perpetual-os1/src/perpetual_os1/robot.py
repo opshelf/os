@@ -1,5 +1,8 @@
+from enum import StrEnum
+from perpetual_trinamic.aio.trinamic_axis import TrinamicAxis
 from pydantic import BaseModel, Field
 from pymodbus.client.serial import AsyncModbusSerialClient
+from perpetual_os1.common import CanAxisConfiguration
 from perpetual_os1.door import Door, DoorConfiguration
 from perpetual_os1.gantry import (
     GantryCommands,
@@ -8,6 +11,8 @@ from perpetual_os1.gantry import (
     GantryCoordinate,
     GantryStatus,
 )
+from perpetual_os1.localizer import LocalizedResult, Localizer
+from perpetual_os1.scale_buttons import ScaleButtons
 from perpetual_os1.storage import Cell, StorageGrid, StorageModuleCellLocation, CellItem, StorageModuleSide
 from perpetual_os1.tool import Tool, ToolCommands, ToolConfiguration, ToolStatus
 from perpetual_can import CANBusHandler
@@ -18,6 +23,7 @@ from perpetual_os1.gantry import GantryCoordinate
 from perpetual_waveshare.digital import DigitalIOController
 import os
 import asyncio
+from perpetual_os1.curtain import IntelligentGrating
 
 
 class StopCommand(BaseModel):
@@ -100,12 +106,21 @@ class ToolCommand(BaseModel):
     command: Literal["tool_command"] = "tool_command"
     payload: ToolCommands
 
-
-
-
 class ReturnCellCommand(BaseModel):
     command: Literal["return_cell"] = "return_cell"
 
+class SizeItemCommand(BaseModel):
+    command: Literal["size_item"] = "size_item"
+
+
+class ToggleScalePowerCommand(BaseModel):
+    command: Literal["toggle_scale_power"] = "toggle_scale_power"
+
+class ToggleScalePrintCommand(BaseModel):
+    command: Literal["toggle_scale_print"] = "toggle_scale_print"
+
+class ToggleScaleTareCommand(BaseModel):
+    command: Literal["toggle_scale_tare"] = "toggle_scale_tare"
 
 # Create a union of all Robot commands using a discriminator field
 RobotCommands = Annotated[
@@ -128,6 +143,10 @@ RobotCommands = Annotated[
         GantryCommand,
         ToolCommand,
         ReturnCellCommand,
+        SizeItemCommand,
+        ToggleScalePowerCommand,
+        ToggleScalePrintCommand,
+        ToggleScaleTareCommand
     ],
     Field(discriminator="command"),
 ]
@@ -147,7 +166,26 @@ class RobotItemStoredResponse(BaseModel):
     location: StorageModuleCellLocation
 
 
-RobotResponse = Union[RobotCommandSuccessful, RobotCommandError, RobotItemStoredResponse]
+
+
+class CellSize(StrEnum):
+    CELL_50 = "CELL_50"
+    CELL_100 = "CELL_100"
+    CELL_150 = "CELL_150"
+    INVALID = "INVALID"
+
+class ItemSizeLocation(BaseModel):
+    object_size: float
+    min_bound: float
+    max_bound: float
+    height: float
+    cell_size: CellSize 
+
+class SizeResult(BaseModel):
+    result: Union[Literal["detected"], Literal["no_item_detected"], Literal["item_outside_of_zone"]]
+    size: Optional[ItemSizeLocation]
+
+RobotResponse = Union[RobotCommandSuccessful, RobotCommandError, RobotItemStoredResponse, SizeResult]
 
 
 class WorkerStatus(BaseModel):
@@ -165,6 +203,7 @@ class RobotConfiguration(BaseModel):
     place_offset: GantryCoordinate
     pickup_location: GantryCoordinate
     pickup_location_offset: GantryCoordinate
+    curtain_axis_configuration: CanAxisConfiguration
     state_file: str = "state.json"
 
 
@@ -180,6 +219,7 @@ class RobotStatus(BaseModel):
     light_curtain: bool
 
 
+
 class Robot:
     def __init__(
         self, bus: CANBusHandler, client: AsyncModbusSerialClient, configuration: RobotConfiguration
@@ -188,12 +228,26 @@ class Robot:
         self._gantry = Gantry(bus, self._configuration.gantry)
         self._tool = Tool(bus, client, self._configuration.tool)
         self._io = DigitalIOController(client)
+        self._scale_buttons = ScaleButtons(client)
+        self._sizing_curtain = IntelligentGrating(client, address=0x40)
+        self._safety_curtain = IntelligentGrating(client, address=0x41)
         self._door = Door(bus, self._configuration.door)
+        self._curtain = TrinamicAxis(
+            bus,
+            configuration=self._configuration.curtain_axis_configuration.configuration,
+            module_id=self._configuration.curtain_axis_configuration.can_id
+        )
+        self._localizer = Localizer(5.0, 25.0)
         self._bus = bus
         self._client = client
         self._storage = StorageGrid(left_module=[], right_module=[])
         self._state = RobotState()
         self.load_state()
+
+
+    @property
+    def curtain(self) -> TrinamicAxis:
+        return self._curtain
 
     @property
     def state(self) -> RobotState:
@@ -207,6 +261,9 @@ class Robot:
         self._configuration = configuration
         await self.initialize()
 
+    @property
+    def door(self) -> Door:
+        return self._door
 
     @property
     def gantry(self) -> Gantry:
@@ -232,12 +289,14 @@ class Robot:
         await self._gantry.initialize()
         await self._tool.initialize()
         await self._door.initialize()
+        await self._curtain.initialize()
 
     async def home(self) -> None:
         await self.retract_stage()
         await self._tool.home()
         await self._gantry.home()
         await self._door.home()
+        await self._curtain.home()
 
     async def unsafe_move(self, coordinate: GantryCoordinate) -> None:
         await self._gantry.move_coordinate(coordinate, True)
@@ -284,9 +343,11 @@ class Robot:
         await self._tool.place_box()
 
     async def move_to_pickup_location(self) -> None:
+        await self.tool.rotate_to_side(StorageModuleSide.RIGHT)
         await self.move(self._configuration.pickup_location)
 
     async def drop_off_item(self) -> None:
+        await self.tool.rotate_to_side(StorageModuleSide.RIGHT)
         await self.move(self._configuration.pickup_location + self._configuration.place_offset)
         await self._door.open_door()
         await self.extend_stage()
@@ -299,6 +360,7 @@ class Robot:
         await self._door.close_door()
 
     async def pickup_item(self) -> None:
+        await self.tool.rotate_to_side(StorageModuleSide.RIGHT)
         await self.move(
             self._configuration.pickup_location + self._configuration.pickup_location_offset
         )
@@ -328,6 +390,7 @@ class Robot:
     async def grab_cell(self, location: StorageModuleCellLocation) -> None:
         coordinate = self._storage.get_cell_coordinate(location)
         cell = self._storage.get_cell(location)
+        await self._tool.rotate_to_side(location.side)
         self._state = RobotState(current_cell=location)
         await self._grab_cell(coordinate.to_gantry_coordinate(), cell)
         self.set_current_cell(location)
@@ -335,6 +398,7 @@ class Robot:
     async def place_cell(self, location: StorageModuleCellLocation) -> None:
         coordinate = self._storage.get_cell_coordinate(location)
         cell = self._storage.get_cell(location)
+        await self._tool.rotate_to_side(location.side)
         self._state = RobotState(current_cell=None)
         await self._place_cell(coordinate.to_gantry_coordinate(), cell)
         self.clear_current_cell()
@@ -375,13 +439,19 @@ class Robot:
     async def status(self) -> RobotStatus:
         gantry_status = await self._gantry.status()
         tool_status = await self._tool.status()
-        #curtain = await self._io.read_channels()
+        blocked = False
+        try:
+            qty = await self._safety_curtain.read_blocked_quantity()
+            blocked = qty > 0
+        except Exception as e:
+            print(e)
+        
         return RobotStatus(
             gantry=gantry_status,
             tool=tool_status,
             storage=self._storage,
             state=self._state,
-            light_curtain=False,
+            light_curtain=blocked,
         )
 
     async def extend_stage(self) -> None:
@@ -394,8 +464,97 @@ class Robot:
             await self._io.set_channel_on(4)
             await asyncio.sleep(3)
 
+
+    async def get_broken_beams(self) -> CellSize:
+        beam_sensors = await self._io.read_channels()
+        if beam_sensors.ch0 == True or beam_sensors.ch5 == True:
+            return CellSize.INVALID
+        elif beam_sensors.ch1 == True or beam_sensors.ch4 == True:
+            return CellSize.CELL_150
+        elif beam_sensors.ch2 == True or beam_sensors.ch3 == True:
+            return CellSize.CELL_100
+        else:
+            return CellSize.CELL_50
+
+    def get_cell_size(self, cell: CellSize, max_bound: float) -> CellSize:
+        if cell == CellSize.CELL_150:
+            return CellSize.CELL_150
+        elif max_bound >= 100.0:
+            return CellSize.CELL_150
+        elif max_bound < 100.0 and max_bound >= 50.0 and cell == CellSize.CELL_100:
+            return CellSize.CELL_100
+        elif max_bound < 100.0 and max_bound >= 50.0 and cell == CellSize.CELL_50:
+            return CellSize.CELL_50
+        elif max_bound < 50.0 and cell == CellSize.CELL_100:
+            return CellSize.CELL_100
+        elif max_bound < 50.0 and cell == CellSize.CELL_50:
+            return CellSize.CELL_50
+        else: 
+            return CellSize.INVALID
+
+    async def size_item(self) -> SizeResult:
+        localizations: List[LocalizedResult] = []
+        broken_beams = await self.get_broken_beams()
+        if broken_beams == CellSize.INVALID:
+            return SizeResult(
+                result="item_outside_of_zone",
+                size=None
+            )
+        try:
+            await self._curtain.move_to_position(0)
+            await self._curtain.init_brake_move()
+            await self._curtain.move_to_position(220, override_brake=True)
+            height = 20
+            while True:
+                beams = await self._sizing_curtain.read_all_light_status(31)
+                height = await self._curtain.get_position() + 20
+                result = self._localizer.localize(beams)
+                if result:
+                    localizations.append(result)
+                    pass
+                else:
+                    await self._curtain.stop()
+                    break
+                position_reached = await self._curtain.get_position_reached()
+                if position_reached:
+                    break
+            await self._curtain.move_to_position(0)
+            max_object_size = 0.0
+            min_bound = 300
+            max_bound = 0
+
+            for localization in localizations:
+                if localization.object_size > max_object_size:
+                    max_object_size = localization.object_size
+                if localization.first_break_location < min_bound:
+                    min_bound = localization.first_break_location
+                if localization.last_break_location > max_bound:
+                    max_bound = localization.last_break_location
+            if max_object_size > 150.0:
+                return SizeResult(
+                    result="item_outside_of_zone",
+                    size=None
+                )
+            else:
+                return SizeResult(
+                    result="detected",
+                    size=ItemSizeLocation(
+                        object_size=max_object_size,
+                        min_bound=min_bound,
+                        max_bound=max_bound,
+                        height=height,
+                        cell_size=self.get_cell_size(broken_beams, max_bound)
+                    )
+                )
+
+        finally:
+            await self._curtain.end_brake_move()
+
+    async def shutdown(self) -> None:
+        self._bus.shutdown()
+        self._client.close()
+
     async def handle_command(self, command: RobotCommands) -> RobotResponse:
-        print(command)
         match command:
             case StopCommand():
                 await self.stop()
@@ -453,6 +612,18 @@ class Robot:
                 return RobotCommandSuccessful()
             case ReturnCellCommand():
                 await self.return_cell()
+                return RobotCommandSuccessful()
+            case SizeItemCommand():
+                ret = await self.size_item()
+                return ret
+            case ToggleScaleTareCommand():
+                await self._scale_buttons.tare()
+                return RobotCommandSuccessful()
+            case ToggleScalePrintCommand():
+                await self._scale_buttons.print()
+                return RobotCommandSuccessful()
+            case ToggleScalePowerCommand():
+                await self._scale_buttons.power()
                 return RobotCommandSuccessful()
             case _:
                 return RobotCommandError(error="Invalid Robot Command")

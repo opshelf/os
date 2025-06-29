@@ -129,8 +129,9 @@ class RobotWorker:
                         self._current_command = None
                         self._msg = None
 
-                await asyncio.sleep(0.05)
+                await asyncio.sleep(0.1)
             except (nats_errors.TimeoutError, asyncio.TimeoutError, asyncio.CancelledError) as e:
+                await asyncio.sleep(0.1)
                 if self._msg:
                     await self._msg.ack()
                 robot_status = await self._robot.status()
@@ -141,20 +142,45 @@ class RobotWorker:
                 self._current_task = None
                 self._current_command = None
                 self._msg = None
+            #except Exception as e:
+            #    robot_status = await self._robot.status()
+            #    error_status = WorkerStatus(
+            #        robot_status=robot_status, running=True, current_command=None
+            #    )
+            #    await self._nc.publish(
+            #        self._nats_config.event_queue, error_status.model_dump_json().encode()
+            #    )
+            #    if self._msg:
+            #        await self._msg.ack()
+            #    self._running = False
+            #    self._current_task = None
+            #    self._current_command = None
+            #    self._msg = None
+
             except Exception as e:
-                robot_status = await self._robot.status()
-                error_status = WorkerStatus(
-                    robot_status=robot_status, running=True, current_command=None
-                )
-                await self._nc.publish(
-                    self._nats_config.event_queue, error_status.model_dump_json().encode()
-                )
+                print(f"Unexpected exception: {e}")  # or use logging
+                try:
+                    robot_status = await self._robot.status()
+                    error_status = WorkerStatus(
+                        robot_status=robot_status, running=True, current_command=None
+                    )
+                    await self._nc.publish(
+                        self._nats_config.event_queue, error_status.model_dump_json().encode()
+                    )
+                except Exception as pub_err:
+                    print(f"Error publishing error status: {pub_err}")
+
                 if self._msg:
-                    await self._msg.ack()
-                self._running = False
+                    try:
+                        await self._msg.ack()
+                    except Exception as ack_err:
+                        print(f"Failed to ack msg: {ack_err}")
+
                 self._current_task = None
                 self._current_command = None
                 self._msg = None
+
+                await asyncio.sleep(1)
 
     async def start(self) -> None:
         if not self._running:
@@ -168,20 +194,27 @@ class RobotWorker:
             )
 
     async def shutdown(self) -> None:
-        if self._running:
-            self._running = False
-            if self._worker_task:
-                self._worker_task.cancel()
-                try:
-                    await self._worker_task
-                except asyncio.CancelledError:
-                    pass
-            # Send a stop command before shutting down.
-            await self._robot.handle_command(StopCommand())
-            shutdown_status = WorkerStatus(robot_status=None, running=False, current_command=None)
-            await self._nc.publish(
-                self._nats_config.status_queue, shutdown_status.model_dump_json().encode()
-            )
+        print("Shutting Down")
+        #if self._running:
+        self._running = False
+        if self._worker_task:
+            print("Cancel Worker Task")
+            self._worker_task.cancel()
+            try:
+                await self._worker_task
+            except asyncio.CancelledError:
+                pass
+        # Send a stop command before shutting down.
+
+        print("Send Stop Command")
+        await self._robot.handle_command(StopCommand())
+        print("Send Shutdown")
+        await self._robot.shutdown()
+        print("Publish Status ")
+        shutdown_status = WorkerStatus(robot_status=None, running=False, current_command=None)
+        await self._nc.publish(
+            self._nats_config.status_queue, shutdown_status.model_dump_json().encode()
+        )
 
     async def _handle_get_storage(self, msg: Msg) -> None:
         storage = await self.get_storage()

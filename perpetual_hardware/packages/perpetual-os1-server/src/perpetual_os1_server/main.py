@@ -74,5 +74,5 @@ def start() -> None:
         host="0.0.0.0",
         port=8000,
         reload=True,
-        timeout_graceful_shutdown=2,
+        #timeout_graceful_shutdown=2,
     )

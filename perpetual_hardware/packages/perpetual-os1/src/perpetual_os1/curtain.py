@@ -57,23 +57,21 @@ class IntelligentGrating:
     async def _read_registers(self, start: int, count: int) -> ModbusPDU:
         return await self.client.read_holding_registers(start, count=count, slave=self.address)
 
-    async def read_lowest_blocked(self) -> Optional[int]:
+    async def read_lowest_blocked(self) -> int:
         rr = await self._read_registers(0x0040, 1)
-        return rr.registers[0] if not rr.isError() else None
+        return rr.registers[0] 
 
-    async def read_highest_blocked(self) -> Optional[int]:
+    async def read_highest_blocked(self) -> int:
         rr = await self._read_registers(0x0041, 1)
-        return rr.registers[0] if not rr.isError() else None
+        return rr.registers[0] 
 
-    async def read_blocked_quantity(self) -> Optional[int]:
+    async def read_blocked_quantity(self) -> int:
         rr = await self._read_registers(0x0042, 1)
-        return rr.registers[0] if not rr.isError() else None
+        return rr.registers[0] 
 
-    async def read_all_light_status(self, count_light_points: int = 80) -> Optional[List[int]]:
+    async def read_all_light_status(self, count_light_points: int = 80) -> List[int]:
         reg_count: int = (count_light_points + 15) // 16
         rr = await self._read_registers(0x0000, reg_count)
-        if rr.isError():
-            return None
         bits = []
         for ix, num in enumerate(rr.registers):
             swapped = ((num & 0xFF00) >> 8) | ((num & 0x00FF) << 8)

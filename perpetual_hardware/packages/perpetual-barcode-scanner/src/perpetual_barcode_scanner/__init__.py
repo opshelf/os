@@ -55,5 +55,9 @@ class ScannerWorker:
             self._worker_task = None
 
     async def close(self) -> None:
+        await self.stop()  # Make sure worker is stopped cleanly
+        await self._nc.drain()  # Flush and unsubscribe
         await self._nc.close()
+        print("Scanner NC Closed")
         await self._scanner.shutdown()
+        print("Scanner NC shutdown")

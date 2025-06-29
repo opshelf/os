@@ -67,5 +67,9 @@ class ScaleWorker:
             self._worker_task = None
 
     async def close(self) -> None:
+        await self.stop()  # Make sure worker is stopped cleanly
+        await self._nc.drain()  # Flush and unsubscribe
         await self._nc.close()
+        print("Nats Closed")
         await self._scale.shutdown()
+        print("Scale Shutdown")
