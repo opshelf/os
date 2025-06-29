@@ -201,6 +201,7 @@ class Tool(AbstractSubsystem[ToolConfiguration, ToolStatus]):
             )
             * 255.0
         )
+        print(value)
         await self._gripper.execute_control_movement(
             ExecuteControlMovement(speed=255, force=255, position=max(0, min(value, 255)))
         )

@@ -187,7 +187,7 @@ def probe_modbus_client() -> Optional[AsyncModbusSerialClient]:
     ports = get_usb_serial()
     for port in ports:
         if port.serial_number == "B001K430":
-            return AsyncModbusSerialClient(port.device, baudrate=115200, timeout=1)
+            return AsyncModbusSerialClient(port.device, baudrate=115200, timeout=1, retries=10)
     return None
 
 

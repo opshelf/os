@@ -29,6 +29,7 @@ class RobotClient:
 
     async def get_storage(self) -> StorageGrid:
         msg = await self._nc.request(self._config.get_storage_subject, b"", timeout=2)
+        print(msg)
         return self._storage_adapter.validate_json(msg.data)
 
     async def set_storage(self, storage: StorageGrid) -> None:

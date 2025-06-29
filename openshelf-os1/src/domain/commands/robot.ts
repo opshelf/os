@@ -89,6 +89,18 @@ export const returnCellCommandSchema = z.object({
   command: z.literal("return_cell"),
 });
 
+export const toggleScalePowerCommandSchema = z.object({
+  command: z.literal("toggle_scale_power"),
+});
+
+export const toggleScalePrintCommandSchema = z.object({
+  command: z.literal("toggle_scale_print"),
+});
+
+export const toggleScaleTareCommandSchema = z.object({
+  command: z.literal("toggle_scale_tare"),
+});
+
 // Full RobotCommand discriminated union
 export const robotCommandsSchema = z.discriminatedUnion("command", [
   stopCommandSchema,
@@ -109,6 +121,9 @@ export const robotCommandsSchema = z.discriminatedUnion("command", [
   gantryCommandSchema,
   toolCommandSchema,
   returnCellCommandSchema,
+  toggleScalePowerCommandSchema,
+  toggleScalePrintCommandSchema,
+  toggleScaleTareCommandSchema,
 ]);
 
 // Type exports

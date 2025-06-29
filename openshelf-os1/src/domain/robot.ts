@@ -126,6 +126,24 @@ export class RobotController {
     });
   }
 
+  async tareScale() {
+    await this.sendCommand({
+      command: "toggle_scale_tare",
+    });
+  }
+
+  async scalePower() {
+    await this.sendCommand({
+      command: "toggle_scale_power",
+    });
+  }
+
+  async scalePrint() {
+    await this.sendCommand({
+      command: "toggle_scale_print",
+    });
+  }
+
   async placeCell(location: StorageModuleCellLocation) {
     await this.sendCommand({
       command: "place_cell",

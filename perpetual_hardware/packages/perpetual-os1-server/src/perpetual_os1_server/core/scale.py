@@ -22,8 +22,9 @@ async def init_scale_worker() -> None:
 
 
 async def stop_scale_worker() -> None:
-    global robot_worker
+    global scale_worker
     if scale_worker:
+        print("Close Scale")
         await scale_worker.close()
 
 

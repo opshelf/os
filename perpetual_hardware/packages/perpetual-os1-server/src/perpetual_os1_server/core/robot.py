@@ -26,7 +26,7 @@ storage_grid = StorageGrid(
                 Cell(
                     status=CellStatus.EMPTY,
                     item=None,
-                    calibration_point=CalibrationCoordinate(x=293, y=410, z=0),
+                    calibration_point=CalibrationCoordinate(x=295, y=410, z=0),
                     dimensions=Dimensions(length=145, height=200, width=145),
                 ),
                 Cell(
@@ -62,7 +62,19 @@ storage_grid = StorageGrid(
                 Cell(
                     status=CellStatus.EMPTY,
                     item=None,
-                    calibration_point=CalibrationCoordinate(x=271.5, y=680, z=0),
+                    calibration_point=CalibrationCoordinate(x=274.5, y=680, z=0),
+                    dimensions=Dimensions(length=100, height=200, width=100),
+                ),
+                Cell(
+                    status=CellStatus.EMPTY,
+                    item=None,
+                    calibration_point=None,
+                    dimensions=Dimensions(length=100, height=200, width=100),
+                ),
+                Cell(
+                    status=CellStatus.EMPTY,
+                    item=None,
+                    calibration_point=None,
                     dimensions=Dimensions(length=100, height=200, width=100),
                 ),
                 Cell(
@@ -85,72 +97,72 @@ storage_grid = StorageGrid(
                 ),
             ],
         ),
-        Shelf(
-            shelf_height=200,
-            shelf_width=1000,
-            cells=[
-                Cell(
-                    status=CellStatus.EMPTY,
-                    item=None,
-                    calibration_point=CalibrationCoordinate(x=249.5, y=885, z=0),
-                    dimensions=Dimensions(length=50, height=200, width=50),
-                ),
-                Cell(
-                    status=CellStatus.EMPTY,
-                    item=None,
-                    calibration_point=None,
-                    dimensions=Dimensions(length=50, height=200, width=50),
-                ),
-                Cell(
-                    status=CellStatus.EMPTY,
-                    item=None,
-                    calibration_point=None,
-                    dimensions=Dimensions(length=50, height=200, width=50),
-                ),
-                Cell(
-                    status=CellStatus.EMPTY,
-                    item=None,
-                    calibration_point=None,
-                    dimensions=Dimensions(length=50, height=200, width=50),
-                ),
-                Cell(
-                    status=CellStatus.EMPTY,
-                    item=None,
-                    calibration_point=None,
-                    dimensions=Dimensions(length=50, height=200, width=50),
-                ),
-                Cell(
-                    status=CellStatus.EMPTY,
-                    item=None,
-                    calibration_point=None,
-                    dimensions=Dimensions(length=50, height=200, width=50),
-                ),
-                Cell(
-                    status=CellStatus.EMPTY,
-                    item=None,
-                    calibration_point=None,
-                    dimensions=Dimensions(length=50, height=200, width=50),
-                ),
-                Cell(
-                    status=CellStatus.EMPTY,
-                    item=None,
-                    calibration_point=None,
-                    dimensions=Dimensions(length=50, height=200, width=50),
-                ),
-                Cell(
-                    status=CellStatus.EMPTY,
-                    item=None,
-                    calibration_point=None,
-                    dimensions=Dimensions(length=50, height=200, width=50),
-                ),
-                Cell(
-                    status=CellStatus.EMPTY,
-                    item=None,
-                    calibration_point=None,
-                    dimensions=Dimensions(length=50, height=200, width=50),
-                ),
-            ],
-        ),
+        #Shelf(
+        #    shelf_height=200,
+        #    shelf_width=1000,
+        #    cells=[
+        #        Cell(
+        #            status=CellStatus.EMPTY,
+        #            item=None,
+        #            calibration_point=CalibrationCoordinate(x=249.5, y=885, z=0),
+        #            dimensions=Dimensions(length=50, height=200, width=50),
+        #        ),
+        #        Cell(
+        #            status=CellStatus.EMPTY,
+        #            item=None,
+        #            calibration_point=None,
+        #            dimensions=Dimensions(length=50, height=200, width=50),
+        #        ),
+        #        Cell(
+        #            status=CellStatus.EMPTY,
+        #            item=None,
+        #            calibration_point=None,
+        #            dimensions=Dimensions(length=50, height=200, width=50),
+        #        ),
+        #        Cell(
+        #            status=CellStatus.EMPTY,
+        #            item=None,
+        #            calibration_point=None,
+        #            dimensions=Dimensions(length=50, height=200, width=50),
+        #        ),
+        #        Cell(
+        #            status=CellStatus.EMPTY,
+        #            item=None,
+        #            calibration_point=None,
+        #            dimensions=Dimensions(length=50, height=200, width=50),
+        #        ),
+        #        Cell(
+        #            status=CellStatus.EMPTY,
+        #            item=None,
+        #            calibration_point=None,
+        #            dimensions=Dimensions(length=50, height=200, width=50),
+        #        ),
+        #        Cell(
+        #            status=CellStatus.EMPTY,
+        #            item=None,
+        #            calibration_point=None,
+        #            dimensions=Dimensions(length=50, height=200, width=50),
+        #        ),
+        #        Cell(
+        #            status=CellStatus.EMPTY,
+        #            item=None,
+        #            calibration_point=None,
+        #            dimensions=Dimensions(length=50, height=200, width=50),
+        #        ),
+        #        Cell(
+        #            status=CellStatus.EMPTY,
+        #            item=None,
+        #            calibration_point=None,
+        #            dimensions=Dimensions(length=50, height=200, width=50),
+        #        ),
+        #        Cell(
+        #            status=CellStatus.EMPTY,
+        #            item=None,
+        #            calibration_point=None,
+        #            dimensions=Dimensions(length=50, height=200, width=50),
+        #        ),
+        #    ],
+        #),
     ],
     left_module=[],
 )

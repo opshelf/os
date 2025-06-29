@@ -22,8 +22,9 @@ async def init_scanner_worker() -> None:
 
 
 async def stop_scanner_worker() -> None:
-    global robot_worker
+    global scanner_worker
     if scanner_worker:
+        print("Close Scanner")
         await scanner_worker.close()
 
 
