@@ -20,4 +20,8 @@ state.json
 size.json
 baseline.jpg
 
+# Claude Code
+.claude/
+CLAUDE.md
+
 
