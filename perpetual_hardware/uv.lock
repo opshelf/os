@@ -9,26 +9,9 @@ resolution-markers = [
 
 [manifest]
 members = [
-    "hardware-common",
-    "perpetual-barcode-scanner",
-    "perpetual-camera",
-    "perpetual-can",
-    "perpetual-hardware",
-    "perpetual-io-detection",
-    "perpetual-label-maker",
-    "perpetual-os1",
-    "perpetual-os1-server",
-    "perpetual-output-box",
-    "perpetual-p0c",
-    "perpetual-p0c-server",
-    "perpetual-print-worker",
-    "perpetual-scale",
-    "perpetual-scan-server",
-    "perpetual-trinamic",
-    "perpetual-usb-utils",
-    "perpetual-waveshare",
-    "trinamic-utils",
-    "waveshare-can",
+    "hardware",
+    "perpetual_os1",
+    "perpetual_os1_server",
 ]
 
 [[package]]
@@ -127,9 +110,9 @@ wheels = [
 ]
 
 [[package]]
-name = "hardware-common"
+name = "hardware"
 version = "0.1.0"
-source = { editable = "packages/hardware-common" }
+source = { editable = "packages/hardware" }
 dependencies = [
     { name = "pydantic" },
 ]
@@ -319,52 +302,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/20/12/38679034af332785aac8774540895e234f4d07f7545804097de4b666afd8/packaging-25.0-py3-none-any.whl", hash = "sha256:29572ef2b1f17581046b3a2227d5c611fb25ec70ca1ba8554b24b0e69331a484", size = 66469 },
 ]
 
-[[package]]
-name = "perpetual-barcode-scanner"
-version = "0.1.0"
-source = { editable = "packages/perpetual-barcode-scanner" }
-dependencies = [
-    { name = "nats-py" },
-    { name = "perpetual-usb-utils" },
-    { name = "pydantic" },
-    { name = "pyserial-asyncio" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "nats-py", specifier = ">=2.9.0" },
-    { name = "perpetual-usb-utils", editable = "packages/perpetual-usb-utils" },
-    { name = "pydantic", specifier = ">=2.10.0" },
-    { name = "pyserial-asyncio", specifier = ">=0.6" },
-]
-
-[[package]]
-name = "perpetual-camera"
-version = "0.1.0"
-source = { editable = "packages/perpetual-camera" }
-dependencies = [
-    { name = "nats-py" },
-    { name = "opencv-python" },
-    { name = "pydantic" },
-    { name = "scikit-image" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "nats-py", specifier = ">=2.9.0" },
-    { name = "opencv-python", specifier = ">=4.11.0.86" },
-    { name = "pydantic", specifier = ">=2.10.0" },
-    { name = "scikit-image", specifier = ">=0.25.2" },
-]
-
-[[package]]
-name = "perpetual-can"
-version = "0.1.0"
-source = { editable = "packages/perpetual-can" }
-dependencies = [
-    { name = "python-can" },
-]
-
 [package.metadata]
 requires-dist = [{ name = "python-can" }]
 
@@ -373,104 +310,35 @@ name = "perpetual-hardware"
 version = "0.1.0"
 source = { virtual = "." }
 
-[package.dev-dependencies]
-dev = [
-    { name = "mypy" },
-]
-
-[package.metadata]
-
-[package.metadata.requires-dev]
-dev = [{ name = "mypy" }]
-
 [[package]]
-name = "perpetual-io-detection"
+name = "perpetual_os1"
 version = "0.1.0"
-source = { editable = "packages/perpetual-io-detection" }
+source = { editable = "packages/perpetual_os1" }
 dependencies = [
-    { name = "fastapi" },
+    { name = "hardware" },
     { name = "nats-py" },
-    { name = "opencv-python" },
-    { name = "perpetual-camera" },
-    { name = "pydantic" },
-    { name = "setuptools" },
-    { name = "sse-starlette" },
-    { name = "uvicorn" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "fastapi", specifier = ">=0.115.6" },
-    { name = "nats-py", specifier = ">=2.9.0" },
-    { name = "opencv-python", specifier = ">=4.11.0.86" },
-    { name = "perpetual-camera", editable = "packages/perpetual-camera" },
-    { name = "pydantic", specifier = ">=2.10.0" },
-    { name = "setuptools", specifier = ">=75.8.0" },
-    { name = "sse-starlette", specifier = ">=2.1.3" },
-    { name = "uvicorn", specifier = ">=0.32.1" },
-]
-
-[[package]]
-name = "perpetual-label-maker"
-version = "0.1.0"
-source = { editable = "packages/perpetual-label-maker" }
-dependencies = [
-    { name = "nats-py" },
-    { name = "pillow" },
-    { name = "pydantic" },
-    { name = "pylibdmtx" },
-    { name = "setuptools" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "nats-py", specifier = ">=2.9.0" },
-    { name = "pillow", specifier = ">=11.1.0" },
-    { name = "pydantic", specifier = ">=2.10.0" },
-    { name = "pylibdmtx", specifier = ">=0.1.10" },
-    { name = "setuptools", specifier = ">=75.8.0" },
-]
-
-[[package]]
-name = "perpetual-os1"
-version = "0.1.0"
-source = { editable = "packages/perpetual-os1" }
-dependencies = [
-    { name = "hardware-common" },
-    { name = "nats-py" },
-    { name = "perpetual-can" },
-    { name = "perpetual-trinamic" },
-    { name = "perpetual-waveshare" },
     { name = "pydantic" },
     { name = "pymodbus" },
     { name = "python-can" },
-    { name = "waveshare-can" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "hardware-common", editable = "packages/hardware-common" },
+    { name = "hardware", editable = "packages/hardware" },
     { name = "nats-py", specifier = ">=2.9.0" },
-    { name = "perpetual-can", editable = "packages/perpetual-can" },
-    { name = "perpetual-trinamic", editable = "packages/perpetual-trinamic" },
-    { name = "perpetual-waveshare", editable = "packages/perpetual-waveshare" },
     { name = "pydantic" },
     { name = "pymodbus", specifier = ">=3.8.6" },
-    { name = "python-can" },
-    { name = "waveshare-can", editable = "packages/waveshare-can" },
+    { name = "python-can" }
 ]
 
 [[package]]
-name = "perpetual-os1-server"
+name = "perpetual_os1_server"
 version = "0.1.0"
-source = { editable = "packages/perpetual-os1-server" }
+source = { editable = "packages/perpetual_os1_server" }
 dependencies = [
     { name = "fastapi" },
     { name = "nats-py" },
-    { name = "perpetual-barcode-scanner" },
-    { name = "perpetual-os1" },
-    { name = "perpetual-scale" },
-    { name = "perpetual-waveshare" },
+    { name = "perpetual_os1" },
     { name = "pydantic" },
     { name = "pyserial-asyncio" },
     { name = "python-barcode" },
@@ -483,237 +351,13 @@ dependencies = [
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115.6" },
     { name = "nats-py", specifier = ">=2.9.0" },
-    { name = "perpetual-barcode-scanner", editable = "packages/perpetual-barcode-scanner" },
-    { name = "perpetual-os1", editable = "packages/perpetual-os1" },
-    { name = "perpetual-scale", editable = "packages/perpetual-scale" },
-    { name = "perpetual-waveshare", editable = "packages/perpetual-waveshare" },
+    { name = "perpetual_os1", editable = "packages/perpetual_os1" },
     { name = "pydantic", specifier = ">=2.10.0" },
     { name = "pyserial-asyncio", specifier = ">=0.6" },
     { name = "python-barcode", specifier = ">=0.15.1" },
     { name = "setuptools", specifier = ">=75.8.0" },
     { name = "sse-starlette", specifier = ">=2.1.3" },
     { name = "uvicorn", specifier = ">=0.32.1" },
-]
-
-[[package]]
-name = "perpetual-output-box"
-version = "0.1.0"
-source = { editable = "packages/perpetual-output-box" }
-dependencies = [
-    { name = "fastapi" },
-    { name = "gpiod", marker = "sys_platform == 'linux'" },
-    { name = "hardware-common" },
-    { name = "nats-py" },
-    { name = "perpetual-trinamic" },
-    { name = "pillow" },
-    { name = "pydantic" },
-    { name = "pylibdmtx" },
-    { name = "pyserial" },
-    { name = "pyserial-asyncio" },
-    { name = "setuptools" },
-    { name = "sse-starlette" },
-    { name = "uvicorn" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "fastapi", specifier = ">=0.115.6" },
-    { name = "gpiod", marker = "sys_platform == 'linux'" },
-    { name = "hardware-common", editable = "packages/hardware-common" },
-    { name = "nats-py", specifier = ">=2.9.0" },
-    { name = "perpetual-trinamic", editable = "packages/perpetual-trinamic" },
-    { name = "pillow", specifier = ">=11.1.0" },
-    { name = "pydantic", specifier = ">=2.10.0" },
-    { name = "pylibdmtx", specifier = ">=0.1.10" },
-    { name = "pyserial", specifier = ">=3.5" },
-    { name = "pyserial-asyncio", specifier = ">=0.6" },
-    { name = "setuptools", specifier = ">=75.8.0" },
-    { name = "sse-starlette", specifier = ">=2.1.3" },
-    { name = "uvicorn", specifier = ">=0.32.1" },
-]
-
-[[package]]
-name = "perpetual-p0c"
-version = "0.1.0"
-source = { editable = "packages/perpetual-p0c" }
-dependencies = [
-    { name = "hardware-common" },
-    { name = "nats-py" },
-    { name = "perpetual-can" },
-    { name = "perpetual-trinamic" },
-    { name = "pydantic" },
-    { name = "python-can" },
-    { name = "waveshare-can" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "hardware-common", editable = "packages/hardware-common" },
-    { name = "nats-py", specifier = ">=2.9.0" },
-    { name = "perpetual-can", editable = "packages/perpetual-can" },
-    { name = "perpetual-trinamic", editable = "packages/perpetual-trinamic" },
-    { name = "pydantic" },
-    { name = "python-can" },
-    { name = "waveshare-can", editable = "packages/waveshare-can" },
-]
-
-[[package]]
-name = "perpetual-p0c-server"
-version = "0.1.0"
-source = { editable = "packages/perpetual-p0c-server" }
-dependencies = [
-    { name = "fastapi" },
-    { name = "nats-py" },
-    { name = "perpetual-camera" },
-    { name = "perpetual-label-maker" },
-    { name = "perpetual-p0c" },
-    { name = "perpetual-waveshare" },
-    { name = "pillow" },
-    { name = "pydantic" },
-    { name = "pylibdmtx" },
-    { name = "pyserial-asyncio" },
-    { name = "setuptools" },
-    { name = "sse-starlette" },
-    { name = "uvicorn" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "fastapi", specifier = ">=0.115.6" },
-    { name = "nats-py", specifier = ">=2.9.0" },
-    { name = "perpetual-camera", editable = "packages/perpetual-camera" },
-    { name = "perpetual-label-maker", editable = "packages/perpetual-label-maker" },
-    { name = "perpetual-p0c", editable = "packages/perpetual-p0c" },
-    { name = "perpetual-waveshare", editable = "packages/perpetual-waveshare" },
-    { name = "pillow", specifier = ">=11.1.0" },
-    { name = "pydantic", specifier = ">=2.10.0" },
-    { name = "pylibdmtx", specifier = ">=0.1.10" },
-    { name = "pyserial-asyncio", specifier = ">=0.6" },
-    { name = "setuptools", specifier = ">=75.8.0" },
-    { name = "sse-starlette", specifier = ">=2.1.3" },
-    { name = "uvicorn", specifier = ">=0.32.1" },
-]
-
-[[package]]
-name = "perpetual-print-worker"
-version = "0.1.0"
-source = { editable = "packages/perpetual-print-worker" }
-dependencies = [
-    { name = "fastapi" },
-    { name = "nats-py" },
-    { name = "pillow" },
-    { name = "pydantic" },
-    { name = "pylibdmtx" },
-    { name = "uvicorn" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "fastapi", specifier = ">=0.115.6" },
-    { name = "nats-py", specifier = ">=2.9.0" },
-    { name = "pillow", specifier = ">=11.1.0" },
-    { name = "pydantic", specifier = ">=2.10.0" },
-    { name = "pylibdmtx", specifier = ">=0.1.10" },
-    { name = "uvicorn", specifier = ">=0.32.1" },
-]
-
-[[package]]
-name = "perpetual-scale"
-version = "0.1.0"
-source = { editable = "packages/perpetual-scale" }
-dependencies = [
-    { name = "nats-py" },
-    { name = "pydantic" },
-    { name = "pyserial-asyncio" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "nats-py", specifier = ">=2.9.0" },
-    { name = "pydantic", specifier = ">=2.10.0" },
-    { name = "pyserial-asyncio", specifier = ">=0.6" },
-]
-
-[[package]]
-name = "perpetual-scan-server"
-version = "0.1.0"
-source = { editable = "packages/perpetual-scan-server" }
-dependencies = [
-    { name = "fastapi" },
-    { name = "nats-py" },
-    { name = "perpetual-p0c-server" },
-    { name = "pydantic" },
-    { name = "pyserial-asyncio" },
-    { name = "uvicorn" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "fastapi", specifier = ">=0.115.6" },
-    { name = "nats-py", specifier = ">=2.9.0" },
-    { name = "perpetual-p0c-server", editable = "packages/perpetual-p0c-server" },
-    { name = "pydantic", specifier = ">=2.10.0" },
-    { name = "pyserial-asyncio", specifier = ">=0.6" },
-    { name = "uvicorn", specifier = ">=0.32.1" },
-]
-
-[[package]]
-name = "perpetual-trinamic"
-version = "0.1.0"
-source = { editable = "packages/perpetual-trinamic" }
-dependencies = [
-    { name = "hardware-common" },
-    { name = "perpetual-can" },
-    { name = "pyserial" },
-    { name = "pyserial-asyncio" },
-    { name = "python-can" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "hardware-common", editable = "packages/hardware-common" },
-    { name = "perpetual-can", editable = "packages/perpetual-can" },
-    { name = "pyserial", specifier = ">=3.5" },
-    { name = "pyserial-asyncio", specifier = ">=0.6" },
-    { name = "python-can", specifier = ">=4.4.2" },
-]
-
-[[package]]
-name = "perpetual-usb-utils"
-version = "0.1.0"
-source = { editable = "packages/perpetual-usb-utils" }
-dependencies = [
-    { name = "perpetual-can" },
-    { name = "pydantic" },
-    { name = "pyserial-asyncio" },
-    { name = "python-can" },
-    { name = "waveshare-can" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "perpetual-can", editable = "packages/perpetual-can" },
-    { name = "pydantic" },
-    { name = "pyserial-asyncio", specifier = ">=0.6" },
-    { name = "python-can" },
-    { name = "waveshare-can", editable = "packages/waveshare-can" },
-]
-
-[[package]]
-name = "perpetual-waveshare"
-version = "0.1.0"
-source = { editable = "packages/perpetual-waveshare" }
-dependencies = [
-    { name = "pydantic" },
-    { name = "pymodbus" },
-    { name = "pyserial" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "pydantic", specifier = ">=2.10.0" },
-    { name = "pymodbus", specifier = ">=3.8.6" },
-    { name = "pyserial", specifier = ">=3.5" },
 ]
 
 [[package]]
@@ -1058,21 +702,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/a6/ae/9bbb19b9e1c450cf9ecaef06463e40234d98d95bf572fab11b4f19ae5ded/uvicorn-0.34.2.tar.gz", hash = "sha256:0e929828f6186353a80b58ea719861d2629d766293b6d19baf086ba31d4f3328", size = 76815 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b1/4b/4cef6ce21a2aaca9d852a6e84ef4f135d99fcd74fa75105e2fc0c8308acd/uvicorn-0.34.2-py3-none-any.whl", hash = "sha256:deb49af569084536d269fe0a6d67e3754f104cf03aba7c11c40f01aadf33c403", size = 62483 },
-]
-
-[[package]]
-name = "waveshare-can"
-version = "0.1.0"
-source = { editable = "packages/waveshare-can" }
-dependencies = [
-    { name = "pyserial" },
-    { name = "python-can" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "pyserial", specifier = ">=3.5" },
-    { name = "python-can", specifier = ">=4.4.2" },
 ]
 
 [[package]]

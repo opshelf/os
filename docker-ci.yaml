@@ -9,7 +9,7 @@ services:
       - "8222:8222"     # NATS HTTP monitoring port
       - "8080:8080"     # WebSocket port
     volumes:
-      - ./perpetual_hardware/packages/perpetual-p0c-server/infra/nats/:/etc/nats/
+      - ./perpetual_hardware/packages/perpetual_os1_server/infra/nats/:/etc/nats/
     command: ["-js", "-config", "/etc/nats/nats.conf"]
     network_mode: "host"
 
@@ -17,7 +17,7 @@ services:
   web:
     image: ghcr.io/perpetual-so/p0c-server:latest
     volumes:
-      - ./perpetual_hardware/packages/perpetual-p0c-server/data/:/app/perpetual_hardware/packages/perpetual-p0c-server/data/
+      - ./perpetual_hardware/packages/perpetual_os1_server/data/:/app/perpetual_hardware/packages/perpetual_os1_server/data/
       - /dev/:/dev/
     ports:
       - "8000:8000"

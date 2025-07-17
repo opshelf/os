@@ -26,7 +26,7 @@ Web UI ↔ API Server (FastAPI) ↔ NATS ↔ Hardware Workers
   - `ScannerEventSSE` - Barcode scans
   - `RobotStatusEventSSE` - Robot position/status
 
-### API Server (`perpetual-os1-server/`)
+### API Server (`perpetual_os1_server/`)
 
 - **Stack**: FastAPI, Python, NATS
 - **Endpoints**:
@@ -67,7 +67,7 @@ Web UI ↔ API Server (FastAPI) ↔ NATS ↔ Hardware Workers
 docker-compose up -d
 
 # Start server
-cd perpetual_hardware/packages/perpetual-os1-server
+cd perpetual_hardware/packages/perpetual_os1_server
 uv run start
 
 # Start UI
