@@ -11,11 +11,4 @@ requires-python = ">=3.12"
 
 
 [tool.uv.workspace]
-members = ["packages/*", "trinamic-utils"]
-
-[tool.uv]
-dev-dependencies = ["mypy"]
-
-
-[tool.uv.sources]
-bindings = { path = "../perpetual_fw/crates/bindings/" }
+members = ["packages/*"]
