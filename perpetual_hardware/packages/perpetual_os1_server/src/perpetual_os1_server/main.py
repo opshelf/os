@@ -27,28 +27,12 @@ root.addHandler(handler)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logging.info(f"{app.title}")
-    # settings = get_settings()
-    # logging.info(f"settings: {settings}")
     await init_robot_worker()
     logging.info("Robot Enabled")
-    # await init_scale_worker()
-    # logging.info("Scale Enabled")
-    # await init_scanner_worker()
-    # logging.info("Scanner Enabled")
-    # init_file_sizes()
-    # auto_storage = AutomaticStorage()
-    # await auto_storage.connect()
-    # asyncio.create_task(auto_storage.run())
     yield
     logging.info("Shutting Down")
     await stop_robot_worker()
     logging.info("Robot Shutdown")
-    # await stop_scale_worker()
-    # logging.info("Scale Shutdown")
-    # await stop_scanner_worker()
-    # logging.info("Scanner Shutdown")
-    # await auto_storage.close()
-
 
 app = FastAPI(lifespan=lifespan)
 
@@ -60,19 +44,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# app.include_router(gantry.router, prefix="/api")
-# app.include_router(robot.router, prefix="/api/robot")
-# app.include_router(scale.router, prefix="/api/scale")
-# app.include_router(scanner.router, prefix="/api/scanner")
-# app.include_router(printer.router, prefix="/api/print")
-# app.include_router(sizes.router, prefix="/api/sizes")
-
-
 def start() -> None:
+    print("beb!")
     uvicorn.run(
         "perpetual_os1_server.main:app",
         host="0.0.0.0",
-        port=8000,
+        port=8888,
         reload=True,
         #timeout_graceful_shutdown=2,
     )
