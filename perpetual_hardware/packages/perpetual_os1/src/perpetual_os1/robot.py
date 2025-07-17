@@ -1,12 +1,10 @@
 from enum import StrEnum
 from pydantic import BaseModel, Field
 from pymodbus.client.serial import AsyncModbusSerialClient
-from common import AxisCoordinate, ToolCoordinate
+from perpetual_os1.common import AxisCoordinate, ToolCoordinate
 from hardware.ModbusController import SharedModbusController as Controller
 from hardware.MotorBase import Motor, motor_x, motor_stage, motor_gripper, motor_rotate
-from perpetual_os1.src.door import Door, DoorConfiguration
-from perpetual_os1.src.scale_buttons import ScaleButtons
-from perpetual_os1.src.storage import Cell, StorageGrid, StorageModuleCellLocation, CellItem, StorageModuleSide
+# from storage import Cell, StorageGrid, StorageModuleCellLocation, CellItem, StorageModuleSide
 from typing import List, Optional
 from typing import Union, Annotated, Literal
 import os
@@ -29,7 +27,7 @@ class MoveCommand(BaseModel):
     coordinate: AxisCoordinate
 
 class MoveToolCommand(BaseModel):
-    command: Literal["move"] = "move"
+    command: Literal["movetool"] = "movetool"
     coordinate: ToolCoordinate
 
 
@@ -55,9 +53,9 @@ class RobotCommandSuccessful(BaseModel):
 class RobotCommandError(BaseModel):
     error: str
 
-class RobotItemStoredResponse(BaseModel):
-    message: Literal["success"] = "success"
-    location: StorageModuleCellLocation
+# class RobotItemStoredResponse(BaseModel):
+#     message: Literal["success"] = "success"
+#     location: StorageModuleCellLocation
 
 class CellSize(StrEnum):
     CELL_50 = "CELL_50"
@@ -76,16 +74,16 @@ class SizeResult(BaseModel):
     result: Union[Literal["detected"], Literal["no_item_detected"], Literal["item_outside_of_zone"]]
     size: Optional[ItemSizeLocation]
 
-RobotResponse = Union[RobotCommandSuccessful, RobotCommandError, RobotItemStoredResponse, SizeResult]
+RobotResponse = Union[RobotCommandSuccessful, RobotCommandError, SizeResult]
 
 
-class WorkerStatus(BaseModel):
-    robot_status: Optional[str]
-    running: bool
-    current_command: Optional[RobotCommands]
+# class WorkerStatus(BaseModel):
+#     robot_status: Optional[str]
+#     running: bool
+#     current_command: Optional[RobotCommands]
 
-class RobotState(BaseModel):
-    current_cell: Optional[StorageModuleCellLocation] = None
+# class RobotState(BaseModel):
+#     current_cell: Optional[StorageModuleCellLocation] = None
 
 
 # class RobotStatus(BaseModel):
@@ -99,10 +97,10 @@ class Robot:
     def __init__(self, port: str) -> None:
         self._bus = Controller(port=port)
 
-        self._mx = Motor(self.bus, motor_x)
-        self._mg = Motor(self.bus, motor_gripper)
-        self._mr = Motor(self.bus, motor_rotate)
-        self._ms = Motor(self.bus, motor_stage)
+        self._mx = Motor(self._bus, motor_x)
+        self._mg = Motor(self._bus, motor_gripper)
+        self._mr = Motor(self._bus, motor_rotate)
+        self._ms = Motor(self._bus, motor_stage)
 
         self._mx.configure()
         self._mg.configure()
@@ -135,18 +133,14 @@ class Robot:
     def shutdown(self) -> None:
         self._bus.close()
 
-    @property
-    def door(self) -> Door:
-        return self._door
+    # def get_storage(self) -> StorageGrid:
+    #     return self._storage
 
-    def get_storage(self) -> StorageGrid:
-        return self._storage
+    # def set_storage(self, value: StorageGrid) -> None:
+    #     self._storage = value
 
-    def set_storage(self, value: StorageGrid) -> None:
-        self._storage = value
-
-    async def idle(self) -> None:
-        await self.move(self._configuration.idle_position)
+    # async def idle(self) -> None:
+    #     await self.move(self._configuration.idle_position)
 
     async def shutdown(self) -> None:
         self._bus.shutdown()

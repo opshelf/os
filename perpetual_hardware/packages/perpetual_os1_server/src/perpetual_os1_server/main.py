@@ -28,7 +28,7 @@ root.addHandler(handler)
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logging.info(f"{app.title}")
     # settings = get_settings()
-    logging.info(f"settings: {settings}")
+    # logging.info(f"settings: {settings}")
     await init_robot_worker()
     logging.info("Robot Enabled")
     # await init_scale_worker()
@@ -39,7 +39,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # auto_storage = AutomaticStorage()
     # await auto_storage.connect()
     # asyncio.create_task(auto_storage.run())
-    # yield
+    yield
     logging.info("Shutting Down")
     await stop_robot_worker()
     logging.info("Robot Shutdown")
