@@ -5,21 +5,21 @@ from nats.aio.msg import Msg
 from nats import errors as nats_errors
 from nats.js.errors import NotFoundError
 from pydantic import BaseModel, TypeAdapter
-from perpetual_os1.src.robot import (
-    RobotConfiguration,
+from perpetual_os1.robot import (
+    # RobotConfiguration,
     Robot,
     RobotCommands,
     RobotResponse,
-    RobotStatus,
+    # RobotStatus,
     StopCommand,
 )
-from perpetual_os1.src.storage import StorageGrid
-from perpetual_os1.src.common import RobotNatsConfiguration
-from perpetual_os1.src.robot_client import RobotClient
+# from storage import StorageGrid
+from perpetual_os1.common import RobotNatsConfiguration
+from perpetual_os1.robot_client import RobotClient
 
 
 class WorkerStatus(BaseModel):
-    robot_status: Optional[RobotStatus]
+    # robot_status: Optional[RobotStatus]
     running: bool
     current_command: Optional[RobotCommands]
 
@@ -56,11 +56,11 @@ class RobotWorker:
             subjects=[
                 self._nats_config.command_queue,
                 self._nats_config.event_queue,
-                self._nats_config.get_storage_subject,
-                self._nats_config.set_storage_subject,
-                self._nats_config.get_config_subject,
-                self._nats_config.set_config_subject,
-                self._nats_config.get_status_subject,
+                # self._nats_config.get_storage_subject,
+                # self._nats_config.set_storage_subject,
+                # self._nats_config.get_config_subject,
+                # self._nats_config.set_config_subject,
+                # self._nats_config.get_status_subject,
             ],
         )
         await self._client.connect()
@@ -69,11 +69,11 @@ class RobotWorker:
         )
 
         # Register request-reply handlers
-        await self._nc.subscribe(self._nats_config.get_storage_subject, cb=self._handle_get_storage)
-        await self._nc.subscribe(self._nats_config.set_storage_subject, cb=self._handle_set_storage)
-        await self._nc.subscribe(self._nats_config.get_config_subject, cb=self._handle_get_config)
-        await self._nc.subscribe(self._nats_config.set_config_subject, cb=self._handle_set_config)
-        await self._nc.subscribe(self._nats_config.get_status_subject, cb=self._handle_get_status)
+        # await self._nc.subscribe(self._nats_config.get_storage_subject, cb=self._handle_get_storage)
+        # await self._nc.subscribe(self._nats_config.set_storage_subject, cb=self._handle_set_storage)
+        # await self._nc.subscribe(self._nats_config.get_config_subject, cb=self._handle_get_config)
+        # await self._nc.subscribe(self._nats_config.set_config_subject, cb=self._handle_set_config)
+        # await self._nc.subscribe(self._nats_config.get_status_subject, cb=self._handle_get_status)
 
     @classmethod
     async def get_instance(cls, robot: Robot) -> "RobotWorker":
@@ -85,17 +85,17 @@ class RobotWorker:
         if self._js:
             await self._js.purge_stream(self._nats_config.stream_name)
 
-    async def get_storage(self) -> StorageGrid:
-        return self._robot.get_storage()
+    # async def get_storage(self) -> StorageGrid:
+    #     return self._robot.get_storage()
 
-    async def set_storage(self, storage: StorageGrid) -> None:
-        self._robot.set_storage(storage)
+    # async def set_storage(self, storage: StorageGrid) -> None:
+    #     self._robot.set_storage(storage)
 
-    async def set_configuration(self, configuration: RobotConfiguration) -> None:
-        await self._robot.set_configuration(configuration)
+    # async def set_configuration(self, configuration: RobotConfiguration) -> None:
+    #     await self._robot.set_configuration(configuration)
 
-    def get_configuration(self) -> RobotConfiguration:
-        return self._robot.configuration
+    # def get_configuration(self) -> RobotConfiguration:
+    #     return self._robot.configuration
 
     async def process_commands(self) -> None:
         while self._running:
@@ -206,25 +206,25 @@ class RobotWorker:
         storage = await self.get_storage()
         await self._nc.publish(msg.reply, storage.model_dump_json().encode())
 
-    async def _handle_set_storage(self, msg: Msg) -> None:
-        try:
-            storage = StorageGrid.model_validate_json(msg.data)
-            await self.set_storage(storage)
-            await self._nc.publish(msg.reply, b"ok")
-        except Exception as e:
-            await self._nc.publish(msg.reply, f"error: {e}".encode())
+    # async def _handle_set_storage(self, msg: Msg) -> None:
+    #     try:
+    #         storage = StorageGrid.model_validate_json(msg.data)
+    #         await self.set_storage(storage)
+    #         await self._nc.publish(msg.reply, b"ok")
+    #     except Exception as e:
+    #         await self._nc.publish(msg.reply, f"error: {e}".encode())
 
-    async def _handle_get_config(self, msg: Msg) -> None:
-        config = self.get_configuration()
-        await self._nc.publish(msg.reply, config.model_dump_json().encode())
+    # async def _handle_get_config(self, msg: Msg) -> None:
+    #     config = self.get_configuration()
+    #     await self._nc.publish(msg.reply, config.model_dump_json().encode())
 
-    async def _handle_set_config(self, msg: Msg) -> None:
-        try:
-            config = RobotConfiguration.model_validate_json(msg.data)
-            await self.set_configuration(config)
-            await self._nc.publish(msg.reply, b"ok")
-        except Exception as e:
-            await self._nc.publish(msg.reply, f"error: {e}".encode())
+    # async def _handle_set_config(self, msg: Msg) -> None:
+    #     try:
+    #         config = RobotConfiguration.model_validate_json(msg.data)
+    #         await self.set_configuration(config)
+    #         await self._nc.publish(msg.reply, b"ok")
+    #     except Exception as e:
+    #         await self._nc.publish(msg.reply, f"error: {e}".encode())
 
     async def _handle_get_status(self, msg: Msg) -> None:
         status = WorkerStatus(

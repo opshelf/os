@@ -1,10 +1,14 @@
+import sys
+from pathlib import Path
+
+sys.path.append(str(Path(__file__).parent.resolve()))
+
 import MotorDefs
 from ModbusController import SharedModbusController
 import time
 
 # 5 steppers/1 servo
 # all motors share a modbus object that maintains the connection
-
 
 motor_stage     = {"motor_id":1, "Ip": 0x0A, "rpm":0xF0, "nrev": 0x2600, "dir": 0, "mpr":50} # todo make the conversion to mm/rev
 motor_gripper   = {"motor_id":3, "Ip": 0x0A, "rpm":0x1F0, "nrev": 0xF000, "dir": 1, "mpr":19.992}

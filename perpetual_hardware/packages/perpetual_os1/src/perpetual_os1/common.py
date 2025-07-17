@@ -1,4 +1,10 @@
-import perpetual_hardware.packages.hardware.MotorBase as Motor
+import sys
+from pathlib import Path
+
+# Add the grandparent directory to the path
+sys.path.append(str(Path(__file__).resolve().parents[5]))
+
+import perpetual_hardware.packages.hardware.src.hardware.MotorBase as Motor
 from pydantic import BaseModel
 from enum import Enum
 from abc import ABC, abstractmethod
