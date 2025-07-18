@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from perpetual_os1_server.core.robot import init_robot_worker, stop_robot_worker
 # from perpetual_os1_server.core.scale import init_scale_worker, stop_scale_worker
 # from perpetual_os1_server.core.scanner import init_scanner_worker, stop_scanner_worker
-# from perpetual_os1_server.routers import gantry, robot, scale, scanner, printer, sizes
+from perpetual_os1_server.routers import robot
 # from perpetual_os1_server.core.sizes import init_file_sizes
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
@@ -44,12 +44,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# app.include_router(gantry.router, prefix="/api")
+app.include_router(robot.router, prefix="/api/robot")
+# app.include_router(scale.router, prefix="/api/scale")
+# app.include_router(scanner.router, prefix="/api/scanner")
+# app.include_router(printer.router, prefix="/api/print")
+# app.include_router(sizes.router, prefix="/api/sizes")
+
 def start() -> None:
     print("beb!")
     uvicorn.run(
         "perpetual_os1_server.main:app",
         host="0.0.0.0",
-        port=8888,
+        port=8000,
         reload=True,
         #timeout_graceful_shutdown=2,
     )
