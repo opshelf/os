@@ -17,15 +17,14 @@ robot_worker: Optional[r_worker.RobotWorker] = None
 
 async def init_robot_worker() -> None:
     global robot_worker
-    logging.info("Getting Bus")
-    # can_bus = await get_can_bus()
+    logging.info("Getting Robot")
     # client = await get_modbus_client()
-    logging.info("Got Bus")
-    # robot = Robot(can_bus, client, robot_configuration)
+    
     robot = r.Robot("/dev/ttyUSB0")
     # storage_grid = load_storage_from_file("storage.json")
     # robot.set_storage(storage_grid)
-    # await robot.initialize()
+    await robot.configure()
+    # logging.info("Got Bus")
     logging.info("Built Robot")
     robot_worker = r_worker.RobotWorker(robot, common.RobotNatsConfiguration())
     logging.info("Got Instance")
