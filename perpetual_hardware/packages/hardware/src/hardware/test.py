@@ -1,40 +1,20 @@
-import asyncio
-import MotorBase
-from MotorBase import Motor
-from ModbusController import SharedModbusController as Controller
+from pymodbus.client import ModbusSerialClient as ModbusClient
+slave_id = 30
 
-import time
+client = ModbusClient(
+    port="/dev/ttyUSB0",
+    baudrate=115200,
+    timeout=1,
+    stopbits=1,
+    bytesize=8,
+    parity='N'  # Use 'E' or 'O' if your device uses even/odd parity
+)
 
-async def main():
-    mb = Controller(port="/dev/ttyUSB0")
-    await mb.connect()
-
-    ms = Motor(mb, MotorBase.motor_stage)
-    mg = Motor(mb, MotorBase.motor_gripper)
-    mr = Motor(mb, MotorBase.motor_rotate)
-    mx = Motor(mb, MotorBase.motor_x)
-
-    await mx.configure()
-    await ms.configure()
-    await mg.configure()
-    await mr.configure()
-
-    await ms.move_to_position(50)
-
-    time.sleep(1)
-
-    await mg.move_to_position(182)
-
-    time.sleep(1)
-
-    await mr.move_to_position(180)
-
-    time.sleep(1)
-
-    await mx.move_to_position(650) # should be two revolutions
-
-    # await mb.close()
-    
-
-if __name__ == "__main__":
-    asyncio.run(main())
+if client.connect():
+    print("connected")
+    # client.write_register(0x0147, 0x25,slave=slave_id) # pos limit
+    client.write_register(0x6200, 0x42, slave=slave_id)
+    client.write_register(0x0191, 0x32, slave=slave_id)
+    client.write_register(0x6203, 0x1F0, slave=slave_id)
+    # client.write_register(0x6202, 0xFFFF, slave=slave_id)
+    client.write_register(0x6002, 0x10, slave=slave_id)

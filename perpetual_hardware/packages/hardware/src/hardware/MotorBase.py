@@ -1,102 +1,143 @@
-import sys
-from pathlib import Path
-
-sys.path.append(str(Path(__file__).parent.resolve()))
-
-import MotorDefs
-from ModbusController import SharedModbusController
+import hardware.MotorDefs as MotorDefs
+from hardware.ModbusController import SharedModbusController
 import time
+import asyncio
+from enum import Enum
 
-# 5 steppers/1 servo
-# all motors share a modbus object that maintains the connection
+class MotorStatus(Enum):
+    IDLE = 0
+    MOVING = 1
+    POSITION_REACHED = 2
+    ERROR = 3
 
-motor_stage     = {"motor_id":1, "Ip": 0x0A, "rpm":0xF0, "nrev": 0x2600, "dir": 0, "mpr":50} # todo make the conversion to mm/rev
-motor_gripper   = {"motor_id":3, "Ip": 0x0A, "rpm":0x1F0, "nrev": 0xF000, "dir": 1, "mpr":19.992}
-motor_rotate    = {"motor_id":4, "Ip": 0x32, "rpm":0x40, "nrev": 0x5800, "dir": 0, "mpr":36} # deg, not mm
-motor_x         = {"motor_id":5, "Ip": 0x32, "rpm":0x80, "nrev": 0x8000, "dir": 0, "mpr":80}
-# motor_y         = {"motor_id":0x05, "Ip": 0x0A, "rpm":0x40, "p_lim": 0x2600}
-# GRIPPER         = 0x06
+class Servo():
+    def __init__(self, controller: SharedModbusController, params: dict):
+            # self._motor_id = int(params["motor_id"])        # slave id
+            self._controller = controller                   # modbus controller
+            # self._params = params 
 
+    async def configure(self):
+        # await self.set_param("Peak Current", int(self._params["Ip"]))
+        await self._controller.write_single_register(9, 0x3E8, 0x3) #enable, 
+    
+    async def open(self):
+         await (self._controller.write_single_register(9, 0x3E8, 0x103))
+         await self.wait_for_servo()
+
+    async def close(self):
+         await (self._controller.write_single_register(9, 0x3E8, 0x203))
+         await self.wait_for_servo()
+
+    async def wait_for_servo(self):
+        # start_time = time.monotonic()
+
+        while True:
+            status = await self._controller.read_holding_registers(9,0x07D0) & (1<<7)
+            if status is None:
+                # print(f"[{self.motor_id}] Failed to read motion status.")
+                return MotorStatus.ERROR
+
+            print(f"[gripper] Motion status: {bin(status)}")
+
+            if status:
+                print(f"[gripper] Move complete.")
+                return 
+
+            # if time.monotonic() - start_time > timeout:
+            #     # print(f"[{self.motor_id}] Timeout waiting for move.")
+            #     return MotorStatus.ERROR
+
+            await asyncio.sleep(0.05)
+         
+
+# stepper
 class Motor():
 
     def __init__(self, controller: SharedModbusController, params: dict):
-            self.motor_id = int(params["motor_id"])        # slave id
-            self.controller = controller                   # modbus controller
-            self.params = params 
+            self._motor_id = int(params["motor_id"])        # slave id
+            self._controller = controller                   # modbus controller
+            self._params = params 
 
-    def configure(self):
-         # Peak current
-        self.controller.write_single_register(self.motor_id, 
-                                                     MotorDefs.get_register_by_name("Peak Current"), 
-                                                     int(self.params["Ip"]))
-         # Speed in RPM
-        self.controller.write_single_register(self.motor_id, 
-                                                     MotorDefs.get_register_by_name("Velocity"),
-                                                     int(self.params["rpm"]))
-         
-        self.controller.write_single_register(self.motor_id,
-                                                     MotorDefs.get_register_by_name("Motor direction"),
-                                                    int(self.params["dir"]))
+    async def configure(self):
+        await self.set_param("Peak Current", int(self._params["Ip"]))
+        await self.set_param("Velocity", int(self._params["rpm"]))
+        await self.set_param("Motor direction", int(self._params["dir"]))
 
         return
 
     # this sort of assumes we're only using path 0, and will have to be adapted if we do anything fancy.
     async def move_to_position(self, value: int): # mm
-        if value > self.params["nrev"]:
-             print(f"[Stepper] Motor {self.motor_id} -> Cannot Move to position {value}")
+        if value > self._params["nrev"]:
+             print(f"[Stepper] Motor {self._motor_id} -> Cannot Move to position {value}")
              return
-        print(f"[Stepper] Motor {self.motor_id} -> Move to position {value}")
-        # TODO move the function calls to get/set param
-        await self.controller.write_single_register(self.motor_id,
-                                                    MotorDefs.get_register_by_name("Motion of Path 0"), 
-                                                    0x41) # position mode
-        pulse = MotorDefs.rev_to_pulse(MotorDefs.mm_to_rev(value,self.params["mpr"])) # tuple
-        await self.controller.write_single_register(self.motor_id, 
-                                                    MotorDefs.get_register_by_name("Position High"),
-                                                    pulse[0])
-        await self.controller.write_single_register(self.motor_id, 
-                                                    MotorDefs.get_register_by_name("Position Low"),
-                                                    pulse[1])
-        await self.controller.write_single_register(self.motor_id, 
-                                                    MotorDefs.TRIGGER, 
-                                                    0x10) # execute
-        
-        # wait for move (motion status bit 5)
-        while self.controller.read_holding_registers(
-            self.motor_id,
-            MotorDefs.get_register_by_name("Motion status") & (1 << 5)
-            ) == 0:
-            
-            time.sleep(0.05)
+        # print(f"[Stepper] Motor {self._motor_id} -> Move to position {value}")
 
-        return 
+        pulse = MotorDefs.rev_to_pulse(MotorDefs.mm_to_rev(value,self._params["mpr"])) # tuple
 
-    # async def get_position(self):
-    #     # TODO: -> read encoder
-    #     pos = await self.controller.read_holding_registers(self.motor_id, 0x6202, 1)
-    #     if pos:
-    #         print(f"[Stepper] Motor {self.motor_id} -> Position: {pos[0]}")
-    #         return pos[0]
-    #     return None
+        await self.set_param("Motion of Path 0", 0x41) # position mode
+        await self.set_param("Position High", pulse[0])
+        await self.set_param("Position Low", pulse[1])
+        await self._controller.write_single_register(
+                self._motor_id, 
+                MotorDefs.TRIGGER,
+                0x10)
 
-    async def set_param(self, address, value):
-         return await self.controller.write_single_register(self.motor_id, address, value)
+    # TODO add actual position registers to the motor defs table
+    async def get_position(self):
+        # TODO: -> read encoder
+        pos_l = await self._controller.read_holding_registers(self._motor_id, 0x602D) 
+        pos_h = await self._controller.read_holding_registers(self._motor_id, 0x602C)
+        pos = (pos_h << 16) & pos_l
+        if pos:
+            print(f"[Stepper] Motor {self._motor_id} -> Position: {pos}")
+            return pos
+        return None
+
+    # TODO set param
+    async def set_param(self, register, value):
+         return await self._controller.write_single_register(self._motor_id, 
+                        MotorDefs.get_register_by_name(register), 
+                        value)
     
-    async def get_param(self, address):
-        val = await self.controller.read_holding_registers(self.motor_id, address)
-        if val:
-            print(f"[Stepper] Motor {self.motor_id} -> val: {val[0]}")
-            return val[0]
+    async def get_param(self, register) -> int:
+        val = await self._controller.read_holding_registers(self._motor_id, 
+                    MotorDefs.get_register_by_name(register))
+        if val is not None:
+            # print(f"[Stepper] Motor {self._motor_id} -> val: {val}")
+            return int(val)
         return None 
     
-    async def home(self):
-        if self.motor_id == MotorDefs.GRIPPER:
-            print(f"[Motor {self.motor_id} is servo")
-            return None
-        pass
+    async def wait_for_move(self, timeout: float = 10.0) -> MotorStatus:
+        start_time = time.monotonic()
+
+        while True:
+            status = await self.get_param("Motion status") & (1<<5)
+
+            if status is None:
+                # print(f"[{self.motor_id}] Failed to read motion status.")
+                return MotorStatus.ERROR
+
+            # print(f"[{self.motor_id}] Motion status: {bin(status)}")
+
+            if status:
+                # print(f"[{self.motor_id}] Move complete.")
+                return MotorStatus.POSITION_REACHED
+
+            if time.monotonic() - start_time > timeout:
+                # print(f"[{self.motor_id}] Timeout waiting for move.")
+                return MotorStatus.ERROR
+
+            await asyncio.sleep(0.05)
+
+    # async def home(self):
+    #     if self._motor_id == MotorDefs.GRIPPER:
+    #         print(f"[Motor {self._motor_id} is servo")
+    #         return None
+    #     pass
 
         # stop
     async def stop(self):
+        #todo 0x40 on trigger to stop
         pass
 
 
