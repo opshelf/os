@@ -6,23 +6,17 @@ from nats import errors as nats_errors
 from nats.js.errors import NotFoundError
 from pydantic import BaseModel, TypeAdapter
 from perpetual_os1.robot import (
-    # RobotConfiguration,
     Robot,
     RobotCommands,
     RobotResponse,
-    # RobotStatus,
+    RobotStatus,
     StopCommand,
+    WorkerStatus
 )
 # from storage import StorageGrid
+from perpetual_os1.configuration import RobotConfiguration
 from perpetual_os1.common import RobotNatsConfiguration
 from perpetual_os1.robot_client import RobotClient
-
-
-class WorkerStatus(BaseModel):
-    # robot_status: Optional[RobotStatus]
-    running: bool
-    current_command: Optional[RobotCommands]
-
 
 RobotCommandAdapter = TypeAdapter[RobotCommands](RobotCommands)
 
@@ -56,11 +50,11 @@ class RobotWorker:
             subjects=[
                 self._nats_config.command_queue,
                 self._nats_config.event_queue,
-                # self._nats_config.get_storage_subject,
-                # self._nats_config.set_storage_subject,
-                # self._nats_config.get_config_subject,
-                # self._nats_config.set_config_subject,
-                # self._nats_config.get_status_subject,
+                self._nats_config.get_storage_subject, #todo wheres the other stream that uses these subjects
+                self._nats_config.set_storage_subject,
+                self._nats_config.get_config_subject,
+                self._nats_config.set_config_subject,
+                self._nats_config.get_status_subject,
             ],
         )
         await self._client.connect()
@@ -71,9 +65,9 @@ class RobotWorker:
         # Register request-reply handlers
         # await self._nc.subscribe(self._nats_config.get_storage_subject, cb=self._handle_get_storage)
         # await self._nc.subscribe(self._nats_config.set_storage_subject, cb=self._handle_set_storage)
-        # await self._nc.subscribe(self._nats_config.get_config_subject, cb=self._handle_get_config)
-        # await self._nc.subscribe(self._nats_config.set_config_subject, cb=self._handle_set_config)
-        # await self._nc.subscribe(self._nats_config.get_status_subject, cb=self._handle_get_status)
+        await self._nc.subscribe(self._nats_config.get_config_subject, cb=self._handle_get_config)
+        await self._nc.subscribe(self._nats_config.set_config_subject, cb=self._handle_set_config)
+        await self._nc.subscribe(self._nats_config.get_status_subject, cb=self._handle_get_status)
 
     @classmethod
     async def get_instance(cls, robot: Robot) -> "RobotWorker":
@@ -91,11 +85,11 @@ class RobotWorker:
     # async def set_storage(self, storage: StorageGrid) -> None:
     #     self._robot.set_storage(storage)
 
-    # async def set_configuration(self, configuration: RobotConfiguration) -> None:
-    #     await self._robot.set_configuration(configuration)
+    async def set_configuration(self, configuration: RobotConfiguration) -> None:
+        await self._robot.set_configuration(configuration)
 
-    # def get_configuration(self) -> RobotConfiguration:
-    #     return self._robot.configuration
+    def get_configuration(self) -> RobotConfiguration:
+        return self._robot.configuration
 
     async def process_commands(self) -> None:
         while self._running:
@@ -107,7 +101,7 @@ class RobotWorker:
                         command = RobotCommandAdapter.validate_json(msg.data.decode())
                         self._current_command = command
                         self._msg = msg
-                        robot_status = await self._robot.status()
+                        robot_status = self._robot._status
                         status = WorkerStatus(
                             robot_status=robot_status, running=True, current_command=command
                         )
@@ -134,7 +128,7 @@ class RobotWorker:
                 await asyncio.sleep(0.1)
                 if self._msg:
                     await self._msg.ack()
-                robot_status = await self._robot.status()
+                robot_status = self._robot._status
                 status = WorkerStatus(robot_status=robot_status, running=True, current_command=None)
                 await self._nc.publish(
                     self._nats_config.status_queue, status.model_dump_json().encode()
@@ -146,13 +140,14 @@ class RobotWorker:
             except Exception as e:
                 print(f"Unexpected exception: {e}")  # or use logging
                 try:
-                    robot_status = await self._robot.status()
+                    robot_status = self._robot._status
                     error_status = WorkerStatus(
                         robot_status=robot_status, running=True, current_command=None
                     )
                     await self._nc.publish(
                         self._nats_config.event_queue, error_status.model_dump_json().encode()
                     )
+                    pass
                 except Exception as pub_err:
                     print(f"Error publishing error status: {pub_err}")
 
@@ -202,9 +197,9 @@ class RobotWorker:
             self._nats_config.status_queue, shutdown_status.model_dump_json().encode()
         )
 
-    async def _handle_get_storage(self, msg: Msg) -> None:
-        storage = await self.get_storage()
-        await self._nc.publish(msg.reply, storage.model_dump_json().encode())
+    # async def _handle_get_storage(self, msg: Msg) -> None:
+    #     storage = await self.get_storage()
+    #     await self._nc.publish(msg.reply, storage.model_dump_json().encode())
 
     # async def _handle_set_storage(self, msg: Msg) -> None:
     #     try:
@@ -214,17 +209,17 @@ class RobotWorker:
     #     except Exception as e:
     #         await self._nc.publish(msg.reply, f"error: {e}".encode())
 
-    # async def _handle_get_config(self, msg: Msg) -> None:
-    #     config = self.get_configuration()
-    #     await self._nc.publish(msg.reply, config.model_dump_json().encode())
+    async def _handle_get_config(self, msg: Msg) -> None:
+        config = self.get_configuration()
+        await self._nc.publish(msg.reply, config.model_dump_json().encode())
 
-    # async def _handle_set_config(self, msg: Msg) -> None:
-    #     try:
-    #         config = RobotConfiguration.model_validate_json(msg.data)
-    #         await self.set_configuration(config)
-    #         await self._nc.publish(msg.reply, b"ok")
-    #     except Exception as e:
-    #         await self._nc.publish(msg.reply, f"error: {e}".encode())
+    async def _handle_set_config(self, msg: Msg) -> None:
+        try:
+            config = RobotConfiguration.model_validate_json(msg.data)
+            await self.set_configuration(config)
+            await self._nc.publish(msg.reply, b"ok")
+        except Exception as e:
+            await self._nc.publish(msg.reply, f"error: {e}".encode())
 
     async def _handle_get_status(self, msg: Msg) -> None:
         status = WorkerStatus(

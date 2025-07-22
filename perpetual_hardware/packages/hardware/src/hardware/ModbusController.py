@@ -25,8 +25,8 @@ class SharedModbusController:
             raise ConnectionError(f"Failed to connect to Modbus device on port {self.port}")
 
     async def close(self):
-        if self.client:
-            await self.client.close()
+        if self.client is not None:
+            self.client.close()
 
     async def read_holding_registers(self, unit_id: int, address: int) -> int:
         async with self.lock:
@@ -34,7 +34,7 @@ class SharedModbusController:
                 result = await self.client.read_holding_registers(address=address, count=1, slave=unit_id)
                 if result.isError():
                     raise ModbusIOException(f"Read error from unit {unit_id}: {result}")
-                return result.registers
+                return int(result.registers[0])
             except Exception as e:
                 print(f"[READ ERROR] {e}")
                 return None

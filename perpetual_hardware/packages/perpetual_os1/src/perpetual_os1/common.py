@@ -1,19 +1,11 @@
-import sys
-from pathlib import Path
-
-# Add the grandparent directory to the path
-sys.path.append(str(Path(__file__).resolve().parents[5]))
-
-import perpetual_hardware.packages.hardware.src.hardware.MotorBase as Motor
+import hardware.MotorBase as Motor
 from pydantic import BaseModel
 from enum import Enum
 from abc import ABC, abstractmethod
 from typing import Generic, TypeVar
 
-
 C = TypeVar("C")
 S = TypeVar("S")
-
 
 class RobotNatsConfiguration(BaseModel):
     stream_name: str = "robot"
@@ -51,12 +43,10 @@ class AxisCoordinate:
 class ToolCoordinate:
     g: float # gripper
     s: float # stage
-    r: float # rotation (only 0 or 180)
+    r: float # rotation (only 0 or 180) # does not add/subtract
 
     def __add__(self, other: "ToolCoordinate") -> "ToolCoordinate":
-        return ToolCoordinate(i=self.i + other.i, j=self.j + other.j, k=self.k)
+        return ToolCoordinate(g=self.g + other.g, s=self.s + other.s, r=self.r)
 
     def __sub__(self, other: "ToolCoordinate") -> "ToolCoordinate":
-        return ToolCoordinate(i=self.i - other.i, j=self.j - other.j, k=self.k)
-
-
+        return ToolCoordinate(g=self.g - other.g, s=self.s - other.s, r=self.r)

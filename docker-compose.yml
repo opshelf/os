@@ -9,16 +9,17 @@ services:
       - "8222:8222"     # NATS HTTP monitoring port
       - "8080:8080"     # WebSocket port
     volumes:
-      - ./perpetual_hardware/packages/perpetual-p0c-server/infra/nats/:/etc/nats/
+      - ./perpetual_hardware/packages/perpetual_os1_server/infra/nats/:/etc/nats/
     command: ["-js", "-config", "/etc/nats/nats.conf"]
     networks:  # Define the network and add NATS to it
       - my-network
 
   web:
     build:
+      context: .
       dockerfile: ./Dockerfile
     volumes:
-      - ./perpetual_hardware/packages/perpetual-p0c-server/data/:/app/perpetual_hardware/packages/perpetual-p0c-server/data/
+      - ./perpetual_hardware/packages/perpetual_os1_server/data/:/app/perpetual_hardware/packages/perpetual_os1_server/data/
     ports:
       - "8000:8000"
     depends_on:  # Ensure NATS starts first
