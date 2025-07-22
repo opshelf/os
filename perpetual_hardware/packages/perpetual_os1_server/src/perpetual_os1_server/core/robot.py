@@ -1,19 +1,12 @@
 from typing import Optional
-# from packages.perpetual_os1.src.perpetual_os1.common import RobotNatsConfiguration
 from perpetual_os1 import robot as r
 from perpetual_os1 import common
 from perpetual_os1 import robot_worker as r_worker
 from perpetual_os1 import robot_client as r_client
-# from perpetual_os1 import
-# from perpetual_os1. import RobotNatsConfiguration
-# from perpetual_os1.src.perpetual_os1.robot_worker import RobotWorker
-# from perpetual_os1.src.perpetual_os1.robot_client import RobotClient
-# from perpetual_os1.src.perpetual_os1.robot import Robot
 
 import logging
 
 robot_worker: Optional[r_worker.RobotWorker] = None
-
 
 async def init_robot_worker() -> None:
     global robot_worker

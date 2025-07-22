@@ -1,23 +1,20 @@
-from enum import StrEnum
+from enum import Enum
 from pydantic import BaseModel, Field
 from pymodbus.client.serial import AsyncModbusSerialClient
+from perpetual_os1.configuration import motor_x, motor_stage, motor_gripper, motor_rotate
 from perpetual_os1.common import AxisCoordinate, ToolCoordinate
 from hardware.ModbusController import SharedModbusController as Controller
-from hardware.MotorBase import Motor, motor_x, motor_stage, motor_gripper, motor_rotate
+from hardware.MotorBase import Motor, MotorStatus
 # from storage import Cell, StorageGrid, StorageModuleCellLocation, CellItem, StorageModuleSide
 from typing import List, Optional
 from typing import Union, Annotated, Literal
 import os
-import asyncio
-
 
 class StopCommand(BaseModel):
     command: Literal["stop"] = "stop"
 
-
 class InitializeCommand(BaseModel):
     command: Literal["initialize"] = "initialize"
-
 
 class HomeCommand(BaseModel):
     command: Literal["home"] = "home"
@@ -30,13 +27,13 @@ class MoveToolCommand(BaseModel):
     command: Literal["movetool"] = "movetool"
     coordinate: ToolCoordinate
 
-
 class IdleCommand(BaseModel):
     command: Literal["idle"] = "idle"
 
 RobotCommands = Annotated[
     Union[
         StopCommand,
+        InitializeCommand,
         HomeCommand,
         MoveCommand,
         MoveToolCommand,
@@ -57,81 +54,81 @@ class RobotCommandError(BaseModel):
 #     message: Literal["success"] = "success"
 #     location: StorageModuleCellLocation
 
-class CellSize(StrEnum):
-    CELL_50 = "CELL_50"
-    CELL_100 = "CELL_100"
-    CELL_150 = "CELL_150"
-    INVALID = "INVALID"
-
 class ItemSizeLocation(BaseModel):
     object_size: float
     min_bound: float
     max_bound: float
-    height: float
-    cell_size: CellSize 
+    height: float 
 
-class SizeResult(BaseModel):
+class SizeResult():
     result: Union[Literal["detected"], Literal["no_item_detected"], Literal["item_outside_of_zone"]]
     size: Optional[ItemSizeLocation]
 
 RobotResponse = Union[RobotCommandSuccessful, RobotCommandError, SizeResult]
 
-
-# class WorkerStatus(BaseModel):
-#     robot_status: Optional[str]
-#     running: bool
-#     current_command: Optional[RobotCommands]
-
 # class RobotState(BaseModel):
 #     current_cell: Optional[StorageModuleCellLocation] = None
 
+class RobotStatus(str, Enum):
+    IDLE = "IDLE"
+    RUNNING = "RUNNING"
+    ERROR = "ERROR"
 
-# class RobotStatus(BaseModel):
-#     tool: ToolStatus
-#     gantry: GantryStatus
-#     storage: StorageGrid
-#     state: RobotState
-#     light_curtain: bool
+class WorkerStatus(BaseModel):
+    robot_status: Optional[RobotStatus]
+    running: bool
+    current_command: Optional[RobotCommands]
+
+# TODO: MORE DICTS
 
 class Robot:
     def __init__(self, port: str) -> None:
         self._bus = Controller(port=port)
-
+        #TODO list of motors
         self._mx = Motor(self._bus, motor_x)
         self._mg = Motor(self._bus, motor_gripper)
         self._mr = Motor(self._bus, motor_rotate)
         self._ms = Motor(self._bus, motor_stage)
+        self._status = RobotStatus.IDLE
 
-        self._mx.configure()
-        self._mg.configure()
-        self._mr.configure()
-        self._ms.configure()
+    async def configure(self):
+        await self._bus.connect()
+        await self._mx.configure()
+        # await self._mg.configure()
+        # await self._mr.configure()
+        # await self._ms.configure()
+        
+    async def move(self, coordinate: AxisCoordinate) -> None:
+        self._status = RobotStatus.RUNNING
+        await self._mx.move_to_position(coordinate.x)
+        await self._mx.wait_for_move(timeout=10.0)
+        self._status = RobotStatus.IDLE
 
-    # todo track coordinates somewhere
-    def move(self, coordinate: AxisCoordinate) -> None:
-        self._mx.move_to_position(coordinate.x)
+    async def tool_move(self, coordinate: ToolCoordinate) -> None:
+        await self._ms.move_to_position(coordinate.s)
+        await self._ms.wait_for_move(timeout=10.0)
+        await self._mg.move_to_position(coordinate.g)
+        await self._ms.wait_for_move(timeout=10.0)
 
-    def tool_move(self, coordinate: ToolCoordinate) -> None:
-        self._ms.move_to_position(coordinate.s)
-        self._mg.move_to_position(coordinate.g)
+    async def home(self) -> None:
+        await self._mx.home()
+        await self._mx.wait_for_move(timeout=10.0)
+        await self._mg.home()
+        await self._mg.wait_for_move(timeout=10.0)
+        await self._mr.home()
+        await self._mr.wait_for_move(timeout=10.0)
+        await self._ms.home()
+        await self._ms.wait_for_move(timeout=10.0)
 
-    def home(self) -> None:
-        self._mx.home()
-        self._mg.home()
-        self._mr.home()
-        self._ms.home()
+    async def stop(self) -> None:
+        await self._mx.stop()
+        await self._mg.stop()
+        await self._mr.stop()
+        await self._ms.stop()
 
-    def stop(self) -> None:
-        self._mx.stop()
-        self._mg.stop()
-        self._mr.stop()
-        self._ms.stop()
-
-    def get_pos(self) -> tuple:
+    def get_pos(self):
+        # get each motor position. return tuple of axis and tool coordinate?
         pass
-
-    def shutdown(self) -> None:
-        self._bus.close()
 
     # def get_storage(self) -> StorageGrid:
     #     return self._storage
@@ -140,11 +137,11 @@ class Robot:
     #     self._storage = value
 
     # async def idle(self) -> None:
-    #     await self.move(self._configuration.idle_position)
+    #     await self.move(self._configuration.idle_position) # basically anywhere along the bottom of the gantry
 
     async def shutdown(self) -> None:
-        self._bus.shutdown()
-        self._client.close()
+        if self._bus:
+            await self._bus.close()
 
     async def handle_command(self, command: RobotCommands) -> RobotResponse:
         match command:
@@ -152,7 +149,7 @@ class Robot:
                 await self.stop()
                 return RobotCommandSuccessful()
             case InitializeCommand():
-                await self.initialize()
+                await self.configure()
                 return RobotCommandSuccessful()
             case HomeCommand():
                 await self.home()
@@ -160,8 +157,11 @@ class Robot:
             case MoveCommand(coordinate=coord):
                 await self.move(coord)
                 return RobotCommandSuccessful()
-            case IdleCommand():
-                await self.idle()
+            case MoveToolCommand(coordinate=coord):
+                await self.tool_move(coord)
                 return RobotCommandSuccessful()
+            # case IdleCommand():
+            #     await self.idle()
+            #     return RobotCommandSuccessful()
             case _:
                 return RobotCommandError(error="Invalid Robot Command")

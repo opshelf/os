@@ -1,6 +1,6 @@
 from collections import OrderedDict
 
-TRIGGER         = 0x6002         
+TRIGGER         = 0x6002
 
 # Full list of parsed register-parameter pairs from the datasheet, formatted for readability and export
 motor_registers = [
@@ -102,6 +102,5 @@ def rev_to_pulse(rev: int):
     return top_bytes, bottom_bytes
 
 def mm_to_rev(mm: int, mpr: float):
-    val = int(mm / mpr)
+    val = float(mm / mpr)
     return val
-
