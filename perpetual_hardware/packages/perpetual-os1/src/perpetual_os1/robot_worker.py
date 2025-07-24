@@ -1,10 +1,11 @@
 import asyncio
-from typing import Optional
+from datetime import datetime
+from typing import Optional, List
 from nats.aio.client import Client as NATS
 from nats.aio.msg import Msg
 from nats import errors as nats_errors
 from nats.js.errors import NotFoundError
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel, TypeAdapter, Field
 from perpetual_os1.robot import (
     RobotConfiguration,
     Robot,
@@ -18,10 +19,19 @@ from perpetual_os1.common import RobotNatsConfiguration
 from perpetual_os1.robot_client import RobotClient
 
 
+class WorkerError(BaseModel):
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    error_type: str
+    message: str
+    context: Optional[dict] = None
+    stack_trace: Optional[str] = None
+
+
 class WorkerStatus(BaseModel):
     robot_status: Optional[RobotStatus]
     running: bool
     current_command: Optional[RobotCommands]
+    error_queue: List[WorkerError] = Field(default_factory=list)
 
 
 RobotCommandAdapter = TypeAdapter[RobotCommands](RobotCommands)
@@ -44,9 +54,39 @@ class RobotWorker:
         self._nats_config = nats_config
         self._client = RobotClient(nats_config)
         self._nc = NATS()
+        self._error_queue: List[WorkerError] = []
 
     def get_client(self) -> RobotClient:
         return self._client
+
+    def _add_error(self, error: WorkerError) -> None:
+        """Add error to queue, maintaining max size of 10"""
+        if len(self._error_queue) >= 10:
+            self._error_queue.pop(0)
+        self._error_queue.append(error)
+
+    async def _publish_status_with_errors(self, current_command: Optional[RobotCommands] = None) -> None:
+        """Publish status including error queue"""
+        try:
+            robot_status = await self._robot.status()
+        except Exception as e:
+            robot_status = None
+            self._add_error(WorkerError(
+                error_type="StatusRetrievalError",
+                message=f"Failed to get robot status: {str(e)}",
+                context={"command": current_command.model_dump() if current_command else None}
+            ))
+        
+        status = WorkerStatus(
+            robot_status=robot_status,
+            running=self._running,
+            current_command=current_command or self._current_command,
+            error_queue=self._error_queue.copy()
+        )
+        await self._nc.publish(
+            self._nats_config.status_queue,
+            status.model_dump_json().encode()
+        )
 
     async def connect(self) -> None:
         await self._nc.connect(servers=[self._nats_config.connection_string()])
@@ -107,22 +147,26 @@ class RobotWorker:
                         command = RobotCommandAdapter.validate_json(msg.data.decode())
                         self._current_command = command
                         self._msg = msg
-                        robot_status = await self._robot.status()
-                        status = WorkerStatus(
-                            robot_status=robot_status, running=True, current_command=command
-                        )
-                        await self._nc.publish(
-                            self._nats_config.status_queue, status.model_dump_json().encode()
-                        )
+                        await self._publish_status_with_errors(command)
                         self._current_task = asyncio.create_task(
                             self._robot.handle_command(command)
                         )
                 else:
                     if self._current_task.done():
-                        result: RobotResponse = self._current_task.result()
-                        await self._nc.publish(
-                            self._nats_config.event_queue, result.model_dump_json().encode()
-                        )
+                        try:
+                            result: RobotResponse = self._current_task.result()
+                            await self._nc.publish(
+                                self._nats_config.event_queue, result.model_dump_json().encode()
+                            )
+                        except Exception as e:
+                            self._add_error(WorkerError(
+                                error_type="CommandExecutionError",
+                                message=f"Command failed: {str(e)}",
+                                context={"command": self._current_command.model_dump() if self._current_command else None},
+                                stack_trace=str(e.__traceback__) if hasattr(e, '__traceback__') else None
+                            ))
+                            await self._publish_status_with_errors()
+                        
                         if self._msg:
                             await self._msg.ack()
                         self._current_task = None
@@ -132,13 +176,15 @@ class RobotWorker:
                 await asyncio.sleep(0.1)
             except (nats_errors.TimeoutError, asyncio.TimeoutError, asyncio.CancelledError) as e:
                 await asyncio.sleep(0.1)
+                if isinstance(e, (nats_errors.TimeoutError, asyncio.TimeoutError)):
+                    self._add_error(WorkerError(
+                        error_type="TimeoutError",
+                        message="Operation timed out",
+                        context={"command": self._current_command.model_dump() if self._current_command else None}
+                    ))
                 if self._msg:
                     await self._msg.ack()
-                robot_status = await self._robot.status()
-                status = WorkerStatus(robot_status=robot_status, running=True, current_command=None)
-                await self._nc.publish(
-                    self._nats_config.status_queue, status.model_dump_json().encode()
-                )
+                await self._publish_status_with_errors()
                 self._current_task = None
                 self._current_command = None
                 self._msg = None
@@ -158,15 +204,17 @@ class RobotWorker:
             #    self._msg = None
 
             except Exception as e:
-                print(f"Unexpected exception: {e}")  # or use logging
+                print(f"Unexpected exception: {e}")
+                import traceback
+                self._add_error(WorkerError(
+                    error_type="UnexpectedError",
+                    message=f"Unexpected error: {str(e)}",
+                    context={"command": self._current_command.model_dump() if self._current_command else None},
+                    stack_trace=traceback.format_exc()
+                ))
+                
                 try:
-                    robot_status = await self._robot.status()
-                    error_status = WorkerStatus(
-                        robot_status=robot_status, running=True, current_command=None
-                    )
-                    await self._nc.publish(
-                        self._nats_config.event_queue, error_status.model_dump_json().encode()
-                    )
+                    await self._publish_status_with_errors()
                 except Exception as pub_err:
                     print(f"Error publishing error status: {pub_err}")
 
@@ -188,10 +236,7 @@ class RobotWorker:
             if self._worker_task:
                 self._worker_task.cancel()
             self._worker_task = asyncio.create_task(self.process_commands())
-            status = WorkerStatus(robot_status=None, running=True, current_command=None)
-            await self._nc.publish(
-                self._nats_config.status_queue, status.model_dump_json().encode()
-            )
+            await self._publish_status_with_errors()
 
     async def shutdown(self) -> None:
         print("Shutting Down")
@@ -207,14 +252,28 @@ class RobotWorker:
         # Send a stop command before shutting down.
 
         print("Send Stop Command")
-        await self._robot.handle_command(StopCommand())
+        try:
+            await self._robot.handle_command(StopCommand())
+        except Exception as e:
+            self._add_error(WorkerError(
+                error_type="ShutdownError",
+                message=f"Error during stop command: {str(e)}",
+                context={"phase": "stop_command"}
+            ))
+        
         print("Send Shutdown")
-        await self._robot.shutdown()
+        try:
+            await self._robot.shutdown()
+        except Exception as e:
+            self._add_error(WorkerError(
+                error_type="ShutdownError",
+                message=f"Error during robot shutdown: {str(e)}",
+                context={"phase": "robot_shutdown"}
+            ))
+        
         print("Publish Status ")
-        shutdown_status = WorkerStatus(robot_status=None, running=False, current_command=None)
-        await self._nc.publish(
-            self._nats_config.status_queue, shutdown_status.model_dump_json().encode()
-        )
+        self._running = False
+        await self._publish_status_with_errors()
 
     async def _handle_get_storage(self, msg: Msg) -> None:
         storage = await self.get_storage()
@@ -241,9 +300,15 @@ class RobotWorker:
             await self._nc.publish(msg.reply, f"error: {e}".encode())
 
     async def _handle_get_status(self, msg: Msg) -> None:
+        try:
+            robot_status = await self._robot.status()
+        except:
+            robot_status = None
+        
         status = WorkerStatus(
-            robot_status=None,  # Optionally fill in real robot status
+            robot_status=robot_status,
             running=self._running,
             current_command=self._current_command,
+            error_queue=self._error_queue.copy()
         )
         await self._nc.publish(msg.reply, status.model_dump_json().encode())

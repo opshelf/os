@@ -7,7 +7,7 @@ from perpetual_barcode_scanner import LabelScannedEvent
 from perpetual_os1.robot import CellSize, RobotResponse, SizeItemCommand, SizeResult, StoreItemCommand
 from perpetual_os1.storage import Cell, CellItem, Dimensions
 from perpetual_scale import ScaleReadEvent
-from perpetual_os1.robot_worker import WorkerStatus
+from perpetual_os1.robot_worker import WorkerStatus, WorkerError
 from perpetual_os1_server.core.robot import get_robot_client
 from perpetual_os1_server.core.sizes import get_size_db
 from perpetual_os1_server.settings import get_settings
