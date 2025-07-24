@@ -1,14 +1,12 @@
 from enum import Enum
 from pydantic import BaseModel, Field
-from pymodbus.client.serial import AsyncModbusSerialClient
 from perpetual_os1.configuration import motor_x, motor_stage, motor_gripper, motor_rotate
 from perpetual_os1.common import AxisCoordinate, ToolCoordinate
 from hardware.ModbusController import SharedModbusController as Controller
-from hardware.MotorBase import Motor, MotorStatus
+from hardware.MotorBase import Motor, Servo
 # from storage import Cell, StorageGrid, StorageModuleCellLocation, CellItem, StorageModuleSide
-from typing import List, Optional
+from typing import Optional
 from typing import Union, Annotated, Literal
-import os
 
 class StopCommand(BaseModel):
     command: Literal["stop"] = "stop"
@@ -89,36 +87,71 @@ class Robot:
         self._mg = Motor(self._bus, motor_gripper)
         self._mr = Motor(self._bus, motor_rotate)
         self._ms = Motor(self._bus, motor_stage)
+        self._gs = Servo(self._bus)
         self._status = RobotStatus.IDLE
 
     async def configure(self):
         await self._bus.connect()
+        if not self._bus.client.connected:
+            print("aw jeez no connection")
+            return
         await self._mx.configure()
-        # await self._mg.configure()
-        # await self._mr.configure()
-        # await self._ms.configure()
-        
-    async def move(self, coordinate: AxisCoordinate) -> None:
-        self._status = RobotStatus.RUNNING
-        await self._mx.move_to_position(coordinate.x)
-        await self._mx.wait_for_move(timeout=10.0)
-        self._status = RobotStatus.IDLE
+        await self._mg.configure()
+        await self._mr.configure()
+        await self._ms.configure()
+        await self._gs.configure()
+        # todo motor list
 
-    async def tool_move(self, coordinate: ToolCoordinate) -> None:
-        await self._ms.move_to_position(coordinate.s)
-        await self._ms.wait_for_move(timeout=10.0)
-        await self._mg.move_to_position(coordinate.g)
-        await self._ms.wait_for_move(timeout=10.0)
+    async def move(self, coordinate: AxisCoordinate) -> None:
+
+        # await self._mx.move_to_position(500)
+        await self._mg.home()
+        await self._ms.home()
+        await self._mr.home()
+        await self._mx.home()
+
+        await self._mx.move_to_position(coordinate.x)
+
+        await self._mr.move_to_position(180)
+        await self._ms.move_to_position(47)
+        await self._mg.move_to_position(165)
+
+        await self._ms.move_to_position(0)
+        await self._mg.move_to_position(0)
+        await self._mr.move_to_position(0)
+        await self._mx.move_to_position(0)
+
+        await self._mr.move_to_position(180)
+        await self._ms.move_to_position(47)
+        await self._mg.move_to_position(165)
+
+        # await self._mg.home()
+        # await self._ms.home()
+        # await self._mx.home()
+        # await self._mr.home()
+
+    # async def tool_pick(self) -> None:
+
+    
+    async def tool_place(self) -> None:
+        await self._ms.move_to_position(0)
+        await self._mg.move_to_position(0)
+        await self._mr.move_to_position(0)
+
+    # async def tool_place(self, coordinate: ToolCoordinate):
+    #     await self.tool_move(ToolCoordinate(g=0, s=0, r=0))
+    #     # await self._gs.close()
+    #     # await self._gs.wait_for_servo()
 
     async def home(self) -> None:
         await self._mx.home()
-        await self._mx.wait_for_move(timeout=10.0)
-        await self._mg.home()
-        await self._mg.wait_for_move(timeout=10.0)
-        await self._mr.home()
-        await self._mr.wait_for_move(timeout=10.0)
-        await self._ms.home()
-        await self._ms.wait_for_move(timeout=10.0)
+        # await self._mx.wait_for_move(timeout=10.0)
+        # await self._mg.home()
+        # await self._mg.wait_for_move(timeout=10.0)
+        # await self._mr.home()
+        # await self._mr.wait_for_move(timeout=10.0)
+        # await self._ms.home()
+        # await self._ms.wait_for_move(timeout=10.0)
 
     async def stop(self) -> None:
         await self._mx.stop()
@@ -128,7 +161,11 @@ class Robot:
 
     def get_pos(self):
         # get each motor position. return tuple of axis and tool coordinate?
-        pass
+        x = self._mx.get_position()
+        g = self._mg.get_position()
+        s = self._ms.get_position()
+        r = self._mr.get_position()
+        return (AxisCoordinate(x, 0), ToolCoordinate(g,s,r))
 
     # def get_storage(self) -> StorageGrid:
     #     return self._storage
