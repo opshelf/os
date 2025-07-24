@@ -51,7 +51,7 @@ function ErrorDrawer() {
 					<ErrorBadge count={errors.length} />
 				</div>
 			</DrawerTrigger>
-			<DrawerContent className="max-h-[85vh]">
+			<DrawerContent className="max-h-[85vh] min-h-[400px]">
 				<ScrollArea className="h-full p-4">
 					<div className="space-y-1">
 						{errors.length === 0 ? (
