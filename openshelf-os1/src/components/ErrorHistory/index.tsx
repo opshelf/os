@@ -27,8 +27,8 @@ function ErrorItem({ error }: ErrorItemProps) {
 			<Badge variant={getErrorTypeBadgeVariant(error.error_type)} className="text-xs">
 				{error.error_type}
 			</Badge>
-			<span className="flex-1 truncate">{error.message}</span>
-			<div className="h-3 w-px bg-gray-200" />
+			<span className="truncate">{error.message}</span>
+			<div className="flex-1 border-b border-dotted border-gray-300 mx-2" />
 			<span className="text-xs text-muted-foreground whitespace-nowrap">
 				{format(new Date(error.timestamp), "HH:mm:ss")}
 			</span>
