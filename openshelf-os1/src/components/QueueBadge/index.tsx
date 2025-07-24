@@ -9,13 +9,9 @@ interface QueueBadgeProps {
 }
 
 const QueueBadge = ({ count, onClick, className }: QueueBadgeProps) => {
-	if (count === 0) return null;
-	
-	const variant = count > 5 ? "destructive" : count > 2 ? "secondary" : "outline";
-	
 	return (
 		<Badge 
-			variant={variant} 
+			variant="outline" 
 			className={cn(
 				"cursor-pointer transition-all hover:scale-105",
 				className
@@ -23,7 +19,7 @@ const QueueBadge = ({ count, onClick, className }: QueueBadgeProps) => {
 			onClick={onClick}
 		>
 			<ListIcon className="h-3 w-3 mr-1" />
-			{count} queued
+			{count === 0 ? "Queue empty" : `${count} queued`}
 		</Badge>
 	);
 };

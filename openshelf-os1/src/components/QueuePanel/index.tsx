@@ -12,6 +12,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import QueueBadge from "@/components/QueueBadge";
 import QueuedOperationCard from "@/components/QueuedOperationCard";
 import { Separator } from "@/components/ui/separator";
+import { ListIcon } from "lucide-react";
 
 const QueuePanel = () => {
 	const [open, setOpen] = useState(false);
@@ -19,8 +20,6 @@ const QueuePanel = () => {
 	
 	const queueLength = robotStatus?.queue_length ?? 0;
 	const queuedOperations = robotStatus?.queued_operations ?? [];
-	
-	if (queueLength === 0) return null;
 	
 	return (
 		<Drawer open={open} onOpenChange={setOpen}>
@@ -41,7 +40,15 @@ const QueuePanel = () => {
 				
 				<ScrollArea className="h-[calc(100vh-200px)]">
 					<div className="space-y-3">
-						{queuedOperations.length > 0 ? (
+						{queueLength === 0 ? (
+							<div className="text-center py-12 text-muted-foreground">
+								<ListIcon className="h-12 w-12 mx-auto mb-4 opacity-20" />
+								<p className="text-lg">No operations in queue</p>
+								<p className="text-sm mt-2">
+									Operations will appear here when commands are sent to the robot
+								</p>
+							</div>
+						) : queuedOperations.length > 0 ? (
 							queuedOperations.map((operation, index) => (
 								<QueuedOperationCard
 									key={`${operation.timestamp}-${index}`}
