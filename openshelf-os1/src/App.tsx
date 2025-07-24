@@ -11,7 +11,6 @@ import Footer from "@/components/Footer";
 import Inventory from "@/components/Inventory";
 import RobotStatusEventSSE from "@/components/RobotStatusEvent";
 import RobotConfiguration from "@/components/RobotConfiguration";
-import ErrorHistory from "@/components/ErrorHistory";
 
 const queryClient = new QueryClient();
 
@@ -21,16 +20,13 @@ function App() {
       <div className="flex flex-col min-h-screen px-4 mb-18">
         <QueryClientProvider client={queryClient}>
           <Header />
-          <div className="space-y-4">
-            <Switch>
-              <Route path="/inventory" component={Inventory} />
-              <Route path="/storage" component={StorageBuilder} />
-              <Route path="/sizes" component={SizeDatabase} />
-              <Route path="/configuration" component={RobotConfiguration} />
-              <Route component={RobotController} />
-            </Switch>
-            <ErrorHistory />
-          </div>
+          <Switch>
+            <Route path="/inventory" component={Inventory} />
+            <Route path="/storage" component={StorageBuilder} />
+            <Route path="/sizes" component={SizeDatabase} />
+            <Route path="/configuration" component={RobotConfiguration} />
+            <Route component={RobotController} />
+          </Switch>
         </QueryClientProvider>
         <ScaleEventSSE />
         <ScannerEventSSE />
