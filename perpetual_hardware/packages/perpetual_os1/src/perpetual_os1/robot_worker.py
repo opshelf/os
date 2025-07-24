@@ -4,7 +4,7 @@ from nats.aio.client import Client as NATS
 from nats.aio.msg import Msg
 from nats import errors as nats_errors
 from nats.js.errors import NotFoundError
-from pydantic import BaseModel, TypeAdapter
+from pydantic import TypeAdapter
 from perpetual_os1.robot import (
     Robot,
     RobotCommands,
