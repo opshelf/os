@@ -114,16 +114,16 @@ class Robot:
 
         await self._mr.move_to_position(180)
         await self._ms.move_to_position(47)
-        await self._mg.move_to_position(165)
+        await self._mg.move_to_position(180)
 
         await self._ms.move_to_position(0)
         await self._mg.move_to_position(0)
         await self._mr.move_to_position(0)
         await self._mx.move_to_position(0)
 
-        await self._mr.move_to_position(180)
+        # await self._mr.move_to_position(180)
         await self._ms.move_to_position(47)
-        await self._mg.move_to_position(165)
+        await self._mg.move_to_position(180)
 
         # await self._mg.home()
         # await self._ms.home()
