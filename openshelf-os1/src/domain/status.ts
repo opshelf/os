@@ -3,6 +3,7 @@ import { robotCommandsSchema } from "./commands/robot";
 import {
   storageModuleCellLocationSchema,
   storageModuleSchema,
+  cellItemSchema,
 } from "./storage";
 
 export const statusFlagsSchema = z.object({
@@ -110,10 +111,22 @@ export const robotStatusSchema = z.object({
 
 export type RobotStatus = z.infer<typeof robotStatusSchema>;
 
+export const queuedOperationSchema = z.object({
+  command: robotCommandsSchema,
+  timestamp: z.string(),
+  location: storageModuleCellLocationSchema.nullable(),
+  item_data: cellItemSchema.nullable(),
+});
+
+export type QueuedOperation = z.infer<typeof queuedOperationSchema>;
+
 export const workerStatusSchema = z.object({
   robot_status: robotStatusSchema.nullable(),
   current_command: robotCommandsSchema.nullable(),
   running: z.boolean(),
+  // Optional fields for enhanced status
+  queued_operations: z.array(queuedOperationSchema).optional(),
+  queue_length: z.number().optional(),
 });
 
 export type WorkerStatus = z.infer<typeof workerStatusSchema>;
