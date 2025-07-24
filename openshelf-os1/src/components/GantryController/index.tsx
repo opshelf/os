@@ -125,7 +125,7 @@ const GantryController = () => {
   };
 
   return (
-    <Card className="flex flex-col px-4 py-4 space-y-4 w-fit">
+    <Card className="flex flex-col px-4 py-4 space-y-4 w-full">
       <CardTitle>Gantry Control</CardTitle>
       <CardContent className="px-0 relative">
         <div className="flex space-x-8 w-full pb-12">
