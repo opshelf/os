@@ -7,10 +7,13 @@ const RobotStatusEventSSE = () => {
   const maxReconnectAttempts = 1000;
   const reconnectInterval = 3000; // 3 seconds
   const reconnectAttemptsRef = useRef(0);
+  const testErrorEmittedRef = useRef(false);
 
   useEffect(() => {
     // Emit a test error immediately on mount to demonstrate error reporting
-    if (import.meta.env.DEV) {
+    // Use ref to prevent double emission in React StrictMode
+    if (import.meta.env.DEV && !testErrorEmittedRef.current) {
+      testErrorEmittedRef.current = true;
       setTimeout(() => {
         useStateStore.getState().addError({
           timestamp: new Date().toISOString(),
