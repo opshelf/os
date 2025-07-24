@@ -91,48 +91,54 @@ export default function DimensionForm() {
   //}, [data]);
 
   return (
-    <Card className="w-fit">
+    <Card className="w-full">
       <CardHeader>
         <CardTitle>Object Dimensions</CardTitle>
         <CardDescription>
           <p>Enter the Scanned Objects Size or Edit it if Necessary</p>
         </CardDescription>
       </CardHeader>
-      <CardContent className="flex flex-col space-y-4">
-        <Label>Item Type:</Label>
-        <Select
-          onValueChange={(value) => setItemState(value as "bottle" | "box")}
-          value={itemType}
-        >
-          <SelectTrigger className="w-[180px]">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="bottle">Bottle</SelectItem>
-            <SelectItem value="box">Box</SelectItem>
-          </SelectContent>
-        </Select>
-        <Label>Height:</Label>
-        <Input
-          className="w-[180px]"
-          value={itemHeight}
-          onChange={(e) => setItemHeight(e.target.value)}
-        />
-        <Label>Width:</Label>
-        <Input
-          className="w-[180px]"
-          value={itemWidth}
-          onChange={(e) => setItemWidth(e.target.value)}
-        />
+      <CardContent className="flex gap-4 items-end">
+        <div className="flex flex-col gap-2">
+          <Label>Item Type:</Label>
+          <Select
+            onValueChange={(value) => setItemState(value as "bottle" | "box")}
+            value={itemType}
+          >
+            <SelectTrigger className="w-[180px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="bottle">Bottle</SelectItem>
+              <SelectItem value="box">Box</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex flex-col gap-2">
+          <Label>Height:</Label>
+          <Input
+            className="w-[180px]"
+            value={itemHeight}
+            onChange={(e) => setItemHeight(e.target.value)}
+          />
+        </div>
+        <div className="flex flex-col gap-2">
+          <Label>Width:</Label>
+          <Input
+            className="w-[180px]"
+            value={itemWidth}
+            onChange={(e) => setItemWidth(e.target.value)}
+          />
+        </div>
         {itemType === "box" && (
-          <>
+          <div className="flex flex-col gap-2">
             <Label>Length:</Label>
             <Input
               className="w-[180px]"
               value={itemLength}
               onChange={(e) => setItemLength(e.target.value)}
             />
-          </>
+          </div>
         )}
 
         <div className="flex space-x-4">

@@ -1,30 +1,30 @@
-import { Card, CardContent, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { ArrowLeft, ArrowRight } from 'lucide-react';
-import { Slider } from '@/components/ui/slider';
+import { Card, CardContent, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { ArrowLeft, ArrowRight } from "lucide-react";
+import { Slider } from "@/components/ui/slider";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
-import { useState } from 'react';
-import { Label } from '@/components/ui/label';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { useForm } from 'react-hook-form';
+} from "@/components/ui/select";
+import { useState } from "react";
+import { Label } from "@/components/ui/label";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useForm } from "react-hook-form";
 import {
   Form,
   FormControl,
   FormField,
   FormItem,
   FormMessage,
-} from '@/components/ui/form';
-import { Input } from '@/components/ui/input';
-import z from 'zod';
-import { RobotController } from '@/domain/robot';
-import { robotCommand } from '@/api/robot';
-import { useStateStore } from '@/store';
+} from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
+import z from "zod";
+import { RobotController } from "@/domain/robot";
+import { robotCommand } from "@/api/robot";
+import { useStateStore } from "@/store";
 
 const MoveForm = () => {
   const robot = new RobotController(robotCommand);
@@ -83,7 +83,7 @@ const ToolController = () => {
   const toolStatus = robotStatus?.robot_status?.tool_status;
 
   return (
-    <Card className="flex flex-col px-4 py-4 space-y-4 w-fit">
+    <Card className="flex flex-col px-4 py-4 space-y-4 w-full">
       <CardTitle>Tool Control</CardTitle>
       <CardContent className="px-0 relative">
         <div className="flex space-x-8 w-full">
@@ -111,9 +111,7 @@ const ToolController = () => {
             </Button>
           </div>
           <div className="flex flex-col space-y-2">
-            <span className="text-xl w-full text-center">
-              Jog Units
-            </span>
+            <span className="text-xl w-full text-center">Jog Units</span>
             <div className="flex gap-2 items-center">
               <Label>Z</Label>
               <Select
@@ -121,10 +119,7 @@ const ToolController = () => {
                 defaultValue={`${jog}`}
               >
                 <SelectTrigger>
-                  <SelectValue
-                    placeholder={`${jog}mm`}
-                    className="w-24"
-                  />
+                  <SelectValue placeholder={`${jog}mm`} className="w-24" />
                 </SelectTrigger>
                 <SelectContent className="w-24">
                   <SelectItem value={`${1}`}>1mm</SelectItem>
@@ -154,9 +149,7 @@ const ToolController = () => {
             </div>
           </div>
           <div className="flex flex-col items-center space-y-2 items-stretch">
-            <span className="text-xl w-full text-center">
-              Move (mm)
-            </span>
+            <span className="text-xl w-full text-center">Move (mm)</span>
             <MoveForm />
           </div>
           <div className="flex flex-col items-center space-y-2 items-stretch">
@@ -213,9 +206,7 @@ const ToolController = () => {
         </div>
         <div className="flex w-full abosolute bottom-0">
           {toolStatus !== undefined && (
-            <p>
-              Tool Position: {toolStatus.carriage_status.position}
-            </p>
+            <p>Tool Position: {toolStatus.carriage_status.position}</p>
           )}
         </div>
       </CardContent>
