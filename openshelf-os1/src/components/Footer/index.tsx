@@ -29,6 +29,7 @@ const Footer = () => {
         <div className="h-4 w-px bg-gray-300" />
         <CommandDisplay command={currentCommand} isRunning={isRunning} />
         <QueuePanel />
+        <div className="h-4 w-px bg-gray-300" />
         <ErrorDrawer />
       </div>
 

@@ -134,7 +134,6 @@ export const workerStatusSchema = z.object({
   robot_status: robotStatusSchema.nullable(),
   current_command: robotCommandsSchema.nullable(),
   running: z.boolean(),
-  // Optional fields for enhanced status
   queued_operations: z.array(queuedOperationSchema).optional(),
   queue_length: z.number().optional(),
   error_queue: z.array(workerErrorSchema).optional(),
