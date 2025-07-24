@@ -9,7 +9,7 @@ from perpetual_os1.common import AxisCoordinate, ToolCoordinate
 motor_stage     = {"motor_name":"stage", "motor_id":3, "Ip": 0xA, "rpm":0xC0, "nrev": 0x2600, "dir": 0, "mpr":50} # todo make the conversion to mm/rev
 motor_gripper   = {"motor_name":"gripper", "motor_id":1, "Ip": 0xA, "rpm":0x80, "nrev": 0xF000, "dir": 1, "mpr":20}
 motor_rotate    = {"motor_name":"rotate", "motor_id":4, "Ip": 0x24, "rpm":0xF0, "nrev": 0x5800, "dir": 0, "mpr":36} # deg, not mm
-motor_x         = {"motor_name":"x_axis", "motor_id":5, "Ip": 0x24, "rpm":0xF0, "nrev": 0x8000, "dir": 0, "mpr":80}
+motor_x         = {"motor_name":"x_axis", "motor_id":5, "Ip": 0x24, "rpm":0x80, "nrev": 0x8000, "dir": 0, "mpr":80}
 # motor_y         = {"motor_id":0x05, "Ip": 0x0A, "rpm":0x40, "p_lim": 0x2600}
 GRIPPER         = 0x09
 
