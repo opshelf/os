@@ -1,6 +1,5 @@
 import { useStateStore } from "@/store";
 import { Badge } from "@/components/ui/badge";
-import { AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface ErrorIndicatorProps {
@@ -19,7 +18,7 @@ function ErrorIndicator({ className, showCount = true }: ErrorIndicatorProps) {
 		<>
 			<div className="h-4 w-px bg-gray-300" />
 			<div className={cn("flex items-center gap-2", className)}>
-				<AlertCircle className="h-4 w-4 text-destructive animate-pulse" />
+				<span className="text-sm text-destructive">Error</span>
 				{showCount && (
 					<Badge
 						variant="destructive"
