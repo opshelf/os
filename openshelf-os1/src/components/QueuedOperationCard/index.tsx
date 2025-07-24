@@ -1,8 +1,9 @@
 import { QueuedOperation } from "@/domain/status";
 import { Card, CardContent } from "@/components/ui/card";
 import CommandDisplay from "@/components/CommandDisplay";
-import { ClockIcon, MapPinIcon, PackageIcon } from "lucide-react";
+import { ClockIcon, MapPinIcon, PackageIcon, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useStateStore } from "@/store";
 
 interface QueuedOperationCardProps {
 	operation: QueuedOperation;
@@ -30,16 +31,29 @@ const formatLocation = (location: QueuedOperation["location"]) => {
 };
 
 const QueuedOperationCard = ({ operation, index, className }: QueuedOperationCardProps) => {
+	const errors = useStateStore((state) => state.errors);
 	const location = formatLocation(operation.location);
 	const hasItem = operation.item_data !== null;
 	
+	// Check if there are any errors related to this command type
+	const relatedError = errors.find(error => 
+		error.context?.command?.command === operation.command.command
+	);
+	
 	return (
-		<Card className={cn("transition-all hover:shadow-md", className)}>
+		<Card className={cn(
+			"transition-all hover:shadow-md",
+			relatedError && "border-destructive",
+			className
+		)}>
 			<CardContent className="p-4">
 				<div className="flex items-start justify-between mb-2">
 					<div className="flex items-center gap-2">
 						<span className="text-xs text-muted-foreground">#{index + 1}</span>
 						<CommandDisplay command={operation.command} />
+						{relatedError && (
+							<AlertCircle className="h-4 w-4 text-destructive" title="Error occurred with similar command" />
+						)}
 					</div>
 					<div className="flex items-center gap-1 text-xs text-muted-foreground">
 						<ClockIcon className="h-3 w-3" />

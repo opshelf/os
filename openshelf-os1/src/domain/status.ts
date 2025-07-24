@@ -120,13 +120,23 @@ export const queuedOperationSchema = z.object({
 
 export type QueuedOperation = z.infer<typeof queuedOperationSchema>;
 
+export const workerErrorSchema = z.object({
+  timestamp: z.string(),
+  error_type: z.string(),
+  message: z.string(),
+  context: z.record(z.any()).optional(),
+  stack_trace: z.string().optional(),
+});
+
+export type WorkerError = z.infer<typeof workerErrorSchema>;
+
 export const workerStatusSchema = z.object({
   robot_status: robotStatusSchema.nullable(),
   current_command: robotCommandsSchema.nullable(),
   running: z.boolean(),
-  // Optional fields for enhanced status
   queued_operations: z.array(queuedOperationSchema).optional(),
   queue_length: z.number().optional(),
+  error_queue: z.array(workerErrorSchema).optional(),
 });
 
 export type WorkerStatus = z.infer<typeof workerStatusSchema>;
