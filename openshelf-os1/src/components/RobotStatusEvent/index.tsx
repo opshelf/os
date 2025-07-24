@@ -9,6 +9,21 @@ const RobotStatusEventSSE = () => {
   const reconnectAttemptsRef = useRef(0);
 
   useEffect(() => {
+    // Emit a test error immediately on mount to demonstrate error reporting
+    if (import.meta.env.DEV) {
+      setTimeout(() => {
+        useStateStore.getState().addError({
+          timestamp: new Date().toISOString(),
+          error_type: "TestError",
+          message: "Error reporting system is active! This is a test error that appears on app load.",
+          context: { 
+            environment: "development",
+            source: "app-startup"
+          }
+        });
+      }, 500); // Small delay to ensure UI is ready
+    }
+    
     let eventSource: EventSource | null = null;
     let reconnectTimeout: NodeJS.Timeout | null = null;
 
@@ -22,22 +37,6 @@ const RobotStatusEventSSE = () => {
         store.setConnectionStatus('connected');
         store.resetReconnectAttempts();
         reconnectAttemptsRef.current = 0;
-        
-        // Emit a test error on connection to demonstrate error reporting
-        // In Vite, use import.meta.env.DEV for development mode detection
-        if (import.meta.env.DEV) {
-          setTimeout(() => {
-            store.addError({
-              timestamp: new Date().toISOString(),
-              error_type: "TestError",
-              message: "Error reporting system is active! This is a test error that appears on app load.",
-              context: { 
-                environment: "development",
-                connection: "SSE established"
-              }
-            });
-          }, 1000); // Delay slightly so user can see the connection establish first
-        }
       };
 
       eventSource.onmessage = (event) => {
