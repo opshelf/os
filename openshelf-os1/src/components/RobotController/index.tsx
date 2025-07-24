@@ -41,10 +41,7 @@ const RobotController = () => {
       <div className="flex space-x-2">
         <Button
           onClick={async () => {
-            await handleApiCall(
-              () => robot.home(),
-              "Failed to home robot"
-            );
+            await handleApiCall(() => robot.home(), "Failed to home robot");
           }}
         >
           <HomeIcon />
@@ -54,7 +51,7 @@ const RobotController = () => {
           onClick={async () => {
             await handleApiCall(
               () => robot.idlePositionCommand(),
-              "Failed to move to idle position"
+              "Failed to move to idle position",
             );
           }}
         >
@@ -65,7 +62,7 @@ const RobotController = () => {
           onClick={async () => {
             await handleApiCall(
               () => robot.moveToPickupLocation(),
-              "Failed to move to pickup location"
+              "Failed to move to pickup location",
             );
           }}
         >
@@ -76,7 +73,7 @@ const RobotController = () => {
           onClick={async () => {
             await handleApiCall(
               () => robot.initialize(),
-              "Failed to initialize robot"
+              "Failed to initialize robot",
             );
           }}
         >
@@ -87,7 +84,7 @@ const RobotController = () => {
           onClick={async () => {
             await handleApiCall(
               () => robot.returnCell(),
-              "Failed to return cell"
+              "Failed to return cell",
             );
           }}
         >
@@ -95,10 +92,7 @@ const RobotController = () => {
         </Button>
         <Button
           onClick={async () => {
-            await handleApiCall(
-              () => robot.stop(),
-              "Failed to stop robot"
-            );
+            await handleApiCall(() => robot.stop(), "Failed to stop robot");
           }}
           variant={"destructive"}
         >
@@ -109,7 +103,7 @@ const RobotController = () => {
           onClick={async () => {
             await handleApiCall(
               () => startWorker(),
-              "Failed to restart worker"
+              "Failed to restart worker",
             );
           }}
         >
@@ -121,7 +115,7 @@ const RobotController = () => {
           onClick={async () => {
             await handleApiCall(
               () => clearCommands(),
-              "Failed to clear commands"
+              "Failed to clear commands",
             );
           }}
         >
@@ -145,12 +139,13 @@ const RobotController = () => {
                     locationData.shelf !== null
                   ) {
                     await handleApiCall(
-                      () => robot.grabCell({
-                        side: locationData.side,
-                        shelf_idx: locationData.shelf,
-                        cell_idx: locationData.cell,
-                      }),
-                      `Failed to pick cell at ${locationData.side} shelf ${locationData.shelf} cell ${locationData.cell}`
+                      () =>
+                        robot.grabCell({
+                          side: locationData.side,
+                          shelf_idx: locationData.shelf,
+                          cell_idx: locationData.cell,
+                        }),
+                      `Failed to pick cell at ${locationData.side} shelf ${locationData.shelf} cell ${locationData.cell}`,
                     );
                   }
                 }}
@@ -175,12 +170,13 @@ const RobotController = () => {
                     placeLocationData.shelf !== null
                   ) {
                     await handleApiCall(
-                      () => robot.placeCell({
-                        side: placeLocationData.side,
-                        shelf_idx: placeLocationData.shelf,
-                        cell_idx: placeLocationData.cell,
-                      }),
-                      `Failed to place cell at ${placeLocationData.side} shelf ${placeLocationData.shelf} cell ${placeLocationData.cell}`
+                      () =>
+                        robot.placeCell({
+                          side: placeLocationData.side,
+                          shelf_idx: placeLocationData.shelf,
+                          cell_idx: placeLocationData.cell,
+                        }),
+                      `Failed to place cell at ${placeLocationData.side} shelf ${placeLocationData.shelf} cell ${placeLocationData.cell}`,
                     );
                   }
                 }}

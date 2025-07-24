@@ -24,7 +24,8 @@ const RobotStatusEventSSE = () => {
         reconnectAttemptsRef.current = 0;
         
         // Emit a test error on connection to demonstrate error reporting
-        if (process.env.NODE_ENV === 'development') {
+        // In Vite, use import.meta.env.DEV for development mode detection
+        if (import.meta.env.DEV) {
           setTimeout(() => {
             store.addError({
               timestamp: new Date().toISOString(),
