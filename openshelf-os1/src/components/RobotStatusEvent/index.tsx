@@ -22,6 +22,21 @@ const RobotStatusEventSSE = () => {
         store.setConnectionStatus('connected');
         store.resetReconnectAttempts();
         reconnectAttemptsRef.current = 0;
+        
+        // Emit a test error on connection to demonstrate error reporting
+        if (process.env.NODE_ENV === 'development') {
+          setTimeout(() => {
+            store.addError({
+              timestamp: new Date().toISOString(),
+              error_type: "TestError",
+              message: "Error reporting system is active! This is a test error that appears on app load.",
+              context: { 
+                environment: "development",
+                connection: "SSE established"
+              }
+            });
+          }, 1000); // Delay slightly so user can see the connection establish first
+        }
       };
 
       eventSource.onmessage = (event) => {
