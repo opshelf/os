@@ -30,7 +30,6 @@ interface State {
   lastErrorTimestamp?: number;
   addError: (error: WorkerError) => void;
   setErrors: (errors: WorkerError[]) => void;
-  dismissError: (index: number) => void;
   setConnectionStatus: (status: ConnectionStatus) => void;
   incrementReconnectAttempts: () => void;
   resetReconnectAttempts: () => void;
@@ -55,9 +54,6 @@ export const useStateStore = create<State>((set) => ({
   setErrors: (errors: WorkerError[]) => set(() => ({ 
     errors: errors.slice(-10), // Keep last 10 errors
     lastErrorTimestamp: errors.length > 0 ? Date.now() : undefined,
-  })),
-  dismissError: (index: number) => set((state) => ({
-    errors: state.errors.filter((_, i) => i !== index),
   })),
   setConnectionStatus: (status: ConnectionStatus) => set(() => ({ connectionStatus: status })),
   incrementReconnectAttempts: () => set((state) => ({ 
