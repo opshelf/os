@@ -11,6 +11,7 @@ import { Button } from "../ui/button";
 import StatusIndicator from "@/components/StatusIndicator";
 import CommandDisplay from "@/components/CommandDisplay";
 import QueuePanel from "@/components/QueuePanel";
+import ErrorIndicator from "@/components/ErrorIndicator";
 
 const Footer = () => {
   const { reading, scan, robotStatus } = useStateStore();
@@ -19,7 +20,7 @@ const Footer = () => {
   const isConnected = robotStatus !== null;
   const isRunning = robotStatus?.running ?? false;
   const currentCommand = robotStatus?.current_command ?? null;
-  
+
   return (
     <div className="flex w-full fixed inset-x-0 bottom-0 bg-white p-4 shadow-lg z-50 items-center">
       {/* Left side - Status information */}
@@ -27,10 +28,10 @@ const Footer = () => {
         <StatusIndicator connected={isConnected} />
         <div className="h-4 w-px bg-gray-300" />
         <CommandDisplay command={currentCommand} isRunning={isRunning} />
-        <div className="h-4 w-px bg-gray-300" />
         <QueuePanel />
+        <ErrorIndicator />
       </div>
-      
+
       {/* Center - Scan information */}
       <div className="flex-1 flex justify-center items-center space-x-2">
         <span className="leading-none text-sm">
@@ -38,7 +39,7 @@ const Footer = () => {
         </span>
         <BarcodeIcon className="h-4 w-4" />
       </div>
-      
+
       {/* Right side - Scale controls */}
       <div className="flex items-center space-x-2">
         <Button
