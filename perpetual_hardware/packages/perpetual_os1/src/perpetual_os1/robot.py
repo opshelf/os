@@ -8,6 +8,8 @@ from hardware.MotorBase import Motor, Servo
 from typing import Optional
 from typing import Union, Annotated, Literal
 
+import asyncio
+
 class StopCommand(BaseModel):
     command: Literal["stop"] = "stop"
 
@@ -109,34 +111,34 @@ class Robot:
         await self._ms.home()
         await self._mr.home()
         await self._mx.home()
+        # # await self._gs.open()
+        # # # await self._gs.clear()
+        # # await self._gs.close()
 
         await self._mx.move_to_position(coordinate.x)
-
         await self._mr.move_to_position(180)
-        await self._ms.move_to_position(47)
-        await self._mg.move_to_position(170) # if you set this too high, the motor just locks up
+        await self._ms.move_to_position(50)
+        await self._gs.safe_open()
+        # await asyncio.sleep(1)
+        await self._mg.move_to_position(175) # if you set this too high, the motor just locks up
+        await self._gs.open()
+        # await asyncio.sleep(1) 
+        # await self._gs.close()
+        
 
-        await self._ms.home()
         await self._mg.home()
-        await self._mr.home()
+        await self._ms.home()
+        # await self._mr.home()
         await self._mx.home()
 
-        # await self._mr.move_to_position(180)
-        await self._ms.move_to_position(47)
-        await self._mg.move_to_position(170)
+        await self._ms.move_to_position(50)
+        await self._mg.move_to_position(175)
+        await self._gs.close()
 
-        # await self._mg.home()
-        # await self._ms.home()
-        # await self._mx.home()
-        # await self._mr.home()
-
-    # async def tool_pick(self) -> None:
-
-    
-    async def tool_place(self) -> None:
-        await self._ms.move_to_position(0)
-        await self._mg.move_to_position(0)
-        await self._mr.move_to_position(0)
+    # async def tool_place(self) -> None:
+    #     await self._ms.move_to_position(0)
+    #     await self._mg.move_to_position(0)
+    #     await self._mr.move_to_position(0)
 
     # async def tool_place(self, coordinate: ToolCoordinate):
     #     await self.tool_move(ToolCoordinate(g=0, s=0, r=0))
