@@ -27,7 +27,7 @@ function ErrorItem({ error }: ErrorItemProps) {
 	};
 	
 	return (
-		<div className="flex items-center gap-2 text-sm py-2">
+		<div className="flex items-center gap-2 text-sm p-3 border rounded-lg">
 			<Badge variant={getErrorTypeBadgeVariant(error.error_type)} className="text-xs">
 				{error.error_type}
 			</Badge>
@@ -51,9 +51,9 @@ function ErrorDrawer() {
 					<ErrorBadge count={errors.length} />
 				</div>
 			</DrawerTrigger>
-			<DrawerContent className="max-h-[85vh] min-h-[400px]">
+			<DrawerContent className="max-h-[85vh] min-h-[270px]">
 				<ScrollArea className="h-full p-4">
-					<div className="space-y-1">
+					<div className="space-y-3">
 						{errors.length === 0 ? (
 							<div className="text-center py-12 text-muted-foreground">
 								<AlertCircle className="h-12 w-12 mx-auto mb-4 opacity-20" />
