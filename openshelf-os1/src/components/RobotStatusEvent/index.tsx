@@ -5,13 +5,11 @@ import { HOST } from "@/api/common";
 
 const RobotStatusEventSSE = () => {
   const maxReconnectAttempts = 1000;
-  const reconnectInterval = 3000; // 3 seconds
+  const reconnectInterval = 3000;
   const reconnectAttemptsRef = useRef(0);
   const testErrorEmittedRef = useRef(false);
 
   useEffect(() => {
-    // Emit a test error immediately on mount to demonstrate error reporting
-    // Use ref to prevent double emission in React StrictMode
     if (import.meta.env.DEV && !testErrorEmittedRef.current) {
       testErrorEmittedRef.current = true;
       setTimeout(() => {
@@ -24,7 +22,7 @@ const RobotStatusEventSSE = () => {
             source: "app-startup"
           }
         });
-      }, 500); // Small delay to ensure UI is ready
+      }, 500);
     }
     
     let eventSource: EventSource | null = null;
@@ -48,7 +46,6 @@ const RobotStatusEventSSE = () => {
           const status = workerStatusSchema.parse(data);
           store.setStatus(status);
           
-          // Update error queue if present
           if (status.error_queue && status.error_queue.length > 0) {
             store.setErrors(status.error_queue);
           }

@@ -23,7 +23,6 @@ interface State {
   addReading: (reading: ScaleReading) => void;
   scan: string | null;
   addScan: (scan: string) => void;
-  // Error management
   errors: WorkerError[];
   connectionStatus: ConnectionStatus;
   reconnectAttempts: number;
@@ -42,17 +41,16 @@ export const useStateStore = create<State>((set) => ({
   addReading: (reading: ScaleReading) => set(() => ({ reading })),
   scan: null,
   addScan: (scan: string) => set(() => ({ scan })),
-  // Error management
   errors: [],
   connectionStatus: 'disconnected',
   reconnectAttempts: 0,
   lastErrorTimestamp: undefined,
   addError: (error: WorkerError) => set((state) => ({
-    errors: [...state.errors.slice(-9), error], // Keep last 10 errors
+    errors: [...state.errors.slice(-9), error],
     lastErrorTimestamp: Date.now(),
   })),
   setErrors: (errors: WorkerError[]) => set(() => ({ 
-    errors: errors.slice(-10), // Keep last 10 errors
+    errors: errors.slice(-10),
     lastErrorTimestamp: errors.length > 0 ? Date.now() : undefined,
   })),
   setConnectionStatus: (status: ConnectionStatus) => set(() => ({ connectionStatus: status })),
