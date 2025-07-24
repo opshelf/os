@@ -114,16 +114,16 @@ class Robot:
 
         await self._mr.move_to_position(180)
         await self._ms.move_to_position(47)
-        await self._mg.move_to_position(180)
+        await self._mg.move_to_position(170) # if you set this too high, the motor just locks up
 
-        await self._ms.move_to_position(0)
-        await self._mg.move_to_position(0)
-        await self._mr.move_to_position(0)
-        await self._mx.move_to_position(0)
+        await self._ms.home()
+        await self._mg.home()
+        await self._mr.home()
+        await self._mx.home()
 
         # await self._mr.move_to_position(180)
         await self._ms.move_to_position(47)
-        await self._mg.move_to_position(180)
+        await self._mg.move_to_position(170)
 
         # await self._mg.home()
         # await self._ms.home()
