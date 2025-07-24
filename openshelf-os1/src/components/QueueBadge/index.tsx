@@ -17,7 +17,7 @@ const QueueBadge = ({ count, onClick, className }: QueueBadgeProps) => {
 			onClick={onClick}
 		>
 			<ListIcon className="h-4 w-4 mr-1" />
-			<span>Queue:</span>
+			<span>Queue</span>
 			<span className="ml-1 text-muted-foreground">
 				{count === 0 ? "Empty" : count}
 			</span>
