@@ -11,7 +11,6 @@ import Footer from "@/components/Footer";
 import Inventory from "@/components/Inventory";
 import RobotStatusEventSSE from "@/components/RobotStatusEvent";
 import RobotConfiguration from "@/components/RobotConfiguration";
-import ErrorAlert from "@/components/ErrorAlert";
 import ErrorHistory from "@/components/ErrorHistory";
 
 const queryClient = new QueryClient();
@@ -23,7 +22,6 @@ function App() {
         <QueryClientProvider client={queryClient}>
           <Header />
           <div className="space-y-4">
-            <ErrorAlert />
             <Switch>
               <Route path="/inventory" component={Inventory} />
               <Route path="/storage" component={StorageBuilder} />

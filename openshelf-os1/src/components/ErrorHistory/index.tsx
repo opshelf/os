@@ -1,6 +1,5 @@
 import { useStateStore } from "@/store";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { AlertCircle, Trash2, ChevronDown, ChevronUp } from "lucide-react";
@@ -98,60 +97,19 @@ function ErrorItem({ error, index, onDismiss }: ErrorItemProps) {
 }
 
 function ErrorHistory() {
-	const { errors, clearErrors, dismissError, addError } = useStateStore();
+	const { errors, dismissError } = useStateStore();
 	
-	const emitTestError = () => {
-		addError({
-			timestamp: new Date().toISOString(),
-			error_type: ["CommandExecutionError", "TimeoutError", "ConnectionError"][Math.floor(Math.random() * 3)],
-			message: `Test error ${Math.floor(Math.random() * 1000)}: This is a sample error message for testing the error reporting system.`,
-			context: {
-				testId: Math.random().toString(36).substring(7),
-				timestamp: Date.now(),
-				source: "Manual test"
-			},
-			stack_trace: process.env.NODE_ENV === 'development' ? `Error: Test error
-    at ErrorHistory.emitTestError (ErrorHistory.tsx:89)
-    at HTMLButtonElement.onClick (ErrorHistory.tsx:105)
-    at invokeFunc (react-dom.js:12859)` : undefined
-		});
-	};
-	
-	if (errors.length === 0 && process.env.NODE_ENV !== 'development') {
+	if (errors.length === 0) {
 		return null;
 	}
 	
 	return (
 		<Card>
-			<CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-				<CardTitle className="text-sm font-medium">
-					Error History ({errors.length})
-				</CardTitle>
-				<div className="flex gap-2">
-					{process.env.NODE_ENV === 'development' && (
-						<Button
-							variant="outline"
-							size="sm"
-							onClick={emitTestError}
-							className="h-8 px-2 text-xs"
-						>
-							<AlertCircle className="h-3 w-3 mr-1" />
-							Test Error
-						</Button>
-					)}
-					<Button
-						variant="ghost"
-						size="sm"
-						onClick={clearErrors}
-						className="h-8 px-2 text-xs"
-					>
-						<Trash2 className="h-3 w-3 mr-1" />
-						Clear All
-					</Button>
-				</div>
+			<CardHeader>
+				<CardTitle>Errors</CardTitle>
 			</CardHeader>
 			<CardContent>
-				<ScrollArea className="h-[300px] pr-4">
+				<div className="space-y-2">
 					{errors.slice().reverse().map((error, index) => (
 						<ErrorItem
 							key={`${error.timestamp}-${index}`}
@@ -160,7 +118,7 @@ function ErrorHistory() {
 							onDismiss={dismissError}
 						/>
 					))}
-				</ScrollArea>
+				</div>
 			</CardContent>
 		</Card>
 	);
