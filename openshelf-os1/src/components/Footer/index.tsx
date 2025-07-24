@@ -11,7 +11,7 @@ import { Button } from "../ui/button";
 import StatusIndicator from "@/components/StatusIndicator";
 import CommandDisplay from "@/components/CommandDisplay";
 import QueuePanel from "@/components/QueuePanel";
-import ErrorIndicator from "@/components/ErrorIndicator";
+import ErrorDrawer from "@/components/ErrorDrawer";
 
 const Footer = () => {
   const { reading, scan, robotStatus } = useStateStore();
@@ -29,7 +29,7 @@ const Footer = () => {
         <div className="h-4 w-px bg-gray-300" />
         <CommandDisplay command={currentCommand} isRunning={isRunning} />
         <QueuePanel />
-        <ErrorIndicator />
+        <ErrorDrawer />
       </div>
 
       {/* Center - Scan information */}
