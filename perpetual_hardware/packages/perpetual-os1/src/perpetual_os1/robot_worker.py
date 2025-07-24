@@ -1,5 +1,6 @@
 import asyncio
-from typing import Optional
+from typing import Optional, List
+from datetime import datetime, timezone
 from nats.aio.client import Client as NATS
 from nats.aio.msg import Msg
 from nats import errors as nats_errors
@@ -13,15 +14,31 @@ from perpetual_os1.robot import (
     RobotStatus,
     StopCommand,
 )
-from perpetual_os1.storage import StorageGrid
+from perpetual_os1.storage import StorageGrid, StorageModuleCellLocation, CellItem
 from perpetual_os1.common import RobotNatsConfiguration
 from perpetual_os1.robot_client import RobotClient
+
+
+class QueuedOperation(BaseModel):
+    command: RobotCommands
+    timestamp: datetime
+    # Extract relevant references from commands
+    location: Optional[StorageModuleCellLocation] = None
+    item_data: Optional[CellItem] = None
 
 
 class WorkerStatus(BaseModel):
     robot_status: Optional[RobotStatus]
     running: bool
     current_command: Optional[RobotCommands]
+
+
+class WorkerStatusWithQueue(BaseModel):
+    robot_status: Optional[RobotStatus]
+    running: bool
+    current_command: Optional[RobotCommands]
+    queued_operations: List[QueuedOperation] = []
+    queue_length: int = 0
 
 
 RobotCommandAdapter = TypeAdapter[RobotCommands](RobotCommands)
@@ -44,6 +61,9 @@ class RobotWorker:
         self._nats_config = nats_config
         self._client = RobotClient(nats_config)
         self._nc = NATS()
+        self._js = None  # Will be set in connect()
+        self._queued_commands: List[QueuedOperation] = []
+        self._use_enhanced_status = True  # Feature flag for enhanced status
 
     def get_client(self) -> RobotClient:
         return self._client
@@ -84,6 +104,8 @@ class RobotWorker:
     async def clear_commands(self) -> None:
         if self._js:
             await self._js.purge_stream(self._nats_config.stream_name)
+        # Also clear our local tracking
+        self._queued_commands = []
 
     async def get_storage(self) -> StorageGrid:
         return self._robot.get_storage()
@@ -97,6 +119,59 @@ class RobotWorker:
     def get_configuration(self) -> RobotConfiguration:
         return self._robot.configuration
 
+    def _extract_location(self, command: RobotCommands) -> Optional[StorageModuleCellLocation]:
+        """Extract storage location from command if available."""
+        if hasattr(command, 'location'):
+            return command.location
+        return None
+
+    def _extract_item_data(self, command: RobotCommands) -> Optional[CellItem]:
+        """Extract item data from command if available."""
+        if hasattr(command, 'item'):
+            return command.item
+        return None
+
+    async def _get_pending_messages_info(self) -> tuple[int, List[QueuedOperation]]:
+        """Get information about pending messages in the queue."""
+        try:
+            if self._js is not None:
+                consumer_info = await self._js.consumer_info(
+                    self._nats_config.stream_name, 
+                    "robot-worker"
+                )
+                pending_count = consumer_info.num_pending
+                return pending_count, self._queued_commands
+        except Exception as e:
+            print(f"Error getting consumer info: {e}")
+            return 0, []
+        
+        return 0, []
+
+    async def _publish_enhanced_status(self) -> None:
+        """Publish enhanced status with queued operations information."""
+        robot_status = await self._robot.status()
+        
+        if self._use_enhanced_status:
+            pending_count, queued_ops = await self._get_pending_messages_info()
+            status = WorkerStatusWithQueue(
+                robot_status=robot_status,
+                running=True,
+                current_command=self._current_command,
+                queued_operations=queued_ops[:10],  # Limit to prevent large payloads
+                queue_length=pending_count
+            )
+        else:
+            status = WorkerStatus(
+                robot_status=robot_status,
+                running=True,
+                current_command=self._current_command
+            )
+        
+        await self._nc.publish(
+            self._nats_config.status_queue, 
+            status.model_dump_json().encode()
+        )
+
     async def process_commands(self) -> None:
         while self._running:
             try:
@@ -107,13 +182,21 @@ class RobotWorker:
                         command = RobotCommandAdapter.validate_json(msg.data.decode())
                         self._current_command = command
                         self._msg = msg
-                        robot_status = await self._robot.status()
-                        status = WorkerStatus(
-                            robot_status=robot_status, running=True, current_command=command
+                        
+                        # Create queued operation entry
+                        queued_op = QueuedOperation(
+                            command=command,
+                            timestamp=datetime.now(timezone.utc),
+                            location=self._extract_location(command),
+                            item_data=self._extract_item_data(command)
                         )
-                        await self._nc.publish(
-                            self._nats_config.status_queue, status.model_dump_json().encode()
-                        )
+                        
+                        # Add to our tracking list
+                        self._queued_commands.append(queued_op)
+                        
+                        # Publish enhanced status
+                        await self._publish_enhanced_status()
+                        
                         self._current_task = asyncio.create_task(
                             self._robot.handle_command(command)
                         )
@@ -125,23 +208,41 @@ class RobotWorker:
                         )
                         if self._msg:
                             await self._msg.ack()
+                        
+                        # Remove the completed command from our tracking
+                        if self._queued_commands and self._current_command:
+                            # Remove the first matching command
+                            self._queued_commands = [
+                                op for op in self._queued_commands 
+                                if op.command != self._current_command
+                            ]
+                        
                         self._current_task = None
                         self._current_command = None
                         self._msg = None
+                        
+                        # Publish updated status after completion
+                        await self._publish_enhanced_status()
 
                 await asyncio.sleep(0.1)
             except (nats_errors.TimeoutError, asyncio.TimeoutError, asyncio.CancelledError) as e:
                 await asyncio.sleep(0.1)
                 if self._msg:
                     await self._msg.ack()
-                robot_status = await self._robot.status()
-                status = WorkerStatus(robot_status=robot_status, running=True, current_command=None)
-                await self._nc.publish(
-                    self._nats_config.status_queue, status.model_dump_json().encode()
-                )
+                
+                # Remove the failed command from tracking if needed
+                if self._current_command and self._queued_commands:
+                    self._queued_commands = [
+                        op for op in self._queued_commands 
+                        if op.command != self._current_command
+                    ]
+                
                 self._current_task = None
                 self._current_command = None
                 self._msg = None
+                
+                # Publish enhanced status
+                await self._publish_enhanced_status()
             #except Exception as e:
             #    robot_status = await self._robot.status()
             #    error_status = WorkerStatus(
@@ -188,7 +289,22 @@ class RobotWorker:
             if self._worker_task:
                 self._worker_task.cancel()
             self._worker_task = asyncio.create_task(self.process_commands())
-            status = WorkerStatus(robot_status=None, running=True, current_command=None)
+            
+            # Clear queued commands tracking on start
+            self._queued_commands = []
+            
+            # Publish initial enhanced status
+            if self._use_enhanced_status:
+                status = WorkerStatusWithQueue(
+                    robot_status=None, 
+                    running=True, 
+                    current_command=None,
+                    queued_operations=[],
+                    queue_length=0
+                )
+            else:
+                status = WorkerStatus(robot_status=None, running=True, current_command=None)
+            
             await self._nc.publish(
                 self._nats_config.status_queue, status.model_dump_json().encode()
             )
@@ -211,7 +327,19 @@ class RobotWorker:
         print("Send Shutdown")
         await self._robot.shutdown()
         print("Publish Status ")
-        shutdown_status = WorkerStatus(robot_status=None, running=False, current_command=None)
+        
+        # Publish shutdown status
+        if self._use_enhanced_status:
+            shutdown_status = WorkerStatusWithQueue(
+                robot_status=None, 
+                running=False, 
+                current_command=None,
+                queued_operations=[],
+                queue_length=0
+            )
+        else:
+            shutdown_status = WorkerStatus(robot_status=None, running=False, current_command=None)
+        
         await self._nc.publish(
             self._nats_config.status_queue, shutdown_status.model_dump_json().encode()
         )
