@@ -1,10 +1,6 @@
 import { useState } from "react";
 import { useStateStore } from "@/store";
-import {
-	Drawer,
-	DrawerContent,
-	DrawerTrigger,
-} from "@/components/ui/drawer";
+import { Drawer, DrawerContent, DrawerTrigger } from "@/components/ui/drawer";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import QueueBadge from "@/components/QueueBadge";
 import QueuedOperationCard from "@/components/QueuedOperationCard";
@@ -13,10 +9,10 @@ import { ListIcon } from "lucide-react";
 const QueuePanel = () => {
 	const [open, setOpen] = useState(false);
 	const { robotStatus } = useStateStore();
-	
+
 	const queueLength = robotStatus?.queue_length ?? 0;
 	const queuedOperations = robotStatus?.queued_operations ?? [];
-	
+
 	return (
 		<Drawer open={open} onOpenChange={setOpen}>
 			<DrawerTrigger asChild>
@@ -30,9 +26,12 @@ const QueuePanel = () => {
 						{queueLength === 0 ? (
 							<div className="text-center py-12 text-muted-foreground">
 								<ListIcon className="h-12 w-12 mx-auto mb-4 opacity-20" />
-								<p className="text-lg">No operations in queue</p>
+								<p className="text-lg">
+									No operations in queue
+								</p>
 								<p className="text-sm mt-2">
-									Operations will appear here when commands are sent to the robot
+									Operations will appear here when commands
+									are sent to the robot
 								</p>
 							</div>
 						) : queuedOperations.length > 0 ? (
@@ -51,12 +50,14 @@ const QueuePanel = () => {
 								</p>
 							</div>
 						)}
-						
-						{queuedOperations.length > 0 && queuedOperations.length < queueLength && (
-							<div className="text-center text-sm text-muted-foreground py-4">
-								Showing {queuedOperations.length} of {queueLength} operations
-							</div>
-						)}
+
+						{queuedOperations.length > 0 &&
+							queuedOperations.length < queueLength && (
+								<div className="text-center text-sm text-muted-foreground py-4">
+									Showing {queuedOperations.length} of{" "}
+									{queueLength} operations
+								</div>
+							)}
 					</div>
 				</ScrollArea>
 			</DrawerContent>
