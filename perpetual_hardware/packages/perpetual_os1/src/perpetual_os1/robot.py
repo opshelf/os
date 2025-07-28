@@ -9,6 +9,14 @@ from typing import Optional
 from typing import Union, Annotated, Literal
 
 import asyncio
+SLIDE_EXTENSION = 45
+GRIPPER_EXTENSION = 170
+REVERSE = 180
+
+BAY1 = 19
+BAY2 = 174
+BAY3 = 329
+BAY4 = 484
 
 class StopCommand(BaseModel):
     command: Literal["stop"] = "stop"
@@ -99,22 +107,28 @@ class Robot:
             return
         await self._mx.configure()
         await self._mg.configure()
-        # await self._mr.configure()
+        await self._mr.configure()
         await self._ms.configure()
         await self._gs.configure()
         # todo motor list
 
     async def move(self, coordinate: AxisCoordinate) -> None:
         await self.home()
-        # await self._mr.move_to_position(182)
-        await self.pick(AxisCoordinate(330, 0))
-        await self.place(AxisCoordinate(19, 0))
+        await self._mr.move_to_position(REVERSE)
+        await self.pick(AxisCoordinate(BAY1, 0))
+        await self.place(AxisCoordinate(BAY2, 0))
+        await self.pick(AxisCoordinate(BAY2, 0))
+        await self.place(AxisCoordinate(BAY3, 0))
+        await self.pick(AxisCoordinate(BAY3, 0))
+        await self.place(AxisCoordinate(BAY4, 0))
+        await self.pick(AxisCoordinate(BAY4, 0))
+        await self.place(AxisCoordinate(BAY1, 0))
 
     async def pick(self, coordinate: AxisCoordinate) -> None:
         await self._gs.safe_open()
         await self._mx.move_to_position(coordinate.x)
-        await self._ms.move_to_position(45) # 50 max
-        await self._mg.move_to_position(170)
+        await self._ms.move_to_position(SLIDE_EXTENSION) # 50 max
+        await self._mg.move_to_position(GRIPPER_EXTENSION)
         await self._gs.open()
 
         await self._mg.retract()
@@ -123,8 +137,8 @@ class Robot:
 
     async def place(self, coordinate: AxisCoordinate):
         await self._mx.move_to_position(coordinate.x)
-        await self._ms.move_to_position(45) # 50 max
-        await self._mg.move_to_position(170)
+        await self._ms.move_to_position(SLIDE_EXTENSION) # 50 max
+        await self._mg.move_to_position(GRIPPER_EXTENSION)
         await self._gs.close()
 
         await self._mg.retract()
@@ -134,7 +148,7 @@ class Robot:
     async def home(self) -> None:
         await self._ms.home()
         await self._mg.home()
-        # await self._mr.home()
+        await self._mr.home()
         await self._mx.home()
 
     async def stop(self) -> None:
@@ -178,9 +192,9 @@ class Robot:
             case MoveCommand(coordinate=coord):
                 await self.move(coord)
                 return RobotCommandSuccessful()
-            case MoveToolCommand(coordinate=coord):
-                await self.tool_move(coord)
-                return RobotCommandSuccessful()
+            # case MoveToolCommand(coordinate=coord):
+            #     await self.tool_move(coord)
+            #     return RobotCommandSuccessful()
             # case IdleCommand():
             #     await self.idle()
             #     return RobotCommandSuccessful()
