@@ -16,7 +16,7 @@ async def init_robot_worker() -> None:
     robot = r.Robot("/dev/ttyUSB0")
     # storage_grid = load_storage_from_file("storage.json")
     # robot.set_storage(storage_grid)
-    await robot.configure()
+    await robot.configure() # todo make these have error handling
     # logging.info("Got Bus")
     logging.info("Built Robot")
     robot_worker = r_worker.RobotWorker(robot, common.RobotNatsConfiguration())
