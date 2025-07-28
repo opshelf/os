@@ -99,61 +99,43 @@ class Robot:
             return
         await self._mx.configure()
         await self._mg.configure()
-        await self._mr.configure()
+        # await self._mr.configure()
         await self._ms.configure()
         await self._gs.configure()
         # todo motor list
 
     async def move(self, coordinate: AxisCoordinate) -> None:
+        await self.home()
+        # await self._mr.move_to_position(182)
+        await self.pick(AxisCoordinate(330, 0))
+        await self.place(AxisCoordinate(19, 0))
 
-        # await self._mx.move_to_position(500)
-        await self._mg.home()
-        await self._ms.home()
-        await self._mr.home()
-        await self._mx.home()
-        # # await self._gs.open()
-        # # # await self._gs.clear()
-        # # await self._gs.close()
-
-        await self._mx.move_to_position(coordinate.x)
-        await self._mr.move_to_position(180)
-        await self._ms.move_to_position(50)
+    async def pick(self, coordinate: AxisCoordinate) -> None:
         await self._gs.safe_open()
-        # await asyncio.sleep(1)
-        await self._mg.move_to_position(175) # if you set this too high, the motor just locks up
+        await self._mx.move_to_position(coordinate.x)
+        await self._ms.move_to_position(45) # 50 max
+        await self._mg.move_to_position(170)
         await self._gs.open()
-        # await asyncio.sleep(1) 
-        # await self._gs.close()
+
+        await self._mg.retract()
+        await self._ms.retract()
         
 
-        await self._mg.home()
-        await self._ms.home()
-        # await self._mr.home()
-        await self._mx.home()
-
-        await self._ms.move_to_position(50)
-        await self._mg.move_to_position(175)
+    async def place(self, coordinate: AxisCoordinate):
+        await self._mx.move_to_position(coordinate.x)
+        await self._ms.move_to_position(45) # 50 max
+        await self._mg.move_to_position(170)
         await self._gs.close()
 
-    # async def tool_place(self) -> None:
-    #     await self._ms.move_to_position(0)
-    #     await self._mg.move_to_position(0)
-    #     await self._mr.move_to_position(0)
+        await self._mg.retract()
+        await self._ms.retract()
 
-    # async def tool_place(self, coordinate: ToolCoordinate):
-    #     await self.tool_move(ToolCoordinate(g=0, s=0, r=0))
-    #     # await self._gs.close()
-    #     # await self._gs.wait_for_servo()
 
     async def home(self) -> None:
-        await self._mx.home()
-        # await self._mx.wait_for_move(timeout=10.0)
-        # await self._mg.home()
-        # await self._mg.wait_for_move(timeout=10.0)
+        await self._ms.home()
+        await self._mg.home()
         # await self._mr.home()
-        # await self._mr.wait_for_move(timeout=10.0)
-        # await self._ms.home()
-        # await self._ms.wait_for_move(timeout=10.0)
+        await self._mx.home()
 
     async def stop(self) -> None:
         await self._mx.stop()
