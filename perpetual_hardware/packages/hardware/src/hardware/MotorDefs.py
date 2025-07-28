@@ -1,5 +1,5 @@
-from collections import OrderedDict
 
+from collections import OrderedDict
 TRIGGER         = 0x6002
 
 # Full list of parsed register-parameter pairs from the datasheet, formatted for readability and export
@@ -62,6 +62,17 @@ motor_registers = [
     (0x1801, None, "Control word", "Command triggers via write", "--", None, "--"),
     (0x1901, None, "Save status word", "0x5555 = OK, 0xAAAA = fail", "--", None, "--"),
     (0x2203, None, "Current alarm", "Alarm code: overcurrent, etc.", "--", None, "--"),
+    (0x600A, None, "Homing mode", "bit0: direction (0=CCW,1=CW), bit1: move to position, bit2: type (0=limit,1=home switch)", "--", "bitfield", "--"),
+    (0x600B, None, "Home switch position (high)", "High 16 bits of home switch absolute position", "pulses", "--", "--"),
+    (0x600C, None, "Home switch position (low)", "Low 16 bits of home switch absolute position", "pulses", "--", "--"),
+    (0x600D, None, "Homing stop position (high)", "High 16 bits of final position after homing", "pulses", "--", "--"),
+    (0x600E, None, "Homing stop position (low)", "Low 16 bits of final position after homing", "pulses", "--", "--"),
+    (0x600F, None, "Homing high velocity", "First segment homing velocity", "rpm", "0–5000", "--"),
+    (0x6010, None, "Homing low velocity", "Second segment precise homing velocity", "rpm", "0–5000", "--"),
+    (0x6011, None, "Homing acceleration", "Acceleration during homing", "ms/1000rpm", "--", "--"),
+    (0x6012, None, "Homing deceleration", "Deceleration during homing", "ms/1000rpm", "--", "--"),
+    # (0x6002, None, "Set current position to 0", "Write 0x21 to set current motor position to zero", "--", "--", "--"),
+    (0x6000, None, "Auto-homing enable", "bit2 = 1 enables auto-homing at power-on", "--", "bitfield", "--"),
     (0x6200, "Pr9.00", "Motion of Path 0", "Path config: type, interrupt, jump, relative", "--", None, "--"),
     (0x6201, "Pr9.01", "Position High", "High 16 bits of position setpoint", "--", None, "--"),
     (0x6202, "Pr9.02", "Position Low", "Low 16 bits of position setpoint", "--", None, "--"),
@@ -101,6 +112,6 @@ def rev_to_pulse(rev: int):
     bottom_bytes = val & 0xFFFF
     return top_bytes, bottom_bytes
 
-def mm_to_rev(mm: int, mpr: float):
+def mm_to_rev(mm: float, mpr: float):
     val = float(mm / mpr)
     return val
