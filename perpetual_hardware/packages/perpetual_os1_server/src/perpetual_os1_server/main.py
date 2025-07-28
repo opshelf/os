@@ -8,7 +8,6 @@ from perpetual_os1_server.routers import robot
 # from perpetual_os1_server.core.sizes import init_file_sizes
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
-# from perpetual_p0c_server.settings import get_settings
 import uvicorn
 import logging
 import sys
@@ -52,7 +51,6 @@ app.include_router(robot.router, prefix="/api/robot")
 # app.include_router(sizes.router, prefix="/api/sizes")
 
 def start() -> None:
-    print("beb!")
     uvicorn.run(
         "perpetual_os1_server.main:app",
         host="0.0.0.0",
