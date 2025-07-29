@@ -105,7 +105,7 @@ def get_register_by_name(param_name: str) -> int:
             return int(entry.get("Register"), 16)
     return None
 
-def rev_to_pulse(rev: int):
+def rev_to_pulse(rev: float):
     pulse_rev = 10000 # todo have this read from the motor
     val = int(rev*pulse_rev)
     top_bytes = (val >> 16) & 0xFFFF
