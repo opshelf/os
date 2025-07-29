@@ -9,14 +9,15 @@ from typing import Optional
 from typing import Union, Annotated, Literal
 
 import asyncio
-SLIDE_EXTENSION = 45
-GRIPPER_EXTENSION = 170
-REVERSE = 180
+SLIDE_EXTENSION = 50
+GRIPPER_EXTENSION_PICK = 168
+GRIPPER_EXTENSION_PLACE = 164
+REVERSE = 180.5
 
-BAY1 = 19
+BAY1 = 18
 BAY2 = 174
-BAY3 = 329
-BAY4 = 484
+BAY3 = 330
+BAY4 = 486
 
 class StopCommand(BaseModel):
     command: Literal["stop"] = "stop"
@@ -115,20 +116,21 @@ class Robot:
     async def move(self, coordinate: AxisCoordinate) -> None:
         await self.home()
         await self._mr.move_to_position(REVERSE)
-        await self.pick(AxisCoordinate(BAY1, 0))
-        await self.place(AxisCoordinate(BAY2, 0))
-        await self.pick(AxisCoordinate(BAY2, 0))
-        await self.place(AxisCoordinate(BAY3, 0))
-        await self.pick(AxisCoordinate(BAY3, 0))
-        await self.place(AxisCoordinate(BAY4, 0))
-        await self.pick(AxisCoordinate(BAY4, 0))
-        await self.place(AxisCoordinate(BAY1, 0))
+        for i in range(0,10):
+            await self.pick(AxisCoordinate(BAY1, 0))
+            await self.place(AxisCoordinate(BAY2, 0))
+            await self.pick(AxisCoordinate(BAY2, 0))
+            await self.place(AxisCoordinate(BAY3, 0))
+            await self.pick(AxisCoordinate(BAY3, 0))
+            await self.place(AxisCoordinate(BAY4, 0))
+            await self.pick(AxisCoordinate(BAY4, 0))
+            await self.place(AxisCoordinate(BAY1, 0))
 
     async def pick(self, coordinate: AxisCoordinate) -> None:
         await self._gs.safe_open()
         await self._mx.move_to_position(coordinate.x)
         await self._ms.move_to_position(SLIDE_EXTENSION) # 50 max
-        await self._mg.move_to_position(GRIPPER_EXTENSION)
+        await self._mg.move_to_position(GRIPPER_EXTENSION_PICK)
         await self._gs.open()
 
         await self._mg.retract()
@@ -138,7 +140,7 @@ class Robot:
     async def place(self, coordinate: AxisCoordinate):
         await self._mx.move_to_position(coordinate.x)
         await self._ms.move_to_position(SLIDE_EXTENSION) # 50 max
-        await self._mg.move_to_position(GRIPPER_EXTENSION)
+        await self._mg.move_to_position(GRIPPER_EXTENSION_PLACE)
         await self._gs.close()
 
         await self._mg.retract()

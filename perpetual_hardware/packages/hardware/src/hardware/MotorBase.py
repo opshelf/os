@@ -24,7 +24,7 @@ class Servo():
         await self._controller.write_single_register(9, 0x3E8, 0x1) #enable
         await self.wait_for_activate()
         #open
-        await self._controller.write_single_register(9, 0x03EB, 0x8018) # 0x80|0x05
+        await self._controller.write_single_register(9, 0x03EB, 0x8020) # 0x80|0x05
         await self._controller.write_single_register(9, 0x03EC, 0x80)
         #close
         await self._controller.write_single_register(9, 0x03ED, 0x80FE) # 0x80|0xFF
@@ -71,12 +71,13 @@ class Servo():
 
         while True:
             status = await self._controller.read_holding_registers(9, 0x07D0)
+            status = (status & (1<<6)) or (status & (1<<7))
             # print(hex(status))
             if status is None:
                 print("Failed to read gripper status.")
                 return MotorStatus.ERROR
 
-            if (status == 0xF5) or (status==0x75):
+            if status:
                 print(f"[gripper] Move complete.")
                 return 
 
@@ -107,7 +108,7 @@ class Motor():
         await self.set_param("Forced enable by software", 0x1) # always on?
         await self.set_param("SI2 input function", 0x26) # neg switch
         await self.set_param("Peak current", self._params["Ip"])
-        await self.set_param("Allowed max position following error", 3000)
+        await self.set_param("Allowed max position following error", 4000)
         return
 
     # this sort of assumes we're only using path 0, and will have to be adapted if we do anything fancy.
@@ -208,7 +209,7 @@ class Motor():
             await asyncio.sleep(0.01)
 
     # TODO set the flag (5 for motion, 6 for homing) as a parameter
-    async def wait_for_home(self, timeout: float = 10.0) -> MotorStatus:
+    # async def wait_for_home(self, timeout: float = 10.0) -> MotorStatus:
         start_time = time.monotonic()
         # await self.get_position()
         last_pos = None
@@ -288,7 +289,7 @@ class Motor():
 
         await self.set_param("Motion of Path 0", 0x2) # velocity
         await self.set_param("Motor direction", home_dir)
-        await self.set_param("Velocity", self._params["rpm"]) # only use with
+        await self.set_param("Velocity", self._params["ret_rpm"]) # only use with gripper and slide
         await self._controller.write_single_register(
                 self._motor_id, 
                 MotorDefs.TRIGGER,
