@@ -2,8 +2,9 @@ from fastapi import APIRouter, Depends
 from perpetual_os1_server.core.printer import generate_random_upca
 from perpetual_os1_server.core.sizes import ItemInformation, get_size_db, SizeDatabase
 from pydantic import BaseModel
+from .auth_deps import get_current_user, require_permissions
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
 @router.get("/")
@@ -16,7 +17,7 @@ class UpdateSizeRequest(BaseModel):
     item: ItemInformation
 
 
-@router.put("/")
+@router.put("/", dependencies=[Depends(require_permissions("sizes:write"))])
 async def add_size_item(
     request: UpdateSizeRequest, size_database: SizeDatabase = Depends(get_size_db)
 ) -> SizeDatabase:
@@ -25,7 +26,7 @@ async def add_size_item(
     return size_database
 
 
-@router.post("/")
+@router.post("/", dependencies=[Depends(require_permissions("sizes:write"))])
 async def add_item(
     item: ItemInformation, size_database: SizeDatabase = Depends(get_size_db)
 ) -> SizeDatabase:
@@ -35,7 +36,7 @@ async def add_item(
     return size_database
 
 
-@router.delete("/{upca}")
+@router.delete("/{upca}", dependencies=[Depends(require_permissions("sizes:write"))])
 async def remove_item(
     upca: str, size_database: SizeDatabase = Depends(get_size_db)
 ) -> SizeDatabase:
