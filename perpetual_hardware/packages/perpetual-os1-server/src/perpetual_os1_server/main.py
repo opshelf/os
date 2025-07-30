@@ -5,14 +5,18 @@ from perpetual_os1_server.core.robot import init_robot_worker, stop_robot_worker
 from perpetual_os1_server.core.scale import init_scale_worker, stop_scale_worker
 from perpetual_os1_server.core.scanner import init_scanner_worker, stop_scanner_worker
 from perpetual_os1_server.routers import gantry, robot, scale, scanner, printer, sizes
+from perpetual_os1_server.routers import auth, users, roles, audit
 from perpetual_os1_server.core.sizes import init_file_sizes
+from perpetual_os1_server.database.base import engine, Base
+from perpetual_os1_server.middleware.audit import AuditMiddleware
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
-from perpetual_p0c_server.settings import get_settings
+from perpetual_os1_server.settings import get_settings
 import uvicorn
 import logging
 import sys
 import asyncio
+import os
 
 root = logging.getLogger()
 root.setLevel(logging.INFO)
@@ -29,6 +33,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logging.info(f"{app.title}")
     settings = get_settings()
     logging.info(f"settings: {settings}")
+    
+    logging.info("Initializing database...")
+    Base.metadata.create_all(bind=engine)
+    
+    if os.getenv("RUN_SEED_SCRIPT") == "true":
+        logging.info("Running seed script...")
+        os.system("python scripts/seed_auth.py")
+    
     await init_robot_worker()
     logging.info("Robot Enabled")
     await init_scale_worker()
@@ -60,6 +72,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.add_middleware(AuditMiddleware)
+
+app.include_router(auth.router)
+app.include_router(users.router)
+app.include_router(roles.router)
+app.include_router(audit.router)
 app.include_router(gantry.router, prefix="/api")
 app.include_router(robot.router, prefix="/api/robot")
 app.include_router(scale.router, prefix="/api/scale")
