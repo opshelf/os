@@ -35,31 +35,55 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logging.info(f"settings: {settings}")
     
     logging.info("Initializing database...")
-    Base.metadata.create_all(bind=engine)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
     
     if os.getenv("RUN_SEED_SCRIPT") == "true":
         logging.info("Running seed script...")
-        os.system("python scripts/seed_auth.py")
+        # Run seed script as subprocess
+        import subprocess
+        import sys
+        from pathlib import Path
+        script_path = Path(__file__).parent.parent.parent / "scripts" / "seed_auth.py"
+        if script_path.exists():
+            subprocess.run([sys.executable, str(script_path)], env={**os.environ, "ENV": "dev"})
     
-    await init_robot_worker()
-    logging.info("Robot Enabled")
-    await init_scale_worker()
-    logging.info("Scale Enabled")
-    await init_scanner_worker()
-    logging.info("Scanner Enabled")
+    if settings.robot.enabled:
+        await init_robot_worker()
+        logging.info("Robot Enabled")
+    
+    if settings.scale.enabled:
+        await init_scale_worker()
+        logging.info("Scale Enabled")
+    
+    if settings.scanner.enabled:
+        await init_scanner_worker()
+        logging.info("Scanner Enabled")
     init_file_sizes()
-    auto_storage = AutomaticStorage()
-    await auto_storage.connect()
-    asyncio.create_task(auto_storage.run())
+    
+    # AutomaticStorage requires NATS which may not be available in dev
+    auto_storage = None
+    try:
+        auto_storage = AutomaticStorage()
+        await auto_storage.connect()
+        asyncio.create_task(auto_storage.run())
+    except Exception as e:
+        logging.warning(f"AutomaticStorage disabled: {e}")
     yield
     logging.info("Shutting Down")
-    await stop_robot_worker()
-    logging.info("Robot Shutdown")
-    await stop_scale_worker()
-    logging.info("Scale Shutdown")
-    await stop_scanner_worker()
-    logging.info("Scanner Shutdown")
-    await auto_storage.close()
+    if settings.robot.enabled:
+        await stop_robot_worker()
+        logging.info("Robot Shutdown")
+    
+    if settings.scale.enabled:
+        await stop_scale_worker()
+        logging.info("Scale Shutdown")
+    
+    if settings.scanner.enabled:
+        await stop_scanner_worker()
+        logging.info("Scanner Shutdown")
+    if auto_storage is not None:
+        await auto_storage.close()
 
 
 app = FastAPI(lifespan=lifespan)

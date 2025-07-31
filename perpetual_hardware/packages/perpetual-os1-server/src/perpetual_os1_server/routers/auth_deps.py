@@ -1,8 +1,10 @@
 """Authentication dependencies for FastAPI routes."""
 from typing import Optional, List
-from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from sqlalchemy.orm import Session
+from fastapi import Depends, HTTPException, status, Request
+from fastapi.security import OAuth2PasswordBearer
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from ..settings import get_settings
 from ..database.session import get_db
@@ -10,24 +12,29 @@ from ..database.models import User
 from ..core.auth import AuthService
 from ..core.permissions import has_permission
 
-security = HTTPBearer(auto_error=False)
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
 
 async def get_current_user_optional(
-	credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
-	db: Session = Depends(get_db)
+	token: Optional[str] = Depends(oauth2_scheme),
+	db: AsyncSession = Depends(get_db)
 ) -> Optional[User]:
 	"""Get current user if authenticated, otherwise None (for dev mode)."""
 	settings = get_settings()
 	
 	if settings.auth.dev_mode and settings.auth.dev_auto_user:
-		user = db.query(User).filter_by(
-			email=settings.auth.dev_auto_user,
-			is_active=True
-		).first()
+		result = await db.execute(
+			select(User)
+			.options(selectinload(User.role))
+			.filter_by(
+				email=settings.auth.dev_auto_user,
+				is_active=True
+			)
+		)
+		user = result.scalar_one_or_none()
 		if user is not None:
 			return user
 	
-	if credentials is None:
+	if token is None:
 		return None
 	
 	auth_service = AuthService(
@@ -35,24 +42,32 @@ async def get_current_user_optional(
 		settings.auth.jwt_algorithm
 	)
 	
-	payload = auth_service.decode_token(credentials.credentials)
+	payload = auth_service.decode_token(token)
 	if payload is None or payload.get("type") != "access":
 		return None
 	
-	user = db.query(User).filter_by(
-		id=payload.get("user_id"),
-		is_active=True
-	).first()
+	result = await db.execute(
+		select(User)
+		.options(selectinload(User.role))
+		.filter_by(
+			id=payload.get("user_id"),
+			is_active=True
+		)
+	)
+	user = result.scalar_one_or_none()
 	
 	return user
 
 async def get_current_user(
-	user: Optional[User] = Depends(get_current_user_optional)
+	token: Optional[str] = Depends(oauth2_scheme),
+	db: AsyncSession = Depends(get_db)
 ) -> User:
 	"""Get current authenticated user or raise 401."""
 	settings = get_settings()
 	
+	# Check if auth is disabled
 	if not settings.auth.enabled or not settings.auth.require_auth:
+		user = await get_current_user_optional(token, db)
 		if user is not None:
 			return user
 		
@@ -62,10 +77,40 @@ async def get_current_user(
 				detail="Dev auto-user not found in database"
 			)
 	
-	if user is None:
+	if not token:
 		raise HTTPException(
 			status_code=status.HTTP_401_UNAUTHORIZED,
 			detail="Not authenticated",
+			headers={"WWW-Authenticate": "Bearer"},
+		)
+	
+	auth_service = AuthService(
+		settings.auth.jwt_secret,
+		settings.auth.jwt_algorithm
+	)
+	
+	payload = auth_service.decode_token(token)
+	if payload is None or payload.get("type") != "access":
+		raise HTTPException(
+			status_code=status.HTTP_401_UNAUTHORIZED,
+			detail="Invalid token",
+			headers={"WWW-Authenticate": "Bearer"},
+		)
+	
+	result = await db.execute(
+		select(User)
+		.options(selectinload(User.role))
+		.filter_by(
+			id=payload.get("user_id"),
+			is_active=True
+		)
+	)
+	user = result.scalar_one_or_none()
+	
+	if user is None:
+		raise HTTPException(
+			status_code=status.HTTP_401_UNAUTHORIZED,
+			detail="User not found or inactive",
 			headers={"WWW-Authenticate": "Bearer"},
 		)
 	

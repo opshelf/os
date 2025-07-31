@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """Seed initial authentication data."""
 import sys
+import asyncio
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).parent.parent / "src"))
 
-from perpetual_os1_server.database.base import SessionLocal, engine
+from sqlalchemy import select
+from perpetual_os1_server.database.base import engine, Base
+from perpetual_os1_server.database.session import AsyncSessionLocal
 from perpetual_os1_server.database.models import User, Role
-from argon2 import PasswordHasher
-import json
-
-ph = PasswordHasher()
+from perpetual_os1_server.core.auth import AuthService
+from perpetual_os1_server.settings import get_settings
 
 DEFAULT_ROLES = [
 	{
@@ -53,21 +54,21 @@ DEFAULT_ROLES = [
 
 DEV_USERS = [
 	{
-		"email": "admin@example.com",
+		"email": "admin@opshelf.com",
 		"first_name": "Admin",
 		"last_name": "User",
 		"pin": "1234",
 		"role": "admin"
 	},
 	{
-		"email": "operator@example.com",
+		"email": "operator@opshelf.com",
 		"first_name": "Operator",
 		"last_name": "User",
 		"pin": "5678",
 		"role": "operator"
 	},
 	{
-		"email": "viewer@example.com",
+		"email": "viewer@opshelf.com",
 		"first_name": "Viewer",
 		"last_name": "User",
 		"pin": "9012",
@@ -75,10 +76,14 @@ DEV_USERS = [
 	}
 ]
 
-def seed_roles(db):
+async def seed_roles(db):
 	"""Create default roles if they don't exist."""
 	for role_data in DEFAULT_ROLES:
-		role = db.query(Role).filter_by(name=role_data["name"]).first()
+		result = await db.execute(
+			select(Role).filter_by(name=role_data["name"])
+		)
+		role = result.scalar_one_or_none()
+
 		if role is None:
 			role = Role(
 				name=role_data["name"],
@@ -89,9 +94,9 @@ def seed_roles(db):
 		else:
 			print(f"Role already exists: {role_data['name']}")
 	
-	db.commit()
+	await db.commit()
 
-def seed_dev_users(db):
+async def seed_dev_users(db):
 	"""Create development users if they don't exist."""
 	import os
 	
@@ -99,10 +104,24 @@ def seed_dev_users(db):
 		print("Skipping dev users - not in development mode")
 		return
 	
+	settings = get_settings()
+	auth_service = AuthService(
+		settings.auth.jwt_secret,
+		settings.auth.jwt_algorithm
+	)
+
 	for user_data in DEV_USERS:
-		user = db.query(User).filter_by(email=user_data["email"]).first()
+		result = await db.execute(
+			select(User).filter_by(email=user_data["email"])
+		)
+		user = result.scalar_one_or_none()
+
 		if user is None:
-			role = db.query(Role).filter_by(name=user_data["role"]).first()
+			result = await db.execute(
+				select(Role).filter_by(name=user_data["role"])
+			)
+			role = result.scalar_one_or_none()
+
 			if role is None:
 				print(f"Role not found: {user_data['role']}")
 				continue
@@ -111,7 +130,7 @@ def seed_dev_users(db):
 				email=user_data["email"],
 				first_name=user_data["first_name"],
 				last_name=user_data["last_name"],
-				pin_hash=ph.hash(user_data["pin"]),
+				pin_hash=auth_service.hash_pin(user_data["pin"]),
 				role_id=role.id,
 				is_active=True
 			)
@@ -120,21 +139,22 @@ def seed_dev_users(db):
 		else:
 			print(f"User already exists: {user_data['email']}")
 	
-	db.commit()
+	await db.commit()
 
-def main():
+async def main():
 	"""Run seed script."""
-	db = SessionLocal()
-	try:
+	# Create tables if they don't exist
+	async with engine.begin() as conn:
+		await conn.run_sync(Base.metadata.create_all)
+
+	async with AsyncSessionLocal() as db:
 		print("Seeding roles...")
-		seed_roles(db)
+		await seed_roles(db)
 		
 		print("\nSeeding development users...")
-		seed_dev_users(db)
+		await seed_dev_users(db)
 		
 		print("\nSeeding complete!")
-	finally:
-		db.close()
 
 if __name__ == "__main__":
-	main()
+	asyncio.run(main())
