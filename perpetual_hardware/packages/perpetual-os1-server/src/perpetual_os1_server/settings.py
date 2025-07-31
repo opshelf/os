@@ -48,12 +48,17 @@ class AuthSettings(BaseModel):
     dev_auto_user: Optional[str] = None
 
 
+class ScaleSettings(BaseModel):
+    enabled: bool = False
+
+
 class Settings(BaseModel):
     storage: StorageSettings
     sizes: SizeDatabaseSettings
     printer: PrinterSettings
     scanner: ScannerSettings
     robot: RobotSettings
+    scale: ScaleSettings
     nats: NatsSettings
     camera: CameraSettings
     auth: AuthSettings
@@ -82,6 +87,8 @@ def get_settings() -> Settings:
         data["nats"] = {"domain": "localhost", "port": 4222}
     if "camera" not in data:
         data["camera"] = {"enabled": False}
+    if "scale" not in data:
+        data["scale"] = {"enabled": False}
     if "auth" not in data:
         data["auth"] = {}
     
@@ -89,7 +96,7 @@ def get_settings() -> Settings:
     if env in ["dev", "development"]:
         data["auth"]["dev_mode"] = True
         data["auth"]["require_auth"] = False
-        data["auth"]["dev_auto_user"] = "admin@example.com"
+        data["auth"]["dev_auto_user"] = "admin@opshelf.com"
     
     if os.getenv("JWT_SECRET"):
         data["auth"]["jwt_secret"] = os.getenv("JWT_SECRET")

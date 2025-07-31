@@ -2,7 +2,8 @@
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func
 from pydantic import BaseModel
 
 from ..database.session import get_db
@@ -36,18 +37,19 @@ class RoleResponse(BaseModel):
 
 @router.get("", response_model=List[RoleResponse])
 async def list_roles(
-	db: Session = Depends(get_db),
+	db: AsyncSession = Depends(get_db),
 	current_user: User = Depends(get_current_user)
 ) -> List[RoleResponse]:
 	"""List all roles."""
-	roles = db.query(Role).all()
+	roles_result = await db.execute(select(Role))
+	roles = roles_result.scalars().all()
 	
 	return [
 		RoleResponse(
 			id=role.id,
 			name=role.name,
 			permissions=role.permissions,
-			user_count=db.query(User).filter_by(role_id=role.id).count(),
+			user_count=await db.scalar(select(func.count()).select_from(User).filter(User.role_id == role.id)),
 			created_at=role.created_at.isoformat(),
 			updated_at=role.updated_at.isoformat()
 		)
@@ -57,11 +59,12 @@ async def list_roles(
 @router.post("", response_model=RoleResponse, dependencies=[Depends(require_permissions("roles:write"))])
 async def create_role(
 	request: RoleCreate,
-	db: Session = Depends(get_db),
+	db: AsyncSession = Depends(get_db),
 	current_user: User = Depends(get_current_user)
 ) -> RoleResponse:
 	"""Create a new role."""
-	existing = db.query(Role).filter_by(name=request.name).first()
+	existing_result = await db.execute(select(Role).filter(Role.name == request.name))
+	existing = existing_result.scalar_one_or_none()
 	if existing is not None:
 		raise HTTPException(
 			status_code=status.HTTP_400_BAD_REQUEST,
@@ -74,8 +77,8 @@ async def create_role(
 	)
 	
 	db.add(role)
-	db.commit()
-	db.refresh(role)
+	await db.commit()
+	await db.refresh(role)
 	
 	return RoleResponse(
 		id=role.id,
@@ -89,11 +92,12 @@ async def create_role(
 @router.get("/{role_id}", response_model=RoleResponse)
 async def get_role(
 	role_id: int,
-	db: Session = Depends(get_db),
+	db: AsyncSession = Depends(get_db),
 	current_user: User = Depends(get_current_user)
 ) -> RoleResponse:
 	"""Get a specific role."""
-	role = db.query(Role).filter_by(id=role_id).first()
+	role_result = await db.execute(select(Role).filter(Role.id == role_id))
+	role = role_result.scalar_one_or_none()
 	if role is None:
 		raise HTTPException(
 			status_code=status.HTTP_404_NOT_FOUND,
@@ -113,11 +117,12 @@ async def get_role(
 async def update_role(
 	role_id: int,
 	request: RoleUpdate,
-	db: Session = Depends(get_db),
+	db: AsyncSession = Depends(get_db),
 	current_user: User = Depends(get_current_user)
 ) -> RoleResponse:
 	"""Update a role."""
-	role = db.query(Role).filter_by(id=role_id).first()
+	role_result = await db.execute(select(Role).filter(Role.id == role_id))
+	role = role_result.scalar_one_or_none()
 	if role is None:
 		raise HTTPException(
 			status_code=status.HTTP_404_NOT_FOUND,
@@ -125,10 +130,13 @@ async def update_role(
 		)
 	
 	if request.name is not None:
-		existing = db.query(Role).filter(
-			Role.name == request.name,
-			Role.id != role_id
-		).first()
+		existing_result = await db.execute(
+			select(Role).filter(
+				Role.name == request.name,
+				Role.id != role_id
+			)
+		)
+		existing = existing_result.scalar_one_or_none()
 		if existing is not None:
 			raise HTTPException(
 				status_code=status.HTTP_400_BAD_REQUEST,
@@ -139,8 +147,8 @@ async def update_role(
 	if request.permissions is not None:
 		role.permissions = request.permissions
 	
-	db.commit()
-	db.refresh(role)
+	await db.commit()
+	await db.refresh(role)
 	
 	return RoleResponse(
 		id=role.id,
@@ -154,18 +162,19 @@ async def update_role(
 @router.delete("/{role_id}", dependencies=[Depends(require_permissions("roles:delete"))])
 async def delete_role(
 	role_id: int,
-	db: Session = Depends(get_db),
+	db: AsyncSession = Depends(get_db),
 	current_user: User = Depends(get_current_user)
 ) -> dict:
 	"""Delete a role."""
-	role = db.query(Role).filter_by(id=role_id).first()
+	role_result = await db.execute(select(Role).filter(Role.id == role_id))
+	role = role_result.scalar_one_or_none()
 	if role is None:
 		raise HTTPException(
 			status_code=status.HTTP_404_NOT_FOUND,
 			detail="Role not found"
 		)
 	
-	user_count = db.query(User).filter_by(role_id=role_id).count()
+	user_count = await db.scalar(select(func.count()).select_from(User).filter(User.role_id == role_id))
 	if user_count > 0:
 		raise HTTPException(
 			status_code=status.HTTP_400_BAD_REQUEST,
@@ -173,6 +182,6 @@ async def delete_role(
 		)
 	
 	db.delete(role)
-	db.commit()
+	await db.commit()
 	
 	return {"message": "Role deleted successfully"}

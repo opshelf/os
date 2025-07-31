@@ -3,8 +3,10 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status, Form
-from fastapi.security import HTTPBearer
-from sqlalchemy.orm import Session
+from fastapi.security import OAuth2PasswordRequestForm
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from pydantic import BaseModel, EmailStr
 
 from ..settings import get_settings
@@ -41,30 +43,78 @@ class RefreshRequest(BaseModel):
 	"""Refresh token request."""
 	refresh_token: str
 
-@router.post("/login", response_model=TokenResponse)
-async def login(
-	request: LoginRequest,
-	db: Session = Depends(get_db)
-) -> TokenResponse:
-	"""Authenticate user and return tokens."""
+@router.post("/login")
+async def login_form(
+	form_data: OAuth2PasswordRequestForm = Depends(),
+	db: AsyncSession = Depends(get_db)
+) -> dict:
+	"""OAuth2 compatible login endpoint for form data."""
 	settings = get_settings()
 	auth_service = AuthService(
 		settings.auth.jwt_secret,
 		settings.auth.jwt_algorithm
 	)
 	
-	user = db.query(User).filter_by(
-		email=request.email,
-		is_active=True
-	).first()
+	result = await db.execute(
+		select(User)
+		.options(selectinload(User.role))
+		.filter_by(
+			email=form_data.username,
+			is_active=True
+		)
+	)
+	user = result.scalar_one_or_none()
 	
-	if user is None:
+	if user is None or not auth_service.verify_pin(form_data.password, user.pin_hash):
 		raise HTTPException(
 			status_code=status.HTTP_401_UNAUTHORIZED,
-			detail="Invalid email or PIN"
+			detail="Incorrect email or PIN",
+			headers={"WWW-Authenticate": "Bearer"},
 		)
 	
-	if not auth_service.verify_pin(request.pin, user.pin_hash):
+	access_token = auth_service.create_access_token(
+		user_id=user.id,
+		email=user.email,
+		role=user.role.name,
+		permissions=user.role.permissions,
+		expires_minutes=settings.auth.jwt_expire_minutes
+	)
+	
+	refresh_token = auth_service.create_refresh_token(
+		user_id=user.id,
+		email=user.email,
+		expires_days=settings.auth.jwt_refresh_expire_days
+	)
+	
+	return {
+		"access_token": access_token,
+		"refresh_token": refresh_token,
+		"token_type": "bearer"
+	}
+
+@router.post("/login/json", response_model=TokenResponse)
+async def login_json(
+	request: LoginRequest,
+	db: AsyncSession = Depends(get_db)
+) -> TokenResponse:
+	"""JSON login endpoint (alternative to form)."""
+	settings = get_settings()
+	auth_service = AuthService(
+		settings.auth.jwt_secret,
+		settings.auth.jwt_algorithm
+	)
+	
+	result = await db.execute(
+		select(User)
+		.options(selectinload(User.role))
+		.filter_by(
+			email=request.email,
+			is_active=True
+		)
+	)
+	user = result.scalar_one_or_none()
+	
+	if user is None or not auth_service.verify_pin(request.pin, user.pin_hash):
 		raise HTTPException(
 			status_code=status.HTTP_401_UNAUTHORIZED,
 			detail="Invalid email or PIN"
@@ -93,7 +143,7 @@ async def login(
 @router.post("/refresh", response_model=TokenResponse)
 async def refresh_token(
 	request: RefreshRequest,
-	db: Session = Depends(get_db)
+	db: AsyncSession = Depends(get_db)
 ) -> TokenResponse:
 	"""Refresh access token using refresh token."""
 	settings = get_settings()
@@ -109,10 +159,15 @@ async def refresh_token(
 			detail="Invalid refresh token"
 		)
 	
-	user = db.query(User).filter_by(
-		id=payload.get("user_id"),
-		is_active=True
-	).first()
+	result = await db.execute(
+		select(User)
+		.options(selectinload(User.role))
+		.filter_by(
+			id=payload.get("user_id"),
+			is_active=True
+		)
+	)
+	user = result.scalar_one_or_none()
 	
 	if user is None:
 		raise HTTPException(
