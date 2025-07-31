@@ -11,12 +11,13 @@ from nats.aio.msg import Msg
 from nats.aio.subscription import Subscription
 from sse_starlette.sse import EventSourceResponse
 from nats.aio.client import Client as NATS
-from perpetual_p0c_server.settings import get_settings
+from perpetual_os1_server.settings import get_settings
+from .auth_deps import get_current_user, require_permissions
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
-@router.post("/commands")
+@router.post("/commands", dependencies=[Depends(require_permissions("robot:control"))])
 async def robot_commands(
     command: RobotCommands, client: RobotClient = Depends(get_robot_client)
 ) -> SuccessResponse:
@@ -24,19 +25,19 @@ async def robot_commands(
     return SuccessResponse()
 
 
-@router.post("/start")
+@router.post("/start", dependencies=[Depends(require_permissions("robot:control"))])
 async def start_robot(worker: RobotWorker = Depends(get_robot_worker)) -> SuccessResponse:
     await worker.start()
     return SuccessResponse()
 
 
-@router.post("/stop")
+@router.post("/stop", dependencies=[Depends(require_permissions("robot:control"))])
 async def stop_robot(worker: RobotWorker = Depends(get_robot_worker)) -> SuccessResponse:
     await worker.shutdown()
     return SuccessResponse()
 
 
-@router.post("/clear_commands")
+@router.post("/clear_commands", dependencies=[Depends(require_permissions("robot:control"))])
 async def clear_robot_commands(
     worker: RobotWorker = Depends(get_robot_worker),
 ) -> SuccessResponse:
@@ -51,7 +52,7 @@ async def configuration(
     return worker.get_configuration()
 
 
-@router.post("/configuration")
+@router.post("/configuration", dependencies=[Depends(require_permissions("robot:control"))])
 async def set_configuration(
     configuration: RobotConfiguration,
     worker: RobotWorker = Depends(get_robot_worker),
@@ -60,7 +61,7 @@ async def set_configuration(
     return SuccessResponse()
 
 
-@router.post("/storage")
+@router.post("/storage", dependencies=[Depends(require_permissions("storage:write"))])
 async def set_storage(
     storage: StorageGrid,
     worker: RobotWorker = Depends(get_robot_worker),
