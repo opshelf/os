@@ -12,7 +12,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import Message
 from sqlalchemy.orm import Session
 
-from ..database.base import SessionLocal
+from ..database.session import AsyncSessionLocal
 from ..database.models import AuditLog, User
 from ..routers.auth_deps import get_current_user_optional
 
@@ -100,34 +100,35 @@ class AuditMiddleware(BaseHTTPMiddleware):
 		duration_ms: int
 	):
 		"""Log request to database."""
-		db = SessionLocal()
-		try:
-			user = await get_current_user_optional(
-				credentials=None,
-				db=db
-			)
-			
-			audit_log = AuditLog(
-				user_id=user.id if user else None,
-				timestamp=datetime.utcnow(),
-				method=request.method,
-				endpoint=str(request.url.path),
-				request_body=request_body,
-				response_status=response_status,
-				response_body=response_body,
-				nats_commands=nats_commands_context.get(),
-				error_message=error_message,
-				ip_address=request.client.host if request.client else None,
-				user_agent=request.headers.get("user-agent"),
-				request_duration_ms=duration_ms
-			)
-			
-			db.add(audit_log)
-			db.commit()
-		except Exception:
-			traceback.print_exc()
-		finally:
-			db.close()
+		async with AsyncSessionLocal() as db:
+			try:
+				# Extract token from request if available
+				token = None
+				auth_header = request.headers.get("Authorization")
+				if auth_header and auth_header.startswith("Bearer "):
+					token = auth_header.split(" ")[1]
+				
+				user = await get_current_user_optional(token=token, db=db)
+				
+				audit_log = AuditLog(
+					user_id=user.id if user else None,
+					timestamp=datetime.utcnow(),
+					method=request.method,
+					endpoint=str(request.url.path),
+					request_body=request_body,
+					response_status=response_status,
+					response_body=response_body,
+					nats_commands=nats_commands_context.get(),
+					error_message=error_message,
+					ip_address=request.client.host if request.client else None,
+					user_agent=request.headers.get("user-agent"),
+					request_duration_ms=duration_ms
+				)
+				
+				db.add(audit_log)
+				await db.commit()
+			except Exception:
+				traceback.print_exc()
 
 def capture_nats_command(command: Dict[str, Any]):
 	"""Capture NATS command for audit logging."""

@@ -56,31 +56,35 @@ ENV=dev uv run python scripts/seed_auth.py
 
 ### 3. Default Users (Dev Mode)
 
-| Email | PIN | Role |
-|-------|-----|------|
-| admin@example.com | 1234 | admin |
-| operator@example.com | 5678 | operator |
-| viewer@example.com | 9012 | viewer |
+| Email                | PIN  | Role     |
+| -------------------- | ---- | -------- |
+| admin@opshelf.com    | 1234 | admin    |
+| operator@opshelf.com | 5678 | operator |
+| viewer@opshelf.com   | 9012 | viewer   |
 
 ## Permission Model
 
 ### Roles and Permissions
 
 **Admin** - Full system access:
+
 - `users:*`, `roles:*`, `audit:read`
 - All robot and hardware control permissions
 
 **Operator** - Hardware control:
+
 - `robot:control`, `gantry:control`, `tool:control`
 - `scanner:control`, `workstation:control`
 - Read access to all resources
 
 **Viewer** - Read-only access:
+
 - `*:read` permissions only
 
 ### Permission Format
 
 Permissions follow the format: `resource:action`
+
 - Examples: `robot:control`, `users:write`, `audit:read`
 - Wildcards: `users:*` (all user actions), `*:read` (read all resources)
 
@@ -89,10 +93,11 @@ Permissions follow the format: `resource:action`
 ### Authentication Flow
 
 1. **Login**
+
 ```bash
 POST /api/auth/login
 {
-  "email": "admin@example.com",
+  "email": "admin@opshelf.com",
   "pin": "1234"
 }
 
@@ -106,12 +111,14 @@ Response:
 ```
 
 2. **Use Token**
+
 ```bash
 GET /api/robot/configuration
 Authorization: Bearer eyJ...
 ```
 
 3. **Refresh Token**
+
 ```bash
 POST /api/auth/refresh
 {
@@ -128,7 +135,7 @@ GET /api/users
 # Create user
 POST /api/users
 {
-  "email": "new@example.com",
+  "email": "new@opshelf.com",
   "first_name": "New",
   "last_name": "User",
   "pin": "9999",
@@ -155,6 +162,7 @@ GET /api/audit/logs/{id}
 ## Development Mode
 
 In development mode (`ENV=dev`):
+
 - Authentication is optional
 - Auto-login as admin user if configured
 - All permissions granted to anonymous users
@@ -170,6 +178,7 @@ In development mode (`ENV=dev`):
 ## Emergency Access
 
 Critical safety endpoints work without authentication:
+
 - Emergency stop endpoints
 - Safety status endpoints
 

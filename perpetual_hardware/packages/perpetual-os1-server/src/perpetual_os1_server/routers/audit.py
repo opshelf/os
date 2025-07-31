@@ -3,8 +3,8 @@ from datetime import datetime
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, Query, HTTPException, status
-from sqlalchemy.orm import Session
-from sqlalchemy import and_
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import and_, select, func
 from pydantic import BaseModel
 
 from ..database.session import get_db
@@ -51,11 +51,11 @@ async def list_audit_logs(
 	status_code: Optional[int] = Query(None, description="Filter by response status"),
 	limit: int = Query(100, ge=1, le=1000, description="Max results"),
 	offset: int = Query(0, ge=0, description="Pagination offset"),
-	db: Session = Depends(get_db),
+	db: AsyncSession = Depends(get_db),
 	current_user: User = Depends(get_current_user)
 ) -> AuditLogListResponse:
 	"""Query audit logs with filters."""
-	query = db.query(AuditLog)
+	query = select(AuditLog)
 	
 	filters = []
 	
@@ -80,9 +80,15 @@ async def list_audit_logs(
 	if filters:
 		query = query.filter(and_(*filters))
 	
-	total = query.count()
+	count_query = select(func.count()).select_from(AuditLog)
+	if filters:
+		count_query = count_query.filter(and_(*filters))
 	
-	logs = query.order_by(AuditLog.timestamp.desc()).offset(offset).limit(limit).all()
+	total_result = await db.execute(count_query)
+	total = total_result.scalar()
+	
+	logs_result = await db.execute(query.order_by(AuditLog.timestamp.desc()).offset(offset).limit(limit))
+	logs = logs_result.scalars().all()
 	
 	return AuditLogListResponse(
 		logs=[
@@ -112,11 +118,12 @@ async def list_audit_logs(
 @router.get("/logs/{log_id}", response_model=AuditLogResponse)
 async def get_audit_log(
 	log_id: int,
-	db: Session = Depends(get_db),
+	db: AsyncSession = Depends(get_db),
 	current_user: User = Depends(get_current_user)
 ) -> AuditLogResponse:
 	"""Get a specific audit log entry."""
-	log = db.query(AuditLog).filter_by(id=log_id).first()
+	log_result = await db.execute(select(AuditLog).filter(AuditLog.id == log_id))
+	log = log_result.scalar_one_or_none()
 	
 	if log is None:
 		raise HTTPException(

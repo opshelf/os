@@ -2,7 +2,8 @@
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func
 from pydantic import BaseModel, EmailStr
 
 from ..database.session import get_db
@@ -59,20 +60,29 @@ async def list_users(
 	limit: int = Query(100, ge=1, le=1000),
 	is_active: Optional[bool] = None,
 	role_id: Optional[int] = None,
-	db: Session = Depends(get_db),
+	db: AsyncSession = Depends(get_db),
 	current_user: User = Depends(get_current_user)
 ) -> UserListResponse:
 	"""List all users with pagination."""
-	query = db.query(User)
+	query = select(User)
 	
 	if is_active is not None:
-		query = query.filter_by(is_active=is_active)
+		query = query.filter(User.is_active == is_active)
 	
 	if role_id is not None:
-		query = query.filter_by(role_id=role_id)
+		query = query.filter(User.role_id == role_id)
 	
-	total = query.count()
-	users = query.offset(offset).limit(limit).all()
+	count_query = select(func.count()).select_from(User)
+	if is_active is not None:
+		count_query = count_query.filter(User.is_active == is_active)
+	if role_id is not None:
+		count_query = count_query.filter(User.role_id == role_id)
+	
+	total_result = await db.execute(count_query)
+	total = total_result.scalar()
+	
+	users_result = await db.execute(query.offset(offset).limit(limit))
+	users = users_result.scalars().all()
 	
 	return UserListResponse(
 		users=[
@@ -97,18 +107,20 @@ async def list_users(
 @router.post("", response_model=UserResponse, dependencies=[Depends(require_permissions("users:write"))])
 async def create_user(
 	request: UserCreate,
-	db: Session = Depends(get_db),
+	db: AsyncSession = Depends(get_db),
 	current_user: User = Depends(get_current_user)
 ) -> UserResponse:
 	"""Create a new user."""
-	existing = db.query(User).filter_by(email=request.email).first()
+	existing_result = await db.execute(select(User).filter(User.email == request.email))
+	existing = existing_result.scalar_one_or_none()
 	if existing is not None:
 		raise HTTPException(
 			status_code=status.HTTP_400_BAD_REQUEST,
 			detail="User with this email already exists"
 		)
 	
-	role = db.query(Role).filter_by(id=request.role_id).first()
+	role_result = await db.execute(select(Role).filter(Role.id == request.role_id))
+	role = role_result.scalar_one_or_none()
 	if role is None:
 		raise HTTPException(
 			status_code=status.HTTP_400_BAD_REQUEST,
@@ -131,8 +143,8 @@ async def create_user(
 	)
 	
 	db.add(user)
-	db.commit()
-	db.refresh(user)
+	await db.commit()
+	await db.refresh(user)
 	
 	return UserResponse(
 		id=user.id,
@@ -149,11 +161,12 @@ async def create_user(
 @router.get("/{user_id}", response_model=UserResponse)
 async def get_user(
 	user_id: int,
-	db: Session = Depends(get_db),
+	db: AsyncSession = Depends(get_db),
 	current_user: User = Depends(get_current_user)
 ) -> UserResponse:
 	"""Get a specific user."""
-	user = db.query(User).filter_by(id=user_id).first()
+	user_result = await db.execute(select(User).filter(User.id == user_id))
+	user = user_result.scalar_one_or_none()
 	if user is None:
 		raise HTTPException(
 			status_code=status.HTTP_404_NOT_FOUND,
@@ -176,11 +189,12 @@ async def get_user(
 async def update_user(
 	user_id: int,
 	request: UserUpdate,
-	db: Session = Depends(get_db),
+	db: AsyncSession = Depends(get_db),
 	current_user: User = Depends(get_current_user)
 ) -> UserResponse:
 	"""Update a user."""
-	user = db.query(User).filter_by(id=user_id).first()
+	user_result = await db.execute(select(User).filter(User.id == user_id))
+	user = user_result.scalar_one_or_none()
 	if user is None:
 		raise HTTPException(
 			status_code=status.HTTP_404_NOT_FOUND,
@@ -188,10 +202,13 @@ async def update_user(
 		)
 	
 	if request.email is not None:
-		existing = db.query(User).filter(
-			User.email == request.email,
-			User.id != user_id
-		).first()
+		existing_result = await db.execute(
+			select(User).filter(
+				User.email == request.email,
+				User.id != user_id
+			)
+		)
+		existing = existing_result.scalar_one_or_none()
 		if existing is not None:
 			raise HTTPException(
 				status_code=status.HTTP_400_BAD_REQUEST,
@@ -214,7 +231,8 @@ async def update_user(
 		user.pin_hash = auth_service.hash_pin(request.pin)
 	
 	if request.role_id is not None:
-		role = db.query(Role).filter_by(id=request.role_id).first()
+		role_result = await db.execute(select(Role).filter(Role.id == request.role_id))
+		role = role_result.scalar_one_or_none()
 		if role is None:
 			raise HTTPException(
 				status_code=status.HTTP_400_BAD_REQUEST,
@@ -225,8 +243,8 @@ async def update_user(
 	if request.is_active is not None:
 		user.is_active = request.is_active
 	
-	db.commit()
-	db.refresh(user)
+	await db.commit()
+	await db.refresh(user)
 	
 	return UserResponse(
 		id=user.id,
@@ -243,11 +261,12 @@ async def update_user(
 @router.delete("/{user_id}", dependencies=[Depends(require_permissions("users:delete"))])
 async def delete_user(
 	user_id: int,
-	db: Session = Depends(get_db),
+	db: AsyncSession = Depends(get_db),
 	current_user: User = Depends(get_current_user)
 ) -> dict:
 	"""Soft delete a user by setting inactive."""
-	user = db.query(User).filter_by(id=user_id).first()
+	user_result = await db.execute(select(User).filter(User.id == user_id))
+	user = user_result.scalar_one_or_none()
 	if user is None:
 		raise HTTPException(
 			status_code=status.HTTP_404_NOT_FOUND,
@@ -261,6 +280,6 @@ async def delete_user(
 		)
 	
 	user.is_active = False
-	db.commit()
+	await db.commit()
 	
 	return {"message": "User deactivated successfully"}
