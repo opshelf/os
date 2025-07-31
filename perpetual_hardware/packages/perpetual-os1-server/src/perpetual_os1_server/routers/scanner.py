@@ -1,14 +1,15 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 import asyncio
 from typing import AsyncGenerator, Optional
 from nats.aio.msg import Msg
 from nats.aio.subscription import Subscription
 from sse_starlette.sse import EventSourceResponse
 from nats.aio.client import Client as NATS
-from perpetual_p0c_server.settings import get_settings
+from perpetual_os1_server.settings import get_settings
+from .auth_deps import get_current_user
 
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
 async def nats_consumer(stop_event: asyncio.Event) -> AsyncGenerator[str, None]:

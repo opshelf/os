@@ -200,10 +200,55 @@ async def stop_robot_worker() -> None:
 async def get_robot_client() -> RobotClient:
     if robot_worker:
         return robot_worker.get_client()
+    
+    # In dev mode without hardware, return a mock
+    from ..settings import get_settings
+    settings = get_settings()
+    if settings.auth.dev_mode and not settings.robot.enabled:
+        class MockClient:
+            async def send_command(self, command):
+                pass
+        return MockClient()
+    
     raise ValueError("Robot Worker was Not Initialized")
 
 
 async def get_robot_worker() -> RobotWorker:
     if robot_worker:
         return robot_worker
+    
+    # In dev mode without hardware, return a mock
+    from ..settings import get_settings
+    settings = get_settings()
+    if settings.auth.dev_mode and not settings.robot.enabled:
+        # Create a minimal mock that returns empty configuration
+        class MockWorker:
+            def get_configuration(self):
+                from perpetual_os1.robot import RobotConfiguration
+                # Return empty config using model_construct to bypass validation
+                return RobotConfiguration.model_construct()
+            
+            async def set_configuration(self, config):
+                pass
+            
+            async def start(self):
+                pass
+            
+            async def shutdown(self):
+                pass
+            
+            async def clear_commands(self):
+                pass
+            
+            async def set_storage(self, storage):
+                pass
+            
+            def get_client(self):
+                class MockClient:
+                    async def send_command(self, command):
+                        pass
+                return MockClient()
+        
+        return MockWorker()
+    
     raise ValueError("Robot Worker was Not Initialized")

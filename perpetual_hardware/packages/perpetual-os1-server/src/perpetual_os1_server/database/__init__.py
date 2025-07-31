@@ -1,0 +1,1 @@
+"""Database module for authentication and audit system."""
