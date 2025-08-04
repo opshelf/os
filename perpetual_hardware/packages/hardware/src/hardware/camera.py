@@ -30,6 +30,7 @@ class Camera:
         curl_cmd = [
             "curl",
             "-u", f"{self.username}:{self.password}",
+            "--no-keepalive",
             "--silent",
             "--max-time", str(self.timeout),
             self.url

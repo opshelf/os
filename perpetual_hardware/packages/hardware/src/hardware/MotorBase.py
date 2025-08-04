@@ -196,7 +196,7 @@ class Motor():
 
             # todo move to within move operation?
             if status:
-                print(f"[{self._motor_id}] Move complete.")
+                # print(f"[{self._motor_id}] Move complete.")
                 await self.stop()
                 return MotorStatus.POSITION_REACHED
 
