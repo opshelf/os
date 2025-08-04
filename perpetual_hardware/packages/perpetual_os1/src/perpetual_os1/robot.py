@@ -4,20 +4,23 @@ from perpetual_os1.configuration import motor_x, motor_stage, motor_gripper, mot
 from perpetual_os1.common import AxisCoordinate, ToolCoordinate
 from hardware.ModbusController import SharedModbusController as Controller
 from hardware.MotorBase import Motor, Servo
+from hardware.camera import Camera
 # from storage import Cell, StorageGrid, StorageModuleCellLocation, CellItem, StorageModuleSide
 from typing import Optional
 from typing import Union, Annotated, Literal
 
 import asyncio
 SLIDE_EXTENSION = 50
-GRIPPER_EXTENSION_PICK = 168
-GRIPPER_EXTENSION_PLACE = 164
+GRIPPER_EXTENSION_PICK = 167
+GRIPPER_EXTENSION_PLACE = 163
 REVERSE = 180.5
 
 BAY1 = 18
 BAY2 = 174
 BAY3 = 330
-BAY4 = 486
+# BAY4 = 486
+BAY4 = 463.5
+BAY5 = 574.5
 
 class StopCommand(BaseModel):
     command: Literal["stop"] = "stop"
@@ -90,6 +93,8 @@ class WorkerStatus(BaseModel):
 
 # TODO: MORE DICTS
 
+PoE = "http://10.254.239.142/"
+
 class Robot:
     def __init__(self, port: str) -> None:
         self._bus = Controller(port=port)
@@ -100,6 +105,7 @@ class Robot:
         self._ms = Motor(self._bus, motor_stage)
         self._gs = Servo(self._bus)
         self._status = RobotStatus.IDLE
+        self._cam = Camera(PoE)
 
     async def configure(self):
         await self._bus.connect()
@@ -114,17 +120,26 @@ class Robot:
         # todo motor list
 
     async def move(self, coordinate: AxisCoordinate) -> None:
+        self._cam.capture_sync("beb.jpg")
+        print("it's a beb")
         await self.home()
         await self._mr.move_to_position(REVERSE)
-        for i in range(0,10):
+        for i in range(0,100):
+            print(i)
+            await self.pick(AxisCoordinate(BAY4, 0))
+            await self.place(AxisCoordinate(BAY5, 0))
+            await self.pick(AxisCoordinate(BAY5, 0))
+            await self.place(AxisCoordinate(BAY4, 0))
+
             await self.pick(AxisCoordinate(BAY1, 0))
             await self.place(AxisCoordinate(BAY2, 0))
             await self.pick(AxisCoordinate(BAY2, 0))
             await self.place(AxisCoordinate(BAY3, 0))
             await self.pick(AxisCoordinate(BAY3, 0))
-            await self.place(AxisCoordinate(BAY4, 0))
-            await self.pick(AxisCoordinate(BAY4, 0))
             await self.place(AxisCoordinate(BAY1, 0))
+            # await self.place(AxisCoordinate(BAY4, 0))
+            # await self.pick(AxisCoordinate(BAY4, 0))
+            # await self.place(AxisCoordinate(BAY1, 0))
 
     async def pick(self, coordinate: AxisCoordinate) -> None:
         await self._gs.safe_open()
