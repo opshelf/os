@@ -13,18 +13,18 @@ async def init_robot_worker() -> None:
     logging.info("Getting Robot")
     # client = await get_modbus_client()
     
-    robot = r.Robot("/dev/ttyUSB0")
-    # storage_grid = load_storage_from_file("storage.json")
-    # robot.set_storage(storage_grid)
-    await robot.configure() # todo make these have error handling
-    # logging.info("Got Bus")
-    logging.info("Built Robot")
-    robot_worker = r_worker.RobotWorker(robot, common.RobotNatsConfiguration())
-    logging.info("Got Instance")
-    await robot_worker.connect()
-    logging.info("Started")
-    await robot_worker.start()
-    logging.info("Connected")
+    # robot = r.Robot("/dev/ttyUSB0")
+    # # storage_grid = load_storage_from_file("storage.json")
+    # # robot.set_storage(storage_grid)
+    # await robot.configure() # todo make these have error handling
+    # # logging.info("Got Bus")
+    # logging.info("Built Robot")
+    # robot_worker = r_worker.RobotWorker(robot, common.RobotNatsConfiguration())
+    # logging.info("Got Instance")
+    # await robot_worker.connect()
+    # logging.info("Started")
+    # await robot_worker.start()
+    # logging.info("Connected")
 
 
 async def stop_robot_worker() -> None:
