@@ -3,8 +3,24 @@ import numpy as np
 import cv2
 import asyncio
 
+#1 mm on x axis ~= 2.5 pixels 
+# the camera stops working after a certain number of captures. maybe it's filling up internal memory
+
+# todo set this with real dimensions of the fiducial
+W_EXPECTED = 65
+H_EXPECTED = 27
+EXPECTED_AREA = W_EXPECTED * H_EXPECTED
+EXPECTED_ASPECT = W_EXPECTED / H_EXPECTED
+TOLERANCE_AREA = 0.1  # 50% margin
+TOLERANCE_ASPECT = 0.1  # ±20%
+
+def score(w, h):
+    area_score = abs((w * h) - EXPECTED_AREA) / EXPECTED_AREA
+    aspect_score = abs((w / h) - EXPECTED_ASPECT)
+    return area_score + aspect_score
+
 class Camera:
-    def __init__(self, url, username='m5stack', password='12345678', timeout=5):
+    def __init__(self, url, username='m5stack', password='12345678', timeout=10):
         self.url = url
         self.username = username
         self.password = password
@@ -36,7 +52,7 @@ class Camera:
             cv2.imwrite(save_path, img)
         return img
     
-    def get_center(frame, object_bbox):
+    def get_center(self, frame, object_bbox):
         frame_h, frame_w = frame.shape[:2]
         frame_center = (frame_w / 2, frame_h / 2)
 
@@ -49,14 +65,10 @@ class Camera:
 
         return centered_score, object_center, frame_center
     
-    def get_fiducial(frame):
-         # Convert to grayscale
+    def get_fiducial(self, frame):
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
-        # Blur to reduce noise
         blurred = cv2.GaussianBlur(gray, (5, 5), 0)
 
-        # Adaptive threshold to isolate white regions
         thresh = cv2.adaptiveThreshold(
             blurred, 255,
             cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
@@ -65,32 +77,39 @@ class Camera:
             C=-5
         )
 
-        # Morphological cleanup
         kernel = np.ones((3, 3), np.uint8)
         cleaned = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
 
-        # Find contours
         contours, _ = cv2.findContours(cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        valid_rects = []
 
-        rectangles = []
+        # print(len(contours))
+
         for cnt in contours:
             epsilon = 0.02 * cv2.arcLength(cnt, True)
             approx = cv2.approxPolyDP(cnt, epsilon, True)
-            if len(approx) == 4 and cv2.contourArea(approx) > 500:
-                rectangles.append(approx)
 
-        if not rectangles:
+            # print(len(approx))
+
+            if len(approx) != 4:
+                # print("not box")
+                continue
+
+            x, y, w, h = cv2.boundingRect(approx)
+            area = w * h
+            aspect = w / h if h != 0 else 0
+
+            if not ((1 - TOLERANCE_AREA) * EXPECTED_AREA <= area <= (1 + TOLERANCE_AREA) * EXPECTED_AREA):
+                # print("bad area")
+                continue
+            if not ((1 - TOLERANCE_ASPECT) * EXPECTED_ASPECT <= aspect <= (1 + TOLERANCE_ASPECT) * EXPECTED_ASPECT):
+                # print("bad aspect ratio")
+                continue
+
+            valid_rects.append((x, y, w, h))
+
+        if not valid_rects:
             return None
 
-        largest_rect = max(rectangles, key=cv2.contourArea)
-        x, y, w, h = cv2.boundingRect(largest_rect)
-        return (x, y, w, h)
-
-# Example usage
-# async def main():
-#     cam = PoECamera("http://10.254.239.142/") # have this load from the ifconfig of the pi
-#     img = await cam.capture("snapshot.jpg")
-#     print("Image saved and returned.")
-
-# if __name__ == "__main__":
-#     asyncio.run(main())
+        best = min(valid_rects, key=lambda b: score(b[2], b[3]))
+        return best

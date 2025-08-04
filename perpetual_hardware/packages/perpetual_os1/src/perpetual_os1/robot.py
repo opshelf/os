@@ -5,6 +5,8 @@ from perpetual_os1.common import AxisCoordinate, ToolCoordinate
 from hardware.ModbusController import SharedModbusController as Controller
 from hardware.MotorBase import Motor, Servo
 from hardware.camera import Camera
+import cv2
+import numpy as np
 # from storage import Cell, StorageGrid, StorageModuleCellLocation, CellItem, StorageModuleSide
 from typing import Optional
 from typing import Union, Annotated, Literal
@@ -14,6 +16,8 @@ SLIDE_EXTENSION = 50
 GRIPPER_EXTENSION_PICK = 167
 GRIPPER_EXTENSION_PLACE = 163
 REVERSE = 180.5
+
+PXMM = 0.22 #pixels per mm mvmt
 
 BAY1 = 18
 BAY2 = 174
@@ -93,7 +97,7 @@ class WorkerStatus(BaseModel):
 
 # TODO: MORE DICTS
 
-PoE = "http://10.254.239.142/"
+PoE = "http://10.254.239.101/" # todo get this from the arp scan/nmap scan
 
 class Robot:
     def __init__(self, port: str) -> None:
@@ -120,23 +124,28 @@ class Robot:
         # todo motor list
 
     async def move(self, coordinate: AxisCoordinate) -> None:
-        self._cam.capture_sync("beb.jpg")
-        print("it's a beb")
         await self.home()
         await self._mr.move_to_position(REVERSE)
-        for i in range(0,100):
-            print(i)
-            await self.pick(AxisCoordinate(BAY4, 0))
-            await self.place(AxisCoordinate(BAY5, 0))
-            await self.pick(AxisCoordinate(BAY5, 0))
-            await self.place(AxisCoordinate(BAY4, 0))
+        await self.auto_cal()
+        # await self._mx.jog(1)
+        await self.auto_cal() # this second one should not move at all
+        # self._cam.capture_sync("beb.jpg")
+        # print("it's a beb")
+        # await self.home()
+        # await self._mr.move_to_position(REVERSE)
+        # for i in range(0,100):
+        #     print(i)
+        #     await self.pick(AxisCoordinate(BAY4, 0))
+        #     await self.place(AxisCoordinate(BAY5, 0))
+        #     await self.pick(AxisCoordinate(BAY5, 0))
+        #     await self.place(AxisCoordinate(BAY4, 0))
 
-            await self.pick(AxisCoordinate(BAY1, 0))
-            await self.place(AxisCoordinate(BAY2, 0))
-            await self.pick(AxisCoordinate(BAY2, 0))
-            await self.place(AxisCoordinate(BAY3, 0))
-            await self.pick(AxisCoordinate(BAY3, 0))
-            await self.place(AxisCoordinate(BAY1, 0))
+        #     await self.pick(AxisCoordinate(BAY1, 0))
+        #     await self.place(AxisCoordinate(BAY2, 0))
+        #     await self.pick(AxisCoordinate(BAY2, 0))
+        #     await self.place(AxisCoordinate(BAY3, 0))
+        #     await self.pick(AxisCoordinate(BAY3, 0))
+        #     await self.place(AxisCoordinate(BAY1, 0))
             # await self.place(AxisCoordinate(BAY4, 0))
             # await self.pick(AxisCoordinate(BAY4, 0))
             # await self.place(AxisCoordinate(BAY1, 0))
@@ -150,7 +159,6 @@ class Robot:
 
         await self._mg.retract()
         await self._ms.retract()
-        
 
     async def place(self, coordinate: AxisCoordinate):
         await self._mx.move_to_position(coordinate.x)
@@ -160,7 +168,6 @@ class Robot:
 
         await self._mg.retract()
         await self._ms.retract()
-
 
     async def home(self) -> None:
         await self._ms.home()
@@ -181,6 +188,36 @@ class Robot:
         s = self._ms.get_position()
         r = self._mr.get_position()
         return (AxisCoordinate(x, 0), ToolCoordinate(g,s,r))
+    
+    async def auto_cal(self):
+        frame = await self._cam.capture()
+        frame = cv2.rotate(frame, cv2.ROTATE_180)
+        height = frame.shape[0]
+        width = frame.shape[1]
+        # Crop to bottom half
+        frame_bottom = frame[height // 2:, :]
+        frame_bottom = frame
+        bbox = self._cam.get_fiducial(frame_bottom)
+        if bbox is None:
+            print("No white rectangular fiducial detected.")
+        else:
+            score, obj_center, frame_center = self._cam.get_center(frame_bottom, bbox)
+            print(f"Centered score (0 = perfect): {score:.3f}")
+            print(f"Object center: {obj_center}")
+            print(f"Frame center: {frame_center}")
+
+            # Draw bounding box and centers
+            x, y, w, h = bbox
+            cv2.rectangle(frame_bottom, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            cv2.circle(frame_bottom, (int(obj_center[0]), int(obj_center[1])), 5, (255, 0, 0), -1)
+            cv2.circle(frame_bottom, (int(frame_center[0]), int(frame_center[1])), 5, (0, 0, 255), -1)
+            offset_mm = (obj_center[0]-frame_center[0])*PXMM
+            print(offset_mm)
+            await self._mx.jog(-offset_mm)
+
+            # print()
+            # Save final result
+            cv2.imwrite("output_fiducial_detected.jpg", frame)
 
     # def get_storage(self) -> StorageGrid:
     #     return self._storage
@@ -208,10 +245,6 @@ class Robot:
                 return RobotCommandSuccessful()
             case MoveCommand(coordinate=coord):
                 await self.move(coord)
-                return RobotCommandSuccessful()
-            # case MoveToolCommand(coordinate=coord):
-            #     await self.tool_move(coord)
-            #     return RobotCommandSuccessful()
             # case IdleCommand():
             #     await self.idle()
             #     return RobotCommandSuccessful()

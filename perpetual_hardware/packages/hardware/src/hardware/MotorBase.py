@@ -280,7 +280,7 @@ class Motor():
             MotorDefs.TRIGGER,
             0x21) # set zero position
         
-    # lazy retraction method (todo home velocity argument)
+    # lazy retraction method 
     async def retract(self):
         await self.set_param("Control word", 0x1111) # clear alarm if any
         await self.set_param("Control word", 0x1122) # clear alarm if any
@@ -301,6 +301,27 @@ class Motor():
             self._motor_id,
             MotorDefs.TRIGGER,
             0x21) # set zero position
+        
+    async def jog(self, dist):
+        await self.set_param("Control word", 0x1111) # clear alarm if any
+        await self.set_param("Control word", 0x1122) # clear alarm if any
+
+        pulse = MotorDefs.rev_to_pulse(MotorDefs.mm_to_rev(dist,self._params["mpr"])) # tuple
+
+        await self.set_param("Motion of Path 0", 0x41) # rel pos
+        await self.set_param("Motor direction", self._params["dir"])
+        await self.set_param("Velocity", self._params["rpm"])
+        await self.set_param("Acceleration", self._params['accel'])
+        await self.set_param("Deceleration", self._params['accel'])
+        await self.set_param("Position High", pulse[0])
+        await self.set_param("Position Low", pulse[1])
+        await self._controller.write_single_register(
+                self._motor_id, 
+                MotorDefs.TRIGGER,
+                0x10) # start path 0
+        
+        # self._homed = False
+        await self.wait_for_move(timeout=10)
 
     async def stop(self):
         await self._controller.write_single_register(
