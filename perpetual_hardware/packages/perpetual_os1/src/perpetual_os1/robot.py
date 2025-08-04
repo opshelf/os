@@ -126,9 +126,12 @@ class Robot:
     async def move(self, coordinate: AxisCoordinate) -> None:
         await self.home()
         await self._mr.move_to_position(REVERSE)
-        await self.auto_cal()
+        cal = False
+        # set a max number of tries
+        while not cal:
+            cal = await self.auto_cal()
         # await self._mx.jog(1)
-        await self.auto_cal() # this second one should not move at all
+        # await self.auto_cal() # this second one should not move at all
         # self._cam.capture_sync("beb.jpg")
         # print("it's a beb")
         # await self.home()
@@ -192,32 +195,41 @@ class Robot:
     async def auto_cal(self):
         frame = await self._cam.capture()
         frame = cv2.rotate(frame, cv2.ROTATE_180)
-        height = frame.shape[0]
-        width = frame.shape[1]
-        # Crop to bottom half
-        frame_bottom = frame[height // 2:, :]
-        frame_bottom = frame
-        bbox = self._cam.get_fiducial(frame_bottom)
-        if bbox is None:
-            print("No white rectangular fiducial detected.")
+        height, width = frame.shape[:2]
+        third = width // 3
+
+        # Crop to middle third horizontally
+        frame_middle = frame[:, third:2 * third]
+
+        bbox_crop = self._cam.get_fiducial(frame_middle)
+
+        if bbox_crop is None:
+            # print("No white rectangular fiducial detected.")
+            await self._mx.jog(25)
+            return False
         else:
-            score, obj_center, frame_center = self._cam.get_center(frame_bottom, bbox)
+            x_crop, y, w, h = bbox_crop
+            x = x_crop + third  # Shift X to full-frame coordinates
+            bbox_full = (x, y, w, h)
+            x = x_crop + third  # Shift X to full-frame coordinates
+            score, obj_center, frame_center = self._cam.get_center(frame_middle, bbox_crop)
             print(f"Centered score (0 = perfect): {score:.3f}")
             print(f"Object center: {obj_center}")
             print(f"Frame center: {frame_center}")
 
             # Draw bounding box and centers
-            x, y, w, h = bbox
-            cv2.rectangle(frame_bottom, (x, y), (x + w, y + h), (0, 255, 0), 2)
-            cv2.circle(frame_bottom, (int(obj_center[0]), int(obj_center[1])), 5, (255, 0, 0), -1)
-            cv2.circle(frame_bottom, (int(frame_center[0]), int(frame_center[1])), 5, (0, 0, 255), -1)
+            x, y, w, h = bbox_full
+            cv2.rectangle(frame_middle, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            cv2.circle(frame_middle, (int(obj_center[0]), int(obj_center[1])), 5, (255, 0, 0), -1)
+            cv2.circle(frame_middle, (int(frame_center[0]), int(frame_center[1])), 5, (0, 0, 255), -1)
             offset_mm = (obj_center[0]-frame_center[0])*PXMM
+            cv2.imwrite("output_fiducial_detected.jpg", frame_middle)
             print(offset_mm)
             await self._mx.jog(-offset_mm)
 
             # print()
             # Save final result
-            cv2.imwrite("output_fiducial_detected.jpg", frame)
+        return True
 
     # def get_storage(self) -> StorageGrid:
     #     return self._storage
