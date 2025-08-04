@@ -12,6 +12,7 @@ dependencies = [
 	"pydantic",
 	"nats-py>=2.9.0",
 	"pymodbus>=3.8.6",
+	"opencv-python",
 ]
 
 [build-system]
