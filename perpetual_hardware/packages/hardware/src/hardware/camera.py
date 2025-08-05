@@ -2,6 +2,8 @@ import subprocess
 import numpy as np
 import cv2
 import asyncio
+import threading
+import time
 
 #1 mm on x axis ~= 2.5 pixels 
 # the camera stops working after a certain number of captures. maybe it's filling up internal memory
@@ -25,6 +27,21 @@ class Camera:
         self.username = username
         self.password = password
         self.timeout = timeout
+        self.cap = None
+        self._vid = str("http://"+self.username+":"+self.password+"@"+self.url+"mjpeg")
+
+    # def start_stream(self):
+    #     vid = str("http://"+self.username+":"+self.password+"@"+self.url+"mjpeg")
+    #     # print(vid)
+    #     self.cap = cv2.VideoCapture(vid)
+
+    # def stream_capture(self):
+    #     if self.cap is not None:
+    #         ret, frame = self.cap.read()
+    #         if not ret:
+    #             print("no frame")
+    #             return None
+    #         return frame
 
     def _capture_sync(self):
         curl_cmd = [
@@ -114,3 +131,36 @@ class Camera:
 
         best = min(valid_rects, key=lambda b: score(b[2], b[3]))
         return best
+
+class VideoStream:
+    def __init__(self, cam, src=0):
+        self.capture = cv2.VideoCapture(src)
+        if not self.capture.isOpened():
+            raise RuntimeError(f"Failed to open video source: {src}")
+        
+        self.ret, self.frame = self.capture.read()
+        if not self.ret:
+            raise RuntimeError("Failed to read initial frame")
+
+        self.running = True
+        self.thread = threading.Thread(target=self.update, daemon=True)
+        self.thread.start()
+        self.cam = cam
+
+    def update(self):
+        while self.running:
+            ret, frame = self.capture.read()
+            if not ret:
+                print("Warning: failed to read frame")
+                time.sleep(0.1)
+                continue
+            self.ret = ret
+            self.frame = frame
+
+    def read(self):
+        return self.ret, self.frame
+
+    def stop(self):
+        self.running = False
+        self.thread.join()
+        self.capture.release()
