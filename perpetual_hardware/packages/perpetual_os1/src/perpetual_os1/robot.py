@@ -16,6 +16,7 @@ SLIDE_EXTENSION = 50
 GRIPPER_EXTENSION_PICK = 167
 GRIPPER_EXTENSION_PLACE = 163
 REVERSE = 180.5
+JOG = 30
 
 PXMM = 0.22 #pixels per mm mvmt
 
@@ -135,19 +136,24 @@ class Robot:
         await self._mr.move_to_position(REVERSE)
 
         # pos = await self.auto_cal()
-        pos = 0
+        # pos = 0
         end = 0
-        while end < 60000: # get from params
-            end = await self._mx.get_position()
+        while True: # get from params
             # print(end)
             pos = await self.auto_cal()
-            # print(pos)
+            print(pos)
             if pos:
                 self._bays.append(pos)
-                # print(pos)
-                await asyncio.sleep(2.5)
-                # await self._mx.jog(25)
-            await asyncio.sleep(2.5)
+                print(pos)
+                await asyncio.sleep(1)
+                await self._mx.jog(JOG)
+            await asyncio.sleep(1)
+
+            if end > 600:
+                break
+
+            end = await self._mx.get_position()
+            end = self._mx._params["mpr"]*end/10000
         
         print(self._bays)
 
@@ -221,9 +227,14 @@ class Robot:
         frame = cv2.rotate(frame, cv2.ROTATE_180)
         height, width = frame.shape[:2]
         third = width // 3
+        third_h = height // 3
 
         # Crop to middle third horizontally
         frame_middle = frame[:, third:2 * third]
+        # Crop to bottom half vertically
+        # frame_middle = frame_middle[height // 3:, :]
+        frame_middle = frame_middle[2 * third_h:, :]
+        cv2.imwrite("beb.jpg",frame_middle)
 
         bbox_crop = self._cam.get_fiducial(frame_middle)
 
@@ -247,6 +258,10 @@ class Robot:
             cv2.circle(frame_middle, (int(frame_center[0]), int(frame_center[1])), 5, (0, 0, 255), -1)
             offset_mm = (obj_center[0]-frame_center[0])*PXMM
 
+            
+
+            # print(offset_mm)
+
             return offset_mm
 
     async def auto_cal(self):
@@ -255,13 +270,14 @@ class Robot:
         frame = await self._cam.capture()
         offset = await self.centering(frame)
         if offset is False:
-            await self._mx.jog(25)
+            await self._mx.jog(JOG)
             return offset
         else:
             await self._mx.jog(-offset) # camera is upside down
+            # goal_pos = self._mx._cur_pos - offset
             pos = await self._mx.get_position()
             pos = ((self._mx._params["mpr"]*pos)/10000) #in mm
-            await self._mx.jog(25) # bump it
+            # await self._mx.jog(25) # bump it
             return pos
        
 

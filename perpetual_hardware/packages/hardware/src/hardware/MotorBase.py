@@ -178,7 +178,7 @@ class Motor():
 
             if status is None:
                 print(f"[{self._motor_id}] Failed to read motion status.")
-                return MotorStatus.ERROR
+                return None
             
             if last_pos is not None and self._cur_pos != last_pos:
                 last_movement_time = now
@@ -197,7 +197,7 @@ class Motor():
             # todo move to within move operation?
             if status:
                 # print(f"[{self._motor_id}] Move complete.")
-                await self.stop()
+                # await self.stop()
                 return MotorStatus.POSITION_REACHED
 
             if time.monotonic() - start_time > timeout:
