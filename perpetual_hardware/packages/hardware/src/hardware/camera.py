@@ -4,17 +4,18 @@ import cv2
 import asyncio
 import threading
 import time
+# import urllib3
 
 #1 mm on x axis ~= 2.5 pixels 
 # the camera stops working after a certain number of captures. maybe it's filling up internal memory
 
 # todo set this with real dimensions of the fiducial
-W_EXPECTED = 65
-H_EXPECTED = 27
+W_EXPECTED = 70
+H_EXPECTED = 30 # 27
 EXPECTED_AREA = W_EXPECTED * H_EXPECTED
 EXPECTED_ASPECT = W_EXPECTED / H_EXPECTED
-TOLERANCE_AREA = 0.1  # 50% margin
-TOLERANCE_ASPECT = 0.1  # ±20%
+TOLERANCE_AREA = 0.5  # 50% margin
+TOLERANCE_ASPECT = 0.2  # ±20%
 
 def score(w, h):
     area_score = abs((w * h) - EXPECTED_AREA) / EXPECTED_AREA
@@ -43,19 +44,43 @@ class Camera:
     #             return None
     #         return frame
 
-    def _capture_sync(self):
+    def _capture_sync(self, timeout=5):
         curl_cmd = [
             "curl",
             "-u", f"{self.username}:{self.password}",
-            "--no-keepalive",
             "--silent",
             "--max-time", str(self.timeout),
             self.url
         ]
-        image_bytes = subprocess.check_output(curl_cmd)
-        img_array = np.asarray(bytearray(image_bytes), dtype=np.uint8)
-        img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
-        return img
+        # image_bytes = subprocess.check_output(curl_cmd)
+        # img_array = np.asarray(bytearray(image_bytes), dtype=np.uint8)
+        # img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+        # return img
+        try:
+            proc = subprocess.Popen(curl_cmd, stdout=subprocess.PIPE)
+            image_bytes, _ = proc.communicate(timeout=timeout)
+            img_array = np.asarray(bytearray(image_bytes), dtype=np.uint8)
+            img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+            return img
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            print("Camera curl timed out")
+            return None
+        except Exception as e:
+            print("Camera capture failed:", e)
+        return None
+    
+    # def _capture_sync_url(self):
+    #     url = "http://m5stack:12345678@10.254.239.102/"
+    #     # req = urllib.request.Request(url)
+    #     # req.add_header("User-Agent", "Mozilla/5.0")  # optional
+    #     # You can also try manually adding Connection: close
+    #     # req.add_header("Connection", "close")
+
+    #     with urllib3.request.urlopen(url, timeout=5) as resp:
+    #         data = np.asarray(bytearray(resp.read()), dtype=np.uint8)
+    #         img = cv2.imdecode(data, cv2.IMREAD_COLOR)
+    #         return img
 
     async def capture(self, save_path=None):
         img = await asyncio.to_thread(self._capture_sync)
