@@ -4,10 +4,10 @@ from perpetual_os1.configuration import motor_x, motor_stage, motor_gripper, mot
 from perpetual_os1.common import AxisCoordinate, ToolCoordinate
 from hardware.ModbusController import SharedModbusController as Controller
 from hardware.MotorBase import Motor, Servo
-from hardware.camera import Camera
+from hardware.camera import Camera, VideoStream
 import cv2
 import numpy as np
-# from storage import Cell, StorageGrid, StorageModuleCellLocation, CellItem, StorageModuleSide
+from perpetual_os1.storage import Cell, StorageGrid, StorageModuleCellLocation, CellItem, StorageModuleSide
 from typing import Optional
 from typing import Union, Annotated, Literal
 
@@ -66,9 +66,9 @@ class RobotCommandSuccessful(BaseModel):
 class RobotCommandError(BaseModel):
     error: str
 
-# class RobotItemStoredResponse(BaseModel):
-#     message: Literal["success"] = "success"
-#     location: StorageModuleCellLocation
+class RobotItemStoredResponse(BaseModel):
+    message: Literal["success"] = "success"
+    location: StorageModuleCellLocation
 
 class ItemSizeLocation(BaseModel):
     object_size: float
@@ -82,8 +82,8 @@ class SizeResult():
 
 RobotResponse = Union[RobotCommandSuccessful, RobotCommandError, SizeResult]
 
-# class RobotState(BaseModel):
-#     current_cell: Optional[StorageModuleCellLocation] = None
+class RobotState(BaseModel):
+    current_cell: Optional[StorageModuleCellLocation] = None
 
 class RobotStatus(str, Enum):
     IDLE = "IDLE"
@@ -97,7 +97,7 @@ class WorkerStatus(BaseModel):
 
 # TODO: MORE DICTS
 
-PoE = "http://10.254.239.101/" # todo get this from the arp scan/nmap scan
+PoE = "http://10.254.239.102/" # todo get this from the arp scan/nmap scan
 
 class Robot:
     def __init__(self, port: str) -> None:
@@ -110,6 +110,7 @@ class Robot:
         self._gs = Servo(self._bus)
         self._status = RobotStatus.IDLE
         self._cam = Camera(PoE)
+        self._bays = []
 
     async def configure(self):
         await self._bus.connect()
@@ -121,15 +122,38 @@ class Robot:
         await self._mr.configure()
         await self._ms.configure()
         await self._gs.configure()
+
+        #init video stream
+        # self._vstrm = VideoStream(self._cam, self._cam._vid)
+        # ret, frame = self._vstrm.read() 
+        # print(frame)
+        # print(ret)
         # todo motor list
 
     async def move(self, coordinate: AxisCoordinate) -> None:
         await self.home()
         await self._mr.move_to_position(REVERSE)
-        cal = False
-        # set a max number of tries
-        while not cal:
-            cal = await self.auto_cal()
+
+        # pos = await self.auto_cal()
+        pos = 0
+        end = 0
+        while end < 60000: # get from params
+            end = await self._mx.get_position()
+            # print(end)
+            pos = await self.auto_cal()
+            # print(pos)
+            if pos:
+                self._bays.append(pos)
+                # print(pos)
+                await asyncio.sleep(2.5)
+                # await self._mx.jog(25)
+            await asyncio.sleep(2.5)
+        
+        print(self._bays)
+
+
+        # pos = await self._mx.get_position()
+        # print(self._mx._params["mpr"]*pos/10000)
         # await self._mx.jog(1)
         # await self.auto_cal() # this second one should not move at all
         # self._cam.capture_sync("beb.jpg")
@@ -192,8 +216,8 @@ class Robot:
         r = self._mr.get_position()
         return (AxisCoordinate(x, 0), ToolCoordinate(g,s,r))
     
-    async def auto_cal(self):
-        frame = await self._cam.capture()
+
+    async def centering(self, frame):
         frame = cv2.rotate(frame, cv2.ROTATE_180)
         height, width = frame.shape[:2]
         third = width // 3
@@ -205,7 +229,6 @@ class Robot:
 
         if bbox_crop is None:
             # print("No white rectangular fiducial detected.")
-            await self._mx.jog(25)
             return False
         else:
             x_crop, y, w, h = bbox_crop
@@ -213,29 +236,40 @@ class Robot:
             bbox_full = (x, y, w, h)
             x = x_crop + third  # Shift X to full-frame coordinates
             score, obj_center, frame_center = self._cam.get_center(frame_middle, bbox_crop)
-            print(f"Centered score (0 = perfect): {score:.3f}")
-            print(f"Object center: {obj_center}")
-            print(f"Frame center: {frame_center}")
+            # print(f"Centered score (0 = perfect): {score:.3f}")
+            # print(f"Object center: {obj_center}")
+            # print(f"Frame center: {frame_center}")
 
             # Draw bounding box and centers
-            x, y, w, h = bbox_full
+            x, y, w, h = bbox_crop
             cv2.rectangle(frame_middle, (x, y), (x + w, y + h), (0, 255, 0), 2)
             cv2.circle(frame_middle, (int(obj_center[0]), int(obj_center[1])), 5, (255, 0, 0), -1)
             cv2.circle(frame_middle, (int(frame_center[0]), int(frame_center[1])), 5, (0, 0, 255), -1)
             offset_mm = (obj_center[0]-frame_center[0])*PXMM
-            cv2.imwrite("output_fiducial_detected.jpg", frame_middle)
-            print(offset_mm)
-            await self._mx.jog(-offset_mm)
 
-            # print()
-            # Save final result
-        return True
+            return offset_mm
 
-    # def get_storage(self) -> StorageGrid:
-    #     return self._storage
+    async def auto_cal(self):
+        # self._cam.start_stream()
 
-    # def set_storage(self, value: StorageGrid) -> None:
-    #     self._storage = value
+        frame = await self._cam.capture()
+        offset = await self.centering(frame)
+        if offset is False:
+            await self._mx.jog(25)
+            return offset
+        else:
+            await self._mx.jog(-offset) # camera is upside down
+            pos = await self._mx.get_position()
+            pos = ((self._mx._params["mpr"]*pos)/10000) #in mm
+            await self._mx.jog(25) # bump it
+            return pos
+       
+
+    def get_storage(self) -> StorageGrid:
+        return self._storage
+
+    def set_storage(self, value: StorageGrid) -> None:
+        self._storage = value
 
     # async def idle(self) -> None:
     #     await self.move(self._configuration.idle_position) # basically anywhere along the bottom of the gantry
