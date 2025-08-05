@@ -20,6 +20,9 @@ state.json
 size.json
 baseline.jpg
 
+# Database and runtime data
+perpetual_hardware/packages/perpetual-os1-server/data/
+
 # Claude Code
 .claude/
 CLAUDE.md
