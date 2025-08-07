@@ -54,6 +54,7 @@ class AuthService:
 			"exp": expire,
 			"type": "access",
 			"user_id": user_id,
+			"email": email,
 			"role": role,
 			"permissions": permissions
 		}
@@ -73,6 +74,7 @@ class AuthService:
 			"exp": expire,
 			"type": "refresh",
 			"user_id": user_id,
+			"email": email,
 			"jti": secrets.token_urlsafe(32)
 		}
 		
