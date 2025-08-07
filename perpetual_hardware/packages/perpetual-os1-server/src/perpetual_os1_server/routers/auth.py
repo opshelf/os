@@ -1,6 +1,6 @@
 """Authentication API endpoints."""
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, status, Form
 from fastapi.security import OAuth2PasswordRequestForm
@@ -42,6 +42,39 @@ class UserResponse(BaseModel):
 class RefreshRequest(BaseModel):
 	"""Refresh token request."""
 	refresh_token: str
+
+class PublicUserResponse(BaseModel):
+	"""Public user information for lock screen."""
+	email: str
+	firstName: str
+	lastName: str
+	role: dict
+
+@router.get("/users", response_model=List[PublicUserResponse])
+async def get_public_users(
+	db: AsyncSession = Depends(get_db)
+) -> List[PublicUserResponse]:
+	"""
+	Get list of active users for lock screen selection.
+	Returns limited information (no sensitive data).
+	"""
+	result = await db.execute(
+		select(User)
+		.options(selectinload(User.role))
+		.filter(User.is_active == True)
+		.order_by(User.id)
+	)
+	users = result.scalars().all()
+	
+	return [
+		PublicUserResponse(
+			email=user.email,
+			firstName=user.first_name,
+			lastName=user.last_name,
+			role={"name": user.role.name}
+		)
+		for user in users
+	]
 
 @router.post("/login")
 async def login_form(
