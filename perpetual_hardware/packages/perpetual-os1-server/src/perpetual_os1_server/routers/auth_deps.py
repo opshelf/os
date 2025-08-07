@@ -21,6 +21,28 @@ async def get_current_user_optional(
 	"""Get current user if authenticated, otherwise None (for dev mode)."""
 	settings = get_settings()
 	
+	# First try to get user from token if provided
+	if token is not None:
+		auth_service = AuthService(
+			settings.auth.jwt_secret,
+			settings.auth.jwt_algorithm
+		)
+		
+		payload = auth_service.decode_token(token)
+		if payload is not None and payload.get("type") == "access":
+			result = await db.execute(
+				select(User)
+				.options(selectinload(User.role))
+				.filter_by(
+					id=payload.get("user_id"),
+					is_active=True
+				)
+			)
+			user = result.scalar_one_or_none()
+			if user is not None:
+				return user
+	
+	# Fall back to dev auto-user if configured and no valid token
 	if settings.auth.dev_mode and settings.auth.dev_auto_user:
 		result = await db.execute(
 			select(User)
@@ -34,29 +56,7 @@ async def get_current_user_optional(
 		if user is not None:
 			return user
 	
-	if token is None:
-		return None
-	
-	auth_service = AuthService(
-		settings.auth.jwt_secret,
-		settings.auth.jwt_algorithm
-	)
-	
-	payload = auth_service.decode_token(token)
-	if payload is None or payload.get("type") != "access":
-		return None
-	
-	result = await db.execute(
-		select(User)
-		.options(selectinload(User.role))
-		.filter_by(
-			id=payload.get("user_id"),
-			is_active=True
-		)
-	)
-	user = result.scalar_one_or_none()
-	
-	return user
+	return None
 
 async def get_current_user(
 	token: Optional[str] = Depends(oauth2_scheme),
