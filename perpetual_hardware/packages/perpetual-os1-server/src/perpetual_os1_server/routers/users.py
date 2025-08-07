@@ -4,6 +4,7 @@ from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
+from sqlalchemy.orm import selectinload
 from pydantic import BaseModel, EmailStr
 
 from ..database.session import get_db
@@ -64,7 +65,7 @@ async def list_users(
 	current_user: User = Depends(get_current_user)
 ) -> UserListResponse:
 	"""List all users with pagination."""
-	query = select(User)
+	query = select(User).options(selectinload(User.role))
 	
 	if is_active is not None:
 		query = query.filter(User.is_active == is_active)
@@ -146,6 +147,10 @@ async def create_user(
 	await db.commit()
 	await db.refresh(user)
 	
+	# Reload with role relationship
+	user_result = await db.execute(select(User).options(selectinload(User.role)).filter(User.id == user.id))
+	user = user_result.scalar_one()
+	
 	return UserResponse(
 		id=user.id,
 		email=user.email,
@@ -165,7 +170,7 @@ async def get_user(
 	current_user: User = Depends(get_current_user)
 ) -> UserResponse:
 	"""Get a specific user."""
-	user_result = await db.execute(select(User).filter(User.id == user_id))
+	user_result = await db.execute(select(User).options(selectinload(User.role)).filter(User.id == user_id))
 	user = user_result.scalar_one_or_none()
 	if user is None:
 		raise HTTPException(
@@ -193,7 +198,7 @@ async def update_user(
 	current_user: User = Depends(get_current_user)
 ) -> UserResponse:
 	"""Update a user."""
-	user_result = await db.execute(select(User).filter(User.id == user_id))
+	user_result = await db.execute(select(User).options(selectinload(User.role)).filter(User.id == user_id))
 	user = user_result.scalar_one_or_none()
 	if user is None:
 		raise HTTPException(
@@ -246,6 +251,10 @@ async def update_user(
 	await db.commit()
 	await db.refresh(user)
 	
+	# Reload with role relationship
+	user_result = await db.execute(select(User).options(selectinload(User.role)).filter(User.id == user.id))
+	user = user_result.scalar_one()
+	
 	return UserResponse(
 		id=user.id,
 		email=user.email,
@@ -265,7 +274,7 @@ async def delete_user(
 	current_user: User = Depends(get_current_user)
 ) -> dict:
 	"""Soft delete a user by setting inactive."""
-	user_result = await db.execute(select(User).filter(User.id == user_id))
+	user_result = await db.execute(select(User).options(selectinload(User.role)).filter(User.id == user_id))
 	user = user_result.scalar_one_or_none()
 	if user is None:
 		raise HTTPException(
