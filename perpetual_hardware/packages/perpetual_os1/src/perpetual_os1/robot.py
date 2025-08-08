@@ -3,8 +3,8 @@ from pydantic import BaseModel, Field
 from perpetual_os1.configuration import motor_x, motor_stage, motor_gripper, motor_rotate
 from perpetual_os1.common import AxisCoordinate, ToolCoordinate
 from hardware.ModbusController import SharedModbusController as Controller
-from hardware.MotorBase import Motor, Servo
-from hardware.camera import Camera, VideoStream
+from hardware.MotorBase import Motor, Servo, MotorStatus
+from hardware.camera import Camera
 import cv2
 import numpy as np
 from perpetual_os1.storage import Cell, StorageGrid, StorageModuleCellLocation, CellItem, StorageModuleSide
@@ -137,25 +137,25 @@ class Robot:
 
         # pos = await self.auto_cal()
         # pos = 0
-        end = 0
-        while True: # get from params
-            # print(end)
-            pos = await self.auto_cal()
-            print(pos)
-            if pos:
-                self._bays.append(pos)
-                print(pos)
-                await asyncio.sleep(1)
-                await self._mx.jog(JOG)
-            await asyncio.sleep(1)
+        # end = 0
+        # while True: # get from params
+        #     # print(end)
+        #     pos = await self.auto_cal()
+        #     print(pos)
+        #     if pos:
+        #         self._bays.append(pos)
+        #         print(pos)
+        #         await asyncio.sleep(1)
+        #         await self._mx.jog(JOG)
+        #     await asyncio.sleep(1)
 
-            if end > 600:
-                break
+        #     if end > 600:
+        #         break
 
-            end = await self._mx.get_position()
-            end = self._mx._params["mpr"]*end/10000
+        #     end = await self._mx.get_position()
+        #     end = self._mx._params["mpr"]*end/10000
         
-        print(self._bays)
+        # print(self._bays)
 
 
         # pos = await self._mx.get_position()
@@ -179,15 +179,18 @@ class Robot:
         #     await self.place(AxisCoordinate(BAY3, 0))
         #     await self.pick(AxisCoordinate(BAY3, 0))
         #     await self.place(AxisCoordinate(BAY1, 0))
-            # await self.place(AxisCoordinate(BAY4, 0))
-            # await self.pick(AxisCoordinate(BAY4, 0))
-            # await self.place(AxisCoordinate(BAY1, 0))
+        #     await self.place(AxisCoordinate(BAY4, 0))
+        #     await self.pick(AxisCoordinate(BAY4, 0))
+        #     await self.place(AxisCoordinate(BAY1, 0))
 
     async def pick(self, coordinate: AxisCoordinate) -> None:
         await self._gs.safe_open()
         await self._mx.move_to_position(coordinate.x)
-        await self._ms.move_to_position(SLIDE_EXTENSION) # 50 max
-        await self._mg.move_to_position(GRIPPER_EXTENSION_PICK)
+        #empty move
+        await self._ms.move_to_position_no_wait(SLIDE_EXTENSION) # 50 max
+        await self._mg.move_to_position_no_wait(GRIPPER_EXTENSION_PICK)
+        await self.tool_wait()
+
         await self._gs.open()
 
         await self._mg.retract()
@@ -201,6 +204,18 @@ class Robot:
 
         await self._mg.retract()
         await self._ms.retract()
+        # await self.tool_wait()
+
+    async def tool_wait(self):
+        while True:
+            ms_finish = await self._ms.wait_for_move()
+            mg_finish = await self._mg.wait_for_move()
+
+            if ms_finish == MotorStatus.STOPPED and mg_finish == MotorStatus.STOPPED:
+                break
+
+            await asyncio.sleep(0.01)  # Wait a bit before checking again
+
 
     async def home(self) -> None:
         await self._ms.home()
