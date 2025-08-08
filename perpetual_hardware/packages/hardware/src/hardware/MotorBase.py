@@ -7,7 +7,7 @@ from enum import Enum
 class MotorStatus(Enum):
     IDLE = 0
     MOVING = 1
-    POSITION_REACHED = 2
+    STOPPED = 2
     ERROR = 3
 
 class Servo():
@@ -116,6 +116,56 @@ class Motor():
         # if value > self._params["nrev"]:
         #      print(f"[Stepper] Motor {self._motor_id} -> Cannot Move to position {value}")
         #      return
+        pulse = MotorDefs.rev_to_pulse(MotorDefs.mm_to_rev(value,self._params["mpr"])) # tuple
+
+        # if self._homed = 
+        await self.set_param("Control word", 0x1111) # clear alarm if any
+        await self.set_param("Control word", 0x1122) # clear alarm if any
+        await self.set_param("Motion of Path 0", 0x1) # abs pos
+        await self.set_param("Motor direction", self._params["dir"])
+        await self.set_param("Velocity", self._params["rpm"])
+        await self.set_param("Acceleration", self._params['accel'])
+        await self.set_param("Deceleration", self._params['accel'])
+        await self.set_param("Position High", pulse[0])
+        await self.set_param("Position Low", pulse[1])
+        await self._controller.write_single_register(
+                self._motor_id, 
+                MotorDefs.TRIGGER,
+                0x10) # start path 0
+        
+        self._homed = False
+        await self.wait_for_move(timeout=10)
+        return
+    
+    async def move_config(self):
+                # if self._homed = 
+        await self.set_param("Control word", 0x1111) # clear alarm if any
+        await self.set_param("Control word", 0x1122) # clear alarm if any
+        await self.set_param("Motion of Path 0", 0x1) # abs pos
+        await self.set_param("Motor direction", self._params["dir"])
+        await self.set_param("Velocity", self._params["rpm"])
+        await self.set_param("Acceleration", self._params['accel'])
+        await self.set_param("Deceleration", self._params['accel'])
+        
+
+    async def retract_config(self):
+        home_dir = self._params["dir"]^1
+        await self.set_param("Control word", 0x1111) # clear alarm if any
+        await self.set_param("Control word", 0x1122) # clear alarm if any
+        await self.set_param("Motion of Path 0", 0x2) # velocity
+        await self.set_param("Motor direction", home_dir)
+        await self.set_param("Velocity", self._params["ret_rpm"])
+    
+    # async def empty_move(self, value: int):
+    #     pass
+
+    # async def empty_retract(self):
+    #     pass
+    
+    async def move_to_position_no_wait(self, value: int): # mm
+        # if value > self._params["nrev"]:
+        #      print(f"[Stepper] Motor {self._motor_id} -> Cannot Move to position {value}")
+        #      return
 
         # if self._homed = 
         await self.set_param("Control word", 0x1111) # clear alarm if any
@@ -192,61 +242,16 @@ class Motor():
             if has_moved and (now - last_movement_time > self._stall_timeout):
                 print(f"[{self._motor_id}] Stopped: No movement detected for {self._stall_timeout} seconds.")
                 await self.stop()
-                return 
+                return MotorStatus.STOPPED
 
             # todo move to within move operation?
             if status:
                 # print(f"[{self._motor_id}] Move complete.")
                 # await self.stop()
-                return MotorStatus.POSITION_REACHED
+                return MotorStatus.STOPPED
 
             if time.monotonic() - start_time > timeout:
                 print(f"[{self._motor_id}] Timeout waiting for move.")
-                await self.stop()
-                return MotorStatus.ERROR
-
-            # print("waiting")
-            await asyncio.sleep(0.01)
-
-    # TODO set the flag (5 for motion, 6 for homing) as a parameter
-    # async def wait_for_home(self, timeout: float = 10.0) -> MotorStatus:
-        start_time = time.monotonic()
-        # await self.get_position()
-        last_pos = None
-        has_moved=False
-        last_movement_time = start_time
-
-        while True:
-            status = await self.get_param("Motion status") & (1<<6)
-            await self.get_position()
-            now = time.monotonic()
-
-            if status is None:
-                print(f"[{self._motor_id}] Failed to read motion status.")
-                return MotorStatus.ERROR
-            
-            if last_pos is not None and self._cur_pos != last_pos:
-                last_movement_time = now
-                has_moved = True
-            elif last_movement_time is None:
-                last_movement_time = now  # initialize once
-
-            last_pos = self._cur_pos
-            
-            if has_moved and (now - last_movement_time > self._stall_timeout):
-                print(f"[{self._motor_id}] Homed: No movement detected for {self._stall_timeout} seconds.")
-                self._homed = True
-                await self.stop()
-                return
-
-            # todo move to within move operation?
-            if status:
-                print(f"[{self._motor_id}] Home complete.")
-                self._homed = True
-                return MotorStatus.POSITION_REACHED
-
-            if time.monotonic() - start_time > timeout:
-                print(f"[{self._motor_id}] Timeout waiting for home.")
                 await self.stop()
                 return MotorStatus.ERROR
 
