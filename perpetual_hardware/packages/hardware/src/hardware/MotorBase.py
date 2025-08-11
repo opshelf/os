@@ -112,7 +112,7 @@ class Motor():
         return
 
     # this sort of assumes we're only using path 0, and will have to be adapted if we do anything fancy.
-    async def move_to_position(self, value: int): # mm
+    async def move_to_position(self, value: float): # mm
         # if value > self._params["nrev"]:
         #      print(f"[Stepper] Motor {self._motor_id} -> Cannot Move to position {value}")
         #      return
@@ -173,11 +173,11 @@ class Motor():
 
         pulse = MotorDefs.rev_to_pulse(MotorDefs.mm_to_rev(value,self._params["mpr"])) # tuple
 
-        await self.set_param("Motion of Path 0", 0x1) # abs pos
-        await self.set_param("Motor direction", self._params["dir"])
-        await self.set_param("Velocity", self._params["rpm"])
-        await self.set_param("Acceleration", self._params['accel'])
-        await self.set_param("Deceleration", self._params['accel'])
+        # await self.set_param("Motion of Path 0", 0x1) # abs pos
+        # await self.set_param("Motor direction", self._params["dir"])
+        # await self.set_param("Velocity", self._params["rpm"])
+        # await self.set_param("Acceleration", self._params['accel'])
+        # await self.set_param("Deceleration", self._params['accel'])
         await self.set_param("Position High", pulse[0])
         await self.set_param("Position Low", pulse[1])
         await self._controller.write_single_register(
@@ -186,7 +186,7 @@ class Motor():
                 0x10) # start path 0
         
         self._homed = False
-        await self.wait_for_move(timeout=10)
+        # await self.wait_for_move(timeout=10)
         return
 
     # TODO add actual position registers to the motor defs table
