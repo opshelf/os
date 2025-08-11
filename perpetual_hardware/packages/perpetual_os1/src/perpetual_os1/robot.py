@@ -13,19 +13,28 @@ from typing import Union, Annotated, Literal
 
 import asyncio
 SLIDE_EXTENSION = 50
-GRIPPER_EXTENSION_PICK = 167
-GRIPPER_EXTENSION_PLACE = 163
+GRIPPER_EXTENSION_PICK = 171 #167
+GRIPPER_EXTENSION_PLACE = 165
 REVERSE = 180.5
 JOG = 30
 
 PXMM = 0.22 #pixels per mm mvmt
 
-BAY1 = 18
-BAY2 = 174
-BAY3 = 330
+# 248.216, 345.608, 464.44, 616.68
+
+BAY1 = 249
+BAY2 = 346
+BAY3 = 464
 # BAY4 = 486
-BAY4 = 463.5
-BAY5 = 574.5
+BAY4 = 617
+# BAY5 = 574.5
+
+# BAY1 = 249
+# BAY2 = 174
+# BAY3 = 330
+# # BAY4 = 486
+# BAY4 = 463.5
+# BAY5 = 574.5
 
 class StopCommand(BaseModel):
     command: Literal["stop"] = "stop"
@@ -132,40 +141,17 @@ class Robot:
         # todo motor list
 
     async def move(self, coordinate: AxisCoordinate) -> None:
+        # await self.get_grid()
         await self.home()
         await self._mr.move_to_position(REVERSE)
-
-        # pos = await self.auto_cal()
-        # pos = 0
-        end = 0
-        while True: # get from params
-            # print(end)
-            pos = await self.auto_cal()
-            print(pos)
-            if pos:
-                self._bays.append(pos)
-                print(pos)
-                await asyncio.sleep(1)
-                await self._mx.jog(JOG)
-            await asyncio.sleep(1)
-
-            if end > 600:
-                break
-
-            end = await self._mx.get_position()
-            end = self._mx._params["mpr"]*end/10000
-        
-        print(self._bays)
-
-
-        # pos = await self._mx.get_position()
-        # print(self._mx._params["mpr"]*pos/10000)
-        # await self._mx.jog(1)
-        # await self.auto_cal() # this second one should not move at all
-        # self._cam.capture_sync("beb.jpg")
-        # print("it's a beb")
-        # await self.home()
-        # await self._mr.move_to_position(REVERSE)
+        await self.pick(AxisCoordinate(BAY1,0))
+        await self.place(AxisCoordinate(BAY1,0))
+        await self.pick(AxisCoordinate(BAY2,0))
+        await self.place(AxisCoordinate(BAY2,0))
+        await self.pick(AxisCoordinate(BAY3,0))
+        await self.place(AxisCoordinate(BAY3,0))
+        await self.pick(AxisCoordinate(BAY4,0))
+        await self.place(AxisCoordinate(BAY4,0))
         # for i in range(0,100):
         #     print(i)
         #     await self.pick(AxisCoordinate(BAY4, 0))
@@ -234,9 +220,9 @@ class Robot:
         # Crop to bottom half vertically
         # frame_middle = frame_middle[height // 3:, :]
         frame_middle = frame_middle[2 * third_h:, :]
-        cv2.imwrite("beb.jpg",frame_middle)
 
         bbox_crop = self._cam.get_fiducial(frame_middle)
+        cv2.imwrite("beb.jpg",frame_middle)
 
         if bbox_crop is None:
             # print("No white rectangular fiducial detected.")
@@ -257,7 +243,7 @@ class Robot:
             cv2.circle(frame_middle, (int(obj_center[0]), int(obj_center[1])), 5, (255, 0, 0), -1)
             cv2.circle(frame_middle, (int(frame_center[0]), int(frame_center[1])), 5, (0, 0, 255), -1)
             offset_mm = (obj_center[0]-frame_center[0])*PXMM
-
+            cv2.imwrite("beb.jpg",frame_middle)
             
 
             # print(offset_mm)
@@ -266,7 +252,6 @@ class Robot:
 
     async def auto_cal(self):
         # self._cam.start_stream()
-
         frame = await self._cam.capture()
         offset = await self.centering(frame)
         if offset is False:
@@ -279,7 +264,30 @@ class Robot:
             pos = ((self._mx._params["mpr"]*pos)/10000) #in mm
             # await self._mx.jog(25) # bump it
             return pos
-       
+        
+    async def get_grid(self):
+        end = 0
+        await self.home()
+        await self._mx.move_to_position(250)
+        await self._mr.move_to_position(REVERSE)
+        while True: # get from params
+            # print(end)
+            pos = await self.auto_cal()
+            # print(pos)
+            if pos:
+                self._bays.append(pos)
+                print(pos)
+                await asyncio.sleep(1)
+                await self._mx.jog(JOG)
+            await asyncio.sleep(1)
+
+            if end > 600:
+                break
+
+            end = await self._mx.get_position()
+            end = self._mx._params["mpr"]*end/10000 # todo param
+        
+        print(self._bays)
 
     def get_storage(self) -> StorageGrid:
         return self._storage

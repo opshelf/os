@@ -10,8 +10,8 @@ import time
 # the camera stops working after a certain number of captures. maybe it's filling up internal memory
 
 # todo set this with real dimensions of the fiducial
-W_EXPECTED = 70
-H_EXPECTED = 30 # 27
+W_EXPECTED = 64
+H_EXPECTED = 64 # 27
 EXPECTED_AREA = W_EXPECTED * H_EXPECTED
 EXPECTED_ASPECT = W_EXPECTED / H_EXPECTED
 TOLERANCE_AREA = 0.5  # 50% margin
