@@ -132,8 +132,29 @@ class Robot:
         # todo motor list
 
     async def move(self, coordinate: AxisCoordinate) -> None:
-        await self.home()
-        await self._mr.move_to_position(REVERSE)
+        # await self.home()
+        # await self._mr.move_to_position(REVERSE)
+        await self._mg.home()
+        await self._ms.home()
+        await self._ms.move_config()
+        await self._mg.move_config()
+        await self._mg.move_to_position_no_wait(GRIPPER_EXTENSION_PICK)
+        await self._ms.move_to_position_no_wait(SLIDE_EXTENSION)
+
+        await asyncio.sleep(5)
+
+        await self._ms.move_config()
+        await self._mg.move_config()
+        await self._mg.move_to_position_no_wait(0)
+        await self._ms.move_to_position_no_wait(0)
+
+        await asyncio.sleep(1) # it needs time to move
+
+        await self._mg.retract()
+        await self._ms.retract()
+
+        # await self._ms.retract_config()
+        # await self._mg.retract_config()
 
         # pos = await self.auto_cal()
         # pos = 0
