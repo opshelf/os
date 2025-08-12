@@ -90,7 +90,6 @@ class Servo():
 
 # stepper
 class Motor():
-    #TODO change to absolute positioning mode w/ encoder feedback
 
     def __init__(self, controller: SharedModbusController, params: dict):
             self._motor_id = int(params["motor_id"])        # slave id
@@ -106,7 +105,8 @@ class Motor():
 
     async def configure(self):
         await self.set_param("Forced enable by software", 0x1) # always on?
-        await self.set_param("SI2 input function", 0x26) # neg switch
+        # await self.set_param("SI2 input function", 0x26) # neg switch
+        # await self.set_param("SI2 input function", 0x8) # neg switch
         await self.set_param("Peak current", self._params["Ip"])
         await self.set_param("Allowed max position following error", 4000)
         return
@@ -141,7 +141,7 @@ class Motor():
                 # if self._homed = 
         await self.set_param("Control word", 0x1111) # clear alarm if any
         await self.set_param("Control word", 0x1122) # clear alarm if any
-        await self.set_param("Motion of Path 0", 0x1) # abs pos
+        await self.set_param("Motion of Path 0", 0x1) # abs pos 0x1
         await self.set_param("Motor direction", self._params["dir"])
         await self.set_param("Velocity", self._params["rpm"])
         await self.set_param("Acceleration", self._params['accel'])
@@ -162,16 +162,22 @@ class Motor():
     # async def empty_retract(self):
     #     pass
     
-    async def move_to_position_no_wait(self, value: int): # mm
+    async def move_to_position_no_wait(self, value: float): # mm
         # if value > self._params["nrev"]:
         #      print(f"[Stepper] Motor {self._motor_id} -> Cannot Move to position {value}")
         #      return
+
+        # print(value)
 
         # if self._homed = 
         await self.set_param("Control word", 0x1111) # clear alarm if any
         await self.set_param("Control word", 0x1122) # clear alarm if any
 
+    
+
         pulse = MotorDefs.rev_to_pulse(MotorDefs.mm_to_rev(value,self._params["mpr"])) # tuple
+
+        # print(pulse)
 
         # await self.set_param("Motion of Path 0", 0x1) # abs pos
         # await self.set_param("Motor direction", self._params["dir"])
@@ -253,7 +259,7 @@ class Motor():
             if time.monotonic() - start_time > timeout:
                 print(f"[{self._motor_id}] Timeout waiting for move.")
                 await self.stop()
-                return MotorStatus.ERROR
+                return MotorStatus.STOPPED
 
             # print("waiting")
             await asyncio.sleep(0.01)

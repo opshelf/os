@@ -1,6 +1,6 @@
 from enum import Enum
 from pydantic import BaseModel, Field
-from perpetual_os1.configuration import motor_x, motor_stage, motor_gripper, motor_rotate
+from perpetual_os1.configuration import motor_x, motor_stage, motor_gripper, motor_rotate, motor_y
 from perpetual_os1.common import AxisCoordinate, ToolCoordinate
 from hardware.ModbusController import SharedModbusController as Controller
 from hardware.MotorBase import Motor, Servo, MotorStatus
@@ -98,8 +98,9 @@ class WorkerStatus(BaseModel):
 
 # TODO: MORE DICTS
 
-PoE = "http://10.254.239.102/" # todo get this from the arp scan/nmap scan
+# PoE = "http://10.254.239.102/" # todo get this from the arp scan/nmap scan
 
+PoE = "http://192.168.1.108/CGI/command/snap?channel=0"
 class Robot:
     def __init__(self, port: str) -> None:
         self._bus = Controller(port=port)
@@ -108,6 +109,7 @@ class Robot:
         self._mg = Motor(self._bus, motor_gripper)
         self._mr = Motor(self._bus, motor_rotate)
         self._ms = Motor(self._bus, motor_stage)
+        # self._my = Motor(self._bus, motor_y)
         self._gs = Servo(self._bus)
         self._status = RobotStatus.IDLE
         self._cam = Camera(PoE)
@@ -123,6 +125,7 @@ class Robot:
         await self._mr.configure()
         await self._ms.configure()
         await self._gs.configure()
+        # await self._my.configure()
 
         #init video stream
         # self._vstrm = VideoStream(self._cam, self._cam._vid)
@@ -132,26 +135,47 @@ class Robot:
         # todo motor list
 
     async def move(self, coordinate: AxisCoordinate) -> None:
-        # await self.home()
-        # await self._mr.move_to_position(REVERSE)
         await self._mg.home()
         await self._ms.home()
-        await self._ms.move_config()
-        await self._mg.move_config()
-        await self._mg.move_to_position_no_wait(GRIPPER_EXTENSION_PICK)
-        await self._ms.move_to_position_no_wait(SLIDE_EXTENSION)
+        await self.place(AxisCoordinate(0,0))
+        # for i in range(100):
+        #     print(i)
+        #     self._cam.capture_sync(f"frame.jpg")
+            # await self._mx.move_config()
+            # await self._my.move_config()
+            # await self._mx.move_to_position_no_wait(1000)
+            # await self._my.move_to_position_no_wait(2000)
 
-        await asyncio.sleep(5)
+            # await asyncio.sleep(5)  # it needs time to move
 
-        await self._ms.move_config()
-        await self._mg.move_config()
-        await self._mg.move_to_position_no_wait(0)
-        await self._ms.move_to_position_no_wait(0)
+            # await self._mx.move_config()
+            # await self._my.move_config()
+            # await self._mx.move_to_position_no_wait(-1000)
+            # await self._my.move_to_position_no_wait(-2000)
 
-        await asyncio.sleep(1) # it needs time to move
+            # await asyncio.sleep(5) 
+        # await self.home()
+        # await self._mr.move_to_position(REVERSE)
+        # await self._mg.home()
+        # await self._ms.home()
+        # await self._ms.move_config()
+        # await self._mg.move_config()
+        # await self._mg.move_to_position_no_wait(GRIPPER_EXTENSION_PICK)
+        # await self._ms.move_to_position_no_wait(SLIDE_EXTENSION)
+        # await self.tool_wait()
 
-        await self._mg.retract()
-        await self._ms.retract()
+        # await asyncio.sleep(5)
+
+        # await self._ms.move_config()
+        # await self._mg.move_config()
+        # await self._mg.move_to_position_no_wait(0)
+        # await self._ms.move_to_position_no_wait(0)
+        # await self.tool_wait()
+        
+        # # await asyncio.sleep(1) # it needs time to move
+
+        # await self._mg.retract()
+        # await self._ms.retract()
 
         # await self._ms.retract_config()
         # await self._mg.retract_config()
@@ -218,10 +242,16 @@ class Robot:
         await self._ms.retract()
 
     async def place(self, coordinate: AxisCoordinate):
-        await self._mx.move_to_position(coordinate.x)
+        # await self._mx.move_to_position(coordinate.x)
         await self._ms.move_to_position(SLIDE_EXTENSION) # 50 max
         await self._mg.move_to_position(GRIPPER_EXTENSION_PLACE)
         await self._gs.close()
+
+        await self._ms.move_config()
+        await self._mg.move_config()
+        await self._mg.move_to_position_no_wait(0)
+        await self._ms.move_to_position_no_wait(0)
+        await self.tool_wait()
 
         await self._mg.retract()
         await self._ms.retract()
@@ -237,6 +267,15 @@ class Robot:
 
             await asyncio.sleep(0.01)  # Wait a bit before checking again
 
+    async def tool_wait(self):
+        while True:
+            mg_finish = await self._mg.wait_for_move()
+            ms_finish = await self._ms.wait_for_move()
+
+            if ms_finish == MotorStatus.STOPPED and mg_finish == MotorStatus.STOPPED:
+                break
+
+            await asyncio.sleep(0.01)  # Wait a bit before checking again
 
     async def home(self) -> None:
         await self._ms.home()
