@@ -1,5 +1,6 @@
 from pymodbus.client import ModbusSerialClient as ModbusClient
-slave_id = 5
+import time
+slave_id = 2
 
 client = ModbusClient(
     port="/dev/ttyUSB0",
@@ -13,9 +14,26 @@ client = ModbusClient(
 if client.connect():
     print("connected")
     # client.close()
-    client.write_register(0x0147, 0x25,slave=slave_id) # pos limit
-    client.write_register(0x6200, 0x41, slave=slave_id)
-    client.write_register(0x0191, 0x32, slave=slave_id)
-    client.write_register(0x6203, 0x1F0, slave=slave_id)
-    client.write_register(0x6202, 0xFF, slave=slave_id)
-    client.write_register(0x6002, 0x10, slave=slave_id)
+    for i in range(10):
+        client.write_register(0x1801, 0x1111, slave=slave_id) # clear errors
+        client.write_register(0x1801, 0x1122, slave=slave_id) # clear errors
+        client.write_register(0x6200, 0x41, slave=slave_id)
+        client.write_register(0x0191, 0x46, slave=slave_id)
+        client.write_register(0x6203, 0xF0, slave=slave_id)
+        client.write_register(0x0007, 0, slave=slave_id) 
+        client.write_register(0x6202, 0xFFFF, slave=slave_id)
+        client.write_register(0x6002, 0x10, slave=slave_id)
+
+        time.sleep(5)
+
+        client.write_register(0x1801, 0x1111, slave=slave_id) # clear errors
+        client.write_register(0x1801, 0x1122, slave=slave_id) # clear errors
+        client.write_register(0x6200, 0x41, slave=slave_id)
+        client.write_register(0x0191, 0x46, slave=slave_id)
+        client.write_register(0x6203, 0xF0, slave=slave_id)
+        client.write_register(0x0007, 1, slave=slave_id) 
+        client.write_register(0x6202, 0xFFFF, slave=slave_id)
+        client.write_register(0x6002, 0x10, slave=slave_id)
+
+        time.sleep(5)
+
