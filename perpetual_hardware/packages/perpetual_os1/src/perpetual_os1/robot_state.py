@@ -19,6 +19,7 @@ class MotorParam(TypedDict, total=False):
     home_rpm: int
     accel: int
     ret_rpm: int
+    lim: float # max travel in mm
 
 class GridCell(TypedDict, total=False):
     id: str
@@ -170,6 +171,78 @@ def remove_motor(state: RobotState, motor_id: Any) -> bool:
             return True
     return False
 
+# --------------------
+# Motor Management
+# --------------------
+
+def _update_motor_field(self, motor_name: str, field: str, value: Any):
+    if motor_name in self.state["motors"]:
+        self.state["motors"][motor_name][field] = value
+        self.save()
+
+def _get_motor_field(self, motor_name: str, field: str) -> Optional[Any]:
+    motor = self.state["motors"].get(motor_name)
+    if motor:
+        return motor.get(field)
+    return None
+
+def add_motor(self, motor_name: str, motor_params: Dict[str, Any]):
+    """Add or update a motor by name."""
+    self.state["motors"][motor_name] = motor_params
+    self.save()
+
+def get_motor(self, motor_name: str) -> Optional[Dict[str, Any]]:
+    return self.state["motors"].get(motor_name)
+
+# Typed setters/getters for each motor parameter
+def set_motor_id(self, motor_name: str, value: int):
+    self._update_motor_field(motor_name, "motor_id", value)
+
+def get_motor_id(self, motor_name: str) -> Optional[int]:
+    return self._get_motor_field(motor_name, "motor_id")
+
+def set_ip(self, motor_name: str, value: int):
+    self._update_motor_field(motor_name, "Ip", value)
+
+def get_ip(self, motor_name: str) -> Optional[int]:
+    return self._get_motor_field(motor_name, "Ip")
+
+def set_rpm(self, motor_name: str, value: int):
+    self._update_motor_field(motor_name, "rpm", value)
+
+def get_rpm(self, motor_name: str) -> Optional[int]:
+    return self._get_motor_field(motor_name, "rpm")
+
+def set_dir(self, motor_name: str, value: int):
+    self._update_motor_field(motor_name, "dir", value)
+
+def get_dir(self, motor_name: str) -> Optional[int]:
+    return self._get_motor_field(motor_name, "dir")
+
+def set_mpr(self, motor_name: str, value: int):
+    self._update_motor_field(motor_name, "mpr", value)
+
+def get_mpr(self, motor_name: str) -> Optional[int]:
+    return self._get_motor_field(motor_name, "mpr")
+
+def set_home_rpm(self, motor_name: str, value: int):
+    self._update_motor_field(motor_name, "home_rpm", value)
+
+def get_home_rpm(self, motor_name: str) -> Optional[int]:
+    return self._get_motor_field(motor_name, "home_rpm")
+
+def set_accel(self, motor_name: str, value: int):
+    self._update_motor_field(motor_name, "accel", value)
+
+def get_accel(self, motor_name: str) -> Optional[int]:
+    return self._get_motor_field(motor_name, "accel")
+
+def set_ret_rpm(self, motor_name: str, value: int):
+    self._update_motor_field(motor_name, "ret_rpm", value)
+
+def get_ret_rpm(self, motor_name: str) -> Optional[int]:
+    return self._get_motor_field(motor_name, "ret_rpm")
+
 # ----------------------------
 # Grid helpers (dynamically scaling dictionary)
 # ----------------------------
@@ -205,10 +278,8 @@ def upsert_grid_cell(
 def get_grid_cell(state: RobotState, cell_id: Any) -> Optional[GridCell]:
     return state["grid"].get(_normalize_id(cell_id))
 
-
 def remove_grid_cell(state: RobotState, cell_id: Any) -> bool:
     return state["grid"].pop(_normalize_id(cell_id), None) is not None
-
 
 def generate_grid(
     state: RobotState,
@@ -236,6 +307,14 @@ def generate_grid(
             x = ox + c * sx
             y = oy + r * sy
             upsert_grid_cell(state, cid, (x, y), cell_size)
+
+
+def search_grid(grid: Dict[str, GridCell], cell_id: str) -> Optional[Tuple[float, float]]:
+    """Return coordinates for a grid cell by ID."""
+    cell = grid.get(cell_id)  # type: Optional[GridCell]
+    if cell is None:
+        return None  # or raise KeyError if you want strict behavior
+    return cell.get("coord") 
 
 # ----------------------------
 # Validation

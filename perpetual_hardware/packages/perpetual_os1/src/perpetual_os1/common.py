@@ -1,4 +1,3 @@
-import hardware.MotorBase as Motor
 from pydantic import BaseModel
 from enum import Enum
 from abc import ABC, abstractmethod
