@@ -2,7 +2,7 @@ from pydantic import BaseModel, Field
 from typing import Union, Annotated, Literal, Optional
 from enum import Enum
 from perpetual_os1.common import AxisCoordinate, ToolCoordinate
-from perpetual_os1.storage import Cell, StorageGrid, StorageModuleCellLocation, CellItem, StorageModuleSide
+# from perpetual_os1.storage import Cell, StorageGrid, StorageModuleCellLocation, CellItem, StorageModuleSide
 
 class StopCommand(BaseModel):
     command: Literal["stop"] = "stop"
@@ -42,9 +42,9 @@ class RobotCommandSuccessful(BaseModel):
 class RobotCommandError(BaseModel):
     error: str
 
-class RobotItemStoredResponse(BaseModel):
-    message: Literal["success"] = "success"
-    location: StorageModuleCellLocation
+# class RobotItemStoredResponse(BaseModel):
+#     message: Literal["success"] = "success"
+#     location: StorageModuleCellLocation
 
 class ItemSizeLocation(BaseModel):
     object_size: float
@@ -58,8 +58,8 @@ class SizeResult():
 
 RobotResponse = Union[RobotCommandSuccessful, RobotCommandError, SizeResult]
 
-class RobotState(BaseModel):
-    current_cell: Optional[StorageModuleCellLocation] = None
+# class RobotState(BaseModel):
+#     current_cell: Optional[StorageModuleCellLocation] = None
 
 class RobotStatus(str, Enum):
     IDLE = "IDLE"

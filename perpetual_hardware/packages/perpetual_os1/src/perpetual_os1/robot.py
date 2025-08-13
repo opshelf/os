@@ -1,15 +1,19 @@
+from typing import Dict, Optional, Tuple
 from perpetual_os1.common import AxisCoordinate, ToolCoordinate
 from hardware.ModbusController import SharedModbusController as Controller
 from hardware.MotorBase import Motor, Servo, MotorStatus
 from hardware.camera import Camera
+from hardware.scale import Scale
+from hardware.curtain import Curtain
 import commands
 import cv2
 import asyncio
 import robot_state
 
 class Robot:
-    def __init__(self, port: str) -> None:
+    def __init__(self, port: str, curtain_port: str) -> None:
         self._bus = Controller(port=port)
+        self._curtain_bus = Controller(port=curtain_port)
         self._state = robot_state.load_state("config.json")
         self._mx = Motor(
             self._bus, 
@@ -39,6 +43,8 @@ class Robot:
         self._gs = Servo(self._bus)
         self._cam = Camera()
         self._grid = self._state["grid"]
+        self._scale = Scale(self._bus, 0x1) #need to update motors
+        self._curtain = Curtain(self._curtain_bus)
         self._cur_item: str = None # some kind of unique identifier
 
     async def configure(self):
@@ -51,13 +57,25 @@ class Robot:
         await self._mr.configure()
         await self._ms.configure()
         await self._my.configure()
+        await self._md.configure()
         await self._gs.configure()
 
+        await self._scale.configure()
+        await self._curtain.connect()
+
     async def retrieve_item(self, label: str):
-        pass
+        item = AxisCoordinate(robot_state.search_grid(self.get_storage()))
+        self.pick(item)
 
     async def place_item(self):
         pass
+
+    async def move_to_io(self):
+        await self._mx.move_config()
+        await self._my.move_config()
+        await self._mx.move_to_position_no_wait(self._state["robot"]["pickup_location"].x)
+        await self._my.move_to_position_no_wait(self._state["robot"]["pickup_location"].y)
+        await self.gantry_wait()
 
     async def pick(self, coordinate: AxisCoordinate) -> None:
         await self._gs.safe_open()
@@ -121,34 +139,50 @@ class Robot:
             await asyncio.sleep(0.01)  # Wait a bit before checking again
 
     # todo, 2D and update grid
-    async def get_grid(self):
-        pos = 0
-        end = 0
-        while True: 
-            pos = await self.auto_cal()
-            if pos:
-                self._bays.append(pos)
-                await asyncio.sleep(0.01)
-                await self._mx.jog(self._state["robot"]["JOG"])
+    async def update_grid(self):
+        self.move(AxisCoordinate(self._state["robot"]["PICKUP_POSITION"]))
+        while end_y < self._state["y_axis"]["MAX_POS"]: 
+            await self._mx.home()
+            pos_y = await self.auto_cal_y()
+            if pos_y:
+                while end_x < self._state["x_axis"]["MAX_POS"]:
+                    pos_x = await self.auto_cal_x()
+                    if pos_x:
+                        robot_state.upsert_grid_cell(
+                            state = self._state,
+                            cell_id = "Beb",
+                            coordinate = AxisCoordinate(pos_x, pos_y),
+                            size = [0,0]
+                        )
+                        await asyncio.sleep(0.01)
+                        await self._mx.jog(self._state["robot"]["JOG_X"])
+                        end_x = await self._mx.get_position()
+                        end_x = self._mx._params["mpr"]*end_x/self._state["robot"]["PPR"]
+
+                    await asyncio.sleep(0.01)
+
+                await self._my.jog(self._state["robot"]["JOG_Y"])
             await asyncio.sleep(0.01)
 
-            if end > 600:
-                # Todo set real axis limit
-                # todo move up one shelf and repeat
-                break
+            end_y = await self._my.get_position()
+            end_y = self._my._params["mpr"]*end_y/self._state["robot"]["PPR"]
 
-            end = await self._mx.get_position()
-            end = self._mx._params["mpr"]*end/self._state["robot"]["PPR"]
-    
+    async def get_weight(self) -> float:
+        try:
+            data = await self._scale.read_weight_data()
+            return data['weight']
+        except Exception as e:
+            print(f"Error reading weight: {e}")
+            return 0.0
 
-    def get_storage(self):
+    def get_storage(self) -> Dict[str, robot_state.GridCell]:
         return self._grid
 
-    # def set_storage(self, value: StorageGrid) -> None:
-    #     self._storage = value
+    def set_storage(self, grid: Dict[str, robot_state.GridCell]) -> None:
+        self._grid = grid
 
-    # async def idle(self) -> None:
-    #     await self.move(self._configuration.idle_position) # basically anywhere along the bottom of the gantry
+    async def idle(self) -> None:
+        await self.move(self._state["robot"]["idle_position"]) # basically anywhere along the bottom of the gantry
 
     async def shutdown(self) -> None:
         if self._bus:
@@ -179,7 +213,7 @@ class Robot:
         r = self._mr.get_position()
         return (AxisCoordinate(x, y), ToolCoordinate(g,s,r))
     
-    async def centering(self, frame):
+    async def centering(self, frame) -> Optional[Tuple[float, float]]:
         frame = cv2.rotate(frame, cv2.ROTATE_180)
         height, width = frame.shape[:2]
         third = width // 3
@@ -213,13 +247,14 @@ class Robot:
             cv2.rectangle(frame_middle, (x, y), (x + w, y + h), (0, 255, 0), 2)
             cv2.circle(frame_middle, (int(obj_center[0]), int(obj_center[1])), 5, (255, 0, 0), -1)
             cv2.circle(frame_middle, (int(frame_center[0]), int(frame_center[1])), 5, (0, 0, 255), -1)
-            offset_mm = (obj_center[0]-frame_center[0])*self._state["robot"]["PXMM"]
+            offset_mm_x = (obj_center[0]-frame_center[0])*self._state["robot"]["PXMM"]
+            offset_mm_y = (obj_center[1]-frame_center[1])*self._state["robot"]["PYMM"]
 
-            return offset_mm
+            return offset_mm_x, offset_mm_y
 
-    async def auto_cal(self):
+    async def auto_cal_x(self):
         frame = await self._cam.capture()
-        offset = await self.centering(frame)
+        offset, _ = await self.centering(frame)
         if offset is False:
             await self._mx.jog(self._state["robot"]["JOG"])
             return offset
@@ -228,8 +263,21 @@ class Robot:
             pos = await self._mx.get_position()
             pos = ((self._mx._params["mpr"]*pos)/self._state["robot"]["PPR"]) #in mm
             return pos
+        
+    async def auto_cal_y(self):
+        frame = await self._cam.capture()
+        _ , offset = await self.centering(frame)
+        if offset is False:
+            await self._my.jog(self._state["robot"]["JOG"])
+            return offset
+        else:
+            await self._my.jog(-offset) # camera is upside down?
+            pos = await self._my.get_position()
+            pos = ((self._my._params["mpr"]*pos)/self._state["robot"]["PPR"]) #in mm
+            return pos
 
-    async def handle_command(self, command: commands.RobotCommands) -> RobotResponse:
+
+    async def handle_command(self, command: commands.RobotCommands):
         match command:
             case commands.StopCommand():
                 await self.stop()
