@@ -14,7 +14,7 @@ from perpetual_os1.robot import (
     WorkerStatus
 )
 # from storage import StorageGrid
-from perpetual_os1.configuration import RobotConfiguration
+# from perpetual_os1.configuration import RobotConfiguration
 from perpetual_os1.common import RobotNatsConfiguration
 from perpetual_os1.robot_client import RobotClient
 
