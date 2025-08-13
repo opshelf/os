@@ -5,10 +5,11 @@ from pymodbus.exceptions import ModbusIOException
 from typing import Optional
 
 class SharedModbusController:
-    def __init__(self, port: str, baudrate: int = 115200, timeout: float = 1.0):
+    def __init__(self, port: str, baudrate: int = 115200, parity: str = "N", timeout: float = 1.0):
         self.port = port
         self.baudrate = baudrate
         self.timeout = timeout
+        self.parity = parity
         self.client: Optional[AsyncModbusSerialClient] = None
         self.lock = asyncio.Lock()  # ensures only one coroutine accesses the bus at a time
 
@@ -17,6 +18,7 @@ class SharedModbusController:
             port=self.port,
             baudrate=self.baudrate,
             timeout=self.timeout,
+            parity=self.parity,
             retries=1,
             framer=pymodbus.FramerType.RTU
         )
@@ -28,10 +30,10 @@ class SharedModbusController:
         if self.client is not None:
             self.client.close()
 
-    async def read_holding_registers(self, unit_id: int, address: int) -> int:
+    async def read_holding_registers(self, unit_id: int, address: int, count: int = 1) -> int:
         async with self.lock:
             try:
-                result = await self.client.read_holding_registers(address=address, count=1, slave=unit_id)
+                result = await self.client.read_holding_registers(address=address, count=count, slave=unit_id)
                 if result.isError():
                     raise ModbusIOException(f"Read error from unit {unit_id}: {result}")
                 return int(result.registers[0])

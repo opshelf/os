@@ -17,10 +17,9 @@ class Servo():
             self._control_reg = 0x3E8
             self._status_reg = 0x07D0                        # status register
 
-
     async def configure(self):
         await self._controller.write_single_register(self._motor_id, self._control_reg, 0x0) #clear
-        await self._controller.write_single_register(self._motor_id, self._control_reg, 0x1) #enable
+        await self._controller.write_single_register(self._motor_id, self._control_reg, 0x1) #enable # do i need this
         await self.wait_for_activate()
         #open
         await self._controller.write_single_register(self._motor_id, 0x03EB, 0x8020) # 0x80|0x20
@@ -90,7 +89,8 @@ class Motor():
             self._controller = controller                   # modbus controller
             self._params = params
             self._cur_pos = None
-            self._stall_timeout = 0.05                      #second??? 
+            self._stall_timeout = 0.01                      #second??? 
+            self._status: MotorStatus = MotorStatus.IDLE
 
     async def configure(self):
         await self.set_param("Forced enable by software", 0x1) # always on?
@@ -101,6 +101,9 @@ class Motor():
 
     # TODO add axis limits
     async def move_to_position(self, value: float): # mm
+        if value > self._params["lim"]:
+            raise ValueError(f"Value {value} exceeds motor limit {self._params['lim']} mm")
+
         pulse = MotorDefs.rev_to_pulse(MotorDefs.mm_to_rev(value,self._params["mpr"])) # tuple
         await self.set_param("Control word", 0x1111) # clear alarm if any
         await self.set_param("Control word", 0x1122) # clear alarm if any
@@ -116,11 +119,14 @@ class Motor():
                 MotorDefs.TRIGGER,
                 0x10) # start path 0
         
+        self._status = MotorStatus.MOVING
         await self.wait_for_move(timeout=10)
         return MotorStatus.STOPPED
     
     # assumes that the motor is already configured
     async def move_to_position_no_wait(self, value: float): # mm
+        if value > self._params["lim"]:
+            raise ValueError(f"Value {value} exceeds motor limit {self._params['lim']} mm")
         pulse = MotorDefs.rev_to_pulse(MotorDefs.mm_to_rev(value,self._params["mpr"])) # tuple
         await self.set_param("Control word", 0x1111) # clear alarm if any
         await self.set_param("Control word", 0x1122) # clear alarm if any
@@ -131,6 +137,7 @@ class Motor():
                 MotorDefs.TRIGGER,
                 0x10) # start path 0
         
+        self._status = MotorStatus.MOVING
         return
     
     async def move_config(self):
@@ -142,16 +149,6 @@ class Motor():
         await self.set_param("Acceleration", self._params['accel'])
         await self.set_param("Deceleration", self._params['accel'])
         
-
-    async def retract_config(self):
-        home_dir = self._params["dir"]^1
-        await self.set_param("Control word", 0x1111) # clear alarm if any
-        await self.set_param("Control word", 0x1122) # clear alarm if any
-        await self.set_param("Motion of Path 0", 0x2) # velocity
-        await self.set_param("Motor direction", home_dir)
-        await self.set_param("Velocity", self._params["ret_rpm"])
-
-    # TODO add actual position registers to the motor defs table
     async def get_position(self):
         # todo get_param
         # pos_l = await self._controller.read_holding_registers(self._motor_id, 0x602D) 
@@ -201,13 +198,11 @@ class Motor():
 
             last_pos = self._cur_pos
             
-            # todo this is also the case that catches the limit switch which stops the motor from actually moving
             if has_moved and (now - last_movement_time > self._stall_timeout):
                 # print(f"[{self._motor_id}] Stopped: No movement detected for {self._stall_timeout} seconds.")
                 await self.stop()
                 return MotorStatus.STOPPED
 
-            # todo move to within move operation?
             if status:
                 # print(f"[{self._motor_id}] Move complete.")
                 # await self.stop()
@@ -218,8 +213,7 @@ class Motor():
                 await self.stop()
                 return MotorStatus.STOPPED
 
-            # print("waiting")
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(0.001)
 
     async def home(self):
         # the homing direction register follows an inverted 
@@ -235,15 +229,15 @@ class Motor():
                 self._motor_id, 
                 MotorDefs.TRIGGER,
                 0x10) # start path 0
+        self._status = MotorStatus.MOVING
+
+        if (await self.wait_for_move(timeout=60) == MotorStatus.STOPPED):
+            await self._controller.write_single_register(
+                self._motor_id,
+                MotorDefs.TRIGGER,
+                0x21) # set zero position
         
-        await self.wait_for_move(timeout=60)
-        # if home successful
-        await self._controller.write_single_register(
-            self._motor_id,
-            MotorDefs.TRIGGER,
-            0x21) # set zero position
-        
-        return MotorStatus.STOPPED
+        return 
         
     # lazy retraction method 
     async def retract(self):
@@ -258,14 +252,14 @@ class Motor():
                 MotorDefs.TRIGGER,
                 0x10) # start path 0
         
-        await self.wait_for_move(timeout=10)
         # # if home successful
-        await self._controller.write_single_register(
-            self._motor_id,
-            MotorDefs.TRIGGER,
-            0x21) # set zero position
+        if (await self.wait_for_move(timeout=10) == MotorStatus.STOPPED):
+            await self._controller.write_single_register(
+                self._motor_id,
+                MotorDefs.TRIGGER,
+                0x21) # set zero position
         
-        return MotorStatus.STOPPED
+        return
     
     # relative motion
     async def jog(self, dist):
