@@ -1,250 +1,87 @@
-from enum import Enum
-from pydantic import BaseModel, Field
-from perpetual_os1.configuration import motor_x, motor_stage, motor_gripper, motor_rotate, motor_y
 from perpetual_os1.common import AxisCoordinate, ToolCoordinate
 from hardware.ModbusController import SharedModbusController as Controller
 from hardware.MotorBase import Motor, Servo, MotorStatus
 from hardware.camera import Camera
+import commands
 import cv2
-import numpy as np
-from perpetual_os1.storage import Cell, StorageGrid, StorageModuleCellLocation, CellItem, StorageModuleSide
-from typing import Optional
-from typing import Union, Annotated, Literal
-
 import asyncio
-SLIDE_EXTENSION = 50
-GRIPPER_EXTENSION_PICK = 167
-GRIPPER_EXTENSION_PLACE = 163
-REVERSE = 180.5
-JOG = 30
+import robot_state
 
-PXMM = 0.22 #pixels per mm mvmt
-
-BAY1 = 18
-BAY2 = 174
-BAY3 = 330
-# BAY4 = 486
-BAY4 = 463.5
-BAY5 = 574.5
-
-class StopCommand(BaseModel):
-    command: Literal["stop"] = "stop"
-
-class InitializeCommand(BaseModel):
-    command: Literal["initialize"] = "initialize"
-
-class HomeCommand(BaseModel):
-    command: Literal["home"] = "home"
-
-class MoveCommand(BaseModel):
-    command: Literal["move"] = "move"
-    coordinate: AxisCoordinate
-
-class MoveToolCommand(BaseModel):
-    command: Literal["movetool"] = "movetool"
-    coordinate: ToolCoordinate
-
-class IdleCommand(BaseModel):
-    command: Literal["idle"] = "idle"
-
-RobotCommands = Annotated[
-    Union[
-        StopCommand,
-        InitializeCommand,
-        HomeCommand,
-        MoveCommand,
-        MoveToolCommand,
-        IdleCommand,
-    ],
-    Field(discriminator="command"),
-]
-
-# Define response types
-class RobotCommandSuccessful(BaseModel):
-    message: Literal["success"] = "success"
-
-
-class RobotCommandError(BaseModel):
-    error: str
-
-class RobotItemStoredResponse(BaseModel):
-    message: Literal["success"] = "success"
-    location: StorageModuleCellLocation
-
-class ItemSizeLocation(BaseModel):
-    object_size: float
-    min_bound: float
-    max_bound: float
-    height: float 
-
-class SizeResult():
-    result: Union[Literal["detected"], Literal["no_item_detected"], Literal["item_outside_of_zone"]]
-    size: Optional[ItemSizeLocation]
-
-RobotResponse = Union[RobotCommandSuccessful, RobotCommandError, SizeResult]
-
-class RobotState(BaseModel):
-    current_cell: Optional[StorageModuleCellLocation] = None
-
-class RobotStatus(str, Enum):
-    IDLE = "IDLE"
-    RUNNING = "RUNNING"
-    ERROR = "ERROR"
-
-class WorkerStatus(BaseModel):
-    robot_status: Optional[RobotStatus]
-    running: bool
-    current_command: Optional[RobotCommands]
-
-# TODO: MORE DICTS
-
-# PoE = "http://10.254.239.102/" # todo get this from the arp scan/nmap scan
-
-PoE = "http://192.168.1.108/CGI/command/snap?channel=0"
 class Robot:
     def __init__(self, port: str) -> None:
         self._bus = Controller(port=port)
-        #TODO list of motors
-        self._mx = Motor(self._bus, motor_x)
-        self._mg = Motor(self._bus, motor_gripper)
-        self._mr = Motor(self._bus, motor_rotate)
-        self._ms = Motor(self._bus, motor_stage)
-        # self._my = Motor(self._bus, motor_y)
+        self._state = robot_state.load_state("config.json")
+        self._mx = Motor(
+            self._bus, 
+            motor_id=self._state["motors"]["x_axis"]["motor_id"], 
+        )
+        self._my = Motor(
+            self._bus, 
+            motor_id=self._state["motors"]["y_axis"]["motor_id"], 
+        )
+        self._mg = Motor(
+            self._bus, 
+            motor_id=self._state["motors"]["z_axis"]["motor_id"], 
+        )
+        self._ms = Motor(
+            self._bus, 
+            motor_id=self._state["motors"]["stage"]["motor_id"], 
+        )
+        self._mr = Motor(
+            self._bus, 
+            motor_id=self._state["motors"]["rotate"]["motor_id"], 
+        )
+        self._md = Motor(
+            self._bus, 
+            motor_id=self._state["motors"]["door"]["motor_id"], 
+        )
+
         self._gs = Servo(self._bus)
-        self._status = RobotStatus.IDLE
-        self._cam = Camera(PoE)
-        self._bays = []
+        self._cam = Camera()
+        self._grid = self._state["grid"]
+        self._cur_item: str = None # some kind of unique identifier
 
     async def configure(self):
         await self._bus.connect()
         if not self._bus.client.connected:
-            print("aw jeez no connection")
+            print("No Connection to Modbus")
             return
         await self._mx.configure()
         await self._mg.configure()
         await self._mr.configure()
         await self._ms.configure()
+        await self._my.configure()
         await self._gs.configure()
-        # await self._my.configure()
 
-        #init video stream
-        # self._vstrm = VideoStream(self._cam, self._cam._vid)
-        # ret, frame = self._vstrm.read() 
-        # print(frame)
-        # print(ret)
-        # todo motor list
+    async def retrieve_item(self, label: str):
+        pass
 
-    async def move(self, coordinate: AxisCoordinate) -> None:
-        await self._mg.home()
-        await self._ms.home()
-        await self.place(AxisCoordinate(0,0))
-        # for i in range(100):
-        #     print(i)
-        #     self._cam.capture_sync(f"frame.jpg")
-            # await self._mx.move_config()
-            # await self._my.move_config()
-            # await self._mx.move_to_position_no_wait(1000)
-            # await self._my.move_to_position_no_wait(2000)
-
-            # await asyncio.sleep(5)  # it needs time to move
-
-            # await self._mx.move_config()
-            # await self._my.move_config()
-            # await self._mx.move_to_position_no_wait(-1000)
-            # await self._my.move_to_position_no_wait(-2000)
-
-            # await asyncio.sleep(5) 
-        # await self.home()
-        # await self._mr.move_to_position(REVERSE)
-        # await self._mg.home()
-        # await self._ms.home()
-        # await self._ms.move_config()
-        # await self._mg.move_config()
-        # await self._mg.move_to_position_no_wait(GRIPPER_EXTENSION_PICK)
-        # await self._ms.move_to_position_no_wait(SLIDE_EXTENSION)
-        # await self.tool_wait()
-
-        # await asyncio.sleep(5)
-
-        # await self._ms.move_config()
-        # await self._mg.move_config()
-        # await self._mg.move_to_position_no_wait(0)
-        # await self._ms.move_to_position_no_wait(0)
-        # await self.tool_wait()
-        
-        # # await asyncio.sleep(1) # it needs time to move
-
-        # await self._mg.retract()
-        # await self._ms.retract()
-
-        # await self._ms.retract_config()
-        # await self._mg.retract_config()
-
-        # pos = await self.auto_cal()
-        # pos = 0
-        # end = 0
-        # while True: # get from params
-        #     # print(end)
-        #     pos = await self.auto_cal()
-        #     print(pos)
-        #     if pos:
-        #         self._bays.append(pos)
-        #         print(pos)
-        #         await asyncio.sleep(1)
-        #         await self._mx.jog(JOG)
-        #     await asyncio.sleep(1)
-
-        #     if end > 600:
-        #         break
-
-        #     end = await self._mx.get_position()
-        #     end = self._mx._params["mpr"]*end/10000
-        
-        # print(self._bays)
-
-
-        # pos = await self._mx.get_position()
-        # print(self._mx._params["mpr"]*pos/10000)
-        # await self._mx.jog(1)
-        # await self.auto_cal() # this second one should not move at all
-        # self._cam.capture_sync("beb.jpg")
-        # print("it's a beb")
-        # await self.home()
-        # await self._mr.move_to_position(REVERSE)
-        # for i in range(0,100):
-        #     print(i)
-        #     await self.pick(AxisCoordinate(BAY4, 0))
-        #     await self.place(AxisCoordinate(BAY5, 0))
-        #     await self.pick(AxisCoordinate(BAY5, 0))
-        #     await self.place(AxisCoordinate(BAY4, 0))
-
-        #     await self.pick(AxisCoordinate(BAY1, 0))
-        #     await self.place(AxisCoordinate(BAY2, 0))
-        #     await self.pick(AxisCoordinate(BAY2, 0))
-        #     await self.place(AxisCoordinate(BAY3, 0))
-        #     await self.pick(AxisCoordinate(BAY3, 0))
-        #     await self.place(AxisCoordinate(BAY1, 0))
-        #     await self.place(AxisCoordinate(BAY4, 0))
-        #     await self.pick(AxisCoordinate(BAY4, 0))
-        #     await self.place(AxisCoordinate(BAY1, 0))
+    async def place_item(self):
+        pass
 
     async def pick(self, coordinate: AxisCoordinate) -> None:
         await self._gs.safe_open()
-        await self._mx.move_to_position(coordinate.x)
+        await self._mx.move_config()
+        await self._my.move_config()
+        await self._mx.move_to_position_no_wait(coordinate.x)
+        await self._my.move_to_position_no_wait(coordinate.y)
+        await self.gantry_wait()
         #empty move
-        await self._ms.move_to_position_no_wait(SLIDE_EXTENSION) # 50 max
-        await self._mg.move_to_position_no_wait(GRIPPER_EXTENSION_PICK)
+        await self._ms.move_to_position_no_wait(self._state["robot"]["SLIDE_EXTENSION"]) # 50 max
+        await self._mg.move_to_position_no_wait(self._state["robot"]["GRIPPER_EXTENSION_PICK"])
         await self.tool_wait()
 
         await self._gs.open()
-
         await self._mg.retract()
         await self._ms.retract()
 
     async def place(self, coordinate: AxisCoordinate):
-        # await self._mx.move_to_position(coordinate.x)
-        await self._ms.move_to_position(SLIDE_EXTENSION) # 50 max
-        await self._mg.move_to_position(GRIPPER_EXTENSION_PLACE)
+        await self._mx.move_config()
+        await self._my.move_config()
+        await self._mx.move_to_position_no_wait(coordinate.x)
+        await self._my.move_to_position_no_wait(coordinate.y)
+        await self._ms.move_to_position(self._state["robot"]["SLIDE_EXTENSION"]) # 50 max
+        await self._mg.move_to_position(self._state["robot"]["GRIPPER_EXTENSION_PLACE"])
         await self._gs.close()
 
         await self._ms.move_config()
@@ -255,14 +92,20 @@ class Robot:
 
         await self._mg.retract()
         await self._ms.retract()
-        # await self.tool_wait()
 
-    async def tool_wait(self):
+    async def move(self, coordinate: AxisCoordinate) -> None:
+        await self._mx.move_config()
+        await self._my.move_config()
+        await self._mx.move_to_position_no_wait(coordinate.x)
+        await self._my.move_to_position_no_wait(coordinate.y)
+        await self.gantry_wait()
+
+    async def gantry_wait(self):
         while True:
-            ms_finish = await self._ms.wait_for_move()
-            mg_finish = await self._mg.wait_for_move()
+            mx_finish = await self._mx.wait_for_move()
+            my_finish = await self._my.wait_for_move()
 
-            if ms_finish == MotorStatus.STOPPED and mg_finish == MotorStatus.STOPPED:
+            if mx_finish == MotorStatus.STOPPED and my_finish == MotorStatus.STOPPED:
                 break
 
             await asyncio.sleep(0.01)  # Wait a bit before checking again
@@ -276,42 +119,83 @@ class Robot:
                 break
 
             await asyncio.sleep(0.01)  # Wait a bit before checking again
+
+    # todo, 2D and update grid
+    async def get_grid(self):
+        pos = 0
+        end = 0
+        while True: 
+            pos = await self.auto_cal()
+            if pos:
+                self._bays.append(pos)
+                await asyncio.sleep(0.01)
+                await self._mx.jog(self._state["robot"]["JOG"])
+            await asyncio.sleep(0.01)
+
+            if end > 600:
+                # Todo set real axis limit
+                # todo move up one shelf and repeat
+                break
+
+            end = await self._mx.get_position()
+            end = self._mx._params["mpr"]*end/self._state["robot"]["PPR"]
+    
+
+    def get_storage(self):
+        return self._grid
+
+    # def set_storage(self, value: StorageGrid) -> None:
+    #     self._storage = value
+
+    # async def idle(self) -> None:
+    #     await self.move(self._configuration.idle_position) # basically anywhere along the bottom of the gantry
+
+    async def shutdown(self) -> None:
+        if self._bus:
+            await self._bus.close()
+
+    #############################
 
     async def home(self) -> None:
         await self._ms.home()
         await self._mg.home()
         await self._mr.home()
         await self._mx.home()
+        await self._my.home()
 
     async def stop(self) -> None:
         await self._mx.stop()
         await self._mg.stop()
         await self._mr.stop()
         await self._ms.stop()
+        await self._my.stop()
 
     def get_pos(self):
         # get each motor position. return tuple of axis and tool coordinate?
         x = self._mx.get_position()
+        y = self._my.get_position()
         g = self._mg.get_position()
         s = self._ms.get_position()
         r = self._mr.get_position()
-        return (AxisCoordinate(x, 0), ToolCoordinate(g,s,r))
+        return (AxisCoordinate(x, y), ToolCoordinate(g,s,r))
     
-
     async def centering(self, frame):
         frame = cv2.rotate(frame, cv2.ROTATE_180)
         height, width = frame.shape[:2]
         third = width // 3
         third_h = height // 3
 
-        # Crop to middle third horizontally
         frame_middle = frame[:, third:2 * third]
-        # Crop to bottom half vertically
-        # frame_middle = frame_middle[height // 3:, :]
         frame_middle = frame_middle[2 * third_h:, :]
-        cv2.imwrite("beb.jpg",frame_middle)
 
-        bbox_crop = self._cam.get_fiducial(frame_middle)
+        w_e = self._state["motors"]["robot"]["W_EXPECTED"], 
+        h_e = self._state["motors"]["robot"]["H_EXPECTED"]
+
+        bbox_crop = self._cam.get_fiducial(frame_middle,
+                                           w_e * h_e,
+                                           w_e // h_e,
+                                           self._state["robot"]["TOLERANCE_AREA"],
+                                           self._state["robot"]["TOLERANCE_ASPECT"])
 
         if bbox_crop is None:
             # print("No white rectangular fiducial detected.")
@@ -319,9 +203,7 @@ class Robot:
         else:
             x_crop, y, w, h = bbox_crop
             x = x_crop + third  # Shift X to full-frame coordinates
-            bbox_full = (x, y, w, h)
-            x = x_crop + third  # Shift X to full-frame coordinates
-            score, obj_center, frame_center = self._cam.get_center(frame_middle, bbox_crop)
+            _ , obj_center, frame_center = self._cam.get_center(frame_middle, bbox_crop)
             # print(f"Centered score (0 = perfect): {score:.3f}")
             # print(f"Object center: {obj_center}")
             # print(f"Frame center: {frame_center}")
@@ -331,59 +213,37 @@ class Robot:
             cv2.rectangle(frame_middle, (x, y), (x + w, y + h), (0, 255, 0), 2)
             cv2.circle(frame_middle, (int(obj_center[0]), int(obj_center[1])), 5, (255, 0, 0), -1)
             cv2.circle(frame_middle, (int(frame_center[0]), int(frame_center[1])), 5, (0, 0, 255), -1)
-            offset_mm = (obj_center[0]-frame_center[0])*PXMM
-
-            
-
-            # print(offset_mm)
+            offset_mm = (obj_center[0]-frame_center[0])*self._state["robot"]["PXMM"]
 
             return offset_mm
 
     async def auto_cal(self):
-        # self._cam.start_stream()
-
         frame = await self._cam.capture()
         offset = await self.centering(frame)
         if offset is False:
-            await self._mx.jog(JOG)
+            await self._mx.jog(self._state["robot"]["JOG"])
             return offset
         else:
             await self._mx.jog(-offset) # camera is upside down
-            # goal_pos = self._mx._cur_pos - offset
             pos = await self._mx.get_position()
-            pos = ((self._mx._params["mpr"]*pos)/10000) #in mm
-            # await self._mx.jog(25) # bump it
+            pos = ((self._mx._params["mpr"]*pos)/self._state["robot"]["PPR"]) #in mm
             return pos
-       
 
-    def get_storage(self) -> StorageGrid:
-        return self._storage
-
-    def set_storage(self, value: StorageGrid) -> None:
-        self._storage = value
-
-    # async def idle(self) -> None:
-    #     await self.move(self._configuration.idle_position) # basically anywhere along the bottom of the gantry
-
-    async def shutdown(self) -> None:
-        if self._bus:
-            await self._bus.close()
-
-    async def handle_command(self, command: RobotCommands) -> RobotResponse:
+    async def handle_command(self, command: commands.RobotCommands) -> RobotResponse:
         match command:
-            case StopCommand():
+            case commands.StopCommand():
                 await self.stop()
-                return RobotCommandSuccessful()
-            case InitializeCommand():
+                return commands.RobotCommandSuccessful()
+            case commands.InitializeCommand():
                 await self.configure()
-                return RobotCommandSuccessful()
-            case HomeCommand():
+                return commands.RobotCommandSuccessful()
+            case commands.HomeCommand():
                 await self.home()
-                return RobotCommandSuccessful()
-            case MoveCommand(coordinate=coord):
+                return commands.RobotCommandSuccessful()
+            case commands.MoveCommand(coordinate=coord):
                 await self.move(coord)
             # case IdleCommand():
             #     await self.idle()
             #     return RobotCommandSuccessful()
             case _:
-                return RobotCommandError(error="Invalid Robot Command")
+                return commands.RobotCommandError(error="Invalid Robot Command")
