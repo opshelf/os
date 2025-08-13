@@ -2,47 +2,18 @@ import subprocess
 import numpy as np
 import cv2
 import asyncio
-import threading
-import time
-# import urllib3
-
-#1 mm on x axis ~= 2.5 pixels 
-# the camera stops working after a certain number of captures. maybe it's filling up internal memory
-
-# todo set this with real dimensions of the fiducial
-W_EXPECTED = 70
-H_EXPECTED = 30 # 27
-EXPECTED_AREA = W_EXPECTED * H_EXPECTED
-EXPECTED_ASPECT = W_EXPECTED / H_EXPECTED
-TOLERANCE_AREA = 0.5  # 50% margin
-TOLERANCE_ASPECT = 0.2  # ±20%
-
-def score(w, h):
-    area_score = abs((w * h) - EXPECTED_AREA) / EXPECTED_AREA
-    aspect_score = abs((w / h) - EXPECTED_ASPECT)
-    return area_score + aspect_score
 
 class Camera:
-    def __init__(self, url, username='m5stack', password='12345678', timeout=10):
+    def __init__(self, 
+                 url = "http://192.168.1.108/CGI/command/snap?channel=0", 
+                 username='admin', 
+                 password='admin123', 
+                 timeout=10):
+        
         self.url = url
         self.username = username
         self.password = password
         self.timeout = timeout
-        self.cap = None
-        self._vid = str("http://"+self.username+":"+self.password+"@"+self.url+"mjpeg")
-
-    # def start_stream(self):
-    #     vid = str("http://"+self.username+":"+self.password+"@"+self.url+"mjpeg")
-    #     # print(vid)
-    #     self.cap = cv2.VideoCapture(vid)
-
-    # def stream_capture(self):
-    #     if self.cap is not None:
-    #         ret, frame = self.cap.read()
-    #         if not ret:
-    #             print("no frame")
-    #             return None
-    #         return frame
 
     def _capture_sync(self, timeout=5):
         curl_cmd = [
@@ -52,10 +23,6 @@ class Camera:
             "--max-time", str(self.timeout),
             self.url
         ]
-        # image_bytes = subprocess.check_output(curl_cmd)
-        # img_array = np.asarray(bytearray(image_bytes), dtype=np.uint8)
-        # img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
-        # return img
         try:
             proc = subprocess.Popen(curl_cmd, stdout=subprocess.PIPE)
             image_bytes, _ = proc.communicate(timeout=timeout)
@@ -69,18 +36,6 @@ class Camera:
         except Exception as e:
             print("Camera capture failed:", e)
         return None
-    
-    # def _capture_sync_url(self):
-    #     url = "http://m5stack:12345678@10.254.239.102/"
-    #     # req = urllib.request.Request(url)
-    #     # req.add_header("User-Agent", "Mozilla/5.0")  # optional
-    #     # You can also try manually adding Connection: close
-    #     # req.add_header("Connection", "close")
-
-    #     with urllib3.request.urlopen(url, timeout=5) as resp:
-    #         data = np.asarray(bytearray(resp.read()), dtype=np.uint8)
-    #         img = cv2.imdecode(data, cv2.IMREAD_COLOR)
-    #         return img
 
     async def capture(self, save_path=None):
         img = await asyncio.to_thread(self._capture_sync)
@@ -88,7 +43,6 @@ class Camera:
             cv2.imwrite(save_path, img)
         return img
     
-
     def capture_sync(self, save_path=None):
         img = self._capture_sync()
         if save_path:
@@ -108,7 +62,12 @@ class Camera:
 
         return centered_score, object_center, frame_center
     
-    def get_fiducial(self, frame):
+    def get_fiducial(self, 
+                     frame,
+                     EXPECTED_AREA,
+                     EXPECTED_ASPECT,
+                     TOLERANCE_AREA,
+                     TOLERANCE_ASPECT):
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         blurred = cv2.GaussianBlur(gray, (5, 5), 0)
 
@@ -126,13 +85,9 @@ class Camera:
         contours, _ = cv2.findContours(cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         valid_rects = []
 
-        # print(len(contours))
-
         for cnt in contours:
             epsilon = 0.02 * cv2.arcLength(cnt, True)
             approx = cv2.approxPolyDP(cnt, epsilon, True)
-
-            # print(len(approx))
 
             if len(approx) != 4:
                 # print("not box")
@@ -154,38 +109,10 @@ class Camera:
         if not valid_rects:
             return None
 
-        best = min(valid_rects, key=lambda b: score(b[2], b[3]))
+        best = min(valid_rects, key=lambda b: self.score(b[2], b[3]))
         return best
-
-class VideoStream:
-    def __init__(self, cam, src=0):
-        self.capture = cv2.VideoCapture(src)
-        if not self.capture.isOpened():
-            raise RuntimeError(f"Failed to open video source: {src}")
-        
-        self.ret, self.frame = self.capture.read()
-        if not self.ret:
-            raise RuntimeError("Failed to read initial frame")
-
-        self.running = True
-        self.thread = threading.Thread(target=self.update, daemon=True)
-        self.thread.start()
-        self.cam = cam
-
-    def update(self):
-        while self.running:
-            ret, frame = self.capture.read()
-            if not ret:
-                print("Warning: failed to read frame")
-                time.sleep(0.1)
-                continue
-            self.ret = ret
-            self.frame = frame
-
-    def read(self):
-        return self.ret, self.frame
-
-    def stop(self):
-        self.running = False
-        self.thread.join()
-        self.capture.release()
+    
+    def score(self, w, h):
+        area_score = abs((w * h) - EXPECTED_AREA) / EXPECTED_AREA
+        aspect_score = abs((w / h) - EXPECTED_ASPECT)
+        return area_score + aspect_score

@@ -1,0 +1,86 @@
+{
+  "motors": [
+    {
+      "motor_name": "z_axis",
+      "motor_id": 1,
+      "Ip": 22,
+      "rpm": 496,
+      "dir": 1,
+      "mpr": 19.992,
+      "home_rpm": 64,
+      "accel": 3000,
+      "ret_rpm": 240
+    },
+    {
+      "motor_name": "y_axis",
+      "motor_id": 2,
+      "Ip": 70,
+      "rpm": 255,
+      "dir": 0,
+      "mpr": 40,
+      "home_rpm": 32,
+      "accel": 1000,
+      "ret_rpm": 128
+    },
+    {
+      "motor_name": "stage",
+      "motor_id": 3,
+      "Ip": 22,
+      "rpm": 240,
+      "dir": 0,
+      "mpr": 50,
+      "home_rpm": 64,
+      "accel": 1000,
+      "ret_rpm": 128
+    },
+    {
+      "motor_name": "rotate",
+      "motor_id": 4,
+      "Ip": 36,
+      "rpm": 176,
+      "dir": 0,
+      "mpr": 36,
+      "home_rpm": 32,
+      "accel": 3000,
+      "ret_rpm": 128
+    },
+    {
+      "motor_name": "x_axis",
+      "motor_id": 5,
+      "Ip": 36,
+      "rpm": 240,
+      "dir": 0,
+      "mpr": 80,
+      "home_rpm": 32,
+      "accel": 1000,
+      "ret_rpm": 128
+    },
+        {
+      "motor_name": "door",
+      "motor_id": 6,
+      "Ip": 22,
+      "rpm": 240,
+      "dir": 0,
+      "mpr": 80,
+      "home_rpm": 32,
+      "accel": 1000,
+      "ret_rpm": 128
+    }
+  ],
+  "grid": {},
+
+  "robot": {
+    "SLIDE_EXTENSION": 50,
+    "GRIPPER_EXTENSION_PICK": 171,
+    "GRIPPER_EXTENSION_PLACE": 165,
+    "REVERSE": 180.5,
+    "JOG": 30,
+    "PXMM": 0.22,
+    "PPR": 10000,
+    "W_EXPECTED": 64,
+    "H_EXPECTED" : 64, 
+    "TOLERANCE_AREA" : 0.5,
+    "TOLERANCE_ASPECT" : 0.2
+  },
+  "status": "idle"
+}

@@ -73,6 +73,8 @@ motor_registers = [
     (0x6012, None, "Homing deceleration", "Deceleration during homing", "ms/1000rpm", "--", "--"),
     # (0x6002, None, "Set current position to 0", "Write 0x21 to set current motor position to zero", "--", "--", "--"),
     (0x6000, None, "Auto-homing enable", "bit2 = 1 enables auto-homing at power-on", "--", "bitfield", "--"),
+    (0x602D, None, "Position Low (Actual)", "", "--", "bitfield", "--"),
+    (0x602C, None, "Position High (Actual)", "", "--", "bitfield", "--"),
     (0x6200, "Pr9.00", "Motion of Path 0", "Path config: type, interrupt, jump, relative", "--", None, "--"),
     (0x6201, "Pr9.01", "Position High", "High 16 bits of position setpoint", "--", None, "--"),
     (0x6202, "Pr9.02", "Position Low", "Low 16 bits of position setpoint", "--", None, "--"),
