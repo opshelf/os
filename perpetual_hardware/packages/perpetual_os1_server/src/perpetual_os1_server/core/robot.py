@@ -11,7 +11,7 @@ robot_worker: Optional[r_worker.RobotWorker] = None
 async def init_robot_worker() -> None:
     global robot_worker
     logging.info("Getting Robot")
-    robot = r.Robot("/dev/ttyUSB0")
+    robot = r.Robot("/dev/ttyACM0")
     logging.info("Got Bus")
     # storage_grid = load_storage_from_file("storage.json")
     # robot.set_storage(storage_grid)

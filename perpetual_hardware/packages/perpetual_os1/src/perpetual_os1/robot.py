@@ -1,51 +1,125 @@
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, Union, Literal, Annotated
 from perpetual_os1.common import AxisCoordinate, ToolCoordinate
 from hardware.ModbusController import SharedModbusController as Controller
 from hardware.MotorBase import Motor, Servo, MotorStatus
 from hardware.camera import Camera
 from hardware.scale import Scale
 from hardware.curtain import Curtain
-import commands
+from pydantic import BaseModel, Field
+from enum import Enum
+# import hardware.commands
 import cv2
 import asyncio
-import robot_state
+import perpetual_os1.robot_state as rs
+
+class StopCommand(BaseModel):
+    command: Literal["stop"] = "stop"
+
+class InitializeCommand(BaseModel):
+    command: Literal["initialize"] = "initialize"
+
+class HomeCommand(BaseModel):
+    command: Literal["home"] = "home"
+
+class MoveCommand(BaseModel):
+    command: Literal["move"] = "move"
+    coordinate: AxisCoordinate
+
+class MoveToolCommand(BaseModel):
+    command: Literal["movetool"] = "movetool"
+    coordinate: ToolCoordinate
+
+class IdleCommand(BaseModel):
+    command: Literal["idle"] = "idle"
+
+RobotCommands = Annotated[
+    Union[
+        StopCommand,
+        InitializeCommand,
+        HomeCommand,
+        MoveCommand,
+        MoveToolCommand,
+        IdleCommand,
+    ],
+    Field(discriminator="command"),
+]
+# Define response types
+class RobotCommandSuccessful(BaseModel):
+    message: Literal["success"] = "success"
+
+class RobotCommandError(BaseModel):
+    error: str
+
+# class RobotItemStoredResponse(BaseModel):
+#     message: Literal["success"] = "success"
+#     location: StorageModuleCellLocation
+
+class ItemSizeLocation(BaseModel):
+    object_size: float
+    min_bound: float
+    max_bound: float
+    height: float 
+
+class SizeResult():
+    result: Union[Literal["detected"], Literal["no_item_detected"], Literal["item_outside_of_zone"]]
+    size: Optional[ItemSizeLocation]
+
+RobotResponse = Union[RobotCommandSuccessful, RobotCommandError, SizeResult]
+
+# class RobotState(BaseModel):
+#     current_cell: Optional[StorageModuleCellLocation] = None
+
+class RobotStatus(str, Enum):
+    IDLE = "IDLE"
+    RUNNING = "RUNNING"
+    ERROR = "ERROR"
+
+class WorkerStatus(BaseModel):
+    robot_status: Optional[RobotStatus]
+    running: bool
+    current_command: Optional[RobotCommands]
+
+
+from pathlib import Path
+CONFIG_PATH = Path(__file__).resolve().parent / "config.json"
 
 class Robot:
-    def __init__(self, port: str, curtain_port: str) -> None:
+    def __init__(self, port: str) -> None:
         self._bus = Controller(port=port)
-        self._curtain_bus = Controller(port=curtain_port)
-        self._state = robot_state.load_state("config.json")
+        # self._curtain_bus = Controller(port=curtain_port)
+        self._state = rs.load_state(CONFIG_PATH)
         self._mx = Motor(
             self._bus, 
-            motor_id=self._state["motors"]["x_axis"]["motor_id"], 
+            rs.get_motor_params(self._state, "x_axis"), 
         )
         self._my = Motor(
             self._bus, 
-            motor_id=self._state["motors"]["y_axis"]["motor_id"], 
+            rs.get_motor_params(self._state, "y_axis"), 
         )
         self._mg = Motor(
             self._bus, 
-            motor_id=self._state["motors"]["z_axis"]["motor_id"], 
+            rs.get_motor_params(self._state, "z_axis"), 
         )
         self._ms = Motor(
             self._bus, 
-            motor_id=self._state["motors"]["stage"]["motor_id"], 
+            rs.get_motor_params(self._state, "stage"), 
         )
         self._mr = Motor(
             self._bus, 
-            motor_id=self._state["motors"]["rotate"]["motor_id"], 
+            rs.get_motor_params(self._state, "rotate"), 
         )
-        self._md = Motor(
-            self._bus, 
-            motor_id=self._state["motors"]["door"]["motor_id"], 
-        )
+        # self._md = Motor(
+        #     self._bus, 
+        #     rs.get_motor_params(self._state, "y_axis"), 
+        # )
 
         self._gs = Servo(self._bus)
         self._cam = Camera()
         self._grid = self._state["grid"]
-        self._scale = Scale(self._bus, 0x1) #need to update motors
-        self._curtain = Curtain(self._curtain_bus)
+        # self._scale = Scale(self._bus, 0x1) #need to update motors
+        # self._curtain = Curtain(self._curtain_bus)
         self._cur_item: str = None # some kind of unique identifier
+        self._status: RobotStatus = RobotStatus.IDLE
 
     async def configure(self):
         await self._bus.connect()
@@ -53,22 +127,29 @@ class Robot:
             print("No Connection to Modbus")
             return
         await self._mx.configure()
+        await self._my.configure()
         await self._mg.configure()
         await self._mr.configure()
         await self._ms.configure()
-        await self._my.configure()
-        await self._md.configure()
+        # # await self._md.configure()
         await self._gs.configure()
 
-        await self._scale.configure()
-        await self._curtain.connect()
+        # await self._scale.configure()
+        # await self._curtain.connect()
 
     async def retrieve_item(self, label: str):
-        item = AxisCoordinate(robot_state.search_grid(self.get_storage()))
+        item = AxisCoordinate(rs.search_grid(self.get_storage()))
         self.pick(item)
 
     async def place_item(self):
-        pass
+        # get next available position
+        next = rs.find_first_available_cell(self.get_storage())
+        if next is None:
+            print("No available cell found.")
+            return
+
+        coordinate = AxisCoordinate(next["coord"])
+        await self.place(coordinate)
 
     async def move_to_io(self):
         await self._mx.move_config()
@@ -79,17 +160,19 @@ class Robot:
 
     async def pick(self, coordinate: AxisCoordinate) -> None:
         await self._gs.safe_open()
-        await self._mx.move_config()
-        await self._my.move_config()
-        await self._mx.move_to_position_no_wait(coordinate.x)
-        await self._my.move_to_position_no_wait(coordinate.y)
-        await self.gantry_wait()
+        # await self._mx.move_config()
+        # await self._my.move_config()
+        await self._mx.move_to_position(coordinate.x)
+        # await self._my.move_to_position(coordinate.y)
+        # await self.gantry_wait()
         #empty move
-        await self._ms.move_to_position_no_wait(self._state["robot"]["SLIDE_EXTENSION"]) # 50 max
-        await self._mg.move_to_position_no_wait(self._state["robot"]["GRIPPER_EXTENSION_PICK"])
-        await self.tool_wait()
+        # await self._ms.move_config()
+        # await self._mg.move_config()
+        await self._ms.move_to_position(50) # 50 max
+        await self._mg.move_to_position(167)
+        # await self.tool_wait()
 
-        await self._gs.open()
+        # await self._gs.open()
         await self._mg.retract()
         await self._ms.retract()
 
@@ -112,21 +195,38 @@ class Robot:
         await self._ms.retract()
 
     async def move(self, coordinate: AxisCoordinate) -> None:
+        await self.home()
+        # await self._mx.move_to_position(200) # 400
+        # await self._my.move_to_position(200) # 400
+        # await self._mx.move_to_position(400) # 400
+        # await self._my.move_to_position(400) # 400
+        # await self._ms.move_to_position(50)
+        # await self._mg.move_to_position(168)
+        # await self._ms.retract()
+        # await self._mg.retract()
+        
+        # await self.pick(AxisCoordinate(291, 386))
         await self._mx.move_config()
         await self._my.move_config()
-        await self._mx.move_to_position_no_wait(coordinate.x)
-        await self._my.move_to_position_no_wait(coordinate.y)
+        await self._mx.move_to_position_no_wait(200) # 400
+        await self._my.move_to_position_no_wait(200) # 385
+        await self.gantry_wait()
+        await self._mx.move_to_position_no_wait(400) # 400
+        await self._my.move_to_position_no_wait(400) # 385
         await self.gantry_wait()
 
     async def gantry_wait(self):
         while True:
-            mx_finish = await self._mx.wait_for_move()
-            my_finish = await self._my.wait_for_move()
+            mx_finish = await self._mx.wait_for_move(timeout=10)
+            my_finish = await self._my.wait_for_move(timeout=10)
+
+            print(mx_finish)
+            print(my_finish)
 
             if mx_finish == MotorStatus.STOPPED and my_finish == MotorStatus.STOPPED:
                 break
 
-            await asyncio.sleep(0.01)  # Wait a bit before checking again
+            await asyncio.sleep(0.001)  # Wait a bit before checking again
 
     async def tool_wait(self):
         while True:
@@ -136,7 +236,7 @@ class Robot:
             if ms_finish == MotorStatus.STOPPED and mg_finish == MotorStatus.STOPPED:
                 break
 
-            await asyncio.sleep(0.01)  # Wait a bit before checking again
+            await asyncio.sleep(0.001)  # Wait a bit before checking again
 
     # todo, 2D and update grid
     async def update_grid(self):
@@ -148,9 +248,9 @@ class Robot:
                 while end_x < self._state["x_axis"]["MAX_POS"]:
                     pos_x = await self.auto_cal_x()
                     if pos_x:
-                        robot_state.upsert_grid_cell(
+                        rs.upsert_grid_cell(
                             state = self._state,
-                            cell_id = "Beb",
+                            cell_id = None,
                             coordinate = AxisCoordinate(pos_x, pos_y),
                             size = [0,0]
                         )
@@ -175,10 +275,10 @@ class Robot:
             print(f"Error reading weight: {e}")
             return 0.0
 
-    def get_storage(self) -> Dict[str, robot_state.GridCell]:
+    def get_storage(self) -> Dict[str, rs.GridCell]:
         return self._grid
 
-    def set_storage(self, grid: Dict[str, robot_state.GridCell]) -> None:
+    def set_storage(self, grid: Dict[str, rs.GridCell]) -> None:
         self._grid = grid
 
     async def idle(self) -> None:
@@ -204,13 +304,13 @@ class Robot:
         await self._ms.stop()
         await self._my.stop()
 
-    def get_pos(self):
+    async def get_pos(self):
         # get each motor position. return tuple of axis and tool coordinate?
-        x = self._mx.get_position()
-        y = self._my.get_position()
-        g = self._mg.get_position()
-        s = self._ms.get_position()
-        r = self._mr.get_position()
+        x = await self._mx.get_position()
+        y = await self._my.get_position()
+        g = await self._mg.get_position()
+        s = await self._ms.get_position()
+        r = await self._mr.get_position()
         return (AxisCoordinate(x, y), ToolCoordinate(g,s,r))
     
     async def centering(self, frame) -> Optional[Tuple[float, float]]:
@@ -277,21 +377,22 @@ class Robot:
             return pos
 
 
-    async def handle_command(self, command: commands.RobotCommands):
+    async def handle_command(self, command: RobotCommands):
         match command:
-            case commands.StopCommand():
+            case StopCommand():
                 await self.stop()
-                return commands.RobotCommandSuccessful()
-            case commands.InitializeCommand():
+                return RobotCommandSuccessful()
+            case InitializeCommand():
                 await self.configure()
-                return commands.RobotCommandSuccessful()
-            case commands.HomeCommand():
+                return RobotCommandSuccessful()
+            case HomeCommand():
                 await self.home()
-                return commands.RobotCommandSuccessful()
-            case commands.MoveCommand(coordinate=coord):
+                return RobotCommandSuccessful()
+            case MoveCommand(coordinate=coord):
                 await self.move(coord)
+                return RobotCommandSuccessful()
             # case IdleCommand():
             #     await self.idle()
             #     return RobotCommandSuccessful()
             case _:
-                return commands.RobotCommandError(error="Invalid Robot Command")
+                return RobotCommandError(error="Invalid Robot Command")

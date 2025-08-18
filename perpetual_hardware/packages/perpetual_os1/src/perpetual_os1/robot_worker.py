@@ -65,9 +65,9 @@ class RobotWorker:
         # Register request-reply handlers
         # await self._nc.subscribe(self._nats_config.get_storage_subject, cb=self._handle_get_storage)
         # await self._nc.subscribe(self._nats_config.set_storage_subject, cb=self._handle_set_storage)
-        await self._nc.subscribe(self._nats_config.get_config_subject, cb=self._handle_get_config)
-        await self._nc.subscribe(self._nats_config.set_config_subject, cb=self._handle_set_config)
-        await self._nc.subscribe(self._nats_config.get_status_subject, cb=self._handle_get_status)
+        # await self._nc.subscribe(self._nats_config.get_config_subject, cb=self._handle_get_config)
+        # await self._nc.subscribe(self._nats_config.set_config_subject, cb=self._handle_set_config)
+        # await self._nc.subscribe(self._nats_config.get_status_subject, cb=self._handle_get_status)
 
     @classmethod
     async def get_instance(cls, robot: Robot) -> "RobotWorker":
@@ -85,11 +85,11 @@ class RobotWorker:
     # async def set_storage(self, storage: StorageGrid) -> None:
     #     self._robot.set_storage(storage)
 
-    async def set_configuration(self, configuration: RobotConfiguration) -> None:
-        await self._robot.set_configuration(configuration)
+    # async def set_configuration(self, configuration: RobotConfiguration) -> None:
+    #     await self._robot.set_configuration(configuration)
 
-    def get_configuration(self) -> RobotConfiguration:
-        return self._robot.configuration
+    # def get_configuration(self) -> RobotConfiguration:
+    #     return self._robot.configuration
 
     async def process_commands(self) -> None:
         while self._running:
@@ -213,13 +213,13 @@ class RobotWorker:
         config = self.get_configuration()
         await self._nc.publish(msg.reply, config.model_dump_json().encode())
 
-    async def _handle_set_config(self, msg: Msg) -> None:
-        try:
-            config = RobotConfiguration.model_validate_json(msg.data)
-            await self.set_configuration(config)
-            await self._nc.publish(msg.reply, b"ok")
-        except Exception as e:
-            await self._nc.publish(msg.reply, f"error: {e}".encode())
+    # async def _handle_set_config(self, msg: Msg) -> None:
+    #     try:
+    #         config = RobotConfiguration.model_validate_json(msg.data)
+    #         await self.set_configuration(config)
+    #         await self._nc.publish(msg.reply, b"ok")
+    #     except Exception as e:
+    #         await self._nc.publish(msg.reply, f"error: {e}".encode())
 
     async def _handle_get_status(self, msg: Msg) -> None:
         status = WorkerStatus(

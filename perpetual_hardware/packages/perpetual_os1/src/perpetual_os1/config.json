@@ -19,7 +19,7 @@
       "rpm": 255,
       "dir": 0,
       "mpr": 40,
-      "home_rpm": 32,
+      "home_rpm": 64,
       "accel": 1000,
       "ret_rpm": 128,
       "lim":1500
@@ -66,7 +66,7 @@
       "Ip": 22,
       "rpm": 240,
       "dir": 0,
-      "mpr": 80,
+      "mpr": 8,
       "home_rpm": 32,
       "accel": 1000,
       "ret_rpm": 128,
