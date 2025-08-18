@@ -89,21 +89,22 @@ class Motor():
             self._controller = controller                   # modbus controller
             self._params = params
             self._cur_pos = None
-            self._stall_timeout = 0.10                      #second??? 
+            self._stall_timeout = 0.1                      #second??? 
             self._status: MotorStatus = MotorStatus.IDLE
 
     async def configure(self):
         await self.set_param("Forced enable by software", 0x1) # always on?
         await self.set_param("SI2 input function", 0x26) # neg switch
         await self.set_param("SO2 output function", 0xA1)
+        await self._controller.write_single_register(self._motor_id, 0x0167, 50)
+        await self._controller.write_single_register(self._motor_id, 0x0169, 50)
+        await self._controller.write_single_register(self._motor_id, 0x016B, 10)
         await self.set_param("Peak current", self._params["Ip"])
         await self.set_param("Allowed max position following error", 4000)
         return
 
     # TODO add axis limits
     async def move_to_position(self, value: float): # mm
-        # if self._params["motor_name"] == "y_axis":
-        #     await self.set_param("SO2 output function", 0xA1)
 
         if value > self._params["lim"]:
             raise ValueError(f"Value {value} exceeds motor limit {self._params['lim']} mm")
@@ -145,7 +146,6 @@ class Motor():
         return
     
     async def move_config(self):
-        # if self._params["motor_name"] == "y_axis":
         await self.set_param("Control word", 0x1111) # clear alarm if any
         await self.set_param("Control word", 0x1122) # clear alarm if any
         await self.set_param("Motion of Path 0", 0x1) # abs pos 0x1
@@ -189,7 +189,7 @@ class Motor():
             now = time.monotonic()
 
             if status is None:
-                print(f"[{self._motor_id}] Failed to read motion status.")
+                # print(f"[{self._motor_id}] Failed to read motion status.")
                 return None
             
             if last_pos is not None and self._cur_pos != last_pos:
@@ -201,21 +201,21 @@ class Motor():
             last_pos = self._cur_pos
             
             if has_moved and (now - last_movement_time > self._stall_timeout):
-                print(f"[{self._motor_id}] Stopped: No movement detected for {self._stall_timeout} seconds.")
+                # print(f"[{self._motor_id}] Stopped: No movement detected for {self._stall_timeout} seconds.")
                 await self.stop()
                 return MotorStatus.STOPPED
 
             if status:
-                print(f"[{self._motor_id}] Move complete.")
+                # print(f"[{self._motor_id}] Move complete.")
                 await self.stop()
                 return MotorStatus.STOPPED
 
             if time.monotonic() - start_time > timeout:
-                print(f"[{self._motor_id}] Timeout waiting for move.")
+                # print(f"[{self._motor_id}] Timeout waiting for move.")
                 await self.stop()
                 return MotorStatus.STOPPED
 
-            await asyncio.sleep(0.001)
+            await asyncio.sleep(0.01)
 
     async def home(self):
         # the homing direction register follows an inverted 

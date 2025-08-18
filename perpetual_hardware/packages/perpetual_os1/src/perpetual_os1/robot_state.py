@@ -23,7 +23,7 @@ class MotorParam(TypedDict, total=False):
 
 class GridCell(TypedDict, total=False):
     id: str
-    coord: List[float]  # stored as JSON array [x, y]
+    coord: AxisCoordinate  # stored as JSON array [x, y]
     size: List[float]   # stored as JSON array [w, h]
     meta: Dict[str, Any]
 
@@ -272,7 +272,7 @@ def upsert_grid_cell(
     cid = _normalize_id(cell_id)
     cell: GridCell = {
         "id": cid,
-        "coord": [float(coord[0]), float(coord[1])],
+        "coord": [float(coord.x), float(coord.y)],
         "size": [float(size[0]), float(size[1])],
     }
     if meta is not None:
@@ -315,7 +315,7 @@ def generate_grid(
             upsert_grid_cell(state, cid, (x, y), cell_size)
 
 
-def search_grid(grid: Dict[str, GridCell], cell_id: str) -> Optional[Tuple[float, float]]:
+def search_grid(grid: Dict[str, GridCell], cell_id: str) -> AxisCoordinate:
     """Return coordinates for a grid cell by ID."""
     cell = grid.get(cell_id)  # type: Optional[GridCell]
     if cell is None:

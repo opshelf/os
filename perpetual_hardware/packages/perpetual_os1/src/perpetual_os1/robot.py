@@ -7,7 +7,6 @@ from hardware.scale import Scale
 from hardware.curtain import Curtain
 from pydantic import BaseModel, Field
 from enum import Enum
-# import hardware.commands
 import cv2
 import asyncio
 import perpetual_os1.robot_state as rs
@@ -114,7 +113,8 @@ class Robot:
         # )
 
         self._gs = Servo(self._bus)
-        self._cam = Camera()
+        self._cam = Camera(exp_area = rs.get_robot_params(self._state).get("EXPECTED_AREA"),
+                           exp_asp = rs.get_robot_params(self._state).get("EXPECTED_ASPECT"))
         self._grid = self._state["grid"]
         # self._scale = Scale(self._bus, 0x1) #need to update motors
         # self._curtain = Curtain(self._curtain_bus)
@@ -154,25 +154,25 @@ class Robot:
     async def move_to_io(self):
         await self._mx.move_config()
         await self._my.move_config()
-        await self._mx.move_to_position_no_wait(self._state["robot"]["pickup_location"].x)
-        await self._my.move_to_position_no_wait(self._state["robot"]["pickup_location"].y)
+        await self._mx.move_to_position_no_wait(rs.get_robot_params(self._state).get("pickup_location").x)
+        await self._my.move_to_position_no_wait(rs.get_robot_params(self._state).get("pickup_location").y)
         await self.gantry_wait()
 
     async def pick(self, coordinate: AxisCoordinate) -> None:
         await self._gs.safe_open()
-        # await self._mx.move_config()
-        # await self._my.move_config()
-        await self._mx.move_to_position(coordinate.x)
-        # await self._my.move_to_position(coordinate.y)
-        # await self.gantry_wait()
+        await self._mx.move_config()
+        await self._my.move_config()
+        await self._mx.move_to_position_no_wait(coordinate.x)
+        await self._my.move_to_position_no_wait(coordinate.y)
+        await self.gantry_wait()
         #empty move
-        # await self._ms.move_config()
-        # await self._mg.move_config()
-        await self._ms.move_to_position(50) # 50 max
-        await self._mg.move_to_position(167)
-        # await self.tool_wait()
+        await self._ms.move_config()
+        await self._mg.move_config()
+        await self._ms.move_to_position_no_wait(rs.get_robot_params(self._state).get("SLIDE_EXTENSION")) # 50 max
+        await self._mg.move_to_position_no_wait(rs.get_robot_params(self._state).get("GRIPPER_EXTENSION_PICK"))
+        await self.tool_wait()
 
-        # await self._gs.open()
+        await self._gs.open()
         await self._mg.retract()
         await self._ms.retract()
 
@@ -181,8 +181,9 @@ class Robot:
         await self._my.move_config()
         await self._mx.move_to_position_no_wait(coordinate.x)
         await self._my.move_to_position_no_wait(coordinate.y)
-        await self._ms.move_to_position(self._state["robot"]["SLIDE_EXTENSION"]) # 50 max
-        await self._mg.move_to_position(self._state["robot"]["GRIPPER_EXTENSION_PLACE"])
+        await self.gantry_wait()
+        await self._ms.move_to_position(rs.get_robot_params(self._state).get("SLIDE_EXTENSION")) # 50 max
+        await self._mg.move_to_position(rs.get_robot_params(self._state).get("GRIPPER_EXTENSION_PLACE"))
         await self._gs.close()
 
         await self._ms.move_config()
@@ -195,77 +196,69 @@ class Robot:
         await self._ms.retract()
 
     async def move(self, coordinate: AxisCoordinate) -> None:
-        await self.home()
-        # await self._mx.move_to_position(200) # 400
-        # await self._my.move_to_position(200) # 400
-        # await self._mx.move_to_position(400) # 400
-        # await self._my.move_to_position(400) # 400
-        # await self._ms.move_to_position(50)
-        # await self._mg.move_to_position(168)
-        # await self._ms.retract()
-        # await self._mg.retract()
-        
-        # await self.pick(AxisCoordinate(291, 386))
+        await self.update_grid()
+
+    async def _move(self, coordinate: AxisCoordinate) -> None:
         await self._mx.move_config()
         await self._my.move_config()
-        await self._mx.move_to_position_no_wait(200) # 400
-        await self._my.move_to_position_no_wait(200) # 385
-        await self.gantry_wait()
-        await self._mx.move_to_position_no_wait(400) # 400
-        await self._my.move_to_position_no_wait(400) # 385
+        await self._mx.move_to_position_no_wait(coordinate.x) 
+        await self._my.move_to_position_no_wait(coordinate.y)
         await self.gantry_wait()
 
     async def gantry_wait(self):
         while True:
-            mx_finish = await self._mx.wait_for_move(timeout=10)
-            my_finish = await self._my.wait_for_move(timeout=10)
+            mx_f = await self._mx.wait_for_move(timeout=10)
+            my_f = await self._my.wait_for_move(timeout=10)
 
-            print(mx_finish)
-            print(my_finish)
+            if mx_f == MotorStatus.STOPPED and my_f == MotorStatus.STOPPED:
+                return
 
-            if mx_finish == MotorStatus.STOPPED and my_finish == MotorStatus.STOPPED:
-                break
-
-            await asyncio.sleep(0.001)  # Wait a bit before checking again
 
     async def tool_wait(self):
         while True:
-            mg_finish = await self._mg.wait_for_move()
-            ms_finish = await self._ms.wait_for_move()
+            mg_f = await self._mg.wait_for_move(timeout=2.5)
+            ms_f = await self._ms.wait_for_move(timeout=2.5)
 
-            if ms_finish == MotorStatus.STOPPED and mg_finish == MotorStatus.STOPPED:
-                break
-
-            await asyncio.sleep(0.001)  # Wait a bit before checking again
+            if mg_f == MotorStatus.STOPPED and ms_f == MotorStatus.STOPPED:
+                return
 
     # todo, 2D and update grid
     async def update_grid(self):
-        self.move(AxisCoordinate(self._state["robot"]["PICKUP_POSITION"]))
-        while end_y < self._state["y_axis"]["MAX_POS"]: 
-            await self._mx.home()
+        await self.home()
+        await self._mr.move_to_position(0.5)
+        await self._move(AxisCoordinate(rs.get_robot_params(self._state).get("PICKUP_POSITION")[0], 
+                                       rs.get_robot_params(self._state).get("PICKUP_POSITION")[1]))
+        while True: 
+            await self._mx.move_to_position(rs.get_robot_params(self._state).get("PICKUP_POSITION")[0])
+            await asyncio.sleep(0.5)         
             pos_y = await self.auto_cal_y()
             if pos_y:
-                while end_x < self._state["x_axis"]["MAX_POS"]:
+                while True:
                     pos_x = await self.auto_cal_x()
                     if pos_x:
                         rs.upsert_grid_cell(
                             state = self._state,
                             cell_id = None,
-                            coordinate = AxisCoordinate(pos_x, pos_y),
+                            coord = AxisCoordinate(pos_x, pos_y),
                             size = [0,0]
                         )
-                        await asyncio.sleep(0.01)
-                        await self._mx.jog(self._state["robot"]["JOG_X"])
+                        print(pos_x, pos_y)
+                        await asyncio.sleep(0.5)
+                        await self._mx.jog(rs.get_robot_params(self._state).get("JOG_X"))
                         end_x = await self._mx.get_position()
-                        end_x = self._mx._params["mpr"]*end_x/self._state["robot"]["PPR"]
+                        end_x = self._mx._params["mpr"]*end_x/(rs.get_robot_params(self._state).get("PPR"))
+                        if end_x > rs.get_motor_params(self._state, "x_axis").get("lim"):
+                            break
 
-                    await asyncio.sleep(0.01)
+                    await asyncio.sleep(0.5)
+                await self._my.jog(rs.get_robot_params(self._state).get("JOG_Y"))
 
-                await self._my.jog(self._state["robot"]["JOG_Y"])
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(0.5)
 
             end_y = await self._my.get_position()
-            end_y = self._my._params["mpr"]*end_y/self._state["robot"]["PPR"]
+            end_y = self._my._params["mpr"]*end_y/(rs.get_robot_params(self._state).get("PPR"))
+            if end_y > rs.get_motor_params(self._state, "y_axis").get("lim"):
+                break
 
     async def get_weight(self) -> float:
         try:
@@ -282,7 +275,7 @@ class Robot:
         self._grid = grid
 
     async def idle(self) -> None:
-        await self.move(self._state["robot"]["idle_position"]) # basically anywhere along the bottom of the gantry
+        await self.move(rs.get_robot_params(self._state).get("IDLE_POSITION")) # basically anywhere along the bottom of the gantry
 
     async def shutdown(self) -> None:
         if self._bus:
@@ -313,30 +306,35 @@ class Robot:
         r = await self._mr.get_position()
         return (AxisCoordinate(x, y), ToolCoordinate(g,s,r))
     
-    async def centering(self, frame) -> Optional[Tuple[float, float]]:
-        frame = cv2.rotate(frame, cv2.ROTATE_180)
+    async def centering(self, frame):
+        # frame = cv2.rotate(frame, cv2.ROTATE_180)
         height, width = frame.shape[:2]
         third = width // 3
         third_h = height // 3
 
         frame_middle = frame[:, third:2 * third]
         frame_middle = frame_middle[2 * third_h:, :]
+        # frame_middle = frame
 
-        w_e = self._state["motors"]["robot"]["W_EXPECTED"], 
-        h_e = self._state["motors"]["robot"]["H_EXPECTED"]
+        w_e = rs.get_robot_params(self._state).get("W_EXPECTED") 
+        h_e = rs.get_robot_params(self._state).get("H_EXPECTED")
+
 
         bbox_crop = self._cam.get_fiducial(frame_middle,
                                            w_e * h_e,
-                                           w_e // h_e,
-                                           self._state["robot"]["TOLERANCE_AREA"],
-                                           self._state["robot"]["TOLERANCE_ASPECT"])
+                                           w_e / h_e,
+                                           rs.get_robot_params(self._state).get("TOLERANCE_AREA"),
+                                           rs.get_robot_params(self._state).get("TOLERANCE_ASPECT"))
+
+
+        # cv2.imwrite("beb.png",frame_middle)
 
         if bbox_crop is None:
-            # print("No white rectangular fiducial detected.")
-            return False
+            print("No white rectangular fiducial detected.")
+            return None, None
         else:
-            x_crop, y, w, h = bbox_crop
-            x = x_crop + third  # Shift X to full-frame coordinates
+            x, y, w, h = bbox_crop
+            # x = x_crop + third  # Shift X to full-frame coordinates
             _ , obj_center, frame_center = self._cam.get_center(frame_middle, bbox_crop)
             # print(f"Centered score (0 = perfect): {score:.3f}")
             # print(f"Object center: {obj_center}")
@@ -347,33 +345,35 @@ class Robot:
             cv2.rectangle(frame_middle, (x, y), (x + w, y + h), (0, 255, 0), 2)
             cv2.circle(frame_middle, (int(obj_center[0]), int(obj_center[1])), 5, (255, 0, 0), -1)
             cv2.circle(frame_middle, (int(frame_center[0]), int(frame_center[1])), 5, (0, 0, 255), -1)
-            offset_mm_x = (obj_center[0]-frame_center[0])*self._state["robot"]["PXMM"]
-            offset_mm_y = (obj_center[1]-frame_center[1])*self._state["robot"]["PYMM"]
+            offset_mm_x = (obj_center[0]-frame_center[0])*rs.get_robot_params(self._state).get("PXMM")
+            offset_mm_y = (obj_center[1]-frame_center[1])*rs.get_robot_params(self._state).get("PYMM")
 
+            cv2.imwrite("beb.png",frame_middle)
+            
             return offset_mm_x, offset_mm_y
 
     async def auto_cal_x(self):
-        frame = await self._cam.capture()
+        frame = self._cam.capture_sync()
         offset, _ = await self.centering(frame)
-        if offset is False:
-            await self._mx.jog(self._state["robot"]["JOG"])
+        if offset is None:
+            await self._mx.jog(rs.get_robot_params(self._state).get("JOG_X"))
             return offset
         else:
-            await self._mx.jog(-offset) # camera is upside down
+            await self._mx.jog(offset) # camera is upside down
             pos = await self._mx.get_position()
-            pos = ((self._mx._params["mpr"]*pos)/self._state["robot"]["PPR"]) #in mm
+            pos = ((self._mx._params["mpr"]*pos)/rs.get_robot_params(self._state).get("PPR")) #in mm
             return pos
         
     async def auto_cal_y(self):
-        frame = await self._cam.capture()
+        frame = self._cam.capture_sync()
         _ , offset = await self.centering(frame)
-        if offset is False:
-            await self._my.jog(self._state["robot"]["JOG"])
+        if offset is None:
+            await self._my.jog(rs.get_robot_params(self._state).get("JOG_Y"))
             return offset
         else:
-            await self._my.jog(-offset) # camera is upside down?
+            await self._my.jog(offset) # camera is upside down?
             pos = await self._my.get_position()
-            pos = ((self._my._params["mpr"]*pos)/self._state["robot"]["PPR"]) #in mm
+            pos = ((self._my._params["mpr"]*pos)/rs.get_robot_params(self._state).get("PPR")) #in mm
             return pos
 
 
