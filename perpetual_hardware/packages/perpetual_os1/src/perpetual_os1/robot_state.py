@@ -15,7 +15,7 @@ class MotorParam(TypedDict, total=False):
     Ip: int
     rpm: int
     dir: int
-    mpr: int
+    mpr: float
     home_rpm: int
     accel: int
     ret_rpm: int
@@ -175,73 +175,79 @@ def remove_motor(state: RobotState, motor_id: Any) -> bool:
 # Motor Management
 # --------------------
 
-def _update_motor_field(self, motor_name: str, field: str, value: Any):
-    if motor_name in self.state["motors"]:
-        self.state["motors"][motor_name][field] = value
-        self.save()
-
-def _get_motor_field(self, motor_name: str, field: str) -> Optional[Any]:
-    motor = self.state["motors"].get(motor_name)
-    if motor:
-        return motor.get(field)
+def _update_motor_field(state: RobotState, motor_name: str, field: str, value: Any) -> bool:
+    for m in state["motors"]:
+        if m.get("motor_name") == motor_name:
+            m[field] = value
+            return True
+    return False
+        
+def _get_motor_field(state: RobotState, motor_name: str, field: str) -> Optional[Any]:
+    for m in state["motors"]:
+        if m.get("motor_name") == motor_name:
+            return m.get(field)
     return None
 
-def add_motor(self, motor_name: str, motor_params: Dict[str, Any]):
+def add_motor(state: RobotState, motor_name: str, motor_params: Dict[str, Any]):
     """Add or update a motor by name."""
-    self.state["motors"][motor_name] = motor_params
-    self.save()
+    state["motors"][motor_name] = motor_params
+    state.save()
 
-def get_motor(self, motor_name: str) -> Optional[Dict[str, Any]]:
-    return self.state["motors"].get(motor_name)
+def get_motor(state: RobotState, motor_name: str) -> Optional[Dict[str, Any]]:
+    return state["motors"].get(motor_name)
 
 # Typed setters/getters for each motor parameter
-def set_motor_id(self, motor_name: str, value: int):
-    self._update_motor_field(motor_name, "motor_id", value)
 
-def get_motor_id(self, motor_name: str) -> Optional[int]:
-    return self._get_motor_field(motor_name, "motor_id")
+def get_motor_params(state: RobotState, motor_name: str) -> Optional[MotorParam]:
+    return next((m for m in state["motors"] if m.get("motor_name") == motor_name), None)
 
-def set_ip(self, motor_name: str, value: int):
-    self._update_motor_field(motor_name, "Ip", value)
+def set_motor_id(state: RobotState, motor_name: str, value: int):
+    _update_motor_field(state, motor_name, "motor_id", value)
 
-def get_ip(self, motor_name: str) -> Optional[int]:
-    return self._get_motor_field(motor_name, "Ip")
+def get_motor_id(state: RobotState, motor_name: str) -> Optional[int]:
+    return _get_motor_field(state, motor_name, "motor_id")
 
-def set_rpm(self, motor_name: str, value: int):
-    self._update_motor_field(motor_name, "rpm", value)
+def set_ip(state: RobotState, motor_name: str, value: int):
+    _update_motor_field(state, motor_name, "Ip", value)
 
-def get_rpm(self, motor_name: str) -> Optional[int]:
-    return self._get_motor_field(motor_name, "rpm")
+def get_ip(state: RobotState, motor_name: str) -> Optional[int]:
+    return _get_motor_field(state, motor_name, "Ip")
 
-def set_dir(self, motor_name: str, value: int):
-    self._update_motor_field(motor_name, "dir", value)
+def set_rpm(state: RobotState, motor_name: str, value: int):
+    _update_motor_field(state, motor_name, "rpm", value)
 
-def get_dir(self, motor_name: str) -> Optional[int]:
-    return self._get_motor_field(motor_name, "dir")
+def get_rpm(state: RobotState, motor_name: str) -> Optional[int]:
+    return _get_motor_field(state, motor_name, "rpm")
 
-def set_mpr(self, motor_name: str, value: int):
-    self._update_motor_field(motor_name, "mpr", value)
+def set_dir(state: RobotState, motor_name: str, value: int):
+    _update_motor_field(state, motor_name, "dir", value)
 
-def get_mpr(self, motor_name: str) -> Optional[int]:
-    return self._get_motor_field(motor_name, "mpr")
+def get_dir(state: RobotState, motor_name: str) -> Optional[int]:
+    return _get_motor_field(state, motor_name, "dir")
 
-def set_home_rpm(self, motor_name: str, value: int):
-    self._update_motor_field(motor_name, "home_rpm", value)
+def set_mpr(state: RobotState, motor_name: str, value: int):
+    _update_motor_field(state, motor_name, "mpr", value)
 
-def get_home_rpm(self, motor_name: str) -> Optional[int]:
-    return self._get_motor_field(motor_name, "home_rpm")
+def get_mpr(state: RobotState, motor_name: str) -> Optional[int]:
+    return _get_motor_field(state, motor_name, "mpr")
 
-def set_accel(self, motor_name: str, value: int):
-    self._update_motor_field(motor_name, "accel", value)
+def set_home_rpm(state: RobotState, motor_name: str, value: int):
+    _update_motor_field(state, motor_name, "home_rpm", value)
 
-def get_accel(self, motor_name: str) -> Optional[int]:
-    return self._get_motor_field(motor_name, "accel")
+def get_home_rpm(state: RobotState, motor_name: str) -> Optional[int]:
+    return _get_motor_field(state, motor_name, "home_rpm")
 
-def set_ret_rpm(self, motor_name: str, value: int):
-    self._update_motor_field(motor_name, "ret_rpm", value)
+def set_accel(state: RobotState, motor_name: str, value: int):
+    _update_motor_field(motor_name, "accel", value)
 
-def get_ret_rpm(self, motor_name: str) -> Optional[int]:
-    return self._get_motor_field(motor_name, "ret_rpm")
+def get_accel(state: RobotState, motor_name: str) -> Optional[int]:
+    return state._get_motor_field(state, motor_name, "accel")
+
+def set_ret_rpm(state: RobotState, motor_name: str, value: int):
+    _update_motor_field(state, motor_name, "ret_rpm", value)
+
+def get_ret_rpm(state: RobotState, motor_name: str) -> Optional[int]:
+    state._get_motor_field(state, motor_name, "ret_rpm")
 
 # ----------------------------
 # Grid helpers (dynamically scaling dictionary)
@@ -316,6 +322,12 @@ def search_grid(grid: Dict[str, GridCell], cell_id: str) -> Optional[Tuple[float
         return None  # or raise KeyError if you want strict behavior
     return cell.get("coord") 
 
+def find_first_available_cell(grid: Dict[str, GridCell]) -> Optional[GridCell]:
+    for cell_key, cell in grid.items():
+        if cell.get("id") is None:
+            return cell
+    return None
+
 # ----------------------------
 # Validation
 # ----------------------------
@@ -345,9 +357,9 @@ def _validate_root(data: Dict[str, Any]) -> None:
         ):
             raise ValueError("Each motor must include 'motor_id' (or legacy 'id')")
         # Basic type checks for Beb's keys (if present)
-        for k in ("Ip", "rpm", "dir", "mpr", "home_rpm", "accel", "ret_rpm"):
-            if k in m and not isinstance(m[k], int):
-                raise ValueError(f"motor field '{k}' must be int when present")
+        # for k in ("Ip", "rpm", "dir", "mpr", "home_rpm", "accel", "ret_rpm"):
+        #     if k in m and not isinstance(m[k], float):
+        #         raise ValueError(f"motor field '{k}' must be float when present")
 
     # grid
     grid = data["grid"]
