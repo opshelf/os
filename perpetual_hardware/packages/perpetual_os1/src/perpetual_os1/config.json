@@ -16,13 +16,13 @@
       "motor_name": "y_axis",
       "motor_id": 2,
       "Ip": 70,
-      "rpm": 255,
+      "rpm": 200,
       "dir": 0,
       "mpr": 40,
       "home_rpm": 64,
-      "accel": 1000,
+      "accel": 250,
       "ret_rpm": 128,
-      "lim":1500
+      "lim":1200
     },
     {
       "motor_name": "stage",
@@ -52,13 +52,13 @@
       "motor_name": "x_axis",
       "motor_id": 5,
       "Ip": 36,
-      "rpm": 240,
+      "rpm": 200,
       "dir": 0,
       "mpr": 80,
       "home_rpm": 32,
-      "accel": 1000,
+      "accel": 3000,
       "ret_rpm": 128,
-      "lim": 1200
+      "lim": 700
     },
         {
       "motor_name": "door",
@@ -77,20 +77,20 @@
 
   "robot": {
     "IDLE_POSITION": [0,0],
-    "PICKUP_POSITION": [0,0],
+    "PICKUP_POSITION": [255,340],
     "SLIDE_EXTENSION": 50,
-    "GRIPPER_EXTENSION_PICK": 171,
+    "GRIPPER_EXTENSION_PICK": 167,
     "GRIPPER_EXTENSION_PLACE": 165,
     "REVERSE": 180.5,
-    "JOG_X": 30,
-    "JOG_Y": 75,
+    "JOG_X": 50,
+    "JOG_Y": 150,
     "PXMM": 0.22,
     "PYMM": 0.22,
     "PPR": 10000,
-    "W_EXPECTED": 64,
-    "H_EXPECTED" : 64, 
+    "W_EXPECTED": 34,
+    "H_EXPECTED": 47, 
     "TOLERANCE_AREA" : 0.5,
-    "TOLERANCE_ASPECT" : 0.2
+    "TOLERANCE_ASPECT" : 0.5
   },
   "status": "idle"
 }
