@@ -278,8 +278,8 @@ def upsert_grid_cell(
     if meta is not None:
         cell["meta"] = dict(meta)
     state["grid"][cid] = cell
+    print(coord.x, coord.y)
     return cell
-
 
 def get_grid_cell(state: RobotState, cell_id: Any) -> Optional[GridCell]:
     return state["grid"].get(_normalize_id(cell_id))
