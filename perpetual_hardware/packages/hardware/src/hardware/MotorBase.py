@@ -44,7 +44,7 @@ class Servo():
                 # print(f"[gripper] Activation complete.")
                 return 
 
-            if time.monotonic() - start_time > 10:
+            if time.monotonic() - start_time > 3:
                 # print(f"[gripper] Timeout waiting for activation.")
                 return MotorStatus.ERROR
 
@@ -93,13 +93,11 @@ class Motor():
             self._status: MotorStatus = MotorStatus.IDLE
 
     async def configure(self):
-        await self.set_param("Forced enable by software", 0x1) # always on?
         await self.set_param("SI2 input function", 0x26) # neg switch
         await self.set_param("SO2 output function", 0xA1)
-        await self._controller.write_single_register(self._motor_id, 0x0167, 50)
-        await self._controller.write_single_register(self._motor_id, 0x0169, 50)
+        await self._controller.write_single_register(self._motor_id, 0x0167, 250)
+        await self._controller.write_single_register(self._motor_id, 0x0169, 250)
         await self._controller.write_single_register(self._motor_id, 0x016B, 10)
-        await self.set_param("Peak current", self._params["Ip"])
         await self.set_param("Allowed max position following error", 4000)
         return
 
@@ -113,6 +111,7 @@ class Motor():
         await self.set_param("Control word", 0x1111) # clear alarm if any
         await self.set_param("Control word", 0x1122) # clear alarm if any
         await self.set_param("Motion of Path 0", 0x1) # abs pos
+        await self.set_param("Peak current", self._params["Ip"])
         await self.set_param("Motor direction", self._params["dir"])
         await self.set_param("Velocity", self._params["rpm"])
         await self.set_param("Acceleration", self._params['accel'])
@@ -149,16 +148,20 @@ class Motor():
         await self.set_param("Control word", 0x1111) # clear alarm if any
         await self.set_param("Control word", 0x1122) # clear alarm if any
         await self.set_param("Motion of Path 0", 0x1) # abs pos 0x1
+        await self.set_param("Peak current", self._params["Ip"])
         await self.set_param("Motor direction", self._params["dir"])
         await self.set_param("Velocity", self._params["rpm"])
         await self.set_param("Acceleration", self._params['accel'])
         await self.set_param("Deceleration", self._params['accel'])
         
+    #TODO return val in mm, not pulses
     async def get_position(self):
         pos_l = await self.get_param("Position Low (Actual)") 
         pos_h = await self.get_param("Position High (Actual)")
         pos = (pos_h << 16) | pos_l
         if pos:
+            ppr = await self.get_param("Pulse/revolution")
+            pos = (pos/ppr)*self._params["mpr"]
             # print(f"[Stepper] Motor {self._motor_id} -> Position: {pos}")
             self._cur_pos = pos
             return pos
@@ -189,15 +192,18 @@ class Motor():
             now = time.monotonic()
 
             if status is None:
-                # print(f"[{self._motor_id}] Failed to read motion status.")
+                print(f"[{self._motor_id}] Failed to read motion status.")
                 return None
             
-            if last_pos is not None and self._cur_pos != last_pos:
-                last_movement_time = now
-                has_moved = True
+            if last_pos is not None:
+                # print(f"cur pos: {round(self._cur_pos, 3)}, last pos: {round(last_pos,3)}") 
+                if(self._cur_pos != last_pos):
+                    last_movement_time = now
+                    has_moved = True
+                
             elif last_movement_time is None:
                 last_movement_time = now  # initialize once
-
+            
             last_pos = self._cur_pos
             
             if has_moved and (now - last_movement_time > self._stall_timeout):
@@ -217,6 +223,53 @@ class Motor():
 
             await asyncio.sleep(0.01)
 
+    async def wait_for_move_y(self, timeout: float = 2.5) -> MotorStatus:
+        start_time = time.monotonic()
+        last_pos = None
+        has_moved = False
+        last_movement_time = start_time
+
+        while True:
+            status = await self.get_param("Motion status") & (1<<5)
+            await self.get_position()
+            now = time.monotonic()
+
+            if status is None:
+                print(f"[{self._motor_id}] Failed to read motion status.")
+                return None
+            
+            if last_pos is not None:
+                last_movement_time = now
+                has_moved = True
+                print(f"cur pos: {round(self._cur_pos, 3)}, last pos: {round(last_pos,3)}")
+                if (round(self._cur_pos, 3) == round(last_pos,3)):
+                    # print("beb")
+                    await self.stop()
+                    return MotorStatus.STOPPED
+                
+            elif last_movement_time is None:
+                last_movement_time = now  # initialize once
+
+            last_pos = self._cur_pos
+            
+            if has_moved and (now - last_movement_time > self._stall_timeout):
+                print(f"[{self._motor_id}] Stopped: No movement detected for {self._stall_timeout} seconds.")
+                await self.stop()
+                return MotorStatus.STOPPED
+
+            if status:
+                print(f"[{self._motor_id}] Move complete.")
+                await self.stop()
+                return MotorStatus.STOPPED
+
+            if time.monotonic() - start_time > timeout:
+                print(f"[{self._motor_id}] Timeout waiting for move.")
+                await self.stop()
+                return MotorStatus.STOPPED
+
+            await asyncio.sleep(0.01)
+
+
     async def home(self):
         # the homing direction register follows an inverted 
         # definition to the motor direction register
@@ -224,9 +277,13 @@ class Motor():
         home_dir = self._params["dir"]^1
         await self.set_param("Control word", 0x1111) # clear alarm if any
         await self.set_param("Control word", 0x1122) # clear alarm if any
+        await self.set_param("Peak current", self._params["Ip"])
         await self.set_param("Motion of Path 0", 0x2) # velocity
+        # await self.set_param("Homing high velocity", self._params["home_rpm"]) # velocity
+        # await self.set_param("Homing low velocity", self._params["home_rpm"]) # velocity
         await self.set_param("Motor direction", home_dir)
         await self.set_param("Velocity", self._params["home_rpm"])
+        await self.set_param("Homing Mode", home_dir)
         await self._controller.write_single_register(
                 self._motor_id, 
                 MotorDefs.TRIGGER,
@@ -234,12 +291,43 @@ class Motor():
         
         self._status = MotorStatus.MOVING
 
-        if (await self.wait_for_move(timeout=60) == MotorStatus.STOPPED):
-            await self._controller.write_single_register(
-                self._motor_id,
+        await self.wait_for_move(timeout=60) 
+
+        await self._controller.write_single_register(
+            self._motor_id,
+            MotorDefs.TRIGGER,
+            0x21) # set zero position
+    
+        return 
+
+    async def home_y(self):
+        # the homing direction register follows an inverted 
+        # definition to the motor direction register
+        # so this ends up being the opposite direction anyway
+        home_dir = self._params["dir"]
+        await self.set_param("Control word", 0x1111) # clear alarm if any
+        await self.set_param("Control word", 0x1122) # clear alarm if any
+        await self.set_param("Peak current", self._params["Ip"])
+        await self.set_param("Motion of Path 0", 0x8) # velocity
+        # await self.set_param("Homing high velocity", self._params["home_rpm"]) # velocity
+        # await self.set_param("Homing low velocity", self._params["home_rpm"]) # velocity
+        # await self.set_param("Motor direction", home_dir)
+        # await self.set_param("Velocity", self._params["home_rpm"])
+        await self.set_param("Homing Mode", 0x0)
+        await self._controller.write_single_register(
+                self._motor_id, 
                 MotorDefs.TRIGGER,
-                0x21) # set zero position
-        
+                0x20) # start path 0
+
+        self._status = MotorStatus.MOVING
+
+        await self.wait_for_move(timeout=60) 
+
+        await self._controller.write_single_register(
+            self._motor_id,
+            MotorDefs.TRIGGER,
+            0x21) # set zero position
+
         return 
         
     # lazy retraction method 
@@ -261,7 +349,7 @@ class Motor():
                 self._motor_id,
                 MotorDefs.TRIGGER,
                 0x21) # set zero position
-        
+
         return
     
     # relative motion
@@ -271,7 +359,8 @@ class Motor():
         await self.set_param("Control word", 0x1122) # clear alarm if any
         await self.set_param("Motion of Path 0", 0x41) # rel pos
         await self.set_param("Motor direction", self._params["dir"])
-        await self.set_param("Velocity", self._params["rpm"])
+        # await self.set_param("Velocity", self._params["rpm"])
+        await self.set_param("Velocity", 32)
         await self.set_param("Acceleration", self._params['accel'])
         await self.set_param("Deceleration", self._params['accel'])
         await self.set_param("Position High", pulse[0])

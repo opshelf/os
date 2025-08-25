@@ -2,7 +2,7 @@
   "motors": [
     {
       "motor_name": "z_axis",
-      "motor_id": 1,
+      "motor_id": 30,
       "Ip": 22,
       "rpm": 496,
       "dir": 1,
@@ -10,19 +10,22 @@
       "home_rpm": 64,
       "accel": 3000,
       "ret_rpm": 240,
-      "lim": 173
+      "lim": 173,
+      "Iph": 20
     },
     {
       "motor_name": "y_axis",
       "motor_id": 2,
-      "Ip": 70,
+      "Ip": 50,
       "rpm": 200,
       "dir": 0,
       "mpr": 40,
-      "home_rpm": 64,
-      "accel": 250,
+      "home_rpm": 32,
+      "accel": 1000,
       "ret_rpm": 128,
-      "lim":1200
+      "lim":1295,
+      "Iph": 50
+      
     },
     {
       "motor_name": "stage",
@@ -34,7 +37,8 @@
       "home_rpm": 64,
       "accel": 1000,
       "ret_rpm": 128,
-      "lim": 50
+      "lim": 50,
+      "Iph": 20
     },
     {
       "motor_name": "rotate",
@@ -46,7 +50,8 @@
       "home_rpm": 32,
       "accel": 3000,
       "ret_rpm": 128,
-      "lim": 270
+      "lim": 270,
+      "Iph": 20
     },
     {
       "motor_name": "x_axis",
@@ -56,39 +61,43 @@
       "dir": 0,
       "mpr": 80,
       "home_rpm": 32,
-      "accel": 3000,
+      "accel": 500,
       "ret_rpm": 128,
-      "lim": 700
+      "lim": 950,
+      "Iph": 20
     },
         {
       "motor_name": "door",
-      "motor_id": 6,
+      "motor_id": 31,
       "Ip": 22,
       "rpm": 240,
       "dir": 0,
       "mpr": 8,
-      "home_rpm": 32,
-      "accel": 1000,
-      "ret_rpm": 128,
-      "lim": 440
+      "home_rpm": 64,
+      "accel": 3000,
+      "ret_rpm": 64,
+      "lim": 220,
+      "Iph": 20
     }
   ],
   "grid": {},
 
   "robot": {
     "IDLE_POSITION": [0,0],
-    "PICKUP_POSITION": [255,340],
+    "PICKUP_POSITION_L": [20,461],
+    "PICKUP_POSITION_H": [20,710],
+    "SCAN_POSITION": [265,275],
     "SLIDE_EXTENSION": 50,
     "GRIPPER_EXTENSION_PICK": 167,
     "GRIPPER_EXTENSION_PLACE": 165,
     "REVERSE": 180.5,
     "JOG_X": 50,
-    "JOG_Y": 150,
-    "PXMM": 0.22,
-    "PYMM": 0.22,
+    "JOG_Y": 50,
+    "PXMM": 0.06,
+    "PYMM": 0.06,
     "PPR": 10000,
-    "W_EXPECTED": 34,
-    "H_EXPECTED": 47, 
+    "W_EXPECTED": 80,
+    "H_EXPECTED": 80, 
     "TOLERANCE_AREA" : 0.5,
     "TOLERANCE_ASPECT" : 0.5
   },
