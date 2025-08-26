@@ -155,7 +155,7 @@ class Motor():
         await self.set_param("Deceleration", self._params['accel'])
         
     #TODO return val in mm, not pulses
-    async def get_position(self):
+    async def get_position(self) -> float:
         pos_l = await self.get_param("Position Low (Actual)") 
         pos_h = await self.get_param("Position High (Actual)")
         pos = (pos_h << 16) | pos_l
@@ -223,52 +223,6 @@ class Motor():
 
             await asyncio.sleep(0.01)
 
-    async def wait_for_move_y(self, timeout: float = 2.5) -> MotorStatus:
-        start_time = time.monotonic()
-        last_pos = None
-        has_moved = False
-        last_movement_time = start_time
-
-        while True:
-            status = await self.get_param("Motion status") & (1<<5)
-            await self.get_position()
-            now = time.monotonic()
-
-            if status is None:
-                print(f"[{self._motor_id}] Failed to read motion status.")
-                return None
-            
-            if last_pos is not None:
-                last_movement_time = now
-                has_moved = True
-                print(f"cur pos: {round(self._cur_pos, 3)}, last pos: {round(last_pos,3)}")
-                if (round(self._cur_pos, 3) == round(last_pos,3)):
-                    # print("beb")
-                    await self.stop()
-                    return MotorStatus.STOPPED
-                
-            elif last_movement_time is None:
-                last_movement_time = now  # initialize once
-
-            last_pos = self._cur_pos
-            
-            if has_moved and (now - last_movement_time > self._stall_timeout):
-                print(f"[{self._motor_id}] Stopped: No movement detected for {self._stall_timeout} seconds.")
-                await self.stop()
-                return MotorStatus.STOPPED
-
-            if status:
-                print(f"[{self._motor_id}] Move complete.")
-                await self.stop()
-                return MotorStatus.STOPPED
-
-            if time.monotonic() - start_time > timeout:
-                print(f"[{self._motor_id}] Timeout waiting for move.")
-                await self.stop()
-                return MotorStatus.STOPPED
-
-            await asyncio.sleep(0.01)
-
 
     async def home(self):
         # the homing direction register follows an inverted 
@@ -301,18 +255,10 @@ class Motor():
         return 
 
     async def home_y(self):
-        # the homing direction register follows an inverted 
-        # definition to the motor direction register
-        # so this ends up being the opposite direction anyway
-        home_dir = self._params["dir"]
         await self.set_param("Control word", 0x1111) # clear alarm if any
         await self.set_param("Control word", 0x1122) # clear alarm if any
         await self.set_param("Peak current", self._params["Ip"])
         await self.set_param("Motion of Path 0", 0x8) # velocity
-        # await self.set_param("Homing high velocity", self._params["home_rpm"]) # velocity
-        # await self.set_param("Homing low velocity", self._params["home_rpm"]) # velocity
-        # await self.set_param("Motor direction", home_dir)
-        # await self.set_param("Velocity", self._params["home_rpm"])
         await self.set_param("Homing Mode", 0x0)
         await self._controller.write_single_register(
                 self._motor_id, 
