@@ -112,71 +112,6 @@ class ScanConfig:
     nms_iou: float = 0.3           # NMS threshold for multiple contours
 
 # ---------------------------
-# Detection utilities
-# ---------------------------
-@dataclass
-class Detection:
-    bbox: Tuple[int, int, int, int]  # x, y, w, h
-    center: Tuple[int, int]
-    score: float
-
-def iou(a, b) -> float:
-    ax, ay, aw, ah = a; bx, by, bw, bh = b
-    x1 = max(ax, bx); y1 = max(ay, by)
-    x2 = min(ax + aw, bx + bw); y2 = min(ay + ah, by + bh)
-    inter = max(0, x2 - x1) * max(0, y2 - y1)
-    union = aw * ah + bw * bh - inter
-    return inter / union if union > 0 else 0.0
-
-def nms(dets: List[Detection], thr: float) -> List[Detection]:
-    dets = sorted(dets, key=lambda d: d.score, reverse=True)
-    kept = []
-    for d in dets:
-        if all(iou(d.bbox, k.bbox) < thr for k in kept):
-            kept.append(d)
-    return kept
-
-def detect_square_fiducials(frame: np.ndarray) -> List[Detection]:
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    blur = cv2.GaussianBlur(gray, (5, 5), 0)
-    # Adaptive threshold works well for uneven lighting; invert if your fiducial is white on black
-    th = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                               cv2.THRESH_BINARY, 15, -5)
-    # Clean small holes/specks
-    kernel = np.ones((3, 3), np.uint8)
-    clean = cv2.morphologyEx(th, cv2.MORPH_OPEN, kernel)
-
-    contours, _ = cv2.findContours(clean, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    dets: List[Detection] = []
-    H, W = gray.shape[:2]
-
-    for c in contours:
-        area = cv2.contourArea(c)
-        if area < 100:
-            continue
-        epsilon = 0.02 * cv2.arcLength(c, True)
-        approx = cv2.approxPolyDP(c, epsilon, True)
-        if len(approx) != 4:
-            continue
-        x, y, w, h = cv2.boundingRect(approx)
-        if w == 0 or h == 0:
-            continue
-        aspect = w / float(h)
-        if abs(aspect - 1.0) > 0.5:
-            continue
-
-        cx = x + w // 2
-        cy = y + h // 2
-        # score: larger & more centered gets higher score
-        center_dist = np.hypot(cx - W // 2, cy - H // 2)
-        score = area - 0.5 * center_dist
-        dets.append(Detection((x, y, w, h), (cx, cy), float(score)))
-
-    # Frame-level de-bounce
-    dets = nms(dets, 0.3)
-    return dets
-
-# ---------------------------
 # Global de-dup registry
 # ---------------------------
 @dataclass
@@ -192,32 +127,6 @@ class FiducialRegistry:
 
     def add(self, xw: float, yw: float):
         self.items.append((xw, yw))
-
-# ---------------------------
-# Centering routine
-# ---------------------------
-
-# ---------------------------
-# Logger
-# ---------------------------
-# class CsvLogger:
-#     def __init__(self, path: str):
-#         self.path = path
-#         with open(self.path, "w", newline="") as f:
-#             w = csv.writer(f)
-#             w.writerow(["ts", "x_world", "y_world", "pixel_cx", "pixel_cy"])
-
-#     def log(self, xw: float, yw: float, cx: int, cy: int):
-#         with open(self.path, "a", newline="") as f:
-#             w = csv.writer(f)
-#             w.writerow([time.time(), xw, yw, cx, cy])
-
-# ---------------------------
-# Raster scan (serpentine)
-# ---------------------------
-
-    # Final home (optional)
-    # await motors.home_y()
 
 class Robot:
     def __init__(self, port: str) -> None:
@@ -270,10 +179,13 @@ class Robot:
         await self._md.configure()
         await self._gs.configure()
 
-        # await self.home()
+        await self.home()
 
         # await self._scale.configure()
         # await self._curtain.connect()
+
+    def get_param(self, param: str):
+        return rs.get_robot_params(self._state).get(param)
 
     async def retrieve_item(self, label: str):
         item = AxisCoordinate(rs.search_grid(self.get_storage()))
@@ -292,8 +204,8 @@ class Robot:
     async def move_to_io(self):
         await self._mx.move_config()
         await self._my.move_config()
-        await self._mx.move_to_position_no_wait(rs.get_robot_params(self._state).get("PICKUP_LOCATION_L")[0])
-        await self._my.move_to_position_no_wait(rs.get_robot_params(self._state).get("PICKUP_LOCATION_L")[1])
+        await self._mx.move_to_position_no_wait(self.get_param("PICKUP_LOCATION_L")[0])
+        await self._my.move_to_position_no_wait(self.get_param("PICKUP_LOCATION_L")[1])
         await self.gantry_wait()
 
     async def pick(self, coordinate: AxisCoordinate) -> None:
@@ -306,8 +218,8 @@ class Robot:
         #empty move
         await self._ms.move_config()
         await self._mg.move_config()
-        await self._ms.move_to_position_no_wait(rs.get_robot_params(self._state).get("SLIDE_EXTENSION")) # 50 max
-        await self._mg.move_to_position_no_wait(rs.get_robot_params(self._state).get("GRIPPER_EXTENSION_PICK"))
+        await self._ms.move_to_position_no_wait(self.get_param("SLIDE_EXTENSION")) # 50 max
+        await self._mg.move_to_position_no_wait(self.get_param("GRIPPER_EXTENSION_PICK"))
         await self.tool_wait()
 
         await self._gs.open()
@@ -320,8 +232,8 @@ class Robot:
         await self._mx.move_to_position_no_wait(coordinate.x)
         await self._my.move_to_position_no_wait(coordinate.y)
         await self.gantry_wait()
-        await self._ms.move_to_position(rs.get_robot_params(self._state).get("SLIDE_EXTENSION")) # 50 max
-        await self._mg.move_to_position(rs.get_robot_params(self._state).get("GRIPPER_EXTENSION_PLACE"))
+        await self._ms.move_to_position(self.get_param("SLIDE_EXTENSION")) # 50 max
+        await self._mg.move_to_position(self.get_param("GRIPPER_EXTENSION_PLACE"))
         await self._gs.close()
 
         await self._ms.move_config()
@@ -355,8 +267,8 @@ class Robot:
         await self._gs.safe_open()
         await self._ms.move_config()
         await self._mg.move_config()
-        await self._ms.move_to_position_no_wait(rs.get_robot_params(self._state).get("SLIDE_EXTENSION")) # 50 max
-        await self._mg.move_to_position_no_wait(rs.get_robot_params(self._state).get("GRIPPER_EXTENSION_PICK"))
+        await self._ms.move_to_position_no_wait(self.get_param("SLIDE_EXTENSION")) # 50 max
+        await self._mg.move_to_position_no_wait(self.get_param("GRIPPER_EXTENSION_PICK"))
         await self.tool_wait()
 
         await self._gs.open()
@@ -365,17 +277,17 @@ class Robot:
 
         # await self._mx.move_config()
         # await self._my.move_config()
-        await self._mx.move_to_position_no_wait(rs.get_robot_params(self._state).get("PICKUP_POSITION_L")[0]) 
-        await self._my.move_to_position_no_wait(rs.get_robot_params(self._state).get("PICKUP_POSITION_L")[1])
+        await self._mx.move_to_position_no_wait(self.get_param("PICKUP_POSITION_L")[0]) 
+        await self._my.move_to_position_no_wait(self.get_param("PICKUP_POSITION_L")[1])
         await self.gantry_wait()
 
         await self._md.move_to_position(170)
 
-        await self._ms.move_to_position(rs.get_robot_params(self._state).get("SLIDE_EXTENSION"))
-        await self._mg.move_to_position(rs.get_robot_params(self._state).get("GRIPPER_EXTENSION_PLACE")+5)
+        await self._ms.move_to_position(self.get_param("SLIDE_EXTENSION"))
+        await self._mg.move_to_position(self.get_param("GRIPPER_EXTENSION_PLACE")+5)
 
-        await self._mx.move_to_position_no_wait(rs.get_robot_params(self._state).get("PICKUP_POSITION_H")[0]) 
-        await self._my.move_to_position_no_wait(rs.get_robot_params(self._state).get("PICKUP_POSITION_H")[1])
+        await self._mx.move_to_position_no_wait(self.get_param("PICKUP_POSITION_H")[0]) 
+        await self._my.move_to_position_no_wait(self.get_param("PICKUP_POSITION_H")[1])
         await self.gantry_wait()
         await self._mg.retract()
         await self._ms.retract()
@@ -390,8 +302,8 @@ class Robot:
 
         await self._ms.move_config()
         await self._mg.move_config()
-        await self._ms.move_to_position_no_wait(rs.get_robot_params(self._state).get("SLIDE_EXTENSION")) # 50 max
-        await self._mg.move_to_position_no_wait(rs.get_robot_params(self._state).get("GRIPPER_EXTENSION_PLACE"))
+        await self._ms.move_to_position_no_wait(self.get_param("SLIDE_EXTENSION")) # 50 max
+        await self._mg.move_to_position_no_wait(self.get_param("GRIPPER_EXTENSION_PLACE"))
         await self.tool_wait()
 
         await self._gs.close()
@@ -407,8 +319,8 @@ class Robot:
         await self._gs.safe_open()
         await self._ms.move_config()
         await self._mg.move_config()
-        await self._ms.move_to_position_no_wait(rs.get_robot_params(self._state).get("SLIDE_EXTENSION")) # 50 max
-        await self._mg.move_to_position_no_wait(rs.get_robot_params(self._state).get("GRIPPER_EXTENSION_PICK"))
+        await self._ms.move_to_position_no_wait(self.get_param("SLIDE_EXTENSION")) # 50 max
+        await self._mg.move_to_position_no_wait(self.get_param("GRIPPER_EXTENSION_PICK"))
         await self.tool_wait()
 
         await self._gs.open()
@@ -417,22 +329,22 @@ class Robot:
 
         # await self._mx.move_config()
         # await self._my.move_config()
-        await self._mx.move_to_position_no_wait(rs.get_robot_params(self._state).get("PICKUP_POSITION_H")[0]) 
-        await self._my.move_to_position_no_wait(rs.get_robot_params(self._state).get("PICKUP_POSITION_H")[1])
+        await self._mx.move_to_position_no_wait(self.get_param("PICKUP_POSITION_H")[0]) 
+        await self._my.move_to_position_no_wait(self.get_param("PICKUP_POSITION_H")[1])
         await self.gantry_wait()
 
         await self._md.move_to_position(170)
 
         await self._ms.move_config()
         await self._mg.move_config()
-        await self._ms.move_to_position_no_wait(rs.get_robot_params(self._state).get("SLIDE_EXTENSION")) # 50 max
-        await self._mg.move_to_position_no_wait(rs.get_robot_params(self._state).get("GRIPPER_EXTENSION_PLACE")+5)
+        await self._ms.move_to_position_no_wait(self.get_param("SLIDE_EXTENSION")) # 50 max
+        await self._mg.move_to_position_no_wait(self.get_param("GRIPPER_EXTENSION_PLACE")+5)
         await self.tool_wait()
 
         # await self._mx.move_config()
         # await self._my.move_config()
-        await self._mx.move_to_position_no_wait(rs.get_robot_params(self._state).get("PICKUP_POSITION_L")[0]) 
-        await self._my.move_to_position_no_wait(rs.get_robot_params(self._state).get("PICKUP_POSITION_L")[1])
+        await self._mx.move_to_position_no_wait(self.get_param("PICKUP_POSITION_L")[0]) 
+        await self._my.move_to_position_no_wait(self.get_param("PICKUP_POSITION_L")[1])
         await self.gantry_wait()
 
         await self._mg.retract()
@@ -448,213 +360,133 @@ class Robot:
 
         await self._ms.move_config()
         await self._mg.move_config()
-        await self._ms.move_to_position_no_wait(rs.get_robot_params(self._state).get("SLIDE_EXTENSION")) # 50 max
-        await self._mg.move_to_position_no_wait(rs.get_robot_params(self._state).get("GRIPPER_EXTENSION_PLACE"))
+        await self._ms.move_to_position_no_wait(self.get_param("SLIDE_EXTENSION")) # 50 max
+        await self._mg.move_to_position_no_wait(self.get_param("GRIPPER_EXTENSION_PLACE"))
         await self.tool_wait()
 
         await self._gs.close()
         await self._mg.retract()
         await self._ms.retract()
 
-    async def center_fiducial(self, frame) -> Optional[Tuple[int, int]]:
-        """Try to center the best fiducial; returns centered pixel (cx, cy) or None."""
-        H, W = frame.shape[:2]
-        dets = detect_square_fiducials(frame)
-        if not dets:
-            return None
+    async def get_shelves(self):
 
-        # Pick the highest score
-        det = max(dets, key=lambda d: d.score)
-        cx, cy = det.center
-        dx_px = (W // 2) - cx
-        dy_px = (H // 2) - cy
-
-        if abs(dx_px) <= 5 and abs(dy_px) <= 5:
-            return (cx, cy)
-
-        # Convert pixel error to motor deltas (in mm or steps)
-        # Sign convention: if fiducial is to the LEFT (cx < center), you likely need to move +X to bring it right.
-        # Adjust sign if your camera axes are flipped.
-        dx = dx_px * 0.06
-        dy = dy_px * 0.06
-
-        # await self.move_rel(dx, dy)
-        await self._mx.jog(dx)
-        await self._my.jog(dy)
-
-        return dx, dy
-
-        # ok = await motors.wait_idle(cfg.move_timeout_s)
-        # if not ok:
-        #     return None
-
-        # Re-check once more and finish
-        # frame2 = self._cam.read()
-        # H2, W2 = frame2.shape[:2]
-        # dets2 = detect_square_fiducials(frame2)
-        # if not dets2:
-        #     return None
-        # det2 = max(dets2, key=lambda d: d.score)
-        # cx2, cy2 = det2.center
-        # if abs((W2 // 2) - cx2) <= 5 and abs((H2 // 2) - cy2) <= 5:
-        #     return (cx2, cy2)
-        # return None
-
-    async def update_grid(self):
-        reg = FiducialRegistry()
+        shelves = []
+        
+        await self.home()
+        await self._mr.move_to_position(0.5)
+        await self._move(AxisCoordinate(self.get_param("SCAN_POSITION")[0], 
+                                        self.get_param("SCAN_POSITION")[1]))
 
         cap = cv2.VideoCapture(self._cam.url, cv2.CAP_FFMPEG)
         if not cap.isOpened():
             raise RuntimeError("bad cam")
-
-        # Start known position
-        # await motors.move_abs(cfg.x_min, cfg.y_min)
-        # await motors.wait_idle(cfg.move_timeout_s)
-        await self.home()
-        await self._mr.move_to_position(0.5)
-        await self._move(AxisCoordinate(rs.get_robot_params(self._state).get("SCAN_POSITION")[0], 
-                                       rs.get_robot_params(self._state).get("SCAN_POSITION")[1]))
-
-        end_x = 0
-        end_y = 0
-
-        time.sleep(5)
-
-        for i in range(0,7):
-            for _ in range(5):  # throw away old frames
-                cap.read()
-            ok, frame = cap.read()
-            if not ok:
-                return
-
-            if frame is None:
-                print("bad frame")
-                return
-            
-            height, width = frame.shape[:2]
-            third = width // 3
-            # third_h = height // 3
-
-            frame = frame[:, third:2 * third]
-            # frame = frame[2 * third_h:, :]
-
-            frame = cv2.resize(frame, None, fx=1.1, fy=1, interpolation=cv2.INTER_LINEAR)
-            # frame = frame[2 * third_h:, :]
-            # TODO add NoneType handling
-            # cv2.imwrite("beb.jpg", frame)
-            rect = self._cam.detect_white_squares(frame)
-            # print(rect)
-            if rect is not None:
-                dx, _ = self._cam.get_center(frame, rect)
-                # only track increasing boxes
-                if dx is not None:
-                    await self._mx.jog(dx * 0.06)
-                    # await self._my.jog(dy* 0.06)
         
-                    # Get world pos AFTER centering
-                    xw = round(await self._mx.get_position(), 4)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
+        cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
+        
+        while True:
+            t0 = time.time()
+            while time.time() - t0 < 4.5: # idr interval
+                cap.grab()
+                time.sleep(0.001)
+
+            for _ in range(5):
+                cap.grab()
+
+            ok, frame = cap.read()
+            if not ok or frame is None:
+                # reconnect on failure
+                cap.release()
+                cap = cv2.VideoCapture(self._cam.url, cv2.CAP_FFMPEG) 
+                if not cap.isOpened():
+                    break
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
+                cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
+                continue
+            
+            frame = cv2.resize(frame, None, fx=1.1, fy=1, interpolation=cv2.INTER_LINEAR)
+            rect = self._cam.detect_white_squares(frame)
+            if rect is not None:
+                _, dy = self._cam.get_center(frame, rect)
+                if dy > 0:
+                    await self._my.jog(dy * self.get_param("PYMM"))
                     yw = round(await self._my.get_position(), 4)
 
-                    # Global de-dup in world coordinates
-                    if reg.seen(xw, yw, 20):
-                        # already captured close to here
-                        return
+                    shelves.append(yw)
+                    # print(f"yw: {yw}")
 
-                    reg.add(xw, yw)
-                    print(f"xw: {xw}")
+            end_y = await self._my.get_position()
+            if end_y + self.get_param("JOG_Y") > rs.get_motor_params(self._state, "y_axis").get("lim"):
+                break
+            await self._my.jog(self.get_param("JOG_Y"))
 
-            await self._mx.jog(90)
         cap.release()
+        return shelves
+
+    async def update_grid(self, shelves: List[float]):
+        await self._mr.move_to_position(0.5)
+        await self._move(AxisCoordinate(self.get_param("SCAN_POSITION")[0], 1))
+
+        cap = cv2.VideoCapture(self._cam.url, cv2.CAP_FFMPEG)
+        if not cap.isOpened():
+            raise RuntimeError("bad cam")
         
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
+        cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
 
-        # ok, frame = cap.read()
-        # if not ok:
-        #     return
+        bays = []
 
-        # if frame is None:
-        #     print("bad frame")
-        #     return
+        for yw in shelves:
+            await self._my.move_to_position(yw)
+            while True:
+                t0 = time.time()
+                while time.time() - t0 < 4.5: # idr interval
+                    cap.grab()
+                    # tiny sleep keeps CPU sane and lets decoder progress
+                    time.sleep(0.001)
 
-        # # height, width = frame.shape[:2]
-        # # third = width // 3
-        # # third_h = height // 3
+                for _ in range(5):
+                    cap.grab()
 
-        # # frame = frame[:, third:2 * third]
-        # # frame = frame[2 * third_h:, :]
-        # frame = cv2.resize(frame, None, fx=1.1, fy=1, interpolation=cv2.INTER_LINEAR)
-
-        # # TODO add NoneType handling
-        # rect = self._cam.detect_white_squares(frame)
-        # if rect is not None:
-        #     dx, _ = self._cam.get_center(frame, rect)
-        
-        #     if dx is not None:
-        #         await self._mx.jog(dx * 0.06)
-        #         # await self._my.jog(dy* 0.06)
-    
-        #         # Get world pos AFTER centering
-        #         xw = await self._mx.get_position()
-        #         yw = await self._my.get_position()
-
-        #         # Global de-dup in world coordinates
-        #         if reg.seen(xw, yw, 20):
-        #             # already captured close to here
-        #             return
-
-        #         reg.add(xw, yw)
-        #         print(f"xw: {xw}")
-
-        # while True:
-        #     while True:
-        #         ok, frame = cap.read()
-        #         if not ok:
-        #             break
-
-        #         if frame is None:
-        #             print("bad frame")
-        #             break
-
-        #         frame = cv2.resize(frame, None, fx=1.1, fy=1, interpolation=cv2.INTER_LINEAR)
-        #         height, width = frame.shape[:2]
-        #         third = width // 3
-        #         third_h = height // 3
-
-        #         frame = frame[:, third:2 * third]
-        #         frame = frame[2 * third_h:, :]
-        #         # TODO add NoneType handling
-        #         rect = self._cam.detect_white_squares(frame)
-        #         if rect is not None:
-        #             dx, dy = self._cam.get_center(frame, rect)
+                ok, frame = cap.read()
                 
-        #             if dx is not None and dy is not None:
-        #                 await self._mx.jog(dx* 0.06)
-        #                 # await self._my.jog(dy* 0.06)
-            
-        #                 # Get world pos AFTER centering
-        #                 xw = await self._mx.get_position()
-        #                 yw = await self._my.get_position()
+                if not ok:
+                    continue
 
-        #                 # Global de-dup in world coordinates
-        #                 if reg.seen(xw, yw, 20):
-        #                     # already captured close to here
-        #                     break
+                if frame is None:
+                    print("bad frame")
+                    continue
+                
+                height, width = frame.shape[:2]
+                third = width // 3
 
-        #                 reg.add(xw, yw)
-        #                 print(f"xw: {xw}")
+                frame = frame[:, third:2 * third]
 
-        #         await self._mx.jog(rs.get_robot_params(self._state).get("JOG_X"))
-        #         end_x = await self._mx.get_position()
-        #         if end_x + rs.get_robot_params(self._state).get("JOG_X") > rs.get_motor_params(self._state, "x_axis").get("lim"):
-        #             print("xlim")
-        #             break
+                frame = cv2.resize(frame, None, fx=1.1, fy=1, interpolation=cv2.INTER_LINEAR)
+                rect = self._cam.detect_white_squares(frame)
+                if rect is not None:
+                    dx, _ = self._cam.get_center(frame, rect)
+                    # only track increasing boxes
+                    if dx is not None:
+                        await self._mx.jog(dx * self.get_param("PXMM"))
+                        xw = round(await self._mx.get_position(), 4)
+                        bays.append((xw+7, yw+127))
+                        print(f"xw: {xw}, yw: {yw}")
 
-        #     await self._mx.move_to_position(rs.get_robot_params(self._state).get("SCAN_POSITION")[0])
-        #     end_y = await self._my.get_position()
-        #     if end_y + rs.get_robot_params(self._state).get("JOG_Y") > rs.get_motor_params(self._state, "y_axis").get("lim")*0.9:
-        #         print("ylim")
-        #         break
-        #     await self._my.jog(rs.get_robot_params(self._state).get("JOG_Y"))
+                end_x = await self._mx.get_position()
+                lim = rs.get_motor_params(self._state, "x_axis").get("lim")
+                jog_x = float(self.get_param("JOG_X"))
+                if end_x + jog_x > lim:
+                    await self._mx.move_to_position(self.get_param("SCAN_POSITION")[0])
+                    break
+                await self._mx.jog(self.get_param("JOG_X"))
 
+        print(bays)
+
+        cap.release()
 
     async def _move(self, coordinate: AxisCoordinate) -> None:
         await self._mx.move_config()
@@ -663,22 +495,17 @@ class Robot:
         await self._my.move_to_position_no_wait(coordinate.y)
         await self.gantry_wait()
 
+        # +7 x and +127 y
+
     async def move(self, coordinate: AxisCoordinate) -> None:
-        await self.update_grid()
+        # shelves = await self.get_shelves()
+        # await self.update_grid(shelves)
         # await self._mx.move_config()
         # await self._my.move_config()
         # await self._mx.move_to_position_no_wait(coordinate.x) 
         # await self._my.move_to_position_no_wait(coordinate.y)
         # await self.gantry_wait()
-        # time.sleep(5)
-        # frame = await self._cam.capture("beb.png")
-        # jog = self._cam.get_shelf_fiducial(frame)*rs.get_robot_params(self._state).get("PYMM")
-        # await self._my.jog(jog+187)
-        # time.sleep(5)
-        # frame = await self._cam.capture("bebcent.png")
-        # fdc = self._cam.get_shelf_fiducial(frame)
-        # jog = fdc*rs.get_robot_params(self._state).get("PYMM")
-        # print(jog)
+        await self.pick(AxisCoordinate(coordinate.x, coordinate.y))
 
     async def gantry_wait(self):
         while True:
@@ -696,52 +523,6 @@ class Robot:
             if mg_f == MotorStatus.STOPPED and ms_f == MotorStatus.STOPPED:
                 return
 
-    # todo, 2D and update grid
-    async def _update_grid(self):
-        await self.home()
-        await self._mr.move_to_position(0.5)
-        await self._move(AxisCoordinate(rs.get_robot_params(self._state).get("SCAN_POSITION")[0], 
-                                       rs.get_robot_params(self._state).get("SCAN_POSITION")[1]))
-        
-        time.sleep(1)
-
-        bays = []
-        
-        while True:
-            jog_count = 0
-            end_y = await self._my.get_position()
-            if end_y + rs.get_robot_params(self._state).get("JOG_Y") > rs.get_motor_params(self._state, "y_axis").get("lim")*0.9:
-                print("ylim")
-                break
-            while True:
-                time.sleep(0.5)
-                pos = await self.auto_cal()
-                if pos is not None:
-                    pos_x, pos_y = pos
-                    pos_x = round(pos_x, 4)
-                    pos_y = round(pos_y, 4)
-                    # also check if the grid cell already exists
-                    rs.upsert_grid_cell(
-                        state = self._state,
-                        cell_id = None,
-                        coord = AxisCoordinate(pos_x, pos_y),
-                        size = [0,0]
-                    )
-                    await self._mx.jog(rs.get_robot_params(self._state).get("JOG_X"))
-                    time.sleep(0.5)
-                    end_x = await self._mx.get_position()
-                    if end_x + rs.get_robot_params(self._state).get("JOG_X") > rs.get_motor_params(self._state, "x_axis").get("lim"):
-                        print("xlim")
-                        break
-                else:
-                    jog_count += 1
-                    if jog_count > 7:
-                        # print("jog")
-                        break
-
-            await self._mx.move_to_position(rs.get_robot_params(self._state).get("SCAN_POSITION")[0])
-            await self._my.jog(rs.get_robot_params(self._state).get("JOG_Y"))
-
     async def get_weight(self) -> float:
         try:
             data = await self._scale.read_weight_data()
@@ -757,7 +538,7 @@ class Robot:
         self._grid = grid
 
     async def idle(self) -> None:
-        await self.move(rs.get_robot_params(self._state).get("IDLE_POSITION")) # basically anywhere along the bottom of the gantry
+        await self.move(self.get_param("IDLE_POSITION")) # basically anywhere along the bottom of the gantry
 
     async def shutdown(self) -> None:
         if self._bus:
