@@ -86,20 +86,17 @@
     "IDLE_POSITION": [0,0],
     "PICKUP_POSITION_L": [20,461],
     "PICKUP_POSITION_H": [20,710],
-    "SCAN_POSITION": [265,275],
+    "SCAN_POSITION": [265,245],
     "SLIDE_EXTENSION": 50,
     "GRIPPER_EXTENSION_PICK": 167,
     "GRIPPER_EXTENSION_PLACE": 165,
     "REVERSE": 180.5,
-    "JOG_X": 50,
+    "JOG_X": 90,
     "JOG_Y": 50,
     "PXMM": 0.06,
     "PYMM": 0.06,
     "PPR": 10000,
-    "W_EXPECTED": 80,
-    "H_EXPECTED": 80, 
-    "TOLERANCE_AREA" : 0.5,
-    "TOLERANCE_ASPECT" : 0.5
+    "IDR": 4.25
   },
   "status": "idle"
 }
