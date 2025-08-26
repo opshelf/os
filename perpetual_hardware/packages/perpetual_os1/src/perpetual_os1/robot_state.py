@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, TypedDict
+from typing import TypedDict, List, Dict, Any, Tuple, Sequence, Union, Optional
 from perpetual_os1.common import AxisCoordinate
 
 # ----------------------------
@@ -278,7 +279,7 @@ def upsert_grid_cell(
     if meta is not None:
         cell["meta"] = dict(meta)
     state["grid"][cid] = cell
-    print(coord.x, coord.y)
+    # print(coord.x, coord.y)
     return cell
 
 def get_grid_cell(state: RobotState, cell_id: Any) -> Optional[GridCell]:
@@ -327,6 +328,70 @@ def find_first_available_cell(grid: Dict[str, GridCell]) -> Optional[GridCell]:
         if cell.get("id") is None:
             return cell
     return None
+
+
+def build_grid_from_coords(
+    state: Dict[str, Any],
+    coords: Sequence[Union[Tuple[float, float], List[float]]],
+    *,
+    key_prefix: str = "G",
+    start_index: int = 1,
+    zero_pad: int = 3,
+    dedupe_tol: float = 0.0,
+    sort_coords: bool = False,
+) -> Dict[str, GridCell]:
+    """
+    Replace state["grid"] with cells built entirely from a list of coordinates.
+
+    - coords: a sequence of (x, y) or [x, y].
+    - key_prefix: prefix for generated keys, e.g. "G" -> G001, G002, ...
+    - start_index: first index for key generation.
+    - zero_pad: zero padding width for the numeric part of the key.
+    - dedupe_tol: if > 0, coordinates within this absolute tolerance are treated as duplicates (first wins).
+    - sort_coords: if True, sort by (x, y) before assigning keys (stable keys for the same set).
+
+    Returns the new grid dictionary (also stored in state["grid"]).
+    """
+    def _to_pair(v: Union[Tuple[float, float], List[float]]) -> AxisCoordinate:
+        if isinstance(v, (tuple, list)) and len(v) == 2:
+            return (float(v[0]), float(v[1]))
+        raise ValueError("Each coordinate must be a 2-tuple/list like (x, y)")
+
+    # Normalize/optionally sort
+    parsed: List[AxisCoordinate] = [_to_pair(p) for p in coords]
+    if sort_coords:
+        parsed.sort(key=lambda p: (p[0], p[1]))  # x, then y
+
+    # Optional de-duplication by tolerance
+    unique: List[AxisCoordinate] = []
+    if dedupe_tol > 0.0:
+        seen = set()
+        scale = 1.0 / dedupe_tol
+        for (x, y) in parsed:
+            q = (int(round(x * scale)), int(round(y * scale)))
+            if q not in seen:
+                seen.add(q)
+                unique.append((x, y))
+    else:
+        unique = parsed
+
+    # Build new grid
+    grid: Dict[str, GridCell] = {}
+    idx = start_index
+    for (x, y) in unique:
+        key = f"{key_prefix}{idx:0{zero_pad}d}"
+        cell: GridCell = {
+            "id": None,               # per your rule
+            "coord": (float(x), float(y)),
+            "size": [0.0, 0.0],       # per your rule
+            "meta": {},
+        }
+        grid[key] = cell
+        idx += 1
+
+    state["grid"] = grid
+    return grid
+
 
 # ----------------------------
 # Validation

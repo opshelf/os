@@ -429,17 +429,16 @@ class Robot:
         await self._mr.move_to_position(0.5)
         await self._move(AxisCoordinate(self.get_param("SCAN_POSITION")[0], 1))
 
-        cap = cv2.VideoCapture(self._cam.url, cv2.CAP_FFMPEG)
-        if not cap.isOpened():
-            raise RuntimeError("bad cam")
-        
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
-        cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
-
         bays = []
 
         for yw in shelves:
+            cap = cv2.VideoCapture(self._cam.url, cv2.CAP_FFMPEG)
+            if not cap.isOpened():
+                raise RuntimeError("bad cam")
+            
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
+            cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
             await self._my.move_to_position(yw)
             while True:
                 t0 = time.time()
@@ -473,8 +472,7 @@ class Robot:
                     if dx is not None:
                         await self._mx.jog(dx * self.get_param("PXMM"))
                         xw = round(await self._mx.get_position(), 4)
-                        bays.append((xw+7, yw+127))
-                        print(f"xw: {xw}, yw: {yw}")
+                        bays.append((xw+7, yw+127)) # update a grid at the end using the list
 
                 end_x = await self._mx.get_position()
                 lim = rs.get_motor_params(self._state, "x_axis").get("lim")
@@ -484,9 +482,9 @@ class Robot:
                     break
                 await self._mx.jog(self.get_param("JOG_X"))
 
-        print(bays)
+            cap.release()
 
-        cap.release()
+        return bays
 
     async def _move(self, coordinate: AxisCoordinate) -> None:
         await self._mx.move_config()
@@ -498,14 +496,17 @@ class Robot:
         # +7 x and +127 y
 
     async def move(self, coordinate: AxisCoordinate) -> None:
-        # shelves = await self.get_shelves()
-        # await self.update_grid(shelves)
+        shelves = await self.get_shelves()
+        bays = await self.update_grid(shelves)
+        rs.build_grid_from_coords(self._state, bays, key_prefix="C", start_index=1, zero_pad=2)
+        # print(self._state)
+
         # await self._mx.move_config()
         # await self._my.move_config()
         # await self._mx.move_to_position_no_wait(coordinate.x) 
         # await self._my.move_to_position_no_wait(coordinate.y)
         # await self.gantry_wait()
-        await self.pick(AxisCoordinate(coordinate.x, coordinate.y))
+        # await self.pick(AxisCoordinate(coordinate.x, coordinate.y))
 
     async def gantry_wait(self):
         while True:
