@@ -5,11 +5,13 @@ from typing import Optional, List
 from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import and_, select, func
+from sqlalchemy.orm import selectinload
 from pydantic import BaseModel
 
 from ..database.session import get_db
 from ..database.models import AuditLog, User
 from .auth_deps import get_current_user, require_permissions
+from ..utils.audit_integrity import canonicalize_payload, sha256_hex, hmac_sha256_hex, build_binding_message
 
 router = APIRouter(
 	prefix="/api/audit",
@@ -40,6 +42,13 @@ class AuditLogListResponse(BaseModel):
 	total: int
 	offset: int
 	limit: int
+
+
+class AuditVerifyResponse(BaseModel):
+	ok: bool
+	checked: int
+	first_error_seq: Optional[int]
+	message: Optional[str]
 
 @router.get("/logs", response_model=AuditLogListResponse)
 async def list_audit_logs(
@@ -87,7 +96,12 @@ async def list_audit_logs(
 	total_result = await db.execute(count_query)
 	total = total_result.scalar()
 	
-	logs_result = await db.execute(query.order_by(AuditLog.timestamp.desc()).offset(offset).limit(limit))
+	logs_result = await db.execute(
+		query.options(selectinload(AuditLog.user))
+		.order_by(AuditLog.timestamp.desc())
+		.offset(offset)
+		.limit(limit)
+	)
 	logs = logs_result.scalars().all()
 	
 	return AuditLogListResponse(
@@ -122,7 +136,11 @@ async def get_audit_log(
 	current_user: User = Depends(get_current_user)
 ) -> AuditLogResponse:
 	"""Get a specific audit log entry."""
-	log_result = await db.execute(select(AuditLog).filter(AuditLog.id == log_id))
+	log_result = await db.execute(
+		select(AuditLog)
+		.options(selectinload(AuditLog.user))
+		.filter(AuditLog.id == log_id)
+	)
 	log = log_result.scalar_one_or_none()
 	
 	if log is None:
@@ -146,4 +164,95 @@ async def get_audit_log(
 		ip_address=log.ip_address,
 		user_agent=log.user_agent,
 		request_duration_ms=log.request_duration_ms
+	)
+
+
+@router.get("/verify", response_model=AuditVerifyResponse)
+async def verify_audit_chain(
+	from_seq: Optional[int] = Query(None, ge=1, description="Start seq_no (inclusive)"),
+	to_seq: Optional[int] = Query(None, ge=1, description="End seq_no (inclusive)"),
+	db: AsyncSession = Depends(get_db),
+	current_user: User = Depends(get_current_user),
+):
+	"""Verify linkage, hashes, and HMACs over protected audit entries.
+
+	Existing queries remain unchanged; this is an additive, lightweight check.
+	"""
+	# Build base query over protected entries only
+	query = select(AuditLog).where(AuditLog.entry_hash.isnot(None))
+	if from_seq is not None:
+		query = query.filter(AuditLog.seq_no >= from_seq)
+	if to_seq is not None:
+		query = query.filter(AuditLog.seq_no <= to_seq)
+	query = query.order_by(AuditLog.seq_no.asc())
+
+	result = await db.execute(query)
+	logs = result.scalars().all()
+
+	checked = 0
+	prev_hash = None
+	first_error_seq = None
+	error_message = None
+
+	for log in logs:
+		# Rebuild payload deterministically to recompute hash
+		# SQLite doesn't preserve timezone info, so we need to add it back
+		from datetime import timezone as tz
+		timestamp_iso = None
+		if log.timestamp:
+			if log.timestamp.tzinfo is None:
+				# Add UTC timezone info since audit logs are created with UTC
+				timestamp_iso = log.timestamp.replace(tzinfo=tz.utc).isoformat()
+			else:
+				timestamp_iso = log.timestamp.isoformat()
+		
+		payload = {
+			"timestamp": timestamp_iso,
+			"method": log.method,
+			"endpoint": log.endpoint,
+			"request_body": log.request_body,
+			"response_status": log.response_status,
+			"response_body": log.response_body,
+			"nats_commands": log.nats_commands,
+			"error_message": log.error_message,
+			"ip_address": log.ip_address,
+			"user_agent": log.user_agent,
+			"request_duration_ms": log.request_duration_ms,
+			"user_id": log.user_id,
+			"seq_no": log.seq_no,
+			"prev_hash": log.prev_hash,
+		}
+		payload_bytes = canonicalize_payload(payload)
+		recomputed_hash = sha256_hex(payload_bytes)
+
+		# Check entry hash matches
+		if log.entry_hash != recomputed_hash:
+			first_error_seq = log.seq_no
+			error_message = "Entry hash mismatch"
+			break
+
+		# Check linkage with previous
+		expected_prev = prev_hash if prev_hash is not None else ("0" * 64)
+		if log.prev_hash != expected_prev:
+			first_error_seq = log.seq_no
+			error_message = "Prev hash mismatch (chain break)"
+			break
+
+		# Check HMAC over binding
+		binding = build_binding_message(log.seq_no, log.prev_hash, log.entry_hash)
+		expected_hmac = hmac_sha256_hex(binding)
+		if log.hmac != expected_hmac:
+			first_error_seq = log.seq_no
+			error_message = "HMAC mismatch"
+			break
+
+		prev_hash = log.entry_hash
+		checked += 1
+
+	ok = first_error_seq is None
+	return AuditVerifyResponse(
+		ok=ok,
+		checked=checked,
+		first_error_seq=first_error_seq,
+		message=error_message,
 	)

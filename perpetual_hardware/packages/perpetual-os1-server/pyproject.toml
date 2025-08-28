@@ -20,6 +20,7 @@ dependencies = [
     "perpetual-waveshare",
     "perpetual-scale",
     "python-barcode>=0.15.1",
+    "pillow>=10.0.0",
     "sqlalchemy>=2.0.0",
     "alembic>=1.13.0",
     "aiosqlite>=0.20.0",
