@@ -1,5 +1,5 @@
 """Authentication core functionality."""
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 import secrets
 
@@ -48,7 +48,7 @@ class AuthService:
 		expires_minutes: int = 30
 	) -> str:
 		"""Create a JWT access token."""
-		expire = datetime.utcnow() + timedelta(minutes=expires_minutes)
+		expire = datetime.now(timezone.utc) + timedelta(minutes=expires_minutes)
 		data = {
 			"sub": email,
 			"exp": expire,
@@ -58,7 +58,6 @@ class AuthService:
 			"role": role,
 			"permissions": permissions
 		}
-		
 		return jwt.encode(data, self.secret_key, algorithm=self.algorithm)
 	
 	def create_refresh_token(
@@ -68,7 +67,7 @@ class AuthService:
 		expires_days: int = 7
 	) -> str:
 		"""Create a JWT refresh token."""
-		expire = datetime.utcnow() + timedelta(days=expires_days)
+		expire = datetime.now(timezone.utc) + timedelta(days=expires_days)
 		data = {
 			"sub": email,
 			"exp": expire,
@@ -77,7 +76,6 @@ class AuthService:
 			"email": email,
 			"jti": secrets.token_urlsafe(32)
 		}
-		
 		return jwt.encode(data, self.secret_key, algorithm=self.algorithm)
 	
 	def decode_token(self, token: str) -> Optional[Dict[str, Any]]:
