@@ -98,6 +98,10 @@ app.add_middleware(
 
 app.add_middleware(AuditMiddleware)
 
+@app.get("/api/health")
+async def health():
+	return {"status": "ok"}
+
 app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(roles.router)

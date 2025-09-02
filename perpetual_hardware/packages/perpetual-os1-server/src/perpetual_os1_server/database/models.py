@@ -1,7 +1,7 @@
 """Database models for authentication and audit system."""
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, JSON, ForeignKey, func
 from sqlalchemy.orm import relationship
-from datetime import datetime
+from datetime import datetime, timezone
 from .base import Base
 
 class Role(Base):
@@ -34,21 +34,28 @@ class User(Base):
 	audit_logs = relationship("AuditLog", back_populates="user")
 
 class AuditLog(Base):
-	"""Audit log model for tracking all API operations."""
-	__tablename__ = "audit_logs"
-	
-	id = Column(Integer, primary_key=True)
-	user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-	timestamp = Column(DateTime, nullable=False, default=datetime.utcnow)
-	method = Column(String(10), nullable=False)
-	endpoint = Column(String(255), nullable=False)
-	request_body = Column(JSON, nullable=True)
-	response_status = Column(Integer, nullable=False)
-	response_body = Column(JSON, nullable=True)
-	nats_commands = Column(JSON, nullable=True)
-	error_message = Column(Text, nullable=True)
-	ip_address = Column(String(45), nullable=True)
-	user_agent = Column(String(255), nullable=True)
-	request_duration_ms = Column(Integer, nullable=True)
-	
-	user = relationship("User", back_populates="audit_logs")
+    """Audit log model for tracking all API operations."""
+    __tablename__ = "audit_logs"
+    
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    timestamp = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    method = Column(String(10), nullable=False)
+    endpoint = Column(String(255), nullable=False)
+    request_body = Column(JSON, nullable=True)
+    response_status = Column(Integer, nullable=False)
+    response_body = Column(JSON, nullable=True)
+    nats_commands = Column(JSON, nullable=True)
+    error_message = Column(Text, nullable=True)
+    ip_address = Column(String(45), nullable=True)
+    user_agent = Column(String(255), nullable=True)
+    request_duration_ms = Column(Integer, nullable=True)
+
+    # Lightweight tamper-evidence fields (nullable for backward compatibility)
+    seq_no = Column(Integer, nullable=True, index=True)
+    prev_hash = Column(String(64), nullable=True)
+    entry_hash = Column(String(64), nullable=True)
+    hmac = Column(String(64), nullable=True)
+    hmac_key_id = Column(String(50), nullable=True)
+    
+    user = relationship("User", back_populates="audit_logs")
