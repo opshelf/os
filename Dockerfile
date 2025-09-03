@@ -12,3 +12,4 @@ EXPOSE 4222
 EXPOSE 8222
 CMD ["uv", "run", "start"]
 
+

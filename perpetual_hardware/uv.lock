@@ -167,6 +167,12 @@ wheels = [
 name = "perpetual-hardware"
 version = "0.1.0"
 source = { virtual = "." }
+dependencies = [
+    { name = "opencv-python" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "opencv-python" }]
 
 [[package]]
 name = "perpetual-os1"
