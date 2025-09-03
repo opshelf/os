@@ -28,7 +28,7 @@ class Servo():
         await self._controller.write_single_register(self._motor_id, 0x03ED, 0x80FE) # 0x80|0xFE
         await self._controller.write_single_register(self._motor_id, 0x03EE, 0x80)
         #safe open
-        await self._controller.write_single_register(self._motor_id, 0x03EF, 0x80B0) # 0x80|0xFF
+        await self._controller.write_single_register(self._motor_id, 0x03EF, 0x80C0) # 0x80|0xFF
         await self._controller.write_single_register(self._motor_id, 0x03F0, 0x80)
 
     async def wait_for_activate(self):
@@ -93,12 +93,15 @@ class Motor():
             self._status: MotorStatus = MotorStatus.IDLE
 
     async def configure(self):
-        await self.set_param("SI2 input function", 0x26) # neg switch
+        # print(self._params["motor_name"])
+        # await self.set_param("SI2 input function", 0x26) # neg switch
         await self.set_param("SO2 output function", 0xA1)
         await self._controller.write_single_register(self._motor_id, 0x0167, 250)
         await self._controller.write_single_register(self._motor_id, 0x0169, 250)
         await self._controller.write_single_register(self._motor_id, 0x016B, 10)
         await self.set_param("Allowed max position following error", 4000)
+        await self.set_param("Position loop Kp", 50)
+        await self.move_config()
         return
 
     # TODO add axis limits
@@ -125,7 +128,7 @@ class Motor():
         
         self._status = MotorStatus.MOVING
         await self.wait_for_move(timeout=10)
-        return MotorStatus.STOPPED
+        return
     
     # assumes that the motor is already configured
     async def move_to_position_no_wait(self, value: float): # mm
@@ -180,6 +183,7 @@ class Motor():
             return int(val)
         return None 
     
+    #TODO add checks for position following error (crash detection)
     async def wait_for_move(self, timeout: float = 2.5) -> MotorStatus:
         start_time = time.monotonic()
         last_pos = None
@@ -187,7 +191,10 @@ class Motor():
         last_movement_time = start_time
 
         while True:
-            status = await self.get_param("Motion status") & (1<<5)
+            status = await self.get_param("Motion status")
+            complete = status & (1 << 5)
+            fault = status & 1
+
             await self.get_position()
             now = time.monotonic()
 
@@ -211,13 +218,81 @@ class Motor():
                 await self.stop()
                 return MotorStatus.STOPPED
 
-            if status:
+            if complete:
                 # print(f"[{self._motor_id}] Move complete.")
                 await self.stop()
                 return MotorStatus.STOPPED
+            
+            if fault:
+                # print(f"[{self._motor_id}] Fault.")
+                await self.stop()
+                return MotorStatus.STOPPED
+                # if self._params["motor_name"] == "y_axis":
+                #     await self.home_y()
+                # else:    
+                #     await self.home()
+                
+                # await self.move_to_position(last_pos)
 
             if time.monotonic() - start_time > timeout:
                 # print(f"[{self._motor_id}] Timeout waiting for move.")
+                await self.stop()
+                return MotorStatus.STOPPED
+
+            await asyncio.sleep(0.01)
+
+    async def wait_for_home(self, timeout: float = 60) -> MotorStatus:
+        start_time = time.monotonic()
+        last_pos = None
+        has_moved = False
+        last_movement_time = start_time
+
+        while True:
+            status = await self.get_param("Motion status")
+            complete = status & (1 << 5)
+            fault = status & 1
+
+            await self.get_position()
+            now = time.monotonic()
+
+            if status is None:
+                print(f"[{self._motor_id}] Failed to read motion status.")
+                return None
+            
+            if last_pos is not None:
+                # print(f"cur pos: {round(self._cur_pos, 3)}, last pos: {round(last_pos,3)}") 
+                if(self._cur_pos != last_pos):
+                    last_movement_time = now
+                    has_moved = True
+                
+            elif last_movement_time is None:
+                last_movement_time = now  # initialize once
+            
+            last_pos = self._cur_pos
+            
+            if has_moved and (now - last_movement_time > self._stall_timeout):
+                # print(f"[{self._motor_id}] Stopped: No movement detected for {self._stall_timeout} seconds.")
+                await self.stop()
+                return MotorStatus.STOPPED
+
+            if complete:
+                # print(f"[{self._motor_id}] Move complete.")
+                await self.stop()
+                return MotorStatus.STOPPED
+            
+            if fault:
+                # print(f"[{self._motor_id}] Stopped - Alarm.")
+                await self.stop()
+                return MotorStatus.STOPPED
+                # if self._params["motor_name"] == "y_axis":
+                #     await self.home_y()
+                # else:    
+                #     await self.home()
+                
+                # await self.move_to_position(last_pos)
+
+            if time.monotonic() - start_time > timeout:
+                print(f"[{self._motor_id}] Timeout waiting for move.")
                 await self.stop()
                 return MotorStatus.STOPPED
 
@@ -245,16 +320,19 @@ class Motor():
         
         self._status = MotorStatus.MOVING
 
-        await self.wait_for_move(timeout=60) 
-
-        await self._controller.write_single_register(
-            self._motor_id,
-            MotorDefs.TRIGGER,
-            0x21) # set zero position
-    
+        stop = await self.wait_for_home(timeout=60) 
+        if stop == MotorStatus.STOPPED:
+            await self._controller.write_single_register(
+                self._motor_id,
+                MotorDefs.TRIGGER,
+                0x21) # set zero position
+            
+            await self.move_config()
         return 
 
     async def home_y(self):
+        if self._params["motor_name"] != "y_axis":
+            return
         await self.set_param("Control word", 0x1111) # clear alarm if any
         await self.set_param("Control word", 0x1122) # clear alarm if any
         await self.set_param("Peak current", self._params["Ip"])
@@ -267,12 +345,15 @@ class Motor():
 
         self._status = MotorStatus.MOVING
 
-        await self.wait_for_move(timeout=60) 
+        stop = await self.wait_for_move(timeout=60) 
 
-        await self._controller.write_single_register(
-            self._motor_id,
-            MotorDefs.TRIGGER,
-            0x21) # set zero position
+        if stop:
+            await self._controller.write_single_register(
+                self._motor_id,
+                MotorDefs.TRIGGER,
+                0x21) # set zero position
+            
+            await self.move_config()
 
         return 
         
@@ -295,6 +376,8 @@ class Motor():
                 self._motor_id,
                 MotorDefs.TRIGGER,
                 0x21) # set zero position
+            
+            await self.move_config()
 
         return
     
@@ -305,8 +388,8 @@ class Motor():
         await self.set_param("Control word", 0x1122) # clear alarm if any
         await self.set_param("Motion of Path 0", 0x41) # rel pos
         await self.set_param("Motor direction", self._params["dir"])
-        # await self.set_param("Velocity", self._params["rpm"])
-        await self.set_param("Velocity", 32)
+        await self.set_param("Velocity", self._params["rpm"])
+        # await self.set_param("Velocity", 32)
         await self.set_param("Acceleration", self._params['accel'])
         await self.set_param("Deceleration", self._params['accel'])
         await self.set_param("Position High", pulse[0])
@@ -318,6 +401,7 @@ class Motor():
         
         # self._homed = False
         await self.wait_for_move(timeout=10)
+        await self.move_config()
         return MotorStatus.STOPPED
 
     async def stop(self):
