@@ -96,11 +96,12 @@ class Motor():
         # print(self._params["motor_name"])
         # await self.set_param("SI2 input function", 0x26) # neg switch
         await self.set_param("SO2 output function", 0xA1)
-        await self._controller.write_single_register(self._motor_id, 0x0167, 250)
-        await self._controller.write_single_register(self._motor_id, 0x0169, 250)
+        await self._controller.write_single_register(self._motor_id, 0x0167, 100)
+        await self._controller.write_single_register(self._motor_id, 0x0169, 100)
         await self._controller.write_single_register(self._motor_id, 0x016B, 10)
         await self.set_param("Allowed max position following error", 4000)
         await self.set_param("Position loop Kp", 50)
+        await self.set_param("Max stop time", 100)
         await self.move_config()
         return
 
@@ -215,16 +216,19 @@ class Motor():
             
             if has_moved and (now - last_movement_time > self._stall_timeout):
                 # print(f"[{self._motor_id}] Stopped: No movement detected for {self._stall_timeout} seconds.")
+                # print(status)
                 await self.stop()
                 return MotorStatus.STOPPED
 
             if complete:
                 # print(f"[{self._motor_id}] Move complete.")
+                # print(status)
                 await self.stop()
                 return MotorStatus.STOPPED
             
             if fault:
                 # print(f"[{self._motor_id}] Fault.")
+                # print(status)
                 await self.stop()
                 return MotorStatus.STOPPED
                 # if self._params["motor_name"] == "y_axis":

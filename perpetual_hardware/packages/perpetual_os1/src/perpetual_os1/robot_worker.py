@@ -17,6 +17,7 @@ from perpetual_os1.robot import (
 # from perpetual_os1.configuration import RobotConfiguration
 from perpetual_os1.common import RobotNatsConfiguration
 from perpetual_os1.robot_client import RobotClient
+from perpetual_os1.barcode_service import BarcodeService  
 
 RobotCommandAdapter = TypeAdapter[RobotCommands](RobotCommands)
 
@@ -38,6 +39,8 @@ class RobotWorker:
         self._nats_config = nats_config
         self._client = RobotClient(nats_config)
         self._nc = NATS()
+        self._barcode: Optional[BarcodeService] = None
+        self._barcode_task: Optional[asyncio.Task] = None
 
     def get_client(self) -> RobotClient:
         return self._client
@@ -69,6 +72,13 @@ class RobotWorker:
         # await self._nc.subscribe(self._nats_config.set_config_subject, cb=self._handle_set_config)
         # await self._nc.subscribe(self._nats_config.get_status_subject, cb=self._handle_get_status)
 
+        # Start barcode bridge (scans -> RobotCommands via NATS)
+        if self._barcode is None:
+            # If you know VID/PID, pass prefer_vid_pid=(0xXXXX, 0xYYYY)
+            self._barcode = BarcodeService(port="/dev/ttyACM0", baudrate=115200)
+            await self._barcode.start()
+            self._barcode_task = asyncio.create_task(self._run_barcode_bridge(), name="barcode-bridge")
+
     @classmethod
     async def get_instance(cls, robot: Robot) -> "RobotWorker":
         if cls._instance is None:
@@ -78,6 +88,57 @@ class RobotWorker:
     async def clear_commands(self) -> None:
         if self._js:
             await self._js.purge_stream(self._nats_config.stream_name)
+
+    async def _run_barcode_bridge(self) -> None:
+        """
+        Consumes barcodes from BarcodeService and publishes RobotCommands JSON
+        to the same NATS command subject this worker already pulls from.
+        """
+        try:
+            async for code in self._barcode:  # non-blocking async iterator
+                try:
+                    cmd: RobotCommands = await self._barcode_to_command(code)
+                except Exception as e:
+                    # Optionally publish an event or log, but don't kill the bridge
+                    print(f"[barcode] mapping error for '{code}': {e}")
+                    continue
+
+                try:
+                    await self._nc.publish(
+                        self._nats_config.command_queue,
+                        cmd.model_dump_json().encode()
+                    )
+                    # If you want persistence/ordering, you can also do:
+                    # await self._js.publish(self._nats_config.command_queue, cmd.model_dump_json().encode())
+                except Exception as pub_err:
+                    print(f"[barcode] publish error: {pub_err}")
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            print(f"[barcode] bridge crashed: {e}")
+
+    async def _barcode_to_command(self, code: str) -> RobotCommands:
+        """
+        Map a scanned barcode string -> a concrete RobotCommands object.
+        IMPLEMENT THIS to match your union variants in `perpetual_os1.robot`.
+        """
+        # --- EXAMPLE A: Pick-by-SKU style command (if you have one) ---
+        # from perpetual_os1.robot import PickCommand  # <- if this exists in your project
+        # return PickCommand(sku=code)
+
+        # --- EXAMPLE B: Move-to-slot by parsed location ---
+        # from perpetual_os1.robot import MoveToSlotCommand
+        # slot = parse_slot_from_code(code)  # write a small parser if needed
+        # return MoveToSlotCommand(slot=slot)
+
+        # --- EXAMPLE C: Route to a generic "RunRecipe" or "QueueJob" ---
+        # from perpetual_os1.robot import RunRecipeCommand
+        # return RunRecipeCommand(recipe_id=code)
+
+        # Fallback placeholder so code compiles; REPLACE with your real mapping.
+        # Import is already available at top: StopCommand
+        # raise ValueError("Implement _barcode_to_command() to create a proper RobotCommands from barcode.")
+        print(code)
 
     # async def get_storage(self) -> StorageGrid:
     #     return self._robot.get_storage()
@@ -178,6 +239,22 @@ class RobotWorker:
         print("Shutting Down")
         #if self._running:
         self._running = False
+
+        # Stop barcode bridge first so we don't enqueue more commands mid-shutdown
+        if self._barcode_task:
+            print("Cancel Barcode Bridge")
+            self._barcode_task.cancel()
+            try:
+                await self._barcode_task
+            except asyncio.CancelledError:
+                pass
+            self._barcode_task = None
+        if self._barcode:
+            print("Stop Barcode Service")
+            await self._barcode.stop()
+            self._barcode = None
+
+
         if self._worker_task:
             print("Cancel Worker Task")
             self._worker_task.cancel()
