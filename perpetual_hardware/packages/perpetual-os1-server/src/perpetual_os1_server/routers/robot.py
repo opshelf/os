@@ -14,7 +14,7 @@ from nats.aio.client import Client as NATS
 from perpetual_os1_server.settings import get_settings
 from .auth_deps import get_current_user, require_permissions
 
-router = APIRouter(dependencies=[Depends(get_current_user)])
+router = APIRouter(tags=["robot"], dependencies=[Depends(get_current_user)])
 
 
 @router.post("/commands", dependencies=[Depends(require_permissions("robot:control"))])

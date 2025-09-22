@@ -99,7 +99,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await auto_storage.close()
 
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(
+    lifespan=lifespan,
+    title="Perpetual OS1 Server API",
+    description="API for controlling Perpetual OS1 robotic automation system including gantry, storage, scanner, and scale operations",
+    version="0.1.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json"
+)
 
 app.add_middleware(
     CORSMiddleware,

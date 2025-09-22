@@ -7,7 +7,7 @@ from .auth_deps import get_current_user, require_permissions
 import subprocess
 from pydantic import BaseModel
 
-router = APIRouter(dependencies=[Depends(get_current_user)])
+router = APIRouter(tags=["printer"], dependencies=[Depends(get_current_user)])
 
 
 class PrintRequest(BaseModel):
