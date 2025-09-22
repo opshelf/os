@@ -4,14 +4,17 @@ from perpetual_os1_server.core.automatic import AutomaticStorage
 from perpetual_os1_server.core.robot import init_robot_worker, stop_robot_worker
 from perpetual_os1_server.core.scale import init_scale_worker, stop_scale_worker
 from perpetual_os1_server.core.scanner import init_scanner_worker, stop_scanner_worker
-from perpetual_os1_server.routers import gantry, robot, scale, scanner, printer, sizes
+from perpetual_os1_server.routers import gantry, robot, scale, scanner, printer, sizes, storage
 from perpetual_os1_server.routers import auth, users, roles, audit
-from perpetual_os1_server.core.sizes import init_file_sizes
+from perpetual_os1_server.core.sizes import init_file_sizes, migrate_if_needed
 from perpetual_os1_server.database.base import engine, Base
+from perpetual_os1_server.database.session import AsyncSessionLocal
 from perpetual_os1_server.middleware.audit import AuditMiddleware
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 from perpetual_os1_server.settings import get_settings
+from sqlalchemy.ext.asyncio import AsyncSession
+from perpetual_os1_server.core.storage import StorageService
 import uvicorn
 import logging
 import sys
@@ -59,7 +62,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     if settings.scanner.enabled:
         await init_scanner_worker()
         logging.info("Scanner Enabled")
+
     init_file_sizes()
+
+    # Initialize storage service dependency
+    async def get_storage_session() -> AsyncGenerator[StorageService, None]:
+        async with AsyncSessionLocal() as session:
+            await migrate_if_needed(session)
+            storage_service = StorageService(session)
+            yield storage_service
+
+    app.dependency_overrides[StorageService] = get_storage_session
     
     # AutomaticStorage requires NATS which may not be available in dev
     auto_storage = None
@@ -112,6 +125,7 @@ app.include_router(scale.router, prefix="/api/scale")
 app.include_router(scanner.router, prefix="/api/scanner")
 app.include_router(printer.router, prefix="/api/print")
 app.include_router(sizes.router, prefix="/api/sizes")
+app.include_router(storage.router, prefix="/api/storage")
 
 
 def start() -> None:

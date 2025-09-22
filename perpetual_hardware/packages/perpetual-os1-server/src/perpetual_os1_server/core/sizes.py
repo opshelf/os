@@ -4,6 +4,7 @@ from typing import Dict, Iterable, Optional, Union, Mapping
 import os
 from typing import Optional
 from perpetual_os1_server.settings import get_settings
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class ItemInformation(BaseModel):
@@ -43,7 +44,7 @@ size_database: Optional[SizeDatabase] = None
 
 
 def init_file_sizes() -> None:
-    global size_database
+    global size_database, _storage_service
     settings = get_settings()
     if os.path.isfile(settings.sizes.filename):
         with open(settings.sizes.filename) as f:
@@ -59,3 +60,35 @@ def get_size_db() -> SizeDatabase:
     if size_database:
         return size_database
     raise ValueError("Size Database was Not Initialized")
+
+
+
+
+def get_item_in_json_format(upca: str) -> Optional[ItemInformation]:
+    """Get item information in JSON format for backward compatibility."""
+    size_db = get_size_db()
+    return size_db.get_item_size(upca)
+
+
+def add_item_to_json(upca: str, data: Json, dimensions: Dimensions) -> None:
+    """Add item to JSON format for backward compatibility."""
+    try:
+        size_db = get_size_db()
+        size_db.add_item_size(upca, data, dimensions)
+        size_db.save()
+    except Exception as e:
+        import logging
+        logging.error(f"Failed to add item {upca} to JSON: {str(e)}")
+        raise RuntimeError(f"Failed to add item {upca} to JSON: {str(e)}") from e
+
+
+def remove_item_from_json(upca: str) -> None:
+    """Remove item from JSON format for backward compatibility."""
+    try:
+        size_db = get_size_db()
+        size_db.remove_item_size(upca)
+        size_db.save()
+    except Exception as e:
+        import logging
+        logging.error(f"Failed to remove item {upca} from JSON: {str(e)}")
+        raise RuntimeError(f"Failed to remove item {upca} from JSON: {str(e)}") from e
