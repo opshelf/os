@@ -12,7 +12,6 @@ async def init_robot_worker() -> None:
     global robot_worker
     logging.info("Getting Robot")
     # client = await get_modbus_client()
-    
     robot = r.Robot("/dev/ttyUSB0")
     # storage_grid = load_storage_from_file("storage.json")
     # robot.set_storage(storage_grid)

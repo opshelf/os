@@ -135,44 +135,6 @@ def rectify_from_chessboard(img_u, pattern_size=None, square_size_mm=10, px_per_
     return rectified, H, inliers, pattern_size
 
 
-
-def _rectify_from_chessboard(img_u, pattern_size=(14,7), square_size_mm=10, px_per_mm=10):
-    cols, rows = pattern_size
-    gray = cv2.cvtColor(img_u, cv2.COLOR_BGR2GRAY)
-
-    ok, corners = cv2.findChessboardCorners(
-        gray, pattern_size,
-        flags=cv2.CALIB_CB_ADAPTIVE_THRESH | cv2.CALIB_CB_NORMALIZE_IMAGE
-    )
-    if not ok:
-        raise RuntimeError("Chessboard not found")
-
-    cv2.cornerSubPix(
-        gray, corners, (5,5), (-1,-1),
-        (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 50, 1e-3)
-    )
-    pts_img = corners.reshape(-1, 2).astype(np.float32)
-
-    i_idx, j_idx = np.meshgrid(np.arange(cols), np.arange(rows))
-    pts_world = np.column_stack([i_idx.ravel(), j_idx.ravel()]).astype(np.float32)
-    pts_dst_mm = pts_world * square_size_mm
-
-    H, inliers = cv2.findHomography(pts_img, pts_dst_mm, method=cv2.RANSAC, ransacReprojThreshold=1.5)
-    if H is None:
-        raise RuntimeError("findHomography failed")
-
-    W_mm = (cols - 1) * square_size_mm
-    H_mm = (rows - 1) * square_size_mm
-    out_size = (int(round(W_mm * px_per_mm)), int(round(H_mm * px_per_mm)))
-
-    S = np.array([[px_per_mm, 0, 0],
-                  [0, px_per_mm, 0],
-                  [0, 0, 1]], dtype=np.float32)
-    H_px = S @ H  # image -> plane-in-pixels
-
-    rectified = cv2.warpPerspective(img_u, H_px, out_size, flags=cv2.INTER_LINEAR)
-    return rectified, H, inliers
-
 def rectify_with_H(img_u, H_img2mm, plane_W_mm, plane_H_mm, px_per_mm=5.0):
     S = np.array([[px_per_mm, 0, 0],
                   [0, px_per_mm, 0],
@@ -239,9 +201,9 @@ class Camera:
         self.board_W_mm = None
         self.board_H_mm = None
         self.pattern_size = (14, 7)
-        self.square_size_mm = 10.0
+        self.square_size_mm = 15.0 #15 actually -> might have accounted for small error in autocal
 
-        # self.get_correct()
+        # self.get_correct() #
 
     async def capture(self):
         cap = cv2.VideoCapture(self.url, cv2.CAP_FFMPEG)

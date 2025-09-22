@@ -160,7 +160,7 @@ class Robot:
 
         self._gs = Servo(self._bus)
         self._cam = Camera()
-        self._grid = self._state["grid"]
+        # self._grid = self._state["grid"]
         # self._scale = Scale(self._bus, 0x1) #need to update motors
         # self._curtain = Curtain(self._curtain_bus)
         self._cur_item: str = None # some kind of unique identifier
@@ -180,8 +180,6 @@ class Robot:
         await self._gs.configure()
 
         await self.home()
-
-        # await self._md.move_to_position(170) # todo make param
 
         # await self._scale.configure()
         # await self._curtain.connect()
@@ -204,8 +202,6 @@ class Robot:
         await self.place(coordinate)
 
     async def io_place(self, coord: AxisCoordinate):
-        # await self._mx.move_config()
-        # await self._my.move_config()
         await self.pick(coord)
 
         await self._mx.move_to_position_no_wait(self.get_param("PICKUP_POSITION_L")[0]) 
@@ -235,8 +231,6 @@ class Robot:
     async def io_pick(self, coord):
 
         await self.pick(coord)
-        # await self._mx.move_config()
-        # await self._my.move_config()
         await self._mx.move_to_position_no_wait(self.get_param("PICKUP_POSITION_H")[0]) 
         await self._my.move_to_position_no_wait(self.get_param("PICKUP_POSITION_H")[1])
         await self._md.move_to_position_no_wait(170)
@@ -244,8 +238,6 @@ class Robot:
 
         # await self._md.move_to_position(170)
 
-        # await self._ms.move_config()
-        # await self._mg.move_config()
         await self._ms.move_to_position_no_wait(self.get_param("SLIDE_EXTENSION")) # 50 max
         await self._mg.move_to_position_no_wait(self.get_param("GRIPPER_EXTENSION_PLACE")+8)
         await self.tool_wait()
@@ -268,14 +260,10 @@ class Robot:
 
     async def pick(self, coordinate: AxisCoordinate) -> None:
         await self._gs.safe_open()
-        # await self._mx.move_config()
-        # await self._my.move_config()
         await self._mx.move_to_position_no_wait(coordinate.x)
         await self._my.move_to_position_no_wait(coordinate.y)
         await self.gantry_wait()
         #empty move
-        # await self._ms.move_config()
-        # await self._mg.move_config()
         await self._ms.move_to_position_no_wait(self.get_param("SLIDE_EXTENSION")) # 50 max
         await self._mg.move_to_position_no_wait(self.get_param("GRIPPER_EXTENSION_PICK"))
         await self.tool_wait()
@@ -283,19 +271,6 @@ class Robot:
         await self._gs.open()
         await self._mg.retract()
         await self._ms.retract()
-
-        # await self._ms.move_to_position(self.get_param("SLIDE_EXTENSION")) # 50 max
-        # await self._mg.move_to_position(self.get_param("GRIPPER_EXTENSION_PLACE"))
-        # await self._gs.close()
-
-        # await self._mg.retract()
-        # await self._ms.retract()
-
-        # await self._ms.move_config()
-        # await self._mg.move_config()
-        # await self._mg.move_to_position_no_wait(0)
-        # await self._ms.move_to_position_no_wait(0)
-        # await self.tool_wait()
 
     async def place(self, coordinate: AxisCoordinate):
         await self._mx.move_to_position_no_wait(coordinate.x)
@@ -305,67 +280,73 @@ class Robot:
         await self._mg.move_to_position(self.get_param("GRIPPER_EXTENSION_PLACE"))
         await self._gs.close()
 
-        # await self._ms.move_config()
-        # await self._mg.move_config()
-        await self._mg.move_to_position_no_wait(0)
-        await self._ms.move_to_position_no_wait(0)
-        await self.tool_wait()
-
-        # await self._mg.retract()
-        # await self._ms.retract()
+        await self._mg.retract()
+        await self._ms.retract()
 
     async def test(self) -> None:
-        # bays = self._state.get("grid")
-        # (244.488, 39.888), (409.72, 39.888), (572.896, 39.888), (736.6, 39.888), (903.536, 39.888),
-        # bays = [ (288.08, 383.88), (381.32, 383.88), (490.08, 383.88), (594.744, 383.88), (698.8, 383.88), (804.184, 383.88), (909.424, 383.88), (288.904, 590.72), (380.984, 590.72), (490.792, 590.72), (593.464, 590.72), (697.264, 590.72), (802.912, 590.72), (909.752, 590.72), (284.416, 789.74), (385.016, 789.74), (478.712, 789.74), (566.656, 789.74), (657.624, 789.74), (745.344, 789.74), (837.664, 789.74), (927.456, 789.74), (284.872, 943.072), (385.464, 943.072), (476.704, 943.072), (566.624, 943.072), (655.792, 943.072), (747.936, 943.072), (836.976, 943.072), (927.272, 943.072)]
-        # bays = [(246.616, 12.832), (412.68, 12.832), (576.016, 12.832), (739.832, 12.832), (905.984, 12.832), (280.704, 350.248), (387.0, 350.248), (492.096, 350.248), (597.736, 350.248), (701.968, 350.248), (807.496, 350.248), (912.48, 350.248), (281.768, 553.712), (387.056, 553.712), (492.072, 553.712), (596.864, 553.712), (700.328, 553.712), (805.792, 553.712), (911.84, 553.712), (289.544, 753.96), (379.56, 753.96), (470.0, 753.96), (559.84, 753.96), (649.896, 753.96), (739.28, 753.96), (829.536, 753.96), (919.888, 753.96), (289.808, 901.22), (380.152, 901.22), (469.696, 901.22), (559.624, 901.22), (649.208, 901.22), (739.832, 901.22), (830.072, 901.22), (920.072, 901.22)]
-        # bays = [(283.7, 382)]
-        # bays = [(288.916, 382.968)]
-        bays = [(288.916, 382.968)]
-                # , (395.252, 382.968), (500.932, 382.968), (606.228, 382.968), (711.332, 382.968), (816.556, 382.968), (922.34, 382.968), (289.244, 583.52), (395.564, 583.52), (501.34, 583.52), (606.068, 583.52), (710.14, 583.52), (814.692, 583.52), (920.156, 583.52), (389.564, 783.568), (480.252, 783.568), (570.404, 783.568), (660.252, 783.568), (749.172, 783.568), (840.116, 783.568), (930.652, 783.568), (390.308, 933.828), (479.588, 933.828), (569.964, 933.828), (659.644, 933.828), (750.292, 933.828), (929.476, 933.828)]
-        # bays = [(283.724, 382.408), (386.988, 382.408), (491.444, 382.408), (596.14, 382.408), (707.044, 382.408), (809.372, 382.408), (913.3, 382.408)]
-        for cell in bays:
-            # coord = bays.get(cell).get("coord")
-            bay = AxisCoordinate(round(cell[0]+2.5), round(cell[1])+2) #0.5, 3
-            await self._move(bay)
+              # bay = AxisCoordinate(round(bays[0]+2.5), round(bays[1])+2) #0.5, 3
 
-            cap = cv2.VideoCapture(self._cam.url, cv2.CAP_FFMPEG)
-            if not cap.isOpened():
-                raise RuntimeError("bad cam")
-            
-            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
-            cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
+        #+4 x +15 y
+        await self._mr.move_to_position(0.5)
 
-            t0 = time.time()
-            while time.time() - t0 < 4.25: # idr interval
-                cap.grab()
-                time.sleep(0.001)
-
-            for _ in range(5):
-                cap.grab()
-
-            ok, frame = cap.read()
-            if not ok or frame is None:
-                # reconnect on failure
-                cap.release()
-                cap = cv2.VideoCapture(self._cam.url, cv2.CAP_FFMPEG) 
-                if not cap.isOpened():
-                    break
-                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-                cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
-                cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
-            
-            #todo dedup
-            
-            # frame = cv2.resize(frame, None, fx=1.25, fy=1, interpolation=cv2.INTER_LINEAR)
-            cv2.imwrite("beb.png", frame)
-            # await self.pick(bay)
+        s1 = [(910.44, 21.048), (745.44, 21.048), (580.44, 21.048), (415.44000000000005, 21.048), (250.44000000000005, 21.048), (85.44000000000005, 21.048)]
+        s2 = [(912.344, 372.04), (807.344, 372.04), (702.344, 372.04), (597.344, 372.04), (492.34400000000005, 372.04), (387.34400000000005, 372.04), (282.34400000000005, 372.04)] 
+        s3 = [(913.008, 575.44), (808.008, 575.44), (703.008, 575.44), (598.008, 575.44), (493.00800000000004, 575.44), (388.00800000000004, 575.44), (283.00800000000004, 575.44)] 
+        s4 = [(921.272, 776.84), (831.272, 776.84), (741.272, 776.84), (651.272, 776.84), (561.272, 776.84), (471.27200000000005, 776.84), (381.27200000000005, 776.84), (291.27200000000005, 776.84)]
+        s5 = [(921.68, 927.24), (831.68, 927.24), (741.68, 927.24), (651.68, 927.24), (561.68, 927.24), (471.67999999999995, 927.24), (381.67999999999995, 927.24), (291.67999999999995, 927.24)]
         
+        sl1 = np.linspace(17, 21.5, 6, retstep=False)
+        sl2 = np.linspace(10, 12.75, 7, retstep=False)
+        sl3 = np.linspace(11.5, 14.25, 7, retstep=False)
+        sl4 = np.linspace(10, 12.25, 8, retstep=False)
+        sl5 = np.linspace(10, 13.5, 8, retstep=False)
 
-            # await self._md.move_to_position(0)
-            # await self._md.home()
-            # await self.place(bay)
+        p1 = [(x + 4, y + dy) for (x, y), dy in zip(s1, sl1)]
+        p2 = [(x + 4, y + dy) for (x, y), dy in zip(s2, sl2)]
+        p3 = [(x + 4, y + dy) for (x, y), dy in zip(s3, sl3)]
+        p4 = [(x + 4, y + dy) for (x, y), dy in zip(s4, sl4)]
+        p5 = [(x + 4, y + dy) for (x, y), dy in zip(s5, sl5)]
+
+        # await self._move(coordinate)
+        
+        # s1, 17 -> 21.5
+        # s2, 10 - > 12.75
+        # s3, 11.5 -> 14.25
+        # s4, 10 -> 12.25
+        # s5, 10 -> 13.5
+
+        # 287.00800000000004, 589.44
+
+        
+        for i in range(0, 30):
+            print(f"Cycle {i}")
+            await self._move(AxisCoordinate(self.get_param("SCAN_POSITION")[0], 
+                                            self.get_param("SCAN_POSITION")[1]))
+            for tray in p1:
+                # print(AxisCoordinate(round(tray[0], 4), round(tray[1], 4)))
+                await self.pick(AxisCoordinate(round(tray[0], 4), round(tray[1], 4)))
+                await self.place(AxisCoordinate(round(tray[0], 4), round(tray[1], 4)))
+            
+            for tray in p2:
+                # print(AxisCoordinate(round(tray[0], 4), round(tray[1], 4)))
+                await self.pick(AxisCoordinate(round(tray[0], 4), round(tray[1], 4)))
+                await self.place(AxisCoordinate(round(tray[0], 4), round(tray[1], 4)))
+
+            for tray in p3:
+                # print(AxisCoordinate(round(tray[0], 4), round(tray[1], 4)))
+                await self.pick(AxisCoordinate(round(tray[0], 4), round(tray[1], 4)))
+                await self.place(AxisCoordinate(round(tray[0], 4), round(tray[1], 4)))
+            
+            for tray in p4:
+                # print(AxisCoordinate(round(tray[0], 4), round(tray[1], 4)))
+                await self.pick(AxisCoordinate(round(tray[0], 4), round(tray[1], 4)))
+                await self.place(AxisCoordinate(round(tray[0], 4), round(tray[1], 4)))
+
+            for tray in p5:
+                # print(AxisCoordinate(round(tray[0], 4), round(tray[1], 4)))
+                await self.pick(AxisCoordinate(round(tray[0], 4), round(tray[1], 4)))
+                await self.place(AxisCoordinate(round(tray[0], 4), round(tray[1], 4)))
+
 
     async def get_shelves(self):
         shelves = []
@@ -381,7 +362,7 @@ class Robot:
             frame = self._cam.correct(frame)
             #todo dedup
             # frame = cv2.resize(frame, None, fx=1.25, fy=1, interpolation=cv2.INTER_LINEAR)
-            cv2.imwrite("beb.png", frame)
+            # cv2.imwrite("beb.png", frame)
             rect = self._cam.detect_white_squares(frame)
             # print(rect)
             if rect is not None:
@@ -390,7 +371,7 @@ class Robot:
                     await self._my.jog(dy * self.get_param("PYMM")) # 30 (figure out bottom shelf)
                     frame = await self._cam.capture()
                     frame = self._cam.correct(frame)
-                    cv2.imwrite("beb2.png", frame)
+                    # cv2.imwrite("beb2.png", frame)
                     if rect is not None:
                         _, dy = self._cam.get_center(frame, rect)
                         if dy is not None:
@@ -453,165 +434,27 @@ class Robot:
                             anchors.append(xw)
                             print(xw)                          
         return anchors
-
-
-    # TODO move video stream stuff to camera (to hide)
-    async def _update_grid(self, shelves: List[float]):
-        await self._move(AxisCoordinate(self.get_param("SCAN_POSITION")[0], 1))
-
-        bays = []
-
-        for yw in shelves:
-            cap = cv2.VideoCapture(self._cam.url, cv2.CAP_FFMPEG)
-            if not cap.isOpened():
-                raise RuntimeError("bad cam")
-            
-            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
-            cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
-            await self._my.move_to_position(yw)
-            t0 = time.time()
-            while time.time() - t0 < 4.25: # idr interval
-                cap.grab()
-                # tiny sleep keeps CPU sane and lets decoder progress
-                time.sleep(0.001)
-
-            for _ in range(5):
-                cap.grab()
-
-            ok, frame = cap.read()
-            
-            if not ok:
-                continue
-
-            if frame is None:
-                print("bad frame")
-                continue
-            
-            height, width = frame.shape[:2]
-            third = width // 3
-
-            frame = frame[:, third:2 * third]
-
-            # frame = cv2.resize(frame, None, fx=1.25, fy=1, interpolation=cv2.INTER_LINEAR)
-            rect = self._cam.detect_white_squares(frame)
-            if rect is not None:
-                dx, dy = self._cam.get_center(frame, rect)
-                # only track increasing boxes
-                if dx is not None and dy is not None :
-                    # await self._mx.jog(dx * self.get_param("PXMM"))
-                    xw = round(await self._mx.get_position(), 4) + dx*self.get_param("PXMM")
-                    y_f = round(await self._my.get_position(), 4) + dy*self.get_param("PYMM")
-                    print(f"xw actual: {xw}, yw actual: {y_f}")
-                    bays.append((xw, yw)) # update a grid at the end using the list
-
-            # end_x = await self._mx.get_position()
-            # lim = rs.get_motor_params(self._state, "x_axis").get("lim")
-            # jog_x = float(self.get_param("JOG_X"))
-            # if end_x + jog_x > lim:
-            #     await self._mx.move_to_position(self.get_param("SCAN_POSITION")[0])
-            #     break
-            # await self._mx.jog(self.get_param("JOG_X"))
-
-            cap.release()
-
-        return bays
+    
 
     async def _move(self, coordinate: AxisCoordinate) -> None:
-        # await self._mx.move_config()
-        # await self._my.move_config()
         await self._mx.move_to_position_no_wait(coordinate.x) 
         await self._my.move_to_position_no_wait(coordinate.y)
         await self.gantry_wait()
 
     async def move(self, coordinate: AxisCoordinate) -> None:
-        # bay = AxisCoordinate(round(bays[0]+2.5), round(bays[1])+2) #0.5, 3
         await self._mr.move_to_position(0.5)
-        shelves = [21.048, 372.04 ,575.44 ,776.84, 927.24]
-        # # await self.auto_cal()
-        anchors = [910.44, 912.344, 913.008, 921.272, 921.68]
-        # # await self.update_grid(shelves)
-        bays = [AxisCoordinate(anchors[0]+4, shelves[0]+15),AxisCoordinate(anchors[1]+4, shelves[1]+15),AxisCoordinate(anchors[2]+4, shelves[2]+15), AxisCoordinate(anchors[3]+4, shelves[3]+15), AxisCoordinate(anchors[4]+4, shelves[4]+15)]
-        # await self._move(bays[0])
-        # time.sleep(5)
-        # await self._move(bays[1])
-        # time.sleep(5)
-        # await self._move(bays[2])
-        # time.sleep(5)
-        # await self._move(bays[3])
-        # time.sleep(5)
-        # await self._move(bays[4])
-        # time.sleep(5)
-
-        for bay in bays:
-            await self.pick(bay)
-            await self.place(bay)
-
-        # # 252.5, 42.5
-        # await self._move(AxisCoordinate(coordinate.x, coordinate.y))
-        # beb = await self._cam.capture()
-        # beb = self._cam.correct(beb)
-        # cv2.imwrite("test.png", beb)
-        # bebst = self._cam.detect_white_squares(beb)
-        # cx, cy = self._cam.get_center(beb, bebst)
-        # print(cx*0.1)
-        # print(cy*0.1)
-        
-        # if beb is not None:
-        #     print("beb")
-        #     self._cam.correct(beb)
-        # cv2.imwrite("1.jpg", beb)
-        # await self._move(AxisCoordinate(20, 481))
-        # beb = await self._cam.capture()
-        # cv2.imwrite("2.jpg", beb)
-        # await self._move(AxisCoordinate(20, 491))
-        # beb = await self._cam.capture()
-        # cv2.imwrite("3.jpg", beb)
-        # await self._move(AxisCoordinate(20, 471))
-        # beb = await self._cam.capture()
-        # cv2.imwrite("4.jpg", beb)
-        # await self._move(AxisCoordinate(10, 471))
-        # beb = await self._cam.capture()
-        # cv2.imwrite("5.jpg", beb)
-        # await self._move(AxisCoordinate(30, 471))
-        # beb = await self._cam.capture()
-        # cv2.imwrite("6.jpg", beb)
-        # await self._move(AxisCoordinate(10, 481))
-        # beb = await self._cam.capture()
-        # cv2.imwrite("7.jpg", beb)
-        # await self._move(AxisCoordinate(30, 481))
-        # beb = await self._cam.capture()
-        # cv2.imwrite("8.jpg", beb)
-        # await self._move(AxisCoordinate(10, 491))
-        # beb = await self._cam.capture()
-        # cv2.imwrite("9.jpg", beb)
-        # await self._move(AxisCoordinate(30, 491))
-        # beb = await self._cam.capture()
-        # cv2.imwrite("10.jpg", beb)
-
-        
-        
+        await self.test()
 
     async def auto_cal(self):
         shelves = await self.get_shelves()
-        print(shelves)
-        # shelves_n = [item - 30 for item in shelves]
         anchors = await self.update_grid(shelves)
-        print(anchors)
-        # rs.build_grid_from_coords(self._state, bays, key_prefix="S", start_index=1, zero_pad=2)
-        # print(self._state)
+        # todo eventually make this auto generate the slope of each shelf by having two scan positions in x
 
     async def pick_wait(self):
         while True:
             mx_f = await self._mx.wait_for_move(timeout=10)
             my_f = await self._my.wait_for_move(timeout=10)
             md_f = await self._md.wait_for_move(timeout=10)
-
-            # if mx_f == MotorStatus.ERROR:
-            #     await self._mx.home()
-
-            # if my_f == MotorStatus.ERROR:
-            #     await self._my.home_y()
 
             if mx_f == MotorStatus.STOPPED and my_f == MotorStatus.STOPPED and md_f == MotorStatus.STOPPED:
                 return
@@ -623,12 +466,6 @@ class Robot:
             mx_f = await self._mx.wait_for_move(timeout=5)
             my_f = await self._my.wait_for_move(timeout=5)
 
-            # if mx_f == MotorStatus.ERROR:
-            #     await self._mx.home()
-
-            # if my_f == MotorStatus.ERROR:
-            #     await self._my.home_y()
-
             if mx_f == MotorStatus.STOPPED and my_f == MotorStatus.STOPPED:
                 return
 
@@ -636,12 +473,6 @@ class Robot:
         while True:
             mg_f = await self._mg.wait_for_move(timeout=2.5)
             ms_f = await self._ms.wait_for_move(timeout=2.5)
-
-            # if mg_f == MotorStatus.ERROR:
-            #     await self._mg.home()
-
-            # if ms_f == MotorStatus.ERROR:
-            #     await self._ms.home()
 
             if mg_f == MotorStatus.STOPPED and ms_f == MotorStatus.STOPPED:
                 return
