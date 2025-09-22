@@ -13,7 +13,7 @@ from perpetual_os1_server.database.session import get_db
 from pydantic import BaseModel
 from .auth_deps import get_current_user, require_permissions
 
-router = APIRouter()
+router = APIRouter(tags=["sizes"])
 
 # Apply authorization to specific endpoints instead of globally
 
