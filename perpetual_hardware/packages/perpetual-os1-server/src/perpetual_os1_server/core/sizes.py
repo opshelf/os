@@ -56,6 +56,17 @@ def init_file_sizes() -> None:
             size_database = default_size_db
 
 
+def get_storage_service():
+    """Mock storage service for backward compatibility."""
+    # This is a temporary mock to avoid circular imports
+    # In production, this should be properly initialized
+    class MockStorageService:
+        async def get_all_items(self):
+            # Return empty list for now
+            return []
+    return MockStorageService()
+
+
 def get_size_db() -> SizeDatabase:
     if size_database:
         return size_database
