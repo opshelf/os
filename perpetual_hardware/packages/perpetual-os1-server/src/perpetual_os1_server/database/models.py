@@ -3,6 +3,7 @@ from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, JSON, F
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 from .base import Base
+from pydantic import ConfigDict
 
 class Role(Base):
 	"""Role model for RBAC."""
@@ -64,6 +65,8 @@ class Item(Base):
     """Item model for storing inventory items."""
     __tablename__ = "items"
 
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     id = Column(Integer, primary_key=True)
     upca = Column(String(255), unique=True, nullable=False, index=True)
     name = Column(String(255), nullable=False)
@@ -79,6 +82,8 @@ class Item(Base):
 class ItemLocation(Base):
     """ItemLocation model for tracking where items are stored."""
     __tablename__ = "item_locations"
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     id = Column(Integer, primary_key=True)
     item_id = Column(Integer, ForeignKey("items.id"), nullable=False)
@@ -103,6 +108,8 @@ class ItemLocation(Base):
 class StorageCell(Base):
     """StorageCell model for defining available storage locations."""
     __tablename__ = "storage_cells"
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     id = Column(Integer, primary_key=True)
     shelf_idx = Column(Integer, nullable=False)

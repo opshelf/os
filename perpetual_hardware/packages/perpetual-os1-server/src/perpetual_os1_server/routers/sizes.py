@@ -5,7 +5,6 @@ from perpetual_os1_server.core.sizes import (
     ItemInformation,
     get_size_db,
     SizeDatabase,
-    get_storage_service,
     add_item_to_json,
     remove_item_from_json,
     get_item_in_json_format
@@ -41,7 +40,7 @@ async def get_size_data(
             data={
                 "name": item.name,
                 "weight": float(item.weight) if item.weight else 0,
-                "metadata": item.metadata or {},
+                "metadata": item.item_metadata or {},
                 "shelf_idx": None,
                 "cell_idx": None
             }
@@ -96,7 +95,7 @@ async def add_size_item(
                 data={
                     "name": item.name,
                     "weight": float(item.weight) if item.weight else 0,
-                    "metadata": item.metadata or {},
+                    "metadata": item.item_metadata or {},
                     "shelf_idx": None,
                     "cell_idx": None
                 }
@@ -158,7 +157,7 @@ async def add_item(
                 data={
                     "name": item.name,
                     "weight": float(item.weight) if item.weight else 0,
-                    "metadata": item.metadata or {},
+                    "metadata": item.item_metadata or {},
                     "shelf_idx": None,
                     "cell_idx": None
                 }
@@ -213,7 +212,7 @@ async def remove_item(
                 data={
                     "name": item.name,
                     "weight": float(item.weight) if item.weight else 0,
-                    "metadata": item.metadata or {},
+                    "metadata": item.item_metadata or {},
                     "shelf_idx": None,
                     "cell_idx": None
                 }
