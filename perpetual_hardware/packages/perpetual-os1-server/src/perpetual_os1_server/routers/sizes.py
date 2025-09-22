@@ -14,10 +14,12 @@ from perpetual_os1_server.database.session import get_db
 from pydantic import BaseModel
 from .auth_deps import get_current_user, require_permissions
 
-router = APIRouter(dependencies=[Depends(get_current_user)])
+router = APIRouter()
+
+# Apply authorization to specific endpoints instead of globally
 
 
-@router.get("/")
+@router.get("/", dependencies=[Depends(get_current_user), Depends(require_permissions("storage:read"))])
 async def get_size_data(
     session: AsyncSession = Depends(get_db),
     use_json: bool = False
@@ -57,7 +59,7 @@ class UpdateSizeRequest(BaseModel):
     item: ItemInformation
 
 
-@router.put("/", dependencies=[Depends(require_permissions("sizes:write"))])
+@router.put("/", dependencies=[Depends(get_current_user), Depends(require_permissions("storage:write"))])
 async def add_size_item(
     request: UpdateSizeRequest,
     session: AsyncSession = Depends(get_db),
@@ -106,12 +108,18 @@ async def add_size_item(
         return legacy_db
 
     except Exception as e:
+        import logging
+        logging.error(f"Database operation failed for item {request.upca}: {str(e)}")
         # Fallback to JSON if database fails
-        add_item_to_json(request.upca, request.item.data, request.item.size)
-        return get_size_db()
+        try:
+            add_item_to_json(request.upca, request.item.data, request.item.size)
+            return get_size_db()
+        except Exception as json_e:
+            logging.error(f"JSON fallback also failed for item {request.upca}: {str(json_e)}")
+            raise RuntimeError(f"Both database and JSON operations failed for item {request.upca}") from json_e
 
 
-@router.post("/", dependencies=[Depends(require_permissions("sizes:write"))])
+@router.post("/", dependencies=[Depends(get_current_user), Depends(require_permissions("storage:write"))])
 async def add_item(
     item: ItemInformation,
     session: AsyncSession = Depends(get_db),
@@ -162,12 +170,18 @@ async def add_item(
         return legacy_db
 
     except Exception as e:
+        import logging
+        logging.error(f"Database operation failed for new item: {str(e)}")
         # Fallback to JSON if database fails
-        add_item_to_json(upca, item.data, item.size)
-        return get_size_db()
+        try:
+            add_item_to_json(upca, item.data, item.size)
+            return get_size_db()
+        except Exception as json_e:
+            logging.error(f"JSON fallback also failed for new item: {str(json_e)}")
+            raise RuntimeError(f"Both database and JSON operations failed for new item") from json_e
 
 
-@router.delete("/{upca}", dependencies=[Depends(require_permissions("sizes:write"))])
+@router.delete("/{upca}", dependencies=[Depends(get_current_user), Depends(require_permissions("storage:delete"))])
 async def remove_item(
     upca: str,
     session: AsyncSession = Depends(get_db),
@@ -211,6 +225,12 @@ async def remove_item(
         return legacy_db
 
     except Exception as e:
+        import logging
+        logging.error(f"Database operation failed to remove item {upca}: {str(e)}")
         # Fallback to JSON if database fails
-        remove_item_from_json(upca)
-        return get_size_db()
+        try:
+            remove_item_from_json(upca)
+            return get_size_db()
+        except Exception as json_e:
+            logging.error(f"JSON fallback also failed to remove item {upca}: {str(json_e)}")
+            raise RuntimeError(f"Both database and JSON operations failed to remove item {upca}") from json_e
