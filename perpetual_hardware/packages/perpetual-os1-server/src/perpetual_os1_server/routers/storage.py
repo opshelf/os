@@ -107,6 +107,7 @@ class PaginatedItemsResponse(BaseModel):
 
 # Item endpoints
 @router.get("/items")
+@require_permissions("storage:read")
 @monitor_performance
 async def get_items(
     skip: int = 0,
