@@ -2,7 +2,7 @@
 import asyncio
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 from weakref import WeakKeyDictionary
 
 from sqlalchemy import delete, func, select, update
@@ -128,12 +128,13 @@ class StorageService:
                     self.session.add(item)
                     await self.session.flush()
 
-                    loc_data = item_data['location_data']
+                    loc_data = cast(dict[str, Any], item_data['location_data'])
                     if (loc_data['shelf_idx'] is not None and
                         loc_data['cell_idx'] is not None and
-                        loc_data['shelf_idx'] >= 0 and loc_data['cell_idx'] >= 0):
+                        isinstance(loc_data['shelf_idx'], int) and loc_data['shelf_idx'] >= 0 and
+                        isinstance(loc_data['cell_idx'], int) and loc_data['cell_idx'] >= 0):
 
-                        LocationValidator.validate_location(loc_data['shelf_idx'], loc_data['cell_idx'])
+                        LocationValidator.validate_location(int(loc_data['shelf_idx']), int(loc_data['cell_idx']))
 
                         location = ItemLocation(
                             item_id=item.id,

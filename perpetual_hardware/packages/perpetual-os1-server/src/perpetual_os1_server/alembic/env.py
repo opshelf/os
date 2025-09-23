@@ -63,7 +63,7 @@ def run_migrations_online() -> None:
 
     """
     configuration = config.get_section(config.config_ini_section, {})
-    configuration["sqlalchemy.url"] = config.get_main_option("sqlalchemy.url")
+    configuration["sqlalchemy.url"] = config.get_main_option("sqlalchemy.url") or ""
     
     connect_args = {}
     if configuration["sqlalchemy.url"].startswith("sqlite"):

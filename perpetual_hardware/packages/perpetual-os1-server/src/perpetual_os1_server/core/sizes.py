@@ -6,7 +6,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Dict, Mapping, Optional
+from typing import Dict, Mapping, Optional, Any, cast
 
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,7 +17,7 @@ from perpetual_os1_server.settings import get_settings
 
 class SerializableDimensions(Dimensions):
     def __getitem__(self, item: str) -> float:
-        return getattr(self, item)
+        return float(getattr(self, item))
 
 
 def _coerce_dimensions(dimensions: Dimensions | Mapping[str, float]) -> SerializableDimensions:
@@ -155,7 +155,7 @@ def init_file_sizes(force: bool = False) -> None:
     _size_db_path = filename
 
 
-def get_storage_service(session: Optional[AsyncSession] = None):
+def get_storage_service(session: Optional[AsyncSession] = None) -> StorageService:
     """Get real storage service for database operations."""
     # Import locally to avoid circular dependency at module load.
     from perpetual_os1_server.core.storage import StorageService
@@ -254,10 +254,10 @@ async def migrate_if_needed(session: AsyncSession) -> None:
                 try:
                     await storage_service.create_item(
                         upca=upca,
-                        name=item_info.data.get("name", "Unknown"),
+                        name=str(item_info.data.get("name", "Unknown")),
                         dimensions=item_info.size.model_dump(),
                         weight=item_info.data.get("weight"),
-                        metadata=item_info.data.get("metadata", {})
+                        metadata=cast(dict[str, Any], item_info.data.get("metadata", {}))
                     )
                     migrated_count += 1
                 except Exception as e:
