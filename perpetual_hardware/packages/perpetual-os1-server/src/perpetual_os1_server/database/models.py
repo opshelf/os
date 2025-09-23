@@ -1,5 +1,5 @@
 """Database models for authentication and audit system."""
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, JSON, ForeignKey, func, Float, Numeric, Index
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, JSON, ForeignKey, func, Index
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 from .base import Base
@@ -71,7 +71,7 @@ class Item(Base):
     upca = Column(String(255), unique=True, nullable=False, index=True)
     name = Column(String(255), nullable=False)
     dimensions = Column(JSON, nullable=False)
-    weight = Column(Numeric(10, 3), nullable=True)
+    weight = Column(String(50), nullable=True)
     item_metadata = Column(JSON, nullable=True, default=dict)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
