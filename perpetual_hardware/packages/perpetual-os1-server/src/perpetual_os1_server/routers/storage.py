@@ -150,7 +150,7 @@ async def get_item(
         name=item.name,
         dimensions=item.dimensions,
         weight=float(item.weight) if item.weight else None,
-        metadata=item.metadata,
+        metadata=item.item_metadata,
         locations=locations,
         created_at=item.created_at.isoformat(),
         updated_at=item.updated_at.isoformat()
@@ -183,7 +183,7 @@ async def create_item(
             name=db_item.name,
             dimensions=db_item.dimensions,
             weight=float(db_item.weight) if db_item.weight else None,
-            metadata=db_item.metadata,
+            metadata=db_item.item_metadata,
             locations=locations,
             created_at=db_item.created_at.isoformat(),
             updated_at=db_item.updated_at.isoformat()
@@ -224,7 +224,7 @@ async def update_item(
         name=updated_item.name,
         dimensions=updated_item.dimensions,
         weight=float(updated_item.weight) if updated_item.weight else None,
-        metadata=updated_item.metadata,
+        metadata=updated_item.item_metadata,
         locations=locations,
         created_at=updated_item.created_at.isoformat(),
         updated_at=updated_item.updated_at.isoformat()
