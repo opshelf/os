@@ -1,6 +1,6 @@
 """Authentication core functionality."""
 from datetime import datetime, timedelta, timezone
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, cast
 import secrets
 
 from argon2 import PasswordHasher
@@ -86,7 +86,7 @@ class AuthService:
 				self.secret_key,
 				algorithms=[self.algorithm]
 			)
-			return payload
+			return cast(Dict[str, Any], payload)
 		except InvalidTokenError:
 			return None
 	

@@ -9,7 +9,7 @@ from perpetual_os1_server.settings import get_settings
 from .auth_deps import get_current_user
 
 
-router = APIRouter(dependencies=[Depends(get_current_user)])
+router = APIRouter(tags=["scale"], dependencies=[Depends(get_current_user)])
 
 
 async def nats_consumer(stop_event: asyncio.Event) -> AsyncGenerator[str, None]:

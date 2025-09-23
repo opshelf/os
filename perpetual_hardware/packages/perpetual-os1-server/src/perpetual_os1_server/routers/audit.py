@@ -1,6 +1,6 @@
 """Audit log query API endpoints."""
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Any, cast
 
 from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -107,24 +107,24 @@ async def list_audit_logs(
 	return AuditLogListResponse(
 		logs=[
 			AuditLogResponse(
-				id=log.id,
-				user_id=log.user_id,
+				id=int(log.id),
+				user_id=int(log.user_id) if log.user_id is not None else None,
 				user_email=log.user.email if log.user else None,
 				timestamp=log.timestamp.isoformat(),
-				method=log.method,
-				endpoint=log.endpoint,
-				request_body=log.request_body,
-				response_status=log.response_status,
-				response_body=log.response_body,
-				nats_commands=log.nats_commands,
-				error_message=log.error_message,
-				ip_address=log.ip_address,
-				user_agent=log.user_agent,
-				request_duration_ms=log.request_duration_ms
+				method=str(log.method),
+				endpoint=str(log.endpoint),
+				request_body=cast(dict[str, Any], log.request_body),
+				response_status=int(log.response_status),
+				response_body=cast(dict[str, Any], log.response_body),
+				nats_commands=cast(list[dict[str, Any]], log.nats_commands),
+				error_message=str(log.error_message) if log.error_message is not None else None,
+				ip_address=str(log.ip_address) if log.ip_address is not None else None,
+				user_agent=str(log.user_agent) if log.user_agent is not None else None,
+				request_duration_ms=int(log.request_duration_ms) if log.request_duration_ms is not None else None
 			)
 			for log in logs
 		],
-		total=total,
+		total=int(total or 0),
 		offset=offset,
 		limit=limit
 	)
@@ -150,20 +150,20 @@ async def get_audit_log(
 		)
 	
 	return AuditLogResponse(
-		id=log.id,
-		user_id=log.user_id,
+		id=int(log.id),
+		user_id=int(log.user_id) if log.user_id is not None else None,
 		user_email=log.user.email if log.user else None,
 		timestamp=log.timestamp.isoformat(),
-		method=log.method,
-		endpoint=log.endpoint,
-		request_body=log.request_body,
-		response_status=log.response_status,
-		response_body=log.response_body,
-		nats_commands=log.nats_commands,
-		error_message=log.error_message,
-		ip_address=log.ip_address,
-		user_agent=log.user_agent,
-		request_duration_ms=log.request_duration_ms
+		method=str(log.method),
+		endpoint=str(log.endpoint),
+		request_body=cast(dict[str, Any], log.request_body),
+		response_status=int(log.response_status),
+		response_body=cast(dict[str, Any], log.response_body),
+		nats_commands=cast(list[dict[str, Any]], log.nats_commands),
+		error_message=str(log.error_message) if log.error_message is not None else None,
+		ip_address=str(log.ip_address) if log.ip_address is not None else None,
+		user_agent=str(log.user_agent) if log.user_agent is not None else None,
+		request_duration_ms=int(log.request_duration_ms) if log.request_duration_ms is not None else None
 	)
 
 
@@ -173,7 +173,7 @@ async def verify_audit_chain(
 	to_seq: Optional[int] = Query(None, ge=1, description="End seq_no (inclusive)"),
 	db: AsyncSession = Depends(get_db),
 	current_user: User = Depends(get_current_user),
-):
+) -> AuditVerifyResponse:
 	"""Verify linkage, hashes, and HMACs over protected audit entries.
 
 	Existing queries remain unchanged; this is an additive, lightweight check.
@@ -239,7 +239,7 @@ async def verify_audit_chain(
 			break
 
 		# Check HMAC over binding
-		binding = build_binding_message(log.seq_no, log.prev_hash, log.entry_hash)
+		binding = build_binding_message(int(log.seq_no) if log.seq_no is not None else 0, str(log.prev_hash), str(log.entry_hash))
 		expected_hmac = hmac_sha256_hex(binding)
 		if log.hmac != expected_hmac:
 			first_error_seq = log.seq_no
