@@ -4,13 +4,25 @@ FastAPI-based backend server for the Perpetual OS1 robotic automation system.
 
 ## Quick Start
 
-### Development
+### Initial Setup
 ```bash
 # Install dependencies
 uv pip install -e .
 
-# Start server with auto-reload
-ENV=dev uv run start
+# Create data directory for database
+mkdir -p data/
+
+# Run database migrations
+uv run alembic upgrade head
+
+# Seed initial authentication data (development mode)
+ENV=dev uv run python scripts/seed_auth.py
+```
+
+### Development
+```bash
+# Start server with auto-reload and auto-seeding
+ENV=dev RUN_SEED_SCRIPT=true uv run start
 
 # Or manually with uvicorn
 ENV=dev uv run uvicorn perpetual_os1_server.main:app --reload --host 0.0.0.0 --port 8000
@@ -23,6 +35,30 @@ uv run start
 
 # Or with specific host/port
 uv run uvicorn perpetual_os1_server.main:app --host 0.0.0.0 --port 8000
+```
+
+### Testing
+```bash
+# Run all tests
+uv run pytest tests/
+
+# Run specific test file
+uv run pytest tests/test_auth.py -v
+
+# Run tests with coverage
+uv run pytest tests/ --cov=src/perpetual_os1_server --cov-report=term-missing
+```
+
+### Code Quality
+```bash
+# Run linting
+uv run ruff check .
+
+# Run type checking
+uv run mypy .
+
+# Format code
+uv run ruff format .
 ```
 
 ## Architecture
