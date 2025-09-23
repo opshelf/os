@@ -12,6 +12,13 @@ import cv2
 import asyncio
 import perpetual_os1.robot_state as rs
 
+
+# class TestCommandOne(BaseModel):
+#     command: Literal["testone"] = "testone"
+
+# class TestCommandTwo(BaseModel):
+#     command: Literal["testtwo"] = "testtwo"
+
 class StopCommand(BaseModel):
     command: Literal["stop"] = "stop"
 
@@ -50,8 +57,8 @@ class RobotCommandSuccessful(BaseModel):
 class RobotCommandError(BaseModel):
     error: str
 
-# class RobotItemStoredResponse(BaseModel):
-#     message: Literal["success"] = "success"
+class RobotItemStoredResponse(BaseModel):
+    message: Literal["success"] = "success"
 #     location: StorageModuleCellLocation
 
 class ItemSizeLocation(BaseModel):
@@ -130,7 +137,8 @@ class FiducialRegistry:
 
 class Robot:
     def __init__(self, port: str) -> None:
-        self._bus = Controller(port=port)
+        self._bus = Controller(port="/dev/ttyUSB1", baudrate=115200) # change to config
+        self._scalebus = Controller(port="/dev/ttyUSB0", baudrate=9600) # change to config
         # self._curtain_bus = Controller(port=curtain_port)
         self._state = rs.load_state(CONFIG_PATH)
         self._mx = Motor(
@@ -159,9 +167,9 @@ class Robot:
         )
 
         self._gs = Servo(self._bus)
-        self._cam = Camera()
+        # self._cam = Camera()
         # self._grid = self._state["grid"]
-        # self._scale = Scale(self._bus, 0x1) #need to update motors
+        self._scale = Scale(self._scalebus, 1) #need to update motors
         # self._curtain = Curtain(self._curtain_bus)
         self._cur_item: str = None # some kind of unique identifier
         self._status: RobotStatus = RobotStatus.IDLE
@@ -181,7 +189,9 @@ class Robot:
 
         await self.home()
 
-        # await self._scale.configure()
+        # await self._scalebus.connect()
+        if not await self._scale.connect():
+            print("No Connection to Scale")
         # await self._curtain.connect()
 
     def get_param(self, param: str):
@@ -189,7 +199,7 @@ class Robot:
 
     async def retrieve_item(self, label: str):
         item = AxisCoordinate(rs.search_grid(self.get_storage()))
-        self.pick(item)
+        await self.pick(item)
 
     async def place_item(self):
         # get next available position
@@ -209,7 +219,7 @@ class Robot:
         await self._md.move_to_position_no_wait(170)
         await self.pick_wait()
 
-        # await self._md.move_to_position(170) # todo make para
+        await self._md.move_to_position(170) # todo make para
         await self._ms.move_to_position(self.get_param("SLIDE_EXTENSION"))
         await self._mg.move_to_position(self.get_param("GRIPPER_EXTENSION_PLACE")+8)
 
@@ -236,7 +246,7 @@ class Robot:
         await self._md.move_to_position_no_wait(170)
         await self.pick_wait()
 
-        # await self._md.move_to_position(170)
+        await self._md.move_to_position(170)
 
         await self._ms.move_to_position_no_wait(self.get_param("SLIDE_EXTENSION")) # 50 max
         await self._mg.move_to_position_no_wait(self.get_param("GRIPPER_EXTENSION_PLACE")+8)
@@ -282,6 +292,29 @@ class Robot:
 
         await self._mg.retract()
         await self._ms.retract()
+
+    # well plate
+    async def testtwo(self):
+        await self._mr.move_to_position(0.5)
+        print("andi")
+        # time.sleep(2.5)
+        while True:
+            w = await self._scale.read_weight_data()
+            if w > 50:
+                await self.io_pick(AxisCoordinate(286.34, 384.79))
+                return
+
+    # big box
+    async def testone(self):
+        await self._mr.move_to_position(0.5)
+        print("beblet")
+        # time.sleep(2.5)
+        while True:
+            w = await self._scale.read_weight_data()
+            if w > 50:
+                await self.io_pick(AxisCoordinate(89.44, 42.548))
+                return
+
 
     async def test(self) -> None:
               # bay = AxisCoordinate(round(bays[0]+2.5), round(bays[1])+2) #0.5, 3
@@ -535,13 +568,19 @@ class Robot:
                 await self.configure()
                 return RobotCommandSuccessful()
             case HomeCommand():
-                await self.home()
+                await self.testone()
                 return RobotCommandSuccessful()
             case MoveCommand(coordinate=coord):
                 await self.move(coord)
                 return RobotCommandSuccessful()
-            # case IdleCommand():
-            #     await self.idle()
+            case IdleCommand():
+                await self.testtwo()
+                return RobotCommandSuccessful()
+            # case TestCommandOne():
+            #     await self.testone()
+            #     return RobotCommandSuccessful()
+            # case TestCommandTwo():
+            #     await self.testtwo()
             #     return RobotCommandSuccessful()
             case _:
                 return RobotCommandError(error="Invalid Robot Command")

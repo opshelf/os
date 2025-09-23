@@ -5,7 +5,7 @@ from pymodbus.exceptions import ModbusIOException
 from typing import Optional
 
 class SharedModbusController:
-    def __init__(self, port: str, baudrate: int = 115200, parity: str = "N", timeout: float = 1.0):
+    def __init__(self, port: str, baudrate: int , parity: str = "N", timeout: float = 2.0):
         self.port = port
         self.baudrate = baudrate
         self.timeout = timeout
@@ -17,9 +17,11 @@ class SharedModbusController:
         self.client = AsyncModbusSerialClient(
             port=self.port,
             baudrate=self.baudrate,
-            timeout=self.timeout,
-            parity=self.parity,
-            retries=1,
+            timeout=1,
+            parity="N",
+            bytesize=8,
+            retries=3,
+            stopbits=1,
             framer=pymodbus.FramerType.RTU
         )
         await self.client.connect()
