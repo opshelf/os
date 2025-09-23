@@ -29,7 +29,7 @@ nats_commands_context: ContextVar[List[Dict[str, Any]]] = ContextVar('nats_comma
 class AuditMiddleware(BaseHTTPMiddleware):
 	"""Middleware to log all API requests and responses."""
 	
-	async def dispatch(self, request: Request, call_next):
+	async def dispatch(self, request: Request, call_next) -> Response:
 		"""Process and log each request."""
 		nats_commands_context.set([])
 		
@@ -92,7 +92,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
 		response_body: Optional[Dict[str, Any]],
 		error_message: Optional[str],
 		duration_ms: int
-	):
+	) -> None:
 		"""Log request to database."""
 		async with AsyncSessionLocal() as db:
 			try:
@@ -186,7 +186,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
 			except Exception:
 				traceback.print_exc()
 
-def capture_nats_command(command: Dict[str, Any]):
+def capture_nats_command(command: Dict[str, Any]) -> None:
 	"""Capture NATS command for audit logging."""
 	try:
 		commands = nats_commands_context.get()

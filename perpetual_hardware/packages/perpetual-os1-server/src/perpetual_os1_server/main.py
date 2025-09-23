@@ -79,7 +79,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     try:
         auto_storage = AutomaticStorage()
         await auto_storage.connect()
-        asyncio.create_task(auto_storage.run())
+        task = asyncio.create_task(auto_storage.run())
     except Exception as e:
         logging.warning(f"AutomaticStorage disabled: {e}")
     yield
@@ -120,7 +120,7 @@ app.add_middleware(
 app.add_middleware(AuditMiddleware)
 
 @app.get("/api/health")
-async def health():
+async def health() -> dict[str, str]:
 	return {"status": "ok"}
 
 app.include_router(auth.router)

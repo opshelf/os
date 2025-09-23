@@ -101,7 +101,7 @@ class ItemLocation(Base):
     item = relationship("Item", back_populates="locations")
 
     # Index for finding all locations of a specific item
-    __table_args__ += (
+    __table_args__ = (
         Index('idx_item_locations_item_id', 'item_id'),
     )
 

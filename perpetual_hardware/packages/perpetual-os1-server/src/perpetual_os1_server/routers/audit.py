@@ -1,6 +1,6 @@
 """Audit log query API endpoints."""
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Any, cast
 
 from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -154,14 +154,14 @@ async def get_audit_log(
 		user_id=log.user_id,
 		user_email=log.user.email if log.user else None,
 		timestamp=log.timestamp.isoformat(),
-		method=log.method,
-		endpoint=log.endpoint,
-		request_body=log.request_body,
-		response_status=log.response_status,
-		response_body=log.response_body,
-		nats_commands=log.nats_commands,
-		error_message=log.error_message,
-		ip_address=log.ip_address,
+		method=str(log.method),
+		endpoint=str(log.endpoint),
+		request_body=cast(dict[Any, Any] | None, log.request_body),
+		response_status=int(log.response_status),
+		response_body=cast(dict[Any, Any] | None, log.response_body),
+		nats_commands=cast(list[dict[Any, Any]] | None, log.nats_commands),
+		error_message=str(log.error_message),
+		ip_address=str(log.ip_address),
 		user_agent=log.user_agent,
 		request_duration_ms=log.request_duration_ms
 	)
@@ -239,7 +239,7 @@ async def verify_audit_chain(
 			break
 
 		# Check HMAC over binding
-		binding = build_binding_message(log.seq_no, log.prev_hash, log.entry_hash)
+		binding = build_binding_message(int(log.seq_no), str(log.prev_hash), str(log.entry_hash))
 		expected_hmac = hmac_sha256_hex(binding)
 		if log.hmac != expected_hmac:
 			first_error_seq = log.seq_no
