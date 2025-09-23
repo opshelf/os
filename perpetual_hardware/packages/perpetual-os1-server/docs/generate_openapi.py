@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from perpetual_os1_server.main import app
 from fastapi.openapi.utils import get_openapi
 
-def generate_openapi_json():
+def generate_openapi_json() -> dict:
     """Generate OpenAPI JSON specification."""
     openapi_schema = get_openapi(
         title=app.title,
@@ -37,7 +37,7 @@ def generate_openapi_json():
 
     return openapi_schema
 
-def main():
+def main() -> None:
     """Generate and save OpenAPI specification."""
     openapi_schema = generate_openapi_json()
 

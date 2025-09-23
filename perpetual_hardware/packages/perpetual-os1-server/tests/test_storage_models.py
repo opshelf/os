@@ -9,7 +9,7 @@ from perpetual_os1_server.core.validation import ValidationError
 
 
 @pytest.mark.anyio
-async def test_item_creation():
+async def test_item_creation() -> None:
     """Test creating an item in the database."""
     async with AsyncSessionLocal() as db:
         service = StorageService(db)
@@ -33,7 +33,7 @@ async def test_item_creation():
 
 
 @pytest.mark.anyio
-async def test_item_get():
+async def test_item_get() -> None:
     """Test retrieving an item by UPCA."""
     async with AsyncSessionLocal() as db:
         service = StorageService(db)
@@ -55,7 +55,7 @@ async def test_item_get():
 
 
 @pytest.mark.anyio
-async def test_item_get_nonexistent():
+async def test_item_get_nonexistent() -> None:
     """Test retrieving a non-existent item."""
     async with AsyncSessionLocal() as db:
         service = StorageService(db)
@@ -66,7 +66,7 @@ async def test_item_get_nonexistent():
 
 
 @pytest.mark.anyio
-async def test_item_update():
+async def test_item_update() -> None:
     """Test updating an item."""
     async with AsyncSessionLocal() as db:
         service = StorageService(db)
@@ -93,7 +93,7 @@ async def test_item_update():
 
 
 @pytest.mark.anyio
-async def test_item_update_nonexistent():
+async def test_item_update_nonexistent() -> None:
     """Test updating a non-existent item."""
     async with AsyncSessionLocal() as db:
         service = StorageService(db)
@@ -107,7 +107,7 @@ async def test_item_update_nonexistent():
 
 
 @pytest.mark.anyio
-async def test_item_delete():
+async def test_item_delete() -> None:
     """Test deleting an item."""
     async with AsyncSessionLocal() as db:
         service = StorageService(db)
@@ -130,7 +130,7 @@ async def test_item_delete():
 
 
 @pytest.mark.anyio
-async def test_item_delete_nonexistent():
+async def test_item_delete_nonexistent() -> None:
     """Test deleting a non-existent item."""
     async with AsyncSessionLocal() as db:
         service = StorageService(db)
@@ -141,7 +141,7 @@ async def test_item_delete_nonexistent():
 
 
 @pytest.mark.anyio
-async def test_get_all_items():
+async def test_get_all_items() -> None:
     """Test retrieving all items with pagination."""
     async with AsyncSessionLocal() as db:
         service = StorageService(db)
@@ -165,7 +165,7 @@ async def test_get_all_items():
 
 
 @pytest.mark.anyio
-async def test_item_location():
+async def test_item_location() -> None:
     """Test adding and retrieving item locations."""
     async with AsyncSessionLocal() as db:
         service = StorageService(db)
@@ -198,7 +198,7 @@ async def test_item_location():
 
 
 @pytest.mark.anyio
-async def test_item_location_remove():
+async def test_item_location_remove() -> None:
     """Test removing item locations."""
     async with AsyncSessionLocal() as db:
         service = StorageService(db)
@@ -227,7 +227,7 @@ async def test_item_location_remove():
 
 
 @pytest.mark.anyio
-async def test_storage_cell_operations():
+async def test_storage_cell_operations() -> None:
     """Test storage cell operations."""
     async with AsyncSessionLocal() as db:
         service = StorageService(db)
@@ -267,7 +267,7 @@ async def test_storage_cell_operations():
 
 
 @pytest.mark.anyio
-async def test_detect_migration_needed():
+async def test_detect_migration_needed() -> None:
     """Test migration detection logic."""
     async with AsyncSessionLocal() as db:
         service = StorageService(db)
