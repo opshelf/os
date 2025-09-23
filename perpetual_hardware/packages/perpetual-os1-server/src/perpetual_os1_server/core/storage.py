@@ -119,10 +119,10 @@ class StorageService:
 
                 for item_data in validated_items:
                     item = Item(
-                        upca=item_data['upca'],
-                        name=item_data['name'],
+                        upca=str(item_data['upca']),
+                        name=str(item_data['name']),
                         dimensions=item_data['dimensions'],
-                        weight=item_data['weight'],
+                        weight=str(item_data['weight']) if item_data['weight'] is not None else None,
                         item_metadata=item_data['metadata']
                     )
                     self.session.add(item)
@@ -177,21 +177,19 @@ class StorageService:
                         upca=upca,
                         name=name,
                         dimensions=dimensions,
-                        weight=normalized_weight,
+                        weight=str(normalized_weight) if normalized_weight is not None else None,
                         item_metadata=normalized_metadata
                     )
                     self.session.add(item)
                 else:
                     item.name = name
                     item.dimensions = dimensions
-                    item.weight = normalized_weight
+                    item.weight = str(normalized_weight) if normalized_weight is not None else None
                     item.item_metadata = normalized_metadata
 
                 await self.session.flush()
                 await self.session.commit()
                 await self.session.refresh(item)
-                item.weight = normalized_weight
-                item.metadata = normalized_metadata
             except Exception:
                 await self.session.rollback()
                 raise
@@ -220,7 +218,7 @@ class StorageService:
             .limit(limit)
             .order_by(Item.created_at)
         )
-        return result.scalars().all()
+        return list(result.scalars().all())
 
     async def get_items_count(self) -> int:
         """Get total count of items."""
@@ -252,15 +250,12 @@ class StorageService:
                 if dimensions is not None:
                     item.dimensions = dimensions
                 if weight is not None:
-                    item.weight = normalized_weight
+                    item.weight = str(normalized_weight)
                 if metadata is not None:
                     item.item_metadata = metadata
 
                 await self.session.commit()
                 await self.session.refresh(item)
-                if normalized_weight is not None:
-                    item.weight = normalized_weight
-                item.metadata = item.item_metadata or {}
                 return item
             except Exception:
                 await self.session.rollback()
@@ -296,7 +291,7 @@ class StorageService:
             .where(Item.upca == upca)
             .order_by(ItemLocation.created_at)
         )
-        return result.scalars().all()
+        return list(result.scalars().all())
 
     async def add_item_location(self, upca: str, shelf_idx: int, cell_idx: int) -> Optional[ItemLocation]:
         """Add a location for an item."""
@@ -358,7 +353,7 @@ class StorageService:
             query = query.where(StorageCell.cell_idx == cell_idx)
 
         result = await self.session.execute(query.order_by(StorageCell.shelf_idx, StorageCell.cell_idx))
-        return result.scalars().all()
+        return list(result.scalars().all())
 
     async def update_storage_cell(self, shelf_idx: int, cell_idx: int, status: str) -> bool:
         """Update storage cell status."""
@@ -423,7 +418,7 @@ class StorageService:
 
                     # Validate location if present
                     if location:
-                        if location.shelf_idx < 0 or location.cell_idx < 0:
+                        if location.shelf_idx is not None and location.shelf_idx < 0 or location.cell_idx is not None and location.cell_idx < 0:
                             raise ValidationError(f"Invalid location for item {item.upca}: negative indices")
 
                     data_payload: Dict[str, Any] = {
