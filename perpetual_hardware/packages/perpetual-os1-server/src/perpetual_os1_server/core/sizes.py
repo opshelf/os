@@ -1,81 +1,176 @@
-from pydantic import BaseModel
-from perpetual_os1.storage import Dimensions, Json
-from typing import Dict, Iterable, Optional, Union, Mapping
+"""Utilities for the legacy size database JSON compatibility layer."""
+
+from __future__ import annotations
+
+import json
+import logging
 import os
-from typing import Optional
-from perpetual_os1_server.settings import get_settings
+from pathlib import Path
+from typing import Dict, Mapping, Optional
+
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from perpetual_os1.storage import Dimensions, Json
+from perpetual_os1_server.settings import get_settings
+
+
+class SerializableDimensions(Dimensions):
+    def __getitem__(self, item: str) -> float:
+        return getattr(self, item)
+
+
+def _coerce_dimensions(dimensions: Dimensions | Mapping[str, float]) -> SerializableDimensions:
+    if isinstance(dimensions, SerializableDimensions):
+        return dimensions
+    if isinstance(dimensions, Dimensions):
+        data = dimensions.model_dump()
+    else:
+        data = dict(dimensions)
+    return SerializableDimensions(**data)
 
 
 class ItemInformation(BaseModel):
-    size: Dimensions
+    size: SerializableDimensions
     data: Json
 
 
 class SizeDatabase(BaseModel):
-    items: Dict[str, ItemInformation] = {}
-    filename: str = "size.json"
+    items: Dict[str, ItemInformation] = Field(default_factory=dict)
+    filename: str = Field(default="data/size.json")
 
-    def get_item_size(self, data: str) -> Optional[ItemInformation]:
-        return self.items.get(data)
+    @classmethod
+    def load(cls, filename: str) -> "SizeDatabase":
+        """Load size database from disk, accepting both legacy and new formats."""
+        path = Path(filename)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:  # pragma: no cover - file system edge cases
+            logging.warning("Unable to ensure size database directory %s: %s", path.parent, exc)
+
+        if not path.exists():
+            size_db = cls(filename=str(path))
+            try:
+                size_db.save()
+            except OSError:
+                logging.warning("Unable to create size database file at %s; operating in memory only", path)
+            return size_db
+
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                raw = json.load(f)
+        except json.JSONDecodeError:
+            logging.warning("Size database %s is not valid JSON; reinitializing", path)
+            size_db = cls(filename=str(path))
+            try:
+                size_db.save()
+            except OSError:
+                logging.warning("Unable to create size database file at %s; operating in memory only", path)
+            return size_db
+
+        if isinstance(raw, dict) and "items" in raw and isinstance(raw["items"], dict):
+            payload = raw["items"]
+        elif isinstance(raw, dict):
+            payload = raw
+        else:
+            payload = {}
+
+        items: Dict[str, ItemInformation] = {}
+        for upca, item_payload in payload.items():
+            try:
+                if isinstance(item_payload, ItemInformation):
+                    info = ItemInformation(
+                        size=_coerce_dimensions(item_payload.size),
+                        data=item_payload.data,
+                    )
+                elif isinstance(item_payload, Mapping):
+                    size_data = item_payload.get("size") or {}
+                    data_payload = item_payload.get("data") or {}
+                    info = ItemInformation(
+                        size=_coerce_dimensions(size_data),
+                        data=data_payload,
+                    )
+                else:
+                    raise ValueError("Item payload must be a mapping")
+            except Exception as exc:  # pragma: no cover - defensive path
+                logging.warning("Skipping invalid size entry %s: %s", upca, exc)
+                continue
+            items[upca] = info
+
+        return cls(items=items, filename=str(path))
+
+    def get_item_size(self, upca: str) -> Optional[ItemInformation]:
+        return self.items.get(upca)
 
     def add_item_size(self, upca: str, data: Json, dimensions: Dimensions) -> None:
-        print(data, dimensions)
-        self.items[upca] = ItemInformation(size=dimensions, data=data)
-        print(self.items)
+        dims = _coerce_dimensions(dimensions)
+        self.items[upca] = ItemInformation(size=dims, data=data or {})
 
     def remove_item_size(self, upca: str) -> None:
         self.items.pop(upca, None)
 
-    def load_from_file(self, filename: str) -> None:
-        with open(filename) as f:
-            result = self.model_validate_json(f.read())
-            self.items = result.items
+    def to_legacy_dict(self) -> Dict[str, Dict[str, Json]]:
+        """Return payload using the historic JSON format expected by hardware tests."""
+        serialized: Dict[str, Dict[str, Json]] = {}
+        for upca, info in self.items.items():
+            serialized[upca] = info.model_dump(mode="json")
+        return serialized
 
     def save_to_file(self, filename: str) -> None:
-        with open(filename, "w+") as f:
-            f.write(self.model_dump_json())
+        payload = self.to_legacy_dict()
+        path = Path(filename)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
 
     def save(self) -> None:
         self.save_to_file(self.filename)
 
 
 size_database: Optional[SizeDatabase] = None
+_size_db_path: Optional[str] = None
 
 
-def init_file_sizes() -> None:
-    global size_database, _storage_service
-    settings = get_settings()
-    if os.path.isfile(settings.sizes.filename):
-        with open(settings.sizes.filename) as f:
-            size_database = SizeDatabase.model_validate_json(f.read())
-    else:
-        with open(settings.sizes.filename, "w+") as f:
-            default_size_db = SizeDatabase(filename=settings.sizes.filename)
-            f.write(default_size_db.model_dump_json())
-            size_database = default_size_db
+def _resolve_sizes_filename() -> str:
+    env_path = os.getenv("SIZES_FILE")
+    if env_path:
+        return env_path
+    return get_settings().sizes.filename
+
+
+def get_sizes_filename() -> str:
+    """Expose the active sizes filename for other modules."""
+    return _resolve_sizes_filename()
+
+
+def init_file_sizes(force: bool = False) -> None:
+    """Initialise or reload the in-memory size database singleton."""
+    global size_database, _size_db_path
+
+    filename = _resolve_sizes_filename()
+    if not force and size_database is not None and filename == _size_db_path:
+        return
+
+    size_database = SizeDatabase.load(filename)
+    _size_db_path = filename
 
 
 def get_storage_service(session: Optional[AsyncSession] = None):
-    """Get real storage service for database operations.
-
-    Args:
-        session: Optional database session. If not provided, caller must handle session management.
-    """
-    # Import here to avoid circular imports at module level
+    """Get real storage service for database operations."""
+    # Import locally to avoid circular dependency at module load.
     from perpetual_os1_server.core.storage import StorageService
 
     if session is None:
-        # This should not happen in production - caller should provide session
         raise ValueError("Database session required for storage service operations")
 
     return StorageService(session)
 
 
 def get_size_db() -> SizeDatabase:
-    if size_database:
-        return size_database
-    raise ValueError("Size Database was Not Initialized")
+    init_file_sizes()
+    if size_database is None:  # pragma: no cover - safety net
+        raise ValueError("Size Database was Not Initialized")
+    return size_database
 
 
 
@@ -113,12 +208,11 @@ def remove_item_from_json(upca: str) -> None:
 async def migrate_if_needed(session: AsyncSession) -> None:
     """Migrate JSON data to database if needed with proper locking."""
     import asyncio
-    from sqlalchemy import text, select
-    from perpetual_os1_server.settings import get_settings
+    from sqlalchemy import text
 
     # Use file-based locking to prevent concurrent migrations
-    settings = get_settings()
-    lock_file = f"{settings.sizes.filename}.lock"
+    filename = get_sizes_filename()
+    lock_file = f"{filename}.lock"
 
     try:
         # Check if migration lock exists
@@ -140,7 +234,7 @@ async def migrate_if_needed(session: AsyncSession) -> None:
         db_count = result.scalar()
 
         # Check if JSON file exists and has data
-        if os.path.exists(settings.sizes.filename) and db_count == 0:
+        if os.path.exists(filename) and db_count == 0:
             import logging
             logging.info("Starting migration from JSON to database...")
 

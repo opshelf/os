@@ -1057,7 +1057,12 @@ test = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "factory-boy", marker = "platform_machine == 'aarch64' or platform_system != 'Darwin' or sys_platform != 'linux'" },
     { name = "fastapi", extra = ["all"], marker = "platform_machine == 'aarch64' or platform_system != 'Darwin' or sys_platform != 'linux'" },
+    { name = "httpx", marker = "platform_machine == 'aarch64' or platform_system != 'Darwin' or sys_platform != 'linux'" },
+    { name = "pytest", marker = "platform_machine == 'aarch64' or platform_system != 'Darwin' or sys_platform != 'linux'" },
+    { name = "pytest-asyncio", marker = "platform_machine == 'aarch64' or platform_system != 'Darwin' or sys_platform != 'linux'" },
+    { name = "pytest-cov", marker = "platform_machine == 'aarch64' or platform_system != 'Darwin' or sys_platform != 'linux'" },
 ]
 
 [package.metadata]
@@ -1069,7 +1074,7 @@ requires-dist = [
     { name = "factory-boy", marker = "extra == 'test'", specifier = ">=3.3.0" },
     { name = "fastapi", specifier = ">=0.115.6" },
     { name = "greenlet", specifier = ">=3.0.0" },
-    { name = "httpx", marker = "extra == 'test'", specifier = ">=0.25.0" },
+    { name = "httpx", marker = "extra == 'test'", specifier = ">=0.27.2" },
     { name = "nats-py", specifier = ">=2.9.0" },
     { name = "perpetual-barcode-scanner", editable = "packages/perpetual-barcode-scanner" },
     { name = "perpetual-os1", editable = "packages/perpetual-os1" },
@@ -1079,9 +1084,9 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.10.0" },
     { name = "pyjwt", specifier = ">=2.8.0" },
     { name = "pyserial-asyncio", specifier = ">=0.6" },
-    { name = "pytest", marker = "extra == 'test'", specifier = ">=7.4.0" },
-    { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=0.21.0" },
-    { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=4.1.0" },
+    { name = "pytest", marker = "extra == 'test'", specifier = ">=8.3.4" },
+    { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=0.23.8" },
+    { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=5.0.0" },
     { name = "python-barcode", specifier = ">=0.15.1" },
     { name = "python-multipart", specifier = ">=0.0.6" },
     { name = "setuptools", specifier = ">=75.8.0" },
@@ -1091,7 +1096,14 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
-dev = [{ name = "fastapi", extras = ["all"], specifier = ">=0.115.6" }]
+dev = [
+    { name = "factory-boy", specifier = ">=3.3.0" },
+    { name = "fastapi", extras = ["all"], specifier = ">=0.115.6" },
+    { name = "httpx", specifier = ">=0.27.2" },
+    { name = "pytest", specifier = ">=8.3.4" },
+    { name = "pytest-asyncio", specifier = ">=0.23.8" },
+    { name = "pytest-cov", specifier = ">=5.0.0" },
+]
 
 [[package]]
 name = "perpetual-output-box"
