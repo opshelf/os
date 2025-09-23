@@ -206,7 +206,7 @@ async def get_robot_client() -> RobotClient:
     settings = get_settings()
     if settings.auth.dev_mode and not settings.robot.enabled:
         class MockClient:
-            async def send_command(self, command) -> None:
+            async def send_command(self, command: dict[str, Any]) -> None:
                 pass
         return cast(RobotClient, MockClient())
     
@@ -223,12 +223,12 @@ async def get_robot_worker() -> RobotWorker:
     if settings.auth.dev_mode and not settings.robot.enabled:
         # Create a minimal mock that returns empty configuration
         class MockWorker:
-            def get_configuration(self) -> Any:
+            def get_configuration(self) -> RobotConfiguration:
                 from perpetual_os1.robot import RobotConfiguration
                 # Return empty config using model_construct to bypass validation
                 return RobotConfiguration.model_construct()
 
-            async def set_configuration(self, config) -> None:
+            async def set_configuration(self, config: RobotConfiguration) -> None:
                 pass
 
             async def start(self) -> None:
@@ -237,15 +237,15 @@ async def get_robot_worker() -> RobotWorker:
             async def shutdown(self) -> None:
                 pass
             
-            async def clear_commands(self):
+            async def clear_commands(self) -> None:
                 pass
             
-            async def set_storage(self, storage):
+            async def set_storage(self, storage: Any) -> None:
                 pass
             
-            def get_client(self):
+            def get_client(self) -> RobotClient:
                 class MockClient:
-                    async def send_command(self, command):
+                    async def send_command(self, command: dict[str, Any]) -> None:
                         pass
                 return MockClient()
         
