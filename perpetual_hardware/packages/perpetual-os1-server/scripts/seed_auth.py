@@ -8,7 +8,7 @@ sys.path.append(str(Path(__file__).parent.parent / "src"))
 
 from sqlalchemy import select
 from perpetual_os1_server.database.base import engine, Base
-from perpetual_os1_server.database.session import AsyncSessionLocal
+from perpetual_os1_server.database.session import AsyncSessionLocal, AsyncSession
 from perpetual_os1_server.database.models import User, Role
 from perpetual_os1_server.core.auth import AuthService
 from perpetual_os1_server.settings import get_settings
@@ -69,7 +69,7 @@ DEV_USERS = [
 	}
 ]
 
-async def seed_roles(db):
+async def seed_roles(db: AsyncSession) -> None:
 	"""Create default roles if they don't exist."""
 	for role_data in DEFAULT_ROLES:
 		result = await db.execute(
@@ -79,8 +79,8 @@ async def seed_roles(db):
 
 		if role is None:
 			role = Role(
-				name=role_data["name"],
-				permissions=role_data["permissions"]
+				name=str(role_data["name"]),
+				permissions=list(role_data["permissions"])
 			)
 			db.add(role)
 			print(f"Created role: {role_data['name']}")
@@ -89,7 +89,7 @@ async def seed_roles(db):
 	
 	await db.commit()
 
-async def seed_dev_users(db):
+async def seed_dev_users(db: AsyncSession) -> None:
 	"""Create development users if they don't exist."""
 	import os
 	
@@ -134,7 +134,7 @@ async def seed_dev_users(db):
 	
 	await db.commit()
 
-async def main():
+async def main() -> None:
 	"""Run seed script."""
 	# Create tables if they don't exist
 	async with engine.begin() as conn:

@@ -6,6 +6,8 @@ from fastapi import FastAPI
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.asyncio import async_sessionmaker
+from typing import AsyncGenerator
 
 import sys
 from pathlib import Path
@@ -19,11 +21,11 @@ from perpetual_os1_server.core.sizes import migrate_if_needed
 
 
 @pytest.fixture
-async def test_db():
+async def test_db() -> AsyncGenerator[AsyncSession, None]:
     """Create test database for hardware compatibility tests."""
     # Use in-memory SQLite for testing
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async_session = async_sessionmaker(engine, expire_on_commit=False)
 
     # Create tables
     from perpetual_os1_server.database.base import Base
@@ -35,7 +37,7 @@ async def test_db():
 
 
 @pytest.fixture
-async def test_json_file(tmp_path):
+async def test_json_file(tmp_path: Path) -> AsyncGenerator[str, None]:
     """Create a temporary JSON file for testing."""
     json_file = tmp_path / "test_sizes.json"
     original_sizes_path = os.environ.get("SIZES_FILE")
@@ -68,7 +70,7 @@ async def test_json_file(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_json_file_exists(test_json_file):
+async def test_json_file_exists(test_json_file: str) -> None:
     """Test that JSON file exists and is readable."""
     assert os.path.exists(test_json_file)
 
@@ -80,7 +82,7 @@ async def test_json_file_exists(test_json_file):
 
 
 @pytest.mark.anyio
-async def test_backward_compatibility_json_reading(test_json_file):
+async def test_backward_compatibility_json_reading(test_json_file: str) -> None:
     """Test that system can read from JSON format (backward compatibility)."""
     # Test legacy function
     from perpetual_os1_server.core.sizes import get_item_in_json_format
@@ -96,7 +98,7 @@ async def test_backward_compatibility_json_reading(test_json_file):
 
 
 @pytest.mark.anyio
-async def test_backward_compatibility_json_writing(test_json_file):
+async def test_backward_compatibility_json_writing(test_json_file: str) -> None:
     """Test that system can write to JSON format (backward compatibility)."""
     # Test adding item via legacy function
     from perpetual_os1_server.core.sizes import add_item_to_json
@@ -129,7 +131,7 @@ async def test_backward_compatibility_json_writing(test_json_file):
 
 
 @pytest.mark.anyio
-async def test_database_with_existing_json(test_db, test_json_file):
+async def test_database_with_existing_json(test_db: AsyncSession, test_json_file: str) -> None:
     """Test that database works with existing JSON file (migration scenario)."""
     # Initialize storage service
     storage_service = StorageService(test_db)
@@ -155,7 +157,7 @@ async def test_database_with_existing_json(test_db, test_json_file):
 
 
 @pytest.mark.anyio
-async def test_database_to_json_sync(test_db, test_json_file):
+async def test_database_to_json_sync(test_db: AsyncSession, test_json_file: str) -> None:
     """Test that database can sync to JSON format."""
     # First migrate existing data
     storage_service = StorageService(test_db)
@@ -182,7 +184,7 @@ async def test_database_to_json_sync(test_db, test_json_file):
 
 
 @pytest.mark.anyio
-async def test_api_endpoints_backward_compatibility(test_json_file):
+async def test_api_endpoints_backward_compatibility(test_json_file: str) -> None:
     """Test API endpoints maintain backward compatibility."""
     # Create client with temporary JSON file
     from httpx import ASGITransport
@@ -199,7 +201,7 @@ async def test_api_endpoints_backward_compatibility(test_json_file):
 
 
 @pytest.mark.anyio
-async def test_api_endpoints_database_integration(test_db, test_json_file):
+async def test_api_endpoints_database_integration(test_db: AsyncSession, test_json_file: str) -> None:
     """Test API endpoints integrate with database while maintaining JSON compatibility."""
     # Create client with temporary JSON file
     from httpx import ASGITransport
@@ -231,7 +233,7 @@ async def test_api_endpoints_database_integration(test_db, test_json_file):
 
 
 @pytest.mark.anyio
-async def test_fallback_mechanism(test_db, test_json_file):
+async def test_fallback_mechanism(test_db: AsyncSession, test_json_file: str) -> None:
     """Test that system falls back to JSON if database fails."""
     # Create client with temporary JSON file
     from httpx import ASGITransport
@@ -253,11 +255,11 @@ async def test_fallback_mechanism(test_db, test_json_file):
 
 
 @pytest.mark.anyio
-async def test_concurrent_access(test_db, test_json_file):
+async def test_concurrent_access(test_db: AsyncSession, test_json_file: str) -> None:
     """Test concurrent access to both database and JSON."""
     import asyncio
 
-    async def create_item(session, upca, name):
+    async def create_item(session: AsyncSession, upca: str, name: str):
         storage_service = StorageService(session)
         return await storage_service.create_item(
             upca=upca,
@@ -295,7 +297,7 @@ async def test_concurrent_access(test_db, test_json_file):
 
 
 @pytest.mark.anyio
-async def test_data_integrity(test_db, test_json_file):
+async def test_data_integrity(test_db: AsyncSession, test_json_file: str) -> None:
     """Test data integrity between database and JSON."""
     # Initialize storage service
     storage_service = StorageService(test_db)
@@ -341,7 +343,7 @@ async def test_data_integrity(test_db, test_json_file):
 
 
 @pytest.mark.anyio
-async def test_error_handling(test_db, test_json_file):
+async def test_error_handling(test_db: AsyncSession, test_json_file: str) -> None:
     """Test error handling when JSON operations fail."""
     storage_service = StorageService(test_db)
 

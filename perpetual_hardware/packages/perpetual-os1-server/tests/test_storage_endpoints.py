@@ -3,7 +3,7 @@ from httpx import AsyncClient
 
 
 @pytest.mark.anyio
-async def test_storage_items_endpoint_unauthorized(client):
+async def test_storage_items_endpoint_unauthorized(client: AsyncClient) -> None:
     """Test storage endpoints without authorization."""
     # Test GET /api/storage/items without auth
     response = await client.get("/api/storage/items")
@@ -19,7 +19,7 @@ async def test_storage_items_endpoint_unauthorized(client):
 
 
 @pytest.mark.anyio
-async def test_storage_items_endpoint_authorized(client):
+async def test_storage_items_endpoint_authorized(client: AsyncClient) -> None:
     """Test storage items endpoint with authorization."""
     # Login as admin
     login_response = await client.post("/api/auth/login/json", json={
@@ -38,7 +38,7 @@ async def test_storage_items_endpoint_authorized(client):
 
 
 @pytest.mark.anyio
-async def test_create_storage_item(client):
+async def test_create_storage_item(client: AsyncClient) -> None:
     """Test creating a storage item."""
     # Login as admin
     login_response = await client.post("/api/auth/login/json", json={
@@ -75,7 +75,7 @@ async def test_create_storage_item(client):
 
 
 @pytest.mark.anyio
-async def test_create_storage_item_validation_error(client):
+async def test_create_storage_item_validation_error(client: AsyncClient) -> None:
     """Test creating a storage item with validation error."""
     # Login as admin
     login_response = await client.post("/api/auth/login/json", json={
@@ -100,7 +100,7 @@ async def test_create_storage_item_validation_error(client):
 
 
 @pytest.mark.anyio
-async def test_get_storage_item(client):
+async def test_get_storage_item(client: AsyncClient) -> None:
     """Test retrieving a specific storage item."""
     # Login as admin
     login_response = await client.post("/api/auth/login/json", json={
@@ -130,7 +130,7 @@ async def test_get_storage_item(client):
 
 
 @pytest.mark.anyio
-async def test_get_nonexistent_storage_item(client):
+async def test_get_nonexistent_storage_item(client: AsyncClient) -> None:
     """Test retrieving a non-existent storage item."""
     # Login as admin
     login_response = await client.post("/api/auth/login/json", json={
@@ -146,7 +146,7 @@ async def test_get_nonexistent_storage_item(client):
 
 
 @pytest.mark.anyio
-async def test_update_storage_item(client):
+async def test_update_storage_item(client: AsyncClient) -> None:
     """Test updating a storage item."""
     # Login as admin
     login_response = await client.post("/api/auth/login/json", json={
@@ -183,7 +183,7 @@ async def test_update_storage_item(client):
 
 
 @pytest.mark.anyio
-async def test_delete_storage_item(client):
+async def test_delete_storage_item(client: AsyncClient) -> None:
     """Test deleting a storage item."""
     # Login as admin
     login_response = await client.post("/api/auth/login/json", json={
@@ -217,7 +217,7 @@ async def test_delete_storage_item(client):
 
 
 @pytest.mark.anyio
-async def test_item_location_operations(client):
+async def test_item_location_operations(client: AsyncClient) -> None:
     """Test item location operations."""
     # Login as admin
     login_response = await client.post("/api/auth/login/json", json={
@@ -278,7 +278,7 @@ async def test_item_location_operations(client):
 
 
 @pytest.mark.anyio
-async def test_storage_cells_endpoint(client):
+async def test_storage_cells_endpoint(client: AsyncClient) -> None:
     """Test storage cells endpoint."""
     # Login as admin
     login_response = await client.post("/api/auth/login/json", json={
@@ -313,7 +313,7 @@ async def test_storage_cells_endpoint(client):
 
 
 @pytest.mark.anyio
-async def test_storage_permissions_enforcement(client):
+async def test_storage_permissions_enforcement(client: AsyncClient) -> None:
     """Test that storage permissions are properly enforced."""
     # Login as viewer (should have limited permissions)
     login_response = await client.post("/api/auth/login/json", json={
@@ -338,7 +338,7 @@ async def test_storage_permissions_enforcement(client):
 
 
 @pytest.mark.anyio
-async def test_pagination_items_endpoint(client):
+async def test_pagination_items_endpoint(client: AsyncClient) -> None:
     """Test pagination on items endpoint."""
     # Login as admin
     login_response = await client.post("/api/auth/login/json", json={
@@ -371,7 +371,7 @@ async def test_pagination_items_endpoint(client):
 
 
 @pytest.mark.anyio
-async def test_storage_endpoint_filtering(client):
+async def test_storage_endpoint_filtering(client: AsyncClient) -> None:
     """Test filtering on storage cells endpoint."""
     # Login as admin
     login_response = await client.post("/api/auth/login/json", json={
