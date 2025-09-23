@@ -4,7 +4,7 @@ from perpetual_os1.utils import get_can_bus, get_modbus_client
 from perpetual_os1.configuration import robot_configuration
 from perpetual_os1.robot_worker import RobotWorker
 from perpetual_os1.robot_client import RobotClient
-from perpetual_os1.robot import Robot
+from perpetual_os1.robot import Robot, RobotConfiguration
 from perpetual_os1.storage import (
     Cell,
     Shelf,
@@ -247,7 +247,7 @@ async def get_robot_worker() -> RobotWorker:
                 class MockClient:
                     async def send_command(self, command: dict[str, Any]) -> None:
                         pass
-                return MockClient()
+                return cast(RobotClient, MockClient())
         
         return cast(RobotWorker, MockWorker())
     

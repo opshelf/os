@@ -239,7 +239,7 @@ async def verify_audit_chain(
 			break
 
 		# Check HMAC over binding
-		binding = build_binding_message(int(log.seq_no), str(log.prev_hash), str(log.entry_hash))
+		binding = build_binding_message(int(log.seq_no) if log.seq_no is not None else 0, str(log.prev_hash), str(log.entry_hash))
 		expected_hmac = hmac_sha256_hex(binding)
 		if log.hmac != expected_hmac:
 			first_error_seq = log.seq_no

@@ -96,8 +96,8 @@ async def get_size_data(
                 "name": item.name,
                 "weight": float(item.weight) if item.weight else 0,
                 "metadata": item.item_metadata or {},
-                "shelf_idx": None,
-                "cell_idx": None
+                "shelf_idx": "",
+                "cell_idx": ""
             }
         )
         json_data[item.upca] = item_info
@@ -148,8 +148,8 @@ async def add_size_item(
                     "name": item.name,
                     "weight": float(item.weight) if item.weight else 0,
                     "metadata": item.item_metadata or {},
-                    "shelf_idx": None,
-                    "cell_idx": None
+                    "shelf_idx": "",
+                    "cell_idx": ""
                 }
             )
             json_data[item.upca] = item_info
@@ -208,8 +208,8 @@ async def add_item(
                     "name": item.name,
                     "weight": float(item.weight) if item.weight else 0,
                     "metadata": item.item_metadata or {},
-                    "shelf_idx": None,
-                    "cell_idx": None
+                    "shelf_idx": "",
+                    "cell_idx": ""
                 }
             )
             json_data[item.upca] = item_info
@@ -264,8 +264,8 @@ async def remove_item(
                     "name": item.name,
                     "weight": float(item.weight) if item.weight else 0,
                     "metadata": item.item_metadata or {},
-                    "shelf_idx": None,
-                    "cell_idx": None
+                    "shelf_idx": "",
+                    "cell_idx": ""
                 }
             )
             json_data[item.upca] = item_info
