@@ -1,10 +1,10 @@
-from typing import Optional
+from typing import Optional, Any, cast
 from perpetual_os1.common import RobotNatsConfiguration
 from perpetual_os1.utils import get_can_bus, get_modbus_client
 from perpetual_os1.configuration import robot_configuration
 from perpetual_os1.robot_worker import RobotWorker
 from perpetual_os1.robot_client import RobotClient
-from perpetual_os1.robot import Robot
+from perpetual_os1.robot import Robot, RobotConfiguration
 from perpetual_os1.storage import (
     Cell,
     Shelf,
@@ -206,9 +206,9 @@ async def get_robot_client() -> RobotClient:
     settings = get_settings()
     if settings.auth.dev_mode and not settings.robot.enabled:
         class MockClient:
-            async def send_command(self, command):
+            async def send_command(self, command: dict[str, Any]) -> None:
                 pass
-        return MockClient()
+        return cast(RobotClient, MockClient())
     
     raise ValueError("Robot Worker was Not Initialized")
 
@@ -223,32 +223,32 @@ async def get_robot_worker() -> RobotWorker:
     if settings.auth.dev_mode and not settings.robot.enabled:
         # Create a minimal mock that returns empty configuration
         class MockWorker:
-            def get_configuration(self):
+            def get_configuration(self) -> RobotConfiguration:
                 from perpetual_os1.robot import RobotConfiguration
                 # Return empty config using model_construct to bypass validation
                 return RobotConfiguration.model_construct()
-            
-            async def set_configuration(self, config):
+
+            async def set_configuration(self, config: RobotConfiguration) -> None:
+                pass
+
+            async def start(self) -> None:
+                pass
+
+            async def shutdown(self) -> None:
                 pass
             
-            async def start(self):
+            async def clear_commands(self) -> None:
                 pass
             
-            async def shutdown(self):
+            async def set_storage(self, storage: Any) -> None:
                 pass
             
-            async def clear_commands(self):
-                pass
-            
-            async def set_storage(self, storage):
-                pass
-            
-            def get_client(self):
+            def get_client(self) -> RobotClient:
                 class MockClient:
-                    async def send_command(self, command):
+                    async def send_command(self, command: dict[str, Any]) -> None:
                         pass
-                return MockClient()
+                return cast(RobotClient, MockClient())
         
-        return MockWorker()
+        return cast(RobotWorker, MockWorker())
     
     raise ValueError("Robot Worker was Not Initialized")

@@ -1,19 +1,20 @@
 import pytest
 from sqlalchemy import select
+from httpx import AsyncClient
 
 from perpetual_os1_server.database.session import AsyncSessionLocal
 from perpetual_os1_server.database.models import User, Role, AuditLog
 
 
-async def login(client, email: str, pin: str) -> str:
+async def login(client: AsyncClient, email: str, pin: str) -> str:
     resp = await client.post("/api/auth/login/json", json={"email": email, "pin": pin})
     assert resp.status_code == 200, resp.text
     data = resp.json()
-    return data["access_token"]
+    return str(data["access_token"])
 
 
 @pytest.mark.anyio
-async def test_auth_flow_and_audit_chain(client):
+async def test_auth_flow_and_audit_chain(client: AsyncClient) -> None:
     token = await login(client, "admin@opshelf.com", "1234")
     headers = {"Authorization": f"Bearer {token}"}
 
@@ -43,7 +44,7 @@ async def test_auth_flow_and_audit_chain(client):
 
 
 @pytest.mark.anyio
-async def test_access_control_enforcement(client):
+async def test_access_control_enforcement(client: AsyncClient) -> None:
     # Create a low-privilege viewer user
     async with AsyncSessionLocal() as db:
         res = await db.execute(select(Role).filter(Role.name == "viewer"))
@@ -57,7 +58,7 @@ async def test_access_control_enforcement(client):
 
             settings = get_settings()
             auth = AuthService(settings.auth.jwt_secret, settings.auth.jwt_algorithm)
-            viewer = User(
+            viewer_user = User(
                 email="viewer@opshelf.com",
                 first_name="View",
                 last_name="Only",
@@ -65,7 +66,7 @@ async def test_access_control_enforcement(client):
                 role_id=viewer_role.id,
                 is_active=True,
             )
-            db.add(viewer)
+            db.add(viewer_user)
             await db.commit()
 
     vtoken = await login(client, "viewer@opshelf.com", "0000")
@@ -81,7 +82,7 @@ async def test_access_control_enforcement(client):
 
 
 @pytest.mark.anyio
-async def test_users_crud_as_admin(client):
+async def test_users_crud_as_admin(client: AsyncClient) -> None:
     token = await login(client, "admin@opshelf.com", "1234")
     headers = {"Authorization": f"Bearer {token}"}
 
@@ -135,7 +136,7 @@ async def test_users_crud_as_admin(client):
 
 
 @pytest.mark.anyio
-async def test_verify_detects_tamper(client):
+async def test_verify_detects_tamper(client: AsyncClient) -> None:
     token = await login(client, "admin@opshelf.com", "1234")
     headers = {"Authorization": f"Bearer {token}"}
 
