@@ -25,7 +25,7 @@ class TestItemValidator:
     def test_invalid_dimensions_type(self) -> None:
         """Test invalid dimensions type."""
         with pytest.raises(ValidationError, match="Dimensions must be a dictionary"):
-            ItemValidator.validate_dimensions("not_a_dict")
+            ItemValidator.validate_dimensions("not_a_dict")  # type: ignore[arg-type]
 
     def test_negative_dimensions(self) -> None:
         """Test negative dimension values."""
@@ -73,7 +73,7 @@ class TestItemValidator:
     def test_invalid_name_type(self) -> None:
         """Test invalid name type."""
         with pytest.raises(ValidationError, match="Name must be a string"):
-            ItemValidator.validate_name(123)
+            ItemValidator.validate_name(123)  # type: ignore[arg-type]
 
     def test_empty_name(self) -> None:
         """Test empty name."""
@@ -101,7 +101,7 @@ class TestItemValidator:
     def test_invalid_metadata_type(self) -> None:
         """Test invalid metadata type."""
         with pytest.raises(ValidationError, match="Metadata must be a dictionary"):
-            ItemValidator.validate_metadata("not_a_dict")
+            ItemValidator.validate_metadata("not_a_dict")  # type: ignore[arg-type]
 
     def test_large_metadata(self) -> None:
         """Test metadata that exceeds size limit."""
@@ -124,7 +124,7 @@ class TestLocationValidator:
     def test_invalid_shelf_idx_type(self) -> None:
         """Test invalid shelf index type."""
         with pytest.raises(ValidationError, match="Shelf index must be an integer"):
-            LocationValidator.validate_shelf_idx("1")
+            LocationValidator.validate_shelf_idx("1")  # type: ignore[arg-type]
 
     def test_negative_shelf_idx(self) -> None:
         """Test negative shelf index."""
@@ -146,7 +146,7 @@ class TestLocationValidator:
     def test_invalid_cell_idx_type(self) -> None:
         """Test invalid cell index type."""
         with pytest.raises(ValidationError, match="Cell index must be an integer"):
-            LocationValidator.validate_cell_idx("1")
+            LocationValidator.validate_cell_idx("1")  # type: ignore[arg-type]
 
     def test_negative_cell_idx(self) -> None:
         """Test negative cell index."""
@@ -168,12 +168,12 @@ class TestLocationValidator:
     def test_invalid_location_shelf(self) -> None:
         """Test location with invalid shelf index."""
         with pytest.raises(ValidationError, match="Shelf index must be an integer"):
-            LocationValidator.validate_location("1", 1)
+            LocationValidator.validate_location("1", 1)  # type: ignore[arg-type]
 
     def test_invalid_location_cell(self) -> None:
         """Test location with invalid cell index."""
         with pytest.raises(ValidationError, match="Cell index must be an integer"):
-            LocationValidator.validate_location(1, "1")
+            LocationValidator.validate_location(1, "1")  # type: ignore[arg-type]
 
 
 class TestStorageCellValidator:
@@ -189,7 +189,7 @@ class TestStorageCellValidator:
     def test_invalid_capacity_type(self) -> None:
         """Test invalid capacity type."""
         with pytest.raises(ValidationError, match="Capacity must be a string"):
-            StorageCellValidator.validate_capacity(123)
+            StorageCellValidator.validate_capacity(123)  # type: ignore[arg-type]
 
     def test_empty_capacity(self) -> None:
         """Test empty capacity."""
@@ -222,7 +222,7 @@ class TestStorageCellValidator:
     def test_invalid_status_type(self) -> None:
         """Test invalid status type."""
         with pytest.raises(ValidationError, match="Status must be a string"):
-            StorageCellValidator.validate_status(123)
+            StorageCellValidator.validate_status(123)  # type: ignore[arg-type]
 
     def test_case_insensitive_status(self) -> None:
         """Test that status validation is case insensitive."""
@@ -249,7 +249,7 @@ class TestStorageValidator:
         """Test invalid UPCA in item creation."""
         with pytest.raises(ValidationError, match="UPCA must be a string"):
             StorageValidator.validate_item_creation(
-                upca=123456789012,
+                upca=123456789012,  # type: ignore[arg-type]
                 name="Test Item",
                 dimensions={"width": 10.0, "height": 20.0, "length": 30.0}
             )
@@ -332,10 +332,10 @@ class TestStorageValidator:
     def test_invalid_location_assignment(self) -> None:
         """Test invalid location assignment."""
         with pytest.raises(ValidationError, match="Shelf index must be an integer"):
-            StorageValidator.validate_location_assignment("1", 1)
+            StorageValidator.validate_location_assignment("1", 1)  # type: ignore[arg-type]
 
         with pytest.raises(ValidationError, match="Cell index must be an integer"):
-            StorageValidator.validate_location_assignment(1, "1")
+            StorageValidator.validate_location_assignment(1, "1")  # type: ignore[arg-type]
 
         with pytest.raises(ValidationError, match="Shelf index cannot be negative"):
             StorageValidator.validate_location_assignment(-1, 1)

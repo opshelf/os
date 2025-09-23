@@ -49,7 +49,7 @@ async def test_audit_logs_with_invalid_auth_token(client: AsyncClient) -> None:
 		log = res.scalar_one_or_none()
 		assert log is not None
 		assert log.user_id is None
-		assert log.error_message is None  # 401 is not an exception
+		assert log.error_message == ""  # 401 is not an exception
 
 
 @pytest.mark.anyio
