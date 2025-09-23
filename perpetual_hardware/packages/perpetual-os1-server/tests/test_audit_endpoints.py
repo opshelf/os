@@ -1,20 +1,21 @@
 import pytest
 from datetime import datetime, timezone, timedelta
 from sqlalchemy import select
+from httpx import AsyncClient
 
 from perpetual_os1_server.database.session import AsyncSessionLocal
 from perpetual_os1_server.database.models import User, Role, AuditLog
 
 
-async def login(client, email: str, pin: str) -> str:
+async def login(client: AsyncClient, email: str, pin: str) -> str:
 	resp = await client.post("/api/auth/login/json", json={"email": email, "pin": pin})
 	assert resp.status_code == 200, resp.text
 	data = resp.json()
-	return data["access_token"]
+	return str(data["access_token"])
 
 
 @pytest.mark.anyio
-async def test_audit_list_with_filters(client):
+async def test_audit_list_with_filters(client: AsyncClient) -> None:
 	token = await login(client, "admin@opshelf.com", "1234")
 	headers = {"Authorization": f"Bearer {token}"}
 
@@ -68,7 +69,7 @@ async def test_audit_list_with_filters(client):
 
 
 @pytest.mark.anyio
-async def test_audit_list_filter_by_user_id(client):
+async def test_audit_list_filter_by_user_id(client: AsyncClient) -> None:
 	admin_token = await login(client, "admin@opshelf.com", "1234")
 	admin_headers = {"Authorization": f"Bearer {admin_token}"}
 
@@ -123,7 +124,7 @@ async def test_audit_list_filter_by_user_id(client):
 
 
 @pytest.mark.anyio
-async def test_audit_list_sorting(client):
+async def test_audit_list_sorting(client: AsyncClient) -> None:
 	token = await login(client, "admin@opshelf.com", "1234")
 	headers = {"Authorization": f"Bearer {token}"}
 
@@ -141,7 +142,7 @@ async def test_audit_list_sorting(client):
 
 
 @pytest.mark.anyio
-async def test_get_single_audit_log(client):
+async def test_get_single_audit_log(client: AsyncClient) -> None:
 	token = await login(client, "admin@opshelf.com", "1234")
 	headers = {"Authorization": f"Bearer {token}"}
 
@@ -171,7 +172,7 @@ async def test_get_single_audit_log(client):
 
 
 @pytest.mark.anyio
-async def test_audit_list_requires_permission(client):
+async def test_audit_list_requires_permission(client: AsyncClient) -> None:
 	# Create user without audit:read permission
 	async with AsyncSessionLocal() as db:
 		res = await db.execute(select(Role).filter(Role.name == "viewer"))
