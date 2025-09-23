@@ -64,6 +64,15 @@ def get_storage_service():
         async def get_all_items(self):
             # Return empty list for now
             return []
+
+        async def create_item(self, upca: str, name: str, dimensions: dict, weight: float = None, metadata: dict = None):
+            pass
+
+        async def delete_item(self, upca: str):
+            return True
+
+        async def sync_to_json(self):
+            pass
     return MockStorageService()
 
 
