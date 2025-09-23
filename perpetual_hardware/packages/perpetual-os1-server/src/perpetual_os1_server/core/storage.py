@@ -184,7 +184,7 @@ class StorageService:
                 else:
                     item.name = name
                     item.dimensions = dimensions
-                    item.weight = str(normalized_weight) if normalized_weight is not None else None
+                    item.weight = normalized_weight if normalized_weight is not None else None
                     item.item_metadata = normalized_metadata
 
                 await self.session.flush()
@@ -250,7 +250,7 @@ class StorageService:
                 if dimensions is not None:
                     item.dimensions = dimensions
                 if weight is not None:
-                    item.weight = str(normalized_weight)
+                    item.weight = normalized_weight
                 if metadata is not None:
                     item.item_metadata = metadata
 

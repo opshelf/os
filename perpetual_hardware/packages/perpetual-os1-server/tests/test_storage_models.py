@@ -26,8 +26,8 @@ async def test_item_creation():
         assert item.upca == "123456789012"
         assert item.name == "Test Item"
         assert item.dimensions == {"width": 10.0, "height": 20.0, "length": 30.0}
-        assert item.weight == "500.0"
-        assert item.metadata == {"category": "test", "priority": 1}
+        assert item.weight == 500
+        assert item.item_metadata == {"category": "test", "priority": 1}
         assert item.created_at is not None
         assert item.updated_at is not None
 
@@ -88,7 +88,7 @@ async def test_item_update():
         assert updated_item is not None
         assert updated_item.id == created_item.id
         assert updated_item.name == "Updated Name"
-        assert updated_item.weight == "1000.0"
+        assert updated_item.weight == 1000
         assert updated_item.dimensions == {"width": 10.0, "height": 20.0, "length": 30.0}
 
 
