@@ -49,7 +49,7 @@ async def list_roles(
 			id=role.id,
 			name=role.name,
 			permissions=role.permissions,
-			user_count=await db.scalar(select(func.count()).select_from(User).filter(User.role_id == role.id)),
+			user_count=int(await db.scalar(select(func.count()).select_from(User).filter(User.role_id == role.id)) or 0),
 			created_at=role.created_at.isoformat(),
 			updated_at=role.updated_at.isoformat()
 		)
@@ -108,7 +108,7 @@ async def get_role(
 		id=role.id,
 		name=role.name,
 		permissions=role.permissions,
-		user_count=db.query(User).filter_by(role_id=role.id).count(),
+		user_count=int(await db.scalar(select(func.count()).select_from(User).filter(User.role_id == role.id)) or 0),
 		created_at=role.created_at.isoformat(),
 		updated_at=role.updated_at.isoformat()
 	)
@@ -154,7 +154,7 @@ async def update_role(
 		id=role.id,
 		name=role.name,
 		permissions=role.permissions,
-		user_count=db.query(User).filter_by(role_id=role.id).count(),
+		user_count=int(await db.scalar(select(func.count()).select_from(User).filter(User.role_id == role.id)) or 0),
 		created_at=role.created_at.isoformat(),
 		updated_at=role.updated_at.isoformat()
 	)
@@ -175,13 +175,13 @@ async def delete_role(
 		)
 	
 	user_count = await db.scalar(select(func.count()).select_from(User).filter(User.role_id == role_id))
-	if user_count > 0:
+	if user_count is not None and user_count > 0:
 		raise HTTPException(
 			status_code=status.HTTP_400_BAD_REQUEST,
 			detail=f"Cannot delete role with {user_count} active users"
 		)
 	
-	db.delete(role)
+	await db.delete(role)
 	await db.commit()
 	
 	return {"message": "Role deleted successfully"}

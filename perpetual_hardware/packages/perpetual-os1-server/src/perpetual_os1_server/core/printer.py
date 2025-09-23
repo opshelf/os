@@ -1,9 +1,9 @@
 import random
-import barcode
-from barcode.writer import ImageWriter
+import barcode  # type: ignore
+from barcode.writer import ImageWriter  # type: ignore
 from pydantic import BaseModel
 from typing import List, Tuple, Optional
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageFile
 
 def create_barcode_upca(filename: str, upca: str) -> Tuple[str, str]:
     upc = barcode.get("upc", upca, writer=ImageWriter())
@@ -60,29 +60,29 @@ def create_label(configuration: LabelConfiguration) -> str:
         barcode = Image.open(configuration.barcode_path)
     except IOError:
         raise Exception("Error: Barcode image not found.")
-    logo = logo.resize((200, 200))
+    logo = logo.resize((200, 200))  # type: ignore
     left = 0
     upper = 50
     right = 200
     lower = 150
     box = (left, upper, right, lower)
-    logo_cropped = logo.crop(box)
+    logo_cropped: ImageFile.ImageFile = logo.crop(box)  # type: ignore
 
-    barcode = barcode.resize((300, 150))
+    barcode = barcode.resize((300, 150))  # type: ignore
     left = 40
     upper = 15
     right = 260
     lower = 135
     box = (left, upper, right, lower)
-    cropped = barcode.crop(box)
+    cropped: ImageFile.ImageFile = barcode.crop(box)  # type: ignore
 
     label.paste(logo_cropped, (10, 10))
     label.paste(cropped, (10, 215))
     draw = ImageDraw.Draw(label)
     try:
-        font = ImageFont.truetype("arial.ttf", 32)
+        font: ImageFont.FreeTypeFont | ImageFont.ImageFont = ImageFont.truetype("arial.ttf", 32)
     except IOError:
-        font = ImageFont.load_default(32)
+        font = ImageFont.load_default()
     text_x = configuration.label_size[0] - 240
     text_y = 60
     line_spacing = 40
