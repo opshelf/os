@@ -162,7 +162,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
 				key_id = get_hmac_key_id()
 
 				audit_log = AuditLog(
-					user_id=user_id or 0,
+					user_id=user_id if user_id is not None else 0,
 					timestamp=now,
 					method=method,
 					endpoint=endpoint,
