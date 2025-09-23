@@ -1,7 +1,7 @@
 from perpetual_os1_server.core.permissions import has_permission, has_any_permission, has_all_permissions
 
 
-def test_permission_checks():
+def test_permission_checks() -> None:
     perms = ["users:read", "roles:*", "*:{action}".format(action="read")]
 
     assert has_permission(perms, "users:read")
