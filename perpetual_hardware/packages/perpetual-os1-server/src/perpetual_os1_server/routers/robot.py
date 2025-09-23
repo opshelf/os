@@ -12,12 +12,12 @@ from nats.aio.subscription import Subscription
 from sse_starlette.sse import EventSourceResponse
 from nats.aio.client import Client as NATS
 from perpetual_os1_server.settings import get_settings
-from .auth_deps import get_current_user, require_permissions
+from .auth_deps import get_current_user, get_current_user_optional, require_permissions
 
-router = APIRouter(dependencies=[Depends(get_current_user)])
+router = APIRouter(tags=["robot"])
 
 
-@router.post("/commands", dependencies=[Depends(require_permissions("robot:control"))])
+@router.post("/commands", dependencies=[Depends(get_current_user), Depends(require_permissions("robot:control"))])
 async def robot_commands(
     command: RobotCommands, client: RobotClient = Depends(get_robot_client)
 ) -> SuccessResponse:
@@ -25,19 +25,19 @@ async def robot_commands(
     return SuccessResponse()
 
 
-@router.post("/start", dependencies=[Depends(require_permissions("robot:control"))])
+@router.post("/start", dependencies=[Depends(get_current_user), Depends(require_permissions("robot:control"))])
 async def start_robot(worker: RobotWorker = Depends(get_robot_worker)) -> SuccessResponse:
     await worker.start()
     return SuccessResponse()
 
 
-@router.post("/stop", dependencies=[Depends(require_permissions("robot:control"))])
+@router.post("/stop", dependencies=[Depends(get_current_user), Depends(require_permissions("robot:control"))])
 async def stop_robot(worker: RobotWorker = Depends(get_robot_worker)) -> SuccessResponse:
     await worker.shutdown()
     return SuccessResponse()
 
 
-@router.post("/clear_commands", dependencies=[Depends(require_permissions("robot:control"))])
+@router.post("/clear_commands", dependencies=[Depends(get_current_user), Depends(require_permissions("robot:control"))])
 async def clear_robot_commands(
     worker: RobotWorker = Depends(get_robot_worker),
 ) -> SuccessResponse:
@@ -45,14 +45,14 @@ async def clear_robot_commands(
     return SuccessResponse()
 
 
-@router.get("/configuration")
+@router.get("/configuration", dependencies=[Depends(get_current_user)])
 async def configuration(
     worker: RobotWorker = Depends(get_robot_worker),
 ) -> RobotConfiguration:
     return worker.get_configuration()
 
 
-@router.post("/configuration", dependencies=[Depends(require_permissions("robot:control"))])
+@router.post("/configuration", dependencies=[Depends(get_current_user), Depends(require_permissions("robot:control"))])
 async def set_configuration(
     configuration: RobotConfiguration,
     worker: RobotWorker = Depends(get_robot_worker),
@@ -61,7 +61,7 @@ async def set_configuration(
     return SuccessResponse()
 
 
-@router.post("/storage", dependencies=[Depends(require_permissions("storage:write"))])
+@router.post("/storage", dependencies=[Depends(get_current_user), Depends(require_permissions("storage:write"))])
 async def set_storage(
     storage: StorageGrid,
     worker: RobotWorker = Depends(get_robot_worker),
@@ -100,7 +100,9 @@ async def nats_consumer(stop_event: asyncio.Event) -> AsyncGenerator[str, None]:
 
 
 @router.get("/status")
-async def stream_sse() -> EventSourceResponse:
+async def stream_sse(
+    current_user = Depends(get_current_user_optional)
+) -> EventSourceResponse:
     """
     SSE endpoint that streams NATS messages to the client.
     """
