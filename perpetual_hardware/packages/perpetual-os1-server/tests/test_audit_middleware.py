@@ -2,13 +2,14 @@ import pytest
 from unittest.mock import patch, MagicMock
 from sqlalchemy import select
 import json
+from httpx import AsyncClient
 
 from perpetual_os1_server.database.session import AsyncSessionLocal
 from perpetual_os1_server.database.models import User, AuditLog
 
 
 @pytest.mark.anyio
-async def test_audit_logs_without_auth_header(client):
+async def test_audit_logs_without_auth_header(client: AsyncClient) -> None:
 	# Make request without auth header
 	resp = await client.get("/api/health")
 	assert resp.status_code == 200
@@ -29,7 +30,7 @@ async def test_audit_logs_without_auth_header(client):
 
 
 @pytest.mark.anyio
-async def test_audit_logs_with_invalid_auth_token(client):
+async def test_audit_logs_with_invalid_auth_token(client: AsyncClient) -> None:
 	headers = {"Authorization": "Bearer invalid_token_here"}
 	
 	# Request with invalid token should still be logged
@@ -52,7 +53,7 @@ async def test_audit_logs_with_invalid_auth_token(client):
 
 
 @pytest.mark.anyio
-async def test_audit_logs_request_with_body(client):
+async def test_audit_logs_request_with_body(client: AsyncClient) -> None:
 	# Login to get token
 	resp = await client.post("/api/auth/login/json", json={"email": "admin@opshelf.com", "pin": "1234"})
 	assert resp.status_code == 200
@@ -79,7 +80,7 @@ async def test_audit_logs_request_with_body(client):
 
 
 @pytest.mark.anyio
-async def test_audit_logs_different_methods(client):
+async def test_audit_logs_different_methods(client: AsyncClient) -> None:
 	# Login
 	resp = await client.post("/api/auth/login/json", json={"email": "admin@opshelf.com", "pin": "1234"})
 	token = resp.json()["access_token"]
@@ -115,7 +116,7 @@ async def test_audit_logs_different_methods(client):
 
 
 @pytest.mark.anyio
-async def test_audit_logs_client_info(client):
+async def test_audit_logs_client_info(client: AsyncClient) -> None:
 	# Custom headers to test user agent and IP tracking
 	headers = {
 		"User-Agent": "TestClient/1.0",
@@ -137,7 +138,7 @@ async def test_audit_logs_client_info(client):
 
 
 @pytest.mark.anyio
-async def test_audit_integrity_fields_populated(client):
+async def test_audit_integrity_fields_populated(client: AsyncClient) -> None:
 	# Login and make a request
 	resp = await client.post("/api/auth/login/json", json={"email": "admin@opshelf.com", "pin": "1234"})
 	token = resp.json()["access_token"]
@@ -167,7 +168,7 @@ async def test_audit_integrity_fields_populated(client):
 
 
 @pytest.mark.anyio
-async def test_audit_chain_continuity(client):
+async def test_audit_chain_continuity(client: AsyncClient) -> None:
 	# Login
 	resp = await client.post("/api/auth/login/json", json={"email": "admin@opshelf.com", "pin": "1234"})
 	token = resp.json()["access_token"]
@@ -204,7 +205,7 @@ async def test_audit_chain_continuity(client):
 
 
 @pytest.mark.anyio
-async def test_audit_logs_errors_in_endpoint(client):
+async def test_audit_logs_errors_in_endpoint(client: AsyncClient) -> None:
 	# Test that errors in endpoints are logged
 	resp = await client.post("/api/auth/login/json", json={"email": "admin@opshelf.com", "pin": "1234"})
 	token = resp.json()["access_token"]
@@ -229,7 +230,7 @@ async def test_audit_logs_errors_in_endpoint(client):
 
 
 @pytest.mark.anyio
-async def test_audit_duration_tracking(client):
+async def test_audit_duration_tracking(client: AsyncClient) -> None:
 	# Make a request and verify duration is tracked
 	resp = await client.get("/api/health")
 	assert resp.status_code == 200
