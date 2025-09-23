@@ -424,7 +424,12 @@ class StorageService:
             # Write to JSON file with error handling
             try:
                 with open(json_path, "w+") as f:
-                    json.dump(json_data, f, indent=2, default=str)
+                    # Wrap items in expected SizeDatabase format
+                    size_db_data = {
+                        "items": json_data,
+                        "filename": os.path.basename(json_path)
+                    }
+                    json.dump(size_db_data, f, indent=2, default=str)
             except (IOError, OSError) as file_error:
                 logging.error(f"Failed to write JSON file: {str(file_error)}")
                 return False
