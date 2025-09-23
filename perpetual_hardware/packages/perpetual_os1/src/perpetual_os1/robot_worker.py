@@ -10,6 +10,8 @@ from perpetual_os1.robot import (
     RobotCommands,
     RobotResponse,
     RobotStatus,
+    IdleCommand,
+    HomeCommand,
     StopCommand,
     WorkerStatus
 )
@@ -138,7 +140,13 @@ class RobotWorker:
         # Fallback placeholder so code compiles; REPLACE with your real mapping.
         # Import is already available at top: StopCommand
         # raise ValueError("Implement _barcode_to_command() to create a proper RobotCommands from barcode.")
-        print(code)
+        # print(code)
+        if code == "313517627104":
+            return HomeCommand()
+        elif code == "365862013057":
+            return IdleCommand()
+
+        
 
     # async def get_storage(self) -> StorageGrid:
     #     return self._robot.get_storage()
@@ -158,20 +166,24 @@ class RobotWorker:
                 if self._current_task is None:
                     msgs = await self.work_consumer.fetch(timeout=1)
                     if msgs:
-                        msg = msgs[0]
-                        command = RobotCommandAdapter.validate_json(msg.data.decode())
-                        self._current_command = command
-                        self._msg = msg
-                        robot_status = self._robot._status
-                        status = WorkerStatus(
-                            robot_status=robot_status, running=True, current_command=command
-                        )
-                        await self._nc.publish(
-                            self._nats_config.status_queue, status.model_dump_json().encode()
-                        )
-                        self._current_task = asyncio.create_task(
-                            self._robot.handle_command(command)
-                        )
+                        msg = msgs[0]                            
+                        try: 
+                            command = RobotCommandAdapter.validate_json(msg.data.decode())
+                             # command = RobotCommandAdapter(msg.data.decode())
+                            self._current_command = command
+                            self._msg = msg
+                            robot_status = self._robot._status
+                            status = WorkerStatus(
+                                robot_status=robot_status, running=True, current_command=command
+                            )
+                            await self._nc.publish(
+                                self._nats_config.status_queue, status.model_dump_json().encode()
+                            )
+                            self._current_task = asyncio.create_task(
+                                self._robot.handle_command(command)
+                            )
+                        except:
+                            pass
                 else:
                     if self._current_task.done():
                         result: RobotResponse = self._current_task.result()
