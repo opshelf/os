@@ -16,7 +16,7 @@ class PrintRequest(BaseModel):
 
 
 @router.post("/", dependencies=[Depends(require_permissions("printer:print"))])
-async def print(pr: PrintRequest, size_database: SizeDatabase = Depends(get_size_db)):
+async def print(pr: PrintRequest, size_database: SizeDatabase = Depends(get_size_db)) -> dict[str, str]:
     upca = create_label(LabelConfiguration())
     size_database.add_item_size(upca, pr.item, pr.dimensions)
     size_database.save()
@@ -37,7 +37,7 @@ async def print(pr: PrintRequest, size_database: SizeDatabase = Depends(get_size
 
 
 @router.post("/{upca}", dependencies=[Depends(require_permissions("printer:print"))])
-async def print_upca(upca: str, size_database: SizeDatabase = Depends(get_size_db)):
+async def print_upca(upca: str, size_database: SizeDatabase = Depends(get_size_db)) -> dict[str, str]:
     item_information = size_database.get_item_size(upca)
     if item_information is None:
         raise HTTPException(status_code=404, detail=f"Item with UPC-A '{upca}' not found")
@@ -63,7 +63,7 @@ async def print_upca(upca: str, size_database: SizeDatabase = Depends(get_size_d
 
 
 @router.post("/custom/{upca}", dependencies=[Depends(require_permissions("printer:print"))])
-async def print_custom(upca: str, pr: PrintRequest, size_database: SizeDatabase = Depends(get_size_db)):
+async def print_custom(upca: str, pr: PrintRequest, size_database: SizeDatabase = Depends(get_size_db)) -> dict[str, str]:
     size_database.add_item_size(upca, pr.item, pr.dimensions)
     size_database.save()
     config = LabelConfiguration(

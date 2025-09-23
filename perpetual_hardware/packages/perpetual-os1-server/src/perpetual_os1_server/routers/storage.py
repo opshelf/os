@@ -17,9 +17,9 @@ from ..database.session import get_db
 router = APIRouter(tags=["storage"])
 
 # Performance monitoring decorator
-def monitor_performance(func: Callable):
+def monitor_performance(func: Callable) -> Callable:
     @functools.wraps(func)
-    async def wrapper(*args, **kwargs) -> Any:
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
         start_time = time.time()
         try:
             result = await func(*args, **kwargs)
@@ -362,11 +362,11 @@ async def get_storage_cells(
 
     return [
         StorageCellResponse(
-            id=cell.id,
-            shelf_idx=cell.shelf_idx,
-            cell_idx=cell.cell_idx,
-            capacity=cell.capacity,
-            status=cell.status,
+            id=int(cell.id),
+            shelf_idx=int(cell.shelf_idx),
+            cell_idx=int(cell.cell_idx),
+            capacity=str(cell.capacity),
+            status=str(cell.status),
             created_at=cell.created_at.isoformat(),
             updated_at=cell.updated_at.isoformat()
         )
@@ -401,11 +401,11 @@ async def update_storage_cell(
 
     cell = cells[0]
     return StorageCellResponse(
-        id=cell.id,
-        shelf_idx=cell.shelf_idx,
-        cell_idx=cell.cell_idx,
-        capacity=cell.capacity,
-        status=cell.status,
+        id=int(cell.id),
+        shelf_idx=int(cell.shelf_idx),
+        cell_idx=int(cell.cell_idx),
+        capacity=str(cell.capacity),
+        status=str(cell.status),
         created_at=cell.created_at.isoformat(),
         updated_at=cell.updated_at.isoformat()
     )
