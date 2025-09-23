@@ -11,7 +11,7 @@ Base = declarative_base()
 if os.getenv("DATABASE_URL"):
 	SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL")
 else:
-	DB_PATH = Path("data/auth.db").resolve()
+	DB_PATH = Path("data/base.db").resolve()
 	DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 	SQLALCHEMY_DATABASE_URL = f"sqlite+aiosqlite:///{DB_PATH}"
 

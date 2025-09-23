@@ -4,11 +4,11 @@ import json
 import logging
 from typing import Dict, List, Optional, Any
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete, update, text
+from sqlalchemy import select, delete, update
 from sqlalchemy.orm import selectinload
 
 from ..database.models import Item, ItemLocation, StorageCell
-from .sizes import SizeDatabase, ItemInformation
+from .sizes import ItemInformation
 from .validation import StorageValidator, StorageCellValidator, LocationValidator, ValidationError
 from perpetual_os1.storage import Dimensions
 from perpetual_os1_server.settings import get_settings
@@ -461,19 +461,22 @@ class StorageService:
 
             if existing_cell:
                 raise ValidationError(f"Storage cell at shelf {shelf_idx}, cell {cell_idx} already exists")
-        except Exception as e:
+        except Exception:
             # If locking fails, try without locking as fallback
-            result = await self.session.execute(
-                select(StorageCell)
-                .where(StorageCell.shelf_idx == shelf_idx)
-                .where(StorageCell.cell_idx == cell_idx)
-            )
-            existing_cell = result.scalar_one_or_none()
+            # This handles databases that don't support SELECT ... FOR UPDATE (like SQLite)
+            try:
+                result = await self.session.execute(
+                    select(StorageCell)
+                    .where(StorageCell.shelf_idx == shelf_idx)
+                    .where(StorageCell.cell_idx == cell_idx)
+                )
+                existing_cell = result.scalar_one_or_none()
 
-            if existing_cell:
-                raise ValidationError(f"Storage cell at shelf {shelf_idx}, cell {cell_idx} already exists")
-            else:
-                raise ValidationError(f"Failed to acquire lock for storage cell: {str(e)}")
+                if existing_cell:
+                    raise ValidationError(f"Storage cell at shelf {shelf_idx}, cell {cell_idx} already exists")
+            except Exception:
+                # If both locking and non-locking queries fail, raise a generic error
+                raise ValidationError("Failed to check storage cell existence due to database locking issues")
 
         try:
             cell = StorageCell(
