@@ -76,7 +76,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
 				request_body=request_body,
 				response_status=status_code,
 				response_body=response_body,
-				error_message=error_message,
+				error_message=error_message or "",
 				duration_ms=duration_ms
 			)
 		except Exception:
@@ -162,7 +162,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
 				key_id = get_hmac_key_id()
 
 				audit_log = AuditLog(
-					user_id=user_id,
+					user_id=user_id or 0,
 					timestamp=now,
 					method=method,
 					endpoint=endpoint,
@@ -170,9 +170,9 @@ class AuditMiddleware(BaseHTTPMiddleware):
 					response_status=response_status,
 					response_body=response_body,
 					nats_commands=nats_commands,
-					error_message=error_message,
-					ip_address=ip_address,
-					user_agent=user_agent,
+					error_message=error_message or "",
+					ip_address=ip_address or "",
+					user_agent=user_agent or "",
 					request_duration_ms=duration_ms,
 					seq_no=seq_no,
 					prev_hash=prev_hash,

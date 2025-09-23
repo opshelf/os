@@ -121,9 +121,9 @@ class StorageService:
                     item = Item(
                         upca=str(item_data['upca']),
                         name=str(item_data['name']),
-                        dimensions=item_data['dimensions'],
-                        weight=str(item_data['weight']) if item_data['weight'] is not None else None,
-                        item_metadata=item_data['metadata']
+                        dimensions=cast(Dict[str, Any], item_data['dimensions']),
+                        weight=str(item_data['weight']) if item_data['weight'] is not None else "",
+                        item_metadata=cast(Optional[Dict[str, Any]], item_data['metadata'])
                     )
                     self.session.add(item)
                     await self.session.flush()
@@ -177,14 +177,14 @@ class StorageService:
                         upca=upca,
                         name=name,
                         dimensions=dimensions,
-                        weight=str(normalized_weight) if normalized_weight is not None else None,
+                        weight=str(normalized_weight) if normalized_weight is not None else "",
                         item_metadata=normalized_metadata
                     )
                     self.session.add(item)
                 else:
                     item.name = name
                     item.dimensions = dimensions
-                    item.weight = normalized_weight if normalized_weight is not None else None
+                    item.weight = str(normalized_weight) if normalized_weight is not None else ""
                     item.item_metadata = normalized_metadata
 
                 await self.session.flush()
@@ -250,7 +250,7 @@ class StorageService:
                 if dimensions is not None:
                     item.dimensions = dimensions
                 if weight is not None:
-                    item.weight = normalized_weight
+                    item.weight = str(normalized_weight)
                 if metadata is not None:
                     item.item_metadata = metadata
 
@@ -406,7 +406,7 @@ class StorageService:
                         raise ValidationError(f"Invalid dimensions format for item {item.upca}")
 
                     # Validate weight if present
-                    weight_value = 0
+                    weight_value: float = 0
                     if item.weight is not None:
                         try:
                             weight_value = float(item.weight)

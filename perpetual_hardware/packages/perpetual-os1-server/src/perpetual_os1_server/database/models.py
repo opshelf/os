@@ -40,7 +40,7 @@ class AuditLog(Base):
     __tablename__ = "audit_logs"
 
     id: Mapped[int] = Column(Integer, primary_key=True)
-    user_id: Mapped[Optional[int]] = Column(Integer, ForeignKey("users.id"), nullable=True)
+    user_id: Mapped[int] = Column(Integer, ForeignKey("users.id"), nullable=True)
     timestamp: Mapped[datetime] = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     method: Mapped[str] = Column(String(10), nullable=False)
     endpoint: Mapped[str] = Column(String(255), nullable=False)
@@ -48,17 +48,17 @@ class AuditLog(Base):
     response_status: Mapped[int] = Column(Integer, nullable=False)
     response_body: Mapped[Optional[Dict[str, Any]]] = Column(JSON, nullable=True)
     nats_commands: Mapped[Optional[List[Dict[str, Any]]]] = Column(JSON, nullable=True)
-    error_message: Mapped[Optional[str]] = Column(Text, nullable=True)
-    ip_address: Mapped[Optional[str]] = Column(String(45), nullable=True)
-    user_agent: Mapped[Optional[str]] = Column(String(255), nullable=True)
-    request_duration_ms: Mapped[Optional[int]] = Column(Integer, nullable=True)
+    error_message: Mapped[str] = Column(Text, nullable=True)
+    ip_address: Mapped[str] = Column(String(45), nullable=True)
+    user_agent: Mapped[str] = Column(String(255), nullable=True)
+    request_duration_ms: Mapped[int] = Column(Integer, nullable=True)
 
     # Lightweight tamper-evidence fields (nullable for backward compatibility)
-    seq_no: Mapped[Optional[int]] = Column(Integer, nullable=True, index=True)
-    prev_hash: Mapped[Optional[str]] = Column(String(64), nullable=True)
-    entry_hash: Mapped[Optional[str]] = Column(String(64), nullable=True)
-    hmac: Mapped[Optional[str]] = Column(String(64), nullable=True)
-    hmac_key_id: Mapped[Optional[str]] = Column(String(50), nullable=True)
+    seq_no: Mapped[int] = Column(Integer, nullable=True, index=True)
+    prev_hash: Mapped[str] = Column(String(64), nullable=True)
+    entry_hash: Mapped[str] = Column(String(64), nullable=True)
+    hmac: Mapped[str] = Column(String(64), nullable=True)
+    hmac_key_id: Mapped[str] = Column(String(50), nullable=True)
 
     user: Mapped["User"] = relationship("User", back_populates="audit_logs")
 
@@ -68,14 +68,14 @@ class Item(Base):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    id = Column(Integer, primary_key=True)
-    upca = Column(String(255), unique=True, nullable=False, index=True)
-    name = Column(String(255), nullable=False)
-    dimensions = Column(JSON, nullable=False)
-    weight = Column(String(50), nullable=True)
-    item_metadata = Column(JSON, nullable=True, default=dict)
-    created_at = Column(DateTime, server_default=func.now())
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    id: Mapped[int] = Column(Integer, primary_key=True)
+    upca: Mapped[str] = Column(String(255), unique=True, nullable=False, index=True)
+    name: Mapped[str] = Column(String(255), nullable=False)
+    dimensions: Mapped[Dict[str, Any]] = Column(JSON, nullable=False)
+    weight: Mapped[str] = Column(String(50), nullable=True)
+    item_metadata: Mapped[Optional[Dict[str, Any]]] = Column(JSON, nullable=True, default=dict)
+    created_at: Mapped[datetime] = Column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
     # Relationship with item locations
     locations: Mapped[List["ItemLocation"]] = relationship("ItemLocation", back_populates="item")
@@ -86,12 +86,12 @@ class ItemLocation(Base):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    id = Column(Integer, primary_key=True)
-    item_id = Column(Integer, ForeignKey("items.id"), nullable=False)
-    shelf_idx = Column(Integer, nullable=False)
-    cell_idx = Column(Integer, nullable=False)
-    created_at = Column(DateTime, server_default=func.now())
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    id: Mapped[int] = Column(Integer, primary_key=True)
+    item_id: Mapped[int] = Column(Integer, ForeignKey("items.id"), nullable=False)
+    shelf_idx: Mapped[int] = Column(Integer, nullable=False)
+    cell_idx: Mapped[int] = Column(Integer, nullable=False)
+    created_at: Mapped[datetime] = Column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
     # Index for frequent queries on shelf and cell combinations
     __table_args__ = (
@@ -112,13 +112,13 @@ class StorageCell(Base):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    id = Column(Integer, primary_key=True)
-    shelf_idx = Column(Integer, nullable=False)
-    cell_idx = Column(Integer, nullable=False)
-    capacity = Column(String(50), nullable=False)
-    status = Column(String(50), nullable=False, default="available")
-    created_at = Column(DateTime, server_default=func.now())
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    id: Mapped[int] = Column(Integer, primary_key=True)
+    shelf_idx: Mapped[int] = Column(Integer, nullable=False)
+    cell_idx: Mapped[int] = Column(Integer, nullable=False)
+    capacity: Mapped[str] = Column(String(50), nullable=False)
+    status: Mapped[str] = Column(String(50), nullable=False, default="available")
+    created_at: Mapped[datetime] = Column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
     # Unique index for (shelf_idx, cell_idx) combination
     __table_args__ = (
