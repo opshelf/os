@@ -235,11 +235,11 @@ async def get_current_user_info(
 ) -> UserResponse:
 	"""Get current user information."""
 	return UserResponse(
-		id=current_user.id,
-		email=current_user.email,
-		first_name=current_user.first_name,
-		last_name=current_user.last_name,
+		id=int(current_user.id),
+		email=str(current_user.email),
+		first_name=str(current_user.first_name),
+		last_name=str(current_user.last_name),
 		role=current_user.role.name,
 		permissions=current_user.role.permissions,
-		is_active=current_user.is_active
+		is_active=bool(current_user.is_active)
 	)

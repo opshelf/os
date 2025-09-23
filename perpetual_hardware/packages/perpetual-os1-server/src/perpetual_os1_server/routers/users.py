@@ -89,18 +89,18 @@ async def list_users(
 		users=[
 			UserResponse(
 				id=user.id,
-				email=user.email,
-				first_name=user.first_name,
-				last_name=user.last_name,
+				email=str(user.email),
+				first_name=str(user.first_name),
+				last_name=str(user.last_name),
 				role_id=user.role_id,
-				role_name=user.role.name,
-				is_active=user.is_active,
-				created_at=user.created_at.isoformat(),
-				updated_at=user.updated_at.isoformat()
+				role_name=str(user.role.name) if user.role.name else "",
+				is_active=bool(user.is_active),
+				created_at=user.created_at.isoformat() if user.created_at else "",
+				updated_at=user.updated_at.isoformat() if user.updated_at else ""
 			)
 			for user in users
 		],
-		total=total,
+		total=int(total or 0),
 		offset=offset,
 		limit=limit
 	)
@@ -153,14 +153,14 @@ async def create_user(
 	
 	return UserResponse(
 		id=user.id,
-		email=user.email,
-		first_name=user.first_name,
-		last_name=user.last_name,
+		email=str(user.email),
+		first_name=str(user.first_name),
+		last_name=str(user.last_name),
 		role_id=user.role_id,
-		role_name=user.role.name,
-		is_active=user.is_active,
-		created_at=user.created_at.isoformat(),
-		updated_at=user.updated_at.isoformat()
+		role_name=str(user.role.name) if user.role.name else "",
+		is_active=bool(user.is_active),
+		created_at=user.created_at.isoformat() if user.created_at else "",
+		updated_at=user.updated_at.isoformat() if user.updated_at else ""
 	)
 
 @router.get("/{user_id}", response_model=UserResponse)
@@ -180,14 +180,14 @@ async def get_user(
 	
 	return UserResponse(
 		id=user.id,
-		email=user.email,
-		first_name=user.first_name,
-		last_name=user.last_name,
+		email=str(user.email),
+		first_name=str(user.first_name),
+		last_name=str(user.last_name),
 		role_id=user.role_id,
-		role_name=user.role.name,
-		is_active=user.is_active,
-		created_at=user.created_at.isoformat(),
-		updated_at=user.updated_at.isoformat()
+		role_name=str(user.role.name) if user.role.name else "",
+		is_active=bool(user.is_active),
+		created_at=user.created_at.isoformat() if user.created_at else "",
+		updated_at=user.updated_at.isoformat() if user.updated_at else ""
 	)
 
 @router.put("/{user_id}", response_model=UserResponse, dependencies=[Depends(require_permissions("users:write"))])
@@ -219,13 +219,13 @@ async def update_user(
 				status_code=status.HTTP_400_BAD_REQUEST,
 				detail="Email already in use"
 			)
-		user.email = request.email
+		user.email = str(request.email)
 	
 	if request.first_name is not None:
-		user.first_name = request.first_name
-	
+		user.first_name = str(request.first_name)
+
 	if request.last_name is not None:
-		user.last_name = request.last_name
+		user.last_name = str(request.last_name)
 	
 	if request.pin is not None:
 		settings = get_settings()
@@ -233,7 +233,7 @@ async def update_user(
 			settings.auth.jwt_secret,
 			settings.auth.jwt_algorithm
 		)
-		user.pin_hash = auth_service.hash_pin(request.pin)
+		user.pin_hash = str(auth_service.hash_pin(request.pin))
 	
 	if request.role_id is not None:
 		role_result = await db.execute(select(Role).filter(Role.id == request.role_id))
@@ -243,10 +243,10 @@ async def update_user(
 				status_code=status.HTTP_400_BAD_REQUEST,
 				detail="Role not found"
 			)
-		user.role_id = request.role_id
-	
+		user.role_id = int(request.role_id)
+
 	if request.is_active is not None:
-		user.is_active = request.is_active
+		user.is_active = bool(request.is_active)
 	
 	await db.commit()
 	await db.refresh(user)
@@ -257,14 +257,14 @@ async def update_user(
 	
 	return UserResponse(
 		id=user.id,
-		email=user.email,
-		first_name=user.first_name,
-		last_name=user.last_name,
+		email=str(user.email),
+		first_name=str(user.first_name),
+		last_name=str(user.last_name),
 		role_id=user.role_id,
-		role_name=user.role.name,
-		is_active=user.is_active,
-		created_at=user.created_at.isoformat(),
-		updated_at=user.updated_at.isoformat()
+		role_name=str(user.role.name) if user.role.name else "",
+		is_active=bool(user.is_active),
+		created_at=user.created_at.isoformat() if user.created_at else "",
+		updated_at=user.updated_at.isoformat() if user.updated_at else ""
 	)
 
 @router.delete("/{user_id}", dependencies=[Depends(require_permissions("users:delete"))])

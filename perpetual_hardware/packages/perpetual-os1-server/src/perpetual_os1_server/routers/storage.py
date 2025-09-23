@@ -1,5 +1,5 @@
 """Storage management endpoints with authorization."""
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, cast, Callable
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, ConfigDict
@@ -17,9 +17,9 @@ from ..database.session import get_db
 router = APIRouter(tags=["storage"])
 
 # Performance monitoring decorator
-def monitor_performance(func):
+def monitor_performance(func: Callable):
     @functools.wraps(func)
-    async def wrapper(*args, **kwargs):
+    async def wrapper(*args, **kwargs) -> Any:
         start_time = time.time()
         try:
             result = await func(*args, **kwargs)
@@ -121,12 +121,12 @@ def _serialize_locations(locations: List[ItemLocation]) -> List[Dict[str, Any]]:
 
 def _build_item_payload(item: Item, locations: List[ItemLocation]) -> ItemWithLocations:
     return ItemWithLocations(
-        id=item.id,
-        upca=item.upca,
-        name=item.name,
-        dimensions=item.dimensions,
+        id=int(item.id),
+        upca=str(item.upca),
+        name=str(item.name),
+        dimensions=cast(dict[str, float], item.dimensions),
         weight=float(item.weight) if item.weight else None,
-        metadata=item.item_metadata or {},
+        metadata=cast(dict[str, Any], item.item_metadata) or {},
         locations=_serialize_locations(locations),
         created_at=item.created_at.isoformat() if item.created_at else "",
         updated_at=item.updated_at.isoformat() if item.updated_at else "",
@@ -282,10 +282,10 @@ async def add_item_location(
 
     # Convert SQLAlchemy model to Pydantic response model
     return ItemLocationResponse(
-        id=storage_location.id,
-        item_id=storage_location.item_id,
-        shelf_idx=storage_location.shelf_idx,
-        cell_idx=storage_location.cell_idx,
+        id=int(storage_location.id),
+        item_id=int(storage_location.item_id),
+        shelf_idx=int(storage_location.shelf_idx),
+        cell_idx=int(storage_location.cell_idx),
         created_at=storage_location.created_at.isoformat() if storage_location.created_at else "",
         updated_at=storage_location.updated_at.isoformat() if storage_location.updated_at else ""
     )
@@ -333,11 +333,11 @@ async def create_storage_cell(
         )
 
         return StorageCellResponse(
-            id=storage_cell.id,
-            shelf_idx=storage_cell.shelf_idx,
-            cell_idx=storage_cell.cell_idx,
+            id=int(storage_cell.id),
+            shelf_idx=int(storage_cell.shelf_idx),
+            cell_idx=int(storage_cell.cell_idx),
             capacity=storage_cell.capacity,
-            status=storage_cell.status,
+            status=str(storage_cell.status),
             created_at=storage_cell.created_at.isoformat(),
             updated_at=storage_cell.updated_at.isoformat()
         )

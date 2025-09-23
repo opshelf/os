@@ -1,5 +1,5 @@
 """Authentication dependencies for FastAPI routes."""
-from typing import Optional, List
+from typing import Optional, List, Callable
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -116,7 +116,7 @@ async def get_current_user(
 	
 	return user
 
-def require_permissions(permissions: str | List[str]):
+def require_permissions(permissions: str | List[str]) -> Callable:
 	"""Dependency to require specific permissions."""
 	if isinstance(permissions, str):
 		permissions = [permissions]
@@ -125,7 +125,7 @@ def require_permissions(permissions: str | List[str]):
 		current_user: User = Depends(get_current_user)
 	) -> User:
 		"""Check if user has required permissions."""
-		user_permissions = current_user.role.permissions
+		user_permissions = current_user.role.permissions or []
 
 		for permission in permissions:
 			if not has_permission(user_permissions, permission):

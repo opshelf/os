@@ -11,7 +11,7 @@ Base = declarative_base()
 
 # Database path configuration
 if os.getenv("DATABASE_URL"):
-	SQLALCHEMY_DATABASE_URL: str | URL = os.getenv("DATABASE_URL")
+	SQLALCHEMY_DATABASE_URL: str | URL = os.getenv("DATABASE_URL") or ""
 else:
 	DB_PATH = Path("data/base.db").resolve()
 	DB_PATH.parent.mkdir(parents=True, exist_ok=True)

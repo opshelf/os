@@ -155,7 +155,7 @@ def init_file_sizes(force: bool = False) -> None:
     _size_db_path = filename
 
 
-def get_storage_service(session: Optional[AsyncSession] = None) -> StorageService:
+def get_storage_service(session: Optional[AsyncSession] = None) -> Any:
     """Get real storage service for database operations."""
     # Import locally to avoid circular dependency at module load.
     from perpetual_os1_server.core.storage import StorageService
@@ -256,7 +256,7 @@ async def migrate_if_needed(session: AsyncSession) -> None:
                         upca=upca,
                         name=str(item_info.data.get("name", "Unknown")),
                         dimensions=item_info.size.model_dump(),
-                        weight=item_info.data.get("weight"),
+                        weight=float(str(item_info.data.get("weight", 0))) if item_info.data.get("weight") is not None else None,
                         metadata=cast(dict[str, Any], item_info.data.get("metadata", {}))
                     )
                     migrated_count += 1

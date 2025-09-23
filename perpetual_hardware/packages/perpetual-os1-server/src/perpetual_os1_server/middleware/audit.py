@@ -3,7 +3,7 @@ import json
 import time
 import traceback
 from datetime import datetime, timezone
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Callable
 from contextvars import ContextVar
 
 from fastapi import Request, Response
@@ -29,7 +29,7 @@ nats_commands_context: ContextVar[List[Dict[str, Any]]] = ContextVar('nats_comma
 class AuditMiddleware(BaseHTTPMiddleware):
 	"""Middleware to log all API requests and responses."""
 	
-	async def dispatch(self, request: Request, call_next) -> Response:
+	async def dispatch(self, request: Request, call_next: Callable) -> Response:
 		"""Process and log each request."""
 		nats_commands_context.set([])
 		
@@ -42,7 +42,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
 				if body:
 					request_body = json.loads(body)
 				
-				async def receive():
+				async def receive() -> dict[str, Any]:
 					return {"type": "http.request", "body": body}
 				
 				request._receive = receive
@@ -54,12 +54,12 @@ class AuditMiddleware(BaseHTTPMiddleware):
 		error_message = None
 		
 		try:
-			response = await call_next(request)
+			response: Response = await call_next(request)
 			status_code = response.status_code
-			
+
 			# We avoid consuming/rewrapping the response body to prevent side effects.
 			# Only capture status_code; leave response as-is.
-			
+
 		except Exception as e:
 			error_message = str(e)
 			traceback.print_exc()
@@ -67,9 +67,9 @@ class AuditMiddleware(BaseHTTPMiddleware):
 				status_code=500,
 				content={"detail": "Internal server error"}
 			)
-		
+
 		duration_ms = int((time.time() - start_time) * 1000)
-		
+
 		try:
 			await self._log_request(
 				request=request,
@@ -81,7 +81,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
 			)
 		except Exception:
 			traceback.print_exc()
-		
+
 		return response
 	
 	async def _log_request(

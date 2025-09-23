@@ -80,7 +80,7 @@ def create_label(configuration: LabelConfiguration) -> str:
     label.paste(cropped, (10, 215))
     draw = ImageDraw.Draw(label)
     try:
-        font = ImageFont.truetype("arial.ttf", 32)
+        font: ImageFont.FreeTypeFont | ImageFont.ImageFont = ImageFont.truetype("arial.ttf", 32)
     except IOError:
         font = ImageFont.load_default()
     text_x = configuration.label_size[0] - 240
