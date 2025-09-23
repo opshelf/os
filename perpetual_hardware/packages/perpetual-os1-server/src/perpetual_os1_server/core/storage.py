@@ -1,17 +1,30 @@
 """Storage service for managing inventory items and locations."""
-import os
-import json
+import asyncio
 import logging
-from typing import Dict, List, Optional, Any
+import os
+from typing import Any, Dict, List, Optional
+from weakref import WeakKeyDictionary
+
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete, update
 from sqlalchemy.orm import selectinload
 
 from ..database.models import Item, ItemLocation, StorageCell
-from .sizes import ItemInformation
-from .validation import StorageValidator, StorageCellValidator, LocationValidator, ValidationError
+from .sizes import ItemInformation, _coerce_dimensions, get_size_db, get_sizes_filename
+from .validation import LocationValidator, StorageCellValidator, StorageValidator, ValidationError
 from perpetual_os1.storage import Dimensions
-from perpetual_os1_server.settings import get_settings
+
+
+_session_locks: "WeakKeyDictionary[AsyncSession, asyncio.Lock]" = WeakKeyDictionary()
+
+
+def _get_session_lock(session: AsyncSession) -> asyncio.Lock:
+    """Return an async lock associated with the given session."""
+    lock = _session_locks.get(session)
+    if lock is None:
+        lock = asyncio.Lock()
+        _session_locks[session] = lock
+    return lock
 
 
 class StorageService:
@@ -19,12 +32,19 @@ class StorageService:
 
     def __init__(self, session: AsyncSession):
         self.session = session
+        self._lock = _get_session_lock(session)
+
+    @staticmethod
+    def _normalize_weight(weight: Optional[float]) -> Optional[str]:
+        if weight is None:
+            return None
+        return str(float(weight))
 
     async def detect_migration_needed(self) -> bool:
         """Check if migration from JSON to database is needed."""
         # Use transaction with isolation level to prevent race conditions
-        settings = get_settings()
-        json_exists = os.path.isfile(settings.sizes.filename)
+        filename = get_sizes_filename()
+        json_exists = os.path.isfile(filename)
 
         if not json_exists:
             return False
@@ -53,7 +73,8 @@ class StorageService:
 
             if not json_data:
                 # Even with no JSON data, ensure database is properly initialized
-                await self.session.commit()
+                async with self._lock:
+                    await self.session.commit()
                 return True
 
             # First, validate all items to ensure data integrity before migration
@@ -83,7 +104,7 @@ class StorageService:
                     'upca': upca,
                     'name': name,
                     'dimensions': item_info.size.model_dump(),
-                    'weight': weight,
+                    'weight': self._normalize_weight(weight),
                     'metadata': item_info.data.get("metadata", {}),
                     'location_data': {
                         'shelf_idx': item_info.data.get("shelf_idx"),
@@ -91,42 +112,37 @@ class StorageService:
                     }
                 })
 
-            # Clear existing data only after validation passes
-            await self.session.execute(delete(ItemLocation))
-            await self.session.execute(delete(Item))
-            await self.session.commit()
+            async with self._lock:
+                await self.session.execute(delete(ItemLocation))
+                await self.session.execute(delete(Item))
+                await self.session.commit()
 
-            # Migrate validated items
-            migrated_items = {}
-            for item_data in validated_items:
-                item = Item(
-                    upca=item_data['upca'],
-                    name=item_data['name'],
-                    dimensions=item_data['dimensions'],
-                    weight=item_data['weight'],
-                    item_metadata=item_data['metadata']
-                )
-                self.session.add(item)
-                await self.session.flush()
-                migrated_items[item.id] = item
-
-                # Create storage location if specified in data and valid
-                loc_data = item_data['location_data']
-                if (loc_data['shelf_idx'] is not None and
-                    loc_data['cell_idx'] is not None and
-                    loc_data['shelf_idx'] >= 0 and loc_data['cell_idx'] >= 0):
-
-                    # Validate location indices
-                    LocationValidator.validate_location(loc_data['shelf_idx'], loc_data['cell_idx'])
-
-                    location = ItemLocation(
-                        item_id=item.id,
-                        shelf_idx=loc_data['shelf_idx'],
-                        cell_idx=loc_data['cell_idx']
+                for item_data in validated_items:
+                    item = Item(
+                        upca=item_data['upca'],
+                        name=item_data['name'],
+                        dimensions=item_data['dimensions'],
+                        weight=item_data['weight'],
+                        item_metadata=item_data['metadata']
                     )
-                    self.session.add(location)
+                    self.session.add(item)
+                    await self.session.flush()
 
-            await self.session.commit()
+                    loc_data = item_data['location_data']
+                    if (loc_data['shelf_idx'] is not None and
+                        loc_data['cell_idx'] is not None and
+                        loc_data['shelf_idx'] >= 0 and loc_data['cell_idx'] >= 0):
+
+                        LocationValidator.validate_location(loc_data['shelf_idx'], loc_data['cell_idx'])
+
+                        location = ItemLocation(
+                            item_id=item.id,
+                            shelf_idx=loc_data['shelf_idx'],
+                            cell_idx=loc_data['cell_idx']
+                        )
+                        self.session.add(location)
+
+                await self.session.commit()
             return True
 
         except ValidationError:
@@ -142,45 +158,50 @@ class StorageService:
     async def create_item(self, upca: str, name: str, dimensions: Dict[str, float],
                         weight: Optional[float] = None, metadata: Optional[Dict[str, Any]] = None,
                         sync_to_json: bool = True) -> Item:
-        """Create a new item in the database.
-
-        Args:
-            upca: Universal Product Code
-            name: Item name
-            dimensions: Item dimensions as dict
-            weight: Item weight
-            metadata: Additional metadata
-            sync_to_json: Whether to sync to JSON after successful creation
-        """
-        # Validate input data
+        """Create or upsert an item in the database."""
         StorageValidator.validate_item_creation(upca, name, dimensions, weight, metadata)
 
-        try:
-            item = Item(
-                upca=upca,
-                name=name,
-                dimensions=dimensions,
-                weight=weight,
-                item_metadata=metadata or {}
-            )
-            self.session.add(item)
-            await self.session.flush()
+        normalized_metadata = metadata or {}
+        normalized_weight = self._normalize_weight(weight)
 
-            # Commit the transaction before JSON sync
-            await self.session.commit()
+        async with self._lock:
+            try:
+                result = await self.session.execute(
+                    select(Item).where(Item.upca == upca)
+                )
+                item = result.scalar_one_or_none()
 
-            # Sync to JSON after successful commit
-            if sync_to_json:
-                try:
-                    await self.sync_to_json(transaction_committed=True)
-                except Exception as json_error:
-                    logging.error(f"JSON sync failed after item creation: {str(json_error)}")
-                    # Don't raise - database operation was successful
+                if item is None:
+                    item = Item(
+                        upca=upca,
+                        name=name,
+                        dimensions=dimensions,
+                        weight=normalized_weight,
+                        item_metadata=normalized_metadata
+                    )
+                    self.session.add(item)
+                else:
+                    item.name = name
+                    item.dimensions = dimensions
+                    item.weight = normalized_weight
+                    item.item_metadata = normalized_metadata
 
-            return item
-        except Exception as e:
-            await self.session.rollback()
-            raise
+                await self.session.flush()
+                await self.session.commit()
+                await self.session.refresh(item)
+                item.weight = normalized_weight
+                item.metadata = normalized_metadata
+            except Exception:
+                await self.session.rollback()
+                raise
+
+        if sync_to_json:
+            try:
+                await self.sync_to_json(transaction_committed=True)
+            except Exception as json_error:  # pragma: no cover - best effort logging
+                logging.error(f"JSON sync failed after item creation: {str(json_error)}")
+
+        return item
 
     async def get_item(self, upca: str) -> Optional[Item]:
         """Get an item by UPCA."""
@@ -193,6 +214,7 @@ class StorageService:
         """Get all items with pagination."""
         result = await self.session.execute(
             select(Item)
+            .options(selectinload(Item.locations))
             .offset(skip)
             .limit(limit)
             .order_by(Item.created_at)
@@ -202,9 +224,9 @@ class StorageService:
     async def get_items_count(self) -> int:
         """Get total count of items."""
         result = await self.session.execute(
-            select(Item)
+            select(func.count()).select_from(Item)
         )
-        return len(result.scalars().all())
+        return int(result.scalar_one())
 
     async def update_item(self, upca: str, name: Optional[str] = None,
                         dimensions: Optional[Dict[str, float]] = None,
@@ -219,24 +241,29 @@ class StorageService:
         if not item:
             return None
 
-        # Validate input data
         StorageValidator.validate_item_update(name, dimensions, weight, metadata)
+        normalized_weight = self._normalize_weight(weight) if weight is not None else None
 
-        try:
-            if name is not None:
-                item.name = name
-            if dimensions is not None:
-                item.dimensions = dimensions
-            if weight is not None:
-                item.weight = weight
-            if metadata is not None:
-                item.item_metadata = metadata
+        async with self._lock:
+            try:
+                if name is not None:
+                    item.name = name
+                if dimensions is not None:
+                    item.dimensions = dimensions
+                if weight is not None:
+                    item.weight = normalized_weight
+                if metadata is not None:
+                    item.item_metadata = metadata
 
-            await self.session.commit()
-            return item
-        except Exception as e:
-            await self.session.rollback()
-            raise
+                await self.session.commit()
+                await self.session.refresh(item)
+                if normalized_weight is not None:
+                    item.weight = normalized_weight
+                item.metadata = item.item_metadata or {}
+                return item
+            except Exception:
+                await self.session.rollback()
+                raise
 
     async def delete_item(self, upca: str) -> bool:
         """Delete an item and its locations."""
@@ -248,19 +275,17 @@ class StorageService:
         if not item:
             return False
 
-        try:
-            # Delete locations first (foreign key constraint)
-            await self.session.execute(
-                delete(ItemLocation).where(ItemLocation.item_id == item.id)
-            )
-
-            # Delete the item
-            await self.session.delete(item)
-            await self.session.commit()
-            return True
-        except Exception as e:
-            await self.session.rollback()
-            raise
+        async with self._lock:
+            try:
+                await self.session.execute(
+                    delete(ItemLocation).where(ItemLocation.item_id == item.id)
+                )
+                await self.session.delete(item)
+                await self.session.commit()
+                return True
+            except Exception:
+                await self.session.rollback()
+                raise
 
     async def get_item_locations(self, upca: str) -> List[ItemLocation]:
         """Get all locations for a specific item."""
@@ -282,21 +307,22 @@ class StorageService:
         if not item:
             return None
 
-        # Validate location data
         StorageValidator.validate_location_assignment(shelf_idx, cell_idx)
 
-        try:
-            location = ItemLocation(
-                item_id=item.id,
-                shelf_idx=shelf_idx,
-                cell_idx=cell_idx
-            )
-            self.session.add(location)
-            await self.session.commit()
-            return location
-        except Exception as e:
-            await self.session.rollback()
-            raise
+        async with self._lock:
+            try:
+                location = ItemLocation(
+                    item_id=item.id,
+                    shelf_idx=shelf_idx,
+                    cell_idx=cell_idx
+                )
+                self.session.add(location)
+                await self.session.commit()
+                await self.session.refresh(location)
+                return location
+            except Exception:
+                await self.session.rollback()
+                raise
 
     async def remove_item_location(self, upca: str, shelf_idx: int, cell_idx: int) -> bool:
         """Remove a specific location for an item."""
@@ -312,13 +338,14 @@ class StorageService:
         if not location:
             return False
 
-        try:
-            await self.session.delete(location)
-            await self.session.commit()
-            return True
-        except Exception as e:
-            await self.session.rollback()
-            raise
+        async with self._lock:
+            try:
+                await self.session.delete(location)
+                await self.session.commit()
+                return True
+            except Exception:
+                await self.session.rollback()
+                raise
 
     async def get_storage_cells(self, shelf_idx: Optional[int] = None,
                                cell_idx: Optional[int] = None) -> List[StorageCell]:
@@ -334,23 +361,26 @@ class StorageService:
 
     async def update_storage_cell(self, shelf_idx: int, cell_idx: int, status: str) -> bool:
         """Update storage cell status."""
-        result = await self.session.execute(
-            update(StorageCell)
-            .where(StorageCell.shelf_idx == shelf_idx)
-            .where(StorageCell.cell_idx == cell_idx)
-            .values(status=status)
-            .returning(StorageCell)
-        )
-        cell = result.scalar_one_or_none()
+        async with self._lock:
+            result = await self.session.execute(
+                update(StorageCell)
+                .where(StorageCell.shelf_idx == shelf_idx)
+                .where(StorageCell.cell_idx == cell_idx)
+                .values(status=status)
+                .returning(StorageCell)
+            )
+            cell = result.scalar_one_or_none()
 
-        if cell:
+            if cell is None:
+                await self.session.rollback()
+                return False
+
             try:
                 await self.session.commit()
                 return True
-            except Exception as e:
+            except Exception:
                 await self.session.rollback()
                 raise
-        return False
 
     async def sync_to_json(self, transaction_committed: bool = False) -> bool:
         """Sync database data to JSON file for hardware compatibility.
@@ -359,9 +389,6 @@ class StorageService:
             transaction_committed: If True, database transaction has been committed and this is a post-sync operation
         """
         try:
-            settings = get_settings()
-            json_path = settings.sizes.filename
-
             # Get all items with locations
             result = await self.session.execute(
                 select(Item)
@@ -371,7 +398,7 @@ class StorageService:
             items = result.scalars().all()
 
             # Convert to legacy format
-            json_data = {}
+            json_data: Dict[str, ItemInformation] = {}
             for item in items:
                 try:
                     # Validate item data before conversion
@@ -398,15 +425,18 @@ class StorageService:
                         if location.shelf_idx < 0 or location.cell_idx < 0:
                             raise ValidationError(f"Invalid location for item {item.upca}: negative indices")
 
+                    data_payload: Dict[str, Any] = {
+                        "name": item.name,
+                        "weight": weight_value,
+                        "metadata": item.item_metadata or {},
+                    }
+                    if location:
+                        data_payload["shelf_idx"] = location.shelf_idx
+                        data_payload["cell_idx"] = location.cell_idx
+
                     item_info = ItemInformation(
-                        size=Dimensions(**item.dimensions),
-                        data={
-                            "name": item.name,
-                            "weight": weight_value,
-                            "metadata": item.item_metadata or {},
-                            "shelf_idx": location.shelf_idx if location else None,
-                            "cell_idx": location.cell_idx if location else None
-                        }
+                        size=_coerce_dimensions(item.dimensions),
+                        data=data_payload,
                     )
                     json_data[item.upca] = item_info
 
@@ -416,21 +446,12 @@ class StorageService:
                     logging.error(f"Failed to convert item {item.upca if item else 'unknown'}: {str(conversion_error)}")
                     raise ValidationError(f"Failed to convert item data: {str(conversion_error)}")
 
-            # Ensure output directory exists - skip if filename has no directory component
-            dirname = os.path.dirname(json_path)
-            if dirname:  # Only create directory if there's a directory component
-                os.makedirs(dirname, exist_ok=True)
+            size_db = get_size_db()
+            size_db.items = json_data
 
-            # Write to JSON file with error handling
             try:
-                with open(json_path, "w+") as f:
-                    # Wrap items in expected SizeDatabase format
-                    size_db_data = {
-                        "items": json_data,
-                        "filename": os.path.basename(json_path)
-                    }
-                    json.dump(size_db_data, f, indent=2, default=str)
-            except (IOError, OSError) as file_error:
+                size_db.save()
+            except (OSError, IOError) as file_error:
                 logging.error(f"Failed to write JSON file: {str(file_error)}")
                 return False
 
@@ -449,46 +470,45 @@ class StorageService:
         StorageCellValidator.validate_status("available")  # New cells default to available
         LocationValidator.validate_location(shelf_idx, cell_idx)
 
-        # Check if storage cell already exists with proper locking
-        try:
-            result = await self.session.execute(
-                select(StorageCell)
-                .where(StorageCell.shelf_idx == shelf_idx)
-                .where(StorageCell.cell_idx == cell_idx)
-                .with_for_update()
-            )
-            existing_cell = result.scalar_one_or_none()
-
-            if existing_cell:
-                raise ValidationError(f"Storage cell at shelf {shelf_idx}, cell {cell_idx} already exists")
-        except Exception:
-            # If locking fails, try without locking as fallback
-            # This handles databases that don't support SELECT ... FOR UPDATE (like SQLite)
+        async with self._lock:
+            # Check if storage cell already exists with proper locking
             try:
                 result = await self.session.execute(
                     select(StorageCell)
                     .where(StorageCell.shelf_idx == shelf_idx)
                     .where(StorageCell.cell_idx == cell_idx)
+                    .with_for_update()
                 )
                 existing_cell = result.scalar_one_or_none()
 
                 if existing_cell:
                     raise ValidationError(f"Storage cell at shelf {shelf_idx}, cell {cell_idx} already exists")
             except Exception:
-                # If both locking and non-locking queries fail, raise a generic error
-                raise ValidationError("Failed to check storage cell existence due to database locking issues")
+                try:
+                    result = await self.session.execute(
+                        select(StorageCell)
+                        .where(StorageCell.shelf_idx == shelf_idx)
+                        .where(StorageCell.cell_idx == cell_idx)
+                    )
+                    existing_cell = result.scalar_one_or_none()
 
-        try:
-            cell = StorageCell(
-                shelf_idx=shelf_idx,
-                cell_idx=cell_idx,
-                capacity=capacity,
-                status="available"
-            )
-            self.session.add(cell)
-            await self.session.flush()
-            await self.session.commit()
-            return cell
-        except Exception as e:
-            await self.session.rollback()
-            raise
+                    if existing_cell:
+                        raise ValidationError(f"Storage cell at shelf {shelf_idx}, cell {cell_idx} already exists")
+                except Exception as exc:  # pragma: no cover - defensive path
+                    raise ValidationError("Failed to check storage cell existence due to database locking issues") from exc
+
+            try:
+                cell = StorageCell(
+                    shelf_idx=shelf_idx,
+                    cell_idx=cell_idx,
+                    capacity=capacity,
+                    status="available"
+                )
+                self.session.add(cell)
+                await self.session.flush()
+                await self.session.commit()
+                await self.session.refresh(cell)
+                return cell
+            except Exception:
+                await self.session.rollback()
+                raise

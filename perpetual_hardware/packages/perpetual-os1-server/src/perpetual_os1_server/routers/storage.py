@@ -1,6 +1,6 @@
 """Storage management endpoints with authorization."""
 from typing import List, Optional, Dict, Any
-from fastapi import APIRouter, Depends, HTTPException, Query, Body
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, ConfigDict
 import logging
@@ -105,15 +105,43 @@ class PaginatedItemsResponse(BaseModel):
     limit: int
 
 
+def _serialize_locations(locations: List[ItemLocation]) -> List[Dict[str, Any]]:
+    payload: List[Dict[str, Any]] = []
+    for location in locations:
+        payload.append({
+            "id": location.id,
+            "item_id": location.item_id,
+            "shelf_idx": location.shelf_idx,
+            "cell_idx": location.cell_idx,
+            "created_at": location.created_at.isoformat() if location.created_at else "",
+            "updated_at": location.updated_at.isoformat() if location.updated_at else "",
+        })
+    return payload
+
+
+def _build_item_payload(item: Item, locations: List[ItemLocation]) -> ItemWithLocations:
+    return ItemWithLocations(
+        id=item.id,
+        upca=item.upca,
+        name=item.name,
+        dimensions=item.dimensions,
+        weight=float(item.weight) if item.weight else None,
+        metadata=item.item_metadata or {},
+        locations=_serialize_locations(locations),
+        created_at=item.created_at.isoformat() if item.created_at else "",
+        updated_at=item.updated_at.isoformat() if item.updated_at else "",
+    )
+
+
 # Item endpoints
-@router.get("/items")
-@require_permissions("storage:read")
+@router.get("/items", dependencies=[Depends(require_permissions("storage:read"))])
 @monitor_performance
 async def get_items(
+    response: Response,
     skip: int = 0,
     limit: int = 50,
-    session: AsyncSession = Depends(get_db)
-) -> dict:
+    session: AsyncSession = Depends(get_db),
+) -> List[ItemWithLocations]:
     """Get all items with pagination."""
     await migrate_if_needed(session)
     storage_service = StorageService(session)
@@ -121,12 +149,10 @@ async def get_items(
     items = await storage_service.get_all_items(skip=skip, limit=limit)
     total = await storage_service.get_items_count()
 
-    return {
-        "items": items,
-        "total": total,
-        "skip": skip,
-        "limit": limit
-    }
+    if response is not None:
+        response.headers["X-Total-Count"] = str(total)
+
+    return [_build_item_payload(item, list(item.locations)) for item in items]
 
 
 @router.get("/items/{upca}", dependencies=[Depends(require_permissions("storage:read"))])
@@ -144,17 +170,7 @@ async def get_item(
 
     locations = await storage_service.get_item_locations(upca)
 
-    return ItemWithLocations(
-        id=item.id,
-        upca=item.upca,
-        name=item.name,
-        dimensions=item.dimensions,
-        weight=float(item.weight) if item.weight else None,
-        metadata=item.item_metadata,
-        locations=locations,
-        created_at=item.created_at.isoformat(),
-        updated_at=item.updated_at.isoformat()
-    )
+    return _build_item_payload(item, locations)
 
 
 @router.post("/items", dependencies=[Depends(require_permissions("storage:write"))])
@@ -177,17 +193,7 @@ async def create_item(
 
         locations = await storage_service.get_item_locations(item.upca)
 
-        return ItemWithLocations(
-            id=db_item.id,
-            upca=db_item.upca,
-            name=db_item.name,
-            dimensions=db_item.dimensions,
-            weight=float(db_item.weight) if db_item.weight else None,
-            metadata=db_item.item_metadata,
-            locations=locations,
-            created_at=db_item.created_at.isoformat(),
-            updated_at=db_item.updated_at.isoformat()
-        )
+        return _build_item_payload(db_item, locations)
 
     except ValidationError as e:
         raise HTTPException(status_code=422, detail=str(e))
@@ -216,19 +222,13 @@ async def update_item(
     if not updated_item:
         raise HTTPException(status_code=404, detail="Item not found")
 
+    fresh_item = await storage_service.get_item(upca)
+    if fresh_item is None:
+        fresh_item = updated_item
+
     locations = await storage_service.get_item_locations(upca)
 
-    return ItemWithLocations(
-        id=updated_item.id,
-        upca=updated_item.upca,
-        name=updated_item.name,
-        dimensions=updated_item.dimensions,
-        weight=float(updated_item.weight) if updated_item.weight else None,
-        metadata=updated_item.item_metadata,
-        locations=locations,
-        created_at=updated_item.created_at.isoformat(),
-        updated_at=updated_item.updated_at.isoformat()
-    )
+    return _build_item_payload(fresh_item, locations)
 
 
 @router.delete("/items/{upca}", dependencies=[Depends(require_permissions("storage:delete"))])
