@@ -416,8 +416,10 @@ class StorageService:
                     logging.error(f"Failed to convert item {item.upca if item else 'unknown'}: {str(conversion_error)}")
                     raise ValidationError(f"Failed to convert item data: {str(conversion_error)}")
 
-            # Ensure output directory exists
-            os.makedirs(os.path.dirname(json_path), exist_ok=True)
+            # Ensure output directory exists - skip if filename has no directory component
+            dirname = os.path.dirname(json_path)
+            if dirname:  # Only create directory if there's a directory component
+                os.makedirs(dirname, exist_ok=True)
 
             # Write to JSON file with error handling
             try:
