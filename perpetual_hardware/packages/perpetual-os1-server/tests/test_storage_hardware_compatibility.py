@@ -7,7 +7,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.asyncio import async_sessionmaker
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Any
 
 import sys
 from pathlib import Path
@@ -108,7 +108,7 @@ async def test_backward_compatibility_json_writing(test_json_file: str) -> None:
     dimensions = Dimensions(width=5.0, height=10.0, length=15.0)
     data = {"name": "Legacy Item", "weight": 250.0}
 
-    add_item_to_json("123456789999", data, dimensions)
+    add_item_to_json("123456789999", data, dimensions)  # type: ignore[arg-type]
 
     # Verify item was added to JSON
     with open(test_json_file, 'r') as f:
@@ -259,7 +259,7 @@ async def test_concurrent_access(test_db: AsyncSession, test_json_file: str) -> 
     """Test concurrent access to both database and JSON."""
     import asyncio
 
-    async def create_item(session: AsyncSession, upca: str, name: str):
+    async def create_item(session: AsyncSession, upca: str, name: str) -> Any:
         storage_service = StorageService(session)
         return await storage_service.create_item(
             upca=upca,
