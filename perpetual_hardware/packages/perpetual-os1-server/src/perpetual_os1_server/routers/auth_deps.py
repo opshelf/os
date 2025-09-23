@@ -120,20 +120,20 @@ def require_permissions(permissions: str | List[str]):
 	"""Dependency to require specific permissions."""
 	if isinstance(permissions, str):
 		permissions = [permissions]
-	
+
 	async def permission_checker(
 		current_user: User = Depends(get_current_user)
 	) -> User:
 		"""Check if user has required permissions."""
 		user_permissions = current_user.role.permissions
-		
+
 		for permission in permissions:
 			if not has_permission(user_permissions, permission):
 				raise HTTPException(
 					status_code=status.HTTP_403_FORBIDDEN,
 					detail=f"Missing required permission: {permission}"
 				)
-		
+
 		return current_user
-	
+
 	return permission_checker
