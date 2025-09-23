@@ -56,24 +56,20 @@ def init_file_sizes() -> None:
             size_database = default_size_db
 
 
-def get_storage_service():
-    """Mock storage service for backward compatibility."""
-    # This is a temporary mock to avoid circular imports
-    # In production, this should be properly initialized
-    class MockStorageService:
-        async def get_all_items(self):
-            # Return empty list for now
-            return []
+def get_storage_service(session: Optional[AsyncSession] = None):
+    """Get real storage service for database operations.
 
-        async def create_item(self, upca: str, name: str, dimensions: dict, weight: float = None, metadata: dict = None):
-            pass
+    Args:
+        session: Optional database session. If not provided, caller must handle session management.
+    """
+    # Import here to avoid circular imports at module level
+    from perpetual_os1_server.core.storage import StorageService
 
-        async def delete_item(self, upca: str):
-            return True
+    if session is None:
+        # This should not happen in production - caller should provide session
+        raise ValueError("Database session required for storage service operations")
 
-        async def sync_to_json(self):
-            pass
-    return MockStorageService()
+    return StorageService(session)
 
 
 def get_size_db() -> SizeDatabase:

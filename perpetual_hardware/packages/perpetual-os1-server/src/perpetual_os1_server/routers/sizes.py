@@ -10,6 +10,7 @@ from perpetual_os1_server.core.sizes import (
     get_item_in_json_format,
     get_storage_service
 )
+from perpetual_os1.storage import Dimensions
 from perpetual_os1_server.database.session import get_db
 from pydantic import BaseModel
 from .auth_deps import get_current_user, require_permissions
@@ -30,14 +31,14 @@ async def get_size_data(
         return get_size_db()
 
     # Get from database and convert to JSON format
-    storage_service = get_storage_service()
+    storage_service = get_storage_service(session)
     items = await storage_service.get_all_items()
 
     # Convert to legacy JSON format
     json_data = {}
     for item in items:
         item_info = ItemInformation(
-            size=item.dimensions,
+            size=Dimensions(**item.dimensions),
             data={
                 "name": item.name,
                 "weight": float(item.weight) if item.weight else 0,
@@ -72,7 +73,7 @@ async def add_size_item(
         return get_size_db()
 
     # Use database with fallback
-    storage_service = get_storage_service()
+    storage_service = get_storage_service(session)
 
     try:
         # Create item in database
@@ -92,7 +93,7 @@ async def add_size_item(
         json_data = {}
         for item in items:
             item_info = ItemInformation(
-                size=item.dimensions,
+                size=Dimensions(**item.dimensions),
                 data={
                     "name": item.name,
                     "weight": float(item.weight) if item.weight else 0,
@@ -127,6 +128,7 @@ async def add_item(
 ) -> SizeDatabase:
     """Add item with generated UPCA to database and sync to JSON."""
     upca = generate_random_upca()
+    request_item = item  # Keep reference for exception handling
 
     if use_json:
         # Use original JSON method for hardware compatibility
@@ -134,7 +136,7 @@ async def add_item(
         return get_size_db()
 
     # Use database with fallback
-    storage_service = get_storage_service()
+    storage_service = get_storage_service(session)
 
     try:
         # Create item in database
@@ -154,7 +156,7 @@ async def add_item(
         json_data = {}
         for item in items:
             item_info = ItemInformation(
-                size=item.dimensions,
+                size=Dimensions(**item.dimensions),
                 data={
                     "name": item.name,
                     "weight": float(item.weight) if item.weight else 0,
@@ -174,7 +176,7 @@ async def add_item(
         logging.error(f"Database operation failed for new item: {str(e)}")
         # Fallback to JSON if database fails
         try:
-            add_item_to_json(upca, item.data, item.size)
+            add_item_to_json(upca, request_item.data, request_item.size)
             return get_size_db()
         except Exception as json_e:
             logging.error(f"JSON fallback also failed for new item: {str(json_e)}")
@@ -194,7 +196,7 @@ async def remove_item(
         return get_size_db()
 
     # Use database with fallback
-    storage_service = get_storage_service()
+    storage_service = get_storage_service(session)
 
     try:
         # Delete from database
@@ -209,7 +211,7 @@ async def remove_item(
         json_data = {}
         for item in items:
             item_info = ItemInformation(
-                size=item.dimensions,
+                size=Dimensions(**item.dimensions),
                 data={
                     "name": item.name,
                     "weight": float(item.weight) if item.weight else 0,
