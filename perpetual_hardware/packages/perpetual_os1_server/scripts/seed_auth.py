@@ -22,7 +22,7 @@ DEFAULT_ROLES = [
 			"robot:control", "robot:read",
 			"gantry:control", "gantry:read",
 			"tool:control", "tool:read",
-			"storage:read", "storage:write",
+			"storage:read", "storage:write", "storage:delete",
 			"scanner:read", "scanner:control",
 			"workstation:control", "workstation:read",
 			"audit:read"

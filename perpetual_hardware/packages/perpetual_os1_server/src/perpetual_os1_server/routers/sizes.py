@@ -10,7 +10,6 @@ from perpetual_os1_server.core.sizes import (
     SizeDatabase,
     add_item_to_json,
     remove_item_from_json,
-    get_item_in_json_format,
     get_storage_service
 )
 from perpetual_os1_server.database.session import get_db

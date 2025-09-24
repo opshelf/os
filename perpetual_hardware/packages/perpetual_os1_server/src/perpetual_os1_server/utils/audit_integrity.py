@@ -23,16 +23,10 @@ def _load_hmac_key() -> bytes:
     key = os.getenv("AUDIT_HMAC_KEY")
     if key:
         try:
-            # Allow hex or base64 or raw
-            try:
-                _HMAC_KEY_CACHE = bytes.fromhex(key)
-            except ValueError:
-                # Not hex; fall back to utf-8 bytes (simple and predictable)
-                _HMAC_KEY_CACHE = key.encode("utf-8")
-        except Exception:
+            _HMAC_KEY_CACHE = bytes.fromhex(key)
+        except ValueError:
             _HMAC_KEY_CACHE = key.encode("utf-8")
     else:
-        # Ephemeral key for dev environments; log a gentle warning
         _HMAC_KEY_CACHE = secrets.token_bytes(32)
         print("[audit] Warning: AUDIT_HMAC_KEY is not set; using ephemeral key (dev only).")
     return _HMAC_KEY_CACHE
@@ -60,6 +54,5 @@ def hmac_sha256_hex(message: bytes) -> str:
 
 
 def build_binding_message(seq_no: int, prev_hash: str, entry_hash: str) -> bytes:
-    # Compact, stable message format for HMAC binding
     return f"{seq_no}|{prev_hash}|{entry_hash}".encode("utf-8")
 

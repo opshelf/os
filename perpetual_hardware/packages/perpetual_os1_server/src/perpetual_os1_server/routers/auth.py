@@ -1,8 +1,7 @@
 """Authentication API endpoints."""
-from datetime import datetime
-from typing import Optional, List
+from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException, status, Form
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -61,7 +60,7 @@ async def get_public_users(
 	result = await db.execute(
 		select(User)
 		.options(selectinload(User.role))
-		.filter(User.is_active == True)
+		.filter(User.is_active)
 		.order_by(User.id)
 	)
 	users = result.scalars().all()

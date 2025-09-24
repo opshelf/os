@@ -3,7 +3,6 @@ from pydantic import BaseModel, EmailStr
 from typing import Optional, List
 from datetime import datetime
 
-# User schemas
 class UserBase(BaseModel):
 	"""Base user model."""
 	email: EmailStr
@@ -43,7 +42,6 @@ class UserResponse(UserBase):
 	permissions: List[str]
 	is_active: bool
 
-# Role schemas
 class RoleBase(BaseModel):
 	"""Base role model."""
 	name: str
@@ -67,7 +65,6 @@ class RoleInDB(RoleBase):
 	class Config:
 		from_attributes = True
 
-# Auth schemas
 class LoginRequest(BaseModel):
 	"""Login with email/PIN."""
 	email: EmailStr
@@ -84,7 +81,6 @@ class RefreshRequest(BaseModel):
 	"""Refresh token request."""
 	refresh_token: str
 
-# Audit schemas
 class AuditLogResponse(BaseModel):
 	"""Audit log entry."""
 	id: int

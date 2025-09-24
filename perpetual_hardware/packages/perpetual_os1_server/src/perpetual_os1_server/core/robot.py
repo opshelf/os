@@ -11,12 +11,8 @@ robot_worker: Optional[r_worker.RobotWorker] = None
 async def init_robot_worker() -> None:
     global robot_worker
     logging.info("Getting Robot")
-    # client = await get_modbus_client()
     robot = r.Robot("/dev/ttyUSB0")
-    # storage_grid = load_storage_from_file("storage.json")
-    # robot.set_storage(storage_grid)
-    await robot.configure() # todo make these have error handling
-    # logging.info("Got Bus")
+    await robot.configure()
     logging.info("Built Robot")
     robot_worker = r_worker.RobotWorker(robot, common.RobotNatsConfiguration())
     logging.info("Got Instance")

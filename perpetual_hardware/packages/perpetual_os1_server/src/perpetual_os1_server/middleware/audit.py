@@ -9,11 +9,9 @@ from contextvars import ContextVar
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.types import Message
-from sqlalchemy.orm import Session
 
 from ..database.session import AsyncSessionLocal
-from ..database.models import AuditLog, User
+from ..database.models import AuditLog
 from sqlalchemy import select
 from ..utils.audit_integrity import (
     canonicalize_payload,
@@ -57,9 +55,6 @@ class AuditMiddleware(BaseHTTPMiddleware):
 			response: Response = await call_next(request)
 			status_code = response.status_code
 
-			# We avoid consuming/rewrapping the response body to prevent side effects.
-			# Only capture status_code; leave response as-is.
-
 		except Exception as e:
 			error_message = str(e)
 			traceback.print_exc()
@@ -96,7 +91,6 @@ class AuditMiddleware(BaseHTTPMiddleware):
 		"""Log request to database."""
 		async with AsyncSessionLocal() as db:
 			try:
-				# Extract token from request if available
 				token = None
 				auth_header = request.headers.get("Authorization")
 				if auth_header and auth_header.startswith("Bearer "):
@@ -104,7 +98,6 @@ class AuditMiddleware(BaseHTTPMiddleware):
 				
 				user = await get_current_user_optional(token=token, db=db)
 
-				# Prepare immutable fields for integrity protection
 				now = datetime.now(timezone.utc)
 				user_id = user.id if user else None
 				method = request.method
@@ -113,7 +106,6 @@ class AuditMiddleware(BaseHTTPMiddleware):
 				ip_address = request.client.host if request.client else None
 				user_agent = request.headers.get("user-agent")
 
-				# Determine previous link (last protected entry), fallback to last id
 				last_seq_no = None
 				last_entry_hash = None
 				result = await db.execute(
@@ -127,7 +119,6 @@ class AuditMiddleware(BaseHTTPMiddleware):
 					last_seq_no = int(row[0])
 					last_entry_hash = str(row[1])
 				else:
-					# Fallback to last id as baseline
 					res2 = await db.execute(
 						select(AuditLog.id).order_by(AuditLog.id.desc()).limit(1)
 					)
@@ -138,7 +129,6 @@ class AuditMiddleware(BaseHTTPMiddleware):
 				seq_no = (last_seq_no or 0) + 1
 				prev_hash = last_entry_hash if last_entry_hash else ("0" * 64)
 
-				# Canonical payload for hashing
 				payload = {
 					"timestamp": now.isoformat(),
 					"method": method,
