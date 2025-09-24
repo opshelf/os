@@ -381,5 +381,3 @@ class RobotWorker:
             )
 
         await self._publish_status()
-
-*** End of File
