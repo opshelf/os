@@ -84,7 +84,7 @@ def get_settings() -> Settings:
     if "robot" not in data:
         data["robot"] = {"enabled": False}
     if "nats" not in data:
-        data["nats"] = {"domain": "localhost", "port": 4222}
+        data["nats"] = {"domain": "nats", "port": 4222}
     if "camera" not in data:
         data["camera"] = {"enabled": False}
     if "scale" not in data:

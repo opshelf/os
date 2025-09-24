@@ -5,10 +5,11 @@ WORKDIR /app/perpetual_hardware
 ENV PATH=/root/.local/bin:$PATH
 RUN echo 'export "PATH=$PATH:my_path"' >> /etc/profile
 RUN uv sync --frozen
-WORKDIR /app/perpetual_hardware/packages/perpetual-os1-server
+WORKDIR /app/perpetual_hardware/packages/perpetual_os1_server
 RUN uv sync 
 EXPOSE 8000
 EXPOSE 4222
 EXPOSE 8222
+ENV RUN_SEED_SCRIPT=true
 CMD ["uv", "run", "start"]
 
