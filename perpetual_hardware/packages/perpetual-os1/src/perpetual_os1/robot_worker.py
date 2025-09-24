@@ -1,38 +1,39 @@
 import asyncio
+import logging
+import os
 from datetime import datetime, timezone
-from typing import Optional, List
+from typing import Optional, List, Any
+
 from nats.aio.client import Client as NATS
 from nats.aio.msg import Msg
 from nats import errors as nats_errors
 from nats.js.errors import NotFoundError
-from pydantic import BaseModel, TypeAdapter, Field
+from pydantic import BaseModel, Field, TypeAdapter
+
 from perpetual_os1.robot import (
-    RobotConfiguration,
     Robot,
     RobotCommands,
     RobotResponse,
     RobotStatus,
     StopCommand,
 )
-from perpetual_os1.storage import StorageGrid, StorageModuleCellLocation, CellItem
 from perpetual_os1.common import RobotNatsConfiguration
 from perpetual_os1.robot_client import RobotClient
+from perpetual_os1.barcode_service import BarcodeService
 
 
 class WorkerError(BaseModel):
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     error_type: str
     message: str
-    context: Optional[dict] = None
+    context: Optional[dict[str, Any]] = None
     stack_trace: Optional[str] = None
 
 
 class QueuedOperation(BaseModel):
     command: RobotCommands
     timestamp: datetime
-    # Extract relevant references from commands
-    location: Optional[StorageModuleCellLocation] = None
-    item_data: Optional[CellItem] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class WorkerStatus(BaseModel):
@@ -42,13 +43,9 @@ class WorkerStatus(BaseModel):
     error_queue: List[WorkerError] = Field(default_factory=list)
 
 
-class WorkerStatusWithQueue(BaseModel):
-    robot_status: Optional[RobotStatus]
-    running: bool
-    current_command: Optional[RobotCommands]
-    queued_operations: List[QueuedOperation] = []
+class WorkerStatusWithQueue(WorkerStatus):
+    queued_operations: List[QueuedOperation] = Field(default_factory=list)
     queue_length: int = 0
-    error_queue: List[WorkerError] = Field(default_factory=list)
 
 
 RobotCommandAdapter = TypeAdapter[RobotCommands](RobotCommands)
@@ -71,16 +68,23 @@ class RobotWorker:
         self._nats_config = nats_config
         self._client = RobotClient(nats_config)
         self._nc = NATS()
-        self._error_queue: List[WorkerError] = []
         self._js = None  # Will be set in connect()
+        self._error_queue: List[WorkerError] = []
         self._queued_commands: List[QueuedOperation] = []
-        self._use_enhanced_status = True  # Feature flag for enhanced status
+        self._use_enhanced_status = True
+        self._barcode: Optional[BarcodeService] = None
+        self._barcode_task: Optional[asyncio.Task] = None
 
     def get_client(self) -> RobotClient:
         return self._client
 
+    @classmethod
+    async def get_instance(cls, robot: Robot) -> "RobotWorker":
+        if cls._instance is None:
+            cls._instance = cls(robot)
+        return cls._instance
+
     def _add_error(self, error: WorkerError) -> None:
-        """Add error to queue, maintaining max size of 10"""
         if len(self._error_queue) >= 10:
             self._error_queue.pop(0)
         self._error_queue.append(error)
@@ -105,98 +109,135 @@ class RobotWorker:
             self._nats_config.command_queue, durable=self._nats_config.command_queue
         )
 
-        # Register request-reply handlers
-        await self._nc.subscribe(self._nats_config.get_storage_subject, cb=self._handle_get_storage)
-        await self._nc.subscribe(self._nats_config.set_storage_subject, cb=self._handle_set_storage)
-        await self._nc.subscribe(self._nats_config.get_config_subject, cb=self._handle_get_config)
-        await self._nc.subscribe(self._nats_config.set_config_subject, cb=self._handle_set_config)
-        await self._nc.subscribe(self._nats_config.get_status_subject, cb=self._handle_get_status)
-
-    @classmethod
-    async def get_instance(cls, robot: Robot) -> "RobotWorker":
-        if cls._instance is None:
-            cls._instance = cls(robot)
-        return cls._instance
+        if self._should_enable_barcode() and self._barcode is None:
+            port = os.getenv("PERPETUAL_BARCODE_PORT", "/dev/ttyACM0")
+            baudrate = int(os.getenv("PERPETUAL_BARCODE_BAUDRATE", "115200"))
+            try:
+                self._barcode = BarcodeService(port=port, baudrate=baudrate)
+                await self._barcode.start()
+                self._barcode_task = asyncio.create_task(
+                    self._run_barcode_bridge(),
+                    name="barcode-bridge",
+                )
+                logging.info("Barcode bridge started on %s", port)
+            except Exception as exc:  # pragma: no cover - hardware dependent
+                logging.warning("Barcode service disabled: %s", exc)
+                self._barcode = None
+                self._barcode_task = None
 
     async def clear_commands(self) -> None:
         if self._js:
             await self._js.purge_stream(self._nats_config.stream_name)
-        # Also clear our local tracking
         self._queued_commands = []
 
-    async def get_storage(self) -> StorageGrid:
-        return self._robot.get_storage()
+    def _should_enable_barcode(self) -> bool:
+        return os.getenv("PERPETUAL_DISABLE_BARCODE", "false").lower() not in {"1", "true", "yes"}
 
-    async def set_storage(self, storage: StorageGrid) -> None:
-        self._robot.set_storage(storage)
+    async def _run_barcode_bridge(self) -> None:
+        if not self._barcode:
+            return
+        try:
+            async for code in self._barcode:
+                try:
+                    command = await self._barcode_to_command(code)
+                except Exception as mapping_error:  # pragma: no cover - hardware dependent
+                    logging.warning("Barcode mapping error for %s: %s", code, mapping_error)
+                    self._add_error(
+                        WorkerError(
+                            error_type="BarcodeMappingError",
+                            message=str(mapping_error),
+                            context={"barcode": code},
+                        )
+                    )
+                    continue
 
-    async def set_configuration(self, configuration: RobotConfiguration) -> None:
-        await self._robot.set_configuration(configuration)
+                try:
+                    await self._nc.publish(
+                        self._nats_config.command_queue,
+                        command.model_dump_json().encode(),
+                    )
+                except Exception as publish_error:  # pragma: no cover - hardware dependent
+                    logging.warning("Barcode publish error: %s", publish_error)
+                    self._add_error(
+                        WorkerError(
+                            error_type="BarcodePublishError",
+                            message=str(publish_error),
+                            context={"barcode": code},
+                        )
+                    )
+        except asyncio.CancelledError:
+            pass
+        except Exception as bridge_error:  # pragma: no cover - hardware dependent
+            logging.error("Barcode bridge crashed: %s", bridge_error)
+            self._add_error(
+                WorkerError(
+                    error_type="BarcodeBridgeError",
+                    message=str(bridge_error),
+                )
+            )
 
-    def get_configuration(self) -> RobotConfiguration:
-        return self._robot.configuration
+    async def _barcode_to_command(self, code: str) -> RobotCommands:
+        logging.info("Received barcode: %s", code)
+        # TODO: map barcodes to real RobotCommands
+        return StopCommand()
 
-    def _extract_location(self, command: RobotCommands) -> Optional[StorageModuleCellLocation]:
-        """Extract storage location from command if available."""
-        if hasattr(command, 'location'):
-            return command.location
-        return None
-
-    def _extract_item_data(self, command: RobotCommands) -> Optional[CellItem]:
-        """Extract item data from command if available."""
-        if hasattr(command, 'item'):
-            return command.item
-        return None
+    def _snapshot_command(self, command: RobotCommands) -> QueuedOperation:
+        metadata: dict[str, Any] = {}
+        for attribute in ("location", "item", "metadata"):
+            value = getattr(command, attribute, None)
+            if value is not None:
+                metadata[attribute] = value
+        return QueuedOperation(command=command, timestamp=datetime.now(timezone.utc), metadata=metadata)
 
     async def _get_pending_messages_info(self) -> tuple[int, List[QueuedOperation]]:
-        """Get information about pending messages in the queue."""
-        try:
-            if self._js is not None:
-                consumer_info = await self._js.consumer_info(
-                    self._nats_config.stream_name, 
-                    "robot-worker"
-                )
-                pending_count = consumer_info.num_pending
-                return pending_count, self._queued_commands
-        except Exception as e:
-            print(f"Error getting consumer info: {e}")
+        if self._js is None:
             return 0, []
-        
-        return 0, []
+        try:
+            consumer_info = await self._js.consumer_info(
+                self._nats_config.stream_name,
+                self._nats_config.command_queue,
+            )
+            return consumer_info.num_pending, list(self._queued_commands)
+        except NotFoundError:
+            return 0, []
+        except Exception as err:  # pragma: no cover - observability
+            logging.warning("Failed to fetch consumer info: %s", err)
+            return 0, []
 
-    async def _publish_enhanced_status(self) -> None:
-        """Publish enhanced status with queued operations information."""
+    async def _publish_status(self) -> None:
         try:
             robot_status = await self._robot.status()
-        except Exception as e:
+        except Exception as err:
             robot_status = None
-            self._add_error(WorkerError(
-                error_type="StatusRetrievalError",
-                message=f"Failed to get robot status: {str(e)}",
-                context={"command": self._current_command.model_dump() if self._current_command else None}
-            ))
-        
+            self._add_error(
+                WorkerError(
+                    error_type="StatusRetrievalError",
+                    message=str(err),
+                    context={"command": self._current_command.model_dump() if self._current_command else None},
+                )
+            )
+
         if self._use_enhanced_status:
             pending_count, queued_ops = await self._get_pending_messages_info()
             status = WorkerStatusWithQueue(
                 robot_status=robot_status,
                 running=self._running,
                 current_command=self._current_command,
-                queued_operations=queued_ops[:10],  # Limit to prevent large payloads
+                queued_operations=queued_ops[:10],
                 queue_length=pending_count,
-                error_queue=self._error_queue.copy()
+                error_queue=list(self._error_queue),
             )
         else:
             status = WorkerStatus(
                 robot_status=robot_status,
                 running=self._running,
                 current_command=self._current_command,
-                error_queue=self._error_queue.copy()
+                error_queue=list(self._error_queue),
             )
-        
+
         await self._nc.publish(
-            self._nats_config.status_queue, 
-            status.model_dump_json().encode()
+            self._nats_config.status_queue,
+            status.model_dump_json().encode(),
         )
 
     async def process_commands(self) -> None:
@@ -209,211 +250,136 @@ class RobotWorker:
                         command = RobotCommandAdapter.validate_json(msg.data.decode())
                         self._current_command = command
                         self._msg = msg
-                        
-                        # Create queued operation entry
-                        queued_op = QueuedOperation(
-                            command=command,
-                            timestamp=datetime.now(timezone.utc),
-                            location=self._extract_location(command),
-                            item_data=self._extract_item_data(command)
-                        )
-                        
-                        # Add to our tracking list
-                        self._queued_commands.append(queued_op)
-                        
-                        # Publish enhanced status with errors
-                        await self._publish_enhanced_status()
-                        
-                        self._current_task = asyncio.create_task(
-                            self._robot.handle_command(command)
-                        )
+                        self._queued_commands.append(self._snapshot_command(command))
+                        await self._publish_status()
+                        self._current_task = asyncio.create_task(self._robot.handle_command(command))
                 else:
                     if self._current_task.done():
                         try:
                             result: RobotResponse = self._current_task.result()
                             await self._nc.publish(
-                                self._nats_config.event_queue, result.model_dump_json().encode()
+                                self._nats_config.event_queue,
+                                result.model_dump_json().encode(),
                             )
-                        except Exception as e:
-                            self._add_error(WorkerError(
-                                error_type="CommandExecutionError",
-                                message=f"Command failed: {str(e)}",
-                                context={"command": self._current_command.model_dump() if self._current_command else None},
-                                stack_trace=str(e.__traceback__) if hasattr(e, '__traceback__') else None
-                            ))
-                            await self._publish_enhanced_status()
-                        
+                        except Exception as err:
+                            self._add_error(
+                                WorkerError(
+                                    error_type="CommandExecutionError",
+                                    message=str(err),
+                                    context={"command": self._current_command.model_dump() if self._current_command else None},
+                                )
+                            )
+
                         if self._msg:
                             await self._msg.ack()
-                        
-                        # Remove the completed command from our tracking
-                        if self._queued_commands and self._current_command:
-                            # Remove the first matching command
+
+                        if self._current_command:
                             self._queued_commands = [
-                                op for op in self._queued_commands 
+                                op for op in self._queued_commands
                                 if op.command != self._current_command
                             ]
-                        
+
                         self._current_task = None
                         self._current_command = None
                         self._msg = None
-                        
-                        # Publish updated status after completion
-                        await self._publish_enhanced_status()
+                        await self._publish_status()
 
                 await asyncio.sleep(0.1)
-            except (nats_errors.TimeoutError, asyncio.TimeoutError, asyncio.CancelledError) as e:
-                await asyncio.sleep(0.1)
-                if isinstance(e, (nats_errors.TimeoutError, asyncio.TimeoutError)):
-                    self._add_error(WorkerError(
-                        error_type="TimeoutError",
-                        message="Operation timed out",
-                        context={"command": self._current_command.model_dump() if self._current_command else None}
-                    ))
+            except (nats_errors.TimeoutError, asyncio.TimeoutError):
                 if self._msg:
                     await self._msg.ack()
-                
-                # Remove the failed command from tracking if needed
-                if self._current_command and self._queued_commands:
-                    self._queued_commands = [
-                        op for op in self._queued_commands 
-                        if op.command != self._current_command
-                    ]
-                
                 self._current_task = None
                 self._current_command = None
                 self._msg = None
-                
-                # Publish enhanced status
-                await self._publish_enhanced_status()
-            #except Exception as e:
-            #    robot_status = await self._robot.status()
-            #    error_status = WorkerStatus(
-            #        robot_status=robot_status, running=True, current_command=None
-            #    )
-            #    await self._nc.publish(
-            #        self._nats_config.event_queue, error_status.model_dump_json().encode()
-            #    )
-            #    if self._msg:
-            #        await self._msg.ack()
-            #    self._running = False
-            #    self._current_task = None
-            #    self._current_command = None
-            #    self._msg = None
-
-            except Exception as e:
-                print(f"Unexpected exception: {e}")
+                await asyncio.sleep(0.1)
+            except asyncio.CancelledError:
+                raise
+            except Exception as err:
+                logging.exception("Unexpected robot worker error: %s", err)
                 import traceback
-                self._add_error(WorkerError(
-                    error_type="UnexpectedError",
-                    message=f"Unexpected error: {str(e)}",
-                    context={"command": self._current_command.model_dump() if self._current_command else None},
-                    stack_trace=traceback.format_exc()
-                ))
-                
+
+                self._add_error(
+                    WorkerError(
+                        error_type="UnexpectedError",
+                        message=str(err),
+                        context={"command": self._current_command.model_dump() if self._current_command else None},
+                        stack_trace=traceback.format_exc(),
+                    )
+                )
                 try:
-                    await self._publish_enhanced_status()
-                except Exception as pub_err:
-                    print(f"Error publishing error status: {pub_err}")
+                    await self._publish_status()
+                except Exception as publish_err:
+                    logging.warning("Failed to publish error status: %s", publish_err)
 
                 if self._msg:
                     try:
                         await self._msg.ack()
                     except Exception as ack_err:
-                        print(f"Failed to ack msg: {ack_err}")
+                        logging.warning("Failed to ack NATS message: %s", ack_err)
 
                 self._current_task = None
                 self._current_command = None
                 self._msg = None
-
                 await asyncio.sleep(1)
 
     async def start(self) -> None:
-        if not self._running:
-            self._running = True
-            if self._worker_task:
-                self._worker_task.cancel()
-            self._worker_task = asyncio.create_task(self.process_commands())
-            
-            # Clear queued commands tracking on start
-            self._queued_commands = []
-            
-            # Publish initial enhanced status
-            await self._publish_enhanced_status()
+        if self._running:
+            return
+        self._running = True
+        if self._worker_task:
+            self._worker_task.cancel()
+        self._worker_task = asyncio.create_task(self.process_commands())
+        self._queued_commands = []
+        await self._publish_status()
 
     async def shutdown(self) -> None:
-        print("Shutting Down")
-        #if self._running:
+        logging.info("Shutting down robot worker")
         self._running = False
+
+        if self._barcode_task:
+            logging.info("Stopping barcode bridge")
+            self._barcode_task.cancel()
+            try:
+                await self._barcode_task
+            except asyncio.CancelledError:
+                pass
+            self._barcode_task = None
+        if self._barcode:
+            try:
+                await self._barcode.stop()
+            except Exception as exc:  # pragma: no cover - hardware dependent
+                logging.warning("Error stopping barcode service: %s", exc)
+            self._barcode = None
+
         if self._worker_task:
-            print("Cancel Worker Task")
             self._worker_task.cancel()
             try:
                 await self._worker_task
             except asyncio.CancelledError:
                 pass
-        # Send a stop command before shutting down.
 
-        print("Send Stop Command")
         try:
             await self._robot.handle_command(StopCommand())
-        except Exception as e:
-            self._add_error(WorkerError(
-                error_type="ShutdownError",
-                message=f"Error during stop command: {str(e)}",
-                context={"phase": "stop_command"}
-            ))
-        
-        print("Send Shutdown")
+        except Exception as err:
+            self._add_error(
+                WorkerError(
+                    error_type="ShutdownError",
+                    message=str(err),
+                    context={"phase": "stop_command"},
+                )
+            )
+
         try:
             await self._robot.shutdown()
-        except Exception as e:
-            self._add_error(WorkerError(
-                error_type="ShutdownError",
-                message=f"Error during robot shutdown: {str(e)}",
-                context={"phase": "robot_shutdown"}
-            ))
-        
-        print("Publish Status ")
-        self._running = False
-        
-        # Publish shutdown status with errors
-        await self._publish_enhanced_status()
+        except Exception as err:
+            self._add_error(
+                WorkerError(
+                    error_type="ShutdownError",
+                    message=str(err),
+                    context={"phase": "robot_shutdown"},
+                )
+            )
 
-    async def _handle_get_storage(self, msg: Msg) -> None:
-        storage = await self.get_storage()
-        await self._nc.publish(msg.reply, storage.model_dump_json().encode())
+        await self._publish_status()
 
-    async def _handle_set_storage(self, msg: Msg) -> None:
-        try:
-            storage = StorageGrid.model_validate_json(msg.data)
-            await self.set_storage(storage)
-            await self._nc.publish(msg.reply, b"ok")
-        except Exception as e:
-            await self._nc.publish(msg.reply, f"error: {e}".encode())
-
-    async def _handle_get_config(self, msg: Msg) -> None:
-        config = self.get_configuration()
-        await self._nc.publish(msg.reply, config.model_dump_json().encode())
-
-    async def _handle_set_config(self, msg: Msg) -> None:
-        try:
-            config = RobotConfiguration.model_validate_json(msg.data)
-            await self.set_configuration(config)
-            await self._nc.publish(msg.reply, b"ok")
-        except Exception as e:
-            await self._nc.publish(msg.reply, f"error: {e}".encode())
-
-    async def _handle_get_status(self, msg: Msg) -> None:
-        try:
-            robot_status = await self._robot.status()
-        except:
-            robot_status = None
-        
-        status = WorkerStatus(
-            robot_status=robot_status,
-            running=self._running,
-            current_command=self._current_command,
-            error_queue=self._error_queue.copy()
-        )
-        await self._nc.publish(msg.reply, status.model_dump_json().encode())
+*** End of File
