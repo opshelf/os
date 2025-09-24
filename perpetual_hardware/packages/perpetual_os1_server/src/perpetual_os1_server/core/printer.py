@@ -3,7 +3,7 @@ import barcode  # type: ignore
 from barcode.writer import ImageWriter  # type: ignore
 from pydantic import BaseModel
 from typing import List, Tuple, Optional
-from PIL import Image, ImageDraw, ImageFont, ImageFile
+from PIL import Image, ImageDraw, ImageFont
 
 def create_barcode_upca(filename: str, upca: str) -> Tuple[str, str]:
     upc = barcode.get("upc", upca, writer=ImageWriter())
