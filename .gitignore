@@ -12,6 +12,9 @@ wheels/
 .ruff_cache/
 .uv-cache
 
+# Coverage files
+.coverage
+
 # Virtual environments
 .venv
 
@@ -35,6 +38,4 @@ perpetual_hardware/packages/perpetual-os1-server/data/
 # Claude Code
 .claude/
 CLAUDE.md
-
-
 AGENTS.md
