@@ -97,6 +97,10 @@ def get_settings() -> Settings:
         data["auth"]["dev_mode"] = True
         data["auth"]["require_auth"] = False
         data["auth"]["dev_auto_user"] = "admin@opshelf.com"
+    elif env == "test":
+        data["auth"]["dev_mode"] = False
+        data["auth"]["require_auth"] = True
+        data["auth"]["enabled"] = True
     
     if os.getenv("JWT_SECRET"):
         data["auth"]["jwt_secret"] = os.getenv("JWT_SECRET")

@@ -157,7 +157,6 @@ def init_file_sizes(force: bool = False) -> None:
 
 def get_storage_service(session: Optional[AsyncSession] = None) -> Any:
     """Get real storage service for database operations."""
-    # Import locally to avoid circular dependency at module load.
     from perpetual_os1_server.core.storage import StorageService
 
     if session is None:
@@ -210,14 +209,11 @@ async def migrate_if_needed(session: AsyncSession) -> None:
     import asyncio
     from sqlalchemy import text
 
-    # Use file-based locking to prevent concurrent migrations
     filename = get_sizes_filename()
     lock_file = f"{filename}.lock"
 
     try:
-        # Check if migration lock exists
         if os.path.exists(lock_file):
-            # Wait up to 30 seconds for lock to be released
             for _ in range(30):
                 if not os.path.exists(lock_file):
                     break
@@ -225,30 +221,24 @@ async def migrate_if_needed(session: AsyncSession) -> None:
             else:
                 raise RuntimeError("Migration locked by another process")
 
-        # Create lock file
         with open(lock_file, "w") as f:
             f.write("locked")
 
-        # Check if database has any items
         result = await session.execute(text("SELECT COUNT(*) FROM items"))
         db_count = result.scalar()
 
-        # Check if JSON file exists and has data
         if os.path.exists(filename) and db_count == 0:
             import logging
             logging.info("Starting migration from JSON to database...")
 
-            # Load JSON data
             size_db = get_size_db()
             if not size_db.items:
                 logging.info("No items in JSON file to migrate")
                 return
 
-            # Import storage service
             from perpetual_os1_server.core.storage import StorageService
             storage_service = StorageService(session)
 
-            # Migrate each item
             migrated_count = 0
             for upca, item_info in size_db.items.items():
                 try:
@@ -262,11 +252,9 @@ async def migrate_if_needed(session: AsyncSession) -> None:
                     migrated_count += 1
                 except Exception as e:
                     logging.error(f"Failed to migrate item {upca}: {str(e)}")
-                    # Continue with other items
 
             logging.info(f"Migration completed: {migrated_count} items migrated")
 
-            # Sync to JSON to maintain consistency
             await storage_service.sync_to_json()
         else:
             import logging
@@ -277,7 +265,6 @@ async def migrate_if_needed(session: AsyncSession) -> None:
         logging.error(f"Migration failed: {str(e)}")
         raise RuntimeError(f"Migration failed: {str(e)}") from e
     finally:
-        # Remove lock file
         if os.path.exists(lock_file):
             try:
                 os.remove(lock_file)

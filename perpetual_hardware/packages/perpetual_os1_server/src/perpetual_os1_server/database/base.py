@@ -9,7 +9,6 @@ import os
 
 Base = declarative_base()
 
-# Database path configuration
 if os.getenv("DATABASE_URL"):
 	SQLALCHEMY_DATABASE_URL: str | URL = os.getenv("DATABASE_URL") or ""
 else:
@@ -23,7 +22,6 @@ engine = create_async_engine(
 	echo=False,
 )
 
-# WAL mode for SQLite (sync engine for event listener)
 if isinstance(SQLALCHEMY_DATABASE_URL, str) and "sqlite" in SQLALCHEMY_DATABASE_URL:
 	@event.listens_for(engine.sync_engine, "connect")
 	def set_sqlite_pragma(dbapi_connection: Any, connection_record: Any) -> None:

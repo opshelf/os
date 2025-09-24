@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 import subprocess
@@ -11,7 +10,6 @@ from typing import AsyncGenerator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from perpetual_os1_server.core.robot import init_robot_worker, stop_robot_worker
 from perpetual_os1_server.core.sizes import init_file_sizes, migrate_if_needed

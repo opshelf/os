@@ -16,6 +16,7 @@ _db_path = _tmpdir / "test.db"
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_db_path}"
 os.environ["JWT_SECRET"] = "test-jwt-secret"
 os.environ["AUDIT_HMAC_KEY"] = "test-hmac-key"
+os.environ["ENV"] = "test"
 
 
 import sys
@@ -51,8 +52,13 @@ async def seeded_db() -> AsyncGenerator[None, None]:
             "admin": [
                 "users:read", "users:write", "users:delete",
                 "roles:read", "roles:write", "roles:delete",
-                "audit:read",
+                "robot:control", "robot:read",
+                "gantry:control", "gantry:read",
+                "tool:control", "tool:read",
                 "storage:read", "storage:write", "storage:delete",
+                "scanner:read", "scanner:control",
+                "workstation:control", "workstation:read",
+                "audit:read"
             ],
             "operator": [
                 "users:read",

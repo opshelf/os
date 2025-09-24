@@ -1,6 +1,6 @@
 import random
-import barcode  # type: ignore
-from barcode.writer import ImageWriter  # type: ignore
+import barcode
+from barcode.writer import ImageWriter
 from pydantic import BaseModel
 from typing import List, Tuple, Optional
 from PIL import Image, ImageDraw, ImageFont, ImageFile
@@ -60,21 +60,21 @@ def create_label(configuration: LabelConfiguration) -> str:
         barcode = Image.open(configuration.barcode_path)
     except IOError:
         raise Exception("Error: Barcode image not found.")
-    logo = logo.resize((200, 200))  # type: ignore
+    logo = logo.resize((200, 200))
     left = 0
     upper = 50
     right = 200
     lower = 150
     box = (left, upper, right, lower)
-    logo_cropped: ImageFile.ImageFile = logo.crop(box)  # type: ignore
+    logo_cropped: ImageFile.ImageFile = logo.crop(box)
 
-    barcode = barcode.resize((300, 150))  # type: ignore
+    barcode = barcode.resize((300, 150))
     left = 40
     upper = 15
     right = 260
     lower = 135
     box = (left, upper, right, lower)
-    cropped: ImageFile.ImageFile = barcode.crop(box)  # type: ignore
+    cropped: ImageFile.ImageFile = barcode.crop(box)
 
     label.paste(logo_cropped, (10, 10))
     label.paste(cropped, (10, 215))

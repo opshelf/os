@@ -1,6 +1,5 @@
 """Data validation utilities for storage operations."""
 from typing import Dict, Any, Optional
-from datetime import datetime
 
 
 class ValidationError(Exception):
@@ -24,8 +23,7 @@ class ItemValidator:
             if not isinstance(dimensions[key], (int, float)) or dimensions[key] <= 0:
                 raise ValidationError(f"{key} must be a positive number")
 
-        # Validate reasonable size limits (e.g., max 10 meters)
-        max_dimension = 1000.0  # 10 meters in cm
+        max_dimension = 1000.0
         for key, value in dimensions.items():
             if value > max_dimension:
                 raise ValidationError(f"{key} exceeds maximum allowed size of {max_dimension}cm")
@@ -36,8 +34,7 @@ class ItemValidator:
         if weight is not None:
             if not isinstance(weight, (int, float)) or weight <= 0:
                 raise ValidationError("Weight must be a positive number")
-            # Validate reasonable weight limit (e.g., max 1000kg)
-            if weight > 1000000:  # 1000kg in grams
+            if weight > 1000000:
                 raise ValidationError("Weight exceeds maximum allowed weight of 1000kg")
 
     @staticmethod
@@ -56,10 +53,9 @@ class ItemValidator:
         if metadata is not None:
             if not isinstance(metadata, dict):
                 raise ValidationError("Metadata must be a dictionary")
-            # Check for any nested values that might be too large
             import json
             metadata_str = json.dumps(metadata)
-            if len(metadata_str) > 10000:  # 10KB limit
+            if len(metadata_str) > 10000:
                 raise ValidationError("Metadata size exceeds maximum allowed size")
 
 
@@ -73,7 +69,7 @@ class LocationValidator:
             raise ValidationError("Shelf index must be an integer")
         if shelf_idx < 0:
             raise ValidationError("Shelf index cannot be negative")
-        if shelf_idx > 999:  # Reasonable upper limit
+        if shelf_idx > 999:
             raise ValidationError("Shelf index exceeds maximum allowed value")
 
     @staticmethod
@@ -83,7 +79,7 @@ class LocationValidator:
             raise ValidationError("Cell index must be an integer")
         if cell_idx < 0:
             raise ValidationError("Cell index cannot be negative")
-        if cell_idx > 999:  # Reasonable upper limit
+        if cell_idx > 999:
             raise ValidationError("Cell index exceeds maximum allowed value")
 
     @staticmethod
@@ -128,7 +124,6 @@ class StorageValidator:
         ItemValidator.validate_weight(weight)
         ItemValidator.validate_metadata(metadata)
 
-        # Validate UPCA format (basic validation)
         if not isinstance(upca, str):
             raise ValidationError("UPCA must be a string")
         if len(upca.strip()) == 0:
