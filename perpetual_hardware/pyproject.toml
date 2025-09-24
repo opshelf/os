@@ -11,6 +11,6 @@ dependencies = [
 [tool.uv.workspace]
 members = [
 	"packages/hardware",
-	"packages/perpetual-os1",
-	"packages/perpetual-os1-server",
+    "packages/perpetual_os1",
+    "packages/perpetual_os1_server",
 ]

@@ -34,8 +34,3 @@ perpetual_hardware/packages/perpetual-os1-server/data/
 
 # Log files
 *.log
-
-# Claude Code
-.claude/
-CLAUDE.md
-AGENTS.md
