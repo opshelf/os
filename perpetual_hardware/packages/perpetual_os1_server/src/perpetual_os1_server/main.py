@@ -32,14 +32,27 @@ root.addHandler(handler)
 
 
 async def _seed_auth_if_requested() -> None:
+    from sqlalchemy import select
+    from perpetual_os1_server.database.models import User
+    from perpetual_os1_server.database.session import AsyncSessionLocal
+
     if os.getenv("RUN_SEED_SCRIPT", "false").lower() not in {"1", "true", "yes"}:
         return
+
     script_path = Path(__file__).parent.parent.parent / "scripts" / "seed_auth.py"
     if not script_path.exists():
         logging.warning("Seed script expected at %s but not found", script_path)
         return
-    logging.info("Running seed script %s", script_path)
-    subprocess.run([sys.executable, str(script_path)], env={**os.environ, "ENV": "dev"}, check=False)
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(User))
+        user_count = len(result.scalars().all())
+
+        if user_count == 0:
+            logging.info("No users found, running seed script %s", script_path)
+            subprocess.run([sys.executable, str(script_path)], env={**os.environ, "ENV": "dev"}, check=False)
+        else:
+            logging.info("Found %d existing users, skipping seed script", user_count)
 
 
 @asynccontextmanager
