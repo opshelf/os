@@ -39,7 +39,7 @@ const ScaleEventSSE = () => {
       };
     };
 
-    connect();
+    // connect();
 
     return () => {
       if (eventSource) {

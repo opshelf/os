@@ -1,189 +1,24 @@
-from typing import Optional, Any, cast
-from perpetual_os1.common import RobotNatsConfiguration
-from perpetual_os1.utils import get_can_bus, get_modbus_client
-from perpetual_os1.configuration import robot_configuration
-from perpetual_os1.robot_worker import RobotWorker
-from perpetual_os1.robot_client import RobotClient
-from perpetual_os1.robot import Robot, RobotConfiguration
-from perpetual_os1.storage import (
-    Cell,
-    Shelf,
-    StorageGrid,
-    CellStatus,
-    Dimensions,
-    CalibrationCoordinate,
-)
+from typing import Optional
+from perpetual_os1 import robot as r
+from perpetual_os1 import common
+from perpetual_os1 import robot_worker as r_worker
+from perpetual_os1 import robot_client as r_client
+
 import logging
 
-robot_worker: Optional[RobotWorker] = None
-
-storage_grid = StorageGrid(
-    right_module=[
-        Shelf(
-            shelf_height=200,
-            shelf_width=1000,
-            cells=[
-                Cell(
-                    status=CellStatus.EMPTY,
-                    item=None,
-                    calibration_point=CalibrationCoordinate(x=295, y=410, z=0),
-                    dimensions=Dimensions(length=145, height=200, width=145),
-                ),
-                Cell(
-                    status=CellStatus.EMPTY,
-                    item=None,
-                    calibration_point=None,
-                    dimensions=Dimensions(length=145, height=200, width=145),
-                ),
-                Cell(
-                    status=CellStatus.EMPTY,
-                    item=None,
-                    calibration_point=None,
-                    dimensions=Dimensions(length=145, height=200, width=145),
-                ),
-                Cell(
-                    status=CellStatus.EMPTY,
-                    item=None,
-                    calibration_point=None,
-                    dimensions=Dimensions(length=145, height=200, width=145),
-                ),
-                Cell(
-                    status=CellStatus.EMPTY,
-                    item=None,
-                    calibration_point=None,
-                    dimensions=Dimensions(length=145, height=200, width=145),
-                ),
-            ],
-        ),
-        Shelf(
-            shelf_height=200,
-            shelf_width=1000,
-            cells=[
-                Cell(
-                    status=CellStatus.EMPTY,
-                    item=None,
-                    calibration_point=CalibrationCoordinate(x=274.5, y=680, z=0),
-                    dimensions=Dimensions(length=100, height=200, width=100),
-                ),
-                Cell(
-                    status=CellStatus.EMPTY,
-                    item=None,
-                    calibration_point=None,
-                    dimensions=Dimensions(length=100, height=200, width=100),
-                ),
-                Cell(
-                    status=CellStatus.EMPTY,
-                    item=None,
-                    calibration_point=None,
-                    dimensions=Dimensions(length=100, height=200, width=100),
-                ),
-                Cell(
-                    status=CellStatus.EMPTY,
-                    item=None,
-                    calibration_point=None,
-                    dimensions=Dimensions(length=100, height=200, width=100),
-                ),
-                Cell(
-                    status=CellStatus.EMPTY,
-                    item=None,
-                    calibration_point=None,
-                    dimensions=Dimensions(length=100, height=200, width=100),
-                ),
-                Cell(
-                    status=CellStatus.EMPTY,
-                    item=None,
-                    calibration_point=None,
-                    dimensions=Dimensions(length=100, height=200, width=100),
-                ),
-            ],
-        ),
-        #Shelf(
-        #    shelf_height=200,
-        #    shelf_width=1000,
-        #    cells=[
-        #        Cell(
-        #            status=CellStatus.EMPTY,
-        #            item=None,
-        #            calibration_point=CalibrationCoordinate(x=249.5, y=885, z=0),
-        #            dimensions=Dimensions(length=50, height=200, width=50),
-        #        ),
-        #        Cell(
-        #            status=CellStatus.EMPTY,
-        #            item=None,
-        #            calibration_point=None,
-        #            dimensions=Dimensions(length=50, height=200, width=50),
-        #        ),
-        #        Cell(
-        #            status=CellStatus.EMPTY,
-        #            item=None,
-        #            calibration_point=None,
-        #            dimensions=Dimensions(length=50, height=200, width=50),
-        #        ),
-        #        Cell(
-        #            status=CellStatus.EMPTY,
-        #            item=None,
-        #            calibration_point=None,
-        #            dimensions=Dimensions(length=50, height=200, width=50),
-        #        ),
-        #        Cell(
-        #            status=CellStatus.EMPTY,
-        #            item=None,
-        #            calibration_point=None,
-        #            dimensions=Dimensions(length=50, height=200, width=50),
-        #        ),
-        #        Cell(
-        #            status=CellStatus.EMPTY,
-        #            item=None,
-        #            calibration_point=None,
-        #            dimensions=Dimensions(length=50, height=200, width=50),
-        #        ),
-        #        Cell(
-        #            status=CellStatus.EMPTY,
-        #            item=None,
-        #            calibration_point=None,
-        #            dimensions=Dimensions(length=50, height=200, width=50),
-        #        ),
-        #        Cell(
-        #            status=CellStatus.EMPTY,
-        #            item=None,
-        #            calibration_point=None,
-        #            dimensions=Dimensions(length=50, height=200, width=50),
-        #        ),
-        #        Cell(
-        #            status=CellStatus.EMPTY,
-        #            item=None,
-        #            calibration_point=None,
-        #            dimensions=Dimensions(length=50, height=200, width=50),
-        #        ),
-        #        Cell(
-        #            status=CellStatus.EMPTY,
-        #            item=None,
-        #            calibration_point=None,
-        #            dimensions=Dimensions(length=50, height=200, width=50),
-        #        ),
-        #    ],
-        #),
-    ],
-    left_module=[],
-)
-
-def load_storage_from_file(filename: str) -> StorageGrid:
-    with open(filename) as f:
-        return StorageGrid.model_validate_json(f.read())
-
+robot_worker: Optional[r_worker.RobotWorker] = None
 
 async def init_robot_worker() -> None:
     global robot_worker
-    logging.info("Getting Bus")
-    can_bus = await get_can_bus()
-    client = await get_modbus_client()
-    logging.info("Got Bus")
-    robot = Robot(can_bus, client, robot_configuration)
-    storage_grid = load_storage_from_file("storage.json")
-    robot.set_storage(storage_grid)
-    await robot.initialize()
+    logging.info("Getting Robot")
+    # client = await get_modbus_client()
+    robot = r.Robot("/dev/ttyUSB0")
+    # storage_grid = load_storage_from_file("storage.json")
+    # robot.set_storage(storage_grid)
+    await robot.configure() # todo make these have error handling
+    # logging.info("Got Bus")
     logging.info("Built Robot")
-    robot_worker = RobotWorker(robot, RobotNatsConfiguration())
+    robot_worker = r_worker.RobotWorker(robot, common.RobotNatsConfiguration())
     logging.info("Got Instance")
     await robot_worker.connect()
     logging.info("Started")
@@ -197,58 +32,13 @@ async def stop_robot_worker() -> None:
         await robot_worker.shutdown()
 
 
-async def get_robot_client() -> RobotClient:
+async def get_robot_client() -> r_client.RobotClient:
     if robot_worker:
         return robot_worker.get_client()
-    
-    # In dev mode without hardware, return a mock
-    from ..settings import get_settings
-    settings = get_settings()
-    if settings.auth.dev_mode and not settings.robot.enabled:
-        class MockClient:
-            async def send_command(self, command: dict[str, Any]) -> None:
-                pass
-        return cast(RobotClient, MockClient())
-    
     raise ValueError("Robot Worker was Not Initialized")
 
 
-async def get_robot_worker() -> RobotWorker:
+async def get_robot_worker() -> r_worker.RobotWorker:
     if robot_worker:
         return robot_worker
-    
-    # In dev mode without hardware, return a mock
-    from ..settings import get_settings
-    settings = get_settings()
-    if settings.auth.dev_mode and not settings.robot.enabled:
-        # Create a minimal mock that returns empty configuration
-        class MockWorker:
-            def get_configuration(self) -> RobotConfiguration:
-                from perpetual_os1.robot import RobotConfiguration
-                # Return empty config using model_construct to bypass validation
-                return RobotConfiguration.model_construct()
-
-            async def set_configuration(self, config: RobotConfiguration) -> None:
-                pass
-
-            async def start(self) -> None:
-                pass
-
-            async def shutdown(self) -> None:
-                pass
-            
-            async def clear_commands(self) -> None:
-                pass
-            
-            async def set_storage(self, storage: Any) -> None:
-                pass
-            
-            def get_client(self) -> RobotClient:
-                class MockClient:
-                    async def send_command(self, command: dict[str, Any]) -> None:
-                        pass
-                return cast(RobotClient, MockClient())
-        
-        return cast(RobotWorker, MockWorker())
-    
     raise ValueError("Robot Worker was Not Initialized")

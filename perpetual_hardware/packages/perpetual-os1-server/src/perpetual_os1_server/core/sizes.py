@@ -11,7 +11,7 @@ from typing import Dict, Mapping, Optional, Any, cast
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from perpetual_os1.storage import Dimensions, Json
+from ..types import Dimensions, Json
 from perpetual_os1_server.settings import get_settings
 
 
