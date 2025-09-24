@@ -54,6 +54,13 @@ DEFAULT_ROLES = [
 
 DEV_USERS = [
 	{
+		"email": "admin@opshelf.com",
+		"first_name": "Admin",
+		"last_name": "User",
+		"pin": "1234",
+		"role": "admin"
+	},
+	{
 		"email": "operator@opshelf.com",
 		"first_name": "Operator",
 		"last_name": "User",
