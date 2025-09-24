@@ -1,6 +1,5 @@
 """Database models for authentication and audit system."""
 from typing import List, Dict, Any, Optional
-from typing_extensions import deprecated
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, JSON, ForeignKey, func, Index, Float
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 from datetime import datetime, timezone

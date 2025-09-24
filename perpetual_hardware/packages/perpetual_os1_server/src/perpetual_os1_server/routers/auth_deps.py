@@ -1,6 +1,6 @@
 """Authentication dependencies for FastAPI routes."""
 from typing import Optional, List, Callable
-from fastapi import Depends, HTTPException, status, Request
+from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select

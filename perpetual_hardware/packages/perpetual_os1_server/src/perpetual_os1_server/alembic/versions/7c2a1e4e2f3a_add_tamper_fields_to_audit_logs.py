@@ -9,7 +9,6 @@ from alembic import op
 import sqlalchemy as sa
 
 
-# revision identifiers, used by Alembic.
 revision = '7c2a1e4e2f3a'
 down_revision = 'e8f130fdc9e9'
 branch_labels = None
@@ -25,7 +24,6 @@ def upgrade() -> None:
     try:
         op.create_index('ix_audit_logs_seq_no', 'audit_logs', ['seq_no'], unique=False)
     except Exception:
-        # Index creation may fail on SQLite older versions; non-fatal for functionality
         pass
 
 

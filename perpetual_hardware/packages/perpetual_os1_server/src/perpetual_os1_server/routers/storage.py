@@ -7,11 +7,11 @@ import logging
 import time
 import functools
 
-from ..database.models import Item, ItemLocation, StorageCell
+from ..database.models import Item, ItemLocation
 from ..core.storage import StorageService
 from ..core.sizes import migrate_if_needed
 from ..core.validation import ValidationError
-from .auth_deps import get_current_user, require_permissions
+from .auth_deps import require_permissions
 from ..database.session import get_db
 
 router = APIRouter(tags=["storage"])

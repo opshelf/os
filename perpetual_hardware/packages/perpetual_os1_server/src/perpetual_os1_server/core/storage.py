@@ -12,7 +12,6 @@ from sqlalchemy.orm import selectinload
 from ..database.models import Item, ItemLocation, StorageCell
 from .sizes import ItemInformation, _coerce_dimensions, get_size_db, get_sizes_filename
 from .validation import LocationValidator, StorageCellValidator, StorageValidator, ValidationError
-from ..types import Dimensions
 
 
 _session_locks: "WeakKeyDictionary[AsyncSession, asyncio.Lock]" = WeakKeyDictionary()
@@ -42,21 +41,18 @@ class StorageService:
 
     async def detect_migration_needed(self) -> bool:
         """Check if migration from JSON to database is needed."""
-        # Use transaction with isolation level to prevent race conditions
         filename = get_sizes_filename()
         json_exists = os.path.isfile(filename)
 
         if not json_exists:
             return False
 
-        # Use SELECT FOR UPDATE to lock the table during check
         try:
             result = await self.session.execute(
                 select(Item).with_for_update()
             )
             items_exist = result.scalar() is not None
-        except Exception as e:
-            # If locking fails, fallback to non-locking check
+        except Exception:
             result = await self.session.execute(
                 select(Item)
             )
@@ -67,20 +63,16 @@ class StorageService:
     async def migrate_from_json(self) -> bool:
         """Migrate existing JSON data to database."""
         try:
-            # Load the existing JSON data
             size_db = get_size_db()
             json_data = size_db.items
 
             if not json_data:
-                # Even with no JSON data, ensure database is properly initialized
                 async with self._lock:
                     await self.session.commit()
                 return True
 
-            # First, validate all items to ensure data integrity before migration
             validated_items = []
             for upca, item_info in json_data.items():
-                # Validate item data
                 if not isinstance(item_info.data, dict):
                     raise ValidationError(f"Invalid item data for UPCA {upca}")
 
@@ -88,7 +80,6 @@ class StorageService:
                 if not name:
                     raise ValidationError(f"Missing name for UPCA {upca}")
 
-                # Convert weight to proper numeric format if it exists
                 weight = item_info.data.get("weight")
                 if weight is not None:
                     try:
@@ -96,7 +87,6 @@ class StorageService:
                     except (ValueError, TypeError):
                         weight = None
 
-                # Validate weight
                 if weight is not None and weight <= 0:
                     raise ValidationError(f"Invalid weight value for UPCA {upca}")
 
@@ -147,11 +137,9 @@ class StorageService:
             return True
 
         except ValidationError:
-            # Re-raise validation errors
             await self.session.rollback()
             raise
         except Exception as e:
-            # Log the specific error for debugging
             logging.error(f"Migration failed: {str(e)}")
             await self.session.rollback()
             raise RuntimeError(f"Migration failed: {str(e)}") from e
@@ -385,7 +373,6 @@ class StorageService:
             transaction_committed: If True, database transaction has been committed and this is a post-sync operation
         """
         try:
-            # Get all items with locations
             result = await self.session.execute(
                 select(Item)
                 .options(selectinload(Item.locations))
@@ -393,19 +380,15 @@ class StorageService:
             )
             items = result.scalars().all()
 
-            # Convert to legacy format
             json_data: Dict[str, ItemInformation] = {}
             for item in items:
                 try:
-                    # Validate item data before conversion
                     if not item.upca or not item.name:
                         raise ValidationError(f"Invalid item data: missing upca or name for item ID {item.id}")
 
-                    # Validate dimensions format
                     if not isinstance(item.dimensions, dict):
                         raise ValidationError(f"Invalid dimensions format for item {item.upca}")
 
-                    # Validate weight if present
                     weight_value: float = 0
                     if item.weight is not None:
                         try:
@@ -413,10 +396,8 @@ class StorageService:
                         except (ValueError, TypeError):
                             weight_value = 0
 
-                    # Find location if available
                     location = item.locations[0] if item.locations else None
 
-                    # Validate location if present
                     if location:
                         if location.shelf_idx is not None and location.shelf_idx < 0 or location.cell_idx is not None and location.cell_idx < 0:
                             raise ValidationError(f"Invalid location for item {item.upca}: negative indices")
@@ -461,13 +442,11 @@ class StorageService:
 
     async def create_storage_cell(self, shelf_idx: int, cell_idx: int, capacity: str) -> StorageCell:
         """Create a new storage cell."""
-        # Validate input data
         StorageCellValidator.validate_capacity(capacity)
         StorageCellValidator.validate_status("available")  # New cells default to available
         LocationValidator.validate_location(shelf_idx, cell_idx)
 
         async with self._lock:
-            # Check if storage cell already exists with proper locking
             try:
                 result = await self.session.execute(
                     select(StorageCell)
