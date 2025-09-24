@@ -1,6 +1,6 @@
 """Database models for authentication and audit system."""
 from typing import List, Dict, Any, Optional
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, JSON, ForeignKey, func, Index
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, JSON, ForeignKey, func, Index, Float
 from sqlalchemy.orm import relationship, Mapped
 from datetime import datetime, timezone
 from .base import Base
@@ -72,7 +72,7 @@ class Item(Base):
     upca: Mapped[str] = Column(String(255), unique=True, nullable=False, index=True)
     name: Mapped[str] = Column(String(255), nullable=False)
     dimensions: Mapped[Dict[str, Any]] = Column(JSON, nullable=False)
-    weight: Mapped[str] = Column(String(50), nullable=True)
+    weight: Mapped[Optional[float]] = Column(Float, nullable=True)
     item_metadata: Mapped[Optional[Dict[str, Any]]] = Column(JSON, nullable=True, default=dict)
     created_at: Mapped[datetime] = Column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = Column(DateTime, server_default=func.now(), onupdate=func.now())

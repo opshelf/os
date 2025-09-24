@@ -35,10 +35,10 @@ class StorageService:
         self._lock = _get_session_lock(session)
 
     @staticmethod
-    def _normalize_weight(weight: Optional[float]) -> Optional[str]:
+    def _normalize_weight(weight: Optional[float]) -> Optional[float]:
         if weight is None:
             return None
-        return str(float(weight))
+        return float(weight)
 
     async def detect_migration_needed(self) -> bool:
         """Check if migration from JSON to database is needed."""
@@ -177,14 +177,14 @@ class StorageService:
                         upca=upca,
                         name=name,
                         dimensions=dimensions,
-                        weight=str(normalized_weight) if normalized_weight is not None else "",
+                        weight=normalized_weight,
                         item_metadata=normalized_metadata
                     )
                     self.session.add(item)
                 else:
                     item.name = name
                     item.dimensions = dimensions
-                    item.weight = str(normalized_weight) if normalized_weight is not None else ""
+                    item.weight = normalized_weight
                     item.item_metadata = normalized_metadata
 
                 await self.session.flush()
@@ -250,7 +250,7 @@ class StorageService:
                 if dimensions is not None:
                     item.dimensions = dimensions
                 if weight is not None:
-                    item.weight = str(normalized_weight)
+                    item.weight = normalized_weight
                 if metadata is not None:
                     item.item_metadata = metadata
 
