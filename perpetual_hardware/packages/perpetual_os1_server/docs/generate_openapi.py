@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
 """Generate OpenAPI documentation."""
-import asyncio
 import json
 import sys
 from pathlib import Path
 
-# Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from perpetual_os1_server.main import app
@@ -20,7 +18,6 @@ def generate_openapi_json() -> dict:
         routes=app.routes,
     )
 
-    # Add tags
     openapi_schema["tags"] = [
         {"name": "auth", "description": "Authentication and user management"},
         {"name": "robot", "description": "Robot control and configuration"},
@@ -41,7 +38,6 @@ def main() -> None:
     """Generate and save OpenAPI specification."""
     openapi_schema = generate_openapi_json()
 
-    # Save to docs directory
     docs_dir = Path(__file__).parent
     output_file = docs_dir / "openapi.json"
 
