@@ -7,8 +7,7 @@ services:
       - "4222:4222"     # NATS client port (can be removed if only internal access is needed)
       - "6222:6222"     # NATS cluster port (if you're using clustering)
       - "8222:8222"     # NATS HTTP monitoring port
-      - "8080:8080"     # WebSocket port
-    volumes:
+      volumes:
       - ./perpetual_hardware/packages/perpetual-os1-server/infra/nats/:/etc/nats/
     command: ["-js", "-config", "/etc/nats/nats.conf"]
     networks:  # Define the network and add NATS to it

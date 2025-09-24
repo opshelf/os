@@ -9,8 +9,8 @@ resolution-markers = [
 members = [
     "hardware",
     "perpetual-hardware",
-    "perpetual-os1",
-    "perpetual-os1-server",
+    "perpetual_os1",
+    "perpetual_os1_server",
 ]
 
 [[package]]
@@ -724,9 +724,9 @@ dependencies = [
 requires-dist = [{ name = "opencv-python" }]
 
 [[package]]
-name = "perpetual-os1"
+name = "perpetual_os1"
 version = "0.1.0"
-source = { editable = "packages/perpetual-os1" }
+source = { editable = "packages/perpetual_os1" }
 dependencies = [
     { name = "hardware" },
     { name = "nats-py" },
@@ -745,9 +745,9 @@ requires-dist = [
 ]
 
 [[package]]
-name = "perpetual-os1-server"
+name = "perpetual_os1_server"
 version = "0.1.0"
-source = { editable = "packages/perpetual-os1-server" }
+source = { editable = "packages/perpetual_os1_server" }
 dependencies = [
     { name = "aiosqlite" },
     { name = "alembic" },
@@ -756,7 +756,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "greenlet" },
     { name = "nats-py" },
-    { name = "perpetual-os1" },
+    { name = "perpetual_os1" },
     { name = "pillow" },
     { name = "pydantic" },
     { name = "pyjwt" },
@@ -799,7 +799,7 @@ requires-dist = [
     { name = "greenlet", specifier = ">=3.0.0" },
     { name = "httpx", marker = "extra == 'test'", specifier = ">=0.27.2" },
     { name = "nats-py", specifier = ">=2.9.0" },
-    { name = "perpetual-os1", editable = "packages/perpetual-os1" },
+    { name = "perpetual_os1", editable = "packages/perpetual_os1" },
     { name = "pillow", specifier = ">=10.0.0" },
     { name = "pydantic", specifier = ">=2.10.0" },
     { name = "pyjwt", specifier = ">=2.8.0" },
