@@ -122,7 +122,7 @@ class StorageService:
                         upca=str(item_data['upca']),
                         name=str(item_data['name']),
                         dimensions=cast(Dict[str, Any], item_data['dimensions']),
-                        weight=str(item_data['weight']) if item_data['weight'] is not None else "",
+                        weight=float(item_data['weight']) if item_data['weight'] is not None else None,
                         item_metadata=cast(Optional[Dict[str, Any]], item_data['metadata'])
                     )
                     self.session.add(item)

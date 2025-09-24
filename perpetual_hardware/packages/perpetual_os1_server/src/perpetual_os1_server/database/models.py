@@ -1,7 +1,8 @@
 """Database models for authentication and audit system."""
 from typing import List, Dict, Any, Optional
+from typing_extensions import deprecated
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, JSON, ForeignKey, func, Index, Float
-from sqlalchemy.orm import relationship, Mapped
+from sqlalchemy.orm import relationship, Mapped, mapped_column
 from datetime import datetime, timezone
 from .base import Base
 from pydantic import ConfigDict
@@ -53,7 +54,6 @@ class AuditLog(Base):
     user_agent: Mapped[str] = Column(String(255), nullable=True)
     request_duration_ms: Mapped[int] = Column(Integer, nullable=True)
 
-    # Lightweight tamper-evidence fields (nullable for backward compatibility)
     seq_no: Mapped[int] = Column(Integer, nullable=True, index=True)
     prev_hash: Mapped[str] = Column(String(64), nullable=True)
     entry_hash: Mapped[str] = Column(String(64), nullable=True)
@@ -68,16 +68,18 @@ class Item(Base):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+
     id: Mapped[int] = Column(Integer, primary_key=True)
     upca: Mapped[str] = Column(String(255), unique=True, nullable=False, index=True)
     name: Mapped[str] = Column(String(255), nullable=False)
     dimensions: Mapped[Dict[str, Any]] = Column(JSON, nullable=False)
-    weight: Mapped[Optional[float]] = Column(Float, nullable=True)
+    weight: Mapped[float | None] = mapped_column(Float, nullable=True)
     item_metadata: Mapped[Optional[Dict[str, Any]]] = Column(JSON, nullable=True, default=dict)
     created_at: Mapped[datetime] = Column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
-    # Relationship with item locations
     locations: Mapped[List["ItemLocation"]] = relationship("ItemLocation", back_populates="item")
 
 class ItemLocation(Base):
@@ -93,15 +95,12 @@ class ItemLocation(Base):
     created_at: Mapped[datetime] = Column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
-    # Index for frequent queries on shelf and cell combinations
     __table_args__ = (
         Index('idx_item_locations_shelf_cell', 'shelf_idx', 'cell_idx'),
     )
 
-    # Relationship with item
     item: Mapped["Item"] = relationship("Item", back_populates="locations")
 
-    # Index for finding all locations of a specific item
     __table_args__ = (
         Index('idx_item_locations_item_id', 'item_id'),
     )
@@ -120,7 +119,6 @@ class StorageCell(Base):
     created_at: Mapped[datetime] = Column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
-    # Unique index for (shelf_idx, cell_idx) combination
     __table_args__ = (
         Index('idx_storage_cells_shelf_cell', 'shelf_idx', 'cell_idx', unique=True),
     )

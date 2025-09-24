@@ -36,10 +36,13 @@ dev-dependencies = [
     "pytest-cov>=5.0.0",
     "httpx>=0.27.2",
     "factory-boy>=3.3.0",
+    "mypy>=1.13.0",
+    "ruff>=0.7.0",
 ]
 
-[tool.uv.scripts]
-test = "pytest"
+[project.scripts]
+start = "perpetual_os1_server.main:start"
+
 
 [tool.pytest.ini_options]
 minversion = "7.0"
@@ -66,9 +69,6 @@ test = [
     "factory-boy>=3.3.0",
 ]
 
-[project.scripts]
-start = "perpetual_os1_server.main:start"
-
 [dependency-groups]
 dev = [
     "fastapi[all]>=0.115.6",
@@ -77,4 +77,6 @@ dev = [
     "pytest-cov>=5.0.0",
     "httpx>=0.27.2",
     "factory-boy>=3.3.0",
+    "mypy>=1.13.0",
+    "ruff>=0.7.0",
 ]

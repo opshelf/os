@@ -76,7 +76,7 @@ async def nats_consumer(stop_event: asyncio.Event) -> AsyncGenerator[str, None]:
 
 @router.get("/status")
 async def stream_sse(
-    current_user = Depends(get_current_user_optional)
+    current_user: dict | None = Depends(get_current_user_optional)
 ) -> EventSourceResponse:
     stop_event = asyncio.Event()
 
