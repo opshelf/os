@@ -1,2 +1,2 @@
 def hello() -> str:
-    return "Hello from perpetual-os1!"
+    return "Hello from perpetual_os1!"

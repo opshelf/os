@@ -1,13 +1,10 @@
-from hardware_common.stepper_motor import StepperMotorConfig
 from pydantic import BaseModel
 from enum import Enum
 from abc import ABC, abstractmethod
 from typing import Generic, TypeVar
 
-
 C = TypeVar("C")
 S = TypeVar("S")
-
 
 class RobotNatsConfiguration(BaseModel):
     stream_name: str = "robot"
@@ -28,29 +25,27 @@ class RobotNatsConfiguration(BaseModel):
         return f"nats://{self.domain}:{self.port}"
 
 
-class AbstractSubsystem(ABC, Generic[C, S]):
-    @property
-    @abstractmethod
-    def configuration(self) -> C: ...
+from dataclasses import dataclass
 
-    @abstractmethod
-    async def set_configuration(self, configuration: C) -> None: ...
+@dataclass
+class AxisCoordinate:
+    x: float
+    y: float
 
-    @abstractmethod
-    async def status(self) -> S: ...
+    def __add__(self, other: "AxisCoordinate") -> "AxisCoordinate":
+        return AxisCoordinate(x=self.x + other.x, y=self.y + other.y, z=self.z + other.z)
 
+    def __sub__(self, other: "AxisCoordinate") -> "AxisCoordinate":
+        return AxisCoordinate(x=self.x - other.x, y=self.y - other.y, z=self.z - other.z)
 
-class CanAxisConfiguration(BaseModel):
-    can_id: int
-    configuration: StepperMotorConfig
-    name: str
-    axis_type: str
+@dataclass
+class ToolCoordinate:
+    g: float # gripper
+    s: float # stage
+    r: float # rotation (only 0 or 180) # does not add/subtract
 
+    def __add__(self, other: "ToolCoordinate") -> "ToolCoordinate":
+        return ToolCoordinate(g=self.g + other.g, s=self.s + other.s, r=self.r)
 
-class CanMessageIds(int, Enum):
-    X_AXIS = 100
-    Y_AXIS = 101
-    Z_AXIS = 110
-    ROTATION = 111
-    DOOR = 120
-    CURTAIN = 121
+    def __sub__(self, other: "ToolCoordinate") -> "ToolCoordinate":
+        return ToolCoordinate(g=self.g - other.g, s=self.s - other.s, r=self.r)

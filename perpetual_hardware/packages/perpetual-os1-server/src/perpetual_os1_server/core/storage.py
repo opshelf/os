@@ -12,7 +12,7 @@ from sqlalchemy.orm import selectinload
 from ..database.models import Item, ItemLocation, StorageCell
 from .sizes import ItemInformation, _coerce_dimensions, get_size_db, get_sizes_filename
 from .validation import LocationValidator, StorageCellValidator, StorageValidator, ValidationError
-from perpetual_os1.storage import Dimensions
+from ..types import Dimensions
 
 
 _session_locks: "WeakKeyDictionary[AsyncSession, asyncio.Lock]" = WeakKeyDictionary()

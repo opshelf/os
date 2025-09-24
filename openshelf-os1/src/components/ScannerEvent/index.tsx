@@ -40,7 +40,7 @@ const ScannerEventSSE = () => {
       };
     };
 
-    connect();
+    // connect();
 
     return () => {
       if (eventSource) {
