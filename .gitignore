@@ -31,3 +31,8 @@ baseline.jpg
 
 # Log files
 *.log
+
+# Database files
+perpetual_hardware/packages/perpetual_os1_server/data/base.db
+perpetual_hardware/packages/perpetual_os1_server/data/base.db-shm
+perpetual_hardware/packages/perpetual_os1_server/data/base.db-wal
