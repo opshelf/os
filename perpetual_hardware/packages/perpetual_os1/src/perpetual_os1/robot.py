@@ -273,8 +273,8 @@ class Robot:
 
     async def pick(self, coordinate: AxisCoordinate) -> None:
         await self._gs.safe_open()
-        await self._mx.move_to_position_no_wait(coordinate.x)
         await self._my.move_to_position_no_wait(coordinate.y)
+        await self._mx.move_to_position_no_wait(coordinate.x)
         await self.gantry_wait()
         #empty move
         await self._ms.move_to_position_no_wait(self.get_param("SLIDE_EXTENSION")) # 50 max
@@ -286,8 +286,8 @@ class Robot:
         await self._ms.retract()
 
     async def place(self, coordinate: AxisCoordinate):
-        await self._mx.move_to_position_no_wait(coordinate.x)
         await self._my.move_to_position_no_wait(coordinate.y)
+        await self._mx.move_to_position_no_wait(coordinate.x)
         await self.gantry_wait()
         await self._ms.move_to_position(self.get_param("SLIDE_EXTENSION")) # 50 max
         await self._mg.move_to_position(self.get_param("GRIPPER_EXTENSION_PLACE"))
@@ -297,18 +297,19 @@ class Robot:
         await self._ms.retract()
 
     # well plate
-    async def testtwo(self):
-        await self._mr.move_to_position(0.5)
-        print("andi")
-        # time.sleep(2.5)
-        while True:
-            w = await self._scale.read_weight_data()
-            if w > 50:
-                await self.io_pick(AxisCoordinate(286.34, 384.79))
-                return
+    # async def testtwo(self):
+    #     await self._mr.move_to_position(0.5)
+    #     print("andi")
+    #     # time.sleep(2.5)
+    #     while True:
+    #         w = await self._scale.read_weight_data()
+    #         if w > 50:
+    #             await self.io_pick(AxisCoordinate(286.34, 384.79))
+    #             return
 
     # big box
     async def testone(self, code):
+        await self._mr.move_to_position(0.5)
         if code == "66666":
             # cl = AxisCoordinate(89.44, 42.548)
             cl = AxisCoordinate(914.44, 38.048)
