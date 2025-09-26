@@ -27,6 +27,7 @@ class InitializeCommand(BaseModel):
 
 class HomeCommand(BaseModel):
     command: Literal["home"] = "home"
+    barcode: str
 
 class MoveCommand(BaseModel):
     command: Literal["move"] = "move"
@@ -137,8 +138,8 @@ class FiducialRegistry:
 
 class Robot:
     def __init__(self, port: str) -> None:
-        self._bus = Controller(port="/dev/ttyUSB1", baudrate=115200) # change to config
-        self._scalebus = Controller(port="/dev/ttyUSB0", baudrate=9600) # change to config
+        self._bus = Controller(port="/dev/ttyUSB0", baudrate=115200) # change to config
+        self._scalebus = Controller(port="/dev/ttyACM0", baudrate=9600) # change to config
         # self._curtain_bus = Controller(port=curtain_port)
         self._state = rs.load_state(CONFIG_PATH)
         self._mx = Motor(
@@ -192,6 +193,8 @@ class Robot:
         # await self._scalebus.connect()
         if not await self._scale.connect():
             print("No Connection to Scale")
+
+        await self._scale.tare()
         # await self._curtain.connect()
 
     def get_param(self, param: str):
@@ -214,8 +217,8 @@ class Robot:
     async def io_place(self, coord: AxisCoordinate):
         await self.pick(coord)
 
-        await self._mx.move_to_position_no_wait(self.get_param("PICKUP_POSITION_L")[0]) 
         await self._my.move_to_position_no_wait(self.get_param("PICKUP_POSITION_L")[1])
+        await self._mx.move_to_position_no_wait(self.get_param("PICKUP_POSITION_L")[0]) 
         await self._md.move_to_position_no_wait(170)
         await self.pick_wait()
 
@@ -223,15 +226,15 @@ class Robot:
         await self._ms.move_to_position(self.get_param("SLIDE_EXTENSION"))
         await self._mg.move_to_position(self.get_param("GRIPPER_EXTENSION_PLACE")+8)
 
-        await self._mx.move_to_position_no_wait(self.get_param("PICKUP_POSITION_H")[0]) 
         await self._my.move_to_position_no_wait(self.get_param("PICKUP_POSITION_H")[1])
+        await self._mx.move_to_position_no_wait(self.get_param("PICKUP_POSITION_H")[0]) 
         await self.gantry_wait()
         await self._mg.retract()
         await self._ms.retract()
 
         await self._md.move_to_position_no_wait(0)
-        await self._mx.move_to_position_no_wait(coord.x)
         await self._my.move_to_position_no_wait(coord.y)
+        await self._mx.move_to_position_no_wait(coord.x)
         await self.pick_wait()
 
         await self.place(coord)
@@ -241,27 +244,27 @@ class Robot:
     async def io_pick(self, coord):
 
         await self.pick(coord)
-        await self._mx.move_to_position_no_wait(self.get_param("PICKUP_POSITION_H")[0]) 
         await self._my.move_to_position_no_wait(self.get_param("PICKUP_POSITION_H")[1])
+        await self._mx.move_to_position_no_wait(self.get_param("PICKUP_POSITION_H")[0]) 
         await self._md.move_to_position_no_wait(170)
         await self.pick_wait()
 
-        await self._md.move_to_position(170)
+        # await self._md.move_to_position(170)
 
         await self._ms.move_to_position_no_wait(self.get_param("SLIDE_EXTENSION")) # 50 max
         await self._mg.move_to_position_no_wait(self.get_param("GRIPPER_EXTENSION_PLACE")+8)
         await self.tool_wait()
 
-        await self._mx.move_to_position_no_wait(self.get_param("PICKUP_POSITION_L")[0]) 
         await self._my.move_to_position_no_wait(self.get_param("PICKUP_POSITION_L")[1])
+        await self._mx.move_to_position_no_wait(self.get_param("PICKUP_POSITION_L")[0]) 
         await self.gantry_wait()
 
         await self._mg.retract()
         await self._ms.retract()
 
-        await self._md.move_to_position(0)
-        await self._mx.move_to_position_no_wait(coord.x)
+        await self._md.move_to_position_no_wait(0)
         await self._my.move_to_position_no_wait(coord.y)
+        await self._mx.move_to_position_no_wait(coord.x)
         await self.pick_wait()
 
         await self.place(coord)
@@ -305,15 +308,35 @@ class Robot:
                 return
 
     # big box
-    async def testone(self):
-        await self._mr.move_to_position(0.5)
-        print("beblet")
-        # time.sleep(2.5)
-        while True:
-            w = await self._scale.read_weight_data()
-            if w > 50:
-                await self.io_pick(AxisCoordinate(89.44, 42.548))
-                return
+    async def testone(self, code):
+        if code == "66666":
+            # cl = AxisCoordinate(89.44, 42.548)
+            cl = AxisCoordinate(914.44, 38.048)
+        # await self._mr.move_to_position(0.5)
+        # print("beblet")
+        # # time.sleep(2.5)
+        # while True:
+        #     w = await self._scale.read_weight_data()
+        #     if w > 50:
+        #         await self.io_pick(AxisCoordinate(89.44, 42.548))
+        #         return
+
+            await self.io_place(cl)
+
+        elif code == "11111":
+            # cl = AxisCoordinate(89.44, 42.548)
+            cl = AxisCoordinate(914.44, 38.048)
+        # await self._mr.move_to_position(0.5)
+        # print("beblet")
+        # # time.sleep(2.5)
+        # while True:
+        #     w = await self._scale.read_weight_data()
+        #     if w > 50:
+        #         await self.io_pick(AxisCoordinate(89.44, 42.548))
+        #         return
+
+            await self.io_pick(cl)
+
 
 
     async def test(self) -> None:
@@ -567,8 +590,8 @@ class Robot:
             case InitializeCommand():
                 await self.configure()
                 return RobotCommandSuccessful()
-            case HomeCommand():
-                await self.testone()
+            case HomeCommand(barcode=code):
+                await self.testone(code)
                 return RobotCommandSuccessful()
             case MoveCommand(coordinate=coord):
                 await self.move(coord)
