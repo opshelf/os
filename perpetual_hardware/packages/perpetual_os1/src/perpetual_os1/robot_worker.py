@@ -77,7 +77,7 @@ class RobotWorker:
         # Start barcode bridge (scans -> RobotCommands via NATS)
         if self._barcode is None:
             # If you know VID/PID, pass prefer_vid_pid=(0xXXXX, 0xYYYY)
-            self._barcode = BarcodeService(port="/dev/ttyACM0", baudrate=115200)
+            self._barcode = BarcodeService(port="/dev/ttyACM1", baudrate=115200)
             await self._barcode.start()
             self._barcode_task = asyncio.create_task(self._run_barcode_bridge(), name="barcode-bridge")
 
@@ -141,10 +141,11 @@ class RobotWorker:
         # Import is already available at top: StopCommand
         # raise ValueError("Implement _barcode_to_command() to create a proper RobotCommands from barcode.")
         # print(code)
-        if code == "313517627104":
-            return HomeCommand()
-        elif code == "365862013057":
-            return IdleCommand()
+        return HomeCommand(barcode=code)
+        # if code == "313517627104":
+        #     return HomeCommand()
+        # elif code == "365862013057":
+        #     return IdleCommand()
 
         
 

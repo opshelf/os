@@ -102,6 +102,9 @@ class Motor():
         await self.set_param("Allowed max position following error", 4000)
         await self.set_param("Position loop Kp", 50)
         await self.set_param("Max stop time", 100)
+        await self.set_param("Acceleration", self._params['accel'])
+        await self.set_param("Deceleration", self._params['accel'])
+        await self.set_param("Peak current", self._params["Ip"])
         await self.move_config()
         return
 
@@ -115,11 +118,8 @@ class Motor():
         await self.set_param("Control word", 0x1111) # clear alarm if any
         await self.set_param("Control word", 0x1122) # clear alarm if any
         await self.set_param("Motion of Path 0", 0x1) # abs pos
-        await self.set_param("Peak current", self._params["Ip"])
         await self.set_param("Motor direction", self._params["dir"])
         await self.set_param("Velocity", self._params["rpm"])
-        await self.set_param("Acceleration", self._params['accel'])
-        await self.set_param("Deceleration", self._params['accel'])
         await self.set_param("Position High", pulse[0])
         await self.set_param("Position Low", pulse[1])
         await self._controller.write_single_register(
@@ -138,6 +138,8 @@ class Motor():
         pulse = MotorDefs.rev_to_pulse(MotorDefs.mm_to_rev(value,self._params["mpr"])) # tuple
         await self.set_param("Control word", 0x1111) # clear alarm if any
         await self.set_param("Control word", 0x1122) # clear alarm if any
+        await self.set_param("Motor direction", self._params["dir"])
+        await self.set_param("Velocity", self._params["rpm"])
         await self.set_param("Position High", pulse[0])
         await self.set_param("Position Low", pulse[1])
         await self._controller.write_single_register(
@@ -155,8 +157,6 @@ class Motor():
         await self.set_param("Peak current", self._params["Ip"])
         await self.set_param("Motor direction", self._params["dir"])
         await self.set_param("Velocity", self._params["rpm"])
-        await self.set_param("Acceleration", self._params['accel'])
-        await self.set_param("Deceleration", self._params['accel'])
         
     #TODO return val in mm, not pulses
     async def get_position(self) -> float:
