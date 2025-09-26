@@ -9,7 +9,7 @@
       "mpr": 19.992,
       "home_rpm": 64,
       "accel": 1000,
-      "ret_rpm": 1000,
+      "ret_rpm": 500,
       "lim": 173,
       "Iph": 20
     },
