@@ -32,8 +32,8 @@ class RobotParams(TypedDict, total=False):
     idle_position: AxisCoordinate
     pickup_location: AxisCoordinate
     SLIDE_EXTENSION: int
-    GRIPPER_EXTENSION_PICK: int
-    GRIPPER_EXTENSION_PLACE: int
+    GRIPPER_EXTENSION_PICK: float
+    GRIPPER_EXTENSION_PLACE: float
     REVERSE: float
     JOG: int
     PXMM: float # pixels per mm movement
@@ -445,8 +445,8 @@ def _validate_root(data: Dict[str, Any]) -> None:
     # sanity check known constants (if present)
     r = data["robot"]
     _ensure_opt_int(r, "SLIDE_EXTENSION")
-    _ensure_opt_int(r, "GRIPPER_EXTENSION_PICK")
-    _ensure_opt_int(r, "GRIPPER_EXTENSION_PLACE")
+    _ensure_opt_float(r, "GRIPPER_EXTENSION_PICK")
+    _ensure_opt_float(r, "GRIPPER_EXTENSION_PLACE")
     _ensure_opt_float(r, "REVERSE")
     _ensure_opt_int(r, "JOG")
     _ensure_opt_float(r, "PXMM")
