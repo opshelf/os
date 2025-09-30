@@ -12,6 +12,7 @@ class SharedModbusController:
         self.parity = parity
         self.client: Optional[AsyncModbusSerialClient] = None
         self.lock = asyncio.Lock()  # ensures only one coroutine accesses the bus at a time
+        
 
     async def connect(self):
         self.client = AsyncModbusSerialClient(

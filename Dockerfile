@@ -9,5 +9,6 @@ EXPOSE 8000
 EXPOSE 4222
 EXPOSE 8222
 ENV RUN_SEED_SCRIPT=true
+CMD python3 -c "import pymodbus; print('PyModbus version:', pymodbus.__version__)"
 CMD ["uv", "run", "start"]
 
