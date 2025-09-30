@@ -57,7 +57,6 @@ async def _seed_auth_if_requested() -> None:
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logging.info("Starting %s", app.title)
     settings = get_settings()
-    logging.info("settings: %s", settings.model_dump())
 
     logging.info("Initializing database schema")
     async with engine.begin() as conn:
@@ -68,9 +67,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     robot_started = False
     try:
         if settings.robot.enabled:
-            await init_robot_worker()
-            robot_started = True
-            logging.info("Robot worker started")
+            try:
+                await init_robot_worker()
+                robot_started = True
+                logging.info("Robot worker started")
+            except Exception as e:
+                logging.error("Robot initialization failed: %s", str(e))
+
         init_file_sizes()
 
         async def get_storage_session() -> AsyncGenerator[StorageService, None]:
