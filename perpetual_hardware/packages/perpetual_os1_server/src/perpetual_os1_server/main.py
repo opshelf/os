@@ -4,6 +4,7 @@ import logging
 import os
 import subprocess
 import sys
+import traceback
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
@@ -70,11 +71,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     try:
         if settings.robot.enabled:
             try:
+                logging.info("Robot is enabled, attempting initialization")
                 await init_robot_worker()
                 robot_started = True
-                logging.info("Robot worker started")
+                logging.info("Robot worker started successfully")
             except Exception as e:
                 logging.error("Robot initialization failed: %s", str(e))
+                logging.error("Exception type: %s", type(e).__name__)
+                logging.error("Full traceback: %s", traceback.format_exc())
+        else:
+            logging.info("Robot is disabled in settings")
+    except Exception as e:
+        logging.error("Unexpected error during robot setup: %s", str(e))
 
         init_file_sizes()
 
