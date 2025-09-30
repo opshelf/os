@@ -28,6 +28,14 @@ formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(messag
 handler.setFormatter(formatter)
 root.addHandler(handler)
 
+# early in main.py (before creating app / tasks)
+import logging, sys
+logging.basicConfig(
+    level=logging.DEBUG,  # or INFO if too chatty
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
+    force=True,  # override uvicorn defaults
+)
 
 async def _seed_auth_if_requested() -> None:
     from sqlalchemy import select

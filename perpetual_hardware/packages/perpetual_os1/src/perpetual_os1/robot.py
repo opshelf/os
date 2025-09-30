@@ -130,6 +130,7 @@ class FiducialRegistry:
 
 class Robot:
     def __init__(self, port: str) -> None:
+        print("Beb")
         self._bus = Controller(port=port)
         # self._curtain_bus = Controller(port=curtain_port)
         self._state = rs.load_state(CONFIG_PATH)
