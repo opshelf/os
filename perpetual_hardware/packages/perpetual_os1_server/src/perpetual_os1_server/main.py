@@ -28,6 +28,8 @@ formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(messag
 handler.setFormatter(formatter)
 root.addHandler(handler)
 
+logging.getLogger("aiosqlite").setLevel(logging.WARNING)
+
 
 async def _seed_auth_if_requested() -> None:
     from sqlalchemy import select
