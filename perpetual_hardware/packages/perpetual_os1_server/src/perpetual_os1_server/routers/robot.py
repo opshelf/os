@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from typing import AsyncGenerator, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from nats.aio.client import Client as NATS
 from nats.aio.msg import Msg
 from nats.aio.subscription import Subscription
@@ -24,28 +24,57 @@ from .auth_deps import (
 router = APIRouter(tags=["robot"])
 
 
-@router.post("/commands", dependencies=[Depends(get_current_user), Depends(require_permissions("robot:control"))])
+async def check_robot_enabled() -> None:
+    settings = get_settings()
+    if not settings.robot.enabled:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Robot is not enabled or configured",
+        )
+
+
+async def get_robot_client_or_error() -> RobotClient:
+    try:
+        return await get_robot_client()
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Robot is not initialized or failed to start",
+        ) from e
+
+
+async def get_robot_worker_or_error() -> RobotWorker:
+    try:
+        return await get_robot_worker()
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Robot is not initialized or failed to start",
+        ) from e
+
+
+@router.post("/commands", dependencies=[Depends(get_current_user), Depends(require_permissions("robot:control")), Depends(check_robot_enabled)])
 async def robot_commands(
-    command: RobotCommands, client: RobotClient = Depends(get_robot_client)
+    command: RobotCommands, client: RobotClient = Depends(get_robot_client_or_error)
 ) -> SuccessResponse:
     await client.send_command(command)
     return SuccessResponse()
 
 
-@router.post("/start", dependencies=[Depends(get_current_user), Depends(require_permissions("robot:control"))])
-async def start_robot(worker: RobotWorker = Depends(get_robot_worker)) -> SuccessResponse:
+@router.post("/start", dependencies=[Depends(get_current_user), Depends(require_permissions("robot:control")), Depends(check_robot_enabled)])
+async def start_robot(worker: RobotWorker = Depends(get_robot_worker_or_error)) -> SuccessResponse:
     await worker.start()
     return SuccessResponse()
 
 
-@router.post("/stop", dependencies=[Depends(get_current_user), Depends(require_permissions("robot:control"))])
-async def stop_robot(worker: RobotWorker = Depends(get_robot_worker)) -> SuccessResponse:
+@router.post("/stop", dependencies=[Depends(get_current_user), Depends(require_permissions("robot:control")), Depends(check_robot_enabled)])
+async def stop_robot(worker: RobotWorker = Depends(get_robot_worker_or_error)) -> SuccessResponse:
     await worker.shutdown()
     return SuccessResponse()
 
 
-@router.post("/clear_commands", dependencies=[Depends(get_current_user), Depends(require_permissions("robot:control"))])
-async def clear_robot_commands(worker: RobotWorker = Depends(get_robot_worker)) -> SuccessResponse:
+@router.post("/clear_commands", dependencies=[Depends(get_current_user), Depends(require_permissions("robot:control")), Depends(check_robot_enabled)])
+async def clear_robot_commands(worker: RobotWorker = Depends(get_robot_worker_or_error)) -> SuccessResponse:
     await worker.clear_commands()
     return SuccessResponse()
 
