@@ -33,7 +33,7 @@ class SharedModbusController:
     async def read_holding_registers(self, unit_id: int, address: int, count: int = 1) -> int:
         async with self.lock:
             try:
-                result = await self.client.read_holding_registers(address=address, count=count, slave=unit_id)
+                result = await self.client.read_holding_registers(address=address, count=count, device_id=unit_id)
                 if result.isError():
                     raise ModbusIOException(f"Read error from unit {unit_id}: {result}")
                 return int(result.registers[0])
@@ -44,9 +44,9 @@ class SharedModbusController:
     async def write_single_register(self, unit_id: int, address: int, value: int):
         async with self.lock:
             try:
-                result = await self.client.write_register(address=address, 
-                                                          value=value, 
-                                                          slave=int(unit_id))
+                result = await self.client.write_register(address=address,
+                                                          value=value,
+                                                          device_id=int(unit_id))
                 if result.isError():
                     raise ModbusIOException(f"Write error to unit {unit_id}: {result}")
                 return

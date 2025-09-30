@@ -35,14 +35,17 @@ class Servo():
         start_time = time.monotonic()
 
         while True:
-            status = await self._controller.read_holding_registers(self._motor_id, self._status_reg) & (1<<5)
+            status = await self._controller.read_holding_registers(self._motor_id, self._status_reg)
             if status is None:
                 # print("Failed to read activation status.")
                 return MotorStatus.ERROR
 
-            if status:
+            # Check the activation bit after ensuring status is not None
+            activation_status = status & (1<<5)
+
+            if activation_status:
                 # print(f"[gripper] Activation complete.")
-                return 
+                return
 
             if time.monotonic() - start_time > 3:
                 # print(f"[gripper] Timeout waiting for activation.")
@@ -67,14 +70,16 @@ class Servo():
 
         while True:
             status = await self._controller.read_holding_registers(self._motor_id, self._status_reg)
-            status = (status & (1<<6)) or (status & (1<<7))
             if status is None:
                 # print("Failed to read gripper status.")
                 return MotorStatus.ERROR
 
-            if status:
+            # Check the status bits after ensuring status is not None
+            move_status = (status & (1<<6)) or (status & (1<<7))
+
+            if move_status:
                 # print(f"[gripper] Move complete.")
-                return 
+                return
 
             if time.monotonic() - start_time > timeout:
                 # print(f"[gripper] Timeout waiting for move.")
