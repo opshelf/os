@@ -30,7 +30,7 @@ class CameraSettings(BaseModel):
 
 
 class NatsSettings(BaseModel):
-    domain: str = "localhost"
+    domain: str = "nats"
     port: int = 4222
 
     def connection_string(self) -> str:
@@ -104,5 +104,10 @@ def get_settings() -> Settings:
     
     if os.getenv("JWT_SECRET"):
         data["auth"]["jwt_secret"] = os.getenv("JWT_SECRET")
-    
+
+    if os.getenv("NATS_DOMAIN"):
+        data["nats"]["domain"] = os.getenv("NATS_DOMAIN")
+    if os.getenv("NATS_PORT"):
+        data["nats"]["port"] = int(os.getenv("NATS_PORT"))
+
     return Settings.model_validate(data)
