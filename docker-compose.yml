@@ -20,8 +20,6 @@ services:
       - ./perpetual_hardware/packages/perpetual_os1_server/data/:/app/perpetual_hardware/packages/perpetual_os1_server/data/
     devices:
       - "/dev/ttyUSB0:/dev/ttyUSB0"
-      - "/dev/ttyUSB1:/dev/ttyUSB1"
-      - "/dev/ttyUSB2:/dev/ttyUSB2"
       - "/dev/ttyACM0:/dev/ttyACM0"
       - "/dev/ttyACM1:/dev/ttyACM1"
       - "/dev/bus/usb:/dev/bus/usb"
