@@ -10,7 +10,7 @@ services:
       - ./perpetual_hardware/packages/perpetual_os1_server/infra/nats/:/etc/nats/
     command: ["-js", "-config", "/etc/nats/nats.conf"]
     networks:
-      - my-network
+      - openshelf-network
 
   api:
     build:
@@ -22,15 +22,17 @@ services:
       - "8000:8000"
     depends_on:
       - nats
+    environment:
+      - ENV=dev
     networks:
-      - my-network
+      - openshelf-network
 
   ui:
     build:
       context: ./openshelf_os1
       dockerfile: ./Dockerfile
     ports:
-      - "8080:5173"
+      - "0.0.0.0:8080:5173"
     volumes:
       - ./openshelf_os1/:/app
       - /app/node_modules
@@ -39,7 +41,7 @@ services:
     depends_on:
       - api
     networks:
-      - my-network
+      - openshelf-network
 
 networks:
-  my-network:
+  openshelf-network:
