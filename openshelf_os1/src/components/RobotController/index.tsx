@@ -134,18 +134,12 @@ const RobotController = () => {
               />
               <Button
                 onClick={async () => {
-                  if (
-                    locationData.cell !== null &&
-                    locationData.shelf !== null
-                  ) {
+                  const { cell, shelf, side } = locationData;
+                  if (cell !== null && shelf !== null) {
+                    const target = { side, shelf_idx: shelf, cell_idx: cell };
                     await handleApiCall(
-                      () =>
-                        robot.grabCell({
-                          side: locationData.side,
-                          shelf_idx: locationData.shelf,
-                          cell_idx: locationData.cell,
-                        }),
-                      `Failed to pick cell at ${locationData.side} shelf ${locationData.shelf} cell ${locationData.cell}`,
+                      () => robot.grabCell(target),
+                      `Failed to pick cell at ${side} shelf ${shelf} cell ${cell}`,
                     );
                   }
                 }}
@@ -165,18 +159,12 @@ const RobotController = () => {
               />
               <Button
                 onClick={async () => {
-                  if (
-                    placeLocationData.cell !== null &&
-                    placeLocationData.shelf !== null
-                  ) {
+                  const { cell, shelf, side } = placeLocationData;
+                  if (cell !== null && shelf !== null) {
+                    const target = { side, shelf_idx: shelf, cell_idx: cell };
                     await handleApiCall(
-                      () =>
-                        robot.placeCell({
-                          side: placeLocationData.side,
-                          shelf_idx: placeLocationData.shelf,
-                          cell_idx: placeLocationData.cell,
-                        }),
-                      `Failed to place cell at ${placeLocationData.side} shelf ${placeLocationData.shelf} cell ${placeLocationData.cell}`,
+                      () => robot.placeCell(target),
+                      `Failed to place cell at ${side} shelf ${shelf} cell ${cell}`,
                     );
                   }
                 }}
@@ -196,15 +184,10 @@ const RobotController = () => {
               />
               <Button
                 onClick={async () => {
-                  if (
-                    placeLocationData.cell !== null &&
-                    placeLocationData.shelf !== null
-                  ) {
-                    await robot.retrieveItem({
-                      side: placeLocationData.side,
-                      shelf_idx: placeLocationData.shelf,
-                      cell_idx: placeLocationData.cell,
-                    });
+                  const { cell, shelf, side } = placeLocationData;
+                  if (cell !== null && shelf !== null) {
+                    const target = { side, shelf_idx: shelf, cell_idx: cell };
+                    await robot.retrieveItem(target);
                   }
                 }}
               >
@@ -223,15 +206,10 @@ const RobotController = () => {
               />
               <Button
                 onClick={async () => {
-                  if (
-                    placeLocationData.cell !== null &&
-                    placeLocationData.shelf !== null
-                  ) {
-                    await robot.storeItem({
-                      side: placeLocationData.side,
-                      shelf_idx: placeLocationData.shelf,
-                      cell_idx: placeLocationData.cell,
-                    });
+                  const { cell, shelf, side } = placeLocationData;
+                  if (cell !== null && shelf !== null) {
+                    const target = { side, shelf_idx: shelf, cell_idx: cell };
+                    await robot.storeItem(target);
                   }
                 }}
               >

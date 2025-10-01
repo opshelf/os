@@ -21,11 +21,11 @@ function App() {
         <QueryClientProvider client={queryClient}>
           <Header />
           <Switch>
-            <Route path="/inventory" component={Inventory} />
-            <Route path="/storage" component={StorageBuilder} />
-            <Route path="/sizes" component={SizeDatabase} />
-            <Route path="/configuration" component={RobotConfiguration} />
-            <Route component={RobotController} />
+            <Route path="/inventory">{() => <Inventory />}</Route>
+            <Route path="/storage">{() => <StorageBuilder />}</Route>
+            <Route path="/sizes">{() => <SizeDatabase />}</Route>
+            <Route path="/configuration">{() => <RobotConfiguration />}</Route>
+            <Route>{() => <RobotController />}</Route>
           </Switch>
         </QueryClientProvider>
         <ScaleEventSSE />

@@ -45,9 +45,11 @@ import {
   Drawer,
   DrawerClose,
   DrawerContent,
+  DrawerDescription,
   DrawerFooter,
-  DrawerTrigger,
   DrawerHeader,
+  DrawerTitle,
+  DrawerTrigger,
 } from '@/components/ui/drawer';
 import GantryController from '../GantryController';
 import ToolController from '../ToolController';
@@ -110,7 +112,6 @@ const Shelf = ({
   };
 
   const shelfHeight = storageModule[side][shelfIdx].shelf_height;
-  const shelfWidth = storageModule[side][shelfIdx].shelf_width;
   return (
     <div
       className="flex justify-center w-full items-center gap-2 border-b"
@@ -299,7 +300,7 @@ const StorageDesigner = ({
 }) => {
   const queryClient = useQueryClient();
   const mutation = useMutation({
-    mutationFn: updateStorage,
+    mutationFn: async (updated: StorageModuleData) => updateStorage(updated),
     onSuccess: () => {
       // Invalidate and refetch
       queryClient.invalidateQueries({ queryKey: ['storage'] });
@@ -491,6 +492,10 @@ const Storage = () => {
       </DrawerTrigger>
       <DrawerContent className="px-4">
         <DrawerHeader>
+          <DrawerTitle>Manual Controls</DrawerTitle>
+          <DrawerDescription>
+            Directly operate the gantry and tool while configuring storage.
+          </DrawerDescription>
           <div className="flex items-start space-x-2">
             <GantryController />
             <ToolController />

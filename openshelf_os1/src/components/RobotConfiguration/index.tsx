@@ -1,20 +1,25 @@
 import { zodResolver } from "@hookform/resolvers/zod";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useForm } from "react-hook-form";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import {
   Form,
+  FormControl,
   FormField,
   FormItem,
   FormLabel,
-  FormControl,
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  robotConfigurationSchema,
-  RobotConfiguration,
-} from "@/domain/configuration";
-import { useForm } from "react-hook-form";
+import { robotConfigurationSchema } from "@/domain/configuration";
+import type { RobotConfiguration } from "@/domain/configuration";
+import { getConfiguration, setConfiguration } from "@/api/robot";
 
 export function RobotConfigurationForm({
   initialValues,
@@ -164,4 +169,46 @@ export function RobotConfigurationForm({
   );
 }
 
-export default RobotConfigurationForm;
+const RobotConfiguration = () => {
+  const queryClient = useQueryClient();
+  const {
+    data,
+    isPending,
+    isError,
+    error,
+  } = useQuery({
+    queryKey: ["robot-configuration"],
+    queryFn: getConfiguration,
+  });
+
+  const mutation = useMutation({
+    mutationFn: setConfiguration,
+    onSuccess: (updated) => {
+      queryClient.setQueryData(["robot-configuration"], updated);
+    },
+  });
+
+  if (isPending) {
+    return <p className="p-4">Loading robot configuration…</p>;
+  }
+
+  if (isError || !data) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    return (
+      <p className="p-4 text-destructive">
+        Failed to load configuration: {message}
+      </p>
+    );
+  }
+
+  return (
+    <RobotConfigurationForm
+      initialValues={data}
+      onSubmit={async (values) => {
+        await mutation.mutateAsync(values);
+      }}
+    />
+  );
+};
+
+export default RobotConfiguration;

@@ -2,7 +2,7 @@ import axios from "axios";
 import { HOST } from "./common";
 import { RobotCommands, robotCommandsSchema } from "@/domain/commands/robot";
 import { BaseMessageSchema } from "@/domain/commands/base";
-import { RobotConfiguration } from "@/domain/configuration";
+import { RobotConfiguration, robotConfigurationSchema } from "@/domain/configuration";
 import { StorageModuleData } from "@/domain";
 import { v4 as uuidv4 } from "uuid";
 import z from "zod";
@@ -12,7 +12,12 @@ export const createBaseMessage = (): BaseMessageSchema => {
   return { message_id: uuidv4() };
 };
 
-export const storeCommand = async (gs1: GS1): Promise<void> => {
+type GS1Payload = {
+  raw_text: string;
+  [key: string]: unknown;
+};
+
+export const storeCommand = async (gs1: GS1Payload): Promise<void> => {
   const response = await axios.post(`${HOST}/robot/events`, {
     kind: "storing_requested",
     payload: {
@@ -41,19 +46,19 @@ export const getCommands = async (): Promise<RobotCommands[]> => {
   return z.array(robotCommandsSchema).parse(response.data);
 };
 
-export const getConfiguration = async (): Promise<any> => {
+export const getConfiguration = async (): Promise<RobotConfiguration> => {
   const response = await axios.get(`${HOST}/robot/configuration`);
-  return response.data;
+  return robotConfigurationSchema.parse(response.data);
 };
 
 export const setConfiguration = async (
   configuration: RobotConfiguration,
-): Promise<any> => {
+): Promise<RobotConfiguration> => {
   const response = await axios.post(
     `${HOST}/robot/configuration`,
     configuration,
   );
-  return response.data;
+  return robotConfigurationSchema.parse(response.data);
 };
 
 export const setStorage = async (storage: StorageModuleData) => {
