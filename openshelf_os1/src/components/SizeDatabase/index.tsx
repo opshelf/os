@@ -13,6 +13,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -173,6 +174,9 @@ const Sizes = () => {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Edit Item</DialogTitle>
+            <DialogDescription>
+              Update the dimensions and name for this item in the size database.
+            </DialogDescription>
           </DialogHeader>
           <DimensionForm
             formData={formData}
@@ -188,6 +192,9 @@ const Sizes = () => {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Add Item</DialogTitle>
+            <DialogDescription>
+              Create a new item by entering its dimensions and name.
+            </DialogDescription>
           </DialogHeader>
           <DimensionForm
             formData={formData}

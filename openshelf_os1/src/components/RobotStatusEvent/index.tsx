@@ -7,24 +7,7 @@ const RobotStatusEventSSE = () => {
   const maxReconnectAttempts = 1000;
   const reconnectInterval = 3000;
   const reconnectAttemptsRef = useRef(0);
-  const testErrorEmittedRef = useRef(false);
-
-  useEffect(() => {
-    if (import.meta.env.DEV && !testErrorEmittedRef.current) {
-      testErrorEmittedRef.current = true;
-      setTimeout(() => {
-        useStateStore.getState().addError({
-          timestamp: new Date().toISOString(),
-          error_type: "TestError",
-          message: "Error reporting system is active! This is a test error that appears on app load.",
-          context: { 
-            environment: "development",
-            source: "app-startup"
-          }
-        });
-      }, 500);
-    }
-    
+      
     let eventSource: EventSource | null = null;
     let reconnectTimeout: NodeJS.Timeout | null = null;
 
