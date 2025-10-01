@@ -80,7 +80,7 @@ const ToolController = () => {
     await robot.tool.toolMoveGripperRelative(movement);
   };
   const { robotStatus } = useStateStore();
-  const toolStatus = robotStatus?.robot_status?.tool_status;
+  const toolStatus = robotStatus?.robot_status?.tool;
 
   return (
     <Card className="flex flex-col px-4 py-4 space-y-4 w-full">
@@ -205,8 +205,8 @@ const ToolController = () => {
           </div>
         </div>
         <div className="flex w-full abosolute bottom-0">
-          {toolStatus !== undefined && (
-            <p>Tool Position: {toolStatus.carriage_status.position}</p>
+          {toolStatus && (
+            <p>Tool Z Position: {toolStatus.z_axis.position}</p>
           )}
         </div>
       </CardContent>

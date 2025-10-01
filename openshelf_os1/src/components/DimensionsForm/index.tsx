@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import {
@@ -16,7 +16,6 @@ import {
   CardHeader,
   CardTitle,
 } from "../ui/card";
-import { storeCommand } from "@/api/robot";
 import { print } from "@/api/print";
 
 export default function DimensionForm() {

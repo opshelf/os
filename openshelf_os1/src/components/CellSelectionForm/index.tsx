@@ -7,7 +7,7 @@ import {
   SelectValue,
   SelectTrigger,
 } from "../ui/select";
-import { useEffect } from "react";
+import { Dispatch, SetStateAction, useEffect } from "react";
 
 export type IntermediateData = {
   side: StorageModuleSide;
@@ -22,7 +22,7 @@ export const CellSelectionForm = ({
 }: {
   data: StorageModuleData;
   locationData: IntermediateData;
-  setLocationData: (location: IntermediateData) => void;
+  setLocationData: Dispatch<SetStateAction<IntermediateData>>;
 }) => {
   const { side, shelf, cell } = locationData;
 
@@ -47,7 +47,7 @@ export const CellSelectionForm = ({
       const newCell = shelves[newShelf].cells.length > 0 ? 0 : null;
       setLocationData({ side, shelf: newShelf, cell: newCell });
     }
-  }, [side]);
+  }, [data, setLocationData, shelf, side]);
 
   // If shelf changes, reset cell if out‑of‑range or empty
   useEffect(() => {
@@ -59,7 +59,7 @@ export const CellSelectionForm = ({
         setLocationData((prev) => ({ ...prev, cell: 0 }));
       }
     }
-  }, [side, shelf]);
+  }, [cell, data, setLocationData, shelf, side]);
 
   const renderShelfSelect = () => (
     <>
