@@ -1,10 +1,4 @@
-import {
-  BotIcon,
-  BoxIcon,
-  DatabaseIcon,
-  RulerIcon,
-  SettingsIcon,
-} from "lucide-react";
+import { BotIcon, BoxIcon, DatabaseIcon, RulerIcon } from "lucide-react";
 import { Link } from "wouter";
 import {
   Tooltip,
@@ -55,16 +49,6 @@ const Header = () => {
               </TooltipTrigger>
               <TooltipContent>
                 <p>Sizes</p>
-              </TooltipContent>
-            </Tooltip>
-          </Link>
-          <Link to="/configuration">
-            <Tooltip>
-              <TooltipTrigger>
-                <SettingsIcon className="w-8 h-8" />
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>Configuration</p>
               </TooltipContent>
             </Tooltip>
           </Link>

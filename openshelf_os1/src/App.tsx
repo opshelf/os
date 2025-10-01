@@ -10,7 +10,6 @@ import ScannerEventSSE from "./components/ScannerEvent";
 import Footer from "@/components/Footer";
 import Inventory from "@/components/Inventory";
 import RobotStatusEventSSE from "@/components/RobotStatusEvent";
-import RobotConfiguration from "@/components/RobotConfiguration";
 
 const queryClient = new QueryClient();
 
@@ -24,7 +23,6 @@ function App() {
             <Route path="/inventory">{() => <Inventory />}</Route>
             <Route path="/storage">{() => <StorageBuilder />}</Route>
             <Route path="/sizes">{() => <SizeDatabase />}</Route>
-            <Route path="/configuration">{() => <RobotConfiguration />}</Route>
             <Route>{() => <RobotController />}</Route>
           </Switch>
         </QueryClientProvider>
