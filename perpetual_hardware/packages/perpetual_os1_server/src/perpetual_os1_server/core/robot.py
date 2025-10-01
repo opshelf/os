@@ -4,6 +4,8 @@ from perpetual_os1 import common
 from perpetual_os1 import robot_worker as r_worker
 from perpetual_os1 import robot_client as r_client
 
+from perpetual_os1_server.settings import get_settings
+
 import logging
 
 robot_worker: Optional[r_worker.RobotWorker] = None
@@ -14,7 +16,12 @@ async def init_robot_worker() -> None:
     robot = r.Robot("/dev/ttyUSB0")
     await robot.configure()
     logging.info("Built Robot")
-    robot_worker = r_worker.RobotWorker(robot, common.RobotNatsConfiguration())
+    settings = get_settings()
+    nats_config = common.RobotNatsConfiguration(
+        domain=settings.nats.domain,
+        port=settings.nats.port,
+    )
+    robot_worker = r_worker.RobotWorker(robot, nats_config)
     logging.info("Got Instance")
     await robot_worker.connect()
     logging.info("Started")
