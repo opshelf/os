@@ -4,6 +4,8 @@ import time
 import asyncio
 from enum import Enum
 
+DEFAULT_PULSES_PER_REV = 10000
+
 class MotorStatus(Enum):
     IDLE = 0
     MOVING = 1
@@ -170,6 +172,8 @@ class Motor():
         pos = (pos_h << 16) | pos_l
         if pos:
             ppr = await self.get_param("Pulse/revolution")
+            if not ppr:
+                ppr = DEFAULT_PULSES_PER_REV
             pos = (pos/ppr)*self._params["mpr"]
             # print(f"[Stepper] Motor {self._motor_id} -> Position: {pos}")
             self._cur_pos = pos
@@ -420,5 +424,3 @@ class Motor():
         0x40)
 
         return MotorStatus.STOPPED
-
-
