@@ -7,14 +7,15 @@ const RobotStatusEventSSE = () => {
   const maxReconnectAttempts = 1000;
   const reconnectInterval = 3000;
   const reconnectAttemptsRef = useRef(0);
-      
+
+  useEffect(() => {
     let eventSource: EventSource | null = null;
-    let reconnectTimeout: NodeJS.Timeout | null = null;
+    let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
 
     const connect = () => {
       const store = useStateStore.getState();
       store.setConnectionStatus('reconnecting');
-      
+
       eventSource = new EventSource(`${HOST}/robot/status`);
 
       eventSource.onopen = () => {
@@ -28,7 +29,7 @@ const RobotStatusEventSSE = () => {
           const data = JSON.parse(event.data);
           const status = workerStatusSchema.parse(data);
           store.setStatus(status);
-          
+
           if (status.error_queue && status.error_queue.length > 0) {
             store.setErrors(status.error_queue);
           }
@@ -46,12 +47,15 @@ const RobotStatusEventSSE = () => {
       eventSource.onerror = () => {
         if (eventSource) {
           eventSource.close();
+          eventSource = null;
           store.setConnectionStatus('disconnected');
-          
+
           if (reconnectAttemptsRef.current < maxReconnectAttempts) {
             reconnectAttemptsRef.current += 1;
             store.incrementReconnectAttempts();
-            reconnectTimeout = setTimeout(connect, reconnectInterval);
+            reconnectTimeout = setTimeout(() => {
+              connect();
+            }, reconnectInterval);
           } else {
             console.error("Maximum reconnect attempts reached. Giving up.");
             store.addError({
@@ -71,7 +75,9 @@ const RobotStatusEventSSE = () => {
       if (eventSource) {
         eventSource.close();
       }
-      clearTimeout(reconnectTimeout);
+      if (reconnectTimeout) {
+        clearTimeout(reconnectTimeout);
+      }
       useStateStore.getState().setConnectionStatus('disconnected');
     };
   }, []);
