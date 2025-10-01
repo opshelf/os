@@ -68,6 +68,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await _seed_auth_if_requested()
 
     robot_started = False
+    storage_override_set = False
     try:
         if settings.robot.enabled:
             try:
@@ -92,12 +93,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 yield StorageService(session)
 
         app.dependency_overrides[StorageService] = get_storage_session
+        storage_override_set = True
+
+    try:
         yield
     finally:
         logging.info("Shutting down")
         if robot_started:
             await stop_robot_worker()
             logging.info("Robot worker stopped")
+        if storage_override_set:
+            app.dependency_overrides.pop(StorageService, None)
 
 
 app = FastAPI(
