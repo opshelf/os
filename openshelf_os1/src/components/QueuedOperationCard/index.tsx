@@ -36,9 +36,21 @@ const QueuedOperationCard = ({ operation, index, className }: QueuedOperationCar
 	const hasItem = operation.item_data !== null;
 	
 	// Check if there are any errors related to this command type
-	const relatedError = errors.find(error => 
-		error.context?.command?.command === operation.command.command
-	);
+	const relatedError = errors.find((error) => {
+		const context = error.context;
+		if (!context || typeof context !== "object") {
+			return false;
+		}
+		const commandContext = (context as Record<string, unknown>).command;
+		if (!commandContext || typeof commandContext !== "object") {
+			return false;
+		}
+		const commandName = (commandContext as Record<string, unknown>).command;
+		return (
+			typeof commandName === "string" &&
+			commandName === operation.command.command
+		);
+	});
 	
 	return (
 		<Card className={cn(
@@ -52,7 +64,10 @@ const QueuedOperationCard = ({ operation, index, className }: QueuedOperationCar
 						<span className="text-xs text-muted-foreground">#{index + 1}</span>
 						<CommandDisplay command={operation.command} />
 						{relatedError && (
-							<AlertCircle className="h-4 w-4 text-destructive" title="Error occurred with similar command" />
+							<AlertCircle
+								className="h-4 w-4 text-destructive"
+								aria-label="Error occurred with similar command"
+							/>
 						)}
 					</div>
 					<div className="flex items-center gap-1 text-xs text-muted-foreground">

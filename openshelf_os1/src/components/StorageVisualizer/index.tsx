@@ -1,7 +1,11 @@
-import { StorageModuleData } from "@/domain";
-import { useState } from "react";
+import type { StorageModuleData } from "@/domain";
 
-const StorageVisualizer = ({ data }: { data: StorageModuleData }) => {
-  const [side, setSide] = useState<keyof StorageModuleData>("left_module");
-  return <div className="flex flex-col"></div>;
+type StorageVisualizerProps = {
+  data: StorageModuleData;
 };
+
+const StorageVisualizer = (_props: StorageVisualizerProps) => {
+  return <div className="flex flex-col" />;
+};
+
+export default StorageVisualizer;

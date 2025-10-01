@@ -35,7 +35,7 @@ export const ToolCoordinateForm = ({
 }) => {
   const { robotStatus } = useStateStore();
 
-  const gantryStatus = robotStatus?.robot_status?.gantry_status;
+  const gantryStatus = robotStatus?.robot_status?.gantry;
 
   const form = useForm<ToolCoordinateSchema>({
     resolver: zodResolver(toolCoordinateSchema),
