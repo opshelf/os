@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import os
 from datetime import datetime, timezone
@@ -33,6 +34,8 @@ class WorkerError(BaseModel):
 class QueuedOperation(BaseModel):
     command: RobotCommands
     timestamp: datetime
+    location: Optional[dict[str, Any]] = None
+    item_data: Optional[dict[str, Any]] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -183,11 +186,21 @@ class RobotWorker:
 
     def _snapshot_command(self, command: RobotCommands) -> QueuedOperation:
         metadata: dict[str, Any] = {}
-        for attribute in ("location", "item", "metadata"):
+        for attribute in ("metadata",):
             value = getattr(command, attribute, None)
             if value is not None:
                 metadata[attribute] = value
-        return QueuedOperation(command=command, timestamp=datetime.now(timezone.utc), metadata=metadata)
+
+        location = getattr(command, "location", None)
+        item_data = getattr(command, "item", None)
+
+        return QueuedOperation(
+            command=command,
+            timestamp=datetime.now(timezone.utc),
+            location=location,
+            item_data=item_data,
+            metadata=metadata,
+        )
 
     async def _get_pending_messages_info(self) -> tuple[int, List[QueuedOperation]]:
         if self._js is None:
@@ -235,9 +248,21 @@ class RobotWorker:
                 error_queue=list(self._error_queue),
             )
 
+        status_payload = status.model_dump(mode="json")
+
+        if status.error_queue:
+            status_payload["error_queue"] = [
+                error.model_dump(mode="json", exclude_none=True) for error in status.error_queue
+            ]
+
+        if isinstance(status, WorkerStatusWithQueue) and status.queued_operations:
+            status_payload["queued_operations"] = [
+                op.model_dump(mode="json") for op in status.queued_operations
+            ]
+
         await self._nc.publish(
             self._nats_config.status_queue,
-            status.model_dump_json().encode(),
+            json.dumps(status_payload).encode(),
         )
 
     async def process_commands(self) -> None:
