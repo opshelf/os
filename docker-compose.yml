@@ -1,31 +1,55 @@
-version: "3.9"
 services:
   nats:
     image: nats:latest
     container_name: nats
     ports:
-      - "4222:4222"     # NATS client port (can be removed if only internal access is needed)
-      - "6222:6222"     # NATS cluster port (if you're using clustering)
-      - "8222:8222"     # NATS HTTP monitoring port
-      - "8080:8080"     # WebSocket port
+      - "4222:4222"
+      - "6222:6222"
+      - "8222:8222"
     volumes:
-      - ./perpetual_hardware/packages/perpetual-p0c-server/infra/nats/:/etc/nats/
+      - ./perpetual_hardware/packages/perpetual_os1_server/infra/nats/:/etc/nats/
     command: ["-js", "-config", "/etc/nats/nats.conf"]
-    networks:  # Define the network and add NATS to it
-      - my-network
+    networks:
+      - openshelf-network
 
-  web:
+  api:
     build:
+      context: .
       dockerfile: ./Dockerfile
     volumes:
-      - ./perpetual_hardware/packages/perpetual-p0c-server/data/:/app/perpetual_hardware/packages/perpetual-p0c-server/data/
+      - ./perpetual_hardware/packages/perpetual_os1_server/data/:/app/perpetual_hardware/packages/perpetual_os1_server/data/
+    devices:
+      - "/dev/ttyUSB0:/dev/ttyUSB0"
+      - "/dev/ttyACM0:/dev/ttyACM0"
+      - "/dev/ttyACM1:/dev/ttyACM1"
+      - "/dev/bus/usb:/dev/bus/usb"
     ports:
       - "8000:8000"
-    depends_on:  # Ensure NATS starts first
+    depends_on:
       - nats
-    networks:  # Add your web service to the same network
-      - my-network
+    environment:
+      - ENV=dev
+      - PERPETUAL_BARCODE_PORT=/dev/ttyACM0
+      - PERPETUAL_BARCODE_BAUDRATE=115200
+      - NATS_DOMAIN=nats
+    networks:
+      - openshelf-network
 
-networks:  # Define the network at the top level
-  my-network:
+  ui:
+    build:
+      context: ./openshelf_os1
+      dockerfile: ./Dockerfile
+    ports:
+      - "0.0.0.0:8080:5173"
+    volumes:
+      - ./openshelf_os1/:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_URL=http://localhost:8000
+    depends_on:
+      - api
+    networks:
+      - openshelf-network
 
+networks:
+  openshelf-network:

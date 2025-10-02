@@ -1,0 +1,82 @@
+[project]
+name = "perpetual_os1_server"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "emgardner", email = "gardner.ethan10@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.6",
+    "nats-py>=2.9.0",
+    "pydantic>=2.10.0",
+    "perpetual_os1",
+    "uvicorn>=0.32.1",
+    "pyserial-asyncio>=0.6",
+    "setuptools>=75.8.0",
+    "sse-starlette>=2.1.3",
+    "python-barcode>=0.15.1",
+    "pillow>=10.0.0",
+    "sqlalchemy>=2.0.0",
+    "alembic>=1.13.0",
+    "aiosqlite>=0.20.0",
+    "greenlet>=3.0.0",
+    "argon2-cffi>=23.1.0",
+    "pyjwt>=2.8.0",
+    "python-multipart>=0.0.6",
+    "email-validator>=2.0.0",
+]
+
+[tool.uv]
+dev-dependencies = [
+    "fastapi[all]>=0.115.6",
+    "pytest>=8.3.4",
+    "pytest-asyncio>=0.23.8",
+    "pytest-cov>=5.0.0",
+    "httpx>=0.27.2",
+    "factory-boy>=3.3.0",
+    "mypy>=1.13.0",
+    "ruff>=0.7.0",
+]
+
+[project.scripts]
+start = "perpetual_os1_server.main:start"
+
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = ["-ra", "--color=yes"]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv.sources]
+perpetual_os1 = { workspace = true }
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.3.4",
+    "pytest-asyncio>=0.23.8",
+    "pytest-cov>=5.0.0",
+    "httpx>=0.27.2",
+    "factory-boy>=3.3.0",
+]
+
+[dependency-groups]
+dev = [
+    "fastapi[all]>=0.115.6",
+    "pytest>=8.3.4",
+    "pytest-asyncio>=0.23.8",
+    "pytest-cov>=5.0.0",
+    "httpx>=0.27.2",
+    "factory-boy>=3.3.0",
+    "mypy>=1.13.0",
+    "ruff>=0.7.0",
+]
