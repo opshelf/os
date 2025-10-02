@@ -4,18 +4,13 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
-#dependencies = [
-#	"bindings"
-#]
-
-
+dependencies = [
+	"opencv-python"
+]
 
 [tool.uv.workspace]
-members = ["packages/*", "trinamic-utils"]
-
-[tool.uv]
-dev-dependencies = ["mypy"]
-
-
-[tool.uv.sources]
-bindings = { path = "../perpetual_fw/crates/bindings/" }
+members = [
+	"packages/hardware",
+    "packages/perpetual_os1",
+    "packages/perpetual_os1_server",
+]
