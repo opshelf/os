@@ -1,12 +1,11 @@
-pkill -f "perpetual_os1_server" 2>/dev/null
-pkill -f "vite" 2>/dev/null
-docker compose -f docker-compose.standalone.yml stop nats 2>/dev/null
+pkill -9 -f "node .*vite"
+docker compose -f docker-compose.standalone.yml stop nats
 
 docker compose -f docker-compose.standalone.yml up -d nats
 
-cd ./perpetual_hardware/packages/perpetual_os1_server
-nohup uv run start > server.log 2>&1 &
-
-cd ../../..
 cd ./openshelf_os1
-nohup npm run dev > ui.log 2>&1 &
+nohup npm run dev 2>&1 &
+
+cd ../perpetual_hardware/packages/perpetual_os1_server
+uv run start
+
