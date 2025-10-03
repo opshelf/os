@@ -18,11 +18,6 @@ services:
       dockerfile: ./Dockerfile
     volumes:
       - ./perpetual_hardware/packages/perpetual_os1_server/data/:/app/perpetual_hardware/packages/perpetual_os1_server/data/
-    devices:
-      - "/dev/ttyUSB0:/dev/ttyUSB0"
-      - "/dev/ttyACM0:/dev/ttyACM0"
-      - "/dev/ttyACM1:/dev/ttyACM1"
-      - "/dev/bus/usb:/dev/bus/usb"
     ports:
       - "8000:8000"
     depends_on:
@@ -34,6 +29,16 @@ services:
       - NATS_DOMAIN=nats
     networks:
       - openshelf-network
+
+  api-hardware:
+    extends: api
+    profiles:
+      - hardware
+    devices:
+      - "/dev/ttyUSB0:/dev/ttyUSB0"
+      - "/dev/ttyACM0:/dev/ttyACM0"
+      - "/dev/ttyACM1:/dev/ttyACM1"
+      - "/dev/bus/usb:/dev/bus/usb"
 
   ui:
     build:
