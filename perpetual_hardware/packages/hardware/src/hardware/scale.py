@@ -29,22 +29,28 @@ class Scale():
 
     async def read_weight_data(self) -> Dict[str, Any]:
         try:
-            regs = await self.modbus_controller.read_holding_registers(0x0, 10, self.scale_id)
-            decimal_pos = regs[2]
-            weight = abs(regs[0] - regs[1])
-            actual_weight = weight / (10 ** decimal_pos)
-            zero_point, stability, overload, bits_3_7, unit_name = await self.interpret_balance_status(regs[3])
-            return {
-                'weight': actual_weight,
-                'decimal_position': decimal_pos,
-                'balance_status': {
-                    'zero_point': zero_point,
-                    'stability': stability,
-                    'overload': overload,
-                    'unit': unit_name
-                },
-                'raw_registers': regs
-            }
+            # TODO implement multi register read
+            dec = await self.modbus_controller.read_holding_registers(0x1, 0x2)
+            w1 = await self.modbus_controller.read_holding_registers(0x1, 0x0)
+            w2 = await self.modbus_controller.read_holding_registers(0x1, 0x1)
+            w = abs(w1-w2)/(10**dec)
+            return w
+
+            # decimal_pos = regs[2]
+            # weight = abs(regs[0] - regs[1])
+            # actual_weight = weight / (10 ** decimal_pos)
+            # zero_point, stability, overload, bits_3_7, unit_name = await self.interpret_balance_status(regs[3])
+            # return {
+            #     'weight': actual_weight,
+            #     'decimal_position': decimal_pos,
+            #     'balance_status': {
+            #         'zero_point': zero_point,
+            #         'stability': stability,
+            #         'overload': overload,
+            #         'unit': unit_name
+            #     },
+            #     'raw_registers': regs
+            # }
         except Exception as e:
             raise Exception(f"Error reading weight data: {e}")
 
