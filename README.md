@@ -45,3 +45,31 @@ docker compose -f docker-compose.standalone.yml -f docker-compose.hardware.yml u
 ```
 
 > **Tip:** The standalone compose file uses the project name `perpetual_os`. Make sure the bundle stack (`opshelf`) is not running at the same time to avoid port conflicts on 8000/8080/4222.
+
+## Scripts
+
+Convenience scripts are provided in the `scripts/` directory for easier management:
+
+### Start Script
+
+```bash
+# Start in standalone mode (default)
+./scripts/start
+
+# Start with hardware access
+./scripts/start -h
+./scripts/start --hardware
+```
+
+### Stop Script
+
+```bash
+# Stop standalone mode (default)
+./scripts/stop
+
+# Stop hardware mode
+./scripts/stop -h
+./scripts/stop --hardware
+```
+
+Both scripts use the standalone Docker Compose configuration by default and include the hardware override file when the `-h` or `--hardware` flag is provided.
