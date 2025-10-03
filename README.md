@@ -2,7 +2,7 @@
 
 ## Quick Start
 
-1. Start the services:
+1. Start the services (same stack as the repository root):
    ```bash
    docker compose up
    ```
@@ -27,3 +27,5 @@ This mounts the following devices:
 - `/dev/bus/usb`
 
 Without the `hardware` profile, the system runs in software-only mode and doesn't require physical devices.
+
+> **Note:** This compose file extends `../docker-compose.yml` and shares the project name `opshelf`, so the containers you manage here are the same ones you would get by running `docker compose` from the repository root.

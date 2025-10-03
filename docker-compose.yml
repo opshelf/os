@@ -1,60 +1,25 @@
+name: opshelf
+
 services:
   nats:
-    image: nats:latest
-    container_name: nats
-    ports:
-      - "4222:4222"
-      - "6222:6222"
-      - "8222:8222"
-    volumes:
-      - ./perpetual_hardware/packages/perpetual_os1_server/infra/nats/:/etc/nats/
-    command: ["-js", "-config", "/etc/nats/nats.conf"]
-    networks:
-      - openshelf-network
+    extends:
+      file: ../docker-compose.yml
+      service: nats
 
   api:
-    build:
-      context: .
-      dockerfile: ./Dockerfile
-    volumes:
-      - ./perpetual_hardware/packages/perpetual_os1_server/data/:/app/perpetual_hardware/packages/perpetual_os1_server/data/
-    ports:
-      - "8000:8000"
-    depends_on:
-      - nats
-    environment:
-      - ENV=dev
-      - PERPETUAL_BARCODE_PORT=/dev/ttyACM0
-      - PERPETUAL_BARCODE_BAUDRATE=115200
-      - NATS_DOMAIN=nats
-    networks:
-      - openshelf-network
+    extends:
+      file: ../docker-compose.yml
+      service: api
 
   api-hardware:
-    extends: api
-    profiles:
-      - hardware
-    devices:
-      - "/dev/ttyUSB0:/dev/ttyUSB0"
-      - "/dev/ttyACM0:/dev/ttyACM0"
-      - "/dev/ttyACM1:/dev/ttyACM1"
-      - "/dev/bus/usb:/dev/bus/usb"
+    extends:
+      file: ../docker-compose.yml
+      service: api-hardware
 
   ui:
-    build:
-      context: ./openshelf_os1
-      dockerfile: ./Dockerfile
-    ports:
-      - "0.0.0.0:8080:5173"
-    volumes:
-      - ./openshelf_os1/:/app
-      - /app/node_modules
-    environment:
-      - VITE_API_URL=http://localhost:8000
-    depends_on:
-      - api
-    networks:
-      - openshelf-network
+    extends:
+      file: ../docker-compose.yml
+      service: ui
 
 networks:
   openshelf-network:
