@@ -138,13 +138,8 @@ class FiducialRegistry:
 
 class Robot:
     def __init__(self, port: str) -> None:
-<<<<<<< HEAD
-        print("Beb")
         self._bus = Controller(port=port)
-=======
-        self._bus = Controller(port="/dev/ttyUSB0", baudrate=115200) # change to config
         self._scalebus = Controller(port="/dev/ttyACM0", baudrate=9600) # change to config
->>>>>>> origin/os_demo_frz
         # self._curtain_bus = Controller(port=curtain_port)
         self._state = rs.load_state(CONFIG_PATH)
         self._mx = Motor(
