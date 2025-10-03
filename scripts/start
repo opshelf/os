@@ -17,9 +17,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ "$HARDWARE" == true ]]; then
-	echo "Starting Perpetual OS in hardware mode..."
-	docker compose -f docker-compose.standalone.yml -f docker-compose.hardware.yml up
+	docker compose -f docker-compose.standalone.yml -f docker-compose.hardware.yml up -d
 else
-	echo "Starting Perpetual OS in standalone mode..."
-	docker compose -f docker-compose.standalone.yml up
+	docker compose -f docker-compose.standalone.yml up -d
 fi
