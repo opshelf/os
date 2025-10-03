@@ -11,11 +11,6 @@ services:
       file: ../docker-compose.yml
       service: api
 
-  api-hardware:
-    extends:
-      file: ../docker-compose.yml
-      service: api-hardware
-
   ui:
     extends:
       file: ../docker-compose.yml
