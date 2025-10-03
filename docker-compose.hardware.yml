@@ -1,0 +1,7 @@
+services:
+  api:
+    devices:
+      - "/dev/ttyUSB0:/dev/ttyUSB0"
+      - "/dev/ttyACM0:/dev/ttyACM0"
+      - "/dev/ttyACM1:/dev/ttyACM1"
+      - "/dev/bus/usb:/dev/bus/usb"
