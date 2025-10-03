@@ -1,0 +1,22 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+	box-sizing: border-box;
+	font-family: monospace;
+	font-size: 14px;
+	font-weight: normal;
+	font-style: normal;
+}
+
+body {
+	margin: 0;
+	min-height: 100vh;
+	background-color: white;
+	color: black;
+}
+
+#app {
+	min-height: 100vh;
+}

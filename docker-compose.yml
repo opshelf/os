@@ -42,12 +42,12 @@ services:
 
   ui:
     build:
-      context: ./openshelf_os1
+      context: ./dev_ui
       dockerfile: ./Dockerfile
     ports:
       - "0.0.0.0:8080:5173"
     volumes:
-      - ./openshelf_os1/:/app
+      - ./dev_ui/:/app
       - /app/node_modules
     environment:
       - VITE_API_URL=http://localhost:8000
