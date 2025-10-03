@@ -1,73 +1,22 @@
-# async_barcode_reader.py
-import asyncio
-import serial_asyncio
-import serial.tools.list_ports
+import numpy as np
 
-def choose_port(preferred=None):
-    ports = list(serial.tools.list_ports.comports())
-    if not ports:
-        raise RuntimeError("No serial ports found.")
-    if preferred:
-        for p in ports:
-            if preferred in (p.device, p.description, p.manufacturer or ""):
-                return p.device
-    return ports[0].device
+s1 = [(910.44, 21.048), (745.44, 21.048), (580.44, 21.048), (415.44000000000005, 21.048), (250.44000000000005, 21.048), (85.44000000000005, 21.048)]
+s2 = [(912.344, 372.04), (807.344, 372.04), (702.344, 372.04), (597.344, 372.04), (492.34400000000005, 372.04), (387.34400000000005, 372.04), (282.34400000000005, 372.04)] 
+s3 = [(913.008, 575.44), (808.008, 575.44), (703.008, 575.44), (598.008, 575.44), (493.00800000000004, 575.44), (388.00800000000004, 575.44), (283.00800000000004, 575.44)] 
+s4 = [(921.272, 776.84), (831.272, 776.84), (741.272, 776.84), (651.272, 776.84), (561.272, 776.84), (471.27200000000005, 776.84), (381.27200000000005, 776.84), (291.27200000000005, 776.84)]
+s5 = [(921.68, 927.24), (831.68, 927.24), (741.68, 927.24), (651.68, 927.24), (561.68, 927.24), (471.67999999999995, 927.24), (381.67999999999995, 927.24), (291.67999999999995, 927.24)]
 
-class BarcodeProtocol(asyncio.Protocol):
-    def __init__(self, on_barcode):
-        super().__init__()
-        self.on_barcode = on_barcode
-        self._buffer = bytearray()
+sl1 = np.linspace(17, 21.5, 6, retstep=False)
+sl2 = np.linspace(10, 12.75, 7, retstep=False)
+sl3 = np.linspace(11.5, 14.25, 7, retstep=False)
+sl4 = np.linspace(10, 12.25, 8, retstep=False)
+sl5 = np.linspace(10, 13.5, 8, retstep=False)
 
-    def data_received(self, data):
-        self._buffer.extend(data)
-        # handle line termination (\n or \r\n)
-        while True:
-            if b'\n' in self._buffer:
-                line, _, rest = self._buffer.partition(b'\n')
-                self._buffer = rest
-                self._handle_line(line)
-            elif b'\r' in self._buffer:
-                line, _, rest = self._buffer.partition(b'\r')
-                self._buffer = rest
-                self._handle_line(line)
-            else:
-                break
+p1 = [(x + 4, y + dy) for (x, y), dy in zip(s1, sl1)]
+p2 = [(x + 4, y + dy) for (x, y), dy in zip(s2, sl2)]
+p3 = [(x + 4, y + dy) for (x, y), dy in zip(s3, sl3)]
+p4 = [(x + 4, y + dy) for (x, y), dy in zip(s4, sl4)]
+p5 = [(x + 4, y + dy) for (x, y), dy in zip(s5, sl5)]
 
-    def _handle_line(self, raw):
-        try:
-            s = raw.decode('utf-8', errors='replace').strip()
-        except Exception:
-            s = raw.hex()
-        if s:
-            asyncio.create_task(self.on_barcode(s))
-
-async def handle_barcode(barcode):
-    print("Async Barcode:", barcode)
-    # insert async processing here
-
-async def main(port=None, baudrate=115200):
-    if port is None:
-        port = choose_port()
-        print(f"Auto-selected port: {port}")
-
-    loop = asyncio.get_running_loop()
-    coro = serial_asyncio.create_serial_connection(
-        loop, lambda: BarcodeProtocol(handle_barcode), port, baudrate=baudrate
-    )
-    transport, protocol = await coro
-    print(f"Listening on {port} @ {baudrate} (press Ctrl-C to quit)")
-    try:
-        await asyncio.Future()  # run forever
-    except asyncio.CancelledError:
-        pass
-    finally:
-        transport.close()
-
-if __name__ == "__main__":
-    import sys
-    port_arg = sys.argv[1] if len(sys.argv) > 1 else None
-    try:
-        asyncio.run(main(port=port_arg))
-    except KeyboardInterrupt:
-        print("Exiting...")
+print(p1)
+print(p2)
