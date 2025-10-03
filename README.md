@@ -3,6 +3,7 @@
 ## Quick Start
 
 1. Start the services (same stack as the repository root):
+
    ```bash
    docker compose up
    ```
@@ -21,6 +22,7 @@ docker compose -f docker-compose.yml -f docker-compose.hardware.yml up
 ```
 
 This mounts the following devices:
+
 - `/dev/ttyUSB0`
 - `/dev/ttyACM0`
 - `/dev/ttyACM1`
@@ -54,22 +56,22 @@ Convenience scripts are provided in the `scripts/` directory for easier manageme
 
 ```bash
 # Start in standalone mode (default)
-./scripts/start
+scripts/start
 
 # Start with hardware access
-./scripts/start -h
-./scripts/start --hardware
+scripts/start -h
+scripts/start --hardware
 ```
 
 ### Stop Script
 
 ```bash
 # Stop standalone mode (default)
-./scripts/stop
+scripts/stop
 
 # Stop hardware mode
-./scripts/stop -h
-./scripts/stop --hardware
+scripts/stop -h
+scripts/stop --hardware
 ```
 
 Both scripts use the standalone Docker Compose configuration by default and include the hardware override file when the `-h` or `--hardware` flag is provided.
