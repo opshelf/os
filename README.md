@@ -29,3 +29,19 @@ This mounts the following devices:
 Without the hardware override file, the system runs in software-only mode and doesn't require physical devices.
 
 > **Note:** This compose file extends `../docker-compose.yml` and shares the project name `opshelf`, so the containers you manage here are the same ones you would get by running `docker compose` from the repository root.
+
+## Standalone development
+
+If you want to work on Perpetual OS without the bundle repository:
+
+```bash
+docker compose -f docker-compose.standalone.yml up
+```
+
+Add hardware access just like the shared stack by including the override file:
+
+```bash
+docker compose -f docker-compose.standalone.yml -f docker-compose.hardware.yml up
+```
+
+> **Tip:** The standalone compose file uses the project name `perpetual_os`. Make sure the bundle stack (`opshelf`) is not running at the same time to avoid port conflicts on 8000/8080/4222.
