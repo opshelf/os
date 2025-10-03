@@ -1,0 +1,23 @@
+#!/bin/bash
+
+HARDWARE=false
+
+while [[ $# -gt 0 ]]; do
+	case $1 in
+		-h|--hardware)
+			HARDWARE=true
+			shift
+			;;
+		*)
+			echo "Unknown option: $1"
+			echo "Usage: $0 [-h|--hardware]"
+			exit 1
+			;;
+	esac
+done
+
+if [[ "$HARDWARE" == true ]]; then
+	docker compose -f docker-compose.standalone.yml -f docker-compose.hardware.yml down
+else
+	docker compose -f docker-compose.standalone.yml down
+fi
