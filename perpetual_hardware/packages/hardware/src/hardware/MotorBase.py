@@ -109,8 +109,20 @@ class Motor():
         await self.set_param("Allowed max position following error", 4000)
         await self.set_param("Position loop Kp", 50)
         await self.set_param("Max stop time", 100)
+        await self.set_param("Acceleration", self._params['accel'])
+        await self.set_param("Deceleration", self._params['accel'])
+        await self.set_param("Peak current", self._params["Ip"])
+        await self.set_param("Motor direction", self._params["dir"])
+        await self.set_param("Velocity", self._params["rpm"])
         await self.move_config()
         return
+
+    # async def extend(self):
+    #     pass
+
+    # async def retract(self):
+
+
 
     # TODO add axis limits
     async def move_to_position(self, value: float): # mm
@@ -119,14 +131,11 @@ class Motor():
             raise ValueError(f"Value {value} exceeds motor limit {self._params['lim']} mm")
 
         pulse = MotorDefs.rev_to_pulse(MotorDefs.mm_to_rev(value,self._params["mpr"])) # tuple
-        await self.set_param("Control word", 0x1111) # clear alarm if any
-        await self.set_param("Control word", 0x1122) # clear alarm if any
-        await self.set_param("Motion of Path 0", 0x1) # abs pos
-        await self.set_param("Peak current", self._params["Ip"])
-        await self.set_param("Motor direction", self._params["dir"])
-        await self.set_param("Velocity", self._params["rpm"])
-        await self.set_param("Acceleration", self._params['accel'])
-        await self.set_param("Deceleration", self._params['accel'])
+        # await self.set_param("Control word", 0x1111) # clear alarm if any
+        # await self.set_param("Control word", 0x1122) # clear alarm if any
+        # await self.set_param("Motion of Path 0", 0x1) # abs pos
+        # await self.set_param("Motor direction", self._params["dir"])
+        # await self.set_param("Velocity", self._params["rpm"])
         await self.set_param("Position High", pulse[0])
         await self.set_param("Position Low", pulse[1])
         await self._controller.write_single_register(
@@ -143,8 +152,10 @@ class Motor():
         if value > self._params["lim"]:
             raise ValueError(f"Value {value} exceeds motor limit {self._params['lim']} mm")
         pulse = MotorDefs.rev_to_pulse(MotorDefs.mm_to_rev(value,self._params["mpr"])) # tuple
-        await self.set_param("Control word", 0x1111) # clear alarm if any
-        await self.set_param("Control word", 0x1122) # clear alarm if any
+        # await self.set_param("Control word", 0x1111) # clear alarm if any
+        # await self.set_param("Control word", 0x1122) # clear alarm if any
+        # await self.set_param("Motor direction", self._params["dir"])
+        # await self.set_param("Velocity", self._params["rpm"])
         await self.set_param("Position High", pulse[0])
         await self.set_param("Position Low", pulse[1])
         await self._controller.write_single_register(
@@ -159,11 +170,8 @@ class Motor():
         await self.set_param("Control word", 0x1111) # clear alarm if any
         await self.set_param("Control word", 0x1122) # clear alarm if any
         await self.set_param("Motion of Path 0", 0x1) # abs pos 0x1
-        await self.set_param("Peak current", self._params["Ip"])
         await self.set_param("Motor direction", self._params["dir"])
         await self.set_param("Velocity", self._params["rpm"])
-        await self.set_param("Acceleration", self._params['accel'])
-        await self.set_param("Deceleration", self._params['accel'])
         
     #TODO return val in mm, not pulses
     async def get_position(self) -> float:
@@ -224,19 +232,19 @@ class Motor():
             last_pos = self._cur_pos
             
             if has_moved and (now - last_movement_time > self._stall_timeout):
-                # print(f"[{self._motor_id}] Stopped: No movement detected for {self._stall_timeout} seconds.")
+                print(f"[{self._motor_id}] Stopped: No movement detected for {self._stall_timeout} seconds.")
                 # print(status)
                 await self.stop()
                 return MotorStatus.STOPPED
 
             if complete:
-                # print(f"[{self._motor_id}] Move complete.")
+                print(f"[{self._motor_id}] Move complete.")
                 # print(status)
                 await self.stop()
                 return MotorStatus.STOPPED
             
             if fault:
-                # print(f"[{self._motor_id}] Fault.")
+                print(f"[{self._motor_id}] Fault.")
                 # print(status)
                 await self.stop()
                 return MotorStatus.STOPPED
@@ -319,13 +327,13 @@ class Motor():
         home_dir = self._params["dir"]^1
         await self.set_param("Control word", 0x1111) # clear alarm if any
         await self.set_param("Control word", 0x1122) # clear alarm if any
-        await self.set_param("Peak current", self._params["Ip"])
+        # await self.set_param("Peak current", self._params["Ip"])
         await self.set_param("Motion of Path 0", 0x2) # velocity
         # await self.set_param("Homing high velocity", self._params["home_rpm"]) # velocity
         # await self.set_param("Homing low velocity", self._params["home_rpm"]) # velocity
         await self.set_param("Motor direction", home_dir)
         await self.set_param("Velocity", self._params["home_rpm"])
-        await self.set_param("Homing Mode", home_dir)
+        # await self.set_param("Homing Mode", home_dir)
         await self._controller.write_single_register(
                 self._motor_id, 
                 MotorDefs.TRIGGER,
@@ -391,6 +399,29 @@ class Motor():
                 0x21) # set zero position
             
             await self.move_config()
+
+        return
+    
+    async def retract_no_wait(self):
+        home_dir = self._params["dir"]^1
+        await self.set_param("Control word", 0x1111) # clear alarm if any
+        await self.set_param("Control word", 0x1122) # clear alarm if any
+        await self.set_param("Motion of Path 0", 0x2) # velocity
+        await self.set_param("Motor direction", home_dir)
+        await self.set_param("Velocity", self._params["ret_rpm"]) # only use with gripper and slide
+        await self._controller.write_single_register(
+                self._motor_id, 
+                MotorDefs.TRIGGER,
+                0x10) # start path 0
+        
+        # # # if home successful
+        # if (await self.wait_for_move(timeout=10) == MotorStatus.STOPPED):
+        #     await self._controller.write_single_register(
+        #         self._motor_id,
+        #         MotorDefs.TRIGGER,
+        #         0x21) # set zero position
+            
+        # await self.move_config()
 
         return
     
