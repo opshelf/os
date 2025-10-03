@@ -17,7 +17,7 @@
 To run with USB device access for barcode scanners, scales, and other hardware:
 
 ```bash
-docker compose --profile hardware up
+docker compose -f docker-compose.yml -f docker-compose.hardware.yml up
 ```
 
 This mounts the following devices:
@@ -26,6 +26,6 @@ This mounts the following devices:
 - `/dev/ttyACM1`
 - `/dev/bus/usb`
 
-Without the `hardware` profile, the system runs in software-only mode and doesn't require physical devices.
+Without the hardware override file, the system runs in software-only mode and doesn't require physical devices.
 
 > **Note:** This compose file extends `../docker-compose.yml` and shares the project name `opshelf`, so the containers you manage here are the same ones you would get by running `docker compose` from the repository root.
