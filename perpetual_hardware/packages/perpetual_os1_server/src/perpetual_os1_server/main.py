@@ -30,7 +30,7 @@ from perpetual_os1_server.settings import get_settings
 configure_logging()
 logger = get_logger(__name__)
 
-sentry_dsn = os.getenv("SENTRY_DSN")
+sentry_dsn = os.getenv("SENTRY_DSN_BACKEND")
 if sentry_dsn is not None:
 	from sentry_sdk.transport import HttpTransport
 
@@ -55,7 +55,7 @@ if sentry_dsn is not None:
 	)
 	logger.info("sentry_initialized", dsn_configured=True)
 else:
-	logger.warning("sentry_not_configured", message="SENTRY_DSN not set")
+	logger.warning("sentry_not_configured", message="SENTRY_DSN_BACKEND not set")
 
 
 def _filter_pii(event: dict, hint: dict) -> dict:
@@ -190,11 +190,17 @@ app.include_router(storage.router, prefix="/api/storage")
 
 
 def start() -> None:
-    import uvicorn
+	import logging
+	import uvicorn
 
-    uvicorn.run(
-        "perpetual_os1_server.main:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
-    )
+	log_config = uvicorn.config.LOGGING_CONFIG
+	log_config["loggers"]["uvicorn.access"]["level"] = "ERROR"
+	log_config["loggers"]["watchfiles"] = {"level": "ERROR"}
+
+	uvicorn.run(
+		"perpetual_os1_server.main:app",
+		host="0.0.0.0",
+		port=8000,
+		reload=True,
+		log_config=log_config,
+	)
