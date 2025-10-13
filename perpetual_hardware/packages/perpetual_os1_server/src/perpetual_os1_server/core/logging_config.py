@@ -106,7 +106,9 @@ def configure_logging() -> None:
 
 	logging.getLogger("aiosqlite").setLevel(logging.WARNING)
 	logging.getLogger("nats").setLevel(logging.INFO)
-	logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+	logging.getLogger("uvicorn.access").setLevel(logging.ERROR)
+	logging.getLogger("uvicorn.error").setLevel(logging.WARNING)
+	logging.getLogger("watchfiles.main").setLevel(logging.ERROR)
 
 
 def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:
