@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 import os
 import subprocess
 import sys
@@ -9,101 +8,143 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
 
-from fastapi import FastAPI
+import sentry_sdk
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+from sentry_sdk.integrations.fastapi import FastApiIntegration
+from sentry_sdk.integrations.starlette import StarletteIntegration
 
+from perpetual_os1_server.core.logging_config import configure_logging, get_logger
 from perpetual_os1_server.core.robot import init_robot_worker, stop_robot_worker
 from perpetual_os1_server.core.sizes import init_file_sizes, migrate_if_needed
 from perpetual_os1_server.core.storage import StorageService
 from perpetual_os1_server.database.base import Base, engine
 from perpetual_os1_server.database.session import AsyncSessionLocal
 from perpetual_os1_server.middleware.audit import AuditMiddleware
+from perpetual_os1_server.middleware.correlation import CorrelationIdMiddleware
+from perpetual_os1_server.middleware.prometheus import PrometheusMiddleware
 from perpetual_os1_server.routers import audit, auth, robot, roles, sizes, storage, users
 from perpetual_os1_server.settings import get_settings
 
-root = logging.getLogger()
-root.setLevel(logging.INFO)
-handler = logging.StreamHandler(sys.stdout)
-handler.setLevel(logging.DEBUG)
-formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-handler.setFormatter(formatter)
-root.addHandler(handler)
+configure_logging()
+logger = get_logger(__name__)
 
-logging.getLogger("aiosqlite").setLevel(logging.WARNING)
+sentry_dsn = os.getenv("SENTRY_DSN")
+if sentry_dsn is not None:
+	from sentry_sdk.transport import HttpTransport
+
+	def before_send_with_flush(event: dict, hint: dict) -> dict:
+		"""Filter PII and flush immediately."""
+		event = _filter_pii(event, hint)
+		return event
+
+	sentry_sdk.init(
+		dsn=sentry_dsn,
+		integrations=[
+			StarletteIntegration(transaction_style="endpoint"),
+			FastApiIntegration(transaction_style="endpoint"),
+		],
+		traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.1")),
+		environment=os.getenv("DEPLOYMENT_ENVIRONMENT", "development"),
+		release=os.getenv("APP_VERSION", "0.1.0"),
+		before_send=before_send_with_flush,
+		transport=HttpTransport,
+		shutdown_timeout=2,
+		debug=os.getenv("SENTRY_DEBUG", "false").lower() in ("true", "1", "yes"),
+	)
+	logger.info("sentry_initialized", dsn_configured=True)
+else:
+	logger.warning("sentry_not_configured", message="SENTRY_DSN not set")
+
+
+def _filter_pii(event: dict, hint: dict) -> dict:
+	"""Filter sensitive information from Sentry events."""
+	if "request" in event:
+		if "headers" in event["request"]:
+			event["request"]["headers"].pop("Authorization", None)
+			event["request"]["headers"].pop("Cookie", None)
+	return event
 
 
 async def _seed_auth_if_requested() -> None:
-    from sqlalchemy import select
-    from perpetual_os1_server.database.models import User
-    from perpetual_os1_server.database.session import AsyncSessionLocal
+	from sqlalchemy import select
+	from perpetual_os1_server.database.models import User
+	from perpetual_os1_server.database.session import AsyncSessionLocal
 
-    if os.getenv("RUN_SEED_SCRIPT", "false").lower() not in {"1", "true", "yes"}:
-        return
+	if os.getenv("RUN_SEED_SCRIPT", "false").lower() not in {"1", "true", "yes"}:
+		return
 
-    script_path = Path(__file__).parent.parent.parent / "scripts" / "seed_auth.py"
-    if not script_path.exists():
-        logging.warning("Seed script expected at %s but not found", script_path)
-        return
+	script_path = Path(__file__).parent.parent.parent / "scripts" / "seed_auth.py"
+	if not script_path.exists():
+		logger.warning("seed_script_not_found", script_path=str(script_path))
+		return
 
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(select(User))
-        user_count = len(result.scalars().all())
+	async with AsyncSessionLocal() as db:
+		result = await db.execute(select(User))
+		user_count = len(result.scalars().all())
 
-        if user_count == 0:
-            logging.info("No users found, running seed script %s", script_path)
-            subprocess.run([sys.executable, str(script_path)], env={**os.environ, "ENV": "dev"}, check=False)
-        else:
-            logging.info("Found %d existing users, skipping seed script", user_count)
+		if user_count == 0:
+			logger.info("running_seed_script", script_path=str(script_path), reason="no_users_found")
+			subprocess.run([sys.executable, str(script_path)], env={**os.environ, "ENV": "dev"}, check=False)
+		else:
+			logger.info("skipping_seed_script", user_count=user_count, reason="users_exist")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    logging.info("Starting %s", app.title)
-    settings = get_settings()
+	logger.info("application_starting", app_title=app.title)
+	settings = get_settings()
 
-    logging.info("Initializing database schema")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+	logger.info("initializing_database_schema")
+	async with engine.begin() as conn:
+		await conn.run_sync(Base.metadata.create_all)
 
-    await _seed_auth_if_requested()
+	await _seed_auth_if_requested()
 
-    robot_started = False
-    storage_override_set = False
-    try:
-        if settings.robot.enabled:
-            try:
-                logging.info("Robot is enabled, attempting initialization")
-                await init_robot_worker()
-                robot_started = True
-                logging.info("Robot worker started successfully")
-            except Exception as e:
-                logging.error("Robot initialization failed: %s", str(e))
-                logging.error("Exception type: %s", type(e).__name__)
-                logging.error("Full traceback: %s", traceback.format_exc())
-        else:
-            logging.info("Robot is disabled in settings")
-    except Exception as e:
-        logging.error("Unexpected error during robot setup: %s", str(e))
+	robot_started = False
+	storage_override_set = False
+	try:
+		if settings.robot.enabled is True:
+			try:
+				logger.info("robot_initialization", status="starting")
+				await init_robot_worker()
+				robot_started = True
+				logger.info("robot_worker_started", status="success")
+			except Exception as e:
+				logger.error(
+					"robot_initialization_failed",
+					error=str(e),
+					error_type=type(e).__name__,
+					traceback=traceback.format_exc(),
+					exc_info=True
+				)
+				sentry_sdk.capture_exception(e)
+		else:
+			logger.info("robot_disabled", reason="settings_configuration")
+	except Exception as e:
+		logger.error("robot_setup_error", error=str(e), exc_info=True)
+		sentry_sdk.capture_exception(e)
 
-        init_file_sizes()
+	init_file_sizes()
 
-        async def get_storage_session() -> AsyncGenerator[StorageService, None]:
-            async with AsyncSessionLocal() as session:
-                await migrate_if_needed(session)
-                yield StorageService(session)
+	async def get_storage_session() -> AsyncGenerator[StorageService, None]:
+		async with AsyncSessionLocal() as session:
+			await migrate_if_needed(session)
+			yield StorageService(session)
 
-        app.dependency_overrides[StorageService] = get_storage_session
-        storage_override_set = True
+	app.dependency_overrides[StorageService] = get_storage_session
+	storage_override_set = True
 
-    try:
-        yield
-    finally:
-        logging.info("Shutting down")
-        if robot_started:
-            await stop_robot_worker()
-            logging.info("Robot worker stopped")
-        if storage_override_set:
-            app.dependency_overrides.pop(StorageService, None)
+	try:
+		yield
+	finally:
+		logger.info("application_shutting_down")
+		if robot_started is True:
+			await stop_robot_worker()
+			logger.info("robot_worker_stopped")
+		if storage_override_set is True:
+			app.dependency_overrides.pop(StorageService, None)
 
 
 app = FastAPI(
@@ -117,18 +158,26 @@ app = FastAPI(
 )
 
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+	CORSMiddleware,
+	allow_origins=["*"],
+	allow_credentials=True,
+	allow_methods=["*"],
+	allow_headers=["*"],
 )
+app.add_middleware(PrometheusMiddleware)
+app.add_middleware(CorrelationIdMiddleware)
 app.add_middleware(AuditMiddleware)
 
 
 @app.get("/api/health")
 async def health() -> dict[str, str]:
-    return {"status": "ok"}
+	return {"status": "ok"}
+
+
+@app.get("/metrics")
+async def metrics() -> Response:
+	"""Prometheus metrics endpoint."""
+	return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 app.include_router(auth.router)
