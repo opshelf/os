@@ -179,7 +179,6 @@ def is_right_angle_quad(pts, cos_tol=0.25):
     dots = [abs(np.dot(v[i], v[(i+1) % 4])) for i in range(4)]
     return all(d <= cos_tol for d in dots)
 
-
 class Camera:
     def __init__(self, 
                  url="rtsp://192.168.1.108:554/user=admin&password=&channel=1&stream=0.sdp?tcp"):

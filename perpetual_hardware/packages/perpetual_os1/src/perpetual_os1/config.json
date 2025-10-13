@@ -16,12 +16,12 @@
     {
       "motor_name": "y_axis",
       "motor_id": 2,
-      "Ip": 50,
-      "rpm": 300,
+      "Ip": 60,
+      "rpm": 250,
       "dir": 0,
       "mpr": 40,
       "home_rpm": 32,
-      "accel": 500,
+      "accel": 1000,
       "ret_rpm": 128,
       "lim":1295,
       "Iph": 50
@@ -72,11 +72,11 @@
       "Ip": 22,
       "rpm": 3000,
       "dir": 0,
-      "mpr": 8,
+      "mpr": 12,
       "home_rpm": 128,
       "accel": 500,
       "ret_rpm": 64,
-      "lim": 220,
+      "lim": 1000,
       "Iph": 20
     }
   ], 
@@ -85,8 +85,8 @@
  
   "robot": {
     "IDLE_POSITION": [0,0],
-    "PICKUP_POSITION_L": [20,461],
-    "PICKUP_POSITION_H": [20,710],
+    "PICKUP_POSITION_L": [52,469],
+    "PICKUP_POSITION_H": [52,725],
     "SCAN_POSITION": [930,1],
     "SLIDE_EXTENSION": 50,
     "GRIPPER_EXTENSION_PICK": 166.75,

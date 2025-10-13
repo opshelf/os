@@ -5,6 +5,7 @@ from hardware.MotorBase import Motor, Servo, MotorStatus
 from hardware.camera import Camera
 from hardware.scale import Scale
 from hardware.curtain import Curtain
+from hardware.sizer import AsyncFootprintSizer
 from pydantic import BaseModel, Field
 import time
 from enum import Enum
@@ -167,6 +168,17 @@ class Robot:
             rs.get_motor_params(self._state, "door"), 
         )
 
+        self._sizer = AsyncFootprintSizer(
+            preferred_tof_port=2,        # try both 0/1
+            max_distance_mm=4000,
+            usb_index=0,
+            square_mm=7.5,
+            fx_px=1150, fy_px=1150,         # let it estimate from FOV or TOF+checkerboard
+            hfov_deg=None, vfov_deg=None,   # optional
+            confidence_min=30,
+            # bounding_box = [[264, 86], [271, 10], [358, 18], [351, 94]]
+        )
+
         self._gs = Servo(self._bus)
         # self._cam = Camera()
         # self._grid = self._state["grid"]
@@ -188,9 +200,11 @@ class Robot:
         await self._md.configure()
         await self._gs.configure()
 
+        await self._sizer.start()
+
         await self.home()
 
-        await self._md.move_to_position(170) # keep door open
+        # await self._md.move_to_position(220) # keep door open
 
         # await self._scalebus.connect()
         if not await self._scale.connect():
@@ -221,10 +235,10 @@ class Robot:
 
         await self._my.move_to_position_no_wait(self.get_param("PICKUP_POSITION_L")[1])
         await self._mx.move_to_position_no_wait(self.get_param("PICKUP_POSITION_L")[0]) 
-        await self._md.move_to_position_no_wait(170)
+        await self._md.move_to_position_no_wait(220)
         await self.pick_wait()
 
-        # await self._md.move_to_position(170) # todo make para
+        await self._md.move_to_position(220) # todo make para
         await self._ms.move_to_position(self.get_param("SLIDE_EXTENSION"))
         await self._mg.move_to_position(self.get_param("GRIPPER_EXTENSION_PLACE")+8)
 
@@ -235,26 +249,26 @@ class Robot:
         await self._mg.move_to_position_no_wait(0)
         await self.tool_wait()
 
-        # await self._md.move_to_position_no_wait(0)
+        await self._md.move_to_position_no_wait(0)
         await self._my.move_to_position_no_wait(coord.y)
         await self._mx.move_to_position_no_wait(coord.x)
         await self.pick_wait()
 
         await self.place(coord)
 
-        # await self._md.home()
+        await self._md.home()
         await self._mg.home()
         await self._ms.home()
 
     async def io_pick(self, coord):
 
         await self.pick(coord)
-        # await self._md.move_to_position_no_wait(170)
+        await self._md.move_to_position_no_wait(220)
         await self._my.move_to_position_no_wait(self.get_param("PICKUP_POSITION_H")[1])
         await self._mx.move_to_position_no_wait(self.get_param("PICKUP_POSITION_H")[0]) 
         await self.pick_wait()
 
-        # await self._md.move_to_position(170)
+        await self._md.move_to_position(220)
 
         await self._ms.move_to_position_no_wait(self.get_param("SLIDE_EXTENSION")) # 50 max
         await self._mg.move_to_position_no_wait(self.get_param("GRIPPER_EXTENSION_PLACE")+8)
@@ -264,11 +278,13 @@ class Robot:
         await self._mx.move_to_position_no_wait(self.get_param("PICKUP_POSITION_L")[0]) 
         await self.gantry_wait()
 
+        # await self._gs.close()
+
         await self._mg.move_to_position(0)
         await self._ms.move_to_position(0)
         # await self.tool_wait()
 
-        # await self._md.move_to_position_no_wait(0)
+        await self._md.move_to_position_no_wait(0)
         await self._my.move_to_position_no_wait(coord.y)
         await self._mx.move_to_position_no_wait(coord.x)
         await self.pick_wait()
@@ -277,7 +293,7 @@ class Robot:
 
         await self._mg.home()
         await self._ms.home()
-        # await self._md.home()
+        await self._md.home()
 
     async def pick(self, coordinate: AxisCoordinate) -> None:
         await self._gs.safe_open()
@@ -305,55 +321,32 @@ class Robot:
         await self._mg.move_to_position_no_wait(0)
         await self._ms.move_to_position_no_wait(0)
         await self.tool_wait()
-
-        # await self._mg.retract()
-        # await self._ms.retract()
-        # await self.tool_wait()
-        # await self._mg.move_config()
-        # await self._ms.move_config()
-
-    # well plate
-    # async def testtwo(self):
-    #     await self._mr.move_to_position(0.5)
-    #     print("andi")
-    #     # time.sleep(2.5)
-    #     while True:
-    #         w = await self._scale.read_weight_data()
-    #         if w > 50:
-    #             await self.io_pick(AxisCoordinate(286.34, 384.79))
-    #             return
-
+        
     # big box
     async def testone(self, code):
+        # print(code)
         await self._mr.move_to_position(0.5)
-        # await self._md.move_to_position(170)
+        cl = AxisCoordinate(89.44, 42.548)
+        sf = AxisCoordinate(914.44, 38.048)
+        wp1 = AxisCoordinate(286.34, 384.79)
+        wp2 = AxisCoordinate(287.00800000000004, 589.44)
+     
         if code == "66666":
-            # cl = AxisCoordinate(89.44, 42.548)
-            cl = AxisCoordinate(914.44, 38.048)
-        # await self._mr.move_to_position(0.5)
-        # print("beblet")
-        # # time.sleep(2.5)
-        # while True:
-        #     w = await self._scale.read_weight_data()
-        #     if w > 50:
-        #         await self.io_pick(AxisCoordinate(89.44, 42.548))
-        #         return
-
             await self.io_place(cl)
-
         elif code == "11111":
-            # cl = AxisCoordinate(89.44, 42.548)
-            cl = AxisCoordinate(914.44, 38.048)
-        # await self._mr.move_to_position(0.5)
-        # print("beblet")
-        # # time.sleep(2.5)
-        # while True:
-        #     w = await self._scale.read_weight_data()
-        #     if w > 50:
-        #         await self.io_pick(AxisCoordinate(89.44, 42.548))
-        #         return
-
             await self.io_pick(cl)
+        elif code == "55555":
+            await self.io_place(sf)
+        elif code == "22222":
+            await self.io_pick(sf)
+        elif code == "33333":
+            await self.io_place(wp1)
+        elif code == "88888":
+            await self.io_pick(wp1)
+        # elif code == "66666":
+        #     await self.io_place(wp2)
+        # elif code == "11111":
+        #     await self.io_pick(wp2)
 
 
 
@@ -516,8 +509,44 @@ class Robot:
         await self.gantry_wait()
 
     async def move(self, coordinate: AxisCoordinate) -> None:
-        await self._mr.move_to_position(0.5)
-        await self.test()
+        await self._md.move_to_position_no_wait(220)
+        await self._mx.move_to_position_no_wait(coordinate.x)
+        await self._my.move_to_position_no_wait(coordinate.y)
+
+        # result = await self._sizer.measure(n_frames=10, bounding_box = (200, 60, 408, 265), bbox_inclusive=True, display=False)
+        # # print(result.get("aggregate").get("footprint_major_mm_med"), result.get("aggregate").get("footprint_minor_mm_med"))
+        # size = result.get("aggregate").get("scale_major_mm_med")
+        # dist = result.get("aggregate").get("center_dist_px_med")
+
+        # print(size)
+        # print(dist)
+
+        # # todo add scale
+        # if dist < 40:
+        #     if size > 200:
+        #         print("too big")
+        #         return
+        #     elif size > 90 and size < 200:
+        #         box = AxisCoordinate(914.44, 38.048)
+        #         print("auto detected large box")
+        #         await self.io_pick(box)
+        #     else:
+        #         box = AxisCoordinate(916.344, 382.04) #large   
+        #         print("auto detected small box")
+        #         await self.io_pick(box)
+        # else:
+        #     print(f"item not centered enough: {dist} px")
+        #     return
+
+        # box = AxisCoordinate(916.344, 382.04)
+        
+        # time.sleep(5)
+        # result = await self._sizer.measure(n_frames=10, display=False)
+        # print(result)
+
+        # bbox
+        #[[264, 86], [271, 10], [358, 18], [351, 94]]
+
 
     async def auto_cal(self):
         shelves = await self.get_shelves()
@@ -579,9 +608,9 @@ class Robot:
         await self._mg.home()
         await self._mr.home()
         await self._mx.home()
-        await self._my.jog(0.1)
+        await self._my.jog(5)
         await self._my.home_y()
-        # await self._md.home()
+        await self._md.home()
 
     async def stop(self) -> None:
         await self._mx.stop()

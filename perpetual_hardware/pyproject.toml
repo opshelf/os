@@ -5,7 +5,8 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-	"opencv-python"
+	"arducamdepthcamera>=0.1.21",
+	"opencv-python",
 ]
 
 [tool.uv.workspace]

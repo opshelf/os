@@ -217,7 +217,7 @@ class Motor():
             now = time.monotonic()
 
             if status is None:
-                print(f"[{self._motor_id}] Failed to read motion status.")
+                # print(f"[{self._motor_id}] Failed to read motion status.")
                 return None
             
             if last_pos is not None:
@@ -232,13 +232,13 @@ class Motor():
             last_pos = self._cur_pos
             
             if has_moved and (now - last_movement_time > self._stall_timeout):
-                print(f"[{self._motor_id}] Stopped: No movement detected for {self._stall_timeout} seconds.")
+                # print(f"[{self._motor_id}] Stopped: No movement detected for {self._stall_timeout} seconds.")
                 # print(status)
                 await self.stop()
                 return MotorStatus.STOPPED
 
             if complete:
-                print(f"[{self._motor_id}] Move complete.")
+                # print(f"[{self._motor_id}] Move complete.")
                 # print(status)
                 await self.stop()
                 return MotorStatus.STOPPED

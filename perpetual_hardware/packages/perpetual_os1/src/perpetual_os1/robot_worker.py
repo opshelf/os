@@ -115,7 +115,7 @@ class RobotWorker:
         )
 
         if self._should_enable_barcode() and self._barcode is None:
-            port = os.getenv("PERPETUAL_BARCODE_PORT", "/dev/ttyACM0")
+            port = os.getenv("PERPETUAL_BARCODE_PORT", "/dev/ttyACM1")
             baudrate = int(os.getenv("PERPETUAL_BARCODE_BAUDRATE", "115200"))
             try:
                 self._barcode = BarcodeService(port=port, baudrate=baudrate)
@@ -184,7 +184,7 @@ class RobotWorker:
     async def _barcode_to_command(self, code: str) -> RobotCommands:
         logging.info("Received barcode: %s", code)
         # TODO: map barcodes to real RobotCommands
-        return StopCommand()
+        return HomeCommand(barcode=code)
 
     def _snapshot_command(self, command: RobotCommands) -> QueuedOperation:
         metadata: dict[str, Any] = {}
