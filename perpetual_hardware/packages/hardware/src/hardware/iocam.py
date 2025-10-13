@@ -1,13 +1,10 @@
 import asyncio
-import os
-import time
 from typing import Optional, Tuple, List, Dict, Any
 
 import cv2
 import numpy as np
 import ArducamDepthCamera as ac
-import iocam_helpers as ih
-import 
+import hardware.iocam_helpers as ih
 
 
 # ============================ Async Sizer Class ============================
@@ -22,24 +19,21 @@ class AFSCam:
     - await stop()
     """
 
-    def __init__(self, params: dict) -> None:
+    def __init__(self, usb_params, tof_params) -> None:
         # TOF parameters
-        self.preferred_tof_port = params.get("preferred_tof_port", 2)   # 0 or 1 on Pi 5; None => try both
-        self.max_distance_mm = params.get("max_distance_mm", 4000)      # 2000 or 4000
+        self.preferred_tof_port = tof_params.csi_port
+        self.max_distance_mm = tof_params.max_distance_mm
 
         # Calibration & geometry
-        self.square_mm = params.get("square_mm", 7.5)
-        self.fx_px = params.get("fx_px", 1150)
-        self.fy_px = params.get("fy_px", 1150)
-        self.confidence_min = params.get("confidence_min", 0)
-
-        # Fallback / headless mode
-        self._headless_out = params.get("headless_fallback_path", "./usb_sizing.jpg")
+        self.square_mm = usb_params.square_mm
+        self.fx_px = usb_params.fx_px
+        self.fy_px = usb_params.fy_px
+        self.confidence_min = tof_params.confidence_min
 
         # USB camera configuration
-        self._usb_index = params.get("usb_index", 0)
-        self._usb_fourcc = params.get("usb_fourcc", "MJPG")
-        self._usb_exposure = params.get("usb_exposure", 100)
+        self._usb_index = usb_params.usb_index
+        self._usb_fourcc = usb_params.usb_fourcc
+        self._usb_exposure = usb_params.usb_exposure
 
         # Hardware handles
         self._tof: Optional[ac.ArducamCamera] = None
@@ -88,10 +82,10 @@ class AFSCam:
         if not self._usb.isOpened():
             self._cleanup_tof()
             raise RuntimeError(f"Failed to open USB camera at index {self._usb_index}")
-        if self._usb_width is not None:
-            self._usb.set(cv2.CAP_PROP_FRAME_WIDTH, int(self._usb_width))
-        if self._usb_height is not None:
-            self._usb.set(cv2.CAP_PROP_FRAME_HEIGHT, int(self._usb_height))
+        # if self._usb_width is not None:
+        #     self._usb.set(cv2.CAP_PROP_FRAME_WIDTH, int(self._usb_width))
+        # if self._usb_height is not None:
+        #     self._usb.set(cv2.CAP_PROP_FRAME_HEIGHT, int(self._usb_height))
         if self._usb_fourcc:
             fourcc = cv2.VideoWriter_fourcc(*self._usb_fourcc)
             self._usb.set(cv2.CAP_PROP_FOURCC, fourcc)
@@ -216,7 +210,7 @@ class AFSCam:
             })
 
         # ----- Aggregates -----
-        ok_frames = [p for p in per_frame if p.get("ok")]
+        ok_frames = [p for p in per_frame if p.ok]
         agg: Dict[str, Any] = {}
         if ok_frames:
             def med(vals):
@@ -229,7 +223,7 @@ class AFSCam:
 
             # NEW: center distance median (pixels), only when bbox was provided
             if bounding_box is not None:
-                dists = [p["center_dist_px"] for p in ok_frames if p.get("center_dist_px") is not None]
+                dists = [p["center_dist_px"] for p in ok_frames if p.center_dist_px is not None]
                 agg["center_dist_px_med"] = med(dists)
 
         return {

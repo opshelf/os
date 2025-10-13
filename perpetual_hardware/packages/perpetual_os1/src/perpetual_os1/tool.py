@@ -1,11 +1,9 @@
-import common as c
+import perpetual_os1.common as c
 
 from hardware.controller import SharedModbusController as Controller
 from hardware.motor import Motor, Servo, MotorStatus
-from hardware.toolcam import Camera
+from hardware.toolcam import ToolCamera
 
-import time
-import asyncio
 from enum import Enum
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Tuple, Union, Literal, Annotated, List
@@ -24,7 +22,6 @@ class FiducialRegistry:
     def add(self, yw: float):
         self.items.append(yw)
  
-
 class ToolMotionStatus(Enum):
     IDLE = 0
     MOVING = 1
@@ -35,29 +32,33 @@ class ToolItemStatus(Enum):
     LOADED = 1
     ERROR = 2
 
+@dataclass
 class ToolStatus:
     motion: ToolMotionStatus
     item: ToolItemStatus
 
 class Tool:
-    def __init__(self, motorcontroller: Controller, params: dict):
+    def __init__(self, motorcontroller: Controller, params: c.Parameters):
         self._motorcontroller = motorcontroller
-        self._status = ToolStatus.IDLE
+        self._istatus = ToolItemStatus.EMPTY
+        self._mstatus = ToolMotionStatus.IDLE
+        self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
         self._params = params
 
-        self._mx = Motor(self._motorbus, self._params.get("motors",{}.get("x_axis", {})))
-        self._my = Motor(self._motorbus, self._params.get("motors",{}.get("y_axis", {})))
-        self._mg = Motor(self._motorbus, self._params.get("motors",{}.get("z_axis", {})))
-        self._ms = Motor(self._motorbus, self._params.get("motors",{}.get("slide", {})))
-        self._mr = Motor(self._motorbus, self._params.get("motors",{}.get("rotate", {})))
-        self._gs = Servo(self._motorbus)
+        self._mx = Motor(self._motorcontroller, self._params.motors.by_name("x_axis"))
+        self._my = Motor(self._motorcontroller, self._params.motors.by_name("y_axis"))
+        self._mg = Motor(self._motorcontroller, self._params.motors.by_name("z_axis"))
+        self._ms = Motor(self._motorcontroller, self._params.motors.by_name("stage"))
+        self._mr = Motor(self._motorcontroller, self._params.motors.by_name("rotate"))
+        self._gs = Servo(self._motorcontroller)
 
-        self._cam = Camera(self._params.get("camera", {}))
+        self._cam = ToolCamera(self._params.poe_camera)
 
         # LEDs
 
 ## MOTORS
     async def configure(self):
+        await self._gs.configure()
         await self._my.configure()
         await self._mx.configure()
         await self._mg.configure()
@@ -93,9 +94,8 @@ class Tool:
         await self.gantry_wait()
 
     async def retract(self) -> None:
-        await self._mg.move_to_position_no_wait(0)
-        await self._ms.move_to_position_no_wait(0)
-        await self.tool_wait()
+        await self._mg.move_to_position(0)
+        await self._ms.move_to_position(0)
 
     async def extend(self) -> None:
         await self._ms.move_to_position(self.get_param("SLIDE_EXTENSION"))
@@ -178,7 +178,7 @@ class Tool:
                                 shelves.append(yw)                    
 
             end_y = await self._my.get_position()
-            lim = self._params.get("motors",{}).get("y_axis", {}).get("lim", 1000)
+            lim = self._params.motors.by_name("y_axis").lim 
             if end_y + self.get_param("JOG_Y") > lim:
                 break
             await self._my.jog(self.get_param("JOG_Y"))
@@ -186,7 +186,7 @@ class Tool:
 
     async def update_grid(self, shelves: List[float]):
         anchors = []
-        await self._move(c.AxisCoordinate(self.get_param("SCAN_POSITION")[0], 
+        await self.move(c.AxisCoordinate(self.get_param("SCAN_POSITION")[0], 
                                           self.get_param("SCAN_POSITION")[1]))
         
         for s in shelves:

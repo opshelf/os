@@ -1,15 +1,14 @@
-import common as c
+import perpetual_os1.common as c
 
 from hardware.controller import SharedModbusController as Controller
-from iobox import IOBox, IOBoxStatus, SizeResult, ItemSizeLocation
-from tool import Tool, ToolStatus
+from perpetual_os1.iobox import IOBox, IOBoxStatus, SizeResult, ItemSizeLocation
+from perpetual_os1.tool import Tool, ToolStatus, ToolMotionStatus, ToolItemStatus
 
+from pathlib import Path
 from enum import Enum
-# import asyncio
 from typing import Dict, Optional, Tuple, Union, Literal, Annotated
 from pydantic import BaseModel, Field
 
-from pathlib import Path
 CONFIG_PATH = Path(__file__).resolve().parent / "config.json"
 
 class StopCommand(BaseModel):
@@ -23,7 +22,7 @@ class HomeCommand(BaseModel):
 
 class MoveCommand(BaseModel):
     command: Literal["move"] = "move"
-    coordinate: c.c.AxisCoordinate
+    coordinate: c.AxisCoordinate
 
 class IdleCommand(BaseModel):
     command: Literal["idle"] = "idle"
@@ -60,20 +59,25 @@ class RobotItemStoredResponse(BaseModel):
 #     location: StorageModuleCellLocation
 
 class RobotStatus(str, Enum):
-    io: IOBoxStatus
-    tool: ToolStatus
     RobotResponse = Union[RobotCommandSuccessful, RobotCommandError, SizeResult]
 
 class RobotState(BaseModel):
-    current_cell: Optional[StorageModuleCellLocation] = None
+    io: IOBoxStatus
+    tool: ToolStatus
+    # current_cell: Optional[StorageModuleCellLocation] = None
 
+RobotResponse = Union[RobotCommandSuccessful, RobotCommandError, SizeResult]
+
+# class WorkerStatus(BaseModel):
+#     robot_status: Optional[RobotStatus]
+#     running: bool
+#     current_command: Optional[RobotCommands]
 
 class Robot:
-    def __init__(self, port: str) -> None:
+    def __init__(self) -> None:
         # TODO add port retries, config, hardening
-        # Modbus Controllers
-        self._motorbus = Controller(port="/dev/ttyUSB0", baudrate=115200) # change to config
-        # self._scalebus = Controller(port="/dev/ttyACM0", baudrate=9600) # change to config
+        self._motorbus = Controller(port="/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_B001XSSJ-if00-port0", baudrate=115200) # change to config
+        self._scalebus = Controller(port="/dev/serial/by-id/usb-1a86_USB_Single_Serial_594D007725-if00", baudrate=115200) # change to config
 
         # Load State
         self._state = c.load_config_file(CONFIG_PATH)
@@ -87,27 +91,27 @@ class Robot:
 
         # Status
         self._cur_item: str = None # some kind of unique identifier
-        self._status: RobotStatus = RobotStatus.IDLE
+        self._status: RobotStatus = None
+        self._state: RobotState = RobotState(io=IOBoxStatus.IDLE, tool=ToolStatus(motion=ToolMotionStatus.IDLE, item=ToolItemStatus.EMPTY))
 
     async def configure(self):
         await self._motorbus.connect()
         if not self._motorbus.client.connected:
             print("No Motor bus")
             return
-        await self._scalebus.connect()
-        if not self._scalebus.client.connected:
-            print("No scale bus")
-            return
+        # await self._scalebus.connect()
+        # if not self._scalebus.client.connected:
+        #     print("No scale bus")
+        #     return
         
         await self._tool.configure()
-        await self._io.configure()
+        # await self._io.configure()
 
     def get_param(self, param: str):
         return self._state.get("robot",{}).get(param, None)
 
     async def io_place(self, coord: c.AxisCoordinate):
         await self._tool.pick(coord)
-
         await self._tool.move(c.AxisCoordinate(self.get_param("PICKUP_POSITION_L")[0], 
                                                self.get_param("PICKUP_POSITION_L")[1])) # move to safe height
         await self._io.open_door()
@@ -120,7 +124,6 @@ class Robot:
         await self._tool.place(coord)
 
     async def io_pick(self, coord):
-
         await self._tool.pick(coord)
         await self._tool.move(c.AxisCoordinate(self.get_param("PICKUP_POSITION_H")[0], 
                                                self.get_param("PICKUP_POSITION_H")[1])) # move to safe height
@@ -136,7 +139,6 @@ class Robot:
         await self._io._md.home()
         await self._tool.clear_alarms()
 
-
     #############################
 
     async def idle(self) -> None:
@@ -146,8 +148,8 @@ class Robot:
         await self.stop()
         if self._motorbus:
             await self._motorbus.close()
-        if self._scalebus:
-            await self._scalebus.close()
+        # if self._scalebus:
+        #     await self._scalebus.close()
 
     async def stop(self) -> None:
         await self._tool.stop()
@@ -166,6 +168,7 @@ class Robot:
                 return RobotCommandSuccessful()
             case MoveCommand(coordinate=coord):
                 await self._tool.move(coord)
+                # await self._tool.place(coord)
                 return RobotCommandSuccessful()
             case IdleCommand():
                 await self.idle()

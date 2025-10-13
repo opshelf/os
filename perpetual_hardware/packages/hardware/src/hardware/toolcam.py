@@ -2,36 +2,35 @@ import numpy as np
 import cv2
 import time
 from pathlib import Path
-
-import toolcam_helpers
+from hardware import toolcam_helpers
 
 MIN_AREA = 200          # reject tiny blobs (px^2)
 ASPECT_TOL = 0.75       # allow ±20% from perfect square (w≈h)
 
 # todo cache all these parameters
-class Camera:
+class ToolCamera:
     def __init__(self, params: dict):
-        self.url = params.get("url", 0)  # default to first local camera
-        self.mtx = params.get("mtx", None)  # camera matrix
-        self.dist = params.get("dist", None)  # distortion coefficients         
-        self.rvecs = params.get("rvecs", None)
-        self.tvecs = params.get("tvecs", None)
-        self.newcameramtx = params.get("newcameramtx", None)
-        self.roi = params.get("roi", None)
-        self.H = params.get("H", None)  # homography to board plane
+        self.url = params.url  # default to first local camera
+        self.mtx = params.mtx # camera matrix
+        self.dist = params.dist # distortion coefficients         
+        self.rvecs = params.rvecs
+        self.tvecs = params.tvecs
+        self.newcameramtx = params.newcameramtx
+        self.roi = params.roi
+        self.H = params.H  # homography to board plane
 
         # remap fields
-        self.map1 = params.get("map1", None)
-        self.map2 = params.get("map2", None)
-        self.map_size = params.get("map_size", None)
+        self.map1 = params.map1
+        self.map2 = params.map2
+        self.map_size = params.map_size
 
-        self.H_ref_size = params.get("H_ref_size", (2880,1620))  # size (w,h) used to compute H
-        self.board_W_mm = params.get("board_W_mm", None)  # physical board size
-        self.board_H_mm = params.get("board_H_mm", None)
-        self.pattern_size = params.get("pattern_size", (14,7))  # (cols,rows) of inner corners
-        self.square_size_mm = params.get("square_size_mm", 15)  # chessboard square size
+        self.H_ref_size = params.H_ref_size
+        self.board_W_mm = params.board_W_mm  # physical board size
+        self.board_H_mm = params.board_H_mm
+        self.pattern_size = params.pattern_size
+        self.square_size_mm = params.square_size_mm
 
-        self.get_correct() #
+        # self.get_correct() #
 
     async def capture(self):
         cap = cv2.VideoCapture(self.url, cv2.CAP_FFMPEG)

@@ -1,19 +1,27 @@
+from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from __future__ import annotations
 from typing import Any, Dict, List, Literal, Optional, Tuple, Union, TypeVar
-from pydantic import BaseModel, Field, validator, root_validator, ValidationError
+
+from pydantic import (
+    BaseModel,
+    Field,
+    ValidationError,
+    RootModel,
+    field_validator,
+)
 
 C = TypeVar("C")
 S = TypeVar("S")
+
+# ---------------------- NATS Config ----------------------
 
 class RobotNatsConfiguration(BaseModel):
     stream_name: str = "robot"
     command_queue: str = "commands"
     event_queue: str = "events"
     status_queue: str = "robot.status"
-
     get_storage_subject: str = "robot.get_storage"
     set_storage_subject: str = "robot.set_storage"
     get_config_subject: str = "robot.get_configuration"
@@ -26,22 +34,26 @@ class RobotNatsConfiguration(BaseModel):
     def connection_string(self) -> str:
         return f"nats://{self.domain}:{self.port}"
 
+
+# ---------------------- Coordinates ----------------------
+
 @dataclass
 class AxisCoordinate:
     x: float
     y: float
 
     def __add__(self, other: "AxisCoordinate") -> "AxisCoordinate":
-        return AxisCoordinate(x=self.x + other.x, y=self.y + other.y, z=self.z + other.z)
+        return AxisCoordinate(x=self.x + other.x, y=self.y + other.y)
 
     def __sub__(self, other: "AxisCoordinate") -> "AxisCoordinate":
-        return AxisCoordinate(x=self.x - other.x, y=self.y - other.y, z=self.z - other.z)
+        return AxisCoordinate(x=self.x - other.x, y=self.y - other.y)
+
 
 @dataclass
 class ToolCoordinate:
-    g: float # gripper
-    s: float # stage
-    r: float # rotation (only 0 or 180) # does not add/subtract
+    g: float  # gripper
+    s: float  # stage
+    r: float  # rotation (only 0 or 180) -- does not add/subtract
 
     def __add__(self, other: "ToolCoordinate") -> "ToolCoordinate":
         return ToolCoordinate(g=self.g + other.g, s=self.s + other.s, r=self.r)
@@ -75,47 +87,48 @@ def _pair_len2(v: List[Union[int, float]], name: str) -> Tuple[Union[int, float]
 
 class Motor(BaseModel):
     motor_name: str = Field(..., min_length=1)
-    motor_id: int = Field(..., ge=0)  # you can tighten range if needed
-    Ip: int = Field(..., ge=0)        # keeping your exact key casing
+    motor_id: int = Field(..., ge=0)  # tighten if desired
+    Ip: int = Field(..., ge=0)        # keeping exact key casing
     rpm: int = Field(..., gt=0)
-    dir: Literal[0, 1]
+    dr: Literal[0, 1]
     mpr: float = Field(..., gt=0)
     accel: int = Field(..., gt=0)
     ret_rpm: int = Field(..., gt=0)
     lim: Union[int, float] = Field(..., gt=0)
 
-    @validator("motor_name")
+    @field_validator("motor_name")
+    @classmethod
     def _strip_name(cls, v: str) -> str:
         s = v.strip()
         if not s:
             raise ValueError("motor_name cannot be empty/whitespace")
         return s
 
-    @validator("lim")
+    @field_validator("lim")
+    @classmethod
     def _lim_positive(cls, v):
         return _positive(v, "lim")
 
 
-class Motors(BaseModel):
-    __root__: List[Motor]
+class Motors(RootModel[List[Motor]]):
 
     def by_name(self, name: str) -> Motor:
-        for m in self.__root__:
+        for m in self.root:
             if m.motor_name == name:
                 return m
         raise KeyError(f"Motor with name '{name}' not found")
 
     def by_id(self, motor_id: int) -> Motor:
-        for m in self.__root__:
+        for m in self.root:
             if m.motor_id == motor_id:
                 return m
         raise KeyError(f"Motor with id '{motor_id}' not found")
 
     def names(self) -> List[str]:
-        return [m.motor_name for m in self.__root__]
+        return [m.motor_name for m in self.root]
 
     def ids(self) -> List[int]:
-        return [m.motor_id for m in self.__root__]
+        return [m.motor_id for m in self.root]
 
 
 # --------------------------- Cameras ---------------------------
@@ -143,12 +156,14 @@ class PoeCamera(BaseModel):
     pattern_size: TwoInt
     square_size_mm: float = Field(..., gt=0)
 
-    @validator("H_ref_size", "pattern_size", pre=True)
+    @field_validator("H_ref_size", "pattern_size", mode="before")
+    @classmethod
     def _as_tuple_len2(cls, v):
         a, b = _pair_len2(v, "pair")
         return int(a), int(b)
 
-    @validator("square_size_mm")
+    @field_validator("square_size_mm")
+    @classmethod
     def _square_pos(cls, v):
         return _positive(v, "square_size_mm")
 
@@ -173,7 +188,8 @@ class TofCamera(BaseModel):
     depth_unit: Literal["mm"] = "mm"
     calibration_status: Literal["uncalibrated", "calibrated"] = "uncalibrated"
 
-    @validator("resolution", pre=True)
+    @field_validator("resolution", mode="before")
+    @classmethod
     def _res_as_tuple(cls, v):
         a, b = _pair_len2(v, "resolution")
         return int(a), int(b)
@@ -197,14 +213,16 @@ class Parameters(BaseModel):
     PXMM: float
     PYMM: float
 
-    @validator("IDLE_POSITION", "PICKUP_POSITION_L", "PICKUP_POSITION_H", "SCAN_POSITION", pre=True)
+    @field_validator("IDLE_POSITION", "PICKUP_POSITION_L", "PICKUP_POSITION_H", "SCAN_POSITION", mode="before")
+    @classmethod
     def _pairs_to_tuple(cls, v):
         a, b = _pair_len2(v, "position")
         return int(a), int(b)
 
-    @validator("PXMM", "PYMM")
-    def _positive_pxmm(cls, v, field):
-        return _positive(v, field.name)
+    @field_validator("PXMM", "PYMM")
+    @classmethod
+    def _positive_pxmm(cls, v, info):
+        return _positive(v, info.field_name)
 
 
 class Tool(BaseModel):
@@ -221,7 +239,7 @@ class IOBlock(BaseModel):
 
 class Robot(BaseModel):
     tool: Tool
-    grid: Dict[str, Any]  # currently empty object, keep flexible
+    grid: Dict[str, Any]  # flexible for now
     io: IOBlock
 
 
@@ -240,30 +258,31 @@ class RootConfig(BaseModel):
 
     # parameters
     def get_parameter(self, key: str) -> Any:
-        if not hasattr(self.tool.parameters, key):
+        params = self.robot.tool.parameters
+        if not hasattr(params, key):
             raise KeyError(f"Parameter '{key}' not found")
-        return getattr(self.robot.parameters, key)
+        return getattr(params, key)
 
     def get_pxmm(self) -> float:
-        return self.robot.parameters.PXMM
+        return self.robot.tool.parameters.PXMM
 
     def get_pymm(self) -> float:
-        return self.robot.parameters.PYMM
+        return self.robot.tool.parameters.PYMM
 
     def get_idle_position(self) -> TwoInt:
-        return self.robot.parameters.IDLE_POSITION
+        return self.robot.tool.parameters.IDLE_POSITION
 
     # motors
     def list_motors(self, section: Literal["tool", "io"]) -> List[str]:
-        motors = getattr(self.robot, section).motors
+        motors: Motors = getattr(self.robot, section).motors
         return motors.names()
 
     def get_motor(self, section: Literal["tool", "io"], *, name: Optional[str] = None,
                   motor_id: Optional[int] = None) -> Motor:
-        motors = getattr(self.robot, section).motors
+        motors: Motors = getattr(self.robot, section).motors
         if (name is None) == (motor_id is None):
             raise ValueError("Provide exactly one of name or motor_id")
-        return motors.by_name(name) if name is not None else motors.by_id(motor_id)  # type: ignore
+        return motors.by_name(name) if name is not None else motors.by_id(motor_id)  # type: ignore[arg-type]
 
     # cameras
     def get_poe_camera(self) -> PoeCamera:
@@ -283,7 +302,7 @@ class RootConfig(BaseModel):
     def get(self, dotted_path: str, default: Any = ... ) -> Any:
         """
         Fetch via dotted path (e.g., 'robot.tool.poe_camera.ip' or
-        'robot.parameters.PICKUP_POSITION_L').
+        'robot.tool.parameters.PICKUP_POSITION_L').
         Raises KeyError if not found and default is Ellipsis; otherwise returns default.
         """
         cur: Any = self
@@ -311,23 +330,20 @@ def load_and_validate_config(cfg: Union[Dict[str, Any], str]) -> RootConfig:
     - If `cfg` is a dict, it is validated directly.
     - If `cfg` is a JSON string, it is parsed/validated.
     """
-    import json
     data: Dict[str, Any]
     if isinstance(cfg, str):
         data = json.loads(cfg)
     else:
         data = cfg
     try:
-        return RootConfig.parse_obj(data)
+        # Pydantic v2 API
+        return RootConfig.model_validate(data)
     except ValidationError as e:
-        # Raise with a crisp message (still keeps full pydantic error content)
         raise ValueError(f"Invalid configuration:\n{e}") from e
 
 
 def load_config_file(path: str) -> RootConfig:
-    import json, io
+    import io
     with io.open(path, "r", encoding="utf-8") as f:
         raw = json.load(f)
     return load_and_validate_config(raw)
-
-
