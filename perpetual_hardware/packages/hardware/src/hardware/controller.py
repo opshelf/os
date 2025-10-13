@@ -18,10 +18,10 @@ class SharedModbusController:
         self.client = AsyncModbusSerialClient(
             port=self.port,
             baudrate=self.baudrate,
-            timeout=1,
+            timeout=self.timeout,
             parity="N",
             bytesize=8,
-            retries=3,
+            retries=1,
             stopbits=1,
             framer=pymodbus.FramerType.RTU
         )
@@ -47,9 +47,7 @@ class SharedModbusController:
     async def write_single_register(self, unit_id: int, address: int, value: int):
         async with self.lock:
             try:
-                result = await self.client.write_register(address=address,
-                                                          value=value,
-                                                          device_id=int(unit_id))
+                result = await self.client.write_register(address=address,value=value, device_id=int(unit_id))
                 if result.isError():
                     raise ModbusIOException(f"Write error to unit {unit_id}: {result}")
                 return

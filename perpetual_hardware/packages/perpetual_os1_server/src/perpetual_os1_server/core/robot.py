@@ -13,7 +13,7 @@ robot_worker: Optional[r_worker.RobotWorker] = None
 async def init_robot_worker() -> None:
     global robot_worker
     logging.info("Getting Robot")
-    robot = r.Robot("/dev/ttyUSB0")
+    robot = r.Robot()
     await robot.configure()
     logging.info("Built Robot")
     settings = get_settings()

@@ -1,5 +1,6 @@
 
 from collections import OrderedDict
+
 TRIGGER         = 0x6002
 
 # Full list of parsed register-parameter pairs from the datasheet, formatted for readability and export
@@ -117,3 +118,10 @@ def rev_to_pulse(rev: float):
 def mm_to_rev(mm: float, mpr: float):
     val = float(mm / mpr)
     return val
+
+def rpm_to_mms(rpm: float, mpr: float):
+    mm_per_min = rpm * mpr
+    mm_per_sec = mm_per_min / 60.0
+    return mm_per_sec
+
+## TODO add rpm and accel conversion functions
