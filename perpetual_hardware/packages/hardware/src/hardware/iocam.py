@@ -221,6 +221,12 @@ class AFSCam:
             agg["scale_minor_mm_med"] = med([p["scale_mm"][1] for p in ok_frames])
             agg["depth_mm_med"]       = med([p["depth_mm"] for p in ok_frames])
 
+            # Add footprint medians when available
+            footprints = [p["footprint_mm"] for p in ok_frames if p["footprint_mm"] is not None]
+            if footprints:
+                agg["footprint_major_mm_med"] = med([fp[0] for fp in footprints])
+                agg["footprint_minor_mm_med"] = med([fp[1] for fp in footprints])
+
             # NEW: center distance median (pixels), only when bbox was provided
             if bounding_box is not None:
                 dists = [p["center_dist_px"] for p in ok_frames if p.center_dist_px is not None]

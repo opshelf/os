@@ -215,9 +215,9 @@ class Tool:
                             anchors.append(xw)                    
         return anchors
         
-
     async def auto_cal(self):
+        """Get shelf positions and anchor points for calibration."""
         shelves = await self.get_shelves()
         anchors = await self.update_grid(shelves)
-        return anchors
+        return shelves, anchors
         # todo eventually make this auto generate the slope of each shelf by having two scan positions in x

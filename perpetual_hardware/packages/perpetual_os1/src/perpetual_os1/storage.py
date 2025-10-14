@@ -3,7 +3,6 @@ from enum import Enum
 from typing import Optional, List, Self, Tuple, Mapping, Iterable, Union, Dict
 from perpetual_os1.common import AxisCoordinate
 
-
 type Json = Dict[str, Union[str, int, float, Mapping, Iterable]]
 
 

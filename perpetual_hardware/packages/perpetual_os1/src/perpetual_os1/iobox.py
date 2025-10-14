@@ -61,7 +61,7 @@ class IOBox:
     async def measure_item(self) -> Optional[ItemSizeLocation]:
         if self._cam is None:
             raise RuntimeError("Camera not configured")
-        size = await self._cam.measure_item()
+        size = await self._cam.measure()
         return size
 
     async def open_door(self):
