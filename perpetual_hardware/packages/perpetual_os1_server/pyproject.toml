@@ -29,7 +29,6 @@ dependencies = [
     "structlog>=24.1.0",
     "python-json-logger>=2.0.7",
     "sentry-sdk[fastapi]>=2.0.0",
-    "prometheus-client>=0.20.0",
 ]
 
 [tool.uv]
