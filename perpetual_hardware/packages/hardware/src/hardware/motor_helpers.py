@@ -1,7 +1,8 @@
 
 from collections import OrderedDict
+from typing import List, Dict, Union, Optional
 
-TRIGGER         = 0x6002
+TRIGGER = 0x6002
 
 # Full list of parsed register-parameter pairs from the datasheet, formatted for readability and export
 motor_registers = [
@@ -104,26 +105,92 @@ register_dict_list: List[Dict[str, Union[str, int, None]]] = [
     for reg, param, name, desc, range_, default, unit in motor_registers
 ]
 
-def get_register_by_name(param_name: str) -> int:
+def get_register_by_name(param_name: str) -> Optional[int]:
+    """Get a register address by its parameter name.
+    
+    Args:
+        param_name: Name of the register parameter
+        
+    Returns:
+        Register address as an integer, or None if not found
+    """
+    if not param_name:
+        return None
+        
     for entry in register_dict_list:
         if entry.get("Name", "").strip().lower() == param_name.strip().lower():
-            return int(entry.get("Register"), 16)
+            try:
+                return int(entry.get("Register"), 16)
+            except (ValueError, TypeError) as e:
+                raise ValueError(f"Invalid register value for {param_name}: {e}") from e
     return None
 
-def rev_to_pulse(rev: float):
-    pulse_rev = 10000 # todo have this read from the motor
-    val = int(rev*pulse_rev)
-    top_bytes = (val >> 16) & 0xFFFF
-    bottom_bytes = val & 0xFFFF
-    return top_bytes, bottom_bytes
+def rev_to_pulse(rev: float) -> tuple[int, int]:
+    """Convert motor revolutions to pulse counts.
+    
+    Args:
+        rev: Number of motor revolutions
+        
+    Returns:
+        Tuple of (high_bytes, low_bytes) for 32-bit pulse count
+        
+    Raises:
+        ValueError: If input value is invalid
+    """
+    if not isinstance(rev, (int, float)):
+        raise ValueError(f"Revolution count must be a number, got {type(rev)}")
+        
+    try:
+        pulse_rev = 10000  # TODO: read from motor
+        val = int(rev * pulse_rev)
+        top_bytes = (val >> 16) & 0xFFFF
+        bottom_bytes = val & 0xFFFF
+        return top_bytes, bottom_bytes
+    except (ValueError, TypeError, OverflowError) as e:
+        raise ValueError(f"Failed to convert {rev} revolutions to pulses: {str(e)}") from e
 
-def mm_to_rev(mm: float, mpr: float):
-    val = float(mm / mpr)
-    return val
+def mm_to_rev(mm: float, mpr: float) -> float:
+    """Convert millimeters to motor revolutions.
+    
+    Args:
+        mm: Distance in millimeters
+        mpr: Millimeters per revolution
+        
+    Returns:
+        Number of motor revolutions
+        
+    Raises:
+        ValueError: If input values are invalid or mpr is zero
+    """
+    if not isinstance(mm, (int, float)) or not isinstance(mpr, (int, float)):
+        raise ValueError("Distance and mpr must be numbers")
+        
+    if mpr == 0:
+        raise ValueError("Millimeters per revolution cannot be zero")
+        
+    try:
+        return float(mm / mpr)
+    except (ValueError, TypeError) as e:
+        raise ValueError(f"Failed to convert {mm}mm at {mpr}mm/rev: {str(e)}") from e
 
-def rpm_to_mms(rpm: float, mpr: float):
-    mm_per_min = rpm * mpr
-    mm_per_sec = mm_per_min / 60.0
-    return mm_per_sec
-
-## TODO add rpm and accel conversion functions
+def rpm_to_mms(rpm: float, mpr: float) -> float:
+    """Convert RPM to millimeters per second.
+    
+    Args:
+        rpm: Motor speed in revolutions per minute
+        mpr: Millimeters per revolution
+        
+    Returns:
+        Speed in millimeters per second
+        
+    Raises:
+        ValueError: If input values are invalid
+    """
+    if not isinstance(rpm, (int, float)) or not isinstance(mpr, (int, float)):
+        raise ValueError("RPM and mpr must be numbers")
+        
+    try:
+        mm_per_min = rpm * mpr
+        return mm_per_min / 60.0
+    except (ValueError, TypeError) as e:
+        raise ValueError(f"Failed to convert {rpm}RPM at {mpr}mm/rev: {str(e)}") from e

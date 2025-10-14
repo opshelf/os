@@ -1,10 +1,14 @@
 import asyncio
 from typing import Optional, Tuple, List, Dict, Any
-
 import cv2
 import numpy as np
 import ArducamDepthCamera as ac
-import hardware.iocam_helpers as ih
+
+from hardware import iocam_helpers as ih
+from hardware.exceptions import (
+    CameraError, CameraConnectionError, CameraConfigError,
+    ImageError, ImageProcessingError, TOFError, TOFConfigError, TOFDataError
+)
 
 
 # ============================ Async Sizer Class ============================
@@ -61,58 +65,194 @@ class AFSCam:
 
     # -------------------- Lifecycle --------------------
 
-    async def start(self) -> None:
-        # TOF
-        self._tof = ac.ArducamCamera()
-        port_used = self._open_tof(self._tof, self.preferred_tof_port)
-        if port_used < 0:
-            raise RuntimeError("Failed to open TOF")
-        if self._tof.start(ac.FrameType.DEPTH) != 0:
-            self._tof.close()
-            raise RuntimeError("Failed to start TOF stream")
-        self._tof.setControl(ac.Control.RANGE, self.max_distance_mm)
+    def _init_tof(self) -> None:
+        """Initialize TOF camera."""
+        try:
+            self._tof = ac.ArducamCamera()
+            port_used = self._open_tof(self._tof, self.preferred_tof_port)
+            if port_used < 0:
+                raise TOFError(f"Failed to open TOF on port {self.preferred_tof_port}")
+                
+            if self._tof.start(ac.FrameType.DEPTH) != 0:
+                self._tof.close()
+                raise TOFError("Failed to start TOF stream")
+                
+            try:
+                self._tof.setControl(ac.Control.RANGE, self.max_distance_mm)
+            except Exception as e:
+                raise TOFConfigError(
+                    f"Failed to set TOF range to {self.max_distance_mm}mm: {str(e)}"
+                ) from e
 
-        fr = self._tof.requestFrame(2000)
-        if fr is not None and isinstance(fr, ac.DepthData):
-            self._update_depth_buffers(fr.depth_data, fr.confidence_data)
-            self._tof.releaseFrame(fr)
-
-        # USB
-        self._usb = cv2.VideoCapture(self._usb_index, cv2.CAP_V4L2)
-        if not self._usb.isOpened():
+            # Get initial frame to verify operation
+            fr = self._tof.requestFrame(2000)
+            if fr is None:
+                raise TOFDataError("Failed to get initial TOF frame")
+                
+            if not isinstance(fr, ac.DepthData):
+                self._tof.releaseFrame(fr)
+                raise TOFDataError("Invalid TOF frame type")
+                
+            try:
+                self._update_depth_buffers(fr.depth_data, fr.confidence_data)
+            finally:
+                self._tof.releaseFrame(fr)
+                
+        except Exception as e:
             self._cleanup_tof()
-            raise RuntimeError(f"Failed to open USB camera at index {self._usb_index}")
-        # if self._usb_width is not None:
-        #     self._usb.set(cv2.CAP_PROP_FRAME_WIDTH, int(self._usb_width))
-        # if self._usb_height is not None:
-        #     self._usb.set(cv2.CAP_PROP_FRAME_HEIGHT, int(self._usb_height))
-        if self._usb_fourcc:
-            fourcc = cv2.VideoWriter_fourcc(*self._usb_fourcc)
-            self._usb.set(cv2.CAP_PROP_FOURCC, fourcc)
-        if self._usb_exposure is not None:
-            self._usb.set(cv2.CAP_PROP_EXPOSURE, float(self._usb_exposure))
+            if not isinstance(e, TOFError):
+                raise TOFError(f"TOF initialization failed: {str(e)}") from e
+            raise
+            
+    def _init_usb(self) -> None:
+        """Initialize USB camera."""
+        try:
+            self._usb = cv2.VideoCapture(self._usb_index, cv2.CAP_V4L2)
+            if not self._usb.isOpened():
+                raise CameraConnectionError(
+                    f"Failed to open USB camera at index {self._usb_index}"
+                )
 
-        # Estimate fx/fy from FOV if needed
-        ok, frame0 = self._usb.read()
-        if ok and frame0 is not None and (self._fx_cache is None or self._fy_cache is None):
-            h0, w0 = frame0.shape[:2]
-            fx, fy = ih.compute_fx_fy_from_fov(w0, h0, self.hfov_deg, self.vfov_deg)
-            self._fx_cache = self._fx_cache or fx
-            self._fy_cache = self._fy_cache or fy
+            # Configure camera settings
+            if self._usb_fourcc:
+                try:
+                    fourcc = cv2.VideoWriter_fourcc(*self._usb_fourcc)
+                    if not self._usb.set(cv2.CAP_PROP_FOURCC, fourcc):
+                        raise CameraConfigError(
+                            f"Failed to set fourcc to {self._usb_fourcc}"
+                        )
+                except Exception as e:
+                    raise CameraConfigError(
+                        f"Error setting fourcc: {str(e)}"
+                    ) from e
 
-        # Start background TOF loop
-        self._stop_evt.clear()
-        self._loop_task = asyncio.create_task(self._tof_loop())
+            if self._usb_exposure is not None:
+                try:
+                    if not self._usb.set(cv2.CAP_PROP_EXPOSURE, float(self._usb_exposure)):
+                        raise CameraConfigError(
+                            f"Failed to set exposure to {self._usb_exposure}"
+                        )
+                except Exception as e:
+                    raise CameraConfigError(
+                        f"Error setting exposure: {str(e)}"
+                    ) from e
+
+            # Get initial frame and compute camera parameters
+            ok, frame0 = self._usb.read()
+            if not ok or frame0 is None:
+                raise CameraError("Failed to get initial USB frame")
+                
+            if self._fx_cache is None or self._fy_cache is None:
+                try:
+                    h0, w0 = frame0.shape[:2]
+                    if h0 <= 0 or w0 <= 0:
+                        raise ValueError(f"Invalid frame dimensions: {w0}x{h0}")
+                        
+                    fx, fy = ih.compute_fx_fy_from_fov(
+                        w0, h0, self.hfov_deg, self.vfov_deg
+                    )
+                    self._fx_cache = self._fx_cache or fx
+                    self._fy_cache = self._fy_cache or fy
+                        
+                except Exception as e:
+                    raise CameraConfigError(
+                        f"Failed to compute camera parameters: {str(e)}"
+                    ) from e
+                    
+        except Exception as e:
+            self._cleanup_usb()
+            if not isinstance(e, (CameraConnectionError, CameraConfigError)):
+                raise CameraError(
+                    f"USB camera initialization failed: {str(e)}"
+                ) from e
+            raise
+            
+    async def start(self) -> None:
+        """
+        Initialize and start both TOF and USB cameras.
+        
+        Raises:
+            TOFError: If TOF camera initialization or configuration fails
+            CameraConnectionError: If USB camera connection fails
+            CameraConfigError: If camera configuration fails
+            CameraError: If general camera initialization fails
+        """
+        try:
+            # Initialize TOF camera first
+            self._init_tof()
+            
+            # Initialize USB camera
+            self._init_usb()
+            
+            # Start background TOF loop
+            self._stop_evt.clear()
+            self._loop_task = asyncio.create_task(self._tof_loop())
+            
+        except Exception as e:
+            self._cleanup()
+            if not isinstance(e, (TOFError, CameraError)):
+                raise CameraError(f"Camera initialization failed: {str(e)}") from e
+            raise
+            
+    def _cleanup_tof(self) -> None:
+        """Clean up TOF camera resources."""
+        if self._tof is not None:
+            try:
+                self._tof.close()
+            except Exception:
+                pass  # Best effort cleanup
+            self._tof = None
+            
+    def _cleanup_usb(self) -> None:
+        """Clean up USB camera resources."""
+        if self._usb is not None:
+            try:
+                self._usb.release()
+            except Exception:
+                pass  # Best effort cleanup
+            self._usb = None
+            
+    def _cleanup(self) -> None:
+        """Clean up all camera resources."""
+        self._cleanup_tof()
+        self._cleanup_usb()
 
     async def stop(self) -> None:
-        self._stop_evt.set()
-        if self._loop_task:
+        """
+        Stop camera operations and clean up resources.
+        
+        Raises:
+            CameraError: If cleanup fails
+        """
+        try:
+            # Signal loop to stop
+            self._stop_evt.set()
+            
+            # Wait for background task to finish
+            if self._loop_task:
+                try:
+                    await asyncio.wait_for(self._loop_task, timeout=1.5)
+                except asyncio.TimeoutError:
+                    self._loop_task.cancel()
+                    await asyncio.sleep(0.1)  # Brief pause to allow cancellation
+                except Exception as e:
+                    raise CameraError(
+                        f"Error stopping background task: {str(e)}"
+                    ) from e
+                finally:
+                    self._loop_task = None
+                    
+            # Cleanup resources
             try:
-                await asyncio.wait_for(self._loop_task, timeout=1.5)
-            except asyncio.TimeoutError:
-                self._loop_task.cancel()
-        self._cleanup_usb()
-        self._cleanup_tof()
+                self._cleanup_usb()
+                self._cleanup_tof()
+            except Exception as e:
+                raise CameraError(f"Error during cleanup: {str(e)}") from e
+                
+        except Exception as e:
+            if not isinstance(e, CameraError):
+                raise CameraError(f"Failed to stop cameras: {str(e)}") from e
+            raise
 
     # -------------------- Public API --------------------
 
@@ -124,119 +264,224 @@ class AFSCam:
         window_name: str = "usb_sizing",
         bounding_box: Optional[Tuple[int, int, int, int]] = None,  # (x0, y0, x1, y1)
         bbox_inclusive: bool = True,
-        max_center_offset_px: float = 40.0  # existing param (kept)
+        max_center_offset_px: float = 40.0
     ) -> Dict[str, Any]:
+        """
+        Capture and analyze measurements using both cameras.
         
+        Args:
+            n_frames: Number of frames to capture
+            timeout_s: Timeout for operation
+            display: Whether to show visualization
+            window_name: Name for display window
+            bounding_box: Region of interest as (x0, y0, x1, y1)
+            bbox_inclusive: Whether bbox is inclusive
+            max_center_offset_px: Maximum allowed center offset
+            
+        Returns:
+            Dict containing measurement results
+            
+        Raises:
+            CameraError: If USB camera is not ready
+            ImageError: If frame capture fails
+            ImageProcessingError: If analysis fails
+            ValueError: If parameters are invalid
+        """
         if self._usb is None:
-            raise RuntimeError("USB camera not started")
+            raise CameraConnectionError("USB camera not started")
+            
+        if n_frames < 1:
+            raise ValueError("n_frames must be positive")
+            
+        if timeout_s <= 0:
+            raise ValueError("timeout_s must be positive")
+            
+        if bounding_box is not None:
+            if len(bounding_box) != 4:
+                raise ValueError("bounding_box must have 4 elements")
+            if any(x < 0 for x in bounding_box):
+                raise ValueError("bounding_box values must be non-negative")
+                
+        if max_center_offset_px <= 0:
+            raise ValueError("max_center_offset_px must be positive")
 
         frames: List[np.ndarray] = []
         loop = asyncio.get_running_loop()
 
-        for _ in range(n_frames):
-            ok, fr = await loop.run_in_executor(None, self._usb.read)
-            if not ok or fr is None:
-                continue
-            frames.append(fr)
+        try:
+            # Capture frames with timeout
+            capture_start = asyncio.get_event_loop().time()
+            frames_captured = 0
+            
+            while frames_captured < n_frames:
+                # Check timeout
+                if asyncio.get_event_loop().time() - capture_start > timeout_s:
+                    raise ImageError(f"Frame capture timeout after {frames_captured} frames")
+                
+                try:
+                    ok, frame = await loop.run_in_executor(None, self._usb.read)
+                    if not ok:
+                        raise ImageError("Frame capture failed")
+                    if frame is None:
+                        raise ImageError("Received null frame")
+                        
+                    frames.append(frame)
+                    frames_captured += 1
+                    
+                except Exception as e:
+                    if not isinstance(e, ImageError):
+                        raise ImageError(f"Error capturing frame: {str(e)}") from e
+                    raise
 
-        if not frames:
-            if display:
-                self._show_text_frame("USB read failed", window_name)
-            return {"ok": False, "reason": "usb_read_failed"}
+            if not frames:
+                if display:
+                    self._show_text_frame("USB read failed", window_name)
+                return {"ok": False, "reason": "usb_read_failed"}
 
-        # Ensure checkerboard scale at least once
-        if self._px_per_mm is None:
-            gray0 = cv2.cvtColor(frames[0], cv2.COLOR_BGR2GRAY)
-            det = ih.detect_checkerboard_scale_detailed(gray0, self.square_mm)
-            if det is not None:
-                self._px_per_mm = det["px_per_mm"]
-                if (self._fx_cache is None or self._fy_cache is None) and self._depth is not None:
-                    cal = self._calibrate_fov_from_checkerboard(det, gray0.shape)
-                    if cal is not None:
-                        fx_est, fy_est, hfov_est, vfov_est = cal
-                        if self._fx_cache is None: self._fx_cache = fx_est
-                        if self._fy_cache is None: self._fy_cache = fy_est
-                        self._hfov_cal, self._vfov_cal = hfov_est, vfov_est
+            # Initialize measurements if needed
             if self._px_per_mm is None:
-                self._px_per_mm = 1.7  # fallback
+                gray0 = cv2.cvtColor(frames[0], cv2.COLOR_BGR2GRAY)
+                det = ih.detect_checkerboard_scale_detailed(gray0, self.square_mm)
+                
+                if det is None:
+                    raise ImageProcessingError("Failed to detect checkerboard scale")
+                
+                self._px_per_mm = det["px_per_mm"]
+                
+                # Calibrate FOV if needed
+                if (self._fx_cache is None or self._fy_cache is None) and self._depth is not None:
+                    try:
+                        cal = self._calibrate_fov_from_checkerboard(det, gray0.shape)
+                        if cal is not None:
+                            fx_est, fy_est, hfov_est, vfov_est = cal
+                            self._fx_cache = self._fx_cache or fx_est
+                            self._fy_cache = self._fy_cache or fy_est
+                            self._hfov_cal, self._vfov_cal = hfov_est, vfov_est
+                    except Exception as e:
+                        raise ImageProcessingError(f"FOV calibration failed: {str(e)}") from e
+                
+                if self._px_per_mm is None:
+                    self._px_per_mm = 1.7  # fallback value
+                    
+            # Process each frame
+            per_frame: List[Dict[str, Any]] = []
+            last_draw = None
 
-        per_frame: List[Dict[str, Any]] = []
-        last_draw = None
+            for fr in frames:
+                try:
+                    draw = fr.copy()
+                    gray = cv2.cvtColor(fr, cv2.COLOR_BGR2GRAY)
 
-        for fr in frames:
-            draw = fr.copy()
-            gray = cv2.cvtColor(fr, cv2.COLOR_BGR2GRAY)
+                    # Segment and analyze image
+                    mask = ih.segment_object_on_checkerboard(gray, self._px_per_mm, self.square_mm)
+                    if mask is None:
+                        raise ImageProcessingError("Segmentation failed")
+                        
+                    contour = ih.pick_main_contour(mask)
+                    if contour is None:
+                        per_frame.append({"ok": False, "reason": "no_contour"})
+                        continue
 
-            mask = ih.segment_object_on_checkerboard(gray, self._px_per_mm, self.square_mm)
-            contour = ih.pick_main_contour(mask)
+                    # Calculate measurements
+                    w_px, h_px, box, (cx, cy) = ih.measure_contour_px(contour)
+                    box_i = np.asarray(box, dtype=int)
 
-            if contour is None:
-                per_frame.append({"ok": False, "reason": "no_contour"})
-                continue
+                    # Process bounding box if provided
+                    center_dist_px = None
+                    if bounding_box is not None:
+                        try:
+                            x0, y0, x1, y1 = map(int, bounding_box)
+                            bx_cx = (x0 + x1) / 2.0
+                            by_cy = (y0 + y1) / 2.0
+                            center_dist_px = float(np.hypot(cx - bx_cx, cy - by_cy))
+                        except Exception as e:
+                            raise ImageProcessingError(
+                                f"Bounding box calculation failed: {str(e)}"
+                            ) from e
 
-            w_px, h_px, box, (cx, cy) = ih.measure_contour_px(contour)
-            box_i = np.asarray(box, dtype=int)
+                    # Calculate dimensions
+                    try:
+                        size_w_mm_scale = w_px / self._px_per_mm
+                        size_h_mm_scale = h_px / self._px_per_mm
+                        a_scale, b_scale = sorted([size_w_mm_scale, size_h_mm_scale], reverse=True)
+                    except Exception as e:
+                        raise ImageProcessingError(
+                            f"Scale calculation failed: {str(e)}"
+                        ) from e
 
-            # ----- Bounding box checks + center distance -----
-            center_dist_px = None
+                    # Process depth and footprint
+                    try:
+                        z_mm = self._sample_depth_at_usb_point((cx, cy), gray.shape)
+                        footprint = None
+                        
+                        if z_mm is not None and self._fx_cache and self._fy_cache:
+                            w_mm_fp, h_mm_fp = ih.footprint_from_rect_pinhole(
+                                w_px, h_px, z_mm, self._fx_cache, self._fy_cache
+                            )
+                            a_fp, b_fp = sorted([w_mm_fp, h_mm_fp], reverse=True)
+                            footprint = (a_fp, b_fp)
+                            
+                    except Exception as e:
+                        raise ImageProcessingError(
+                            f"Depth/footprint calculation failed: {str(e)}"
+                        ) from e
 
-            if bounding_box is not None:
-                x0, y0, x1, y1 = map(int, bounding_box)
+                    # Store results for this frame
+                    per_frame.append({
+                        "ok": True,
+                        "center_xy": (int(cx), int(cy)),
+                        "center_dist_px": center_dist_px,
+                        "scale_mm": (float(a_scale), float(b_scale)),
+                        "depth_mm": float(z_mm) if z_mm is not None else None,
+                        "footprint_mm": (float(footprint[0]), float(footprint[1])) 
+                            if footprint is not None else None
+                    })
+                    
+                except Exception as e:
+                    if not isinstance(e, ImageProcessingError):
+                        raise ImageProcessingError(
+                            f"Frame processing failed: {str(e)}"
+                        ) from e
+                    raise
+                    
+            # Calculate aggregates from valid frames
+            try:
+                ok_frames = [p for p in per_frame if p["ok"]]
+                agg: Dict[str, Any] = {}
+                
+                if ok_frames:
+                    def med(vals):
+                        vals = [v for v in vals if v is not None]
+                        return float(np.median(vals)) if vals else None
 
-                # center-to-center distance in pixels
-                bx_cx = (x0 + x1) / 2.0
-                by_cy = (y0 + y1) / 2.0
-                center_dist_px = float(np.hypot(cx - bx_cx, cy - by_cy))
+                    agg["scale_major_mm_med"] = med([p["scale_mm"][0] for p in ok_frames])
+                    agg["scale_minor_mm_med"] = med([p["scale_mm"][1] for p in ok_frames])
+                    agg["depth_mm_med"] = med([p["depth_mm"] for p in ok_frames])
 
-            # ----- Scale and depth -----
-            size_w_mm_scale = w_px / self._px_per_mm
-            size_h_mm_scale = h_px / self._px_per_mm
-            a_scale, b_scale = sorted([size_w_mm_scale, size_h_mm_scale], reverse=True)
+                    # Add footprint medians when available
+                    footprints = [p["footprint_mm"] for p in ok_frames if p["footprint_mm"] is not None]
+                    if footprints:
+                        agg["footprint_major_mm_med"] = med([fp[0] for fp in footprints])
+                        agg["footprint_minor_mm_med"] = med([fp[1] for fp in footprints])
 
-            z_mm = self._sample_depth_at_usb_point((cx, cy), gray.shape)
-            footprint = None
-            if z_mm is not None and self._fx_cache and self._fy_cache:
-                w_mm_fp, h_mm_fp = ih.footprint_from_rect_pinhole(w_px, h_px, z_mm, self._fx_cache, self._fy_cache)
-                a_fp, b_fp = sorted([w_mm_fp, h_mm_fp], reverse=True)
-                footprint = (a_fp, b_fp)
+                    if bounding_box is not None:
+                        dists = [p["center_dist_px"] for p in ok_frames if p["center_dist_px"] is not None]
+                        agg["center_dist_px_med"] = med(dists)
+                
+                return {
+                    "ok": bool(ok_frames),
+                    "aggregate": agg
+                }
+                
+            except Exception as e:
+                raise ImageProcessingError(
+                    f"Aggregate calculation failed: {str(e)}"
+                ) from e
 
-            per_frame.append({
-                "ok": True,
-                "center_xy": (int(cx), int(cy)),
-                "center_dist_px": center_dist_px,          # <-- per-frame distance recorded
-                "scale_mm": (float(a_scale), float(b_scale)),
-                "depth_mm": float(z_mm) if z_mm is not None else None,
-                "footprint_mm": (float(footprint[0]), float(footprint[1])) if footprint is not None else None
-            })
-
-        # ----- Aggregates -----
-        ok_frames = [p for p in per_frame if p.ok]
-        agg: Dict[str, Any] = {}
-        if ok_frames:
-            def med(vals):
-                vals = [v for v in vals if v is not None]
-                return float(np.median(vals)) if vals else None
-
-            agg["scale_major_mm_med"] = med([p["scale_mm"][0] for p in ok_frames])
-            agg["scale_minor_mm_med"] = med([p["scale_mm"][1] for p in ok_frames])
-            agg["depth_mm_med"]       = med([p["depth_mm"] for p in ok_frames])
-
-            # Add footprint medians when available
-            footprints = [p["footprint_mm"] for p in ok_frames if p["footprint_mm"] is not None]
-            if footprints:
-                agg["footprint_major_mm_med"] = med([fp[0] for fp in footprints])
-                agg["footprint_minor_mm_med"] = med([fp[1] for fp in footprints])
-
-            # NEW: center distance median (pixels), only when bbox was provided
-            if bounding_box is not None:
-                dists = [p["center_dist_px"] for p in ok_frames if p.center_dist_px is not None]
-                agg["center_dist_px_med"] = med(dists)
-
-        return {
-            "ok": bool(ok_frames),
-            # "per_frame": per_frame,
-            "aggregate": agg
-        }
+        except Exception as e:
+            if not isinstance(e, (ImageError, ImageProcessingError)):
+                raise ImageProcessingError(f"Measurement failed: {str(e)}") from e
+            raise
 
     # -------------------- Internals --------------------
 

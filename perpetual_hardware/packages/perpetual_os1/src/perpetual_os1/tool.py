@@ -214,7 +214,7 @@ class Tool:
                             xw = round(await self._mx.get_position(), 4)
                             anchors.append(xw)                    
         return anchors
-        
+    
     async def auto_cal(self):
         """Get shelf positions and anchor points for calibration."""
         shelves = await self.get_shelves()

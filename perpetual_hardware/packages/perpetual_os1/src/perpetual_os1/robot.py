@@ -7,6 +7,7 @@ from perpetual_os1.storage import (
     StorageGrid, Shelf, Cell, CellStatus, CalibrationCoordinate,
     Dimensions, StorageModuleSide, CellItem, StorageModuleCellLocation
 )
+from perpetual_os1.robot_state import RobotStateManager, RobotStateError
 
 from pathlib import Path
 from enum import Enum
@@ -72,11 +73,6 @@ class RobotState(BaseModel):
 
 RobotResponse = Union[RobotCommandSuccessful, RobotCommandError, SizeResult]
 
-# class WorkerStatus(BaseModel):
-#     robot_status: Optional[RobotStatus]
-#     running: bool
-#     current_command: Optional[RobotCommands]
-
 class Robot:
     def __init__(self) -> None:
         # TODO add port retries, config, hardening
@@ -97,24 +93,31 @@ class Robot:
         self._cur_item: str = None # some kind of unique identifier
         self._status: RobotStatus = None
         self._state: RobotState = RobotState(io=IOBoxStatus.IDLE, tool=ToolStatus(motion=ToolMotionStatus.IDLE, item=ToolItemStatus.EMPTY))
+        
+        # State Machine
+        self._state_manager = RobotStateManager()
 
     async def configure(self):
         await self._motorbus.connect()
         if not self._motorbus.client.connected:
             print("No Motor bus")
             return
-        # await self._scalebus.connect()
-        # if not self._scalebus.client.connected:
-        #     print("No scale bus")
-        #     return
+        await self._scalebus.connect()
+        if not self._scalebus.client.connected:
+            print("No scale bus")
+            return
         
         await self._tool.configure()
-        # await self._io.configure()
+        await self._io.configure()
 
     def get_param(self, param: str):
         return self._state.get("robot",{}).get(param, None)
 
     async def io_place(self, coord: c.AxisCoordinate):
+        # Validate state before operation
+        self._state_manager.update_state(self._state.tool, self._state.io)
+        self._state_manager.validate_operation('place_iobox')
+        
         await self._tool.pick(coord)
         await self._tool.move(c.AxisCoordinate(self.get_param("PICKUP_POSITION_L")[0], 
                                                self.get_param("PICKUP_POSITION_L")[1])) # move to safe height
@@ -129,8 +132,15 @@ class Robot:
 
         await self._io._md.home()
         await self._tool.clear_alarms()
+        
+        # Update state after operation
+        self._state_manager.update_state(self._state.tool, self._state.io)
 
     async def io_pick(self, coord):
+        # Validate state before operation
+        self._state_manager.update_state(self._state.tool, self._state.io)
+        self._state_manager.validate_operation('pick_iobox')
+        
         await self._tool.pick(coord)
         await self._tool.move(c.AxisCoordinate(self.get_param("PICKUP_POSITION_H")[0], 
                                                self.get_param("PICKUP_POSITION_H")[1])) # move to safe height
@@ -145,6 +155,9 @@ class Robot:
 
         await self._io._md.home()
         await self._tool.clear_alarms()
+        
+        # Update state after operation
+        self._state_manager.update_state(self._state.tool, self._state.io)
 
     async def idle(self) -> None:
         await self._tool.move(self.get_param("IDLE_POSITION"))
@@ -184,7 +197,7 @@ class Robot:
         # If we have a specific cell location, use that directly
         if cell_location:
             cal_coord = self._grid.get_cell_coordinate(cell_location)
-            return cal_coord.to_gantry_coordinate()
+            return cal_coord.to_axis_coordinate()
             
         # Search through all cells for matching item
         all_cells = self._grid.get_all_cell_data()
@@ -196,14 +209,14 @@ class Robot:
             # Match by UPCA if provided
             if upca and cell_data.cell.upca == upca:
                 cal_coord = self._grid.get_cell_coordinate(cell_data.location)
-                return cal_coord.to_gantry_coordinate()
+                return cal_coord.to_axis_coordinate()
                 
             # Match by item name in data
             if item_name and cell_data.cell.data:
                 item_data = cell_data.cell.data
                 if isinstance(item_data, dict) and item_data.get("name") == item_name:
                     cal_coord = self._grid.get_cell_coordinate(cell_data.location)
-                    return cal_coord.to_gantry_coordinate()
+                    return cal_coord.to_axis_coordinate()
                     
         return None
 
@@ -243,7 +256,7 @@ class Robot:
             
         if location:
             cal_coord = self._grid.get_cell_coordinate(location)
-            return cal_coord.to_gantry_coordinate()
+            return cal_coord.to_axis_coordinate()
             
         return None
 
@@ -409,22 +422,56 @@ class Robot:
         except Exception as e:
             return RobotCommandError(error=f"Storage calibration failed: {str(e)}")
 
-    async def store(self, item_name: str) -> None:
+    async def store(self, item_name: str, dimensions: Optional[Dict[str, float]] = None) -> None:
         """
-        Store an item in the storage grid, finding the best available location.
+        Store an item in the storage grid, finding the best available location based on item dimensions.
         
         Args:
             item_name: Name identifier for the item to store
+            dimensions: Dictionary containing item dimensions in mm (from measure_item_dimensions).
+                       Should contain some of these keys:
+                       - footprint_major_mm: Major axis from pinhole model
+                       - footprint_minor_mm: Minor axis from pinhole model
+                       - scale_major_mm: Major axis from checkerboard scale
+                       - scale_minor_mm: Minor axis from checkerboard scale
+                       - depth_mm: Item depth/height
             
         Returns:
             RobotResponse indicating success or failure
         """
         if not self._grid:
             return RobotCommandError(error="Storage grid not calibrated")
+        
+        # Set default dimensions or use measured ones
+        width = 50.0  # default width
+        height = 50.0  # default height
+        length = 400.0  # default length
+        
+        if dimensions:
+            # Prefer footprint measurements over scale measurements if available
+            if "footprint_major_mm" in dimensions and "footprint_minor_mm" in dimensions:
+                width = dimensions["footprint_major_mm"]
+                height = dimensions["footprint_minor_mm"]
+            elif "scale_major_mm" in dimensions and "scale_minor_mm" in dimensions:
+                width = dimensions["scale_major_mm"]
+                height = dimensions["scale_minor_mm"]
+                
+            # Use measured depth if available
+            if "depth_mm" in dimensions:
+                length = dimensions["depth_mm"]
+                
+            # Add safety margin to ensure item fits (10%)
+            width *= 1.1
+            height *= 1.1
+            length *= 1.1
             
         # Find a suitable empty location for the item
         item = CellItem(
-            dimensions=Dimensions(width=50.0, height=50.0, length=400.0),  # Default dimensions
+            dimensions=Dimensions(
+                width=width,
+                height=height,
+                length=length
+            ),
             data={"name": item_name}  # Store item name in data
         )
         location = self._grid.find_best_slot_for_item(item)
@@ -434,7 +481,7 @@ class Robot:
             
         # Get coordinate and store
         coord = self._grid.get_cell_coordinate(location)
-        await self.io_place(coord.to_gantry_coordinate())
+        await self.io_place(coord.to_axis_coordinate())
         
         # Update storage grid
         self._grid.store_item(location, item)
@@ -478,7 +525,13 @@ class Robot:
             - scale_minor_mm: Minor axis from checkerboard scale
             - depth_mm: Item depth/height from TOF sensor
             Returns None if measurement fails
+            
+        Raises:
+            RobotStateError: If there is no item in the IOBox to measure
         """
+        # Validate state before operation
+        self._state_manager.update_state(self._state.tool, self._state.io)
+        self._state_manager.validate_operation('measure')
         if not self._io or not self._io._cam:
             raise RuntimeError("IOBox camera not configured")
             

@@ -24,7 +24,7 @@ iocam_helpers
 toolcam_helpers
     Helper functions for tool camera processing and calibration
 
-motor_regs
+motor_helpers
     Motor register definitions and constants
 """
 

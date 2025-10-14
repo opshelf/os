@@ -15,9 +15,8 @@ from pydantic import BaseModel
 
 class IOBoxStatus(Enum):
     IDLE = 0
-    RUNNING = 1
-    READY = 2
-    ERROR = 3
+    READY = 1
+    ERROR = 2
 
 class ItemSizeLocation(BaseModel):
     object_size: float

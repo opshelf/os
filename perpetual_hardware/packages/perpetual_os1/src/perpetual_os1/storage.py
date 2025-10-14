@@ -20,7 +20,7 @@ class CalibrationCoordinate(AxisCoordinate):
     def __sub__(self, rhs: "CalibrationCoordinate") -> "CalibrationCoordinate":  # type: ignore[override]
         return CalibrationCoordinate(x=self.x - rhs.x, y=self.y - rhs.y, z=self.z - rhs.z)
 
-    def to_gantry_coordinate(self) -> AxisCoordinate:
+    def to_axis_coordinate(self) -> AxisCoordinate:
         return AxisCoordinate(x=self.x, y=self.y)
 
 
