@@ -10,22 +10,6 @@ from hardware.exceptions import (
     MotorConfigError, ConfigurationError
 )
 
-class MotorError(Exception):
-    """Base class for motor-related errors."""
-    pass
-
-class MotorTimeoutError(MotorError):
-    """Motor operation timed out."""
-    pass
-
-class MotorLimitError(MotorError):
-    """Motor hit a limit switch or exceeded bounds."""
-    pass
-
-class MotorConfigError(MotorError):
-    """Error in motor configuration."""
-    pass
-
 class MotorStatus(Enum):
     IDLE = 0
     MOVING = 1

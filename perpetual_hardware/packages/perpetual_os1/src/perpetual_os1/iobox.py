@@ -3,6 +3,9 @@ import perpetual_os1.common as c
 from hardware.controller import SharedModbusController as Controller
 from hardware.motor import Motor
 from hardware.iocam import AFSCam
+from perpetual_os1.exceptions import (
+    IOBoxError, MotorError, CameraError, ConfigError
+)
 # from hardware.scale import Scale
 # from hardware.curtain import Curtain
 
@@ -43,43 +46,126 @@ class IOBox:
                            tof_params = self._params.tof_camera)
 
     async def configure(self):
-        await self._md.configure()
-        await self._md.home()
-        await self._cam.start()
+        """
+        Configure and initialize IOBox components.
+        
+        Raises:
+            IOBoxError: If configuration of any component fails
+        """
+        try:
+            await self._md.configure()
+            await self._md.home()
+            await self._cam.start()
+            self._status = IOBoxStatus.READY
+        except Exception as e:
+            self._status = IOBoxStatus.ERROR
+            raise IOBoxError(f"IOBox configuration failed: {str(e)}") from e
 
         #scale config
         #curtain config
 
     async def get_weight(self) -> float:
-        if self._scale is None:
-            # self._scale = Scale(controller=self._scalecontroller, rs.gete_params(self._state, "iobox"))
-            await self._scale.configure()
-        weight = await self._scale.get_weight()
-        return weight
+        """
+        Get weight reading from scale.
+        
+        Raises:
+            IOBoxError: If scale is not configured or reading fails
+        """
+        try:
+            if self._scale is None:
+                # self._scale = Scale(controller=self._scalecontroller, rs.gete_params(self._state, "iobox"))
+                await self._scale.configure()
+            weight = await self._scale.get_weight()
+            return weight
+        except Exception as e:
+            self._status = IOBoxStatus.ERROR
+            raise IOBoxError(f"Failed to get weight: {str(e)}") from e
     
     async def measure_item(self) -> Optional[ItemSizeLocation]:
-        if self._cam is None:
-            raise RuntimeError("Camera not configured")
-        size = await self._cam.measure()
-        return size
+        """
+        Measure item dimensions using camera system.
+        
+        Raises:
+            IOBoxError: If camera is not configured
+            CameraError: If measurement fails
+        """
+        try:
+            if self._cam is None:
+                raise IOBoxError("Camera not configured")
+            size = await self._cam.measure()
+            return size
+        except Exception as e:
+            self._status = IOBoxStatus.ERROR
+            if isinstance(e, IOBoxError):
+                raise
+            raise CameraError(f"Item measurement failed: {str(e)}") from e
 
     async def open_door(self):
-        if self._md is None:
-            raise RuntimeError("Motor not configured")
-        await self._md.move_to_position(220)  # open position
+        """
+        Open IOBox door.
+        
+        Raises:
+            IOBoxError: If door motor is not configured
+            MotorError: If door movement fails
+        """
+        try:
+            if self._md is None:
+                raise IOBoxError("Door motor not configured")
+            await self._md.move_to_position(220)  # open position
+        except Exception as e:
+            self._status = IOBoxStatus.ERROR
+            if isinstance(e, IOBoxError):
+                raise
+            raise MotorError(f"Failed to open door: {str(e)}") from e
 
     async def close_door(self):
-        if self._md is None:
-            raise RuntimeError("Motor not configured")
-        await self._md.move_to_position(0)  # closed position
+        """
+        Close IOBox door.
+        
+        Raises:
+            IOBoxError: If door motor is not configured
+            MotorError: If door movement fails
+        """
+        try:
+            if self._md is None:
+                raise IOBoxError("Door motor not configured")
+            await self._md.move_to_position(0)  # closed position
+        except Exception as e:
+            self._status = IOBoxStatus.ERROR
+            if isinstance(e, IOBoxError):
+                raise
+            raise MotorError(f"Failed to close door: {str(e)}") from e
 
     # curtain worker?
 
     # shutdown/teardown
     async def stop(self) -> None:
+        """
+        Stop all IOBox components safely.
+        
+        Note: Attempts best-effort cleanup of all components,
+        continues even if individual stops fail.
+        """
+        errors = []
+        
         if self._md is not None:
-            await self._md.stop()
+            try:
+                await self._md.stop()
+            except Exception as e:
+                errors.append(f"Door motor stop failed: {str(e)}")
+                
         if self._scale is not None:
-            await self._scale.stop()
+            try:
+                await self._scale.stop()
+            except Exception as e:
+                errors.append(f"Scale stop failed: {str(e)}")
+                
         if self._cam is not None:
-            await self._cam.stop()  
+            try:
+                await self._cam.stop()
+            except Exception as e:
+                errors.append(f"Camera stop failed: {str(e)}")
+        
+        if errors:
+            self._status = IOBoxStatus.ERROR
+            raise IOBoxError("Stop errors: " + "; ".join(errors))  

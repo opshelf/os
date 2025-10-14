@@ -1,4 +1,4 @@
-import perpetual_os1.common as c
+from perpetual_os1.common import AxisCoordinate, load_config_file
 
 from hardware.controller import SharedModbusController as Controller
 from perpetual_os1.iobox import IOBox, IOBoxStatus, SizeResult, ItemSizeLocation
@@ -27,7 +27,7 @@ class HomeCommand(BaseModel):
 
 class MoveCommand(BaseModel):
     command: Literal["move"] = "move"
-    coordinate: c.AxisCoordinate
+    coordinate: AxisCoordinate
 
 class IdleCommand(BaseModel):
     command: Literal["idle"] = "idle"
@@ -69,7 +69,7 @@ class RobotStatus(str, Enum):
 class RobotState(BaseModel):
     io: IOBoxStatus
     tool: ToolStatus
-    # current_cell: Optional[StorageModuleCellLocation] = None
+    current_cell: Optional[StorageModuleCellLocation] = None
 
 RobotResponse = Union[RobotCommandSuccessful, RobotCommandError, SizeResult]
 
@@ -77,10 +77,10 @@ class Robot:
     def __init__(self) -> None:
         # TODO add port retries, config, hardening
         self._motorbus = Controller(port="/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_B001XSSJ-if00-port0", baudrate=115200) # change to config
-        self._scalebus = Controller(port="/dev/serial/by-id/usb-1a86_USB_Single_Serial_594D007725-if00", baudrate=115200) # change to config
+        self._scalebus = Controller(port="/dev/serial/by-id/usb-1a86_USB_Single_Serial_594D007725-if00", baudrate=9600) # change to config
 
         # Load State
-        self._state = c.load_config_file(CONFIG_PATH)
+        self._state = load_config_file(CONFIG_PATH)
         tool_params = self._state.get("robot.tool", {})
         io_params = self._state.get("robot.io", {})
 
@@ -110,20 +110,21 @@ class Robot:
         await self._tool.configure()
         await self._io.configure()
 
+
     def get_param(self, param: str):
         return self._state.get("robot",{}).get(param, None)
 
-    async def io_place(self, coord: c.AxisCoordinate):
+    async def io_place(self, coord: AxisCoordinate):
         # Validate state before operation
         self._state_manager.update_state(self._state.tool, self._state.io)
         self._state_manager.validate_operation('place_iobox')
         
         await self._tool.pick(coord)
-        await self._tool.move(c.AxisCoordinate(self.get_param("PICKUP_POSITION_L")[0], 
+        await self._tool.move(AxisCoordinate(self.get_param("PICKUP_POSITION_L")[0], 
                                                self.get_param("PICKUP_POSITION_L")[1])) # move to safe height
         await self._io.open_door()
         await self._tool.extend()
-        await self._tool.move(c.AxisCoordinate(self.get_param("PICKUP_POSITION_H")[0], 
+        await self._tool.move(AxisCoordinate(self.get_param("PICKUP_POSITION_H")[0], 
                                                self.get_param("PICKUP_POSITION_H")[1]))
         await self._tool.retract()
         await self._io.close_door()
@@ -142,15 +143,15 @@ class Robot:
         self._state_manager.validate_operation('pick_iobox')
         
         await self._tool.pick(coord)
-        await self._tool.move(c.AxisCoordinate(self.get_param("PICKUP_POSITION_H")[0], 
+        await self._tool.move(AxisCoordinate(self.get_param("PICKUP_POSITION_H")[0], 
                                                self.get_param("PICKUP_POSITION_H")[1])) # move to safe height
         await self._io.open_door()
         await self._tool.extend()
-        await self._tool.move(c.AxisCoordinate(self.get_param("PICKUP_POSITION_L")[0], 
+        await self._tool.move(AxisCoordinate(self.get_param("PICKUP_POSITION_L")[0], 
                                                self.get_param("PICKUP_POSITION_L")[1])) # move to safe height
         await self._tool.retract()
         await self._io.close_door()
-        await self._tool.move(c.AxisCoordinate(coord))
+        await self._tool.move(AxisCoordinate(coord))
         await self._tool.place(coord)
 
         await self._io._md.home()
@@ -166,8 +167,8 @@ class Robot:
         await self.stop()
         if self._motorbus:
             await self._motorbus.close()
-        # if self._scalebus:
-        #     await self._scalebus.close()
+        if self._scalebus:
+            await self._scalebus.close()
 
     async def stop(self) -> None:
         await self._tool.stop()
@@ -178,7 +179,7 @@ class Robot:
         item_name: Optional[str] = None,
         upca: Optional[str] = None,
         cell_location: Optional[StorageModuleCellLocation] = None
-    ) -> Optional[c.AxisCoordinate]:
+    ) -> Optional[AxisCoordinate]:
         """
         Find an item in the storage grid by name, UPCA code, or specific location.
         Returns the AxisCoordinate for the item's position if found.
@@ -225,7 +226,7 @@ class Robot:
         width: float,
         height: float,
         length: float = 400.0
-    ) -> Optional[c.AxisCoordinate]:
+    ) -> Optional[AxisCoordinate]:
         """
         Find the next available cell that can fit an item of given dimensions,
         optimizing for minimal wasted space.
@@ -259,8 +260,6 @@ class Robot:
             return cal_coord.to_axis_coordinate()
             
         return None
-
-    #############################
     
     async def calculate_storage_positions(
         self,
@@ -268,21 +267,21 @@ class Robot:
         cells_per_shelf: List[int],
         cell_spacings: List[float],
         x_anchor_points: List[float]
-    ) -> List[List[c.AxisCoordinate]]:
+    ) -> List[List[AxisCoordinate]]:
         """Calculate positions for all storage cells based on detected shelf positions."""
         if not (len(shelf_y_positions) == len(cells_per_shelf) == len(cell_spacings) == len(x_anchor_points)):
             raise ValueError("All input lists must have the same length (one entry per shelf)")
             
-        shelf_positions: List[List[c.AxisCoordinate]] = []
+        shelf_positions: List[List[AxisCoordinate]] = []
         
         for shelf_idx, (y_pos, num_cells, spacing, x_anchor) in enumerate(
             zip(shelf_y_positions, cells_per_shelf, cell_spacings, x_anchor_points)
         ):
-            shelf_cells: List[c.AxisCoordinate] = []
+            shelf_cells: List[AxisCoordinate] = []
             
             for cell_idx in range(num_cells):
                 x_pos = x_anchor + (cell_idx * spacing)
-                cell_coord = c.AxisCoordinate(
+                cell_coord = AxisCoordinate(
                     x=round(x_pos, 4),
                     y=round(y_pos, 4)
                 )
@@ -509,7 +508,7 @@ class Robot:
         # Retrieve item
         await self.io_pick(coord)
 
-    async def measure_item_dimensions(self, n_frames: int = 5) -> Optional[Dict[str, float]]:
+    async def measure_item_dimensions(self, n_frames: int = 10) -> Optiononl[Dict[str, float]]:
         """
         Use the IOBox's AFSCam to measure the dimensions of an item currently in the IO box.
         Returns the aggregate dimensions including footprint and depth measurements.

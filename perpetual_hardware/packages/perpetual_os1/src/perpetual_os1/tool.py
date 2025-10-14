@@ -3,10 +3,14 @@ import perpetual_os1.common as c
 from hardware.controller import SharedModbusController as Controller
 from hardware.motor import Motor, Servo, MotorStatus
 from hardware.toolcam import ToolCamera
+from perpetual_os1.exceptions import (
+    MotorError, CameraError, ConfigError,
+    ToolError, GripperError, MovementError
+)
 
 from enum import Enum
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Tuple, Union, Literal, Annotated, List
+from typing import Dict, Optional, Tuple, Union, Literal, Annotated, List, Any
 
 @dataclass
 class FiducialRegistry:
@@ -58,86 +62,298 @@ class Tool:
 
 ## MOTORS
     async def configure(self):
-        await self._gs.configure()
-        await self._my.configure()
-        await self._mx.configure()
-        await self._mg.configure()
-        await self._ms.configure()
-        await self._mr.configure()
-        await self.home()
+        """
+        Configure all motors and home the tool.
+        
+        Raises:
+            MotorError: If motor configuration or homing fails
+            CameraError: If camera initialization fails
+        """
+        try:
+            await self._gs.configure()
+            await self._my.configure()
+            await self._mx.configure()
+            await self._mg.configure()
+            await self._ms.configure()
+            await self._mr.configure()
+            await self.home()
+        except Exception as e:
+            self._mstatus = ToolMotionStatus.ERROR
+            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+            raise MotorError(f"Tool configuration failed: {str(e)}") from e
 
-    async def get_param(self, param: str):
-        return self._params.get("parameters", {}).get(param, None)
+    async def get_param(self, param: str) -> Optional[Any]:
+        """Get a parameter value from tool configuration."""
+        try:
+            return self._params.get("parameters", {}).get(param, None)
+        except Exception as e:
+            raise ConfigError(f"Failed to get parameter {param}: {str(e)}") from e
 
     async def home(self) -> None:
-        await self._ms.home()
-        await self._mg.home()
-        await self._mr.home()
-        await self._mx.home()
-        await self._my.jog(5)
-        await self._my.home()
+        """
+        Home all motors in a specific sequence.
+        
+        Raises:
+            MotorError: If any motor fails to home
+        """
+        try:
+            await self._ms.home()
+            await self._mg.home()
+            await self._mr.home()
+            await self._mx.home()
+            await self._my.jog(5)
+            await self._my.home()
+            self._mstatus = ToolMotionStatus.IDLE
+            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+        except Exception as e:
+            self._mstatus = ToolMotionStatus.ERROR
+            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+            raise MotorError(f"Failed to home tool: {str(e)}") from e
 
     async def clear_alarms(self) -> None:
-        await self._mg.home()
-        await self._ms.home()
+        """
+        Clear alarms by homing gripper and stage motors.
+        
+        Raises:
+            MotorError: If homing fails during alarm clear
+        """
+        try:
+            await self._mg.home()
+            await self._ms.home()
+        except Exception as e:
+            self._mstatus = ToolMotionStatus.ERROR
+            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+            raise MotorError(f"Failed to clear alarms: {str(e)}") from e
 
     async def stop(self) -> None:
-        await self._mx.stop()
-        await self._mg.stop()
-        await self._mr.stop()
-        await self._ms.stop()
-        await self._my.stop()
+        """
+        Stop all motors immediately.
+        
+        Raises:
+            MotorError: If any motor fails to stop
+        """
+        try:
+            await self._mx.stop()
+            await self._mg.stop()
+            await self._mr.stop()
+            await self._ms.stop()
+            await self._my.stop()
+            self._mstatus = ToolMotionStatus.IDLE
+            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+        except Exception as e:
+            self._mstatus = ToolMotionStatus.ERROR
+            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+            raise MotorError(f"Failed to stop tool: {str(e)}") from e
 
     async def move(self, coordinate: c.AxisCoordinate) -> None:
-        await self._my.move_to_position_no_wait(coordinate.y)
-        await self._mx.move_to_position_no_wait(coordinate.x)
-        await self.gantry_wait()
+        """
+        Move gantry to specified coordinates.
+        
+        Raises:
+            MovementError: If movement fails or times out
+        """
+        try:
+            self._mstatus = ToolMotionStatus.MOVING
+            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+            await self._my.move_to_position_no_wait(coordinate.y)
+            await self._mx.move_to_position_no_wait(coordinate.x)
+            await self.gantry_wait()
+            self._mstatus = ToolMotionStatus.IDLE
+            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+        except Exception as e:
+            self._mstatus = ToolMotionStatus.ERROR
+            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+            raise MovementError(f"Gantry movement failed: {str(e)}") from e
 
     async def retract(self) -> None:
-        await self._mg.move_to_position(0)
-        await self._ms.move_to_position(0)
+        """
+        Retract gripper and slide to home positions.
+        
+        Raises:
+            MovementError: If retraction fails
+        """
+        try:
+            self._mstatus = ToolMotionStatus.MOVING
+            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+            await self._mg.move_to_position(0)
+            await self._ms.move_to_position(0)
+            self._mstatus = ToolMotionStatus.IDLE
+            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+        except Exception as e:
+            self._mstatus = ToolMotionStatus.ERROR
+            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+            raise MovementError(f"Tool retraction failed: {str(e)}") from e
 
     async def extend(self) -> None:
-        await self._ms.move_to_position(self.get_param("SLIDE_EXTENSION"))
-        await self._mg.move_to_position(self.get_param("GRIPPER_EXTENSION"))
+        """
+        Extend gripper and slide to operation positions.
+        
+        Raises:
+            MovementError: If extension fails
+            ConfigError: If extension parameters are missing
+        """
+        try:
+            slide_ext = await self.get_param("SLIDE_EXTENSION")
+            grip_ext = await self.get_param("GRIPPER_EXTENSION")
+            if slide_ext is None or grip_ext is None:
+                raise ConfigError("Missing extension parameters")
+            
+            self._mstatus = ToolMotionStatus.MOVING
+            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+            await self._ms.move_to_position(slide_ext)
+            await self._mg.move_to_position(grip_ext)
+            self._mstatus = ToolMotionStatus.IDLE
+            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+        except Exception as e:
+            self._mstatus = ToolMotionStatus.ERROR
+            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+            if isinstance(e, ConfigError):
+                raise
+            raise MovementError(f"Tool extension failed: {str(e)}") from e
 
     async def extend_empty(self) -> None:
-        await self._ms.move_to_position_no_wait(self.get_param("SLIDE_EXTENSION"))
-        await self._mg.move_to_position_no_wait(self.get_param("GRIPPER_EXTENSION"))
-        await self.tool_wait()
+        """
+        Extend empty tool without waiting between moves.
+        
+        Raises:
+            MovementError: If extension fails
+            ConfigError: If extension parameters are missing
+        """
+        try:
+            slide_ext = await self.get_param("SLIDE_EXTENSION")
+            grip_ext = await self.get_param("GRIPPER_EXTENSION")
+            if slide_ext is None or grip_ext is None:
+                raise ConfigError("Missing extension parameters")
+            
+            self._mstatus = ToolMotionStatus.MOVING
+            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+            await self._ms.move_to_position_no_wait(slide_ext)
+            await self._mg.move_to_position_no_wait(grip_ext)
+            await self.tool_wait()
+            self._mstatus = ToolMotionStatus.IDLE
+            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+        except Exception as e:
+            self._mstatus = ToolMotionStatus.ERROR
+            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+            if isinstance(e, ConfigError):
+                raise
+            raise MovementError(f"Tool empty extension failed: {str(e)}") from e
     
     async def retract_empty(self) -> None:
-        await self._ms.move_to_position_no_wait(0)
-        await self._mg.move_to_position_no_wait(0)
-        await self.tool_wait()
+        """
+        Retract empty tool without waiting between moves.
+        
+        Raises:
+            MovementError: If retraction fails
+        """
+        try:
+            self._mstatus = ToolMotionStatus.MOVING
+            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+            await self._ms.move_to_position_no_wait(0)
+            await self._mg.move_to_position_no_wait(0)
+            await self.tool_wait()
+            self._mstatus = ToolMotionStatus.IDLE
+            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+        except Exception as e:
+            self._mstatus = ToolMotionStatus.ERROR
+            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+            raise MovementError(f"Tool empty retraction failed: {str(e)}") from e
         
     async def pick(self, coordinate: c.AxisCoordinate) -> None:
-        await self._gs.safe_open()
-        await self.move(coordinate)
-        await self.extend_empty()
-        await self._gs.open()
-        await self.retract()
+        """
+        Execute pick sequence at specified coordinates.
+        
+        Raises:
+            MovementError: If any movement fails
+            GripperError: If gripper operation fails
+        """
+        try:
+            self._mstatus = ToolMotionStatus.MOVING
+            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+            
+            await self._gs.safe_open()
+            await self.move(coordinate)
+            await self.extend_empty()
+            await self._gs.open()
+            await self.retract()
+            
+            self._istatus = ToolItemStatus.LOADED
+            self._mstatus = ToolMotionStatus.IDLE
+            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+        except Exception as e:
+            self._mstatus = ToolMotionStatus.ERROR
+            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+            if isinstance(e, MovementError):
+                raise
+            raise GripperError(f"Pick operation failed: {str(e)}") from e
 
     async def place(self, coordinate: c.AxisCoordinate):
-        await self.move(coordinate)
-        await self.extend()
-        await self._gs.close()
-        await self.retract_empty()
+        """
+        Execute place sequence at specified coordinates.
+        
+        Raises:
+            MovementError: If any movement fails
+            GripperError: If gripper operation fails
+        """
+        try:
+            self._mstatus = ToolMotionStatus.MOVING
+            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+            
+            await self.move(coordinate)
+            await self.extend()
+            await self._gs.close()
+            await self.retract_empty()
+            
+            self._istatus = ToolItemStatus.EMPTY
+            self._mstatus = ToolMotionStatus.IDLE
+            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+        except Exception as e:
+            self._mstatus = ToolMotionStatus.ERROR
+            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+            if isinstance(e, MovementError):
+                raise
+            raise GripperError(f"Place operation failed: {str(e)}") from e
 
     # todo "homeable position checking"
     async def gantry_wait(self):
-        while True:
-            mx_f = await self._mx.wait_for_move(timeout=5)
-            my_f = await self._my.wait_for_move(timeout=5)
-            if mx_f == MotorStatus.STOPPED and my_f == MotorStatus.STOPPED:
-                return
+        """
+        Wait for gantry motors to complete movement.
+        
+        Raises:
+            MovementError: If wait times out or motors error
+        """
+        try:
+            while True:
+                mx_f = await self._mx.wait_for_move(timeout=5)
+                my_f = await self._my.wait_for_move(timeout=5)
+                if mx_f == MotorStatus.STOPPED and my_f == MotorStatus.STOPPED:
+                    return
+                if mx_f == MotorStatus.ERROR or my_f == MotorStatus.ERROR:
+                    raise MovementError("Gantry motor error during wait")
+        except Exception as e:
+            self._mstatus = ToolMotionStatus.ERROR
+            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+            raise MovementError(f"Gantry wait failed: {str(e)}") from e
 
     async def tool_wait(self):
-        while True:
-            mg_f = await self._mg.wait_for_move(timeout=2.5)
-            ms_f = await self._ms.wait_for_move(timeout=2.5)
-            if mg_f == MotorStatus.STOPPED and ms_f == MotorStatus.STOPPED:
-                return
+        """
+        Wait for tool motors to complete movement.
+        
+        Raises:
+            MovementError: If wait times out or motors error
+        """
+        try:
+            while True:
+                mg_f = await self._mg.wait_for_move(timeout=2.5)
+                ms_f = await self._ms.wait_for_move(timeout=2.5)
+                if mg_f == MotorStatus.STOPPED and ms_f == MotorStatus.STOPPED:
+                    return
+                if mg_f == MotorStatus.ERROR or ms_f == MotorStatus.ERROR:
+                    raise MovementError("Tool motor error during wait")
+        except Exception as e:
+            self._mstatus = ToolMotionStatus.ERROR
+            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+            raise MovementError(f"Tool wait failed: {str(e)}") from e
             
     async def get_pos(self):
         # get each motor position. return tuple of axis and tool coordinate?
@@ -168,6 +384,7 @@ class Tool:
                     await self._my.jog(dy * self.get_param("PYMM")) # 30 (figure out bottom shelf)
                     frame = await self._cam.capture()
                     frame = self._cam.correct(frame)
+                    rect = self._cam.detect_white_squares(frame)
                     if rect is not None:
                         _, dy = self._cam.get_center(frame, rect)
                         if dy is not None:

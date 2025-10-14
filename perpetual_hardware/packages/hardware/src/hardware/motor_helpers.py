@@ -194,3 +194,38 @@ def rpm_to_mms(rpm: float, mpr: float) -> float:
         return mm_per_min / 60.0
     except (ValueError, TypeError) as e:
         raise ValueError(f"Failed to convert {rpm}RPM at {mpr}mm/rev: {str(e)}") from e
+        
+def accel_time_to_mms2(accel_time: float, mpr: float) -> float:
+    """Convert acceleration time from ms/1000rpm to mm/s².
+    
+    The motor's acceleration parameter is specified in milliseconds to reach 1000 RPM.
+    This function converts it to real-world acceleration in mm/s².
+    
+    Args:
+        accel_time: Time in milliseconds to reach 1000 RPM
+        mpr: Millimeters per revolution
+        
+    Returns:
+        Acceleration in millimeters per second squared
+        
+    Raises:
+        ValueError: If input values are invalid or accel_time is zero
+    """
+    if not isinstance(accel_time, (int, float)) or not isinstance(mpr, (int, float)):
+        raise ValueError("Acceleration time and mpr must be numbers")
+        
+    if accel_time <= 0:
+        raise ValueError("Acceleration time must be positive")
+        
+    try:
+        # Convert acceleration time to seconds
+        accel_seconds = accel_time / 1000.0
+        
+        # Convert target speed (1000 RPM) to mm/s
+        target_speed = rpm_to_mms(1000.0, mpr)
+        
+        # Calculate acceleration (v = a*t, so a = v/t)
+        return target_speed / accel_seconds
+        
+    except (ValueError, TypeError) as e:
+        raise ValueError(f"Failed to convert {accel_time}ms/1000rpm at {mpr}mm/rev: {str(e)}") from e
