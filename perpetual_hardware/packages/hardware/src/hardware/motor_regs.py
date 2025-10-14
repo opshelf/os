@@ -88,8 +88,10 @@ motor_registers = [
 
 # the other 15 paths are exactly the same 8 register structure
 
+from typing import List, Dict, Union
+
 # Convert to list of dicts for exporting or interactive usage
-register_dict_list = [
+register_dict_list: List[Dict[str, Union[str, int, None]]] = [
     OrderedDict([
         ("Register", f"0x{reg:04X}"),
         ("Param No.", param),

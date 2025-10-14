@@ -8,8 +8,31 @@ MIN_AREA = 200          # reject tiny blobs (px^2)
 ASPECT_TOL = 0.75       # allow ±20% from perfect square (w≈h)
 
 # todo cache all these parameters
+from typing import Dict, Optional, Tuple, Any
+import numpy.typing as npt
+
 class ToolCamera:
-    def __init__(self, params: dict):
+    url: str
+    mtx: npt.NDArray  # camera matrix
+    dist: npt.NDArray  # distortion coefficients         
+    rvecs: npt.NDArray
+    tvecs: npt.NDArray
+    newcameramtx: npt.NDArray
+    roi: Tuple[int, int, int, int]
+    H: npt.NDArray  # homography to board plane
+
+    # remap fields
+    map1: npt.NDArray
+    map2: npt.NDArray
+    map_size: Tuple[int, int]
+
+    H_ref_size: Tuple[int, int]
+    board_W_mm: float  # physical board size
+    board_H_mm: float
+    pattern_size: Tuple[int, int]
+    square_size_mm: float
+
+    def __init__(self, params: Dict[str, Any]) -> None:
         self.url = params.url  # default to first local camera
         self.mtx = params.mtx # camera matrix
         self.dist = params.dist # distortion coefficients         
@@ -32,7 +55,7 @@ class ToolCamera:
 
         # self.get_correct() #
 
-    async def capture(self):
+    async def capture(self) -> Optional[npt.NDArray]:
         cap = cv2.VideoCapture(self.url, cv2.CAP_FFMPEG)
         if not cap.isOpened():
             raise RuntimeError("bad cam")
@@ -57,7 +80,7 @@ class ToolCamera:
         cap.release()
         return frame
     
-    def _build_remap(self, size_wh):
+    def _build_remap(self, size_wh: Tuple[int, int]) -> None:
         """(Re)compute remap for given (w,h) using current intrinsics."""
         w, h = size_wh
         self.newcameramtx, self.roi = cv2.getOptimalNewCameraMatrix(

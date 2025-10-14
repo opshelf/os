@@ -3,6 +3,7 @@ from hardware.controller import SharedModbusController
 import time
 import asyncio
 from enum import Enum
+from typing import Any, Optional
 
 DEFAULT_PULSES_PER_REV = 10000
 
@@ -83,13 +84,20 @@ class Servo():
          
 # stepper
 class Motor():
-    def __init__(self, controller: SharedModbusController, params):
+    _motor_id: int
+    _controller: SharedModbusController
+    _params: Any  # Consider creating a MotorParams type
+    _cur_pos: Optional[int]
+    _stall_timeout: float
+    _status: MotorStatus
+
+    def __init__(self, controller: SharedModbusController, params: Any) -> None:
         self._motor_id = params.motor_id        
         self._controller = controller           
         self._params = params
         self._cur_pos = None
         self._stall_timeout = 0.25                     
-        self._status: MotorStatus = MotorStatus.IDLE
+        self._status = MotorStatus.IDLE
 
     async def configure(self):
         await self.set_param("Control word", 0x1111) # clear alarm if any

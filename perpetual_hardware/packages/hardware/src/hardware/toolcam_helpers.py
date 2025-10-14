@@ -2,7 +2,10 @@ import numpy as np
 import cv2
 from pathlib import Path
 
-def try_find_board(gray, sizes):
+from typing import List, Tuple, Optional
+import numpy.typing as npt
+
+def try_find_board(gray: np.ndarray, sizes: List[Tuple[int, int]]) -> Tuple[Optional[Tuple[int, int]], Optional[npt.NDArray[np.float32]]]:
     """
     Try a list of candidate inner-corner sizes with the SB detector.
     Returns (pattern_size, corners) on success, else (None, None).

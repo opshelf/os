@@ -27,7 +27,9 @@ def footprint_from_rect_pinhole(w_px: float, h_px: float,
     h_mm = (h_px * float(z_mm)) / float(fy)
     return w_mm, h_mm
 
-def detect_checkerboard_scale_detailed(gray: np.ndarray, square_mm: float) -> Optional[dict]:
+from typing import Dict, Any, Tuple, List, Union
+
+def detect_checkerboard_scale_detailed(gray: np.ndarray, square_mm: float) -> Optional[Dict[str, Union[Tuple[int, int], np.ndarray, float]]]:
     """
     Returns: {
       'pattern': (w,h),
