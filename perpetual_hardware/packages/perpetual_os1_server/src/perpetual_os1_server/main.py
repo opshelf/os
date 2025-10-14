@@ -9,9 +9,8 @@ from pathlib import Path
 from typing import AsyncGenerator
 
 import sentry_sdk
-from fastapi import FastAPI, Response
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 
@@ -23,7 +22,6 @@ from perpetual_os1_server.database.base import Base, engine
 from perpetual_os1_server.database.session import AsyncSessionLocal
 from perpetual_os1_server.middleware.audit import AuditMiddleware
 from perpetual_os1_server.middleware.correlation import CorrelationIdMiddleware
-from perpetual_os1_server.middleware.prometheus import PrometheusMiddleware
 from perpetual_os1_server.routers import audit, auth, robot, roles, sizes, storage, users
 from perpetual_os1_server.settings import get_settings
 
@@ -119,12 +117,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 					traceback=traceback.format_exc(),
 					exc_info=True
 				)
-				sentry_sdk.capture_exception(e)
+				if sentry_dsn is not None:
+					sentry_sdk.capture_exception(e)
 		else:
 			logger.info("robot_disabled", reason="settings_configuration")
 	except Exception as e:
 		logger.error("robot_setup_error", error=str(e), exc_info=True)
-		sentry_sdk.capture_exception(e)
+		if sentry_dsn is not None:
+			sentry_sdk.capture_exception(e)
 
 	init_file_sizes()
 
@@ -164,7 +164,6 @@ app.add_middleware(
 	allow_methods=["*"],
 	allow_headers=["*"],
 )
-app.add_middleware(PrometheusMiddleware)
 app.add_middleware(CorrelationIdMiddleware)
 app.add_middleware(AuditMiddleware)
 
@@ -172,12 +171,6 @@ app.add_middleware(AuditMiddleware)
 @app.get("/api/health")
 async def health() -> dict[str, str]:
 	return {"status": "ok"}
-
-
-@app.get("/metrics")
-async def metrics() -> Response:
-	"""Prometheus metrics endpoint."""
-	return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 app.include_router(auth.router)
