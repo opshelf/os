@@ -2517,3 +2517,418 @@ Killed
   ➜  Network: http://192.168.1.252:8080/
   ➜  Network: http://100.97.185.56:8080/
   ➜  Network: http://172.18.0.1:8080/
+
+> openshelf_os1@0.0.0 dev
+> vite --port 8080 --host 0.0.0.0
+
+
+  VITE v6.3.6  ready in 775 ms
+
+  ➜  Local:   http://localhost:8080/
+  ➜  Network: http://192.168.1.252:8080/
+  ➜  Network: http://100.97.185.56:8080/
+  ➜  Network: http://172.18.0.1:8080/
+Killed
+
+> openshelf_os1@0.0.0 dev
+> vite --port 8080 --host 0.0.0.0
+
+
+  VITE v6.3.6  ready in 823 ms
+
+  ➜  Local:   http://localhost:8080/
+  ➜  Network: http://192.168.1.252:8080/
+  ➜  Network: http://100.97.185.56:8080/
+  ➜  Network: http://172.18.0.1:8080/
+Killed
+
+> openshelf_os1@0.0.0 dev
+> vite --port 8080 --host 0.0.0.0
+
+
+  VITE v6.3.6  ready in 825 ms
+
+  ➜  Local:   http://localhost:8080/
+  ➜  Network: http://192.168.1.252:8080/
+  ➜  Network: http://100.97.185.56:8080/
+  ➜  Network: http://172.18.0.1:8080/
+Killed
+
+> openshelf_os1@0.0.0 dev
+> vite --port 8080 --host 0.0.0.0
+
+
+  VITE v6.3.6  ready in 790 ms
+
+  ➜  Local:   http://localhost:8080/
+  ➜  Network: http://192.168.1.252:8080/
+  ➜  Network: http://100.97.185.56:8080/
+  ➜  Network: http://172.18.0.1:8080/
+
+> openshelf_os1@0.0.0 dev
+> vite --port 8080 --host 0.0.0.0
+
+
+  VITE v6.3.6  ready in 804 ms
+
+  ➜  Local:   http://localhost:8080/
+  ➜  Network: http://192.168.1.252:8080/
+  ➜  Network: http://100.97.185.56:8080/
+  ➜  Network: http://172.18.0.1:8080/
+
+> openshelf_os1@0.0.0 dev
+> vite --port 8080 --host 0.0.0.0
+
+
+  VITE v6.3.6  ready in 831 ms
+
+  ➜  Local:   http://localhost:8080/
+  ➜  Network: http://192.168.1.1:8080/
+  ➜  Network: http://192.168.1.252:8080/
+  ➜  Network: http://100.97.185.56:8080/
+  ➜  Network: http://172.18.0.1:8080/
+
+> openshelf_os1@0.0.0 dev
+> vite --port 8080 --host 0.0.0.0
+
+
+  VITE v6.3.6  ready in 830 ms
+
+  ➜  Local:   http://localhost:8080/
+  ➜  Network: http://192.168.1.1:8080/
+  ➜  Network: http://192.168.1.252:8080/
+  ➜  Network: http://100.97.185.56:8080/
+  ➜  Network: http://172.18.0.1:8080/
+
+> openshelf_os1@0.0.0 dev
+> vite --port 8080 --host 0.0.0.0
+
+
+  VITE v6.3.6  ready in 854 ms
+
+  ➜  Local:   http://localhost:8080/
+  ➜  Network: http://192.168.1.1:8080/
+  ➜  Network: http://192.168.1.252:8080/
+  ➜  Network: http://100.97.185.56:8080/
+  ➜  Network: http://172.18.0.1:8080/
+
+> openshelf_os1@0.0.0 dev
+> vite --port 8080 --host 0.0.0.0
+
+
+  VITE v6.3.6  ready in 805 ms
+
+  ➜  Local:   http://localhost:8080/
+  ➜  Network: http://192.168.1.1:8080/
+  ➜  Network: http://192.168.1.252:8080/
+  ➜  Network: http://100.97.185.56:8080/
+  ➜  Network: http://172.18.0.1:8080/
+
+> openshelf_os1@0.0.0 dev
+> vite --port 8080 --host 0.0.0.0
+
+
+  VITE v6.3.6  ready in 876 ms
+
+  ➜  Local:   http://localhost:8080/
+  ➜  Network: http://192.168.1.1:8080/
+  ➜  Network: http://192.168.1.252:8080/
+  ➜  Network: http://100.97.185.56:8080/
+  ➜  Network: http://172.18.0.1:8080/
+
+> openshelf_os1@0.0.0 dev
+> vite --port 8080 --host 0.0.0.0
+
+
+  VITE v6.3.6  ready in 788 ms
+
+  ➜  Local:   http://localhost:8080/
+  ➜  Network: http://192.168.1.1:8080/
+  ➜  Network: http://192.168.1.252:8080/
+  ➜  Network: http://100.97.185.56:8080/
+  ➜  Network: http://172.18.0.1:8080/
+
+> openshelf_os1@0.0.0 dev
+> vite --port 8080 --host 0.0.0.0
+
+
+  VITE v6.3.6  ready in 806 ms
+
+  ➜  Local:   http://localhost:8080/
+  ➜  Network: http://192.168.1.1:8080/
+  ➜  Network: http://192.168.1.252:8080/
+  ➜  Network: http://100.97.185.56:8080/
+  ➜  Network: http://172.18.0.1:8080/
+
+> openshelf_os1@0.0.0 dev
+> vite --port 8080 --host 0.0.0.0
+
+
+  VITE v6.3.6  ready in 803 ms
+
+  ➜  Local:   http://localhost:8080/
+  ➜  Network: http://192.168.1.1:8080/
+  ➜  Network: http://192.168.1.252:8080/
+  ➜  Network: http://100.97.185.56:8080/
+  ➜  Network: http://172.18.0.1:8080/
+
+> openshelf_os1@0.0.0 dev
+> vite --port 8080 --host 0.0.0.0
+
+
+  VITE v6.3.6  ready in 985 ms
+
+  ➜  Local:   http://localhost:8080/
+  ➜  Network: http://192.168.1.1:8080/
+  ➜  Network: http://192.168.1.252:8080/
+  ➜  Network: http://100.97.185.56:8080/
+  ➜  Network: http://172.18.0.1:8080/
+
+> openshelf_os1@0.0.0 dev
+> vite --port 8080 --host 0.0.0.0
+
+
+  VITE v6.3.6  ready in 1037 ms
+
+  ➜  Local:   http://localhost:8080/
+  ➜  Network: http://192.168.1.252:8080/
+  ➜  Network: http://100.97.185.56:8080/
+  ➜  Network: http://172.18.0.1:8080/
+
+> openshelf_os1@0.0.0 dev
+> vite --port 8080 --host 0.0.0.0
+
+
+  VITE v6.3.6  ready in 1035 ms
+
+  ➜  Local:   http://localhost:8080/
+  ➜  Network: http://192.168.1.252:8080/
+  ➜  Network: http://100.97.185.56:8080/
+  ➜  Network: http://172.18.0.1:8080/
+
+> openshelf_os1@0.0.0 dev
+> vite --port 8080 --host 0.0.0.0
+
+
+  VITE v6.3.6  ready in 934 ms
+
+  ➜  Local:   http://localhost:8080/
+  ➜  Network: http://192.168.1.1:8080/
+  ➜  Network: http://192.168.1.252:8080/
+  ➜  Network: http://100.97.185.56:8080/
+  ➜  Network: http://172.18.0.1:8080/
+
+> openshelf_os1@0.0.0 dev
+> vite --port 8080 --host 0.0.0.0
+
+
+  VITE v6.3.6  ready in 914 ms
+
+  ➜  Local:   http://localhost:8080/
+  ➜  Network: http://192.168.1.1:8080/
+  ➜  Network: http://192.168.1.252:8080/
+  ➜  Network: http://100.97.185.56:8080/
+  ➜  Network: http://172.18.0.1:8080/
+
+> openshelf_os1@0.0.0 dev
+> vite --port 8080 --host 0.0.0.0
+
+
+  VITE v6.3.6  ready in 1052 ms
+
+  ➜  Local:   http://localhost:8080/
+  ➜  Network: http://192.168.1.1:8080/
+  ➜  Network: http://192.168.1.252:8080/
+  ➜  Network: http://100.97.185.56:8080/
+  ➜  Network: http://172.18.0.1:8080/
+
+> openshelf_os1@0.0.0 dev
+> vite --port 8080 --host 0.0.0.0
+
+
+  VITE v6.3.6  ready in 1022 ms
+
+  ➜  Local:   http://localhost:8080/
+  ➜  Network: http://192.168.1.1:8080/
+  ➜  Network: http://192.168.1.252:8080/
+  ➜  Network: http://100.97.185.56:8080/
+  ➜  Network: http://172.18.0.1:8080/
+
+> openshelf_os1@0.0.0 dev
+> vite --port 8080 --host 0.0.0.0
+
+
+  VITE v6.3.6  ready in 1040 ms
+
+  ➜  Local:   http://localhost:8080/
+  ➜  Network: http://192.168.1.1:8080/
+  ➜  Network: http://192.168.1.252:8080/
+  ➜  Network: http://100.97.185.56:8080/
+  ➜  Network: http://172.18.0.1:8080/
+
+> openshelf_os1@0.0.0 dev
+> vite --port 8080 --host 0.0.0.0
+
+
+  VITE v6.3.6  ready in 1082 ms
+
+  ➜  Local:   http://localhost:8080/
+  ➜  Network: http://192.168.1.1:8080/
+  ➜  Network: http://192.168.1.252:8080/
+  ➜  Network: http://100.97.185.56:8080/
+  ➜  Network: http://172.18.0.1:8080/
+
+> openshelf_os1@0.0.0 dev
+> vite --port 8080 --host 0.0.0.0
+
+
+  VITE v6.3.6  ready in 1723 ms
+
+  ➜  Local:   http://localhost:8080/
+  ➜  Network: http://192.168.1.1:8080/
+  ➜  Network: http://192.168.1.252:8080/
+  ➜  Network: http://100.97.185.56:8080/
+  ➜  Network: http://172.18.0.1:8080/
+
+> openshelf_os1@0.0.0 dev
+> vite --port 8080 --host 0.0.0.0
+
+
+  VITE v6.3.6  ready in 778 ms
+
+  ➜  Local:   http://localhost:8080/
+  ➜  Network: http://192.168.1.1:8080/
+  ➜  Network: http://192.168.1.252:8080/
+  ➜  Network: http://100.97.185.56:8080/
+  ➜  Network: http://172.18.0.1:8080/
+
+> openshelf_os1@0.0.0 dev
+> vite --port 8080 --host 0.0.0.0
+
+
+  VITE v6.3.6  ready in 811 ms
+
+  ➜  Local:   http://localhost:8080/
+  ➜  Network: http://192.168.1.1:8080/
+  ➜  Network: http://192.168.1.252:8080/
+  ➜  Network: http://100.97.185.56:8080/
+  ➜  Network: http://172.18.0.1:8080/
+
+> openshelf_os1@0.0.0 dev
+> vite --port 8080 --host 0.0.0.0
+
+
+  VITE v6.3.6  ready in 819 ms
+
+  ➜  Local:   http://localhost:8080/
+  ➜  Network: http://192.168.1.1:8080/
+  ➜  Network: http://192.168.1.252:8080/
+  ➜  Network: http://100.97.185.56:8080/
+  ➜  Network: http://172.18.0.1:8080/
+
+> openshelf_os1@0.0.0 dev
+> vite --port 8080 --host 0.0.0.0
+
+
+  VITE v6.3.6  ready in 828 ms
+
+  ➜  Local:   http://localhost:8080/
+  ➜  Network: http://192.168.1.1:8080/
+  ➜  Network: http://192.168.1.252:8080/
+  ➜  Network: http://100.97.185.56:8080/
+  ➜  Network: http://172.18.0.1:8080/
+
+> openshelf_os1@0.0.0 dev
+> vite --port 8080 --host 0.0.0.0
+
+
+  VITE v6.3.6  ready in 817 ms
+
+  ➜  Local:   http://localhost:8080/
+  ➜  Network: http://192.168.1.1:8080/
+  ➜  Network: http://192.168.1.252:8080/
+  ➜  Network: http://100.97.185.56:8080/
+  ➜  Network: http://172.18.0.1:8080/
+
+> openshelf_os1@0.0.0 dev
+> vite --port 8080 --host 0.0.0.0
+
+
+  VITE v6.3.6  ready in 814 ms
+
+  ➜  Local:   http://localhost:8080/
+  ➜  Network: http://192.168.1.252:8080/
+  ➜  Network: http://100.97.185.56:8080/
+  ➜  Network: http://172.18.0.1:8080/
+
+> openshelf_os1@0.0.0 dev
+> vite --port 8080 --host 0.0.0.0
+
+
+  VITE v6.3.6  ready in 772 ms
+
+  ➜  Local:   http://localhost:8080/
+  ➜  Network: http://192.168.1.1:8080/
+  ➜  Network: http://192.168.1.252:8080/
+  ➜  Network: http://100.97.185.56:8080/
+  ➜  Network: http://172.18.0.1:8080/
+
+> openshelf_os1@0.0.0 dev
+> vite --port 8080 --host 0.0.0.0
+
+
+  VITE v6.3.6  ready in 852 ms
+
+  ➜  Local:   http://localhost:8080/
+  ➜  Network: http://192.168.1.1:8080/
+  ➜  Network: http://192.168.1.252:8080/
+  ➜  Network: http://100.97.185.56:8080/
+  ➜  Network: http://172.18.0.1:8080/
+
+> openshelf_os1@0.0.0 dev
+> vite --port 8080 --host 0.0.0.0
+
+
+  VITE v6.3.6  ready in 850 ms
+
+  ➜  Local:   http://localhost:8080/
+  ➜  Network: http://192.168.1.1:8080/
+  ➜  Network: http://192.168.1.252:8080/
+  ➜  Network: http://100.97.185.56:8080/
+  ➜  Network: http://172.18.0.1:8080/
+
+> openshelf_os1@0.0.0 dev
+> vite --port 8080 --host 0.0.0.0
+
+
+  VITE v6.3.6  ready in 936 ms
+
+  ➜  Local:   http://localhost:8080/
+  ➜  Network: http://192.168.1.1:8080/
+  ➜  Network: http://192.168.1.252:8080/
+  ➜  Network: http://100.97.185.56:8080/
+  ➜  Network: http://172.18.0.1:8080/
+
+> openshelf_os1@0.0.0 dev
+> vite --port 8080 --host 0.0.0.0
+
+
+  VITE v6.3.6  ready in 776 ms
+
+  ➜  Local:   http://localhost:8080/
+  ➜  Network: http://192.168.1.1:8080/
+  ➜  Network: http://192.168.1.252:8080/
+  ➜  Network: http://100.97.185.56:8080/
+  ➜  Network: http://172.18.0.1:8080/
+
+> openshelf_os1@0.0.0 dev
+> vite --port 8080 --host 0.0.0.0
+
+
+  VITE v6.3.6  ready in 804 ms
+
+  ➜  Local:   http://localhost:8080/
+  ➜  Network: http://192.168.1.1:8080/
+  ➜  Network: http://192.168.1.252:8080/
+  ➜  Network: http://100.97.185.56:8080/
+  ➜  Network: http://172.18.0.1:8080/

@@ -41,7 +41,7 @@
           "dr": 0,
           "mpr": 40,
           "accel": 1000,
-          "ret_rpm": 128,
+          "ret_rpm": 64,
           "lim": 1295,
           "Iph": 50
         },
@@ -71,11 +71,11 @@
           "motor_name": "x_axis",
           "motor_id": 5,
           "Ip": 36,
-          "rpm": 500,
+          "rpm": 100,
           "dr": 0,
           "mpr": 80,
           "accel": 500,
-          "ret_rpm": 256,
+          "ret_rpm": 64,
           "lim": 950
         }
       ],

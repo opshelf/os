@@ -102,13 +102,13 @@ class Robot:
         if not self._motorbus.client.connected:
             print("No Motor bus")
             return
-        await self._scalebus.connect()
-        if not self._scalebus.client.connected:
-            print("No scale bus")
-            return
+        # await self._scalebus.connect()
+        # if not self._scalebus.client.connected:
+        #     print("No scale bus")
+        #     return
         
         await self._tool.configure()
-        await self._io.configure()
+        # await self._io.configure()
 
 
     def get_param(self, param: str):
@@ -154,7 +154,7 @@ class Robot:
         await self._tool.move(AxisCoordinate(coord))
         await self._tool.place(coord)
 
-        await self._io._md.home()
+        await self._io._md.home() # clear alarms io
         await self._tool.clear_alarms()
         
         # Update state after operation
@@ -444,7 +444,7 @@ class Robot:
         # Set default dimensions or use measured ones
         width = 50.0  # default width
         height = 50.0  # default height
-        length = 400.0  # default length
+        length = 200.0  # default length
         
         if dimensions:
             # Prefer footprint measurements over scale measurements if available
@@ -508,7 +508,7 @@ class Robot:
         # Retrieve item
         await self.io_pick(coord)
 
-    async def measure_item_dimensions(self, n_frames: int = 10) -> Optiononl[Dict[str, float]]:
+    async def measure_item_dimensions(self, n_frames: int = 10) -> Optional[Dict[str, float]]:
         """
         Use the IOBox's AFSCam to measure the dimensions of an item currently in the IO box.
         Returns the aggregate dimensions including footprint and depth measurements.
@@ -565,6 +565,12 @@ class Robot:
             result["depth_mm"] = agg["depth_mm_med"]
             
         return result if result else None
+    
+    async def test(self, coordinate) -> None:
+        await self._tool.pick(coordinate=coordinate)
+        await self._tool.place(coordinate=coordinate)
+        # await self._tool.move(coordinate=coordinate)
+        # await self._tool.place(coordinate=coordinate)
 
     async def handle_command(self, command: RobotCommands):
         if isinstance(command, StopCommand):
@@ -577,7 +583,8 @@ class Robot:
             await self._tool.home()
             return RobotCommandSuccessful()
         elif isinstance(command, MoveCommand):
-            await self._tool.move(command.coordinate)
+            # await self._tool.move(command.coordinate)
+            await self.test(command.coordinate)
             return RobotCommandSuccessful()
         elif isinstance(command, IdleCommand):
             await self.idle()

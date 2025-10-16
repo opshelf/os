@@ -7,7 +7,7 @@ from typing import Any, Optional
 
 from hardware.exceptions import (
     MotorError, MotorTimeoutError, MotorLimitError,
-    MotorConfigError, ConfigurationError
+    MotorConfigError
 )
 
 class MotorStatus(Enum):
@@ -189,6 +189,12 @@ class Motor():
             
             # Configure motor parameters
             await self.set_param("SO2 output function", 0xA1)  # brake output
+            await self._controller.write_single_register(self._motor_id, 0x0167, 100)
+            await self._controller.write_single_register(self._motor_id, 0x0169, 100)
+            await self._controller.write_single_register(self._motor_id, 0x016B, 10)
+            await self.set_param("Allowed max position following error", 4000)
+            await self.set_param("Position loop Kp", 50)
+            await self.set_param("Max stop time", 100)
             await self.set_param("Acceleration", self._params.accel)
             await self.set_param("Deceleration", self._params.accel)
             await self.set_param("Peak current", self._params.Ip)
@@ -317,7 +323,7 @@ class Motor():
             # Combine high and low position values
             pos = (pos_h << 16) | pos_l
             if not pos:
-                return -1
+                return 0.0
                 
             # Get pulses per revolution
             ppr = await self.get_param("Pulse/revolution")
@@ -358,8 +364,8 @@ class Motor():
                 value
             )
             
-            if result is None:
-                raise MotorError(f"Failed to write {value} to register {register}")
+            # if result is None:
+            #     raise MotorError(f"Failed to write {value} to register {register}")
                 
         except Exception as e:
             if not isinstance(e, (MotorError, ValueError)):
@@ -399,7 +405,7 @@ class Motor():
             raise
     
     #TODO add checks for position following error (crash detection)
-    async def wait_for_move(self, timeout: float = 2.5) -> MotorStatus:
+    async def wait_for_move(self, timeout: float = 2.5, homing: bool = False) -> MotorStatus:
         """Wait for motor movement to complete.
         
         Args:
@@ -441,7 +447,9 @@ class Motor():
             # Check for stall condition
             if has_moved and (now - last_movement_time > self._stall_timeout):
                 await self.stop()
-                raise MotorError(f"Motor {self._motor_id} stalled")
+                if not homing:
+                    raise MotorError(f"Motor {self._motor_id} stalled")
+                return MotorStatus.STOPPED #add a stalled command?)
 
             # Normal completion
             if complete:
@@ -450,15 +458,17 @@ class Motor():
             
             # Check for motor fault
             if fault:
+                # print(f"Motor {self._motor_id} reported fault condition")
+                if not homing:
+                    raise MotorError(f"Motor {self._motor_id} reported fault condition")
                 await self.stop()
-                raise MotorError(f"Motor {self._motor_id} reported fault condition")
+                return MotorStatus.STOPPED
+               
 
             # Check for timeout
             if time.monotonic() - start_time > timeout:
                 await self.stop()
-                raise MotorTimeoutError(
-                    f"Motor {self._motor_id} movement timed out after {timeout} seconds"
-                )
+                return MotorStatus.STOPPED
 
             await asyncio.sleep(0.01)
 
@@ -502,7 +512,7 @@ class Motor():
                 raise MotorError(f"Failed to start homing movement: {str(e)}") from e
 
             # Wait for homing to complete (longer timeout for homing)
-            stop = await self.wait_for_move(timeout=60)
+            stop = await self.wait_for_move(timeout=30, homing=True)
             
             if stop == MotorStatus.STOPPED:
                 try:
@@ -561,7 +571,7 @@ class Motor():
             )
             
             # Wait for completion
-            await self.wait_for_move(timeout=10)
+            await self.wait_for_move(timeout=10, homing=True)
             await self.move_config()
             return MotorStatus.STOPPED
             

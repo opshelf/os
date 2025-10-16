@@ -85,7 +85,9 @@ class Tool:
     async def get_param(self, param: str) -> Optional[Any]:
         """Get a parameter value from tool configuration."""
         try:
-            return self._params.get("parameters", {}).get(param, None)
+            if not hasattr(self._params.parameters, param):
+                raise KeyError(f"Parameter '{param}' not found")
+            return getattr(self._params.parameters, param)
         except Exception as e:
             raise ConfigError(f"Failed to get parameter {param}: {str(e)}") from e
 
@@ -194,7 +196,7 @@ class Tool:
         """
         try:
             slide_ext = await self.get_param("SLIDE_EXTENSION")
-            grip_ext = await self.get_param("GRIPPER_EXTENSION")
+            grip_ext = await self.get_param("GRIPPER_EXTENSION_PLACE")
             if slide_ext is None or grip_ext is None:
                 raise ConfigError("Missing extension parameters")
             
@@ -221,7 +223,7 @@ class Tool:
         """
         try:
             slide_ext = await self.get_param("SLIDE_EXTENSION")
-            grip_ext = await self.get_param("GRIPPER_EXTENSION")
+            grip_ext = await self.get_param("GRIPPER_EXTENSION_PICK")
             if slide_ext is None or grip_ext is None:
                 raise ConfigError("Missing extension parameters")
             
@@ -229,7 +231,7 @@ class Tool:
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
             await self._ms.move_to_position_no_wait(slide_ext)
             await self._mg.move_to_position_no_wait(grip_ext)
-            await self.tool_wait()
+            await self.tool_wait(homing=False)
             self._mstatus = ToolMotionStatus.IDLE
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
         except Exception as e:
@@ -251,7 +253,7 @@ class Tool:
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
             await self._ms.move_to_position_no_wait(0)
             await self._mg.move_to_position_no_wait(0)
-            await self.tool_wait()
+            await self.tool_wait(homing=True)
             self._mstatus = ToolMotionStatus.IDLE
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
         except Exception as e:
@@ -335,7 +337,7 @@ class Tool:
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
             raise MovementError(f"Gantry wait failed: {str(e)}") from e
 
-    async def tool_wait(self):
+    async def tool_wait(self, homing):
         """
         Wait for tool motors to complete movement.
         
@@ -344,8 +346,8 @@ class Tool:
         """
         try:
             while True:
-                mg_f = await self._mg.wait_for_move(timeout=2.5)
-                ms_f = await self._ms.wait_for_move(timeout=2.5)
+                mg_f = await self._mg.wait_for_move(timeout=2.5, homing=homing)
+                ms_f = await self._ms.wait_for_move(timeout=2.5, homing=homing)
                 if mg_f == MotorStatus.STOPPED and ms_f == MotorStatus.STOPPED:
                     return
                 if mg_f == MotorStatus.ERROR or ms_f == MotorStatus.ERROR:

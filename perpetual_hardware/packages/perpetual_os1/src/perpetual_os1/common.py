@@ -239,7 +239,7 @@ class IOBlock(BaseModel):
 
 class Robot(BaseModel):
     tool: Tool
-    grid: Dict[str, Any]  # flexible for now
+    grid: str # path to storage grid (JSON)
     io: IOBlock
 
 

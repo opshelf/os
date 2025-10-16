@@ -1,7 +1,7 @@
 import pymodbus
 import asyncio
 from pymodbus.client import AsyncModbusSerialClient
-from pymodbus.exceptions import ModbusIOException, ModbusException, ModbusInvalidResponseError
+from pymodbus.exceptions import ModbusIOException, ModbusException
 from typing import Optional, Any, Union, List
 
 from .exceptions import (
@@ -165,7 +165,7 @@ class SharedModbusController:
                             f"Write error to unit {unit_id}, register {address}: {result}"
                         )
                     return
-                except (ModbusIOException, ModbusConnectionError, ModbusTimeoutError, ModbusInvalidResponseError, ModbusException, asyncio.TimeoutError) as e:
+                except (ModbusIOException, ModbusConnectionError, ModbusTimeoutError, ModbusException, asyncio.TimeoutError) as e:
                     if attempt == 0:
                         reconnected = await self._reconnect()
                         if not reconnected:
@@ -219,7 +219,7 @@ class SharedModbusController:
                             f"Write error to unit {unit_id}, registers {address}-{address+len(values)-1}: {result}"
                         )
                     return
-                except (ModbusIOException, ModbusConnectionError, ModbusTimeoutError, ModbusInvalidResponseError, ModbusException, asyncio.TimeoutError) as e:
+                except (ModbusIOException, ModbusConnectionError, ModbusTimeoutError, ModbusException, asyncio.TimeoutError) as e:
                     if attempt == 0:
                         reconnected = await self._reconnect()
                         if not reconnected:
