@@ -175,6 +175,7 @@ class UsbCamera(BaseModel):
     square_mm: float = Field(..., gt=0)
     fx_px: float = Field(..., gt=0)
     fy_px: float = Field(..., gt=0)
+    px_per_mm: float = Field(..., gt=0)
     confidence_min: int = Field(..., ge=0)
     headless_fallback_path: str = Field(..., min_length=1)
 

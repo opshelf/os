@@ -7,12 +7,19 @@ from perpetual_os1.storage import (
     StorageGrid, Shelf, Cell, CellStatus, CalibrationCoordinate,
     Dimensions, StorageModuleSide, CellItem, StorageModuleCellLocation
 )
+
+from perpetual_os1.exceptions import (
+    ConfigError,
+)
+
 from perpetual_os1.robot_state import RobotStateManager, RobotStateError
 
 from pathlib import Path
 from enum import Enum
 from typing import Dict, Optional, Tuple, Union, Literal, Annotated, List
 from pydantic import BaseModel, Field
+
+import time
 
 CONFIG_PATH = Path(__file__).resolve().parent / "config.json"
 
@@ -80,9 +87,9 @@ class Robot:
         self._scalebus = Controller(port="/dev/serial/by-id/usb-1a86_USB_Single_Serial_594D007725-if00", baudrate=9600) # change to config
 
         # Load State
-        self._state = load_config_file(CONFIG_PATH)
-        tool_params = self._state.get("robot.tool", {})
-        io_params = self._state.get("robot.io", {})
+        self._config = load_config_file(CONFIG_PATH)
+        tool_params = self._config.get("robot.tool", {})
+        io_params = self._config.get("robot.io", {})
 
         # Robot Components
         self._tool = Tool(motorcontroller=self._motorbus, params=tool_params)
@@ -108,24 +115,30 @@ class Robot:
         #     return
         
         await self._tool.configure()
-        # await self._io.configure()
+        await self._io.configure()
 
 
     def get_param(self, param: str):
-        return self._state.get("robot",{}).get(param, None)
+        try:
+            if not hasattr(self._config.robot, param):
+                raise KeyError(f"Parameter '{param}' not found")
+            return getattr(self._config.robot, param)
+        except Exception as e:
+            raise ConfigError(f"Failed to get parameter {param}: {str(e)}") from e
 
     async def io_place(self, coord: AxisCoordinate):
         # Validate state before operation
         self._state_manager.update_state(self._state.tool, self._state.io)
         self._state_manager.validate_operation('place_iobox')
+
+        ppl = await self._tool.get_param("PICKUP_POSITION_L")
+        pph = await self._tool.get_param("PICKUP_POSITION_H")
         
         await self._tool.pick(coord)
-        await self._tool.move(AxisCoordinate(self.get_param("PICKUP_POSITION_L")[0], 
-                                               self.get_param("PICKUP_POSITION_L")[1])) # move to safe height
+        await self._tool.move(AxisCoordinate(ppl[0], ppl[1])) # move to safe height
         await self._io.open_door()
-        await self._tool.extend()
-        await self._tool.move(AxisCoordinate(self.get_param("PICKUP_POSITION_H")[0], 
-                                               self.get_param("PICKUP_POSITION_H")[1]))
+        await self._tool.extend_IO()
+        await self._tool.move(AxisCoordinate(pph[0], pph[1]))
         await self._tool.retract()
         await self._io.close_door()
         await self._tool.move(coord)
@@ -141,17 +154,18 @@ class Robot:
         # Validate state before operation
         self._state_manager.update_state(self._state.tool, self._state.io)
         self._state_manager.validate_operation('pick_iobox')
+
+        ppl = await self._tool.get_param("PICKUP_POSITION_L")
+        pph = await self._tool.get_param("PICKUP_POSITION_H")
         
         await self._tool.pick(coord)
-        await self._tool.move(AxisCoordinate(self.get_param("PICKUP_POSITION_H")[0], 
-                                               self.get_param("PICKUP_POSITION_H")[1])) # move to safe height
+        await self._tool.move(AxisCoordinate(pph[0], pph[1])) # move to safe height
         await self._io.open_door()
         await self._tool.extend()
-        await self._tool.move(AxisCoordinate(self.get_param("PICKUP_POSITION_L")[0], 
-                                               self.get_param("PICKUP_POSITION_L")[1])) # move to safe height
+        await self._tool.move(AxisCoordinate(ppl[0], ppl[1])) # move to safe height
         await self._tool.retract()
         await self._io.close_door()
-        await self._tool.move(AxisCoordinate(coord))
+        await self._tool.move(coord)
         await self._tool.place(coord)
 
         await self._io._md.home() # clear alarms io
@@ -160,8 +174,8 @@ class Robot:
         # Update state after operation
         self._state_manager.update_state(self._state.tool, self._state.io)
 
-    async def idle(self) -> None:
-        await self._tool.move(self.get_param("IDLE_POSITION"))
+    # async def idle(self) -> None:
+    #     await self._tool.move(self._tool.get_param("IDLE_POSITION"))
 
     async def shutdown(self) -> None:
         await self.stop()
@@ -308,6 +322,7 @@ class Robot:
             num_shelves = len(shelf_y_positions)
 
             # Load parameters (can be a single value or a list matching shelves)
+            # this is actually a function of the robot, to keep the grid defintion simple
             raw_cells_per_shelf = self.get_param("CELLS_PER_SHELF")
             raw_cell_spacings = self.get_param("CELL_SPACINGS")
             cell_heights = self.get_param("CELL_HEIGHTS")
@@ -359,7 +374,8 @@ class Robot:
             left_module = []
             right_module = []
 
-            z_offset = self.get_param("Z_OFFSET", 0.0)  # Get Z offset from config or default to 0
+            # z_offset = self.get_param("Z_OFFSET", 0.0)  # Get Z offset from config or default to 0
+            z_offset = 0.0
 
             for shelf_idx, shelf_cells in enumerate(cell_positions):
                 shelf_cells_left = []
@@ -567,8 +583,17 @@ class Robot:
         return result if result else None
     
     async def test(self, coordinate) -> None:
-        await self._tool.pick(coordinate=coordinate)
-        await self._tool.place(coordinate=coordinate)
+        # await self.io_pick(AxisCoordinate(89, 42.55))
+        # # await self._io.open_door()
+        # # time.sleep(5)
+        # # await self._io.close_door()
+        
+        # await self._tool.move(coordinate=coordinate)
+        item = await self._io.measure_item()
+        print(item)
+        # img = await self._tool._cam.capture()
+        # cv2.imwrite("beb.png", img)
+        # await self._tool.place(coordinate=coordinate)
         # await self._tool.move(coordinate=coordinate)
         # await self._tool.place(coordinate=coordinate)
 

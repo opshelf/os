@@ -23,6 +23,7 @@ class RobotStateManager:
     
     State Transitions:
     - IDLE -> ITEM_IN_IOBOX: Item placed in IOBox
+    - IDLE -> ITEM_IN_TOOL: item retrieved from storage
     - ITEM_IN_IOBOX -> ITEM_IN_TOOL: Tool picks up item from IOBox
     - ITEM_IN_TOOL -> IDLE: Tool places item in storage
     - ITEM_IN_TOOL -> ITEM_IN_IOBOX: Tool places item in IOBox
@@ -75,12 +76,13 @@ class RobotStateManager:
     def can_pick_from_iobox(self) -> bool:
         """Check if picking item from IOBox is allowed."""
         # Can only pick from IOBox when tool is empty
-        return self._current_state == RobotOperationState.ITEM_IN_IOBOX
+        # should only be abel to pick when theres something in the bay
+        return self._current_state in [RobotOperationState.ITEM_IN_IOBOX, RobotOperationState.IDLE]
 
     def can_place_in_iobox(self) -> bool:
         """Check if placing item in IOBox is allowed."""
         # Can only place in IOBox when tool has item and IOBox is empty
-        return self._current_state == RobotOperationState.ITEM_IN_TOOL
+        return self._current_state in [RobotOperationState.ITEM_IN_TOOL, RobotOperationState.IDLE]
 
     def can_pick_from_storage(self) -> bool:
         """Check if picking item from storage is allowed."""

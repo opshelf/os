@@ -35,7 +35,7 @@ class ToolCamera:
     pattern_size: Tuple[int, int]
     square_size_mm: float
 
-    def __init__(self, params: Dict[str, Any]) -> None:
+    def __init__(self, params) -> None:
         self.url = params.url  # default to first local camera
         self.mtx = params.mtx # camera matrix
         self.dist = params.dist # distortion coefficients         
@@ -71,6 +71,7 @@ class ToolCamera:
             ImageError: If frame capture fails or returns invalid data
         """
         try:
+            print("attempting capture")
             cap = cv2.VideoCapture(self.url, cv2.CAP_FFMPEG)
             if not cap.isOpened():
                 raise CameraConnectionError(
@@ -79,12 +80,12 @@ class ToolCamera:
             
             try:
                 # Configure camera settings
-                if not cap.set(cv2.CAP_PROP_BUFFERSIZE, 1):
-                    raise CameraConfigError("Failed to set buffer size")
-                if not cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000):
-                    raise CameraConfigError("Failed to set open timeout")
-                if not cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000):
-                    raise CameraConfigError("Failed to set read timeout")
+                # if not cap.set(cv2.CAP_PROP_BUFFERSIZE, 1):
+                #     raise CameraConfigError("Failed to set buffer size")
+                # if not cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000):
+                #     raise CameraConfigError("Failed to set open timeout")
+                # if not cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000):
+                #     raise CameraConfigError("Failed to set read timeout")
 
                 # Clear buffer
                 t0 = time.time()
@@ -104,7 +105,7 @@ class ToolCamera:
                     raise ImageError(
                         "Failed to read frame or received empty frame"
                     )
-                
+                print("returning frame")
                 return frame
                 
             finally:

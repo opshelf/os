@@ -35,6 +35,7 @@ class SizeResult():
 class IOBox:
     def __init__(self, motorcontroller: Controller, params: dict):
         # self._scalecontroller = scalecontroller
+        self._scale = None
         self._motorcontroller = motorcontroller
         self._status = IOBoxStatus.IDLE
         self._params = params

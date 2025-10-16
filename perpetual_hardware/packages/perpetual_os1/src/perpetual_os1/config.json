@@ -10,8 +10,8 @@
         "PICKUP_POSITION_L": [52, 469],
         "PICKUP_POSITION_H": [52, 725],
         "SCAN_POSITION": [930, 1],
-        "SLIDE_EXTENSION": 50,
-        "GRIPPER_EXTENSION_PICK": 166.75,
+        "SLIDE_EXTENSION":49.5,
+        "GRIPPER_EXTENSION_PICK": 166.5,
         "GRIPPER_EXTENSION_PLACE": 165,
         "DOOR_OPEN": 220,
         "FRONT": 0.5,
@@ -31,7 +31,7 @@
           "mpr": 19.992,
           "accel": 750,
           "ret_rpm": 500,
-          "lim": 173
+          "lim": 180
         },
         {
           "motor_name": "y_axis",
@@ -71,7 +71,7 @@
           "motor_name": "x_axis",
           "motor_id": 5,
           "Ip": 36,
-          "rpm": 100,
+          "rpm": 500,
           "dr": 0,
           "mpr": 80,
           "accel": 500,
@@ -130,6 +130,7 @@
         "square_mm": 7.5,
         "fx_px": 1150,
         "fy_px": 1150,
+        "px_per_mm": 1.5,
         "confidence_min": 0,
         "headless_fallback_path": "./usb_sizing.jpg"
       },

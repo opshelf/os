@@ -32,6 +32,7 @@ class AFSCam:
         self.square_mm = usb_params.square_mm
         self.fx_px = usb_params.fx_px
         self.fy_px = usb_params.fy_px
+        self.px_per_mm = usb_params.px_per_mm
         self.confidence_min = tof_params.confidence_min
 
         # USB camera configuration
@@ -50,7 +51,7 @@ class AFSCam:
         self._depth_w: int = 0
 
         # Calibration caches
-        self._px_per_mm: Optional[float] = None
+        self._px_per_mm: Optional[float] = self.px_per_mm
         self._fx_cache: Optional[float] = self.fx_px
         self._fy_cache: Optional[float] = self.fy_px
         self._hfov_cal: Optional[float] = None

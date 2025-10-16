@@ -76,7 +76,9 @@ class Tool:
             await self._mg.configure()
             await self._ms.configure()
             await self._mr.configure()
-            await self.home()
+            # await self.home()
+            # self._cam.get_correct()
+            self._mstatus = ToolMotionStatus.IDLE
         except Exception as e:
             self._mstatus = ToolMotionStatus.ERROR
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
@@ -212,6 +214,34 @@ class Tool:
             if isinstance(e, ConfigError):
                 raise
             raise MovementError(f"Tool extension failed: {str(e)}") from e
+        
+    async def extend_IO(self) -> None:
+        """
+        Extend gripper and slide to operation positions.
+        
+        Raises:
+            MovementError: If extension fails
+            ConfigError: If extension parameters are missing
+        """
+        try:
+            io_offset = 8
+            slide_ext = await self.get_param("SLIDE_EXTENSION")
+            grip_ext = await self.get_param("GRIPPER_EXTENSION_PLACE")
+            if slide_ext is None or grip_ext is None:
+                raise ConfigError("Missing extension parameters")
+            
+            self._mstatus = ToolMotionStatus.MOVING
+            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+            await self._ms.move_to_position(slide_ext)
+            await self._mg.move_to_position(grip_ext+io_offset)
+            self._mstatus = ToolMotionStatus.IDLE
+            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+        except Exception as e:
+            self._mstatus = ToolMotionStatus.ERROR
+            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+            if isinstance(e, ConfigError):
+                raise
+            raise MovementError(f"Tool extension failed: {str(e)}") from e
 
     async def extend_empty(self) -> None:
         """
@@ -273,6 +303,7 @@ class Tool:
             self._mstatus = ToolMotionStatus.MOVING
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
             
+            await self._mr.move_to_position(0.5) # TODO pull param, give shelf side param
             await self._gs.safe_open()
             await self.move(coordinate)
             await self.extend_empty()
@@ -282,7 +313,7 @@ class Tool:
             self._istatus = ToolItemStatus.LOADED
             self._mstatus = ToolMotionStatus.IDLE
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
-        except Exception as e:
+        except Exception as e: # add rehoming???
             self._mstatus = ToolMotionStatus.ERROR
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
             if isinstance(e, MovementError):
@@ -301,6 +332,7 @@ class Tool:
             self._mstatus = ToolMotionStatus.MOVING
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
             
+            await self._mr.move_to_position(0.5)
             await self.move(coordinate)
             await self.extend()
             await self._gs.close()
