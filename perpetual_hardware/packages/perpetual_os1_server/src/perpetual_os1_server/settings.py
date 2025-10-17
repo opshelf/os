@@ -27,6 +27,7 @@ class RobotSettings(BaseModel):
 
 class CameraSettings(BaseModel):
     enabled: bool = False
+    url: str = "rtsp://192.168.1.108:554/user=admin&password=&channel=1&stream=0.sdp?tcp"
 
 
 class NatsSettings(BaseModel):
@@ -86,7 +87,7 @@ def get_settings() -> Settings:
     if "nats" not in data:
         data["nats"] = {"domain": "nats", "port": 4222}
     if "camera" not in data:
-        data["camera"] = {"enabled": False}
+        data["camera"] = {"enabled": False, "url": "rtsp://192.168.1.108:554/user=admin&password=&channel=1&stream=0.sdp?tcp"}
     if "scale" not in data:
         data["scale"] = {"enabled": False}
     if "auth" not in data:
