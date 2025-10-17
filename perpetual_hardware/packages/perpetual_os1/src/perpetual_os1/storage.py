@@ -97,8 +97,6 @@ class Shelf(BaseModel):
                     cal_idx += 1
                 cal_point.x = x_value
                 return cal_point
-            
-    # def get_cell_coord(self)
 
     def get_next_optimal_slot(self, item: CellItem) -> Optional[int]:
         cell_idx = 0
