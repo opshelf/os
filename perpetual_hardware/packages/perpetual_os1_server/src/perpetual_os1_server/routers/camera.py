@@ -34,8 +34,12 @@ async def mjpeg_stream_generator(request: Request) -> AsyncGenerator[bytes, None
 		await start_camera_stream()
 		manager = await get_camera_manager()
 
+		# Yield immediately to start the HTTP response
+		# This prevents the browser from timing out while waiting for first frame
+		yield b""
+
 		wait_count = 0
-		max_wait = 60
+		max_wait = 200
 
 		while True:
 			if await request.is_disconnected() is True:
