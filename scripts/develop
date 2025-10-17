@@ -1,3 +1,5 @@
+#!/bin/bash
+
 pkill -9 -f "node .*vite"
 docker compose -f docker-compose.standalone.yml stop nats
 
