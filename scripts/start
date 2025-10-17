@@ -17,7 +17,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ "$HARDWARE" == true ]]; then
-	docker compose -f docker-compose.standalone.yml -f docker-compose.hardware.yml up
+	docker compose -f docker-compose.yml -f docker-compose.hardware.yml up
 else
-	docker compose -f docker-compose.standalone.yml up
+	docker compose -f docker-compose.yml up
 fi
