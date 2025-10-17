@@ -34,8 +34,10 @@ class CameraStreamManager:
 		try:
 			self.camera.get_correct()
 			logger.info("camera_calibration_loaded")
+		except FileNotFoundError as e:
+			logger.warning("camera_calibration_skipped", reason="calibration_images_not_found", error=str(e))
 		except Exception as e:
-			logger.warning("camera_calibration_failed", error=str(e))
+			logger.warning("camera_calibration_failed", error=str(e), error_type=type(e).__name__)
 
 		self.is_running = True
 		self.capture_task = asyncio.create_task(self._capture_loop())
@@ -85,7 +87,7 @@ class CameraStreamManager:
 				frame = await self.camera.capture()
 
 				if frame is None:
-					logger.warning("camera_capture_failed")
+					logger.warning("camera_capture_failed_no_frame")
 					await asyncio.sleep(1.0)
 					continue
 
@@ -103,8 +105,16 @@ class CameraStreamManager:
 					async with self.frame_lock:
 						self.latest_frame = buffer.tobytes()
 
+			except RuntimeError as e:
+				if "bad cam" in str(e):
+					logger.error("camera_connection_failed", url=self.camera_url, error=str(e))
+					await asyncio.sleep(5.0)
+				else:
+					logger.error("camera_runtime_error", error=str(e), exc_info=True)
+					await asyncio.sleep(1.0)
+				continue
 			except Exception as e:
-				logger.error("camera_frame_processing_error", error=str(e), exc_info=True)
+				logger.error("camera_frame_processing_error", error=str(e), error_type=type(e).__name__, exc_info=True)
 				await asyncio.sleep(1.0)
 				continue
 

@@ -14,6 +14,8 @@ from perpetual_os1_server.core.camera import (
 from perpetual_os1_server.settings import get_settings
 from .auth_deps import get_current_user_optional
 
+from perpetual_os1_server.routers.common import SuccessResponse
+
 router = APIRouter(tags=["camera"])
 
 
@@ -66,3 +68,32 @@ async def stream_camera_detection(
 		mjpeg_stream_generator(request),
 		media_type="multipart/x-mixed-replace; boundary=frame",
 	)
+
+
+@router.get("/status")
+async def get_camera_status(
+	current_user: dict | None = Depends(get_current_user_optional),
+) -> dict[str, str | int | bool]:
+	settings = get_settings()
+
+	if settings.camera.enabled is False:
+		return {
+			"enabled": False,
+			"message": "Camera is disabled in settings"
+		}
+
+	try:
+		manager = await get_camera_manager()
+		return {
+			"enabled": True,
+			"running": manager.is_running,
+			"consumers": manager.consumer_count,
+			"target_fps": manager.target_fps,
+			"url": manager.camera_url,
+			"has_frame": manager.latest_frame is not None
+		}
+	except ValueError:
+		return {
+			"enabled": True,
+			"message": "Camera manager not initialized"
+		}
