@@ -21,15 +21,15 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 
-COMPOSE_CMD="docker compose -f docker-compose.yml --remove-orphans"
+COMPOSE_CMD="docker compose -f docker-compose.yml"
 if [[ "$HARDWARE" == true ]]; then
 	COMPOSE_CMD="$COMPOSE_CMD -f docker-compose.hardware.yml"
 fi
 
 if [[ "$BUILD" == true ]]; then
-	COMPOSE_CMD="$COMPOSE_CMD up --build"
+	COMPOSE_CMD="$COMPOSE_CMD up --build --remove-orphans"
 else
-	COMPOSE_CMD="$COMPOSE_CMD up"
+	COMPOSE_CMD="$COMPOSE_CMD up --remove-orphans"
 fi
 
 eval $COMPOSE_CMD
