@@ -1,6 +1,7 @@
 #!/bin/bash
 
 HARDWARE=false
+BUILD=false
 
 while [[ $# -gt 0 ]]; do
 	case $1 in
@@ -8,16 +9,27 @@ while [[ $# -gt 0 ]]; do
 			HARDWARE=true
 			shift
 			;;
+		-b|--build)
+			BUILD=true
+			shift
+			;;
 		*)
 			echo "Unknown option: $1"
-			echo "Usage: $0 [-h|--hardware]"
+			echo "Usage: $0 [-h|--hardware] [-b|--build]"
 			exit 1
 			;;
 	esac
 done
 
+COMPOSE_CMD="docker compose -f docker-compose.yml"
 if [[ "$HARDWARE" == true ]]; then
-	docker compose -f docker-compose.yml -f docker-compose.hardware.yml up
-else
-	docker compose -f docker-compose.yml up
+	COMPOSE_CMD="$COMPOSE_CMD -f docker-compose.hardware.yml"
 fi
+
+if [[ "$BUILD" == true ]]; then
+	COMPOSE_CMD="$COMPOSE_CMD up --build"
+else
+	COMPOSE_CMD="$COMPOSE_CMD up"
+fi
+
+eval $COMPOSE_CMD

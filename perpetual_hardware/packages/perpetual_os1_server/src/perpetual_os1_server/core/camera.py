@@ -90,7 +90,6 @@ class CameraStreamManager:
 					await asyncio.sleep(1.0)
 					continue
 
-				logger.info("camera_capture_starting")
 				frame = await self.camera.capture()
 
 				if frame is None:
@@ -98,23 +97,19 @@ class CameraStreamManager:
 					await asyncio.sleep(1.0)
 					continue
 
-				logger.info("camera_frame_received", shape=str(frame.shape))
 				corrected = self.camera.correct(frame)
 				bbox = self.camera.detect_white_squares(corrected)
 
 				if bbox is not None:
 					annotated = self._draw_detection_overlay(corrected, bbox)
-					logger.info("camera_detection_found", bbox=str(bbox))
 				else:
 					annotated = corrected
-					logger.info("camera_no_detection")
 
 				success, buffer = cv2.imencode('.jpg', annotated, [cv2.IMWRITE_JPEG_QUALITY, 85])
 
 				if success is True:
 					async with self.frame_lock:
 						self.latest_frame = buffer.tobytes()
-					logger.info("camera_frame_encoded", size_bytes=len(buffer))
 
 			except RuntimeError as e:
 				if "bad cam" in str(e):
@@ -166,6 +161,9 @@ async def init_camera_manager() -> None:
 	camera_manager = CameraStreamManager(settings.camera.url)
 	logger.info("camera_manager_initialized")
 
+	await camera_manager.start()
+	logger.info("camera_manager_started_on_init")
+
 
 async def start_camera_stream() -> None:
 	global camera_manager
@@ -175,9 +173,6 @@ async def start_camera_stream() -> None:
 
 	camera_manager.increment_consumers()
 
-	if camera_manager.is_running is False:
-		await camera_manager.start()
-
 
 async def stop_camera_stream() -> None:
 	global camera_manager
@@ -186,9 +181,6 @@ async def stop_camera_stream() -> None:
 		return
 
 	consumer_count = camera_manager.decrement_consumers()
-
-	if consumer_count == 0 and camera_manager.is_running is True:
-		await camera_manager.stop()
 
 
 async def get_camera_manager() -> CameraStreamManager:
