@@ -29,7 +29,7 @@ class CameraStreamManager:
 		if self.is_running is True:
 			return
 
-		logger.info("camera_stream_manager_starting", url=self.camera_url)
+		logger.info("camera_starting")
 		self.camera = Camera(url=self.camera_url)
 
 		loop = asyncio.get_event_loop()
@@ -38,24 +38,23 @@ class CameraStreamManager:
 				loop.run_in_executor(None, self.camera.get_correct),
 				timeout=30.0
 			)
-			logger.info("camera_calibration_loaded")
+			logger.info("camera_calibration_complete")
 		except asyncio.TimeoutError:
-			logger.warning("camera_calibration_timeout", reason="calibration_took_too_long")
-		except FileNotFoundError as e:
-			logger.warning("camera_calibration_skipped", reason="calibration_images_not_found", error=str(e))
+			logger.warning("camera_calibration_timeout")
+		except FileNotFoundError:
+			logger.warning("camera_calibration_skipped")
 		except Exception as e:
-			logger.warning("camera_calibration_failed", error=str(e), error_type=type(e).__name__)
+			logger.warning("camera_calibration_failed", error=str(e))
 
 		self.calibration_complete.set()
 		self.is_running = True
 		self.capture_task = asyncio.create_task(self._capture_loop())
-		logger.info("camera_stream_manager_started")
+		logger.info("camera_ready")
 
 	async def stop(self) -> None:
 		if self.is_running is False:
 			return
 
-		logger.info("camera_stream_manager_stopping")
 		self.is_running = False
 
 		if self.capture_task is not None:
@@ -68,27 +67,21 @@ class CameraStreamManager:
 
 		self.camera = None
 		self.latest_frame = None
-		logger.info("camera_stream_manager_stopped")
 
 	def increment_consumers(self) -> int:
 		self.consumer_count += 1
-		logger.info("camera_consumer_connected", count=self.consumer_count)
 		return self.consumer_count
 
 	def decrement_consumers(self) -> int:
 		self.consumer_count = max(0, self.consumer_count - 1)
-		logger.info("camera_consumer_disconnected", count=self.consumer_count)
 		return self.consumer_count
 
 	async def _capture_loop(self) -> None:
-		logger.info("camera_capture_loop_started", target_fps=self.target_fps)
-
 		while self.is_running is True:
 			loop_start = asyncio.get_event_loop().time()
 
 			try:
 				if self.camera is None:
-					logger.warning("camera_not_initialized")
 					await asyncio.sleep(1.0)
 					continue
 
@@ -128,7 +121,6 @@ class CameraStreamManager:
 				frame, corrected, bbox = await loop.run_in_executor(None, sync_capture_and_process)
 
 				if frame is None:
-					logger.warning("camera_capture_failed_no_frame")
 					await asyncio.sleep(1.0)
 					continue
 
@@ -160,8 +152,6 @@ class CameraStreamManager:
 			sleep_time = max(0.0, self.frame_interval - elapsed)
 			await asyncio.sleep(sleep_time)
 
-		logger.info("camera_capture_loop_stopped")
-
 	def _draw_detection_overlay(self, frame: np.ndarray, bbox: tuple[int, int, int, int]) -> np.ndarray:
 		annotated = frame.copy()
 		x, y, w, h = bbox
@@ -187,14 +177,10 @@ async def init_camera_manager() -> None:
 	settings = get_settings()
 
 	if settings.camera.enabled is False:
-		logger.info("camera_disabled", reason="settings_configuration")
 		return
 
 	camera_manager = CameraStreamManager(settings.camera.url)
-	logger.info("camera_manager_initialized")
-
 	asyncio.create_task(camera_manager.start())
-	logger.info("camera_manager_starting_in_background")
 
 
 async def start_camera_stream() -> None:
