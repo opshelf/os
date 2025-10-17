@@ -193,42 +193,48 @@ class Camera:
         self.H = None
         self.calibration_valid = False
 
-        # remap fields
         self.map1 = None
         self.map2 = None
-        self.map_size = None  # (w,h) used to build maps
+        self.map_size = None
 
-        self.H_ref_size = (2880, 1620)  # (w0, h0)
+        self.H_ref_size = (2880, 1620)
         self.board_W_mm = None
         self.board_H_mm = None
         self.pattern_size = (14, 7)
-        self.square_size_mm = 15.0 #15 actually -> might have accounted for small error in autocal
+        self.square_size_mm = 15.0
 
-        # self.get_correct() #
+        self.cap = None
+        self.cap_initialized = False
 
     async def capture(self):
-        cap = cv2.VideoCapture(self.url, cv2.CAP_FFMPEG)
-        if not cap.isOpened():
-            raise RuntimeError("bad cam")
-        
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
-        cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
+        if self.cap is None or not self.cap.isOpened():
+            self.cap = cv2.VideoCapture(self.url, cv2.CAP_FFMPEG)
+            if not self.cap.isOpened():
+                raise RuntimeError("bad cam")
 
-        t0 = time.time()
-        while time.time() - t0 < 4.25: # idr interval
-            cap.grab()
-            time.sleep(0.001)
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            self.cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
+            self.cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
 
-        for _ in range(5):
-            cap.grab()
+            if not self.cap_initialized:
+                t0 = time.time()
+                while time.time() - t0 < 4.25:
+                    self.cap.grab()
+                    time.sleep(0.001)
+                self.cap_initialized = True
 
-        ok, frame = cap.read()
+        for _ in range(3):
+            self.cap.grab()
+
+        ok, frame = self.cap.read()
         if not ok or frame is None:
             print("camera fail")
+            if self.cap is not None:
+                self.cap.release()
+                self.cap = None
+                self.cap_initialized = False
             return None
-        
-        cap.release()
+
         return frame
     
     def _build_remap(self, size_wh):
