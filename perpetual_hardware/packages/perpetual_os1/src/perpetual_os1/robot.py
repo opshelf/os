@@ -14,6 +14,7 @@ from perpetual_os1.exceptions import (
 
 from perpetual_os1.robot_state import RobotStateManager, RobotStateError
 
+import json
 from pathlib import Path
 from enum import Enum
 from typing import Dict, Optional, Tuple, Union, Literal, Annotated, List
@@ -21,6 +22,8 @@ from pydantic import BaseModel, Field
 
 import time
 
+import os
+STORAGE_PATH = os.path.join(os.path.dirname(__file__), 'storage.json')
 CONFIG_PATH = Path(__file__).resolve().parent / "config.json"
 
 class StopCommand(BaseModel):
@@ -94,7 +97,9 @@ class Robot:
         # Robot Components
         self._tool = Tool(motorcontroller=self._motorbus, params=tool_params)
         self._io = IOBox(motorcontroller=self._motorbus, params=io_params)
-        self._grid: Optional[StorageGrid] = None  # Storage grid configuration
+        with open(STORAGE_PATH, 'r') as f:
+             data = json.load(f)
+        self._grid = StorageGrid.model_validate(data)  # Storage grid configuration
 
         # Status
         self._cur_item: str = None # some kind of unique identifier
@@ -116,7 +121,7 @@ class Robot:
         
         await self._tool.configure()
         await self._io.configure()
-
+        # self._grid.parse_file(self._grid.filename)
 
     def get_param(self, param: str):
         try:
@@ -214,24 +219,45 @@ class Robot:
             cal_coord = self._grid.get_cell_coordinate(cell_location)
             return cal_coord.to_axis_coordinate()
             
-        # Search through all cells for matching item
-        all_cells = self._grid.get_all_cell_data()
-        
-        for cell_data in all_cells:
-            if not cell_data.cell:  # Skip empty cells
+        # # Search through all cells for matching item
+        # all_cells = self._grid.get_all_cell_data()
+        all_cells = self._grid.get_all_cells()
+
+        for cell in all_cells:
+            # print(cell_data)
+            if cell.status == CellStatus.EMPTY:  # Skip empty cells
                 continue
                 
-            # Match by UPCA if provided
-            if upca and cell_data.cell.upca == upca:
-                cal_coord = self._grid.get_cell_coordinate(cell_data.location)
-                return cal_coord.to_axis_coordinate()
+            # # Match by UPCA if provided
+            # if upca and cell.cell.upca == upca:
+            #     cal_coord = self._grid.get_cell_coordinate(cell_data.location)
+            #     return cal_coord.to_axis_coordinate()
                 
             # Match by item name in data
-            if item_name and cell_data.cell.data:
-                item_data = cell_data.cell.data
-                if isinstance(item_data, dict) and item_data.get("name") == item_name:
-                    cal_coord = self._grid.get_cell_coordinate(cell_data.location)
-                    return cal_coord.to_axis_coordinate()
+            if item_name and cell:
+                item_data = cell.name
+                if item_data == item_name:
+                    coord = cell.calibration_point.to_axis_coordinate()
+                    return coord
+                    # cal_coord = self._grid.get_cell_coordinate(cell.location)
+                    # return cal_coord.to_axis_coordinate()
+        
+        # for cell_data in all_cells:
+        #     # print(cell_data)
+        #     if not cell_data.cell:  # Skip empty cells
+        #         continue
+                
+        #     # Match by UPCA if provided
+        #     if upca and cell_data.cell.upca == upca:
+        #         cal_coord = self._grid.get_cell_coordinate(cell_data.location)
+        #         return cal_coord.to_axis_coordinate()
+                
+        #     # Match by item name in data
+        #     if item_name and cell_data.cell.data:
+        #         item_data = cell_data.cell.data
+        #         if isinstance(item_data, dict) and item_data.get("name") == item_name:
+        #             cal_coord = self._grid.get_cell_coordinate(cell_data.location)
+        #             return cal_coord.to_axis_coordinate()
                     
         return None
 
@@ -496,7 +522,7 @@ class Robot:
             
         # Get coordinate and store
         coord = self._grid.get_cell_coordinate(location)
-        await self.io_place(coord.to_axis_coordinate())
+        await self.io_pick(coord.to_axis_coordinate())
         
         # Update storage grid
         self._grid.store_item(location, item)
@@ -522,7 +548,10 @@ class Robot:
             return RobotCommandError(error=f"Item '{item_name}' not found in storage")
             
         # Retrieve item
-        await self.io_pick(coord)
+        # print(coord)
+        await self.io_place(coord)
+
+        # todo update storage grid
 
     async def measure_item_dimensions(self, n_frames: int = 10) -> Optional[Dict[str, float]]:
         """
@@ -589,8 +618,11 @@ class Robot:
         # # await self._io.close_door()
         
         # await self._tool.move(coordinate=coordinate)
-        item = await self._io.measure_item()
-        print(item)
+        # item = await self._io.measure_item()
+        # print(item)
+        # print(self._grid)
+        # print("beblet")
+        await self.retrieve(item_name="andi")
         # img = await self._tool._cam.capture()
         # cv2.imwrite("beb.png", img)
         # await self._tool.place(coordinate=coordinate)

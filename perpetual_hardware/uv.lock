@@ -444,11 +444,15 @@ name = "hardware"
 version = "0.1.0"
 source = { editable = "packages/hardware" }
 dependencies = [
+    { name = "arducamdepthcamera" },
     { name = "pydantic" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "pydantic", specifier = ">=2.10.0" }]
+requires-dist = [
+    { name = "arducamdepthcamera", specifier = "==0.1.21" },
+    { name = "pydantic", specifier = ">=2.10.0" },
+]
 
 [[package]]
 name = "httpcore"

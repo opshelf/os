@@ -76,7 +76,7 @@ class Tool:
             await self._mg.configure()
             await self._ms.configure()
             await self._mr.configure()
-            # await self.home()
+            await self.home()
             # self._cam.get_correct()
             self._mstatus = ToolMotionStatus.IDLE
         except Exception as e:

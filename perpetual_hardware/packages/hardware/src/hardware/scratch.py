@@ -24,136 +24,133 @@ p3 = [(x + 4, y + dy) for (x, y), dy in zip(s3, sl3)]
 p4 = [(x + 4, y + dy) for (x, y), dy in zip(s4, sl4)]
 p5 = [(x + 4, y + dy) for (x, y), dy in zip(s5, sl5)]
 
-print(p1)
-
-# import json
-# from dataclasses import asdict, dataclass
+import json
+from dataclasses import asdict, dataclass
 
 
-# @dataclass
-# class CellDef:
-# 	x: float
-# 	y: float
-# 	width: float
-# 	height: float
-# 	depth: float
+@dataclass
+class CellDef:
+	x: float
+	y: float
+	width: float
+	height: float
+	depth: float
 
 
-# def generate_storage_schema(box_width: float = 50.0, box_height: float = 100.0, box_length: float = 400.0):
-# 	"""Generate a storage grid schema from p1..p5.
+def generate_storage_schema(box_width: float = 50.0, box_height: float = 100.0, box_length: float = 400.0):
+	"""Generate a storage grid schema from p1..p5.
 
-# 	Strategy:
-# 	- Treat each pN list as a shelf row, left-to-right order as given.
-# 	- Divide into left/right modules by median x across all points.
-# 	- For each shelf build a list of cells with identical box dimensions.
-# 	"""
-# 	rows = [p1, p2, p3, p4, p5]
-# 	all_points = [pt for row in rows for pt in row]
-# 	xs = sorted([p[0] for p in all_points])
-# 	if not xs:
-# 		raise ValueError("No points to build schema from")
-# 	median_x = xs[len(xs) // 2]
+	Strategy:
+	- Treat each pN list as a shelf row, left-to-right order as given.
+	- Divide into left/right modules by median x across all points.
+	- For each shelf build a list of cells with identical box dimensions.
+	"""
+	rows = [p1, p2, p3, p4, p5]
+	all_points = [pt for row in rows for pt in row]
+	xs = sorted([p[0] for p in all_points])
+	if not xs:
+		raise ValueError("No points to build schema from")
+	median_x = xs[len(xs) // 2]
 
-# 	left_module = []
-# 	right_module = []
+	left_module = []
+	right_module = []
 
-# 	for row in rows:
-# 		shelf_cells_left = []
-# 		shelf_cells_right = []
-# 		for (x, y) in row:
-# 			cell = CellDef(x=x, y=y, width=box_width, height=box_height, depth=box_length)
-# 			if x <= median_x:
-# 				shelf_cells_left.append(cell)
-# 			else:
-# 				shelf_cells_right.append(cell)
+	for row in rows:
+		shelf_cells_left = []
+		shelf_cells_right = []
+		for (x, y) in row:
+			cell = CellDef(x=x, y=y, width=box_width, height=box_height, depth=box_length)
+			if x <= median_x:
+				shelf_cells_left.append(cell)
+			else:
+				shelf_cells_right.append(cell)
 
-# 		# Keep order from left->right by x
-# 		shelf_cells_left.sort(key=lambda c: c.x)
-# 		shelf_cells_right.sort(key=lambda c: c.x)
+		# Keep order from left->right by x
+		shelf_cells_left.sort(key=lambda c: c.x)
+		shelf_cells_right.sort(key=lambda c: c.x)
 
-# 		# Convert to simple dicts
-# 		left_module.append([asdict(c) for c in shelf_cells_left])
-# 		right_module.append([asdict(c) for c in shelf_cells_right])
+		# Convert to simple dicts
+		left_module.append([asdict(c) for c in shelf_cells_left])
+		right_module.append([asdict(c) for c in shelf_cells_right])
 
-# 	schema = {
-# 		"left_module": left_module,
-# 		"right_module": right_module,
-# 		"box_dimensions": {"width": box_width, "height": box_height, "length": box_length},
-# 		"generated_from": "scratch.py"
-# 	}
+	schema = {
+		"left_module": left_module,
+		"right_module": right_module,
+		"box_dimensions": {"width": box_width, "height": box_height, "length": box_length},
+		"generated_from": "scratch.py"
+	}
 
-# 	out_path = "storage_schema.json"
-# 	with open(out_path, "w+") as f:
-# 		json.dump(schema, f, indent=2)
+	out_path = "storage_schema.json"
+	with open(out_path, "w+") as f:
+		json.dump(schema, f, indent=2)
 
-# 	# Print summary
-# 	total_left = sum(len(s) for s in left_module)
-# 	total_right = sum(len(s) for s in right_module)
-# 	print(f"Wrote {out_path}: left_cells={total_left}, right_cells={total_right}")
+	# Print summary
+	total_left = sum(len(s) for s in left_module)
+	total_right = sum(len(s) for s in right_module)
+	print(f"Wrote {out_path}: left_cells={total_left}, right_cells={total_right}")
 
 
-# if __name__ == "__main__":
-# 	generate_storage_schema()
-# 	# After schema generation, also convert to StorageGrid-style JSON
-# 	def convert_schema_to_storage(schema_path: str = "storage_schema.json", out_path: str = "storage.json"):
-# 		"""Convert the simple schema to a StorageGrid-like storage.json and place all cells on the left side."""
-# 		with open(schema_path, "r") as f:
-# 			sch = json.load(f)
+if __name__ == "__main__":
+	generate_storage_schema()
+	# After schema generation, also convert to StorageGrid-style JSON
+	def convert_schema_to_storage(schema_path: str = "storage_schema.json", out_path: str = "storage.json"):
+		"""Convert the simple schema to a StorageGrid-like storage.json and place all cells on the left side."""
+		with open(schema_path, "r") as f:
+			sch = json.load(f)
 
-# 		box_dims = sch.get("box_dimensions", {"width": 50.0, "height": 100.0, "length": 400.0})
+		box_dims = sch.get("box_dimensions", {"width": 50.0, "height": 100.0, "length": 400.0})
 
-# 		left_module_shelves = []
+		left_module_shelves = []
 
-# 		# Gather all shelves from both modules and place them into left_module
-# 		all_shelves = []
-# 		for shelf in sch.get("left_module", []):
-# 			all_shelves.append(shelf)
-# 		for shelf in sch.get("right_module", []):
-# 			all_shelves.append(shelf)
+		# Gather all shelves from both modules and place them into left_module
+		all_shelves = []
+		for shelf in sch.get("left_module", []):
+			all_shelves.append(shelf)
+		for shelf in sch.get("right_module", []):
+			all_shelves.append(shelf)
 
-# 		for shelf in all_shelves:
-# 			# shelf is a list of cell dicts
-# 			cells = []
-# 			xs = [c["x"] for c in shelf] if shelf else []
-# 			# approximate shelf_width from span or number of cells
-# 			if xs:
-# 				shelf_width = max(xs) - min(xs) + box_dims.get("width", 50.0)
-# 			else:
-# 				shelf_width = len(shelf) * box_dims.get("width", 50.0)
+		for shelf in all_shelves:
+			# shelf is a list of cell dicts
+			cells = []
+			xs = [c["x"] for c in shelf] if shelf else []
+			# approximate shelf_width from span or number of cells
+			if xs:
+				shelf_width = max(xs) - min(xs) + box_dims.get("width", 50.0)
+			else:
+				shelf_width = len(shelf) * box_dims.get("width", 50.0)
 
-# 			# set shelf_height equal to box height plus a small margin
-# 			shelf_height = box_dims.get("height", 100.0) + 10.0
+			# set shelf_height equal to box height plus a small margin
+			shelf_height = box_dims.get("height", 100.0) + 10.0
 
-# 			for c in shelf:
-# 				cell = {
-# 					"status": "EMPTY",
-# 					"item": None,
-# 					"calibration_point": {"x": float(c.get("x", 0.0)), "y": float(c.get("y", 0.0)), "z": 0.0},
-# 					"dimensions": {"length": float(box_dims.get("length", 400.0)), "width": float(box_dims.get("width", 50.0)), "height": float(box_dims.get("height", 100.0))},
-# 					"empty": True
-# 				}
-# 				cells.append(cell)
+			for c in shelf:
+				cell = {
+					"status": "EMPTY",
+					"item": None,
+					"calibration_point": {"x": float(c.get("x", 0.0)), "y": float(c.get("y", 0.0)), "z": 0.0},
+					"dimensions": {"length": float(box_dims.get("length", 400.0)), "width": float(box_dims.get("width", 50.0)), "height": float(box_dims.get("height", 100.0))},
+					"empty": True
+				}
+				cells.append(cell)
 
-# 			left_module_shelves.append({
-# 				"shelf_height": float(shelf_height),
-# 				"shelf_width": float(shelf_width),
-# 				"cells": cells,
-# 				"divider_width": 8.0
-# 			})
+			left_module_shelves.append({
+				"shelf_height": float(shelf_height),
+				"shelf_width": float(shelf_width),
+				"cells": cells,
+				"divider_width": 8.0
+			})
 
-# 		storage = {
-# 			"left_module": left_module_shelves,
-# 			"right_module": [],
-# 			"filename": "storage.json"
-# 		}
+		storage = {
+			"left_module": left_module_shelves,
+			"right_module": [],
+			"filename": "storage.json"
+		}
 
-# 		# ensure target directory exists
-# 		out_dir = "/Users/openshelf/Documents/perpetual_os/perpetual_hardware/packages/perpetual_os1/src/perpetual_os1"
-# 		out_file = out_dir + "/storage.json"
-# 		with open(out_file, "w+") as f:
-# 			json.dump(storage, f, indent=2)
+		# ensure target directory exists
+		out_file = "./storage.json"
+		with open(out_file, "w+") as f:
+			json.dump(storage, f, indent=2)
 
-# 		total_cells = sum(len(s["cells"]) for s in storage["left_module"])
-# 		print(f"Wrote storage.json with {len(storage['left_module'])} shelves and {total_cells} total cells to {out_file}")
+		total_cells = sum(len(s["cells"]) for s in storage["left_module"])
+		print(f"Wrote storage.json with {len(storage['left_module'])} shelves and {total_cells} total cells to {out_file}")
 
-# 	convert_schema_to_storage()
+	convert_schema_to_storage()

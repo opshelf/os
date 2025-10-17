@@ -2,10 +2,11 @@ from pydantic import BaseModel, ValidationError, model_validator, field_validato
 from enum import Enum
 from typing import Optional, List, Self, Tuple, Mapping, Iterable, Union, Dict
 from perpetual_os1.common import AxisCoordinate
+import os
 
 type Json = Dict[str, Union[str, int, float, Mapping, Iterable]]
 
-
+STORAGE_PATH = os.path.join(os.path.dirname(__file__), 'storage.json')
 class StorageModuleSide(str, Enum):
     RIGHT = "right_module"
     LEFT = "left_module"
@@ -46,6 +47,7 @@ class CellItem(BaseModel):
 class Cell(BaseModel):
     status: CellStatus
     item: Optional[CellItem]
+    name: Optional[str]
     calibration_point: Optional[CalibrationCoordinate]
     dimensions: Dimensions
     empty: bool = False
@@ -95,6 +97,8 @@ class Shelf(BaseModel):
                     cal_idx += 1
                 cal_point.x = x_value
                 return cal_point
+            
+    # def get_cell_coord(self)
 
     def get_next_optimal_slot(self, item: CellItem) -> Optional[int]:
         cell_idx = 0
@@ -137,9 +141,10 @@ class CellLocationData(BaseModel):
 
 
 class StorageGrid(BaseModel):
-    left_module: List[Shelf]
-    right_module: List[Shelf]
-    filename: str = "storage.json"
+    left_module: List[Shelf] = Field(default_factory=list)
+    right_module: List[Shelf] = Field(default_factory=list)
+    # filename: str = "./storage.json"
+    filename: str = STORAGE_PATH
 
     def save_to_file(self, filename: str) -> None:
         with open(filename, "w+") as f:
@@ -304,6 +309,19 @@ class StorageGrid(BaseModel):
                         )
                     )
         return locations
+
+    def get_all_cells(self) -> List[Cell]:
+        cells: List[Cell] = []
+        for shelf_idx, shelf in enumerate(self.left_module):
+            for cell_idx, cell in enumerate(shelf.cells):
+                cells.append(cell)
+                    
+        for shelf_idx, shelf in enumerate(self.right_module):
+            for cell_idx, cell in enumerate(shelf.cells):
+                cells.append(cell)
+
+        return cells
+
 
     def get_all_cell_data(self) -> List[CellLocationData]:
         items: List[CellLocationData] = []

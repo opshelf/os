@@ -37,13 +37,12 @@
           "motor_name": "y_axis",
           "motor_id": 2,
           "Ip": 60,
-          "rpm": 250,
+          "rpm": 300,
           "dr": 0,
           "mpr": 40,
-          "accel": 1000,
+          "accel": 500,
           "ret_rpm": 64,
-          "lim": 1295,
-          "Iph": 50
+          "lim": 1295
         },
         {
           "motor_name": "stage",
