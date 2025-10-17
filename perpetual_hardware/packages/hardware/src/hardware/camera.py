@@ -339,9 +339,8 @@ class Camera:
     def detect_white_squares(self, frame):
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         gray = cv2.GaussianBlur(gray, (3, 3), 0)
-        _, bin_ = cv2.threshold(gray, 225, 255, cv2.THRESH_BINARY) # 200
+        _, bin_ = cv2.threshold(gray, 225, 255, cv2.THRESH_BINARY)
         bin_ = cv2.morphologyEx(bin_, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8), iterations=1)
-        cv2.imwrite("bin.png", bin_)
         contours, _ = cv2.findContours(bin_, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         valid_rects = []
