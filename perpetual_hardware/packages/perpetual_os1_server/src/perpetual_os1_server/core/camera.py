@@ -31,9 +31,15 @@ class CameraStreamManager:
 		logger.info("camera_stream_manager_starting", url=self.camera_url)
 		self.camera = Camera(url=self.camera_url)
 
+		loop = asyncio.get_event_loop()
 		try:
-			self.camera.get_correct()
+			await asyncio.wait_for(
+				loop.run_in_executor(None, self.camera.get_correct),
+				timeout=10.0
+			)
 			logger.info("camera_calibration_loaded")
+		except asyncio.TimeoutError:
+			logger.warning("camera_calibration_timeout", reason="calibration_took_too_long")
 		except FileNotFoundError as e:
 			logger.warning("camera_calibration_skipped", reason="calibration_images_not_found", error=str(e))
 		except Exception as e:
