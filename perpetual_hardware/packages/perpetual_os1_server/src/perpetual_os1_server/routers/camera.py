@@ -42,6 +42,20 @@ async def mjpeg_stream_generator(request: Request) -> AsyncGenerator[bytes, None
 			if await request.is_disconnected() is True:
 				break
 
+			if manager.calibration_complete.is_set() is False:
+				if black_frame_cache is None:
+					black = np.zeros((900, 1950, 3), dtype=np.uint8)
+					_, buffer = cv2.imencode('.jpg', black, [cv2.IMWRITE_JPEG_QUALITY, 85])
+					black_frame_cache = buffer.tobytes()
+
+				yield (
+					b"--frame\r\n"
+					b"Content-Type: image/jpeg\r\n\r\n" + black_frame_cache + b"\r\n"
+				)
+
+				await asyncio.sleep(0.05)
+				continue
+
 			frame_bytes = await manager.get_latest_frame()
 
 			if frame_bytes is None:

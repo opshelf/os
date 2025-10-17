@@ -23,6 +23,7 @@ class CameraStreamManager:
 		self.capture_task: Optional[asyncio.Task] = None
 		self.target_fps = 12
 		self.frame_interval = 1.0 / self.target_fps
+		self.calibration_complete = asyncio.Event()
 
 	async def start(self) -> None:
 		if self.is_running is True:
@@ -45,6 +46,7 @@ class CameraStreamManager:
 		except Exception as e:
 			logger.warning("camera_calibration_failed", error=str(e), error_type=type(e).__name__)
 
+		self.calibration_complete.set()
 		self.is_running = True
 		self.capture_task = asyncio.create_task(self._capture_loop())
 		logger.info("camera_stream_manager_started")
