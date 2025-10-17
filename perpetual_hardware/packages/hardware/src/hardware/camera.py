@@ -181,7 +181,7 @@ def is_right_angle_quad(pts, cos_tol=0.25):
 
 
 class Camera:
-    def __init__(self, 
+    def __init__(self,
                  url="rtsp://192.168.1.108:554/user=admin&password=&channel=1&stream=0.sdp?tcp"):
         self.url = url
         self.mtx = None
@@ -191,6 +191,7 @@ class Camera:
         self.newcameramtx = None
         self.roi = None
         self.H = None
+        self.calibration_valid = False
 
         # remap fields
         self.map1 = None
@@ -270,11 +271,13 @@ class Camera:
         self.board_W_mm = (cols - 1) * self.square_size_mm
         self.board_H_mm = (rows - 1) * self.square_size_mm
 
+        self.calibration_valid = True
+
         # cv2.imwrite("rectified.jpg", rectified0)
 
     def correct(self, img):
         """Undistort with remap, then rectify with H scaled to the current size."""
-        if self.H is None or self.mtx is None or self.dist is None:
+        if self.calibration_valid is False:
             return img
 
         h, w = img.shape[:2]
