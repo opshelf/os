@@ -132,6 +132,9 @@ class CameraStreamManager:
 					await asyncio.sleep(1.0)
 					continue
 
+				h, w = corrected.shape[:2]
+				logger.info("frame_captured", width=w, height=h, calibration_valid=self.camera.calibration_valid, has_bbox=bbox is not None)
+
 				if bbox is not None:
 					annotated = self._draw_detection_overlay(corrected, bbox)
 				else:
