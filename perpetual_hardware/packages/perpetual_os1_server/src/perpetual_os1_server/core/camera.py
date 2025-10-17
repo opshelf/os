@@ -44,10 +44,10 @@ class CameraStreamManager:
 			logger.warning("camera_calibration_skipped", reason="calibration_images_not_found", error=str(e))
 		except Exception as e:
 			logger.warning("camera_calibration_failed", error=str(e), error_type=type(e).__name__)
-
-		self.is_running = True
-		self.capture_task = asyncio.create_task(self._capture_loop())
-		logger.info("camera_stream_manager_started")
+		finally:
+			self.is_running = True
+			self.capture_task = asyncio.create_task(self._capture_loop())
+			logger.info("camera_stream_manager_started")
 
 	async def stop(self) -> None:
 		if self.is_running is False:

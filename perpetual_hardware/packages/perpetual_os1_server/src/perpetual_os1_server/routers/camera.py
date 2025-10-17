@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 from typing import AsyncGenerator
 
+import cv2
+import numpy as np
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 
@@ -36,7 +38,7 @@ async def mjpeg_stream_generator(request: Request) -> AsyncGenerator[bytes, None
 
 		wait_count = 0
 		max_wait = 200
-		first_frame = True
+		black_frame_cache = None
 
 		while True:
 			if await request.is_disconnected() is True:
@@ -48,6 +50,17 @@ async def mjpeg_stream_generator(request: Request) -> AsyncGenerator[bytes, None
 				wait_count += 1
 				if wait_count >= max_wait:
 					raise TimeoutError(f"No frames received after {max_wait * 0.05:.1f}s")
+
+				if black_frame_cache is None:
+					black = np.zeros((900, 1950, 3), dtype=np.uint8)
+					_, buffer = cv2.imencode('.jpg', black, [cv2.IMWRITE_JPEG_QUALITY, 85])
+					black_frame_cache = buffer.tobytes()
+
+				yield (
+					b"--frame\r\n"
+					b"Content-Type: image/jpeg\r\n\r\n" + black_frame_cache + b"\r\n"
+				)
+
 				await asyncio.sleep(0.05)
 				continue
 
@@ -57,9 +70,6 @@ async def mjpeg_stream_generator(request: Request) -> AsyncGenerator[bytes, None
 				b"--frame\r\n"
 				b"Content-Type: image/jpeg\r\n\r\n" + frame_bytes + b"\r\n"
 			)
-
-			if first_frame:
-				first_frame = False
 
 			await asyncio.sleep(1.0 / manager.target_fps)
 
