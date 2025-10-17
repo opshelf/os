@@ -36,8 +36,6 @@ async def mjpeg_stream_generator(request: Request) -> AsyncGenerator[bytes, None
 		await start_camera_stream()
 		manager = await get_camera_manager()
 
-		wait_count = 0
-		max_wait = 200
 		black_frame_cache = None
 
 		while True:
@@ -47,10 +45,6 @@ async def mjpeg_stream_generator(request: Request) -> AsyncGenerator[bytes, None
 			frame_bytes = await manager.get_latest_frame()
 
 			if frame_bytes is None:
-				wait_count += 1
-				if wait_count >= max_wait:
-					raise TimeoutError(f"No frames received after {max_wait * 0.05:.1f}s")
-
 				if black_frame_cache is None:
 					black = np.zeros((900, 1950, 3), dtype=np.uint8)
 					_, buffer = cv2.imencode('.jpg', black, [cv2.IMWRITE_JPEG_QUALITY, 85])
@@ -63,8 +57,6 @@ async def mjpeg_stream_generator(request: Request) -> AsyncGenerator[bytes, None
 
 				await asyncio.sleep(0.05)
 				continue
-
-			wait_count = 0
 
 			yield (
 				b"--frame\r\n"
