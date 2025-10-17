@@ -274,6 +274,9 @@ class Camera:
 
     def correct(self, img):
         """Undistort with remap, then rectify with H scaled to the current size."""
+        if self.H is None or self.mtx is None or self.dist is None:
+            return img
+
         h, w = img.shape[:2]
         if self.map1 is None or self.map_size != (w, h):
             self._build_remap((w, h))
