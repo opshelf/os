@@ -90,15 +90,45 @@ class CameraStreamManager:
 					await asyncio.sleep(1.0)
 					continue
 
-				frame = await self.camera.capture()
+				loop = asyncio.get_event_loop()
+
+				def sync_capture_and_process():
+					if self.camera.cap is None or not self.camera.cap.isOpened():
+						self.camera.cap = cv2.VideoCapture(self.camera.url, cv2.CAP_FFMPEG)
+						if not self.camera.cap.isOpened():
+							return None, None, None
+						self.camera.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+						self.camera.cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
+						self.camera.cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
+						if not self.camera.cap_initialized:
+							import time
+							t0 = time.time()
+							while time.time() - t0 < 4.25:
+								self.camera.cap.grab()
+								time.sleep(0.001)
+							self.camera.cap_initialized = True
+
+					for _ in range(3):
+						self.camera.cap.grab()
+
+					ok, frame = self.camera.cap.read()
+					if not ok or frame is None:
+						if self.camera.cap is not None:
+							self.camera.cap.release()
+							self.camera.cap = None
+							self.camera.cap_initialized = False
+						return None, None, None
+
+					corrected = self.camera.correct(frame)
+					bbox = self.camera.detect_white_squares(corrected)
+					return frame, corrected, bbox
+
+				frame, corrected, bbox = await loop.run_in_executor(None, sync_capture_and_process)
 
 				if frame is None:
 					logger.warning("camera_capture_failed_no_frame")
 					await asyncio.sleep(1.0)
 					continue
-
-				corrected = self.camera.correct(frame)
-				bbox = self.camera.detect_white_squares(corrected)
 
 				if bbox is not None:
 					annotated = self._draw_detection_overlay(corrected, bbox)
@@ -161,8 +191,8 @@ async def init_camera_manager() -> None:
 	camera_manager = CameraStreamManager(settings.camera.url)
 	logger.info("camera_manager_initialized")
 
-	await camera_manager.start()
-	logger.info("camera_manager_started_on_init")
+	asyncio.create_task(camera_manager.start())
+	logger.info("camera_manager_starting_in_background")
 
 
 async def start_camera_stream() -> None:
