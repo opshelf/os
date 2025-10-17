@@ -85,8 +85,8 @@ async def mjpeg_stream_generator(request: Request) -> AsyncGenerator[bytes, None
 		await stop_camera_stream()
 
 
-@router.get("/stream/detection")
-async def stream_camera_detection(
+@router.get("")
+async def stream_camera(
 	request: Request,
 	current_user: dict | None = Depends(get_current_user_optional),
 ) -> StreamingResponse:
