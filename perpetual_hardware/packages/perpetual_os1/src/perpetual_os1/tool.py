@@ -233,7 +233,7 @@ class Tool:
             self._mstatus = ToolMotionStatus.MOVING
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
             await self._ms.move_to_position(slide_ext)
-            await self._mg.move_to_position(grip_ext+io_offset)
+            await self._mg.move_to_position(grip_ext)
             self._mstatus = ToolMotionStatus.IDLE
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
         except Exception as e:
@@ -378,8 +378,8 @@ class Tool:
         """
         try:
             while True:
-                mg_f = await self._mg.wait_for_move(timeout=2.5, homing=homing)
-                ms_f = await self._ms.wait_for_move(timeout=2.5, homing=homing)
+                mg_f = await self._mg.wait_for_move(timeout=5, homing=homing)
+                ms_f = await self._ms.wait_for_move(timeout=5, homing=homing)
                 if mg_f == MotorStatus.STOPPED and ms_f == MotorStatus.STOPPED:
                     return
                 if mg_f == MotorStatus.ERROR or ms_f == MotorStatus.ERROR:

@@ -10,7 +10,7 @@
         "PICKUP_POSITION_L": [52, 469],
         "PICKUP_POSITION_H": [52, 725],
         "SCAN_POSITION": [930, 1],
-        "SLIDE_EXTENSION":49.5,
+        "SLIDE_EXTENSION":49,
         "GRIPPER_EXTENSION_PICK": 166.5,
         "GRIPPER_EXTENSION_PLACE": 165,
         "DOOR_OPEN": 220,

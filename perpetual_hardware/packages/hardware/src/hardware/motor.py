@@ -172,7 +172,7 @@ class Motor():
         self._controller = controller           
         self._params = params
         self._cur_pos = None
-        self._stall_timeout = 0.25                     
+        self._stall_timeout = 0.5                     
         self._status = MotorStatus.IDLE
 
     async def configure(self):
@@ -445,11 +445,11 @@ class Motor():
             last_pos = self._cur_pos
             
             # Check for stall condition
-            if has_moved and (now - last_movement_time > self._stall_timeout):
-                await self.stop()
-                if not homing:
-                    raise MotorError(f"Motor {self._motor_id} stalled")
-                return MotorStatus.STOPPED #add a stalled command?)
+            # if has_moved and (now - last_movement_time > self._stall_timeout):
+            #     await self.stop()
+            #     if not homing:
+            #         raise MotorError(f"Motor {self._motor_id} stalled")
+            #     return MotorStatus.STOPPED #add a stalled command?)
 
             # Normal completion
             if complete:
