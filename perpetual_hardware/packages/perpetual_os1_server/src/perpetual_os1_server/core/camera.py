@@ -90,6 +90,7 @@ class CameraStreamManager:
 					await asyncio.sleep(1.0)
 					continue
 
+				logger.info("camera_capture_starting")
 				frame = await self.camera.capture()
 
 				if frame is None:
@@ -97,19 +98,23 @@ class CameraStreamManager:
 					await asyncio.sleep(1.0)
 					continue
 
+				logger.info("camera_frame_received", shape=str(frame.shape))
 				corrected = self.camera.correct(frame)
 				bbox = self.camera.detect_white_squares(corrected)
 
 				if bbox is not None:
 					annotated = self._draw_detection_overlay(corrected, bbox)
+					logger.info("camera_detection_found", bbox=str(bbox))
 				else:
 					annotated = corrected
+					logger.info("camera_no_detection")
 
 				success, buffer = cv2.imencode('.jpg', annotated, [cv2.IMWRITE_JPEG_QUALITY, 85])
 
 				if success is True:
 					async with self.frame_lock:
 						self.latest_frame = buffer.tobytes()
+					logger.info("camera_frame_encoded", size_bytes=len(buffer))
 
 			except RuntimeError as e:
 				if "bad cam" in str(e):

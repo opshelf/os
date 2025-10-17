@@ -34,6 +34,9 @@ async def mjpeg_stream_generator(request: Request) -> AsyncGenerator[bytes, None
 		await start_camera_stream()
 		manager = await get_camera_manager()
 
+		wait_count = 0
+		max_wait = 60
+
 		while True:
 			if await request.is_disconnected() is True:
 				break
@@ -41,8 +44,13 @@ async def mjpeg_stream_generator(request: Request) -> AsyncGenerator[bytes, None
 			frame_bytes = await manager.get_latest_frame()
 
 			if frame_bytes is None:
+				wait_count += 1
+				if wait_count >= max_wait:
+					raise TimeoutError(f"No frames received after {max_wait * 0.05:.1f}s")
 				await asyncio.sleep(0.05)
 				continue
+
+			wait_count = 0
 
 			yield (
 				b"--frame\r\n"
