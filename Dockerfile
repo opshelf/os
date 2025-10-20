@@ -25,4 +25,4 @@ EXPOSE 8000
 EXPOSE 4222
 EXPOSE 8222
 
-CMD ["uv", "run", "start"]
+CMD ["uv", "run", "--no-dev", "start"]

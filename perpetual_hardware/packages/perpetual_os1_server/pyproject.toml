@@ -5,7 +5,7 @@ description = "Add your description here"
 authors = [
     { name = "emgardner", email = "gardner.ethan10@gmail.com" }
 ]
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.14"
 dependencies = [
     "fastapi>=0.115.6",
     "nats-py>=2.9.0",
