@@ -1,5 +1,5 @@
 export function getApiBase(): string {
-	const raw = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/api";
+	const raw = import.meta.env.VITE_API_BASE_URL ?? `http://${location.hostname}:8000/api`;
 	return raw.endsWith("/") ? raw.slice(0, -1) : raw;
 }
 
