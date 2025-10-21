@@ -19,7 +19,8 @@ services:
       dockerfile: ./Dockerfile
     volumes:
       - ./perpetual_hardware/:/app/perpetual_hardware/
-    network_mode: host
+    ports:
+      - "8000:8000"
     depends_on:
       - nats
     environment:
@@ -28,7 +29,29 @@ services:
       - PERPETUAL_BARCODE_BAUDRATE=115200
       - JWT_SECRET=${JWT_SECRET:-INSECURE_JWT_SECRET}
       - AUDIT_HMAC_KEY=${AUDIT_HMAC_KEY:-INSECURE_AUDIT_HMAC_KEY}
-      - NATS_DOMAIN=localhost
+      - NATS_DOMAIN=nats
+    networks:
+      - openshelf-network
+
+  dev_ui:
+    build:
+      context: ./dev_ui
+      dockerfile: Dockerfile
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 8080"
+    environment:
+      - VITE_API_BASE_URL=http://localhost:8000/api
+    volumes:
+      - ./dev_ui:/app
+      - dev_ui_node_modules:/app/node_modules
+    ports:
+      - "8080:8080"
+    depends_on:
+      - api
+    networks:
+      - openshelf-network
 
 networks:
   openshelf-network:
+
+volumes:
+  dev_ui_node_modules:
