@@ -2,6 +2,7 @@
 	import { browser } from '$app/environment';
 	import { onMount } from 'svelte';
 	import { apiFetch, buildApiUrl } from '$lib';
+	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 
 	type CameraStatus = {
 		enabled?: boolean;
@@ -31,7 +32,7 @@
 			status = await apiFetch<CameraStatus>('/camera/status');
 			statusError = '';
 		} catch (error) {
-			statusError = error instanceof Error ? error.message : 'Unable to load camera status';
+			statusError = error instanceof Error ? error.message : 'unable to load camera status';
 		}
 	}
 
@@ -44,56 +45,60 @@
 	}
 </script>
 
-<h1>Camera Feed</h1>
-
-<p>The live feed below connects to the API's <code>/api/camera</code> endpoint.</p>
-
 {#if status?.has_frame === true}
-	<img src={streamUrl} alt="Camera feed" on:error={markStreamError} on:load={markStreamLoaded} />
+	<img src={streamUrl} alt="camera feed" on:error={markStreamError} on:load={markStreamLoaded} />
 {/if}
 
 {#if streamError || status?.has_frame === false}
-	<p>Unable to display the camera stream. Verify the camera service is enabled.</p>
+	<ErrorMessage message="unable to display the camera stream. verify the camera service is enabled." />
 {/if}
 
-<button type="button" on:click={loadStatus}>Refresh Status</button>
-
-{#if statusError}
-	<p>{statusError}</p>
-{:else if status}
-	<h2>Stream Status</h2>
-	<table>
+<table>
+	{#if statusError}
 		<tbody>
 			<tr>
-				<td>Enabled</td>
+				<td colspan="2"><ErrorMessage message={statusError} /></td>
+			</tr>
+		</tbody>
+	{:else if status}
+		<thead>
+			<tr>
+				<th colspan="2">stream status</th>
+			</tr>
+		</thead>
+		<tbody>
+			<tr>
+				<td>enabled</td>
 				<td>{status.enabled ? 'yes' : 'no'}</td>
 			</tr>
 			<tr>
-				<td>Running</td>
+				<td>running</td>
 				<td>{status.running ? 'yes' : 'no'}</td>
 			</tr>
 			<tr>
-				<td>Consumers</td>
+				<td>consumers</td>
 				<td>{status.consumers ?? 0}</td>
 			</tr>
 			<tr>
-				<td>Target FPS</td>
+				<td>target fps</td>
 				<td>{status.target_fps ?? ''}</td>
 			</tr>
 			<tr>
-				<td>Camera URL</td>
+				<td>camera url</td>
 				<td>{status.url ?? ''}</td>
 			</tr>
 			<tr>
-				<td>Latest Frame</td>
+				<td>latest frame</td>
 				<td>{status.has_frame ? 'available' : 'not available'}</td>
 			</tr>
 			{#if status.message}
 				<tr>
-					<td>Message</td>
+					<td>message</td>
 					<td>{status.message}</td>
 				</tr>
 			{/if}
 		</tbody>
-	</table>
-{/if}
+	{/if}
+</table>
+
+<button type="button" on:click={loadStatus}>refresh status</button>

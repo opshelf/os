@@ -2,6 +2,7 @@
 	import { browser } from '$app/environment';
 	import { onMount } from 'svelte';
 	import { buildApiUrl, getApiOrigin } from '$lib';
+	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 
 	type SchemaObject = {
 		title?: string;
@@ -52,20 +53,20 @@
 		try {
 			const response = await fetch(`${getApiOrigin()}/openapi.json`);
 			if (!response.ok) {
-				loadError = `Failed to load OpenAPI document: ${response.status}`;
+				loadError = `failed to load openapi document: ${response.status}`;
 				return;
 			}
 			const spec = (await response.json()) as Record<string, unknown>;
 			const defs = parseCommandDefinitions(spec);
 			if (defs.length === 0) {
-				loadError = 'No robot command definitions found in OpenAPI document';
+				loadError = 'no robot command definitions found in openapi document';
 				return;
 			}
 			commandDefinitions = defs;
 			selectedCommand = defs[0].name;
 			initialiseForm(defs[0]);
 		} catch (error) {
-			loadError = error instanceof Error ? error.message : 'Failed to load OpenAPI document';
+			loadError = error instanceof Error ? error.message : 'failed to load openapi document';
 		} finally {
 			loading = false;
 		}
@@ -162,7 +163,7 @@
 		submitError = '';
 		const definition = commandDefinitions.find((entry) => entry.name === selectedCommand);
 		if (!definition) {
-			submitError = 'No command selected';
+			submitError = 'no command selected';
 			return;
 		}
 
@@ -170,7 +171,7 @@
 		try {
 			payload = buildPayload(definition);
 		} catch (error) {
-			submitError = error instanceof Error ? error.message : 'Failed to build command payload';
+			submitError = error instanceof Error ? error.message : 'failed to build command payload';
 			return;
 		}
 
@@ -185,11 +186,11 @@
 			});
 			if (!response.ok) {
 				const text = await response.text();
-				throw new Error(text || `Request failed with status ${response.status}`);
+				throw new Error(text || `request failed with status ${response.status}`);
 			}
-			submitMessage = 'Command sent successfully';
+			submitMessage = 'command sent successfully';
 		} catch (error) {
-			submitError = error instanceof Error ? error.message : 'Failed to send command';
+			submitError = error instanceof Error ? error.message : 'failed to send command';
 		} finally {
 			submitting = false;
 		}
@@ -201,7 +202,7 @@
 			const raw = field.constValue ?? formValues[field.path];
 			if ((raw === undefined || raw === '') && !field.constValue) {
 				if (field.required) {
-					throw new Error(`Missing required field: ${field.label}`);
+					throw new Error(`missing required field: ${field.label}`);
 				}
 				continue;
 			}
@@ -218,7 +219,7 @@
 		if (field.type === 'number' || field.type === 'integer') {
 			const value = Number(raw);
 			if (Number.isNaN(value)) {
-				throw new Error(`Field ${field.label} expects a number`);
+				throw new Error(`field ${field.label} expects a number`);
 			}
 			return field.type === 'integer' ? Math.trunc(value) : value;
 		}
@@ -252,19 +253,22 @@
 	}
 </script>
 
-<h1>Send Robot Command</h1>
-
 {#if loading}
-	<p>Loading command definitions...</p>
+	<p>loading command definitions...</p>
 {:else}
 	{#if loadError}
-		<p>{loadError}</p>
+		<ErrorMessage message={loadError} />
 	{:else}
 		<form on:submit={submitCommand}>
 			<table>
+				<thead>
+					<tr>
+						<th colspan="2">command selection</th>
+					</tr>
+				</thead>
 				<tbody>
 					<tr>
-						<td>Command</td>
+						<td>command</td>
 						<td>
 							<select bind:value={selectedCommand} on:change={(event) => onCommandChange((event.currentTarget as HTMLSelectElement).value)}>
 								{#each commandDefinitions as definition}
@@ -274,28 +278,25 @@
 						</td>
 					</tr>
 				</tbody>
-			</table>
 
-		{#if selectedCommand}
-			{#each commandDefinitions.filter((entry) => entry.name === selectedCommand) as definition}
-				<h2>{definition.title}</h2>
-				<table>
-					<tbody>
-						{#each definition.fields as field}
-							<tr>
-								<td>{field.label}{field.required ? ' *' : ''}</td>
-								<td>
-									{#if field.constValue !== undefined}
-										<input value={field.constValue} readonly />
-									{:else}
-										<input
-											type={inputType(field)}
-											value={formValues[field.path] ?? ''}
-											on:input={(event) => updateFormValue(field.path, (event.currentTarget as HTMLInputElement).value)}
-										/>
-									{/if}
-								</td>
-							</tr>
+				{#if selectedCommand}
+					{#each commandDefinitions.filter((entry) => entry.name === selectedCommand) as definition}
+						<tbody>
+							{#each definition.fields.filter((field) => field.path !== 'command') as field}
+								<tr>
+									<td>{field.label}{field.required ? ' *' : ''}</td>
+									<td>
+										{#if field.constValue !== undefined}
+											<input value={field.constValue} readonly />
+										{:else}
+											<input
+												type={inputType(field)}
+												value={formValues[field.path] ?? ''}
+												on:input={(event) => updateFormValue(field.path, (event.currentTarget as HTMLInputElement).value)}
+											/>
+										{/if}
+									</td>
+								</tr>
 								{#if field.description}
 									<tr>
 										<td colspan="2">{field.description}</td>
@@ -303,18 +304,19 @@
 								{/if}
 							{/each}
 						</tbody>
-					</table>
-				{/each}
-			{/if}
+					{/each}
+				{/if}
+			</table>
 
-			<button type="submit" disabled={submitting}>Send</button>
+			<button type="submit" disabled={submitting}>send</button>
 		</form>
 
 		{#if submitMessage}
 			<p>{submitMessage}</p>
 		{/if}
+
 		{#if submitError}
-			<p>{submitError}</p>
+			<ErrorMessage message={submitError} />
 		{/if}
 	{/if}
 {/if}

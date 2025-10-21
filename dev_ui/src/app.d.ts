@@ -10,4 +10,12 @@ declare global {
 	}
 }
 
+interface ImportMetaEnv {
+	readonly PUBLIC_VERSION: string;
+}
+
+interface ImportMeta {
+	readonly env: ImportMetaEnv;
+}
+
 export {};

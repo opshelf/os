@@ -2,6 +2,7 @@
 	import { browser } from '$app/environment';
 	import { onDestroy, onMount } from 'svelte';
 	import { apiFetch, buildApiUrl, getApiBase } from '$lib';
+	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 
 	type WorkerStatusPayload = {
 		robot_status?: string | null;
@@ -41,7 +42,7 @@
 			statusError = '';
 			lastStatusUpdate = new Date().toLocaleString();
 		} catch (error) {
-			statusError = 'Failed to parse robot status payload';
+			statusError = 'failed to parse robot status payload';
 		}
 	}
 
@@ -53,10 +54,10 @@
 			if (Array.isArray(data)) {
 				storageCells = data;
 			} else {
-				storageError = 'Unexpected storage payload format';
+				storageError = 'unexpected storage payload format';
 			}
 		} catch (error) {
-			storageError = error instanceof Error ? error.message : 'Failed to load storage locations';
+			storageError = error instanceof Error ? error.message : 'failed to load storage locations';
 		} finally {
 			storageLoading = false;
 		}
@@ -121,7 +122,7 @@
 
 		source.onerror = () => {
 			statusConnected = false;
-			statusError = 'Lost connection to robot status stream';
+			statusError = 'lost connection to robot status stream';
 		};
 
 		return () => {
@@ -134,55 +135,63 @@
 	});
 </script>
 
-<h1>Robot Status</h1>
-
 <table>
+	<thead>
+		<tr>
+			<th colspan="2">system information</th>
+		</tr>
+	</thead>
 	<tbody>
 		<tr>
-			<td>API Base URL</td>
+			<td>api base url</td>
 			<td>{apiBase}</td>
 		</tr>
 		<tr>
-			<td>UI Hostname</td>
+			<td>device id</td>
 			<td>{hostname}</td>
 		</tr>
 		<tr>
-			<td>Status Stream</td>
+			<td>stream status</td>
 			<td>{statusConnected ? 'connected' : 'disconnected'}</td>
 		</tr>
 		<tr>
-			<td>Last Update</td>
+			<td>last update</td>
 			<td>{lastStatusUpdate || 'waiting for first event'}</td>
 		</tr>
+		{#if statusError}
+			<tr>
+				<td colspan="2"><ErrorMessage message={statusError} /></td>
+			</tr>
+		{/if}
 	</tbody>
-</table>
 
-{#if statusError}
-	<p>{statusError}</p>
-{/if}
-
-{#if status}
-	<h2>Current Robot State</h2>
-	<table>
+	{#if status}
+		<thead>
+			<tr>
+				<th colspan="2">current robot state</th>
+			</tr>
+		</thead>
 		<tbody>
 			<tr>
-				<td>Robot Status</td>
+				<td>robot status</td>
 				<td>{status.robot_status ?? 'unknown'}</td>
 			</tr>
 			<tr>
-				<td>Worker Running</td>
+				<td>worker running</td>
 				<td>{status.running ? 'yes' : 'no'}</td>
 			</tr>
 			<tr>
-				<td>Queued Commands</td>
+				<td>queued commands</td>
 				<td>{status.queue_length ?? 0}</td>
 			</tr>
 		</tbody>
-	</table>
 
-	{#if status.current_command}
-		<h3>Current Command</h3>
-		<table>
+		{#if status.current_command}
+			<thead>
+				<tr>
+					<th colspan="2">current command</th>
+				</tr>
+			</thead>
 			<tbody>
 				{#each formatCommand(status.current_command) as entry}
 					<tr>
@@ -191,16 +200,13 @@
 					</tr>
 				{/each}
 			</tbody>
-		</table>
-	{/if}
+		{/if}
 
-	{#if status.error_queue && status.error_queue.length > 0}
-		<h3>Recent Errors</h3>
-		<table>
+		{#if status.error_queue && status.error_queue.length > 0}
 			<thead>
 				<tr>
-					<th>Type</th>
-					<th>Message</th>
+					<th>recent errors - type</th>
+					<th>message</th>
 				</tr>
 			</thead>
 			<tbody>
@@ -211,67 +217,64 @@
 					</tr>
 				{/each}
 			</tbody>
-		</table>
-	{/if}
-{/if}
-
-<h2>Storage Summary</h2>
-
-{#if storageLoading}
-	<p>Loading storage data...</p>
-{:else}
-	{#if storageError}
-		<p>{storageError}</p>
-	{:else}
-		<table>
-			<tbody>
-				<tr>
-					<td>Total Cells</td>
-					<td>{storageCells.length}</td>
-				</tr>
-			</tbody>
-		</table>
-
-		{#if storageCells.length > 0}
-			<h3>Cells by Status</h3>
-			<table>
-				<thead>
-					<tr>
-						<th>Status</th>
-						<th>Count</th>
-					</tr>
-				</thead>
-				<tbody>
-					{#each storageSummary() as row}
-						<tr>
-							<td>{row.status}</td>
-							<td>{row.count}</td>
-						</tr>
-					{/each}
-				</tbody>
-			</table>
-
-			<h3>First Ten Cells</h3>
-			<table>
-				<thead>
-					<tr>
-						<th>Shelf</th>
-						<th>Cell</th>
-						<th>Capacity</th>
-						<th>Status</th>
-					</tr>
-				</thead>
-				<tbody>
-					{#each storageCells.slice(0, 10) as cell}
-						<tr>
-							<td>{cell.shelf_idx}</td>
-							<td>{cell.cell_idx}</td>
-							<td>{cell.capacity}</td>
-							<td>{cell.status}</td>
-						</tr>
-					{/each}
-				</tbody>
-			</table>
 		{/if}
 	{/if}
-{/if}
+
+	<thead>
+		<tr>
+			<th colspan="2">storage summary</th>
+		</tr>
+	</thead>
+	<tbody>
+		{#if storageLoading}
+			<tr>
+				<td colspan="2">loading storage data...</td>
+			</tr>
+		{:else if storageError}
+			<tr>
+				<td colspan="2"><ErrorMessage message={storageError} /></td>
+			</tr>
+		{:else}
+			<tr>
+				<td>total cells</td>
+				<td>{storageCells.length}</td>
+			</tr>
+		{/if}
+	</tbody>
+
+	{#if !storageLoading && !storageError && storageCells.length > 0}
+		<thead>
+			<tr>
+				<th>cells by status</th>
+				<th>count</th>
+			</tr>
+		</thead>
+		<tbody>
+			{#each storageSummary() as row}
+				<tr>
+					<td>{row.status}</td>
+					<td>{row.count}</td>
+				</tr>
+			{/each}
+		</tbody>
+
+		<thead>
+			<tr>
+				<th>shelf</th>
+				<th>cell</th>
+				<th>capacity</th>
+				<th>status</th>
+			</tr>
+		</thead>
+		<tbody>
+			{#each storageCells.slice(0, 10) as cell}
+				<tr>
+					<td>{cell.shelf_idx}</td>
+					<td>{cell.cell_idx}</td>
+					<td>{cell.capacity}</td>
+					<td>{cell.status}</td>
+				</tr>
+			{/each}
+		</tbody>
+	{/if}
+</table>

@@ -30,7 +30,7 @@ export async function apiFetch<T = unknown>(path: string, init?: RequestInit): P
 	try {
 		return JSON.parse(text) as T;
 	} catch (error) {
-		throw new Error("Failed to parse response body as JSON");
+		throw new Error("failed to parse response body as json");
 	}
 }
 
