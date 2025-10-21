@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { page } from '$app/stores';
-	import favicon from '$lib/assets/favicon.svg';
 	import '../app.css';
 
 	const version = import.meta.env.PUBLIC_VERSION;
@@ -22,7 +21,7 @@
 </script>
 
 <svelte:head>
-	<link rel="icon" href={favicon} />
+	<link rel="icon" href="/favicon.svg" />
 </svelte:head>
 
 <nav>
