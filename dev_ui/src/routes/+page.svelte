@@ -110,6 +110,11 @@
 		const source = new EventSource(buildApiUrl('/robot/status'));
 		eventSource = source;
 
+		source.onopen = () => {
+			statusConnected = true;
+			statusError = '';
+		};
+
 		source.onmessage = (event: MessageEvent<string>) => {
 			handleStatusMessage(event.data);
 		};

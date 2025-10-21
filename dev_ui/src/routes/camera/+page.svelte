@@ -48,9 +48,11 @@
 
 <p>The live feed below connects to the API's <code>/api/camera</code> endpoint.</p>
 
-<img src={streamUrl} alt="Camera feed" on:error={markStreamError} on:load={markStreamLoaded} />
+{#if status?.has_frame === true}
+	<img src={streamUrl} alt="Camera feed" on:error={markStreamError} on:load={markStreamLoaded} />
+{/if}
 
-{#if streamError}
+{#if streamError || status?.has_frame === false}
 	<p>Unable to display the camera stream. Verify the camera service is enabled.</p>
 {/if}
 
