@@ -10,19 +10,6 @@ services:
     volumes:
       - ./perpetual_hardware/packages/perpetual_os1_server/infra/nats/:/etc/nats/
     command: ["-js", "-config", "/etc/nats/nats.conf"]
-    healthcheck:
-      test: [
-          "CMD",
-          "wget",
-          "--no-verbose",
-          "--tries=1",
-          "--spider",
-          "http://localhost:8222/",
-        ]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 5s
     networks:
       - openshelf-network
     restart: unless-stopped
@@ -45,13 +32,12 @@ services:
       - AUDIT_HMAC_KEY=${AUDIT_HMAC_KEY:-INSECURE_AUDIT_HMAC_KEY}
       - NATS_DOMAIN=nats
     healthcheck:
-      test:
-        [
+      test: [
           "CMD",
-          "wget",
-          "--no-verbose",
-          "--tries=1",
-          "--spider",
+          "curl",
+          "-fsS",
+          "--max-time",
+          "5",
           "http://localhost:8000/",
         ]
       interval: 15s
