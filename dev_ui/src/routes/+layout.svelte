@@ -27,8 +27,18 @@
 <nav>
 	<ul>
 		{#each links as link}
-			<li><a href={link.href} class:active={isActiveLink(link.href, $page.url.pathname)}>{link.label}</a></li>
+			<li>
+				<a href={link.href} class:active={isActiveLink(link.href, $page.url.pathname)}>
+					{link.label}
+				</a>
+			</li>
 		{/each}
+
+		<li class="spacer-flexible"></li>
+
+		<li>
+			<a href={`http://${document.location.hostname}:8888/`}>Ray</a>
+		</li>
 	</ul>
 </nav>
 

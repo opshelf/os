@@ -32,14 +32,7 @@ services:
       - AUDIT_HMAC_KEY=${AUDIT_HMAC_KEY:-INSECURE_AUDIT_HMAC_KEY}
       - NATS_DOMAIN=nats
     healthcheck:
-      test: [
-          "CMD",
-          "curl",
-          "-fsS",
-          "--max-time",
-          "5",
-          "http://localhost:8000/",
-        ]
+      test: ["CMD", "curl", "-fsS", "--max-time", "5", "http://localhost:8000/"]
       interval: 15s
       timeout: 5s
       retries: 2
@@ -48,18 +41,17 @@ services:
       - openshelf-network
     restart: unless-stopped
 
-  ui:
+  dev_ui:
     build:
-      context: ../openshelf_ui
+      context: ./dev_ui
       dockerfile: Dockerfile
-      args:
-        PUBLIC_DEPLOYMENT_ENVIRONMENT: production
-        PUBLIC_DEFAULT_API_BASE: http://localhost:8000/api
     ports:
-      - "8888:8888"
+      - "8080:8080"
+    volumes:
+      - ./dev_ui:/app
+      - /app/node_modules
     environment:
-      - PUBLIC_DEPLOYMENT_ENVIRONMENT=production
-      - PUBLIC_DEFAULT_API_BASE=http://localhost:8000/api
+      - NODE_ENV=development
     depends_on:
       - api
     restart: unless-stopped
