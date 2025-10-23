@@ -1,0 +1,110 @@
+@font-face {
+	font-family: Unica Mono;
+	src: url(/unica-mono.woff2) format("woff2");
+	font-weight: 400;
+	font-style: normal;
+	font-display: block;
+}
+
+* {
+	margin: 0;
+	padding: 0;
+	box-sizing: border-box;
+}
+
+body {
+	font-family:
+		Unica Mono,
+		monospace;
+	font-size: 1em;
+	font-weight: normal;
+	color: black;
+	background-color: white;
+	margin: 2em;
+}
+
+* {
+	font-size: 1em;
+	font-weight: normal;
+	font-family:
+		Unica Mono,
+		monospace;
+}
+
+table {
+	border: 1px solid black;
+	border-collapse: separate;
+	border-spacing: 0;
+}
+
+td,
+th {
+	padding: 5px;
+	border: 1px solid black;
+	text-align: left;
+}
+
+th {
+	text-transform: uppercase;
+	border-top: 4px solid black;
+}
+
+ul {
+	margin: 0;
+	padding: 0;
+	list-style-type: none;
+}
+
+nav ul {
+	display: flex;
+	gap: 1em;
+	text-transform: uppercase;
+	margin-bottom: 1.5em;
+}
+
+nav a {
+	color: #000000;
+	text-decoration: none;
+	display: inline-block;
+	margin-top: 0;
+}
+
+a,
+button {
+	appearance: none;
+	padding: 5px;
+	border: 2px solid black;
+	background-color: white;
+	margin-top: 1em;
+	text-transform: uppercase;
+	box-shadow: 4px 4px 0 #cccccc;
+	cursor: pointer;
+}
+
+a:active,
+button:active {
+	transform: translate3d(4px, 4px, 0px);
+	box-shadow: none;
+}
+
+.error {
+	border: 2px solid red;
+	margin-top: 1em;
+	display: inline-block;
+	padding: 5px;
+	color: red;
+	white-space: pre-wrap;
+}
+
+nav a.active {
+	background-color: black;
+	color: white;
+}
+
+.version-label {
+	position: fixed;
+	bottom: 2em;
+	left: 2em;
+	background-color: white;
+	text-transform: uppercase;
+}
