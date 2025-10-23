@@ -193,7 +193,7 @@ class RobotWorker:
 
     async def _publish_status(self) -> None:
         try:
-            robot_status = await self._robot.status()
+            robot_status = await self._robot.get_status()
         except Exception as err:
             robot_status = None
             self._add_error(

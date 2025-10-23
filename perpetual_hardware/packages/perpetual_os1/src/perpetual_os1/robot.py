@@ -17,7 +17,7 @@ from perpetual_os1.robot_state import RobotStateManager, RobotStateError
 import json
 from pathlib import Path
 from enum import Enum
-from typing import Dict, Optional, Tuple, Union, Literal, Annotated, List
+from typing import Dict, Optional, Tuple, Union, Literal, Annotated, List, Callable, TYPE_CHECKING
 from pydantic import BaseModel, Field
 
 import time
@@ -71,20 +71,23 @@ class RobotCommandError(BaseModel):
 
 class RobotItemStoredResponse(BaseModel):
     message: Literal["success"] = "success"
-#     location: StorageModuleCellLocation
+    location: StorageModuleCellLocation
 
-class RobotStatus(str, Enum):
-    RobotResponse = Union[RobotCommandSuccessful, RobotCommandError, SizeResult]
 
 class RobotState(BaseModel):
     io: IOBoxStatus
     tool: ToolStatus
     current_cell: Optional[StorageModuleCellLocation] = None
 
+class RobotStatus(BaseModel):
+    storage: StorageGrid
+    state: RobotState
+    light_curtain: bool
+
 RobotResponse = Union[RobotCommandSuccessful, RobotCommandError, SizeResult]
 
 class Robot:
-    def __init__(self) -> None:
+    def __init__(self = None) -> None:
         # TODO add port retries, config, hardening
         self._motorbus = Controller(port="/dev/ttyUSB1", baudrate=115200) # change to config
         # self._scalebus = Controller(port="/dev/serial/by-id/usb-1a86_USB_Single_Serial_594D007725-if00", baudrate=9600) # change to config
@@ -102,8 +105,9 @@ class Robot:
         self._grid = StorageGrid.model_validate(data)  # Storage grid configuration
 
         # Status
-        self._cur_item: str = None # some kind of unique identifier
+        self._cur_item: StorageModuleCellLocation = None # some kind of unique identifier
         self._status: RobotStatus = None
+        # self._session_factory = session_factory
         self._state: RobotState = RobotState(io=IOBoxStatus.IDLE, tool=ToolStatus(motion=ToolMotionStatus.IDLE, item=ToolItemStatus.EMPTY))
         
         # State Machine
@@ -120,7 +124,7 @@ class Robot:
         #     return
         
         await self._tool.configure()
-        await self._io.configure()
+        # await self._io.configure()
         # self._grid.parse_file(self._grid.filename)
 
     def get_param(self, param: str):
@@ -179,8 +183,8 @@ class Robot:
         # Update state after operation
         self._state_manager.update_state(self._state.tool, self._state.io)
 
-    # async def idle(self) -> None:
-    #     await self._tool.move(self._tool.get_param("IDLE_POSITION"))
+    async def idle(self) -> None:
+        await self._tool.move(self._tool.get_param("IDLE_POSITION"))
 
     async def shutdown(self) -> None:
         await self.stop()
@@ -220,45 +224,25 @@ class Robot:
             return cal_coord.to_axis_coordinate()
             
         # # Search through all cells for matching item
-        # all_cells = self._grid.get_all_cell_data()
-        all_cells = self._grid.get_all_cells()
+        all_cells = self._grid.get_all_cell_data()
+        # all_cells = self._grid.get_all_cells()
 
-        for cell in all_cells:
-            # print(cell_data)
-            if cell.status == CellStatus.EMPTY:  # Skip empty cells
+        for cell_data in all_cells:
+            if not cell_data.cell:  # Skip empty cells
                 continue
-                
-            # # Match by UPCA if provided
-            # if upca and cell.cell.upca == upca:
-            #     cal_coord = self._grid.get_cell_coordinate(cell_data.location)
-            #     return cal_coord.to_axis_coordinate()
-                
+
+            # Match by UPCA if provided
+            if upca and cell_data.cell.upca == upca:
+                cal_coord = self._grid.get_cell_coordinate(cell_data.location)
+                return cal_coord.to_axis_coordinate()
+
             # Match by item name in data
-            if item_name and cell:
-                item_data = cell.name
-                if item_data == item_name:
-                    coord = cell.calibration_point.to_axis_coordinate()
-                    return coord
-                    # cal_coord = self._grid.get_cell_coordinate(cell.location)
-                    # return cal_coord.to_axis_coordinate()
-        
-        # for cell_data in all_cells:
-        #     # print(cell_data)
-        #     if not cell_data.cell:  # Skip empty cells
-        #         continue
-                
-        #     # Match by UPCA if provided
-        #     if upca and cell_data.cell.upca == upca:
-        #         cal_coord = self._grid.get_cell_coordinate(cell_data.location)
-        #         return cal_coord.to_axis_coordinate()
-                
-        #     # Match by item name in data
-        #     if item_name and cell_data.cell.data:
-        #         item_data = cell_data.cell.data
-        #         if isinstance(item_data, dict) and item_data.get("name") == item_name:
-        #             cal_coord = self._grid.get_cell_coordinate(cell_data.location)
-        #             return cal_coord.to_axis_coordinate()
-                    
+            if item_name and cell_data.cell.data:
+                item_data = cell_data.cell.data
+                if isinstance(item_data, dict) and item_data.get("name") == item_name:
+                    cal_coord = self._grid.get_cell_coordinate(cell_data.location)
+                    return cal_coord.to_axis_coordinate()
+
         return None
 
     async def find_next_available_cell(
@@ -530,7 +514,7 @@ class Robot:
 
     async def retrieve(self, item_name: str) -> None:
         """
-        Retrieve an item from storage by its name.
+        Retrieve an item from storage by its name. # todo or upca
         
         Args:
             item_name: Name identifier of the item to retrieve
@@ -548,8 +532,8 @@ class Robot:
             return RobotCommandError(error=f"Item '{item_name}' not found in storage")
             
         # Retrieve item
-        # print(coord)
-        await self.io_place(coord)
+        print(coord)
+        # await self.io_place(coord)
 
         # todo update storage grid
 
@@ -611,23 +595,16 @@ class Robot:
             
         return result if result else None
     
+    async def get_status(self) -> RobotStatus:
+        status = RobotStatus(storage=self._grid,
+                             state=RobotState(io=self._io._status,
+                                              tool=self._tool._status),
+                             light_curtain= False)
+        self._status = status
+        return status
+    
     async def test(self, coordinate) -> None:
-        # await self.io_pick(AxisCoordinate(89, 42.55))
-        # # await self._io.open_door()
-        # # time.sleep(5)
-        # # await self._io.close_door()
-        
-        # await self._tool.move(coordinate=coordinate)
-        # item = await self._io.measure_item()
-        # print(item)
-        # print(self._grid)
-        # print("beblet")
-        await self.retrieve(item_name="andi")
-        # img = await self._tool._cam.capture()
-        # cv2.imwrite("beb.png", img)
-        # await self._tool.place(coordinate=coordinate)
-        # await self._tool.move(coordinate=coordinate)
-        # await self._tool.place(coordinate=coordinate)
+        await self.retrieve(item_name="beblet")
 
     async def handle_command(self, command: RobotCommands):
         if isinstance(command, StopCommand):
@@ -644,7 +621,7 @@ class Robot:
             await self.test(command.coordinate)
             return RobotCommandSuccessful()
         elif isinstance(command, IdleCommand):
-            await self.idle()
+            await self.idle() # todo remove
             return RobotCommandSuccessful()
         elif isinstance(command, StoreCommand):
             await self.store(command.item)

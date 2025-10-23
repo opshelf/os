@@ -47,7 +47,6 @@ class CellItem(BaseModel):
 class Cell(BaseModel):
     status: CellStatus
     item: Optional[CellItem]
-    name: Optional[str]
     calibration_point: Optional[CalibrationCoordinate]
     dimensions: Dimensions
     empty: bool = False

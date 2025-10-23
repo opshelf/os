@@ -37,7 +37,7 @@
           "motor_name": "y_axis",
           "motor_id": 2,
           "Ip": 60,
-          "rpm": 300,
+          "rpm": 150,
           "dr": 0,
           "mpr": 40,
           "accel": 500,

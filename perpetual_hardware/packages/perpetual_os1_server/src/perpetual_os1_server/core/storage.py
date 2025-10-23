@@ -188,6 +188,7 @@ class StorageService:
             except Exception as json_error:  # pragma: no cover - best effort logging
                 logging.error(f"JSON sync failed after item creation: {str(json_error)}")
 
+        print("added item")
         return item
 
     async def get_item(self, upca: str) -> Optional[Item]:
