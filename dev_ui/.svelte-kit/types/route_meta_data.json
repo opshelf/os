@@ -1,0 +1,12 @@
+{
+	"/": [
+		"src/routes/+layout.ts",
+		"src/routes/+layout.ts"
+	],
+	"/camera": [
+		"src/routes/+layout.ts"
+	],
+	"/command": [
+		"src/routes/+layout.ts"
+	]
+}

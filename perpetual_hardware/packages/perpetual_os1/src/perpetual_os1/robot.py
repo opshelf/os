@@ -86,8 +86,8 @@ RobotResponse = Union[RobotCommandSuccessful, RobotCommandError, SizeResult]
 class Robot:
     def __init__(self) -> None:
         # TODO add port retries, config, hardening
-        self._motorbus = Controller(port="/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_B001XSSJ-if00-port0", baudrate=115200) # change to config
-        self._scalebus = Controller(port="/dev/serial/by-id/usb-1a86_USB_Single_Serial_594D007725-if00", baudrate=9600) # change to config
+        self._motorbus = Controller(port="/dev/ttyUSB1", baudrate=115200) # change to config
+        # self._scalebus = Controller(port="/dev/serial/by-id/usb-1a86_USB_Single_Serial_594D007725-if00", baudrate=9600) # change to config
 
         # Load State
         self._config = load_config_file(CONFIG_PATH)
