@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 
+from perpetual_os1_server.core.camera import init_camera_manager
 from perpetual_os1_server.core.logging_config import configure_logging, get_logger
 from perpetual_os1_server.core.robot import init_robot_worker, stop_robot_worker
 from perpetual_os1_server.core.sizes import init_file_sizes, migrate_if_needed
@@ -22,7 +23,7 @@ from perpetual_os1_server.database.base import Base, engine
 from perpetual_os1_server.database.session import AsyncSessionLocal
 from perpetual_os1_server.middleware.audit import AuditMiddleware
 from perpetual_os1_server.middleware.correlation import CorrelationIdMiddleware
-from perpetual_os1_server.routers import audit, auth, robot, roles, sizes, storage, users
+from perpetual_os1_server.routers import audit, auth, camera, robot, roles, sizes, storage, users
 from perpetual_os1_server.settings import get_settings
 
 configure_logging()
@@ -99,6 +100,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 		await conn.run_sync(Base.metadata.create_all)
 
 	await _seed_auth_if_requested()
+
+	await init_camera_manager()
 
 	robot_started = False
 	storage_override_set = False
@@ -180,6 +183,7 @@ app.include_router(audit.router)
 app.include_router(robot.router, prefix="/api/robot")
 app.include_router(sizes.router, prefix="/api/sizes")
 app.include_router(storage.router, prefix="/api/storage")
+app.include_router(camera.router, prefix="/api/camera")
 
 
 def start() -> None:
