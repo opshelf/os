@@ -15,7 +15,6 @@ from enum import Enum
 from typing import Dict, Optional, Tuple, Union, Literal, Annotated
 from pydantic import BaseModel
 
-
 class IOBoxStatus(Enum):
     IDLE = 0
     READY = 1
@@ -29,8 +28,7 @@ class ItemSizeLocation(BaseModel):
 
 class SizeResult():
     result: Union[Literal["detected"], Literal["no_item_detected"], Literal["item_outside_of_zone"]]
-    # size: Optional[ItemSizeLocation]
-    # 
+    size: Optional[ItemSizeLocation]
 
 class IOBox:
     def __init__(self, motorcontroller: Controller, params: dict):
@@ -74,7 +72,7 @@ class IOBox:
         """
         try:
             if self._scale is None:
-                # self._scale = Scale(controller=self._scalecontroller, rs.gete_params(self._state, "iobox"))
+                # self._scale = Scale(controller=self._scalecontroller, rs.get _params(self._state, "iobox"))
                 await self._scale.configure()
             weight = await self._scale.get_weight()
             return weight
@@ -112,7 +110,7 @@ class IOBox:
         try:
             if self._md is None:
                 raise IOBoxError("Door motor not configured")
-            await self._md.move_to_position(220)  # open position
+            await self._md.move_to_position(self._params.motors.by_name("door").lim)  # open position
         except Exception as e:
             self._status = IOBoxStatus.ERROR
             if isinstance(e, IOBoxError):

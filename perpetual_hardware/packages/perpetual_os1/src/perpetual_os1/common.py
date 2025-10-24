@@ -206,7 +206,6 @@ class Parameters(BaseModel):
     SLIDE_EXTENSION: Union[int, float]
     GRIPPER_EXTENSION_PICK: float
     GRIPPER_EXTENSION_PLACE: float
-    DOOR_OPEN: Union[int, float]
     FRONT: float
     BACK: float
     JOG_X: Union[int, float]

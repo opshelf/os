@@ -7,10 +7,10 @@ import cv2
 import numpy as np
 from hardware.iocam import AFSCam
 
-from perpetual_os1_server.core.logging_config import get_logger
+# from perpetual_os1_server.core.logging_config import get_logger
 # from perpetual_os1_server.settings import get_settings
 
-logger = get_logger(__name__)
+# logger = get_logger(__name__)
 
 class CameraStreamManager:
 	def __init__(self, camera: AFSCam):
@@ -112,14 +112,17 @@ class CameraStreamManager:
 
 			except RuntimeError as e:
 				if "bad cam" in str(e):
-					logger.error("camera_connection_failed", url=self.camera_url, error=str(e))
+					print("connection failed")
+					# logger.error("camera_connection_failed", url=self.camera_url, error=str(e))
 					await asyncio.sleep(5.0)
 				else:
-					logger.error("camera_runtime_error", error=str(e), exc_info=True)
+					print("runtime error")
+					# logger.error("camera_runtime_error", error=str(e), exc_info=True)
 					await asyncio.sleep(1.0)
 				continue
 			except Exception as e:
-				logger.error("camera_frame_processing_error", error=str(e), error_type=type(e).__name__, exc_info=True)
+				print("frame processing error")
+				# logger.error("camera_frame_processing_error", error=str(e), error_type=type(e).__name__, exc_info=True)
 				await asyncio.sleep(1.0)
 				continue
 

@@ -13,7 +13,6 @@
         "SLIDE_EXTENSION":49,
         "GRIPPER_EXTENSION_PICK": 166.5,
         "GRIPPER_EXTENSION_PLACE": 165,
-        "DOOR_OPEN": 220,
         "FRONT": 0.5,
         "BACK": 180.5,
         "JOG_X": 40,
@@ -118,7 +117,7 @@
           "mpr": 12,
           "accel": 500,
           "ret_rpm": 64,
-          "lim": 1000
+          "lim": 220 
         }
       ],
       "usb_camera": {

@@ -100,6 +100,8 @@ class Robot:
         # Robot Components
         self._tool = Tool(motorcontroller=self._motorbus, params=tool_params)
         self._io = IOBox(motorcontroller=self._motorbus, params=io_params)
+
+        # storage grid to store physical robot state
         with open(STORAGE_PATH, 'r') as f:
              data = json.load(f)
         self._grid = StorageGrid.model_validate(data)  # Storage grid configuration
@@ -125,7 +127,6 @@ class Robot:
         
         await self._tool.configure()
         # await self._io.configure()
-        # self._grid.parse_file(self._grid.filename)
 
     def get_param(self, param: str):
         try:
@@ -197,6 +198,7 @@ class Robot:
         await self._tool.stop()
         await self._io.stop()
 
+    # returns item coordinates
     async def find_item_location(
         self, 
         item_name: Optional[str] = None,
@@ -225,7 +227,6 @@ class Robot:
             
         # # Search through all cells for matching item
         all_cells = self._grid.get_all_cell_data()
-        # all_cells = self._grid.get_all_cells()
 
         for cell_data in all_cells:
             if not cell_data.cell:  # Skip empty cells
@@ -447,6 +448,8 @@ class Robot:
         except Exception as e:
             return RobotCommandError(error=f"Storage calibration failed: {str(e)}")
 
+
+    # plug in sizing from the io box
     async def store(self, item_name: str, dimensions: Optional[Dict[str, float]] = None) -> None:
         """
         Store an item in the storage grid, finding the best available location based on item dimensions.
