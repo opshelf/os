@@ -2,4 +2,6 @@ services:
   api:
     devices:
       - "/dev/ttyUSB0:/dev/ttyUSB0"
+      - "/dev/ttyUSB1:/dev/ttyUSB1"
+      - "/dev/video0:/dev/video0"
       - "/dev/bus/usb:/dev/bus/usb"

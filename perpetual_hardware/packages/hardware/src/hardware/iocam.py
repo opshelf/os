@@ -1,4 +1,5 @@
 import asyncio
+import time
 from typing import Optional, Tuple, List, Dict, Any
 import cv2
 import numpy as np
@@ -25,7 +26,7 @@ class AFSCam:
 
     def __init__(self, usb_params, tof_params) -> None:
         # TOF parameters
-        self.preferred_tof_port = tof_params.csi_port
+        self.preferred_tof_port = None
         self.max_distance_mm = tof_params.max_distance_mm
 
         # Calibration & geometry
@@ -180,14 +181,14 @@ class AFSCam:
         """
         try:
             # Initialize TOF camera first
-            self._init_tof()
+            # self._init_tof()
             
             # Initialize USB camera
             self._init_usb()
             
             # Start background TOF loop
-            self._stop_evt.clear()
-            self._loop_task = asyncio.create_task(self._tof_loop())
+            # self._stop_evt.clear()
+            # self._loop_task = asyncio.create_task(self._tof_loop())
             
         except Exception as e:
             self._cleanup()
@@ -256,6 +257,272 @@ class AFSCam:
             raise
 
     # -------------------- Public API --------------------
+
+    def measure_sync(
+        self,
+        n_frames: int = 5,
+        timeout_s: float = 2.0,
+        display: bool = False,
+        window_name: str = "usb_sizing",
+        bounding_box: Optional[Tuple[int, int, int, int]] = None,  # (x0, y0, x1, y1)
+        bbox_inclusive: bool = True,
+        max_center_offset_px: float = 40.0
+    ) -> Dict[str, Any]:
+        """
+        Synchronous variant of :meth:`measure` that draws the distance between the given
+        bounding box center and the detected contour center on the USB frame.
+
+        Args:
+            n_frames: Number of frames to capture
+            timeout_s: Timeout for operation
+            display: Whether to show visualization
+            window_name: Name for display window
+            bounding_box: Region of interest as (x0, y0, x1, y1)
+            bbox_inclusive: Whether bbox is inclusive
+            max_center_offset_px: Maximum allowed center offset
+
+        Returns:
+            Dict containing measurement results and the last annotated frame
+
+        Raises:
+            CameraError: If USB camera is not ready
+            ImageError: If frame capture fails
+            ImageProcessingError: If analysis fails
+            ValueError: If parameters are invalid
+        """
+        if self._usb is None:
+            raise CameraConnectionError("USB camera not started")
+
+        if n_frames < 1:
+            raise ValueError("n_frames must be positive")
+
+        if timeout_s <= 0:
+            raise ValueError("timeout_s must be positive")
+
+        if bounding_box is not None:
+            if len(bounding_box) != 4:
+                raise ValueError("bounding_box must have 4 elements")
+            if any(x < 0 for x in bounding_box):
+                raise ValueError("bounding_box values must be non-negative")
+
+        if max_center_offset_px <= 0:
+            raise ValueError("max_center_offset_px must be positive")
+
+        frames: List[np.ndarray] = []
+        capture_start = time.monotonic()
+        frames_captured = 0
+
+        try:
+            while frames_captured < n_frames:
+                if time.monotonic() - capture_start > timeout_s:
+                    raise ImageError(f"Frame capture timeout after {frames_captured} frames")
+
+                ok, frame = self._usb.read()
+                if not ok:
+                    raise ImageError("Frame capture failed")
+                if frame is None:
+                    raise ImageError("Received null frame")
+
+                frames.append(frame)
+                frames_captured += 1
+
+            if not frames:
+                if display:
+                    show_fn = getattr(self, "_show_text_frame", None)
+                    if callable(show_fn):
+                        show_fn("USB read failed", window_name)
+                return {"ok": False, "reason": "usb_read_failed"}
+
+            if self._px_per_mm is None:
+                gray0 = cv2.cvtColor(frames[0], cv2.COLOR_BGR2GRAY)
+                det = ih.detect_checkerboard_scale_detailed(gray0, self.square_mm)
+
+                if det is None:
+                    raise ImageProcessingError("Failed to detect checkerboard scale")
+
+                self._px_per_mm = det["px_per_mm"]
+
+                if (self._fx_cache is None or self._fy_cache is None) and self._depth is not None:
+                    try:
+                        cal = self._calibrate_fov_from_checkerboard(det, gray0.shape)
+                        if cal is not None:
+                            fx_est, fy_est, hfov_est, vfov_est = cal
+                            self._fx_cache = self._fx_cache or fx_est
+                            self._fy_cache = self._fy_cache or fy_est
+                            self._hfov_cal, self._vfov_cal = hfov_est, vfov_est
+                    except Exception as e:
+                        raise ImageProcessingError(
+                            f"FOV calibration failed: {str(e)}"
+                        ) from e
+
+                if self._px_per_mm is None:
+                    self._px_per_mm = 1.7  # fallback value
+
+            per_frame: List[Dict[str, Any]] = []
+            last_draw: Optional[np.ndarray] = None
+
+            for fr in frames:
+                try:
+                    draw = fr.copy()
+                    gray = cv2.cvtColor(fr, cv2.COLOR_BGR2GRAY)
+
+                    bbox_center_xy: Optional[Tuple[float, float]] = None
+                    bbox_center_int: Optional[Tuple[int, int]] = None
+                    if bounding_box is not None:
+                        try:
+                            x0, y0, x1, y1 = map(int, bounding_box)
+                            if bbox_inclusive:
+                                bx_cx = (x0 + x1) / 2.0
+                                by_cy = (y0 + y1) / 2.0
+                            else:
+                                bx_cx = (x0 + x1 - 1) / 2.0
+                                by_cy = (y0 + y1 - 1) / 2.0
+                            bbox_center_xy = (float(bx_cx), float(by_cy))
+                            bbox_center_int = (int(round(bx_cx)), int(round(by_cy)))
+                            cv2.rectangle(draw, (x0, y0), (x1, y1), (0, 255, 0), 2)
+                        except Exception as e:
+                            raise ImageProcessingError(
+                                f"Bounding box calculation failed: {str(e)}"
+                            ) from e
+
+                    mask = ih.segment_object_on_checkerboard(gray, self._px_per_mm, self.square_mm)
+                    if mask is None:
+                        per_frame.append({"ok": False, "reason": "segmentation_failed"})
+                        last_draw = draw
+                        continue
+
+                    contour = ih.pick_main_contour(mask)
+                    if contour is None:
+                        per_frame.append({"ok": False, "reason": "no_contour"})
+                        last_draw = draw
+                        continue
+
+                    w_px, h_px, box, (cx, cy) = ih.measure_contour_px(contour)
+                    box_i = np.asarray(box, dtype=int)
+                    cv2.drawContours(draw, [box_i], 0, (0, 0, 255), 2)
+
+                    center_dist_px = None
+                    if bbox_center_xy is not None:
+                        bx_cx, by_cy = bbox_center_xy
+                        center_dist_px = float(np.hypot(cx - bx_cx, cy - by_cy))
+                        pt_bbox = (int(round(bx_cx)), int(round(by_cy)))
+                        pt_contour = (int(round(cx)), int(round(cy)))
+                        cv2.circle(draw, pt_bbox, 4, (0, 255, 0), -1)
+                        cv2.circle(draw, pt_contour, 4, (0, 0, 255), -1)
+                        cv2.line(draw, pt_bbox, pt_contour, (255, 255, 0), 2)
+
+                        label_x = int(round((pt_bbox[0] + pt_contour[0]) / 2.0))
+                        label_y = int(round((pt_bbox[1] + pt_contour[1]) / 2.0)) - 10
+                        label_x = max(0, min(draw.shape[1] - 1, label_x))
+                        label_y = max(15, min(draw.shape[0] - 1, label_y))
+                        cv2.putText(
+                            draw,
+                            f"{center_dist_px:.1f}px",
+                            (label_x, label_y),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.5,
+                            (255, 255, 0),
+                            1,
+                            cv2.LINE_AA,
+                        )
+                    else:
+                        cv2.circle(draw, (int(round(cx)), int(round(cy))), 4, (0, 0, 255), -1)
+
+                    try:
+                        size_w_mm_scale = w_px / self._px_per_mm
+                        size_h_mm_scale = h_px / self._px_per_mm
+                        a_scale, b_scale = sorted([size_w_mm_scale, size_h_mm_scale], reverse=True)
+                    except Exception as e:
+                        raise ImageProcessingError(
+                            f"Scale calculation failed: {str(e)}"
+                        ) from e
+
+                    try:
+                        z_mm = self._sample_depth_at_usb_point((cx, cy), gray.shape)
+                        footprint = None
+
+                        if z_mm is not None and self._fx_cache and self._fy_cache:
+                            w_mm_fp, h_mm_fp = ih.footprint_from_rect_pinhole(
+                                w_px, h_px, z_mm, self._fx_cache, self._fy_cache
+                            )
+                            a_fp, b_fp = sorted([w_mm_fp, h_mm_fp], reverse=True)
+                            footprint = (a_fp, b_fp)
+
+                    except Exception as e:
+                        raise ImageProcessingError(
+                            f"Depth/footprint calculation failed: {str(e)}"
+                        ) from e
+
+                    per_frame.append({
+                        "ok": True,
+                        "center_xy": (int(cx), int(cy)),
+                        "bbox_center_xy": bbox_center_int,
+                        "center_dist_px": center_dist_px,
+                        "scale_mm": (float(a_scale), float(b_scale)),
+                        "depth_mm": float(z_mm) if z_mm is not None else None,
+                        "footprint_mm": (float(footprint[0]), float(footprint[1]))
+                            if footprint is not None else None
+                    })
+
+                    last_draw = draw
+
+                except Exception as e:
+                    if not isinstance(e, ImageProcessingError):
+                        raise ImageProcessingError(
+                            f"Frame processing failed: {str(e)}"
+                        ) from e
+                    raise
+
+            try:
+                ok_frames = [p for p in per_frame if p["ok"]]
+                agg: Dict[str, Any] = {}
+
+                if ok_frames:
+                    def med(vals):
+                        vals = [v for v in vals if v is not None]
+                        return float(np.median(vals)) if vals else None
+
+                    agg["scale_major_mm_med"] = med([p["scale_mm"][0] for p in ok_frames])
+                    agg["scale_minor_mm_med"] = med([p["scale_mm"][1] for p in ok_frames])
+                    agg["depth_mm_med"] = med([p["depth_mm"] for p in ok_frames])
+
+                    footprints = [p["footprint_mm"] for p in ok_frames if p["footprint_mm"] is not None]
+                    if footprints:
+                        agg["footprint_major_mm_med"] = med([fp[0] for fp in footprints])
+                        agg["footprint_minor_mm_med"] = med([fp[1] for fp in footprints])
+
+                    if bounding_box is not None:
+                        dists = [p["center_dist_px"] for p in ok_frames if p["center_dist_px"] is not None]
+                        agg["center_dist_px_med"] = med(dists)
+
+                result: Dict[str, Any] = {
+                    "ok": bool(ok_frames),
+                    "aggregate": agg,
+                    "per_frame": per_frame
+                }
+
+                if last_draw is not None:
+                    self.last_annotated = last_draw
+                    result["annotated_frame"] = last_draw
+                    if display:
+                        cv2.imshow(window_name, last_draw)
+                        cv2.waitKey(1)
+                elif display:
+                    show_fn = getattr(self, "_show_text_frame", None)
+                    if callable(show_fn):
+                        show_fn("No contour detected", window_name)
+
+                return result
+
+            except Exception as e:
+                raise ImageProcessingError(
+                    f"Aggregate calculation failed: {str(e)}"
+                ) from e
+
+        except Exception as e:
+            if not isinstance(e, (ImageError, ImageProcessingError)):
+                raise ImageProcessingError(f"Measurement failed: {str(e)}") from e
+            raise
 
     async def measure(
         self,

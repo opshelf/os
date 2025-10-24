@@ -47,7 +47,6 @@ declare module '$env/static/private' {
 	export const NODE: string;
 	export const npm_package_name: string;
 	export const npm_lifecycle_script: string;
-	export const VITE_API_BASE_URL: string;
 	export const npm_package_version: string;
 	export const npm_lifecycle_event: string;
 	export const npm_config_globalconfig: string;
@@ -56,9 +55,9 @@ declare module '$env/static/private' {
 	export const npm_execpath: string;
 	export const npm_config_global_prefix: string;
 	export const npm_command: string;
+	export const NODE_ENV: string;
 	export const INIT_CWD: string;
 	export const EDITOR: string;
-	export const NODE_ENV: string;
 }
 
 /**
@@ -109,7 +108,6 @@ declare module '$env/dynamic/private' {
 		NODE: string;
 		npm_package_name: string;
 		npm_lifecycle_script: string;
-		VITE_API_BASE_URL: string;
 		npm_package_version: string;
 		npm_lifecycle_event: string;
 		npm_config_globalconfig: string;
@@ -118,9 +116,9 @@ declare module '$env/dynamic/private' {
 		npm_execpath: string;
 		npm_config_global_prefix: string;
 		npm_command: string;
+		NODE_ENV: string;
 		INIT_CWD: string;
 		EDITOR: string;
-		NODE_ENV: string;
 		[key: `PUBLIC_${string}`]: undefined;
 		[key: `${string}`]: string | undefined;
 	}

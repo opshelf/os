@@ -109,7 +109,7 @@ class Robot:
         # Status
         self._cur_item: StorageModuleCellLocation = None # some kind of unique identifier
         self._status: RobotStatus = None
-        # self._session_factory = session_factory
+
         self._state: RobotState = RobotState(io=IOBoxStatus.IDLE, tool=ToolStatus(motion=ToolMotionStatus.IDLE, item=ToolItemStatus.EMPTY))
         
         # State Machine
@@ -125,8 +125,8 @@ class Robot:
         #     print("No scale bus")
         #     return
         
-        await self._tool.configure()
-        # await self._io.configure()
+        # await self._tool.configure()
+        await self._io.configure()
 
     def get_param(self, param: str):
         try:
@@ -198,123 +198,6 @@ class Robot:
         await self._tool.stop()
         await self._io.stop()
 
-    # returns item coordinates
-    async def find_item_location(
-        self, 
-        item_name: Optional[str] = None,
-        upca: Optional[str] = None,
-        cell_location: Optional[StorageModuleCellLocation] = None
-    ) -> Optional[AxisCoordinate]:
-        """
-        Find an item in the storage grid by name, UPCA code, or specific location.
-        Returns the AxisCoordinate for the item's position if found.
-        
-        Args:
-            item_name: Name or identifier stored in item data
-            upca: UPCA barcode of the item
-            cell_location: Specific storage cell location
-            
-        Returns:
-            AxisCoordinate if item is found, None otherwise
-        """
-        if not self._grid:
-            return None
-            
-        # If we have a specific cell location, use that directly
-        if cell_location:
-            cal_coord = self._grid.get_cell_coordinate(cell_location)
-            return cal_coord.to_axis_coordinate()
-            
-        # # Search through all cells for matching item
-        all_cells = self._grid.get_all_cell_data()
-
-        for cell_data in all_cells:
-            if not cell_data.cell:  # Skip empty cells
-                continue
-
-            # Match by UPCA if provided
-            if upca and cell_data.cell.upca == upca:
-                cal_coord = self._grid.get_cell_coordinate(cell_data.location)
-                return cal_coord.to_axis_coordinate()
-
-            # Match by item name in data
-            if item_name and cell_data.cell.data:
-                item_data = cell_data.cell.data
-                if isinstance(item_data, dict) and item_data.get("name") == item_name:
-                    cal_coord = self._grid.get_cell_coordinate(cell_data.location)
-                    return cal_coord.to_axis_coordinate()
-
-        return None
-
-    async def find_next_available_cell(
-        self,
-        width: float,
-        height: float,
-        length: float = 400.0
-    ) -> Optional[AxisCoordinate]:
-        """
-        Find the next available cell that can fit an item of given dimensions,
-        optimizing for minimal wasted space.
-        Returns the AxisCoordinate for the cell's position.
-        
-        Args:
-            width: Width of the item in mm
-            height: Height of the item in mm
-            length: Length of the item in mm (default 400.0)
-            
-        Returns:
-            AxisCoordinate if suitable cell is found, None otherwise
-        """
-        if not self._grid:
-            return None
-            
-        # Create a temporary item to use storage grid's sizing logic
-        temp_item = CellItem(
-            dimensions=Dimensions(
-                width=width,
-                height=height,
-                length=length
-            )
-        )
-        
-        # Always use find_best_slot_for_item to optimize space usage
-        location = self._grid.find_best_slot_for_item(temp_item)
-            
-        if location:
-            cal_coord = self._grid.get_cell_coordinate(location)
-            return cal_coord.to_axis_coordinate()
-            
-        return None
-    
-    async def calculate_storage_positions(
-        self,
-        shelf_y_positions: List[float],
-        cells_per_shelf: List[int],
-        cell_spacings: List[float],
-        x_anchor_points: List[float]
-    ) -> List[List[AxisCoordinate]]:
-        """Calculate positions for all storage cells based on detected shelf positions."""
-        if not (len(shelf_y_positions) == len(cells_per_shelf) == len(cell_spacings) == len(x_anchor_points)):
-            raise ValueError("All input lists must have the same length (one entry per shelf)")
-            
-        shelf_positions: List[List[AxisCoordinate]] = []
-        
-        for shelf_idx, (y_pos, num_cells, spacing, x_anchor) in enumerate(
-            zip(shelf_y_positions, cells_per_shelf, cell_spacings, x_anchor_points)
-        ):
-            shelf_cells: List[AxisCoordinate] = []
-            
-            for cell_idx in range(num_cells):
-                x_pos = x_anchor + (cell_idx * spacing)
-                cell_coord = AxisCoordinate(
-                    x=round(x_pos, 4),
-                    y=round(y_pos, 4)
-                )
-                shelf_cells.append(cell_coord)
-            
-            shelf_positions.append(shelf_cells)
-            
-        return shelf_positions
 
     async def auto_calibrate_storage(self) -> RobotResponse:
         """
@@ -374,7 +257,7 @@ class Robot:
                 )
 
             # Calculate all cell positions
-            cell_positions = await self.calculate_storage_positions(
+            cell_positions = await self._grid.calculate_storage_positions(
                 shelf_y_positions=shelf_y_positions,
                 cells_per_shelf=cells_per_shelf,
                 cell_spacings=cell_spacings,
