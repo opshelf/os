@@ -18,7 +18,7 @@ from perpetual_os1_server.core.storage import StorageService
 from perpetual_os1_server.database.base import Base, engine
 from perpetual_os1_server.database.session import AsyncSessionLocal
 from perpetual_os1_server.middleware.audit import AuditMiddleware
-from perpetual_os1_server.routers import audit, auth, robot, roles, sizes, storage, users
+from perpetual_os1_server.routers import access_levels, audit, auth, robot, roles, sizes, storage, users
 from perpetual_os1_server.settings import get_settings
 
 root = logging.getLogger()
@@ -30,6 +30,40 @@ handler.setFormatter(formatter)
 root.addHandler(handler)
 
 logging.getLogger("aiosqlite").setLevel(logging.WARNING)
+
+
+def _run_migrations() -> None:
+	from alembic import command
+	from alembic.config import Config
+	from perpetual_os1_server.database.base import get_database_url
+
+	try:
+		script_location = Path(__file__).parent / "alembic"
+
+		if script_location.exists() == False:
+			logging.warning("Alembic directory not found at %s", script_location)
+			return
+
+		package_root = Path(__file__).parent.parent.parent.parent.parent
+		alembic_ini_path = package_root / "alembic.ini"
+
+		if alembic_ini_path.exists() == False:
+			logging.warning("alembic.ini not found at %s, using fallback", alembic_ini_path)
+			alembic_cfg = Config()
+			alembic_cfg.set_main_option("script_location", str(script_location))
+		else:
+			alembic_cfg = Config(str(alembic_ini_path))
+			alembic_cfg.set_main_option("script_location", str(script_location))
+
+		db_url = get_database_url()
+		alembic_cfg.set_main_option("sqlalchemy.url", db_url)
+
+		logging.info("Running database migrations from %s", script_location)
+		command.upgrade(alembic_cfg, "head")
+		logging.info("Database migrations complete")
+	except Exception as e:
+		logging.error("Migration failed: %s", str(e), exc_info=True)
+		logging.warning("Continuing without migrations")
 
 
 async def _seed_auth_if_requested() -> None:
@@ -61,9 +95,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logging.info("Starting %s", app.title)
     settings = get_settings()
 
-    logging.info("Initializing database schema")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+	_run_migrations()
+
+	logging.info("Initializing database schema")
+	async with engine.begin() as conn:
+		await conn.run_sync(Base.metadata.create_all)
 
     await _seed_auth_if_requested()
 
@@ -134,6 +170,7 @@ async def health() -> dict[str, str]:
 app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(roles.router)
+app.include_router(access_levels.router)
 app.include_router(audit.router)
 app.include_router(robot.router, prefix="/api/robot")
 app.include_router(sizes.router, prefix="/api/sizes")
@@ -141,11 +178,11 @@ app.include_router(storage.router, prefix="/api/storage")
 
 
 def start() -> None:
-    import uvicorn
+	import uvicorn
 
-    uvicorn.run(
-        "perpetual_os1_server.main:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
-    )
+	uvicorn.run(
+		"perpetual_os1_server.main:app",
+		host="0.0.0.0",
+		port=8000,
+		reload=True,
+	)
