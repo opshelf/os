@@ -9,30 +9,43 @@ from pydantic import ConfigDict
 class Role(Base):
 	"""Role model for RBAC."""
 	__tablename__ = "roles"
-	
+
 	id: Mapped[int] = Column(Integer, primary_key=True)
 	name: Mapped[str] = Column(String(50), unique=True, nullable=False)
 	permissions: Mapped[List[str]] = Column(JSON, nullable=False, default=list)
 	created_at: Mapped[datetime] = Column(DateTime, server_default=func.now())
 	updated_at: Mapped[datetime] = Column(DateTime, server_default=func.now(), onupdate=func.now())
-	
+
 	users: Mapped[List["User"]] = relationship("User", back_populates="role")
+
+class AccessLevel(Base):
+	"""Access level model for tier-based access control."""
+	__tablename__ = "access_levels"
+
+	id: Mapped[int] = Column(Integer, primary_key=True)
+	name: Mapped[str] = Column(String(50), unique=True, nullable=False)
+	created_at: Mapped[datetime] = Column(DateTime, server_default=func.now())
+	updated_at: Mapped[datetime] = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+	users: Mapped[List["User"]] = relationship("User", back_populates="access_level")
 
 class User(Base):
 	"""User model for authentication."""
 	__tablename__ = "users"
-	
+
 	id: Mapped[int] = Column(Integer, primary_key=True)
 	email: Mapped[str] = Column(String(100), unique=True, nullable=False)
 	first_name: Mapped[str] = Column(String(50), nullable=False)
 	last_name: Mapped[str] = Column(String(50), nullable=False)
 	pin_hash: Mapped[str] = Column(String(255), nullable=False)
 	role_id: Mapped[int] = Column(Integer, ForeignKey("roles.id"), nullable=False)
+	access_level_id: Mapped[int] = Column(Integer, ForeignKey("access_levels.id"), nullable=True)  # type: ignore[assignment]
 	is_active: Mapped[bool] = Column(Boolean, default=True, nullable=False)
 	created_at: Mapped[datetime] = Column(DateTime, server_default=func.now())
 	updated_at: Mapped[datetime] = Column(DateTime, server_default=func.now(), onupdate=func.now())
-	
+
 	role: Mapped["Role"] = relationship("Role", back_populates="users")
+	access_level: Mapped[Optional["AccessLevel"]] = relationship("AccessLevel", back_populates="users")
 	audit_logs: Mapped[List["AuditLog"]] = relationship("AuditLog", back_populates="user")
 
 class AuditLog(Base):
