@@ -40,6 +40,15 @@ class MoveToolCommand(BaseModel):
 class IdleCommand(BaseModel):
     command: Literal["idle"] = "idle"
 
+class RetrieveItemCommand(BaseModel):
+    command: Literal["retrieve_item"] = "retrieve_item"
+    location: Dict[str, Any]
+
+class StoreItemCommand(BaseModel):
+    command: Literal["store_item"] = "store_item"
+    location: Dict[str, Any]
+    item: Optional[Dict[str, Any]] = None
+
 RobotCommands = Annotated[
     Union[
         StopCommand,
@@ -48,6 +57,8 @@ RobotCommands = Annotated[
         MoveCommand,
         MoveToolCommand,
         IdleCommand,
+        RetrieveItemCommand,
+        StoreItemCommand,
     ],
     Field(discriminator="command"),
 ]
