@@ -1,6 +1,5 @@
 from hardware.ModbusController import SharedModbusController
-from typing import Optional, Dict, Any
-import asyncio
+from typing import Dict, Any
 
 class Scale():
     def __init__(self, modbus_controller: SharedModbusController, scale_id: int):

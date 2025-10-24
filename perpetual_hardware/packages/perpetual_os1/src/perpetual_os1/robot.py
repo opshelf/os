@@ -1,16 +1,16 @@
-from typing import Dict, Optional, Tuple, Union, Literal, Annotated
+from typing import Dict, Optional, Union, Literal, Annotated, Any, List
+from pathlib import Path
+from dataclasses import dataclass, field
+from enum import Enum
+import numpy as np
+import perpetual_os1.robot_state as rs
 from perpetual_os1.common import AxisCoordinate, ToolCoordinate
 from hardware.ModbusController import SharedModbusController as Controller
 from hardware.MotorBase import Motor, Servo, MotorStatus
-from hardware.camera import Camera
 from hardware.scale import Scale
-from hardware.curtain import Curtain
 from pydantic import BaseModel, Field
-import time
-from enum import Enum
-import cv2
-import asyncio
-import perpetual_os1.robot_state as rs
+
+CONFIG_PATH = Path(__file__).resolve().parent / "config.json"
 
 
 # class TestCommandOne(BaseModel):
@@ -40,6 +40,15 @@ class MoveToolCommand(BaseModel):
 class IdleCommand(BaseModel):
     command: Literal["idle"] = "idle"
 
+class RetrieveItemCommand(BaseModel):
+    command: Literal["retrieve_item"] = "retrieve_item"
+    location: Dict[str, Any]
+
+class StoreItemCommand(BaseModel):
+    command: Literal["store_item"] = "store_item"
+    location: Dict[str, Any]
+    item: Optional[Dict[str, Any]] = None
+
 RobotCommands = Annotated[
     Union[
         StopCommand,
@@ -48,6 +57,8 @@ RobotCommands = Annotated[
         MoveCommand,
         MoveToolCommand,
         IdleCommand,
+        RetrieveItemCommand,
+        StoreItemCommand,
     ],
     Field(discriminator="command"),
 ]
@@ -87,17 +98,6 @@ class WorkerStatus(BaseModel):
     running: bool
     current_command: Optional[RobotCommands]
 
-
-from pathlib import Path
-CONFIG_PATH = Path(__file__).resolve().parent / "config.json"
-
-import cv2
-import numpy as np
-import asyncio
-import csv
-import time
-from dataclasses import dataclass, field
-from typing import List, Tuple, Optional, Dict
 
 # ---------------------------
 # Config

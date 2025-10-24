@@ -1,5 +1,5 @@
 from hardware.ModbusController import SharedModbusController as Controller
-from typing import Optional, List
+from typing import List
 
 class Curtain:
     def __init__(self, bus: str, address: int) -> None:

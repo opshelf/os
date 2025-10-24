@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, TypedDict
-from typing import TypedDict, List, Dict, Any, Tuple, Sequence, Union, Optional
+from typing import Sequence, Union
 from perpetual_os1.common import AxisCoordinate
 
 # ----------------------------
