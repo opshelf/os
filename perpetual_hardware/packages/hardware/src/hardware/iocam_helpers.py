@@ -107,6 +107,8 @@ def segment_object_on_checkerboard(gray: np.ndarray, px_per_mm: float, square_mm
     mask = cv2.morphologyEx(th, cv2.MORPH_OPEN, open_kernel, iterations=1)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, close_kernel, iterations=1)
 
+    # cv2.imwrite("beb.png", mask)
+
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
     if num_labels > 1:
         h, w = gray.shape

@@ -264,7 +264,7 @@ class AFSCam:
         timeout_s: float = 2.0,
         display: bool = False,
         window_name: str = "usb_sizing",
-        bounding_box: Optional[Tuple[int, int, int, int]] = None,  # (x0, y0, x1, y1)
+        bounding_box: Optional[Tuple[int, int, int, int]] = (200,60,408,265),  # (x0, y0, x1, y1)
         bbox_inclusive: bool = True,
         max_center_offset_px: float = 40.0
     ) -> Dict[str, Any]:
@@ -395,6 +395,7 @@ class AFSCam:
                     if contour is None:
                         per_frame.append({"ok": False, "reason": "no_contour"})
                         last_draw = draw
+                        print("no mask")
                         continue
 
                     w_px, h_px, box, (cx, cy) = ih.measure_contour_px(contour)
@@ -530,7 +531,7 @@ class AFSCam:
         timeout_s: float = 2.0,
         display: bool = False,
         window_name: str = "usb_sizing",
-        bounding_box: Optional[Tuple[int, int, int, int]] = None,  # (x0, y0, x1, y1)
+        bounding_box: Optional[Tuple[int, int, int, int]] = (200,60,408,265),  # (x0, y0, x1, y1)
         bbox_inclusive: bool = True,
         max_center_offset_px: float = 40.0
     ) -> Dict[str, Any]:

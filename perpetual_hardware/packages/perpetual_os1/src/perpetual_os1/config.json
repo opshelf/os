@@ -124,7 +124,7 @@
         "index": 0,
         "usb_index": 0,
         "usb_fourcc": "MJPG",
-        "usb_exposure": 100,
+        "usb_exposure": 50,
         "square_mm": 7.5,
         "fx_px": 1150,
         "fy_px": 1150,
