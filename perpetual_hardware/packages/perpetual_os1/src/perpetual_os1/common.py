@@ -1,7 +1,6 @@
 from pydantic import BaseModel
-from enum import Enum
-from abc import ABC, abstractmethod
-from typing import Generic, TypeVar
+from typing import TypeVar
+from dataclasses import dataclass
 
 C = TypeVar("C")
 S = TypeVar("S")
@@ -24,8 +23,6 @@ class RobotNatsConfiguration(BaseModel):
     def connection_string(self) -> str:
         return f"nats://{self.domain}:{self.port}"
 
-
-from dataclasses import dataclass
 
 @dataclass
 class AxisCoordinate:

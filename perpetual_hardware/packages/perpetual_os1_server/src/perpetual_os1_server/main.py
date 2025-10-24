@@ -178,11 +178,11 @@ app.include_router(storage.router, prefix="/api/storage")
 
 
 def start() -> None:
-    import uvicorn
+	import uvicorn
 
-    uvicorn.run(
-        "perpetual_os1_server.main:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
-    )
+	uvicorn.run(
+		"perpetual_os1_server.main:app",
+		host="0.0.0.0",
+		port=8000,
+		reload=True,
+	)

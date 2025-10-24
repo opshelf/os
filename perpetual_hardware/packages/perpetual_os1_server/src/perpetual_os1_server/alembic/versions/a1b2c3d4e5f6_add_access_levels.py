@@ -7,7 +7,6 @@ Create Date: 2025-10-24 00:00:00.000000
 
 from alembic import op
 import sqlalchemy as sa
-from datetime import datetime
 
 
 revision = 'a1b2c3d4e5f6'
