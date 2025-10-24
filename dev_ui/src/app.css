@@ -117,3 +117,7 @@ nav a.active {
 .spacer-flexible {
 	flex: 1;
 }
+
+img {
+	margin-bottom: 1em;
+}

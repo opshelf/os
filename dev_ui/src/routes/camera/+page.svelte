@@ -50,17 +50,19 @@
 {/if}
 
 {#if streamError || status?.has_frame === false}
-	<ErrorMessage message="unable to display the camera stream. verify the camera service is enabled." />
+	<ErrorMessage
+		message="unable to display the camera stream. verify the camera service is enabled."
+	/>
 {/if}
 
-<table>
-	{#if statusError}
-		<tbody>
-			<tr>
-				<td colspan="2"><ErrorMessage message={statusError} /></td>
-			</tr>
-		</tbody>
-	{:else if status}
+{#if statusError}
+	<ErrorMessage message={statusError} />
+{:else}
+	<ErrorMessage message={'Not connected'} />
+{/if}
+
+{#if status}
+	<table>
 		<thead>
 			<tr>
 				<th colspan="2">stream status</th>
@@ -84,10 +86,6 @@
 				<td>{status.target_fps ?? ''}</td>
 			</tr>
 			<tr>
-				<td>camera url</td>
-				<td>{status.url ?? ''}</td>
-			</tr>
-			<tr>
 				<td>latest frame</td>
 				<td>{status.has_frame ? 'available' : 'not available'}</td>
 			</tr>
@@ -98,7 +96,9 @@
 				</tr>
 			{/if}
 		</tbody>
-	{/if}
-</table>
+	</table>
+{/if}
+
+<br />
 
 <button type="button" on:click={loadStatus}>refresh status</button>
