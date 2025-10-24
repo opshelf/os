@@ -28,6 +28,7 @@ class AccessLevel(Base):
 	updated_at: Mapped[datetime] = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
 	users: Mapped[List["User"]] = relationship("User", back_populates="access_level")
+	items: Mapped[List["Item"]] = relationship("Item", back_populates="access_level")
 
 class User(Base):
 	"""User model for authentication."""
@@ -89,10 +90,12 @@ class Item(Base):
     dimensions: Mapped[Dict[str, Any]] = Column(JSON, nullable=False)
     weight: Mapped[float | None] = mapped_column(Float, nullable=True)
     item_metadata: Mapped[Optional[Dict[str, Any]]] = Column(JSON, nullable=True, default=dict)
+    access_level_id: Mapped[int] = Column(Integer, ForeignKey("access_levels.id"), nullable=True)  # type: ignore[assignment]
     created_at: Mapped[datetime] = Column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
     locations: Mapped[List["ItemLocation"]] = relationship("ItemLocation", back_populates="item")
+    access_level: Mapped[Optional["AccessLevel"]] = relationship("AccessLevel")
 
 class ItemLocation(Base):
     """ItemLocation model for tracking where items are stored."""

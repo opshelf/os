@@ -40,6 +40,7 @@ class ItemCreate(BaseModel):
     dimensions: Dict[str, float]
     weight: Optional[float] = None
     metadata: Optional[Dict[str, Any]] = None
+    access_level_id: Optional[int] = None
 
 
 class ItemUpdate(BaseModel):
@@ -47,6 +48,7 @@ class ItemUpdate(BaseModel):
     dimensions: Optional[Dict[str, float]] = None
     weight: Optional[float] = None
     metadata: Optional[Dict[str, Any]] = None
+    access_level_id: Optional[int] = None
 
 
 class ItemLocationCreate(BaseModel):
@@ -74,6 +76,7 @@ class ItemWithLocations(BaseModel):
     dimensions: Dict[str, float]
     weight: Optional[float]
     metadata: Optional[Dict[str, Any]]
+    access_level_id: Optional[int]
     locations: List[Any]  # Temporary fix for SQLAlchemy model
     created_at: str
     updated_at: str
@@ -127,6 +130,7 @@ def _build_item_payload(item: Item, locations: List[ItemLocation]) -> ItemWithLo
         dimensions=cast(dict[str, float], item.dimensions),
         weight=float(item.weight) if item.weight else None,
         metadata=cast(dict[str, Any], item.item_metadata) or {},
+        access_level_id=item.access_level_id,
         locations=_serialize_locations(locations),
         created_at=item.created_at.isoformat() if item.created_at else "",
         updated_at=item.updated_at.isoformat() if item.updated_at else "",
@@ -188,7 +192,8 @@ async def create_item(
             name=item.name,
             dimensions=item.dimensions,
             weight=item.weight,
-            metadata=item.metadata or {}
+            metadata=item.metadata or {},
+            access_level_id=item.access_level_id
         )
 
         locations = await storage_service.get_item_locations(item.upca)
@@ -216,7 +221,8 @@ async def update_item(
         name=item.name,
         dimensions=item.dimensions,
         weight=item.weight,
-        metadata=item.metadata
+        metadata=item.metadata,
+        access_level_id=item.access_level_id
     )
 
     if not updated_item:
