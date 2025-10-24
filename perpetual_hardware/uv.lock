@@ -339,12 +339,14 @@ source = { editable = "packages/hardware" }
 dependencies = [
     { name = "arducamdepthcamera" },
     { name = "pydantic" },
+    { name = "rpi-gpio" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "arducamdepthcamera", specifier = "==0.1.21" },
+    { name = "arducamdepthcamera", specifier = ">=0.1.21" },
     { name = "pydantic", specifier = ">=2.10.0" },
+    { name = "rpi-gpio", specifier = ">=0.7.0" },
 ]
 
 [[package]]
@@ -1049,6 +1051,12 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/7e/06/1b3307f6437d29bede5a95738aa89e6d910ba68d4054175c9f60d8e2c6b1/rignore-0.6.4-cp313-cp313t-musllinux_1_2_i686.whl", hash = "sha256:4d1918221a249e5342b60fd5fa513bf3d6bf272a8738e66023799f0c82ecd788", size = 1108862, upload-time = "2025-07-19T19:24:26.765Z" },
     { url = "https://files.pythonhosted.org/packages/b0/d5/b37c82519f335f2c472a63fc6215c6f4c51063ecf3166e3acf508011afbd/rignore-0.6.4-cp313-cp313t-musllinux_1_2_x86_64.whl", hash = "sha256:240777332b859dc89dcba59ab6e3f1e062bc8e862ffa3e5f456e93f7fd5cb415", size = 1120002, upload-time = "2025-07-19T19:24:38.952Z" },
 ]
+
+[[package]]
+name = "rpi-gpio"
+version = "0.7.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/c4/0f/10b524a12b3445af1c607c27b2f5ed122ef55756e29942900e5c950735f2/RPi.GPIO-0.7.1.tar.gz", hash = "sha256:cd61c4b03c37b62bba4a5acfea9862749c33c618e0295e7e90aa4713fb373b70", size = 29090, upload-time = "2022-02-06T15:15:06.022Z" }
 
 [[package]]
 name = "ruff"

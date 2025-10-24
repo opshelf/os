@@ -89,7 +89,7 @@ class CameraStreamManager:
 
 				def sync_capture_and_process():
 					frame_agg = self.camera.measure_sync(n_frames=10)
-					draw = frame_agg.get("last_draw")
+					draw = frame_agg.get("annotated_frame")
 					return draw
 
 				frame = await loop.run_in_executor(None, sync_capture_and_process)

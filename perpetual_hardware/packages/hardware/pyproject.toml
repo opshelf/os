@@ -6,7 +6,8 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.10.0",
-    "arducamdepthcamera==0.1.21"
+    "arducamdepthcamera>=0.1.21",
+    "RPi.GPIO>=0.7.0"
 ]
 
 [build-system]
