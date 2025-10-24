@@ -57,8 +57,6 @@
 
 {#if statusError}
 	<ErrorMessage message={statusError} />
-{:else}
-	<ErrorMessage message={'Not connected'} />
 {/if}
 
 {#if status}
