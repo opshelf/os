@@ -117,7 +117,6 @@ async def get_camera_status(
 			"running": manager.is_running,
 			"consumers": manager.consumer_count,
 			"target_fps": manager.target_fps,
-			"url": manager.camera_url,
 			"has_frame": manager.latest_frame is not None
 		}
 	except ValueError:
