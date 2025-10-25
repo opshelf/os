@@ -9,6 +9,12 @@ from typing import Any, Dict, List, Optional, Tuple, TypedDict
 from typing import Sequence, Union
 from perpetual_os1.common import AxisCoordinate
 
+
+class RobotStateError(Exception):
+    """Exception raised for invalid robot state operations."""
+    pass
+
+
 class RobotOperationState(Enum):
     """
     High-level robot operation states based on Tool and IOBox conditions.

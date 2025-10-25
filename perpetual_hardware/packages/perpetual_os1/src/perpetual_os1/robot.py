@@ -1,4 +1,4 @@
-from perpetual_os1.common import AxisCoordinate, load_config_file
+from perpetual_os1.common import AxisCoordinate, ToolCoordinate, load_config_file
 
 from hardware.controller import SharedModbusController as Controller
 from perpetual_os1.iobox import IOBox, IOBoxStatus, SizeResult, ItemSizeLocation
@@ -17,7 +17,7 @@ from perpetual_os1.robot_state import RobotStateManager, RobotStateError
 import json
 from pathlib import Path
 from enum import Enum
-from typing import Dict, Optional, Tuple, Union, Literal, Annotated, List, Callable, TYPE_CHECKING
+from typing import Any, Dict, Optional, Tuple, Union, Literal, Annotated, List, Callable, TYPE_CHECKING
 from pydantic import BaseModel, Field
 
 import time
@@ -39,16 +39,21 @@ class MoveCommand(BaseModel):
     command: Literal["move"] = "move"
     coordinate: AxisCoordinate
 
+class MoveToolCommand(BaseModel):
+    command: Literal["movetool"] = "movetool"
+    coordinate: ToolCoordinate
+
 class IdleCommand(BaseModel):
     command: Literal["idle"] = "idle"
 
-class StoreCommand(BaseModel):
-    command: Literal["store"] = "store"
-    item: str
+class RetrieveItemCommand(BaseModel):
+    command: Literal["retrieve_item"] = "retrieve_item"
+    location: Dict[str, Any]
 
-class RetrieveCommand(BaseModel):
-    command: Literal["retrieve"] = "retrieve"
-    item: str
+class StoreItemCommand(BaseModel):
+    command: Literal["store_item"] = "store_item"
+    location: Dict[str, Any]
+    item: Optional[Dict[str, Any]] = None
 
 RobotCommands = Annotated[
     Union[
@@ -56,9 +61,10 @@ RobotCommands = Annotated[
         InitializeCommand,
         HomeCommand,
         MoveCommand,
+        MoveToolCommand,
         IdleCommand,
-        StoreCommand,
-        RetrieveCommand,
+        RetrieveItemCommand,
+        StoreItemCommand,
     ],
     Field(discriminator="command"),
 ]

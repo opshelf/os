@@ -16,7 +16,7 @@ depends_on = None
 
 
 def upgrade() -> None:
-	with op.batch_alter_table('items') as batch_op:
+	with op.batch_alter_table('items', copy_from=None, table_args=()) as batch_op:
 		batch_op.add_column(sa.Column('access_level_id', sa.Integer(), nullable=True))
 		batch_op.create_foreign_key('fk_items_access_level_id', 'access_levels', ['access_level_id'], ['id'])
 
@@ -24,4 +24,4 @@ def upgrade() -> None:
 def downgrade() -> None:
 	with op.batch_alter_table('items') as batch_op:
 		batch_op.drop_constraint('fk_items_access_level_id', type_='foreignkey')
-		batch_op.drop_column('access_level_id')
+	op.drop_column('items', 'access_level_id')

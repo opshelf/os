@@ -18,7 +18,7 @@ from perpetual_os1_server.core.storage import StorageService
 from perpetual_os1_server.database.base import Base, engine
 from perpetual_os1_server.database.session import AsyncSessionLocal
 from perpetual_os1_server.middleware.audit import AuditMiddleware
-from perpetual_os1_server.routers import audit, auth, camera, robot, roles, sizes, storage, users
+from perpetual_os1_server.routers import access_levels, audit, auth, camera, robot, roles, sizes, storage, users
 from perpetual_os1_server.settings import get_settings
 
 root = logging.getLogger()
@@ -95,11 +95,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logging.info("Starting %s", app.title)
     settings = get_settings()
 
-	_run_migrations()
+    _run_migrations()
 
-	logging.info("Initializing database schema")
-	async with engine.begin() as conn:
-		await conn.run_sync(Base.metadata.create_all)
+    logging.info("Initializing database schema")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
 
     await _seed_auth_if_requested()
 
