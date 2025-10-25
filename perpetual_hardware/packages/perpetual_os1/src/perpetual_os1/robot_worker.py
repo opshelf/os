@@ -16,8 +16,6 @@ from perpetual_os1.robot import (
     RobotCommands,
     RobotResponse,
     RobotStatus,
-    IdleCommand,
-    HomeCommand,
     StopCommand,
 )
 from perpetual_os1.common import RobotNatsConfiguration

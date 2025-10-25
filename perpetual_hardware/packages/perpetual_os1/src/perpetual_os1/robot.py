@@ -62,6 +62,7 @@ RobotCommands = Annotated[
     ],
     Field(discriminator="command"),
 ]
+
 # Define response types
 class RobotCommandSuccessful(BaseModel):
     message: Literal["success"] = "success"
@@ -111,7 +112,7 @@ class Robot:
         self._status: RobotStatus = None
 
         self._state: RobotState = RobotState(io=IOBoxStatus.IDLE, tool=ToolStatus(motion=ToolMotionStatus.IDLE, item=ToolItemStatus.EMPTY))
-        
+
         # State Machine
         self._state_manager = RobotStateManager()
 
@@ -124,7 +125,7 @@ class Robot:
         # if not self._scalebus.client.connected:
         #     print("No scale bus")
         #     return
-        
+
         # await self._tool.configure()
         await self._io.configure()
 
@@ -143,7 +144,7 @@ class Robot:
 
         ppl = await self._tool.get_param("PICKUP_POSITION_L")
         pph = await self._tool.get_param("PICKUP_POSITION_H")
-        
+
         await self._tool.pick(coord)
         await self._tool.move(AxisCoordinate(ppl[0], ppl[1])) # move to safe height
         await self._io.open_door()
@@ -156,7 +157,7 @@ class Robot:
 
         await self._io._md.home()
         await self._tool.clear_alarms()
-        
+
         # Update state after operation
         self._state_manager.update_state(self._state.tool, self._state.io)
 
@@ -167,7 +168,7 @@ class Robot:
 
         ppl = await self._tool.get_param("PICKUP_POSITION_L")
         pph = await self._tool.get_param("PICKUP_POSITION_H")
-        
+
         await self._tool.pick(coord)
         await self._tool.move(AxisCoordinate(pph[0], pph[1])) # move to safe height
         await self._io.open_door()
@@ -180,7 +181,7 @@ class Robot:
 
         await self._io._md.home() # clear alarms io
         await self._tool.clear_alarms()
-        
+
         # Update state after operation
         self._state_manager.update_state(self._state.tool, self._state.io)
 
@@ -274,10 +275,10 @@ class Robot:
             for shelf_idx, shelf_cells in enumerate(cell_positions):
                 shelf_cells_left = []
                 shelf_cells_right = []
-                
+
                 mid_point = len(shelf_cells) // 2
                 shelf_height = cell_heights[shelf_idx] if isinstance(cell_heights, list) else cell_heights
-                
+
                 # Process left side cells
                 for cell_idx, coord in enumerate(shelf_cells[:mid_point]):
                     cell_width = cell_widths[cell_idx] if isinstance(cell_widths, list) else cell_widths
@@ -288,7 +289,7 @@ class Robot:
                         dimensions=Dimensions(width=cell_width, height=shelf_height, length=400.0)  # Default length
                     )
                     shelf_cells_left.append(cell)
-                
+
                 # Process right side cells
                 for cell_idx, coord in enumerate(shelf_cells[mid_point:]):
                     cell_width = cell_widths[cell_idx + mid_point] if isinstance(cell_widths, list) else cell_widths
@@ -307,7 +308,7 @@ class Robot:
                         shelf_width=sum(cell.dimensions.width for cell in shelf_cells_left),
                         cells=shelf_cells_left
                     ))
-                
+
                 if shelf_cells_right:
                     right_module.append(Shelf(
                         shelf_height=shelf_height,
@@ -336,7 +337,7 @@ class Robot:
     async def store(self, item_name: str) -> None:
         """
         Store an item in the storage grid, finding the best available location based on item dimensions.
-        
+
         Args:
             item_name: Name identifier for the item to store
             dimensions: Dictionary containing item dimensions in mm (from measure_item_dimensions).
@@ -346,13 +347,13 @@ class Robot:
                        - scale_major_mm: Major axis from checkerboard scale
                        - scale_minor_mm: Minor axis from checkerboard scale
                        - depth_mm: Item depth/height
-            
+
         Returns:
             RobotResponse indicating success or failure
         """
         if not self._grid:
             return RobotCommandError(error="Storage grid not calibrated")
-        
+
         # Set default dimensions or use measured ones
         width = 50.0  # default width
         height = 50.0  # default height
@@ -360,7 +361,7 @@ class Robot:
 
         dimensions = self.measure_item_dimensions()
         print(dimensions, flush=True)
-        
+
         # TODO remove dimensions, and modify io sizer wrapper to return a dimensions object
 
         # if dimensions:
@@ -371,16 +372,16 @@ class Robot:
         #     elif "scale_major_mm" in dimensions and "scale_minor_mm" in dimensions:
         #         width = dimensions["scale_major_mm"]
         #         height = dimensions["scale_minor_mm"]
-                
+
         #     # Use measured depth if available
         #     if "depth_mm" in dimensions:
         #         length = dimensions["depth_mm"]
-                
+
         #     # Add safety margin to ensure item fits (10%)
         #     width *= 1.1
         #     height *= 1.1
         #     length *= 1.1
-            
+
         # Find a suitable empty location for the item
 
         print(width, flush=True)
@@ -400,16 +401,16 @@ class Robot:
         # print("beb")
         location = self._grid.find_best_slot_for_item(item)
         print(location, flush=True)
-        
+
         if not location:
             print("no cell")
             return RobotCommandError(error="No suitable storage location found")
-            
+
         # Get coordinate and store
         coord = self._grid.get_cell_coordinate(location)
         print(coord)
         # await self.io_pick(coord.to_axis_coordinate())
-        
+
         # Update storage grid
         self._grid.store_item(location, item)
         self._grid.save()
@@ -418,22 +419,22 @@ class Robot:
     async def retrieve(self, item_name: str) -> None:
         """
         Retrieve an item from storage by its name. # todo or upca
-        
+
         Args:
             item_name: Name identifier of the item to retrieve
-            
+
         Returns:
             RobotResponse indicating success or failure
         """
         if not self._grid:
             return RobotCommandError(error="Storage grid not initialized")
-            
+
         # Find item location
         coord = await self._grid.find_item_location(item_name=item_name)
-        
+
         if not coord:
             return RobotCommandError(error=f"Item '{item_name}' not found in storage")
-            
+
         # Retrieve item
         print(coord)
         # await self.io_place(coord)
@@ -459,10 +460,10 @@ class Robot:
         """
         Use the IOBox's AFSCam to measure the dimensions of an item currently in the IO box.
         Returns the aggregate dimensions including footprint and depth measurements.
-        
+
         Args:
             n_frames: Number of frames to capture for measurement (default=5)
-            
+
         Returns:
             Dictionary containing the following measurements in millimeters:
             - footprint_major_mm: Major axis of item footprint from pinhole model
@@ -471,7 +472,7 @@ class Robot:
             - scale_minor_mm: Minor axis from checkerboard scale
             - depth_mm: Item depth/height from TOF sensor
             Returns None if measurement fails
-            
+
         Raises:
             RobotStateError: If there is no item in the IOBox to measure
         """
@@ -480,42 +481,42 @@ class Robot:
         # self._state_manager.validate_operation('measure')
         if not self._io or not self._io._cam:
             raise RuntimeError("IOBox camera not configured")
-            
+
         # Take measurement using AFSCam
         measure_result = self._io.measure_item_sync()
         # print(measure_result)
-        
+
         if not measure_result["ok"]:
             print("bad")
             return None
-            
+
         # Extract relevant measurements from aggregates
         agg = measure_result["aggregate"]
         if not agg:
             print("bad agg")
             return None
-            
+
         # Collect all available measurements
         result = {}
-        
+
         # Footprint measurements (from pinhole model)
         if "footprint_major_mm_med" in agg:
             result["footprint_major_mm"] = agg["footprint_major_mm_med"]
         if "footprint_minor_mm_med" in agg:
             result["footprint_minor_mm"] = agg["footprint_minor_mm_med"]
-            
+
         # Scale measurements (from checkerboard)
         if "scale_major_mm_med" in agg:
             result["scale_major_mm"] = agg["scale_major_mm_med"]
         if "scale_minor_mm_med" in agg:
             result["scale_minor_mm"] = agg["scale_minor_mm_med"]
-            
+
         # Depth measurement
         if "depth_mm_med" in agg:
             result["depth_mm"] = agg["depth_mm_med"]
 
         return result if result else None
-    
+
     async def get_status(self) -> RobotStatus:
         status = RobotStatus(storage=self._grid,
                              state=RobotState(io=self._io._status,
