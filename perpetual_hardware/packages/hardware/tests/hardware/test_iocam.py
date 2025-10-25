@@ -1,0 +1,88 @@
+import pytest
+import numpy as np
+import cv2
+from hardware.iocam import AFSCam
+from unittest.mock import Mock, patch, AsyncMock
+
+@pytest.mark.asyncio
+async def test_afscam_initialization(sample_tof_params, sample_usb_params):
+    cam = AFSCam(sample_usb_params, sample_tof_params)
+    
+    # Check initialization of parameters
+    assert cam.preferred_tof_port == sample_tof_params.csi_port
+    assert cam.max_distance_mm == sample_tof_params.max_distance_mm
+    assert cam.confidence_min == sample_tof_params.confidence_min
+    assert cam.square_mm == sample_usb_params.square_mm
+    assert cam.fx_px == sample_usb_params.fx_px
+    assert cam.fy_px == sample_usb_params.fy_px
+
+@pytest.mark.asyncio
+async def test_afscam_start_stop():
+    with patch('ArducamDepthCamera.ArducamCamera') as mock_tof, \
+         patch('cv2.VideoCapture') as mock_usb:
+        
+        # Setup mock TOF camera
+        mock_tof_instance = Mock()
+        mock_tof_instance.start.return_value = 0
+        mock_tof.return_value = mock_tof_instance
+        
+        # Setup mock USB camera
+        mock_usb_instance = Mock()
+        mock_usb_instance.isOpened.return_value = True
+        mock_usb_instance.read.return_value = (True, np.zeros((480, 640, 3)))
+        mock_usb.return_value = mock_usb_instance
+        
+        # Create camera instance
+        cam = AFSCam(sample_usb_params, sample_tof_params)
+        
+        # Test start
+        await cam.start()
+        mock_tof_instance.start.assert_called_once()
+        mock_usb_instance.set.assert_any_call(cv2.CAP_PROP_EXPOSURE, 
+                                            float(sample_usb_params.usb_exposure))
+        
+        # Test stop
+        await cam.stop()
+        mock_tof_instance.close.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_afscam_measure(sample_tof_params, sample_usb_params):
+    with patch('ArducamDepthCamera.ArducamCamera') as mock_tof, \
+         patch('cv2.VideoCapture') as mock_usb:
+        
+        # Setup mock cameras
+        mock_tof_instance = Mock()
+        mock_tof_instance.start.return_value = 0
+        mock_tof.return_value = mock_tof_instance
+        
+        mock_usb_instance = Mock()
+        mock_usb_instance.isOpened.return_value = True
+        mock_usb_instance.read.return_value = (True, np.zeros((480, 640, 3)))
+        mock_usb.return_value = mock_usb_instance
+        
+        # Create and start camera
+        cam = AFSCam(sample_usb_params, sample_tof_params)
+        await cam.start()
+        
+        # Test measurement
+        result = await cam.measure(n_frames=2, display=False)
+        assert isinstance(result, dict)
+        assert 'ok' in result
+        
+        # Cleanup
+        await cam.stop()
+
+@pytest.mark.asyncio
+async def test_afscam_error_handling():
+    with patch('ArducamDepthCamera.ArducamCamera') as mock_tof:
+        # Setup mock TOF camera to fail
+        mock_tof_instance = Mock()
+        mock_tof_instance.start.return_value = 1  # Indicate failure
+        mock_tof.return_value = mock_tof_instance
+        
+        # Create camera instance
+        cam = AFSCam(sample_usb_params, sample_tof_params)
+        
+        # Test start should raise exception
+        with pytest.raises(RuntimeError):
+            await cam.start()
