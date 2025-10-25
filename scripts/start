@@ -2,6 +2,7 @@
 
 HARDWARE=false
 BUILD=false
+DETACHED=false
 
 while [[ $# -gt 0 ]]; do
 	case $1 in
@@ -13,9 +14,13 @@ while [[ $# -gt 0 ]]; do
 			BUILD=true
 			shift
 			;;
+		-d|--detached)
+			DETACHED=true
+			shift
+			;;
 		*)
 			echo "Unknown option: $1"
-			echo "Usage: $0 [-h|--hardware] [-b|--build]"
+			echo "Usage: $0 [-h|--hardware] [-b|--build] [-d|--detached]"
 			exit 1
 			;;
 	esac
@@ -30,6 +35,10 @@ if [[ "$BUILD" == true ]]; then
 	COMPOSE_CMD="$COMPOSE_CMD up --build --remove-orphans"
 else
 	COMPOSE_CMD="$COMPOSE_CMD up --remove-orphans"
+fi
+
+if [[ "$DETACHED" == true ]]; then
+	COMPOSE_CMD="$COMPOSE_CMD -d"
 fi
 
 eval $COMPOSE_CMD
