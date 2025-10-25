@@ -95,7 +95,7 @@ class Item(Base):
     updated_at: Mapped[datetime] = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
     locations: Mapped[List["ItemLocation"]] = relationship("ItemLocation", back_populates="item")
-    access_level: Mapped[Optional["AccessLevel"]] = relationship("AccessLevel")
+    access_level: Mapped[Optional["AccessLevel"]] = relationship("AccessLevel", back_populates="items")
 
 class ItemLocation(Base):
     """ItemLocation model for tracking where items are stored."""
@@ -110,13 +110,10 @@ class ItemLocation(Base):
     created_at: Mapped[datetime] = Column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
-    __table_args__ = (
-        Index('idx_item_locations_shelf_cell', 'shelf_idx', 'cell_idx'),
-    )
-
     item: Mapped["Item"] = relationship("Item", back_populates="locations")
 
     __table_args__ = (
+        Index('idx_item_locations_shelf_cell', 'shelf_idx', 'cell_idx'),
         Index('idx_item_locations_item_id', 'item_id'),
     )
 

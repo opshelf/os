@@ -19,40 +19,11 @@ from perpetual_os1.robot import (
     StopCommand,
 )
 from perpetual_os1.common import RobotNatsConfiguration
+from perpetual_os1.robot_defs import WorkerError, QueuedOperation, WorkerStatus, WorkerStatusWithQueue
 from perpetual_os1.robot_client import RobotClient
-from perpetual_os1.barcode_service import BarcodeService
-
-
-class WorkerError(BaseModel):
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    error_type: str
-    message: str
-    context: Optional[dict[str, Any]] = None
-    stack_trace: Optional[str] = None
-
-
-class QueuedOperation(BaseModel):
-    command: RobotCommands
-    timestamp: datetime
-    location: Optional[dict[str, Any]] = None
-    item_data: Optional[dict[str, Any]] = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-class WorkerStatus(BaseModel):
-    robot_status: Optional[RobotStatus]
-    running: bool
-    current_command: Optional[RobotCommands]
-    error_queue: List[WorkerError] = Field(default_factory=list)
-
-
-class WorkerStatusWithQueue(WorkerStatus):
-    queued_operations: List[QueuedOperation] = Field(default_factory=list)
-    queue_length: int = 0
-
+from perpetual_os1.barcode import BarcodeService
 
 RobotCommandAdapter = TypeAdapter[RobotCommands](RobotCommands)
-
 
 class RobotWorker:
     _instance: Optional["RobotWorker"] = None
@@ -113,7 +84,8 @@ class RobotWorker:
         )
 
         if self._should_enable_barcode() and self._barcode is None:
-            port = os.getenv("PERPETUAL_BARCODE_PORT", "/dev/ttyACM0")
+            # port = os.getenv("PERPETUAL_BARCODE_PORT", "/dev/ttyACM1")
+            port = os.getenv("PERPETUAL_BARCODE_PORT", "/dev/serial/by-id/usb-Linux_4.9.84_Barcode_Scanner-if00")
             baudrate = int(os.getenv("PERPETUAL_BARCODE_BAUDRATE", "115200"))
             try:
                 self._barcode = BarcodeService(port=port, baudrate=baudrate)
@@ -182,7 +154,7 @@ class RobotWorker:
     async def _barcode_to_command(self, code: str) -> RobotCommands:
         logging.info("Received barcode: %s", code)
         # TODO: map barcodes to real RobotCommands
-        return StopCommand()
+        return HomeCommand(barcode=code)
 
     def _snapshot_command(self, command: RobotCommands) -> QueuedOperation:
         metadata: dict[str, Any] = {}
@@ -219,7 +191,7 @@ class RobotWorker:
 
     async def _publish_status(self) -> None:
         try:
-            robot_status = await self._robot.status()
+            robot_status = await self._robot.get_status()
         except Exception as err:
             robot_status = None
             self._add_error(

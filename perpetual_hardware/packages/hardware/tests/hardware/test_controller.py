@@ -1,0 +1,69 @@
+import pytest
+import asyncio
+from unittest.mock import AsyncMock, Mock
+from hardware.controller import SharedModbusController
+
+@pytest.mark.asyncio
+async def test_controller_initialization():
+    controller = SharedModbusController("/dev/ttyUSB0", 115200)
+    assert controller.port == "/dev/ttyUSB0"
+    assert controller.baudrate == 115200
+    assert controller.timeout == 2.0
+    assert controller.parity == "N"
+    assert controller.client is None
+
+@pytest.mark.asyncio
+async def test_controller_connect(mock_modbus_client):
+    controller = SharedModbusController("/dev/ttyUSB0", 115200)
+    controller.client = mock_modbus_client
+    await controller.connect()
+    mock_modbus_client.connect.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_controller_read_holding_registers(mock_modbus_client):
+    controller = SharedModbusController("/dev/ttyUSB0", 115200)
+    controller.client = mock_modbus_client
+    
+    # Setup mock response
+    result = Mock()
+    result.isError.return_value = False
+    result.registers = [42]
+    mock_modbus_client.read_holding_registers.return_value = result
+
+    # Test successful read
+    value = await controller.read_holding_registers(1, 0x100)
+    assert value == 42
+    mock_modbus_client.read_holding_registers.assert_called_once_with(
+        address=0x100, count=1, device_id=1
+    )
+
+@pytest.mark.asyncio
+async def test_controller_write_single_register(mock_modbus_client):
+    controller = SharedModbusController("/dev/ttyUSB0", 115200)
+    controller.client = mock_modbus_client
+    
+    # Setup mock response
+    result = Mock()
+    result.isError.return_value = False
+    mock_modbus_client.write_register.return_value = result
+
+    # Test successful write
+    success = await controller.write_single_register(1, 0x100, 42)
+    assert success is True
+    mock_modbus_client.write_register.assert_called_once_with(
+        address=0x100, value=42, device_id=1
+    )
+
+@pytest.mark.asyncio
+async def test_controller_error_handling(mock_modbus_client):
+    controller = SharedModbusController("/dev/ttyUSB0", 115200)
+    controller.client = mock_modbus_client
+    
+    # Setup mock error response
+    result = Mock()
+    result.isError.return_value = True
+    mock_modbus_client.read_holding_registers.return_value = result
+
+    # Test error handling
+    value = await controller.read_holding_registers(1, 0x100)
+    assert value is None

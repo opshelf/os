@@ -1,103 +1,148 @@
 {
-  "motors": [
-    {
-      "motor_name": "z_axis",
-      "motor_id": 30,
-      "Ip": 16,
-      "rpm": 2000,
-      "dir": 1,
-      "mpr": 19.992,
-      "home_rpm": 64,
-      "accel": 750,
-      "ret_rpm": 500,
-      "lim": 173,
-      "Iph": 20
-    },
-    {
-      "motor_name": "y_axis",
-      "motor_id": 2,
-      "Ip": 50,
-      "rpm": 300,
-      "dir": 0,
-      "mpr": 40,
-      "home_rpm": 32,
-      "accel": 500,
-      "ret_rpm": 128,
-      "lim":1295,
-      "Iph": 50
-      
-    },
-    {
-      "motor_name": "stage",
-      "motor_id": 3,
-      "Ip": 22,
-      "rpm": 200,
-      "dir": 0,
-      "mpr": 50,
-      "home_rpm": 64,
-      "accel": 500,
-      "ret_rpm": 128,
-      "lim": 50,
-      "Iph": 20
-    },
-    {
-      "motor_name": "rotate",
-      "motor_id": 4,
-      "Ip": 36,
-      "rpm": 176,
-      "dir": 0,
-      "mpr": 36,
-      "home_rpm": 32,
-      "accel": 3000,
-      "ret_rpm": 128,
-      "lim": 270,
-      "Iph": 20
-    },
-    {
-      "motor_name": "x_axis",
-      "motor_id": 5,
-      "Ip": 36,
-      "rpm": 500,
-      "dir": 0,
-      "mpr": 80,
-      "home_rpm": 64,
-      "accel": 500,
-      "ret_rpm": 128,
-      "lim": 950,
-      "Iph": 20
-    },
-        {
-      "motor_name": "door",
-      "motor_id": 31,
-      "Ip": 22,
-      "rpm": 3000,
-      "dir": 0,
-      "mpr": 8,
-      "home_rpm": 128,
-      "accel": 500,
-      "ret_rpm": 64,
-      "lim": 220,
-      "Iph": 20
-    }
-  ], 
-  "grid": 
-    {},
- 
+  "name": "perpetual_os1",
+  "version": "0.1.0",
+  "description": "Perpetual OS1 configuration",
+  
   "robot": {
-    "IDLE_POSITION": [0,0],
-    "PICKUP_POSITION_L": [20,461],
-    "PICKUP_POSITION_H": [20,710],
-    "SCAN_POSITION": [930,1],
-    "SLIDE_EXTENSION": 50,
-    "GRIPPER_EXTENSION_PICK": 166.75,
-    "GRIPPER_EXTENSION_PLACE": 165,
-    "REVERSE": 180.5,
-    "JOG_X": 40,
-    "JOG_Y": 50,
-    "PXMM": 0.1,
-    "PYMM": 0.09375,
-    "PPR": 10000,
-    "IDR": 4.25
+    "tool": {
+      "parameters": {
+        "IDLE_POSITION": [0, 0],
+        "PICKUP_POSITION_L": [52, 469],
+        "PICKUP_POSITION_H": [52, 725],
+        "SCAN_POSITION": [930, 1],
+        "SLIDE_EXTENSION":49,
+        "GRIPPER_EXTENSION_PICK": 166.5,
+        "GRIPPER_EXTENSION_PLACE": 165,
+        "FRONT": 0.5,
+        "BACK": 180.5,
+        "JOG_X": 40,
+        "JOG_Y": 50,
+        "PXMM": 0.1,
+        "PYMM": 0.1
+      },
+      "motors": [
+        {
+          "motor_name": "z_axis",
+          "motor_id": 30,
+          "Ip": 16,
+          "rpm": 2000,
+          "dr": 1,
+          "mpr": 19.992,
+          "accel": 750,
+          "ret_rpm": 500,
+          "lim": 180
+        },
+        {
+          "motor_name": "y_axis",
+          "motor_id": 2,
+          "Ip": 60,
+          "rpm": 150,
+          "dr": 0,
+          "mpr": 40,
+          "accel": 500,
+          "ret_rpm": 64,
+          "lim": 1295
+        },
+        {
+          "motor_name": "stage",
+          "motor_id": 3,
+          "Ip": 22,
+          "rpm": 200,
+          "dr": 0,
+          "mpr": 50,
+          "accel": 500,
+          "ret_rpm": 64,
+          "lim": 50
+        },
+        {
+          "motor_name": "rotate",
+          "motor_id": 4,
+          "Ip": 36,
+          "rpm": 176,
+          "dr": 0,
+          "mpr": 36,
+          "accel": 3000,
+          "ret_rpm": 36,
+          "lim": 270
+        },
+        {
+          "motor_name": "x_axis",
+          "motor_id": 5,
+          "Ip": 36,
+          "rpm": 500,
+          "dr": 0,
+          "mpr": 80,
+          "accel": 500,
+          "ret_rpm": 64,
+          "lim": 950
+        }
+      ],
+      "poe_camera": {
+        "ip": "10.254.10.201",
+        "port": 80,
+        "username": "admin",
+        "password": "admin",
+        "model": "UnitV2",
+        "stream_uri": "rtsp://10.254.10.201:8554/stream",
+        "url": "rtsp://192.168.1.108:554/user=admin&password=&channel=1&stream=0.sdp?tcp",
+        "calibration_status": "uncalibrated",
+        "mtx": null,
+        "dist": null,
+        "rvecs": null,
+        "tvecs": null,
+        "newcameramtx": null,
+        "roi": null,
+        "H": null,
+        "map1": null,
+        "map2": null,
+        "map_size": null,
+        "H_ref_size": [2880, 1620],
+        "board_W_mm": null,
+        "board_H_mm": null,
+        "pattern_size": [14, 7],
+        "square_size_mm": 15.0
+      }
+    },
+
+    "grid": "./storage.json",
+
+    "io": {
+      "motors": [
+        {
+          "motor_name": "door",
+          "motor_id": 31,
+          "Ip": 22,
+          "rpm": 3000,
+          "dr": 0,
+          "mpr": 12,
+          "accel": 500,
+          "ret_rpm": 64,
+          "lim": 220 
+        }
+      ],
+      "usb_camera": {
+        "index": 0,
+        "usb_index": 0,
+        "usb_fourcc": "MJPG",
+        "usb_exposure": 50,
+        "square_mm": 7.5,
+        "fx_px": 1150,
+        "fy_px": 1150,
+        "px_per_mm": 1.5,
+        "confidence_min": 0,
+        "headless_fallback_path": "./usb_sizing.jpg"
+      },
+      "tof_camera": {
+        "csi_port": 2,
+        "resolution": [240, 180],
+        "fps": 30,
+        "max_distance_mm": 4000,
+        "confidence_min": 0,
+        "depth_unit": "mm",
+        "calibration_status": "uncalibrated"
+      }
+    }
   },
+
   "status": "idle"
 }

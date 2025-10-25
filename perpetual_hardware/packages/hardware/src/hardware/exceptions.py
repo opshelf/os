@@ -1,0 +1,84 @@
+"""
+Low-level hardware exceptions for the hardware package.
+These exceptions handle fundamental hardware communication and control errors.
+"""
+
+class HardwareError(Exception):
+    """Base exception for all hardware-related errors."""
+    pass
+
+class CommunicationError(HardwareError):
+    """Base class for communication-related errors."""
+    pass
+
+class ModbusError(CommunicationError):
+    """Modbus communication errors."""
+    pass
+
+class ModbusTimeoutError(ModbusError):
+    """Modbus operation timed out."""
+    pass
+
+class ModbusConnectionError(ModbusError):
+    """Failed to establish Modbus connection."""
+    pass
+
+class CameraError(HardwareError):
+    """Base class for camera-related errors."""
+    pass
+
+class CameraConnectionError(CameraError):
+    """Camera connection or initialization failed."""
+    pass
+
+class CameraConfigError(CameraError):
+    """Camera configuration error."""
+    pass
+
+class ImageError(CameraError):
+    """Image capture or processing error."""
+    pass
+
+class ImageProcessingError(ImageError):
+    """Error during image processing or analysis."""
+    pass
+
+class CalibrationError(CameraError):
+    """Camera calibration error."""
+    pass
+
+class TOFError(CameraError):
+    """Time-of-flight sensor specific errors."""
+    pass
+
+class TOFConfigError(TOFError):
+    """TOF sensor configuration error."""
+    pass
+
+class TOFDataError(TOFError):
+    """TOF sensor data read/processing error."""
+    pass
+
+class MotorError(HardwareError):
+    """Base class for motor-related errors."""
+    pass
+
+class MotorTimeoutError(MotorError):
+    """Motor operation timed out."""
+    pass
+
+class MotorLimitError(MotorError):
+    """Motor hit a limit switch or exceeded bounds."""
+    pass
+
+class MotorConfigError(MotorError):
+    """Error in motor configuration."""
+    pass
+
+class MotorMovementError(MotorError):
+    """Error during motor movement."""
+    pass
+
+class MotorStateError(MotorError):
+    """Invalid motor state transition."""
+    pass
