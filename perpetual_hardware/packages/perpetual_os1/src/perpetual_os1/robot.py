@@ -333,7 +333,7 @@ class Robot:
 
 
     # plug in sizing from the io box
-    async def store(self, item_name: str, dimensions: Optional[Dict[str, float]] = None) -> None:
+    async def store(self, item_name: str) -> None:
         """
         Store an item in the storage grid, finding the best available location based on item dimensions.
         
@@ -356,27 +356,37 @@ class Robot:
         # Set default dimensions or use measured ones
         width = 50.0  # default width
         height = 50.0  # default height
-        length = 200.0  # default length
+        length = 50.0  # default length
+
+        dimensions = self.measure_item_dimensions()
+        print(dimensions, flush=True)
         
-        if dimensions:
-            # Prefer footprint measurements over scale measurements if available
-            if "footprint_major_mm" in dimensions and "footprint_minor_mm" in dimensions:
-                width = dimensions["footprint_major_mm"]
-                height = dimensions["footprint_minor_mm"]
-            elif "scale_major_mm" in dimensions and "scale_minor_mm" in dimensions:
-                width = dimensions["scale_major_mm"]
-                height = dimensions["scale_minor_mm"]
+        # TODO remove dimensions, and modify io sizer wrapper to return a dimensions object
+
+        # if dimensions:
+        #     # Prefer footprint measurements over scale measurements if available
+        #     if "footprint_major_mm" in dimensions and "footprint_minor_mm" in dimensions:
+        #         width = dimensions["footprint_major_mm"]
+        #         height = dimensions["footprint_minor_mm"]
+        #     elif "scale_major_mm" in dimensions and "scale_minor_mm" in dimensions:
+        #         width = dimensions["scale_major_mm"]
+        #         height = dimensions["scale_minor_mm"]
                 
-            # Use measured depth if available
-            if "depth_mm" in dimensions:
-                length = dimensions["depth_mm"]
+        #     # Use measured depth if available
+        #     if "depth_mm" in dimensions:
+        #         length = dimensions["depth_mm"]
                 
-            # Add safety margin to ensure item fits (10%)
-            width *= 1.1
-            height *= 1.1
-            length *= 1.1
+        #     # Add safety margin to ensure item fits (10%)
+        #     width *= 1.1
+        #     height *= 1.1
+        #     length *= 1.1
             
         # Find a suitable empty location for the item
+
+        print(width, flush=True)
+        print(height,flush=True)
+        print(length,flush=True)
+
         item = CellItem(
             dimensions=Dimensions(
                 width=width,
@@ -385,18 +395,25 @@ class Robot:
             ),
             data={"name": item_name}  # Store item name in data
         )
+
+        # print(item, flush=True)
+        # print("beb")
         location = self._grid.find_best_slot_for_item(item)
+        print(location, flush=True)
         
         if not location:
+            print("no cell")
             return RobotCommandError(error="No suitable storage location found")
             
         # Get coordinate and store
         coord = self._grid.get_cell_coordinate(location)
-        await self.io_pick(coord.to_axis_coordinate())
+        print(coord)
+        # await self.io_pick(coord.to_axis_coordinate())
         
         # Update storage grid
         self._grid.store_item(location, item)
         self._grid.save()
+        print(self._grid)
 
     async def retrieve(self, item_name: str) -> None:
         """
@@ -412,7 +429,7 @@ class Robot:
             return RobotCommandError(error="Storage grid not initialized")
             
         # Find item location
-        coord = await self.find_item_location(item_name=item_name)
+        coord = await self._grid.find_item_location(item_name=item_name)
         
         if not coord:
             return RobotCommandError(error=f"Item '{item_name}' not found in storage")
@@ -421,9 +438,24 @@ class Robot:
         print(coord)
         # await self.io_place(coord)
 
-        # todo update storage grid
+        # clear the item we just retrieved
+        location = next(
+            (
+                entry.location
+                for entry in self._grid.get_all_cell_data()
+                if entry.cell
+                and entry.cell.data
+                and isinstance(entry.cell.data, dict)
+                and entry.cell.data.get("name") == item_name
+            ),
+            None,
+        )
+        if location:
 
-    async def measure_item_dimensions(self, n_frames: int = 10) -> Optional[Dict[str, float]]:
+            self._grid.clear_item(location)
+            self._grid.save()
+
+    def measure_item_dimensions(self, n_frames: int = 10) -> Optional[Dict[str, float]]:
         """
         Use the IOBox's AFSCam to measure the dimensions of an item currently in the IO box.
         Returns the aggregate dimensions including footprint and depth measurements.
@@ -443,21 +475,24 @@ class Robot:
         Raises:
             RobotStateError: If there is no item in the IOBox to measure
         """
-        # Validate state before operation
-        self._state_manager.update_state(self._state.tool, self._state.io)
-        self._state_manager.validate_operation('measure')
+        # Validate state before operation -> change state on weight read
+        # self._state_manager.update_state(self._state.tool, self._state.io)
+        # self._state_manager.validate_operation('measure')
         if not self._io or not self._io._cam:
             raise RuntimeError("IOBox camera not configured")
             
         # Take measurement using AFSCam
-        measure_result = await self._io._cam.measure(n_frames=n_frames)
+        measure_result = self._io.measure_item_sync()
+        # print(measure_result)
         
         if not measure_result["ok"]:
+            print("bad")
             return None
             
         # Extract relevant measurements from aggregates
         agg = measure_result["aggregate"]
         if not agg:
+            print("bad agg")
             return None
             
         # Collect all available measurements
@@ -478,7 +513,7 @@ class Robot:
         # Depth measurement
         if "depth_mm_med" in agg:
             result["depth_mm"] = agg["depth_mm_med"]
-            
+
         return result if result else None
     
     async def get_status(self) -> RobotStatus:
@@ -490,7 +525,7 @@ class Robot:
         return status
     
     async def test(self, coordinate) -> None:
-        await self.retrieve(item_name="beblet")
+        await self.store(item_name="andi")
 
     async def handle_command(self, command: RobotCommands):
         if isinstance(command, StopCommand):

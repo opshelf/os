@@ -98,6 +98,25 @@ class IOBox:
             if isinstance(e, IOBoxError):
                 raise
             raise CameraError(f"Item measurement failed: {str(e)}") from e
+        
+    def measure_item_sync(self) -> Optional[ItemSizeLocation]:
+        """
+        Measure item dimensions using camera system.
+        
+        Raises:
+            IOBoxError: If camera is not configured
+            CameraError: If measurement fails
+        """
+        try:
+            if self._cam is None:
+                raise IOBoxError("Camera not configured")
+            size = self._cam.measure_sync()
+            return size
+        except Exception as e:
+            self._status = IOBoxStatus.ERROR
+            if isinstance(e, IOBoxError):
+                raise
+            raise CameraError(f"Item measurement failed: {str(e)}") from e
 
     async def open_door(self):
         """
