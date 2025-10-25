@@ -39,3 +39,4 @@ perpetual_hardware/packages/perpetual_os1_server/data/*.db-wal
 
 # SvelteKit build directory
 dev_ui/.svelte-kit
+dev_ui/node_modules
