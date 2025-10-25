@@ -3,9 +3,11 @@ from typing import Optional
 from perpetual_os1.iobox import IOBoxStatus
 from perpetual_os1.tool import ToolItemStatus, ToolMotionStatus, ToolStatus
 
-class RobotStateError(Exception):
-    """Raised when an operation is not allowed in the current robot state."""
-    pass
+import json
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, TypedDict
+from typing import Sequence, Union
+from perpetual_os1.common import AxisCoordinate
 
 class RobotOperationState(Enum):
     """
@@ -20,7 +22,7 @@ class RobotOperationState(Enum):
 class RobotStateManager:
     """
     Manages allowed operations based on Tool and IOBox states.
-    
+
     State Transitions:
     - IDLE -> ITEM_IN_IOBOX: Item placed in IOBox
     - IDLE -> ITEM_IN_TOOL: item retrieved from storage
@@ -33,7 +35,7 @@ class RobotStateManager:
     - BOTH_OCCUPIED -> ITEM_IN_IOBOX: Tool places its item in storage
     - Any state -> ERROR: Component error
     """
-    
+
     def __init__(self):
         self._current_state = RobotOperationState.IDLE
 
@@ -47,8 +49,8 @@ class RobotStateManager:
         Returns the new state.
         """
         # Check for error conditions first
-        if (tool_status.motion == ToolMotionStatus.ERROR or 
-            tool_status.item == ToolItemStatus.ERROR or 
+        if (tool_status.motion == ToolMotionStatus.ERROR or
+            tool_status.item == ToolItemStatus.ERROR or
             io_status == IOBoxStatus.ERROR):
             self._current_state = RobotOperationState.ERROR
             return self._current_state

@@ -7,11 +7,11 @@ import logging
 import time
 import functools
 
-from ..database.models import Item, ItemLocation
+from ..database.models import Item, ItemLocation, User
 from ..core.storage import StorageService
 from ..core.sizes import migrate_if_needed
 from ..core.validation import ValidationError
-from .auth_deps import require_permissions
+from .auth_deps import require_permissions, get_current_user, can_user_retrieve_item
 from ..database.session import get_db
 
 router = APIRouter(tags=["storage"])
@@ -40,6 +40,7 @@ class ItemCreate(BaseModel):
     dimensions: Dict[str, float]
     weight: Optional[float] = None
     metadata: Optional[Dict[str, Any]] = None
+    access_level_id: Optional[int] = None
 
 
 class ItemUpdate(BaseModel):
@@ -47,6 +48,7 @@ class ItemUpdate(BaseModel):
     dimensions: Optional[Dict[str, float]] = None
     weight: Optional[float] = None
     metadata: Optional[Dict[str, Any]] = None
+    access_level_id: Optional[int] = None
 
 
 class ItemLocationCreate(BaseModel):
@@ -74,9 +76,11 @@ class ItemWithLocations(BaseModel):
     dimensions: Dict[str, float]
     weight: Optional[float]
     metadata: Optional[Dict[str, Any]]
+    access_level_id: Optional[int]
     locations: List[Any]  # Temporary fix for SQLAlchemy model
     created_at: str
     updated_at: str
+    can_retrieve: bool
 
 
 class ItemLocationResponse(BaseModel):
@@ -119,7 +123,7 @@ def _serialize_locations(locations: List[ItemLocation]) -> List[Dict[str, Any]]:
     return payload
 
 
-def _build_item_payload(item: Item, locations: List[ItemLocation]) -> ItemWithLocations:
+def _build_item_payload(item: Item, locations: List[ItemLocation], current_user: User) -> ItemWithLocations:
     return ItemWithLocations(
         id=int(item.id),
         upca=str(item.upca),
@@ -127,9 +131,11 @@ def _build_item_payload(item: Item, locations: List[ItemLocation]) -> ItemWithLo
         dimensions=cast(dict[str, float], item.dimensions),
         weight=float(item.weight) if item.weight else None,
         metadata=cast(dict[str, Any], item.item_metadata) or {},
+        access_level_id=item.access_level_id,
         locations=_serialize_locations(locations),
         created_at=item.created_at.isoformat() if item.created_at else "",
         updated_at=item.updated_at.isoformat() if item.updated_at else "",
+        can_retrieve=can_user_retrieve_item(current_user, item),
     )
 
 
@@ -141,6 +147,7 @@ async def get_items(
     skip: int = 0,
     limit: int = 50,
     session: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> List[ItemWithLocations]:
     """Get all items with pagination."""
     await migrate_if_needed(session)
@@ -152,13 +159,14 @@ async def get_items(
     if response is not None:
         response.headers["X-Total-Count"] = str(total)
 
-    return [_build_item_payload(item, list(item.locations)) for item in items]
+    return [_build_item_payload(item, list(item.locations), current_user) for item in items]
 
 
 @router.get("/items/{upca}", dependencies=[Depends(require_permissions("storage:read"))])
 async def get_item(
     upca: str,
-    session: AsyncSession = Depends(get_db)
+    session: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> ItemWithLocations:
     """Get a specific item by UPCA."""
     await migrate_if_needed(session)
@@ -170,13 +178,14 @@ async def get_item(
 
     locations = await storage_service.get_item_locations(upca)
 
-    return _build_item_payload(item, locations)
+    return _build_item_payload(item, locations, current_user)
 
 
 @router.post("/items", dependencies=[Depends(require_permissions("storage:write"))])
 async def create_item(
     item: ItemCreate,
-    session: AsyncSession = Depends(get_db)
+    session: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> ItemWithLocations:
     """Create a new item."""
     await migrate_if_needed(session)
@@ -188,12 +197,13 @@ async def create_item(
             name=item.name,
             dimensions=item.dimensions,
             weight=item.weight,
-            metadata=item.metadata or {}
+            metadata=item.metadata or {},
+            access_level_id=item.access_level_id
         )
 
         locations = await storage_service.get_item_locations(item.upca)
 
-        return _build_item_payload(db_item, locations)
+        return _build_item_payload(db_item, locations, current_user)
 
     except ValidationError as e:
         raise HTTPException(status_code=422, detail=str(e))
@@ -205,7 +215,8 @@ async def create_item(
 async def update_item(
     upca: str,
     item: ItemUpdate,
-    session: AsyncSession = Depends(get_db)
+    session: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> ItemWithLocations:
     """Update an existing item."""
     await migrate_if_needed(session)
@@ -216,7 +227,8 @@ async def update_item(
         name=item.name,
         dimensions=item.dimensions,
         weight=item.weight,
-        metadata=item.metadata
+        metadata=item.metadata,
+        access_level_id=item.access_level_id
     )
 
     if not updated_item:
@@ -228,7 +240,7 @@ async def update_item(
 
     locations = await storage_service.get_item_locations(upca)
 
-    return _build_item_payload(fresh_item, locations)
+    return _build_item_payload(fresh_item, locations, current_user)
 
 
 @router.delete("/items/{upca}", dependencies=[Depends(require_permissions("storage:delete"))])

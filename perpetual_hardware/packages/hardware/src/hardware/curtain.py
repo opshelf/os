@@ -1,12 +1,4 @@
-"""
-GPIO-based curtain sensor helpers.
-
-This module provides thin wrappers around RPi.GPIO so that the curtain state can
-be read from a digital input on a Raspberry Pi 5.
-"""
-
 from __future__ import annotations
-
 from typing import Optional
 
 try:
