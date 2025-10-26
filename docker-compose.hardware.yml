@@ -3,5 +3,6 @@ services:
     devices:
       - "/dev/ttyUSB0:/dev/ttyUSB0"
       - "/dev/ttyUSB1:/dev/ttyUSB1"
-      - "/dev/video0:/dev/video0"
+      - "/dev/video1:/dev/video1"
       - "/dev/bus/usb:/dev/bus/usb"
+      - "/dev/usb/lp0:/dev/usb/lp0"

@@ -615,7 +615,9 @@ class Robot:
         return status
     
     async def test(self, coordinate) -> None:
-        await self.store(item_name="andi")
+        # await self.store(item_name="andi")
+        beb = self.measure_item_dimensions()
+        print(beb)
 
     async def handle_command(self, command: RobotCommands):
         if isinstance(command, StopCommand):

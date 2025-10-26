@@ -450,9 +450,10 @@ class Motor():
             
             last_pos = self._cur_pos
             
-            # Check for stall condition
+            # # Check for hardstop stall
             # if has_moved and (now - last_movement_time > self._stall_timeout):
             #     await self.stop()
+            #     self._pending_motion = None
             #     if not homing:
             #         raise MotorError(f"Motor {self._motor_id} stalled")
             #     return MotorStatus.STOPPED #add a stalled command?)
@@ -473,10 +474,10 @@ class Motor():
                 if homing:
                     self._pending_motion = None
                     self._logger.warning(
-                        "Fault detected during homing",
+                        "Stall detected during homing",
                         extra={"elapsed": time.monotonic() - start_time}
                     )
-                    return MotorStatus.FAULT
+                    return MotorStatus.STOPPED
 
                 self._logger.warning(
                     "Fault detected",
