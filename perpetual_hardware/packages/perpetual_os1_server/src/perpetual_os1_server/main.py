@@ -33,37 +33,37 @@ logging.getLogger("aiosqlite").setLevel(logging.WARNING)
 
 
 def _run_migrations() -> None:
-	from alembic import command
-	from alembic.config import Config
-	from perpetual_os1_server.database.base import get_database_url
+    from alembic import command
+    from alembic.config import Config
+    from perpetual_os1_server.database.base import get_database_url
 
-	try:
-		script_location = Path(__file__).parent / "alembic"
+    try:
+        script_location = Path(__file__).parent / "alembic"
 
-		if script_location.exists() == False:
-			logging.warning("Alembic directory not found at %s", script_location)
-			return
+        if script_location.exists() == False:
+            logging.warning("Alembic directory not found at %s", script_location)
+            return
 
-		package_root = Path(__file__).parent.parent.parent.parent.parent
-		alembic_ini_path = package_root / "alembic.ini"
+        package_root = Path(__file__).parent.parent.parent.parent.parent
+        alembic_ini_path = package_root / "alembic.ini"
 
-		if alembic_ini_path.exists() == False:
-			logging.warning("alembic.ini not found at %s, using fallback", alembic_ini_path)
-			alembic_cfg = Config()
-			alembic_cfg.set_main_option("script_location", str(script_location))
-		else:
-			alembic_cfg = Config(str(alembic_ini_path))
-			alembic_cfg.set_main_option("script_location", str(script_location))
+        if alembic_ini_path.exists() == False:
+            logging.warning("alembic.ini not found at %s, using fallback", alembic_ini_path)
+            alembic_cfg = Config()
+            alembic_cfg.set_main_option("script_location", str(script_location))
+        else:
+            alembic_cfg = Config(str(alembic_ini_path))
+            alembic_cfg.set_main_option("script_location", str(script_location))
 
-		db_url = get_database_url()
-		alembic_cfg.set_main_option("sqlalchemy.url", db_url)
+        db_url = get_database_url()
+        alembic_cfg.set_main_option("sqlalchemy.url", db_url)
 
-		logging.info("Running database migrations from %s", script_location)
-		command.upgrade(alembic_cfg, "head")
-		logging.info("Database migrations complete")
-	except Exception as e:
-		logging.error("Migration failed: %s", str(e), exc_info=True)
-		logging.warning("Continuing without migrations")
+        logging.info("Running database migrations from %s", script_location)
+        command.upgrade(alembic_cfg, "head")
+        logging.info("Database migrations complete")
+    except Exception as e:
+        logging.error("Migration failed: %s", str(e), exc_info=True)
+        logging.warning("Continuing without migrations")
 
 
 async def _seed_auth_if_requested() -> None:
@@ -179,11 +179,11 @@ app.include_router(storage.router, prefix="/api/storage")
 
 
 def start() -> None:
-	import uvicorn
+    import uvicorn
 
-	uvicorn.run(
-		"perpetual_os1_server.main:app",
-		host="0.0.0.0",
-		port=8000,
-		reload=True,
-	)
+    uvicorn.run(
+        "perpetual_os1_server.main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+    )
