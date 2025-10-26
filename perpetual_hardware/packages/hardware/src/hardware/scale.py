@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from typing import Optional, Dict, Any, Tuple
 
-from hardware.ModbusController import SharedModbusController
+from hardware.controller import SharedModbusController
 
 
 class Scale:
@@ -27,7 +27,7 @@ class Scale:
     def __init__(
         self,
         modbus_controller: SharedModbusController,
-        scale_id: int,
+        scale_id: int = 1,
         retries: int = 2,
         retry_delay: float = 0.05,
     ):

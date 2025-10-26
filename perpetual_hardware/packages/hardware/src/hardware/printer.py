@@ -2,22 +2,26 @@
 USB printer component driver.
 
 This module provides a small asynchronous-friendly driver that can talk to a
-USB-connected receipt/label printer via PyUSB.  It focuses on reliably sending
-UTF-8 text payloads while allowing the caller to adjust the amount of trailing
-whitespace (spaces and/or blank lines) that is appended to each print job.
+USB-connected receipt/label printer exposed as a character device (e.g.
+/dev/usb/lp0). It focuses on reliably sending UTF-8 text payloads while allowing
+the caller to adjust the amount of trailing whitespace (spaces and/or blank
+lines) that is appended to each print job.
 """
 
 from __future__ import annotations
 
 import logging
+import math
 import threading
 from typing import Optional
 
+from pathlib import Path
+import struct
+
 try:
-    import usb.core  # type: ignore
-    import usb.util  # type: ignore
-except ImportError:  # pragma: no cover - handled by runtime checks
-    usb = None  # type: ignore
+    from PIL import Image
+except ImportError:  # pragma: no cover
+    Image = None  # type: ignore
 
 from hardware.exceptions import CommunicationError
 
@@ -34,14 +38,10 @@ class PrinterNotConnectedError(PrinterError):
 
 class USBPrinter:
     """
-    Minimal USB printer driver using PyUSB.
+    Minimal USB printer driver that streams bytes to a character device.
 
     Parameters:
-        vendor_id:  USB vendor ID of the printer.
-        product_id: USB product ID of the printer.
-        interface:  Interface index to claim (default 0).
-        out_endpoint: Optional endpoint address for output; auto-detected if None.
-        timeout_ms: Write timeout in milliseconds.
+        device_path: Path to the printer device (default /dev/usb/lp0).
         encoding:  Text encoding used when sending strings.
         default_trailing_spaces: Number of spaces appended to every print job.
         default_trailing_newlines: Number of newline characters appended.
@@ -49,28 +49,22 @@ class USBPrinter:
 
     def __init__(
         self,
-        vendor_id: int,
-        product_id: int,
-        interface: int = 0,
-        out_endpoint: Optional[int] = None,
-        timeout_ms: int = 2000,
+        device_path: str = "/dev/usb/lp0",
         encoding: str = "utf-8",
         default_trailing_spaces: int = 0,
         default_trailing_newlines: int = 0,
+        line_width: int = 32,
     ) -> None:
-        self.vendor_id = vendor_id
-        self.product_id = product_id
-        self.interface = interface
-        self.out_endpoint = out_endpoint
-        self.timeout_ms = timeout_ms
+        self.device_path = Path(device_path)
         self.encoding = encoding
         self._default_trailing_spaces = max(0, int(default_trailing_spaces))
         self._default_trailing_newlines = max(0, int(default_trailing_newlines))
+        if line_width <= 0:
+            raise ValueError("line_width must be > 0")
+        self._line_width = line_width
 
-        self._device: Optional["usb.core.Device"] = None  # type: ignore[name-defined]
-        self._endpoint: Optional["usb.core.Endpoint"] = None  # type: ignore[name-defined]
+        self._device_file: Optional[object] = None
         self._lock = threading.Lock()
-        self._claimed = False
 
     # --------------------------------------------------------------------- #
     # Public configuration helpers
@@ -102,76 +96,39 @@ class USBPrinter:
 
     def connect(self) -> None:
         """
-        Locate and claim the USB printer.
+        Locate and open the printer device.
 
         Raises:
-            PrinterError: If PyUSB is missing, the device cannot be found,
-                          or the interface/endpoint cannot be claimed.
+            PrinterError: If the device file cannot be opened.
         """
-        self._ensure_usb_available()
-        if self._device is not None:
-            log.debug("USB printer already connected")
+        if self._device_file is not None:
+            log.debug("Printer device already open at %s", self.device_path)
             return
 
-        device = usb.core.find(idVendor=self.vendor_id, idProduct=self.product_id)  # type: ignore[name-defined]
-        if device is None:
-            raise PrinterError(
-                f"USB printer {self.vendor_id:04x}:{self.product_id:04x} not found"
-            )
+        if not self.device_path.exists():
+            raise PrinterError(f"Printer device {self.device_path} does not exist")
 
         try:
-            if device.is_kernel_driver_active(self.interface):
-                device.detach_kernel_driver(self.interface)
-        except (AttributeError, NotImplementedError):
-            pass  # Some backends do not implement kernel driver checks
-        except usb.core.USBError as exc:  # type: ignore[name-defined]
-            raise PrinterError(f"Failed to detach kernel driver: {exc}") from exc
+            # buffering=0 ensures writes are pushed immediately.
+            self._device_file = self.device_path.open("wb", buffering=0)
+        except OSError as exc:
+            raise PrinterError(f"Failed to open printer device {self.device_path}: {exc}") from exc
 
-        try:
-            device.set_configuration()
-            cfg = device.get_active_configuration()
-            intf = cfg[(self.interface, 0)]
-            endpoint = self._resolve_endpoint(intf)
-            usb.util.claim_interface(device, self.interface)  # type: ignore[name-defined]
-        except usb.core.USBError as exc:  # type: ignore[name-defined]
-            try:
-                usb.util.release_interface(device, self.interface)  # type: ignore[name-defined]
-            except Exception:
-                pass
-            raise PrinterError(f"Failed to initialize printer interface: {exc}") from exc
-
-        self._device = device
-        self._endpoint = endpoint
-        self._claimed = True
-        log.debug(
-            "USB printer connected (vid=0x%04x pid=0x%04x endpoint=0x%02x)",
-            self.vendor_id,
-            self.product_id,
-            endpoint.bEndpointAddress,
-        )
+        log.debug("Printer device %s opened", self.device_path)
 
     def disconnect(self) -> None:
-        """Release USB resources."""
-        device = self._device
-        if device is None:
+        """Close printer device handle."""
+        if self._device_file is None:
             return
 
         with self._lock:
-            if self._claimed:
-                try:
-                    usb.util.release_interface(device, self.interface)  # type: ignore[name-defined]
-                except Exception:
-                    pass
-                try:
-                    device.attach_kernel_driver(self.interface)  # type: ignore[name-defined]
-                except (usb.core.USBError, NotImplementedError):  # type: ignore[name-defined]
-                    pass
-
-            usb.util.dispose_resources(device)  # type: ignore[name-defined]
-            self._claimed = False
-            self._device = None
-            self._endpoint = None
-            log.debug("USB printer disconnected")
+            try:
+                self._device_file.close()
+            except Exception:
+                log.exception("Failed to close printer device %s cleanly", self.device_path)
+            finally:
+                self._device_file = None
+                log.debug("Printer device %s closed", self.device_path)
 
     # --------------------------------------------------------------------- #
     # Printing API
@@ -204,23 +161,41 @@ class USBPrinter:
 
         Raises:
             PrinterNotConnectedError: If the USB device is not connected.
-            PrinterError: On USB write failures.
+            PrinterError: On write failures.
         """
         if not data:
             return
-        if self._device is None or self._endpoint is None:
+        if self._device_file is None:
             raise PrinterNotConnectedError("Printer is not connected")
 
         with self._lock:
             try:
-                written = self._endpoint.write(data, self.timeout_ms)
-            except usb.core.USBError as exc:  # type: ignore[name-defined]
-                raise PrinterError(f"USB write failed: {exc}") from exc
+                self._device_file.write(data)
+                self._device_file.flush()
+            except OSError as exc:
+                raise PrinterError(f"Failed to write to printer device {self.device_path}: {exc}") from exc
 
-        if written != len(data):
-            raise PrinterError(
-                f"Incomplete write, expected {len(data)} bytes but sent {written}"
-            )
+    def print_png(
+        self,
+        image_path: str,
+        *,
+        max_width: Optional[int] = None,
+        invert: bool = False,
+    ) -> None:
+        """Rasterize and print a PNG image using ESC/POS graphics commands."""
+        if Image is None:
+            raise PrinterError("Pillow is required for image printing")
+
+        img = Image.open(image_path)
+        img = img.convert("L")
+        if max_width and max_width > 0 and img.width > max_width:
+            ratio = max_width / img.width
+            new_height = max(1, int(img.height * ratio))
+            img = img.resize((max_width, new_height), Image.LANCZOS)
+        img = img.convert("1")  # monochrome dithered
+
+        raster = self._encode_raster_image(img, invert=invert)
+        self.print_raw(raster)
 
     # --------------------------------------------------------------------- #
     # Context manager helpers
@@ -235,26 +210,6 @@ class USBPrinter:
     # --------------------------------------------------------------------- #
     # Internal helpers
 
-    def _resolve_endpoint(self, interface) -> "usb.core.Endpoint":  # type: ignore[name-defined]
-        """
-        Locate the OUT endpoint either by explicit address or by discovery.
-        """
-        if self.out_endpoint is not None:
-            endpoint = usb.util.find_descriptor(  # type: ignore[name-defined]
-                interface,
-                bEndpointAddress=self.out_endpoint,
-            )
-            if endpoint is None:
-                raise PrinterError(
-                    f"Endpoint 0x{self.out_endpoint:02x} not found on interface {self.interface}"
-                )
-            return endpoint
-
-        for endpoint in interface:
-            if usb.util.endpoint_direction(endpoint.bEndpointAddress) == usb.util.ENDPOINT_OUT:  # type: ignore[name-defined]
-                return endpoint
-        raise PrinterError(f"No OUT endpoint found on interface {self.interface}")
-
     def _prepare_payload(
         self,
         text: str,
@@ -265,16 +220,52 @@ class USBPrinter:
         spaces = self._default_trailing_spaces if trailing_spaces is None else max(0, int(trailing_spaces))
         newlines = self._default_trailing_newlines if trailing_newlines is None else max(0, int(trailing_newlines))
 
-        whitespace = " " * spaces + ("\n" * newlines)
+        # Ensure output is always at least 8 lines when rendered with the configured width.
+        MIN_LINES = 8
+        used_lines = self._estimate_line_usage(text)
+        missing_lines = max(0, MIN_LINES - (used_lines + newlines))
+        total_newlines = newlines + missing_lines
+
+        whitespace = " " * spaces + ("\n" * total_newlines)
         payload_str = f"{text}{whitespace}"
         try:
             return payload_str.encode(self.encoding, errors="replace")
         except LookupError as exc:
             raise PrinterError(f"Unknown printer encoding '{self.encoding}'") from exc
 
-    @staticmethod
-    def _ensure_usb_available() -> None:
-        if usb is None:  # type: ignore[misc]
-            raise PrinterError(
-                "PyUSB is not installed. Install the 'pyusb' package to use USBPrinter."
-            )
+    def _estimate_line_usage(self, text: str) -> int:
+        """Estimate how many printed lines a string will consume."""
+        if not text:
+            return 0
+        segments = text.split("\n")
+        lines = 0
+        for segment in segments:
+            length = len(segment)
+            lines += max(1, math.ceil(length / self._line_width)) if length else 1
+        return lines
+
+    def _encode_raster_image(self, img: "Image.Image", *, invert: bool = False) -> bytes:
+        width = img.width
+        height = img.height
+        width_bytes = (width + 7) // 8
+        header = b"\x1d\x76\x30\x00" + struct.pack("<HH", width_bytes, height)
+        pixels = img.load()
+        body = bytearray()
+        for y in range(height):
+            row_byte = 0
+            bit_count = 0
+            for x in range(width):
+                pixel = pixels[x, y]
+                bit = 0 if pixel else 1
+                if invert:
+                    bit ^= 1
+                row_byte = (row_byte << 1) | bit
+                bit_count += 1
+                if bit_count == 8:
+                    body.append(row_byte)
+                    row_byte = 0
+                    bit_count = 0
+            if bit_count:
+                row_byte <<= (8 - bit_count)
+                body.append(row_byte)
+        return header + body + b"\n"
