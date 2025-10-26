@@ -12,6 +12,7 @@ from hardware.scale import Scale
 
 import time
 import asyncio
+import random
 from enum import Enum
 from typing import Dict, Optional, Tuple, Union, Literal, Annotated
 from pydantic import BaseModel
@@ -99,6 +100,26 @@ class IOBox:
             return
         await self._cam.start()
         self._cam_running = True
+
+    def _generate_random_upca(self) -> str:
+        digits = [str(random.randint(0, 9)) for _ in range(11)]
+        odd_sum = sum(int(digits[i]) for i in range(0, 11, 2))
+        even_sum = sum(int(digits[i]) for i in range(1, 11, 2))
+        total = odd_sum * 3 + even_sum
+        check_digit = (10 - (total % 10)) % 10
+        return "".join(digits) + str(check_digit)
+
+    def print_random_barcode(self) -> str:
+        """Generate and print a random UPC-A code using the USB printer."""
+        if self._printer is None:
+            raise IOBoxError("Printer not configured")
+        upca = self._generate_random_upca()
+        try:
+            self._printer.print_text(f"UPC-A: {upca}")
+            return upca
+        except PrinterError as exc:
+            self._status = IOBoxStatus.ERROR
+            raise IOBoxError(f"Failed to print barcode: {str(exc)}") from exc
 
     async def get_weight(self) -> float:
         """
