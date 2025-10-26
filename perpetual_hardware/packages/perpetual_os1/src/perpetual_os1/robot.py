@@ -20,6 +20,7 @@ from pathlib import Path
 from enum import Enum
 from typing import Any, Dict, Optional, Tuple, Union, Literal, Annotated, List, Callable, TYPE_CHECKING
 from pydantic import BaseModel, Field
+from dataclasses import dataclass
 
 import time
 import asyncio
