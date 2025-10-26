@@ -145,7 +145,7 @@
 
     "bus": {
       "motor": {
-        "ports": ["/dev/ttyUSB1", "/dev/ttyUSB2"],
+        "ports": ["/dev/ttyUSB1"],
         "baudrate": 115200,
         "parity": "N",
         "timeout": 2.0,

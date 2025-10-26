@@ -508,24 +508,19 @@ class Robot:
             data={"name": item_name}  # Store item metadata
         )
 
-        # print(item, flush=True)
-        # print("beb")
         location = self._grid.find_best_slot_for_item(item)
-        print(location, flush=True)
 
         if not location:
-            print("no cell")
             return RobotCommandError(error="No suitable storage location found")
 
         # Get coordinate and store
         coord = self._grid.get_cell_coordinate(location)
-        print(coord)
-        # await self.io_pick(coord.to_axis_coordinate())
+        await self.io_pick(coord.to_axis_coordinate())
 
         # Update storage grid
         self._grid.store_item(location, item)
         self._grid.save()
-        print(self._grid)
+
 
     async def retrieve(self, item_name: str) -> None:
         """
@@ -593,13 +588,11 @@ class Robot:
         # print(measure_result)
 
         if not measure_result["ok"]:
-            print("bad")
             return None
 
         # Extract relevant measurements from aggregates
         agg = measure_result["aggregate"]
         if not agg:
-            print("bad agg")
             return None
 
         # Prefer footprint measurements (from pinhole model) and fall back to scale data if needed.
@@ -608,7 +601,6 @@ class Robot:
         length = agg.get("depth_mm_med")
 
         if width is None or height is None or length is None:
-            print("Incomplete dimension data", flush=True)
             return None
 
         return Dimensions(length=float(length), width=float(width), height=float(height))
