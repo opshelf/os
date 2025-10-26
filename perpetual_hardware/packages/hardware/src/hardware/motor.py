@@ -308,7 +308,6 @@ class Motor():
         except Exception as e:
             raise MotorConfigError(f"Failed to configure movement parameters: {str(e)}") from e
         
-    #TODO return val in mm, not pulsesat:
     async def get_position(self) -> float:
         """Get the current motor position in millimeters.
         
