@@ -121,8 +121,8 @@
         }
       ],
       "usb_camera": {
-        "index": 0,
-        "usb_index": 0,
+        "index": 1,
+        "usb_index": 1,
         "usb_fourcc": "MJPG",
         "usb_exposure": 50,
         "square_mm": 7.5,
@@ -140,6 +140,23 @@
         "confidence_min": 0,
         "depth_unit": "mm",
         "calibration_status": "uncalibrated"
+      }
+    },
+
+    "bus": {
+      "motor": {
+        "ports": ["/dev/ttyUSB1"],
+        "baudrate": 115200,
+        "parity": "N",
+        "timeout": 2.0,
+        "retry_delay_s": 0.25
+      },
+      "scale": {
+        "ports": ["/dev/ttyUSB0"],
+        "baudrate": 9600,
+        "parity": "N",
+        "timeout": 2.0,
+        "retry_delay_s": 0.25
       }
     }
   },

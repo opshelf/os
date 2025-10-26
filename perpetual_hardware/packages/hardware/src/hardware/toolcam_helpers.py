@@ -1,9 +1,12 @@
+import json
 import numpy as np
 import cv2
 from pathlib import Path
 
-from typing import List, Tuple, Optional
+from typing import Any, Dict, List, Tuple, Optional, Union
 import numpy.typing as npt
+
+CONFIG_PATH = Path(__file__).resolve().parents[3] / "perpetual_os1" / "src" / "perpetual_os1" / "config.json"
 
 def try_find_board(gray: np.ndarray, sizes: List[Tuple[int, int]]) -> Tuple[Optional[Tuple[int, int]], Optional[npt.NDArray[np.float32]]]:
     """
@@ -469,3 +472,41 @@ def is_right_angle_quad(pts: np.ndarray, cos_tol: float = 0.25) -> bool:
         if isinstance(e, ValueError):
             raise
         raise RuntimeError(f"Failed to check quad angles: {str(e)}") from e
+
+
+def _to_serializable(value: Any) -> Any:
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, (list, tuple)):
+        return [_to_serializable(v) for v in value]
+    return value
+
+
+def persist_poe_camera_calibration(
+    calibration: Dict[str, Any],
+    config_path: Optional[Union[str, Path]] = None
+) -> None:
+    """
+    Persist updated PoE camera calibration data back into config.json.
+    """
+    path = Path(config_path) if config_path else CONFIG_PATH
+    if not path.exists():
+        raise FileNotFoundError(f"Configuration file not found at {path}")
+
+    with path.open("r", encoding="utf-8") as handle:
+        data = json.load(handle)
+
+    try:
+        poe_camera = data["robot"]["tool"]["poe_camera"]
+    except KeyError as exc:
+        raise RuntimeError("Invalid configuration structure; expected robot.tool.poe_camera") from exc
+
+    for key, value in calibration.items():
+        poe_camera[key] = _to_serializable(value)
+
+    poe_camera["calibration_status"] = "calibrated"
+
+    with path.open("w", encoding="utf-8") as handle:
+        json.dump(data, handle, indent=2)

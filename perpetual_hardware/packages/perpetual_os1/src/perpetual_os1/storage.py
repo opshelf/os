@@ -395,7 +395,6 @@ class StorageGrid(BaseModel):
         possible_slots.sort(key=lambda x: x[1])
         return possible_slots[0][0] if possible_slots else None
     
-
 # returns item coordinates
     async def find_item_location(
         self, 
@@ -463,8 +462,8 @@ class StorageGrid(BaseModel):
         Returns:
             AxisCoordinate if suitable cell is found, None otherwise
         """
-        if not self._grid:
-            return None
+        # if not self._grid:
+        #     return None
             
         # Create a temporary item to use storage grid's sizing logic
         temp_item = CellItem(

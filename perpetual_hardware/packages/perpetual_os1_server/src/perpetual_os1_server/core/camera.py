@@ -7,10 +7,10 @@ import cv2
 import numpy as np
 from hardware.iocam import AFSCam
 
-# from perpetual_os1_server.core.logging_config import get_logger
-# from perpetual_os1_server.settings import get_settings
+from perpetual_os1_server.core.logging_config import get_logger
+from perpetual_os1_server.settings import get_settings
 
-# logger = get_logger(__name__)
+logger = get_logger(__name__)
 
 class CameraStreamManager:
 	def __init__(self, camera: AFSCam):
@@ -29,27 +29,13 @@ class CameraStreamManager:
 		if self.is_running is True:
 			return
 
-		# logger.info("camera_starting")
-		# self.camera = cv2.VideoCapture(self._camera_index, cv2.CAP_V4L2)
 
 		loop = asyncio.get_event_loop()
-		# try:
-		# 	await asyncio.wait_for(
-		# 		loop.run_in_executor(None, self.camera.get_correct),
-		# 		timeout=30.0
-		# 	)
-		# 	logger.info("camera_calibration_complete")
-		# except asyncio.TimeoutError:
-		# 	logger.warning("camera_calibration_timeout")
-		# except FileNotFoundError:
-		# 	logger.warning("camera_calibration_skipped")
-		# except Exception as e:
-		# 	logger.warning("camera_calibration_failed", error=str(e))
 
 		self.calibration_complete.set()
 		self.is_running = True
 		self.capture_task = asyncio.create_task(self._capture_loop())
-		# logger.info("camera_ready")
+		logger.info("camera_ready")
 
 	async def stop(self) -> None:
 		if self.is_running is False:
@@ -98,12 +84,6 @@ class CameraStreamManager:
 					await asyncio.sleep(1.0)
 					continue
 
-				# if bbox is not None:
-				# 	annotated = self._draw_detection_overlay(corrected, bbox)
-				# else:
-				# 	annotated = corrected
-
-				# success, buffer = cv2.imencode('.jpg', annotated, [cv2.IMWRITE_JPEG_QUALITY, 85])
 				success, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
 
 				if success is True:
@@ -113,16 +93,16 @@ class CameraStreamManager:
 			except RuntimeError as e:
 				if "bad cam" in str(e):
 					print("connection failed")
-					# logger.error("camera_connection_failed", url=self.camera_url, error=str(e))
+					logger.error("camera_connection_failed", url=self.camera_url, error=str(e))
 					await asyncio.sleep(5.0)
 				else:
 					print("runtime error")
-					# logger.error("camera_runtime_error", error=str(e), exc_info=True)
+					logger.error("camera_runtime_error", error=str(e), exc_info=True)
 					await asyncio.sleep(1.0)
 				continue
 			except Exception as e:
 				print("frame processing error")
-				# logger.error("camera_frame_processing_error", error=str(e), error_type=type(e).__name__, exc_info=True)
+				logger.error("camera_frame_processing_error", error=str(e), error_type=type(e).__name__, exc_info=True)
 				await asyncio.sleep(1.0)
 				continue
 
@@ -150,10 +130,10 @@ camera_manager: Optional[CameraStreamManager] = None
 async def init_camera_manager(camera) -> None:
 	global camera_manager
 
-	# settings = get_settings()
+	settings = get_settings()
 
-	# if settings.camera.enabled is False:
-	# 	return
+	if settings.camera.enabled is False:
+		return
 
 	camera_manager = CameraStreamManager(camera=camera)
 	asyncio.create_task(camera_manager.start())
