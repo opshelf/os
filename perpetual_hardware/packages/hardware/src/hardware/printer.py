@@ -11,6 +11,7 @@ lines) that is appended to each print job.
 from __future__ import annotations
 
 import logging
+import math
 import threading
 from typing import Optional
 
@@ -46,11 +47,15 @@ class USBPrinter:
         encoding: str = "utf-8",
         default_trailing_spaces: int = 0,
         default_trailing_newlines: int = 0,
+        line_width: int = 32,
     ) -> None:
         self.device_path = Path(device_path)
         self.encoding = encoding
         self._default_trailing_spaces = max(0, int(default_trailing_spaces))
         self._default_trailing_newlines = max(0, int(default_trailing_newlines))
+        if line_width <= 0:
+            raise ValueError("line_width must be > 0")
+        self._line_width = line_width
 
         self._device_file: Optional[object] = None
         self._lock = threading.Lock()
@@ -187,9 +192,26 @@ class USBPrinter:
         spaces = self._default_trailing_spaces if trailing_spaces is None else max(0, int(trailing_spaces))
         newlines = self._default_trailing_newlines if trailing_newlines is None else max(0, int(trailing_newlines))
 
-        whitespace = " " * spaces + ("\n" * newlines)
+        # Ensure output is always at least 8 lines when rendered with the configured width.
+        MIN_LINES = 8
+        used_lines = self._estimate_line_usage(text)
+        missing_lines = max(0, MIN_LINES - (used_lines + newlines))
+        total_newlines = newlines + missing_lines
+
+        whitespace = " " * spaces + ("\n" * total_newlines)
         payload_str = f"{text}{whitespace}"
         try:
             return payload_str.encode(self.encoding, errors="replace")
         except LookupError as exc:
             raise PrinterError(f"Unknown printer encoding '{self.encoding}'") from exc
+
+    def _estimate_line_usage(self, text: str) -> int:
+        """Estimate how many printed lines a string will consume."""
+        if not text:
+            return 0
+        segments = text.split("\n")
+        lines = 0
+        for segment in segments:
+            length = len(segment)
+            lines += max(1, math.ceil(length / self._line_width)) if length else 1
+        return lines

@@ -3,6 +3,7 @@ from hardware.controller import SharedModbusController
 import time
 import asyncio
 import functools
+import logging
 from enum import Enum
 from typing import Any, Optional, Callable, Awaitable
 
@@ -11,11 +12,21 @@ from hardware.exceptions import (
     MotorConfigError
 )
 
+MOTOR_MOVE_TIMEOUT = 10.0
+MOTOR_HOME_TIMEOUT = 30.0
+MOTOR_JOG_TIMEOUT = 10.0
+MOTOR_WAIT_TIMEOUT = 2.5
+MAX_FAULT_RETRIES = 1
+
+logger = logging.getLogger(__name__)
+
 class MotorStatus(Enum):
     IDLE = 0
     MOVING = 1
     STOPPED = 2
     ERROR = 3
+    FAULT = 4
+    TIMEOUT = 5
 
 class Servo:
     """Controls a servo motor via Modbus."""
@@ -176,6 +187,7 @@ class Motor():
         self._stall_timeout = 0.5                     
         self._status = MotorStatus.IDLE
         self._pending_motion: Optional[Callable[[], Awaitable[None]]] = None
+        self._logger = logger.getChild(f"motor.{self._motor_id}")
 
     async def configure(self):
         """Configure the stepper motor with initial parameters.
@@ -219,10 +231,12 @@ class Motor():
         """
         try:
             await self._start_absolute_move(value)
-            status = await self.wait_for_move(timeout=10)
+            status = await self.wait_for_move(timeout=MOTOR_MOVE_TIMEOUT)
             
-            if status == MotorStatus.ERROR:
-                raise MotorError(f"Movement failed for motor {self._motor_id}")
+            if status != MotorStatus.STOPPED:
+                raise MotorError(
+                    f"Movement failed for motor {self._motor_id} (status={status.name})"
+                )
                 
         except Exception as e:
             if not isinstance(e, MotorError):
@@ -270,6 +284,10 @@ class Motor():
 
         self._status = MotorStatus.MOVING
         self._pending_motion = functools.partial(self._start_absolute_move, value)
+        self._logger.debug(
+            "Started absolute move",
+            extra={"target_mm": value, "limit_mm": self._params.lim}
+        )
     
     async def move_config(self) -> None:
         """Configure motor movement parameters.
@@ -393,7 +411,7 @@ class Motor():
             raise
     
     #TODO add checks for position following error (crash detection)
-    async def wait_for_move(self, timeout: float = 2.5, homing: bool = False) -> MotorStatus:
+    async def wait_for_move(self, timeout: float = MOTOR_WAIT_TIMEOUT, homing: bool = False) -> MotorStatus:
         """Wait for motor movement to complete.
         
         Args:
@@ -410,7 +428,7 @@ class Motor():
         last_pos = None
         has_moved = False
         last_movement_time = start_time
-        retry_attempted = False
+        retry_attempts = 0
 
         while True:
             status = await self.get_param("Motion status")
@@ -444,6 +462,10 @@ class Motor():
             if complete:
                 await self.stop()
                 self._pending_motion = None
+                self._logger.debug(
+                    "Motion complete",
+                    extra={"homing": homing, "elapsed": time.monotonic() - start_time}
+                )
                 return MotorStatus.STOPPED
             
             # Check for motor fault
@@ -451,27 +473,43 @@ class Motor():
                 await self.stop()
                 if homing:
                     self._pending_motion = None
-                    return MotorStatus.STOPPED
+                    self._logger.warning(
+                        "Fault detected during homing",
+                        extra={"elapsed": time.monotonic() - start_time}
+                    )
+                    return MotorStatus.FAULT
 
-                if retry_attempted or self._pending_motion is None:
-                    raise MotorError(f"Motor {self._motor_id} reported fault condition")
+                self._logger.warning(
+                    "Fault detected",
+                    extra={"retry_attempts": retry_attempts, "homing": homing}
+                )
 
-                retry_attempted = True
+                if retry_attempts >= MAX_FAULT_RETRIES or self._pending_motion is None:
+                    self._pending_motion = None
+                    return MotorStatus.FAULT
+
+                retry_attempts += 1
 
                 try:
                     await self.home()
                 except Exception as home_exc:
-                    raise MotorError(
-                        f"Motor {self._motor_id} faulted and failed to home before retry: {str(home_exc)}"
-                    ) from home_exc
+                    self._pending_motion = None
+                    self._logger.error(
+                        "Fault recovery homing failed",
+                        extra={"error": str(home_exc)}
+                    )
+                    return MotorStatus.FAULT
 
                 # Re-run the pending motion and reset timers
                 try:
                     await self._pending_motion()
                 except Exception as restart_exc:
-                    raise MotorError(
-                        f"Motor {self._motor_id} failed to restart motion after homing: {str(restart_exc)}"
-                    ) from restart_exc
+                    self._pending_motion = None
+                    self._logger.error(
+                        "Failed to restart motion after recovery",
+                        extra={"error": str(restart_exc)}
+                    )
+                    return MotorStatus.FAULT
 
                 start_time = time.monotonic()
                 last_pos = None
@@ -484,7 +522,11 @@ class Motor():
             if time.monotonic() - start_time > timeout:
                 await self.stop()
                 self._pending_motion = None
-                return MotorStatus.STOPPED
+                self._logger.error(
+                    "Motion timeout",
+                    extra={"timeout": timeout, "homing": homing}
+                )
+                return MotorStatus.TIMEOUT
 
             await asyncio.sleep(0.01)
 
@@ -528,7 +570,7 @@ class Motor():
                 raise MotorError(f"Failed to start homing movement: {str(e)}") from e
 
             # Wait for homing to complete (longer timeout for homing)
-            stop = await self.wait_for_move(timeout=30, homing=True)
+            stop = await self.wait_for_move(timeout=MOTOR_HOME_TIMEOUT, homing=True)
             
             if stop == MotorStatus.STOPPED:
                 try:
@@ -543,8 +585,10 @@ class Motor():
                 
                 # Reconfigure for normal movement
                 await self.move_config()
+            elif stop == MotorStatus.FAULT:
+                raise MotorError(f"Motor {self._motor_id} faulted during homing")
             else:
-                raise MotorError(f"Motor {self._motor_id} did not stop properly after homing")
+                raise MotorTimeoutError(f"Motor {self._motor_id} homing timed out")
                 
         except Exception as e:
             if not isinstance(e, (MotorError, MotorConfigError, MotorTimeoutError)):
@@ -587,7 +631,9 @@ class Motor():
             )
             
             # Wait for completion
-            await self.wait_for_move(timeout=10, homing=True)
+            result = await self.wait_for_move(timeout=MOTOR_JOG_TIMEOUT, homing=True)
+            if result != MotorStatus.STOPPED:
+                raise MotorError(f"Relative move failed (status={result.name})")
             await self.move_config()
             return MotorStatus.STOPPED
             

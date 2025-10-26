@@ -1,7 +1,7 @@
 import perpetual_os1.common as c
 
 from hardware.controller import SharedModbusController as Controller
-from hardware.motor import Motor, Servo, MotorStatus
+from hardware.motor import Motor, Servo, MotorStatus, MOTOR_WAIT_TIMEOUT
 from hardware.toolcam import ToolCamera
 from perpetual_os1.exceptions import (
     MotorError, CameraError, ConfigError,
@@ -357,12 +357,13 @@ class Tool:
             MovementError: If wait times out or motors error
         """
         try:
+            terminal_error_states = {MotorStatus.ERROR, MotorStatus.FAULT, MotorStatus.TIMEOUT}
             while True:
-                mx_f = await self._mx.wait_for_move(timeout=5)
-                my_f = await self._my.wait_for_move(timeout=5)
+                mx_f = await self._mx.wait_for_move(timeout=GANTRY_WAIT_TIMEOUT)
+                my_f = await self._my.wait_for_move(timeout=GANTRY_WAIT_TIMEOUT)
                 if mx_f == MotorStatus.STOPPED and my_f == MotorStatus.STOPPED:
                     return
-                if mx_f == MotorStatus.ERROR or my_f == MotorStatus.ERROR:
+                if mx_f in terminal_error_states or my_f in terminal_error_states:
                     raise MovementError("Gantry motor error during wait")
         except Exception as e:
             self._mstatus = ToolMotionStatus.ERROR
@@ -377,12 +378,13 @@ class Tool:
             MovementError: If wait times out or motors error
         """
         try:
+            terminal_error_states = {MotorStatus.ERROR, MotorStatus.FAULT, MotorStatus.TIMEOUT}
             while True:
-                mg_f = await self._mg.wait_for_move(timeout=5, homing=homing)
-                ms_f = await self._ms.wait_for_move(timeout=5, homing=homing)
+                mg_f = await self._mg.wait_for_move(timeout=TOOL_WAIT_TIMEOUT, homing=homing)
+                ms_f = await self._ms.wait_for_move(timeout=TOOL_WAIT_TIMEOUT, homing=homing)
                 if mg_f == MotorStatus.STOPPED and ms_f == MotorStatus.STOPPED:
                     return
-                if mg_f == MotorStatus.ERROR or ms_f == MotorStatus.ERROR:
+                if mg_f in terminal_error_states or ms_f in terminal_error_states:
                     raise MovementError("Tool motor error during wait")
         except Exception as e:
             self._mstatus = ToolMotionStatus.ERROR
@@ -472,3 +474,5 @@ class Tool:
         anchors = await self.update_grid(shelves)
         return shelves, anchors
         # todo eventually make this auto generate the slope of each shelf by having two scan positions in x
+GANTRY_WAIT_TIMEOUT = MOTOR_WAIT_TIMEOUT * 2
+TOOL_WAIT_TIMEOUT = MOTOR_WAIT_TIMEOUT * 2

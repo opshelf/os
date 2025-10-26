@@ -15,6 +15,7 @@ import asyncio
 from enum import Enum
 from typing import Dict, Optional, Tuple, Union, Literal, Annotated
 from pydantic import BaseModel
+import logging
 
 class IOBoxStatus(Enum):
     IDLE = 0
@@ -49,6 +50,9 @@ class IOBox:
         
         self._scale = Scale(scalecontroller)
         self._printer = USBPrinter()
+        self._scale_ready = False
+        self._cam_running = False
+        self._logger = logging.getLogger(__name__).getChild("IOBox")
 
         # printer_params = getattr(self._params, "printer", None)
         # self._printer = USBPrinter(
@@ -68,7 +72,11 @@ class IOBox:
         try:
             await self._md.configure()
             await self._md.home()
-            await self._cam.start()
+            await self._scale.configure()
+            self._scale_ready = True
+            if not self._cam_running:
+                await self._cam.start()
+                self._cam_running = True
             self._printer.connect()
             self._printer.tare()
             self._status = IOBoxStatus.IDLE
@@ -78,6 +86,20 @@ class IOBox:
 
         #curtain config
 
+    async def _ensure_scale_ready(self) -> None:
+        """Ensure the scale interface is configured before reading."""
+        if self._scale_ready:
+            return
+        await self._scale.configure()
+        self._scale_ready = True
+
+    async def _ensure_camera_running(self) -> None:
+        """Ensure the AFSCam pipeline is active before measuring."""
+        if self._cam_running:
+            return
+        await self._cam.start()
+        self._cam_running = True
+
     async def get_weight(self) -> float:
         """
         Get weight reading from scale.
@@ -86,9 +108,21 @@ class IOBox:
             IOBoxError: If scale is not configured or reading fails
         """
         try:
-            await self._scale.configure()
-            weight = await self._scale.get_weight()
-            return weight
+            await self._ensure_scale_ready()
+            retries = 2
+            for attempt in range(retries):
+                try:
+                    return await self._scale.get_weight()
+                except Exception as err:
+                    self._logger.warning(
+                        "Scale read failed (attempt %s/%s)",
+                        attempt + 1,
+                        retries,
+                        exc_info=err,
+                    )
+                    if attempt == retries - 1:
+                        raise
+                    await asyncio.sleep(0.05)
         except Exception as e:
             self._status = IOBoxStatus.ERROR
             raise IOBoxError(f"Failed to get weight: {str(e)}") from e
@@ -104,11 +138,13 @@ class IOBox:
         try:
             if self._cam is None:
                 raise IOBoxError("Camera not configured")
+            await self._ensure_camera_running()
             size = await self._cam.measure()
             return size
         except Exception as e:
-            self._status = IOBoxStatus.ERROR
+            self._logger.warning("Async measurement failed", exc_info=e)
             if isinstance(e, IOBoxError):
+                self._status = IOBoxStatus.ERROR
                 raise
             raise CameraError(f"Item measurement failed: {str(e)}") from e
 
@@ -150,8 +186,9 @@ class IOBox:
             size = self._cam.measure_sync()
             return size
         except Exception as e:
-            self._status = IOBoxStatus.ERROR
+            self._logger.warning("Sync measurement failed", exc_info=e)
             if isinstance(e, IOBoxError):
+                self._status = IOBoxStatus.ERROR
                 raise
             raise CameraError(f"Item measurement failed: {str(e)}") from e
 
