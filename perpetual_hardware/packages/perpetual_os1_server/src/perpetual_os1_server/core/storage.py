@@ -350,14 +350,34 @@ class StorageService:
         result = await self.session.execute(query.order_by(StorageCell.shelf_idx, StorageCell.cell_idx))
         return list(result.scalars().all())
 
-    async def update_storage_cell(self, shelf_idx: int, cell_idx: int, status: str) -> bool:
-        """Update storage cell status."""
+    async def update_storage_cell(
+        self,
+        shelf_idx: int,
+        cell_idx: int,
+        status: Optional[str] = None,
+        capacity: Optional[str] = None
+    ) -> bool:
+        """Update storage cell properties."""
+        update_values: Dict[str, Any] = {}
+
+        if status is not None:
+            StorageCellValidator.validate_status(status)
+            update_values["status"] = status
+
+        if capacity is not None:
+            StorageCellValidator.validate_capacity(capacity)
+            update_values["capacity"] = capacity
+
+        if not update_values:
+            # Nothing to update, treat as success.
+            return True
+
         async with self._lock:
             result = await self.session.execute(
                 update(StorageCell)
                 .where(StorageCell.shelf_idx == shelf_idx)
                 .where(StorageCell.cell_idx == cell_idx)
-                .values(status=status)
+                .values(**update_values)
                 .returning(StorageCell)
             )
             cell = result.scalar_one_or_none()
