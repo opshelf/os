@@ -16,6 +16,12 @@ import threading
 from typing import Optional
 
 from pathlib import Path
+import struct
+
+try:
+    from PIL import Image
+except ImportError:  # pragma: no cover
+    Image = None  # type: ignore
 
 from hardware.exceptions import CommunicationError
 
@@ -169,6 +175,28 @@ class USBPrinter:
             except OSError as exc:
                 raise PrinterError(f"Failed to write to printer device {self.device_path}: {exc}") from exc
 
+    def print_png(
+        self,
+        image_path: str,
+        *,
+        max_width: Optional[int] = None,
+        invert: bool = False,
+    ) -> None:
+        """Rasterize and print a PNG image using ESC/POS graphics commands."""
+        if Image is None:
+            raise PrinterError("Pillow is required for image printing")
+
+        img = Image.open(image_path)
+        img = img.convert("L")
+        if max_width and max_width > 0 and img.width > max_width:
+            ratio = max_width / img.width
+            new_height = max(1, int(img.height * ratio))
+            img = img.resize((max_width, new_height), Image.LANCZOS)
+        img = img.convert("1")  # monochrome dithered
+
+        raster = self._encode_raster_image(img, invert=invert)
+        self.print_raw(raster)
+
     # --------------------------------------------------------------------- #
     # Context manager helpers
 
@@ -215,3 +243,29 @@ class USBPrinter:
             length = len(segment)
             lines += max(1, math.ceil(length / self._line_width)) if length else 1
         return lines
+
+    def _encode_raster_image(self, img: "Image.Image", *, invert: bool = False) -> bytes:
+        width = img.width
+        height = img.height
+        width_bytes = (width + 7) // 8
+        header = b"\x1d\x76\x30\x00" + struct.pack("<HH", width_bytes, height)
+        pixels = img.load()
+        body = bytearray()
+        for y in range(height):
+            row_byte = 0
+            bit_count = 0
+            for x in range(width):
+                pixel = pixels[x, y]
+                bit = 0 if pixel else 1
+                if invert:
+                    bit ^= 1
+                row_byte = (row_byte << 1) | bit
+                bit_count += 1
+                if bit_count == 8:
+                    body.append(row_byte)
+                    row_byte = 0
+                    bit_count = 0
+            if bit_count:
+                row_byte <<= (8 - bit_count)
+                body.append(row_byte)
+        return header + body + b"\n"
