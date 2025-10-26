@@ -15,6 +15,7 @@ from perpetual_os1.exceptions import (
 from perpetual_os1.robot_state import RobotStateManager, RobotStateError
 
 import json
+import logging
 from pathlib import Path
 from enum import Enum
 from typing import Any, Dict, Optional, Tuple, Union, Literal, Annotated, List, Callable, TYPE_CHECKING
@@ -94,11 +95,19 @@ class RobotStatus(BaseModel):
 
 RobotResponse = Union[RobotCommandSuccessful, RobotCommandError, SizeResult]
 
+
+@dataclass
+class IOBoxMeasurement:
+    dimensions: Optional[Dimensions]
+    weight: Optional[float]
+    timestamp: float
+
 class Robot:
     def __init__(self = None) -> None:
         # Load State / Configuration
         self._config = load_config_file(CONFIG_PATH)
         self._bus_settings = self._prepare_bus_settings()
+        self._logger = logging.getLogger(__name__).getChild("Robot")
 
         motor_bus = self._bus_settings["motor"]
         scale_bus = self._bus_settings["scale"]
@@ -408,6 +417,25 @@ class Robot:
             return RobotCommandError(error=f"Storage calibration failed: {str(e)}")
 
 
+    async def _collect_iobox_measurement(self) -> IOBoxMeasurement:
+        """Gather IOBox measurement data (weight & optical dimensions)."""
+        timestamp = time.time()
+        weight: Optional[float] = None
+        dimensions: Optional[Dimensions] = None
+
+        try:
+            weight = await self._io.get_weight()
+        except Exception as exc:
+            self._logger.warning("IOBox weight read failed", exc_info=exc)
+
+        try:
+            dimensions = self.measure_item_dimensions()
+        except Exception as exc:
+            self._logger.warning("IOBox dimension measurement failed", exc_info=exc)
+
+        return IOBoxMeasurement(dimensions=dimensions, weight=weight, timestamp=timestamp)
+
+
     # plug in sizing from the io box
     async def store(self, item_name: str) -> None:
         """
@@ -428,8 +456,17 @@ class Robot:
         height = 50.0  # default height
         length = 50.0  # default length
 
-        measured_dimensions = self.measure_item_dimensions()
-        print(measured_dimensions, flush=True)
+        measurement = await self._collect_iobox_measurement()
+        weight = measurement.weight
+        measured_dimensions = measurement.dimensions
+        self._logger.debug(
+            "Collected IOBox measurement",
+            extra={
+                "weight": weight,
+                "dimensions": measured_dimensions.model_dump() if measured_dimensions else None,
+                "timestamp": measurement.timestamp,
+            }
+        )
 
         if measured_dimensions:
             # Add safety margin to ensure item fits (10%)
@@ -439,17 +476,14 @@ class Robot:
 
         # Find a suitable empty location for the item
 
-        print(width, flush=True)
-        print(height,flush=True)
-        print(length,flush=True)
-
         item = CellItem(
             dimensions=Dimensions(
                 width=width,
                 height=height,
                 length=length
             ),
-            data={"name": item_name}  # Store item name in data
+            weight=weight,
+            data={"name": item_name}  # Store item metadata
         )
 
         # print(item, flush=True)
@@ -527,8 +561,8 @@ class Robot:
             RobotStateError: If there is no item in the IOBox to measure
         """
         # Validate state before operation -> change state on weight read
-        # self._state_manager.update_state(self._state.tool, self._state.io)
-        # self._state_manager.validate_operation('measure')
+        self._state_manager.update_state(self._state.tool, self._state.io)
+        self._state_manager.validate_operation('measure')
         if not self._io or not self._io._cam:
             raise RuntimeError("IOBox camera not configured")
 

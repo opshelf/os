@@ -29,22 +29,8 @@ class CameraStreamManager:
 		if self.is_running is True:
 			return
 
-		# logger.info("camera_starting")
-		# self.camera = cv2.VideoCapture(self._camera_index, cv2.CAP_V4L2)
 
 		loop = asyncio.get_event_loop()
-		# try:
-		# 	await asyncio.wait_for(
-		# 		loop.run_in_executor(None, self.camera.get_correct),
-		# 		timeout=30.0
-		# 	)
-		# 	logger.info("camera_calibration_complete")
-		# except asyncio.TimeoutError:
-		# 	logger.warning("camera_calibration_timeout")
-		# except FileNotFoundError:
-		# 	logger.warning("camera_calibration_skipped")
-		# except Exception as e:
-		# 	logger.warning("camera_calibration_failed", error=str(e))
 
 		self.calibration_complete.set()
 		self.is_running = True
