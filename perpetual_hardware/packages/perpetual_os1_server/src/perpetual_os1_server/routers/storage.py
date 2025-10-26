@@ -7,7 +7,7 @@ import re
 import time
 from typing import Any, Callable, Dict, List, Optional, Union, cast
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -110,23 +110,12 @@ class ItemWithLocations(BaseModel):
     name: str
     dimensions: Dict[str, float]
     weight: Optional[float]
-    item_metadata: Optional[Dict[str, Any]] = Field(alias="item_metadata")
+    metadata: Dict[str, Any] = Field(default_factory=dict)
     access_level_id: Optional[int]
     locations: List[Dict[str, Any]]
     created_at: str
     updated_at: str
     can_retrieve: bool
-
-
-class PaginatedItemsResponse(BaseModel):
-    """Envelope for paginated item results."""
-
-    model_config = ConfigDict(populate_by_name=True)
-
-    items: List[ItemWithLocations]
-    total: int
-    skip: int
-    limit: int
 
 
 class StorageCellResponse(BaseModel):
@@ -168,7 +157,7 @@ def _build_item_payload(item: Item, locations: List[ItemLocation], current_user:
         name=str(item.name),
         dimensions=cast(Dict[str, float], item.dimensions),
         weight=float(item.weight) if item.weight else None,
-        item_metadata=cast(Dict[str, Any], item.item_metadata) or {},
+        metadata=cast(Dict[str, Any], item.item_metadata) or {},
         access_level_id=item.access_level_id,
         locations=_serialize_locations(locations),
         created_at=item.created_at.isoformat() if item.created_at else "",
@@ -241,12 +230,13 @@ def monitor_performance(func: Callable) -> Callable:
 @router.get("/items", dependencies=[Depends(require_permissions("storage:read"))])
 @monitor_performance
 async def get_items(
+    request: Request,
     response: Response,
     skip: int = 0,
     limit: int = 50,
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> PaginatedItemsResponse:
+) -> Union[List[ItemWithLocations], Dict[str, Any]]:
     """Get all items with pagination."""
     await migrate_if_needed(session)
     storage_service = StorageService(session)
@@ -256,13 +246,23 @@ async def get_items(
 
     if response is not None:
         response.headers["X-Total-Count"] = str(total)
+        response.headers["X-Limit"] = str(limit)
+        response.headers["X-Skip"] = str(skip)
 
-    return PaginatedItemsResponse(
-        items=[_build_item_payload(item, list(item.locations), current_user) for item in items],
-        total=total,
-        skip=skip,
-        limit=limit,
-    )
+    item_payloads = [
+        _build_item_payload(item, list(item.locations), current_user)
+        for item in items
+    ]
+
+    if "skip" in request.query_params or "limit" in request.query_params:
+        return {
+            "items": item_payloads,
+            "total": total,
+            "skip": skip,
+            "limit": limit,
+        }
+
+    return item_payloads
 
 
 @router.get("/items/{upca}", dependencies=[Depends(require_permissions("storage:read"))])
@@ -528,10 +528,11 @@ async def update_storage_cell(
     await migrate_if_needed(session)
     storage_service = StorageService(session)
 
+    status_value = cell_update.status.lower() if cell_update.status else None
     success = await storage_service.update_storage_cell(
         shelf_idx=shelf_idx,
         cell_idx=cell_idx,
-        status=cell_update.status,
+        status=status_value,
         capacity=_serialize_capacity(cell_update.capacity),
     )
 
