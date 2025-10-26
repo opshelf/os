@@ -141,6 +141,23 @@
         "depth_unit": "mm",
         "calibration_status": "uncalibrated"
       }
+    },
+
+    "bus": {
+      "motor": {
+        "ports": ["/dev/ttyUSB1", "/dev/ttyUSB2"],
+        "baudrate": 115200,
+        "parity": "N",
+        "timeout": 2.0,
+        "retry_delay_s": 0.25
+      },
+      "scale": {
+        "ports": ["/dev/ttyUSB0"],
+        "baudrate": 9600,
+        "parity": "N",
+        "timeout": 2.0,
+        "retry_delay_s": 0.25
+      }
     }
   },
 

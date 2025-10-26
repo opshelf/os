@@ -2,8 +2,9 @@ from hardware import motor_helpers
 from hardware.controller import SharedModbusController
 import time
 import asyncio
+import functools
 from enum import Enum
-from typing import Any, Optional
+from typing import Any, Optional, Callable, Awaitable
 
 from hardware.exceptions import (
     MotorError, MotorTimeoutError, MotorLimitError,
@@ -174,6 +175,7 @@ class Motor():
         self._cur_pos = None
         self._stall_timeout = 0.5                     
         self._status = MotorStatus.IDLE
+        self._pending_motion: Optional[Callable[[], Awaitable[None]]] = None
 
     async def configure(self):
         """Configure the stepper motor with initial parameters.
@@ -215,27 +217,8 @@ class Motor():
             MotorLimitError: If target position exceeds motor limits
             MotorError: If movement fails or times out
         """
-        if value > self._params.lim:
-            raise MotorLimitError(
-                f"Target position {value}mm exceeds motor limit {self._params.lim}mm"
-            )
-            
         try:
-            # Convert mm to pulses
-            pulse = motor_helpers.rev_to_pulse(motor_helpers.mm_to_rev(value, self._params.mpr))
-            
-            # Set target position
-            await self.set_param("Position High", pulse[0])
-            await self.set_param("Position Low", pulse[1])
-            
-            # Start movement
-            await self._controller.write_single_register(
-                self._motor_id, 
-                motor_helpers.TRIGGER,
-                0x10  # start path 0
-            )
-            
-            self._status = MotorStatus.MOVING
+            await self._start_absolute_move(value)
             status = await self.wait_for_move(timeout=10)
             
             if status == MotorStatus.ERROR:
@@ -256,32 +239,37 @@ class Motor():
             MotorLimitError: If target position exceeds motor limits
             MotorError: If movement setup fails
         """
-        if value > self._params.lim:
-            raise MotorLimitError(
-                f"Target position {value}mm exceeds motor limit {self._params.lim}mm"
-            )
-            
         try:
-            # Convert mm to pulses
-            pulse = motor_helpers.rev_to_pulse(motor_helpers.mm_to_rev(value, self._params.mpr))
-            
-            # Set target position
-            await self.set_param("Position High", pulse[0])
-            await self.set_param("Position Low", pulse[1])
-            
-            # Start movement
-            await self._controller.write_single_register(
-                self._motor_id, 
-                motor_helpers.TRIGGER,
-                0x10  # start path 0
-            )
-            
-            self._status = MotorStatus.MOVING
+            await self._start_absolute_move(value)
             
         except Exception as e:
             if not isinstance(e, (MotorError, MotorLimitError)):
                 raise MotorError(f"Failed to start movement to {value}mm: {str(e)}") from e
             raise
+
+    async def _start_absolute_move(self, value: float) -> None:
+        """Setup and trigger an absolute move, tracking it for retries."""
+        if value > self._params.lim:
+            raise MotorLimitError(
+                f"Target position {value}mm exceeds motor limit {self._params.lim}mm"
+            )
+
+        # Convert mm to pulses
+        pulse = motor_helpers.rev_to_pulse(motor_helpers.mm_to_rev(value, self._params.mpr))
+
+        # Set target position
+        await self.set_param("Position High", pulse[0])
+        await self.set_param("Position Low", pulse[1])
+
+        # Start movement
+        await self._controller.write_single_register(
+            self._motor_id,
+            motor_helpers.TRIGGER,
+            0x10  # start path 0
+        )
+
+        self._status = MotorStatus.MOVING
+        self._pending_motion = functools.partial(self._start_absolute_move, value)
     
     async def move_config(self) -> None:
         """Configure motor movement parameters.
@@ -422,6 +410,7 @@ class Motor():
         last_pos = None
         has_moved = False
         last_movement_time = start_time
+        retry_attempted = False
 
         while True:
             status = await self.get_param("Motion status")
@@ -454,20 +443,47 @@ class Motor():
             # Normal completion
             if complete:
                 await self.stop()
+                self._pending_motion = None
                 return MotorStatus.STOPPED
             
             # Check for motor fault
             if fault:
-                # print(f"Motor {self._motor_id} reported fault condition")
-                if not homing:
-                    raise MotorError(f"Motor {self._motor_id} reported fault condition")
                 await self.stop()
-                return MotorStatus.STOPPED
+                if homing:
+                    self._pending_motion = None
+                    return MotorStatus.STOPPED
+
+                if retry_attempted or self._pending_motion is None:
+                    raise MotorError(f"Motor {self._motor_id} reported fault condition")
+
+                retry_attempted = True
+
+                try:
+                    await self.home()
+                except Exception as home_exc:
+                    raise MotorError(
+                        f"Motor {self._motor_id} faulted and failed to home before retry: {str(home_exc)}"
+                    ) from home_exc
+
+                # Re-run the pending motion and reset timers
+                try:
+                    await self._pending_motion()
+                except Exception as restart_exc:
+                    raise MotorError(
+                        f"Motor {self._motor_id} failed to restart motion after homing: {str(restart_exc)}"
+                    ) from restart_exc
+
+                start_time = time.monotonic()
+                last_pos = None
+                has_moved = False
+                last_movement_time = start_time
+                continue
                
 
             # Check for timeout
             if time.monotonic() - start_time > timeout:
                 await self.stop()
+                self._pending_motion = None
                 return MotorStatus.STOPPED
 
             await asyncio.sleep(0.01)

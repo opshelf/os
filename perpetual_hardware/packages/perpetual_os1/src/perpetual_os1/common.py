@@ -195,6 +195,30 @@ class TofCamera(BaseModel):
         a, b = _pair_len2(v, "resolution")
         return int(a), int(b)
 
+# --------------------------- Buses ---------------------------
+
+class ModbusBusConfig(BaseModel):
+    ports: List[str] = Field(default_factory=list)
+    baudrate: int = Field(..., gt=0)
+    parity: Literal["N", "E", "O"] = "N"
+    timeout: float = Field(2.0, gt=0)
+    retry_delay_s: float = Field(0.1, ge=0)
+
+    @field_validator("ports")
+    @classmethod
+    def _validate_ports(cls, v: List[str]) -> List[str]:
+        if not v:
+            raise ValueError("ports must contain at least one entry")
+        cleaned = [p.strip() for p in v if p and p.strip()]
+        if not cleaned:
+            raise ValueError("ports must contain at least one non-empty entry")
+        return cleaned
+
+
+class RobotBus(BaseModel):
+    motor: ModbusBusConfig
+    scale: ModbusBusConfig
+
 
 # ----------------------- Parameters / IO -----------------------
 
@@ -241,6 +265,7 @@ class Robot(BaseModel):
     tool: Tool
     grid: str # path to storage grid (JSON)
     io: IOBlock
+    bus: Optional[RobotBus] = None
 
 
 class RootConfig(BaseModel):

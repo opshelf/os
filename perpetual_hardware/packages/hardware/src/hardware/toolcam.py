@@ -71,7 +71,6 @@ class ToolCamera:
             ImageError: If frame capture fails or returns invalid data
         """
         try:
-            print("attempting capture")
             cap = cv2.VideoCapture(self.url, cv2.CAP_FFMPEG)
             if not cap.isOpened():
                 raise CameraConnectionError(
@@ -80,12 +79,12 @@ class ToolCamera:
             
             try:
                 # Configure camera settings
-                # if not cap.set(cv2.CAP_PROP_BUFFERSIZE, 1):
-                #     raise CameraConfigError("Failed to set buffer size")
-                # if not cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000):
-                #     raise CameraConfigError("Failed to set open timeout")
-                # if not cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000):
-                #     raise CameraConfigError("Failed to set read timeout")
+                if not cap.set(cv2.CAP_PROP_BUFFERSIZE, 1):
+                    raise CameraConfigError("Failed to set buffer size")
+                if not cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000):
+                    raise CameraConfigError("Failed to set open timeout")
+                if not cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000):
+                    raise CameraConfigError("Failed to set read timeout")
 
                 # Clear buffer
                 t0 = time.time()
@@ -105,7 +104,6 @@ class ToolCamera:
                     raise ImageError(
                         "Failed to read frame or received empty frame"
                     )
-                print("returning frame")
                 return frame
                 
             finally:
@@ -235,6 +233,29 @@ class ToolCamera:
                         )
                     self.board_W_mm = (cols - 1) * self.square_size_mm
                     self.board_H_mm = (rows - 1) * self.square_size_mm
+
+                    try:
+                        toolcam_helpers.persist_poe_camera_calibration(
+                            {
+                                "mtx": self.mtx,
+                                "dist": self.dist,
+                                "rvecs": self.rvecs,
+                                "tvecs": self.tvecs,
+                                "newcameramtx": self.newcameramtx,
+                                "roi": self.roi,
+                                "H": self.H,
+                                "map_size": self.map_size,
+                                "H_ref_size": self.H_ref_size,
+                                "board_W_mm": self.board_W_mm,
+                                "board_H_mm": self.board_H_mm,
+                                "pattern_size": self.pattern_size,
+                                "square_size_mm": self.square_size_mm,
+                            }
+                        )
+                    except Exception as e:
+                        raise CalibrationError(
+                            f"Failed to persist calibration data: {str(e)}"
+                        ) from e
                     
                 except Exception as e:
                     if not isinstance(e, CalibrationError):

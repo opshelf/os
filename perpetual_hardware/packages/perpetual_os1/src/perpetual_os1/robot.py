@@ -21,6 +21,7 @@ from typing import Any, Dict, Optional, Tuple, Union, Literal, Annotated, List, 
 from pydantic import BaseModel, Field
 
 import time
+import asyncio
 
 import os
 STORAGE_PATH = os.path.join(os.path.dirname(__file__), 'storage.json')
@@ -95,18 +96,31 @@ RobotResponse = Union[RobotCommandSuccessful, RobotCommandError, SizeResult]
 
 class Robot:
     def __init__(self = None) -> None:
-        # TODO add port retries, config, hardening
-        self._motorbus = Controller(port="/dev/ttyUSB1", baudrate=115200) # change to config
-        # self._scalebus = Controller(port="/dev/serial/by-id/usb-1a86_USB_Single_Serial_594D007725-if00", baudrate=9600) # change to config
-
-        # Load State
+        # Load State / Configuration
         self._config = load_config_file(CONFIG_PATH)
+        self._bus_settings = self._prepare_bus_settings()
+
+        motor_bus = self._bus_settings["motor"]
+        scale_bus = self._bus_settings["scale"]
+        self._motorbus = Controller(
+            port=motor_bus["ports"][0],
+            baudrate=motor_bus["baudrate"],
+            parity=motor_bus["parity"],
+            timeout=motor_bus["timeout"],
+        )
+        self._scalebus = Controller(
+            port=scale_bus["ports"][0],
+            baudrate=scale_bus["baudrate"],
+            parity=scale_bus["parity"],
+            timeout=scale_bus["timeout"],
+        )
+
         tool_params = self._config.get("robot.tool", {})
         io_params = self._config.get("robot.io", {})
 
         # Robot Components
         self._tool = Tool(motorcontroller=self._motorbus, params=tool_params)
-        self._io = IOBox(motorcontroller=self._motorbus, params=io_params)
+        self._io = IOBox(motorcontroller=self._motorbus, scalecontroller=self._scalebus, params=io_params)
 
         # storage grid to store physical robot state
         with open(STORAGE_PATH, 'r') as f:
@@ -123,16 +137,10 @@ class Robot:
         self._state_manager = RobotStateManager()
 
     async def configure(self):
-        await self._motorbus.connect()
-        if not self._motorbus.client.connected:
-            print("No Motor bus")
-            return
-        # await self._scalebus.connect()
-        # if not self._scalebus.client.connected:
-        #     print("No scale bus")
-        #     return
+        await self._connect_controller("motor", self._motorbus, self._bus_settings["motor"])
+        await self._connect_controller("scale", self._scalebus, self._bus_settings["scale"])
 
-        # await self._tool.configure()
+        await self._tool.configure()
         await self._io.configure()
 
     def get_param(self, param: str):
@@ -205,6 +213,67 @@ class Robot:
         await self._tool.stop()
         await self._io.stop()
 
+    def _prepare_bus_settings(self) -> Dict[str, Dict[str, Any]]:
+        defaults = {
+            "motor": {
+                "ports": ["/dev/ttyUSB1"],
+                "baudrate": 115200,
+                "parity": "N",
+                "timeout": 2.0,
+                "retry_delay_s": 0.25,
+            },
+            "scale": {
+                "ports": ["/dev/ttyUSB0"],
+                "baudrate": 9600,
+                "parity": "N",
+                "timeout": 2.0,
+                "retry_delay_s": 0.25,
+            },
+        }
+
+        bus_cfg = getattr(self._config.robot, "bus", None)
+
+        def build(name: str) -> Dict[str, Any]:
+            cfg = getattr(bus_cfg, name, None) if bus_cfg else None
+            settings = defaults[name].copy()
+            if cfg is not None:
+                settings.update(
+                    {
+                        "ports": list(cfg.ports),
+                        "baudrate": cfg.baudrate,
+                        "parity": cfg.parity,
+                        "timeout": cfg.timeout,
+                        "retry_delay_s": cfg.retry_delay_s,
+                    }
+                )
+            return settings
+
+        return {"motor": build("motor"), "scale": build("scale")}
+
+    async def _connect_controller(self, label: str, controller: Controller, settings: Dict[str, Any]) -> None:
+        errors: List[str] = []
+        for port in settings["ports"]:
+            controller.port = port
+            controller.baudrate = settings["baudrate"]
+            controller.parity = settings["parity"]
+            controller.timeout = settings["timeout"]
+            try:
+                await controller.connect()
+            except Exception as exc:
+                errors.append(f"{port}: {exc}")
+                await controller.close()
+            else:
+                if controller.client and controller.client.connected:
+                    return
+                errors.append(f"{port}: client not connected")
+                await controller.close()
+
+            delay = settings.get("retry_delay_s", 0)
+            if delay:
+                await asyncio.sleep(delay)
+
+        detail = "; ".join(errors) if errors else "no ports configured"
+        raise ConfigError(f"{label.capitalize()} bus connection failed ({detail})")
 
     async def auto_calibrate_storage(self) -> RobotResponse:
         """
@@ -345,14 +414,8 @@ class Robot:
         Store an item in the storage grid, finding the best available location based on item dimensions.
 
         Args:
-            item_name: Name identifier for the item to store
-            dimensions: Dictionary containing item dimensions in mm (from measure_item_dimensions).
-                       Should contain some of these keys:
-                       - footprint_major_mm: Major axis from pinhole model
-                       - footprint_minor_mm: Minor axis from pinhole model
-                       - scale_major_mm: Major axis from checkerboard scale
-                       - scale_minor_mm: Minor axis from checkerboard scale
-                       - depth_mm: Item depth/height
+            item_name: Name identifier for the item to store. Item dimensions are
+                       obtained via `measure_item_dimensions`.
 
         Returns:
             RobotResponse indicating success or failure
@@ -365,28 +428,14 @@ class Robot:
         height = 50.0  # default height
         length = 50.0  # default length
 
-        dimensions = self.measure_item_dimensions()
-        print(dimensions, flush=True)
+        measured_dimensions = self.measure_item_dimensions()
+        print(measured_dimensions, flush=True)
 
-        # TODO remove dimensions, and modify io sizer wrapper to return a dimensions object
-
-        # if dimensions:
-        #     # Prefer footprint measurements over scale measurements if available
-        #     if "footprint_major_mm" in dimensions and "footprint_minor_mm" in dimensions:
-        #         width = dimensions["footprint_major_mm"]
-        #         height = dimensions["footprint_minor_mm"]
-        #     elif "scale_major_mm" in dimensions and "scale_minor_mm" in dimensions:
-        #         width = dimensions["scale_major_mm"]
-        #         height = dimensions["scale_minor_mm"]
-
-        #     # Use measured depth if available
-        #     if "depth_mm" in dimensions:
-        #         length = dimensions["depth_mm"]
-
-        #     # Add safety margin to ensure item fits (10%)
-        #     width *= 1.1
-        #     height *= 1.1
-        #     length *= 1.1
+        if measured_dimensions:
+            # Add safety margin to ensure item fits (10%)
+            width = measured_dimensions.width * 1.1
+            height = measured_dimensions.height * 1.1
+            length = measured_dimensions.length * 1.1
 
         # Find a suitable empty location for the item
 
@@ -462,7 +511,7 @@ class Robot:
             self._grid.clear_item(location)
             self._grid.save()
 
-    def measure_item_dimensions(self, n_frames: int = 10) -> Optional[Dict[str, float]]:
+    def measure_item_dimensions(self, n_frames: int = 10) -> Optional[Dimensions]:
         """
         Use the IOBox's AFSCam to measure the dimensions of an item currently in the IO box.
         Returns the aggregate dimensions including footprint and depth measurements.
@@ -471,13 +520,8 @@ class Robot:
             n_frames: Number of frames to capture for measurement (default=5)
 
         Returns:
-            Dictionary containing the following measurements in millimeters:
-            - footprint_major_mm: Major axis of item footprint from pinhole model
-            - footprint_minor_mm: Minor axis of item footprint from pinhole model
-            - scale_major_mm: Major axis from checkerboard scale
-            - scale_minor_mm: Minor axis from checkerboard scale
-            - depth_mm: Item depth/height from TOF sensor
-            Returns None if measurement fails
+            Dimensions object (length, width, height) in millimeters.
+            Returns None if measurement fails or required values are missing.
 
         Raises:
             RobotStateError: If there is no item in the IOBox to measure
@@ -502,26 +546,16 @@ class Robot:
             print("bad agg")
             return None
 
-        # Collect all available measurements
-        result = {}
+        # Prefer footprint measurements (from pinhole model) and fall back to scale data if needed.
+        width = agg.get("footprint_major_mm_med") or agg.get("scale_major_mm_med")
+        height = agg.get("footprint_minor_mm_med") or agg.get("scale_minor_mm_med")
+        length = agg.get("depth_mm_med")
 
-        # Footprint measurements (from pinhole model)
-        if "footprint_major_mm_med" in agg:
-            result["footprint_major_mm"] = agg["footprint_major_mm_med"]
-        if "footprint_minor_mm_med" in agg:
-            result["footprint_minor_mm"] = agg["footprint_minor_mm_med"]
+        if width is None or height is None or length is None:
+            print("Incomplete dimension data", flush=True)
+            return None
 
-        # Scale measurements (from checkerboard)
-        if "scale_major_mm_med" in agg:
-            result["scale_major_mm"] = agg["scale_major_mm_med"]
-        if "scale_minor_mm_med" in agg:
-            result["scale_minor_mm"] = agg["scale_minor_mm_med"]
-
-        # Depth measurement
-        if "depth_mm_med" in agg:
-            result["depth_mm"] = agg["depth_mm_med"]
-
-        return result if result else None
+        return Dimensions(length=float(length), width=float(width), height=float(height))
 
     async def get_status(self) -> RobotStatus:
         status = RobotStatus(storage=self._grid,
