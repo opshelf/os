@@ -284,64 +284,82 @@ class Robot:
         detail = "; ".join(errors) if errors else "no ports configured"
         raise ConfigError(f"{label.capitalize()} bus connection failed ({detail})")
 
-    async def auto_calibrate_storage(self) -> RobotResponse:
-        """
-        Perform full storage system calibration:
-        1. Find shelf positions using tool camera
-        2. Detect anchor points
-        3. Calculate cell positions (cells per shelf and spacing are provided per-shelf)
-        4. Generate and save storage grid configuration
-        """
+    async def auto_calibrate_storage(self, side: Union[StorageModuleSide, str]) -> RobotResponse:
+        """Calibrate storage for a single module side (LEFT or RIGHT)."""
         try:
-            # Detect shelf positions and anchors first (we need number of shelves)
+            if isinstance(side, str):
+                try:
+                    side = StorageModuleSide(side)
+                except ValueError:
+                    return RobotCommandError(error=f"Invalid storage side '{side}'")
+
             shelf_y_positions = await self._tool.get_shelves()
             if not shelf_y_positions:
                 return RobotCommandError(error="No shelves detected")
 
             num_shelves = len(shelf_y_positions)
 
-            # Load parameters (can be a single value or a list matching shelves)
-            # this is actually a function of the robot, to keep the grid defintion simple
             raw_cells_per_shelf = self.get_param("CELLS_PER_SHELF")
             raw_cell_spacings = self.get_param("CELL_SPACINGS")
-            cell_heights = self.get_param("CELL_HEIGHTS")
+            raw_cell_heights = self.get_param("CELL_HEIGHTS")
             cell_widths = self.get_param("CELL_WIDTHS")
 
-            if any(param is None for param in [raw_cells_per_shelf, raw_cell_spacings, cell_heights, cell_widths]):
+            if any(param is None for param in [raw_cells_per_shelf, raw_cell_spacings, raw_cell_heights, cell_widths]):
                 return RobotCommandError(error="Missing required parameters: CELLS_PER_SHELF, CELL_SPACINGS, CELL_HEIGHTS, or CELL_WIDTHS")
 
-            # Normalize cells_per_shelf -> List[int] length == num_shelves
-            if isinstance(raw_cells_per_shelf, int):
-                cells_per_shelf = [raw_cells_per_shelf] * num_shelves
-            elif isinstance(raw_cells_per_shelf, list):
-                if len(raw_cells_per_shelf) != num_shelves:
-                    return RobotCommandError(
-                        error=f"CELLS_PER_SHELF length ({len(raw_cells_per_shelf)}) does not match detected shelves ({num_shelves})"
-                    )
-                cells_per_shelf = [int(x) for x in raw_cells_per_shelf]
-            else:
-                return RobotCommandError(error="CELLS_PER_SHELF must be an int or list of ints")
+            def _expand_per_shelf(value, name, caster):
+                if value is None:
+                    raise RobotCommandError(error=f"{name} is not defined")
+                if isinstance(value, list):
+                    if len(value) != num_shelves:
+                        raise RobotCommandError(
+                            error=f"{name} length ({len(value)}) does not match detected shelves ({num_shelves})"
+                        )
+                    return [caster(x) for x in value]
+                return [caster(value)] * num_shelves
 
-            # Normalize cell_spacings -> List[float] length == num_shelves
-            if isinstance(raw_cell_spacings, (int, float)):
-                cell_spacings = [float(raw_cell_spacings)] * num_shelves
-            elif isinstance(raw_cell_spacings, list):
-                if len(raw_cell_spacings) != num_shelves:
-                    return RobotCommandError(
-                        error=f"CELL_SPACINGS length ({len(raw_cell_spacings)}) does not match detected shelves ({num_shelves})"
-                    )
-                cell_spacings = [float(x) for x in raw_cell_spacings]
-            else:
-                return RobotCommandError(error="CELL_SPACINGS must be a number or list of numbers")
+            def _normalize_cells_per_shelf(raw_value):
+                if isinstance(raw_value, dict):
+                    left_vals = _expand_per_shelf(raw_value.get("left"), "CELLS_PER_SHELF.left", int)
+                    right_vals = _expand_per_shelf(raw_value.get("right"), "CELLS_PER_SHELF.right", int)
+                    totals = [l + r for l, r in zip(left_vals, right_vals)]
+                    return totals, list(zip(left_vals, right_vals))
 
-            # Detect anchors (one anchor per shelf expected)
+                if isinstance(raw_value, list) and raw_value and all(isinstance(entry, (list, tuple)) for entry in raw_value):
+                    if len(raw_value) != num_shelves:
+                        raise RobotCommandError(
+                            error=f"CELLS_PER_SHELF length ({len(raw_value)}) does not match detected shelves ({num_shelves})"
+                        )
+                    left_vals = []
+                    right_vals = []
+                    for entry in raw_value:
+                        if len(entry) != 2:
+                            raise RobotCommandError(error="Each CELLS_PER_SHELF entry must have [left, right] counts")
+                        left_vals.append(int(entry[0]))
+                        right_vals.append(int(entry[1]))
+                    totals = [l + r for l, r in zip(left_vals, right_vals)]
+                    return totals, list(zip(left_vals, right_vals))
+
+                totals = _expand_per_shelf(raw_value, "CELLS_PER_SHELF", int)
+                left_vals = [total // 2 for total in totals]
+                right_vals = [total - left for total, left in zip(totals, left_vals)]
+                return totals, list(zip(left_vals, right_vals))
+
+            try:
+                cells_per_shelf, per_side_counts = _normalize_cells_per_shelf(raw_cells_per_shelf)
+                cell_spacings = _expand_per_shelf(raw_cell_spacings, "CELL_SPACINGS", float)
+                cell_heights = _expand_per_shelf(raw_cell_heights, "CELL_HEIGHTS", float)
+            except RobotCommandError as exc:
+                return exc
+            except Exception as exc:
+                return RobotCommandError(error=str(exc))
+
             x_anchor_points = await self._tool.update_grid(shelf_y_positions)
             if not x_anchor_points or len(x_anchor_points) != num_shelves:
                 return RobotCommandError(
                     error=f"Anchor detection returned {len(x_anchor_points) if x_anchor_points is not None else 0} anchors; expected {num_shelves}"
                 )
 
-            # Calculate all cell positions
             cell_positions = await self._grid.calculate_storage_positions(
                 shelf_y_positions=shelf_y_positions,
                 cells_per_shelf=cells_per_shelf,
@@ -349,66 +367,70 @@ class Robot:
                 x_anchor_points=x_anchor_points,
             )
 
-            # Generate StorageGrid structure
-            left_module = []
-            right_module = []
+            def _cell_width_for_index(index: int) -> float:
+                if isinstance(cell_widths, list):
+                    if index >= len(cell_widths):
+                        raise RobotCommandError(error="CELL_WIDTHS list is shorter than total cell count")
+                    return float(cell_widths[index])
+                return float(cell_widths)
 
-            # z_offset = self.get_param("Z_OFFSET", 0.0)  # Get Z offset from config or default to 0
+            target_shelves: List[Shelf] = []
             z_offset = 0.0
 
             for shelf_idx, shelf_cells in enumerate(cell_positions):
-                shelf_cells_left = []
-                shelf_cells_right = []
-
-                mid_point = len(shelf_cells) // 2
-                shelf_height = cell_heights[shelf_idx] if isinstance(cell_heights, list) else cell_heights
-
-                # Process left side cells
-                for cell_idx, coord in enumerate(shelf_cells[:mid_point]):
-                    cell_width = cell_widths[cell_idx] if isinstance(cell_widths, list) else cell_widths
-                    cell = Cell(
-                        status=CellStatus.EMPTY,
-                        item=None,
-                        calibration_point=CalibrationCoordinate(x=coord.x, y=coord.y, z=z_offset),
-                        dimensions=Dimensions(width=cell_width, height=shelf_height, length=400.0)  # Default length
+                left_count, right_count = per_side_counts[shelf_idx]
+                if left_count + right_count != len(shelf_cells):
+                    return RobotCommandError(
+                        error=(
+                            f"Side cell counts ({left_count}+{right_count}) do not match total cells "
+                            f"({len(shelf_cells)}) for shelf {shelf_idx}"
+                        )
                     )
-                    shelf_cells_left.append(cell)
 
-                # Process right side cells
-                for cell_idx, coord in enumerate(shelf_cells[mid_point:]):
-                    cell_width = cell_widths[cell_idx + mid_point] if isinstance(cell_widths, list) else cell_widths
-                    cell = Cell(
-                        status=CellStatus.EMPTY,
-                        item=None,
-                        calibration_point=CalibrationCoordinate(x=coord.x, y=coord.y, z=z_offset),
-                        dimensions=Dimensions(width=cell_width, height=shelf_height, length=400.0)  # Default length
+                if side == StorageModuleSide.LEFT:
+                    relevant_cells = shelf_cells[:left_count]
+                    index_offset = 0
+                else:
+                    relevant_cells = shelf_cells[left_count:left_count + right_count]
+                    index_offset = left_count
+
+                shelf_height = cell_heights[shelf_idx]
+                shelf_cell_models: List[Cell] = []
+                for offset, coord in enumerate(relevant_cells, start=index_offset):
+                    shelf_cell_models.append(
+                        Cell(
+                            status=CellStatus.EMPTY,
+                            item=None,
+                            calibration_point=CalibrationCoordinate(x=coord.x, y=coord.y, z=z_offset),
+                            dimensions=Dimensions(width=_cell_width_for_index(offset), height=shelf_height, length=400.0)
+                        )
                     )
-                    shelf_cells_right.append(cell)
 
-                # Create shelf objects
-                if shelf_cells_left:
-                    left_module.append(Shelf(
-                        shelf_height=shelf_height,
-                        shelf_width=sum(cell.dimensions.width for cell in shelf_cells_left),
-                        cells=shelf_cells_left
-                    ))
+                if shelf_cell_models:
+                    target_shelves.append(
+                        Shelf(
+                            shelf_height=shelf_height,
+                            shelf_width=sum(cell.dimensions.width for cell in shelf_cell_models),
+                            cells=shelf_cell_models
+                        )
+                    )
 
-                if shelf_cells_right:
-                    right_module.append(Shelf(
-                        shelf_height=shelf_height,
-                        shelf_width=sum(cell.dimensions.width for cell in shelf_cells_right),
-                        cells=shelf_cells_right
-                    ))
+            current_left = [] if self._grid is None else self._grid.left_module
+            current_right = [] if self._grid is None else self._grid.right_module
 
-            # Create and save StorageGrid
+            if side == StorageModuleSide.LEFT:
+                left_module = target_shelves
+                right_module = current_right
+            else:
+                left_module = current_left
+                right_module = target_shelves
+
             storage_grid = StorageGrid(
                 left_module=left_module,
                 right_module=right_module,
                 filename=str(CONFIG_PATH.parent / "storage_grid.json")
             )
             storage_grid.save()
-
-            # Update internal grid reference
             self._grid = storage_grid
 
             return RobotCommandSuccessful()
@@ -619,10 +641,10 @@ class Robot:
         elif isinstance(command, IdleCommand):
             await self.idle() # todo remove
             return RobotCommandSuccessful()
-        elif isinstance(command, StoreCommand):
+        elif isinstance(command, StoreItemCommand):
             await self.store(command.item)
             return RobotCommandSuccessful()
-        elif isinstance(command, RetrieveCommand):
+        elif isinstance(command, RetrieveItemCommand):
             await self.retrieve(command.item)
             return RobotCommandSuccessful()
         else:
