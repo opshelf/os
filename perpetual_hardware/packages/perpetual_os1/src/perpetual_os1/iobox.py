@@ -2,11 +2,12 @@ import perpetual_os1.common as c
 
 from hardware.controller import SharedModbusController as Controller
 from hardware.motor import Motor
+from hardware.printer import USBPrinter, PrinterError
 from hardware.iocam import AFSCam
 from perpetual_os1.exceptions import (
     IOBoxError, MotorError, CameraError, ConfigError
 )
-# from hardware.scale import Scale
+from hardware.scale import Scale
 # from hardware.curtain import Curtain
 
 import time
@@ -31,18 +32,31 @@ class SizeResult():
     size: Optional[ItemSizeLocation]
 
 class IOBox:
-    def __init__(self, motorcontroller: Controller, params: dict):
-        # self._scalecontroller = scalecontroller
-        self._scale = None
+    def __init__(self, 
+                 motorcontroller: Controller,
+                 scalecontroller: Controller, 
+                 params: dict,
+                 ):
+        self._scalecontroller = scalecontroller
         self._motorcontroller = motorcontroller
         self._status = IOBoxStatus.IDLE
         self._params = params
 
-        # self._scale: Optional[Scale] = None
         self._md = Motor(controller = self._motorcontroller, 
                          params = self._params.motors.by_name("door"))
         self._cam = AFSCam(usb_params = self._params.usb_camera,
                            tof_params = self._params.tof_camera)
+        
+        self._scale = Scale(scalecontroller)
+        self._printer = USBPrinter()
+
+        # printer_params = getattr(self._params, "printer", None)
+        # self._printer = USBPrinter(
+        #     device_path=getattr(printer_params, "device_path", "/dev/usb/lp0"),
+        #     encoding=getattr(printer_params, "encoding", "utf-8"),
+        #     default_trailing_spaces=getattr(printer_params, "trailing_spaces", 0),
+        #     default_trailing_newlines=getattr(printer_params, "trailing_newlines", 0),
+        # )
 
     async def configure(self):
         """
@@ -55,12 +69,13 @@ class IOBox:
             await self._md.configure()
             await self._md.home()
             await self._cam.start()
-            self._status = IOBoxStatus.READY
+            self._printer.connect()
+            self._printer.tare()
+            self._status = IOBoxStatus.IDLE
         except Exception as e:
             self._status = IOBoxStatus.ERROR
             raise IOBoxError(f"IOBox configuration failed: {str(e)}") from e
 
-        #scale config
         #curtain config
 
     async def get_weight(self) -> float:
@@ -71,9 +86,7 @@ class IOBox:
             IOBoxError: If scale is not configured or reading fails
         """
         try:
-            if self._scale is None:
-                # self._scale = Scale(controller=self._scalecontroller, rs.get _params(self._state, "iobox"))
-                await self._scale.configure()
+            await self._scale.configure()
             weight = await self._scale.get_weight()
             return weight
         except Exception as e:
@@ -98,6 +111,30 @@ class IOBox:
             if isinstance(e, IOBoxError):
                 raise
             raise CameraError(f"Item measurement failed: {str(e)}") from e
+
+    async def detect_item_presence(self) -> Tuple[Optional[ItemSizeLocation], float]:
+        """
+        Determine whether an item is present by combining scale weight and camera measurement.
+
+        Returns:
+            Tuple containing the measured ItemSizeLocation (or None) and the recorded weight.
+
+        Side Effects:
+            Updates IOBox status to READY when an item is confirmed present, otherwise IDLE.
+        """
+        try:
+            weight = await self.get_weight()
+            measurement = await self.measure_item()
+
+            if measurement is not None and weight != 0:
+                self._status = IOBoxStatus.READY
+            else:
+                self._status = IOBoxStatus.IDLE
+
+            return measurement, weight
+        except Exception:
+            # get_weight / measure_item already set status/errors appropriately
+            raise
         
     def measure_item_sync(self) -> Optional[ItemSizeLocation]:
         """
@@ -154,6 +191,25 @@ class IOBox:
                 raise
             raise MotorError(f"Failed to close door: {str(e)}") from e
 
+    def print_text(self, text: str, *, trailing_spaces: Optional[int] = None, trailing_newlines: Optional[int] = None) -> None:
+        """
+        Print text using the IOBox printer.
+
+        Raises:
+            IOBoxError: If the printer is not available or the write fails.
+        """
+        if self._printer is None:
+            raise IOBoxError("Printer not configured")
+        try:
+            self._printer.print_text(
+                text,
+                trailing_spaces=trailing_spaces,
+                trailing_newlines=trailing_newlines,
+            )
+        except PrinterError as exc:
+            self._status = IOBoxStatus.ERROR
+            raise IOBoxError(f"Printer failed: {str(exc)}") from exc
+
     # curtain worker?
 
     # shutdown/teardown
@@ -183,6 +239,12 @@ class IOBox:
                 await self._cam.stop()
             except Exception as e:
                 errors.append(f"Camera stop failed: {str(e)}")
+
+        if self._printer is not None:
+            try:
+                self._printer.disconnect()
+            except Exception as e:
+                errors.append(f"Printer disconnect failed: {str(e)}")
         
         if errors:
             self._status = IOBoxStatus.ERROR
