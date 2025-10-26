@@ -17,7 +17,7 @@ async def init_robot_worker() -> None:
     logging.info("Getting Robot")
     robot = r.Robot()
     await robot.configure()
-    await init_camera_manager(robot._io._cam)
+    # await init_camera_manager(robot._io._cam)
     logging.info("Built Robot")
     settings = get_settings()
     nats_config = common.RobotNatsConfiguration(

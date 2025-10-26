@@ -73,13 +73,13 @@ class IOBox:
         try:
             await self._md.configure()
             await self._md.home()
-            await self._scale.configure()
+            # await self._scale.connect()
+            await self._scale.tare()
             self._scale_ready = True
             if not self._cam_running:
                 await self._cam.start()
                 self._cam_running = True
             self._printer.connect()
-            self._printer.tare()
             self._status = IOBoxStatus.IDLE
         except Exception as e:
             self._status = IOBoxStatus.ERROR
