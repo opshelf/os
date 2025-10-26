@@ -309,7 +309,7 @@ async def test_storage_cells_endpoint(client: AsyncClient) -> None:
     # Update a storage cell (assuming cell 1,1 exists)
     update_data = {
         "capacity": {"width": 50, "height": 100, "length": 50},
-        "status": "available"
+        "status": "occupied"
     }
 
     response = await client.put("/api/storage/locations/1/1",
@@ -319,7 +319,7 @@ async def test_storage_cells_endpoint(client: AsyncClient) -> None:
         data = response.json()
         assert data["shelf_idx"] == 1
         assert data["cell_idx"] == 1
-        assert data["status"] == "available"
+        assert data["status"] == "occupied"
         assert data["capacity"]["width"] >= 0
 
 

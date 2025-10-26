@@ -120,6 +120,7 @@ def _transform_worker_status_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     state_payload = robot_status_payload.get("state") or {"current_cell": None}
     storage_payload = robot_status_payload.get("storage") or {"left_module": [], "right_module": []}
+    storage_payload = _normalize_storage_payload(storage_payload)
 
     transformed["robot_status"] = {
         "gantry": {
@@ -142,6 +143,37 @@ def _transform_worker_status_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     transformed["error_queue"] = errors
 
     return transformed
+
+
+def _normalize_storage_payload(storage: Dict[str, Any]) -> Dict[str, Any]:
+    def normalize_cell(cell: Dict[str, Any]) -> Dict[str, Any]:
+        status = cell.get("status")
+        if isinstance(status, str):
+            normalized = status.lower()
+            if normalized == "empty":
+                normalized = "available"
+            elif normalized == "blocked":
+                normalized = "maintenance"
+            cell = dict(cell)
+            cell["status"] = normalized
+        return cell
+
+    normalized_storage = {"left_module": [], "right_module": []}
+
+    for side in ("left_module", "right_module"):
+        shelves = storage.get(side) or []
+        normalized_shelves: List[Dict[str, Any]] = []
+        for shelf in shelves:
+            if not isinstance(shelf, dict):
+                continue
+            cells = shelf.get("cells") or []
+            normalized_cells = [normalize_cell(cell) for cell in cells if isinstance(cell, dict)]
+            shelf_copy = dict(shelf)
+            shelf_copy["cells"] = normalized_cells
+            normalized_shelves.append(shelf_copy)
+        normalized_storage[side] = normalized_shelves
+
+    return normalized_storage
 
 class RobotWorker:
     _instance: Optional["RobotWorker"] = None

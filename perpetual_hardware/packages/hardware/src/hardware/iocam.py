@@ -1,9 +1,19 @@
 import asyncio
 import time
-from typing import Optional, Tuple, List, Dict, Any
+from typing import Optional, Tuple, List, Dict, Any, TYPE_CHECKING
+
 import cv2
 import numpy as np
-import ArducamDepthCamera as ac
+
+try:
+    import ArducamDepthCamera as ac
+except ImportError:
+    ac = None  # type: ignore[assignment]
+
+if TYPE_CHECKING:
+    from ArducamDepthCamera import ArducamCamera  # type: ignore[misc]
+else:
+    ArducamCamera = Any  # type: ignore
 
 from hardware import iocam_helpers as ih
 from hardware.exceptions import (
@@ -13,8 +23,6 @@ from hardware.exceptions import (
 
 
 # ============================ Async Sizer Class ============================
-
-from typing import Optional
 
 class AFSCam:
     """
@@ -42,7 +50,7 @@ class AFSCam:
         self._usb_exposure = usb_params.usb_exposure
 
         # Hardware handles
-        self._tof: Optional[ac.ArducamCamera] = None
+        self._tof: Optional[ArducamCamera] = None
         self._usb: Optional[cv2.VideoCapture] = None
 
         # Latest TOF frame buffers (updated in background loop)
@@ -69,6 +77,11 @@ class AFSCam:
 
     def _init_tof(self) -> None:
         """Initialize TOF camera."""
+        if ac is None:
+            raise TOFError(
+                "ArducamDepthCamera is not installed. Install the hardware extras to "
+                "enable TOF camera support."
+            )
         try:
             self._tof = ac.ArducamCamera()
             port_used = self._open_tof(self._tof, self.preferred_tof_port)
@@ -981,7 +994,7 @@ class AFSCam:
 
     # -------------------- Internals --------------------
 
-    def _open_tof(self, cam: ac.ArducamCamera, preferred_port: Optional[int]) -> int:
+    def _open_tof(self, cam: ArducamCamera, preferred_port: Optional[int]) -> int:
         ports_to_try = [preferred_port] if preferred_port is not None else [0, 1, 2]
         last_err = None
         for p in ports_to_try:
