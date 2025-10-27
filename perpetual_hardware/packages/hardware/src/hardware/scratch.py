@@ -124,7 +124,7 @@
 
 # 			for c in shelf:
 # 				cell = {
-# 					"status": "EMPTY",
+# 					"status": "available",
 # 					"item": None,
 # 					"calibration_point": {"x": float(c.get("x", 0.0)), "y": float(c.get("y", 0.0)), "z": 0.0},
 # 					"dimensions": {"length": float(box_dims.get("length", 400.0)), "width": float(box_dims.get("width", 50.0)), "height": float(box_dims.get("height", 100.0))},

@@ -400,7 +400,7 @@ class Robot:
                 for offset, coord in enumerate(relevant_cells, start=index_offset):
                     shelf_cell_models.append(
                         Cell(
-                            status=CellStatus.EMPTY,
+                            status=CellStatus.AVAILABLE,
                             item=None,
                             calibration_point=CalibrationCoordinate(x=coord.x, y=coord.y, z=z_offset),
                             dimensions=Dimensions(width=_cell_width_for_index(offset), height=shelf_height, length=400.0)

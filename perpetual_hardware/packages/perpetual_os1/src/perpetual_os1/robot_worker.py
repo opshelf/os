@@ -149,13 +149,8 @@ def _normalize_storage_payload(storage: Dict[str, Any]) -> Dict[str, Any]:
     def normalize_cell(cell: Dict[str, Any]) -> Dict[str, Any]:
         status = cell.get("status")
         if isinstance(status, str):
-            normalized = status.lower()
-            if normalized == "empty":
-                normalized = "available"
-            elif normalized == "blocked":
-                normalized = "maintenance"
             cell = dict(cell)
-            cell["status"] = normalized
+            cell["status"] = status.lower()
         return cell
 
     normalized_storage = {"left_module": [], "right_module": []}
