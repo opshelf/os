@@ -153,6 +153,10 @@ class Robot:
         await self._tool.configure()
         await self._io.configure()
 
+        # await self._tool.pick(AxisCoordinate(917, 381))
+        # await self._io.open_door()
+        # await self._tool.move(AxisCoordinate(46, 465))
+
     def get_param(self, param: str):
         try:
             if not hasattr(self._config.robot, param):
@@ -452,7 +456,7 @@ class Robot:
             self._logger.warning("IOBox weight read failed", exc_info=exc)
 
         try:
-            dimensions = self.measure_item_dimensions()
+            dimensions = await self.measure_item_dimensions()
         except Exception as exc:
             self._logger.warning("IOBox dimension measurement failed", exc_info=exc)
 
@@ -510,13 +514,14 @@ class Robot:
         )
 
         location = self._grid.find_best_slot_for_item(item)
+        # print(location)
 
         if not location:
             return RobotCommandError(error="No suitable storage location found")
 
         # Get coordinate and store
         coord = self._grid.get_cell_coordinate(location)
-        await self.io_pick(coord.to_axis_coordinate())
+        # await self.io_pick(coord.to_axis_coordinate())
 
         # Update storage grid
         self._grid.store_item(location, item)
@@ -543,7 +548,7 @@ class Robot:
             return RobotCommandError(error=f"Item '{item_name}' not found in storage")
 
         # Retrieve item
-        print(coord)
+        await self._tool.move(coord)
         # await self.io_place(coord)
 
         # clear the item we just retrieved
@@ -563,7 +568,7 @@ class Robot:
             self._grid.clear_item(location)
             self._grid.save()
 
-    def measure_item_dimensions(self, n_frames: int = 10) -> Optional[Dimensions]:
+    async def measure_item_dimensions(self, n_frames: int = 5) -> Optional[Dimensions]:
         """
         Use the IOBox's AFSCam to measure the dimensions of an item currently in the IO box.
         Returns the aggregate dimensions including footprint and depth measurements.
@@ -579,13 +584,13 @@ class Robot:
             RobotStateError: If there is no item in the IOBox to measure
         """
         # Validate state before operation -> change state on weight read
-        self._state_manager.update_state(self._state.tool, self._state.io)
-        self._state_manager.validate_operation('measure')
+        # self._state_manager.update_state(self._state.tool, self._state.io)
+        # self._state_manager.validate_operation('measure')
         if not self._io or not self._io._cam:
             raise RuntimeError("IOBox camera not configured")
 
         # Take measurement using AFSCam
-        measure_result = self._io.measure_item_sync()
+        measure_result = await self._io.measure_item()
         # print(measure_result)
 
         if not measure_result["ok"]:
@@ -599,7 +604,7 @@ class Robot:
         # Prefer footprint measurements (from pinhole model) and fall back to scale data if needed.
         width = agg.get("footprint_major_mm_med") or agg.get("scale_major_mm_med")
         height = agg.get("footprint_minor_mm_med") or agg.get("scale_minor_mm_med")
-        length = agg.get("depth_mm_med")
+        length = agg.get("depth_mm_med")/10
 
         if width is None or height is None or length is None:
             return None
@@ -615,9 +620,23 @@ class Robot:
         return status
     
     async def test(self, coordinate) -> None:
+        await self.io_place(AxisCoordinate(917, 381))
+        # await self.io_pick()
+        # await self._tool._ms.move_to_position(54)
+        # await self._tool._mg.move_to_position(161)
+        # await self._tool.move(coordinate)
+        # await self._tool._mg.move_to_position(coordinate.x)
+        # await self._io._md.move_to_position(coordinate.x)
+        # await self._tool._gs.safe_open()
+        # await self._tool._mg.move_to_position(coordinate.x) # 162
+        # await self._tool._my.move_to_position(coordinate.y)
+        # beb = await self._io.detect_item_presence()
+        # print(beb)
+        # beb = await self._io.scale.get_weight()
+        # print(beb)
         # await self.store(item_name="andi")
-        beb = self.measure_item_dimensions()
-        print(beb)
+        # beb = await self._io.detect_item_presence()
+        # print(beb)
 
     async def handle_command(self, command: RobotCommands):
         if isinstance(command, StopCommand):
