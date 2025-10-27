@@ -538,7 +538,7 @@ class AFSCam:
                 raise ImageProcessingError(f"Measurement failed: {str(e)}") from e
             raise
 
-    async def measure_sync(
+    async def measure_async(
         self,
         n_frames: int = 5,
         timeout_s: float = 2.0,
@@ -549,7 +549,7 @@ class AFSCam:
         max_center_offset_px: float = 40.0
     ) -> Dict[str, Any]:
         """
-        Capture and analyze measurements using both cameras.
+        Async counterpart to `measure_sync` that captures and analyzes measurements using both cameras.
         
         Args:
             n_frames: Number of frames to capture
