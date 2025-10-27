@@ -13,9 +13,10 @@ RUN apt-get update && apt-get -y install --no-install-recommends \
 	ca-certificates \
 	curl \
 	wget \
+	v4l-utils \
 	&& rm -rf /var/lib/apt/lists/* \
 	&& apt-get clean
-
+	
 WORKDIR /app/perpetual_hardware/packages/perpetual_os1_server
 
 RUN mkdir -p /app/perpetual_hardware/packages/perpetual_os1_server/data && \

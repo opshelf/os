@@ -4,6 +4,14 @@ from typing import Optional, Tuple, List, Dict, Any
 import cv2
 import numpy as np
 import ArducamDepthCamera as ac
+from pathlib import Path
+import subprocess
+import re
+
+INNOMAKER_PRODUCT = "Innomaker-U20CAM-1080p-S1"
+INNOMAKER_MANUFACTURER = "Innomaker"     # optional guard
+INNOMAKER_SERIAL = "SN0001"              # optional guard; set to None to ignore
+
 
 from hardware import iocam_helpers as ih
 from hardware.exceptions import (
@@ -11,6 +19,33 @@ from hardware.exceptions import (
     ImageError, ImageProcessingError, TOFError, TOFConfigError, TOFDataError
 )
 
+# ============================ Linux /dev/ helper ============================
+
+INNOMAKER_PRODUCT = "Innomaker-U20CAM-1080p-S1"
+INNOMAKER_MANUFACTURER = "Innomaker"     # optional guard
+INNOMAKER_SERIAL = "SN0001"              # optional guard; set to None to ignore
+
+
+def _find_innomaker_device() -> int:
+    """Return the /dev/video index for the Innomaker camera."""
+    try:
+        result = subprocess.run(
+            ["v4l2-ctl", "--list-devices"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        lines = result.stdout.splitlines()
+        for i, line in enumerate(lines):
+            if "Innomaker-U20CAM-1080p-S1" in line:
+                # The next line usually contains /dev/videoX
+                if i + 1 < len(lines):
+                    match = re.search(r"/dev/video(\d+)", lines[i + 1])
+                    if match:
+                        return int(match.group(1))
+        raise RuntimeError("Innomaker U20CAM not found in v4l2-ctl output.")
+    except Exception as e:
+        raise RuntimeError(f"Failed to detect Innomaker camera: {e}")
 
 # ============================ Async Sizer Class ============================
 
@@ -70,18 +105,22 @@ class AFSCam:
     def _init_tof(self) -> None:
         """Initialize TOF camera."""
         try:
+            # print("initializing")
             self._tof = ac.ArducamCamera()
             port_used = self._open_tof(self._tof, self.preferred_tof_port)
             if port_used < 0:
+                print("bad port")
                 raise TOFError(f"Failed to open TOF on port {self.preferred_tof_port}")
                 
             if self._tof.start(ac.FrameType.DEPTH) != 0:
                 self._tof.close()
+                print("bad stream")
                 raise TOFError("Failed to start TOF stream")
                 
             try:
                 self._tof.setControl(ac.Control.RANGE, self.max_distance_mm)
             except Exception as e:
+                print("bad range")
                 raise TOFConfigError(
                     f"Failed to set TOF range to {self.max_distance_mm}mm: {str(e)}"
                 ) from e
@@ -105,70 +144,53 @@ class AFSCam:
             if not isinstance(e, TOFError):
                 raise TOFError(f"TOF initialization failed: {str(e)}") from e
             raise
-            
+
     def _init_usb(self) -> None:
-        """Initialize USB camera."""
+        """Initialize USB camera (auto-detect Innomaker U20CAM)."""
         try:
-            self._usb = cv2.VideoCapture(self._usb_index, cv2.CAP_V4L2)
+            # Auto-detect Innomaker camera
+            usb_index = _find_innomaker_device()
+            self._usb_index = usb_index
+            print(f"[USB] Found Innomaker U20CAM at /dev/video{usb_index}")
+
+            # Open using V4L2 backend
+            self._usb = cv2.VideoCapture(usb_index, cv2.CAP_V4L2)
             if not self._usb.isOpened():
-                raise CameraConnectionError(
-                    f"Failed to open USB camera at index {self._usb_index}"
-                )
+                raise CameraConnectionError(f"Failed to open Innomaker at index {usb_index}")
 
-            # Configure camera settings
+            # Configure FOURCC
             if self._usb_fourcc:
-                try:
-                    fourcc = cv2.VideoWriter_fourcc(*self._usb_fourcc)
-                    if not self._usb.set(cv2.CAP_PROP_FOURCC, fourcc):
-                        raise CameraConfigError(
-                            f"Failed to set fourcc to {self._usb_fourcc}"
-                        )
-                except Exception as e:
-                    raise CameraConfigError(
-                        f"Error setting fourcc: {str(e)}"
-                    ) from e
+                fourcc = cv2.VideoWriter_fourcc(*self._usb_fourcc)
+                if not self._usb.set(cv2.CAP_PROP_FOURCC, fourcc):
+                    raise CameraConfigError(f"Failed to set FOURCC to {self._usb_fourcc}")
 
+            # Configure exposure if specified
             if self._usb_exposure is not None:
-                try:
-                    if not self._usb.set(cv2.CAP_PROP_EXPOSURE, float(self._usb_exposure)):
-                        raise CameraConfigError(
-                            f"Failed to set exposure to {self._usb_exposure}"
-                        )
-                except Exception as e:
-                    raise CameraConfigError(
-                        f"Error setting exposure: {str(e)}"
-                    ) from e
+                if not self._usb.set(cv2.CAP_PROP_EXPOSURE, float(self._usb_exposure)):
+                    raise CameraConfigError(f"Failed to set exposure {self._usb_exposure}")
 
-            # Get initial frame and compute camera parameters
+            # Get initial frame and compute FOV parameters
             ok, frame0 = self._usb.read()
+            # print(ok)
+            # print(frame0)
             if not ok or frame0 is None:
-                raise CameraError("Failed to get initial USB frame")
-                
+                raise CameraError("Failed to capture initial frame")
+
             if self._fx_cache is None or self._fy_cache is None:
-                try:
-                    h0, w0 = frame0.shape[:2]
-                    if h0 <= 0 or w0 <= 0:
-                        raise ValueError(f"Invalid frame dimensions: {w0}x{h0}")
-                        
-                    fx, fy = ih.compute_fx_fy_from_fov(
-                        w0, h0, self.hfov_deg, self.vfov_deg
-                    )
-                    self._fx_cache = self._fx_cache or fx
-                    self._fy_cache = self._fy_cache or fy
-                        
-                except Exception as e:
-                    raise CameraConfigError(
-                        f"Failed to compute camera parameters: {str(e)}"
-                    ) from e
-                    
+                h0, w0 = frame0.shape[:2]
+                if h0 <= 0 or w0 <= 0:
+                    raise ValueError(f"Invalid frame dimensions: {w0}x{h0}")
+
+                fx, fy = ih.compute_fx_fy_from_fov(w0, h0, self.hfov_deg, self.vfov_deg)
+                self._fx_cache = self._fx_cache or fx
+                self._fy_cache = self._fy_cache or fy
+
         except Exception as e:
             self._cleanup_usb()
             if not isinstance(e, (CameraConnectionError, CameraConfigError)):
-                raise CameraError(
-                    f"USB camera initialization failed: {str(e)}"
-                ) from e
+                raise CameraError(f"USB camera initialization failed: {e}") from e
             raise
-            
+                
     async def start(self) -> None:
         """
         Initialize and start both TOF and USB cameras.
@@ -180,15 +202,15 @@ class AFSCam:
             CameraError: If general camera initialization fails
         """
         try:
-            # Initialize TOF camera first
-            # self._init_tof()
-            
             # Initialize USB camera
             self._init_usb()
+
+            # Initialize TOF camera
+            self._init_tof()
             
-            # Start background TOF loop
-            # self._stop_evt.clear()
-            # self._loop_task = asyncio.create_task(self._tof_loop())
+            # # # Start background TOF loop
+            self._stop_evt.clear()
+            self._loop_task = asyncio.create_task(self._tof_loop())
             
         except Exception as e:
             self._cleanup()
@@ -982,11 +1004,12 @@ class AFSCam:
     # -------------------- Internals --------------------
 
     def _open_tof(self, cam: ac.ArducamCamera, preferred_port: Optional[int]) -> int:
-        ports_to_try = [preferred_port] if preferred_port is not None else [0, 1, 2]
+        ports_to_try = [0, 1, 2]
         last_err = None
         for p in ports_to_try:
             ret = cam.open(ac.Connection.CSI, p)
             if ret == 0:
+                # print(p)
                 return p
             last_err = ret
         print(f"[TOF] Failed to open on any CSI port. Last error: {last_err}")

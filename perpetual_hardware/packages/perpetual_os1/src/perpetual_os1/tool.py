@@ -179,8 +179,8 @@ class Tool:
         try:
             self._mstatus = ToolMotionStatus.MOVING
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
-            await self._mg.move_to_position(0)
-            await self._ms.move_to_position(0)
+            await self._mg.move_to_position(1)
+            await self._ms.move_to_position(1)
             self._mstatus = ToolMotionStatus.IDLE
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
         except Exception as e:
@@ -224,7 +224,7 @@ class Tool:
             ConfigError: If extension parameters are missing
         """
         try:
-            io_offset = 8
+            io_offset = -3
             slide_ext = await self.get_param("SLIDE_EXTENSION")
             grip_ext = await self.get_param("GRIPPER_EXTENSION_PLACE")
             if slide_ext is None or grip_ext is None:
@@ -232,7 +232,7 @@ class Tool:
             
             self._mstatus = ToolMotionStatus.MOVING
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
-            await self._ms.move_to_position(slide_ext)
+            await self._ms.move_to_position(slide_ext+io_offset)
             await self._mg.move_to_position(grip_ext)
             self._mstatus = ToolMotionStatus.IDLE
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
@@ -281,8 +281,8 @@ class Tool:
         try:
             self._mstatus = ToolMotionStatus.MOVING
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
-            await self._ms.move_to_position_no_wait(0)
-            await self._mg.move_to_position_no_wait(0)
+            await self._ms.move_to_position_no_wait(1)
+            await self._mg.move_to_position_no_wait(1)
             await self.tool_wait(homing=True)
             self._mstatus = ToolMotionStatus.IDLE
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)

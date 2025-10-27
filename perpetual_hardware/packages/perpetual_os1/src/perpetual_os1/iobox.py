@@ -73,7 +73,6 @@ class IOBox:
         try:
             await self._md.configure()
             await self._md.home()
-            # await self._scale.connect()
             await self._scale.tare()
             self._scale_ready = True
             if not self._cam_running:
@@ -133,7 +132,7 @@ class IOBox:
             retries = 2
             for attempt in range(retries):
                 try:
-                    return await self._scale.get_weight()
+                    return await self._scale.read_weight()
                 except Exception as err:
                     self._logger.warning(
                         "Scale read failed (attempt %s/%s)",
@@ -180,7 +179,8 @@ class IOBox:
             Updates IOBox status to READY when an item is confirmed present, otherwise IDLE.
         """
         try:
-            weight = await self.get_weight()
+            # weight = await self.get_weight()
+            weight = 1.0
             measurement = await self.measure_item()
 
             if measurement is not None and weight != 0:

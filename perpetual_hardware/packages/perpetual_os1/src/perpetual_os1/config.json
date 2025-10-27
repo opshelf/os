@@ -7,12 +7,12 @@
     "tool": {
       "parameters": {
         "IDLE_POSITION": [0, 0],
-        "PICKUP_POSITION_L": [52, 469],
-        "PICKUP_POSITION_H": [52, 725],
+        "PICKUP_POSITION_L": [46, 465],
+        "PICKUP_POSITION_H": [46, 723],
         "SCAN_POSITION": [930, 1],
-        "SLIDE_EXTENSION":49,
-        "GRIPPER_EXTENSION_PICK": 166.5,
-        "GRIPPER_EXTENSION_PLACE": 165,
+        "SLIDE_EXTENSION":51,
+        "GRIPPER_EXTENSION_PICK": 161.5,
+        "GRIPPER_EXTENSION_PLACE": 160.5,
         "FRONT": 0.5,
         "BACK": 180.5,
         "JOG_X": 40,
@@ -52,7 +52,7 @@
           "mpr": 50,
           "accel": 500,
           "ret_rpm": 64,
-          "lim": 50
+          "lim": 75
         },
         {
           "motor_name": "rotate",
@@ -115,16 +115,16 @@
           "rpm": 3000,
           "dr": 0,
           "mpr": 12,
-          "accel": 500,
-          "ret_rpm": 64,
-          "lim": 220 
+          "accel": 1500,
+          "ret_rpm": 500,
+          "lim": 560 
         }
       ],
       "usb_camera": {
-        "index": 1,
-        "usb_index": 1,
+        "index": 0,
+        "usb_index": 10,
         "usb_fourcc": "MJPG",
-        "usb_exposure": 50,
+        "usb_exposure": 75,
         "square_mm": 7.5,
         "fx_px": 1150,
         "fy_px": 1150,
@@ -133,7 +133,7 @@
         "headless_fallback_path": "./usb_sizing.jpg"
       },
       "tof_camera": {
-        "csi_port": 2,
+        "csi_port": 0,
         "resolution": [240, 180],
         "fps": 30,
         "max_distance_mm": 4000,
@@ -145,14 +145,14 @@
 
     "bus": {
       "motor": {
-        "ports": ["/dev/ttyUSB1"],
+        "ports": ["/dev/ttyUSB0"],
         "baudrate": 115200,
         "parity": "N",
         "timeout": 2.0,
         "retry_delay_s": 0.25
       },
       "scale": {
-        "ports": ["/dev/ttyUSB0"],
+        "ports": ["/dev/ttyUSB1"],
         "baudrate": 9600,
         "parity": "N",
         "timeout": 2.0,
