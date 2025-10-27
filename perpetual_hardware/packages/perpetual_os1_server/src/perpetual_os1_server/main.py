@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
 
+import sentry_sdk
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -20,6 +21,18 @@ from perpetual_os1_server.database.session import AsyncSessionLocal
 from perpetual_os1_server.middleware.audit import AuditMiddleware
 from perpetual_os1_server.routers import access_levels, audit, auth, camera, robot, roles, sizes, storage, users
 from perpetual_os1_server.settings import get_settings
+
+deployment_environment = os.getenv("ENV", "development")
+is_production = deployment_environment == "production"
+
+if is_production is True:
+	sentry_sdk.init(
+		dsn="https://fd43eccbf758f520e1c26249bf6a3cd8@o4510181088296960.ingest.us.sentry.io/4510181127946240",
+		traces_sample_rate=0.1,
+		environment=deployment_environment,
+		enable_tracing=True,
+	)
+	logging.info("Sentry initialized for perpetual_os1_server")
 
 root = logging.getLogger()
 root.setLevel(logging.INFO)
