@@ -124,11 +124,11 @@
         "index": 0,
         "usb_index": 10,
         "usb_fourcc": "MJPG",
-        "usb_exposure": 75,
+        "usb_exposure":25,
         "square_mm": 7.5,
         "fx_px": 1150,
         "fy_px": 1150,
-        "px_per_mm": 1.5,
+        "px_per_mm": 1.35,
         "confidence_min": 0,
         "headless_fallback_path": "./usb_sizing.jpg"
       },

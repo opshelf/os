@@ -1,271 +1,191 @@
-"""
-USB printer component driver.
-
-This module provides a small asynchronous-friendly driver that can talk to a
-USB-connected receipt/label printer exposed as a character device (e.g.
-/dev/usb/lp0). It focuses on reliably sending UTF-8 text payloads while allowing
-the caller to adjust the amount of trailing whitespace (spaces and/or blank
-lines) that is appended to each print job.
-"""
-
+#!/usr/bin/env python3
 from __future__ import annotations
 
-import logging
-import math
-import threading
-from typing import Optional
-
 from pathlib import Path
-import struct
+from typing import Optional, Tuple, Union
+import os, time
+from PIL import Image
 
-try:
-    from PIL import Image
-except ImportError:  # pragma: no cover
-    Image = None  # type: ignore
+PathLike = Union[str, Path]
 
-from hardware.exceptions import CommunicationError
+import asyncio
+from contextlib import suppress
 
-log = logging.getLogger(__name__)
+class AsyncPrinter:
+    def __init__(self, esc_printer):
+        self._p = esc_printer          # instance of ESCImagePrinter
+        self._lock = asyncio.Lock()    # serialize device access
 
-
-class PrinterError(CommunicationError):
-    """Base class for printer-related errors."""
-
-
-class PrinterNotConnectedError(PrinterError):
-    """Raised when an operation requires an active USB connection."""
-
-
-class USBPrinter:
-    """
-    Minimal USB printer driver that streams bytes to a character device.
-
-    Parameters:
-        device_path: Path to the printer device (default /dev/usb/lp0).
-        encoding:  Text encoding used when sending strings.
-        default_trailing_spaces: Number of spaces appended to every print job.
-        default_trailing_newlines: Number of newline characters appended.
-    """
-
-    def __init__(
-        self,
-        device_path: str = "/dev/usb/lp0",
-        encoding: str = "utf-8",
-        default_trailing_spaces: int = 0,
-        default_trailing_newlines: int = 0,
-        line_width: int = 32,
-    ) -> None:
-        self.device_path = Path(device_path)
-        self.encoding = encoding
-        self._default_trailing_spaces = max(0, int(default_trailing_spaces))
-        self._default_trailing_newlines = max(0, int(default_trailing_newlines))
-        if line_width <= 0:
-            raise ValueError("line_width must be > 0")
-        self._line_width = line_width
-
-        self._device_file: Optional[object] = None
-        self._lock = threading.Lock()
-
-    # --------------------------------------------------------------------- #
-    # Public configuration helpers
-
-    def configure_trailing_whitespace(
-        self,
-        *,
-        trailing_spaces: Optional[int] = None,
-        trailing_newlines: Optional[int] = None,
-    ) -> None:
+    async def print_image(self, path: str, **kwargs) -> None:
         """
-        Update the default whitespace appended to each print job.
-
-        Args:
-            trailing_spaces:  Override default trailing spaces (>= 0).
-            trailing_newlines: Override default trailing newline characters (>= 0).
+        Run the blocking print in a worker thread, with:
+        - a global lock to prevent interleaving
+        - cancellation shielding so partial jobs still finish a band/feed
         """
-        if trailing_spaces is not None:
-            if trailing_spaces < 0:
-                raise ValueError("trailing_spaces must be >= 0")
-            self._default_trailing_spaces = int(trailing_spaces)
-        if trailing_newlines is not None:
-            if trailing_newlines < 0:
-                raise ValueError("trailing_newlines must be >= 0")
-            self._default_trailing_newlines = int(trailing_newlines)
+        async with self._lock:
+            # Keep the print from being torn down mid-write
+            async def _run():
+                # run sync code in a thread; propagate exceptions
+                return await asyncio.to_thread(self._p.print_image, path, **kwargs)
 
-    # --------------------------------------------------------------------- #
-    # Connection management
+            # Shield from cancellation; if cancelled, try to let current band finish
+            with suppress(asyncio.CancelledError):
+                await asyncio.shield(_run())
 
-    def connect(self) -> None:
-        """
-        Locate and open the printer device.
 
-        Raises:
-            PrinterError: If the device file cannot be opened.
-        """
-        if self._device_file is not None:
-            log.debug("Printer device already open at %s", self.device_path)
-            return
+class ESCImagePrinter:
+    ESC = b"\x1b"; GS = b"\x1d"; CAN = b"\x18"
 
-        if not self.device_path.exists():
-            raise PrinterError(f"Printer device {self.device_path} does not exist")
+    DARK_PRESETS = {
+        0: (6,  60,  2),
+        1: (7,  80,  2),
+        2: (9,  100, 3),
+        3: (11, 120, 4),
+        4: (12, 140, 6),
+        5: (14, 160, 8),
+    }
 
-        try:
-            # buffering=0 ensures writes are pushed immediately.
-            self._device_file = self.device_path.open("wb", buffering=0)
-        except OSError as exc:
-            raise PrinterError(f"Failed to open printer device {self.device_path}: {exc}") from exc
+    def __init__(self,
+                 device: str = "/dev/usb/lp0",
+                 print_width_px: int = 384,
+                 default_darkness: int = 3,
+                 bytes_per_write: int = 1024,
+                 band_height: int = 24,
+                 band_feed_dots: Optional[int] = 24,  # feed per band; 24 dots ~ one 24-dot band
+                 chunk_sleep: float = 0.0,
+                 fsync_each_band: bool = True,
+                 send_crlf_after_band: bool = True) -> None:
+        self.device = device
+        self.print_width_px = int(print_width_px)
+        self.default_darkness = int(default_darkness)
+        self.bytes_per_write = int(bytes_per_write)
+        self.band_height = int(band_height)        # 24 for m=33
+        self.band_feed_dots = band_feed_dots
+        self.chunk_sleep = float(chunk_sleep)
+        self.fsync_each_band = bool(fsync_each_band)
+        self.send_crlf_after_band = bool(send_crlf_after_band)
 
-        log.debug("Printer device %s opened", self.device_path)
+    # ---------------- Public API ----------------
+    def print_image(self,
+                    image: PathLike | Image.Image,
+                    *,
+                    dither: bool = False,
+                    threshold: int = 128,
+                    invert: bool = False,
+                    feed_dots: int = 80,
+                    darkness: Optional[int] = None,
+                    heat_params: Optional[Tuple[int,int,int]] = None) -> None:
+        mono = self._prepare_bitmap(image, dither=dither, threshold=threshold, invert=invert)
+        with self._open_printer() as f:
+            self._force_binary_mode(f)
+            # heating/darkness
+            if heat_params is not None:
+                n1, n2, n3 = heat_params
+            else:
+                level = self.default_darkness if darkness is None else max(0, min(5, darkness))
+                n1, n2, n3 = self.DARK_PRESETS[level]
+            self._set_heating(f, n1, n2, n3)
 
-    def disconnect(self) -> None:
-        """Close printer device handle."""
-        if self._device_file is None:
-            return
+            self._print_bands_bitimage(f, mono)
 
-        with self._lock:
-            try:
-                self._device_file.close()
-            except Exception:
-                log.exception("Failed to close printer device %s cleanly", self.device_path)
-            finally:
-                self._device_file = None
-                log.debug("Printer device %s closed", self.device_path)
+            self._feed_dots(f, feed_dots)
 
-    # --------------------------------------------------------------------- #
-    # Printing API
+    # ---------------- Core I/O ----------------
+    def _open_printer(self):
+        return open(self.device, "wb", buffering=0)
 
-    def print_text(
-        self,
-        text: str,
-        *,
-        trailing_spaces: Optional[int] = None,
-        trailing_newlines: Optional[int] = None,
-    ) -> None:
-        """
-        Print the given text string with optional trailing whitespace.
+    def _force_binary_mode(self, f) -> None:
+        f.write(self.CAN * 8)
+        f.write(self.ESC + b"@")                 # Initialize
+        f.write(self.ESC + b"!" + b"\x00")       # Standard mode
+        f.write(self.ESC + b"t" + b"\x00")       # CP437
+        f.write(self.ESC + b"a" + b"\x00")       # Left
+        f.write(self.ESC + b"2")                 # Default line spacing
+        f.write(self.ESC + b"3" + b"\x18")       # 24-dot spacing
 
-        Args:
-            text: The string payload to print.
-            trailing_spaces: Optional override for spaces appended after text.
-            trailing_newlines: Optional override for newline characters appended.
-        """
-        payload = self._prepare_payload(
-            text,
-            trailing_spaces=trailing_spaces,
-            trailing_newlines=trailing_newlines,
-        )
-        self.print_raw(payload)
+    def _set_heating(self, f, n1: int, n2: int, n3: int) -> None:
+        f.write(self.ESC + b"7" + bytes([(n1 & 0xFF), (n2 & 0xFF), (n3 & 0xFF)]))
 
-    def print_raw(self, data: bytes) -> None:
-        """
-        Send raw bytes to the printer.
+    def _feed_dots(self, f, dots: int) -> None:
+        if dots <= 0: return
+        remaining = dots
+        while remaining > 0:
+            step = min(255, remaining)
+            f.write(self.ESC + b"J" + bytes([step]))
+            remaining -= step
 
-        Raises:
-            PrinterNotConnectedError: If the USB device is not connected.
-            PrinterError: On write failures.
-        """
-        if not data:
-            return
-        if self._device_file is None:
-            raise PrinterNotConnectedError("Printer is not connected")
+    # ---------------- Image pipeline ----------------
+    def _prepare_bitmap(self,
+                        image: PathLike | Image.Image,
+                        *,
+                        dither: bool, threshold: int, invert: bool) -> Image.Image:
+        img = image if isinstance(image, Image.Image) else Image.open(str(image))
+        w, h = img.size
+        if w != self.print_width_px:
+            new_h = int(round(h * (self.print_width_px / float(w))))
+            img = img.resize((self.print_width_px, new_h), Image.LANCZOS)
+        if dither:
+            img = img.convert("1")
+        else:
+            img = img.convert("L").point(lambda x: 255 if x >= threshold else 0, mode="1")
+        if invert:
+            img = Image.eval(img, lambda v: 255 - v)
+        return img.convert("1")
 
-        with self._lock:
-            try:
-                self._device_file.write(data)
-                self._device_file.flush()
-            except OSError as exc:
-                raise PrinterError(f"Failed to write to printer device {self.device_path}: {exc}") from exc
+    # ---------------- ESC * printing (24-dot bands) ----------------
+    def _print_bands_bitimage(self, f, mono: Image.Image) -> None:
+        width_px, height_px = mono.size
+        n = width_px                   # n is columns in dots
+        nL, nH = (n & 0xFF), ((n >> 8) & 0xFF)
+        px = mono.load()
 
-    def print_png(
-        self,
-        image_path: str,
-        *,
-        max_width: Optional[int] = None,
-        invert: bool = False,
-    ) -> None:
-        """Rasterize and print a PNG image using ESC/POS graphics commands."""
-        if Image is None:
-            raise PrinterError("Pillow is required for image printing")
+        for y0 in range(0, height_px, self.band_height):
+            # 1) Header: ESC * 33 nL nH
+            header = self.ESC + b"*" + bytes([33, nL, nH])
+            f.write(header)
 
-        img = Image.open(image_path)
-        img = img.convert("L")
-        if max_width and max_width > 0 and img.width > max_width:
-            ratio = max_width / img.width
-            new_height = max(1, int(img.height * ratio))
-            img = img.resize((max_width, new_height), Image.LANCZOS)
-        img = img.convert("1")  # monochrome dithered
+            # 2) Build band bytes: for each x column -> 3 bytes (top/mid/bot 8 rows)
+            band = bytearray()
+            for x in range(width_px):
+                # top 8
+                b0 = 0
+                for bit in range(8):
+                    yy = y0 + bit
+                    if yy < height_px and px[x, yy] == 0:
+                        b0 |= (1 << (7 - bit))
+                # mid 8
+                b1 = 0
+                for bit in range(8):
+                    yy = y0 + 8 + bit
+                    if yy < height_px and px[x, yy] == 0:
+                        b1 |= (1 << (7 - bit))
+                # bottom 8
+                b2 = 0
+                for bit in range(8):
+                    yy = y0 + 16 + bit
+                    if yy < height_px and px[x, yy] == 0:
+                        b2 |= (1 << (7 - bit))
+                band.extend((b0, b1, b2))
 
-        raster = self._encode_raster_image(img, invert=invert)
-        self.print_raw(raster)
+            # 3) Write band in small slices (avoid usblp choke)
+            if self.bytes_per_write <= 0:
+                f.write(band)
+            else:
+                i = 0
+                step = self.bytes_per_write
+                while i < len(band):
+                    f.write(band[i:i+step])
+                    i += step
 
-    # --------------------------------------------------------------------- #
-    # Context manager helpers
+            # 4) Explicit CRLF + dot-feed to “commit” this band on picky firmwares
+            if self.send_crlf_after_band:
+                f.write(b"\r\n")
+            if self.band_feed_dots and self.band_feed_dots > 0:
+                self._feed_dots(f, self.band_feed_dots)
 
-    def __enter__(self) -> "USBPrinter":
-        self.connect()
-        return self
+            # 5) Force flush at the kernel/device level
+            if self.fsync_each_band:
+                os.fsync(f.fileno())
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        self.disconnect()
-
-    # --------------------------------------------------------------------- #
-    # Internal helpers
-
-    def _prepare_payload(
-        self,
-        text: str,
-        *,
-        trailing_spaces: Optional[int],
-        trailing_newlines: Optional[int],
-    ) -> bytes:
-        spaces = self._default_trailing_spaces if trailing_spaces is None else max(0, int(trailing_spaces))
-        newlines = self._default_trailing_newlines if trailing_newlines is None else max(0, int(trailing_newlines))
-
-        # Ensure output is always at least 8 lines when rendered with the configured width.
-        MIN_LINES = 8
-        used_lines = self._estimate_line_usage(text)
-        missing_lines = max(0, MIN_LINES - (used_lines + newlines))
-        total_newlines = newlines + missing_lines
-
-        whitespace = " " * spaces + ("\n" * total_newlines)
-        payload_str = f"{text}{whitespace}"
-        try:
-            return payload_str.encode(self.encoding, errors="replace")
-        except LookupError as exc:
-            raise PrinterError(f"Unknown printer encoding '{self.encoding}'") from exc
-
-    def _estimate_line_usage(self, text: str) -> int:
-        """Estimate how many printed lines a string will consume."""
-        if not text:
-            return 0
-        segments = text.split("\n")
-        lines = 0
-        for segment in segments:
-            length = len(segment)
-            lines += max(1, math.ceil(length / self._line_width)) if length else 1
-        return lines
-
-    def _encode_raster_image(self, img: "Image.Image", *, invert: bool = False) -> bytes:
-        width = img.width
-        height = img.height
-        width_bytes = (width + 7) // 8
-        header = b"\x1d\x76\x30\x00" + struct.pack("<HH", width_bytes, height)
-        pixels = img.load()
-        body = bytearray()
-        for y in range(height):
-            row_byte = 0
-            bit_count = 0
-            for x in range(width):
-                pixel = pixels[x, y]
-                bit = 0 if pixel else 1
-                if invert:
-                    bit ^= 1
-                row_byte = (row_byte << 1) | bit
-                bit_count += 1
-                if bit_count == 8:
-                    body.append(row_byte)
-                    row_byte = 0
-                    bit_count = 0
-            if bit_count:
-                row_byte <<= (8 - bit_count)
-                body.append(row_byte)
-        return header + body + b"\n"
+            if self.chunk_sleep > 0:
+                time.sleep(self.chunk_sleep)

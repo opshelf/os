@@ -2,7 +2,7 @@ import perpetual_os1.common as c
 
 from hardware.controller import SharedModbusController as Controller
 from hardware.motor import Motor
-from hardware.printer import USBPrinter, PrinterError
+# from hardware.printer import USBPrinter
 from hardware.iocam import AFSCam
 from perpetual_os1.exceptions import (
     IOBoxError, MotorError, CameraError, ConfigError
@@ -50,7 +50,7 @@ class IOBox:
                            tof_params = self._params.tof_camera)
         
         self._scale = Scale(scalecontroller)
-        self._printer = USBPrinter()
+        # self._printer = USBPrinter()
         self._scale_ready = False
         self._cam_running = False
         self._logger = logging.getLogger(__name__).getChild("IOBox")
@@ -78,7 +78,7 @@ class IOBox:
             if not self._cam_running:
                 await self._cam.start()
                 self._cam_running = True
-            self._printer.connect()
+            # self._printer.connect()
             self._status = IOBoxStatus.IDLE
         except Exception as e:
             self._status = IOBoxStatus.ERROR

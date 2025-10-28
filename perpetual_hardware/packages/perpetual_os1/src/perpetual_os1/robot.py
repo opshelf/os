@@ -25,6 +25,11 @@ from dataclasses import dataclass
 import time
 import asyncio
 
+from PIL import Image
+
+from hardware.printer import ESCImagePrinter as printer
+from hardware.printer import AsyncPrinter as aprinter
+
 import os
 STORAGE_PATH = os.path.join(os.path.dirname(__file__), 'storage.json')
 CONFIG_PATH = Path(__file__).resolve().parent / "config.json"
@@ -146,16 +151,22 @@ class Robot:
         # State Machine
         self._state_manager = RobotStateManager()
 
+        self.p = printer(
+            "/dev/usb/lp0",
+            print_width_px=384,
+            default_darkness=3,       # try 3–4; 5 if you need max
+            bytes_per_write=1024,     # slice writes (container-friendly)
+            band_height=24,           # required for m=33
+            chunk_sleep=0.0,          # 0.01 if PSU is marginal
+        )
+        self.ap = aprinter(self.p)
+
     async def configure(self):
         await self._connect_controller("motor", self._motorbus, self._bus_settings["motor"])
         await self._connect_controller("scale", self._scalebus, self._bus_settings["scale"])
 
-        await self._tool.configure()
+        # await self._tool.configure()
         await self._io.configure()
-
-        # await self._tool.pick(AxisCoordinate(917, 381))
-        # await self._io.open_door()
-        # await self._tool.move(AxisCoordinate(46, 465))
 
     def get_param(self, param: str):
         try:
@@ -513,15 +524,18 @@ class Robot:
             data={"name": item_name}  # Store item metadata
         )
 
+        print(measured_dimensions)
+
         location = self._grid.find_best_slot_for_item(item)
-        # print(location)
+        print(location)
 
         if not location:
+            print("couldn't store")
             return RobotCommandError(error="No suitable storage location found")
 
         # Get coordinate and store
         coord = self._grid.get_cell_coordinate(location)
-        # await self.io_pick(coord.to_axis_coordinate())
+        await self.io_pick(coord.to_axis_coordinate())
 
         # Update storage grid
         self._grid.store_item(location, item)
@@ -538,18 +552,23 @@ class Robot:
         Returns:
             RobotResponse indicating success or failure
         """
+        print("retrieving")
         if not self._grid:
+            print("not init")
             return RobotCommandError(error="Storage grid not initialized")
 
         # Find item location
+        print("bebdar")
         coord = await self._grid.find_item_location(item_name=item_name)
+        print(coord)
 
         if not coord:
+            print("couldn't find")
             return RobotCommandError(error=f"Item '{item_name}' not found in storage")
 
         # Retrieve item
-        await self._tool.move(coord)
-        # await self.io_place(coord)
+        # await self._tool.move(coord)
+        await self.io_place(coord)
 
         # clear the item we just retrieved
         location = next(
@@ -620,23 +639,14 @@ class Robot:
         return status
     
     async def test(self, coordinate) -> None:
-        await self.io_place(AxisCoordinate(917, 381))
-        # await self.io_pick()
-        # await self._tool._ms.move_to_position(54)
-        # await self._tool._mg.move_to_position(161)
-        # await self._tool.move(coordinate)
-        # await self._tool._mg.move_to_position(coordinate.x)
-        # await self._io._md.move_to_position(coordinate.x)
-        # await self._tool._gs.safe_open()
-        # await self._tool._mg.move_to_position(coordinate.x) # 162
-        # await self._tool._my.move_to_position(coordinate.y)
-        # beb = await self._io.detect_item_presence()
-        # print(beb)
-        # beb = await self._io.scale.get_weight()
-        # print(beb)
+        # await self.ap.print_image("barcode.png")
+        print
+        # self._io._printer.print_text("hi beb")
+        # self._io._printer.print_raster()
+        # await self.io_place(AxisCoordinate(917, 381))
         # await self.store(item_name="andi")
-        # beb = await self._io.detect_item_presence()
-        # print(beb)
+        # await self.retrieve(item_name="andi")
+        # await self.auto_calibrate_storage()
 
     async def handle_command(self, command: RobotCommands):
         if isinstance(command, StopCommand):
