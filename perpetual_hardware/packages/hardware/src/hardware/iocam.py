@@ -386,6 +386,8 @@ class AFSCam:
             for fr in frames:
                 try:
                     draw = fr.copy()
+                    # cv2.imwrite("frame.png", draw)
+                    # cv2.imwrite("frame.png", corrected)
                     gray = cv2.cvtColor(fr, cv2.COLOR_BGR2GRAY)
 
                     bbox_center_xy: Optional[Tuple[float, float]] = None
@@ -407,20 +409,23 @@ class AFSCam:
                                 f"Bounding box calculation failed: {str(e)}"
                             ) from e
 
-                    mask = ih.segment_object_on_checkerboard(gray, self._px_per_mm, self.square_mm)
-                    if mask is None:
-                        per_frame.append({"ok": False, "reason": "segmentation_failed"})
-                        last_draw = draw
-                        continue
+                    # mask = ih.segment_light_objects(fr)
+                    # mask = ih.segment_object_on_checkerboard(gray, self._px_per_mm, self.square_mm)
+                    # # cv2.imwrite("beb.png", mask)
+                    # if mask is None:
+                    #     per_frame.append({"ok": False, "reason": "segmentation_failed"})
+                    #     last_draw = draw
+                    #     continue
 
-                    contour = ih.pick_main_contour(mask)
-                    if contour is None:
-                        per_frame.append({"ok": False, "reason": "no_contour"})
-                        last_draw = draw
-                        print("no mask")
-                        continue
+                    # contour = ih.pick_main_contour(mask)
+                    # if contour is None:
+                    #     per_frame.append({"ok": False, "reason": "no_contour"})
+                    #     last_draw = draw
+                    #     continue
 
-                    w_px, h_px, box, (cx, cy) = ih.measure_contour_px(contour)
+                    # contour = ih.detect_lid_contour(fr)
+                    contour = ih.lid_mask_tuned(fr)
+                    w_px, h_px, box, (cx, cy) = ih.measure_contour_px(ih.sanitize_contour(contour))
                     box_i = np.asarray(box, dtype=int)
                     cv2.drawContours(draw, [box_i], 0, (0, 0, 255), 2)
 
@@ -461,6 +466,7 @@ class AFSCam:
                         ) from e
 
                     try:
+                        gray = cv2.cvtColor(fr, cv2.COLOR_BGR2GRAY)
                         z_mm = self._sample_depth_at_usb_point((cx, cy), gray.shape)
                         footprint = None
 
@@ -547,7 +553,7 @@ class AFSCam:
                 raise ImageProcessingError(f"Measurement failed: {str(e)}") from e
             raise
 
-    async def measure_sync(
+    async def measure(
         self,
         n_frames: int = 5,
         timeout_s: float = 2.0,
@@ -601,12 +607,12 @@ class AFSCam:
 
         try:
             # Capture frames with timeout
-            capture_start = time.time()
+            capture_start = loop.time()
             frames_captured = 0
             
             while frames_captured < n_frames:
                 # Check timeout
-                if time.time() - capture_start > timeout_s:
+                if loop.time() - capture_start > timeout_s:
                     raise ImageError(f"Frame capture timeout after {frames_captured} frames")
                 
                 try:
@@ -661,17 +667,21 @@ class AFSCam:
             for fr in frames:
                 try:
                     draw = fr.copy()
-                    gray = cv2.cvtColor(fr, cv2.COLOR_BGR2GRAY)
+                    # gray = cv2.cvtColor(fr, cv2.COLOR_BGR2GRAY)
 
-                    # Segment and analyze image
-                    mask = ih.segment_object_on_checkerboard(gray, self._px_per_mm, self.square_mm)
-                    if mask is None:
-                        raise ImageProcessingError("Segmentation failed")
+                    # # Segment and analyze image
+                    # mask = ih.segment_object_on_checkerboard(gray, self._px_per_mm, self.square_mm)
+                    # if mask is None:
+                    #     raise ImageProcessingError("Segmentation failed")
                         
-                    contour = ih.pick_main_contour(mask)
-                    if contour is None:
-                        per_frame.append({"ok": False, "reason": "no_contour"})
-                        continue
+                    # contour = ih.pick_main_contour(mask)
+                    # if contour is None:
+                    #     per_frame.append({"ok": False, "reason": "no_contour"})
+                    #     continue
+
+                    contour = ih.lid_mask_tuned(fr)
+                    print(contour)
+                    #TODO implement none check
 
                     # Calculate measurements
                     w_px, h_px, box, (cx, cy) = ih.measure_contour_px(contour)
@@ -702,7 +712,7 @@ class AFSCam:
 
                     # Process depth and footprint
                     try:
-                        z_mm = self._sample_depth_at_usb_point((cx, cy), gray.shape)
+                        z_mm = self._sample_depth_at_usb_point((cx, cy), fr.shape)
                         footprint = None
                         
                         if z_mm is not None and self._fx_cache and self._fy_cache:
@@ -890,15 +900,17 @@ class AFSCam:
                     draw = fr.copy()
                     gray = cv2.cvtColor(fr, cv2.COLOR_BGR2GRAY)
 
-                    # Segment and analyze image
-                    mask = ih.segment_object_on_checkerboard(gray, self._px_per_mm, self.square_mm)
-                    if mask is None:
-                        raise ImageProcessingError("Segmentation failed")
+                    contour = ih.lid_mask_tuned(fr)
+
+                    # # Segment and analyze image
+                    # mask = ih.segment_object_on_checkerboard(gray, self._px_per_mm, self.square_mm)
+                    # if mask is None:
+                    #     raise ImageProcessingError("Segmentation failed")
                         
-                    contour = ih.pick_main_contour(mask)
-                    if contour is None:
-                        per_frame.append({"ok": False, "reason": "no_contour"})
-                        continue
+                    # contour = ih.pick_main_contour(mask)
+                    # if contour is None:
+                    #     per_frame.append({"ok": False, "reason": "no_contour"})
+                    #     continue
 
                     # Calculate measurements
                     w_px, h_px, box, (cx, cy) = ih.measure_contour_px(contour)

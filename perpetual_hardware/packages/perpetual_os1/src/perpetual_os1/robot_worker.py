@@ -21,7 +21,7 @@ from perpetual_os1.robot import (
 from perpetual_os1.common import RobotNatsConfiguration
 from perpetual_os1.robot_defs import WorkerError, QueuedOperation, WorkerStatus, WorkerStatusWithQueue
 from perpetual_os1.robot_client import RobotClient
-from perpetual_os1.barcode import BarcodeService
+from perpetual_os1.barcode_protocol import BarcodeService
 
 RobotCommandAdapter = TypeAdapter[RobotCommands](RobotCommands)
 

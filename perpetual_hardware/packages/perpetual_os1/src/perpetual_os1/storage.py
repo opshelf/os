@@ -6,7 +6,8 @@ import os
 
 type Json = Dict[str, Union[str, int, float, Mapping, Iterable]]
 
-STORAGE_PATH = os.path.join(os.path.dirname(__file__), 'storage.json')
+STORAGE_PATH = os.path.join(os.path.dirname(__file__), "storage.json")
+
 class StorageModuleSide(str, Enum):
     RIGHT = "right_module"
     LEFT = "left_module"
@@ -142,6 +143,11 @@ class StorageGrid(BaseModel):
     right_module: List[Shelf] = Field(default_factory=list)
     # filename: str = "./storage.json"
     filename: str = STORAGE_PATH
+
+    @field_validator("filename", mode="before")
+    @classmethod
+    def _force_storage_path(cls, _: object) -> str:
+        return STORAGE_PATH
 
     def save_to_file(self, filename: str) -> None:
         with open(filename, "w+") as f:
@@ -324,6 +330,7 @@ class StorageGrid(BaseModel):
         items: List[CellLocationData] = []
         for shelf_idx, shelf in enumerate(self.left_module):
             for cell_idx, cell in enumerate(shelf.cells):
+                print("cell")
                 if cell.status == CellStatus.OCCUPIED:
                     items.append(
                         CellLocationData(
@@ -335,6 +342,7 @@ class StorageGrid(BaseModel):
                             ),
                         )
                     )
+                    print(items)
         for shelf_idx, shelf in enumerate(self.right_module):
             for cell_idx, cell in enumerate(shelf.cells):
                 if cell.status == CellStatus.OCCUPIED:
@@ -414,16 +422,18 @@ class StorageGrid(BaseModel):
         Returns:
             AxisCoordinate if item is found, None otherwise
         """
-        if not self._grid:
-            return None
+        print("finding")
             
-        # If we have a specific cell location, use that directly
+        # # If we have a specific cell location, use that directly
         if cell_location:
-            cal_coord = self._grid.get_cell_coordinate(cell_location)
+            cal_coord = self.get_cell_coordinate(cell_location)
             return cal_coord.to_axis_coordinate()
             
+        print("searching cells")
         # # Search through all cells for matching item
-        all_cells = self._grid.get_all_cell_data()
+        all_cells = self.get_all_cell_data()
+
+        print(all_cells)
 
         for cell_data in all_cells:
             if not cell_data.cell:  # Skip empty cells
@@ -431,14 +441,14 @@ class StorageGrid(BaseModel):
 
             # Match by UPCA if provided
             if upca and cell_data.cell.upca == upca:
-                cal_coord = self._grid.get_cell_coordinate(cell_data.location)
+                cal_coord = self.get_cell_coordinate(cell_data.location)
                 return cal_coord.to_axis_coordinate()
 
             # Match by item name in data
             if item_name and cell_data.cell.data:
                 item_data = cell_data.cell.data
                 if isinstance(item_data, dict) and item_data.get("name") == item_name:
-                    cal_coord = self._grid.get_cell_coordinate(cell_data.location)
+                    cal_coord = self.get_cell_coordinate(cell_data.location)
                     return cal_coord.to_axis_coordinate()
 
         return None
