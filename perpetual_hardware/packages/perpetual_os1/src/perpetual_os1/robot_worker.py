@@ -17,6 +17,7 @@ from perpetual_os1.robot import (
     RobotResponse,
     RobotStatus,
     StopCommand,
+    StoreItemCommand
 )
 from perpetual_os1.common import RobotNatsConfiguration
 from perpetual_os1.robot_defs import WorkerError, QueuedOperation, WorkerStatus, WorkerStatusWithQueue
@@ -154,7 +155,7 @@ class RobotWorker:
     async def _barcode_to_command(self, code: str) -> RobotCommands:
         logging.info("Received barcode: %s", code)
         # TODO: map barcodes to real RobotCommands
-        return HomeCommand(barcode=code)
+        return StoreItemCommand(item={"barcode":code})
 
     def _snapshot_command(self, command: RobotCommands) -> QueuedOperation:
         metadata: dict[str, Any] = {}

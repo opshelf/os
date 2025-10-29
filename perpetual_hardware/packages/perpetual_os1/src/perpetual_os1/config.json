@@ -128,7 +128,7 @@
         "square_mm": 7.5,
         "fx_px": 1150,
         "fy_px": 1150,
-        "px_per_mm": 1.35,
+        "px_per_mm": 1.25,
         "confidence_min": 0,
         "headless_fallback_path": "./usb_sizing.jpg"
       },

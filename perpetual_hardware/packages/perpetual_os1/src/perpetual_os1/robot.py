@@ -59,7 +59,7 @@ class RetrieveItemCommand(BaseModel):
 
 class StoreItemCommand(BaseModel):
     command: Literal["store_item"] = "store_item"
-    location: Dict[str, Any]
+    # location: Dict[str, Any]
     item: Optional[Dict[str, Any]] = None
 
 RobotCommands = Annotated[
@@ -154,7 +154,7 @@ class Robot:
         await self._connect_controller("motor", self._motorbus, self._bus_settings["motor"])
         await self._connect_controller("scale", self._scalebus, self._bus_settings["scale"])
 
-        # await self._tool.configure()
+        await self._tool.configure()
         await self._io.configure()
 
     def get_param(self, param: str):
@@ -475,6 +475,8 @@ class Robot:
         Returns:
             RobotResponse indicating success or failure
         """
+        await asyncio.sleep(5)
+
         if not self._grid:
             return RobotCommandError(error="Storage grid not calibrated")
 
@@ -599,7 +601,7 @@ class Robot:
 
         # Take measurement using AFSCam
         measure_result = await self._io.measure_item()
-        # print(measure_result)
+        print(measure_result)
 
         if not measure_result["ok"]:
             return None
@@ -629,18 +631,10 @@ class Robot:
     
     async def test(self, coordinate) -> None:
         # await self.ap.print_image("barcode.png")
-        from hardware.printer import BarcodePrinter
-        bp = BarcodePrinter(device="/dev/usb/lp0")
+        from hardware.printer import USBPrinter
+        bp = USBPrinter(device="/dev/usb/lp0")
         try:
-            payload = bp.print_random_barcode(
-                symbology="code128",
-                mode="image",
-                img_width=384,
-                img_height=140,
-                feed=4,
-                cut="full",
-            )
-            print("Printed random payload:", payload)
+            bp.print_barcode()
         finally:
             bp.close()
         # self._io._printer.print_text("hi beb")
