@@ -1,336 +1,163 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import time
-import secrets
-from typing import Optional, Tuple
+import argparse, os, sys, errno
+from typing import Optional
 
-from PIL import Image
-from escpos.printer import Usb, File, Network  # type: ignore
+ESC = b"\x1b"
+GS  = b"\x1d"
 
-# Optional image-based generation
-try:
-    import barcode as bc
-    from barcode.writer import ImageWriter
-except Exception:
-    bc = None
-    ImageWriter = None
+HRI_MAP = {"none":0, "above":1, "below":2, "both":3}
 
+# GS k (mode B) symbology map
+SYMS = {
+    "UPC-A":65, "UPCA":65,
+    "UPC-E":66, "UPCE":66,
+    "EAN13":67, "JAN13":67,
+    "EAN8":68,  "JAN8":68,
+    "CODE39":69, "CODE-39":69,
+    "ITF":70, "I2OF5":70, "INTERLEAVED2OF5":70,
+    "CODABAR":71, "NW-7":71,
+    "CODE93":72,
+    "CODE128":73,
+    "UCC/EAN128":74, "GS1-128":74, "EAN128":74,
+}
 
-class BarcodePrinter:
+class USBPrinter:
     """
-    ESC/POS Barcode Printer wrapper supporting:
-      - Backends: USB, /dev/usb/lp0 (File), Network
-      - Modes: image (python-barcode -> raster) or native ESC/POS
-      - A helper to print a RANDOM valid barcode for common symbologies
+    Minimal ESC/POS direct-write printer for /dev/usb/lp0
+    Designed to be robust inside Docker containers.
     """
+    def __init__(self, device: str = "/dev/usb/lp0"):
+        self.device = device
+        self._fd: Optional[int] = None
 
-    # ---------- Construction / Connection ----------
-    def __init__(
-        self,
-        *,
-        usb: Optional[str] = None,      # "0xVID:0xPID"
-        in_ep: Optional[str] = None,    # "0x82"
-        out_ep: Optional[str] = None,   # "0x01"
-        usb_timeout_ms: int = 2000,
-        device: Optional[str] = None,   # "/dev/usb/lp0"
-        host: Optional[str] = None,     # "192.168.1.50"
-        port: int = 9100,
-        default_align: str = "center",
-    ) -> None:
-        self._backend_args = dict(
-            usb=usb, in_ep=in_ep, out_ep=out_ep, usb_timeout_ms=usb_timeout_ms,
-            device=device, host=host, port=port,
-        )
-        self._p = None
-        self._default_align = default_align
-
-    @staticmethod
-    def _parse_vid_pid(arg: str) -> Tuple[int, int]:
-        if ":" not in arg:
-            raise ValueError("VID:PID must be '0xVID:0xPID' (e.g. 0x0416:0x5011)")
-        v, p = arg.split(":", 1)
-        return int(v, 16), int(p, 16)
-
-    def _connect(self):
-        if self._p is not None:
-            return self._p
-        args = self._backend_args
-        if args["usb"]:
-            vid, pid = self._parse_vid_pid(args["usb"])
-            in_ep = int(args["in_ep"], 16) if args["in_ep"] else None
-            out_ep = int(args["out_ep"], 16) if args["out_ep"] else None
-            self._p = Usb(vid, pid, in_ep=in_ep, out_ep=out_ep, timeout=args["usb_timeout_ms"])
-        elif args["device"]:
-            self._p = File(args["device"])
-        elif args["host"]:
-            self._p = Network(args["host"], port=args["port"])
-        else:
-            raise RuntimeError("Specify one of usb='0xVID:0xPID', device='/dev/usb/lp0', or host='IP'.")
-        # light defaults
-        try:
-            self._p.set(align=self._default_align)
-        except Exception:
-            pass
-        time.sleep(0.05)
-        return self._p
+    # --------- lifecycle ----------
+    def open(self) -> None:
+        if self._fd is not None:
+            return
+        # O_SYNC to push bytes promptly; no buffering
+        self._fd = os.open(self.device, os.O_WRONLY | os.O_CLOEXEC)
 
     def close(self) -> None:
-        if self._p:
+        if self._fd is not None:
             try:
-                self._p.close()
+                os.close(self._fd)
             finally:
-                self._p = None
+                self._fd = None
 
-    # ---------- Cut / feed ----------
-    def _cut_safe(self, mode: str = "full") -> None:
-        p = self._connect()
+    def __enter__(self) -> "USBPrinter":
+        self.open()
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
+
+    # --------- low-level write with one automatic reopen ----------
+    def _write_all(self, data: bytes) -> None:
+        if self._fd is None:
+            self.open()
         try:
-            if mode == "partial":
-                p.cut("PART")
+            self._write_all_once(data)
+        except OSError as e:
+            # Handle device disappearing mid-job in containers
+            if e.errno in (errno.EPIPE, errno.ENODEV, errno.EIO):
+                self.close()
+                self.open()
+                self._write_all_once(data)
             else:
-                p.cut("FULL")
-            return
-        except Exception:
-            pass
-        try:
-            p.text("\n\n\n\n")
-        except Exception:
-            pass
+                raise
 
-    # ---------- Image generation (image mode) ----------
-    @staticmethod
-    def _generate_barcode_image(symbology: str, data: str, width_px: int, height_px: int,
-                                text: Optional[str], quiet_zone: int) -> Image.Image:
-        if bc is None or ImageWriter is None:
-            raise RuntimeError("python-barcode[images] is required for image mode. pip install python-barcode[images]")
-        name_map = {
-            "code128": "code128", "ean13": "ean13", "ean8": "ean8", "upca": "upca",
-            "isbn13": "isbn13", "issn": "issn", "code39": "code39", "itf": "itf", "jan": "jan",
-        }
-        key = name_map.get(symbology.lower())
-        if key is None:
-            raise ValueError(f"Unsupported symbology for image mode: {symbology}")
-        writer = ImageWriter()
-        options = {
-            "write_text": bool(text),
-            "text": text or data,
-            "quiet_zone": quiet_zone,
-            "font_size": 12,
-            "module_width": 0.2,
-            "module_height": 30.0,
-            "foreground": "black",
-            "background": "white",
-        }
-        BarcodeClass = bc.get_barcode_class(key)
-        b = BarcodeClass(data, writer=writer)
-        pil_img = b.render(writer_options=options).convert("L")
-        pil_img = pil_img.resize((width_px, height_px), Image.LANCZOS).convert("1")
-        return pil_img
+    def _write_all_once(self, data: bytes) -> None:
+        assert self._fd is not None
+        view = memoryview(data)
+        total = 0
+        while total < len(view):
+            n = os.write(self._fd, view[total:])
+            if n <= 0:
+                raise OSError(errno.EIO, "short write to printer")
+            total += n
 
-    def _print_image(self, img: Image.Image, align: str = "center", high_density: bool = True) -> None:
-        p = self._connect()
-        try:
-            p.set(align=align)
-        except Exception:
-            pass
-        p.image(img, high_density_vertical=high_density, high_density_horizontal=high_density, impl="bitImageRaster")
+    # --------- ESC/POS helpers ----------
+    def init(self) -> None:
+        self._write_all(ESC + b"@")
 
-    # ---------- Native barcode ----------
-    def _print_native_barcode(self, symbology: str, data: str, height: int, width: int,
-                              hri: str = "below", align: str = "center") -> None:
-        p = self._connect()
-        try:
-            p.set(align=align)
-        except Exception:
-            pass
-        hri_map = {"none": 0, "above": 1, "below": 2, "both": 3}
-        p._raw(b"\x1D\x48" + bytes([hri_map.get(hri, 2)]))              # GS H
-        if 2 <= width <= 6:
-            p._raw(b"\x1D\x77" + bytes([width]))                        # GS w
-        p._raw(b"\x1D\x68" + bytes([max(1, min(255, height))]))         # GS h
-        type_map = {
-            "code128": "CODE128", "ean13": "EAN13", "ean8": "EAN8",
-            "upca": "UPC-A", "code39": "CODE39", "itf": "ITF",
-        }
-        escpos_type = type_map.get(symbology.lower())
-        if escpos_type is None:
-            raise ValueError(f"Unsupported symbology for native mode: {symbology}")
-        p.barcode(data, escpos_type, width=width, height=height, pos=hri.upper() if hri != "none" else "OFF")
+    def set_hri(self, where: str = "none") -> None:
+        n = HRI_MAP.get(where.lower(), 0)
+        self._write_all(GS + b"H" + bytes([n]))
 
-    # ---------- Public: print a specific barcode ----------
-    # Add this helper to your class
-    def _drain(self, seconds: float = 0.25) -> None:
-        # With python-escpos we can't fsync the kernel directly; a small sleep is practical and reliable.
-        if seconds > 0:
-            time.sleep(seconds)
+    def set_height(self, dots: int = 96) -> None:
+        if not (1 <= dots <= 255):
+            raise ValueError("height must be 1..255 dots")
+        self._write_all(GS + b"h" + bytes([dots]))
 
-    # Hardened image printing path
-    def _print_image(self, img: Image.Image, align: str = "center", high_density: bool = True,
-                    fragment_height: int = 256) -> None:
-        p = self._connect()
-        try:
-            p.set(align=align)
-        except Exception:
-            pass
+    def set_width(self, module_dots: int = 3) -> None:
+        if not (1 <= module_dots <= 6):
+            raise ValueError("width must be 1..6 dots")
+        self._write_all(GS + b"w" + bytes([module_dots]))
 
-        # Try bitImageRaster first, then graphics as a fallback
-        try:
-            p.image(
-                img,
-                high_density_vertical=high_density,
-                high_density_horizontal=high_density,
-                impl="bitImageRaster",
-                fragment_height=fragment_height,   # <- split tall images to avoid truncation
-            )
-        except Exception:
-            # Some printers prefer 'graphics'
-            p.image(
-                img,
-                high_density_vertical=high_density,
-                high_density_horizontal=high_density,
-                impl="graphics",
-                fragment_height=fragment_height,
-            )
+    def _build_barcode_cmd(self, sym: str, data: bytes) -> bytes:
+        m = SYMS.get(sym.upper())
+        if m is None:
+            raise ValueError(f"unsupported symbology: {sym}")
+        if not (1 <= len(data) <= 255):
+            raise ValueError("data length must be 1..255")
+        # GS k m n [data]
+        return GS + b"k" + bytes([m, len(data)]) + data
 
+    # --------- public API ----------
     def print_barcode(
         self,
+        sym: str = "CODE128",
+        payload: str = "beblet",
         *,
-        data: str,
-        symbology: str = "code128",
-        mode: str = "image",
-        align: str = "center",
-        # image-mode sizing:
-        img_width: int = 384,
-        img_height: int = 160,
-        quiet: int = 6,
-        label: Optional[str] = None,
-        # native-mode sizing:
-        height: int = 80,
+        height: int = 96,
         width: int = 3,
-        hri: str = "below",
-        feed: int = 3,
-        cut: str = "full",
-        # NEW: tweakables
-        drain_after_image: float = 0.25,
-        pre_cut_feed: int = 2,
-        fragment_height: int = 256,
+        hri: str = "none",
+        raw: bool = False,
+        feed_after: int = 2,
     ) -> None:
-        p = self._connect()
-        try:
-            if mode == "image":
-                img = self._generate_barcode_image(symbology, data, img_width, img_height, label, quiet)
-                self._print_image(img, align=align, high_density=True, fragment_height=fragment_height)
+        data = payload.encode("ascii", "strict")
+        # Helpful default for Code128: select set B unless raw requested
+        if sym.upper() == "CODE128" and not raw:
+            data = b"{B" + data
 
-                # ---- IMPLEMENTATION OF THE ADVICE ----
-                # 1) small drain after printing the image
-                self._drain(drain_after_image)
-                # 2) feed a few lines BEFORE cutting
-                if pre_cut_feed > 0:
-                    p.text("\n" * int(pre_cut_feed))
+        # Build & send
+        self.init()
+        self.set_hri(hri)
+        self.set_height(height)
+        self.set_width(width)
+        self._write_all(self._build_barcode_cmd(sym, data))
+        if feed_after > 0:
+            self._write_all(b"\n" * feed_after)
 
-            else:
-                self._print_native_barcode(symbology, data, height, width, hri=hri, align=align)
+# ---------- CLI wrapper ----------
+def main():
+    ap = argparse.ArgumentParser(description="Print a 1D barcode on an ESC/POS USB printer")
+    ap.add_argument("--device", default="/dev/usb/lp0")
+    ap.add_argument("--sym", default="CODE128",
+                    help="CODE128, CODE39, EAN13, EAN8, ITF, etc.")
+    ap.add_argument("--payload", default="beblet", help="ASCII barcode data")
+    ap.add_argument("--height", type=int, default=96, help="1..255 dots")
+    ap.add_argument("--width", type=int, default=3, help="module width 1..6 dots")
+    ap.add_argument("--hri", choices=["none","above","below","both"], default="none")
+    ap.add_argument("--raw", action="store_true", help="Do not add {B for CODE128")
+    ap.add_argument("--feed", type=int, default=2, help="line feeds after print")
+    args = ap.parse_args()
 
-            # Keep your usual end-of-job feed & cut
-            if feed > 0:
-                p.text("\n" * int(feed))
-            if cut != "none":
-                self._cut_safe("partial" if cut == "partial" else "full")
-
-            # Optional tiny drain at the very end
-            self._drain(0.2)
-
-        finally:
-            pass  # keep connection open unless you prefer to close each job
-
-    # ---------- Random data generators with valid checksums ----------
-    @staticmethod
-    def _rand_digits(n: int) -> str:
-        return "".join(secrets.choice("0123456789") for _ in range(n))
-
-    @staticmethod
-    def _ean13_chk(s12: str) -> str:
-        assert len(s12) == 12 and s12.isdigit()
-        # sum(odd)*1 + sum(even)*3 (positions 1..12), check = (10 - (sum % 10)) % 10
-        total = sum(int(d) for i, d in enumerate(s12, 1) if i % 2 == 1) \
-              + 3 * sum(int(d) for i, d in enumerate(s12, 1) if i % 2 == 0)
-        return str((10 - (total % 10)) % 10)
-
-    @staticmethod
-    def _ean8_chk(s7: str) -> str:
-        assert len(s7) == 7 and s7.isdigit()
-        # weights 3,1,3,1,3,1,3 on digits 1..7
-        weights = [3,1,3,1,3,1,3]
-        total = sum(int(d)*w for d, w in zip(s7, weights))
-        return str((10 - (total % 10)) % 10)
-
-    @staticmethod
-    def _upca_chk(s11: str) -> str:
-        # UPC-A checksum is EAN-13 over 12 digits starting with digit 1..11 + check
-        # same formula as EAN-13 with 12 digits:
-        return BarcodePrinter._ean13_chk(s11 + "0")  # trick: compute with placeholder then ignore; or recalc directly
-
-    def random_payload(self, symbology: str) -> str:
-        s = symbology.lower()
-        if s == "ean13":
-            base = self._rand_digits(12)
-            return base + self._ean13_chk(base)
-        if s == "ean8":
-            base = self._rand_digits(7)
-            return base + self._ean8_chk(base)
-        if s == "upca":
-            base = self._rand_digits(11)
-            # UPC-A check: odd-even weighting on 11 digits
-            odd = sum(int(d) for i, d in enumerate(base, 1) if i % 2 == 1)
-            even = sum(int(d) for i, d in enumerate(base, 1) if i % 2 == 0)
-            chk = (10 - ((odd * 3 + even) % 10)) % 10
-            return base + str(chk)
-        if s in ("code39", "itf"):
-            # digits & uppercase for Code39; digits only for ITF
-            alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ" if s == "code39" else "0123456789"
-            length = 10 if s == "code39" else 12
-            return "".join(secrets.choice(alphabet) for _ in range(length))
-        # default Code128: use digits+upper for simplicity (CODE128 can encode more)
-        return "".join(secrets.choice("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ") for _ in range(12))
-
-    # ---------- Public: print a RANDOM barcode ----------
-    def print_random_barcode(
-        self,
-        *,
-        symbology: str = "code128",
-        mode: str = "image",
-        label: Optional[str] = None,
-        **kwargs
-    ) -> str:
-        """
-        Generate a valid random payload for the given symbology and print it.
-        Returns the payload string.
-        Extra keyword args are passed to print_barcode (feed, cut, sizing, etc.).
-        """
-        payload = self.random_payload(symbology)
-        self.print_barcode(
-            data=payload,
-            symbology=symbology,
-            mode=mode,
-            label=(label if label is not None else payload) if mode == "image" else None,
-            **kwargs,
-        )
-        return payload
-
-
-# ---------------------- Example usage ----------------------
-if __name__ == "__main__":
-    # Example: /dev/usb/lp0, print a random Code128 as an image at 384 px width.
-    bp = BarcodePrinter(device="/dev/usb/lp0")
     try:
-        payload = bp.print_random_barcode(
-            symbology="code128",
-            mode="image",
-            img_width=384,
-            img_height=140,
-            feed=4,
-            cut="full",
-        )
-        print("Printed random payload:", payload)
-    finally:
-        bp.close()
+        with USBPrinter(args.device) as p:
+            p.print_barcode(
+                args.sym,
+                args.payload,
+                height=args.height,
+                width=args.width,
+                hri=args.hri,
+                raw=args.raw,
+                feed_after=args.feed,
+            )
+    except Exception as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        sys.exit(2)
+
+if __name__ == "__main__":
+    main()
