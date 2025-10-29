@@ -1,178 +1,278 @@
-#!/usr/bin/env python3
 """
-Robust 58mm raster image printer for /dev/usb/lp0 (384 px wide).
-Adds darkness control (ESC 7) and optional per-chunk sleep.
+Print a barcode to an ESC/POS printer using python-escpos.
 
-Usage:
-  python print_raster.py img.png [--dither] [--threshold 128] [--invert]
-                                [--feed 80]
-                                [--darkness 0..5]
-                                [--heat-dots N1 --heat-time N2 --heat-interval N3]
-                                [--chunk-sleep 0.0]
+Two modes:
+  1) image  (default): Generate a barcode image (Code128, EAN13, etc.) and print it as a raster image.
+  2) native: Use the printer's ESC/POS BARCODE command directly.
+
+Connection backends:
+  - USB:     --usb 0xVID:0xPID [--in_ep 0x82 --out_ep 0x01]
+  - File:    --device /dev/usb/lp0
+  - Network: --host 192.168.1.50 [--port 9100]
+
+Requires:
+  pip install python-escpos pillow python-barcode[images]
 """
 
+from __future__ import annotations
 import argparse
+import sys
 import time
+from typing import Optional, Tuple
+
 from PIL import Image
+from escpos.printer import Usb, File, Network  # type: ignore
 
-PRINTER_DEV = "/dev/usb/lp0"
-PRINT_WIDTH_PX = 384
-STRIPE_MAX_ROWS = 256
+# Image-based barcode generation
+try:
+    import barcode as bc  # python-barcode
+    from barcode.writer import ImageWriter
+except Exception:
+    bc = None
+    ImageWriter = None
 
-ESC = b"\x1b"
-GS  = b"\x1d"
-CAN = b"\x18"
 
-def open_printer(dev=PRINTER_DEV):
-    return open(dev, "wb", buffering=0)
+# ---------------------- Helpers ----------------------
 
-# ------------------- Forcing ESC/POS binary mode -------------------
-
-def force_binary_mode(f):
-    f.write(CAN * 8)
-    f.write(ESC + b"@")                 # Initialize
-    f.write(ESC + b"!" + b"\x00")       # Standard mode
-    f.write(ESC + b"t" + b"\x00")       # Codepage 0 (CP437)
-    f.write(ESC + b"a" + b"\x00")       # Left justify
-    f.write(ESC + b"2")                 # Default line spacing
-    f.write(ESC + b"3" + b"\x18")       # 24-dot spacing
-
-    # Tiny 1x8 raster probe
-    width_bytes = 1
-    f.write(GS + b"v" + b"0" + b"\x00" + bytes([width_bytes, 0, 8, 0]))
-    f.write(b"\xff" * 8)
-
-# ------------------- Darkness / Heating -------------------
-
-# Handy presets seen on many ESC/POS heads (tune to taste)
-# Format: (heating_dots, heating_time, heating_interval)
-DARK_PRESETS = {
-    0: (6,  60,  2),    # very light / cool
-    1: (7,  80,  2),    # default-ish
-    2: (9,  100, 3),    # a bit darker
-    3: (11, 120, 4),    # dark
-    4: (12, 140, 6),    # darker / slower
-    5: (14, 160, 8),    # max-ish (watch for power limits)
-}
-
-def set_heating(f, n1, n2, n3):
+def parse_vid_pid(arg: str) -> Tuple[int, int]:
     """
-    ESC 7 n1 n2 n3
-      n1: heating dots (0-255)
-      n2: heating time (0-255)
-      n3: heating interval (0-255)
-    Higher n1/n2 and lower n3 => darker but slower/hotter.
+    Parse '0x0416:0x5011' or '0416:5011' into (VID, PID) ints.
     """
-    f.write(ESC + b"7" + bytes([n1 & 0xFF, n2 & 0xFF, n3 & 0xFF]))
+    if ":" not in arg:
+        raise argparse.ArgumentTypeError("Format must be 0xVID:0xPID (e.g., 0x0416:0x5011)")
+    vid_s, pid_s = arg.split(":", 1)
+    vid = int(vid_s, 16)
+    pid = int(pid_s, 16)
+    return vid, pid
 
-def escpos_feed(f, dots=80):
-    if dots <= 0: return
-    remain = dots
-    while remain > 0:
-        step = min(255, remain)
-        f.write(ESC + b"J" + bytes([step]))
-        remain -= step
 
-# ------------------- Image prep -------------------
+def build_printer(args):
+    """
+    Construct an escpos printer instance from CLI args.
+    """
+    if args.usb:
+        vid, pid = parse_vid_pid(args.usb)
+        in_ep = int(args.in_ep, 16) if args.in_ep else None
+        out_ep = int(args.out_ep, 16) if args.out_ep else None
+        return Usb(vid, pid, in_ep=in_ep, out_ep=out_ep, timeout=args.usb_timeout_ms)
+    if args.device:
+        return File(args.device)
+    if args.host:
+        return Network(args.host, port=args.port)
+    raise SystemExit("You must specify one of --usb, --device, or --host.")
 
-def to_bitmap(img: Image.Image, dither: bool, threshold: int, invert: bool) -> Image.Image:
-    w, h = img.size
-    if w != PRINT_WIDTH_PX:
-        new_h = int(round(h * (PRINT_WIDTH_PX / float(w))))
-        img = img.resize((PRINT_WIDTH_PX, new_h), Image.LANCZOS)
 
-    if dither:
-        img = img.convert("1")
-    else:
-        img = img.convert("L").point(lambda x: 255 if x >= threshold else 0, mode="1")
+def set_defaults(p, speed: int = 2, density: int = 10):
+    """
+    Apply some sensible defaults. Not all printers honor these; safe to ignore errors.
+    """
+    # python-escpos .set controls font/size/bold/align; feed small init
+    try:
+        p.set(align="center")
+    except Exception:
+        pass
+    # Some printers expose HW-specific density/speed via GS ( E ...;
+    # python-escpos generally doesn’t wrap that. We'll just add tiny delays.
+    time.sleep(0.05)
 
-    if invert:
-        img = Image.eval(img, lambda v: 255 - v)
-    return img
 
-def pack_row_bits(row_white255):
-    out = bytearray()
-    byte = 0
-    bit_count = 0
-    for p in row_white255:
-        bit = 1 if p == 0 else 0  # black -> 1
-        byte = (byte << 1) | bit
-        bit_count += 1
-        if bit_count == 8:
-            out.append(byte)
-            byte = 0
-            bit_count = 0
-    if bit_count:
-        out.append(byte << (8 - bit_count))
-    return bytes(out)
-
-def send_raster_chunk(f, mono: Image.Image, y0: int, y1: int):
-    assert mono.mode == "1"
-    width = mono.width
-    height = y1 - y0
-    width_bytes = (width + 7) // 8
-    xL, xH = width_bytes & 0xFF, (width_bytes >> 8) & 0xFF
-    yL, yH = height & 0xFF, (height >> 8) & 0xFF
-    f.write(GS + b"v" + b"0" + b"\x00" + bytes([xL, xH, yL, yH]))
-    px = mono.load()
-    for y in range(y0, y1):
-        row = [px[x, y] for x in range(width)]
-        f.write(pack_row_bits(row))
-
-# ------------------- Main entry -------------------
-
-def print_image(path, dither=False, threshold=128, invert=False,
-                feed=80, darkness=5, heat_dots=None, heat_time=None,
-                heat_interval=None, chunk_sleep=0.0):
-    img = Image.open(path)
-    mono = to_bitmap(img, dither=dither, threshold=threshold, invert=invert)
-
-    with open_printer() as f:
-        force_binary_mode(f)
-
-        # Pick heating parameters
-        if heat_dots is not None and heat_time is not None and heat_interval is not None:
-            n1, n2, n3 = heat_dots, heat_time, heat_interval
+def cut_safe(p, mode: str = "full"):
+    """
+    Try multiple cut variants; ignore if not supported.
+    """
+    try:
+        if mode == "partial":
+            p.cut("PART")
         else:
-            level = 1 if darkness is None else max(0, min(5, darkness))
-            n1, n2, n3 = DARK_PRESETS[level]
-        set_heating(f, n1, n2, n3)
+            p.cut("FULL")
+        return
+    except Exception:
+        pass
+    # Fallback: feed lines if no cutter
+    try:
+        p.text("\n\n\n\n")
+    except Exception:
+        pass
 
-        # Stream in stripes
-        h = mono.height
-        y = 0
-        while y < h:
-            y_next = min(y + STRIPE_MAX_ROWS, h)
-            send_raster_chunk(f, mono, y, y_next)
-            y = y_next
-            if chunk_sleep > 0:
-                time.sleep(chunk_sleep)
 
-        escpos_feed(f, feed)
+def generate_barcode_image(symbology: str, data: str, width_px: int, height_px: int,
+                           text: Optional[str], quiet_zone: int) -> Image.Image:
+    """
+    Generate a barcode image using python-barcode + Pillow and return a PIL Image.
+    """
+    if bc is None or ImageWriter is None:
+        raise RuntimeError("python-barcode[images] is required for image mode. pip install python-barcode[images]")
 
-if __name__ == "__main__":
-    ap = argparse.ArgumentParser()
-    ap.add_argument("image", help="Path to input image (png/jpg/bmp)")
-    ap.add_argument("--dither", action="store_true", help="Use Floyd–Steinberg dithering")
-    ap.add_argument("--threshold", type=int, default=128, help="Threshold 0–255 if not using --dither")
-    ap.add_argument("--invert", action="store_true", help="Invert black/white if prints come out reversed")
-    ap.add_argument("--feed", type=int, default=80, help="Feed dots after print (80≈~10 mm at 203 dpi)")
-    ap.add_argument("--darkness", type=int, choices=range(0,6),
-                    help="Convenience levels 0..5 (maps to ESC 7 presets)")
-    ap.add_argument("--heat-dots", type=int, help="ESC 7 n1: heating dots")
-    ap.add_argument("--heat-time", type=int, help="ESC 7 n2: heating time")
-    ap.add_argument("--heat-interval", type=int, help="ESC 7 n3: heating interval")
-    ap.add_argument("--chunk-sleep", type=float, default=0.0,
-                    help="Sleep seconds between raster stripes (stability)")
+    # Map user symbology to python-barcode names
+    name_map = {
+        "code128": "code128",
+        "ean13": "ean13",
+        "ean8": "ean8",
+        "upca": "upca",
+        "isbn13": "isbn13",
+        "issn": "issn",
+        "code39": "code39",
+        "itf": "itf",
+        "jan": "jan",
+    }
+    key = name_map.get(symbology.lower())
+    if key is None:
+        raise ValueError(f"Unsupported symbology for image mode: {symbology}")
+
+    writer = ImageWriter()
+    # writer options are in modules per python-barcode
+    options = {
+        "write_text": bool(text),        # draw text under bars
+        "text": text or data,            # explicit label if requested
+        "quiet_zone": quiet_zone,        # side margins in 'module' units
+        "font_size": 12,
+        "module_width": 0.2,             # mm per module (affects final width)
+        "module_height": 30.0,           # mm height of bars (we'll resize anyway)
+        "foreground": "black",
+        "background": "white",
+    }
+
+    BarcodeClass = bc.get_barcode_class(key)
+    b = BarcodeClass(data, writer=writer)
+    pil_img = b.render(writer_options=options).convert("L")  # grayscale
+
+    # Resize to target width/height for your 58mm printer (commonly ~384 px wide)
+    pil_img = pil_img.resize((width_px, height_px), Image.LANCZOS).convert("1")
+    return pil_img
+
+
+def print_image_with_escpos(p, img: Image.Image, align: str = "center", high_density: bool = True):
+    """
+    Print a PIL Image using python-escpos' raster image path (bitImageRaster).
+    """
+    p.open()
+    try:
+        p.set(align=align)
+    except Exception:
+        pass
+
+    # python-escpos accepts a PIL Image directly
+    # impl options: 'bitImageRaster' (most reliable), 'graphics' (newer), 'bitImageColumn'
+    p.image(img, high_density_vertical=high_density, high_density_horizontal=high_density, impl="bitImageRaster")
+
+
+def print_native_barcode(p, symbology: str, data: str, height: int, width: int,
+                         hri: str = "below", align: str = "center"):
+    """
+    Use ESC/POS native barcode command. width is 2..6 (module width), height in dots.
+    hri: 'none'|'above'|'below'|'both'
+    """
+    try:
+        p.set(align=align)
+    except Exception:
+        pass
+
+    # Set HRI position
+    hri_map = {
+        "none": 0, "above": 1, "below": 2, "both": 3
+    }
+    p._raw(b"\x1D\x48" + bytes([hri_map.get(hri, 2)]))  # GS H
+
+    # Set module width and height if supported
+    if 2 <= width <= 6:
+        p._raw(b"\x1D\x77" + bytes([width]))            # GS w
+    p._raw(b"\x1D\x68" + bytes([max(1, min(255, height))]))  # GS h
+
+    # Map to python-escpos barcode types
+    # (common: 'CODE128', 'EAN13', 'EAN8', 'UPC-A', 'CODE39', 'ITF')
+    type_map = {
+        "code128": "CODE128",
+        "ean13": "EAN13",
+        "ean8": "EAN8",
+        "upca": "UPC-A",
+        "code39": "CODE39",
+        "itf": "ITF",
+    }
+    escpos_type = type_map.get(symbology.lower())
+    if escpos_type is None:
+        raise ValueError(f"Unsupported symbology for native mode: {symbology}")
+
+    p.barcode(data, escpos_type, width=width, height=height, pos=hri.upper() if hri != "none" else "OFF")
+
+
+# ---------------------- CLI ----------------------
+
+def main():
+    ap = argparse.ArgumentParser(description="Print a barcode to an ESC/POS printer.")
+    conn = ap.add_argument_group("Connection")
+    conn.add_argument("--usb", help="USB device as 0xVID:0xPID (e.g. 0x0416:0x5011)")
+    conn.add_argument("--in-ep", default=None, help="USB IN endpoint (e.g. 0x82)")
+    conn.add_argument("--out-ep", default=None, help="USB OUT endpoint (e.g. 0x01)")
+    conn.add_argument("--usb-timeout-ms", type=int, default=2000)
+    conn.add_argument("--device", help="File device (e.g. /dev/usb/lp0)")
+    conn.add_argument("--host", help="Printer IP (for network printers)")
+    conn.add_argument("--port", type=int, default=9100)
+
+    job = ap.add_argument_group("Job")
+    job.add_argument("--mode", choices=["image", "native"], default="image", help="Print mode")
+    job.add_argument("--symbology", default="code128",
+                     help="Barcode symbology (image: code128, ean13, ean8, upca, code39, itf, ...; native: limited set)")
+    job.add_argument("--data", required=True, help="Data to encode in the barcode")
+    job.add_argument("--label", default=None, help="Optional text under the barcode (image mode)")
+    job.add_argument("--align", choices=["left", "center", "right"], default="center")
+
+    # Image-mode sizing
+    job.add_argument("--img-width", type=int, default=384, help="Target image width in px (58mm printer ~384)")
+    job.add_argument("--img-height", type=int, default=160, help="Target image height in px")
+    job.add_argument("--quiet", type=int, default=6, help="Quiet zone (modules) for image barcodes")
+
+    # Native-mode sizing
+    job.add_argument("--height", type=int, default=80, help="Native barcode height (dots)")
+    job.add_argument("--width", type=int, default=3, help="Native module width (2..6)")
+    job.add_argument("--hri", choices=["none", "above", "below", "both"], default="below", help="Human-readable text position")
+
+    job.add_argument("--feed", type=int, default=3, help="Lines to feed after printing")
+    job.add_argument("--cut", choices=["none", "full", "partial"], default="full")
+
     args = ap.parse_args()
 
-    print_image(args.image,
-                dither=args.dither,
-                threshold=args.threshold,
-                invert=args.invert,
-                feed=args.feed,
-                darkness=args.darkness,
-                heat_dots=args.heat_dots,
-                heat_time=args.heat_time,
-                heat_interval=args.heat_interval,
-                chunk_sleep=args.chunk_sleep)
+    # p = build_printer(args)
+    p = File("/dev/usb/lp0", auto_flush=True)
+    try:
+        set_defaults(p)
+
+        if args.mode == "image":
+            img = generate_barcode_image(
+                symbology=args.symbology,
+                data=args.data,
+                width_px=args.img_width,
+                height_px=args.img_height,
+                text=args.label,
+                quiet_zone=args.quiet,
+            )
+            print_image_with_escpos(p, img, align=args.align, high_density=True)
+
+        else:  # native
+            print_native_barcode(
+                p,
+                symbology=args.symbology,
+                data=args.data,
+                height=args.height,
+                width=args.width,
+                hri=args.hri,
+                align=args.align,
+            )
+
+        # Feed & cut
+        if args.feed > 0:
+            p.text("\n" * args.feed)
+        if args.cut != "none":
+            cut_safe(p, mode=("partial" if args.cut == "partial" else "full"))
+
+        # Small drain delay for some printers
+        time.sleep(0.2)
+
+    finally:
+        try:
+            p.close()
+        except Exception:
+            pass
+
+
+if __name__ == "__main__":
+    main()
