@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Print a barcode to an ESC/POS printer using python-escpos.
 
@@ -145,7 +146,6 @@ def print_image_with_escpos(p, img: Image.Image, align: str = "center", high_den
     """
     Print a PIL Image using python-escpos' raster image path (bitImageRaster).
     """
-    p.open()
     try:
         p.set(align=align)
     except Exception:
@@ -231,8 +231,7 @@ def main():
 
     args = ap.parse_args()
 
-    # p = build_printer(args)
-    p = File("/dev/usb/lp0", auto_flush=True)
+    p = build_printer(args)
     try:
         set_defaults(p)
 
