@@ -27,8 +27,7 @@ import asyncio
 
 from PIL import Image
 
-from hardware.printer import ESCImagePrinter as printer
-from hardware.printer import AsyncPrinter as aprinter
+# from hardware.printer import AsyncPrinter as printer
 
 import os
 STORAGE_PATH = os.path.join(os.path.dirname(__file__), 'storage.json')
@@ -150,16 +149,6 @@ class Robot:
 
         # State Machine
         self._state_manager = RobotStateManager()
-
-        self.p = printer(
-            "/dev/usb/lp0",
-            print_width_px=384,
-            default_darkness=3,       # try 3–4; 5 if you need max
-            bytes_per_write=1024,     # slice writes (container-friendly)
-            band_height=24,           # required for m=33
-            chunk_sleep=0.0,          # 0.01 if PSU is marginal
-        )
-        self.ap = aprinter(self.p)
 
     async def configure(self):
         await self._connect_controller("motor", self._motorbus, self._bus_settings["motor"])
@@ -640,7 +629,20 @@ class Robot:
     
     async def test(self, coordinate) -> None:
         # await self.ap.print_image("barcode.png")
-        print
+        from hardware.printer import BarcodePrinter
+        bp = BarcodePrinter(device="/dev/usb/lp0")
+        try:
+            payload = bp.print_random_barcode(
+                symbology="code128",
+                mode="image",
+                img_width=384,
+                img_height=140,
+                feed=4,
+                cut="full",
+            )
+            print("Printed random payload:", payload)
+        finally:
+            bp.close()
         # self._io._printer.print_text("hi beb")
         # self._io._printer.print_raster()
         # await self.io_place(AxisCoordinate(917, 381))
