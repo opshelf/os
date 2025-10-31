@@ -154,7 +154,7 @@ class Robot:
         await self._connect_controller("motor", self._motorbus, self._bus_settings["motor"])
         await self._connect_controller("scale", self._scalebus, self._bus_settings["scale"])
 
-        await self._tool.configure()
+        # await self._tool.configure()
         await self._io.configure()
 
     def get_param(self, param: str):
@@ -601,7 +601,7 @@ class Robot:
 
         # Take measurement using AFSCam
         measure_result = await self._io.measure_item()
-        print(measure_result)
+        # print(measure_result)
 
         if not measure_result["ok"]:
             return None
@@ -613,8 +613,8 @@ class Robot:
 
         # Prefer footprint measurements (from pinhole model) and fall back to scale data if needed.
         width = agg.get("footprint_major_mm_med") or agg.get("scale_major_mm_med")
-        height = agg.get("footprint_minor_mm_med") or agg.get("scale_minor_mm_med")
-        length = agg.get("depth_mm_med")/10
+        length = agg.get("footprint_minor_mm_med") or agg.get("scale_minor_mm_med")
+        height = 600 - agg.get("depth_mm_med")
 
         if width is None or height is None or length is None:
             return None
@@ -630,19 +630,24 @@ class Robot:
         return status
     
     async def test(self, coordinate) -> None:
+
         # await self.ap.print_image("barcode.png")
-        from hardware.printer import USBPrinter
-        bp = USBPrinter(device="/dev/usb/lp0")
-        try:
-            bp.print_barcode()
-        finally:
-            bp.close()
+        # from hardware.printer import USBPrinter
+        # bp = USBPrinter(device="/dev/usb/lp0")
+        # try:
+            # bp.print_barcode()
+        # finally:
+        #     bp.close()
+        beb = await self.measure_item_dimensions()
+        print(beb)
+
         # self._io._printer.print_text("hi beb")
         # self._io._printer.print_raster()
         # await self.io_place(AxisCoordinate(917, 381))
         # await self.store(item_name="andi")
         # await self.retrieve(item_name="andi")
         # await self.auto_calibrate_storage()
+        # await self._tool.move(coordinate)
 
     async def handle_command(self, command: RobotCommands):
         if isinstance(command, StopCommand):

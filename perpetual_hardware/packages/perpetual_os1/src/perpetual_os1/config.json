@@ -126,9 +126,9 @@
         "usb_fourcc": "MJPG",
         "usb_exposure":25,
         "square_mm": 7.5,
-        "fx_px": 1150,
-        "fy_px": 1150,
-        "px_per_mm": 1.25,
+        "fx_px": 708,
+        "fy_px": 708,
+        "px_per_mm": 1.2,
         "confidence_min": 0,
         "headless_fallback_path": "./usb_sizing.jpg"
       },

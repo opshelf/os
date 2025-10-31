@@ -160,6 +160,7 @@ class IOBox:
                 raise IOBoxError("Camera not configured")
             await self._ensure_camera_running()
             size = await self._cam.measure()
+            # print(size)
             return size
         except Exception as e:
             self._logger.warning("Async measurement failed", exc_info=e)
