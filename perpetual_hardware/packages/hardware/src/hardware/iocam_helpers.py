@@ -88,14 +88,14 @@ def sanitize_contour(c):
     return np.ascontiguousarray(c, dtype=np.float32)  # or np.int32
 
 def lid_mask_tuned(bgr,
-                   roi_frac=(0.25, 0.25, 0.5, 0.5),  # x,y,w,h as fractions of image
+                   roi_frac=(0.20, 0.20, 0.75, 0.75),  # x,y,w,h as fractions of image
                    clahe_clip=2.0,
                    gamma=1.05,
                    adapt_block_frac=1/6,  # block ~ min(w,h)*this
                    adapt_C=+9,             # raise to suppress background
                    bg_radius_frac=0.10,    # rolling-ball radius as frac of min(w,h)
-                   open_frac=0.015,         # morphology open kernel
-                   close_frac=0.035,        # morphology close kernel
+                   open_frac=0.012,         # morphology open kernel
+                   close_frac=0.045,        # morphology close kernel
                    min_area_frac=0.006, max_area_frac=0.25,
                    min_circularity=0.50, max_aspect=2.0, min_extent=0.55,
                    return_debug=False):
@@ -143,7 +143,7 @@ def lid_mask_tuned(bgr,
     mask = cv2.erode(mask,  np.ones((3,3),np.uint8), 1)
 
 
-    # cv2.imwrite("mask.png",mask)
+    cv2.imwrite("mask.png",mask)
 
     # 5) Contours + scoring (favor near-circular, filled blobs)
     cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -576,3 +576,43 @@ def measure_contour_px(contour: np.ndarray) -> Tuple[float, float, np.ndarray, T
     (cx, cy), (w_px, h_px), _angle = rect
     box = np.int32(np.round(cv2.boxPoints(rect)))  # shape (4,2)
     return float(w_px), float(h_px), box, (int(round(cx)), int(round(cy)))
+
+def measure_contour_px_span(contour: np.ndarray) -> Tuple[Tuple[int, int], Tuple[int, int], float]:
+    """
+    Return the endpoints of the maximum internal span (longest chord) of a contour
+    in pixels along with the length of that chord.
+    """
+    cnt = sanitize_contour(contour)
+    if cnt is None or len(cnt) == 0:
+        return (0, 0), (0, 0), 0.0
+
+    hull = cv2.convexHull(cnt, returnPoints=True)
+    pts = np.asarray(hull, dtype=np.float32).reshape(-1, 2)
+    n = len(pts)
+
+    if n == 1:
+        p = tuple(int(round(v)) for v in pts[0])
+        return p, p, 0.0
+    if n == 2:
+        p0 = tuple(int(round(v)) for v in pts[0])
+        p1 = tuple(int(round(v)) for v in pts[1])
+        span = float(np.hypot(*(pts[1] - pts[0])))
+        return p0, p1, span
+
+    max_d2 = 0.0
+    best_pair = (pts[0], pts[0])
+
+    for i in range(n - 1):
+        diffs = pts[i + 1 :] - pts[i]
+        d2 = np.sum(diffs * diffs, axis=1)
+        if d2.size == 0:
+            continue
+        j = int(np.argmax(d2))
+        if d2[j] > max_d2:
+            max_d2 = float(d2[j])
+            best_pair = (pts[i], pts[i + 1 + j])
+
+    span = float(np.sqrt(max_d2))
+    p0 = tuple(int(round(v)) for v in best_pair[0])
+    p1 = tuple(int(round(v)) for v in best_pair[1])
+    return p0, p1, span
