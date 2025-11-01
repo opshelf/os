@@ -10,6 +10,23 @@ from math import pi
 import cv2
 import numpy as np
 
+def pinch_spurs(mask, k_frac, w, h):
+    """Remove thin protrusions by erosion + keep-largest + dilation."""
+    k = max(3, int(min(w, h) * k_frac) | 1)
+    se = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
+
+    er = cv2.erode(mask, se, iterations=1)
+
+    # keep largest connected component only
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(er, connectivity=8)
+    if n > 1:
+        largest = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
+        er = np.where(labels == largest, 255, 0).astype(np.uint8)
+
+    out = cv2.dilate(er, se, iterations=1)
+    return out
+
+
 def close_and_despeckle(mask: np.ndarray,
                         gap_frac: float = 0.03,     # bridge gaps (≈ 4–5% of ROI size)
                         open_frac: float = 0.010,    # shave pepper after closing
@@ -92,10 +109,10 @@ def lid_mask_tuned(bgr,
                    clahe_clip=2.0,
                    gamma=1.05,
                    adapt_block_frac=1/6,  # block ~ min(w,h)*this
-                   adapt_C=+9,             # raise to suppress background
+                   adapt_C=+12,             # raise to suppress background
                    bg_radius_frac=0.10,    # rolling-ball radius as frac of min(w,h)
                    open_frac=0.012,         # morphology open kernel
-                   close_frac=0.045,        # morphology close kernel
+                   close_frac=0.04,        # morphology close kernel
                    min_area_frac=0.006, max_area_frac=0.25,
                    min_circularity=0.50, max_aspect=2.0, min_extent=0.55,
                    return_debug=False):
@@ -141,7 +158,7 @@ def lid_mask_tuned(bgr,
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((k_close,k_close), np.uint8), 1)
     mask = cv2.dilate(mask, np.ones((3,3),np.uint8), 1)
     mask = cv2.erode(mask,  np.ones((3,3),np.uint8), 1)
-
+    mask = pinch_spurs(mask, k_frac=0.075, w=w, h=h)  # ~1.2% of min dim
 
     cv2.imwrite("mask.png",mask)
 
