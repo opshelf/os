@@ -10,6 +10,126 @@ from math import pi
 import cv2
 import numpy as np
 
+
+import cv2, numpy as np
+
+def multicolor_object_contour(
+    bgr: np.ndarray,
+    prefer_point: tuple | None = None,      # (x,y) in image coords, e.g. bbox center
+    roi_frac: tuple | None = None,          # (rx,ry,rw,rh) in [0..1] if you want to limit search
+    k: int = 4,                             # color clusters
+    min_area_frac: float = 0.004,           # reject tiny blobs
+    max_area_frac: float = 0.90,            # reject nearly-full-frame blobs
+    close_frac: float = 0.03,               # morphology close kernel as frac of min(H,W)
+    open_frac: float  = 0.008,              # morphology open kernel as frac of min(H,W)
+    canny: tuple = (40, 120)                # edge prior thresholds
+) -> np.ndarray | None:
+    """
+    Segment a multi-color object top by fusing color clusters (Lab k-means) with an edge prior.
+    Returns the best contour (np.ndarray Nx1x2) or None.
+    """
+    H, W = bgr.shape[:2]
+    view = bgr
+    x0 = y0 = 0
+    if roi_frac is not None:
+        rx, ry, rw, rh = roi_frac
+        x0, y0 = int(rx*W), int(ry*H)
+        ww, hh = int(rw*W), int(rh*H)
+        x1, y1 = x0+ww, y0+hh
+        x1 = min(W, x1); y1 = min(H, y1)
+        view = bgr[y0:y1, x0:x1]
+
+    h, w = view.shape[:2]
+    m = min(h, w)
+
+    # --- Color clustering in Lab (better perceptual uniformity) ---
+    lab = cv2.cvtColor(view, cv2.COLOR_BGR2LAB)
+    # speed-up: downscale for kmeans, then upsample labels
+    scale = 0.5 if max(h, w) > 900 else 1.0
+    if scale < 1.0:
+        lab_small = cv2.resize(lab, (int(w*scale), int(h*scale)), interpolation=cv2.INTER_AREA)
+    else:
+        lab_small = lab
+
+    Z = lab_small.reshape((-1, 3)).astype(np.float32)
+    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 20, 0.5)
+    _compact, labels_small, centers = cv2.kmeans(Z, k, None, criteria, 3, cv2.KMEANS_PP_CENTERS)
+    labels_small = labels_small.reshape(lab_small.shape[:2])
+
+    # Upsample labels back to ROI size
+    if scale < 1.0:
+        labels = cv2.resize(labels_small, (w, h), interpolation=cv2.INTER_NEAREST)
+    else:
+        labels = labels_small
+
+    # --- Build candidate masks per cluster ---
+    # Edge prior to suppress background textures; fill large edges to provide closure
+    gray = cv2.cvtColor(view, cv2.COLOR_BGR2GRAY)
+    edges = cv2.Canny(gray, canny[0], canny[1])
+    edges = cv2.dilate(edges, cv2.getStructuringElement(cv2.MORPH_RECT, (3,3)), iterations=1)
+
+    close_k = max(1, int(round(close_frac * m)))
+    open_k  = max(1, int(round(open_frac  * m)))
+    k_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (close_k, close_k))
+    k_open  = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (open_k, open_k))
+
+    roi_area = float(h*w)
+    candidates: list[tuple[np.ndarray, float, np.ndarray]] = []
+
+    for clu in range(k):
+        mask = (labels == clu).astype(np.uint8) * 255
+        # Fuse with a soft edge prior: fill holes then intersect complement of edges
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, k_close, iterations=1)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN,  k_open,  iterations=1)
+        # Light touch: remove strong edges from the cluster to prefer smooth interiors
+        mask = cv2.bitwise_and(mask, cv2.bitwise_not(edges))
+
+        cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not cnts: 
+            continue
+        # Keep only viable blobs
+        for c in cnts:
+            a = cv2.contourArea(c)
+            if a < min_area_frac*roi_area or a > max_area_frac*roi_area:
+                continue
+            rect = cv2.minAreaRect(c)
+            (rw, rh) = rect[1]
+            if rw <= 1 or rh <= 1:
+                continue
+            candidates.append((c, a, mask))
+
+    if not candidates:
+        # Fallback: edge-fill + closing to get *some* shape
+        fill = cv2.morphologyEx(cv2.bitwise_not(edges), cv2.MORPH_CLOSE, k_close, iterations=2)
+        cnts, _ = cv2.findContours(fill, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not cnts:
+            return None
+        return max(cnts, key=cv2.contourArea)
+
+    # --- Choose best contour ---
+    if prefer_point is not None:
+        px, py = prefer_point
+        if roi_frac is not None:
+            # map prefer_point into ROI coords
+            px, py = px - x0, py - y0
+        best = None
+        for c, a, _ in candidates:
+            if cv2.pointPolygonTest(c, (float(px), float(py)), False) >= 0:
+                if best is None or a > best[1]:
+                    best = (c, a)
+        if best is not None:
+            c = best[0]
+            if roi_frac is not None:
+                c = c + np.array([[[x0, y0]]], dtype=c.dtype)
+            return c
+
+    # Otherwise largest-area candidate
+    c, _a, _m = max(candidates, key=lambda t: t[1])
+    if roi_frac is not None:
+        c = c + np.array([[[x0, y0]]], dtype=c.dtype)
+    return c
+
+
 def pinch_spurs(mask, k_frac, w, h):
     """Remove thin protrusions by erosion + keep-largest + dilation."""
     k = max(3, int(min(w, h) * k_frac) | 1)
@@ -106,13 +226,13 @@ def sanitize_contour(c):
 
 def lid_mask_tuned(bgr,
                    roi_frac=(0.20, 0.20, 0.75, 0.75),  # x,y,w,h as fractions of image
-                   clahe_clip=2.0,
+                   clahe_clip=1.5,
                    gamma=1.05,
                    adapt_block_frac=1/6,  # block ~ min(w,h)*this
-                   adapt_C=+12,             # raise to suppress background
-                   bg_radius_frac=0.10,    # rolling-ball radius as frac of min(w,h)
+                   adapt_C=+9,             # raise to suppress background
+                   bg_radius_frac=0.14,    # rolling-ball radius as frac of min(w,h)
                    open_frac=0.012,         # morphology open kernel
-                   close_frac=0.04,        # morphology close kernel
+                   close_frac=0.05,        # morphology close kernel
                    min_area_frac=0.006, max_area_frac=0.25,
                    min_circularity=0.50, max_aspect=2.0, min_extent=0.55,
                    return_debug=False):
