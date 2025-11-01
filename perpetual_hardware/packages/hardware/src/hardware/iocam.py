@@ -284,55 +284,34 @@ class AFSCam:
 
     # -------------------- Public API --------------------
 
+
     def measure_sync(
         self,
-        n_frames: int = 15,
+        n_frames: int = 60,
         timeout_s: float = 2.0,
         display: bool = False,
         window_name: str = "usb_sizing",
         bounding_box: Optional[Tuple[int, int, int, int]] = (316,266,316,266),  # (x0, y0, x1, y1)
         bbox_inclusive: bool = True,
         max_center_offset_px: float = 40.0
-        # px_per_mm: Optional[Union[float, Tuple[float, float]]] = (1.25,1.0)
     ) -> Dict[str, Any]:
         """
-        Synchronous variant of :meth:`measure` that draws the distance between the given
-        bounding box center and the detected contour center on the USB frame.
-
-        Args:
-            n_frames: Number of frames to capture
-            timeout_s: Timeout for operation
-            display: Whether to show visualization
-            window_name: Name for display window
-            bounding_box: Region of interest as (x0, y0, x1, y1)
-            bbox_inclusive: Whether bbox is inclusive
-            max_center_offset_px: Maximum allowed center offset
-            px_per_mm: Optional override for pixel-per-mm along (x, y)
-
-        Returns:
-            Dict containing measurement results and the last annotated frame
-
-        Raises:
-            CameraError: If USB camera is not ready
-            ImageError: If frame capture fails
-            ImageProcessingError: If analysis fails
-            ValueError: If parameters are invalid
+        Synchronous variant that draws the distance between the given bounding box center
+        and the detected contour center on the USB frame, and also overlays the *depth
+        sampling location* (crosshair + sampling window) projected on the USB frame.
         """
         if self._usb is None:
             raise CameraConnectionError("USB camera not started")
 
         if n_frames < 1:
             raise ValueError("n_frames must be positive")
-
         if timeout_s <= 0:
             raise ValueError("timeout_s must be positive")
-
         if bounding_box is not None:
             if len(bounding_box) != 4:
                 raise ValueError("bounding_box must have 4 elements")
             if any(x < 0 for x in bounding_box):
                 raise ValueError("bounding_box values must be non-negative")
-
         if max_center_offset_px <= 0:
             raise ValueError("max_center_offset_px must be positive")
 
@@ -344,13 +323,11 @@ class AFSCam:
             while frames_captured < n_frames:
                 if time.monotonic() - capture_start > timeout_s:
                     raise ImageError(f"Frame capture timeout after {frames_captured} frames")
-
                 ok, frame = self._usb.read()
                 if not ok:
                     raise ImageError("Frame capture failed")
                 if frame is None:
                     raise ImageError("Received null frame")
-
                 frames.append(frame)
                 frames_captured += 1
 
@@ -361,10 +338,10 @@ class AFSCam:
                         show_fn("USB read failed", window_name)
                 return {"ok": False, "reason": "usb_read_failed"}
 
+            # --------- One-time px/mm + optional FOV caches ----------
             if self._px_per_mm is None:
                 gray0 = cv2.cvtColor(frames[0], cv2.COLOR_BGR2GRAY)
                 det = ih.detect_checkerboard_scale_detailed(gray0, self.square_mm)
-
                 if det is None:
                     raise ImageProcessingError("Failed to detect checkerboard scale")
 
@@ -399,18 +376,15 @@ class AFSCam:
                 if self._px_per_mm_xy is None and self._px_per_mm is not None:
                     self._px_per_mm_xy = (float(self._px_per_mm), float(self._px_per_mm))
 
-            # px_per_mm_x, px_per_mm_y = self._resolve_px_per_mm(px_per_mm)
-
             per_frame: List[Dict[str, Any]] = []
             last_draw: Optional[np.ndarray] = None
 
             for fr in frames:
                 try:
                     draw = fr.copy()
-                    # cv2.imwrite("frame.png", draw)
-                    # cv2.imwrite("frame.png", corrected)
                     gray = cv2.cvtColor(fr, cv2.COLOR_BGR2GRAY)
 
+                    # --------- ROI box + center distance scaffolding ----------
                     bbox_center_xy: Optional[Tuple[float, float]] = None
                     bbox_center_int: Optional[Tuple[int, int]] = None
                     if bounding_box is not None:
@@ -430,6 +404,7 @@ class AFSCam:
                                 f"Bounding box calculation failed: {str(e)}"
                             ) from e
 
+                    # --------- Contour detection + visualization ----------
                     contour = ih.lid_mask_tuned(fr)
                     if contour is None:
                         per_frame.append({"ok": False, "reason": "no_contour"})
@@ -437,7 +412,7 @@ class AFSCam:
                         continue
 
                     w_px, h_px, box, (cx, cy) = ih.measure_contour_px(ih.sanitize_contour(contour))
-                    _, _, span = ih.measure_contour_px_span(contour) # internal diameter
+                    _, _, span = ih.measure_contour_px_span(contour)  # internal diameter
 
                     box_i = np.asarray(box, dtype=int)
                     cv2.drawContours(draw, [box_i], 0, (0, 0, 255), 2)
@@ -451,24 +426,18 @@ class AFSCam:
                         cv2.circle(draw, pt_bbox, 4, (0, 255, 0), -1)
                         cv2.circle(draw, pt_contour, 4, (0, 0, 255), -1)
                         cv2.line(draw, pt_bbox, pt_contour, (255, 255, 0), 2)
-
                         label_x = int(round((pt_bbox[0] + pt_contour[0]) / 2.0))
                         label_y = int(round((pt_bbox[1] + pt_contour[1]) / 2.0)) - 10
                         label_x = max(0, min(draw.shape[1] - 1, label_x))
                         label_y = max(15, min(draw.shape[0] - 1, label_y))
                         cv2.putText(
-                            draw,
-                            f"{center_dist_px:.1f}px",
-                            (label_x, label_y),
-                            cv2.FONT_HERSHEY_SIMPLEX,
-                            0.5,
-                            (255, 255, 0),
-                            1,
-                            cv2.LINE_AA,
+                            draw, f"{center_dist_px:.1f}px", (label_x, label_y),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1, cv2.LINE_AA
                         )
                     else:
                         cv2.circle(draw, (int(round(cx)), int(round(cy))), 4, (0, 0, 255), -1)
 
+                    # --------- Scale-only size in mm ----------
                     try:
                         size_w_mm_scale = w_px / self.px_per_mm
                         size_h_mm_scale = h_px / self.px_per_mm
@@ -478,61 +447,103 @@ class AFSCam:
                             f"Scale calculation failed: {str(e)}"
                         ) from e
 
+                    # --------- Depth sampling + overlay + footprint ----------
                     try:
-                        gray = cv2.cvtColor(fr, cv2.COLOR_BGR2GRAY)
-                        # print(cx)
-                        # print(cy)
-                        # z_mm = self._sample_depth_at_usb_point((cx, cy), gray.shape)
-                        # z_mm = self._sample_depth_at_usb_point_shift_depth_dependent((cx,cy),gray.shape)
-                        
+                        # Depth sampling (keep your original averaging + bias)
                         values = [self._sample_depth_at_usb_point((cx, cy), gray.shape) for _ in range(10)]
-                        z_mm = (sum(values) / len(values) if values else None)+85             
+                        z_mm = (sum(values) / len(values) if values else None)
+                        if z_mm is not None:
+                            z_mm = z_mm + 50  # keep your bias if desired
 
-                        # z_mm = self.get_max_depth_mm()
+                        # ---- Draw depth sampling location (projected to USB frame) ----
+                        H_u, W_u = gray.shape[:2]
+                        H_d = getattr(self, "_depth_h", None)
+                        W_d = getattr(self, "_depth_w", None)
+                        if (H_d is None or W_d is None) and getattr(self, "_depth", None) is not None and hasattr(self._depth, "shape"):
+                            H_d, W_d = self._depth.shape[:2]
 
-                        print(z_mm)
-                        #  = pinch_spurs(mask, k_frac=0.012, w=w, h=h)  # ~1.2% of min dim
+                        if H_d and W_d:
+                            sx = W_d / float(W_u)
+                            sy = H_d / float(H_u)
 
-                        
+                            # Optional user-maintained shift (in *depth* pixels)
+                            shift_dx, shift_dy = (0.0, 0.0)
+                            if hasattr(self, "_depth_pixel_shift") and isinstance(self._depth_pixel_shift, (tuple, list)) and len(self._depth_pixel_shift) == 2:
+                                try:
+                                    shift_dx = float(self._depth_pixel_shift[0])
+                                    shift_dy = float(self._depth_pixel_shift[1])
+                                except Exception:
+                                    shift_dx, shift_dy = (0.0, 0.0)
+
+                            # Depth coords actually sampled
+                            x_d = int(round(cx * sx + shift_dx))
+                            y_d = int(round(cy * sy + shift_dy))
+                            x_d = max(0, min(W_d - 1, x_d))
+                            y_d = max(0, min(H_d - 1, y_d))
+
+                            # Sampling window radius (depth pixels)
+                            win_r_d = 3
+                            if hasattr(self, "_depth_win_radius"):
+                                try:
+                                    win_r_d = max(1, int(self._depth_win_radius))
+                                except Exception:
+                                    pass
+
+                            # Back-project window extents into USB pixels for drawing
+                            r_u_x = max(1, int(round(win_r_d / sx)))
+                            r_u_y = max(1, int(round(win_r_d / sy)))
+
+                            # Back-projected USB center
+                            x_u_vis = int(round(x_d / sx))
+                            y_u_vis = int(round(y_d / sy))
+                            x_u_vis = max(0, min(W_u - 1, x_u_vis))
+                            y_u_vis = max(0, min(H_u - 1, y_u_vis))
+
+                            # Crosshair + window (cyan)
+                            cv2.drawMarker(draw, (x_u_vis, y_u_vis), (255, 255, 0),
+                                        markerType=cv2.MARKER_CROSS, markerSize=10, thickness=2)
+                            x0s = max(0, x_u_vis - r_u_x)
+                            y0s = max(0, y_u_vis - r_u_y)
+                            x1s = min(W_u - 1, x_u_vis + r_u_x)
+                            y1s = min(H_u - 1, y_u_vis + r_u_y)
+                            cv2.rectangle(draw, (x0s, y0s), (x1s, y1s), (255, 255, 0), 1)
+
+                            if z_mm is not None:
+                                lbl = f"{z_mm:.1f} mm"
+                                ty = max(15, y0s - 6)
+                                cv2.putText(draw, lbl, (x0s, ty),
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1, cv2.LINE_AA)
+
+                        # Footprint via pinhole if fx/fy present
                         footprint = None
-
                         if z_mm is not None and self._fx_cache and self._fy_cache:
                             w_mm_fp, h_mm_fp = ih.footprint_from_rect_pinhole(
                                 w_px, h_px, z_mm, self._fx_cache, self._fy_cache
                             )
                             a_fp, b_fp = sorted([w_mm_fp, h_mm_fp], reverse=True)
                             footprint = (a_fp, b_fp)
-
-                            span_mm = (span*self._fx_cache)/z_mm
-
-                            # print(f"{span} mm || {span_mm}mm span @ {z_mm}mm depth")
-
-
+                            # Optionally use span to mm:
+                            # span_mm = (span * self._fx_cache) / z_mm
 
                     except Exception as e:
                         raise ImageProcessingError(
                             f"Depth/footprint calculation failed: {str(e)}"
                         ) from e
 
+                    # --------- On-frame text block ----------
                     dim_lines = [
                         f"Scale: {size_w_mm_scale:.1f}mm x {size_h_mm_scale:.1f}mm"
                     ]
-                    if footprint is not None:
+                    if footprint is not None and z_mm is not None:
                         dim_lines.append(
-                            f"Footprint: {footprint[0]:.1f}mm x {footprint[1]:.1f}mm x {617-z_mm:.1f}mm"
+                            f"Footprint: {footprint[0]:.1f}mm x {footprint[1]:.1f}mm @ z={z_mm:.1f}mm"
                         )
 
                     text_y = draw.shape[0] - 10
                     for line_text in reversed(dim_lines):
                         cv2.putText(
-                            draw,
-                            line_text,
-                            (10, text_y),
-                            cv2.FONT_HERSHEY_SIMPLEX,
-                            0.6,
-                            (0, 255, 255),
-                            2,
-                            cv2.LINE_AA,
+                            draw, line_text, (10, text_y),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2, cv2.LINE_AA
                         )
                         text_y -= 20
 
@@ -556,6 +567,7 @@ class AFSCam:
                         ) from e
                     raise
 
+            # --------- Aggregate ----------
             try:
                 ok_frames = [p for p in per_frame if p["ok"]]
                 agg: Dict[str, Any] = {}
@@ -595,7 +607,6 @@ class AFSCam:
                     if callable(show_fn):
                         show_fn("No contour detected", window_name)
 
-                # print(result.get("aggregate"))
                 return result
 
             except Exception as e:
@@ -608,7 +619,8 @@ class AFSCam:
                 raise ImageProcessingError(f"Measurement failed: {str(e)}") from e
             raise
 
-    def measure_sync(
+
+    async def measure(
         self,
         n_frames: int = 15,
         timeout_s: float = 2.0,
@@ -639,12 +651,17 @@ class AFSCam:
             raise ValueError("max_center_offset_px must be positive")
 
         frames: List[np.ndarray] = []
-        capture_start = time.monotonic()
+        try:
+            time_fn = asyncio.get_running_loop().time
+        except RuntimeError:
+            time_fn = time.monotonic
+
+        capture_start = time_fn()
         frames_captured = 0
 
         try:
             while frames_captured < n_frames:
-                if time.monotonic() - capture_start > timeout_s:
+                if time_fn() - capture_start > timeout_s:
                     raise ImageError(f"Frame capture timeout after {frames_captured} frames")
                 ok, frame = self._usb.read()
                 if not ok:
@@ -981,257 +998,7 @@ class AFSCam:
 
         return px_x, px_y
 
-    async def measure(
-        self,
-        n_frames: int = 10,
-        timeout_s: float = 2.0,
-        display: bool = False,
-        window_name: str = "usb_sizing",
-        bounding_box: Optional[Tuple[int, int, int, int]] = (316,266,316,266),  # (x0, y0, x1, y1)
-        bbox_inclusive: bool = True,
-        max_center_offset_px: float = 40.0,
-        px_per_mm: Optional[Union[float, Tuple[float, float]]] = (1.25,1.0)
-    ) -> Dict[str, Any]:
-        """
-        Capture and analyze measurements using both cameras.
-        
-        Args:
-            n_frames: Number of frames to capture
-            timeout_s: Timeout for operation
-            display: Whether to show visualization
-            window_name: Name for display window
-            bounding_box: Region of interest as (x0, y0, x1, y1)
-            bbox_inclusive: Whether bbox is inclusive
-            max_center_offset_px: Maximum allowed center offset
-            px_per_mm: Optional override for pixel-per-mm along (x, y)
-            
-        Returns:
-            Dict containing measurement results
-            
-        Raises:
-            CameraError: If USB camera is not ready
-            ImageError: If frame capture fails
-            ImageProcessingError: If analysis fails
-            ValueError: If parameters are invalid
-        """
-        if self._usb is None:
-            raise CameraConnectionError("USB camera not started")
-            
-        if n_frames < 1:
-            raise ValueError("n_frames must be positive")
-            
-        if timeout_s <= 0:
-            raise ValueError("timeout_s must be positive")
-            
-        if bounding_box is not None:
-            if len(bounding_box) != 4:
-                raise ValueError("bounding_box must have 4 elements")
-            if any(x < 0 for x in bounding_box):
-                raise ValueError("bounding_box values must be non-negative")
-                
-        if max_center_offset_px <= 0:
-            raise ValueError("max_center_offset_px must be positive")
-
-        frames: List[np.ndarray] = []
-        loop = asyncio.get_running_loop()
-
-        try:
-            # Capture frames with timeout
-            capture_start = loop.time()
-            frames_captured = 0
-            
-            while frames_captured < n_frames:
-                # Check timeout
-                if loop.time() - capture_start > timeout_s:
-                    raise ImageError(f"Frame capture timeout after {frames_captured} frames")
-                
-                try:
-                    ok, frame = await loop.run_in_executor(None, self._usb.read)
-                    if not ok:
-                        raise ImageError("Frame capture failed")
-                    if frame is None:
-                        raise ImageError("Received null frame")
-                        
-                    frames.append(frame)
-                    frames_captured += 1
-                    
-                except Exception as e:
-                    if not isinstance(e, ImageError):
-                        raise ImageError(f"Error capturing frame: {str(e)}") from e
-                    raise
-
-            if not frames:
-                if display:
-                    self._show_text_frame("USB read failed", window_name)
-                return {"ok": False, "reason": "usb_read_failed"}
-
-            # Initialize measurements if needed
-            if self._px_per_mm is None:
-                gray0 = cv2.cvtColor(frames[0], cv2.COLOR_BGR2GRAY)
-                det = ih.detect_checkerboard_scale_detailed(gray0, self.square_mm)
-                
-                if det is None:
-                    raise ImageProcessingError("Failed to detect checkerboard scale")
-                
-                try:
-                    self._px_per_mm = float(det["px_per_mm"])
-                except (KeyError, TypeError, ValueError):
-                    self._px_per_mm = None
-
-                px_h = det.get("px_per_mm_h") if isinstance(det, dict) else None
-                px_v = det.get("px_per_mm_v") if isinstance(det, dict) else None
-                if self._px_per_mm is not None:
-                    self._px_per_mm_xy = (
-                        float(px_h) if px_h is not None else float(self._px_per_mm),
-                        float(px_v) if px_v is not None else float(self._px_per_mm),
-                    )
-                
-                # Calibrate FOV if needed
-                if (self._fx_cache is None or self._fy_cache is None) and self._depth is not None:
-                    try:
-                        cal = self._calibrate_fov_from_checkerboard(det, gray0.shape)
-                        if cal is not None:
-                            fx_est, fy_est, hfov_est, vfov_est = cal
-                            self._fx_cache = self._fx_cache or fx_est
-                            self._fy_cache = self._fy_cache or fy_est
-                            self._hfov_cal, self._vfov_cal = hfov_est, vfov_est
-                    except Exception as e:
-                        raise ImageProcessingError(f"FOV calibration failed: {str(e)}") from e
-                
-                if self._px_per_mm is None:
-                    self._px_per_mm = 1.3  # fallback value
-                if self._px_per_mm_xy is None and self._px_per_mm is not None:
-                    self._px_per_mm_xy = (float(self._px_per_mm), float(self._px_per_mm))
-
-            px_per_mm_x, px_per_mm_y = self._resolve_px_per_mm(px_per_mm)
-                    
-            # Process each frame
-            per_frame: List[Dict[str, Any]] = []
-            last_draw = None
-
-            for fr in frames:
-                try:
-                    draw = fr.copy()
-                    # gray = cv2.cvtColor(fr, cv2.COLOR_BGR2GRAY)
-
-                    # # Segment and analyze image
-                    # mask = ih.segment_object_on_checkerboard(gray, self._px_per_mm, self.square_mm)
-                    # if mask is None:
-                    #     raise ImageProcessingError("Segmentation failed")
-                        
-                    # contour = ih.pick_main_contour(mask)
-                    # if contour is None:
-                    #     per_frame.append({"ok": False, "reason": "no_contour"})
-                    #     continue
-
-                    contour = ih.lid_mask_tuned(fr)
-                    if contour is None:
-                        per_frame.append({"ok": False, "reason": "no_contour"})
-                        continue
-
-                    # Calculate measurements
-                    w_px, h_px, box, (cx, cy) = ih.measure_contour_px(contour)
-                    box_i = np.asarray(box, dtype=int)
-
-                    # Process bounding box if provided
-                    center_dist_px = None
-                    if bounding_box is not None:
-                        try:
-                            x0, y0, x1, y1 = map(int, bounding_box)
-                            bx_cx = (x0 + x1) / 2.0
-                            by_cy = (y0 + y1) / 2.0
-                            center_dist_px = float(np.hypot(cx - bx_cx, cy - by_cy))
-                        except Exception as e:
-                            raise ImageProcessingError(
-                                f"Bounding box calculation failed: {str(e)}"
-                            ) from e
-
-                    # Calculate dimensions
-                    try:
-                        size_w_mm_scale = w_px / px_per_mm_x
-                        size_h_mm_scale = h_px / px_per_mm_y
-                        a_scale, b_scale = sorted([size_w_mm_scale, size_h_mm_scale], reverse=True)
-                    except Exception as e:
-                        raise ImageProcessingError(
-                            f"Scale calculation failed: {str(e)}"
-                        ) from e
-
-                    # Process depth and footprint
-                    try:
-                        gray = cv2.cvtColor(fr, cv2.COLOR_BGR2GRAY)
-                        z_mm = self._sample_depth_at_usb_point((cx, cy), gray.shape)
-                        z_max = self.get_max_depth_mm()
-                        print(z_max)
-                        footprint = None
-                        
-                        if z_mm is not None and self._fx_cache and self._fy_cache:
-                            w_mm_fp, h_mm_fp = ih.footprint_from_rect_pinhole(
-                                w_px, h_px, z_mm, self._fx_cache, self._fy_cache
-                            )
-                            a_fp, b_fp = sorted([w_mm_fp, h_mm_fp], reverse=True) # TODO change this to always return width and height 
-                            footprint = (a_fp, b_fp)
-                            
-                    except Exception as e:
-                        raise ImageProcessingError(
-                            f"Depth/footprint calculation failed: {str(e)}"
-                        ) from e
-
-                    # Store results for this frame
-                    per_frame.append({
-                        "ok": True,
-                        "center_xy": (int(cx), int(cy)),
-                        "center_dist_px": center_dist_px,
-                        "scale_mm": (float(a_scale), float(b_scale)),
-                        "depth_mm": float(z_mm) if z_mm is not None else None,
-                        "footprint_mm": (float(footprint[0]), float(footprint[1])) 
-                            if footprint is not None else None
-                    })
-                    
-                except Exception as e:
-                    if not isinstance(e, ImageProcessingError):
-                        raise ImageProcessingError(
-                            f"Frame processing failed: {str(e)}"
-                        ) from e
-                    raise
-                    
-            # Calculate aggregates from valid frames
-            try:
-                ok_frames = [p for p in per_frame if p["ok"]]
-                agg: Dict[str, Any] = {}
-                
-                if ok_frames:
-                    def med(vals):
-                        vals = [v for v in vals if v is not None]
-                        return float(np.median(vals)) if vals else None
-
-                    agg["scale_major_mm_med"] = med([p["scale_mm"][0] for p in ok_frames])
-                    agg["scale_minor_mm_med"] = med([p["scale_mm"][1] for p in ok_frames])
-                    agg["depth_mm_med"] = med([p["depth_mm"] for p in ok_frames])
-
-                    # Add footprint medians when available
-                    footprints = [p["footprint_mm"] for p in ok_frames if p["footprint_mm"] is not None]
-                    if footprints:
-                        agg["footprint_major_mm_med"] = med([fp[0] for fp in footprints])
-                        agg["footprint_minor_mm_med"] = med([fp[1] for fp in footprints])
-
-                    if bounding_box is not None:
-                        dists = [p["center_dist_px"] for p in ok_frames if p["center_dist_px"] is not None]
-                        agg["center_dist_px_med"] = med(dists)
-                
-                return {
-                    "ok": bool(ok_frames),
-                    "aggregate": agg
-                }
-                
-            except Exception as e:
-                raise ImageProcessingError(
-                    f"Aggregate calculation failed: {str(e)}"
-                ) from e
-
-        except Exception as e:
-            if not isinstance(e, (ImageError, ImageProcessingError)):
-                raise ImageProcessingError(f"Measurement failed: {str(e)}") from e
-            raise
+    
 
     # -------------------- Internals --------------------
 
@@ -1435,4 +1202,3 @@ class AFSCam:
         hfov = 2.0 * np.degrees(np.arctan((W / 2.0) / fx))
         vfov = 2.0 * np.degrees(np.arctan((H / 2.0) / fy))
         return float(fx), float(fy), float(hfov), float(vfov)
-
