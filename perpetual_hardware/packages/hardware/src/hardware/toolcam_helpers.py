@@ -503,8 +503,14 @@ def persist_poe_camera_calibration(
     except KeyError as exc:
         raise RuntimeError("Invalid configuration structure; expected robot.tool.poe_camera") from exc
 
+    skip_keys = {"map1", "map2"}
     for key, value in calibration.items():
+        if key in skip_keys:
+            continue
         poe_camera[key] = _to_serializable(value)
+
+    for key in skip_keys:
+        poe_camera.pop(key, None)
 
     poe_camera["calibration_status"] = "calibrated"
 

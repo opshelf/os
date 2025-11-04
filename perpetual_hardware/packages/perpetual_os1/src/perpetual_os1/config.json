@@ -2,15 +2,26 @@
   "name": "perpetual_os1",
   "version": "0.1.0",
   "description": "Perpetual OS1 configuration",
-  
   "robot": {
     "tool": {
       "parameters": {
-        "IDLE_POSITION": [0, 0],
-        "PICKUP_POSITION_L": [46, 465],
-        "PICKUP_POSITION_H": [46, 723],
-        "SCAN_POSITION": [930, 1],
-        "SLIDE_EXTENSION":51,
+        "IDLE_POSITION": [
+          0,
+          0
+        ],
+        "PICKUP_POSITION_L": [
+          46,
+          465
+        ],
+        "PICKUP_POSITION_H": [
+          46,
+          723
+        ],
+        "SCAN_POSITION": [
+          930,
+          1
+        ],
+        "SLIDE_EXTENSION": 51,
         "GRIPPER_EXTENSION_PICK": 161.5,
         "GRIPPER_EXTENSION_PLACE": 160.5,
         "FRONT": 0.5,
@@ -84,28 +95,150 @@
         "password": "admin",
         "model": "UnitV2",
         "stream_uri": "rtsp://10.254.10.201:8554/stream",
-        "url": "rtsp://192.168.1.108:554/user=admin&password=&channel=1&stream=0.sdp?tcp",
-        "calibration_status": "uncalibrated",
-        "mtx": null,
-        "dist": null,
-        "rvecs": null,
-        "tvecs": null,
-        "newcameramtx": null,
-        "roi": null,
-        "H": null,
-        "map1": null,
-        "map2": null,
-        "map_size": null,
-        "H_ref_size": [2880, 1620],
-        "board_W_mm": null,
-        "board_H_mm": null,
-        "pattern_size": [14, 7],
+        "url": "rtsp://admin:admin@192.168.1.108:554/stream1",
+        "calibration_status": "calibrated",
+        "mtx": [
+          [
+            4575.455793556883,
+            0.0,
+            1662.36722639279
+          ],
+          [
+            0.0,
+            4694.877263306352,
+            1262.7479161818287
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "dist": [
+          -0.9808878236166961,
+          0.23943820062755983,
+          -0.07839792583462363,
+          -0.01628368254442654,
+          0.7716060375417397
+        ],
+        "rvecs": [
+          [
+            -0.07322393548167312,
+            -0.91548205151199,
+            2.999422133002264
+          ],
+          [
+            -0.07447228136044474,
+            -0.9154648681864093,
+            3.000008981992529
+          ],
+          [
+            -0.07451580018975767,
+            -0.9153266873509354,
+            2.999914555573047
+          ],
+          [
+            -0.07560002571141869,
+            -0.9160828933699598,
+            3.00013972008402
+          ],
+          [
+            -0.07286713762440457,
+            -0.9156550173873116,
+            2.9994115930178427
+          ]
+        ],
+        "tvecs": [
+          [
+            82.04186125600982,
+            -1.5244911612475018,
+            365.7554834009247
+          ],
+          [
+            91.62653332535348,
+            14.959896376492779,
+            377.6541467819868
+          ],
+          [
+            81.85213701415363,
+            6.750114398229648,
+            371.4458669175946
+          ],
+          [
+            81.66194019656591,
+            15.058507776277663,
+            377.20568963309694
+          ],
+          [
+            82.0575434466113,
+            -1.4339040206482987,
+            365.76631340801856
+          ]
+        ],
+        "newcameramtx": [
+          [
+            3819.0702133870427,
+            0.0,
+            1699.955310372658
+          ],
+          [
+            0.0,
+            3904.704959330599,
+            1173.1357869485382
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "roi": [
+          102,
+          116,
+          2714,
+          1362
+        ],
+        "H": [
+          [
+            0.0761962984553665,
+            -0.014899378330444291,
+            -19.80162745745202
+          ],
+          [
+            0.0006100542136031474,
+            0.07876484688144798,
+            -19.799409727040285
+          ],
+          [
+            -1.1427229167615734e-05,
+            -0.00014013296266184738,
+            1.0
+          ]
+        ],
+        "map_size": [
+          2880,
+          1620
+        ],
+        "H_ref_size": [
+          2880,
+          1620
+        ],
+        "board_W_mm": 195.0,
+        "board_H_mm": 90.0,
+        "pattern_size": [
+          14,
+          7
+        ],
         "square_size_mm": 15.0
       }
     },
-
-    "grid": "./storage.json",
-
+    "store_detection_window_s": 1.0,
+    "store_detection_attempts": 3,
+    "grid": {
+      "path": "./storage.json",
+      "cell_spacing_per_shelf": [],
+      "cells_per_shelf": []
+    },
     "io": {
       "motors": [
         {
@@ -117,14 +250,14 @@
           "mpr": 12,
           "accel": 1500,
           "ret_rpm": 500,
-          "lim": 560 
+          "lim": 560
         }
       ],
       "usb_camera": {
         "index": 0,
         "usb_index": 10,
         "usb_fourcc": "MJPG",
-        "usb_exposure":25,
+        "usb_exposure": 25,
         "square_mm": 7.5,
         "fx_px": 708,
         "fy_px": 708,
@@ -134,25 +267,31 @@
       },
       "tof_camera": {
         "csi_port": 0,
-        "resolution": [240, 180],
+        "resolution": [
+          240,
+          180
+        ],
         "fps": 30,
-        "max_distance_mm": 4000,
-        "confidence_min": 0,
+        "max_distance_mm": 2000,
+        "confidence_min": 0.9,
         "depth_unit": "mm",
         "calibration_status": "uncalibrated"
       }
     },
-
     "bus": {
       "motor": {
-        "ports": ["/dev/ttyUSB0"],
+        "ports": [
+          "/dev/ttyUSB0"
+        ],
         "baudrate": 115200,
         "parity": "N",
         "timeout": 2.0,
         "retry_delay_s": 0.25
       },
       "scale": {
-        "ports": ["/dev/ttyUSB1"],
+        "ports": [
+          "/dev/ttyUSB1"
+        ],
         "baudrate": 9600,
         "parity": "N",
         "timeout": 2.0,
@@ -160,6 +299,5 @@
       }
     }
   },
-
   "status": "idle"
 }

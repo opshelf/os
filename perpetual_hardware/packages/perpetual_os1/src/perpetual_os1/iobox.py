@@ -2,22 +2,34 @@ import perpetual_os1.common as c
 
 from hardware.controller import SharedModbusController as Controller
 from hardware.motor import Motor
-# from hardware.printer import USBPrinter
+from hardware.printer import USBPrinter
 from hardware.iocam import AFSCam
 from perpetual_os1.exceptions import (
     IOBoxError, MotorError, CameraError, ConfigError
 )
+
+from perpetual_os1.storage import (
+    StorageGrid, Shelf, Cell, CellStatus, CalibrationCoordinate,
+    Dimensions, StorageModuleSide, CellItem, StorageModuleCellLocation
+)
+
 from hardware.scale import Scale
 # from hardware.curtain import Curtain
 
 import time
 import asyncio
-import random
 from enum import Enum
 from typing import Dict, Optional, Tuple, Union, Literal, Annotated
 from pydantic import BaseModel
+from dataclasses import dataclass
 import logging
 
+
+@dataclass
+class IOBoxMeasurement:
+    dimensions: Optional[Dimensions]
+    weight: Optional[float]
+    timestamp: float
 class IOBoxStatus(Enum):
     IDLE = 0
     READY = 1
@@ -50,18 +62,11 @@ class IOBox:
                            tof_params = self._params.tof_camera)
         
         self._scale = Scale(scalecontroller)
-        # self._printer = USBPrinter()
+        self._printer = USBPrinter()
         self._scale_ready = False
         self._cam_running = False
         self._logger = logging.getLogger(__name__).getChild("IOBox")
 
-        # printer_params = getattr(self._params, "printer", None)
-        # self._printer = USBPrinter(
-        #     device_path=getattr(printer_params, "device_path", "/dev/usb/lp0"),
-        #     encoding=getattr(printer_params, "encoding", "utf-8"),
-        #     default_trailing_spaces=getattr(printer_params, "trailing_spaces", 0),
-        #     default_trailing_newlines=getattr(printer_params, "trailing_newlines", 0),
-        # )
 
     async def configure(self):
         """
@@ -78,7 +83,6 @@ class IOBox:
             if not self._cam_running:
                 await self._cam.start()
                 self._cam_running = True
-            # self._printer.connect()
             self._status = IOBoxStatus.IDLE
         except Exception as e:
             self._status = IOBoxStatus.ERROR
@@ -100,23 +104,25 @@ class IOBox:
         await self._cam.start()
         self._cam_running = True
 
-    def _generate_random_upca(self) -> str:
-        digits = [str(random.randint(0, 9)) for _ in range(11)]
-        odd_sum = sum(int(digits[i]) for i in range(0, 11, 2))
-        even_sum = sum(int(digits[i]) for i in range(1, 11, 2))
-        total = odd_sum * 3 + even_sum
-        check_digit = (10 - (total % 10)) % 10
-        return "".join(digits) + str(check_digit)
-
-    def print_random_barcode(self) -> str:
+    def print_random_barcode(
+        self,
+        *,
+        height: int = 96,
+        width: int = 3,
+        hri: str = "none",
+        feed_after: int = 2,
+    ) -> str:
         """Generate and print a random UPC-A code using the USB printer."""
         if self._printer is None:
             raise IOBoxError("Printer not configured")
-        upca = self._generate_random_upca()
         try:
-            self._printer.print_text(f"UPC-A: {upca}")
-            return upca
-        except PrinterError as exc:
+            return self._printer.print_random_upca(
+                height=height,
+                width=width,
+                hri=hri,
+                feed_after=feed_after,
+            )
+        except Exception as exc:
             self._status = IOBoxStatus.ERROR
             raise IOBoxError(f"Failed to print barcode: {str(exc)}") from exc
 
@@ -157,12 +163,13 @@ class IOBox:
         """
         try:
             if self._cam is None:
+                print("no cam")
                 raise IOBoxError("Camera not configured")
             await self._ensure_camera_running()
             size = await self._cam.measure()
-            # print(size)
             return size
         except Exception as e:
+            print("measurement failed")
             self._logger.warning("Async measurement failed", exc_info=e)
             if isinstance(e, IOBoxError):
                 self._status = IOBoxStatus.ERROR
@@ -180,11 +187,11 @@ class IOBox:
             Updates IOBox status to READY when an item is confirmed present, otherwise IDLE.
         """
         try:
-            # weight = await self.get_weight()
-            weight = 1.0
+            weight = await self.get_weight()
             measurement = await self.measure_item()
 
-            if measurement is not None and weight != 0:
+            if measurement is not None and abs(weight) > 5.0:
+                print(measurement)
                 self._status = IOBoxStatus.READY
             else:
                 self._status = IOBoxStatus.IDLE
@@ -193,26 +200,51 @@ class IOBox:
         except Exception:
             # get_weight / measure_item already set status/errors appropriately
             raise
-        
-    def measure_item_sync(self) -> Optional[ItemSizeLocation]:
-        """
-        Measure item dimensions using camera system.
-        
-        Raises:
-            IOBoxError: If camera is not configured
-            CameraError: If measurement fails
-        """
+
+    async def _collect_iobox_measurement(self) -> IOBoxMeasurement:
+        """Gather IOBox measurement data (weight & optical dimensions)."""
+        timestamp = time.time()
+        weight: Optional[float] = None
+        dimensions: Optional[Dimensions] = None
+
+
+        # print("measuring")
         try:
-            if self._cam is None:
-                raise IOBoxError("Camera not configured")
-            size = self._cam.measure_sync()
-            return size
-        except Exception as e:
-            self._logger.warning("Sync measurement failed", exc_info=e)
-            if isinstance(e, IOBoxError):
-                self._status = IOBoxStatus.ERROR
-                raise
-            raise CameraError(f"Item measurement failed: {str(e)}") from e
+            # print("weight")
+            weight = await self.get_weight()
+        except Exception as exc:
+            # print("bad weight")
+            self._logger.warning("IOBox weight read failed", exc_info=exc)
+
+        try:
+            # print("size")
+            dimensions = await self.measure_item()
+            # print(dimensions)
+        except Exception as exc:
+            print("measurement failed")
+            self._logger.warning("IOBox dimension measurement failed", exc_info=exc)
+
+        return IOBoxMeasurement(dimensions=dimensions, weight=weight, timestamp=timestamp)
+        
+    # def measure_item_sync(self) -> Optional[ItemSizeLocation]:
+    #     """
+    #     Measure item dimensions using camera system.
+        
+    #     Raises:
+    #         IOBoxError: If camera is not configured
+    #         CameraError: If measurement fails
+    #     """
+    #     try:
+    #         if self._cam is None:
+    #             raise IOBoxError("Camera not configured")
+    #         size = self._cam.measure_sync()
+    #         return size
+    #     except Exception as e:
+    #         self._logger.warning("Sync measurement failed", exc_info=e)
+    #         if isinstance(e, IOBoxError):
+    #             self._status = IOBoxStatus.ERROR
+    #             raise
+    #         raise CameraError(f"Item measurement failed: {str(e)}") from e
 
     async def open_door(self):
         """
@@ -249,25 +281,6 @@ class IOBox:
             if isinstance(e, IOBoxError):
                 raise
             raise MotorError(f"Failed to close door: {str(e)}") from e
-
-    def print_text(self, text: str, *, trailing_spaces: Optional[int] = None, trailing_newlines: Optional[int] = None) -> None:
-        """
-        Print text using the IOBox printer.
-
-        Raises:
-            IOBoxError: If the printer is not available or the write fails.
-        """
-        if self._printer is None:
-            raise IOBoxError("Printer not configured")
-        try:
-            self._printer.print_text(
-                text,
-                trailing_spaces=trailing_spaces,
-                trailing_newlines=trailing_newlines,
-            )
-        except PrinterError as exc:
-            self._status = IOBoxStatus.ERROR
-            raise IOBoxError(f"Printer failed: {str(exc)}") from exc
 
     # curtain worker?
 

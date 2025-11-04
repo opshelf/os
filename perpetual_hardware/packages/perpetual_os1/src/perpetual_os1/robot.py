@@ -88,6 +88,11 @@ class RobotItemStoredResponse(BaseModel):
     location: StorageModuleCellLocation
 
 
+class RobotBarcodeResponse(BaseModel):
+    message: Literal["success"] = "success"
+    upca: str
+
+
 class RobotState(BaseModel):
     io: IOBoxStatus
     tool: ToolStatus
@@ -98,14 +103,7 @@ class RobotStatus(BaseModel):
     state: RobotState
     light_curtain: bool
 
-RobotResponse = Union[RobotCommandSuccessful, RobotCommandError, SizeResult]
-
-
-@dataclass
-class IOBoxMeasurement:
-    dimensions: Optional[Dimensions]
-    weight: Optional[float]
-    timestamp: float
+RobotResponse = Union[RobotCommandSuccessful, RobotCommandError, RobotBarcodeResponse, SizeResult]
 
 class Robot:
     def __init__(self = None) -> None:
@@ -154,14 +152,14 @@ class Robot:
         await self._connect_controller("motor", self._motorbus, self._bus_settings["motor"])
         await self._connect_controller("scale", self._scalebus, self._bus_settings["scale"])
 
-        # await self._tool.configure()
+        await self._tool.configure()
         await self._io.configure()
 
     def get_param(self, param: str):
         try:
-            if not hasattr(self._config.robot, param):
-                raise KeyError(f"Parameter '{param}' not found")
-            return getattr(self._config.robot, param)
+            if hasattr(self._config.robot, param):
+                return getattr(self._config.robot, param)
+            return self._config.robot.grid.get_param(param)
         except Exception as e:
             raise ConfigError(f"Failed to get parameter {param}: {str(e)}") from e
 
@@ -222,6 +220,34 @@ class Robot:
             await self._motorbus.close()
         if self._scalebus:
             await self._scalebus.close()
+
+    async def print_random_barcode(
+        self,
+        *,
+        height: int = 96,
+        width: int = 3,
+        hri: str = "none",
+        feed_after: int = 2,
+    ) -> RobotResponse:
+        """
+        Ask the IOBox printer to generate and print a random UPC-A barcode.
+
+        Returns:
+            RobotBarcodeResponse on success or RobotCommandError on failure.
+        """
+        if self._io is None:
+            return RobotCommandError(error="IOBox not configured")
+        try:
+            upca = self._io.print_random_barcode(
+                height=height,
+                width=width,
+                hri=hri,
+                feed_after=feed_after,
+            )
+        except IOError as exc:
+            return RobotCommandError(error=str(exc))
+        return RobotBarcodeResponse(upca=upca)
+
 
     async def stop(self) -> None:
         await self._tool.stop()
@@ -444,25 +470,6 @@ class Robot:
             return RobotCommandError(error=f"Storage calibration failed: {str(e)}")
 
 
-    async def _collect_iobox_measurement(self) -> IOBoxMeasurement:
-        """Gather IOBox measurement data (weight & optical dimensions)."""
-        timestamp = time.time()
-        weight: Optional[float] = None
-        dimensions: Optional[Dimensions] = None
-
-        try:
-            weight = await self._io.get_weight()
-        except Exception as exc:
-            self._logger.warning("IOBox weight read failed", exc_info=exc)
-
-        try:
-            dimensions = await self.measure_item_dimensions()
-        except Exception as exc:
-            self._logger.warning("IOBox dimension measurement failed", exc_info=exc)
-
-        return IOBoxMeasurement(dimensions=dimensions, weight=weight, timestamp=timestamp)
-
-
     # plug in sizing from the io box
     async def store(self, item_name: str) -> None:
         """
@@ -475,19 +482,36 @@ class Robot:
         Returns:
             RobotResponse indicating success or failure
         """
-        await asyncio.sleep(5)
 
-        if not self._grid:
-            return RobotCommandError(error="Storage grid not calibrated")
+        # while True:
+        #     weight = await self._io.get_weight()
+        #     if abs(weight) > 5.0:
+        #         break
+        #     await asyncio.sleep(0.01)
+        #     print("waiting for weight")
 
-        # Set default dimensions or use measured ones
-        width = 50.0  # default width
-        height = 50.0  # default height
-        length = 50.0  # default length
+        print("storing")
+        # await asyncio.sleep(1)
 
-        measurement = await self._collect_iobox_measurement()
-        weight = measurement.weight
-        measured_dimensions = measurement.dimensions
+        # # Poll IOBox to refresh presence state before storing
+        # await self._io.detect_item_presence()
+
+        # # Validate state before storing
+        # self._state = RobotState(io=self._io._status, tool=self._tool._status)
+        # self._state_manager.update_state(self._state.tool, self._state.io)
+        # try:
+        #     self._state_manager.validate_operation('store')
+        # except RobotStateError as exc:
+        #     print("error")
+        #     return RobotCommandError(error=str(exc))
+
+        # if not self._grid:
+        #     print("no grid")
+        #     return RobotCommandError(error="Storage grid not calibrated")
+
+        measurement = await self.measure_item_dimensions()
+        weight = 0.0
+        measured_dimensions = measurement
         self._logger.debug(
             "Collected IOBox measurement",
             extra={
@@ -497,11 +521,14 @@ class Robot:
             }
         )
 
-        if measured_dimensions:
-            # Add safety margin to ensure item fits (10%)
-            width = measured_dimensions.width * 1.1
-            height = measured_dimensions.height * 1.1
-            length = measured_dimensions.length * 1.1
+        # print(measured_dimensions)
+        # print("beb")
+
+        # if measured_dimensions is not None:
+        # Add safety margin to ensure item fits (10%)
+        width = measured_dimensions.width * 1.1
+        height = (measured_dimensions.height) * 1.1
+        length = measured_dimensions.length * 1.1
 
         # Find a suitable empty location for the item
 
@@ -512,25 +539,26 @@ class Robot:
                 length=length
             ),
             weight=weight,
-            data={"name": item_name}  # Store item metadata
+            data={"upca": item_name}  # Store item metadata
         )
 
         print(measured_dimensions)
 
         location = self._grid.find_best_slot_for_item(item)
-        print(location)
 
         if not location:
-            print("couldn't store")
+            print("no location")
             return RobotCommandError(error="No suitable storage location found")
 
         # Get coordinate and store
+        # print(location)
         coord = self._grid.get_cell_coordinate(location)
-        await self.io_pick(coord.to_axis_coordinate())
+        # await self.io_pick(coord.to_axis_coordinate())
 
         # Update storage grid
-        self._grid.store_item(location, item)
-        self._grid.save()
+        # self._grid.store_item(location, item)
+        # self._grid.save()
+
 
 
     async def retrieve(self, item_name: str) -> None:
@@ -543,22 +571,26 @@ class Robot:
         Returns:
             RobotResponse indicating success or failure
         """
-        print("retrieving")
+        # Validate state before retrieval
+        self._state = RobotState(io=self._io._status, tool=self._tool._status)
+        self._state_manager.update_state(self._state.tool, self._state.io)
+        try:
+            self._state_manager.validate_operation('retrieve')
+        except RobotStateError as exc:
+            return RobotCommandError(error=str(exc))
+
         if not self._grid:
-            print("not init")
+            # print("not init")
             return RobotCommandError(error="Storage grid not initialized")
 
         # Find item location
-        print("bebdar")
         coord = await self._grid.find_item_location(item_name=item_name)
-        print(coord)
 
         if not coord:
-            print("couldn't find")
+            # print("couldn't find")
             return RobotCommandError(error=f"Item '{item_name}' not found in storage")
 
         # Retrieve item
-        # await self._tool.move(coord)
         await self.io_place(coord)
 
         # clear the item we just retrieved
@@ -593,32 +625,37 @@ class Robot:
         Raises:
             RobotStateError: If there is no item in the IOBox to measure
         """
-        # Validate state before operation -> change state on weight read
+        # # Validate state before operation -> change state on weight read
         # self._state_manager.update_state(self._state.tool, self._state.io)
         # self._state_manager.validate_operation('measure')
-        if not self._io or not self._io._cam:
-            raise RuntimeError("IOBox camera not configured")
+        # if not self._io or not self._io._cam:
+        #     raise RuntimeError("IOBox camera not configured")
 
         # Take measurement using AFSCam
         measure_result = await self._io.measure_item()
         # print(measure_result)
 
         if not measure_result["ok"]:
+            print("not ok")
             return None
 
         # Extract relevant measurements from aggregates
         agg = measure_result["aggregate"]
         if not agg:
+            print("no agg")
             return None
 
         # Prefer footprint measurements (from pinhole model) and fall back to scale data if needed.
         width = agg.get("footprint_major_mm_med") or agg.get("scale_major_mm_med")
         length = agg.get("footprint_minor_mm_med") or agg.get("scale_minor_mm_med")
-        height = 600 - agg.get("depth_mm_med")
+        height = 620 - agg.get("depth_mm_med")
 
         if width is None or height is None or length is None:
+            print("none")
             return None
+        
 
+        # print(f"{width}mm x {length}mm x {height}mm")
         return Dimensions(length=float(length), width=float(width), height=float(height))
 
     async def get_status(self) -> RobotStatus:
@@ -630,24 +667,11 @@ class Robot:
         return status
     
     async def test(self, coordinate) -> None:
+        # bebs = await self._tool.auto_cal()
+        # print(bebs)
+        # await self.print_random_barcode()
+        await self.store(item_name="beb")
 
-        # await self.ap.print_image("barcode.png")
-        # from hardware.printer import USBPrinter
-        # bp = USBPrinter(device="/dev/usb/lp0")
-        # try:
-            # bp.print_barcode()
-        # finally:
-        #     bp.close()
-        beb = await self.measure_item_dimensions()
-        print(beb)
-
-        # self._io._printer.print_text("hi beb")
-        # self._io._printer.print_raster()
-        # await self.io_place(AxisCoordinate(917, 381))
-        # await self.store(item_name="andi")
-        # await self.retrieve(item_name="andi")
-        # await self.auto_calibrate_storage()
-        # await self._tool.move(coordinate)
 
     async def handle_command(self, command: RobotCommands):
         if isinstance(command, StopCommand):

@@ -41,6 +41,10 @@ class ToolStatus:
     motion: ToolMotionStatus
     item: ToolItemStatus
 
+
+GANTRY_WAIT_TIMEOUT = MOTOR_WAIT_TIMEOUT * 2
+TOOL_WAIT_TIMEOUT = MOTOR_WAIT_TIMEOUT * 2
+
 class Tool:
     def __init__(self, motorcontroller: Controller, params: c.Parameters):
         self._motorcontroller = motorcontroller
@@ -61,6 +65,24 @@ class Tool:
         # LEDs
 
 ## MOTORS
+    def _has_cached_camera_calibration(self) -> bool:
+        """Return True when calibration data has been persisted in configuration."""
+        camera_cfg = self._params.poe_camera
+        required = (
+            camera_cfg.mtx,
+            camera_cfg.dist,
+            camera_cfg.H,
+            camera_cfg.H_ref_size,
+            camera_cfg.pattern_size,
+            camera_cfg.board_W_mm,
+            camera_cfg.board_H_mm,
+            camera_cfg.square_size_mm,
+        )
+        return (
+            getattr(camera_cfg, "calibration_status", None) == "calibrated"
+            and all(value is not None for value in required)
+        )
+
     async def configure(self):
         """
         Configure all motors and home the tool.
@@ -77,7 +99,8 @@ class Tool:
             await self._ms.configure()
             await self._mr.configure()
             await self.home()
-            # self._cam.get_correct()
+            if not self._has_cached_camera_calibration():
+                self._cam.get_correct()
             self._mstatus = ToolMotionStatus.IDLE
         except Exception as e:
             self._mstatus = ToolMotionStatus.ERROR
@@ -303,7 +326,11 @@ class Tool:
             self._mstatus = ToolMotionStatus.MOVING
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
             
-            await self._mr.move_to_position(0.5) # TODO pull param, give shelf side param
+            front_angle = await self.get_param("FRONT")
+            back_angle = await self.get_param("BACK")
+            target_angle = front_angle if coordinate.s == 0 else back_angle
+
+            await self._mr.move_to_position(target_angle)
             await self._gs.safe_open()
             await self.move(coordinate)
             await self.extend_empty()
@@ -332,7 +359,11 @@ class Tool:
             self._mstatus = ToolMotionStatus.MOVING
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
             
-            await self._mr.move_to_position(0.5)
+            front_angle = await self.get_param("FRONT")
+            back_angle = await self.get_param("BACK")
+            target_angle = front_angle if coordinate.s == 0 else back_angle
+
+            await self._mr.move_to_position(target_angle)
             await self.move(coordinate)
             await self.extend()
             await self._gs.close()
@@ -403,10 +434,11 @@ class Tool:
     ### CAMERA
 
     async def get_shelves(self):
+        await self._mr.move_to_position(0.5)
         shelves = []
         reg = FiducialRegistry()
-        await self.move(c.AxisCoordinate(self.get_param("SCAN_POSITION")[0], 
-                                         self.get_param("SCAN_POSITION")[1]))
+        s = await self.get_param("SCAN_POSITION")
+        await self.move(c.AxisCoordinate(s[0], s[1]))
         
         while True:
             frame = await self._cam.capture() # TODO error handling
@@ -439,8 +471,9 @@ class Tool:
 
     async def update_grid(self, shelves: List[float]):
         anchors = []
-        await self.move(c.AxisCoordinate(self.get_param("SCAN_POSITION")[0], 
-                                          self.get_param("SCAN_POSITION")[1]))
+        await self._mr.move_to_position(0.5)
+        s = await self.get_param("SCAN_POSITION")
+        await self.move(c.AxisCoordinate(s[0], s[1]))
         
         for s in shelves:
             await self._my.move_to_position(s)
@@ -474,5 +507,3 @@ class Tool:
         anchors = await self.update_grid(shelves)
         return shelves, anchors
         # todo eventually make this auto generate the slope of each shelf by having two scan positions in x
-GANTRY_WAIT_TIMEOUT = MOTOR_WAIT_TIMEOUT * 2
-TOOL_WAIT_TIMEOUT = MOTOR_WAIT_TIMEOUT * 2

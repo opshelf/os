@@ -2,7 +2,7 @@ import numpy as np
 import cv2
 import time
 from pathlib import Path
-from typing import Dict, Optional, Tuple, Any
+from typing import Dict, Optional, Tuple, Any, List
 import numpy.typing as npt
 
 from hardware import toolcam_helpers
@@ -58,6 +58,7 @@ class ToolCamera:
 
         # self.get_correct() #
 
+
     async def capture(self) -> npt.NDArray:
         """
         Capture a frame from the camera.
@@ -71,21 +72,13 @@ class ToolCamera:
             ImageError: If frame capture fails or returns invalid data
         """
         try:
-            cap = cv2.VideoCapture(self.url, cv2.CAP_FFMPEG)
+            cap = cv2.VideoCapture(self.url)
             if not cap.isOpened():
                 raise CameraConnectionError(
                     f"Failed to open camera at URL: {self.url}"
                 )
             
             try:
-                # Configure camera settings
-                if not cap.set(cv2.CAP_PROP_BUFFERSIZE, 1):
-                    raise CameraConfigError("Failed to set buffer size")
-                if not cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000):
-                    raise CameraConfigError("Failed to set open timeout")
-                if not cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000):
-                    raise CameraConfigError("Failed to set read timeout")
-
                 # Clear buffer
                 t0 = time.time()
                 while time.time() - t0 < 4.25:  # idr interval
@@ -235,23 +228,43 @@ class ToolCamera:
                     self.board_H_mm = (rows - 1) * self.square_size_mm
 
                     try:
-                        toolcam_helpers.persist_poe_camera_calibration(
-                            {
-                                "mtx": self.mtx,
-                                "dist": self.dist,
-                                "rvecs": self.rvecs,
-                                "tvecs": self.tvecs,
-                                "newcameramtx": self.newcameramtx,
-                                "roi": self.roi,
-                                "H": self.H,
-                                "map_size": self.map_size,
-                                "H_ref_size": self.H_ref_size,
-                                "board_W_mm": self.board_W_mm,
-                                "board_H_mm": self.board_H_mm,
-                                "pattern_size": self.pattern_size,
-                                "square_size_mm": self.square_size_mm,
-                            }
-                        )
+                        def _matrix_to_floats(mat: Any) -> Optional[List[List[float]]]:
+                            if mat is None:
+                                return None
+                            arr = np.asarray(mat, dtype=float)
+                            return [[float(v) for v in row] for row in arr]
+
+                        def _vector_to_floats(vec: Any) -> Optional[List[float]]:
+                            if vec is None:
+                                return None
+                            arr = np.asarray(vec, dtype=float).reshape(-1)
+                            return [float(v) for v in arr]
+
+                        def _maybe_ints(values: Any) -> Optional[List[int]]:
+                            if values is None:
+                                return None
+                            return [int(v) for v in values]
+
+                        calibration_payload = {
+                            "mtx": _matrix_to_floats(self.mtx),
+                            "dist": _vector_to_floats(self.dist),
+                            "rvecs": [
+                                _vector_to_floats(rvec) for rvec in self.rvecs
+                            ] if self.rvecs is not None else None,
+                            "tvecs": [
+                                _vector_to_floats(tvec) for tvec in self.tvecs
+                            ] if self.tvecs is not None else None,
+                            "newcameramtx": _matrix_to_floats(self.newcameramtx),
+                            "roi": _maybe_ints(self.roi),
+                            "H": _matrix_to_floats(self.H),
+                            "map_size": _maybe_ints(self.map_size),
+                            "H_ref_size": _maybe_ints(self.H_ref_size),
+                            "board_W_mm": float(self.board_W_mm) if self.board_W_mm is not None else None,
+                            "board_H_mm": float(self.board_H_mm) if self.board_H_mm is not None else None,
+                            "pattern_size": _maybe_ints(self.pattern_size),
+                            "square_size_mm": float(self.square_size_mm),
+                        }
+                        toolcam_helpers.persist_poe_camera_calibration(calibration_payload)
                     except Exception as e:
                         raise CalibrationError(
                             f"Failed to persist calibration data: {str(e)}"

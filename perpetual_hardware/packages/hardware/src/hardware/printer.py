@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import argparse, os, sys, errno
-from typing import Optional
+import argparse, os, sys, errno, random
+from typing import Optional, List
 
 ESC = b"\x1b"
 GS  = b"\x1d"
@@ -21,6 +21,19 @@ SYMS = {
     "CODE128":73,
     "UCC/EAN128":74, "GS1-128":74, "EAN128":74,
 }
+
+def _calculate_upc_check_digit(digits: List[str]) -> int:
+    odd_sum = sum(int(digits[i]) for i in range(0, 11, 2))
+    even_sum = sum(int(digits[i]) for i in range(1, 11, 2))
+    total = odd_sum * 3 + even_sum
+    return (10 - (total % 10)) % 10
+
+
+def generate_random_upca() -> str:
+    digits = [str(random.randint(0, 9)) for _ in range(11)]
+    check_digit = _calculate_upc_check_digit(digits)
+    return "".join(digits) + str(check_digit)
+
 
 class USBPrinter:
     """
@@ -130,34 +143,23 @@ class USBPrinter:
         if feed_after > 0:
             self._write_all(b"\n" * feed_after)
 
-# ---------- CLI wrapper ----------
-def main():
-    ap = argparse.ArgumentParser(description="Print a 1D barcode on an ESC/POS USB printer")
-    ap.add_argument("--device", default="/dev/usb/lp0")
-    ap.add_argument("--sym", default="CODE128",
-                    help="CODE128, CODE39, EAN13, EAN8, ITF, etc.")
-    ap.add_argument("--payload", default="beblet", help="ASCII barcode data")
-    ap.add_argument("--height", type=int, default=96, help="1..255 dots")
-    ap.add_argument("--width", type=int, default=3, help="module width 1..6 dots")
-    ap.add_argument("--hri", choices=["none","above","below","both"], default="none")
-    ap.add_argument("--raw", action="store_true", help="Do not add {B for CODE128")
-    ap.add_argument("--feed", type=int, default=2, help="line feeds after print")
-    args = ap.parse_args()
-
-    try:
-        with USBPrinter(args.device) as p:
-            p.print_barcode(
-                args.sym,
-                args.payload,
-                height=args.height,
-                width=args.width,
-                hri=args.hri,
-                raw=args.raw,
-                feed_after=args.feed,
-            )
-    except Exception as e:
-        print(f"ERROR: {e}", file=sys.stderr)
-        sys.exit(2)
-
-if __name__ == "__main__":
-    main()
+    def print_random_upca(
+        self,
+        *,
+        height: int = 96,
+        width: int = 3,
+        hri: str = "none",
+        feed_after: int = 2,
+    ) -> str:
+        """Generate a random UPC-A code and print it."""
+        upca = generate_random_upca()
+        print(upca)
+        self.print_barcode(
+            sym="UPC-A",
+            payload=upca,
+            height=height,
+            width=width,
+            hri=hri,
+            feed_after=feed_after,
+        )
+        return upca
