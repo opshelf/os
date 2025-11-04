@@ -10,6 +10,7 @@ from pydantic import (
     ValidationError,
     RootModel,
     field_validator,
+    model_validator,
 )
 
 C = TypeVar("C")
@@ -41,12 +42,28 @@ class RobotNatsConfiguration(BaseModel):
 class AxisCoordinate:
     x: float
     y: float
+    s: int = 0  # 0 -> left module, 1 -> right module
+
+    def __post_init__(self) -> None:
+        if self.s not in (0, 1):
+            raise ValueError("AxisCoordinate.s must be 0 (left) or 1 (right)")
+
+    def _assert_same_side(self, other: "AxisCoordinate", op: str) -> None:
+        if not isinstance(other, AxisCoordinate):
+            raise TypeError(f"Cannot {op} AxisCoordinate with {type(other)!r}")
+        if self.s != other.s:
+            raise ValueError(
+                f"Cannot {op} AxisCoordinate instances from different sides "
+                f"(self={self.s}, other={other.s})"
+            )
 
     def __add__(self, other: "AxisCoordinate") -> "AxisCoordinate":
-        return AxisCoordinate(x=self.x + other.x, y=self.y + other.y)
+        self._assert_same_side(other, "add")
+        return AxisCoordinate(x=self.x + other.x, y=self.y + other.y, s=self.s)
 
     def __sub__(self, other: "AxisCoordinate") -> "AxisCoordinate":
-        return AxisCoordinate(x=self.x - other.x, y=self.y - other.y)
+        self._assert_same_side(other, "subtract")
+        return AxisCoordinate(x=self.x - other.x, y=self.y - other.y, s=self.s)
 
 
 @dataclass
@@ -67,10 +84,10 @@ class ToolCoordinate:
 TwoInt = Tuple[int, int]
 TwoFloat = Tuple[float, float]
 
-def _nonneg(v: Union[int, float], name: str) -> Union[int, float]:
-    if v < 0:
-        raise ValueError(f"{name} must be >= 0")
-    return v
+# def _nonneg(v: Union[int, float], name: str) -> Union[int, float]:
+#     if v < 0:
+#         raise ValueError(f"{name} must be >= 0")
+#     return v
 
 def _positive(v: Union[int, float], name: str) -> Union[int, float]:
     if v <= 0:
@@ -185,7 +202,7 @@ class TofCamera(BaseModel):
     resolution: TwoInt
     fps: int = Field(..., gt=0)
     max_distance_mm: int = Field(..., gt=0)
-    confidence_min: int = Field(..., ge=0)
+    confidence_min: float = Field(..., ge=0)
     depth_unit: Literal["mm"] = "mm"
     calibration_status: Literal["uncalibrated", "calibrated"] = "uncalibrated"
 
@@ -261,11 +278,43 @@ class IOBlock(BaseModel):
     tof_camera: TofCamera
 
 
+class GridConfig(BaseModel):
+    path: str = Field(..., min_length=1)
+    cell_spacing_per_shelf: Optional[Union[float, List[Union[int, float]]]] = None
+    cells_per_shelf: Optional[Union[int, List[int], List[List[int]], Dict[str, List[int]]]] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_legacy(cls, value):
+        if isinstance(value, str):
+            return {"path": value}
+        if isinstance(value, dict):
+            coerced = value.copy()
+            if "storage" in coerced and "path" not in coerced:
+                coerced["path"] = coerced.pop("storage")
+            if "file" in coerced and "path" not in coerced:
+                coerced["path"] = coerced.pop("file")
+            return coerced
+        return value
+
+    def get_param(self, key: str) -> Any:
+        alias_map = {
+            "CELL_SPACINGS": "cell_spacing_per_shelf",
+            "CELLS_PER_SHELF": "cells_per_shelf",
+        }
+        target = alias_map.get(key, key)
+        if hasattr(self, target):
+            return getattr(self, target)
+        raise KeyError(f"Grid parameter '{key}' not found")
+
+
 class Robot(BaseModel):
     tool: Tool
-    grid: str # path to storage grid (JSON)
+    grid: GridConfig
     io: IOBlock
     bus: Optional[RobotBus] = None
+    store_detection_window_s: float = Field(1.0, ge=0)
+    store_detection_attempts: int = Field(1, ge=1)
 
 
 class RootConfig(BaseModel):
@@ -321,7 +370,7 @@ class RootConfig(BaseModel):
 
     # grid
     def get_grid(self) -> Dict[str, Any]:
-        return self.robot.grid
+        return self.robot.grid.model_dump()
 
     # generic dotted path
     def get(self, dotted_path: str, default: Any = ... ) -> Any:

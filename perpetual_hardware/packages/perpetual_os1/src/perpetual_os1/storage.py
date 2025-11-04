@@ -17,13 +17,15 @@ class CalibrationCoordinate(AxisCoordinate):
     z: float
 
     def __add__(self, rhs: "CalibrationCoordinate") -> "CalibrationCoordinate":  # type: ignore[override]
-        return CalibrationCoordinate(x=self.x + rhs.x, y=self.y + rhs.y, z=self.z + rhs.z)
+        self._assert_same_side(rhs, "add")
+        return CalibrationCoordinate(x=self.x + rhs.x, y=self.y + rhs.y, z=self.z + rhs.z, s=self.s)
 
     def __sub__(self, rhs: "CalibrationCoordinate") -> "CalibrationCoordinate":  # type: ignore[override]
-        return CalibrationCoordinate(x=self.x - rhs.x, y=self.y - rhs.y, z=self.z - rhs.z)
+        self._assert_same_side(rhs, "subtract")
+        return CalibrationCoordinate(x=self.x - rhs.x, y=self.y - rhs.y, z=self.z - rhs.z, s=self.s)
 
     def to_axis_coordinate(self) -> AxisCoordinate:
-        return AxisCoordinate(x=self.x, y=self.y)
+        return AxisCoordinate(x=self.x, y=self.y, s=self.s)
 
 
 class Dimensions(BaseModel):

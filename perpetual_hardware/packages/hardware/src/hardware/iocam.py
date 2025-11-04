@@ -8,11 +8,6 @@ from pathlib import Path
 import subprocess
 import re
 
-INNOMAKER_PRODUCT = "Innomaker-U20CAM-1080p-S1"
-INNOMAKER_MANUFACTURER = "Innomaker"     # optional guard
-INNOMAKER_SERIAL = "SN0001"              # optional guard; set to None to ignore
-
-
 from hardware import iocam_helpers as ih
 from hardware.exceptions import (
     CameraError, CameraConnectionError, CameraConfigError,
@@ -48,6 +43,8 @@ def _find_innomaker_device() -> int:
         raise RuntimeError(f"Failed to detect Innomaker camera: {e}")
 
 # ============================ Async Sizer Class ============================
+
+Z_MAX = 620
 
 class AFSCam:
     """
@@ -111,7 +108,7 @@ class AFSCam:
             self._tof = ac.ArducamCamera()
             port_used = self._open_tof(self._tof, self.preferred_tof_port)
             if port_used < 0:
-                print("bad port")
+                # print("bad port")
                 raise TOFError(f"Failed to open TOF on port {self.preferred_tof_port}")
                 
             if self._tof.start(ac.FrameType.DEPTH) != 0:
@@ -122,17 +119,15 @@ class AFSCam:
             try:
                 self._tof.setControl(ac.Control.RANGE, self.max_distance_mm)
             except Exception as e:
-                print("bad range")
+                # print("bad range")
                 raise TOFConfigError(
                     f"Failed to set TOF range to {self.max_distance_mm}mm: {str(e)}"
                 ) from e
-
+            
             # Get initial frame to verify operation
             fr = self._tof.requestFrame(2000)
             if fr is None:
                 raise TOFDataError("Failed to get initial TOF frame")
-            
-            # cv2.imwrite("tof.png", fr)
 
             if not isinstance(fr, ac.DepthData):
                 self._tof.releaseFrame(fr)
@@ -175,19 +170,8 @@ class AFSCam:
 
             # Get initial frame and compute FOV parameters
             ok, frame0 = self._usb.read()
-            # print(ok)
-            # print(frame0)
             if not ok or frame0 is None:
                 raise CameraError("Failed to capture initial frame")
-
-            if self._fx_cache is None or self._fy_cache is None:
-                h0, w0 = frame0.shape[:2]
-                if h0 <= 0 or w0 <= 0:
-                    raise ValueError(f"Invalid frame dimensions: {w0}x{h0}")
-
-                fx, fy = ih.compute_fx_fy_from_fov(w0, h0, self.hfov_deg, self.vfov_deg)
-                self._fx_cache = self._fx_cache or fx
-                self._fy_cache = self._fy_cache or fy
 
         except Exception as e:
             self._cleanup_usb()
@@ -287,7 +271,7 @@ class AFSCam:
 
     def measure_sync(
         self,
-        n_frames: int = 60,
+        n_frames: int = 15,
         timeout_s: float = 2.0,
         display: bool = False,
         window_name: str = "usb_sizing",
@@ -338,44 +322,6 @@ class AFSCam:
                         show_fn("USB read failed", window_name)
                 return {"ok": False, "reason": "usb_read_failed"}
 
-            # --------- One-time px/mm + optional FOV caches ----------
-            if self._px_per_mm is None:
-                gray0 = cv2.cvtColor(frames[0], cv2.COLOR_BGR2GRAY)
-                det = ih.detect_checkerboard_scale_detailed(gray0, self.square_mm)
-                if det is None:
-                    raise ImageProcessingError("Failed to detect checkerboard scale")
-
-                try:
-                    self._px_per_mm = float(det["px_per_mm"])
-                except (KeyError, TypeError, ValueError):
-                    self._px_per_mm = None
-
-                px_h = det.get("px_per_mm_h") if isinstance(det, dict) else None
-                px_v = det.get("px_per_mm_v") if isinstance(det, dict) else None
-                if self._px_per_mm is not None:
-                    self._px_per_mm_xy = (
-                        float(px_h) if px_h is not None else float(self._px_per_mm),
-                        float(px_v) if px_v is not None else float(self._px_per_mm),
-                    )
-
-                if (self._fx_cache is None or self._fy_cache is None) and self._depth is not None:
-                    try:
-                        cal = self._calibrate_fov_from_checkerboard(det, gray0.shape)
-                        if cal is not None:
-                            fx_est, fy_est, hfov_est, vfov_est = cal
-                            self._fx_cache = self._fx_cache or fx_est
-                            self._fy_cache = self._fy_cache or fy_est
-                            self._hfov_cal, self._vfov_cal = hfov_est, vfov_est
-                    except Exception as e:
-                        raise ImageProcessingError(
-                            f"FOV calibration failed: {str(e)}"
-                        ) from e
-
-                if self._px_per_mm is None:
-                    self._px_per_mm = 1.7  # fallback value
-                if self._px_per_mm_xy is None and self._px_per_mm is not None:
-                    self._px_per_mm_xy = (float(self._px_per_mm), float(self._px_per_mm))
-
             per_frame: List[Dict[str, Any]] = []
             last_draw: Optional[np.ndarray] = None
 
@@ -412,7 +358,6 @@ class AFSCam:
                         continue
 
                     w_px, h_px, box, (cx, cy) = ih.measure_contour_px(ih.sanitize_contour(contour))
-                    _, _, span = ih.measure_contour_px_span(contour)  # internal diameter
 
                     box_i = np.asarray(box, dtype=int)
                     cv2.drawContours(draw, [box_i], 0, (0, 0, 255), 2)
@@ -450,10 +395,12 @@ class AFSCam:
                     # --------- Depth sampling + overlay + footprint ----------
                     try:
                         # Depth sampling (keep your original averaging + bias)
-                        values = [self._sample_depth_at_usb_point((cx, cy), gray.shape) for _ in range(10)]
+                        values = [self._sample_depth_at_usb_point_shift_depth_dependent((cx, cy), gray.shape) for _ in range(10)]
+                        # print(values)
                         z_mm = (sum(values) / len(values) if values else None)
                         if z_mm is not None:
-                            z_mm = z_mm + 50  # keep your bias if desired
+                            z_mm = z_mm-55  # keep your bias if desired
+                            # print(z_mm)
 
                         # ---- Draw depth sampling location (projected to USB frame) ----
                         H_u, W_u = gray.shape[:2]
@@ -536,7 +483,7 @@ class AFSCam:
                     ]
                     if footprint is not None and z_mm is not None:
                         dim_lines.append(
-                            f"Footprint: {footprint[0]:.1f}mm x {footprint[1]:.1f}mm @ z={z_mm:.1f}mm"
+                            f"Footprint: {footprint[0]:.1f}mm x {footprint[1]:.1f}mm @ depth={z_mm:.1f}mm"
                         )
 
                     text_y = draw.shape[0] - 10
@@ -698,19 +645,6 @@ class AFSCam:
                         float(px_v) if px_v is not None else float(self._px_per_mm),
                     )
 
-                if (self._fx_cache is None or self._fy_cache is None) and self._depth is not None:
-                    try:
-                        cal = self._calibrate_fov_from_checkerboard(det, gray0.shape)
-                        if cal is not None:
-                            fx_est, fy_est, hfov_est, vfov_est = cal
-                            self._fx_cache = self._fx_cache or fx_est
-                            self._fy_cache = self._fy_cache or fy_est
-                            self._hfov_cal, self._vfov_cal = hfov_est, vfov_est
-                    except Exception as e:
-                        raise ImageProcessingError(
-                            f"FOV calibration failed: {str(e)}"
-                        ) from e
-
                 if self._px_per_mm is None:
                     self._px_per_mm = 1.7  # fallback value
                 if self._px_per_mm_xy is None and self._px_per_mm is not None:
@@ -752,8 +686,6 @@ class AFSCam:
                         continue
 
                     w_px, h_px, box, (cx, cy) = ih.measure_contour_px(ih.sanitize_contour(contour))
-                    _, _, span = ih.measure_contour_px_span(contour)  # internal diameter
-
                     box_i = np.asarray(box, dtype=int)
                     cv2.drawContours(draw, [box_i], 0, (0, 0, 255), 2)
 
@@ -789,12 +721,12 @@ class AFSCam:
 
                     # --------- Depth sampling + overlay + footprint ----------
                     try:
-                        # Depth sampling (keep your original averaging + bias)
-                        values = [self._sample_depth_at_usb_point((cx, cy), gray.shape) for _ in range(10)]
+                        values = [self._sample_depth_at_usb_point_shift_depth_dependent((cx, cy), gray.shape) for _ in range(10)]
+                        # print(values)
                         z_mm = (sum(values) / len(values) if values else None)
                         if z_mm is not None:
-                            z_mm = z_mm - 35  # keep your bias if desired
-                            print(z_mm)
+                            z_mm = z_mm-55  # keep your bias if desired
+                            # print(z_mm)
 
                         # ---- Draw depth sampling location (projected to USB frame) ----
                         H_u, W_u = gray.shape[:2]
@@ -959,45 +891,6 @@ class AFSCam:
             if not isinstance(e, (ImageError, ImageProcessingError)):
                 raise ImageProcessingError(f"Measurement failed: {str(e)}") from e
             raise
-
-
-
-    def _resolve_px_per_mm(
-        self,
-        override: Optional[Union[float, Tuple[float, float]]]
-    ) -> Tuple[float, float]:
-        """
-        Determine the px/mm scale to use for width (x) and height (y).
-        """
-        px_x: Optional[float]
-        px_y: Optional[float]
-
-        if override is not None:
-            if isinstance(override, (tuple, list)):
-                if len(override) != 2:
-                    raise ValueError("px_per_mm must be a tuple/list of two values (x, y)")
-                px_x, px_y = float(override[0]), float(override[1])
-            else:
-                value = float(override)
-                px_x = px_y = value
-        elif self._px_per_mm_xy is not None:
-            px_x, px_y = float(self._px_per_mm_xy[0]), float(self._px_per_mm_xy[1])
-        elif self._px_per_mm is not None:
-            value = float(self._px_per_mm)
-            px_x = px_y = value
-        else:
-            raise ValueError(
-                "Pixel-per-mm calibration unavailable; provide px_per_mm or run calibration"
-            )
-
-        if px_x is None or px_y is None or px_x <= 0.0 or px_y <= 0.0:
-            raise ValueError("px_per_mm components must be positive numbers")
-
-        if override is None and self._px_per_mm_xy is None:
-            self._px_per_mm_xy = (px_x, px_y)
-
-        return px_x, px_y
-
     
 
     # -------------------- Internals --------------------
@@ -1019,33 +912,11 @@ class AFSCam:
         self._conf = conf.copy()
         self._depth_h, self._depth_w = self._depth.shape[:2]
 
-    def get_min_depth_mm(self, reference_depth: np.ndarray) -> Optional[float]:
-        """
-        Return the maximum absolute depth delta (mm) between the latest TOF frame and a
-        reference depth image.
-        """
-        if self._depth is None or reference_depth is None:
-            return None
-        if reference_depth.shape != self._depth.shape:
-            raise ValueError("reference_depth must match the depth frame shape")
-
-        curr_valid = (self._depth > 0) & (self._depth <= self.max_distance_mm)
-        ref_valid = (reference_depth > 0) & (reference_depth <= self.max_distance_mm)
-        valid = curr_valid & ref_valid
-        if not np.any(valid):
-            return None
-
-        delta = np.abs(self._depth[valid] - reference_depth[valid])
-        if delta.size == 0:
-            return None
-        return float(delta.min())
-
     async def _tof_loop(self) -> None:
         assert self._tof is not None
         try:
             while not self._stop_evt.is_set():
                 fr = self._tof.requestFrame(200)
-                # cv2.imwrite("tof.png", fr)
                 if fr is not None and isinstance(fr, ac.DepthData):
                     self._update_depth_buffers(fr.depth_data, fr.confidence_data)
                     self._tof.releaseFrame(fr)
@@ -1073,37 +944,12 @@ class AFSCam:
                 pass
             self._usb = None
 
-    def _sample_depth_at_usb_point(self, u_xy: Tuple[int, int], usb_shape: Tuple[int, int], win_radius: int = 3) -> Optional[float]:
-        if self._depth is None or self._conf is None:
-            return None
-        usb_h, usb_w = usb_shape
-        x_u, y_u = u_xy
-        sx = self._depth_w / float(usb_w)
-        sy = self._depth_h / float(usb_h)
-        x_d = int(round(x_u * sx))
-        y_d = int(round(y_u * sy))
-
-        x0 = max(0, x_d - win_radius)
-        x1 = min(self._depth_w, x_d + win_radius + 1)
-        y0 = max(0, y_d - win_radius)
-        y1 = min(self._depth_h, y_d + win_radius + 1)
-        if x0 >= x1 or y0 >= y1:
-            return None
-
-        depth_win = self._depth[y0:y1, x0:x1]
-        conf_win  = self._conf[y0:y1, x0:x1]
-        valid = (conf_win >= self.confidence_min) & (depth_win > 0) & (depth_win < self.max_distance_mm)
-        if not np.any(valid):
-            return None
-        return float(np.mean(depth_win[valid]))
-    
-
     def _sample_depth_at_usb_point_shift_depth_dependent(
         self,
         u_xy: Tuple[int, int],
         usb_shape: Tuple[int, int],
         *,
-        win_radius: int = 3,
+        win_radius: int = 5,
         # Stereo geometry
         fy_depth_px: float = 214.0,  # focal length (pixels) of the DEPTH camera
         baseline_mm: float = 50.0,   # camera center-to-center baseline in mm
@@ -1129,7 +975,7 @@ class AFSCam:
         x_center = x_u * sx
         y_center = y_u * sy
 
-        # Helper to sample a window around (xc, yc) and return mean valid depth
+        # Helper to sample a window around (xc, yc) and return median valid depth
         def sample_depth_at(xc: float, yc: float) -> Optional[float]:
             x_d = int(round(xc))
             y_d = int(round(yc))
@@ -1145,11 +991,11 @@ class AFSCam:
             valid = (
                 (conf_win >= self.confidence_min)
                 & (depth_win > 0)
-                & (depth_win < self.max_distance_mm)
+                & (depth_win <= Z_MAX)
             )
             if not np.any(valid):
                 return None
-            return float(np.mean(depth_win[valid]))
+            return float(np.median(depth_win[valid]))
 
         Z_mm: Optional[float] = None
         xc, yc = x_center, y_center
@@ -1180,25 +1026,3 @@ class AFSCam:
             yc = y_center + shift_y
 
         return Z_mm
-
-
-    def _calibrate_fov_from_checkerboard(self, det: dict, usb_shape: Tuple[int, int]) -> Optional[Tuple[float, float, float, float]]:
-        if self._depth is None or self._conf is None:
-            return None
-        center_xy = det["center_xy"]
-        z_mm = self._sample_depth_at_usb_point(center_xy, usb_shape=usb_shape)
-        if z_mm is None or z_mm <= 0:
-            return None
-
-        px_per_mm_h = float(det["px_per_mm_h"])
-        px_per_mm_v = float(det["px_per_mm_v"])
-        spacing_h_px = px_per_mm_h * self.square_mm
-        spacing_v_px = px_per_mm_v * self.square_mm
-
-        fx = (spacing_h_px * z_mm) / self.square_mm
-        fy = (spacing_v_px * z_mm) / self.square_mm
-
-        H, W = usb_shape[:2]
-        hfov = 2.0 * np.degrees(np.arctan((W / 2.0) / fx))
-        vfov = 2.0 * np.degrees(np.arctan((H / 2.0) / fy))
-        return float(fx), float(fy), float(hfov), float(vfov)
