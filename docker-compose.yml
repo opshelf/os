@@ -18,10 +18,9 @@ services:
     build:
       context: .
       dockerfile: ./Dockerfile
+    network_mode: "host"
     volumes:
       - ./perpetual_hardware/:/app/perpetual_hardware/
-    ports:
-      - "8000:8000"
     depends_on:
       - nats
     environment:
@@ -30,15 +29,13 @@ services:
       - PERPETUAL_BARCODE_BAUDRATE=115200
       - JWT_SECRET=${JWT_SECRET:-INSECURE_JWT_SECRET}
       - AUDIT_HMAC_KEY=${AUDIT_HMAC_KEY:-INSECURE_AUDIT_HMAC_KEY}
-      - NATS_DOMAIN=nats
+      - NATS_DOMAIN=localhost
     healthcheck:
       test: ["CMD", "curl", "-fsS", "--max-time", "5", "http://localhost:8000/api/health"]
       interval: 15s
       timeout: 5s
       retries: 2
       start_period: 20s
-    networks:
-      - openshelf-network
     restart: unless-stopped
 
   dev_ui:

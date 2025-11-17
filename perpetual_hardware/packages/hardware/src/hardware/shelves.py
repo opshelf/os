@@ -1,26 +1,30 @@
-# s1 = [(910.44, 21.048), (745.44, 21.048), (580.44, 21.048), (415.44000000000005, 21.048), (250.44000000000005, 21.048), (85.44000000000005, 21.048)]
-# s2 = [(912.344, 372.04), (807.344, 372.04), (702.344, 372.04), (597.344, 372.04), (492.34400000000005, 372.04), (387.34400000000000005, 372.04), (282.34400000000005, 372.04)]
-# s3 = [(913.008, 575.44), (808.008, 575.44), (703.008, 575.44), (598.008, 575.44), (493.00800000000004, 575.44), (388.00800000000004, 575.44), (283.00800000000004, 575.44)]
-# s4 = [(921.272, 776.84), (831.272, 776.84), (741.272, 776.84), (651.272, 776.84), (561.272, 776.84), (471.27200000000005, 776.84), (381.27200000000005, 776.84), (291.27200000000005, 776.84)]
-# s5 = [(921.68, 927.24), (831.68, 927.24), (741.68, 927.24), (651.68, 927.24), (561.68, 927.24), (471.67999999999995, 927.24), (381.67999999999995, 927.24), (291.67999999999995, 927.24)]
+"""Shelf coordinate definitions."""
 
-# # Simple linspace implementation (inclusive)
-# def linspace(start, stop, num):
-# 	if num == 1:
-# 		return [start]
-# 	step = (stop - start) / (num - 1)
-# 	return [start + i * step for i in range(num)]
+from __future__ import annotations
 
-# sl1 = linspace(17, 21.5, 6)
-# sl2 = linspace(10, 12.75, 7)
-# sl3 = linspace(11.5, 14.25, 7)
-# sl4 = linspace(10, 12.25, 8)
-# sl5 = linspace(10, 13.5, 8)
+from typing import List, Tuple
 
-# p1 = [(x + 4, y + dy) for (x, y), dy in zip(s1, sl1)]
-# p2 = [(x + 4, y + dy) for (x, y), dy in zip(s2, sl2)]
-# p3 = [(x + 4, y + dy) for (x, y), dy in zip(s3, sl3)]
-# p4 = [(x + 4, y + dy) for (x, y), dy in zip(s4, sl4)]
-# p5 = [(x + 4, y + dy) for (x, y), dy in zip(s5, sl5)]
 
-# print(p2)
+sl: Tuple[List[float], List[float]] = (
+    [900.664, 909.304, 910.88, 903.264, 900.944, 888.888],
+    [157.704, 381.204, 611.28, 808.724, 957.952, 1108.724],
+)
+
+sr: Tuple[List[float], List[float]] = (
+    [874.856, 877.008, 875.968, 846.416, 846.184],
+    [59.992, 411.124, 709.3, 1007.82, 1207.96],
+)
+
+
+def pair_coordinates(raw_coordinates: Tuple[List[float], List[float]]) -> List[Tuple[float, float]]:
+    """Convert two parallel lists of coordinates into (x, y) tuples."""
+
+    x_values, y_values = raw_coordinates
+    return list(zip(x_values, y_values))
+
+
+sl_pairs: List[Tuple[float, float]] = list((pair_coordinates(sl)))
+sr_pairs: List[Tuple[float, float]] = list((pair_coordinates(sr)))
+
+print(sl_pairs)
+print(sr_pairs)

@@ -188,10 +188,11 @@ class IOBox:
         """
         try:
             weight = await self.get_weight()
+            weight = 10.0
             measurement = await self.measure_item()
 
             if measurement is not None and abs(weight) > 5.0:
-                print(measurement)
+                # print(measurement)
                 self._status = IOBoxStatus.READY
             else:
                 self._status = IOBoxStatus.IDLE

@@ -1,0 +1,1316 @@
+{
+  "left_module": [
+    {
+      "shelf_height": 500.0,
+      "shelf_width": 500.0,
+      "cells": [
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 907.164,
+            "y": 156.704,
+            "z": 0.0,
+            "s": 0
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 802.164,
+            "y": 156.704,
+            "z": 0.0,
+            "s": 0
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 697.164,
+            "y": 156.704,
+            "z": 0.0,
+            "s": 0
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 592.164,
+            "y": 156.704,
+            "z": 0.0,
+            "s": 0
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 487.164,
+            "y": 156.704,
+            "z": 0.0,
+            "s": 0
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 382.164,
+            "y": 156.704,
+            "z": 0.0,
+            "s": 0
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 277.164,
+            "y": 156.704,
+            "z": 0.0,
+            "s": 0
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 172.164,
+            "y": 156.704,
+            "z": 0.0,
+            "s": 0
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 67.16399999999999,
+            "y": 156.704,
+            "z": 0.0,
+            "s": 0
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        }
+      ],
+      "divider_width": 8.0
+    },
+    {
+      "shelf_height": 500.0,
+      "shelf_width": 500.0,
+      "cells": [
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 915.804,
+            "y": 380.204,
+            "z": 0.0,
+            "s": 0
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 810.804,
+            "y": 380.204,
+            "z": 0.0,
+            "s": 0
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 705.804,
+            "y": 380.204,
+            "z": 0.0,
+            "s": 0
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 600.804,
+            "y": 380.204,
+            "z": 0.0,
+            "s": 0
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 495.804,
+            "y": 380.204,
+            "z": 0.0,
+            "s": 0
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 390.804,
+            "y": 380.204,
+            "z": 0.0,
+            "s": 0
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 285.804,
+            "y": 380.204,
+            "z": 0.0,
+            "s": 0
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        }
+      ],
+      "divider_width": 8.0
+    },
+    {
+      "shelf_height": 500.0,
+      "shelf_width": 500.0,
+      "cells": [
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 917.38,
+            "y": 610.28,
+            "z": 0.0,
+            "s": 0
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 812.38,
+            "y": 610.28,
+            "z": 0.0,
+            "s": 0
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 707.38,
+            "y": 610.28,
+            "z": 0.0,
+            "s": 0
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 602.38,
+            "y": 610.28,
+            "z": 0.0,
+            "s": 0
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 497.38,
+            "y": 610.28,
+            "z": 0.0,
+            "s": 0
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 392.38,
+            "y": 610.28,
+            "z": 0.0,
+            "s": 0
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 287.38,
+            "y": 610.28,
+            "z": 0.0,
+            "s": 0
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        }
+      ],
+      "divider_width": 8.0
+    },
+    {
+      "shelf_height": 500.0,
+      "shelf_width": 500.0,
+      "cells": [
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 909.764,
+            "y": 807.72,
+            "z": 0.0,
+            "s": 0
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 819.764,
+            "y": 807.72,
+            "z": 0.0,
+            "s": 0
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 729.764,
+            "y": 807.72,
+            "z": 0.0,
+            "s": 0
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 639.764,
+            "y": 807.72,
+            "z": 0.0,
+            "s": 0
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 549.764,
+            "y": 807.72,
+            "z": 0.0,
+            "s": 0
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 459.764,
+            "y": 807.72,
+            "z": 0.0,
+            "s": 0
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 369.764,
+            "y": 807.72,
+            "z": 0.0,
+            "s": 0
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 279.764,
+            "y": 807.72,
+            "z": 0.0,
+            "s": 0
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        }
+      ],
+      "divider_width": 8.0
+    },
+    {
+      "shelf_height": 500.0,
+      "shelf_width": 500.0,
+      "cells": [
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 907.444,
+            "y": 956.952,
+            "z": 0.0,
+            "s": 0
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 817.444,
+            "y": 956.952,
+            "z": 0.0,
+            "s": 0
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 727.444,
+            "y": 956.952,
+            "z": 0.0,
+            "s": 0
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 637.444,
+            "y": 956.952,
+            "z": 0.0,
+            "s": 0
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 547.444,
+            "y": 956.952,
+            "z": 0.0,
+            "s": 0
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 457.44399999999996,
+            "y": 956.952,
+            "z": 0.0,
+            "s": 0
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 367.44399999999996,
+            "y": 956.952,
+            "z": 0.0,
+            "s": 0
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 277.44399999999996,
+            "y": 956.952,
+            "z": 0.0,
+            "s": 0
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        }
+      ],
+      "divider_width": 8.0
+    },
+    {
+      "shelf_height": 500.0,
+      "shelf_width": 500.0,
+      "cells": [
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 895.388,
+            "y": 1107.724,
+            "z": 0.0,
+            "s": 0
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 775.388,
+            "y": 1107.724,
+            "z": 0.0,
+            "s": 0
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 655.388,
+            "y": 1107.724,
+            "z": 0.0,
+            "s": 0
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 535.388,
+            "y": 1107.724,
+            "z": 0.0,
+            "s": 0
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 415.38800000000003,
+            "y": 1107.724,
+            "z": 0.0,
+            "s": 0
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 295.38800000000003,
+            "y": 1107.724,
+            "z": 0.0,
+            "s": 0
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        }
+      ],
+      "divider_width": 8.0
+    }
+  ],
+  "right_module": [
+    {
+      "shelf_height": 500.0,
+      "shelf_width": 500.0,
+      "cells": [
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 866.856,
+            "y": 58.992,
+            "z": 0.0,
+            "s": 1
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 701.856,
+            "y": 58.992,
+            "z": 0.6,
+            "s": 1
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 536.856,
+            "y": 58.992,
+            "z": 1.2,
+            "s": 1
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 371.856,
+            "y": 58.992,
+            "z": 1.7999999999999998,
+            "s": 1
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 206.856,
+            "y": 58.992,
+            "z": 2.4,
+            "s": 1
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 41.855999999999995,
+            "y": 58.992,
+            "z": 3.0,
+            "s": 1
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        }
+      ],
+      "divider_width": 8.0
+    },
+    {
+      "shelf_height": 500.0,
+      "shelf_width": 500.0,
+      "cells": [
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 869.008,
+            "y": 410.124,
+            "z": 0.0,
+            "s": 1
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 704.008,
+            "y": 410.124,
+            "z": 0.6,
+            "s": 1
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 539.008,
+            "y": 410.124,
+            "z": 1.2,
+            "s": 1
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 374.00800000000004,
+            "y": 410.124,
+            "z": 1.7999999999999998,
+            "s": 1
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 209.00800000000004,
+            "y": 410.124,
+            "z": 2.4,
+            "s": 1
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 44.00800000000004,
+            "y": 410.124,
+            "z": 3.0,
+            "s": 1
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        }
+      ],
+      "divider_width": 8.0
+    },
+    {
+      "shelf_height": 500.0,
+      "shelf_width": 500.0,
+      "cells": [
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 867.968,
+            "y": 710.3,
+            "z": 0.0,
+            "s": 1
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 702.968,
+            "y": 710.3,
+            "z": 0.6,
+            "s": 1
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 537.968,
+            "y": 710.3,
+            "z": 1.2,
+            "s": 1
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 372.96799999999996,
+            "y": 710.3,
+            "z": 1.7999999999999998,
+            "s": 1
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 207.96799999999996,
+            "y": 710.3,
+            "z": 2.4,
+            "s": 1
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 42.96799999999996,
+            "y": 710.3,
+            "z": 3.0,
+            "s": 1
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        }
+      ],
+      "divider_width": 8.0
+    },
+    {
+      "shelf_height": 500.0,
+      "shelf_width": 500.0,
+      "cells": [
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 838.416,
+            "y": 1006.82,
+            "z": 0.0,
+            "s": 1
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 703.416,
+            "y": 1006.82,
+            "z": 0.5,
+            "s": 1
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 568.416,
+            "y": 1006.82,
+            "z": 1.0,
+            "s": 1
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 433.41600000000005,
+            "y": 1006.82,
+            "z": 1.5,
+            "s": 1
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 298.41600000000005,
+            "y": 1006.82,
+            "z": 2.0,
+            "s": 1
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 163.41600000000005,
+            "y": 1006.82,
+            "z": 2.5,
+            "s": 1
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 28.416000000000054,
+            "y": 1006.82,
+            "z": 3.0,
+            "s": 1
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        }
+      ],
+      "divider_width": 8.0
+    },
+    {
+      "shelf_height": 500.0,
+      "shelf_width": 500.0,
+      "cells": [
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 838.184,
+            "y": 1206.96,
+            "z": 0.0,
+            "s": 1
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 703.184,
+            "y": 1206.96,
+            "z": 0.5,
+            "s": 1
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 568.184,
+            "y": 1206.96,
+            "z": 1.0,
+            "s": 1
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 433.18399999999997,
+            "y": 1206.96,
+            "z": 1.5,
+            "s": 1
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 298.18399999999997,
+            "y": 1206.96,
+            "z": 2.0,
+            "s": 1
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 163.18399999999997,
+            "y": 1206.96,
+            "z": 2.5,
+            "s": 1
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        },
+        {
+          "status": "EMPTY",
+          "item": null,
+          "calibration_point": {
+            "x": 28.18399999999997,
+            "y": 1206.96,
+            "z": 3.0,
+            "s": 1
+          },
+          "dimensions": {
+            "length": 100.0,
+            "width": 100.0,
+            "height": 250.0
+          },
+          "empty": true
+        }
+      ],
+      "divider_width": 8.0
+    }
+  ],
+  "filename": "./storage.json"
+}
