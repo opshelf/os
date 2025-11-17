@@ -172,6 +172,7 @@ class Robot:
         pph = await self._tool.get_param("PICKUP_POSITION_H")
 
         await self._tool.pick(coord)
+        await self._tool.rotate_to_position("front")
         await self._tool.move(AxisCoordinate(ppl[0], ppl[1])) # move to safe height
         await self._io.open_door()
         await self._tool.extend_IO()
@@ -196,6 +197,7 @@ class Robot:
         pph = await self._tool.get_param("PICKUP_POSITION_H")
 
         await self._tool.pick(coord)
+        await self._tool.rotate_to_position("front")
         await self._tool.move(AxisCoordinate(pph[0], pph[1])) # move to safe height
         await self._io.open_door()
         await self._tool.extend()
@@ -490,7 +492,7 @@ class Robot:
         #     await asyncio.sleep(0.01)
         #     print("waiting for weight")
 
-        print("storing")
+        # print("storing")
         # await asyncio.sleep(1)
 
         # # Poll IOBox to refresh presence state before storing
@@ -505,24 +507,25 @@ class Robot:
         #     print("error")
         #     return RobotCommandError(error=str(exc))
 
-        # if not self._grid:
-        #     print("no grid")
-        #     return RobotCommandError(error="Storage grid not calibrated")
+        if not self._grid:
+            print("no grid")
+            return RobotCommandError(error="Storage grid not calibrated")
 
         measurement = await self.measure_item_dimensions()
+        print("beb")
         weight = 0.0
         measured_dimensions = measurement
-        self._logger.debug(
-            "Collected IOBox measurement",
-            extra={
-                "weight": weight,
-                "dimensions": measured_dimensions.model_dump() if measured_dimensions else None,
-                "timestamp": measurement.timestamp,
-            }
-        )
+        # self._logger.debug(
+        #     "Collected IOBox measurement",
+        #     extra={
+        #         "weight": weight,
+        #         "dimensions": measured_dimensions.model_dump() if measured_dimensions else None,
+        #         "timestamp": measurement.timestamp,
+        #     }
+        # )
 
         # print(measured_dimensions)
-        # print("beb")
+    
 
         # if measured_dimensions is not None:
         # Add safety margin to ensure item fits (10%)
@@ -539,12 +542,15 @@ class Robot:
                 length=length
             ),
             weight=weight,
-            data={"upca": item_name}  # Store item metadata
+            data={"name": item_name},  # Store item metadata
+            upca=item_name
         )
 
-        print(measured_dimensions)
+        # print(item)
 
         location = self._grid.find_best_slot_for_item(item)
+
+        # print("andi")
 
         if not location:
             print("no location")
@@ -553,11 +559,11 @@ class Robot:
         # Get coordinate and store
         # print(location)
         coord = self._grid.get_cell_coordinate(location)
-        # await self.io_pick(coord.to_axis_coordinate())
+        await self.io_pick(coord.to_axis_coordinate())
 
         # Update storage grid
-        # self._grid.store_item(location, item)
-        # self._grid.save()
+        self._grid.store_item(location, item)
+        self._grid.save()
 
 
 
@@ -655,7 +661,7 @@ class Robot:
             return None
         
 
-        # print(f"{width}mm x {length}mm x {height}mm")
+        print(f"{width}mm x {length}mm x {height}mm")
         return Dimensions(length=float(length), width=float(width), height=float(height))
 
     async def get_status(self) -> RobotStatus:
@@ -666,11 +672,53 @@ class Robot:
         self._status = status
         return status
     
-    async def test(self, coordinate) -> None:
-        # bebs = await self._tool.auto_cal()
-        # print(bebs)
-        # await self.print_random_barcode()
-        await self.store(item_name="beb")
+
+    async def teststore(self) -> None:
+        await self.store("beb")
+        # await self.retrieve("beb")
+
+    async def testretrieve(self) -> None:
+        # await self.store("beb")
+        await self.retrieve("beb")
+
+    async def testone(self, coordinate) -> None:
+        print("beb")
+        # await self._tool.pick(AxisCoordinate(900.664+7, 157.704+3))
+        """Exercise pick/place at every calibrated left-module location."""
+
+        if not self._grid.left_module:
+            self._logger.warning("No left-module shelves available for storage test")
+            print("no shelves")
+            return
+
+        for shelf_idx, shelf in enumerate(self._grid.left_module):
+            for cell_idx, cell in enumerate(shelf.cells):
+                calibration_point = cell.calibration_point
+                # print(calibration_point)
+                if calibration_point is None:
+                    print("no cal point")
+                    self._logger.warning(
+                        "Skipping left-module shelf %s cell %s: missing calibration point",
+                        shelf_idx,
+                        cell_idx,
+                    )
+                    continue
+
+
+                # print("andi")
+                coordinate = calibration_point.to_axis_coordinate()
+                # print(coordinate)
+                try:
+                    # await self._tool.move(coordinate)
+                    await self._tool.pick(coordinate)
+                    await self._tool.place(coordinate)
+                except Exception:
+                    self._logger.exception(
+                        "Pick/place sequence failed at left-module shelf %s cell %s",
+                        shelf_idx,
+                        cell_idx,
+                    )
+                    raise
 
 
     async def handle_command(self, command: RobotCommands):
@@ -681,14 +729,15 @@ class Robot:
             await self.configure()
             return RobotCommandSuccessful()
         elif isinstance(command, HomeCommand):
-            await self._tool.home()
+            # await self._tool.home()
+            await self.print_random_barcode()
             return RobotCommandSuccessful()
         elif isinstance(command, MoveCommand):
             # await self._tool.move(command.coordinate)
-            await self.test(command.coordinate)
+            await self.teststore()
             return RobotCommandSuccessful()
         elif isinstance(command, IdleCommand):
-            await self.idle() # todo remove
+            await self.testretrieve() # todo remove
             return RobotCommandSuccessful()
         elif isinstance(command, StoreItemCommand):
             await self.store(command.item)

@@ -43,6 +43,7 @@ class AxisCoordinate:
     x: float
     y: float
     s: int = 0  # 0 -> left module, 1 -> right module
+    z_offset: float = 0.0
 
     def __post_init__(self) -> None:
         if self.s not in (0, 1):
@@ -59,11 +60,21 @@ class AxisCoordinate:
 
     def __add__(self, other: "AxisCoordinate") -> "AxisCoordinate":
         self._assert_same_side(other, "add")
-        return AxisCoordinate(x=self.x + other.x, y=self.y + other.y, s=self.s)
+        return AxisCoordinate(
+            x=self.x + other.x,
+            y=self.y + other.y,
+            s=self.s,
+            z_offset=self.z_offset + other.z_offset,
+        )
 
     def __sub__(self, other: "AxisCoordinate") -> "AxisCoordinate":
         self._assert_same_side(other, "subtract")
-        return AxisCoordinate(x=self.x - other.x, y=self.y - other.y, s=self.s)
+        return AxisCoordinate(
+            x=self.x - other.x,
+            y=self.y - other.y,
+            s=self.s,
+            z_offset=self.z_offset - other.z_offset,
+        )
 
 
 @dataclass
@@ -244,7 +255,8 @@ class Parameters(BaseModel):
     PICKUP_POSITION_L: TwoInt
     PICKUP_POSITION_H: TwoInt
     SCAN_POSITION: TwoInt
-    SLIDE_EXTENSION: Union[int, float]
+    SLIDE_EXTENSION_FRONT: Union[int, float]
+    SLIDE_EXTENSION_BACK: Union[int, float]
     GRIPPER_EXTENSION_PICK: float
     GRIPPER_EXTENSION_PLACE: float
     FRONT: float

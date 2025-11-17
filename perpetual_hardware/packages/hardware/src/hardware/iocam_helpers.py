@@ -101,16 +101,15 @@ def sanitize_contour(c):
 
 def lid_mask_tuned(bgr,
                    roi_frac=(0.20, 0.20, 0.75, 0.75),  # x,y,w,h as fractions of image
-                   clahe_clip=1.5,
-                   gamma=1.05,
+                   clahe_clip=1.1,
+                   gamma=1.00,
                    adapt_block_frac=1/6,  # block ~ min(w,h)*this
-                   adapt_C=+8,             # raise to suppress background
-                   bg_radius_frac=0.14,    # rolling-ball radius as frac of min(w,h)
-                   open_frac=0.012,         # morphology open kernel
+                   adapt_C=+12,             # raise to suppress background
+                   bg_radius_frac=0.18,    # rolling-ball radius as frac of min(w,h)
+                   open_frac=0.013,         # morphology open kernel
                    close_frac=0.05,        # morphology close kernel
                    min_area_frac=0.005, max_area_frac=0.50,
-                   min_circularity=0.50, max_aspect=3.0, min_extent=0.55,
-                   return_debug=False):
+                   min_circularity=0.50, max_aspect=3.0, min_extent=0.55):
     H, W = bgr.shape[:2]
 
     # 0) ROI: ignore ceiling/walls entirely
@@ -155,7 +154,7 @@ def lid_mask_tuned(bgr,
     mask = cv2.erode(mask,  np.ones((3,3),np.uint8), 1)
     mask = pinch_spurs(mask, k_frac=0.075, w=w, h=h)  # ~1.2% of min dim
 
-    # cv2.imwrite("mask.png",mask)
+    cv2.imwrite("mask.png",mask)
 
     # 5) Contours + scoring (favor near-circular, filled blobs)
     cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -166,6 +165,9 @@ def lid_mask_tuned(bgr,
     for c in cnts:
         area = cv2.contourArea(c)
         if area < min_area_frac * roi_area:
+            continue
+
+        if area > max_area_frac * roi_area:
             continue
 
         rect = cv2.minAreaRect(c)

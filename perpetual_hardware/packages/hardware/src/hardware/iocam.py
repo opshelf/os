@@ -271,7 +271,7 @@ class AFSCam:
 
     def measure_sync(
         self,
-        n_frames: int = 15,
+        n_frames: int = 30,
         timeout_s: float = 2.0,
         display: bool = False,
         window_name: str = "usb_sizing",

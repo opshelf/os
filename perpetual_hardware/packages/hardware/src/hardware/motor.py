@@ -12,10 +12,10 @@ from hardware.exceptions import (
     MotorConfigError
 )
 
-MOTOR_MOVE_TIMEOUT = 10.0
-MOTOR_HOME_TIMEOUT = 60.0
+MOTOR_MOVE_TIMEOUT = 180.0
+MOTOR_HOME_TIMEOUT = 180.0
 MOTOR_JOG_TIMEOUT = 10.0
-MOTOR_WAIT_TIMEOUT = 2.5
+MOTOR_WAIT_TIMEOUT = 60.0
 MAX_FAULT_RETRIES = 1
 
 logger = logging.getLogger(__name__)

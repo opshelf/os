@@ -74,6 +74,7 @@ class ToolCamera:
         try:
             cap = cv2.VideoCapture(self.url)
             if not cap.isOpened():
+                print("no cam")
                 raise CameraConnectionError(
                     f"Failed to open camera at URL: {self.url}"
                 )
@@ -83,6 +84,7 @@ class ToolCamera:
                 t0 = time.time()
                 while time.time() - t0 < 4.25:  # idr interval
                     if not cap.grab():
+                        print("bad grab")
                         raise ImageError("Failed to grab frame during buffer clear")
                     time.sleep(0.001)
 
@@ -97,6 +99,7 @@ class ToolCamera:
                     raise ImageError(
                         "Failed to read frame or received empty frame"
                     )
+                cv2.imwrite("frame.png", frame)
                 return frame
                 
             finally:
@@ -322,8 +325,8 @@ class ToolCamera:
                 )
                 
             # Update remap if needed
-            if self.map1 is None or self.map_size != (w, h):
-                self._build_remap((w, h))
+            # if self.map1 is None or self.map_size != (w, h):
+            #     self._build_remap((w, h))
 
             # Undistort
             try:

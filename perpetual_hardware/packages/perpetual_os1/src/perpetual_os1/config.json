@@ -6,8 +6,8 @@
     "tool": {
       "parameters": {
         "IDLE_POSITION": [
-          0,
-          0
+          100,
+          100
         ],
         "PICKUP_POSITION_L": [
           46,
@@ -21,15 +21,16 @@
           930,
           1
         ],
-        "SLIDE_EXTENSION": 51,
+        "SLIDE_EXTENSION_FRONT": 51,
+        "SLIDE_EXTENSION_BACK": 45,
         "GRIPPER_EXTENSION_PICK": 161.5,
         "GRIPPER_EXTENSION_PLACE": 160.5,
         "FRONT": 0.5,
         "BACK": 180.5,
-        "JOG_X": 40,
-        "JOG_Y": 50,
-        "PXMM": 0.1,
-        "PYMM": 0.1
+        "JOG_X": 5,
+        "JOG_Y": 25,
+        "PXMM": 10,
+        "PYMM": 10
       },
       "motors": [
         {
@@ -95,7 +96,7 @@
         "password": "admin",
         "model": "UnitV2",
         "stream_uri": "rtsp://10.254.10.201:8554/stream",
-        "url": "rtsp://admin:admin@192.168.1.108:554/stream1",
+        "url": "rtsp://192.168.1.108:554/user=admin&password=&channel=1&stream=0.sdp?tcp",
         "calibration_status": "calibrated",
         "mtx": [
           [
