@@ -8,6 +8,7 @@ from perpetual_os1.exceptions import (
     ToolError, GripperError, MovementError
 )
 
+import logging
 import cv2
 
 from enum import Enum
@@ -55,6 +56,7 @@ class Tool:
         self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
         self._params = params
         self._fault_recovery_active = False
+        self._fault_recovery_attempted = False
 
         self._mx = Motor(self._motorcontroller, self._params.motors.by_name("x_axis"))
         self._my = Motor(self._motorcontroller, self._params.motors.by_name("y_axis"))
@@ -95,6 +97,7 @@ class Tool:
             CameraError: If camera initialization fails
         """
         try:
+            self._fault_recovery_attempted = False
             await self._gs.configure()
             await self._my.configure()
             await self._mx.configure()
@@ -119,12 +122,13 @@ class Tool:
 
     async def _recover_from_fault(self) -> None:
         """Move to idle and re-home after a fault, ignoring secondary failures."""
-        if self._fault_recovery_active:
+        if self._fault_recovery_active or self._fault_recovery_attempted:
             return
 
         self._fault_recovery_active = True
         try:
             idle_coord: Optional[c.AxisCoordinate] = None
+            dump_coord: Optional[c.AxisCoordinate] = None
             try:
                 idle_position = await self.get_param("IDLE_POSITION")
                 if idle_position is not None:
@@ -132,6 +136,15 @@ class Tool:
                     idle_coord = c.AxisCoordinate(ix, iy)
             except Exception:
                 idle_coord = None
+
+            # if self._istatus == ToolItemStatus.LOADED:
+            try:
+                dump_position = await self.get_param("FAULT_DUMP_POSITION")
+                if dump_position is not None:
+                    dx, dy = dump_position
+                    dump_coord = c.AxisCoordinate(dx, dy, 1)
+            except Exception:
+                dump_coord = None
 
             if idle_coord is not None:
                 try:
@@ -147,8 +160,16 @@ class Tool:
                 await self.home()
             except Exception:
                 pass
+
+            if dump_coord is not None and idle_coord is not None:
+                try:
+                    await self.place(dump_coord)
+                    await self.move(idle_coord)
+                except Exception as dump_error:
+                    logging.warning("Failed to dump tool contents after fault: %s", dump_error)
         finally:
             self._fault_recovery_active = False
+            self._fault_recovery_attempted = True
 
     async def get_param(self, param: str) -> Optional[Any]:
         """Get a parameter value from tool configuration."""

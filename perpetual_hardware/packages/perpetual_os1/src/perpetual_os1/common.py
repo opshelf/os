@@ -255,6 +255,7 @@ class Parameters(BaseModel):
     PICKUP_POSITION_L: TwoInt
     PICKUP_POSITION_H: TwoInt
     SCAN_POSITION: TwoInt
+    FAULT_DUMP_POSITION: Optional[TwoInt] = None
     SLIDE_EXTENSION_FRONT: Union[int, float]
     SLIDE_EXTENSION_BACK: Union[int, float]
     GRIPPER_EXTENSION_PICK: float
@@ -266,9 +267,18 @@ class Parameters(BaseModel):
     PXMM: float
     PYMM: float
 
-    @field_validator("IDLE_POSITION", "PICKUP_POSITION_L", "PICKUP_POSITION_H", "SCAN_POSITION", mode="before")
+    @field_validator(
+        "IDLE_POSITION",
+        "PICKUP_POSITION_L",
+        "PICKUP_POSITION_H",
+        "SCAN_POSITION",
+        "FAULT_DUMP_POSITION",
+        mode="before",
+    )
     @classmethod
     def _pairs_to_tuple(cls, v):
+        if v is None:
+            return None
         a, b = _pair_len2(v, "position")
         return int(a), int(b)
 
