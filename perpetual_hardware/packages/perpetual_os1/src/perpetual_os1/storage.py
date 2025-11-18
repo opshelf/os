@@ -37,9 +37,10 @@ class Dimensions(BaseModel):
 
 
 class CellStatus(str, Enum):
-    OCCUPIED = "OCCUPIED"
-    EMPTY = "EMPTY"
-    BLOCKED = "BLOCKED"
+    OCCUPIED = "occupied"
+    AVAILABLE = "available"
+    MAINTENANCE = "maintenance"
+    DISABLED = "disabled"
 
 
 class CellItem(BaseModel):
@@ -57,7 +58,7 @@ class Cell(BaseModel):
     empty: bool = False
 
     def clear(self) -> None:
-        self.status = CellStatus.EMPTY
+        self.status = CellStatus.AVAILABLE
         self.item = None
 
 
@@ -110,7 +111,7 @@ class Shelf(BaseModel):
                 self.cells[cell_idx].dimensions.width >= item.dimensions.width
                 and self.cells[cell_idx].dimensions.height >= item.dimensions.height
             ):
-                if self.cells[cell_idx].status == CellStatus.EMPTY:
+                if self.cells[cell_idx].status == CellStatus.AVAILABLE:
                     locations.append(cell_idx)
             cell_idx += 1
         for location in locations:
@@ -131,7 +132,7 @@ class Shelf(BaseModel):
                 self.cells[cell_idx].dimensions.width > item.dimensions.width
                 and self.cells[cell_idx].dimensions.height >= item.dimensions.height
             ):
-                if self.cells[cell_idx].status == CellStatus.EMPTY:
+                if self.cells[cell_idx].status == CellStatus.AVAILABLE:
                     return cell_idx
             cell_idx += 1
         return None
@@ -297,7 +298,7 @@ class StorageGrid(BaseModel):
         locations: List[StorageModuleCellLocation] = []
         for shelf_idx, shelf in enumerate(self.left_module):
             for cell_idx, cell in enumerate(shelf.cells):
-                if cell.status == CellStatus.EMPTY:
+                if cell.status == CellStatus.AVAILABLE:
                     locations.append(
                         StorageModuleCellLocation(
                             shelf_idx=shelf_idx,
@@ -307,7 +308,7 @@ class StorageGrid(BaseModel):
                     )
         for shelf_idx, shelf in enumerate(self.right_module):
             for cell_idx, cell in enumerate(shelf.cells):
-                if cell.status == CellStatus.EMPTY:
+                if cell.status == CellStatus.AVAILABLE:
                     locations.append(
                         StorageModuleCellLocation(
                             shelf_idx=shelf_idx,
@@ -366,7 +367,7 @@ class StorageGrid(BaseModel):
         possible_slots: List[Tuple[StorageModuleCellLocation, float]] = []
         for shelf_idx, shelf in enumerate(self.left_module):
             for cell_idx, cell in enumerate(shelf.cells):
-                if cell.status == CellStatus.EMPTY and (
+                if cell.status == CellStatus.AVAILABLE and (
                     cell.dimensions.width >= item.dimensions.width
                     and cell.dimensions.length >= item.dimensions.length
                     and cell.dimensions.height >= item.dimensions.height
@@ -387,7 +388,7 @@ class StorageGrid(BaseModel):
                     )
         for shelf_idx, shelf in enumerate(self.right_module):
             for cell_idx, cell in enumerate(shelf.cells):
-                if cell.status == CellStatus.EMPTY and (
+                if cell.status == CellStatus.AVAILABLE and (
                     cell.dimensions.width >= item.dimensions.width
                     and cell.dimensions.length >= item.dimensions.length
                     and cell.dimensions.height >= item.dimensions.height

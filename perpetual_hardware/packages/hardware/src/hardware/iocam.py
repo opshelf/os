@@ -7,6 +7,20 @@ import ArducamDepthCamera as ac
 from pathlib import Path
 import subprocess
 import re
+from typing import Optional, Tuple, List, Dict, Any, TYPE_CHECKING
+
+import cv2
+import numpy as np
+
+try:
+    import ArducamDepthCamera as ac
+except ImportError:
+    ac = None  # type: ignore[assignment]
+
+if TYPE_CHECKING:
+    from ArducamDepthCamera import ArducamCamera  # type: ignore[misc]
+else:
+    ArducamCamera = Any  # type: ignore
 
 from hardware import iocam_helpers as ih
 from hardware.exceptions import (
@@ -72,7 +86,7 @@ class AFSCam:
         self._usb_exposure = usb_params.usb_exposure
 
         # Hardware handles
-        self._tof: Optional[ac.ArducamCamera] = None
+        self._tof: Optional[ArducamCamera] = None
         self._usb: Optional[cv2.VideoCapture] = None
 
         # Latest TOF frame buffers (updated in background loop)
@@ -103,6 +117,11 @@ class AFSCam:
 
     def _init_tof(self) -> None:
         """Initialize TOF camera."""
+        if ac is None:
+            raise TOFError(
+                "ArducamDepthCamera is not installed. Install the hardware extras to "
+                "enable TOF camera support."
+            )
         try:
             # print("initializing")
             self._tof = ac.ArducamCamera()
@@ -895,8 +914,8 @@ class AFSCam:
 
     # -------------------- Internals --------------------
 
-    def _open_tof(self, cam: ac.ArducamCamera, preferred_port: Optional[int]) -> int:
-        ports_to_try = [0, 1, 2]
+    def _open_tof(self, cam: ArducamCamera, preferred_port: Optional[int]) -> int:
+        ports_to_try = [preferred_port] if preferred_port is not None else [0, 1, 2]
         last_err = None
         for p in ports_to_try:
             ret = cam.open(ac.Connection.CSI, p)

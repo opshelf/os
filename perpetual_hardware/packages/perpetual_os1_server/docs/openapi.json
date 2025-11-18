@@ -2837,9 +2837,10 @@
       "CellStatus": {
         "type": "string",
         "enum": [
-          "OCCUPIED",
-          "EMPTY",
-          "BLOCKED"
+          "occupied",
+          "available",
+          "maintenance",
+          "disabled"
         ],
         "title": "CellStatus"
       },
