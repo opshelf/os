@@ -188,11 +188,9 @@ class IOBox:
         """
         try:
             weight = await self.get_weight()
-            weight = 10.0
             measurement = await self.measure_item()
 
             if measurement is not None and abs(weight) > 5.0:
-                # print(measurement)
                 self._status = IOBoxStatus.READY
             else:
                 self._status = IOBoxStatus.IDLE
@@ -208,19 +206,13 @@ class IOBox:
         weight: Optional[float] = None
         dimensions: Optional[Dimensions] = None
 
-
-        # print("measuring")
         try:
-            # print("weight")
             weight = await self.get_weight()
         except Exception as exc:
-            # print("bad weight")
             self._logger.warning("IOBox weight read failed", exc_info=exc)
 
         try:
-            # print("size")
             dimensions = await self.measure_item()
-            # print(dimensions)
         except Exception as exc:
             print("measurement failed")
             self._logger.warning("IOBox dimension measurement failed", exc_info=exc)
