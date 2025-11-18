@@ -404,6 +404,7 @@ class StorageGrid(BaseModel):
                         )
                     )
         possible_slots.sort(key=lambda x: x[1])
+        print(possible_slots)
         return possible_slots[0][0] if possible_slots else None
     
 # returns item coordinates

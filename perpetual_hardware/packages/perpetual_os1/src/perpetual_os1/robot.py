@@ -27,6 +27,9 @@ import asyncio
 
 from PIL import Image
 
+if TYPE_CHECKING:
+    from hardware.motor import Motor
+
 # from hardware.printer import AsyncPrinter as printer
 
 import os
@@ -98,10 +101,51 @@ class RobotState(BaseModel):
     tool: ToolStatus
     current_cell: Optional[StorageModuleCellLocation] = None
 
+
+class StatusFlags(BaseModel):
+    value: int = 0
+    stall_guard2_status: bool = False
+    over_temperature: bool = False
+    over_temperature_pre_warning: bool = False
+    short_to_ground_a: bool = False
+    short_to_ground_b: bool = False
+    open_load_a: bool = False
+    open_load_b: bool = False
+    stand_still: bool = False
+
+
+class TrinamicErrorFlags(BaseModel):
+    value: int = 0
+    stall_guard_error: bool = False
+    deviation_error: bool = False
+
+
+class AxisTelemetry(BaseModel):
+    status_flags: StatusFlags = Field(default_factory=StatusFlags)
+    error_flags: TrinamicErrorFlags = Field(default_factory=TrinamicErrorFlags)
+    position: float = 0.0
+    homed: int = 0
+    hard_stopped: int = 0
+
+
+class ToolAxisStatus(BaseModel):
+    z_axis: AxisTelemetry
+
+
+class GantryStatus(BaseModel):
+    x_axis: AxisTelemetry
+    y_axis: AxisTelemetry
+
+
+class RobotStatusState(BaseModel):
+    current_cell: Optional[StorageModuleCellLocation] = None
+
+
 class RobotStatus(BaseModel):
+    gantry: GantryStatus
+    tool: ToolAxisStatus
+    state: RobotStatusState
     storage: StorageGrid
-    state: RobotState
-    light_curtain: bool
 
 RobotResponse = Union[RobotCommandSuccessful, RobotCommandError, RobotBarcodeResponse, SizeResult]
 
@@ -148,10 +192,10 @@ class Robot:
         # State Machine
         self._state_manager = RobotStateManager()
 
+
     async def configure(self):
         await self._connect_controller("motor", self._motorbus, self._bus_settings["motor"])
-        await self._connect_controller("scale", self._scalebus, self._bus_settings["scale"])
-
+        await self._connect_controller("scale", self._scalebus, self._bus_settings["scale"])    
         await self._tool.configure()
         await self._io.configure()
 
@@ -485,17 +529,17 @@ class Robot:
             RobotResponse indicating success or failure
         """
 
-        # # Poll IOBox to refresh presence state before storing
-        await self._io.detect_item_presence()
+        # # # Poll IOBox to refresh presence state before storing
+        # await self._io.detect_item_presence()
 
-        # Validate state before storing
-        self._state = RobotState(io=self._io._status, tool=self._tool._status)
-        self._state_manager.update_state(self._state.tool, self._state.io)
-        try:
-            self._state_manager.validate_operation('store')
-        except RobotStateError as exc:
-            print("error")
-            return RobotCommandError(error=str(exc))
+        # # Validate state before storing
+        # self._state = RobotState(io=self._io._status, tool=self._tool._status)
+        # self._state_manager.update_state(self._state.tool, self._state.io)
+        # try:
+        #     self._state_manager.validate_operation('store')
+        # except RobotStateError as exc:
+        #     print("error")
+        #     return RobotCommandError(error=str(exc))
 
         if not self._grid:
             print("no grid")
@@ -637,11 +681,31 @@ class Robot:
         print(f"{width}mm x {length}mm x {height}mm")
         return Dimensions(length=float(length), width=float(width), height=float(height))
 
+    async def _build_axis_status(self, motor: Optional["Motor"]) -> AxisTelemetry:
+        position = 0.0
+        if motor is None:
+            return AxisTelemetry(position=position)
+        try:
+            position = await motor.get_position()
+        except Exception as exc:
+            self._logger.debug("Failed to read motor position: %s", exc)
+        return AxisTelemetry(position=position)
+
     async def get_status(self) -> RobotStatus:
-        status = RobotStatus(storage=self._grid,
-                             state=RobotState(io=self._io._status,
-                                              tool=self._tool._status),
-                             light_curtain= False)
+        gantry_status = GantryStatus(
+            x_axis=await self._build_axis_status(getattr(self._tool, "_mx", None)),
+            y_axis=await self._build_axis_status(getattr(self._tool, "_my", None)),
+        )
+        tool_status = ToolAxisStatus(
+            z_axis=await self._build_axis_status(getattr(self._tool, "_mg", None))
+        )
+        state = RobotStatusState(current_cell=self._state.current_cell)
+        status = RobotStatus(
+            gantry=gantry_status,
+            tool=tool_status,
+            state=state,
+            storage=self._grid,
+        )
         self._status = status
         return status
     
@@ -655,8 +719,6 @@ class Robot:
         await self.retrieve("beb")
 
     async def testone(self, coordinate) -> None:
-        print("beb")
-        # await self._tool.pick(AxisCoordinate(900.664+7, 157.704+3))
         """Exercise pick/place at every calibrated left-module location."""
 
         if not self._grid.left_module:
@@ -699,11 +761,12 @@ class Robot:
             await self.stop()
             return RobotCommandSuccessful()
         elif isinstance(command, InitializeCommand):
-            await self.configure()
+            await self._tool.configure()
             return RobotCommandSuccessful()
         elif isinstance(command, HomeCommand):
-            # await self._tool.home()
-            await self.print_random_barcode()
+            await self._tool.configure()
+            await self._tool.home()
+            # await self.print_random_barcode()
             return RobotCommandSuccessful()
         elif isinstance(command, MoveCommand):
             # await self._tool.move(command.coordinate)
