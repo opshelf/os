@@ -25,8 +25,6 @@ class CalibrationCoordinate(AxisCoordinate):
         return CalibrationCoordinate(x=self.x - rhs.x, y=self.y - rhs.y, z_offset=self.z_offset - rhs.z_offset, s=self.s)
 
     def to_axis_coordinate(self) -> AxisCoordinate:
-        # print("to axis")
-        print(self.z_offset)
         return AxisCoordinate(x=self.x, y=self.y, s=self.s, z_offset=self.z_offset)
 
 
@@ -335,7 +333,6 @@ class StorageGrid(BaseModel):
         items: List[CellLocationData] = []
         for shelf_idx, shelf in enumerate(self.left_module):
             for cell_idx, cell in enumerate(shelf.cells):
-                # print("cell")
                 if cell.status == CellStatus.OCCUPIED:
                     items.append(
                         CellLocationData(
@@ -347,7 +344,6 @@ class StorageGrid(BaseModel):
                             ),
                         )
                     )
-                    # print(items)
         for shelf_idx, shelf in enumerate(self.right_module):
             for cell_idx, cell in enumerate(shelf.cells):
                 if cell.status == CellStatus.OCCUPIED:
@@ -435,12 +431,9 @@ class StorageGrid(BaseModel):
         if cell_location:
             cal_coord = self.get_cell_coordinate(cell_location)
             return cal_coord.to_axis_coordinate()
-            
-        # print("searching cells")
+        
         # # Search through all cells for matching item
         all_cells = self.get_all_cell_data()
-
-        # print(all_cells)
 
         for cell_data in all_cells:
             if not cell_data.cell:  # Skip empty cells
@@ -455,7 +448,6 @@ class StorageGrid(BaseModel):
             if item_name and cell_data.cell.data:
                 item_data = cell_data.cell.data
                 if isinstance(item_data, dict) and item_data.get("name") == item_name:
-                    print("beb")
                     cal_coord = self.get_cell_coordinate(cell_data.location)
                     return cal_coord.to_axis_coordinate()
 

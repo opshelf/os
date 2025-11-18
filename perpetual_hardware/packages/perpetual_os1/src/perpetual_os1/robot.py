@@ -485,44 +485,25 @@ class Robot:
             RobotResponse indicating success or failure
         """
 
-        # while True:
-        #     weight = await self._io.get_weight()
-        #     if abs(weight) > 5.0:
-        #         break
-        #     await asyncio.sleep(0.01)
-        #     print("waiting for weight")
-
-        # print("storing")
-        # await asyncio.sleep(1)
-
         # # Poll IOBox to refresh presence state before storing
-        # await self._io.detect_item_presence()
+        await self._io.detect_item_presence()
 
-        # # Validate state before storing
-        # self._state = RobotState(io=self._io._status, tool=self._tool._status)
-        # self._state_manager.update_state(self._state.tool, self._state.io)
-        # try:
-        #     self._state_manager.validate_operation('store')
-        # except RobotStateError as exc:
-        #     print("error")
-        #     return RobotCommandError(error=str(exc))
+        # Validate state before storing
+        self._state = RobotState(io=self._io._status, tool=self._tool._status)
+        self._state_manager.update_state(self._state.tool, self._state.io)
+        try:
+            self._state_manager.validate_operation('store')
+        except RobotStateError as exc:
+            print("error")
+            return RobotCommandError(error=str(exc))
 
         if not self._grid:
             print("no grid")
             return RobotCommandError(error="Storage grid not calibrated")
 
         measurement = await self.measure_item_dimensions()
-        print("beb")
         weight = 0.0
         measured_dimensions = measurement
-        # self._logger.debug(
-        #     "Collected IOBox measurement",
-        #     extra={
-        #         "weight": weight,
-        #         "dimensions": measured_dimensions.model_dump() if measured_dimensions else None,
-        #         "timestamp": measurement.timestamp,
-        #     }
-        # )
 
         # print(measured_dimensions)
     
@@ -546,18 +527,13 @@ class Robot:
             upca=item_name
         )
 
-        # print(item)
-
         location = self._grid.find_best_slot_for_item(item)
-
-        # print("andi")
 
         if not location:
             print("no location")
             return RobotCommandError(error="No suitable storage location found")
 
         # Get coordinate and store
-        # print(location)
         coord = self._grid.get_cell_coordinate(location)
         await self.io_pick(coord.to_axis_coordinate())
 
@@ -586,14 +562,12 @@ class Robot:
             return RobotCommandError(error=str(exc))
 
         if not self._grid:
-            # print("not init")
             return RobotCommandError(error="Storage grid not initialized")
 
         # Find item location
         coord = await self._grid.find_item_location(item_name=item_name)
 
         if not coord:
-            # print("couldn't find")
             return RobotCommandError(error=f"Item '{item_name}' not found in storage")
 
         # Retrieve item
@@ -616,7 +590,7 @@ class Robot:
             self._grid.clear_item(location)
             self._grid.save()
 
-    async def measure_item_dimensions(self, n_frames: int = 5) -> Optional[Dimensions]:
+    async def measure_item_dimensions(self, n_frames: int = 15) -> Optional[Dimensions]:
         """
         Use the IOBox's AFSCam to measure the dimensions of an item currently in the IO box.
         Returns the aggregate dimensions including footprint and depth measurements.
@@ -639,7 +613,6 @@ class Robot:
 
         # Take measurement using AFSCam
         measure_result = await self._io.measure_item()
-        # print(measure_result)
 
         if not measure_result["ok"]:
             print("not ok")
