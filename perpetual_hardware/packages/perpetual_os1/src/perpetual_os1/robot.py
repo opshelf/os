@@ -96,10 +96,10 @@ class RobotBarcodeResponse(BaseModel):
     upca: str
 
 
-class RobotState(BaseModel):
-    io: IOBoxStatus
-    tool: ToolStatus
-    current_cell: Optional[StorageModuleCellLocation] = None
+# class RobotState(BaseModel):
+#     # io: IOBoxStatus
+#     # tool: ToolStatus
+#     current_cell: Optional[StorageModuleCellLocation] = None
 
 
 class StatusFlags(BaseModel):
@@ -137,14 +137,14 @@ class GantryStatus(BaseModel):
     y_axis: AxisTelemetry
 
 
-class RobotStatusState(BaseModel):
+class RobotState(BaseModel):
     current_cell: Optional[StorageModuleCellLocation] = None
 
 
 class RobotStatus(BaseModel):
     gantry: GantryStatus
     tool: ToolAxisStatus
-    state: RobotStatusState
+    state: RobotState
     storage: StorageGrid
 
 RobotResponse = Union[RobotCommandSuccessful, RobotCommandError, RobotBarcodeResponse, SizeResult]
@@ -187,7 +187,8 @@ class Robot:
         self._cur_item: StorageModuleCellLocation = None # some kind of unique identifier
         self._status: RobotStatus = None
 
-        self._state: RobotState = RobotState(io=IOBoxStatus.IDLE, tool=ToolStatus(motion=ToolMotionStatus.IDLE, item=ToolItemStatus.EMPTY))
+        # self._state: RobotState = RobotState(io=IOBoxStatus.IDLE, tool=ToolStatus(motion=ToolMotionStatus.IDLE, item=ToolItemStatus.EMPTY), )
+        self._state: RobotState = RobotState(current_cell=None)
 
         # State Machine
         self._state_manager = RobotStateManager()
@@ -209,8 +210,8 @@ class Robot:
 
     async def io_place(self, coord: AxisCoordinate):
         # Validate state before operation
-        self._state_manager.update_state(self._state.tool, self._state.io)
-        self._state_manager.validate_operation('place_iobox')
+        # self._state_manager.update_state(self._state.tool, self._state.io)
+        # self._state_manager.validate_operation('place_iobox')
 
         ppl = await self._tool.get_param("PICKUP_POSITION_L")
         pph = await self._tool.get_param("PICKUP_POSITION_H")
@@ -230,12 +231,12 @@ class Robot:
         await self._tool.clear_alarms()
 
         # Update state after operation
-        self._state_manager.update_state(self._state.tool, self._state.io)
+        # self._state_manager.update_state(self._state.tool, self._state.io)
 
     async def io_pick(self, coord):
         # Validate state before operation
-        self._state_manager.update_state(self._state.tool, self._state.io)
-        self._state_manager.validate_operation('pick_iobox')
+        # self._state_manager.update_state(self._state.tool, self._state.io)
+        # self._state_manager.validate_operation('pick_iobox')
 
         ppl = await self._tool.get_param("PICKUP_POSITION_L")
         pph = await self._tool.get_param("PICKUP_POSITION_H")
@@ -255,7 +256,7 @@ class Robot:
         await self._tool.clear_alarms()
 
         # Update state after operation
-        self._state_manager.update_state(self._state.tool, self._state.io)
+        # self._state_manager.update_state(self._state.tool, self._state.io)
 
     async def idle(self) -> None:
         await self._tool.move(self._tool.get_param("IDLE_POSITION"))
@@ -577,13 +578,17 @@ class Robot:
             print("no location")
             return RobotCommandError(error="No suitable storage location found")
 
-        # Get coordinate and store
-        coord = self._grid.get_cell_coordinate(location)
-        await self.io_pick(coord.to_axis_coordinate())
+        self._state.current_cell = location
+        try:
+            coord = self._grid.get_cell_coordinate(location)
+            await self.io_pick(coord.to_axis_coordinate())
 
-        # Update storage grid
-        self._grid.store_item(location, item)
-        self._grid.save()
+            # Update storage grid
+            self._grid.store_item(location, item)
+            self._grid.save()
+        finally:
+            # self._state.current_cell = None
+            pass
 
 
 
@@ -597,27 +602,17 @@ class Robot:
         Returns:
             RobotResponse indicating success or failure
         """
-        # Validate state before retrieval
-        self._state = RobotState(io=self._io._status, tool=self._tool._status)
-        self._state_manager.update_state(self._state.tool, self._state.io)
-        try:
-            self._state_manager.validate_operation('retrieve')
-        except RobotStateError as exc:
-            return RobotCommandError(error=str(exc))
+        # # Validate state before retrieval
+        # self._state = RobotState(io=self._io._status, tool=self._tool._status)
+        # self._state_manager.update_state(self._state.tool, self._state.io)
+        # try:
+        #     self._state_manager.validate_operation('retrieve')
+        # except RobotStateError as exc:
+        #     return RobotCommandError(error=str(exc))
 
         if not self._grid:
             return RobotCommandError(error="Storage grid not initialized")
 
-        # Find item location
-        coord = await self._grid.find_item_location(item_name=item_name)
-
-        if not coord:
-            return RobotCommandError(error=f"Item '{item_name}' not found in storage")
-
-        # Retrieve item
-        await self.io_place(coord)
-
-        # clear the item we just retrieved
         location = next(
             (
                 entry.location
@@ -629,10 +624,18 @@ class Robot:
             ),
             None,
         )
-        if location:
+        if location is None:
+            return RobotCommandError(error=f"Item '{item_name}' not found in storage")
 
+        self._state.current_cell = location
+        try:
+            coord = self._grid.get_cell_coordinate(location).to_axis_coordinate()
+            await self.io_place(coord)
             self._grid.clear_item(location)
             self._grid.save()
+        finally:
+            # self._state.current_cell = None
+            pass
 
     async def measure_item_dimensions(self, n_frames: int = 15) -> Optional[Dimensions]:
         """
@@ -659,13 +662,11 @@ class Robot:
         measure_result = await self._io.measure_item()
 
         if not measure_result["ok"]:
-            print("not ok")
             return None
 
         # Extract relevant measurements from aggregates
         agg = measure_result["aggregate"]
         if not agg:
-            print("no agg")
             return None
 
         # Prefer footprint measurements (from pinhole model) and fall back to scale data if needed.
@@ -674,11 +675,11 @@ class Robot:
         height = 620 - agg.get("depth_mm_med")
 
         if width is None or height is None or length is None:
-            print("none")
+            # print("none")
             return None
         
 
-        print(f"{width}mm x {length}mm x {height}mm")
+        # print(f"{width}mm x {length}mm x {height}mm")
         return Dimensions(length=float(length), width=float(width), height=float(height))
 
     async def _build_axis_status(self, motor: Optional["Motor"]) -> AxisTelemetry:
@@ -699,7 +700,7 @@ class Robot:
         tool_status = ToolAxisStatus(
             z_axis=await self._build_axis_status(getattr(self._tool, "_mg", None))
         )
-        state = RobotStatusState(current_cell=self._state.current_cell)
+        state = RobotState(current_cell=self._state.current_cell)
         status = RobotStatus(
             gantry=gantry_status,
             tool=tool_status,
@@ -723,15 +724,12 @@ class Robot:
 
         if not self._grid.left_module:
             self._logger.warning("No left-module shelves available for storage test")
-            print("no shelves")
             return
 
         for shelf_idx, shelf in enumerate(self._grid.left_module):
             for cell_idx, cell in enumerate(shelf.cells):
                 calibration_point = cell.calibration_point
-                # print(calibration_point)
                 if calibration_point is None:
-                    print("no cal point")
                     self._logger.warning(
                         "Skipping left-module shelf %s cell %s: missing calibration point",
                         shelf_idx,
@@ -739,12 +737,8 @@ class Robot:
                     )
                     continue
 
-
-                # print("andi")
                 coordinate = calibration_point.to_axis_coordinate()
-                # print(coordinate)
                 try:
-                    # await self._tool.move(coordinate)
                     await self._tool.pick(coordinate)
                     await self._tool.place(coordinate)
                 except Exception:
