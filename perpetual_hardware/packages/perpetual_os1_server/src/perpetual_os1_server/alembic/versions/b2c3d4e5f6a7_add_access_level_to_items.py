@@ -16,12 +16,43 @@ depends_on = None
 
 
 def upgrade() -> None:
-	with op.batch_alter_table('items', copy_from=None, table_args=()) as batch_op:
-		batch_op.add_column(sa.Column('access_level_id', sa.Integer(), nullable=True))
-		batch_op.create_foreign_key('fk_items_access_level_id', 'access_levels', ['access_level_id'], ['id'])
+	bind = op.get_bind()
+	inspector = sa.inspect(bind)
+
+	if not inspector.has_table('items'):
+		return
+
+	column_names = {column["name"] for column in inspector.get_columns('items')}
+	if 'access_level_id' in column_names:
+		return
+
+	if bind.dialect.name == 'sqlite':
+		op.execute(sa.text(
+			"ALTER TABLE items ADD COLUMN access_level_id INTEGER REFERENCES access_levels(id)"
+		))
+	else:
+		op.add_column('items', sa.Column('access_level_id', sa.Integer(), nullable=True))
+		op.create_foreign_key(
+			'fk_items_access_level_id',
+			'items',
+			'access_levels',
+			['access_level_id'],
+			['id']
+		)
 
 
 def downgrade() -> None:
-	with op.batch_alter_table('items') as batch_op:
-		batch_op.drop_constraint('fk_items_access_level_id', type_='foreignkey')
+	bind = op.get_bind()
+	inspector = sa.inspect(bind)
+
+	if not inspector.has_table('items'):
+		return
+
+	column_names = {column["name"] for column in inspector.get_columns('items')}
+	if 'access_level_id' not in column_names:
+		return
+
+	if bind.dialect.name != 'sqlite':
+		op.drop_constraint('fk_items_access_level_id', 'items', type_='foreignkey')
+
 	op.drop_column('items', 'access_level_id')
