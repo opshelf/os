@@ -194,9 +194,13 @@ class RobotWorker:
         self._use_enhanced_status = True
         self._barcode: Optional[BarcodeService] = None
         self._barcode_task: Optional[asyncio.Task] = None
+        self._latest_status_payload: Optional[str] = None
 
     def get_client(self) -> RobotClient:
         return self._client
+
+    def get_latest_status_payload(self) -> Optional[str]:
+        return self._latest_status_payload
 
     @classmethod
     async def get_instance(cls, robot: Robot) -> "RobotWorker":
@@ -380,10 +384,12 @@ class RobotWorker:
             ]
 
         status_payload = _transform_worker_status_payload(status_payload)
+        payload_json = json.dumps(status_payload)
+        self._latest_status_payload = payload_json
 
         await self._nc.publish(
             self._nats_config.status_queue,
-            json.dumps(status_payload).encode(),
+            payload_json.encode(),
         )
 
     async def process_commands(self) -> None:
