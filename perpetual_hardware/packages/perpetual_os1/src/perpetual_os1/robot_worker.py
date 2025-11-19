@@ -171,8 +171,8 @@ def _normalize_storage_payload(storage: Dict[str, Any]) -> Dict[str, Any]:
 
     return normalized_storage
 
-	class RobotWorker:
-	    _instance: Optional["RobotWorker"] = None
+class RobotWorker:
+    _instance: Optional["RobotWorker"] = None
 
     def __init__(
         self, robot: Robot, nats_config: RobotNatsConfiguration = RobotNatsConfiguration()
