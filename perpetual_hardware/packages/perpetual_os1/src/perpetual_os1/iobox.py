@@ -163,13 +163,11 @@ class IOBox:
         """
         try:
             if self._cam is None:
-                print("no cam")
                 raise IOBoxError("Camera not configured")
             await self._ensure_camera_running()
             size = await self._cam.measure()
             return size
         except Exception as e:
-            print("measurement failed")
             self._logger.warning("Async measurement failed", exc_info=e)
             if isinstance(e, IOBoxError):
                 self._status = IOBoxStatus.ERROR
@@ -293,11 +291,11 @@ class IOBox:
             except Exception as e:
                 errors.append(f"Door motor stop failed: {str(e)}")
                 
-        if self._scale is not None:
-            try:
-                await self._scale.stop()
-            except Exception as e:
-                errors.append(f"Scale stop failed: {str(e)}")
+        # if self._scale is not None:
+        #     try:
+        #         await self._scale.stop()
+        #     except Exception as e:
+        #         errors.append(f"Scale stop failed: {str(e)}")
                 
         if self._cam is not None:
             try:
@@ -305,11 +303,11 @@ class IOBox:
             except Exception as e:
                 errors.append(f"Camera stop failed: {str(e)}")
 
-        if self._printer is not None:
-            try:
-                self._printer.disconnect()
-            except Exception as e:
-                errors.append(f"Printer disconnect failed: {str(e)}")
+        # if self._printer is not None:
+        #     try:
+        #         self._printer.disconnect()
+        #     except Exception as e:
+        #         errors.append(f"Printer disconnect failed: {str(e)}")
         
         if errors:
             self._status = IOBoxStatus.ERROR
