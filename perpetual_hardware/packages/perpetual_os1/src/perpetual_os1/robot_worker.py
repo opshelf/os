@@ -171,8 +171,8 @@ def _normalize_storage_payload(storage: Dict[str, Any]) -> Dict[str, Any]:
 
     return normalized_storage
 
-class RobotWorker:
-    _instance: Optional["RobotWorker"] = None
+	class RobotWorker:
+	    _instance: Optional["RobotWorker"] = None
 
     def __init__(
         self, robot: Robot, nats_config: RobotNatsConfiguration = RobotNatsConfiguration()
@@ -200,6 +200,14 @@ class RobotWorker:
         return self._client
 
     def get_latest_status_payload(self) -> Optional[str]:
+        return self._latest_status_payload
+
+    async def get_status_snapshot(self, force_refresh: bool = False) -> Optional[str]:
+        if force_refresh or self._latest_status_payload is None:
+            try:
+                await self._publish_status()
+            except Exception as err:
+                logging.warning("Failed to refresh robot status payload: %s", err)
         return self._latest_status_payload
 
     @classmethod

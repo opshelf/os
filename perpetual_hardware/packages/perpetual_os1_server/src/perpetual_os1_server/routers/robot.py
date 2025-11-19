@@ -150,12 +150,14 @@ async def stream_sse(
 ) -> EventSourceResponse:
     stop_event = asyncio.Event()
 
+    initial_payload: Optional[str] = None
     try:
         worker = await get_robot_worker()
-        initial_payload = worker.get_latest_status_payload()
     except ValueError:
         worker = None
-        initial_payload = None
+
+    if worker is not None:
+        initial_payload = await worker.get_status_snapshot(force_refresh=True)
 
     async def event_generator() -> AsyncGenerator[dict[str, str], None]:
         try:
