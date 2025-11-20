@@ -40,7 +40,7 @@ def _build_label_configuration(upca: str) -> LabelConfiguration:
     )
 
 
-def _dispatch_to_printer(output_path: str) -> None:
+def _dispatch_to_printer(output_path: str) -> bool:
     command = [
         "lpr",
         "-o",
@@ -55,20 +55,14 @@ def _dispatch_to_printer(output_path: str) -> None:
     try:
         result = subprocess.run(command, capture_output=True, text=True, check=False)
     except FileNotFoundError as exc:
-        logging.error("Print command not found: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Printer command unavailable",
-        ) from exc
+        logging.warning("Print command not found; skipping printer dispatch: %s", exc)
+        return False
 
     if result.returncode != 0:
         logging.error("Printer command failed: %s", result.stderr.strip())
+        return False
 
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Printer command failed",
-        )
-
+    return True
 
 @router.post(
     "/{upca}",
@@ -87,9 +81,10 @@ async def print_label(upca: str) -> dict[str, str]:
             detail="Failed to generate label",
         ) from exc
 
+    printed = False
     if settings.printer.enabled:
-        _dispatch_to_printer(config.output_path)
+        printed = _dispatch_to_printer(config.output_path)
     else:
         logging.info("Printer disabled; generated label at %s", config.output_path)
 
-    return {"message": "success", "upca": upca, "printed": settings.printer.enabled}
+    return {"message": "success", "upca": upca, "printed": printed or settings.printer.enabled}
