@@ -39,4 +39,4 @@ EXPOSE 8222
 COPY perpetual_hardware/packages/perpetual_os1_server/entrypoint.sh /app/perpetual_hardware/packages/perpetual_os1_server/entrypoint.sh
 RUN chmod +x /app/perpetual_hardware/packages/perpetual_os1_server/entrypoint.sh
 
-CMD ["/app/perpetual_hardware/packages/perpetual_os1_server/entrypoint.sh"]
+ENTRYPOINT ["/bin/sh", "/app/perpetual_hardware/packages/perpetual_os1_server/entrypoint.sh"]
