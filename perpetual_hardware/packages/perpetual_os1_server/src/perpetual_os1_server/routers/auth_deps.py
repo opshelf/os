@@ -125,6 +125,9 @@ def require_permissions(permissions: str | List[str]) -> Callable:
 		current_user: User = Depends(get_current_user)
 	) -> User:
 		"""Check if user has required permissions."""
+		if current_user.role.name == "admin":
+			return current_user
+
 		user_permissions = current_user.role.permissions or []
 
 		for permission in permissions:
