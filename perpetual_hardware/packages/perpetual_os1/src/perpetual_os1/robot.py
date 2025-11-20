@@ -773,7 +773,38 @@ class Robot:
             await self.store(command.item)
             return RobotCommandSuccessful()
         elif isinstance(command, RetrieveItemCommand):
-            await self.retrieve(command.item)
+            await self.retrieve_by_location(command.location)
             return RobotCommandSuccessful()
         else:
             return RobotCommandError(error="Invalid Robot Command")
+
+    async def retrieve_by_location(self, location_payload: Dict[str, Any]) -> None:
+        """
+        Retrieve an item from a specific storage location.
+        """
+        if not self._grid:
+            return RobotCommandError(error="Storage grid not initialized")
+
+        try:
+            location = StorageModuleCellLocation(**location_payload)
+        except Exception:
+            return RobotCommandError(error="Invalid location payload")
+
+        try:
+            cell = self._grid.get_cell(location)
+        except Exception:
+            return RobotCommandError(error="Location out of range")
+
+        if cell.status != CellStatus.OCCUPIED or cell.item is None:
+            return RobotCommandError(
+                error=f"No item found at location (shelf: {location.shelf_idx}, cell: {location.cell_idx})"
+            )
+
+        self._state.current_cell = location
+        try:
+            coord = self._grid.get_cell_coordinate(location).to_axis_coordinate()
+            await self.io_place(coord)
+            self._grid.clear_item(location)
+            self._grid.save()
+        finally:
+            pass
