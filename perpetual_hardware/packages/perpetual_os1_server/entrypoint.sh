@@ -8,7 +8,12 @@ fi
 
 # Ensure serial_asyncio is available (needed by robot worker)
 if command -v uv >/dev/null 2>&1; then
-	uv pip install --system pyserial-asyncio >/dev/null 2>&1 || true
+	ENV_PATH="/app/perpetual_hardware/.venv"
+	if [ -x "${ENV_PATH}/bin/python" ]; then
+		uv pip install --python "${ENV_PATH}/bin/python" pyserial-asyncio >/dev/null 2>&1 || true
+	else
+		uv pip install pyserial-asyncio >/dev/null 2>&1 || true
+	fi
 fi
 
 # Resolve printer queue/URI
