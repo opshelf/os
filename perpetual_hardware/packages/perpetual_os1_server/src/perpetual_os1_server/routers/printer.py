@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 from pathlib import Path
 from typing import List, Tuple
@@ -49,8 +50,13 @@ def _dispatch_to_printer(output_path: str) -> None:
         "fit-to-page",
         "-o",
         "orientation-requested=1",
-        output_path,
     ]
+    settings = get_settings()
+    queue = settings.printer.queue or os.getenv("PRINTER")
+    if queue:
+        command.extend(["-P", queue])
+
+    command.append(output_path)
 
     try:
         result = subprocess.run(command, capture_output=True, text=True, check=False)
@@ -63,6 +69,11 @@ def _dispatch_to_printer(output_path: str) -> None:
 
     if result.returncode != 0:
         logging.error("Printer command failed: %s", result.stderr.strip())
+        if "No default destination" in (result.stderr or ""):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Printer command failed: no default destination (configure printer queue)",
+            )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Printer command failed",
