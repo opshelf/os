@@ -84,7 +84,7 @@ def _dispatch_to_printer(output_path: str) -> None:
     "/{upca}",
     dependencies=[Depends(require_permissions("printer:print"))],
 )
-async def print_label(upca: str) -> dict[str, str]:
+async def print_label(upca: str) -> dict[str, str | bool]:
     settings = get_settings()
     config = _build_label_configuration(upca)
 
