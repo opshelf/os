@@ -25,7 +25,7 @@ RUN apt-get update && apt-get -y install --no-install-recommends \
 	&& rm -rf /var/lib/apt/lists/* \
 	&& apt-get clean
 
-RUN pip install pyserial-asyncio
+RUN python3 -m pip install pyserial-asyncio
 
 	
 WORKDIR /app/perpetual_hardware/packages/perpetual_os1_server
