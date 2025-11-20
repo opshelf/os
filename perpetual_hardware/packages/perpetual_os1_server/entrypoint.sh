@@ -6,6 +6,11 @@ if command -v cupsd >/dev/null 2>&1; then
 	cupsd || true
 fi
 
+# Ensure serial_asyncio is available (needed by robot worker)
+if command -v uv >/dev/null 2>&1; then
+	uv pip install --system pyserial-asyncio >/dev/null 2>&1 || true
+fi
+
 # Resolve printer queue/URI
 if [ -z "${PRINTER_QUEUE:-}" ] && [ -z "${PRINTER:-}" ] && [ -f "/app/perpetual_hardware/packages/perpetual_os1_server/data/settings.json" ] && command -v python3 >/dev/null 2>&1; then
 	QUEUE_FROM_SETTINGS=$(python3 - <<'PY'
