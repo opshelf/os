@@ -6,7 +6,25 @@ if command -v cupsd >/dev/null 2>&1; then
 	cupsd || true
 fi
 
-QUEUE="${PRINTER_QUEUE:-${PRINTER:-}}"
+# Resolve printer queue/URI
+if [ -z "${PRINTER_QUEUE:-}" ] && [ -z "${PRINTER:-}" ] && [ -f "/app/perpetual_hardware/packages/perpetual_os1_server/data/settings.json" ]; then
+	QUEUE_FROM_SETTINGS=$(python - <<'PY'
+import json, pathlib
+path = pathlib.Path("/app/perpetual_hardware/packages/perpetual_os1_server/data/settings.json")
+try:
+    data = json.loads(path.read_text())
+    queue = data.get("printer", {}).get("queue")
+    if queue:
+        print(queue)
+except Exception:
+    pass
+PY
+)
+else
+	QUEUE_FROM_SETTINGS=""
+fi
+
+QUEUE="${PRINTER_QUEUE:-${PRINTER:-${QUEUE_FROM_SETTINGS}}}"
 URI="${PRINTER_URI:-usb://Caysn/T9E-US?serial=000015753145}"
 
 if [ -n "$QUEUE" ] && command -v lpadmin >/dev/null 2>&1; then
