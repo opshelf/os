@@ -144,7 +144,7 @@ class StorageService:
             await self.session.rollback()
             raise RuntimeError(f"Migration failed: {str(e)}") from e
 
-    async def create_item(self, upca: str, name: str, dimensions: Dict[str, float],
+    async def create_item(self, upca: str, name: str, dimensions: Optional[Dict[str, float]] = None,
                         weight: Optional[float] = None, metadata: Optional[Dict[str, Any]] = None,
                         access_level_id: Optional[int] = None,
                         sync_to_json: bool = True) -> Item:
@@ -153,6 +153,7 @@ class StorageService:
 
         normalized_metadata = metadata or {}
         normalized_weight = self._normalize_weight(weight)
+        normalized_dimensions = dimensions or {"width": 0, "height": 0, "length": 0}
 
         async with self._lock:
             try:
@@ -165,7 +166,7 @@ class StorageService:
                     item = Item(
                         upca=upca,
                         name=name,
-                        dimensions=dimensions,
+                        dimensions=normalized_dimensions,
                         weight=normalized_weight,
                         item_metadata=normalized_metadata,
                         access_level_id=access_level_id
@@ -173,7 +174,8 @@ class StorageService:
                     self.session.add(item)
                 else:
                     item.name = name
-                    item.dimensions = dimensions
+                    if dimensions is not None:
+                        item.dimensions = normalized_dimensions
                     item.weight = normalized_weight
                     item.item_metadata = normalized_metadata
                     item.access_level_id = access_level_id

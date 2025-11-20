@@ -40,7 +40,7 @@ class ItemCreate(BaseModel):
 
     upca: str
     name: str
-    dimensions: Dict[str, float]
+    dimensions: Optional[Dict[str, float]] = None
     weight: Optional[float] = None
     item_metadata: Optional[Dict[str, Any]] = Field(default=None, alias="item_metadata")
     access_level_id: Optional[int] = None

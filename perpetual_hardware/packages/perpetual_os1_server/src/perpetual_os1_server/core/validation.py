@@ -116,11 +116,12 @@ class StorageValidator:
     """Main storage validator combining all validation logic."""
 
     @staticmethod
-    def validate_item_creation(upca: str, name: str, dimensions: Dict[str, float],
+    def validate_item_creation(upca: str, name: str, dimensions: Optional[Dict[str, float]] = None,
                              weight: Optional[float] = None, metadata: Optional[Dict[str, Any]] = None) -> None:
         """Validate complete item creation data."""
         ItemValidator.validate_name(name)
-        ItemValidator.validate_dimensions(dimensions)
+        if dimensions is not None:
+            ItemValidator.validate_dimensions(dimensions)
         ItemValidator.validate_weight(weight)
         ItemValidator.validate_metadata(metadata)
 
