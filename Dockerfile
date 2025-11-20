@@ -21,6 +21,7 @@ RUN apt-get update && apt-get -y install --no-install-recommends \
     gstreamer1.0-plugins-bad \
 	gstreamer1.0-plugins-ugly \
 	cups-bsd \
+	cups-daemon \
 	&& rm -rf /var/lib/apt/lists/* \
 	&& apt-get clean
 
@@ -35,4 +36,7 @@ EXPOSE 8000
 EXPOSE 4222
 EXPOSE 8222
 
-CMD ["uv", "run", "--no-dev", "start"]
+COPY perpetual_hardware/packages/perpetual_os1_server/entrypoint.sh /app/perpetual_hardware/packages/perpetual_os1_server/entrypoint.sh
+RUN chmod +x /app/perpetual_hardware/packages/perpetual_os1_server/entrypoint.sh
+
+CMD ["/app/perpetual_hardware/packages/perpetual_os1_server/entrypoint.sh"]
