@@ -7,8 +7,8 @@ if command -v cupsd >/dev/null 2>&1; then
 fi
 
 # Resolve printer queue/URI
-if [ -z "${PRINTER_QUEUE:-}" ] && [ -z "${PRINTER:-}" ] && [ -f "/app/perpetual_hardware/packages/perpetual_os1_server/data/settings.json" ]; then
-	QUEUE_FROM_SETTINGS=$(python - <<'PY'
+if [ -z "${PRINTER_QUEUE:-}" ] && [ -z "${PRINTER:-}" ] && [ -f "/app/perpetual_hardware/packages/perpetual_os1_server/data/settings.json" ] && command -v python3 >/dev/null 2>&1; then
+	QUEUE_FROM_SETTINGS=$(python3 - <<'PY'
 import json, pathlib
 path = pathlib.Path("/app/perpetual_hardware/packages/perpetual_os1_server/data/settings.json")
 try:
