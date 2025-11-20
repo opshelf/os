@@ -23,7 +23,7 @@ DEFAULT_ROLES = [
 			"gantry:control", "gantry:read",
 			"tool:control", "tool:read",
 			"storage:read", "storage:write", "storage:delete",
-			"scanner:read", "scanner:control",
+			"scanner:read", "scanner:control", "printer:print",
 			"workstation:control", "workstation:read",
 			"audit:read"
 		]
@@ -35,7 +35,7 @@ DEFAULT_ROLES = [
 			"gantry:control", "gantry:read",
 			"tool:control", "tool:read",
 			"storage:read",
-			"scanner:read", "scanner:control",
+			"scanner:read", "scanner:control", "printer:print",
 			"workstation:control", "workstation:read"
 		]
 	},
