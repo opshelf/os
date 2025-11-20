@@ -40,6 +40,8 @@ if [ -n "$QUEUE" ] && command -v lpadmin >/dev/null 2>&1; then
 	cupsenable "$QUEUE" || true
 	cupsaccept "$QUEUE" || true
 	lpoptions -d "$QUEUE" || true
+else
+	echo "Printer queue not configured or lpadmin missing; printing may fail"
 fi
 
 exec uv run --no-dev start
