@@ -25,6 +25,9 @@ else
 fi
 
 QUEUE="${PRINTER_QUEUE:-${PRINTER:-${QUEUE_FROM_SETTINGS}}}"
+if [ -z "$QUEUE" ]; then
+	QUEUE="Caysn_T9E-US"
+fi
 URI="${PRINTER_URI:-usb://Caysn/T9E-US?serial=000015753145}"
 
 if [ -n "$QUEUE" ] && command -v lpadmin >/dev/null 2>&1; then
