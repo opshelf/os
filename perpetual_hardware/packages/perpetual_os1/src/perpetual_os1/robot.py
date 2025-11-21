@@ -519,7 +519,7 @@ class Robot:
 
 
     # plug in sizing from the io box
-    async def store(self, item_name: str) -> RobotResponse:
+    async def store(self, item_payload: Any) -> RobotResponse:
         """
         Store an item in the storage grid, finding the best available location based on item dimensions.
 
@@ -549,11 +549,16 @@ class Robot:
             print("no grid")
             return RobotCommandError(command=command_name, error="Storage grid not calibrated")
 
-        if isinstance(item_name, str):
-            resolved_item_name = item_name
-        elif isinstance(item_name, dict):
-            resolved_item_name = item_name.get("upca") or item_name.get("name") or "item"
+        resolved_upca: str
+        resolved_item_name: str
+        if isinstance(item_payload, str):
+            resolved_upca = item_payload
+            resolved_item_name = item_payload
+        elif isinstance(item_payload, dict):
+            resolved_upca = item_payload.get("upca") or item_payload.get("name") or "item"
+            resolved_item_name = item_payload.get("name") or resolved_upca
         else:
+            resolved_upca = "item"
             resolved_item_name = "item"
 
         measurement = await self.measure_item_dimensions()
@@ -578,7 +583,7 @@ class Robot:
             ),
             weight=weight,
             data={"name": resolved_item_name},  # Store item metadata
-            upca=resolved_item_name
+            upca=resolved_upca
         )
 
         location = self._grid.find_best_slot_for_item(item)
@@ -595,7 +600,7 @@ class Robot:
             # Update storage grid
             self._grid.store_item(location, item)
             self._grid.save()
-            return RobotCommandSuccessful(command=command_name, location=location, upca=item.upca)
+            return RobotCommandSuccessful(command=command_name, location=location, upca=resolved_upca)
         except Exception as exc:
             self._logger.exception("Store command failed for %s", resolved_item_name)
             return RobotCommandError(command=command_name, error=str(exc))
@@ -683,7 +688,7 @@ class Robot:
             return None
         
 
-        # print(f"{width}mm x {length}mm x {height}mm")
+        print(f"{width}mm x {length}mm x {height}mm")
         return Dimensions(length=float(length), width=float(width), height=float(height))
 
     async def _build_axis_status(self, motor: Optional["Motor"]) -> AxisTelemetry:
@@ -764,9 +769,7 @@ class Robot:
                 await self._tool.configure()
                 return RobotCommandSuccessful(command=command_name)
             elif isinstance(command, HomeCommand):
-                await self._tool.configure()
-                await self._tool.home()
-                # await self.print_random_barcode()
+                await self.print_random_barcode()
                 return RobotCommandSuccessful(command=command_name)
             elif isinstance(command, MoveCommand):
                 # await self._tool.move(command.coordinate)
@@ -776,7 +779,10 @@ class Robot:
                 await self.testretrieve() # todo remove
                 return RobotCommandSuccessful(command=command_name)
             elif isinstance(command, StoreItemCommand):
-                return await self.store(command.item)
+                payload = getattr(command, "upca", None)
+                if payload is None:
+                    payload = getattr(command, "item", None)
+                return await self.store(payload)
             elif isinstance(command, RetrieveItemCommand):
                 return await self.retrieve_by_location(command.location)
             else:

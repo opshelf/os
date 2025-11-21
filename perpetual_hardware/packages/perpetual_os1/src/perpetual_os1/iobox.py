@@ -62,7 +62,7 @@ class IOBox:
                            tof_params = self._params.tof_camera)
         
         self._scale = Scale(scalecontroller)
-        self._printer = USBPrinter()
+        # self._printer = USBPrinter()
         self._scale_ready = False
         self._cam_running = False
         self._logger = logging.getLogger(__name__).getChild("IOBox")
