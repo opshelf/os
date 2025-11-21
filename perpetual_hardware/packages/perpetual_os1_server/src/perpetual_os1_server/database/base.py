@@ -32,14 +32,14 @@ if isinstance(SQLALCHEMY_DATABASE_URL, str) and "sqlite" in SQLALCHEMY_DATABASE_
 
 def get_database_url() -> str:
 	"""Get the database URL for synchronous operations like Alembic migrations."""
-	if isinstance(SQLALCHEMY_DATABASE_URL, str) == True:
+	if isinstance(SQLALCHEMY_DATABASE_URL, str):
 		url_str: str = cast(str, SQLALCHEMY_DATABASE_URL)
-		if url_str.startswith("sqlite+aiosqlite://") == True:
+		if url_str.startswith("sqlite+aiosqlite://"):
 			return url_str.replace("sqlite+aiosqlite://", "sqlite:///")
 		return url_str
 
 	url_str_from_obj: str = str(SQLALCHEMY_DATABASE_URL)
-	if url_str_from_obj.startswith("sqlite+aiosqlite://") == True:
+	if url_str_from_obj.startswith("sqlite+aiosqlite://"):
 		return url_str_from_obj.replace("sqlite+aiosqlite://", "sqlite:///")
 
 	return url_str_from_obj
