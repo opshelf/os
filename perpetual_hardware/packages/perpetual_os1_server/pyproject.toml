@@ -25,7 +25,8 @@ dependencies = [
     "python-multipart>=0.0.6",
     "email-validator>=2.0.0",
     "structlog>=25.4.0",
-        "pyserial-asyncio>=0.6",
+    "python-json-logger>=2.0.7",
+    "pyserial-asyncio>=0.6",
 ]
 
 [project.scripts]
