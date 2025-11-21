@@ -311,9 +311,8 @@ class RobotWorker:
 
     async def _barcode_to_command(self, code: str) -> RobotCommands:
         logging.info("Received barcode: %s", code)
-        pass
         # TODO: map barcodes to real RobotCommands
-        # return StoreItemCommand(item={"name":code})
+        return StoreItemCommand(upca=code)
 
     def _snapshot_command(self, command: RobotCommands) -> QueuedOperation:
         metadata: dict[str, Any] = {}
