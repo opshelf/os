@@ -34,17 +34,17 @@ SYMS = {
     "UCC/EAN128":74, "GS1-128":74, "EAN128":74,
 }
 
-def _calculate_upc_check_digit(digits: List[str]) -> int:
-    odd_sum = sum(int(digits[i]) for i in range(0, 11, 2))
-    even_sum = sum(int(digits[i]) for i in range(1, 11, 2))
-    total = odd_sum * 3 + even_sum
-    return (10 - (total % 10)) % 10
+# def _calculate_upc_check_digit(digits: List[str]) -> int:
+#     odd_sum = sum(int(digits[i]) for i in range(0, 11, 2))
+#     even_sum = sum(int(digits[i]) for i in range(1, 11, 2))
+#     total = odd_sum * 3 + even_sum
+#     return (10 - (total % 10)) % 10
 
 
-def generate_random_upca() -> str:
-    digits = [str(random.randint(0, 9)) for _ in range(11)]
-    check_digit = _calculate_upc_check_digit(digits)
-    return "".join(digits) + str(check_digit)
+# def generate_random_upca() -> str:
+#     digits = [str(random.randint(0, 9)) for _ in range(11)]
+#     check_digit = _calculate_upc_check_digit(digits)
+#     return "".join(digits) + str(check_digit)
 
 
 class USBPrinter:
@@ -155,26 +155,26 @@ class USBPrinter:
         if feed_after > 0:
             self._write_all(b"\n" * feed_after)
 
-    def print_random_upca(
-        self,
-        *,
-        height: int = 96,
-        width: int = 3,
-        hri: str = "none",
-        feed_after: int = 2,
-    ) -> str:
-        """Generate a random UPC-A code and print it."""
-        upca = generate_random_upca()
-        # print(upca)
-        self.print_barcode(
-            sym="UPC-A",
-            payload=upca,
-            height=height,
-            width=width,
-            hri=hri,
-            feed_after=feed_after,
-        )
-        return upca
+    # def print_random_upca(
+    #     self,
+    #     *,
+    #     height: int = 96,
+    #     width: int = 3,
+    #     hri: str = "none",
+    #     feed_after: int = 2,
+    # ) -> str:
+    #     """Generate a random UPC-A code and print it."""
+    #     upca = generate_random_upca()
+    #     # print(upca)
+    #     self.print_barcode(
+    #         sym="UPC-A",
+    #         payload=upca,
+    #         height=height,
+    #         width=width,
+    #         hri=hri,
+    #         feed_after=feed_after,
+    #     )
+    #     return upca
 
 ###############################
 
@@ -207,43 +207,43 @@ def _build_label_configuration(upca: str) -> LabelConfiguration:
     )
 
 
-def _dispatch_to_printer(output_path: str) -> None:
-    command = [
-        "lpr",
-        "-o",
-        "media=Custom3x2",
-        "-o",
-        "fit-to-page",
-        "-o",
-        "orientation-requested=1",
-    ]
-    settings = get_settings()
-    queue = settings.printer.queue or os.getenv("PRINTER")
-    if queue:
-        command.extend(["-P", queue])
+# def _dispatch_to_printer(output_path: str) -> None:
+#     command = [
+#         "lpr",
+#         "-o",
+#         "media=Custom3x2",
+#         "-o",
+#         "fit-to-page",
+#         "-o",
+#         "orientation-requested=1",
+#     ]
+#     settings = get_settings()
+#     queue = settings.printer.queue or os.getenv("PRINTER")
+#     if queue:
+#         command.extend(["-P", queue])
 
-    command.append(output_path)
+#     command.append(output_path)
 
-    try:
-        result = subprocess.run(command, capture_output=True, text=True, check=False)
-    except FileNotFoundError as exc:
-        logging.error("Print command not found: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Printer command unavailable",
-        ) from exc
+#     try:
+#         result = subprocess.run(command, capture_output=True, text=True, check=False)
+#     except FileNotFoundError as exc:
+#         logging.error("Print command not found: %s", exc)
+#         raise HTTPException(
+#             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+#             detail="Printer command unavailable",
+#         ) from exc
 
-    if result.returncode != 0:
-        logging.error("Printer command failed: %s", result.stderr.strip())
-        if "No default destination" in (result.stderr or ""):
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Printer command failed: no default destination (configure printer queue)",
-            )
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Printer command failed",
-        )
+#     if result.returncode != 0:
+        # logging.error("Printer command failed: %s", result.stderr.strip())
+        # if "No default destination" in (result.stderr or ""):
+        #     raise HTTPException(
+        #         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        #         detail="Printer command failed: no default destination (configure printer queue)",
+        #     )
+        # raise HTTPException(
+        #     status_code=status.HTTP_502_BAD_GATEWAY,
+        #     detail="Printer command failed",
+        # )
 
 
 @router.post(
@@ -267,7 +267,6 @@ async def print_label(upca: str) -> dict[str, str | bool]:
     if settings.printer.enabled:
         # _dispatch_to_printer(config.output_path)
         printer.print_barcode(sym="UPC-A", payload=upca)
-        # printer.print_random_upca()
         printed = True
     else:
         logging.info("Printer disabled; generated label at %s", config.output_path)
