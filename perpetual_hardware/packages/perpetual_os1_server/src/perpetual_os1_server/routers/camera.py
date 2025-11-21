@@ -16,8 +16,6 @@ from perpetual_os1_server.core.camera import (
 from perpetual_os1_server.settings import get_settings
 from .auth_deps import get_current_user_optional
 
-from perpetual_os1_server.routers.common import SuccessResponse
-
 router = APIRouter(tags=["camera"])
 
 

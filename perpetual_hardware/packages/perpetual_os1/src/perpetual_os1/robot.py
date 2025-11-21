@@ -81,14 +81,15 @@ RobotCommands = Annotated[
 
 # Define response types
 class RobotCommandSuccessful(BaseModel):
+    command: str = "unknown"
     message: Literal["success"] = "success"
+    location: Optional[StorageModuleCellLocation] = None
+    upca: Optional[str] = None
+
 
 class RobotCommandError(BaseModel):
+    command: str = "unknown"
     error: str
-
-class RobotItemStoredResponse(BaseModel):
-    message: Literal["success"] = "success"
-    location: StorageModuleCellLocation
 
 
 class RobotBarcodeResponse(BaseModel):
@@ -518,7 +519,7 @@ class Robot:
 
 
     # plug in sizing from the io box
-    async def store(self, item_name: str) -> None:
+    async def store(self, item_name: str) -> RobotResponse:
         """
         Store an item in the storage grid, finding the best available location based on item dimensions.
 
@@ -542,18 +543,26 @@ class Robot:
         #     print("error")
         #     return RobotCommandError(error=str(exc))
 
+        command_name = "store_item"
+
         if not self._grid:
             print("no grid")
-            return RobotCommandError(error="Storage grid not calibrated")
+            return RobotCommandError(command=command_name, error="Storage grid not calibrated")
+
+        if isinstance(item_name, str):
+            resolved_item_name = item_name
+        elif isinstance(item_name, dict):
+            resolved_item_name = item_name.get("upca") or item_name.get("name") or "item"
+        else:
+            resolved_item_name = "item"
 
         measurement = await self.measure_item_dimensions()
         weight = 0.0
         measured_dimensions = measurement
 
-        # print(measured_dimensions)
-    
+        if measured_dimensions is None:
+            return RobotCommandError(command=command_name, error="Failed to measure item dimensions")
 
-        # if measured_dimensions is not None:
         # Add safety margin to ensure item fits (10%)
         width = measured_dimensions.width * 1.1
         height = (measured_dimensions.height) * 1.1
@@ -568,15 +577,15 @@ class Robot:
                 length=length
             ),
             weight=weight,
-            data={"name": item_name},  # Store item metadata
-            upca=item_name
+            data={"name": resolved_item_name},  # Store item metadata
+            upca=resolved_item_name
         )
 
         location = self._grid.find_best_slot_for_item(item)
 
         if not location:
             print("no location")
-            return RobotCommandError(error="No suitable storage location found")
+            return RobotCommandError(command=command_name, error="No suitable storage location found")
 
         self._state.current_cell = location
         try:
@@ -586,13 +595,14 @@ class Robot:
             # Update storage grid
             self._grid.store_item(location, item)
             self._grid.save()
-        finally:
-            # self._state.current_cell = None
-            pass
+            return RobotCommandSuccessful(command=command_name, location=location, upca=item.upca)
+        except Exception as exc:
+            self._logger.exception("Store command failed for %s", resolved_item_name)
+            return RobotCommandError(command=command_name, error=str(exc))
 
 
 
-    async def retrieve(self, item_name: str) -> None:
+    async def retrieve(self, item_name: str) -> RobotResponse:
         """
         Retrieve an item from storage by its name. # todo or upca
 
@@ -610,8 +620,10 @@ class Robot:
         # except RobotStateError as exc:
         #     return RobotCommandError(error=str(exc))
 
+        command_name = "retrieve_item"
+
         if not self._grid:
-            return RobotCommandError(error="Storage grid not initialized")
+            return RobotCommandError(command=command_name, error="Storage grid not initialized")
 
         location = next(
             (
@@ -625,17 +637,9 @@ class Robot:
             None,
         )
         if location is None:
-            return RobotCommandError(error=f"Item '{item_name}' not found in storage")
+            return RobotCommandError(command=command_name, error=f"Item '{item_name}' not found in storage")
 
-        self._state.current_cell = location
-        try:
-            coord = self._grid.get_cell_coordinate(location).to_axis_coordinate()
-            await self.io_place(coord)
-            self._grid.clear_item(location)
-            self._grid.save()
-        finally:
-            # self._state.current_cell = None
-            pass
+        return await self.retrieve_by_location(location.model_dump())
 
     async def measure_item_dimensions(self, n_frames: int = 15) -> Optional[Dimensions]:
         """
@@ -750,61 +754,75 @@ class Robot:
                     raise
 
 
-    async def handle_command(self, command: RobotCommands):
-        if isinstance(command, StopCommand):
-            await self.stop()
-            return RobotCommandSuccessful()
-        elif isinstance(command, InitializeCommand):
-            await self._tool.configure()
-            return RobotCommandSuccessful()
-        elif isinstance(command, HomeCommand):
-            await self._tool.configure()
-            await self._tool.home()
-            # await self.print_random_barcode()
-            return RobotCommandSuccessful()
-        elif isinstance(command, MoveCommand):
-            # await self._tool.move(command.coordinate)
-            await self.teststore()
-            return RobotCommandSuccessful()
-        elif isinstance(command, IdleCommand):
-            await self.testretrieve() # todo remove
-            return RobotCommandSuccessful()
-        elif isinstance(command, StoreItemCommand):
-            await self.store(command.item)
-            return RobotCommandSuccessful()
-        elif isinstance(command, RetrieveItemCommand):
-            await self.retrieve_by_location(command.location)
-            return RobotCommandSuccessful()
-        else:
-            return RobotCommandError(error="Invalid Robot Command")
+    async def handle_command(self, command: RobotCommands) -> RobotResponse:
+        command_name = getattr(command, "command", "unknown")
+        try:
+            if isinstance(command, StopCommand):
+                await self.stop()
+                return RobotCommandSuccessful(command=command_name)
+            elif isinstance(command, InitializeCommand):
+                await self._tool.configure()
+                return RobotCommandSuccessful(command=command_name)
+            elif isinstance(command, HomeCommand):
+                await self._tool.configure()
+                await self._tool.home()
+                # await self.print_random_barcode()
+                return RobotCommandSuccessful(command=command_name)
+            elif isinstance(command, MoveCommand):
+                # await self._tool.move(command.coordinate)
+                await self.teststore()
+                return RobotCommandSuccessful(command=command_name)
+            elif isinstance(command, IdleCommand):
+                await self.testretrieve() # todo remove
+                return RobotCommandSuccessful(command=command_name)
+            elif isinstance(command, StoreItemCommand):
+                return await self.store(command.item)
+            elif isinstance(command, RetrieveItemCommand):
+                return await self.retrieve_by_location(command.location)
+            else:
+                return RobotCommandError(command=command_name, error="Invalid Robot Command")
+        except Exception as exc:
+            self._logger.exception("Unhandled error while processing command %s", command_name)
+            return RobotCommandError(command=command_name, error=str(exc))
 
-    async def retrieve_by_location(self, location_payload: Dict[str, Any]) -> None:
+    async def retrieve_by_location(self, location_payload: Dict[str, Any]) -> RobotResponse:
         """
         Retrieve an item from a specific storage location.
         """
+        command_name = "retrieve_item"
+
         if not self._grid:
-            return RobotCommandError(error="Storage grid not initialized")
+            return RobotCommandError(command=command_name, error="Storage grid not initialized")
 
         try:
             location = StorageModuleCellLocation(**location_payload)
         except Exception:
-            return RobotCommandError(error="Invalid location payload")
+            return RobotCommandError(command=command_name, error="Invalid location payload")
 
         try:
             cell = self._grid.get_cell(location)
         except Exception:
-            return RobotCommandError(error="Location out of range")
+            return RobotCommandError(command=command_name, error="Location out of range")
 
         if cell.status != CellStatus.OCCUPIED or cell.item is None:
             return RobotCommandError(
+                command=command_name,
                 error=f"No item found at location (shelf: {location.shelf_idx}, cell: {location.cell_idx})"
             )
 
         self._state.current_cell = location
+        retrieved_upca = cell.item.upca or (cell.item.data.get("upca") if cell.item.data else None)
+
         try:
             coord = self._grid.get_cell_coordinate(location).to_axis_coordinate()
             await self.io_place(coord)
             self._grid.clear_item(location)
             self._grid.save()
-        finally:
-            pass
+            return RobotCommandSuccessful(command=command_name, location=location, upca=retrieved_upca)
+        except Exception as exc:
+            self._logger.exception(
+                "Retrieve command failed at shelf %s cell %s",
+                location.shelf_idx,
+                location.cell_idx,
+            )
+            return RobotCommandError(command=command_name, error=str(exc))

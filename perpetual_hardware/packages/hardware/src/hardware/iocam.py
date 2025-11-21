@@ -1,13 +1,9 @@
 import asyncio
 import time
-from typing import Optional, Tuple, List, Dict, Any, Union
-import cv2
-import numpy as np
-import ArducamDepthCamera as ac
 from pathlib import Path
-import subprocess
 import re
-from typing import Optional, Tuple, List, Dict, Any, TYPE_CHECKING
+import subprocess
+from typing import Optional, Tuple, List, Dict, Any, Union, TYPE_CHECKING
 
 import cv2
 import numpy as np

@@ -64,14 +64,14 @@ def _run_migrations() -> None:
     try:
         script_location = Path(__file__).parent / "alembic"
 
-        if script_location.exists() == False:
+        if not script_location.exists():
             logging.warning("Alembic directory not found at %s", script_location)
             return
 
         package_root = Path(__file__).parent.parent.parent.parent.parent
         alembic_ini_path = package_root / "alembic.ini"
 
-        if alembic_ini_path.exists() == False:
+        if not alembic_ini_path.exists():
             logging.warning("alembic.ini not found at %s, using fallback", alembic_ini_path)
             alembic_cfg = Config()
             alembic_cfg.set_main_option("script_location", str(script_location))
