@@ -15,40 +15,91 @@ async def process_robot_event(payload: dict[str, Any]) -> None:
     Handle a single robot event payload, updating storage state when retrieval completes.
     """
     command = payload.get("command")
-    if command != "retrieve_item":
-        return
+    message = payload.get("message")
 
-    if payload.get("message") != "success":
-        return
+    if command == "retrieve_item":
+        if message != "success":
+            return
 
-    location = payload.get("location") or {}
-    upca = payload.get("upca")
+        location = payload.get("location") or {}
+        upca = payload.get("upca")
 
-    shelf_idx = location.get("shelf_idx")
-    cell_idx = location.get("cell_idx")
+        shelf_idx = location.get("shelf_idx")
+        cell_idx = location.get("cell_idx")
 
-    if upca is None or shelf_idx is None or cell_idx is None:
-        logging.warning("Skipping retrieve_item event with incomplete data: %s", payload)
-        return
+        if upca is None or shelf_idx is None or cell_idx is None:
+            logging.warning("Skipping retrieve_item event with incomplete data: %s", payload)
+            return
 
-    try:
-        shelf_idx_int = int(shelf_idx)
-        cell_idx_int = int(cell_idx)
-    except (TypeError, ValueError):
-        logging.warning("Skipping retrieve_item event with non-integer location: %s", payload)
-        return
-
-    async with AsyncSessionLocal() as session:
-        storage_service = StorageService(session)
         try:
-            removed = await storage_service.remove_item_location(upca, shelf_idx_int, cell_idx_int)
-            if removed:
+            shelf_idx_int = int(shelf_idx)
+            cell_idx_int = int(cell_idx)
+        except (TypeError, ValueError):
+            logging.warning("Skipping retrieve_item event with non-integer location: %s", payload)
+            return
+
+        async with AsyncSessionLocal() as session:
+            storage_service = StorageService(session)
+            try:
+                removed = await storage_service.remove_item_location(upca, shelf_idx_int, cell_idx_int)
+                if removed:
+                    try:
+                        await storage_service.sync_to_json(transaction_committed=True)
+                    except Exception as sync_err:  # pragma: no cover - best effort logging
+                        logging.warning("Failed to sync storage JSON after retrieval: %s", sync_err)
+            except Exception as err:
+                logging.exception("Failed to process retrieve_item event for %s: %s", upca, err)
+
+    if command == "store_item":
+        if message != "success":
+            return
+
+        location = payload.get("location") or {}
+        upca = payload.get("upca")
+
+        shelf_idx = location.get("shelf_idx")
+        cell_idx = location.get("cell_idx")
+
+        if upca is None or shelf_idx is None or cell_idx is None:
+            logging.warning("Skipping store_item event with incomplete data: %s", payload)
+            return
+
+        try:
+            shelf_idx_int = int(shelf_idx)
+            cell_idx_int = int(cell_idx)
+        except (TypeError, ValueError):
+            logging.warning("Skipping store_item event with non-integer location: %s", payload)
+            return
+
+        async with AsyncSessionLocal() as session:
+            storage_service = StorageService(session)
+            try:
+                existing_item = await storage_service.get_item(str(upca))
+                if existing_item is None:
+                    await storage_service.create_item(
+                        upca=str(upca),
+                        name=str(upca),
+                        dimensions=None,
+                        weight=None,
+                        metadata={"name": str(upca)},
+                        sync_to_json=False,
+                    )
+
+                existing_locations = await storage_service.get_item_locations(str(upca))
+                already_assigned = any(
+                    loc.shelf_idx == shelf_idx_int and loc.cell_idx == cell_idx_int
+                    for loc in existing_locations
+                )
+
+                if already_assigned is False:
+                    await storage_service.add_item_location(str(upca), shelf_idx_int, cell_idx_int)
+
                 try:
                     await storage_service.sync_to_json(transaction_committed=True)
                 except Exception as sync_err:  # pragma: no cover - best effort logging
-                    logging.warning("Failed to sync storage JSON after retrieval: %s", sync_err)
-        except Exception as err:
-            logging.exception("Failed to process retrieve_item event for %s: %s", upca, err)
+                    logging.warning("Failed to sync storage JSON after storage event: %s", sync_err)
+            except Exception as err:
+                logging.exception("Failed to process store_item event for %s: %s", upca, err)
 
 
 class RobotEventListener:
