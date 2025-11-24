@@ -62,3 +62,61 @@ async def test_process_robot_event_ignores_incomplete_payload() -> None:
             .where(Item.upca == "222")
         )
         assert result.scalar_one_or_none() is not None
+
+
+@pytest.mark.anyio
+async def test_process_robot_event_adds_location_on_store_success() -> None:
+    async with AsyncSessionLocal() as session:
+        storage = StorageService(session)
+        await storage.create_item(
+            upca="333",
+            name="Store Target",
+            dimensions={"width": 1.0, "height": 1.0, "length": 1.0},
+            weight=None,
+            metadata={"name": "Store Target"},
+        )
+
+    payload = {
+        "command": "store_item",
+        "message": "success",
+        "location": {"side": "left_module", "shelf_idx": 2, "cell_idx": 4},
+        "upca": "333",
+    }
+
+    await process_robot_event(payload)
+
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(ItemLocation)
+            .join(Item)
+            .where(Item.upca == "333")
+        )
+        location = result.scalar_one_or_none()
+        assert location is not None
+        assert location.shelf_idx == 2
+        assert location.cell_idx == 4
+
+
+@pytest.mark.anyio
+async def test_process_robot_event_creates_item_when_missing() -> None:
+    payload = {
+        "command": "store_item",
+        "message": "success",
+        "location": {"side": "left_module", "shelf_idx": 1, "cell_idx": 1},
+        "upca": "444",
+    }
+
+    await process_robot_event(payload)
+
+    async with AsyncSessionLocal() as session:
+        item_result = await session.execute(select(Item).where(Item.upca == "444"))
+        item = item_result.scalar_one_or_none()
+        assert item is not None
+
+        location_result = await session.execute(
+            select(ItemLocation)
+            .join(Item)
+            .where(Item.upca == "444")
+        )
+        location = location_result.scalar_one_or_none()
+        assert location is not None
