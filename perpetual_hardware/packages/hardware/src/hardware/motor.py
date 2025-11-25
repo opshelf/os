@@ -218,6 +218,22 @@ class Motor():
         except Exception as e:
             raise MotorConfigError(f"Failed to configure motor {self._motor_id}: {str(e)}") from e
 
+    async def _read_status(self) -> MotorStatus:
+        """Read the current motor status word."""
+        try:
+            status_val = await self._controller.read_holding_registers(
+                self._motor_id,
+                0x0000
+            )
+            if status_val is None:
+                return MotorStatus.ERROR
+            try:
+                return MotorStatus(int(status_val))
+            except Exception:
+                return MotorStatus.ERROR
+        except Exception:
+            return MotorStatus.ERROR
+
     # TODO add axis limits
     async def move_to_position(self, value: float) -> None:  # mm
         """Move the motor to an absolute position in millimeters.
