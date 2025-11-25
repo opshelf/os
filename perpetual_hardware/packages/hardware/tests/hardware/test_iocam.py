@@ -1,6 +1,7 @@
 import pytest
 import numpy as np
 import cv2
+from hardware.exceptions import TOFError
 from hardware.iocam import AFSCam
 from unittest.mock import Mock, patch, AsyncMock
 
@@ -17,7 +18,7 @@ async def test_afscam_initialization(sample_tof_params, sample_usb_params):
     assert cam.fy_px == sample_usb_params.fy_px
 
 @pytest.mark.asyncio
-async def test_afscam_start_stop():
+async def test_afscam_start_stop(sample_tof_params, sample_usb_params):
     with patch('ArducamDepthCamera.ArducamCamera') as mock_tof, \
          patch('cv2.VideoCapture') as mock_usb:
         
@@ -29,7 +30,7 @@ async def test_afscam_start_stop():
         # Setup mock USB camera
         mock_usb_instance = Mock()
         mock_usb_instance.isOpened.return_value = True
-        mock_usb_instance.read.return_value = (True, np.zeros((480, 640, 3)))
+        mock_usb_instance.read.return_value = (True, np.zeros((480, 640, 3), dtype=np.uint8))
         mock_usb.return_value = mock_usb_instance
         
         # Create camera instance
@@ -57,7 +58,7 @@ async def test_afscam_measure(sample_tof_params, sample_usb_params):
         
         mock_usb_instance = Mock()
         mock_usb_instance.isOpened.return_value = True
-        mock_usb_instance.read.return_value = (True, np.zeros((480, 640, 3)))
+        mock_usb_instance.read.return_value = (True, np.zeros((480, 640, 3), dtype=np.uint8))
         mock_usb.return_value = mock_usb_instance
         
         # Create and start camera
@@ -73,7 +74,7 @@ async def test_afscam_measure(sample_tof_params, sample_usb_params):
         await cam.stop()
 
 @pytest.mark.asyncio
-async def test_afscam_error_handling():
+async def test_afscam_error_handling(sample_tof_params, sample_usb_params):
     with patch('ArducamDepthCamera.ArducamCamera') as mock_tof:
         # Setup mock TOF camera to fail
         mock_tof_instance = Mock()
@@ -84,5 +85,5 @@ async def test_afscam_error_handling():
         cam = AFSCam(sample_usb_params, sample_tof_params)
         
         # Test start should raise exception
-        with pytest.raises(RuntimeError):
+        with pytest.raises(TOFError):
             await cam.start()

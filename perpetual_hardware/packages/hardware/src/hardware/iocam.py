@@ -66,7 +66,7 @@ class AFSCam:
 
     def __init__(self, usb_params, tof_params) -> None:
         # TOF parameters
-        self.preferred_tof_port = None
+        self.preferred_tof_port = getattr(tof_params, "csi_port", None)
         self.max_distance_mm = tof_params.max_distance_mm
 
         # Calibration & geometry
