@@ -546,7 +546,6 @@ class Robot:
         command_name = "store_item"
 
         if not self._grid:
-            print("no grid")
             return RobotCommandError(command=command_name, error="Storage grid not calibrated")
 
         resolved_upca: str
@@ -562,7 +561,7 @@ class Robot:
             resolved_item_name = "item"
 
         measurement = await self.measure_item_dimensions()
-        weight = 0.0
+        weight = await self._io.get_weight()
         measured_dimensions = measurement
 
         if measured_dimensions is None:
@@ -589,7 +588,6 @@ class Robot:
         location = self._grid.find_best_slot_for_item(item)
 
         if not location:
-            print("no location")
             return RobotCommandError(command=command_name, error="No suitable storage location found")
 
         self._state.current_cell = location
