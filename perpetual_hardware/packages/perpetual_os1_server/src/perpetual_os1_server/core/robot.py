@@ -4,22 +4,17 @@ from perpetual_os1 import common
 from perpetual_os1 import robot_worker as r_worker
 from perpetual_os1 import robot_client as r_client
 
-from perpetual_os1_server.core.camera import init_camera_manager
-from perpetual_os1_server.core.robot_events import RobotEventListener
 from perpetual_os1_server.settings import get_settings
-from perpetual_os1_server.database.session import AsyncSessionLocal
 
 import logging
 
 robot_worker: Optional[r_worker.RobotWorker] = None
-robot_event_listener: Optional[RobotEventListener] = None
 
 async def init_robot_worker() -> None:
-    global robot_worker, robot_event_listener
+    global robot_worker
     logging.info("Getting Robot")
-    robot = r.Robot()
+    robot = r.Robot("/dev/ttyUSB0")
     await robot.configure()
-    # await init_camera_manager(robot._io._cam)
     logging.info("Built Robot")
     settings = get_settings()
     nats_config = common.RobotNatsConfiguration(
@@ -32,21 +27,12 @@ async def init_robot_worker() -> None:
     logging.info("Started")
     await robot_worker.start()
     logging.info("Connected")
-    try:
-        robot_event_listener = RobotEventListener(nats_config)
-        await robot_event_listener.start()
-    except Exception as err:
-        logging.warning("Failed to start robot event listener: %s", err)
-        robot_event_listener = None
 
 
 async def stop_robot_worker() -> None:
-    global robot_worker, robot_event_listener
+    global robot_worker
     if robot_worker:
         await robot_worker.shutdown()
-    if robot_event_listener:
-        await robot_event_listener.stop()
-        robot_event_listener = None
 
 
 async def get_robot_client() -> r_client.RobotClient:

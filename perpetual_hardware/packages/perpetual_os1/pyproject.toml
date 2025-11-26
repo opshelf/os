@@ -2,7 +2,6 @@
 name = "perpetual_os1"
 version = "0.1.0"
 description = "Add your description here"
-readme = "README.md"
 authors = [
     { name = "emgardner", email = "gardner.ethan10@gmail.com" }
 ]
@@ -11,8 +10,8 @@ dependencies = [
 	"hardware",
 	"pydantic",
 	"nats-py>=2.9.0",
+	"pymodbus>=3.11.2",
 	"opencv-python",
-	"sentry-sdk>=2.38.0",
 ]
 
 [build-system]
