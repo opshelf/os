@@ -144,16 +144,14 @@ class StorageService:
             await self.session.rollback()
             raise RuntimeError(f"Migration failed: {str(e)}") from e
 
-    async def create_item(self, upca: str, name: str, dimensions: Optional[Dict[str, float]] = None,
+    async def create_item(self, upca: str, name: str, dimensions: Dict[str, float],
                         weight: Optional[float] = None, metadata: Optional[Dict[str, Any]] = None,
-                        access_level_id: Optional[int] = None,
                         sync_to_json: bool = True) -> Item:
         """Create or upsert an item in the database."""
         StorageValidator.validate_item_creation(upca, name, dimensions, weight, metadata)
 
         normalized_metadata = metadata or {}
         normalized_weight = self._normalize_weight(weight)
-        normalized_dimensions = dimensions or {"width": 0, "height": 0, "length": 0}
 
         async with self._lock:
             try:
@@ -166,19 +164,16 @@ class StorageService:
                     item = Item(
                         upca=upca,
                         name=name,
-                        dimensions=normalized_dimensions,
+                        dimensions=dimensions,
                         weight=normalized_weight,
-                        item_metadata=normalized_metadata,
-                        access_level_id=access_level_id
+                        item_metadata=normalized_metadata
                     )
                     self.session.add(item)
                 else:
                     item.name = name
-                    if dimensions is not None:
-                        item.dimensions = normalized_dimensions
+                    item.dimensions = dimensions
                     item.weight = normalized_weight
                     item.item_metadata = normalized_metadata
-                    item.access_level_id = access_level_id
 
                 await self.session.flush()
                 await self.session.commit()
@@ -193,7 +188,6 @@ class StorageService:
             except Exception as json_error:  # pragma: no cover - best effort logging
                 logging.error(f"JSON sync failed after item creation: {str(json_error)}")
 
-        print("added item")
         return item
 
     async def get_item(self, upca: str) -> Optional[Item]:
@@ -224,8 +218,7 @@ class StorageService:
     async def update_item(self, upca: str, name: Optional[str] = None,
                         dimensions: Optional[Dict[str, float]] = None,
                         weight: Optional[float] = None,
-                        metadata: Optional[Dict[str, Any]] = None,
-                        access_level_id: Optional[int] = None) -> Optional[Item]:
+                        metadata: Optional[Dict[str, Any]] = None) -> Optional[Item]:
         """Update an existing item."""
         result = await self.session.execute(
             select(Item).where(Item.upca == upca)
@@ -248,8 +241,6 @@ class StorageService:
                     item.weight = normalized_weight
                 if metadata is not None:
                     item.item_metadata = metadata
-                if access_level_id is not None:
-                    item.access_level_id = access_level_id
 
                 await self.session.commit()
                 await self.session.refresh(item)
@@ -352,34 +343,14 @@ class StorageService:
         result = await self.session.execute(query.order_by(StorageCell.shelf_idx, StorageCell.cell_idx))
         return list(result.scalars().all())
 
-    async def update_storage_cell(
-        self,
-        shelf_idx: int,
-        cell_idx: int,
-        status: Optional[str] = None,
-        capacity: Optional[str] = None
-    ) -> bool:
-        """Update storage cell properties."""
-        update_values: Dict[str, Any] = {}
-
-        if status is not None:
-            StorageCellValidator.validate_status(status)
-            update_values["status"] = status
-
-        if capacity is not None:
-            StorageCellValidator.validate_capacity(capacity)
-            update_values["capacity"] = capacity
-
-        if not update_values:
-            # Nothing to update, treat as success.
-            return True
-
+    async def update_storage_cell(self, shelf_idx: int, cell_idx: int, status: str) -> bool:
+        """Update storage cell status."""
         async with self._lock:
             result = await self.session.execute(
                 update(StorageCell)
                 .where(StorageCell.shelf_idx == shelf_idx)
                 .where(StorageCell.cell_idx == cell_idx)
-                .values(**update_values)
+                .values(status=status)
                 .returning(StorageCell)
             )
             cell = result.scalar_one_or_none()

@@ -15,7 +15,6 @@ class SizeDatabaseSettings(BaseModel):
 
 class PrinterSettings(BaseModel):
     enabled: bool = False
-    queue: Optional[str] = None
 
 
 class ScannerSettings(BaseModel):
@@ -80,8 +79,6 @@ def get_settings() -> Settings:
         data["sizes"] = {"filename": "data/size.json"}
     if "printer" not in data:
         data["printer"] = {"enabled": False}
-    else:
-        data["printer"].setdefault("queue", None)
     if "scanner" not in data:
         data["scanner"] = {"enabled": False}
     if "robot" not in data:
