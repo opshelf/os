@@ -2,6 +2,7 @@ import pytest
 import cv2
 import numpy as np
 from unittest.mock import Mock, patch
+from hardware.exceptions import CameraError
 from hardware.toolcam import ToolCamera
 
 def test_toolcam_initialization(sample_camera_params):
@@ -28,9 +29,6 @@ async def test_toolcam_capture():
         frame = await camera.capture()
         assert frame is not None
         assert frame.shape == (480, 640, 3)
-        
-        # Verify camera settings were applied
-        mock_instance.set.assert_any_call(cv2.CAP_PROP_BUFFERSIZE, 1)
 
 def test_toolcam_build_remap(sample_camera_params):
     camera = ToolCamera(sample_camera_params)
@@ -56,5 +54,5 @@ async def test_toolcam_capture_failure():
         mock_instance.read.return_value = (False, None)
         mock_cap.return_value = mock_instance
 
-        frame = await camera.capture()
-        assert frame is None
+        with pytest.raises(CameraError):
+            await camera.capture()

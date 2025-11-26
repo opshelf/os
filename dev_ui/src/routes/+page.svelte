@@ -4,8 +4,8 @@
 	import { apiFetch, buildApiUrl, getApiBase } from '$lib';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 
-	type WorkerStatusPayload = {
-		robot_status?: string | null;
+type WorkerStatusPayload = {
+	robot_status?: Record<string, unknown> | null;
 		running?: boolean;
 		current_command?: Record<string, unknown> | null;
 		queue_length?: number;
@@ -174,7 +174,13 @@
 		<tbody>
 			<tr>
 				<td>robot status</td>
-				<td>{status.robot_status ?? 'unknown'}</td>
+				<td>
+					{#if status.robot_status}
+						<pre>{JSON.stringify(status.robot_status, null, 2)}</pre>
+					{:else}
+						unknown
+					{/if}
+				</td>
 			</tr>
 			<tr>
 				<td>worker running</td>

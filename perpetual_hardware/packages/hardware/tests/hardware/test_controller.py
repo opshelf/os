@@ -2,6 +2,7 @@ import pytest
 import asyncio
 from unittest.mock import AsyncMock, Mock
 from hardware.controller import SharedModbusController
+from hardware.exceptions import ModbusError
 
 @pytest.mark.asyncio
 async def test_controller_initialization():
@@ -49,7 +50,7 @@ async def test_controller_write_single_register(mock_modbus_client):
 
     # Test successful write
     success = await controller.write_single_register(1, 0x100, 42)
-    assert success is True
+    assert success is None
     mock_modbus_client.write_register.assert_called_once_with(
         address=0x100, value=42, device_id=1
     )
@@ -65,5 +66,5 @@ async def test_controller_error_handling(mock_modbus_client):
     mock_modbus_client.read_holding_registers.return_value = result
 
     # Test error handling
-    value = await controller.read_holding_registers(1, 0x100)
-    assert value is None
+    with pytest.raises(ModbusError):
+        await controller.read_holding_registers(1, 0x100)

@@ -10,14 +10,28 @@ services:
     volumes:
       - ./perpetual_hardware/packages/perpetual_os1_server/infra/nats/:/etc/nats/
     command: ["-js", "-config", "/etc/nats/nats.conf"]
+    healthcheck:
+      test: [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1",
+          "
+          -  --spider",
+          "http://localhost:8000/",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
     networks:
       - openshelf-network
-    restart: unless-stopped
 
   api:
     build:
       context: .
       dockerfile: ./Dockerfile
+    network_mode: "host"
     volumes:
       - ./perpetual_hardware/:/app/perpetual_hardware/
     ports:
@@ -28,33 +42,38 @@ services:
       - ENV=dev
       - PERPETUAL_BARCODE_PORT=/dev/ttyACM0
       - PERPETUAL_BARCODE_BAUDRATE=115200
+      - NATS_DOMAIN=nats
       - JWT_SECRET=${JWT_SECRET:-INSECURE_JWT_SECRET}
       - AUDIT_HMAC_KEY=${AUDIT_HMAC_KEY:-INSECURE_AUDIT_HMAC_KEY}
-      - NATS_DOMAIN=nats
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "--max-time", "5", "http://localhost:8000/api/health"]
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1 --spider",
+          "http://localhost:8000/",
+        ]
       interval: 15s
       timeout: 5s
       retries: 2
       start_period: 20s
     networks:
       - openshelf-network
-    restart: unless-stopped
 
-  dev_ui:
+  ui:
     build:
-      context: ./dev_ui
-      dockerfile: Dockerfile
+      context: ./openshelf_os1
+      dockerfile: ./Dockerfile
     ports:
-      - "8080:8080"
+      - "0.0.0.0:8080:5173"
     volumes:
-      - ./dev_ui:/app
+      - ./openshelf_os1/:/app
       - /app/node_modules
     environment:
-      - NODE_ENV=development
+      - VITE_API_URL=http://localhost:8000
     depends_on:
       - api
-    restart: unless-stopped
     networks:
       - openshelf-network
 
