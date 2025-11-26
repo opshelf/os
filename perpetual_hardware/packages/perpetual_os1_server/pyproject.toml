@@ -2,11 +2,10 @@
 name = "perpetual_os1_server"
 version = "0.1.0"
 description = "Add your description here"
-readme = "README.md"
 authors = [
     { name = "emgardner", email = "gardner.ethan10@gmail.com" }
 ]
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.14"
 dependencies = [
     "fastapi>=0.115.6",
     "nats-py>=2.9.0",
@@ -26,6 +25,9 @@ dependencies = [
     "pyjwt>=2.8.0",
     "python-multipart>=0.0.6",
     "email-validator>=2.0.0",
+    "structlog>=24.1.0",
+    "python-json-logger>=2.0.7",
+    "sentry-sdk[fastapi]>=2.0.0",
 ]
 
 [tool.uv]

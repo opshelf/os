@@ -2,11 +2,18 @@ import perpetual_os1.common as c
 
 from hardware.controller import SharedModbusController as Controller
 from hardware.motor import Motor
+from hardware.printer import USBPrinter
 from hardware.iocam import AFSCam
 from perpetual_os1.exceptions import (
     IOBoxError, MotorError, CameraError, ConfigError
 )
-# from hardware.scale import Scale
+
+from perpetual_os1.storage import (
+    StorageGrid, Shelf, Cell, CellStatus, CalibrationCoordinate,
+    Dimensions, StorageModuleSide, CellItem, StorageModuleCellLocation
+)
+
+from hardware.scale import Scale
 # from hardware.curtain import Curtain
 
 import time
@@ -14,7 +21,15 @@ import asyncio
 from enum import Enum
 from typing import Dict, Optional, Tuple, Union, Literal, Annotated
 from pydantic import BaseModel
+from dataclasses import dataclass
+import logging
 
+
+@dataclass
+class IOBoxMeasurement:
+    dimensions: Optional[Dimensions]
+    weight: Optional[float]
+    timestamp: float
 class IOBoxStatus(Enum):
     IDLE = 0
     READY = 1
@@ -31,18 +46,27 @@ class SizeResult():
     size: Optional[ItemSizeLocation]
 
 class IOBox:
-    def __init__(self, motorcontroller: Controller, params: dict):
-        # self._scalecontroller = scalecontroller
-        self._scale = None
+    def __init__(self, 
+                 motorcontroller: Controller,
+                 scalecontroller: Controller, 
+                 params: dict,
+                 ):
+        self._scalecontroller = scalecontroller
         self._motorcontroller = motorcontroller
         self._status = IOBoxStatus.IDLE
         self._params = params
 
-        # self._scale: Optional[Scale] = None
         self._md = Motor(controller = self._motorcontroller, 
                          params = self._params.motors.by_name("door"))
         self._cam = AFSCam(usb_params = self._params.usb_camera,
                            tof_params = self._params.tof_camera)
+        
+        self._scale = Scale(scalecontroller)
+        # self._printer = USBPrinter()
+        self._scale_ready = False
+        self._cam_running = False
+        self._logger = logging.getLogger(__name__).getChild("IOBox")
+
 
     async def configure(self):
         """
@@ -54,14 +78,53 @@ class IOBox:
         try:
             await self._md.configure()
             await self._md.home()
-            await self._cam.start()
-            self._status = IOBoxStatus.READY
+            await self._scale.tare()
+            self._scale_ready = True
+            if not self._cam_running:
+                await self._cam.start()
+                self._cam_running = True
+            self._status = IOBoxStatus.IDLE
         except Exception as e:
             self._status = IOBoxStatus.ERROR
             raise IOBoxError(f"IOBox configuration failed: {str(e)}") from e
 
-        #scale config
         #curtain config
+
+    async def _ensure_scale_ready(self) -> None:
+        """Ensure the scale interface is configured before reading."""
+        if self._scale_ready:
+            return
+        await self._scale.configure()
+        self._scale_ready = True
+
+    async def _ensure_camera_running(self) -> None:
+        """Ensure the AFSCam pipeline is active before measuring."""
+        if self._cam_running:
+            return
+        await self._cam.start()
+        self._cam_running = True
+
+    def print_random_barcode(
+        self,
+        *,
+        height: int = 96,
+        width: int = 3,
+        hri: str = "none",
+        feed_after: int = 2,
+    ) -> str:
+        """Generate and print a random UPC-A code using the USB printer."""
+        if self._printer is None:
+            raise IOBoxError("Printer not configured")
+        try:
+            return self._printer.print_random_upca(
+                height=height,
+                width=width,
+                hri=hri,
+                feed_after=feed_after,
+            )
+        except Exception as exc:
+            self._status = IOBoxStatus.ERROR
+            raise IOBoxError(f"Failed to print barcode: {str(exc)}") from exc
 
     async def get_weight(self) -> float:
         """
@@ -71,11 +134,21 @@ class IOBox:
             IOBoxError: If scale is not configured or reading fails
         """
         try:
-            if self._scale is None:
-                # self._scale = Scale(controller=self._scalecontroller, rs.get _params(self._state, "iobox"))
-                await self._scale.configure()
-            weight = await self._scale.get_weight()
-            return weight
+            await self._ensure_scale_ready()
+            retries = 2
+            for attempt in range(retries):
+                try:
+                    return await self._scale.read_weight()
+                except Exception as err:
+                    self._logger.warning(
+                        "Scale read failed (attempt %s/%s)",
+                        attempt + 1,
+                        retries,
+                        exc_info=err,
+                    )
+                    if attempt == retries - 1:
+                        raise
+                    await asyncio.sleep(0.05)
         except Exception as e:
             self._status = IOBoxStatus.ERROR
             raise IOBoxError(f"Failed to get weight: {str(e)}") from e
@@ -91,32 +164,78 @@ class IOBox:
         try:
             if self._cam is None:
                 raise IOBoxError("Camera not configured")
+            await self._ensure_camera_running()
             size = await self._cam.measure()
             return size
         except Exception as e:
-            self._status = IOBoxStatus.ERROR
+            self._logger.warning("Async measurement failed", exc_info=e)
             if isinstance(e, IOBoxError):
+                self._status = IOBoxStatus.ERROR
                 raise
             raise CameraError(f"Item measurement failed: {str(e)}") from e
-        
-    def measure_item_sync(self) -> Optional[ItemSizeLocation]:
+
+    async def detect_item_presence(self) -> Tuple[Optional[ItemSizeLocation], float]:
         """
-        Measure item dimensions using camera system.
-        
-        Raises:
-            IOBoxError: If camera is not configured
-            CameraError: If measurement fails
+        Determine whether an item is present by combining scale weight and camera measurement.
+
+        Returns:
+            Tuple containing the measured ItemSizeLocation (or None) and the recorded weight.
+
+        Side Effects:
+            Updates IOBox status to READY when an item is confirmed present, otherwise IDLE.
         """
         try:
-            if self._cam is None:
-                raise IOBoxError("Camera not configured")
-            size = self._cam.measure_sync()
-            return size
-        except Exception as e:
-            self._status = IOBoxStatus.ERROR
-            if isinstance(e, IOBoxError):
-                raise
-            raise CameraError(f"Item measurement failed: {str(e)}") from e
+            weight = await self.get_weight()
+            measurement = await self.measure_item()
+
+            if measurement is not None and abs(weight) > 5.0:
+                self._status = IOBoxStatus.READY
+            else:
+                self._status = IOBoxStatus.IDLE
+
+            return measurement, weight
+        except Exception:
+            # get_weight / measure_item already set status/errors appropriately
+            raise
+
+    async def _collect_iobox_measurement(self) -> IOBoxMeasurement:
+        """Gather IOBox measurement data (weight & optical dimensions)."""
+        timestamp = time.time()
+        weight: Optional[float] = None
+        dimensions: Optional[Dimensions] = None
+
+        try:
+            weight = await self.get_weight()
+        except Exception as exc:
+            self._logger.warning("IOBox weight read failed", exc_info=exc)
+
+        try:
+            dimensions = await self.measure_item()
+        except Exception as exc:
+            print("measurement failed")
+            self._logger.warning("IOBox dimension measurement failed", exc_info=exc)
+
+        return IOBoxMeasurement(dimensions=dimensions, weight=weight, timestamp=timestamp)
+        
+    # def measure_item_sync(self) -> Optional[ItemSizeLocation]:
+    #     """
+    #     Measure item dimensions using camera system.
+        
+    #     Raises:
+    #         IOBoxError: If camera is not configured
+    #         CameraError: If measurement fails
+    #     """
+    #     try:
+    #         if self._cam is None:
+    #             raise IOBoxError("Camera not configured")
+    #         size = self._cam.measure_sync()
+    #         return size
+    #     except Exception as e:
+    #         self._logger.warning("Sync measurement failed", exc_info=e)
+    #         if isinstance(e, IOBoxError):
+    #             self._status = IOBoxStatus.ERROR
+    #             raise
+    #         raise CameraError(f"Item measurement failed: {str(e)}") from e
 
     async def open_door(self):
         """
@@ -172,17 +291,23 @@ class IOBox:
             except Exception as e:
                 errors.append(f"Door motor stop failed: {str(e)}")
                 
-        if self._scale is not None:
-            try:
-                await self._scale.stop()
-            except Exception as e:
-                errors.append(f"Scale stop failed: {str(e)}")
+        # if self._scale is not None:
+        #     try:
+        #         await self._scale.stop()
+        #     except Exception as e:
+        #         errors.append(f"Scale stop failed: {str(e)}")
                 
         if self._cam is not None:
             try:
                 await self._cam.stop()
             except Exception as e:
                 errors.append(f"Camera stop failed: {str(e)}")
+
+        # if self._printer is not None:
+        #     try:
+        #         self._printer.disconnect()
+        #     except Exception as e:
+        #         errors.append(f"Printer disconnect failed: {str(e)}")
         
         if errors:
             self._status = IOBoxStatus.ERROR

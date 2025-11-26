@@ -4,9 +4,7 @@ from perpetual_os1 import common
 from perpetual_os1 import robot_worker as r_worker
 from perpetual_os1 import robot_client as r_client
 
-from perpetual_os1_server.core.camera import init_camera_manager
 from perpetual_os1_server.settings import get_settings
-from perpetual_os1_server.database.session import AsyncSessionLocal
 
 import logging
 
@@ -15,9 +13,8 @@ robot_worker: Optional[r_worker.RobotWorker] = None
 async def init_robot_worker() -> None:
     global robot_worker
     logging.info("Getting Robot")
-    robot = r.Robot()
+    robot = r.Robot("/dev/ttyUSB0")
     await robot.configure()
-    # await init_camera_manager(robot._io._cam)
     logging.info("Built Robot")
     settings = get_settings()
     nats_config = common.RobotNatsConfiguration(

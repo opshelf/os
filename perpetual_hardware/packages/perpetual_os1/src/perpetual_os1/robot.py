@@ -1,30 +1,23 @@
-from perpetual_os1.common import AxisCoordinate, ToolCoordinate, load_config_file
-
-from hardware.controller import SharedModbusController as Controller
-from perpetual_os1.iobox import IOBox, IOBoxStatus, SizeResult, ItemSizeLocation
-from perpetual_os1.tool import Tool, ToolStatus, ToolMotionStatus, ToolItemStatus
-from perpetual_os1.storage import (
-    StorageGrid, Shelf, Cell, CellStatus, CalibrationCoordinate,
-    Dimensions, StorageModuleSide, CellItem, StorageModuleCellLocation
-)
-
-from perpetual_os1.exceptions import (
-    ConfigError,
-)
-
-from perpetual_os1.robot_state import RobotStateManager, RobotStateError
-
-import json
-from pathlib import Path
-from enum import Enum
-from typing import Any, Dict, Optional, Tuple, Union, Literal, Annotated, List, Callable, TYPE_CHECKING
+from typing import Dict, Optional, Tuple, Union, Literal, Annotated
+from perpetual_os1.common import AxisCoordinate, ToolCoordinate
+from hardware.ModbusController import SharedModbusController as Controller
+from hardware.MotorBase import Motor, Servo, MotorStatus
+from hardware.camera import Camera
+from hardware.scale import Scale
+from hardware.curtain import Curtain
 from pydantic import BaseModel, Field
-
 import time
+from enum import Enum
+import cv2
+import asyncio
+import perpetual_os1.robot_state as rs
 
-import os
-STORAGE_PATH = os.path.join(os.path.dirname(__file__), 'storage.json')
-CONFIG_PATH = Path(__file__).resolve().parent / "config.json"
+
+# class TestCommandOne(BaseModel):
+#     command: Literal["testone"] = "testone"
+
+# class TestCommandTwo(BaseModel):
+#     command: Literal["testtwo"] = "testtwo"
 
 class StopCommand(BaseModel):
     command: Literal["stop"] = "stop"
@@ -34,6 +27,7 @@ class InitializeCommand(BaseModel):
 
 class HomeCommand(BaseModel):
     command: Literal["home"] = "home"
+    barcode: str
 
 class MoveCommand(BaseModel):
     command: Literal["move"] = "move"
@@ -46,15 +40,6 @@ class MoveToolCommand(BaseModel):
 class IdleCommand(BaseModel):
     command: Literal["idle"] = "idle"
 
-class RetrieveItemCommand(BaseModel):
-    command: Literal["retrieve_item"] = "retrieve_item"
-    location: Dict[str, Any]
-
-class StoreItemCommand(BaseModel):
-    command: Literal["store_item"] = "store_item"
-    location: Dict[str, Any]
-    item: Optional[Dict[str, Any]] = None
-
 RobotCommands = Annotated[
     Union[
         StopCommand,
@@ -63,12 +48,9 @@ RobotCommands = Annotated[
         MoveCommand,
         MoveToolCommand,
         IdleCommand,
-        RetrieveItemCommand,
-        StoreItemCommand,
     ],
     Field(discriminator="command"),
 ]
-
 # Define response types
 class RobotCommandSuccessful(BaseModel):
     message: Literal["success"] = "success"
@@ -78,484 +60,568 @@ class RobotCommandError(BaseModel):
 
 class RobotItemStoredResponse(BaseModel):
     message: Literal["success"] = "success"
-    location: StorageModuleCellLocation
+#     location: StorageModuleCellLocation
 
+class ItemSizeLocation(BaseModel):
+    object_size: float
+    min_bound: float
+    max_bound: float
+    height: float 
 
-class RobotState(BaseModel):
-    io: IOBoxStatus
-    tool: ToolStatus
-    current_cell: Optional[StorageModuleCellLocation] = None
-
-class RobotStatus(BaseModel):
-    storage: StorageGrid
-    state: RobotState
-    light_curtain: bool
+class SizeResult():
+    result: Union[Literal["detected"], Literal["no_item_detected"], Literal["item_outside_of_zone"]]
+    size: Optional[ItemSizeLocation]
 
 RobotResponse = Union[RobotCommandSuccessful, RobotCommandError, SizeResult]
 
+# class RobotState(BaseModel):
+#     current_cell: Optional[StorageModuleCellLocation] = None
+
+class RobotStatus(str, Enum):
+    IDLE = "IDLE"
+    RUNNING = "RUNNING"
+    ERROR = "ERROR"
+
+class WorkerStatus(BaseModel):
+    robot_status: Optional[RobotStatus]
+    running: bool
+    current_command: Optional[RobotCommands]
+
+
+from pathlib import Path
+CONFIG_PATH = Path(__file__).resolve().parent / "config.json"
+
+import cv2
+import numpy as np
+import asyncio
+import csv
+import time
+from dataclasses import dataclass, field
+from typing import List, Tuple, Optional, Dict
+
+# ---------------------------
+# Config
+# ---------------------------
+@dataclass
+class ScanConfig:
+    x_min: float = 0.0
+    x_max: float = 300.0           # mm or steps—match your units
+    y_min: float = 0.0
+    y_max: float = 200.0
+    x_step: float = 10.0
+    y_step: float = 10.0
+    center_tol_px: int = 3         # how close to perfect center is "centered"
+    px_per_mm_x: float = 4.5       # camera scale: pixels per mm (x)
+    px_per_mm_y: float = 4.5       # camera scale: pixels per mm (y)
+    move_timeout_s: float = 3.0
+    registry_tol_mm: float = 1.0   # "same fiducial" if world distance < this
+    min_area_px: int = 100         # reject tiny noise
+    aspect_tol: float = 0.25       # allowed deviation from 1:1 square
+    nms_iou: float = 0.3           # NMS threshold for multiple contours
+
+# ---------------------------
+# Global de-dup registry
+# ---------------------------
+@dataclass
+class FiducialRegistry:
+    # store world positions (motor coordinates) to avoid double counting
+    items: List[float] = field(default_factory=list)
+
+    def seen(self, yw: float, tol: float) -> bool:
+        for yy in self.items:
+            if abs(yy - yw) <= tol:
+                return True
+        return False
+
+    def add(self, yw: float):
+        self.items.append(yw)
+
 class Robot:
-    def __init__(self = None) -> None:
-        # TODO add port retries, config, hardening
-        self._motorbus = Controller(port="/dev/ttyUSB1", baudrate=115200) # change to config
-        # self._scalebus = Controller(port="/dev/serial/by-id/usb-1a86_USB_Single_Serial_594D007725-if00", baudrate=9600) # change to config
+    def __init__(self, port: str) -> None:
+        self._bus = Controller(port=port)
+        self._scalebus = Controller(port="/dev/ttyACM0", baudrate=9600) # change to config
+        # self._curtain_bus = Controller(port=curtain_port)
+        self._state = rs.load_state(CONFIG_PATH)
+        self._mx = Motor(
+            self._bus, 
+            rs.get_motor_params(self._state, "x_axis"), 
+        )
+        self._my = Motor(
+            self._bus, 
+            rs.get_motor_params(self._state, "y_axis"), 
+        )
+        self._mg = Motor(
+            self._bus, 
+            rs.get_motor_params(self._state, "z_axis"), 
+        )
+        self._ms = Motor(
+            self._bus, 
+            rs.get_motor_params(self._state, "stage"), 
+        )
+        self._mr = Motor(
+            self._bus, 
+            rs.get_motor_params(self._state, "rotate"), 
+        )
+        self._md = Motor(
+            self._bus, 
+            rs.get_motor_params(self._state, "door"), 
+        )
 
-        # Load State
-        self._config = load_config_file(CONFIG_PATH)
-        tool_params = self._config.get("robot.tool", {})
-        io_params = self._config.get("robot.io", {})
-
-        # Robot Components
-        self._tool = Tool(motorcontroller=self._motorbus, params=tool_params)
-        self._io = IOBox(motorcontroller=self._motorbus, params=io_params)
-
-        # storage grid to store physical robot state
-        with open(STORAGE_PATH, 'r') as f:
-             data = json.load(f)
-        self._grid = StorageGrid.model_validate(data)  # Storage grid configuration
-
-        # Status
-        self._cur_item: StorageModuleCellLocation = None # some kind of unique identifier
-        self._status: RobotStatus = None
-
-        self._state: RobotState = RobotState(io=IOBoxStatus.IDLE, tool=ToolStatus(motion=ToolMotionStatus.IDLE, item=ToolItemStatus.EMPTY))
-
-        # State Machine
-        self._state_manager = RobotStateManager()
+        self._gs = Servo(self._bus)
+        # self._cam = Camera()
+        # self._grid = self._state["grid"]
+        self._scale = Scale(self._scalebus, 1) #need to update motors
+        # self._curtain = Curtain(self._curtain_bus)
+        self._cur_item: str = None # some kind of unique identifier
+        self._status: RobotStatus = RobotStatus.IDLE
 
     async def configure(self):
-        await self._motorbus.connect()
-        if not self._motorbus.client.connected:
-            print("No Motor bus")
+        await self._bus.connect()
+        if not self._bus.client.connected:
+            print("No Connection to Modbus")
             return
-        # await self._scalebus.connect()
-        # if not self._scalebus.client.connected:
-        #     print("No scale bus")
-        #     return
+        await self._mx.configure()
+        await self._my.configure()
+        await self._mg.configure()
+        await self._mr.configure()
+        await self._ms.configure()
+        await self._md.configure()
+        await self._gs.configure()
 
-        # await self._tool.configure()
-        await self._io.configure()
+        await self.home()
+
+        await self._md.move_to_position(170) # keep door open
+
+        # await self._scalebus.connect()
+        if not await self._scale.connect():
+            print("No Connection to Scale")
+
+        await self._scale.tare()
+        # await self._curtain.connect()
 
     def get_param(self, param: str):
-        try:
-            if not hasattr(self._config.robot, param):
-                raise KeyError(f"Parameter '{param}' not found")
-            return getattr(self._config.robot, param)
-        except Exception as e:
-            raise ConfigError(f"Failed to get parameter {param}: {str(e)}") from e
+        return rs.get_robot_params(self._state).get(param)
+
+    async def retrieve_item(self, label: str):
+        item = AxisCoordinate(rs.search_grid(self.get_storage()))
+        await self.pick(item)
+
+    async def place_item(self):
+        # get next available position
+        next = rs.find_first_available_cell(self.get_storage())
+        if next is None:
+            print("No available cell found.")
+            return
+
+        coordinate = AxisCoordinate(next["coord"])
+        await self.place(coordinate)
 
     async def io_place(self, coord: AxisCoordinate):
-        # Validate state before operation
-        self._state_manager.update_state(self._state.tool, self._state.io)
-        self._state_manager.validate_operation('place_iobox')
+        await self.pick(coord)
 
-        ppl = await self._tool.get_param("PICKUP_POSITION_L")
-        pph = await self._tool.get_param("PICKUP_POSITION_H")
+        await self._my.move_to_position_no_wait(self.get_param("PICKUP_POSITION_L")[1])
+        await self._mx.move_to_position_no_wait(self.get_param("PICKUP_POSITION_L")[0]) 
+        await self._md.move_to_position_no_wait(170)
+        await self.pick_wait()
 
-        await self._tool.pick(coord)
-        await self._tool.move(AxisCoordinate(ppl[0], ppl[1])) # move to safe height
-        await self._io.open_door()
-        await self._tool.extend_IO()
-        await self._tool.move(AxisCoordinate(pph[0], pph[1]))
-        await self._tool.retract()
-        await self._io.close_door()
-        await self._tool.move(coord)
-        await self._tool.place(coord)
+        # await self._md.move_to_position(170) # todo make para
+        await self._ms.move_to_position(self.get_param("SLIDE_EXTENSION"))
+        await self._mg.move_to_position(self.get_param("GRIPPER_EXTENSION_PLACE")+8)
 
-        await self._io._md.home()
-        await self._tool.clear_alarms()
+        await self._my.move_to_position_no_wait(self.get_param("PICKUP_POSITION_H")[1])
+        await self._mx.move_to_position_no_wait(self.get_param("PICKUP_POSITION_H")[0]) 
+        await self.gantry_wait()
+        await self._ms.move_to_position_no_wait(0)
+        await self._mg.move_to_position_no_wait(0)
+        await self.tool_wait()
 
-        # Update state after operation
-        self._state_manager.update_state(self._state.tool, self._state.io)
+        # await self._md.move_to_position_no_wait(0)
+        await self._my.move_to_position_no_wait(coord.y)
+        await self._mx.move_to_position_no_wait(coord.x)
+        await self.pick_wait()
+
+        await self.place(coord)
+
+        # await self._md.home()
+        await self._mg.home()
+        await self._ms.home()
 
     async def io_pick(self, coord):
-        # Validate state before operation
-        self._state_manager.update_state(self._state.tool, self._state.io)
-        self._state_manager.validate_operation('pick_iobox')
 
-        ppl = await self._tool.get_param("PICKUP_POSITION_L")
-        pph = await self._tool.get_param("PICKUP_POSITION_H")
+        await self.pick(coord)
+        # await self._md.move_to_position_no_wait(170)
+        await self._my.move_to_position_no_wait(self.get_param("PICKUP_POSITION_H")[1])
+        await self._mx.move_to_position_no_wait(self.get_param("PICKUP_POSITION_H")[0]) 
+        await self.pick_wait()
 
-        await self._tool.pick(coord)
-        await self._tool.move(AxisCoordinate(pph[0], pph[1])) # move to safe height
-        await self._io.open_door()
-        await self._tool.extend()
-        await self._tool.move(AxisCoordinate(ppl[0], ppl[1])) # move to safe height
-        await self._tool.retract()
-        await self._io.close_door()
-        await self._tool.move(coord)
-        await self._tool.place(coord)
+        # await self._md.move_to_position(170)
 
-        await self._io._md.home() # clear alarms io
-        await self._tool.clear_alarms()
+        await self._ms.move_to_position_no_wait(self.get_param("SLIDE_EXTENSION")) # 50 max
+        await self._mg.move_to_position_no_wait(self.get_param("GRIPPER_EXTENSION_PLACE")+8)
+        await self.tool_wait()
 
-        # Update state after operation
-        self._state_manager.update_state(self._state.tool, self._state.io)
+        await self._my.move_to_position_no_wait(self.get_param("PICKUP_POSITION_L")[1])
+        await self._mx.move_to_position_no_wait(self.get_param("PICKUP_POSITION_L")[0]) 
+        await self.gantry_wait()
+
+        await self._mg.move_to_position(0)
+        await self._ms.move_to_position(0)
+        # await self.tool_wait()
+
+        # await self._md.move_to_position_no_wait(0)
+        await self._my.move_to_position_no_wait(coord.y)
+        await self._mx.move_to_position_no_wait(coord.x)
+        await self.pick_wait()
+
+        await self.place(coord)
+
+        await self._mg.home()
+        await self._ms.home()
+        # await self._md.home()
+
+    async def pick(self, coordinate: AxisCoordinate) -> None:
+        await self._gs.safe_open()
+        await self._my.move_to_position_no_wait(coordinate.y)
+        await self._mx.move_to_position_no_wait(coordinate.x)
+        await self.gantry_wait()
+        #empty move
+        await self._ms.move_to_position_no_wait(self.get_param("SLIDE_EXTENSION")) # 50 max
+        await self._mg.move_to_position_no_wait(self.get_param("GRIPPER_EXTENSION_PICK"))
+        await self.tool_wait()
+
+        await self._gs.open()
+        await self._mg.move_to_position(0)
+        await self._ms.move_to_position(0)
+        # await self._ms.retract()
+
+    async def place(self, coordinate: AxisCoordinate):
+        await self._my.move_to_position_no_wait(coordinate.y)
+        await self._mx.move_to_position_no_wait(coordinate.x)
+        await self.gantry_wait()
+        await self._ms.move_to_position(self.get_param("SLIDE_EXTENSION")) # 50 max
+        await self._mg.move_to_position(self.get_param("GRIPPER_EXTENSION_PLACE"))
+        await self._gs.close()
+
+        await self._mg.move_to_position_no_wait(0)
+        await self._ms.move_to_position_no_wait(0)
+        await self.tool_wait()
+
+        # await self._mg.retract()
+        # await self._ms.retract()
+        # await self.tool_wait()
+        # await self._mg.move_config()
+        # await self._ms.move_config()
+
+    # well plate
+    # async def testtwo(self):
+    #     await self._mr.move_to_position(0.5)
+    #     print("andi")
+    #     # time.sleep(2.5)
+    #     while True:
+    #         w = await self._scale.read_weight_data()
+    #         if w > 50:
+    #             await self.io_pick(AxisCoordinate(286.34, 384.79))
+    #             return
+
+    # big box
+    async def testone(self, code):
+        await self._mr.move_to_position(0.5)
+        # await self._md.move_to_position(170)
+        if code == "66666":
+            # cl = AxisCoordinate(89.44, 42.548)
+            cl = AxisCoordinate(914.44, 38.048)
+        # await self._mr.move_to_position(0.5)
+        # print("beblet")
+        # # time.sleep(2.5)
+        # while True:
+        #     w = await self._scale.read_weight_data()
+        #     if w > 50:
+        #         await self.io_pick(AxisCoordinate(89.44, 42.548))
+        #         return
+
+            await self.io_place(cl)
+
+        elif code == "11111":
+            # cl = AxisCoordinate(89.44, 42.548)
+            cl = AxisCoordinate(914.44, 38.048)
+        # await self._mr.move_to_position(0.5)
+        # print("beblet")
+        # # time.sleep(2.5)
+        # while True:
+        #     w = await self._scale.read_weight_data()
+        #     if w > 50:
+        #         await self.io_pick(AxisCoordinate(89.44, 42.548))
+        #         return
+
+            await self.io_pick(cl)
+
+
+
+    async def test(self) -> None:
+              # bay = AxisCoordinate(round(bays[0]+2.5), round(bays[1])+2) #0.5, 3
+
+        #+4 x +15 y
+        await self._mr.move_to_position(0.5)
+
+        s1 = [(910.44, 21.048), (745.44, 21.048), (580.44, 21.048), (415.44000000000005, 21.048), (250.44000000000005, 21.048), (85.44000000000005, 21.048)]
+        s2 = [(912.344, 372.04), (807.344, 372.04), (702.344, 372.04), (597.344, 372.04), (492.34400000000005, 372.04), (387.34400000000005, 372.04), (282.34400000000005, 372.04)] 
+        s3 = [(913.008, 575.44), (808.008, 575.44), (703.008, 575.44), (598.008, 575.44), (493.00800000000004, 575.44), (388.00800000000004, 575.44), (283.00800000000004, 575.44)] 
+        s4 = [(921.272, 776.84), (831.272, 776.84), (741.272, 776.84), (651.272, 776.84), (561.272, 776.84), (471.27200000000005, 776.84), (381.27200000000005, 776.84), (291.27200000000005, 776.84)]
+        s5 = [(921.68, 927.24), (831.68, 927.24), (741.68, 927.24), (651.68, 927.24), (561.68, 927.24), (471.67999999999995, 927.24), (381.67999999999995, 927.24), (291.67999999999995, 927.24)]
+        
+        sl1 = np.linspace(17, 21.5, 6, retstep=False)
+        sl2 = np.linspace(10, 12.75, 7, retstep=False)
+        sl3 = np.linspace(11.5, 14.25, 7, retstep=False)
+        sl4 = np.linspace(10, 12.25, 8, retstep=False)
+        sl5 = np.linspace(10, 13.5, 8, retstep=False)
+
+        p1 = [(x + 4, y + dy) for (x, y), dy in zip(s1, sl1)]
+        p2 = [(x + 4, y + dy) for (x, y), dy in zip(s2, sl2)]
+        p3 = [(x + 4, y + dy) for (x, y), dy in zip(s3, sl3)]
+        p4 = [(x + 4, y + dy) for (x, y), dy in zip(s4, sl4)]
+        p5 = [(x + 4, y + dy) for (x, y), dy in zip(s5, sl5)]
+
+        # await self._move(coordinate)
+        
+        # s1, 17 -> 21.5
+        # s2, 10 - > 12.75
+        # s3, 11.5 -> 14.25
+        # s4, 10 -> 12.25
+        # s5, 10 -> 13.5
+
+        # 287.00800000000004, 589.44
+
+        
+        for i in range(0, 30):
+            print(f"Cycle {i}")
+            await self._move(AxisCoordinate(self.get_param("SCAN_POSITION")[0], 
+                                            self.get_param("SCAN_POSITION")[1]))
+            for tray in p1:
+                # print(AxisCoordinate(round(tray[0], 4), round(tray[1], 4)))
+                await self.pick(AxisCoordinate(round(tray[0], 4), round(tray[1], 4)))
+                await self.place(AxisCoordinate(round(tray[0], 4), round(tray[1], 4)))
+            
+            for tray in p2:
+                # print(AxisCoordinate(round(tray[0], 4), round(tray[1], 4)))
+                await self.pick(AxisCoordinate(round(tray[0], 4), round(tray[1], 4)))
+                await self.place(AxisCoordinate(round(tray[0], 4), round(tray[1], 4)))
+
+            for tray in p3:
+                # print(AxisCoordinate(round(tray[0], 4), round(tray[1], 4)))
+                await self.pick(AxisCoordinate(round(tray[0], 4), round(tray[1], 4)))
+                await self.place(AxisCoordinate(round(tray[0], 4), round(tray[1], 4)))
+            
+            for tray in p4:
+                # print(AxisCoordinate(round(tray[0], 4), round(tray[1], 4)))
+                await self.pick(AxisCoordinate(round(tray[0], 4), round(tray[1], 4)))
+                await self.place(AxisCoordinate(round(tray[0], 4), round(tray[1], 4)))
+
+            for tray in p5:
+                # print(AxisCoordinate(round(tray[0], 4), round(tray[1], 4)))
+                await self.pick(AxisCoordinate(round(tray[0], 4), round(tray[1], 4)))
+                await self.place(AxisCoordinate(round(tray[0], 4), round(tray[1], 4)))
+
+
+    async def get_shelves(self):
+        shelves = []
+        # last_shelf = None
+        reg = FiducialRegistry()
+        
+        # await self.home()
+        await self._move(AxisCoordinate(self.get_param("SCAN_POSITION")[0], 
+                                        self.get_param("SCAN_POSITION")[1]))
+        
+        while True:
+            frame = await self._cam.capture() # TODO error handling
+            frame = self._cam.correct(frame)
+            #todo dedup
+            # frame = cv2.resize(frame, None, fx=1.25, fy=1, interpolation=cv2.INTER_LINEAR)
+            # cv2.imwrite("beb.png", frame)
+            rect = self._cam.detect_white_squares(frame)
+            # print(rect)
+            if rect is not None:
+                _, dy = self._cam.get_center(frame, rect)
+                if dy > 0:
+                    await self._my.jog(dy * self.get_param("PYMM")) # 30 (figure out bottom shelf)
+                    frame = await self._cam.capture()
+                    frame = self._cam.correct(frame)
+                    # cv2.imwrite("beb2.png", frame)
+                    if rect is not None:
+                        _, dy = self._cam.get_center(frame, rect)
+                        if dy is not None:
+                            await self._my.jog(dy * self.get_param("PYMM"))
+                            yw = round(await self._my.get_position(), 4)
+                        
+                            if not reg.seen(yw, 20):
+                                reg.add(yw)
+                                shelves.append(yw)
+                                print(yw)                          
+
+            end_y = await self._my.get_position()
+            # if end_y + self.get_param("JOG_Y") > rs.get_motor_params(self._state, "y_axis").get("lim"):
+            if end_y + self.get_param("JOG_Y") > 1000:
+                break
+            await self._my.jog(self.get_param("JOG_Y"))
+            # last_shelf = yw
+        return shelves
+
+    async def update_grid(self, shelves: List[float]):
+        anchors = []
+        # last_shelf = None
+        reg = FiducialRegistry()
+        
+        # await self.home()
+        await self._move(AxisCoordinate(self.get_param("SCAN_POSITION")[0], 
+                                        self.get_param("SCAN_POSITION")[1]))
+        
+        for s in shelves:
+            await self._my.move_to_position(s)
+            frame = await self._cam.capture() # TODO error handling
+            frame = self._cam.correct(frame)
+            height, width = frame.shape[:2]
+            third = width // 3
+            frame = frame[:, third:2 * third]
+            # cv2.imwrite("beb.png", frame)
+            rect = self._cam.detect_white_squares(frame)
+            # print(rect)
+            if rect is not None:
+                dx, _ = self._cam.get_center(frame, rect)
+                # print(dx)
+                if dx is not None:
+                    await self._mx.jog(dx * self.get_param("PXMM")) # 30 (figure out bottom shelf)
+                    frame = await self._cam.capture()
+                    frame = self._cam.correct(frame)
+                    height, width = frame.shape[:2]
+                    third = width // 3
+                    frame = frame[:, third:2 * third]
+                    # cv2.imwrite("beb2.png", beb)
+                    rect = self._cam.detect_white_squares(frame)
+                    if rect is not None:
+                        # print(rect)
+                        dx, _ = self._cam.get_center(frame, rect)
+                        if dx is not None:
+                            await self._mx.jog(dx * self.get_param("PXMM"))
+                            xw = round(await self._mx.get_position(), 4)
+                        
+                            # if not reg.seen(xw, 20): # diff shelves
+                            reg.add(xw)
+                            anchors.append(xw)
+                            print(xw)                          
+        return anchors
+    
+
+    async def _move(self, coordinate: AxisCoordinate) -> None:
+        await self._mx.move_to_position_no_wait(coordinate.x) 
+        await self._my.move_to_position_no_wait(coordinate.y)
+        await self.gantry_wait()
+
+    async def move(self, coordinate: AxisCoordinate) -> None:
+        await self._mr.move_to_position(0.5)
+        await self.test()
+
+    async def auto_cal(self):
+        shelves = await self.get_shelves()
+        anchors = await self.update_grid(shelves)
+        # todo eventually make this auto generate the slope of each shelf by having two scan positions in x
+
+    async def pick_wait(self):
+        while True:
+            mx_f = await self._mx.wait_for_move(timeout=10)
+            my_f = await self._my.wait_for_move(timeout=10)
+            # md_f = await self._md.wait_for_move(timeout=10)
+
+            if mx_f == MotorStatus.STOPPED and my_f == MotorStatus.STOPPED:
+                return
+
+
+    # todo "homeable position checking"
+    async def gantry_wait(self):
+        while True:
+            mx_f = await self._mx.wait_for_move(timeout=5)
+            my_f = await self._my.wait_for_move(timeout=5)
+
+            if mx_f == MotorStatus.STOPPED and my_f == MotorStatus.STOPPED:
+                return
+
+    async def tool_wait(self):
+        while True:
+            mg_f = await self._mg.wait_for_move(timeout=2.5)
+            ms_f = await self._ms.wait_for_move(timeout=2.5)
+
+            if mg_f == MotorStatus.STOPPED and ms_f == MotorStatus.STOPPED:
+                return
+
+    async def get_weight(self) -> float:
+        try:
+            data = await self._scale.read_weight_data()
+            return data['weight']
+        except Exception as e:
+            print(f"Error reading weight: {e}")
+            return 0.0
+
+    def get_storage(self) -> Dict[str, rs.GridCell]:
+        return self._grid
+
+    def set_storage(self, grid: Dict[str, rs.GridCell]) -> None:
+        self._grid = grid
 
     async def idle(self) -> None:
-        await self._tool.move(self._tool.get_param("IDLE_POSITION"))
+        await self.move(self.get_param("IDLE_POSITION")) # basically anywhere along the bottom of the gantry
 
     async def shutdown(self) -> None:
-        await self.stop()
-        if self._motorbus:
-            await self._motorbus.close()
-        if self._scalebus:
-            await self._scalebus.close()
+        if self._bus:
+            await self._bus.close()
+
+    #############################
+
+    async def home(self) -> None:
+        await self._ms.home()
+        await self._mg.home()
+        await self._mr.home()
+        await self._mx.home()
+        await self._my.jog(0.1)
+        await self._my.home_y()
+        # await self._md.home()
 
     async def stop(self) -> None:
-        await self._tool.stop()
-        await self._io.stop()
+        await self._mx.stop()
+        await self._mg.stop()
+        await self._mr.stop()
+        await self._ms.stop()
+        await self._my.stop()
+        await self._md.stop()
 
-
-    async def auto_calibrate_storage(self) -> RobotResponse:
-        """
-        Perform full storage system calibration:
-        1. Find shelf positions using tool camera
-        2. Detect anchor points
-        3. Calculate cell positions (cells per shelf and spacing are provided per-shelf)
-        4. Generate and save storage grid configuration
-        """
-        try:
-            # Detect shelf positions and anchors first (we need number of shelves)
-            shelf_y_positions = await self._tool.get_shelves()
-            if not shelf_y_positions:
-                return RobotCommandError(error="No shelves detected")
-
-            num_shelves = len(shelf_y_positions)
-
-            # Load parameters (can be a single value or a list matching shelves)
-            # this is actually a function of the robot, to keep the grid defintion simple
-            raw_cells_per_shelf = self.get_param("CELLS_PER_SHELF")
-            raw_cell_spacings = self.get_param("CELL_SPACINGS")
-            cell_heights = self.get_param("CELL_HEIGHTS")
-            cell_widths = self.get_param("CELL_WIDTHS")
-
-            if any(param is None for param in [raw_cells_per_shelf, raw_cell_spacings, cell_heights, cell_widths]):
-                return RobotCommandError(error="Missing required parameters: CELLS_PER_SHELF, CELL_SPACINGS, CELL_HEIGHTS, or CELL_WIDTHS")
-
-            # Normalize cells_per_shelf -> List[int] length == num_shelves
-            if isinstance(raw_cells_per_shelf, int):
-                cells_per_shelf = [raw_cells_per_shelf] * num_shelves
-            elif isinstance(raw_cells_per_shelf, list):
-                if len(raw_cells_per_shelf) != num_shelves:
-                    return RobotCommandError(
-                        error=f"CELLS_PER_SHELF length ({len(raw_cells_per_shelf)}) does not match detected shelves ({num_shelves})"
-                    )
-                cells_per_shelf = [int(x) for x in raw_cells_per_shelf]
-            else:
-                return RobotCommandError(error="CELLS_PER_SHELF must be an int or list of ints")
-
-            # Normalize cell_spacings -> List[float] length == num_shelves
-            if isinstance(raw_cell_spacings, (int, float)):
-                cell_spacings = [float(raw_cell_spacings)] * num_shelves
-            elif isinstance(raw_cell_spacings, list):
-                if len(raw_cell_spacings) != num_shelves:
-                    return RobotCommandError(
-                        error=f"CELL_SPACINGS length ({len(raw_cell_spacings)}) does not match detected shelves ({num_shelves})"
-                    )
-                cell_spacings = [float(x) for x in raw_cell_spacings]
-            else:
-                return RobotCommandError(error="CELL_SPACINGS must be a number or list of numbers")
-
-            # Detect anchors (one anchor per shelf expected)
-            x_anchor_points = await self._tool.update_grid(shelf_y_positions)
-            if not x_anchor_points or len(x_anchor_points) != num_shelves:
-                return RobotCommandError(
-                    error=f"Anchor detection returned {len(x_anchor_points) if x_anchor_points is not None else 0} anchors; expected {num_shelves}"
-                )
-
-            # Calculate all cell positions
-            cell_positions = await self._grid.calculate_storage_positions(
-                shelf_y_positions=shelf_y_positions,
-                cells_per_shelf=cells_per_shelf,
-                cell_spacings=cell_spacings,
-                x_anchor_points=x_anchor_points,
-            )
-
-            # Generate StorageGrid structure
-            left_module = []
-            right_module = []
-
-            # z_offset = self.get_param("Z_OFFSET", 0.0)  # Get Z offset from config or default to 0
-            z_offset = 0.0
-
-            for shelf_idx, shelf_cells in enumerate(cell_positions):
-                shelf_cells_left = []
-                shelf_cells_right = []
-
-                mid_point = len(shelf_cells) // 2
-                shelf_height = cell_heights[shelf_idx] if isinstance(cell_heights, list) else cell_heights
-
-                # Process left side cells
-                for cell_idx, coord in enumerate(shelf_cells[:mid_point]):
-                    cell_width = cell_widths[cell_idx] if isinstance(cell_widths, list) else cell_widths
-                    cell = Cell(
-                        status=CellStatus.EMPTY,
-                        item=None,
-                        calibration_point=CalibrationCoordinate(x=coord.x, y=coord.y, z=z_offset),
-                        dimensions=Dimensions(width=cell_width, height=shelf_height, length=400.0)  # Default length
-                    )
-                    shelf_cells_left.append(cell)
-
-                # Process right side cells
-                for cell_idx, coord in enumerate(shelf_cells[mid_point:]):
-                    cell_width = cell_widths[cell_idx + mid_point] if isinstance(cell_widths, list) else cell_widths
-                    cell = Cell(
-                        status=CellStatus.EMPTY,
-                        item=None,
-                        calibration_point=CalibrationCoordinate(x=coord.x, y=coord.y, z=z_offset),
-                        dimensions=Dimensions(width=cell_width, height=shelf_height, length=400.0)  # Default length
-                    )
-                    shelf_cells_right.append(cell)
-
-                # Create shelf objects
-                if shelf_cells_left:
-                    left_module.append(Shelf(
-                        shelf_height=shelf_height,
-                        shelf_width=sum(cell.dimensions.width for cell in shelf_cells_left),
-                        cells=shelf_cells_left
-                    ))
-
-                if shelf_cells_right:
-                    right_module.append(Shelf(
-                        shelf_height=shelf_height,
-                        shelf_width=sum(cell.dimensions.width for cell in shelf_cells_right),
-                        cells=shelf_cells_right
-                    ))
-
-            # Create and save StorageGrid
-            storage_grid = StorageGrid(
-                left_module=left_module,
-                right_module=right_module,
-                filename=str(CONFIG_PATH.parent / "storage_grid.json")
-            )
-            storage_grid.save()
-
-            # Update internal grid reference
-            self._grid = storage_grid
-
-            return RobotCommandSuccessful()
-
-        except Exception as e:
-            return RobotCommandError(error=f"Storage calibration failed: {str(e)}")
-
-
-    # plug in sizing from the io box
-    async def store(self, item_name: str) -> None:
-        """
-        Store an item in the storage grid, finding the best available location based on item dimensions.
-
-        Args:
-            item_name: Name identifier for the item to store
-            dimensions: Dictionary containing item dimensions in mm (from measure_item_dimensions).
-                       Should contain some of these keys:
-                       - footprint_major_mm: Major axis from pinhole model
-                       - footprint_minor_mm: Minor axis from pinhole model
-                       - scale_major_mm: Major axis from checkerboard scale
-                       - scale_minor_mm: Minor axis from checkerboard scale
-                       - depth_mm: Item depth/height
-
-        Returns:
-            RobotResponse indicating success or failure
-        """
-        if not self._grid:
-            return RobotCommandError(error="Storage grid not calibrated")
-
-        # Set default dimensions or use measured ones
-        width = 50.0  # default width
-        height = 50.0  # default height
-        length = 50.0  # default length
-
-        dimensions = self.measure_item_dimensions()
-        print(dimensions, flush=True)
-
-        # TODO remove dimensions, and modify io sizer wrapper to return a dimensions object
-
-        # if dimensions:
-        #     # Prefer footprint measurements over scale measurements if available
-        #     if "footprint_major_mm" in dimensions and "footprint_minor_mm" in dimensions:
-        #         width = dimensions["footprint_major_mm"]
-        #         height = dimensions["footprint_minor_mm"]
-        #     elif "scale_major_mm" in dimensions and "scale_minor_mm" in dimensions:
-        #         width = dimensions["scale_major_mm"]
-        #         height = dimensions["scale_minor_mm"]
-
-        #     # Use measured depth if available
-        #     if "depth_mm" in dimensions:
-        #         length = dimensions["depth_mm"]
-
-        #     # Add safety margin to ensure item fits (10%)
-        #     width *= 1.1
-        #     height *= 1.1
-        #     length *= 1.1
-
-        # Find a suitable empty location for the item
-
-        print(width, flush=True)
-        print(height,flush=True)
-        print(length,flush=True)
-
-        item = CellItem(
-            dimensions=Dimensions(
-                width=width,
-                height=height,
-                length=length
-            ),
-            data={"name": item_name}  # Store item name in data
-        )
-
-        # print(item, flush=True)
-        # print("beb")
-        location = self._grid.find_best_slot_for_item(item)
-        print(location, flush=True)
-
-        if not location:
-            print("no cell")
-            return RobotCommandError(error="No suitable storage location found")
-
-        # Get coordinate and store
-        coord = self._grid.get_cell_coordinate(location)
-        print(coord)
-        # await self.io_pick(coord.to_axis_coordinate())
-
-        # Update storage grid
-        self._grid.store_item(location, item)
-        self._grid.save()
-        print(self._grid)
-
-    async def retrieve(self, item_name: str) -> None:
-        """
-        Retrieve an item from storage by its name. # todo or upca
-
-        Args:
-            item_name: Name identifier of the item to retrieve
-
-        Returns:
-            RobotResponse indicating success or failure
-        """
-        if not self._grid:
-            return RobotCommandError(error="Storage grid not initialized")
-
-        # Find item location
-        coord = await self._grid.find_item_location(item_name=item_name)
-
-        if not coord:
-            return RobotCommandError(error=f"Item '{item_name}' not found in storage")
-
-        # Retrieve item
-        print(coord)
-        # await self.io_place(coord)
-
-        # clear the item we just retrieved
-        location = next(
-            (
-                entry.location
-                for entry in self._grid.get_all_cell_data()
-                if entry.cell
-                and entry.cell.data
-                and isinstance(entry.cell.data, dict)
-                and entry.cell.data.get("name") == item_name
-            ),
-            None,
-        )
-        if location:
-
-            self._grid.clear_item(location)
-            self._grid.save()
-
-    def measure_item_dimensions(self, n_frames: int = 10) -> Optional[Dict[str, float]]:
-        """
-        Use the IOBox's AFSCam to measure the dimensions of an item currently in the IO box.
-        Returns the aggregate dimensions including footprint and depth measurements.
-
-        Args:
-            n_frames: Number of frames to capture for measurement (default=5)
-
-        Returns:
-            Dictionary containing the following measurements in millimeters:
-            - footprint_major_mm: Major axis of item footprint from pinhole model
-            - footprint_minor_mm: Minor axis of item footprint from pinhole model
-            - scale_major_mm: Major axis from checkerboard scale
-            - scale_minor_mm: Minor axis from checkerboard scale
-            - depth_mm: Item depth/height from TOF sensor
-            Returns None if measurement fails
-
-        Raises:
-            RobotStateError: If there is no item in the IOBox to measure
-        """
-        # Validate state before operation -> change state on weight read
-        # self._state_manager.update_state(self._state.tool, self._state.io)
-        # self._state_manager.validate_operation('measure')
-        if not self._io or not self._io._cam:
-            raise RuntimeError("IOBox camera not configured")
-
-        # Take measurement using AFSCam
-        measure_result = self._io.measure_item_sync()
-        # print(measure_result)
-
-        if not measure_result["ok"]:
-            print("bad")
-            return None
-
-        # Extract relevant measurements from aggregates
-        agg = measure_result["aggregate"]
-        if not agg:
-            print("bad agg")
-            return None
-
-        # Collect all available measurements
-        result = {}
-
-        # Footprint measurements (from pinhole model)
-        if "footprint_major_mm_med" in agg:
-            result["footprint_major_mm"] = agg["footprint_major_mm_med"]
-        if "footprint_minor_mm_med" in agg:
-            result["footprint_minor_mm"] = agg["footprint_minor_mm_med"]
-
-        # Scale measurements (from checkerboard)
-        if "scale_major_mm_med" in agg:
-            result["scale_major_mm"] = agg["scale_major_mm_med"]
-        if "scale_minor_mm_med" in agg:
-            result["scale_minor_mm"] = agg["scale_minor_mm_med"]
-
-        # Depth measurement
-        if "depth_mm_med" in agg:
-            result["depth_mm"] = agg["depth_mm_med"]
-
-        return result if result else None
-
-    async def get_status(self) -> RobotStatus:
-        status = RobotStatus(storage=self._grid,
-                             state=RobotState(io=self._io._status,
-                                              tool=self._tool._status),
-                             light_curtain= False)
-        self._status = status
-        return status
+    async def get_pos(self):
+        # get each motor position. return tuple of axis and tool coordinate?
+        x = await self._mx.get_position()
+        y = await self._my.get_position()
+        g = await self._mg.get_position()
+        s = await self._ms.get_position()
+        r = await self._mr.get_position()
+        return (AxisCoordinate(x, y), ToolCoordinate(g,s,r))
     
-    async def test(self, coordinate) -> None:
-        await self.store(item_name="andi")
-
     async def handle_command(self, command: RobotCommands):
-        if isinstance(command, StopCommand):
-            await self.stop()
-            return RobotCommandSuccessful()
-        elif isinstance(command, InitializeCommand):
-            await self.configure()
-            return RobotCommandSuccessful()
-        elif isinstance(command, HomeCommand):
-            await self._tool.home()
-            return RobotCommandSuccessful()
-        elif isinstance(command, MoveCommand):
-            # await self._tool.move(command.coordinate)
-            await self.test(command.coordinate)
-            return RobotCommandSuccessful()
-        elif isinstance(command, IdleCommand):
-            await self.idle() # todo remove
-            return RobotCommandSuccessful()
-        elif isinstance(command, StoreCommand):
-            await self.store(command.item)
-            return RobotCommandSuccessful()
-        elif isinstance(command, RetrieveCommand):
-            await self.retrieve(command.item)
-            return RobotCommandSuccessful()
-        else:
-            return RobotCommandError(error="Invalid Robot Command")
+        match command:
+            case StopCommand():
+                await self.stop()
+                return RobotCommandSuccessful()
+            case InitializeCommand():
+                await self.configure()
+                return RobotCommandSuccessful()
+            case HomeCommand(barcode=code):
+                await self.testone(code)
+                return RobotCommandSuccessful()
+            case MoveCommand(coordinate=coord):
+                await self.move(coord)
+                return RobotCommandSuccessful()
+            # case IdleCommand():
+            #     await self.testtwo()
+            #     return RobotCommandSuccessful()
+            # case TestCommandOne():
+            #     await self.testone()
+            #     return RobotCommandSuccessful()
+            # case TestCommandTwo():
+            #     await self.testtwo()
+            #     return RobotCommandSuccessful()
+            case _:
+                return RobotCommandError(error="Invalid Robot Command")

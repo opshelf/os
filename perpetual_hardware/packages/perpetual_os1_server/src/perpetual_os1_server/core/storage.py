@@ -146,7 +146,6 @@ class StorageService:
 
     async def create_item(self, upca: str, name: str, dimensions: Dict[str, float],
                         weight: Optional[float] = None, metadata: Optional[Dict[str, Any]] = None,
-                        access_level_id: Optional[int] = None,
                         sync_to_json: bool = True) -> Item:
         """Create or upsert an item in the database."""
         StorageValidator.validate_item_creation(upca, name, dimensions, weight, metadata)
@@ -167,8 +166,7 @@ class StorageService:
                         name=name,
                         dimensions=dimensions,
                         weight=normalized_weight,
-                        item_metadata=normalized_metadata,
-                        access_level_id=access_level_id
+                        item_metadata=normalized_metadata
                     )
                     self.session.add(item)
                 else:
@@ -176,7 +174,6 @@ class StorageService:
                     item.dimensions = dimensions
                     item.weight = normalized_weight
                     item.item_metadata = normalized_metadata
-                    item.access_level_id = access_level_id
 
                 await self.session.flush()
                 await self.session.commit()
@@ -191,7 +188,6 @@ class StorageService:
             except Exception as json_error:  # pragma: no cover - best effort logging
                 logging.error(f"JSON sync failed after item creation: {str(json_error)}")
 
-        print("added item")
         return item
 
     async def get_item(self, upca: str) -> Optional[Item]:
@@ -222,8 +218,7 @@ class StorageService:
     async def update_item(self, upca: str, name: Optional[str] = None,
                         dimensions: Optional[Dict[str, float]] = None,
                         weight: Optional[float] = None,
-                        metadata: Optional[Dict[str, Any]] = None,
-                        access_level_id: Optional[int] = None) -> Optional[Item]:
+                        metadata: Optional[Dict[str, Any]] = None) -> Optional[Item]:
         """Update an existing item."""
         result = await self.session.execute(
             select(Item).where(Item.upca == upca)
@@ -246,8 +241,6 @@ class StorageService:
                     item.weight = normalized_weight
                 if metadata is not None:
                     item.item_metadata = metadata
-                if access_level_id is not None:
-                    item.access_level_id = access_level_id
 
                 await self.session.commit()
                 await self.session.refresh(item)
