@@ -3,15 +3,9 @@ name = "perpetual-hardware"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.12,<3.14"
+requires-python = ">=3.12"
 dependencies = [
-	"arducamdepthcamera>=0.1.21; platform_system == \"Linux\"",
-	"opencv-python",
-]
-
-[project.optional-dependencies]
-arducam = [
-	"arducamdepthcamera>=0.1.21",
+	"opencv-python"
 ]
 
 [tool.uv.workspace]

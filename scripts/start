@@ -1,8 +1,6 @@
 #!/bin/bash
 
 HARDWARE=false
-BUILD=false
-DETACHED=false
 
 while [[ $# -gt 0 ]]; do
 	case $1 in
@@ -10,35 +8,16 @@ while [[ $# -gt 0 ]]; do
 			HARDWARE=true
 			shift
 			;;
-		-b|--build)
-			BUILD=true
-			shift
-			;;
-		-d|--detached)
-			DETACHED=true
-			shift
-			;;
 		*)
 			echo "Unknown option: $1"
-			echo "Usage: $0 [-h|--hardware] [-b|--build] [-d|--detached]"
+			echo "Usage: $0 [-h|--hardware]"
 			exit 1
 			;;
 	esac
 done
 
-COMPOSE_CMD="docker compose -f docker-compose.yml"
 if [[ "$HARDWARE" == true ]]; then
-	COMPOSE_CMD="$COMPOSE_CMD -f docker-compose.hardware.yml"
-fi
-
-if [[ "$BUILD" == true ]]; then
-	COMPOSE_CMD="$COMPOSE_CMD up --build --remove-orphans"
+	docker compose -f docker-compose.yml -f docker-compose.hardware.yml up
 else
-	COMPOSE_CMD="$COMPOSE_CMD up --remove-orphans"
+	docker compose -f docker-compose.yml up
 fi
-
-if [[ "$DETACHED" == true ]]; then
-	COMPOSE_CMD="$COMPOSE_CMD -d"
-fi
-
-eval $COMPOSE_CMD

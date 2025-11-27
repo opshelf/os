@@ -1,162 +1,60 @@
-from __future__ import annotations
-
+from hardware.ModbusController import SharedModbusController
+from typing import Optional, Dict, Any
 import asyncio
-from typing import Optional, Dict, Any, Tuple
 
-from hardware.controller import SharedModbusController
-
-
-class Scale:
-    """
-    Async driver for SJ-101D_X using your SharedModbusController (pymodbus async).
-
-    Register map (0-based holding registers):
-      0 -> 40001: Weight high 16 bits
-      1 -> 40002: Weight low  16 bits
-      2 -> 40003: Decimal position (0..3)
-      3 -> 40004: Status bits: bit0=stable, bit1=zero, bit2=overload, bit4=valid
-      4 -> 40005: Tare (write 1)
-    """
-
-    REG_WEIGHT_HI = 0
-    REG_WEIGHT_LO = 1
-    REG_DECIMALS  = 2
-    REG_STATUS    = 3
-    REG_TARE      = 4
-
-    def __init__(
-        self,
-        modbus_controller: SharedModbusController,
-        scale_id: int = 1,
-        retries: int = 2,
-        retry_delay: float = 0.05,
-    ):
+class Scale():
+    def __init__(self, modbus_controller: SharedModbusController, scale_id: int):
         self.modbus_controller = modbus_controller
         self.scale_id = scale_id
-        self.retries = max(0, retries)
-        self.retry_delay = retry_delay
-
-    # ---------- connection mgmt ----------
 
     async def connect(self) -> bool:
         await self.modbus_controller.connect()
-        return bool(getattr(self.modbus_controller.client, "connected", True))
+        return self.modbus_controller.client.connected
 
     async def close(self) -> None:
         await self.modbus_controller.close()
 
-    # ---------- helpers ----------
-
-    async def _read_one(self, addr: int) -> Optional[int]:
-        """Read a single holding register with retries."""
-        for _ in range(self.retries + 1):
-            val = await self.modbus_controller.read_holding_registers(self.scale_id, addr, 1)
-            if isinstance(val, int):
-                return val & 0xFFFF
-            await asyncio.sleep(self.retry_delay)
-        return None
-
-    async def _read_block(self, start: int, count: int) -> Optional[Tuple[int, ...]]:
-        """
-        Read 'count' registers starting at 'start'.
-        (Your controller returns only first register even if count>1, so read individually.)
-        """
-        vals = []
-        for ofs in range(count):
-            v = await self._read_one(start + ofs)
-            if v is None:
-                return None
-            vals.append(v)
-        return tuple(vals)
-
-    @staticmethod
-    def _to_int32_signed(hi: int, lo: int) -> int:
-        raw = ((hi & 0xFFFF) << 16) | (lo & 0xFFFF)
-        return raw - 0x1_0000_0000 if (raw & 0x8000_0000) else raw
-
-    @staticmethod
-    def _interpret_status(v: int) -> Dict[str, bool | int]:
-        return {
-            "stable":   bool(v & (1 << 0)),
-            "zero":     bool(v & (1 << 1)),
-            "overload": bool(v & (1 << 2)),
-            "valid":    bool(v & (1 << 4)),
-            "raw":      v & 0xFFFF,
+    def interpret_balance_status(self, value: int):
+        zero_point = '0' if (value & 0x01) else '1'
+        stability = 'stability' if (value & 0x02) else 'instability'
+        overload = 'overload' if (value & 0x04) else 'normal'
+        bits_3_7 = (value >> 3) & 0x1F
+        unit_map = {
+            0: "ct", 1: "lb", 2: "oz", 3: "ozt", 4: "dr", 5: "lbt", 6: "gr", 7: "dwt",
+            8: "K.tl", 9: "T.tl", 10: "H.tl", 11: "S.tl", 12: "T", 13: "M", 14: "Cl", 15: "Mom",
+            16: "BG", 17: "kg", 18: "mg", 19: "g"
         }
-
-    # ---------- high-level API ----------
-
-    async def read_weight(self, averages: int = 1, delay: float = 0.1) -> Optional[float]:
-        """
-        Return current weight in kilograms. Optionally average N samples.
-        """
-        averages = max(1, int(averages))
-        total = 0.0
-        got = 0
-        for i in range(averages):
-            regs = await self._read_block(self.REG_WEIGHT_HI, 3)  # hi, lo, decimals
-            if not regs:
-                if i < averages - 1:
-                    await asyncio.sleep(delay)
-                    continue
-                return None
-            hi, lo, decimals = regs
-            raw = self._to_int32_signed(hi, lo)
-            kg = raw * (10 ** (-int(decimals)))
-            total += kg
-            got += 1
-            if i < averages - 1:
-                await asyncio.sleep(delay)
-        return (total / got) if got else None
+        unit_name = unit_map.get(bits_3_7, f"Unknown ({bits_3_7})")
+        return zero_point, stability, overload, bits_3_7, unit_name
 
     async def read_weight_data(self) -> Dict[str, Any]:
-        """
-        Rich read: weight (kg), decimals, status flags, and raw regs.
-        """
-        regs = await self._read_block(self.REG_WEIGHT_HI, 4)  # hi, lo, decimals, status
-        if not regs:
-            raise RuntimeError("Failed to read weight registers")
-        hi, lo, decimals, status_raw = regs
-        raw = self._to_int32_signed(hi, lo)
-        kg = raw * (10 ** (-int(decimals)))
-        return {
-            "weight": kg,
-            "decimal_position": int(decimals),
-            "status": self._interpret_status(status_raw),
-            "raw_registers": {
-                "weight_hi": hi,
-                "weight_lo": lo,
-                "decimals": decimals,
-                "status": status_raw,
-            },
-        }
+        try:
+            # TODO implement multi register read
+            dec = await self.modbus_controller.read_holding_registers(0x1, 0x2)
+            w1 = await self.modbus_controller.read_holding_registers(0x1, 0x0)
+            w2 = await self.modbus_controller.read_holding_registers(0x1, 0x1)
+            w = abs(w1-w2)/(10**dec)
+            return w
 
-    async def tare(self) -> bool:
-        """Tare: write 1 to 40005 (address 4)."""
-        ok = await self.modbus_controller.write_single_register(self.scale_id, self.REG_TARE, 1)
-        return ok is None or ok is True  # your controller returns None on success
+            # decimal_pos = regs[2]
+            # weight = abs(regs[0] - regs[1])
+            # actual_weight = weight / (10 ** decimal_pos)
+            # zero_point, stability, overload, bits_3_7, unit_name = await self.interpret_balance_status(regs[3])
+            # return {
+            #     'weight': actual_weight,
+            #     'decimal_position': decimal_pos,
+            #     'balance_status': {
+            #         'zero_point': zero_point,
+            #         'stability': stability,
+            #         'overload': overload,
+            #         'unit': unit_name
+            #     },
+            #     'raw_registers': regs
+            # }
+        except Exception as e:
+            raise Exception(f"Error reading weight data: {e}")
 
-    async def read_status(self) -> Dict[str, Any]:
-        v = await self._read_one(self.REG_STATUS)
-        if v is None:
-            raise RuntimeError("Failed to read status register")
-        return self._interpret_status(v)
 
-    async def wait_for_stable_weight(
-        self,
-        timeout: float = 2.0,
-        poll_interval: float = 0.05,
-        require_valid: bool = True,
-    ) -> Optional[float]:
-        """
-        Poll status until stable (and valid if required), then return one weight sample.
-        Returns None on timeout.
-        """
-        loop = asyncio.get_event_loop()
-        deadline = loop.time() + timeout
-        while loop.time() < deadline:
-            st = await self.read_status()
-            if st["stable"] and (st["valid"] or not require_valid):
-                return await self.read_weight()
-            await asyncio.sleep(poll_interval)
-        return None
+    async def tare(self):
+        await self.modbus_controller.write_single_register(self.scale_id, 0x4, 0x1)
+        pass
