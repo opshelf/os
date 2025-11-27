@@ -3,7 +3,7 @@ import json
 import logging
 import os
 from datetime import datetime, timezone
-from typing import Optional, List, Any, Dict
+from typing import Optional, List, Any
 
 from nats.aio.client import Client as NATS
 from nats.aio.msg import Msg
@@ -16,160 +16,45 @@ from perpetual_os1.robot import (
     RobotCommands,
     RobotResponse,
     RobotStatus,
+    IdleCommand,
+    HomeCommand,
     StopCommand,
-    StoreItemCommand
 )
 from perpetual_os1.common import RobotNatsConfiguration
-from perpetual_os1.robot_defs import WorkerError, QueuedOperation, WorkerStatus, WorkerStatusWithQueue
 from perpetual_os1.robot_client import RobotClient
-from perpetual_os1.barcode_protocol import BarcodeService
+from perpetual_os1.barcode_service import BarcodeService
+
+
+class WorkerError(BaseModel):
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    error_type: str
+    message: str
+    context: Optional[dict[str, Any]] = None
+    stack_trace: Optional[str] = None
+
+
+class QueuedOperation(BaseModel):
+    command: RobotCommands
+    timestamp: datetime
+    location: Optional[dict[str, Any]] = None
+    item_data: Optional[dict[str, Any]] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class WorkerStatus(BaseModel):
+    robot_status: Optional[RobotStatus]
+    running: bool
+    current_command: Optional[RobotCommands]
+    error_queue: List[WorkerError] = Field(default_factory=list)
+
+
+class WorkerStatusWithQueue(WorkerStatus):
+    queued_operations: List[QueuedOperation] = Field(default_factory=list)
+    queue_length: int = 0
+
 
 RobotCommandAdapter = TypeAdapter[RobotCommands](RobotCommands)
 
-
-def _default_axis_status() -> Dict[str, Any]:
-    return {
-        "status_flags": {
-            "value": 0,
-            "stall_guard2_status": False,
-            "over_temperature": False,
-            "over_temperature_pre_warning": False,
-            "short_to_ground_a": False,
-            "short_to_ground_b": False,
-            "open_load_a": False,
-            "open_load_b": False,
-            "stand_still": False,
-        },
-        "error_flags": {
-            "value": 0,
-            "stall_guard_error": False,
-            "deviation_error": False,
-        },
-        "position": 0,
-        "homed": 0,
-        "hard_stopped": 0,
-    }
-
-
-def _normalize_location(payload: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    if not isinstance(payload, dict):
-        return None
-
-    side = payload.get("side")
-    shelf_idx = payload.get("shelf_idx")
-    cell_idx = payload.get("cell_idx")
-
-    if side is None or shelf_idx is None or cell_idx is None:
-        return None
-
-    try:
-        shelf_idx_int = int(shelf_idx)
-        cell_idx_int = int(cell_idx)
-    except (TypeError, ValueError):
-        return None
-
-    return {"side": str(side), "shelf_idx": shelf_idx_int, "cell_idx": cell_idx_int}
-
-
-def _normalize_command(command: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    if not isinstance(command, dict):
-        return None
-
-    command_name = command.get("command")
-    if command_name not in {"store_item", "retrieve_item"}:
-        return None
-
-    location = _normalize_location(command.get("location"))
-    if location is None:
-        return None
-
-    normalized: Dict[str, Any] = {"command": command_name, "location": location}
-
-    if command_name == "store_item":
-        item_payload = command.get("item")
-        if isinstance(item_payload, dict):
-            normalized["item"] = item_payload
-
-    return normalized
-
-
-def _transform_worker_status_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
-    transformed = dict(payload)
-
-    normalized_command = _normalize_command(payload.get("current_command"))
-    transformed["current_command"] = normalized_command
-
-    normalized_operations: List[Dict[str, Any]] = []
-    for operation in payload.get("queued_operations", []):
-        command = _normalize_command(operation.get("command"))
-        if command is None:
-            continue
-
-        normalized_operations.append(
-            {
-                "command": command,
-                "timestamp": operation.get("timestamp"),
-                "location": _normalize_location(operation.get("location")),
-                "item_data": operation.get("item_data"),
-            }
-        )
-
-    transformed["queued_operations"] = normalized_operations
-    transformed["queue_length"] = payload.get("queue_length", len(normalized_operations))
-
-    robot_status_payload = payload.get("robot_status") or {}
-
-    state_payload = robot_status_payload.get("state") or {"current_cell": None}
-    storage_payload = robot_status_payload.get("storage") or {"left_module": [], "right_module": []}
-    storage_payload = _normalize_storage_payload(storage_payload)
-
-    transformed["robot_status"] = {
-        "gantry": {
-            "x_axis": _default_axis_status(),
-            "y_axis": _default_axis_status(),
-        },
-        "tool": {
-            "z_axis": _default_axis_status(),
-        },
-        "state": {
-            "current_cell": state_payload.get("current_cell"),
-        },
-        "storage": storage_payload,
-    }
-
-    errors: List[Dict[str, Any]] = []
-    for error in payload.get("error_queue", []):
-        if isinstance(error, dict):
-            errors.append(error)
-    transformed["error_queue"] = errors
-
-    return transformed
-
-
-def _normalize_storage_payload(storage: Dict[str, Any]) -> Dict[str, Any]:
-    def normalize_cell(cell: Dict[str, Any]) -> Dict[str, Any]:
-        status = cell.get("status")
-        if isinstance(status, str):
-            cell = dict(cell)
-            cell["status"] = status.lower()
-        return cell
-
-    normalized_storage = {"left_module": [], "right_module": []}
-
-    for side in ("left_module", "right_module"):
-        shelves = storage.get(side) or []
-        normalized_shelves: List[Dict[str, Any]] = []
-        for shelf in shelves:
-            if not isinstance(shelf, dict):
-                continue
-            cells = shelf.get("cells") or []
-            normalized_cells = [normalize_cell(cell) for cell in cells if isinstance(cell, dict)]
-            shelf_copy = dict(shelf)
-            shelf_copy["cells"] = normalized_cells
-            normalized_shelves.append(shelf_copy)
-        normalized_storage[side] = normalized_shelves
-
-    return normalized_storage
 
 class RobotWorker:
     _instance: Optional["RobotWorker"] = None
@@ -194,21 +79,9 @@ class RobotWorker:
         self._use_enhanced_status = True
         self._barcode: Optional[BarcodeService] = None
         self._barcode_task: Optional[asyncio.Task] = None
-        self._latest_status_payload: Optional[str] = None
 
     def get_client(self) -> RobotClient:
         return self._client
-
-    def get_latest_status_payload(self) -> Optional[str]:
-        return self._latest_status_payload
-
-    async def get_status_snapshot(self, force_refresh: bool = False) -> Optional[str]:
-        if force_refresh or self._latest_status_payload is None:
-            try:
-                await self._publish_status()
-            except Exception as err:
-                logging.warning("Failed to refresh robot status payload: %s", err)
-        return self._latest_status_payload
 
     @classmethod
     async def get_instance(cls, robot: Robot) -> "RobotWorker":
@@ -242,8 +115,7 @@ class RobotWorker:
         )
 
         if self._should_enable_barcode() and self._barcode is None:
-            # port = os.getenv("PERPETUAL_BARCODE_PORT", "/dev/ttyACM1")
-            port = os.getenv("PERPETUAL_BARCODE_PORT", "/dev/serial/by-id/usb-Linux_4.9.84_Barcode_Scanner-if00")
+            port = os.getenv("PERPETUAL_BARCODE_PORT", "/dev/ttyACM0")
             baudrate = int(os.getenv("PERPETUAL_BARCODE_BAUDRATE", "115200"))
             try:
                 self._barcode = BarcodeService(port=port, baudrate=baudrate)
@@ -272,10 +144,6 @@ class RobotWorker:
         try:
             async for code in self._barcode:
                 try:
-                    await self._nc.publish(
-                        self._nats_config.event_queue,
-                        json.dumps({"kind": "label_scanned", "payload": code}).encode(),
-                    )
                     command = await self._barcode_to_command(code)
                 except Exception as mapping_error:  # pragma: no cover - hardware dependent
                     logging.warning("Barcode mapping error for %s: %s", code, mapping_error)
@@ -316,7 +184,7 @@ class RobotWorker:
     async def _barcode_to_command(self, code: str) -> RobotCommands:
         logging.info("Received barcode: %s", code)
         # TODO: map barcodes to real RobotCommands
-        return StoreItemCommand(item={"upca": code})
+        return StopCommand()
 
     def _snapshot_command(self, command: RobotCommands) -> QueuedOperation:
         metadata: dict[str, Any] = {}
@@ -353,7 +221,7 @@ class RobotWorker:
 
     async def _publish_status(self) -> None:
         try:
-            robot_status = await self._robot.get_status()
+            robot_status = await self._robot.status()
         except Exception as err:
             robot_status = None
             self._add_error(
@@ -394,13 +262,9 @@ class RobotWorker:
                 op.model_dump(mode="json") for op in status.queued_operations
             ]
 
-        status_payload = _transform_worker_status_payload(status_payload)
-        payload_json = json.dumps(status_payload)
-        self._latest_status_payload = payload_json
-
         await self._nc.publish(
             self._nats_config.status_queue,
-            payload_json.encode(),
+            json.dumps(status_payload).encode(),
         )
 
     async def process_commands(self) -> None:

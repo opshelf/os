@@ -33,11 +33,6 @@ baseline.jpg
 *.log
 
 # Database files
-perpetual_hardware/packages/perpetual_os1_server/core
-perpetual_hardware/packages/perpetual_os1_server/data/*.db
-perpetual_hardware/packages/perpetual_os1_server/data/*.db-shm
-perpetual_hardware/packages/perpetual_os1_server/data/*.db-wal
-
-# SvelteKit build directory
-dev_ui/.svelte-kit
-dev_ui/node_modules
+perpetual_hardware/packages/perpetual_os1_server/data/base.db
+perpetual_hardware/packages/perpetual_os1_server/data/base.db-shm
+perpetual_hardware/packages/perpetual_os1_server/data/base.db-wal

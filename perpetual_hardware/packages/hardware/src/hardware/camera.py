@@ -181,7 +181,7 @@ def is_right_angle_quad(pts, cos_tol=0.25):
 
 
 class Camera:
-    def __init__(self,
+    def __init__(self, 
                  url="rtsp://192.168.1.108:554/user=admin&password=&channel=1&stream=0.sdp?tcp"):
         self.url = url
         self.mtx = None
@@ -191,50 +191,43 @@ class Camera:
         self.newcameramtx = None
         self.roi = None
         self.H = None
-        self.calibration_valid = False
 
+        # remap fields
         self.map1 = None
         self.map2 = None
-        self.map_size = None
+        self.map_size = None  # (w,h) used to build maps
 
-        self.H_ref_size = (2880, 1620)
+        self.H_ref_size = (2880, 1620)  # (w0, h0)
         self.board_W_mm = None
         self.board_H_mm = None
         self.pattern_size = (14, 7)
-        self.square_size_mm = 15.0
+        self.square_size_mm = 15.0 #15 actually -> might have accounted for small error in autocal
 
-        self.cap = None
-        self.cap_initialized = False
+        # self.get_correct() #
 
     async def capture(self):
-        if self.cap is None or not self.cap.isOpened():
-            self.cap = cv2.VideoCapture(self.url, cv2.CAP_FFMPEG)
-            if not self.cap.isOpened():
-                raise RuntimeError("bad cam")
+        cap = cv2.VideoCapture(self.url, cv2.CAP_FFMPEG)
+        if not cap.isOpened():
+            raise RuntimeError("bad cam")
+        
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
+        cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
 
-            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            self.cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
-            self.cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
+        t0 = time.time()
+        while time.time() - t0 < 4.25: # idr interval
+            cap.grab()
+            time.sleep(0.001)
 
-            if not self.cap_initialized:
-                t0 = time.time()
-                while time.time() - t0 < 4.25:
-                    self.cap.grab()
-                    time.sleep(0.001)
-                self.cap_initialized = True
+        for _ in range(5):
+            cap.grab()
 
-        for _ in range(3):
-            self.cap.grab()
-
-        ok, frame = self.cap.read()
+        ok, frame = cap.read()
         if not ok or frame is None:
             print("camera fail")
-            if self.cap is not None:
-                self.cap.release()
-                self.cap = None
-                self.cap_initialized = False
             return None
-
+        
+        cap.release()
         return frame
     
     def _build_remap(self, size_wh):
@@ -277,15 +270,10 @@ class Camera:
         self.board_W_mm = (cols - 1) * self.square_size_mm
         self.board_H_mm = (rows - 1) * self.square_size_mm
 
-        self.calibration_valid = True
-
         # cv2.imwrite("rectified.jpg", rectified0)
 
     def correct(self, img):
         """Undistort with remap, then rectify with H scaled to the current size."""
-        if self.calibration_valid is False:
-            return img
-
         h, w = img.shape[:2]
         if self.map1 is None or self.map_size != (w, h):
             self._build_remap((w, h))
@@ -339,8 +327,9 @@ class Camera:
     def detect_white_squares(self, frame):
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         gray = cv2.GaussianBlur(gray, (3, 3), 0)
-        _, bin_ = cv2.threshold(gray, 225, 255, cv2.THRESH_BINARY)
+        _, bin_ = cv2.threshold(gray, 225, 255, cv2.THRESH_BINARY) # 200
         bin_ = cv2.morphologyEx(bin_, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8), iterations=1)
+        cv2.imwrite("bin.png", bin_)
         contours, _ = cv2.findContours(bin_, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         valid_rects = []
