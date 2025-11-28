@@ -34,7 +34,10 @@ async def test_storage_items_endpoint_authorized(client: AsyncClient) -> None:
     response = await client.get("/api/storage/items", headers=headers)
     assert response.status_code == 200
     data = response.json()
-    assert isinstance(data, list)
+    assert isinstance(data, dict)
+    assert "items" in data
+    assert "total" in data
+    assert isinstance(data["items"], list)
 
 
 @pytest.mark.anyio
@@ -55,7 +58,7 @@ async def test_create_storage_item(client: AsyncClient) -> None:
         "name": "Test Item",
         "dimensions": {"width": 10.0, "height": 20.0, "length": 30.0},
         "weight": 500.0,
-        "metadata": {"category": "test", "priority": 1}
+        "item_metadata": {"category": "test", "priority": 1}
     }
 
     response = await client.post("/api/storage/items", json=item_data, headers=headers)
@@ -68,7 +71,7 @@ async def test_create_storage_item(client: AsyncClient) -> None:
     assert data["name"] == "Test Item"
     assert data["dimensions"] == {"width": 10.0, "height": 20.0, "length": 30.0}
     assert data["weight"] == 500.0
-    assert data["metadata"] == {"category": "test", "priority": 1}
+    assert data["item_metadata"] == {"category": "test", "priority": 1}
     assert data["locations"] == []
     assert "created_at" in data
     assert "updated_at" in data
@@ -264,7 +267,7 @@ async def test_item_location_operations(client: AsyncClient) -> None:
 
     # Remove location
     remove_response = await client.delete(
-        f"/api/storage/items/{created_item['upca']}/locations?shelf_idx=1&cell_idx=2",
+        f"/api/storage/items/{created_item['upca']}/locations/1/2",
         headers=headers
     )
     assert remove_response.status_code == 200
@@ -362,12 +365,12 @@ async def test_pagination_items_endpoint(client: AsyncClient) -> None:
     response = await client.get("/api/storage/items?skip=0&limit=2", headers=headers)
     assert response.status_code == 200
     data = response.json()
-    assert len(data) <= 2
+    assert len(data["items"]) <= 2
 
     response = await client.get("/api/storage/items?skip=1&limit=2", headers=headers)
     assert response.status_code == 200
     data = response.json()
-    assert len(data) <= 2
+    assert len(data["items"]) <= 2
 
 
 @pytest.mark.anyio
