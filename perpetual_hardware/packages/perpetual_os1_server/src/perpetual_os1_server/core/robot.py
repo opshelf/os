@@ -21,7 +21,11 @@ async def init_robot_worker() -> None:
         domain=settings.nats.domain,
         port=settings.nats.port,
     )
-    robot_worker = r_worker.RobotWorker(robot, nats_config)
+    robot_worker = r_worker.RobotWorker(
+        robot,
+        nats_config,
+        storage_path=settings.storage.filename,
+    )
     logging.info("Got Instance")
     await robot_worker.connect()
     logging.info("Started")
