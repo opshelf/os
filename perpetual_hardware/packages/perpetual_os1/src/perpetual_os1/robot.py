@@ -731,6 +731,7 @@ class Robot:
 
     async def handle_command(self, command: RobotCommands) -> RobotResponse:
         command_name = getattr(command, "command", "unknown")
+        self._logger.info("Handling command: %s", command_name)
         try:
             if isinstance(command, StopCommand):
                 await self.stop()
