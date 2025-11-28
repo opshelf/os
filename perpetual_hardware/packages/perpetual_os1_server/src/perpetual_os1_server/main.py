@@ -22,7 +22,7 @@ from perpetual_os1_server.database.base import Base, engine
 from perpetual_os1_server.database.session import AsyncSessionLocal
 from perpetual_os1_server.middleware.audit import AuditMiddleware
 from perpetual_os1_server.middleware.correlation import CorrelationIdMiddleware
-from perpetual_os1_server.routers import audit, auth, printer, robot, roles, sizes, storage, users
+from perpetual_os1_server.routers import access_levels, audit, auth, camera, printer, robot, roles, sizes, storage, users
 from perpetual_os1_server.settings import get_settings
 
 configure_logging()
@@ -176,7 +176,9 @@ async def health() -> dict[str, str]:
 app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(roles.router)
+app.include_router(access_levels.router)
 app.include_router(audit.router)
+app.include_router(camera.router, prefix="/api/camera")
 app.include_router(robot.router, prefix="/api/robot")
 app.include_router(sizes.router, prefix="/api/sizes")
 app.include_router(storage.router, prefix="/api/storage")
