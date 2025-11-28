@@ -671,9 +671,9 @@ class Robot:
 
         item = CellItem(
             dimensions=Dimensions(
-                width=width,
-                height=height,
-                length=length
+                width=width * 1.1,
+                height=height * 1.1,
+                length=length * 1.1
             ),
             weight=weight,
             data={"name": resolved_item_name},
