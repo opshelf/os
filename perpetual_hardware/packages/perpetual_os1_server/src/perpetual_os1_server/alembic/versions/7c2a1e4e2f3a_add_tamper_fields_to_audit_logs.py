@@ -16,15 +16,35 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column('audit_logs', sa.Column('seq_no', sa.Integer(), nullable=True))
-    op.add_column('audit_logs', sa.Column('prev_hash', sa.String(length=64), nullable=True))
-    op.add_column('audit_logs', sa.Column('entry_hash', sa.String(length=64), nullable=True))
-    op.add_column('audit_logs', sa.Column('hmac', sa.String(length=64), nullable=True))
-    op.add_column('audit_logs', sa.Column('hmac_key_id', sa.String(length=50), nullable=True))
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    columns = set()
+
+    if inspector.has_table('audit_logs'):
+        columns = {col["name"] for col in inspector.get_columns('audit_logs')}
+
+    if 'seq_no' not in columns:
+        op.add_column('audit_logs', sa.Column('seq_no', sa.Integer(), nullable=True))
+    if 'prev_hash' not in columns:
+        op.add_column('audit_logs', sa.Column('prev_hash', sa.String(length=64), nullable=True))
+    if 'entry_hash' not in columns:
+        op.add_column('audit_logs', sa.Column('entry_hash', sa.String(length=64), nullable=True))
+    if 'hmac' not in columns:
+        op.add_column('audit_logs', sa.Column('hmac', sa.String(length=64), nullable=True))
+    if 'hmac_key_id' not in columns:
+        op.add_column('audit_logs', sa.Column('hmac_key_id', sa.String(length=50), nullable=True))
+
+    existing_indexes = set()
     try:
-        op.create_index('ix_audit_logs_seq_no', 'audit_logs', ['seq_no'], unique=False)
+        existing_indexes = {idx['name'] for idx in inspector.get_indexes('audit_logs')}
     except Exception:
         pass
+
+    if 'ix_audit_logs_seq_no' not in existing_indexes:
+        try:
+            op.create_index('ix_audit_logs_seq_no', 'audit_logs', ['seq_no'], unique=False)
+        except Exception:
+            pass
 
 
 def downgrade() -> None:
@@ -37,4 +57,3 @@ def downgrade() -> None:
     op.drop_column('audit_logs', 'entry_hash')
     op.drop_column('audit_logs', 'prev_hash')
     op.drop_column('audit_logs', 'seq_no')
-

@@ -16,27 +16,48 @@ depends_on = None
 
 
 def upgrade() -> None:
-	op.create_table(
-		'access_levels',
-		sa.Column('id', sa.Integer(), nullable=False),
-		sa.Column('name', sa.String(length=50), nullable=False),
-		sa.Column('created_at', sa.DateTime(), server_default=sa.text('CURRENT_TIMESTAMP'), nullable=True),
-		sa.Column('updated_at', sa.DateTime(), server_default=sa.text('CURRENT_TIMESTAMP'), nullable=True),
-		sa.PrimaryKeyConstraint('id'),
-		sa.UniqueConstraint('name')
-	)
+	bind = op.get_bind()
+	inspector = sa.inspect(bind)
+	dialect = bind.dialect.name
 
-	with op.batch_alter_table('users') as batch_op:
-		batch_op.add_column(sa.Column('access_level_id', sa.Integer(), nullable=True))
-		batch_op.create_foreign_key('fk_users_access_level_id', 'access_levels', ['access_level_id'], ['id'])
+	# Clean up any temp table left by interrupted sqlite batch ops.
+	if inspector.has_table("_alembic_tmp_users"):
+		op.execute(sa.text("DROP TABLE _alembic_tmp_users"))
 
-	op.execute("""
-		INSERT INTO access_levels (name, created_at, updated_at)
-		VALUES
-			('Level 1', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-			('Level 2', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-			('Level 3', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-	""")
+	if not inspector.has_table('access_levels'):
+		op.create_table(
+			'access_levels',
+			sa.Column('id', sa.Integer(), nullable=False),
+			sa.Column('name', sa.String(length=50), nullable=False),
+			sa.Column('created_at', sa.DateTime(), server_default=sa.text('CURRENT_TIMESTAMP'), nullable=True),
+			sa.Column('updated_at', sa.DateTime(), server_default=sa.text('CURRENT_TIMESTAMP'), nullable=True),
+			sa.PrimaryKeyConstraint('id'),
+			sa.UniqueConstraint('name')
+		)
+
+	user_columns: set[str] = set()
+	if inspector.has_table('users'):
+		user_columns = {col["name"] for col in inspector.get_columns('users')}
+
+	if 'access_level_id' not in user_columns and inspector.has_table('users'):
+		if dialect == "sqlite":
+			# SQLite cannot add foreign keys via ALTER TABLE; add column only.
+			op.execute(sa.text("ALTER TABLE users ADD COLUMN access_level_id INTEGER"))
+		else:
+			op.add_column('users', sa.Column('access_level_id', sa.Integer(), nullable=True))
+			op.create_foreign_key('fk_users_access_level_id', 'users', 'access_levels', ['access_level_id'], ['id'])
+
+	if inspector.has_table('access_levels'):
+		existing_levels = {row[0] for row in bind.execute(sa.text("SELECT name FROM access_levels")).fetchall()}
+		levels_to_insert = ["Level 1", "Level 2", "Level 3"]
+		missing_levels = [lvl for lvl in levels_to_insert if lvl not in existing_levels]
+
+		for level_name in missing_levels:
+			stmt = sa.text(
+				"INSERT INTO access_levels (name, created_at, updated_at) "
+				"VALUES (:name, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+			).bindparams(sa.bindparam("name", level_name))
+			op.execute(stmt)
 
 
 def downgrade() -> None:
