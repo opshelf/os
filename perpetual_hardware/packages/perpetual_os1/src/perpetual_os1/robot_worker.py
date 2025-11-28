@@ -441,9 +441,7 @@ class RobotWorker:
                     msgs = await self.work_consumer.fetch(timeout=1)
                     if msgs:
                         msg = msgs[0]
-                        raw_data = msg.data.decode()
-                        logging.info("Worker received command: %s", raw_data[:200])
-                        command = RobotCommandAdapter.validate_json(raw_data)
+                        command = RobotCommandAdapter.validate_json(msg.data.decode())
                         self._current_command = command
                         self._msg = msg
                         self._queued_commands.append(self._snapshot_command(command))
