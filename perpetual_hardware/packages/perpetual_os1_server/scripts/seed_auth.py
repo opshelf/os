@@ -25,6 +25,7 @@ DEFAULT_ROLES = [
 			"storage:read", "storage:write", "storage:delete",
 			"scanner:read", "scanner:control",
 			"workstation:control", "workstation:read",
+			"printer:print",
 			"audit:read"
 		]
 	},
