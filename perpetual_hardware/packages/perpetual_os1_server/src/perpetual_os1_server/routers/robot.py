@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import AsyncGenerator, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -84,27 +85,37 @@ async def robot_commands(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> SuccessResponse:
+    command_name = getattr(command, "command", "unknown")
+    logging.info("API received command: %s", command_name)
+
     if not isinstance(command, SUPPORTED_COMMANDS):
-        command_name = getattr(command, "command", "unknown")
+        logging.warning("Unsupported command received: %s", command_name)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Unsupported command: {command_name}",
         )
 
     if isinstance(command, StoreItemCommand):
+        logging.info("Processing StoreItemCommand: item=%s", command.item)
         item_data = command.item or {}
         upca = item_data.get("upca")
 
         if upca is not None:
+            logging.info("Looking up item by upca: %s", upca)
             result = await db.execute(select(Item).where(Item.upca == upca))
             item = result.scalar_one_or_none()
 
             if item is not None:
+                logging.info("Found item in db: name=%s, dimensions=%s", item.name, item.dimensions)
                 item_data["dimensions"] = item.dimensions
                 item_data["name"] = item.name
                 if item.weight is not None:
                     item_data["weight"] = item.weight
                 command = StoreItemCommand(item=item_data)
+            else:
+                logging.info("Item not found in db for upca: %s", upca)
+
+        logging.info("Final StoreItemCommand: item=%s", command.item)
 
     if isinstance(command, RetrieveItemCommand):
         location_data = command.location or {}

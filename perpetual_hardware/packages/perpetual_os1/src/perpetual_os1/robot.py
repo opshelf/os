@@ -639,8 +639,10 @@ class Robot:
 
     async def store(self, item_payload: Any) -> RobotResponse:
         command_name = "store_item"
+        self._logger.info("store() called with payload: %s", item_payload)
 
         if self._grid is None:
+            self._logger.error("Storage grid not loaded")
             return RobotCommandError(command=command_name, error="Storage grid not loaded")
 
         resolved_upca: str = "item"
@@ -664,6 +666,9 @@ class Robot:
                 height = float(dimensions.get("height") or 100.0)
                 length = float(dimensions.get("length") or 100.0)
 
+        self._logger.info("store() resolved: upca=%s, name=%s, dims=(%s,%s,%s)",
+                         resolved_upca, resolved_item_name, width, height, length)
+
         item = CellItem(
             dimensions=Dimensions(
                 width=width * 1.1,
@@ -677,14 +682,19 @@ class Robot:
 
         location = self._grid.find_best_slot_for_item(item)
         if location is None:
+            self._logger.error("No suitable storage location found for item")
             return RobotCommandError(command=command_name, error="No suitable storage location found")
 
+        self._logger.info("store() found location: side=%s, shelf=%s, cell=%s",
+                         location.side, location.shelf_idx, location.cell_idx)
         self._current_cell = location
         try:
             coord = self._grid.get_cell_coordinate(location)
+            self._logger.info("store() starting io_pick at coord: %s", coord)
             await self.io_pick(coord.to_axis_coordinate())
             self._grid.store_item(location, item)
             self._grid.save()
+            self._logger.info("store() completed successfully")
             return RobotCommandSuccessful(command=command_name, location=location, upca=resolved_upca)
         except Exception as exc:
             self._logger.exception("Store command failed for %s", resolved_item_name)
@@ -731,6 +741,7 @@ class Robot:
 
     async def handle_command(self, command: RobotCommands) -> RobotResponse:
         command_name = getattr(command, "command", "unknown")
+        self._logger.info("handle_command called: %s", command_name)
         try:
             if isinstance(command, StopCommand):
                 await self.stop()
@@ -746,10 +757,12 @@ class Robot:
                 return RobotCommandSuccessful(command=command_name)
             elif isinstance(command, StoreItemCommand):
                 payload = getattr(command, "item", None)
+                self._logger.info("StoreItemCommand - calling store() with payload: %s", payload)
                 return await self.store(payload)
             elif isinstance(command, RetrieveItemCommand):
                 return await self.retrieve_by_location(command.location)
             else:
+                self._logger.warning("Unknown command type: %s", type(command))
                 return RobotCommandError(command=command_name, error="Invalid Robot Command")
         except Exception as exc:
             self._logger.exception("Unhandled error while processing command %s", command_name)

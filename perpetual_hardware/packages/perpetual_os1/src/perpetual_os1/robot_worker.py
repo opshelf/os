@@ -441,11 +441,15 @@ class RobotWorker:
                     msgs = await self.work_consumer.fetch(timeout=1)
                     if msgs:
                         msg = msgs[0]
-                        command = RobotCommandAdapter.validate_json(msg.data.decode())
+                        raw_data = msg.data.decode()
+                        logging.info("Worker received raw command: %s", raw_data[:500])
+                        command = RobotCommandAdapter.validate_json(raw_data)
+                        logging.info("Worker parsed command: %s", getattr(command, "command", "unknown"))
                         self._current_command = command
                         self._msg = msg
                         self._queued_commands.append(self._snapshot_command(command))
                         await self._publish_status()
+                        logging.info("Worker dispatching to robot.handle_command")
                         self._current_task = asyncio.create_task(self._robot.handle_command(command))
                 else:
                     if self._current_task.done():
