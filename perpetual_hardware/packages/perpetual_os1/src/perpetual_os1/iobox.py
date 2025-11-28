@@ -56,11 +56,12 @@ class IOBox:
         self._status = IOBoxStatus.IDLE
         self._params = params
 
-        self._md = Motor(controller = self._motorcontroller, 
+        self._md = Motor(controller = self._motorcontroller,
                          params = self._params.motors.by_name("door"))
-        self._cam = AFSCam(usb_params = self._params.usb_camera,
-                           tof_params = self._params.tof_camera)
-        
+        # self._cam = AFSCam(usb_params = self._params.usb_camera,
+        #                    tof_params = self._params.tof_camera)
+        self._cam = None
+
         self._scale = Scale(scalecontroller)
         # self._printer = USBPrinter()
         self._scale_ready = False
@@ -80,9 +81,9 @@ class IOBox:
             await self._md.home()
             await self._scale.tare()
             self._scale_ready = True
-            if not self._cam_running:
-                await self._cam.start()
-                self._cam_running = True
+            # if not self._cam_running:
+            #     await self._cam.start()
+            #     self._cam_running = True
             self._status = IOBoxStatus.IDLE
         except Exception as e:
             self._status = IOBoxStatus.ERROR
