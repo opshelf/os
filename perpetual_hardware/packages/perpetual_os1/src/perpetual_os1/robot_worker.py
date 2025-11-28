@@ -122,7 +122,10 @@ def _normalize_command(command: Optional[Dict[str, Any]]) -> Optional[Dict[str, 
     return normalized
 
 
-def _transform_worker_status_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+def _transform_worker_status_payload(
+    payload: Dict[str, Any],
+    storage_override: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     transformed = dict(payload)
 
     normalized_command = _normalize_command(payload.get("current_command"))
@@ -151,7 +154,11 @@ def _transform_worker_status_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         robot_status_payload = {}
 
     state_payload = robot_status_payload.get("state") or {"current_cell": None}
-    storage_payload = robot_status_payload.get("storage") or {"left_module": [], "right_module": []}
+
+    if storage_override is not None:
+        storage_payload = storage_override
+    else:
+        storage_payload = robot_status_payload.get("storage") or {"left_module": [], "right_module": []}
 
     transformed["robot_status"] = {
         "gantry": {
@@ -180,7 +187,10 @@ class RobotWorker:
     _instance: Optional["RobotWorker"] = None
 
     def __init__(
-        self, robot: Robot, nats_config: RobotNatsConfiguration = RobotNatsConfiguration()
+        self,
+        robot: Robot,
+        nats_config: RobotNatsConfiguration = RobotNatsConfiguration(),
+        storage_path: Optional[str] = None,
     ):
         if RobotWorker._instance is not None:
             raise RuntimeError("RobotWorker is a singleton. Use `get_instance()` to access it.")
@@ -200,9 +210,26 @@ class RobotWorker:
         self._barcode: Optional[BarcodeService] = None
         self._barcode_task: Optional[asyncio.Task] = None
         self._latest_status_payload: Optional[str] = None
+        self._storage_path = storage_path
 
     def get_client(self) -> RobotClient:
         return self._client
+
+    def _load_storage(self) -> Dict[str, Any]:
+        if self._storage_path is None:
+            return {"left_module": [], "right_module": []}
+
+        try:
+            with open(self._storage_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            return {
+                "left_module": data.get("left_module", []),
+                "right_module": data.get("right_module", []),
+            }
+        except Exception as err:
+            logging.warning("Failed to load storage from %s: %s", self._storage_path, err)
+            return {"left_module": [], "right_module": []}
 
     def get_latest_status_payload(self) -> Optional[str]:
         return self._latest_status_payload
@@ -394,7 +421,8 @@ class RobotWorker:
                 op.model_dump(mode="json") for op in status.queued_operations
             ]
 
-        status_payload = _transform_worker_status_payload(status_payload)
+        storage_data = self._load_storage()
+        status_payload = _transform_worker_status_payload(status_payload, storage_override=storage_data)
         self._latest_status_payload = json.dumps(status_payload)
 
         await self._nc.publish(
