@@ -24,7 +24,7 @@ services:
       context: .
       dockerfile: ./Dockerfile
     volumes:
-      - ./perpetual_hardware/packages/perpetual_os1_server/data/:/app/perpetual_hardware/packages/perpetual_os1_server/data/
+      - ./perpetual_hardware/:/app/perpetual_hardware/
     ports:
       - "8000:8000"
     depends_on:
