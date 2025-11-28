@@ -175,6 +175,9 @@ class Robot:
         self._cur_item: str = None # some kind of unique identifier
         self._status: RobotStatus = RobotStatus.IDLE
 
+    async def status(self) -> RobotStatus:
+        return self._status
+
     async def configure(self):
         await self._bus.connect()
         if not self._bus.client.connected:

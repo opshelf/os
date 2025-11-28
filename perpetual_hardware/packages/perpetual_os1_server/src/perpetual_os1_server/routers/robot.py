@@ -109,8 +109,19 @@ async def stream_sse(
 ) -> EventSourceResponse:
     stop_event = asyncio.Event()
 
+    initial_payload: Optional[str] = None
+    try:
+        worker = await get_robot_worker()
+    except ValueError:
+        worker = None
+
+    if worker is not None:
+        initial_payload = await worker.get_status_snapshot(force_refresh=True)
+
     async def event_generator() -> AsyncGenerator[dict[str, str], None]:
         try:
+            if initial_payload is not None:
+                yield {"data": initial_payload}
             async for message in nats_consumer(stop_event):
                 yield {"data": message}
         finally:

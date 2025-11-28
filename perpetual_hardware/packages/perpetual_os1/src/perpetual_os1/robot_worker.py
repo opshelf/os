@@ -79,9 +79,21 @@ class RobotWorker:
         self._use_enhanced_status = True
         self._barcode: Optional[BarcodeService] = None
         self._barcode_task: Optional[asyncio.Task] = None
+        self._latest_status_payload: Optional[str] = None
 
     def get_client(self) -> RobotClient:
         return self._client
+
+    def get_latest_status_payload(self) -> Optional[str]:
+        return self._latest_status_payload
+
+    async def get_status_snapshot(self, force_refresh: bool = False) -> Optional[str]:
+        if force_refresh or self._latest_status_payload is None:
+            try:
+                await self._publish_status()
+            except Exception as err:
+                logging.warning("Failed to refresh robot status payload: %s", err)
+        return self._latest_status_payload
 
     @classmethod
     async def get_instance(cls, robot: Robot) -> "RobotWorker":
@@ -262,9 +274,11 @@ class RobotWorker:
                 op.model_dump(mode="json") for op in status.queued_operations
             ]
 
+        self._latest_status_payload = json.dumps(status_payload)
+
         await self._nc.publish(
             self._nats_config.status_queue,
-            json.dumps(status_payload).encode(),
+            self._latest_status_payload.encode(),
         )
 
     async def process_commands(self) -> None:
