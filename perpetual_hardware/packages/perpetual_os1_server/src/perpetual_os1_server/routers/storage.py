@@ -3,6 +3,7 @@ from typing import List, Optional, Dict, Any, cast, Callable
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, ConfigDict
+import json
 import logging
 import time
 import functools
@@ -36,10 +37,10 @@ def monitor_performance(func: Callable) -> Callable:
 # Pydantic models for request/response
 class ItemCreate(BaseModel):
     upca: str
-    name: str
-    dimensions: Dict[str, float]
+    name: Optional[str] = None
+    dimensions: Optional[Dict[str, float]] = None
     weight: Optional[float] = None
-    metadata: Optional[Dict[str, Any]] = None
+    item_metadata: Optional[Dict[str, Any]] = None
     access_level_id: Optional[int] = None
 
 
@@ -47,7 +48,7 @@ class ItemUpdate(BaseModel):
     name: Optional[str] = None
     dimensions: Optional[Dict[str, float]] = None
     weight: Optional[float] = None
-    metadata: Optional[Dict[str, Any]] = None
+    item_metadata: Optional[Dict[str, Any]] = None
     access_level_id: Optional[int] = None
 
 
@@ -56,15 +57,33 @@ class ItemLocationCreate(BaseModel):
     cell_idx: int
 
 
+class Dimension(BaseModel):
+    length: float
+    width: float
+    height: float
+
+
+def _dimension_to_str(dim: Dimension) -> str:
+    return json.dumps({"length": dim.length, "width": dim.width, "height": dim.height})
+
+
+def _str_to_dimension(s: str) -> Dimension:
+    try:
+        data = json.loads(s)
+        return Dimension(length=data["length"], width=data["width"], height=data["height"])
+    except (json.JSONDecodeError, KeyError, TypeError):
+        return Dimension(length=0.0, width=0.0, height=0.0)
+
+
 class StorageCellUpdate(BaseModel):
-    capacity: str
-    status: str
+    capacity: Optional[Dimension] = None
+    status: Optional[str] = None
 
 
 class StorageCellCreate(BaseModel):
     shelf_idx: int
     cell_idx: int
-    capacity: str
+    capacity: Dimension
 
 
 class ItemWithLocations(BaseModel):
@@ -75,7 +94,7 @@ class ItemWithLocations(BaseModel):
     name: str
     dimensions: Dict[str, float]
     weight: Optional[float]
-    metadata: Optional[Dict[str, Any]]
+    item_metadata: Optional[Dict[str, Any]]
     access_level_id: Optional[int]
     locations: List[Any]  # Temporary fix for SQLAlchemy model
     created_at: str
@@ -96,7 +115,7 @@ class StorageCellResponse(BaseModel):
     id: int
     shelf_idx: int
     cell_idx: int
-    capacity: str
+    capacity: Dimension
     status: str
     created_at: str
     updated_at: str
@@ -130,7 +149,7 @@ def _build_item_payload(item: Item, locations: List[ItemLocation], current_user:
         name=str(item.name),
         dimensions=cast(dict[str, float], item.dimensions),
         weight=float(item.weight) if item.weight else None,
-        metadata=cast(dict[str, Any], item.item_metadata) or {},
+        item_metadata=cast(dict[str, Any], item.item_metadata) or {},
         access_level_id=item.access_level_id,
         locations=_serialize_locations(locations),
         created_at=item.created_at.isoformat() if item.created_at else "",
@@ -148,7 +167,7 @@ async def get_items(
     limit: int = 50,
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> List[ItemWithLocations]:
+) -> PaginatedItemsResponse:
     """Get all items with pagination."""
     await migrate_if_needed(session)
     storage_service = StorageService(session)
@@ -159,7 +178,12 @@ async def get_items(
     if response is not None:
         response.headers["X-Total-Count"] = str(total)
 
-    return [_build_item_payload(item, list(item.locations), current_user) for item in items]
+    return PaginatedItemsResponse(
+        items=[_build_item_payload(item, list(item.locations), current_user) for item in items],
+        total=total,
+        skip=skip,
+        limit=limit
+    )
 
 
 @router.get("/items/{upca}", dependencies=[Depends(require_permissions("storage:read"))])
@@ -192,12 +216,15 @@ async def create_item(
     storage_service = StorageService(session)
 
     try:
+        resolved_name = item.name or item.item_metadata.get("name") if item.item_metadata else None
+        resolved_dimensions = item.dimensions or {"length": 1.0, "width": 1.0, "height": 1.0}
+
         db_item = await storage_service.create_item(
             upca=item.upca,
-            name=item.name,
-            dimensions=item.dimensions,
+            name=resolved_name or item.upca,
+            dimensions=resolved_dimensions,
             weight=item.weight,
-            metadata=item.metadata or {},
+            metadata=item.item_metadata or {},
             access_level_id=item.access_level_id
         )
 
@@ -227,7 +254,7 @@ async def update_item(
         name=item.name,
         dimensions=item.dimensions,
         weight=item.weight,
-        metadata=item.metadata,
+        metadata=item.item_metadata,
         access_level_id=item.access_level_id
     )
 
@@ -303,7 +330,7 @@ async def add_item_location(
     )
 
 
-@router.delete("/items/{upca}/locations", dependencies=[Depends(require_permissions("storage:write"))])
+@router.delete("/items/{upca}/locations/{shelf_idx}/{cell_idx}", dependencies=[Depends(require_permissions("storage:write"))])
 async def remove_item_location(
     upca: str,
     shelf_idx: int,
@@ -341,14 +368,14 @@ async def create_storage_cell(
         storage_cell = await storage_service.create_storage_cell(
             shelf_idx=cell.shelf_idx,
             cell_idx=cell.cell_idx,
-            capacity=cell.capacity
+            capacity=_dimension_to_str(cell.capacity)
         )
 
         return StorageCellResponse(
             id=int(storage_cell.id),
             shelf_idx=int(storage_cell.shelf_idx),
             cell_idx=int(storage_cell.cell_idx),
-            capacity=storage_cell.capacity,
+            capacity=_str_to_dimension(storage_cell.capacity),
             status=str(storage_cell.status),
             created_at=storage_cell.created_at.isoformat(),
             updated_at=storage_cell.updated_at.isoformat()
@@ -377,7 +404,7 @@ async def get_storage_cells(
             id=int(cell.id),
             shelf_idx=int(cell.shelf_idx),
             cell_idx=int(cell.cell_idx),
-            capacity=str(cell.capacity),
+            capacity=_str_to_dimension(cell.capacity),
             status=str(cell.status),
             created_at=cell.created_at.isoformat(),
             updated_at=cell.updated_at.isoformat()
@@ -416,7 +443,7 @@ async def update_storage_cell(
         id=int(cell.id),
         shelf_idx=int(cell.shelf_idx),
         cell_idx=int(cell.cell_idx),
-        capacity=str(cell.capacity),
+        capacity=_str_to_dimension(cell.capacity),
         status=str(cell.status),
         created_at=cell.created_at.isoformat(),
         updated_at=cell.updated_at.isoformat()

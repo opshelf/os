@@ -5,12 +5,10 @@ from pathlib import Path
 import pytest
 from typing import AsyncGenerator
 
-from sqlalchemy import delete
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from perpetual_os1_server.database.models import AuditLog, Item, ItemLocation, Role, StorageCell, User
-from perpetual_os1_server.core import sizes as size_utils
-
-# Ensure env is set before importing the app/DB engine
+# Ensure env is set BEFORE importing any app modules that use the database
 _tmpdir = Path(tempfile.mkdtemp(prefix="perp_os1_testdb_"))
 _db_path = _tmpdir / "test.db"
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_db_path}"
@@ -18,16 +16,15 @@ os.environ["JWT_SECRET"] = "test-jwt-secret"
 os.environ["AUDIT_HMAC_KEY"] = "test-hmac-key"
 os.environ["ENV"] = "test"
 
+from sqlalchemy import delete
 
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from perpetual_os1_server.database.models import AccessLevel, AuditLog, Item, ItemLocation, Role, StorageCell, User
+from perpetual_os1_server.core import sizes as size_utils
 
 import httpx
 from perpetual_os1_server.main import app
 from perpetual_os1_server.database.session import AsyncSessionLocal
 from sqlalchemy.ext.asyncio import AsyncSession
-from perpetual_os1_server.database.models import Role, User
 from sqlalchemy import select
 from perpetual_os1_server.core.auth import AuthService
 from perpetual_os1_server.settings import get_settings
