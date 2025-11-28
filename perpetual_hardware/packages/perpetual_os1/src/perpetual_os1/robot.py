@@ -637,50 +637,40 @@ class Robot:
         r = await self._mr.get_position()
         return (AxisCoordinate(x, y), ToolCoordinate(g,s,r))
 
-    async def measure_item_dimensions(self) -> Optional[Dimensions]:
-        try:
-            weight_data = await self._scale.read_weight_data()
-            width = 100.0
-            height = 100.0
-            length = 100.0
-            return Dimensions(length=length, width=width, height=height)
-        except Exception as e:
-            self._logger.warning("Failed to measure item dimensions: %s", e)
-            return None
-
     async def store(self, item_payload: Any) -> RobotResponse:
         command_name = "store_item"
 
         if self._grid is None:
             return RobotCommandError(command=command_name, error="Storage grid not loaded")
 
-        resolved_upca: str
-        resolved_item_name: str
+        resolved_upca: str = "item"
+        resolved_item_name: str = "item"
+        width: float = 100.0
+        height: float = 100.0
+        length: float = 100.0
+        weight: float = 0.0
+
         if isinstance(item_payload, str):
             resolved_upca = item_payload
             resolved_item_name = item_payload
         elif isinstance(item_payload, dict):
             resolved_upca = item_payload.get("upca") or item_payload.get("name") or "item"
             resolved_item_name = item_payload.get("name") or resolved_upca
-        else:
-            resolved_upca = "item"
-            resolved_item_name = "item"
+            weight = float(item_payload.get("weight") or 0.0)
 
-        measurement = await self.measure_item_dimensions()
-        if measurement is None:
-            measurement = Dimensions(length=100.0, width=100.0, height=100.0)
-
-        width = measurement.width * 1.1
-        height = measurement.height * 1.1
-        length = measurement.length * 1.1
+            dimensions = item_payload.get("dimensions")
+            if isinstance(dimensions, dict):
+                width = float(dimensions.get("width") or 100.0)
+                height = float(dimensions.get("height") or 100.0)
+                length = float(dimensions.get("length") or 100.0)
 
         item = CellItem(
             dimensions=Dimensions(
-                width=width,
-                height=height,
-                length=length
+                width=width * 1.1,
+                height=height * 1.1,
+                length=length * 1.1
             ),
-            weight=0.0,
+            weight=weight,
             data={"name": resolved_item_name},
             upca=resolved_upca
         )

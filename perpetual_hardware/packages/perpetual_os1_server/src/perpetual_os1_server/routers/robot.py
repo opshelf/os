@@ -91,6 +91,21 @@ async def robot_commands(
             detail=f"Unsupported command: {command_name}",
         )
 
+    if isinstance(command, StoreItemCommand):
+        item_data = command.item or {}
+        upca = item_data.get("upca")
+
+        if upca is not None:
+            result = await db.execute(select(Item).where(Item.upca == upca))
+            item = result.scalar_one_or_none()
+
+            if item is not None:
+                item_data["dimensions"] = item.dimensions
+                item_data["name"] = item.name
+                if item.weight is not None:
+                    item_data["weight"] = item.weight
+                command = StoreItemCommand(item=item_data)
+
     if isinstance(command, RetrieveItemCommand):
         location_data = command.location or {}
         shelf_idx = location_data.get("shelf_idx")
