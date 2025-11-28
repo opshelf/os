@@ -1,4 +1,4 @@
-from typing import Dict, Optional, Tuple, Union, Literal, Annotated, Any
+from typing import Dict, Optional, Tuple, Union, Literal, Annotated, Any, List
 from perpetual_os1.common import AxisCoordinate, ToolCoordinate
 from hardware.ModbusController import SharedModbusController as Controller
 from hardware.MotorBase import Motor, Servo, MotorStatus
@@ -10,7 +10,12 @@ import time
 from enum import Enum
 import cv2
 import asyncio
+import json
+import logging
 import perpetual_os1.robot_state as rs
+from perpetual_os1.storage import (
+    StorageGrid, CellItem, CellStatus, Dimensions, StorageModuleCellLocation
+)
 
 
 # class TestCommandOne(BaseModel):
@@ -67,9 +72,13 @@ RobotCommands = Annotated[
 ]
 # Define response types
 class RobotCommandSuccessful(BaseModel):
+    command: str = "unknown"
     message: Literal["success"] = "success"
+    location: Optional[StorageModuleCellLocation] = None
+    upca: Optional[str] = None
 
 class RobotCommandError(BaseModel):
+    command: str = "unknown"
     error: str
 
 class RobotItemStoredResponse(BaseModel):
@@ -150,44 +159,56 @@ class FiducialRegistry:
     def add(self, yw: float):
         self.items.append(yw)
 
+STORAGE_PATH = CONFIG_PATH.parent / "storage.json"
+
 class Robot:
-    def __init__(self, port: str) -> None:
+    def __init__(self, port: str, storage_path: Optional[str] = None) -> None:
         self._bus = Controller(port=port, baudrate=115200)
         self._scalebus = Controller(port="/dev/ttyACM0", baudrate=9600)
-        # self._curtain_bus = Controller(port=curtain_port)
+        self._logger = logging.getLogger(__name__).getChild("Robot")
         self._state = rs.load_state(CONFIG_PATH)
         self._mx = Motor(
-            self._bus, 
-            rs.get_motor_params(self._state, "x_axis"), 
+            self._bus,
+            rs.get_motor_params(self._state, "x_axis"),
         )
         self._my = Motor(
-            self._bus, 
-            rs.get_motor_params(self._state, "y_axis"), 
+            self._bus,
+            rs.get_motor_params(self._state, "y_axis"),
         )
         self._mg = Motor(
-            self._bus, 
-            rs.get_motor_params(self._state, "z_axis"), 
+            self._bus,
+            rs.get_motor_params(self._state, "z_axis"),
         )
         self._ms = Motor(
-            self._bus, 
-            rs.get_motor_params(self._state, "stage"), 
+            self._bus,
+            rs.get_motor_params(self._state, "stage"),
         )
         self._mr = Motor(
-            self._bus, 
-            rs.get_motor_params(self._state, "rotate"), 
+            self._bus,
+            rs.get_motor_params(self._state, "rotate"),
         )
         self._md = Motor(
-            self._bus, 
-            rs.get_motor_params(self._state, "door"), 
+            self._bus,
+            rs.get_motor_params(self._state, "door"),
         )
 
         self._gs = Servo(self._bus)
-        # self._cam = Camera()
-        # self._grid = self._state["grid"]
-        self._scale = Scale(self._scalebus, 1) #need to update motors
-        # self._curtain = Curtain(self._curtain_bus)
-        self._cur_item: str = None # some kind of unique identifier
+        self._scale = Scale(self._scalebus, 1)
+        self._cur_item: str = None
         self._status: RobotStatus = RobotStatus.IDLE
+        self._current_cell: Optional[StorageModuleCellLocation] = None
+
+        storage_file = storage_path if storage_path else str(STORAGE_PATH)
+        self._grid: Optional[StorageGrid] = None
+        try:
+            with open(storage_file, 'r') as f:
+                data = json.load(f)
+            self._grid = StorageGrid.model_validate(data)
+            self._logger.info("Loaded storage grid from %s", storage_file)
+        except FileNotFoundError:
+            self._logger.warning("Storage grid file not found at %s", storage_file)
+        except Exception as e:
+            self._logger.warning("Failed to load storage grid: %s", e)
 
     async def status(self) -> RobotStatus:
         return self._status
@@ -609,36 +630,137 @@ class Robot:
         await self._md.stop()
 
     async def get_pos(self):
-        # get each motor position. return tuple of axis and tool coordinate?
         x = await self._mx.get_position()
         y = await self._my.get_position()
         g = await self._mg.get_position()
         s = await self._ms.get_position()
         r = await self._mr.get_position()
         return (AxisCoordinate(x, y), ToolCoordinate(g,s,r))
-    
-    async def handle_command(self, command: RobotCommands):
-        match command:
-            case StopCommand():
+
+    async def measure_item_dimensions(self) -> Optional[Dimensions]:
+        try:
+            weight_data = await self._scale.read_weight_data()
+            width = 100.0
+            height = 100.0
+            length = 100.0
+            return Dimensions(length=length, width=width, height=height)
+        except Exception as e:
+            self._logger.warning("Failed to measure item dimensions: %s", e)
+            return None
+
+    async def store(self, item_payload: Any) -> RobotResponse:
+        command_name = "store_item"
+
+        if self._grid is None:
+            return RobotCommandError(command=command_name, error="Storage grid not loaded")
+
+        resolved_upca: str
+        resolved_item_name: str
+        if isinstance(item_payload, str):
+            resolved_upca = item_payload
+            resolved_item_name = item_payload
+        elif isinstance(item_payload, dict):
+            resolved_upca = item_payload.get("upca") or item_payload.get("name") or "item"
+            resolved_item_name = item_payload.get("name") or resolved_upca
+        else:
+            resolved_upca = "item"
+            resolved_item_name = "item"
+
+        measurement = await self.measure_item_dimensions()
+        if measurement is None:
+            measurement = Dimensions(length=100.0, width=100.0, height=100.0)
+
+        width = measurement.width * 1.1
+        height = measurement.height * 1.1
+        length = measurement.length * 1.1
+
+        item = CellItem(
+            dimensions=Dimensions(
+                width=width,
+                height=height,
+                length=length
+            ),
+            weight=0.0,
+            data={"name": resolved_item_name},
+            upca=resolved_upca
+        )
+
+        location = self._grid.find_best_slot_for_item(item)
+        if location is None:
+            return RobotCommandError(command=command_name, error="No suitable storage location found")
+
+        self._current_cell = location
+        try:
+            coord = self._grid.get_cell_coordinate(location)
+            await self.io_pick(coord.to_axis_coordinate())
+            self._grid.store_item(location, item)
+            self._grid.save()
+            return RobotCommandSuccessful(command=command_name, location=location, upca=resolved_upca)
+        except Exception as exc:
+            self._logger.exception("Store command failed for %s", resolved_item_name)
+            return RobotCommandError(command=command_name, error=str(exc))
+
+    async def retrieve_by_location(self, location_payload: Dict[str, Any]) -> RobotResponse:
+        command_name = "retrieve_item"
+
+        if self._grid is None:
+            return RobotCommandError(command=command_name, error="Storage grid not loaded")
+
+        try:
+            location = StorageModuleCellLocation(**location_payload)
+        except Exception:
+            return RobotCommandError(command=command_name, error="Invalid location payload")
+
+        try:
+            cell = self._grid.get_cell(location)
+        except Exception:
+            return RobotCommandError(command=command_name, error="Location out of range")
+
+        if cell.status != CellStatus.OCCUPIED or cell.item is None:
+            return RobotCommandError(
+                command=command_name,
+                error=f"No item found at location (shelf: {location.shelf_idx}, cell: {location.cell_idx})"
+            )
+
+        self._current_cell = location
+        retrieved_upca = cell.item.upca or (cell.item.data.get("upca") if cell.item.data else None)
+
+        try:
+            coord = self._grid.get_cell_coordinate(location).to_axis_coordinate()
+            await self.io_place(coord)
+            self._grid.clear_item(location)
+            self._grid.save()
+            return RobotCommandSuccessful(command=command_name, location=location, upca=retrieved_upca)
+        except Exception as exc:
+            self._logger.exception(
+                "Retrieve command failed at shelf %s cell %s",
+                location.shelf_idx,
+                location.cell_idx,
+            )
+            return RobotCommandError(command=command_name, error=str(exc))
+
+    async def handle_command(self, command: RobotCommands) -> RobotResponse:
+        command_name = getattr(command, "command", "unknown")
+        try:
+            if isinstance(command, StopCommand):
                 await self.stop()
-                return RobotCommandSuccessful()
-            case InitializeCommand():
+                return RobotCommandSuccessful(command=command_name)
+            elif isinstance(command, InitializeCommand):
                 await self.configure()
-                return RobotCommandSuccessful()
-            case HomeCommand(barcode=code):
-                await self.testone(code)
-                return RobotCommandSuccessful()
-            case MoveCommand(coordinate=coord):
-                await self.move(coord)
-                return RobotCommandSuccessful()
-            # case IdleCommand():
-            #     await self.testtwo()
-            #     return RobotCommandSuccessful()
-            # case TestCommandOne():
-            #     await self.testone()
-            #     return RobotCommandSuccessful()
-            # case TestCommandTwo():
-            #     await self.testtwo()
-            #     return RobotCommandSuccessful()
-            case _:
-                return RobotCommandError(error="Invalid Robot Command")
+                return RobotCommandSuccessful(command=command_name)
+            elif isinstance(command, HomeCommand):
+                await self.testone(command.barcode)
+                return RobotCommandSuccessful(command=command_name)
+            elif isinstance(command, MoveCommand):
+                await self.move(command.coordinate)
+                return RobotCommandSuccessful(command=command_name)
+            elif isinstance(command, StoreItemCommand):
+                payload = getattr(command, "item", None)
+                return await self.store(payload)
+            elif isinstance(command, RetrieveItemCommand):
+                return await self.retrieve_by_location(command.location)
+            else:
+                return RobotCommandError(command=command_name, error="Invalid Robot Command")
+        except Exception as exc:
+            self._logger.exception("Unhandled error while processing command %s", command_name)
+            return RobotCommandError(command=command_name, error=str(exc))
