@@ -36,6 +36,7 @@ class UserResponse(BaseModel):
 	last_name: str
 	role: str
 	permissions: list[str]
+	access_level: str | None = None
 	is_active: bool
 
 class RefreshRequest(BaseModel):
@@ -48,6 +49,7 @@ class PublicUserResponse(BaseModel):
 	firstName: str
 	lastName: str
 	role: dict
+	accessLevel: dict | None = None
 
 @router.get("/users", response_model=List[PublicUserResponse])
 async def get_public_users(
@@ -59,7 +61,7 @@ async def get_public_users(
 	"""
 	result = await db.execute(
 		select(User)
-		.options(selectinload(User.role))
+		.options(selectinload(User.role), selectinload(User.access_level))
 		.filter(User.is_active)
 		.order_by(User.id)
 	)
@@ -70,7 +72,8 @@ async def get_public_users(
 			email=user.email,
 			firstName=user.first_name,
 			lastName=user.last_name,
-			role={"name": user.role.name}
+			role={"name": user.role.name},
+			accessLevel={"name": user.access_level.name} if user.access_level else None
 		)
 		for user in users
 	]
@@ -89,7 +92,7 @@ async def login_form(
 	
 	result = await db.execute(
 		select(User)
-		.options(selectinload(User.role))
+		.options(selectinload(User.role), selectinload(User.access_level))
 		.filter_by(
 			email=form_data.username,
 			is_active=True
@@ -109,6 +112,7 @@ async def login_form(
 		email=user.email,
 		role=user.role.name,
 		permissions=user.role.permissions,
+		access_level=user.access_level.name if user.access_level else None,
 		expires_minutes=settings.auth.jwt_expire_minutes
 	)
 	
@@ -138,7 +142,7 @@ async def login_json(
 	
 	result = await db.execute(
 		select(User)
-		.options(selectinload(User.role))
+		.options(selectinload(User.role), selectinload(User.access_level))
 		.filter_by(
 			email=request.email,
 			is_active=True
@@ -157,6 +161,7 @@ async def login_json(
 		email=user.email,
 		role=user.role.name,
 		permissions=user.role.permissions,
+		access_level=user.access_level.name if user.access_level else None,
 		expires_minutes=settings.auth.jwt_expire_minutes
 	)
 	
@@ -193,7 +198,7 @@ async def refresh_token(
 	
 	result = await db.execute(
 		select(User)
-		.options(selectinload(User.role))
+		.options(selectinload(User.role), selectinload(User.access_level))
 		.filter_by(
 			id=payload.get("user_id"),
 			is_active=True
@@ -212,6 +217,7 @@ async def refresh_token(
 		email=user.email,
 		role=user.role.name,
 		permissions=user.role.permissions,
+		access_level=user.access_level.name if user.access_level else None,
 		expires_minutes=settings.auth.jwt_expire_minutes
 	)
 	
@@ -240,5 +246,6 @@ async def get_current_user_info(
 		last_name=str(current_user.last_name),
 		role=current_user.role.name,
 		permissions=current_user.role.permissions,
+		access_level=current_user.access_level.name if current_user.access_level else None,
 		is_active=bool(current_user.is_active)
 	)

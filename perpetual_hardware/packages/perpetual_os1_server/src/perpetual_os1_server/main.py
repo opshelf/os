@@ -18,7 +18,7 @@ from perpetual_os1_server.core.logging_config import configure_logging, get_logg
 from perpetual_os1_server.core.robot import init_robot_worker, stop_robot_worker
 from perpetual_os1_server.core.sizes import init_file_sizes, migrate_if_needed
 from perpetual_os1_server.core.storage import StorageService
-from perpetual_os1_server.database.base import Base, engine
+from perpetual_os1_server.database.base import Base, engine, get_database_url
 from perpetual_os1_server.database.session import AsyncSessionLocal
 from perpetual_os1_server.middleware.audit import AuditMiddleware
 from perpetual_os1_server.middleware.correlation import CorrelationIdMiddleware
@@ -65,6 +65,39 @@ def _filter_pii(event: dict, hint: dict) -> dict:
 	return event
 
 
+def _run_migrations() -> None:
+	from alembic import command
+	from alembic.config import Config
+
+	try:
+		script_location = Path(__file__).parent / "alembic"
+
+		if script_location.exists() is False:
+			logger.warning("alembic_directory_missing", script_location=str(script_location))
+			return
+
+		package_root = Path(__file__).parent.parent.parent.parent.parent
+		alembic_ini_path = package_root / "alembic.ini"
+
+		if alembic_ini_path.exists() is False:
+			logger.warning("alembic_ini_missing", path=str(alembic_ini_path), action="using_fallback_config")
+			alembic_cfg = Config()
+			alembic_cfg.set_main_option("script_location", str(script_location))
+		else:
+			alembic_cfg = Config(str(alembic_ini_path))
+			alembic_cfg.set_main_option("script_location", str(script_location))
+
+		db_url = get_database_url()
+		alembic_cfg.set_main_option("sqlalchemy.url", db_url)
+
+		logger.info("running_database_migrations", script_location=str(script_location))
+		command.upgrade(alembic_cfg, "head")
+		logger.info("database_migrations_complete")
+	except Exception as e:
+		logger.error("migration_failed", error=str(e), exc_info=True)
+		logger.warning("continuing_without_migrations")
+
+
 async def _seed_auth_if_requested() -> None:
 	from sqlalchemy import select
 	from perpetual_os1_server.database.models import User
@@ -93,6 +126,8 @@ async def _seed_auth_if_requested() -> None:
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 	logger.info("application_starting", app_title=app.title)
 	settings = get_settings()
+
+	_run_migrations()
 
 	logger.info("initializing_database_schema")
 	async with engine.begin() as conn:
@@ -186,7 +221,6 @@ app.include_router(printer.router, prefix="/api/print")
 
 
 def start() -> None:
-	import logging
 	import uvicorn
 
 	log_config = uvicorn.config.LOGGING_CONFIG

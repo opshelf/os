@@ -29,9 +29,6 @@ class CameraStreamManager:
 		if self.is_running is True:
 			return
 
-
-		loop = asyncio.get_event_loop()
-
 		self.calibration_complete.set()
 		self.is_running = True
 		self.capture_task = asyncio.create_task(self._capture_loop())
@@ -154,7 +151,7 @@ async def stop_camera_stream() -> None:
 	if camera_manager is None:
 		return
 
-	consumer_count = camera_manager.decrement_consumers()
+	camera_manager.decrement_consumers()
 
 
 async def get_camera_manager() -> CameraStreamManager:
