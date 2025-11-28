@@ -8,7 +8,7 @@ from sqlalchemy.orm import selectinload
 
 from ..settings import get_settings
 from ..database.session import get_db
-from ..database.models import User
+from ..database.models import User, Item
 from ..core.auth import AuthService
 from ..core.permissions import has_permission
 
@@ -32,7 +32,7 @@ async def get_current_user_optional(
 		if payload is not None and payload.get("type") == "access":
 			result = await db.execute(
 				select(User)
-				.options(selectinload(User.role))
+				.options(selectinload(User.role), selectinload(User.access_level))
 				.filter_by(
 					id=payload.get("user_id"),
 					is_active=True
@@ -41,12 +41,12 @@ async def get_current_user_optional(
 			user = result.scalar_one_or_none()
 			if user is not None:
 				return user
-	
+
 	# Fall back to dev auto-user if configured and no valid token
 	if settings.auth.dev_mode and settings.auth.dev_auto_user:
 		result = await db.execute(
 			select(User)
-			.options(selectinload(User.role))
+			.options(selectinload(User.role), selectinload(User.access_level))
 			.filter_by(
 				email=settings.auth.dev_auto_user,
 				is_active=True
@@ -99,22 +99,23 @@ async def get_current_user(
 	
 	result = await db.execute(
 		select(User)
-		.options(selectinload(User.role))
+		.options(selectinload(User.role), selectinload(User.access_level))
 		.filter_by(
 			id=payload.get("user_id"),
 			is_active=True
 		)
 	)
 	user = result.scalar_one_or_none()
-	
+
 	if user is None:
 		raise HTTPException(
 			status_code=status.HTTP_401_UNAUTHORIZED,
 			detail="User not found or inactive",
 			headers={"WWW-Authenticate": "Bearer"},
 		)
-	
+
 	return user
+
 
 def require_permissions(permissions: str | List[str]) -> Callable:
 	"""Dependency to require specific permissions."""
@@ -137,3 +138,28 @@ def require_permissions(permissions: str | List[str]) -> Callable:
 		return current_user
 
 	return permission_checker
+
+
+def can_user_retrieve_item(user: User, item: Item) -> bool:
+	"""
+	Check if user can retrieve an item based on access level rules.
+
+	Rules:
+	1. Admin role users can retrieve any item
+	2. Items with no access level can be retrieved by anyone
+	3. Users with no access level can only retrieve items with no access level
+	4. Users with an access level can retrieve items with same level or no level
+	"""
+	if user.role.name == "admin":
+		return True
+
+	if item.access_level_id is None:
+		return True
+
+	if user.access_level_id is None:
+		return False
+
+	if user.access_level_id == item.access_level_id:
+		return True
+
+	return False
