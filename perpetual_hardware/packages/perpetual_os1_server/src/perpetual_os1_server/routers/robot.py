@@ -7,7 +7,15 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from nats.aio.client import Client as NATS
 from nats.aio.msg import Msg
 from nats.aio.subscription import Subscription
-from perpetual_os1.robot import RobotCommands, RetrieveItemCommand
+from perpetual_os1.robot import (
+    RobotCommands,
+    RetrieveItemCommand,
+    StoreItemCommand,
+    StopCommand,
+    InitializeCommand,
+    HomeCommand,
+    MoveCommand,
+)
 from perpetual_os1.common import RobotNatsConfiguration
 from perpetual_os1.robot_client import RobotClient
 from perpetual_os1.robot_worker import RobotWorker
@@ -59,6 +67,16 @@ async def get_robot_worker_or_error() -> RobotWorker:
         ) from e
 
 
+SUPPORTED_COMMANDS = (
+    StopCommand,
+    InitializeCommand,
+    HomeCommand,
+    MoveCommand,
+    StoreItemCommand,
+    RetrieveItemCommand,
+)
+
+
 @router.post("/commands", dependencies=[Depends(require_permissions("robot:control")), Depends(check_robot_enabled)])
 async def robot_commands(
     command: RobotCommands,
@@ -66,6 +84,13 @@ async def robot_commands(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> SuccessResponse:
+    if not isinstance(command, SUPPORTED_COMMANDS):
+        command_name = getattr(command, "command", "unknown")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported command: {command_name}",
+        )
+
     if isinstance(command, RetrieveItemCommand):
         location_data = command.location or {}
         shelf_idx = location_data.get("shelf_idx")
