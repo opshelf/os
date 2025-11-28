@@ -303,6 +303,10 @@ class RobotWorker:
         try:
             async for code in self._barcode:
                 try:
+                    await self._nc.publish(
+                        self._nats_config.event_queue,
+                        json.dumps({"kind": "label_scanned", "payload": code}).encode(),
+                    )
                     command = await self._barcode_to_command(code)
                 except Exception as mapping_error:  # pragma: no cover - hardware dependent
                     logging.warning("Barcode mapping error for %s: %s", code, mapping_error)
