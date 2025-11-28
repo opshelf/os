@@ -48,7 +48,7 @@ class RetrieveItemCommand(BaseModel):
 
 class StoreItemCommand(BaseModel):
     command: Literal["store_item"] = "store_item"
-    location: Dict[str, Any]
+    location: Optional[Dict[str, Any]] = None
     item: Optional[Dict[str, Any]] = None
 
 
