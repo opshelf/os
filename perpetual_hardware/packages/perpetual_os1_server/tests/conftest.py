@@ -3,6 +3,7 @@ import asyncio
 import tempfile
 from pathlib import Path
 import pytest
+import pytest_asyncio
 from typing import AsyncGenerator
 
 import sys
@@ -95,8 +96,11 @@ async def seeded_db() -> AsyncGenerator[None, None]:
         yield
 
 
-@pytest.fixture(autouse=True)
-async def reset_storage_tables(seeded_db: AsyncGenerator[None, None], request: pytest.FixtureRequest) -> AsyncGenerator[None, None]:
+@pytest_asyncio.fixture(autouse=True)
+async def reset_storage_tables(
+    seeded_db: AsyncGenerator[None, None],
+    request: pytest.FixtureRequest
+) -> AsyncGenerator[None, None]:
     """Ensure test fixtures leave storage and audit data in a clean state."""
     module_name = getattr(getattr(request.node, "module", None), "__name__", "")
     is_storage = "test_storage" in module_name

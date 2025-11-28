@@ -246,18 +246,24 @@ async def test_item_location_operations(client: AsyncClient) -> None:
         "cell_idx": 2
     }
 
-    response = await client.post(f"/api/storage/items/{created_item['upca']}/locations",
-                               json=location_data, headers=headers)
+    response = await client.post(
+        f"/api/storage/items/{created_item['upca']}/locations",
+        json=location_data,
+        headers=headers,
+    )
     assert response.status_code == 200
     data = response.json()
 
-    assert data["shelf_idx"] == 1
-    assert data["cell_idx"] == 2
-    assert data["item_id"] == created_item["id"]
+    assert data["upca"] == created_item["upca"]
+    assert len(data["locations"]) == 1
+    assert data["locations"][0]["shelf_idx"] == 1
+    assert data["locations"][0]["cell_idx"] == 2
 
     # Get item with location
-    get_response = await client.get(f"/api/storage/items/{created_item['upca']}",
-                                  headers=headers)
+    get_response = await client.get(
+        f"/api/storage/items/{created_item['upca']}",
+        headers=headers,
+    )
     assert get_response.status_code == 200
     data = get_response.json()
 
@@ -271,10 +277,15 @@ async def test_item_location_operations(client: AsyncClient) -> None:
         headers=headers
     )
     assert remove_response.status_code == 200
+    removed_payload = remove_response.json()
+    assert removed_payload["upca"] == created_item["upca"]
+    assert removed_payload["locations"] == []
 
     # Verify location is removed
-    get_response = await client.get(f"/api/storage/items/{created_item['upca']}",
-                                  headers=headers)
+    get_response = await client.get(
+        f"/api/storage/items/{created_item['upca']}",
+        headers=headers,
+    )
     assert get_response.status_code == 200
     data = get_response.json()
     assert len(data["locations"]) == 0
