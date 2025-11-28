@@ -1,7 +1,7 @@
 """Database base configuration and engine setup."""
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.engine.url import URL
-from typing import Any
+from typing import Any, cast
 from sqlalchemy.orm import declarative_base
 from sqlalchemy import event
 from pathlib import Path
@@ -22,9 +22,32 @@ engine = create_async_engine(
 	echo=False,
 )
 
+@event.listens_for(engine.sync_engine, "connect")
+def _set_sqlite_pragma(dbapi_connection: Any, connection_record: Any) -> None:
+	if isinstance(SQLALCHEMY_DATABASE_URL, str) and "sqlite" not in SQLALCHEMY_DATABASE_URL:
+		return
+	cursor = dbapi_connection.cursor()
+	cursor.execute("PRAGMA foreign_keys=ON")
+	cursor.close()
+
 if isinstance(SQLALCHEMY_DATABASE_URL, str) and "sqlite" in SQLALCHEMY_DATABASE_URL:
 	@event.listens_for(engine.sync_engine, "connect")
-	def set_sqlite_pragma(dbapi_connection: Any, connection_record: Any) -> None:
+	def _set_wal_mode(dbapi_connection: Any, connection_record: Any) -> None:  # pragma: no cover - requires sqlite
 		cursor = dbapi_connection.cursor()
 		cursor.execute("PRAGMA journal_mode=WAL")
 		cursor.close()
+
+
+def get_database_url() -> str:
+	"""Get the database URL for synchronous operations like Alembic migrations."""
+	if isinstance(SQLALCHEMY_DATABASE_URL, str):
+		url_str: str = cast(str, SQLALCHEMY_DATABASE_URL)
+		if url_str.startswith("sqlite+aiosqlite://"):
+			return url_str.replace("sqlite+aiosqlite://", "sqlite:///")
+		return url_str
+
+	url_str_from_obj: str = str(SQLALCHEMY_DATABASE_URL)
+	if url_str_from_obj.startswith("sqlite+aiosqlite://"):
+		return url_str_from_obj.replace("sqlite+aiosqlite://", "sqlite:///")
+
+	return url_str_from_obj

@@ -19,6 +19,7 @@ class TokenData(BaseModel):
 	user_id: int
 	role: str
 	permissions: list[str]
+	access_level: Optional[str] = None
 
 class AuthService:
 	"""Authentication service for managing tokens and passwords."""
@@ -45,6 +46,7 @@ class AuthService:
 		email: str,
 		role: str,
 		permissions: list[str],
+		access_level: Optional[str] = None,
 		expires_minutes: int = 30
 	) -> str:
 		"""Create a JWT access token."""
@@ -56,7 +58,8 @@ class AuthService:
 			"user_id": user_id,
 			"email": email,
 			"role": role,
-			"permissions": permissions
+			"permissions": permissions,
+			"access_level": access_level
 		}
 		return jwt.encode(data, self.secret_key, algorithm=self.algorithm)
 	
