@@ -211,6 +211,7 @@ async def migrate_if_needed(session: AsyncSession) -> None:
 
     filename = get_sizes_filename()
     lock_file = f"{filename}.lock"
+    Path(lock_file).parent.mkdir(parents=True, exist_ok=True)
 
     try:
         if os.path.exists(lock_file):
