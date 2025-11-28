@@ -1,4 +1,4 @@
-from typing import Dict, Optional, Tuple, Union, Literal, Annotated
+from typing import Dict, Optional, Tuple, Union, Literal, Annotated, Any
 from perpetual_os1.common import AxisCoordinate, ToolCoordinate
 from hardware.ModbusController import SharedModbusController as Controller
 from hardware.MotorBase import Motor, Servo, MotorStatus
@@ -40,6 +40,18 @@ class MoveToolCommand(BaseModel):
 class IdleCommand(BaseModel):
     command: Literal["idle"] = "idle"
 
+
+class RetrieveItemCommand(BaseModel):
+    command: Literal["retrieve_item"] = "retrieve_item"
+    location: Dict[str, Any]
+
+
+class StoreItemCommand(BaseModel):
+    command: Literal["store_item"] = "store_item"
+    location: Dict[str, Any]
+    item: Optional[Dict[str, Any]] = None
+
+
 RobotCommands = Annotated[
     Union[
         StopCommand,
@@ -48,6 +60,8 @@ RobotCommands = Annotated[
         MoveCommand,
         MoveToolCommand,
         IdleCommand,
+        RetrieveItemCommand,
+        StoreItemCommand,
     ],
     Field(discriminator="command"),
 ]
