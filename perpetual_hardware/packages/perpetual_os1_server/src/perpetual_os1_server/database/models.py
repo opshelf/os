@@ -107,6 +107,7 @@ class ItemLocation(Base):
 
     id: Mapped[int] = Column(Integer, primary_key=True)
     item_id: Mapped[int] = Column(Integer, ForeignKey("items.id"), nullable=False)
+    side: Mapped[str] = Column(String(20), nullable=False, default="left_module")
     shelf_idx: Mapped[int] = Column(Integer, nullable=False)
     cell_idx: Mapped[int] = Column(Integer, nullable=False)
     created_at: Mapped[datetime] = Column(DateTime, server_default=func.now())
@@ -115,7 +116,7 @@ class ItemLocation(Base):
     item: Mapped["Item"] = relationship("Item", back_populates="locations")
 
     __table_args__ = (
-        Index('idx_item_locations_shelf_cell', 'shelf_idx', 'cell_idx'),
+        Index('idx_item_locations_side_shelf_cell', 'side', 'shelf_idx', 'cell_idx'),
         Index('idx_item_locations_item_id', 'item_id'),
     )
 

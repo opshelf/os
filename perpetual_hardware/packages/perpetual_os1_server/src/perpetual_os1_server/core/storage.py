@@ -289,7 +289,7 @@ class StorageService:
         )
         return list(result.scalars().all())
 
-    async def add_item_location(self, upca: str, shelf_idx: int, cell_idx: int) -> Optional[ItemLocation]:
+    async def add_item_location(self, upca: str, side: str, shelf_idx: int, cell_idx: int) -> Optional[ItemLocation]:
         """Add a location for an item."""
         result = await self.session.execute(
             select(Item).where(Item.upca == upca)
@@ -305,8 +305,9 @@ class StorageService:
             try:
                 location = ItemLocation(
                     item_id=item.id,
+                    side=side,
                     shelf_idx=shelf_idx,
-                    cell_idx=cell_idx
+                    cell_idx=cell_idx,
                 )
                 self.session.add(location)
                 await self.session.commit()
@@ -316,12 +317,13 @@ class StorageService:
                 await self.session.rollback()
                 raise
 
-    async def remove_item_location(self, upca: str, shelf_idx: int, cell_idx: int) -> bool:
+    async def remove_item_location(self, upca: str, side: str, shelf_idx: int, cell_idx: int) -> bool:
         """Remove a specific location for an item."""
         result = await self.session.execute(
             select(ItemLocation)
             .join(Item)
             .where(Item.upca == upca)
+            .where(ItemLocation.side == side)
             .where(ItemLocation.shelf_idx == shelf_idx)
             .where(ItemLocation.cell_idx == cell_idx)
         )
