@@ -294,12 +294,17 @@ async def delete_item(
 
 
 # Item location endpoints
-@router.post("/items/{upca}/locations", dependencies=[Depends(require_permissions("storage:write"))])
+@router.post(
+    "/items/{upca}/locations",
+    response_model=ItemWithLocations,
+    dependencies=[Depends(require_permissions("storage:write"))],
+)
 async def add_item_location(
     upca: str,
     location: ItemLocationCreate,
-    session: AsyncSession = Depends(get_db)
-) -> ItemLocationResponse:
+    session: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ItemWithLocations:
     """Add a location for an item."""
     await migrate_if_needed(session)
     storage_service = StorageService(session)
@@ -319,24 +324,27 @@ async def add_item_location(
 
     await storage_service.sync_to_json()
 
-    # Convert SQLAlchemy model to Pydantic response model
-    return ItemLocationResponse(
-        id=int(storage_location.id),
-        item_id=int(storage_location.item_id),
-        shelf_idx=int(storage_location.shelf_idx),
-        cell_idx=int(storage_location.cell_idx),
-        created_at=storage_location.created_at.isoformat() if storage_location.created_at else "",
-        updated_at=storage_location.updated_at.isoformat() if storage_location.updated_at else ""
-    )
+    fresh_item = await storage_service.get_item(upca)
+    if fresh_item is None:
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    locations = await storage_service.get_item_locations(upca)
+
+    return _build_item_payload(fresh_item, locations, current_user)
 
 
-@router.delete("/items/{upca}/locations/{shelf_idx}/{cell_idx}", dependencies=[Depends(require_permissions("storage:write"))])
+@router.delete(
+    "/items/{upca}/locations/{shelf_idx}/{cell_idx}",
+    response_model=ItemWithLocations,
+    dependencies=[Depends(require_permissions("storage:write"))],
+)
 async def remove_item_location(
     upca: str,
     shelf_idx: int,
     cell_idx: int,
-    session: AsyncSession = Depends(get_db)
-) -> Dict[str, str]:
+    session: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ItemWithLocations:
     """Remove a specific location for an item."""
     await migrate_if_needed(session)
     storage_service = StorageService(session)
@@ -351,7 +359,14 @@ async def remove_item_location(
         raise HTTPException(status_code=404, detail="Location not found")
 
     await storage_service.sync_to_json()
-    return {"message": "Location removed successfully"}
+
+    fresh_item = await storage_service.get_item(upca)
+    if fresh_item is None:
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    locations = await storage_service.get_item_locations(upca)
+
+    return _build_item_payload(fresh_item, locations, current_user)
 
 
 # Storage cell endpoints
