@@ -90,22 +90,24 @@ async def robot_commands(
         logging.info("Final StoreItemCommand: item=%s", command.item)
 
     if isinstance(command, RetrieveItemCommand):
-        location_data = command.location
+        location_data = command.location or {}
+        side = location_data.get("side")
         shelf_idx = location_data.get("shelf_idx")
         cell_idx = location_data.get("cell_idx")
 
-        if shelf_idx is None or cell_idx is None:
+        if side is None or shelf_idx is None or cell_idx is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid location: shelf_idx and cell_idx are required"
+                detail="Invalid location: side, shelf_idx and cell_idx are required",
             )
 
         result = await db.execute(
             select(Item)
             .join(ItemLocation)
             .where(
+                ItemLocation.side == side,
                 ItemLocation.shelf_idx == shelf_idx,
-                ItemLocation.cell_idx == cell_idx
+                ItemLocation.cell_idx == cell_idx,
             )
         )
         item = result.scalar_one_or_none()
@@ -113,7 +115,7 @@ async def robot_commands(
         if item is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"No item found at location (shelf: {shelf_idx}, cell: {cell_idx})"
+                detail=f"No item found at location (side: {side}, shelf: {shelf_idx}, cell: {cell_idx})",
             )
 
         if can_user_retrieve_item(current_user, item) is False:

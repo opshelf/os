@@ -1,23 +1,207 @@
 """Storage management endpoints with authorization."""
-from typing import List, Optional, Dict, Any, cast, Callable
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import BaseModel, ConfigDict
-import json
-import logging
-import time
+from __future__ import annotations
+
 import functools
+import logging
+import re
+import time
+from typing import Any, Callable, Dict, List, Optional, Union, cast
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from sqlalchemy.ext.asyncio import AsyncSession
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..database.models import Item, ItemLocation, User
 from ..core.storage import StorageService
 from ..core.sizes import migrate_if_needed
 from ..core.validation import ValidationError
-from .auth_deps import require_permissions, get_current_user, can_user_retrieve_item
+from .auth_deps import can_user_retrieve_item, get_current_user, require_permissions
 from ..database.session import get_db
 
 router = APIRouter(tags=["storage"])
 
+
+# ---------------------------------------------------------------------------
+# Helper models
+# ---------------------------------------------------------------------------
+
+class DimensionsPayload(BaseModel):
+    """Shared dimension representation."""
+
+    width: float
+    height: float
+    length: float
+
+
+class ItemCreate(BaseModel):
+    """Request payload for creating an item."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    upca: str
+    name: str
+    dimensions: Optional[Dict[str, float]] = None
+    weight: Optional[float] = None
+    item_metadata: Optional[Dict[str, Any]] = Field(default=None, alias="item_metadata")
+    access_level_id: Optional[int] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_metadata(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "metadata" in data and "item_metadata" not in data:
+            data["item_metadata"] = data.pop("metadata")
+        return data
+
+    @model_validator(mode="after")
+    def ensure_metadata(self) -> "ItemCreate":
+        if self.item_metadata is None:
+            self.item_metadata = {}
+        return self
+
+
+class ItemUpdate(BaseModel):
+    """Request payload for updating an item."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: Optional[str] = None
+    dimensions: Optional[Dict[str, float]] = None
+    weight: Optional[float] = None
+    item_metadata: Optional[Dict[str, Any]] = Field(default=None, alias="item_metadata")
+    access_level_id: Optional[int] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_metadata(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "metadata" in data and "item_metadata" not in data:
+            data["item_metadata"] = data.pop("metadata")
+        return data
+
+
+class ItemLocationCreate(BaseModel):
+    """Request payload for assigning a location to an item."""
+
+    side: str
+    shelf_idx: int
+    cell_idx: int
+
+
+class StorageCellCreate(BaseModel):
+    """Request payload for creating a storage cell."""
+
+    shelf_idx: int
+    cell_idx: int
+    capacity: Union[str, DimensionsPayload]
+
+
+class StorageCellUpdate(BaseModel):
+    """Request payload for updating a storage cell."""
+
+    capacity: Optional[Union[str, DimensionsPayload]] = None
+    status: Optional[str] = None
+
+
+class ItemWithLocations(BaseModel):
+    """Response payload describing an item with its locations."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True, populate_by_name=True)
+
+    id: int
+    upca: str
+    name: str
+    dimensions: Dict[str, float]
+    weight: Optional[float]
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    access_level_id: Optional[int]
+    locations: List[Dict[str, Any]]
+    created_at: str
+    updated_at: str
+    can_retrieve: bool
+
+
+class StorageCellResponse(BaseModel):
+    """Response payload for a storage cell."""
+
+    id: int
+    shelf_idx: int
+    cell_idx: int
+    capacity: DimensionsPayload
+    status: str
+    created_at: str
+    updated_at: str
+
+
+# ---------------------------------------------------------------------------
+# Utility helpers
+# ---------------------------------------------------------------------------
+
+def _serialize_locations(locations: List[ItemLocation]) -> List[Dict[str, Any]]:
+    payload: List[Dict[str, Any]] = []
+    for location in locations:
+        payload.append(
+            {
+                "id": location.id,
+                "item_id": location.item_id,
+                "side": location.side,
+                "shelf_idx": location.shelf_idx,
+                "cell_idx": location.cell_idx,
+                "created_at": location.created_at.isoformat() if location.created_at else "",
+                "updated_at": location.updated_at.isoformat() if location.updated_at else "",
+            }
+        )
+    return payload
+
+
+def _build_item_payload(item: Item, locations: List[ItemLocation], current_user: User) -> ItemWithLocations:
+    return ItemWithLocations(
+        id=int(item.id),
+        upca=str(item.upca),
+        name=str(item.name),
+        dimensions=cast(Dict[str, float], item.dimensions),
+        weight=float(item.weight) if item.weight else None,
+        metadata=cast(Dict[str, Any], item.item_metadata) or {},
+        access_level_id=item.access_level_id,
+        locations=_serialize_locations(locations),
+        created_at=item.created_at.isoformat() if item.created_at else "",
+        updated_at=item.updated_at.isoformat() if item.updated_at else "",
+        can_retrieve=can_user_retrieve_item(current_user, item),
+    )
+
+
+def _serialize_capacity(capacity: Union[str, DimensionsPayload, None]) -> Optional[str]:
+    if capacity is None:
+        return None
+    if isinstance(capacity, str):
+        return capacity
+    return f"{capacity.width}x{capacity.height}x{capacity.length}"
+
+
+def _deserialize_capacity(capacity: str) -> DimensionsPayload:
+    numbers = [float(match) for match in re.findall(r"\d+(?:\.\d+)?", capacity)]
+    if len(numbers) >= 3:
+        width, height, length = numbers[:3]
+    else:
+        width = height = length = 0.0
+    return DimensionsPayload(width=width, height=height, length=length)
+
+
+async def _load_item_with_locations(
+    upca: str,
+    storage_service: StorageService,
+    current_user: User,
+) -> ItemWithLocations:
+    item = await storage_service.get_item(upca)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    locations = await storage_service.get_item_locations(upca)
+    return _build_item_payload(item, locations, current_user)
+
+
+# ---------------------------------------------------------------------------
 # Performance monitoring decorator
+# ---------------------------------------------------------------------------
+
 def monitor_performance(func: Callable) -> Callable:
     @functools.wraps(func)
     async def wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -27,147 +211,34 @@ def monitor_performance(func: Callable) -> Callable:
             duration = time.time() - start_time
             logging.info(f"Storage operation {func.__name__} completed in {duration:.3f}s")
             return result
-        except Exception as e:
+        except Exception as exc:  # pragma: no cover - defensive logging
             duration = time.time() - start_time
-            logging.error(f"Storage operation {func.__name__} failed after {duration:.3f}s: {str(e)}")
+            logging.error(
+                "Storage operation %s failed after %.3fs: %s",
+                func.__name__,
+                duration,
+                str(exc),
+            )
             raise
+
     return wrapper
 
 
-# Pydantic models for request/response
-class ItemCreate(BaseModel):
-    upca: str
-    name: Optional[str] = None
-    dimensions: Optional[Dict[str, float]] = None
-    weight: Optional[float] = None
-    item_metadata: Optional[Dict[str, Any]] = None
-    access_level_id: Optional[int] = None
-
-
-class ItemUpdate(BaseModel):
-    name: Optional[str] = None
-    dimensions: Optional[Dict[str, float]] = None
-    weight: Optional[float] = None
-    item_metadata: Optional[Dict[str, Any]] = None
-    access_level_id: Optional[int] = None
-
-
-class ItemLocationCreate(BaseModel):
-    shelf_idx: int
-    cell_idx: int
-
-
-class Dimension(BaseModel):
-    length: float
-    width: float
-    height: float
-
-
-def _dimension_to_str(dim: Dimension) -> str:
-    return json.dumps({"length": dim.length, "width": dim.width, "height": dim.height})
-
-
-def _str_to_dimension(s: str) -> Dimension:
-    try:
-        data = json.loads(s)
-        return Dimension(length=data["length"], width=data["width"], height=data["height"])
-    except (json.JSONDecodeError, KeyError, TypeError):
-        return Dimension(length=0.0, width=0.0, height=0.0)
-
-
-class StorageCellUpdate(BaseModel):
-    capacity: Optional[Dimension] = None
-    status: Optional[str] = None
-
-
-class StorageCellCreate(BaseModel):
-    shelf_idx: int
-    cell_idx: int
-    capacity: Dimension
-
-
-class ItemWithLocations(BaseModel):
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    id: int
-    upca: str
-    name: str
-    dimensions: Dict[str, float]
-    weight: Optional[float]
-    item_metadata: Optional[Dict[str, Any]]
-    access_level_id: Optional[int]
-    locations: List[Any]  # Temporary fix for SQLAlchemy model
-    created_at: str
-    updated_at: str
-    can_retrieve: bool
-
-
-class ItemLocationResponse(BaseModel):
-    id: int
-    item_id: int
-    shelf_idx: int
-    cell_idx: int
-    created_at: str
-    updated_at: str
-
-
-class StorageCellResponse(BaseModel):
-    id: int
-    shelf_idx: int
-    cell_idx: int
-    capacity: Dimension
-    status: str
-    created_at: str
-    updated_at: str
-
-
-class PaginatedItemsResponse(BaseModel):
-    items: List[ItemWithLocations]
-    total: int
-    skip: int
-    limit: int
-
-
-def _serialize_locations(locations: List[ItemLocation]) -> List[Dict[str, Any]]:
-    payload: List[Dict[str, Any]] = []
-    for location in locations:
-        payload.append({
-            "id": location.id,
-            "item_id": location.item_id,
-            "shelf_idx": location.shelf_idx,
-            "cell_idx": location.cell_idx,
-            "created_at": location.created_at.isoformat() if location.created_at else "",
-            "updated_at": location.updated_at.isoformat() if location.updated_at else "",
-        })
-    return payload
-
-
-def _build_item_payload(item: Item, locations: List[ItemLocation], current_user: User) -> ItemWithLocations:
-    return ItemWithLocations(
-        id=int(item.id),
-        upca=str(item.upca),
-        name=str(item.name),
-        dimensions=cast(dict[str, float], item.dimensions),
-        weight=float(item.weight) if item.weight else None,
-        item_metadata=cast(dict[str, Any], item.item_metadata) or {},
-        access_level_id=item.access_level_id,
-        locations=_serialize_locations(locations),
-        created_at=item.created_at.isoformat() if item.created_at else "",
-        updated_at=item.updated_at.isoformat() if item.updated_at else "",
-        can_retrieve=can_user_retrieve_item(current_user, item),
-    )
-
-
+# ---------------------------------------------------------------------------
 # Item endpoints
+# ---------------------------------------------------------------------------
+
+
 @router.get("/items", dependencies=[Depends(require_permissions("storage:read"))])
 @monitor_performance
 async def get_items(
+    request: Request,
     response: Response,
     skip: int = 0,
     limit: int = 50,
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> PaginatedItemsResponse:
+) -> Union[List[ItemWithLocations], Dict[str, Any]]:
     """Get all items with pagination."""
     await migrate_if_needed(session)
     storage_service = StorageService(session)
@@ -177,13 +248,23 @@ async def get_items(
 
     if response is not None:
         response.headers["X-Total-Count"] = str(total)
+        response.headers["X-Limit"] = str(limit)
+        response.headers["X-Skip"] = str(skip)
 
-    return PaginatedItemsResponse(
-        items=[_build_item_payload(item, list(item.locations), current_user) for item in items],
-        total=total,
-        skip=skip,
-        limit=limit
-    )
+    item_payloads = [
+        _build_item_payload(item, list(item.locations), current_user)
+        for item in items
+    ]
+
+    if "skip" in request.query_params or "limit" in request.query_params:
+        return {
+            "items": item_payloads,
+            "total": total,
+            "skip": skip,
+            "limit": limit,
+        }
+
+    return item_payloads
 
 
 @router.get("/items/{upca}", dependencies=[Depends(require_permissions("storage:read"))])
@@ -201,7 +282,6 @@ async def get_item(
         raise HTTPException(status_code=404, detail="Item not found")
 
     locations = await storage_service.get_item_locations(upca)
-
     return _build_item_payload(item, locations, current_user)
 
 
@@ -216,26 +296,23 @@ async def create_item(
     storage_service = StorageService(session)
 
     try:
-        resolved_name = item.name or item.item_metadata.get("name") if item.item_metadata else None
-        resolved_dimensions = item.dimensions or {"length": 1.0, "width": 1.0, "height": 1.0}
-
         db_item = await storage_service.create_item(
             upca=item.upca,
-            name=resolved_name or item.upca,
-            dimensions=resolved_dimensions,
+            name=item.name,
+            dimensions=item.dimensions,
             weight=item.weight,
             metadata=item.item_metadata or {},
-            access_level_id=item.access_level_id
+            access_level_id=item.access_level_id,
         )
 
         locations = await storage_service.get_item_locations(item.upca)
 
         return _build_item_payload(db_item, locations, current_user)
 
-    except ValidationError as e:
-        raise HTTPException(status_code=422, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.put("/items/{upca}", dependencies=[Depends(require_permissions("storage:write"))])
@@ -255,7 +332,7 @@ async def update_item(
         dimensions=item.dimensions,
         weight=item.weight,
         metadata=item.item_metadata,
-        access_level_id=item.access_level_id
+        access_level_id=item.access_level_id,
     )
 
     if not updated_item:
@@ -274,7 +351,7 @@ async def update_item(
 @monitor_performance
 async def delete_item(
     upca: str,
-    session: AsyncSession = Depends(get_db)
+    session: AsyncSession = Depends(get_db),
 ) -> Dict[str, str]:
     """Delete an item."""
     await migrate_if_needed(session)
@@ -286,19 +363,18 @@ async def delete_item(
 
     try:
         await storage_service.sync_to_json(transaction_committed=True)
-    except Exception as json_error:
+    except Exception as json_error:  # pragma: no cover - best effort logging
         logging.error(f"JSON sync failed after item deletion: {str(json_error)}")
-        # Don't raise - database operation was successful
 
     return {"message": "Item deleted successfully"}
 
 
+# ---------------------------------------------------------------------------
 # Item location endpoints
-@router.post(
-    "/items/{upca}/locations",
-    response_model=ItemWithLocations,
-    dependencies=[Depends(require_permissions("storage:write"))],
-)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/items/{upca}/locations", dependencies=[Depends(require_permissions("storage:write"))])
 async def add_item_location(
     upca: str,
     location: ItemLocationCreate,
@@ -310,13 +386,14 @@ async def add_item_location(
     storage_service = StorageService(session)
 
     db_item = await storage_service.get_item(upca)
-    if not db_item:
+    if db_item is None:
         raise HTTPException(status_code=404, detail="Item not found")
 
     storage_location = await storage_service.add_item_location(
+        upca=upca,
+        side=location.side,
         shelf_idx=location.shelf_idx,
         cell_idx=location.cell_idx,
-        upca=upca
     )
 
     if not storage_location:
@@ -324,22 +401,33 @@ async def add_item_location(
 
     await storage_service.sync_to_json()
 
-    fresh_item = await storage_service.get_item(upca)
-    if fresh_item is None:
-        raise HTTPException(status_code=404, detail="Item not found")
-
-    locations = await storage_service.get_item_locations(upca)
-
-    return _build_item_payload(fresh_item, locations, current_user)
+    return await _load_item_with_locations(upca, storage_service, current_user)
 
 
-@router.delete(
-    "/items/{upca}/locations/{shelf_idx}/{cell_idx}",
-    response_model=ItemWithLocations,
-    dependencies=[Depends(require_permissions("storage:write"))],
-)
+async def _remove_item_location_impl(
+    upca: str,
+    side: str,
+    shelf_idx: int,
+    cell_idx: int,
+    storage_service: StorageService,
+) -> None:
+    success = await storage_service.remove_item_location(
+        upca=upca,
+        side=side,
+        shelf_idx=shelf_idx,
+        cell_idx=cell_idx,
+    )
+
+    if not success:
+        raise HTTPException(status_code=404, detail="Location not found")
+
+    await storage_service.sync_to_json()
+
+
+@router.delete("/items/{upca}/locations", dependencies=[Depends(require_permissions("storage:write"))])
 async def remove_item_location(
     upca: str,
+    side: str,
     shelf_idx: int,
     cell_idx: int,
     session: AsyncSession = Depends(get_db),
@@ -349,31 +437,39 @@ async def remove_item_location(
     await migrate_if_needed(session)
     storage_service = StorageService(session)
 
-    success = await storage_service.remove_item_location(
-        upca=upca,
-        shelf_idx=shelf_idx,
-        cell_idx=cell_idx
-    )
-
-    if not success:
-        raise HTTPException(status_code=404, detail="Location not found")
-
-    await storage_service.sync_to_json()
-
-    fresh_item = await storage_service.get_item(upca)
-    if fresh_item is None:
-        raise HTTPException(status_code=404, detail="Item not found")
-
-    locations = await storage_service.get_item_locations(upca)
-
-    return _build_item_payload(fresh_item, locations, current_user)
+    await _remove_item_location_impl(upca, side, shelf_idx, cell_idx, storage_service)
+    return await _load_item_with_locations(upca, storage_service, current_user)
 
 
+@router.delete(
+    "/items/{upca}/locations/{side}/{shelf_idx}/{cell_idx}",
+    dependencies=[Depends(require_permissions("storage:write"))],
+)
+async def remove_item_location_by_path(
+    upca: str,
+    side: str,
+    shelf_idx: int,
+    cell_idx: int,
+    session: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ItemWithLocations:
+    """Remove a specific location using path parameters."""
+    await migrate_if_needed(session)
+    storage_service = StorageService(session)
+
+    await _remove_item_location_impl(upca, side, shelf_idx, cell_idx, storage_service)
+    return await _load_item_with_locations(upca, storage_service, current_user)
+
+
+# ---------------------------------------------------------------------------
 # Storage cell endpoints
+# ---------------------------------------------------------------------------
+
+
 @router.post("/locations", dependencies=[Depends(require_permissions("storage:write"))])
 async def create_storage_cell(
     cell: StorageCellCreate,
-    session: AsyncSession = Depends(get_db)
+    session: AsyncSession = Depends(get_db),
 ) -> StorageCellResponse:
     """Create a new storage cell."""
     await migrate_if_needed(session)
@@ -383,30 +479,30 @@ async def create_storage_cell(
         storage_cell = await storage_service.create_storage_cell(
             shelf_idx=cell.shelf_idx,
             cell_idx=cell.cell_idx,
-            capacity=_dimension_to_str(cell.capacity)
+            capacity=_serialize_capacity(cell.capacity) or "",
         )
 
         return StorageCellResponse(
             id=int(storage_cell.id),
             shelf_idx=int(storage_cell.shelf_idx),
             cell_idx=int(storage_cell.cell_idx),
-            capacity=_str_to_dimension(storage_cell.capacity),
+            capacity=_deserialize_capacity(storage_cell.capacity),
             status=str(storage_cell.status),
             created_at=storage_cell.created_at.isoformat(),
-            updated_at=storage_cell.updated_at.isoformat()
+            updated_at=storage_cell.updated_at.isoformat(),
         )
 
-    except ValidationError as e:
-        raise HTTPException(status_code=422, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/locations", dependencies=[Depends(require_permissions("storage:read"))])
 async def get_storage_cells(
     shelf_idx: Optional[int] = Query(None, description="Filter by shelf index"),
     cell_idx: Optional[int] = Query(None, description="Filter by cell index"),
-    session: AsyncSession = Depends(get_db)
+    session: AsyncSession = Depends(get_db),
 ) -> List[StorageCellResponse]:
     """Get storage cells with optional filtering."""
     await migrate_if_needed(session)
@@ -419,10 +515,10 @@ async def get_storage_cells(
             id=int(cell.id),
             shelf_idx=int(cell.shelf_idx),
             cell_idx=int(cell.cell_idx),
-            capacity=_str_to_dimension(cell.capacity),
+            capacity=_deserialize_capacity(str(cell.capacity)),
             status=str(cell.status),
             created_at=cell.created_at.isoformat(),
-            updated_at=cell.updated_at.isoformat()
+            updated_at=cell.updated_at.isoformat(),
         )
         for cell in cells
     ]
@@ -433,22 +529,23 @@ async def update_storage_cell(
     shelf_idx: int,
     cell_idx: int,
     cell_update: StorageCellUpdate,
-    session: AsyncSession = Depends(get_db)
+    session: AsyncSession = Depends(get_db),
 ) -> StorageCellResponse:
-    """Update storage cell status."""
+    """Update storage cell status or capacity."""
     await migrate_if_needed(session)
     storage_service = StorageService(session)
 
+    status_value = cell_update.status.lower() if cell_update.status else None
     success = await storage_service.update_storage_cell(
         shelf_idx=shelf_idx,
         cell_idx=cell_idx,
-        status=cell_update.status
+        status=status_value,
+        capacity=_serialize_capacity(cell_update.capacity),
     )
 
     if not success:
         raise HTTPException(status_code=404, detail="Storage cell not found")
 
-    # Get updated cell
     cells = await storage_service.get_storage_cells(shelf_idx=shelf_idx, cell_idx=cell_idx)
     if not cells:
         raise HTTPException(status_code=404, detail="Storage cell not found")
@@ -458,8 +555,8 @@ async def update_storage_cell(
         id=int(cell.id),
         shelf_idx=int(cell.shelf_idx),
         cell_idx=int(cell.cell_idx),
-        capacity=_str_to_dimension(cell.capacity),
+        capacity=_deserialize_capacity(str(cell.capacity)),
         status=str(cell.status),
         created_at=cell.created_at.isoformat(),
-        updated_at=cell.updated_at.isoformat()
+        updated_at=cell.updated_at.isoformat(),
     )

@@ -24,10 +24,11 @@ async def process_robot_event(payload: dict[str, Any]) -> None:
         location = payload.get("location") or {}
         upca = payload.get("upca")
 
+        side = location.get("side")
         shelf_idx = location.get("shelf_idx")
         cell_idx = location.get("cell_idx")
 
-        if upca is None or shelf_idx is None or cell_idx is None:
+        if upca is None or side is None or shelf_idx is None or cell_idx is None:
             logging.warning("Skipping retrieve_item event with incomplete data: %s", payload)
             return
 
@@ -41,7 +42,7 @@ async def process_robot_event(payload: dict[str, Any]) -> None:
         async with AsyncSessionLocal() as session:
             storage_service = StorageService(session)
             try:
-                removed = await storage_service.remove_item_location(upca, shelf_idx_int, cell_idx_int)
+                removed = await storage_service.remove_item_location(upca, side, shelf_idx_int, cell_idx_int)
                 if removed:
                     try:
                         await storage_service.sync_to_json(transaction_committed=True)
@@ -57,10 +58,11 @@ async def process_robot_event(payload: dict[str, Any]) -> None:
         location = payload.get("location") or {}
         upca = payload.get("upca")
 
+        side = location.get("side")
         shelf_idx = location.get("shelf_idx")
         cell_idx = location.get("cell_idx")
 
-        if upca is None or shelf_idx is None or cell_idx is None:
+        if upca is None or side is None or shelf_idx is None or cell_idx is None:
             logging.warning("Skipping store_item event with incomplete data: %s", payload)
             return
 
@@ -87,12 +89,12 @@ async def process_robot_event(payload: dict[str, Any]) -> None:
 
                 existing_locations = await storage_service.get_item_locations(str(upca))
                 already_assigned = any(
-                    loc.shelf_idx == shelf_idx_int and loc.cell_idx == cell_idx_int
+                    loc.side == side and loc.shelf_idx == shelf_idx_int and loc.cell_idx == cell_idx_int
                     for loc in existing_locations
                 )
 
                 if already_assigned is False:
-                    await storage_service.add_item_location(str(upca), shelf_idx_int, cell_idx_int)
+                    await storage_service.add_item_location(str(upca), side, shelf_idx_int, cell_idx_int)
 
                 try:
                     await storage_service.sync_to_json(transaction_committed=True)
