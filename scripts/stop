@@ -1,3 +1,3 @@
 #!/bin/bash
 
-docker compose -f docker-compose.yml -f docker-compose.hardware.yml down 2>/dev/null || docker compose -f docker-compose.yml down
+docker compose -f docker-compose.standalone.yml -f docker-compose.hardware.yml down 2>/dev/null || docker compose -f docker-compose.standalone.yml down
