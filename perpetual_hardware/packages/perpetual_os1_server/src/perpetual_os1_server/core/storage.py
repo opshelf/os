@@ -178,7 +178,7 @@ class StorageService:
                     item.dimensions = resolved_dimensions
                     item.weight = normalized_weight
                     item.item_metadata = normalized_metadata
-                    item.access_level_id = access_level_id
+                    item.access_level_id = access_level_id  # type: ignore[assignment]
 
                 await self.session.flush()
                 await self.session.commit()
@@ -353,14 +353,29 @@ class StorageService:
         result = await self.session.execute(query.order_by(StorageCell.shelf_idx, StorageCell.cell_idx))
         return list(result.scalars().all())
 
-    async def update_storage_cell(self, shelf_idx: int, cell_idx: int, status: str) -> bool:
-        """Update storage cell status."""
+    async def update_storage_cell(
+        self,
+        shelf_idx: int,
+        cell_idx: int,
+        status: Optional[str] = None,
+        capacity: Optional[str] = None,
+    ) -> bool:
+        """Update storage cell status and/or capacity."""
         async with self._lock:
+            values: Dict[str, Any] = {}
+            if status is not None:
+                values["status"] = status
+            if capacity is not None:
+                values["capacity"] = capacity
+
+            if not values:
+                return True
+
             result = await self.session.execute(
                 update(StorageCell)
                 .where(StorageCell.shelf_idx == shelf_idx)
                 .where(StorageCell.cell_idx == cell_idx)
-                .values(status=status)
+                .values(**values)
                 .returning(StorageCell)
             )
             cell = result.scalar_one_or_none()
