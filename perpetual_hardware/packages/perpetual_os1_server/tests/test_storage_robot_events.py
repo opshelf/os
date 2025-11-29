@@ -7,7 +7,7 @@ from perpetual_os1_server.database.models import Item, ItemLocation
 from perpetual_os1_server.database.session import AsyncSessionLocal
 
 
-async def _seed_item_with_location(upca: str = "123456", shelf_idx: int = 0, cell_idx: int = 0) -> None:
+async def _seed_item_with_location(upca: str, side: str, shelf_idx: int, cell_idx: int) -> None:
     async with AsyncSessionLocal() as session:
         storage = StorageService(session)
         await storage.create_item(
@@ -17,12 +17,12 @@ async def _seed_item_with_location(upca: str = "123456", shelf_idx: int = 0, cel
             weight=None,
             metadata={"name": "Test Item"},
         )
-        await storage.add_item_location(upca, shelf_idx, cell_idx)
+        await storage.add_item_location(upca, side, shelf_idx, cell_idx)
 
 
 @pytest.mark.anyio
 async def test_process_robot_event_removes_location_on_success() -> None:
-    await _seed_item_with_location(upca="111", shelf_idx=1, cell_idx=2)
+    await _seed_item_with_location(upca="111", side="left_module", shelf_idx=1, cell_idx=2)
 
     payload = {
         "command": "retrieve_item",
@@ -44,7 +44,7 @@ async def test_process_robot_event_removes_location_on_success() -> None:
 
 @pytest.mark.anyio
 async def test_process_robot_event_ignores_incomplete_payload() -> None:
-    await _seed_item_with_location(upca="222", shelf_idx=0, cell_idx=0)
+    await _seed_item_with_location(upca="222", side="left_module", shelf_idx=0, cell_idx=0)
 
     payload = {
         "command": "retrieve_item",
