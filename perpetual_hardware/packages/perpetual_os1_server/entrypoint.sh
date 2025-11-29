@@ -1,5 +1,5 @@
 #!/bin/sh
-set -euo pipefail
+set -eu
 
 # Start cupsd if available
 if command -v cupsd >/dev/null 2>&1; then
