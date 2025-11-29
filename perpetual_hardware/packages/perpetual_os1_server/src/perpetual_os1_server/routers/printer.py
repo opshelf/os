@@ -4,7 +4,8 @@ import errno
 import logging
 import os
 from pathlib import Path
-from typing import List, Optional, Tuple
+from types import TracebackType
+from typing import List, Optional, Tuple, Type
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
@@ -71,7 +72,12 @@ class USBPrinter:
         self.open()
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> None:
+    def __exit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc: Optional[BaseException],
+        tb: Optional[TracebackType]
+    ) -> None:
         self.close()
 
     # --------- low-level write with one automatic reopen ----------

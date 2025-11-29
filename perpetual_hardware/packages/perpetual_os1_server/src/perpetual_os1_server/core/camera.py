@@ -70,9 +70,9 @@ class CameraStreamManager:
 
 				loop = asyncio.get_event_loop()
 
-				def sync_capture_and_process():
+				def sync_capture_and_process() -> np.ndarray | None:
 					frame_agg = self.camera.measure_sync(n_frames=10)
-					draw = frame_agg.get("annotated_frame")
+					draw: np.ndarray | None = frame_agg.get("annotated_frame")
 					return draw
 
 				frame = await loop.run_in_executor(None, sync_capture_and_process)
@@ -90,7 +90,7 @@ class CameraStreamManager:
 			except RuntimeError as e:
 				if "bad cam" in str(e):
 					print("connection failed")
-					logger.error("camera_connection_failed", url=self.camera_url, error=str(e))
+					logger.error("camera_connection_failed", error=str(e))
 					await asyncio.sleep(5.0)
 				else:
 					print("runtime error")
@@ -124,7 +124,7 @@ class CameraStreamManager:
 
 camera_manager: Optional[CameraStreamManager] = None
 
-async def init_camera_manager(camera) -> None:
+async def init_camera_manager(camera: AFSCam) -> None:
 	global camera_manager
 
 	settings = get_settings()
@@ -133,7 +133,7 @@ async def init_camera_manager(camera) -> None:
 		return
 
 	camera_manager = CameraStreamManager(camera=camera)
-	asyncio.create_task(camera_manager.start())
+	await camera_manager.start()
 
 
 async def start_camera_stream() -> None:
