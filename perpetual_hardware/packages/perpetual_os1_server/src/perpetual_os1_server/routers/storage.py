@@ -177,6 +177,19 @@ def _serialize_capacity(capacity: Union[str, DimensionsPayload, None]) -> Option
 
 
 def _deserialize_capacity(capacity: str) -> DimensionsPayload:
+    import json as json_module
+
+    try:
+        data = json_module.loads(capacity)
+        if isinstance(data, dict):
+            return DimensionsPayload(
+                width=float(data.get("width", 0.0)),
+                height=float(data.get("height", 0.0)),
+                length=float(data.get("length", 0.0)),
+            )
+    except (json_module.JSONDecodeError, TypeError, ValueError):
+        pass
+
     numbers = [float(match) for match in re.findall(r"\d+(?:\.\d+)?", capacity)]
     if len(numbers) >= 3:
         width, height, length = numbers[:3]
