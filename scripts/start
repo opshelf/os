@@ -26,7 +26,7 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 
-COMPOSE_CMD="docker compose -f docker-compose.standalone.yml"
+COMPOSE_CMD="docker compose -f docker-compose.yml"
 if [[ "$HARDWARE" == true ]]; then
 	COMPOSE_CMD="$COMPOSE_CMD -f docker-compose.hardware.yml"
 fi

@@ -2,6 +2,7 @@ FROM ghcr.io/astral-sh/uv:debian-slim as base
 
 ENV PATH=/root/.local/bin:$PATH
 ENV RUN_SEED_SCRIPT=true
+ENV UV_PYTHON=3.13
 
 RUN apt-get update && apt-get -y install --no-install-recommends \
 	libdmtx-dev \
@@ -12,9 +13,19 @@ RUN apt-get update && apt-get -y install --no-install-recommends \
 	ca-certificates \
 	curl \
 	wget \
+	v4l-utils \
+    gstreamer1.0-tools \
+	gstreamer1.0-libav \
+    gstreamer1.0-plugins-base \
+	gstreamer1.0-plugins-good \
+    gstreamer1.0-plugins-bad \
+	gstreamer1.0-plugins-ugly \
+	cups-bsd \
+	cups-daemon \
 	&& rm -rf /var/lib/apt/lists/* \
 	&& apt-get clean
 
+	
 WORKDIR /app/perpetual_hardware/packages/perpetual_os1_server
 
 RUN mkdir -p /app/perpetual_hardware/packages/perpetual_os1_server/data && \
@@ -25,4 +36,7 @@ EXPOSE 8000
 EXPOSE 4222
 EXPOSE 8222
 
-CMD ["uv", "run", "--no-dev", "start"]
+COPY perpetual_hardware/packages/perpetual_os1_server/entrypoint.sh /app/perpetual_hardware/packages/perpetual_os1_server/entrypoint.sh
+RUN chmod +x /app/perpetual_hardware/packages/perpetual_os1_server/entrypoint.sh
+
+ENTRYPOINT ["/bin/sh", "/app/perpetual_hardware/packages/perpetual_os1_server/entrypoint.sh"]
