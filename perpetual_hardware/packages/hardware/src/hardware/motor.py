@@ -379,8 +379,8 @@ class Motor():
             if reg_addr is None:
                 raise ValueError(f"Invalid register name: {register}")
                 
-            result = await self._controller.write_single_register(
-                self._motor_id, 
+            await self._controller.write_single_register(
+                self._motor_id,
                 reg_addr,
                 value
             )
@@ -441,7 +441,6 @@ class Motor():
         """
         start_time = time.monotonic()
         last_pos = None
-        has_moved = False
         last_movement_time = start_time
         retry_attempts = 0
 
@@ -457,10 +456,9 @@ class Motor():
             now = time.monotonic()
             
             if last_pos is not None:
-                if(self._cur_pos != last_pos):
+                if self._cur_pos != last_pos:
                     last_movement_time = now
-                    has_moved = True
-                
+
             elif last_movement_time is None:
                 last_movement_time = now  # initialize once
             
@@ -529,7 +527,6 @@ class Motor():
 
                 start_time = time.monotonic()
                 last_pos = None
-                has_moved = False
                 last_movement_time = start_time
                 continue
                

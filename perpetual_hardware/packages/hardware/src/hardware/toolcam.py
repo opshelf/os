@@ -2,7 +2,7 @@ import numpy as np
 import cv2
 import time
 from pathlib import Path
-from typing import Dict, Optional, Tuple, Any, List
+from typing import Optional, Tuple, Any, List
 import numpy.typing as npt
 
 from hardware import toolcam_helpers
@@ -517,7 +517,7 @@ class ToolCamera:
 
                     valid_rects.append((x, y, w, h))
                     
-                except Exception as e:
+                except Exception:
                     # Skip problematic contours but continue processing
                     continue
 

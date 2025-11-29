@@ -4,8 +4,8 @@ from hardware.controller import SharedModbusController as Controller
 from hardware.motor import Motor, Servo, MotorStatus, MOTOR_WAIT_TIMEOUT
 from hardware.toolcam import ToolCamera
 from perpetual_os1.exceptions import (
-    MotorError, CameraError, ConfigError,
-    ToolError, GripperError, MovementError
+    MotorError, ConfigError,
+    GripperError, MovementError
 )
 
 import logging
@@ -13,7 +13,7 @@ import cv2
 
 from enum import Enum
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Tuple, Union, Literal, Annotated, List, Any
+from typing import Optional, Literal, List, Any
 
 @dataclass
 class FiducialRegistry:

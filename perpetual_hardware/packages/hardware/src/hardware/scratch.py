@@ -156,7 +156,10 @@
 # 	convert_schema_to_storage()
 
 #!/usr/bin/env python3
-import os, sys, time, cv2
+import os
+import sys
+import time
+import cv2
 
 def grab_snapshot(rtsp_url: str, out_path: str = "snapshot.jpg", warmup_frames: int = 8) -> None:
     # Make ffmpeg-based RTSP more reliable (TCP + 5s timeout).
@@ -192,5 +195,3 @@ if __name__ == "__main__":
     url = sys.argv[1]
     out = sys.argv[2] if len(sys.argv) > 2 else "snapshot.jpg"
     grab_snapshot(url, out)
-cv2.imwrite(OUTPUT_PATH, frame)
-print(f"Saved frame to {OUTPUT_PATH}")
