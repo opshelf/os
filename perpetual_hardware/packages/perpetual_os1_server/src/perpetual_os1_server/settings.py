@@ -107,8 +107,8 @@ def get_settings() -> Settings:
 
     if os.getenv("NATS_DOMAIN"):
         data["nats"]["domain"] = os.getenv("NATS_DOMAIN")
-    nats_port = os.getenv("NATS_PORT")
-    if nats_port is not None:
+    nats_port = os.getenv("NATS_PORT", "")
+    if nats_port:
         data["nats"]["port"] = int(nats_port)
 
     return Settings.model_validate(data)

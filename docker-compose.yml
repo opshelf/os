@@ -31,6 +31,9 @@ services:
       - JWT_SECRET=${JWT_SECRET:-INSECURE_JWT_SECRET}
       - AUDIT_HMAC_KEY=${AUDIT_HMAC_KEY:-INSECURE_AUDIT_HMAC_KEY}
       - NATS_DOMAIN=localhost
+      - SENTRY_DSN_API=${SENTRY_DSN_API:-}
+      - SENTRY_DSN_HARDWARE=${SENTRY_DSN_HARDWARE:-}
+      - SENTRY_ENVIRONMENT=${SENTRY_ENVIRONMENT:-development}
     healthcheck:
       test: ["CMD", "curl", "-fsS", "--max-time", "5", "http://localhost:8000/api/health"]
       interval: 15s

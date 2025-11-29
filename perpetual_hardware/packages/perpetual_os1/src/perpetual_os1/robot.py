@@ -16,11 +16,13 @@ from perpetual_os1.robot_state import RobotStateManager
 
 import json
 import logging
+import traceback
 from pathlib import Path
 from typing import Any, Dict, Optional, Union, Literal, Annotated, List, TYPE_CHECKING
 from pydantic import BaseModel, Field
 
 import asyncio
+import sentry_sdk
 
 
 if TYPE_CHECKING:
@@ -602,7 +604,11 @@ class Robot:
             return RobotCommandSuccessful(command=command_name, location=location, upca=resolved_upca)
         except Exception as exc:
             self._logger.exception("Store command failed for %s", resolved_item_name)
-            return RobotCommandError(command=command_name, error=str(exc))
+            sentry_sdk.capture_exception(exc)
+            return RobotCommandError(
+                command=command_name,
+                error=f"{type(exc).__name__}: {exc}"
+            )
 
 
 
@@ -743,7 +749,11 @@ class Robot:
                 return RobotCommandError(command=command_name, error="Invalid Robot Command")
         except Exception as exc:
             self._logger.exception("Unhandled error while processing command %s", command_name)
-            return RobotCommandError(command=command_name, error=str(exc))
+            sentry_sdk.capture_exception(exc)
+            return RobotCommandError(
+                command=command_name,
+                error=f"{type(exc).__name__}: {exc}"
+            )
 
     async def retrieve_by_location(self, location_payload: Dict[str, Any]) -> RobotResponse:
         """
@@ -785,4 +795,8 @@ class Robot:
                 location.shelf_idx,
                 location.cell_idx,
             )
-            return RobotCommandError(command=command_name, error=str(exc))
+            sentry_sdk.capture_exception(exc)
+            return RobotCommandError(
+                command=command_name,
+                error=f"{type(exc).__name__}: {exc}"
+            )

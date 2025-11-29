@@ -35,3 +35,18 @@ class StorageError(PerpetualError):
 class IOBoxError(PerpetualError):
     """Exception raised for IO box-related errors."""
     pass
+
+
+class OperationTimeoutError(PerpetualError):
+    """Exception raised when an operation exceeds its timeout."""
+    pass
+
+
+class ScanTimeoutError(OperationTimeoutError):
+    """Exception raised when camera scanning operation times out."""
+    pass
+
+
+class MotorWaitTimeoutError(OperationTimeoutError):
+    """Exception raised when motor wait operation times out."""
+    pass

@@ -9,8 +9,9 @@ from pathlib import Path
 from typing import Any, AsyncGenerator
 
 import sentry_sdk
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 
@@ -28,13 +29,12 @@ from perpetual_os1_server.settings import get_settings
 configure_logging()
 logger = get_logger(__name__)
 
-sentry_dsn = os.getenv("SENTRY_DSN_BACKEND")
-if sentry_dsn is not None:
+sentry_dsn = os.getenv("SENTRY_DSN_API", "")
+if sentry_dsn:
 	from sentry_sdk.transport import HttpTransport
 	from sentry_sdk.types import Event
 
 	def before_send_with_flush(event: Event, hint: dict[str, Any]) -> Event | None:
-		"""Filter PII and flush immediately."""
 		if "request" in event:
 			request = event.get("request")
 			if request is not None and isinstance(request, dict) and "headers" in request:
@@ -60,7 +60,7 @@ if sentry_dsn is not None:
 	)
 	logger.info("sentry_initialized", dsn_configured=True)
 else:
-	logger.warning("sentry_not_configured", message="SENTRY_DSN_BACKEND not set")
+	logger.warning("sentry_not_configured", message="SENTRY_DSN_API not set")
 
 
 def _filter_pii(event: dict[str, Any], hint: dict[str, Any]) -> dict[str, Any]:
@@ -208,6 +208,30 @@ app.add_middleware(
 )
 app.add_middleware(CorrelationIdMiddleware)
 app.add_middleware(AuditMiddleware)
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+	correlation_id = getattr(request.state, "correlation_id", None)
+
+	if sentry_dsn:
+		with sentry_sdk.push_scope() as scope:
+			if correlation_id:
+				scope.set_tag("correlation_id", correlation_id)
+			scope.set_tag("path", request.url.path)
+			scope.set_tag("method", request.method)
+			sentry_sdk.capture_exception(exc)
+
+	logger.error(
+		"unhandled_exception",
+		error=str(exc),
+		error_type=type(exc).__name__,
+		path=request.url.path,
+		method=request.method,
+		correlation_id=correlation_id,
+		exc_info=True,
+	)
+	return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
 @app.get("/api/health")
