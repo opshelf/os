@@ -1,8 +1,8 @@
 from perpetual_os1.common import AxisCoordinate, ToolCoordinate, load_config_file
 
 from hardware.controller import SharedModbusController as Controller
-from perpetual_os1.iobox import IOBox, IOBoxStatus
-from perpetual_os1.tool import Tool, ToolStatus, ToolMotionStatus, ToolItemStatus
+from perpetual_os1.iobox import IOBox
+from perpetual_os1.tool import Tool
 from perpetual_os1.storage import (
     StorageGrid, Shelf, Cell, CellStatus, CalibrationCoordinate,
     Dimensions, StorageModuleSide, CellItem, StorageModuleCellLocation
@@ -12,20 +12,16 @@ from perpetual_os1.exceptions import (
     ConfigError,
 )
 
-from perpetual_os1.robot_state import RobotStateManager, RobotStateError
+from perpetual_os1.robot_state import RobotStateManager
 
 import json
 import logging
 from pathlib import Path
-from enum import Enum
-from typing import Any, Dict, Optional, Tuple, Union, Literal, Annotated, List, Callable, TYPE_CHECKING
+from typing import Any, Dict, Optional, Union, Literal, Annotated, List, TYPE_CHECKING
 from pydantic import BaseModel, Field
-from dataclasses import dataclass
 
-import time
 import asyncio
 
-from PIL import Image
 
 if TYPE_CHECKING:
     from hardware.motor import Motor
@@ -401,7 +397,7 @@ class Robot:
                 if isinstance(raw_value, dict):
                     left_vals = _expand_per_shelf(raw_value.get("left"), "CELLS_PER_SHELF.left", int)
                     right_vals = _expand_per_shelf(raw_value.get("right"), "CELLS_PER_SHELF.right", int)
-                    totals = [l + r for l, r in zip(left_vals, right_vals)]
+                    totals = [left + right for left, right in zip(left_vals, right_vals)]
                     return totals, list(zip(left_vals, right_vals))
 
                 if isinstance(raw_value, list) and raw_value and all(isinstance(entry, (list, tuple)) for entry in raw_value):
@@ -416,7 +412,7 @@ class Robot:
                             raise RobotCommandError(error="Each CELLS_PER_SHELF entry must have [left, right] counts")
                         left_vals.append(int(entry[0]))
                         right_vals.append(int(entry[1]))
-                    totals = [l + r for l, r in zip(left_vals, right_vals)]
+                    totals = [left + right for left, right in zip(left_vals, right_vals)]
                     return totals, list(zip(left_vals, right_vals))
 
                 totals = _expand_per_shelf(raw_value, "CELLS_PER_SHELF", int)

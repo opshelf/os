@@ -366,7 +366,6 @@ class Camera:
             if not (1.0 - ASPECT_TOL <= aspect <= 1.0 + ASPECT_TOL):
                 continue
 
-            cx, cy = (x + w / 2.0, y + h / 2.0)
             valid_rects.append((x, y, w, h))
 
         if not valid_rects:

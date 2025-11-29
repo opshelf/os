@@ -2,11 +2,10 @@ import pymodbus
 import asyncio
 from pymodbus.client import AsyncModbusSerialClient
 from pymodbus.exceptions import ModbusIOException, ModbusException
-from typing import Optional, Any, Union, List
+from typing import Optional, List
 
 from .exceptions import (
-    ModbusError, ModbusTimeoutError, ModbusConnectionError,
-    CommunicationError
+    ModbusError, ModbusTimeoutError, ModbusConnectionError
 )
 
 class SharedModbusController:

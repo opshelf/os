@@ -1,7 +1,7 @@
 from typing import Optional, Tuple
 import cv2
 import numpy as np
-from math import acos, degrees, pi
+from math import acos, degrees
 
 # ============================ Helpers (standalone) ============================
 
@@ -302,7 +302,6 @@ def detect_checkerboard_scale_detailed(img: np.ndarray,
         "px_per_mm": px_per_mm
     }
 
-from typing import Dict, Any, Tuple, List, Union
 
 def pick_main_contour(mask: np.ndarray) -> Optional[np.ndarray]:
     h, w = mask.shape

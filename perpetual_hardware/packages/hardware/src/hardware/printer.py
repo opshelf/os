@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import argparse, os, sys, errno, random
+import os
+import errno
+import random
 from typing import Optional, List
 
 ESC = b"\x1b"

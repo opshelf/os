@@ -1,8 +1,6 @@
-import perpetual_os1.common as c
 
 from hardware.controller import SharedModbusController as Controller
 from hardware.motor import Motor
-from hardware.printer import USBPrinter
 from perpetual_os1.exceptions import (
     IOBoxError, MotorError
 )
@@ -11,7 +9,6 @@ from hardware.scale import Scale
 
 import asyncio
 from enum import Enum
-from typing import Optional
 import logging
 
 
