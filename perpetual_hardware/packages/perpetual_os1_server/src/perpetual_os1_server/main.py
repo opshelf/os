@@ -6,7 +6,7 @@ import sys
 import traceback
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import AsyncGenerator
+from typing import Any, AsyncGenerator
 
 import sentry_sdk
 from fastapi import FastAPI
@@ -31,10 +31,17 @@ logger = get_logger(__name__)
 sentry_dsn = os.getenv("SENTRY_DSN_BACKEND")
 if sentry_dsn is not None:
 	from sentry_sdk.transport import HttpTransport
+	from sentry_sdk.types import Event
 
-	def before_send_with_flush(event: dict, hint: dict) -> dict:
+	def before_send_with_flush(event: Event, hint: dict[str, Any]) -> Event | None:
 		"""Filter PII and flush immediately."""
-		event = _filter_pii(event, hint)
+		if "request" in event:
+			request = event.get("request")
+			if request is not None and isinstance(request, dict) and "headers" in request:
+				headers = request.get("headers")
+				if isinstance(headers, dict):
+					headers.pop("Authorization", None)
+					headers.pop("Cookie", None)
 		return event
 
 	sentry_sdk.init(
@@ -56,7 +63,7 @@ else:
 	logger.warning("sentry_not_configured", message="SENTRY_DSN_BACKEND not set")
 
 
-def _filter_pii(event: dict, hint: dict) -> dict:
+def _filter_pii(event: dict[str, Any], hint: dict[str, Any]) -> dict[str, Any]:
 	"""Filter sensitive information from Sentry events."""
 	if "request" in event:
 		if "headers" in event["request"]:

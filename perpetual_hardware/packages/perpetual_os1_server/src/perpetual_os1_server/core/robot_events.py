@@ -4,6 +4,7 @@ from typing import Any, Optional
 
 from nats.aio.client import Client as NATS
 from nats.aio.msg import Msg
+from nats.aio.subscription import Subscription
 
 from perpetual_os1.common import RobotNatsConfiguration
 from perpetual_os1_server.core.storage import StorageService
@@ -110,7 +111,7 @@ class RobotEventListener:
     def __init__(self, nats_config: RobotNatsConfiguration):
         self._config = nats_config
         self._nc: Optional[NATS] = None
-        self._subscription = None
+        self._subscription: Optional[Subscription] = None
 
     async def start(self) -> None:
         if self._nc is not None:

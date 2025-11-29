@@ -3,9 +3,10 @@ import logging
 import os
 import sys
 from contextvars import ContextVar
-from typing import Any
+from typing import Any, MutableMapping, Mapping
 
 import structlog
+from structlog.typing import WrappedLogger
 from pythonjsonlogger import jsonlogger
 
 correlation_id_var: ContextVar[str | None] = ContextVar("correlation_id", default=None)
@@ -41,10 +42,10 @@ class CustomJsonFormatter(jsonlogger.JsonFormatter):
 
 
 def add_context_to_event_dict(
-	logger: Any,
+	logger: WrappedLogger,
 	method_name: str,
-	event_dict: dict[str, Any]
-) -> dict[str, Any]:
+	event_dict: MutableMapping[str, Any]
+) -> Mapping[str, Any]:
 	"""Add context variables to structlog event dict."""
 	correlation_id = correlation_id_var.get()
 	if correlation_id is not None:
@@ -113,7 +114,8 @@ def configure_logging() -> None:
 
 def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:
 	"""Get a structured logger instance."""
-	return structlog.get_logger(name)
+	logger: structlog.stdlib.BoundLogger = structlog.get_logger(name)
+	return logger
 
 
 def set_correlation_id(correlation_id: str) -> None:
