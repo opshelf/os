@@ -78,10 +78,14 @@ def _normalize_command(command: Optional[Dict[str, Any]]) -> Optional[Dict[str, 
         return None
 
     location = _normalize_location(command.get("location"))
-    if location is None:
+
+    if command_name == "retrieve_item" and location is None:
         return None
 
-    normalized: Dict[str, Any] = {"command": command_name, "location": location}
+    normalized: Dict[str, Any] = {"command": command_name}
+
+    if location is not None:
+        normalized["location"] = location
 
     if command_name == "store_item":
         item_payload = command.get("item")
