@@ -7,7 +7,7 @@ import re
 import time
 from typing import Any, Callable, Dict, List, Optional, Union, cast
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -245,13 +245,12 @@ def monitor_performance(func: Callable) -> Callable:
 @router.get("/items", dependencies=[Depends(require_permissions("storage:read"))])
 @monitor_performance
 async def get_items(
-    request: Request,
     response: Response,
     skip: int = 0,
     limit: int = 50,
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> Union[List[ItemWithLocations], Dict[str, Any]]:
+) -> Dict[str, Any]:
     """Get all items with pagination."""
     await migrate_if_needed(session)
     storage_service = StorageService(session)
@@ -269,15 +268,12 @@ async def get_items(
         for item in items
     ]
 
-    if "skip" in request.query_params or "limit" in request.query_params:
-        return {
-            "items": item_payloads,
-            "total": total,
-            "skip": skip,
-            "limit": limit,
-        }
-
-    return item_payloads
+    return {
+        "items": item_payloads,
+        "total": total,
+        "skip": skip,
+        "limit": limit,
+    }
 
 
 @router.get("/items/{upca}", dependencies=[Depends(require_permissions("storage:read"))])

@@ -34,7 +34,12 @@ async def test_storage_items_endpoint_authorized(client: AsyncClient) -> None:
     response = await client.get("/api/storage/items", headers=headers)
     assert response.status_code == 200
     data = response.json()
-    assert isinstance(data, list)
+    assert isinstance(data, dict)
+    assert "items" in data
+    assert "total" in data
+    assert "skip" in data
+    assert "limit" in data
+    assert isinstance(data["items"], list)
 
 
 @pytest.mark.anyio
