@@ -1,44 +1,71 @@
-from hardware.ModbusController import SharedModbusController as Controller
-from typing import Optional, List
+from __future__ import annotations
+from typing import Optional
 
-class Curtain:
-    def __init__(self, bus: str, address: int) -> None:
-        self.controller: Controller = Controller(bus)
-        self.address: int = address
+try:
+    import RPi.GPIO as GPIO  # type: ignore[import]
+except ModuleNotFoundError as import_error:
+    GPIO = None  # type: ignore[assignment]
+    _GPIO_IMPORT_ERROR = import_error
+else:
+    _GPIO_IMPORT_ERROR = None
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setwarnings(False)
 
-    async def connect(self):
-        if not await self.controller.connect():
-            raise ConnectionError(f"Failed to connect to Intelligent Grating on {self.controller.port}")
-        return True
 
-    def close(self) -> None:
-        self.controller.close()
+def _ensure_gpio() -> None:
+    if GPIO is None:
+        raise RuntimeError(
+            "RPi.GPIO is not available. This module must run on a Raspberry Pi "
+            "with the RPi.GPIO package installed."
+        ) from _GPIO_IMPORT_ERROR
 
-    async def read_lowest_blocked(self) -> int:
-        rr = await self.controller.read_holding_registers(self.address, 0x40)
-        return rr.registers[0] 
 
-    async def read_highest_blocked(self) -> int:
-        rr = await self.controller.read_holding_registers(self.address, 0x41)
-        return rr.registers[0] 
+def configure_curtain_input(pin: int, *, pull: Optional[str] = "down") -> None:
+    """
+    Configure the GPIO pin that reports the curtain sensor state.
 
-    async def read_blocked_quantity(self) -> int:
-        rr = await self.controller.read_holding_registers(self.address, 0x42)
-        return rr.registers[0] 
+    Args:
+        pin: BCM pin number connected to the curtain sensor.
+        pull: One of 'up', 'down', or 'off'. Defaults to 'down'.
+    """
+    _ensure_gpio()
 
-    async def read_all_light_status(self, count_light_points: int = 22) -> List[int]:
-        reg_count: int = (count_light_points + 15) // 16
-        rr = await self.controller.read_holding_registers(self.address, 0x0, reg_count)
-        bits = []
-        for ix, num in enumerate(rr.registers):
-            swapped = ((num & 0xFF00) >> 8) | ((num & 0x00FF) << 8)
-            for idx in range(0, 16): 
-                if idx + ix * 16 >= count_light_points:
-                    pass 
-                else:
-                    if swapped & (0x01 << idx):
-                        bits.append(1)
-                    else:
-                        bits.append(0)
-        return bits
+    pull_options = {
+        None: GPIO.PUD_OFF,
+        "off": GPIO.PUD_OFF,
+        "down": GPIO.PUD_DOWN,
+        "up": GPIO.PUD_UP,
+    }
 
+    if pull not in pull_options:
+        raise ValueError(f"Invalid pull option '{pull}'. Use 'up', 'down', or 'off'.")
+
+    GPIO.setup(pin, GPIO.IN, pull_up_down=pull_options[pull])
+
+
+def read_curtain_state(pin: int) -> bool:
+    """
+    Read the current curtain sensor state.
+
+    Args:
+        pin: BCM pin number previously configured with configure_curtain_input.
+
+    Returns:
+        True if the pin reads HIGH, False otherwise.
+    """
+    _ensure_gpio()
+    return GPIO.input(pin) == GPIO.HIGH
+
+
+def cleanup_curtain_pin(pin: Optional[int] = None) -> None:
+    """
+    Release GPIO resources associated with the curtain sensor.
+
+    Args:
+        pin: Optional BCM pin to clean up. If omitted, all pins are reset.
+    """
+    _ensure_gpio()
+    if pin is None:
+        GPIO.cleanup()
+    else:
+        GPIO.cleanup(pin)
