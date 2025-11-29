@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import AsyncGenerator, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from nats.aio.client import Client as NATS
 from nats.aio.msg import Msg
 from nats.aio.subscription import Subscription
+from pydantic import BaseModel, Field
 from perpetual_os1.robot import RobotCommands, RetrieveItemCommand, StoreItemCommand
 import logging
 from perpetual_os1.common import RobotNatsConfiguration
@@ -29,6 +31,10 @@ from .auth_deps import (
 )
 
 router = APIRouter(tags=["robot"])
+
+
+class LabelScanRequest(BaseModel):
+    code: str = Field(..., min_length=1)
 
 
 async def check_robot_enabled() -> None:
@@ -143,6 +149,38 @@ async def stop_robot(worker: RobotWorker = Depends(get_robot_worker_or_error)) -
 @router.post("/clear_commands", dependencies=[Depends(get_current_user), Depends(require_permissions("robot:control")), Depends(check_robot_enabled)])
 async def clear_robot_commands(worker: RobotWorker = Depends(get_robot_worker_or_error)) -> SuccessResponse:
     await worker.clear_commands()
+    return SuccessResponse()
+
+
+async def _publish_label_scanned(code: str, settings) -> None:
+    nats_config = RobotNatsConfiguration(domain=settings.nats.domain, port=settings.nats.port)
+    nats_client = NATS()
+    try:
+        await nats_client.connect(servers=[nats_config.connection_string()])
+        payload = json.dumps({"kind": "label_scanned", "payload": code}).encode()
+        await nats_client.publish(nats_config.event_queue, payload)
+    finally:
+        if nats_client.is_connected:
+            try:
+                await nats_client.drain()
+            except Exception:
+                await nats_client.close()
+
+
+@router.post(
+    "/debug/label_scan",
+    dependencies=[Depends(require_permissions("robot:control")), Depends(check_robot_enabled)],
+)
+async def emit_label_scanned_event(request: LabelScanRequest) -> SuccessResponse:
+    settings = get_settings()
+    try:
+        await _publish_label_scanned(request.code, settings)
+    except Exception as exc:
+        logging.error("Failed to publish label_scanned event: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Failed to publish label_scanned event",
+        ) from exc
     return SuccessResponse()
 
 
