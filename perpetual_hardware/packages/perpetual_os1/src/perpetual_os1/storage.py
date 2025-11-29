@@ -144,6 +144,7 @@ class CellLocationData(BaseModel):
 class StorageGrid(BaseModel):
     left_module: List[Shelf] = Field(default_factory=list)
     right_module: List[Shelf] = Field(default_factory=list)
+    # filename: str = "./storage.json"
     filename: str = STORAGE_PATH
 
     @field_validator("filename", mode="before")
@@ -320,7 +321,7 @@ class StorageGrid(BaseModel):
         for shelf_idx, shelf in enumerate(self.left_module):
             for cell_idx, cell in enumerate(shelf.cells):
                 cells.append(cell)
-
+                    
         for shelf_idx, shelf in enumerate(self.right_module):
             for cell_idx, cell in enumerate(shelf.cells):
                 cells.append(cell)
@@ -404,27 +405,46 @@ class StorageGrid(BaseModel):
                     )
         possible_slots.sort(key=lambda x: x[1])
         return possible_slots[0][0] if possible_slots else None
-
+    
+# returns item coordinates
     async def find_item_location(
-        self,
+        self, 
         item_name: Optional[str] = None,
         upca: Optional[str] = None,
         cell_location: Optional[StorageModuleCellLocation] = None
     ) -> Optional[AxisCoordinate]:
+        """
+        Find an item in the storage grid by name, UPCA code, or specific location.
+        Returns the AxisCoordinate for the item's position if found.
+        
+        Args:
+            item_name: Name or identifier stored in item data
+            upca: UPCA barcode of the item
+            cell_location: Specific storage cell location
+            
+        Returns:
+            AxisCoordinate if item is found, None otherwise
+        """
+        print("finding")
+            
+        # # If we have a specific cell location, use that directly
         if cell_location:
             cal_coord = self.get_cell_coordinate(cell_location)
             return cal_coord.to_axis_coordinate()
-
+        
+        # # Search through all cells for matching item
         all_cells = self.get_all_cell_data()
 
         for cell_data in all_cells:
-            if not cell_data.cell:
+            if not cell_data.cell:  # Skip empty cells
                 continue
 
+            # Match by UPCA if provided
             if upca and cell_data.cell.upca == upca:
                 cal_coord = self.get_cell_coordinate(cell_data.location)
                 return cal_coord.to_axis_coordinate()
 
+            # Match by item name in data
             if item_name and cell_data.cell.data:
                 item_data = cell_data.cell.data
                 if isinstance(item_data, dict) and item_data.get("name") == item_name:
@@ -439,6 +459,23 @@ class StorageGrid(BaseModel):
         height: float,
         length: float = 400.0
     ) -> Optional[AxisCoordinate]:
+        """
+        Find the next available cell that can fit an item of given dimensions,
+        optimizing for minimal wasted space.
+        Returns the AxisCoordinate for the cell's position.
+        
+        Args:
+            width: Width of the item in mm
+            height: Height of the item in mm
+            length: Length of the item in mm (default 400.0)
+            
+        Returns:
+            AxisCoordinate if suitable cell is found, None otherwise
+        """
+        # if not self._grid:
+        #     return None
+            
+        # Create a temporary item to use storage grid's sizing logic
         temp_item = CellItem(
             dimensions=Dimensions(
                 width=width,
@@ -446,15 +483,16 @@ class StorageGrid(BaseModel):
                 length=length
             )
         )
-
-        location = self.find_best_slot_for_item(temp_item)
-
+        
+        # Always use find_best_slot_for_item to optimize space usage
+        location = self._grid.find_best_slot_for_item(temp_item)
+            
         if location:
-            cal_coord = self.get_cell_coordinate(location)
+            cal_coord = self._grid.get_cell_coordinate(location)
             return cal_coord.to_axis_coordinate()
-
+            
         return None
-
+    
     async def calculate_storage_positions(
         self,
         shelf_y_positions: List[float],
@@ -462,16 +500,17 @@ class StorageGrid(BaseModel):
         cell_spacings: List[float],
         x_anchor_points: List[float]
     ) -> List[List[AxisCoordinate]]:
+        """Calculate positions for all storage cells based on detected shelf positions."""
         if not (len(shelf_y_positions) == len(cells_per_shelf) == len(cell_spacings) == len(x_anchor_points)):
             raise ValueError("All input lists must have the same length (one entry per shelf)")
-
+            
         shelf_positions: List[List[AxisCoordinate]] = []
-
+        
         for shelf_idx, (y_pos, num_cells, spacing, x_anchor) in enumerate(
             zip(shelf_y_positions, cells_per_shelf, cell_spacings, x_anchor_points)
         ):
             shelf_cells: List[AxisCoordinate] = []
-
+            
             for cell_idx in range(num_cells):
                 x_pos = x_anchor + (cell_idx * spacing)
                 cell_coord = AxisCoordinate(
@@ -479,7 +518,7 @@ class StorageGrid(BaseModel):
                     y=round(y_pos, 4)
                 )
                 shelf_cells.append(cell_coord)
-
+            
             shelf_positions.append(shelf_cells)
-
+            
         return shelf_positions

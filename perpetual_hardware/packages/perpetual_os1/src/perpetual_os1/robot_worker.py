@@ -16,42 +16,13 @@ from perpetual_os1.robot import (
     RobotCommands,
     RobotResponse,
     RobotStatus,
-    IdleCommand,
-    HomeCommand,
     StopCommand,
+    StoreItemCommand
 )
 from perpetual_os1.common import RobotNatsConfiguration
+from perpetual_os1.robot_defs import WorkerError, QueuedOperation, WorkerStatus, WorkerStatusWithQueue
 from perpetual_os1.robot_client import RobotClient
-from perpetual_os1.barcode_service import BarcodeService
-
-
-class WorkerError(BaseModel):
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    error_type: str
-    message: str
-    context: Optional[dict[str, Any]] = None
-    stack_trace: Optional[str] = None
-
-
-class QueuedOperation(BaseModel):
-    command: RobotCommands
-    timestamp: datetime
-    location: Optional[dict[str, Any]] = None
-    item_data: Optional[dict[str, Any]] = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-class WorkerStatus(BaseModel):
-    robot_status: Optional[RobotStatus]
-    running: bool
-    current_command: Optional[RobotCommands]
-    error_queue: List[WorkerError] = Field(default_factory=list)
-
-
-class WorkerStatusWithQueue(WorkerStatus):
-    queued_operations: List[QueuedOperation] = Field(default_factory=list)
-    queue_length: int = 0
-
+from perpetual_os1.barcode_protocol import BarcodeService
 
 RobotCommandAdapter = TypeAdapter[RobotCommands](RobotCommands)
 
@@ -122,10 +93,7 @@ def _normalize_command(command: Optional[Dict[str, Any]]) -> Optional[Dict[str, 
     return normalized
 
 
-def _transform_worker_status_payload(
-    payload: Dict[str, Any],
-    storage_override: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
+def _transform_worker_status_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     transformed = dict(payload)
 
     normalized_command = _normalize_command(payload.get("current_command"))
@@ -150,15 +118,10 @@ def _transform_worker_status_payload(
     transformed["queue_length"] = payload.get("queue_length", len(normalized_operations))
 
     robot_status_payload = payload.get("robot_status") or {}
-    if isinstance(robot_status_payload, str):
-        robot_status_payload = {}
 
     state_payload = robot_status_payload.get("state") or {"current_cell": None}
-
-    if storage_override is not None:
-        storage_payload = storage_override
-    else:
-        storage_payload = robot_status_payload.get("storage") or {"left_module": [], "right_module": []}
+    storage_payload = robot_status_payload.get("storage") or {"left_module": [], "right_module": []}
+    storage_payload = _normalize_storage_payload(storage_payload)
 
     transformed["robot_status"] = {
         "gantry": {
@@ -183,14 +146,36 @@ def _transform_worker_status_payload(
     return transformed
 
 
+def _normalize_storage_payload(storage: Dict[str, Any]) -> Dict[str, Any]:
+    def normalize_cell(cell: Dict[str, Any]) -> Dict[str, Any]:
+        status = cell.get("status")
+        if isinstance(status, str):
+            cell = dict(cell)
+            cell["status"] = status.lower()
+        return cell
+
+    normalized_storage = {"left_module": [], "right_module": []}
+
+    for side in ("left_module", "right_module"):
+        shelves = storage.get(side) or []
+        normalized_shelves: List[Dict[str, Any]] = []
+        for shelf in shelves:
+            if not isinstance(shelf, dict):
+                continue
+            cells = shelf.get("cells") or []
+            normalized_cells = [normalize_cell(cell) for cell in cells if isinstance(cell, dict)]
+            shelf_copy = dict(shelf)
+            shelf_copy["cells"] = normalized_cells
+            normalized_shelves.append(shelf_copy)
+        normalized_storage[side] = normalized_shelves
+
+    return normalized_storage
+
 class RobotWorker:
     _instance: Optional["RobotWorker"] = None
 
     def __init__(
-        self,
-        robot: Robot,
-        nats_config: RobotNatsConfiguration = RobotNatsConfiguration(),
-        storage_path: Optional[str] = None,
+        self, robot: Robot, nats_config: RobotNatsConfiguration = RobotNatsConfiguration()
     ):
         if RobotWorker._instance is not None:
             raise RuntimeError("RobotWorker is a singleton. Use `get_instance()` to access it.")
@@ -210,26 +195,9 @@ class RobotWorker:
         self._barcode: Optional[BarcodeService] = None
         self._barcode_task: Optional[asyncio.Task] = None
         self._latest_status_payload: Optional[str] = None
-        self._storage_path = storage_path
 
     def get_client(self) -> RobotClient:
         return self._client
-
-    def _load_storage(self) -> Dict[str, Any]:
-        if self._storage_path is None:
-            return {"left_module": [], "right_module": []}
-
-        try:
-            with open(self._storage_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-
-            return {
-                "left_module": data.get("left_module", []),
-                "right_module": data.get("right_module", []),
-            }
-        except Exception as err:
-            logging.warning("Failed to load storage from %s: %s", self._storage_path, err)
-            return {"left_module": [], "right_module": []}
 
     def get_latest_status_payload(self) -> Optional[str]:
         return self._latest_status_payload
@@ -274,7 +242,8 @@ class RobotWorker:
         )
 
         if self._should_enable_barcode() and self._barcode is None:
-            port = os.getenv("PERPETUAL_BARCODE_PORT", "/dev/ttyACM0")
+            # port = os.getenv("PERPETUAL_BARCODE_PORT", "/dev/ttyACM1")
+            port = os.getenv("PERPETUAL_BARCODE_PORT", "/dev/serial/by-id/usb-Linux_4.9.84_Barcode_Scanner-if00")
             baudrate = int(os.getenv("PERPETUAL_BARCODE_BAUDRATE", "115200"))
             try:
                 self._barcode = BarcodeService(port=port, baudrate=baudrate)
@@ -347,7 +316,7 @@ class RobotWorker:
     async def _barcode_to_command(self, code: str) -> RobotCommands:
         logging.info("Received barcode: %s", code)
         # TODO: map barcodes to real RobotCommands
-        return StopCommand()
+        return StoreItemCommand(item={"upca": code})
 
     def _snapshot_command(self, command: RobotCommands) -> QueuedOperation:
         metadata: dict[str, Any] = {}
@@ -384,7 +353,7 @@ class RobotWorker:
 
     async def _publish_status(self) -> None:
         try:
-            robot_status = await self._robot.status()
+            robot_status = await self._robot.get_status()
         except Exception as err:
             robot_status = None
             self._add_error(
@@ -425,13 +394,13 @@ class RobotWorker:
                 op.model_dump(mode="json") for op in status.queued_operations
             ]
 
-        storage_data = self._load_storage()
-        status_payload = _transform_worker_status_payload(status_payload, storage_override=storage_data)
-        self._latest_status_payload = json.dumps(status_payload)
+        status_payload = _transform_worker_status_payload(status_payload)
+        payload_json = json.dumps(status_payload)
+        self._latest_status_payload = payload_json
 
         await self._nc.publish(
             self._nats_config.status_queue,
-            self._latest_status_payload.encode(),
+            payload_json.encode(),
         )
 
     async def process_commands(self) -> None:
@@ -441,15 +410,11 @@ class RobotWorker:
                     msgs = await self.work_consumer.fetch(timeout=1)
                     if msgs:
                         msg = msgs[0]
-                        raw_data = msg.data.decode()
-                        logging.info("Worker received raw command: %s", raw_data[:500])
-                        command = RobotCommandAdapter.validate_json(raw_data)
-                        logging.info("Worker parsed command: %s", getattr(command, "command", "unknown"))
+                        command = RobotCommandAdapter.validate_json(msg.data.decode())
                         self._current_command = command
                         self._msg = msg
                         self._queued_commands.append(self._snapshot_command(command))
                         await self._publish_status()
-                        logging.info("Worker dispatching to robot.handle_command")
                         self._current_task = asyncio.create_task(self._robot.handle_command(command))
                 else:
                     if self._current_task.done():
