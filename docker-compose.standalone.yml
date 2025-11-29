@@ -48,17 +48,17 @@ services:
     networks:
       - openshelf-network
 
-  ui:
+  dev_ui:
     build:
-      context: ./openshelf_os1
-      dockerfile: ./Dockerfile
+      context: ./dev_ui
+      dockerfile: Dockerfile
     ports:
-      - "0.0.0.0:8080:5173"
+      - "0.0.0.0:8080:8080"
     volumes:
-      - ./openshelf_os1/:/app
+      - ./dev_ui:/app
       - /app/node_modules
     environment:
-      - VITE_API_URL=http://localhost:8000
+      - NODE_ENV=development
     depends_on:
       - api
     networks:
