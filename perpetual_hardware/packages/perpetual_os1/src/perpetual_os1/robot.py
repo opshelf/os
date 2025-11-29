@@ -1,7 +1,7 @@
 from perpetual_os1.common import AxisCoordinate, ToolCoordinate, load_config_file
 
 from hardware.controller import SharedModbusController as Controller
-from perpetual_os1.iobox import IOBox, IOBoxStatus, SizeResult, ItemSizeLocation
+from perpetual_os1.iobox import IOBox, IOBoxStatus
 from perpetual_os1.tool import Tool, ToolStatus, ToolMotionStatus, ToolItemStatus
 from perpetual_os1.storage import (
     StorageGrid, Shelf, Cell, CellStatus, CalibrationCoordinate,
@@ -148,7 +148,7 @@ class RobotStatus(BaseModel):
     state: RobotState
     storage: StorageGrid
 
-RobotResponse = Union[RobotCommandSuccessful, RobotCommandError, RobotBarcodeResponse, SizeResult]
+RobotResponse = Union[RobotCommandSuccessful, RobotCommandError, RobotBarcodeResponse]
 
 class Robot:
     def __init__(self = None) -> None:
@@ -564,20 +564,16 @@ class Robot:
         if isinstance(item_payload, dict):
             provided_dimensions = item_payload.get("dimensions")
 
-        if provided_dimensions is not None:
-            self._logger.info("Using provided dimensions: %s", provided_dimensions)
-            width = float(provided_dimensions.get("width", 0))
-            height = float(provided_dimensions.get("height", 0))
-            length = float(provided_dimensions.get("length", 0))
-            if width <= 0 or height <= 0 or length <= 0:
-                return RobotCommandError(command=command_name, error="Invalid dimensions provided")
-        else:
-            measurement = await self.measure_item_dimensions()
-            if measurement is None:
-                return RobotCommandError(command=command_name, error="Failed to measure item dimensions")
-            width = measurement.width * 1.1
-            height = measurement.height * 1.1
-            length = measurement.length * 1.1
+        if provided_dimensions is None:
+            return RobotCommandError(command=command_name, error="Item dimensions required")
+
+        self._logger.info("Using provided dimensions: %s", provided_dimensions)
+        width = float(provided_dimensions.get("width", 0))
+        height = float(provided_dimensions.get("height", 0))
+        length = float(provided_dimensions.get("length", 0))
+
+        if width <= 0 or height <= 0 or length <= 0:
+            return RobotCommandError(command=command_name, error="Invalid dimensions provided")
 
         weight = await self._io.get_weight()
 
@@ -652,51 +648,6 @@ class Robot:
             return RobotCommandError(command=command_name, error=f"Item '{item_name}' not found in storage")
 
         return await self.retrieve_by_location(location.model_dump())
-
-    async def measure_item_dimensions(self, n_frames: int = 15) -> Optional[Dimensions]:
-        """
-        Use the IOBox's AFSCam to measure the dimensions of an item currently in the IO box.
-        Returns the aggregate dimensions including footprint and depth measurements.
-
-        Args:
-            n_frames: Number of frames to capture for measurement (default=5)
-
-        Returns:
-            Dimensions object (length, width, height) in millimeters.
-            Returns None if measurement fails or required values are missing.
-
-        Raises:
-            RobotStateError: If there is no item in the IOBox to measure
-        """
-        # # Validate state before operation -> change state on weight read
-        # self._state_manager.update_state(self._state.tool, self._state.io)
-        # self._state_manager.validate_operation('measure')
-        # if not self._io or not self._io._cam:
-        #     raise RuntimeError("IOBox camera not configured")
-
-        # Take measurement using AFSCam
-        measure_result = await self._io.measure_item()
-
-        if not measure_result["ok"]:
-            return None
-
-        # Extract relevant measurements from aggregates
-        agg = measure_result["aggregate"]
-        if not agg:
-            return None
-
-        # Prefer footprint measurements (from pinhole model) and fall back to scale data if needed.
-        width = agg.get("footprint_major_mm_med") or agg.get("scale_major_mm_med")
-        length = agg.get("footprint_minor_mm_med") or agg.get("scale_minor_mm_med")
-        height = 620 - agg.get("depth_mm_med")
-
-        if width is None or height is None or length is None:
-            # print("none")
-            return None
-        
-
-        print(f"{width}mm x {length}mm x {height}mm")
-        return Dimensions(length=float(length), width=float(width), height=float(height))
 
     async def _build_axis_status(self, motor: Optional["Motor"]) -> AxisTelemetry:
         position = 0.0
