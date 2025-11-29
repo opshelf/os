@@ -14,18 +14,14 @@ async def init_robot_worker() -> None:
     global robot_worker
     logging.info("Getting Robot")
     settings = get_settings()
-    robot = r.Robot("/dev/ttyUSB0", storage_path=settings.storage.filename)
+    robot = r.Robot()
     await robot.configure()
     logging.info("Built Robot")
     nats_config = common.RobotNatsConfiguration(
         domain=settings.nats.domain,
         port=settings.nats.port,
     )
-    robot_worker = r_worker.RobotWorker(
-        robot,
-        nats_config,
-        storage_path=settings.storage.filename,
-    )
+    robot_worker = r_worker.RobotWorker(robot, nats_config)
     logging.info("Got Instance")
     await robot_worker.connect()
     logging.info("Started")

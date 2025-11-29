@@ -17,7 +17,6 @@ from perpetual_os1.robot import (
     RobotResponse,
     RobotStatus,
     StopCommand,
-    StoreItemCommand
 )
 from perpetual_os1.common import RobotNatsConfiguration
 from perpetual_os1.robot_defs import WorkerError, QueuedOperation, WorkerStatus, WorkerStatusWithQueue
@@ -271,30 +270,14 @@ class RobotWorker:
             return
         try:
             async for code in self._barcode:
+                logging.info("Received barcode: %s", code)
                 try:
                     await self._nc.publish(
                         self._nats_config.event_queue,
                         json.dumps({"kind": "label_scanned", "payload": code}).encode(),
                     )
-                    command = await self._barcode_to_command(code)
-                except Exception as mapping_error:  # pragma: no cover - hardware dependent
-                    logging.warning("Barcode mapping error for %s: %s", code, mapping_error)
-                    self._add_error(
-                        WorkerError(
-                            error_type="BarcodeMappingError",
-                            message=str(mapping_error),
-                            context={"barcode": code},
-                        )
-                    )
-                    continue
-
-                try:
-                    await self._nc.publish(
-                        self._nats_config.command_queue,
-                        command.model_dump_json().encode(),
-                    )
                 except Exception as publish_error:  # pragma: no cover - hardware dependent
-                    logging.warning("Barcode publish error: %s", publish_error)
+                    logging.warning("Barcode event publish error: %s", publish_error)
                     self._add_error(
                         WorkerError(
                             error_type="BarcodePublishError",
@@ -312,11 +295,6 @@ class RobotWorker:
                     message=str(bridge_error),
                 )
             )
-
-    async def _barcode_to_command(self, code: str) -> RobotCommands:
-        logging.info("Received barcode: %s", code)
-        # TODO: map barcodes to real RobotCommands
-        return StoreItemCommand(item={"upca": code})
 
     def _snapshot_command(self, command: RobotCommands) -> QueuedOperation:
         metadata: dict[str, Any] = {}
