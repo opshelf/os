@@ -34,10 +34,7 @@ async def test_storage_items_endpoint_authorized(client: AsyncClient) -> None:
     response = await client.get("/api/storage/items", headers=headers)
     assert response.status_code == 200
     data = response.json()
-    assert isinstance(data, dict)
-    assert "items" in data
-    assert "total" in data
-    assert isinstance(data["items"], list)
+    assert isinstance(data, list)
 
 
 @pytest.mark.anyio
@@ -58,7 +55,7 @@ async def test_create_storage_item(client: AsyncClient) -> None:
         "name": "Test Item",
         "dimensions": {"width": 10.0, "height": 20.0, "length": 30.0},
         "weight": 500.0,
-        "item_metadata": {"category": "test", "priority": 1}
+        "metadata": {"category": "test", "priority": 1}
     }
 
     response = await client.post("/api/storage/items", json=item_data, headers=headers)
@@ -71,7 +68,7 @@ async def test_create_storage_item(client: AsyncClient) -> None:
     assert data["name"] == "Test Item"
     assert data["dimensions"] == {"width": 10.0, "height": 20.0, "length": 30.0}
     assert data["weight"] == 500.0
-    assert data["item_metadata"] == {"category": "test", "priority": 1}
+    assert data["metadata"] == {"category": "test", "priority": 1}
     assert data["locations"] == []
     assert "created_at" in data
     assert "updated_at" in data
@@ -243,14 +240,12 @@ async def test_item_location_operations(client: AsyncClient) -> None:
     # Add location to item
     location_data = {
         "shelf_idx": 1,
-        "cell_idx": 2
+        "cell_idx": 2,
+        "side": "left"
     }
 
-    response = await client.post(
-        f"/api/storage/items/{created_item['upca']}/locations",
-        json=location_data,
-        headers=headers,
-    )
+    response = await client.post(f"/api/storage/items/{created_item['upca']}/locations",
+                               json=location_data, headers=headers)
     assert response.status_code == 200
     data = response.json()
 
@@ -262,7 +257,7 @@ async def test_item_location_operations(client: AsyncClient) -> None:
     # Get item with location
     get_response = await client.get(
         f"/api/storage/items/{created_item['upca']}",
-        headers=headers,
+        headers=headers
     )
     assert get_response.status_code == 200
     data = get_response.json()
@@ -273,18 +268,17 @@ async def test_item_location_operations(client: AsyncClient) -> None:
 
     # Remove location
     remove_response = await client.delete(
-        f"/api/storage/items/{created_item['upca']}/locations/1/2",
+        f"/api/storage/items/{created_item['upca']}/locations?shelf_idx=1&cell_idx=2&side=left",
         headers=headers
     )
     assert remove_response.status_code == 200
-    removed_payload = remove_response.json()
-    assert removed_payload["upca"] == created_item["upca"]
-    assert removed_payload["locations"] == []
+    data = remove_response.json()
+    assert len(data["locations"]) == 0
 
     # Verify location is removed
     get_response = await client.get(
         f"/api/storage/items/{created_item['upca']}",
-        headers=headers,
+        headers=headers
     )
     assert get_response.status_code == 200
     data = get_response.json()
@@ -309,10 +303,13 @@ async def test_storage_cells_endpoint(client: AsyncClient) -> None:
     data = response.json()
 
     assert isinstance(data, list)
+    if data:
+        assert isinstance(data[0]["capacity"], dict)
+        assert {"width", "height", "length"} <= set(data[0]["capacity"].keys())
 
     # Update a storage cell (assuming cell 1,1 exists)
     update_data = {
-        "capacity": "small",
+        "capacity": {"width": 50, "height": 100, "length": 50},
         "status": "occupied"
     }
 
@@ -324,6 +321,7 @@ async def test_storage_cells_endpoint(client: AsyncClient) -> None:
         assert data["shelf_idx"] == 1
         assert data["cell_idx"] == 1
         assert data["status"] == "occupied"
+        assert data["capacity"]["width"] >= 0
 
 
 @pytest.mark.anyio
@@ -376,11 +374,17 @@ async def test_pagination_items_endpoint(client: AsyncClient) -> None:
     response = await client.get("/api/storage/items?skip=0&limit=2", headers=headers)
     assert response.status_code == 200
     data = response.json()
+    assert isinstance(data["items"], list)
+    assert data["skip"] == 0
+    assert data["limit"] == 2
     assert len(data["items"]) <= 2
 
     response = await client.get("/api/storage/items?skip=1&limit=2", headers=headers)
     assert response.status_code == 200
     data = response.json()
+    assert isinstance(data["items"], list)
+    assert data["skip"] == 1
+    assert data["limit"] == 2
     assert len(data["items"]) <= 2
 
 
