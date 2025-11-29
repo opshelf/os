@@ -180,6 +180,7 @@ async def test_item_location() -> None:
         # Add location
         location = await service.add_item_location(
             upca="123456789012",
+            side="left_module",
             shelf_idx=1,
             cell_idx=2
         )
@@ -210,11 +211,12 @@ async def test_item_location_remove() -> None:
             dimensions={"width": 10.0, "height": 20.0, "length": 30.0}
         )
 
-        await service.add_item_location(upca="123456789012", shelf_idx=1, cell_idx=2)
+        await service.add_item_location(upca="123456789012", side="left_module", shelf_idx=1, cell_idx=2)
 
         # Remove location
         success = await service.remove_item_location(
             upca="123456789012",
+            side="left_module",
             shelf_idx=1,
             cell_idx=2
         )
