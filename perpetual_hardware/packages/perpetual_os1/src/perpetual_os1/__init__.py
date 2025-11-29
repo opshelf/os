@@ -3,16 +3,17 @@ import os
 
 import sentry_sdk
 
-deployment_environment = os.getenv("ENV", "development")
-is_production = deployment_environment == "production"
+sentry_dsn = os.getenv("SENTRY_DSN_HARDWARE", "")
 
-if is_production is True:
+if sentry_dsn:
 	sentry_sdk.init(
-		dsn="https://4a1dffab81cbbe859f982f1f22541a68@o4510181088296960.ingest.us.sentry.io/4510260412809216",
+		dsn=sentry_dsn,
 		traces_sample_rate=0.1,
-		environment=deployment_environment,
+		environment=os.getenv("DEPLOYMENT_ENVIRONMENT", "development"),
 	)
 	logging.info("Sentry initialized for perpetual_os1")
+else:
+	logging.debug("Sentry not configured for perpetual_os1: SENTRY_DSN_HARDWARE not set")
 
 def hello() -> str:
     return "Hello from perpetual_os1!"

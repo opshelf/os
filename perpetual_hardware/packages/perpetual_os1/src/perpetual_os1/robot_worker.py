@@ -2,9 +2,11 @@ import asyncio
 import json
 import logging
 import os
+import traceback
 from datetime import datetime, timezone
 from typing import Optional, List, Any, Dict
 
+import sentry_sdk
 from nats.aio.client import Client as NATS
 from nats.aio.msg import Msg
 from nats import errors as nats_errors
@@ -219,9 +221,38 @@ class RobotWorker:
         return cls._instance
 
     def _add_error(self, error: WorkerError) -> None:
-        if len(self._error_queue) >= 10:
+        if len(self._error_queue) >= 100:
             self._error_queue.pop(0)
         self._error_queue.append(error)
+
+    def _report_error(self, error: WorkerError, exc: Optional[Exception] = None) -> None:
+        sentry_event_id: Optional[str] = None
+        try:
+            with sentry_sdk.push_scope() as scope:
+                scope.set_tag("error_type", error.error_type)
+                if error.context:
+                    scope.set_context("worker_error", error.context)
+                if self._current_command:
+                    scope.set_tag("command", getattr(self._current_command, "command", "unknown"))
+                if error.stack_trace:
+                    scope.set_extra("stack_trace", error.stack_trace)
+
+                if exc is not None:
+                    sentry_event_id = sentry_sdk.capture_exception(exc)
+                else:
+                    sentry_event_id = sentry_sdk.capture_message(
+                        f"{error.error_type}: {error.message}",
+                        level="error"
+                    )
+        except Exception:
+            pass
+
+        if sentry_event_id:
+            if error.context is None:
+                error.context = {}
+            error.context["sentry_event_id"] = sentry_event_id
+
+        self._add_error(error)
 
     async def connect(self) -> None:
         await self._nc.connect(servers=[self._nats_config.connection_string()])
@@ -281,22 +312,24 @@ class RobotWorker:
                     )
                 except Exception as publish_error:  # pragma: no cover - hardware dependent
                     logging.warning("Barcode event publish error: %s", publish_error)
-                    self._add_error(
+                    self._report_error(
                         WorkerError(
                             error_type="BarcodePublishError",
                             message=str(publish_error),
                             context={"barcode": code},
-                        )
+                        ),
+                        exc=publish_error,
                     )
         except asyncio.CancelledError:
             pass
         except Exception as bridge_error:  # pragma: no cover - hardware dependent
             logging.error("Barcode bridge crashed: %s", bridge_error)
-            self._add_error(
+            self._report_error(
                 WorkerError(
                     error_type="BarcodeBridgeError",
                     message=str(bridge_error),
-                )
+                ),
+                exc=bridge_error,
             )
 
     def _snapshot_command(self, command: RobotCommands) -> QueuedOperation:
@@ -337,12 +370,13 @@ class RobotWorker:
             robot_status = await self._robot.get_status()
         except Exception as err:
             robot_status = None
-            self._add_error(
+            self._report_error(
                 WorkerError(
                     error_type="StatusRetrievalError",
                     message=str(err),
                     context={"command": self._current_command.model_dump() if self._current_command else None},
-                )
+                ),
+                exc=err,
             )
 
         if self._use_enhanced_status:
@@ -406,12 +440,14 @@ class RobotWorker:
                                 result.model_dump_json().encode(),
                             )
                         except Exception as err:
-                            self._add_error(
+                            self._report_error(
                                 WorkerError(
                                     error_type="CommandExecutionError",
                                     message=str(err),
                                     context={"command": self._current_command.model_dump() if self._current_command else None},
-                                )
+                                    stack_trace=traceback.format_exc(),
+                                ),
+                                exc=err,
                             )
 
                         if self._msg:
@@ -440,15 +476,14 @@ class RobotWorker:
                 raise
             except Exception as err:
                 logging.exception("Unexpected robot worker error: %s", err)
-                import traceback
-
-                self._add_error(
+                self._report_error(
                     WorkerError(
                         error_type="UnexpectedError",
                         message=str(err),
                         context={"command": self._current_command.model_dump() if self._current_command else None},
                         stack_trace=traceback.format_exc(),
-                    )
+                    ),
+                    exc=err,
                 )
                 try:
                     await self._publish_status()
@@ -505,23 +540,32 @@ class RobotWorker:
         try:
             await self._robot.handle_command(StopCommand())
         except Exception as err:
-            self._add_error(
+            self._report_error(
                 WorkerError(
                     error_type="ShutdownError",
                     message=str(err),
                     context={"phase": "stop_command"},
-                )
+                    stack_trace=traceback.format_exc(),
+                ),
+                exc=err,
             )
 
         try:
             await self._robot.shutdown()
         except Exception as err:
-            self._add_error(
+            self._report_error(
                 WorkerError(
                     error_type="ShutdownError",
                     message=str(err),
                     context={"phase": "robot_shutdown"},
-                )
+                    stack_trace=traceback.format_exc(),
+                ),
+                exc=err,
             )
 
         await self._publish_status()
+
+        try:
+            sentry_sdk.flush(timeout=2.0)
+        except Exception:
+            pass
