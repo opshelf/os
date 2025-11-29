@@ -178,9 +178,17 @@ class Robot:
         self._io = IOBox(motorcontroller=self._motorbus, scalecontroller=self._scalebus, params=io_params)
 
         # storage grid to store physical robot state
-        with open(STORAGE_PATH, 'r') as f:
-             data = json.load(f)
-        self._grid = StorageGrid.model_validate(data)  # Storage grid configuration
+        if os.path.exists(STORAGE_PATH) is True:
+            try:
+                with open(STORAGE_PATH, 'r') as f:
+                    data = json.load(f)
+                self._grid = StorageGrid.model_validate(data)
+            except (json.JSONDecodeError, Exception) as e:
+                self._logger.warning("storage_load_failed", path=STORAGE_PATH, error=str(e))
+                self._grid = StorageGrid()
+        else:
+            self._logger.info("storage_file_missing", path=STORAGE_PATH, action="using_empty_grid")
+            self._grid = StorageGrid()
 
         # Status
         self._cur_item: StorageModuleCellLocation = None # some kind of unique identifier
