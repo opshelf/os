@@ -13,6 +13,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sentry_sdk.integrations.fastapi import FastApiIntegration
+from sentry_sdk.integrations.logging import LoggingIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 
 from perpetual_os1_server.core.logging_config import configure_logging, get_logger
@@ -49,6 +50,7 @@ if sentry_dsn:
 		integrations=[
 			StarletteIntegration(transaction_style="endpoint"),
 			FastApiIntegration(transaction_style="endpoint"),
+			LoggingIntegration(event_level=None),
 		],
 		traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.1")),
 		environment=os.getenv("DEPLOYMENT_ENVIRONMENT", "development"),
