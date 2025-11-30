@@ -5,13 +5,15 @@ from perpetual_os1 import robot_worker as r_worker
 from perpetual_os1 import robot_client as r_client
 
 from perpetual_os1_server.settings import get_settings
+from perpetual_os1_server.core.robot_events import RobotEventListener
 
 import logging
 
 robot_worker: Optional[r_worker.RobotWorker] = None
+event_listener: Optional[RobotEventListener] = None
 
 async def init_robot_worker() -> None:
-    global robot_worker
+    global robot_worker, event_listener
     logging.info("Getting Robot")
     settings = get_settings()
     robot = r.Robot()
@@ -28,10 +30,17 @@ async def init_robot_worker() -> None:
     await robot_worker.start()
     logging.info("Connected")
 
+    event_listener = RobotEventListener(nats_config)
+    await event_listener.start()
+    logging.info("Robot event listener started")
+
 
 async def stop_robot_worker() -> None:
-    global robot_worker
-    if robot_worker:
+    global robot_worker, event_listener
+    if event_listener is not None:
+        await event_listener.stop()
+        logging.info("Robot event listener stopped")
+    if robot_worker is not None:
         await robot_worker.shutdown()
 
 
