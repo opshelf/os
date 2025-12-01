@@ -6,6 +6,7 @@ import functools
 import logging
 from enum import Enum
 from typing import Any, Optional, Callable, Awaitable
+import asyncio
 
 from hardware.exceptions import (
     MotorError, MotorTimeoutError, MotorLimitError,
@@ -19,6 +20,24 @@ MOTOR_WAIT_TIMEOUT = 60.0
 MAX_FAULT_RETRIES = 1
 
 logger = logging.getLogger(__name__)
+
+
+class CurtainSafety:
+    def __init__(self) -> None:
+        self._clear = asyncio.Event()
+        self._clear.set()
+        self.blocked = False
+
+    def block(self) -> None:
+        self.blocked = True
+        self._clear.clear()
+
+    def unblock(self) -> None:
+        self.blocked = False
+        self._clear.set()
+
+    async def wait_clear(self) -> None:
+        await self._clear.wait()
 
 class MotorStatus(Enum):
     IDLE = 0
@@ -179,7 +198,7 @@ class Motor():
     _stall_timeout: float
     _status: MotorStatus
 
-    def __init__(self, controller: SharedModbusController, params: Any) -> None:
+    def __init__(self, controller: SharedModbusController, params: Any, safety: Optional[CurtainSafety] = None) -> None:
         self._motor_id = params.motor_id        
         self._controller = controller           
         self._params = params
@@ -188,6 +207,7 @@ class Motor():
         self._status = MotorStatus.IDLE
         self._pending_motion: Optional[Callable[[], Awaitable[None]]] = None
         self._logger = logger.getChild(f"motor.{self._motor_id}")
+        self._safety = safety
 
     async def configure(self):
         """Configure the stepper motor with initial parameters.
@@ -246,6 +266,8 @@ class Motor():
             MotorError: If movement fails or times out
         """
         try:
+            if self._safety:
+                await self._safety.wait_clear()
             await self._start_absolute_move(value)
             status = await self.wait_for_move(timeout=MOTOR_MOVE_TIMEOUT)
             
@@ -270,6 +292,8 @@ class Motor():
             MotorError: If movement setup fails
         """
         try:
+            if self._safety:
+                await self._safety.wait_clear()
             await self._start_absolute_move(value)
             
         except Exception as e:
@@ -529,7 +553,17 @@ class Motor():
                 last_pos = None
                 last_movement_time = start_time
                 continue
-               
+
+            if self._safety and self._safety.blocked:
+                await self.stop()
+                await self._safety.wait_clear()
+                if self._pending_motion:
+                    await self._pending_motion()
+                start_time = time.monotonic()
+                last_pos = None
+                last_movement_time = start_time
+                continue
+
 
             # Check for timeout
             if time.monotonic() - start_time > timeout:
