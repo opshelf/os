@@ -11,6 +11,7 @@ RUN apt-get update && apt-get -y install --no-install-recommends \
 	build-essential \
 	gcc \
 	swig \
+	liblgpio-dev \
 	ca-certificates \
 	curl \
 	wget \
