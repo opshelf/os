@@ -11,7 +11,7 @@ RUN apt-get update && apt-get -y install --no-install-recommends \
 	build-essential \
 	gcc \
 	swig \
-	liblgpio-dev \
+	git \
 	ca-certificates \
 	curl \
 	wget \
@@ -26,6 +26,10 @@ RUN apt-get update && apt-get -y install --no-install-recommends \
 	cups-daemon \
 	&& rm -rf /var/lib/apt/lists/* \
 	&& apt-get clean
+
+RUN git clone --depth 1 https://github.com/joan2937/lg /tmp/lg && \
+	cd /tmp/lg && make && make install && \
+	rm -rf /tmp/lg
 
 	
 WORKDIR /app/perpetual_hardware/packages/perpetual_os1_server
