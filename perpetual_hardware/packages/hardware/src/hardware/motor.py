@@ -478,7 +478,17 @@ class Motor():
 
             await self.get_position()
             now = time.monotonic()
-            
+
+            if self._safety and self._safety.blocked:
+                await self.stop()
+                await self._safety.wait_clear()
+                if self._pending_motion:
+                    await self._pending_motion()
+                start_time = time.monotonic()
+                last_pos = None
+                last_movement_time = start_time
+                continue
+
             if last_pos is not None:
                 if self._cur_pos != last_pos:
                     last_movement_time = now
@@ -549,16 +559,6 @@ class Motor():
                     )
                     return MotorStatus.FAULT
 
-                start_time = time.monotonic()
-                last_pos = None
-                last_movement_time = start_time
-                continue
-
-            if self._safety and self._safety.blocked:
-                await self.stop()
-                await self._safety.wait_clear()
-                if self._pending_motion:
-                    await self._pending_motion()
                 start_time = time.monotonic()
                 last_pos = None
                 last_movement_time = start_time
