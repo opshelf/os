@@ -1,3 +1,4 @@
+from typing import Optional
 
 from hardware.controller import SharedModbusController as Controller
 from hardware.motor import Motor
@@ -10,6 +11,7 @@ from hardware.scale import Scale
 import asyncio
 from enum import Enum
 import logging
+import sentry_sdk
 
 
 class IOBoxStatus(Enum):
@@ -83,32 +85,21 @@ class IOBox:
             self._status = IOBoxStatus.ERROR
             raise IOBoxError(f"Failed to print barcode: {str(exc)}") from exc
 
-    async def get_weight(self) -> float:
+    async def get_weight(self) -> Optional[float]:
         """
-        Get weight reading from scale.
-        
-        Raises:
-            IOBoxError: If scale is not configured or reading fails
+        Get stable weight reading from scale in grams.
+        Returns None if scale fails (does not raise exception).
         """
         try:
             await self._ensure_scale_ready()
-            retries = 2
-            for attempt in range(retries):
-                try:
-                    return await self._scale.read_weight()
-                except Exception as err:
-                    self._logger.warning(
-                        "Scale read failed (attempt %s/%s)",
-                        attempt + 1,
-                        retries,
-                        exc_info=err,
-                    )
-                    if attempt == retries - 1:
-                        raise
-                    await asyncio.sleep(0.05)
+            weight = await self._scale.wait_for_stable_weight(timeout=3.0, poll_interval=0.1)
+            if weight is None:
+                self._logger.warning("Scale did not stabilize within timeout")
+            return weight
         except Exception as e:
-            self._status = IOBoxStatus.ERROR
-            raise IOBoxError(f"Failed to get weight: {str(e)}") from e
+            self._logger.error("Scale read failed: %s", e)
+            sentry_sdk.capture_exception(e)
+            return None
     
     async def open_door(self):
         """

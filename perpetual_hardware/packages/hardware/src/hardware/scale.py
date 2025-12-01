@@ -88,30 +88,34 @@ class Scale:
 
     async def read_weight(self, averages: int = 1, delay: float = 0.1) -> Optional[float]:
         """
-        Return current weight in kilograms. Optionally average N samples.
+        Return current weight in grams (absolute value for inverted mount).
+        Optionally average N samples.
         """
         averages = max(1, int(averages))
         total = 0.0
         got = 0
+
         for i in range(averages):
-            regs = await self._read_block(self.REG_WEIGHT_HI, 3)  # hi, lo, decimals
-            if not regs:
+            regs = await self._read_block(self.REG_WEIGHT_HI, 3)
+            if regs is None:
                 if i < averages - 1:
                     await asyncio.sleep(delay)
                     continue
                 return None
             hi, lo, decimals = regs
             raw = self._to_int32_signed(hi, lo)
-            kg = raw * (10 ** (-int(decimals)))
-            total += kg
+            grams = abs(raw * (10 ** (-int(decimals))))
+            total += grams
             got += 1
             if i < averages - 1:
                 await asyncio.sleep(delay)
+
         return (total / got) if got else None
 
     async def read_weight_data(self) -> Dict[str, Any]:
         """
-        Rich read: weight (kg), decimals, status flags, and raw regs.
+        Rich read: weight (grams), decimals, status flags, and raw regs.
+        Note: This method returns raw values without abs() - used for debugging.
         """
         regs = await self._read_block(self.REG_WEIGHT_HI, 4)  # hi, lo, decimals, status
         if not regs:
@@ -146,17 +150,18 @@ class Scale:
         self,
         timeout: float = 2.0,
         poll_interval: float = 0.05,
-        require_valid: bool = True,
     ) -> Optional[float]:
         """
-        Poll status until stable (and valid if required), then return one weight sample.
+        Poll status until stable, then return one weight sample in grams.
         Returns None on timeout.
         """
         loop = asyncio.get_event_loop()
         deadline = loop.time() + timeout
+
         while loop.time() < deadline:
             st = await self.read_status()
-            if st["stable"] and (st["valid"] or not require_valid):
+            if st["stable"] is True:
                 return await self.read_weight()
             await asyncio.sleep(poll_interval)
+
         return None
