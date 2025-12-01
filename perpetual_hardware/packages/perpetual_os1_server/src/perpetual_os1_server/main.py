@@ -128,7 +128,7 @@ def _get_tool_camera_url(settings: Settings) -> str | None:
 				config = json.load(f)
 
 			poe_camera = config.get("robot", {}).get("tool", {}).get("poe_camera", {})
-			url = poe_camera.get("url") or poe_camera.get("stream_uri")
+			url = poe_camera.get("stream_uri") or poe_camera.get("url")
 			if url is not None and url != "":
 				logger.info("tool_camera_url_from_config", config_path=str(config_path), url=url)
 				return str(url)
