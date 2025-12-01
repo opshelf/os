@@ -4,8 +4,8 @@
 	import { apiFetch, buildApiUrl, getApiBase } from '$lib';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 
-type WorkerStatusPayload = {
-	robot_status?: Record<string, unknown> | null;
+	type WorkerStatusPayload = {
+		robot_status?: Record<string, unknown> | null;
 		running?: boolean;
 		current_command?: Record<string, unknown> | null;
 		queue_length?: number;
@@ -72,7 +72,9 @@ type WorkerStatusPayload = {
 		return Array.from(summary.entries()).map(([status, count]) => ({ status, count }));
 	}
 
-	function formatCommand(command: Record<string, unknown> | null | undefined): Array<{ field: string; value: string }> {
+	function formatCommand(
+		command: Record<string, unknown> | null | undefined
+	): Array<{ field: string; value: string }> {
 		if (!command || typeof command !== 'object') {
 			return [];
 		}
@@ -172,7 +174,7 @@ type WorkerStatusPayload = {
 			</tr>
 		</thead>
 		<tbody>
-			<tr>
+			<tr valign="top">
 				<td>robot status</td>
 				<td>
 					{#if status.robot_status}
