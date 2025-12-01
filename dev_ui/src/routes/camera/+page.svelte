@@ -4,99 +4,124 @@
 	import { apiFetch, buildApiUrl } from '$lib';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 
-	type CameraStatus = {
-		enabled?: boolean;
-		running?: boolean;
-		consumers?: number;
-		target_fps?: number;
-		url?: string;
-		has_frame?: boolean;
-		message?: string;
+	type CameraInfo = {
+		id: string;
+		type: string;
+		running: boolean;
+		consumers: number;
+		has_frame: boolean;
 	};
 
-	const streamUrl = buildApiUrl('/camera');
+	type CamerasResponse = {
+		cameras: CameraInfo[];
+	};
 
-	let status: CameraStatus | null = null;
+	let cameras: CameraInfo[] = [];
+	let selectedCameraId: string = '';
 	let statusError = '';
 	let streamError = false;
+	let loading = true;
+
+	$: streamUrl = selectedCameraId !== '' ? buildApiUrl(`/camera/${selectedCameraId}`) : '';
+	$: selectedCamera = cameras.find((c) => c.id === selectedCameraId) ?? null;
 
 	onMount(() => {
-		if (!browser) {
+		if (browser === false) {
 			return;
 		}
-		loadStatus();
+		loadCameras();
 	});
 
-	async function loadStatus(): Promise<void> {
+	async function loadCameras(): Promise<void> {
+		loading = true;
 		try {
-			status = await apiFetch<CameraStatus>('/camera/status');
+			const response = await apiFetch<CamerasResponse>('/camera');
+			cameras = response.cameras;
 			statusError = '';
+
+			if (selectedCameraId === '' && cameras.length > 0) {
+				selectedCameraId = cameras[0].id;
+			}
 		} catch (error) {
-			statusError = error instanceof Error ? error.message : 'unable to load camera status';
+			statusError = error instanceof Error ? error.message : 'unable to load cameras';
+		} finally {
+			loading = false;
 		}
 	}
 
-	function markStreamError(): void {
+	function didSelectCamera(event: Event): void {
+		const target = event.target as HTMLSelectElement;
+		selectedCameraId = target.value;
+		streamError = false;
+	}
+
+	function didStreamError(): void {
 		streamError = true;
 	}
 
-	function markStreamLoaded(): void {
+	function didStreamLoad(): void {
 		streamError = false;
 	}
 </script>
 
-{#if status?.has_frame === true}
-	<img src={streamUrl} alt="camera feed" on:error={markStreamError} on:load={markStreamLoaded} />
-{/if}
-
-{#if streamError || status?.has_frame === false}
-	<ErrorMessage
-		message="unable to display the camera stream. verify the camera service is enabled."
-	/>
-{/if}
-
-{#if statusError}
-	<ErrorMessage message={statusError} />
-{/if}
-
-{#if status}
-	<table>
-		<thead>
-			<tr>
-				<th colspan="2">stream status</th>
-			</tr>
-		</thead>
-		<tbody>
-			<tr>
-				<td>enabled</td>
-				<td>{status.enabled ? 'yes' : 'no'}</td>
-			</tr>
-			<tr>
-				<td>running</td>
-				<td>{status.running ? 'yes' : 'no'}</td>
-			</tr>
-			<tr>
-				<td>consumers</td>
-				<td>{status.consumers ?? 0}</td>
-			</tr>
-			<tr>
-				<td>target fps</td>
-				<td>{status.target_fps ?? ''}</td>
-			</tr>
-			<tr>
-				<td>latest frame</td>
-				<td>{status.has_frame ? 'available' : 'not available'}</td>
-			</tr>
-			{#if status.message}
+{#if loading}
+	<p>loading cameras...</p>
+{:else}
+	{#if statusError !== ''}
+		<ErrorMessage message={statusError} />
+	{:else}
+		<table>
+			<thead>
 				<tr>
-					<td>message</td>
-					<td>{status.message}</td>
+					<th colspan="2">camera selection</th>
 				</tr>
-			{/if}
-		</tbody>
-	</table>
+			</thead>
+			<tbody>
+				<tr>
+					<td>camera</td>
+					<td>
+						<select value={selectedCameraId} on:change={didSelectCamera}>
+							{#each cameras as camera}
+								<option value={camera.id}>{camera.id} ({camera.type})</option>
+							{/each}
+						</select>
+					</td>
+				</tr>
+				{#if selectedCamera !== null}
+					<tr>
+						<td>type</td>
+						<td>{selectedCamera.type}</td>
+					</tr>
+					<tr>
+						<td>running</td>
+						<td>{selectedCamera.running === true ? 'yes' : 'no'}</td>
+					</tr>
+					<tr>
+						<td>consumers</td>
+						<td>{selectedCamera.consumers}</td>
+					</tr>
+					<tr>
+						<td>has frame</td>
+						<td>{selectedCamera.has_frame === true ? 'yes' : 'no'}</td>
+					</tr>
+				{/if}
+			</tbody>
+		</table>
+
+		<button type="button" on:click={loadCameras}>refresh</button>
+
+		{#if streamUrl !== '' && streamError === false}
+			<img src={streamUrl} alt="camera feed" on:error={didStreamError} on:load={didStreamLoad} />
+		{/if}
+
+		{#if streamError === true}
+			<ErrorMessage
+				message="unable to display the camera stream. verify the camera is running."
+			/>
+		{/if}
+
+		{#if cameras.length === 0}
+			<p>no cameras available</p>
+		{/if}
+	{/if}
 {/if}
-
-<br />
-
-<button type="button" on:click={loadStatus}>refresh status</button>

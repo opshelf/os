@@ -20,6 +20,7 @@ from perpetual_os1_server.core.logging_config import configure_logging, get_logg
 from perpetual_os1_server.core.robot import init_robot_worker, stop_robot_worker
 from perpetual_os1_server.core.sizes import init_file_sizes, migrate_if_needed
 from perpetual_os1_server.core.storage import StorageService
+from perpetual_os1_server.core.camera import init_tool_camera_manager
 from perpetual_os1_server.database.base import Base, engine, get_database_url
 from perpetual_os1_server.database.session import AsyncSessionLocal
 from perpetual_os1_server.middleware.audit import AuditMiddleware
@@ -171,6 +172,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 			sentry_sdk.capture_exception(e)
 
 	init_file_sizes()
+
+	if settings.tool_camera.enabled is True and settings.tool_camera.rtsp_url != "":
+		try:
+			await init_tool_camera_manager(settings.tool_camera.rtsp_url)
+			logger.info("tool_camera_initialized", rtsp_url=settings.tool_camera.rtsp_url)
+		except Exception as e:
+			logger.error("tool_camera_initialization_failed", error=str(e), exc_info=True)
 
 	async def get_storage_session() -> AsyncGenerator[StorageService, None]:
 		async with AsyncSessionLocal() as session:

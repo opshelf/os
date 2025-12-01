@@ -9,40 +9,31 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 
 from perpetual_os1_server.core.camera import (
-	get_camera_manager,
-	start_camera_stream,
-	stop_camera_stream,
+	CameraManager,
+	get_camera_manager_by_id,
+	get_all_cameras_status,
+	start_camera_stream_by_id,
+	stop_camera_stream_by_id,
 )
-from perpetual_os1_server.settings import get_settings
 from .auth_deps import get_current_user_optional
 
 router = APIRouter(tags=["camera"])
 
 
-async def check_camera_enabled() -> None:
-	settings = get_settings()
+async def mjpeg_stream_generator_for_camera(
+	manager: CameraManager,
+	request: Request
+) -> AsyncGenerator[bytes, None]:
+	black_frame_cache = None
 
-	if settings.camera.enabled is False:
-		raise HTTPException(
-			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail="Camera is not enabled or configured",
-		)
-
-
-async def mjpeg_stream_generator(request: Request) -> AsyncGenerator[bytes, None]:
 	try:
-		await start_camera_stream()
-		manager = await get_camera_manager()
-
-		black_frame_cache = None
-
 		while True:
 			if await request.is_disconnected() is True:
 				break
 
 			if manager.calibration_complete.is_set() is False:
 				if black_frame_cache is None:
-					black = np.zeros((900, 1950, 3), dtype=np.uint8)
+					black = np.zeros((480, 640, 3), dtype=np.uint8)
 					_, buffer = cv2.imencode('.jpg', black, [cv2.IMWRITE_JPEG_QUALITY, 85])
 					black_frame_cache = buffer.tobytes()
 
@@ -58,7 +49,7 @@ async def mjpeg_stream_generator(request: Request) -> AsyncGenerator[bytes, None
 
 			if frame_bytes is None:
 				if black_frame_cache is None:
-					black = np.zeros((900, 1950, 3), dtype=np.uint8)
+					black = np.zeros((480, 640, 3), dtype=np.uint8)
 					_, buffer = cv2.imencode('.jpg', black, [cv2.IMWRITE_JPEG_QUALITY, 85])
 					black_frame_cache = buffer.tobytes()
 
@@ -79,46 +70,47 @@ async def mjpeg_stream_generator(request: Request) -> AsyncGenerator[bytes, None
 
 	except asyncio.CancelledError:
 		pass
-	finally:
-		await stop_camera_stream()
 
 
 @router.get("")
+async def list_cameras(
+	current_user: dict | None = Depends(get_current_user_optional),
+) -> dict:
+	cameras = get_all_cameras_status()
+
+	return {"cameras": cameras}
+
+
+@router.get("/{camera_id}")
 async def stream_camera(
+	camera_id: str,
 	request: Request,
 	current_user: dict | None = Depends(get_current_user_optional),
 ) -> StreamingResponse:
-	await check_camera_enabled()
+	manager = get_camera_manager_by_id(camera_id)
 
-	return StreamingResponse(
-		mjpeg_stream_generator(request),
-		media_type="multipart/x-mixed-replace; boundary=frame",
-	)
-
-
-@router.get("/status")
-async def get_camera_status(
-	current_user: dict | None = Depends(get_current_user_optional),
-) -> dict[str, str | int | bool]:
-	settings = get_settings()
-
-	if settings.camera.enabled is False:
-		return {
-			"enabled": False,
-			"message": "Camera is disabled in settings"
-		}
+	if manager is None:
+		raise HTTPException(
+			status_code=status.HTTP_404_NOT_FOUND,
+			detail=f"Camera '{camera_id}' not found",
+		)
 
 	try:
-		manager = await get_camera_manager()
-		return {
-			"enabled": True,
-			"running": manager.is_running,
-			"consumers": manager.consumer_count,
-			"target_fps": manager.target_fps,
-			"has_frame": manager.latest_frame is not None
-		}
-	except ValueError:
-		return {
-			"enabled": True,
-			"message": "Camera manager not initialized"
-		}
+		await start_camera_stream_by_id(camera_id)
+	except ValueError as e:
+		raise HTTPException(
+			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+			detail=str(e),
+		)
+
+	async def stream_with_cleanup() -> AsyncGenerator[bytes, None]:
+		try:
+			async for chunk in mjpeg_stream_generator_for_camera(manager, request):
+				yield chunk
+		finally:
+			await stop_camera_stream_by_id(camera_id)
+
+	return StreamingResponse(
+		stream_with_cleanup(),
+		media_type="multipart/x-mixed-replace; boundary=frame",
+	)

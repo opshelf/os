@@ -29,6 +29,11 @@ class CameraSettings(BaseModel):
     enabled: bool = False
 
 
+class ToolCameraSettings(BaseModel):
+    enabled: bool = False
+    rtsp_url: str = ""
+
+
 class NatsSettings(BaseModel):
     domain: str = "nats"
     port: int = 4222
@@ -61,6 +66,7 @@ class Settings(BaseModel):
     scale: ScaleSettings
     nats: NatsSettings
     camera: CameraSettings
+    tool_camera: ToolCameraSettings
     auth: AuthSettings
 
 
@@ -87,6 +93,8 @@ def get_settings() -> Settings:
         data["nats"] = {"domain": "nats", "port": 4222}
     if "camera" not in data:
         data["camera"] = {"enabled": False}
+    if "tool_camera" not in data:
+        data["tool_camera"] = {"enabled": False, "rtsp_url": ""}
     if "scale" not in data:
         data["scale"] = {"enabled": False}
     if "auth" not in data:
