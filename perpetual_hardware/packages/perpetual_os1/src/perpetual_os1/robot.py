@@ -175,8 +175,10 @@ class Robot:
         io_params = self._config.get("robot.io", {})
 
         # Robot Components
-        self._tool = Tool(motorcontroller=self._motorbus, params=tool_params)
-        self._io = IOBox(motorcontroller=self._motorbus, scalecontroller=self._scalebus, params=io_params)
+        from hardware.motor import CurtainSafety
+        self._curtain_safety = CurtainSafety()
+        self._tool = Tool(motorcontroller=self._motorbus, params=tool_params, safety=self._curtain_safety)
+        self._io = IOBox(motorcontroller=self._motorbus, scalecontroller=self._scalebus, params=io_params, safety=self._curtain_safety)
 
         # storage grid to store physical robot state
         if os.path.exists(STORAGE_PATH) is True:
@@ -279,6 +281,13 @@ class Robot:
     def register_curtain_listener(self, listener) -> None:
         if self._io:
             self._io.set_curtain_listener(listener)
+
+    async def pause_for_curtain(self) -> None:
+        self._curtain_safety.block()
+        await self.stop()
+
+    def resume_after_curtain(self) -> None:
+        self._curtain_safety.unblock()
 
     def get_curtain_state(self) -> Optional[bool]:
         if self._io:

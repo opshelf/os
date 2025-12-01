@@ -56,7 +56,7 @@ GANTRY_OUTER_TIMEOUT = 120.0
 TOOL_OUTER_TIMEOUT = 60.0
 
 class Tool:
-    def __init__(self, motorcontroller: Controller, params: c.Parameters):
+    def __init__(self, motorcontroller: Controller, params: c.Parameters, safety=None):
         self._motorcontroller = motorcontroller
         self._istatus = ToolItemStatus.EMPTY
         self._mstatus = ToolMotionStatus.IDLE
@@ -66,11 +66,11 @@ class Tool:
         self._fault_recovery_attempted = False
         self._logger = logging.getLogger(__name__)
 
-        self._mx = Motor(self._motorcontroller, self._params.motors.by_name("x_axis"))
-        self._my = Motor(self._motorcontroller, self._params.motors.by_name("y_axis"))
-        self._mg = Motor(self._motorcontroller, self._params.motors.by_name("z_axis"))
-        self._ms = Motor(self._motorcontroller, self._params.motors.by_name("stage"))
-        self._mr = Motor(self._motorcontroller, self._params.motors.by_name("rotate"))
+        self._mx = Motor(self._motorcontroller, self._params.motors.by_name("x_axis"), safety)
+        self._my = Motor(self._motorcontroller, self._params.motors.by_name("y_axis"), safety)
+        self._mg = Motor(self._motorcontroller, self._params.motors.by_name("z_axis"), safety)
+        self._ms = Motor(self._motorcontroller, self._params.motors.by_name("stage"), safety)
+        self._mr = Motor(self._motorcontroller, self._params.motors.by_name("rotate"), safety)
         self._gs = Servo(self._motorcontroller)
 
         self._cam = ToolCamera(self._params.poe_camera)

@@ -23,6 +23,7 @@ class IOBox:
                  motorcontroller: Controller,
                  scalecontroller: Controller, 
                  params: dict,
+                 safety=None,
                  ):
         self._scalecontroller = scalecontroller
         self._motorcontroller = motorcontroller
@@ -30,7 +31,8 @@ class IOBox:
         self._params = params
 
         self._md = Motor(controller = self._motorcontroller,
-                         params = self._params.motors.by_name("door"))
+                         params = self._params.motors.by_name("door"),
+                         safety = safety)
         self._scale = Scale(scalecontroller)
         self._scale_ready = False
         self._logger = logging.getLogger(__name__).getChild("IOBox")

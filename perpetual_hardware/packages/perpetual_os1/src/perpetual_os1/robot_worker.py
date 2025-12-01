@@ -599,5 +599,9 @@ class RobotWorker:
     def _on_curtain_change(self, state: Optional[bool]) -> None:
         # Fire-and-forget: publish status and curtain event when curtain changes.
         async def _handle() -> None:
+            if state:
+                await self._robot.pause_for_curtain()
+            else:
+                self._robot.resume_after_curtain()
             await self._publish_status()
         asyncio.create_task(_handle())
