@@ -26,6 +26,7 @@ async def test_list_cameras_with_io_camera(client: AsyncClient) -> None:
 	mock_manager.is_running = True
 	mock_manager.consumer_count = 2
 	mock_manager.latest_frame = b"fake_frame"
+	mock_manager.depth_enabled = False
 
 	with patch.dict(camera_registry, {"io": mock_manager}, clear=True):
 		response = await client.get("/api/camera")
@@ -36,7 +37,7 @@ async def test_list_cameras_with_io_camera(client: AsyncClient) -> None:
 
 	camera = data["cameras"][0]
 	assert camera["id"] == "io"
-	assert camera["type"] == "AFSCam"
+	assert camera["type"] == "IOCamera"
 	assert camera["running"] is True
 	assert camera["consumers"] == 2
 	assert camera["has_frame"] is True
@@ -70,6 +71,7 @@ async def test_list_cameras_multiple(client: AsyncClient) -> None:
 	mock_io.is_running = True
 	mock_io.consumer_count = 1
 	mock_io.latest_frame = b"frame"
+	mock_io.depth_enabled = False
 
 	mock_tool = MagicMock(spec=ToolCameraStreamManager)
 	mock_tool.is_running = True
@@ -116,6 +118,7 @@ async def test_camera_types_identified_correctly(client: AsyncClient) -> None:
 	io_manager.is_running = False
 	io_manager.consumer_count = 0
 	io_manager.latest_frame = None
+	io_manager.depth_enabled = False
 
 	tool_manager = MagicMock(spec=ToolCameraStreamManager)
 	tool_manager.is_running = False
@@ -132,7 +135,7 @@ async def test_camera_types_identified_correctly(client: AsyncClient) -> None:
 	tool_camera = next((c for c in data["cameras"] if c["id"] == "tool"), None)
 
 	assert io_camera is not None
-	assert io_camera["type"] == "AFSCam"
+	assert io_camera["type"] == "IOCamera"
 
 	assert tool_camera is not None
 	assert tool_camera["type"] == "ToolCamera"

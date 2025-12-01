@@ -21,7 +21,7 @@ from perpetual_os1_server.core.logging_config import configure_logging, get_logg
 from perpetual_os1_server.core.robot import init_robot_worker, stop_robot_worker
 from perpetual_os1_server.core.sizes import init_file_sizes, migrate_if_needed
 from perpetual_os1_server.core.storage import StorageService
-from perpetual_os1_server.core.camera import init_tool_camera_manager
+from perpetual_os1_server.core.camera import init_tool_camera_manager, init_camera_manager
 from perpetual_os1_server.settings import Settings
 from perpetual_os1_server.database.base import Base, engine, get_database_url
 from perpetual_os1_server.database.session import AsyncSessionLocal
@@ -138,6 +138,33 @@ def _get_tool_camera_url(settings: Settings) -> str | None:
 	return None
 
 
+def _get_io_camera_config() -> tuple[dict, dict | None] | None:
+	config_paths = [
+		Path(__file__).parent.parent.parent / "perpetual_os1" / "src" / "perpetual_os1" / "config.json",
+		Path("/app/perpetual_hardware/packages/perpetual_os1/src/perpetual_os1/config.json"),
+	]
+
+	for config_path in config_paths:
+		if config_path.exists() is False:
+			continue
+
+		try:
+			with open(config_path) as f:
+				config = json.load(f)
+
+			io_config = config.get("robot", {}).get("io", {})
+			usb_camera = io_config.get("usb_camera")
+			tof_camera = io_config.get("tof_camera")
+
+			if usb_camera is not None:
+				logger.info("io_camera_config_found", config_path=str(config_path))
+				return (usb_camera, tof_camera)
+		except Exception as e:
+			logger.warning("failed_to_read_io_camera_config", config_path=str(config_path), error=str(e))
+
+	return None
+
+
 async def _seed_auth_if_requested() -> None:
 	from sqlalchemy import select
 	from perpetual_os1_server.database.models import User
@@ -210,6 +237,26 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 			logger.info("tool_camera_initialized", rtsp_url=tool_camera_url)
 		except Exception as e:
 			logger.error("tool_camera_initialization_failed", error=str(e), exc_info=True)
+
+	if settings.camera.enabled is True:
+		io_camera_config = _get_io_camera_config()
+		if io_camera_config is not None:
+			try:
+				from hardware.iocam import AFSCam
+				from perpetual_os1.common import UsbCamera, TofCamera
+
+				usb_config, tof_config = io_camera_config
+				usb_params = UsbCamera(**usb_config)
+				tof_params = TofCamera(**tof_config) if tof_config is not None and settings.camera.depth_enabled is True else None
+
+				io_camera = AFSCam(usb_params, tof_params)
+				await io_camera.start(enable_tof=settings.camera.depth_enabled)
+				await init_camera_manager(io_camera, depth_enabled=settings.camera.depth_enabled)
+				logger.info("io_camera_initialized", depth_enabled=settings.camera.depth_enabled)
+			except Exception as e:
+				logger.error("io_camera_initialization_failed", error=str(e), exc_info=True)
+		else:
+			logger.warning("io_camera_config_not_found")
 
 	async def get_storage_session() -> AsyncGenerator[StorageService, None]:
 		async with AsyncSessionLocal() as session:
