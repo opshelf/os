@@ -98,16 +98,8 @@
 							<td>{selectedCamera.type}</td>
 						</tr>
 						<tr>
-							<td>running</td>
-							<td>{selectedCamera.running === true ? 'yes' : 'no'}</td>
-						</tr>
-						<tr>
 							<td>consumers</td>
 							<td>{selectedCamera.consumers}</td>
-						</tr>
-						<tr>
-							<td>has frame</td>
-							<td>{selectedCamera.has_frame === true ? 'yes' : 'no'}</td>
 						</tr>
 					{/if}
 				{/if}
@@ -117,7 +109,9 @@
 		<button type="button" on:click={loadCameras}>refresh</button>
 
 		{#if streamUrl !== '' && streamError === false}
-			<img src={streamUrl} alt="camera feed" on:error={didStreamError} on:load={didStreamLoad} />
+			<div class="stream-container">
+				<img src={streamUrl} alt="camera feed" on:error={didStreamError} on:load={didStreamLoad} />
+			</div>
 		{/if}
 
 		{#if streamError === true}
@@ -127,3 +121,15 @@
 		{/if}
 	{/if}
 {/if}
+
+<style>
+	.stream-container {
+		display: block;
+		margin-top: 1rem;
+	}
+
+	.stream-container img {
+		max-width: 100%;
+		display: block;
+	}
+</style>
