@@ -10,6 +10,7 @@ RUN apt-get update && apt-get -y install --no-install-recommends \
 	libglib2.0-0 \
 	build-essential \
 	gcc \
+	swig \
 	ca-certificates \
 	curl \
 	wget \
