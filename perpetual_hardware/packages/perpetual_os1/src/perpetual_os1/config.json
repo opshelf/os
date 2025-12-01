@@ -281,7 +281,8 @@
         "confidence_min": 0.9,
         "depth_unit": "mm",
         "calibration_status": "uncalibrated"
-      }
+      },
+      "curtain_enabled": true
     },
     "bus": {
       "motor": {
