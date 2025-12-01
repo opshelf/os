@@ -297,6 +297,7 @@ class IOBlock(BaseModel):
     motors: Motors
     usb_camera: UsbCamera
     tof_camera: TofCamera
+    curtain_enabled: bool = True
 
 
 class GridConfig(BaseModel):

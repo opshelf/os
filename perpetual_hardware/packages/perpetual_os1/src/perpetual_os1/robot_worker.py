@@ -125,6 +125,7 @@ def _transform_worker_status_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     state_payload = robot_status_payload.get("state") or {"current_cell": None}
     storage_payload = robot_status_payload.get("storage") or {"left_module": [], "right_module": []}
+    curtain_blocked = robot_status_payload.get("curtain_blocked")
     storage_payload = _normalize_storage_payload(storage_payload)
 
     transformed["robot_status"] = {
@@ -139,6 +140,7 @@ def _transform_worker_status_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
             "current_cell": state_payload.get("current_cell"),
         },
         "storage": storage_payload,
+        "curtain_blocked": curtain_blocked,
     }
 
     errors: List[Dict[str, Any]] = []
@@ -199,6 +201,7 @@ class RobotWorker:
         self._barcode: Optional[BarcodeService] = None
         self._barcode_task: Optional[asyncio.Task] = None
         self._latest_status_payload: Optional[str] = None
+        self._last_published_curtain: Optional[bool] = None
 
     def get_client(self) -> RobotClient:
         return self._client
@@ -290,6 +293,10 @@ class RobotWorker:
                 logging.warning("Barcode service disabled: %s", exc)
                 self._barcode = None
                 self._barcode_task = None
+
+        self._robot.register_curtain_listener(self._on_curtain_change)
+
+        # Curtain change publishing is driven by Robot.get_status() reads when status is requested.
 
     async def clear_commands(self) -> None:
         if self._js:
@@ -417,6 +424,7 @@ class RobotWorker:
             self._nats_config.status_queue,
             payload_json.encode(),
         )
+        await self._maybe_publish_curtain_event(status_payload.get("robot_status", {}).get("curtain_blocked"))
 
     async def process_commands(self) -> None:
         while self._running:
@@ -569,3 +577,27 @@ class RobotWorker:
             sentry_sdk.flush(timeout=2.0)
         except Exception:
             pass
+
+    async def _maybe_publish_curtain_event(self, state: Optional[bool]) -> None:
+        if state == self._last_published_curtain:
+            return
+        self._last_published_curtain = state
+        try:
+            payload = json.dumps(
+                {
+                    "kind": "curtain_state",
+                    "payload": {
+                        "blocked": state,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    },
+                }
+            ).encode()
+            await self._nc.publish(self._nats_config.event_queue, payload)
+        except Exception as err:  # pragma: no cover - observability
+            logging.warning("Failed to publish curtain event: %s", err)
+
+    def _on_curtain_change(self, state: Optional[bool]) -> None:
+        # Fire-and-forget: publish status and curtain event when curtain changes.
+        async def _handle() -> None:
+            await self._publish_status()
+        asyncio.create_task(_handle())

@@ -2,6 +2,7 @@ from typing import Optional
 
 from hardware.controller import SharedModbusController as Controller
 from hardware.motor import Motor
+from hardware.curtain import CurtainSensor, CurtainMonitor
 from perpetual_os1.exceptions import (
     IOBoxError, MotorError
 )
@@ -33,6 +34,10 @@ class IOBox:
         self._scale = Scale(scalecontroller)
         self._scale_ready = False
         self._logger = logging.getLogger(__name__).getChild("IOBox")
+        self._curtain_sensor: Optional[CurtainSensor] = None
+        self._curtain_monitor: Optional[CurtainMonitor] = None
+        self._curtain_state: Optional[bool] = None
+        self._curtain_listener = None
 
 
     async def configure(self):
@@ -52,7 +57,27 @@ class IOBox:
             self._status = IOBoxStatus.ERROR
             raise IOBoxError(f"IOBox configuration failed: {str(e)}") from e
 
-        #curtain config
+        await self._configure_curtain()
+
+    async def _configure_curtain(self) -> None:
+        if not getattr(self._params, "curtain_enabled", True):
+            self._logger.info("Curtain sensor disabled via config")
+            return
+
+        pin = 2
+        poll_interval = 0.01
+
+        self._curtain_sensor = CurtainSensor(pin=pin)
+        self._curtain_monitor = CurtainMonitor(
+            self._curtain_sensor,
+            poll_interval=poll_interval,
+            on_change=self._handle_curtain_change,
+        )
+        await self._curtain_monitor.start()
+        self._logger.info(
+            "Curtain monitor started",
+            extra={"pin": pin, "poll_interval": poll_interval},
+        )
 
     async def _ensure_scale_ready(self) -> None:
         """Ensure the scale interface is configured before reading."""
@@ -137,6 +162,20 @@ class IOBox:
 
     # curtain worker?
 
+    async def _handle_curtain_change(self, state: Optional[bool]) -> None:
+        self._curtain_state = state
+        if self._curtain_listener:
+            try:
+                self._curtain_listener(state)
+            except Exception as exc:
+                self._logger.warning("Curtain listener failed: %s", exc)
+
+    def get_curtain_state(self) -> Optional[bool]:
+        return self._curtain_state
+
+    def set_curtain_listener(self, listener) -> None:
+        self._curtain_listener = listener
+
     # shutdown/teardown
     async def stop(self) -> None:
         """
@@ -152,6 +191,18 @@ class IOBox:
                 await self._md.stop()
             except Exception as e:
                 errors.append(f"Door motor stop failed: {str(e)}")
+
+        if self._curtain_monitor is not None:
+            try:
+                await self._curtain_monitor.stop()
+            except Exception as e:
+                errors.append(f"Curtain monitor stop failed: {str(e)}")
+
+        if self._curtain_sensor is not None:
+            try:
+                self._curtain_sensor.cleanup()
+            except Exception:
+                pass
         
         if errors:
             self._status = IOBoxStatus.ERROR

@@ -145,6 +145,7 @@ class RobotStatus(BaseModel):
     tool: ToolAxisStatus
     state: RobotState
     storage: StorageGrid
+    curtain_blocked: Optional[bool] = None
 
 RobotResponse = Union[RobotCommandSuccessful, RobotCommandError, RobotBarcodeResponse]
 
@@ -274,6 +275,15 @@ class Robot:
             await self._motorbus.close()
         if self._scalebus:
             await self._scalebus.close()
+
+    def register_curtain_listener(self, listener) -> None:
+        if self._io:
+            self._io.set_curtain_listener(listener)
+
+    def get_curtain_state(self) -> Optional[bool]:
+        if self._io:
+            return self._io.get_curtain_state()
+        return None
 
     async def print_random_barcode(
         self,
@@ -683,6 +693,7 @@ class Robot:
             tool=tool_status,
             state=state,
             storage=self._grid,
+            curtain_blocked=self.get_curtain_state(),
         )
         self._status = status
         return status

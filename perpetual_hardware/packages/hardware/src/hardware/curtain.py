@@ -1,71 +1,83 @@
 from __future__ import annotations
+import asyncio
+import logging
 from typing import Optional
 
-try:
-    import RPi.GPIO as GPIO  # type: ignore[import]
-except ModuleNotFoundError as import_error:
-    GPIO = None  # type: ignore[assignment]
-    _GPIO_IMPORT_ERROR = import_error
-else:
-    _GPIO_IMPORT_ERROR = None
-    GPIO.setmode(GPIO.BCM)
-    GPIO.setwarnings(False)
+import RPi.GPIO as GPIO  # type: ignore[import]
+
+GPIO.setmode(GPIO.BCM)
+GPIO.setwarnings(False)
+
+logger = logging.getLogger(__name__).getChild("curtain")
 
 
-def _ensure_gpio() -> None:
-    if GPIO is None:
-        raise RuntimeError(
-            "RPi.GPIO is not available. This module must run on a Raspberry Pi "
-            "with the RPi.GPIO package installed."
-        ) from _GPIO_IMPORT_ERROR
-
-
-def configure_curtain_input(pin: int, *, pull: Optional[str] = "down") -> None:
+class CurtainSensor:
     """
-    Configure the GPIO pin that reports the curtain sensor state.
+    Lightweight wrapper around the curtain GPIO input.
 
-    Args:
-        pin: BCM pin number connected to the curtain sensor.
-        pull: One of 'up', 'down', or 'off'. Defaults to 'down'.
+    Raises on construction if GPIO is unavailable.
     """
-    _ensure_gpio()
 
-    pull_options = {
-        None: GPIO.PUD_OFF,
-        "off": GPIO.PUD_OFF,
-        "down": GPIO.PUD_DOWN,
-        "up": GPIO.PUD_UP,
-    }
+    def __init__(
+        self,
+        *,
+        pin: int = 2,
+    ) -> None:
+        self.pin = pin
+        GPIO.setup(pin, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
+        self._last_state: Optional[bool] = None
 
-    if pull not in pull_options:
-        raise ValueError(f"Invalid pull option '{pull}'. Use 'up', 'down', or 'off'.")
+    def read(self) -> bool:
+        raw = GPIO.input(self.pin) == GPIO.HIGH  # type: ignore[arg-type]
+        self._last_state = raw
+        return raw
 
-    GPIO.setup(pin, GPIO.IN, pull_up_down=pull_options[pull])
-
-
-def read_curtain_state(pin: int) -> bool:
-    """
-    Read the current curtain sensor state.
-
-    Args:
-        pin: BCM pin number previously configured with configure_curtain_input.
-
-    Returns:
-        True if the pin reads HIGH, False otherwise.
-    """
-    _ensure_gpio()
-    return GPIO.input(pin) == GPIO.HIGH
+    def cleanup(self) -> None:
+        GPIO.cleanup(self.pin)  # type: ignore[arg-type]
 
 
-def cleanup_curtain_pin(pin: Optional[int] = None) -> None:
-    """
-    Release GPIO resources associated with the curtain sensor.
 
-    Args:
-        pin: Optional BCM pin to clean up. If omitted, all pins are reset.
-    """
-    _ensure_gpio()
-    if pin is None:
-        GPIO.cleanup()
-    else:
-        GPIO.cleanup(pin)
+class CurtainMonitor:
+    """Polls a CurtainSensor and invokes a sync callback on state change."""
+
+    def __init__(
+        self,
+        sensor: CurtainSensor,
+        *,
+        poll_interval: float = 0.01,
+        on_change,
+    ) -> None:
+        self._sensor = sensor
+        self._poll_interval = poll_interval
+        self._on_change = on_change
+        self._task: Optional[asyncio.Task] = None
+        self._last: Optional[bool] = None
+
+    async def start(self) -> None:
+        if self._task:
+            return
+        self._last = self._sensor.read()
+        self._on_change(self._last)
+        self._task = asyncio.create_task(self._run(), name="curtain-monitor")
+
+    async def stop(self) -> None:
+        if self._task:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+            self._task = None
+
+    async def _run(self) -> None:
+        try:
+            while True:
+                state = self._sensor.read()
+                if state != self._last:
+                    self._last = state
+                    self._on_change(state)
+                await asyncio.sleep(self._poll_interval)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # pragma: no cover - hardware dependent
+            logger.warning("Curtain monitor crashed: %s", exc)
