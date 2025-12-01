@@ -8,7 +8,6 @@ import numpy as np
 from hardware.iocam import AFSCam
 
 from perpetual_os1_server.core.logging_config import get_logger
-from perpetual_os1_server.settings import get_settings
 
 logger = get_logger(__name__)
 
@@ -16,8 +15,9 @@ CameraManager = Union["CameraStreamManager", "ToolCameraStreamManager"]
 camera_registry: dict[str, CameraManager] = {}
 
 class CameraStreamManager:
-	def __init__(self, camera: AFSCam):
-		self.camera = camera
+	def __init__(self, camera: AFSCam, depth_enabled: bool = False):
+		self.camera: Optional[AFSCam] = camera
+		self.depth_enabled = depth_enabled
 		self.is_running = False
 		self.consumer_count = 0
 		self.latest_frame: Optional[bytes] = None
@@ -73,12 +73,15 @@ class CameraStreamManager:
 
 				loop = asyncio.get_event_loop()
 
-				def sync_capture_and_process() -> np.ndarray | None:
-					frame_agg = self.camera.measure_sync(n_frames=10)
-					draw: np.ndarray | None = frame_agg.get("annotated_frame")
-					return draw
+				if self.depth_enabled is True:
+					def sync_capture_and_process() -> np.ndarray | None:
+						frame_agg = self.camera.measure_sync(n_frames=10)
+						draw: np.ndarray | None = frame_agg.get("annotated_frame")
+						return draw
 
-				frame = await loop.run_in_executor(None, sync_capture_and_process)
+					frame = await loop.run_in_executor(None, sync_capture_and_process)
+				else:
+					frame = await loop.run_in_executor(None, self.camera.capture_raw)
 
 				if frame is None:
 					await asyncio.sleep(1.0)
@@ -92,16 +95,13 @@ class CameraStreamManager:
 
 			except RuntimeError as e:
 				if "bad cam" in str(e):
-					print("connection failed")
 					logger.error("camera_connection_failed", error=str(e))
 					await asyncio.sleep(5.0)
 				else:
-					print("runtime error")
 					logger.error("camera_runtime_error", error=str(e), exc_info=True)
 					await asyncio.sleep(1.0)
 				continue
 			except Exception as e:
-				print("frame processing error")
 				logger.error("camera_frame_processing_error", error=str(e), error_type=type(e).__name__, exc_info=True)
 				await asyncio.sleep(1.0)
 				continue
@@ -229,17 +229,12 @@ class ToolCameraStreamManager:
 camera_manager: Optional[CameraStreamManager] = None
 tool_camera_manager: Optional[ToolCameraStreamManager] = None
 
-async def init_camera_manager(camera: AFSCam) -> None:
+async def init_camera_manager(camera: AFSCam, depth_enabled: bool = False) -> None:
 	global camera_manager, camera_registry
 
-	settings = get_settings()
-
-	if settings.camera.enabled is False:
-		return
-
-	camera_manager = CameraStreamManager(camera=camera)
-	await camera_manager.start()
+	camera_manager = CameraStreamManager(camera=camera, depth_enabled=depth_enabled)
 	camera_registry["io"] = camera_manager
+	logger.info("io_camera_registered", depth_enabled=depth_enabled)
 
 
 async def init_tool_camera_manager(rtsp_url: str) -> None:
@@ -314,7 +309,11 @@ def get_all_cameras_status() -> list[dict]:
 	cameras = []
 
 	for camera_id, manager in camera_registry.items():
-		camera_type = "AFSCam" if isinstance(manager, CameraStreamManager) else "ToolCamera"
+		if isinstance(manager, CameraStreamManager):
+			camera_type = "IOCamera (depth)" if manager.depth_enabled is True else "IOCamera"
+		else:
+			camera_type = "ToolCamera"
+
 		cameras.append({
 			"id": camera_id,
 			"type": camera_type,

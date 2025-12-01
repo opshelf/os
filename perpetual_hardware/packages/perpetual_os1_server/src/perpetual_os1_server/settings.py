@@ -27,6 +27,7 @@ class RobotSettings(BaseModel):
 
 class CameraSettings(BaseModel):
     enabled: bool = False
+    depth_enabled: bool = False
 
 
 class ToolCameraSettings(BaseModel):
@@ -92,7 +93,7 @@ def get_settings() -> Settings:
     if "nats" not in data:
         data["nats"] = {"domain": "nats", "port": 4222}
     if "camera" not in data:
-        data["camera"] = {"enabled": False}
+        data["camera"] = {"enabled": False, "depth_enabled": False}
     if "tool_camera" not in data:
         data["tool_camera"] = {"enabled": False, "rtsp_url": ""}
     if "scale" not in data:

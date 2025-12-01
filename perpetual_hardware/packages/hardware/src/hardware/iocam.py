@@ -63,17 +63,22 @@ class AFSCam:
     - await stop()
     """
 
-    def __init__(self, usb_params, tof_params) -> None:
-        # TOF parameters
-        self.preferred_tof_port = getattr(tof_params, "csi_port", None)
-        self.max_distance_mm = tof_params.max_distance_mm
+    def __init__(self, usb_params, tof_params=None) -> None:
+        self._tof_params = tof_params
 
-        # Calibration & geometry
+        if tof_params is not None:
+            self.preferred_tof_port = getattr(tof_params, "csi_port", None)
+            self.max_distance_mm = tof_params.max_distance_mm
+            self.confidence_min = tof_params.confidence_min
+        else:
+            self.preferred_tof_port = None
+            self.max_distance_mm = 620
+            self.confidence_min = 0
+
         self.square_mm = usb_params.square_mm
         self.fx_px = usb_params.fx_px
         self.fy_px = usb_params.fy_px
         self.px_per_mm = usb_params.px_per_mm
-        self.confidence_min = tof_params.confidence_min
 
         # USB camera configuration
         self._usb_index = usb_params.usb_index
@@ -193,10 +198,14 @@ class AFSCam:
                 raise CameraError(f"USB camera initialization failed: {e}") from e
             raise
                 
-    async def start(self) -> None:
+    async def start(self, enable_tof: bool = True) -> None:
         """
-        Initialize and start both TOF and USB cameras.
-        
+        Initialize and start cameras.
+
+        Args:
+            enable_tof: If True, initialize TOF camera for depth measurement.
+                       If False, only USB camera is initialized (monitoring mode).
+
         Raises:
             TOFError: If TOF camera initialization or configuration fails
             CameraConnectionError: If USB camera connection fails
@@ -204,15 +213,12 @@ class AFSCam:
             CameraError: If general camera initialization fails
         """
         try:
-            # Initialize USB camera
             self._init_usb()
 
-            # Initialize TOF camera
-            self._init_tof()
-            
-            # # # Start background TOF loop
-            self._stop_evt.clear()
-            self._loop_task = asyncio.create_task(self._tof_loop())
+            if enable_tof is True and self._tof_params is not None:
+                self._init_tof()
+                self._stop_evt.clear()
+                self._loop_task = asyncio.create_task(self._tof_loop())
             
         except Exception as e:
             self._cleanup()
@@ -282,6 +288,16 @@ class AFSCam:
 
     # -------------------- Public API --------------------
 
+    def capture_raw(self) -> Optional[np.ndarray]:
+        """Capture a single raw frame from USB camera without any processing."""
+        if self._usb is None:
+            return None
+
+        ok, frame = self._usb.read()
+        if ok is True and frame is not None:
+            return frame
+
+        return None
 
     def measure_sync(
         self,
