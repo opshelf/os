@@ -97,8 +97,9 @@ async def process_robot_event(payload: dict[str, Any]) -> None:
                         metadata={"name": str(upca)},
                         sync_to_json=False,
                     )
-                elif normalized_weight is not None and existing_item.weight is None:
-                    await storage_service.update_item(str(upca), weight=normalized_weight)
+                elif normalized_weight is not None:
+                    if existing_item.weight != normalized_weight:
+                        await storage_service.update_item(str(upca), weight=normalized_weight)
 
                 existing_locations = await storage_service.get_item_locations(str(upca))
                 already_assigned = any(

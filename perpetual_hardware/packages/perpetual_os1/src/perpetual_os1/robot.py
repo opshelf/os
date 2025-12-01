@@ -16,7 +16,6 @@ from perpetual_os1.robot_state import RobotStateManager
 
 import json
 import logging
-import traceback
 from pathlib import Path
 from typing import Any, Dict, Optional, Union, Literal, Annotated, List, TYPE_CHECKING
 from pydantic import BaseModel, Field
