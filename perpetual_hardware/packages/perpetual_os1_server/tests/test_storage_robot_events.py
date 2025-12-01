@@ -120,3 +120,36 @@ async def test_process_robot_event_creates_item_when_missing() -> None:
         )
         location = location_result.scalar_one_or_none()
         assert location is not None
+
+
+@pytest.mark.anyio
+async def test_process_robot_event_updates_weight_from_scale() -> None:
+    upca = "555"
+
+    async with AsyncSessionLocal() as session:
+        storage = StorageService(session)
+        await storage.create_item(
+            upca=upca,
+            name="Has Weight",
+            dimensions={"width": 1.0, "height": 1.0, "length": 1.0},
+            weight=50.0,
+            metadata={"name": "Has Weight"},
+            sync_to_json=False,
+        )
+
+    payload = {
+        "command": "store_item",
+        "message": "success",
+        "location": {"side": "left_module", "shelf_idx": 0, "cell_idx": 0},
+        "upca": upca,
+        "weight": 152.0,
+    }
+
+    await process_robot_event(payload)
+
+    async with AsyncSessionLocal() as session:
+        item_result = await session.execute(select(Item).where(Item.upca == upca))
+        item = item_result.scalar_one_or_none()
+
+        assert item is not None
+        assert item.weight == 152.0

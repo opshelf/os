@@ -7,8 +7,6 @@ from perpetual_os1.exceptions import (
 )
 
 from hardware.scale import Scale
-
-import asyncio
 from enum import Enum
 import logging
 import sentry_sdk

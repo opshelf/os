@@ -127,7 +127,7 @@ def patch_iocam(monkeypatch: pytest.MonkeyPatch) -> None:
         depth = fake_ac.DepthData()
         self._update_depth_buffers(depth.depth_data, depth.confidence_data)
 
-    def _fake_init_usb(self) -> None:
+    def _fake_init_usb(self, use_auto_exposure: bool = False, *_, **__kwargs: Any) -> None:
         self._usb = cv2.VideoCapture(self._usb_index)
         if not self._usb.isOpened():
             raise CameraConnectionError("Failed to open mock USB camera")
