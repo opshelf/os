@@ -158,7 +158,7 @@ def _build_item_payload(item: Item, locations: List[ItemLocation], current_user:
         upca=str(item.upca),
         name=str(item.name),
         dimensions=cast(Dict[str, float], item.dimensions),
-        weight=float(item.weight) if item.weight else None,
+        weight=float(item.weight) if item.weight is not None else None,
         metadata=cast(Dict[str, Any], item.item_metadata) or {},
         access_level_id=item.access_level_id,
         locations=_serialize_locations(locations),

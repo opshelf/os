@@ -58,6 +58,7 @@ async def process_robot_event(payload: dict[str, Any]) -> None:
 
         location = payload.get("location") or {}
         upca = payload.get("upca")
+        weight = payload.get("weight")
 
         side = location.get("side")
         shelf_idx = location.get("shelf_idx")
@@ -74,6 +75,15 @@ async def process_robot_event(payload: dict[str, Any]) -> None:
             logging.warning("Skipping store_item event with non-integer location: %s", payload)
             return
 
+        normalized_weight = None
+        if weight is not None:
+            try:
+                normalized_weight = float(weight)
+                if normalized_weight <= 0:
+                    normalized_weight = None
+            except (TypeError, ValueError):
+                normalized_weight = None
+
         async with AsyncSessionLocal() as session:
             storage_service = StorageService(session)
             try:
@@ -83,10 +93,12 @@ async def process_robot_event(payload: dict[str, Any]) -> None:
                         upca=str(upca),
                         name=str(upca),
                         dimensions=None,
-                        weight=None,
+                        weight=normalized_weight,
                         metadata={"name": str(upca)},
                         sync_to_json=False,
                     )
+                elif normalized_weight is not None and existing_item.weight is None:
+                    await storage_service.update_item(str(upca), weight=normalized_weight)
 
                 existing_locations = await storage_service.get_item_locations(str(upca))
                 already_assigned = any(

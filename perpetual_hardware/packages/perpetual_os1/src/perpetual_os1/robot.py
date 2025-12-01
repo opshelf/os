@@ -83,6 +83,7 @@ class RobotCommandSuccessful(BaseModel):
     message: Literal["success"] = "success"
     location: Optional[StorageModuleCellLocation] = None
     upca: Optional[str] = None
+    weight: Optional[float] = None
 
 
 class RobotCommandError(BaseModel):
@@ -609,7 +610,7 @@ class Robot:
             # Update storage grid
             self._grid.store_item(location, item)
             self._grid.save()
-            return RobotCommandSuccessful(command=command_name, location=location, upca=resolved_upca)
+            return RobotCommandSuccessful(command=command_name, location=location, upca=resolved_upca, weight=weight)
         except Exception as exc:
             self._logger.exception("Store command failed for %s", resolved_item_name)
             sentry_sdk.capture_exception(exc)
