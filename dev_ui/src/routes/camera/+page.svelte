@@ -77,33 +77,39 @@
 				</tr>
 			</thead>
 			<tbody>
-				<tr>
-					<td>camera</td>
-					<td>
-						<select value={selectedCameraId} on:change={didSelectCamera}>
-							{#each cameras as camera}
-								<option value={camera.id}>{camera.id} ({camera.type})</option>
-							{/each}
-						</select>
-					</td>
-				</tr>
-				{#if selectedCamera !== null}
+				{#if cameras.length === 0}
 					<tr>
-						<td>type</td>
-						<td>{selectedCamera.type}</td>
+						<td colspan="2">no cameras available</td>
 					</tr>
+				{:else}
 					<tr>
-						<td>running</td>
-						<td>{selectedCamera.running === true ? 'yes' : 'no'}</td>
+						<td>camera</td>
+						<td>
+							<select value={selectedCameraId} on:change={didSelectCamera}>
+								{#each cameras as camera}
+									<option value={camera.id}>{camera.id} ({camera.type})</option>
+								{/each}
+							</select>
+						</td>
 					</tr>
-					<tr>
-						<td>consumers</td>
-						<td>{selectedCamera.consumers}</td>
-					</tr>
-					<tr>
-						<td>has frame</td>
-						<td>{selectedCamera.has_frame === true ? 'yes' : 'no'}</td>
-					</tr>
+					{#if selectedCamera !== null}
+						<tr>
+							<td>type</td>
+							<td>{selectedCamera.type}</td>
+						</tr>
+						<tr>
+							<td>running</td>
+							<td>{selectedCamera.running === true ? 'yes' : 'no'}</td>
+						</tr>
+						<tr>
+							<td>consumers</td>
+							<td>{selectedCamera.consumers}</td>
+						</tr>
+						<tr>
+							<td>has frame</td>
+							<td>{selectedCamera.has_frame === true ? 'yes' : 'no'}</td>
+						</tr>
+					{/if}
 				{/if}
 			</tbody>
 		</table>
@@ -118,10 +124,6 @@
 			<ErrorMessage
 				message="unable to display the camera stream. verify the camera is running."
 			/>
-		{/if}
-
-		{#if cameras.length === 0}
-			<p>no cameras available</p>
 		{/if}
 	{/if}
 {/if}
