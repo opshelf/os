@@ -5,7 +5,7 @@ description = "Add your description here"
 requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.10.0",
-    "RPi.GPIO>=0.7.1",
+    "rpi-lgpio",
 ]
 
 [build-system]
