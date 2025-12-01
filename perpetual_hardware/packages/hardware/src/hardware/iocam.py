@@ -163,7 +163,7 @@ class AFSCam:
                 raise TOFError(f"TOF initialization failed: {str(e)}") from e
             raise
 
-    def _init_usb(self) -> None:
+    def _init_usb(self, use_auto_exposure: bool = False) -> None:
         """Initialize USB camera (auto-detect Innomaker U20CAM)."""
         try:
             # Auto-detect Innomaker camera
@@ -182,8 +182,10 @@ class AFSCam:
                 if not self._usb.set(cv2.CAP_PROP_FOURCC, fourcc):
                     raise CameraConfigError(f"Failed to set FOURCC to {self._usb_fourcc}")
 
-            # Configure exposure if specified
-            if self._usb_exposure is not None:
+            # Configure exposure
+            if use_auto_exposure is True:
+                self._usb.set(cv2.CAP_PROP_AUTO_EXPOSURE, 3)
+            elif self._usb_exposure is not None:
                 if not self._usb.set(cv2.CAP_PROP_EXPOSURE, float(self._usb_exposure)):
                     raise CameraConfigError(f"Failed to set exposure {self._usb_exposure}")
 
@@ -204,7 +206,7 @@ class AFSCam:
 
         Args:
             enable_tof: If True, initialize TOF camera for depth measurement.
-                       If False, only USB camera is initialized (monitoring mode).
+                       If False, only USB camera is initialized (monitoring mode with auto-exposure).
 
         Raises:
             TOFError: If TOF camera initialization or configuration fails
@@ -213,13 +215,14 @@ class AFSCam:
             CameraError: If general camera initialization fails
         """
         try:
-            self._init_usb()
+            use_auto_exposure = enable_tof is False
+            self._init_usb(use_auto_exposure=use_auto_exposure)
 
             if enable_tof is True and self._tof_params is not None:
                 self._init_tof()
                 self._stop_evt.clear()
                 self._loop_task = asyncio.create_task(self._tof_loop())
-            
+
         except Exception as e:
             self._cleanup()
             if not isinstance(e, (TOFError, CameraError)):
