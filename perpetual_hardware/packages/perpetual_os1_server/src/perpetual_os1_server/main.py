@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -21,6 +22,7 @@ from perpetual_os1_server.core.robot import init_robot_worker, stop_robot_worker
 from perpetual_os1_server.core.sizes import init_file_sizes, migrate_if_needed
 from perpetual_os1_server.core.storage import StorageService
 from perpetual_os1_server.core.camera import init_tool_camera_manager
+from perpetual_os1_server.settings import Settings
 from perpetual_os1_server.database.base import Base, engine, get_database_url
 from perpetual_os1_server.database.session import AsyncSessionLocal
 from perpetual_os1_server.middleware.audit import AuditMiddleware
@@ -108,6 +110,34 @@ def _run_migrations() -> None:
 		logger.warning("continuing_without_migrations")
 
 
+def _get_tool_camera_url(settings: Settings) -> str | None:
+	if settings.tool_camera.enabled is True and settings.tool_camera.rtsp_url != "":
+		return settings.tool_camera.rtsp_url
+
+	config_paths = [
+		Path(__file__).parent.parent.parent / "perpetual_os1" / "src" / "perpetual_os1" / "config.json",
+		Path("/app/perpetual_hardware/packages/perpetual_os1/src/perpetual_os1/config.json"),
+	]
+
+	for config_path in config_paths:
+		if config_path.exists() is False:
+			continue
+
+		try:
+			with open(config_path) as f:
+				config = json.load(f)
+
+			poe_camera = config.get("robot", {}).get("tool", {}).get("poe_camera", {})
+			url = poe_camera.get("url") or poe_camera.get("stream_uri")
+			if url is not None and url != "":
+				logger.info("tool_camera_url_from_config", config_path=str(config_path), url=url)
+				return str(url)
+		except Exception as e:
+			logger.warning("failed_to_read_config", config_path=str(config_path), error=str(e))
+
+	return None
+
+
 async def _seed_auth_if_requested() -> None:
 	from sqlalchemy import select
 	from perpetual_os1_server.database.models import User
@@ -173,10 +203,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 	init_file_sizes()
 
-	if settings.tool_camera.enabled is True and settings.tool_camera.rtsp_url != "":
+	tool_camera_url = _get_tool_camera_url(settings)
+	if tool_camera_url is not None and tool_camera_url != "":
 		try:
-			await init_tool_camera_manager(settings.tool_camera.rtsp_url)
-			logger.info("tool_camera_initialized", rtsp_url=settings.tool_camera.rtsp_url)
+			await init_tool_camera_manager(tool_camera_url)
+			logger.info("tool_camera_initialized", rtsp_url=tool_camera_url)
 		except Exception as e:
 			logger.error("tool_camera_initialization_failed", error=str(e), exc_info=True)
 
