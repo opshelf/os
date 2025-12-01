@@ -164,7 +164,7 @@ class IOBox:
 
     # curtain worker?
 
-    async def _handle_curtain_change(self, state: Optional[bool]) -> None:
+    def _handle_curtain_change(self, state: Optional[bool]) -> None:
         self._curtain_state = state
         if self._curtain_listener:
             try:
