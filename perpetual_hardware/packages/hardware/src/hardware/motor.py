@@ -6,7 +6,6 @@ import functools
 import logging
 from enum import Enum
 from typing import Any, Optional, Callable, Awaitable
-import asyncio
 
 from hardware.exceptions import (
     MotorError, MotorTimeoutError, MotorLimitError,
