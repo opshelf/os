@@ -268,6 +268,8 @@ class Parameters(BaseModel):
     SLIDE_EXTENSION_BACK: Union[int, float]
     GRIPPER_EXTENSION_PICK: float
     GRIPPER_EXTENSION_PLACE: float
+    GRIPPER_MOVE_RPM: int = Field(..., gt=0)
+    GRIPPER_MOVE_ACCEL: int = Field(..., gt=0)
     FRONT: float
     BACK: float
     JOG_X: Union[int, float]

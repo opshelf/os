@@ -254,11 +254,13 @@ class Motor():
             return MotorStatus.ERROR
 
     # TODO add axis limits
-    async def move_to_position(self, value: float) -> None:  # mm
+    async def move_to_position(self, value: float, rpm: Optional[int] = None, accel: Optional[int] = None) -> None:  # mm
         """Move the motor to an absolute position in millimeters.
         
         Args:
             value: Target position in millimeters
+            rpm: Optional velocity override in RPM
+            accel: Optional acceleration/deceleration override in ms/1000rpm
             
         Raises:
             MotorLimitError: If target position exceeds motor limits
@@ -267,7 +269,7 @@ class Motor():
         try:
             if self._safety:
                 await self._safety.wait_clear()
-            await self._start_absolute_move(value)
+            await self._start_absolute_move(value, rpm, accel)
             status = await self.wait_for_move(timeout=MOTOR_MOVE_TIMEOUT)
             
             if status != MotorStatus.STOPPED:
@@ -280,11 +282,13 @@ class Motor():
                 raise MotorError(f"Failed to move motor {self._motor_id} to position {value}mm: {str(e)}") from e
             raise
     
-    async def move_to_position_no_wait(self, value: float) -> None:
+    async def move_to_position_no_wait(self, value: float, rpm: Optional[int] = None, accel: Optional[int] = None) -> None:
         """Move motor to position without waiting for completion.
         
         Args:
             value: Target position in millimeters
+            rpm: Optional velocity override in RPM
+            accel: Optional acceleration/deceleration override in ms/1000rpm
             
         Raises:
             MotorLimitError: If target position exceeds motor limits
@@ -293,14 +297,14 @@ class Motor():
         try:
             if self._safety:
                 await self._safety.wait_clear()
-            await self._start_absolute_move(value)
+            await self._start_absolute_move(value, rpm, accel)
             
         except Exception as e:
             if not isinstance(e, (MotorError, MotorLimitError)):
                 raise MotorError(f"Failed to start movement to {value}mm: {str(e)}") from e
             raise
 
-    async def _start_absolute_move(self, value: float) -> None:
+    async def _start_absolute_move(self, value: float, rpm: Optional[int] = None, accel: Optional[int] = None) -> None:
         """Setup and trigger an absolute move, tracking it for retries."""
         if value > self._params.lim:
             raise MotorLimitError(
@@ -309,6 +313,12 @@ class Motor():
 
         # Convert mm to pulses
         pulse = motor_helpers.rev_to_pulse(motor_helpers.mm_to_rev(value, self._params.mpr))
+
+        if rpm is not None:
+            await self.set_param("Velocity", int(rpm))
+        if accel is not None:
+            await self.set_param("Acceleration", int(accel))
+            await self.set_param("Deceleration", int(accel))
 
         # Set target position
         await self.set_param("Position High", pulse[0])
@@ -322,10 +332,15 @@ class Motor():
         )
 
         self._status = MotorStatus.MOVING
-        self._pending_motion = functools.partial(self._start_absolute_move, value)
+        self._pending_motion = functools.partial(self._start_absolute_move, value, rpm, accel)
         self._logger.debug(
             "Started absolute move",
-            extra={"target_mm": value, "limit_mm": self._params.lim}
+            extra={
+                "target_mm": value,
+                "limit_mm": self._params.lim,
+                "rpm": rpm or self._params.rpm,
+                "accel": accel or self._params.accel,
+            }
         )
     
     async def move_config(self) -> None:
