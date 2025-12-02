@@ -222,6 +222,13 @@ class TofCamera(BaseModel):
         a, b = _pair_len2(v, "resolution")
         return int(a), int(b)
 
+
+class CurtainConfig(BaseModel):
+    enabled: bool = True
+    pin: int = Field(2, ge=0)
+    poll_interval_s: float = Field(0.01, gt=0)
+
+
 # --------------------------- Buses ---------------------------
 
 class ModbusBusConfig(BaseModel):
@@ -297,7 +304,16 @@ class IOBlock(BaseModel):
     motors: Motors
     usb_camera: UsbCamera
     tof_camera: TofCamera
-    curtain_enabled: bool = True
+    curtain: CurtainConfig = Field(default_factory=CurtainConfig)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_legacy_curtain(cls, value):
+        if isinstance(value, dict) and "curtain" not in value and "curtain_enabled" in value:
+            data = dict(value)
+            data["curtain"] = {"enabled": data.pop("curtain_enabled")}
+            return data
+        return value
 
 
 class GridConfig(BaseModel):

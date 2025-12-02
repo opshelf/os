@@ -36,3 +36,7 @@ baseline.jpg
 perpetual_hardware/packages/perpetual_os1_server/data/base.db
 perpetual_hardware/packages/perpetual_os1_server/data/base.db-shm
 perpetual_hardware/packages/perpetual_os1_server/data/base.db-wal
+
+# Claude Code and MCP
+.claude/
+.mcp.json
