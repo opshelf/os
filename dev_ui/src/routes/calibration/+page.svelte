@@ -378,7 +378,8 @@
 	.jog-controls {
 		display: flex;
 		gap: 2em;
-		margin-top: 1em;
+		margin-top: 2em;
+		margin-bottom: 2em;
 	}
 
 	.jog-axis,
@@ -394,7 +395,9 @@
 	}
 
 	.jog-axis button {
-		min-width: 2em;
+		min-width: 3em;
+		min-height: 3em;
+		font-size: 1.5em;
 		margin-top: 0;
 	}
 
