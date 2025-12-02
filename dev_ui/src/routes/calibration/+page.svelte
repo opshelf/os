@@ -183,6 +183,21 @@
 		}
 	}
 
+	async function didClickReset(): Promise<void> {
+		isMoving = true;
+		error = '';
+		message = '';
+
+		try {
+			currentPosition = await moveToCell(selectedSide, selectedShelf, selectedCell);
+			message = 'position reset';
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'failed to reset position';
+		} finally {
+			isMoving = false;
+		}
+	}
+
 	function formatNumber(value: number): string {
 		return value.toFixed(2);
 	}
@@ -324,6 +339,13 @@
 				disabled={isMoving === true || isTesting === true || isSaving === true}
 			>
 				test gripper
+			</button>
+			<button
+				type="button"
+				on:click={didClickReset}
+				disabled={isMoving === true || isTesting === true || isSaving === true}
+			>
+				reset
 			</button>
 			<button
 				type="button"
