@@ -27,7 +27,17 @@
 	let error = '';
 	let message = '';
 
-	const JOG_STEP = 0.1;
+	let jogStep = 1;
+
+	const JOG_STEPS = [
+		{ value: 0.1, label: '0.1mm' },
+		{ value: 0.25, label: '0.25mm' },
+		{ value: 0.5, label: '0.5mm' },
+		{ value: 1, label: '1mm' },
+		{ value: 2, label: '2mm' },
+		{ value: 5, label: '5mm' },
+		{ value: 10, label: '1cm' }
+	];
 
 	onMount(function() {
 		if (browser === false) {
@@ -250,14 +260,14 @@
 				<span class="axis-label">X</span>
 				<button
 					type="button"
-					on:click={() => didClickJog('x', -JOG_STEP)}
+					on:click={() => didClickJog('x', -jogStep)}
 					disabled={isMoving === true}
 				>
 					-
 				</button>
 				<button
 					type="button"
-					on:click={() => didClickJog('x', JOG_STEP)}
+					on:click={() => didClickJog('x', jogStep)}
 					disabled={isMoving === true}
 				>
 					+
@@ -267,14 +277,14 @@
 				<span class="axis-label">Y</span>
 				<button
 					type="button"
-					on:click={() => didClickJog('y', -JOG_STEP)}
+					on:click={() => didClickJog('y', -jogStep)}
 					disabled={isMoving === true}
 				>
 					-
 				</button>
 				<button
 					type="button"
-					on:click={() => didClickJog('y', JOG_STEP)}
+					on:click={() => didClickJog('y', jogStep)}
 					disabled={isMoving === true}
 				>
 					+
@@ -284,18 +294,26 @@
 				<span class="axis-label">Z</span>
 				<button
 					type="button"
-					on:click={() => didClickJog('z', -JOG_STEP)}
+					on:click={() => didClickJog('z', -jogStep)}
 					disabled={isMoving === true}
 				>
 					-
 				</button>
 				<button
 					type="button"
-					on:click={() => didClickJog('z', JOG_STEP)}
+					on:click={() => didClickJog('z', jogStep)}
 					disabled={isMoving === true}
 				>
 					+
 				</button>
+			</div>
+			<div class="jog-step">
+				<span class="axis-label">step</span>
+				<select bind:value={jogStep}>
+					{#each JOG_STEPS as step}
+						<option value={step.value}>{step.label}</option>
+					{/each}
+				</select>
 			</div>
 		</div>
 
@@ -341,7 +359,8 @@
 		margin-top: 1em;
 	}
 
-	.jog-axis {
+	.jog-axis,
+	.jog-step {
 		display: flex;
 		align-items: center;
 		gap: 0.5em;
