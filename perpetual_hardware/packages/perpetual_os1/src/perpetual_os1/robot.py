@@ -271,7 +271,14 @@ class Robot:
         # self._state_manager.update_state(self._state.tool, self._state.io)
 
     async def idle(self) -> None:
-        await self._tool.move(self._tool.get_param("IDLE_POSITION"))
+        idle_position = await self._tool.get_param("IDLE_POSITION")
+        if idle_position is None:
+            raise ConfigError("IDLE_POSITION not configured")
+        try:
+            ix, iy = idle_position
+        except Exception as exc:
+            raise ConfigError("IDLE_POSITION must be a 2-element iterable [x, y]") from exc
+        await self._tool.move(AxisCoordinate(ix, iy))
 
     async def shutdown(self) -> None:
         await self.stop()
@@ -796,11 +803,10 @@ class Robot:
                 await self.print_random_barcode()
                 return RobotCommandSuccessful(command=command_name)
             elif isinstance(command, MoveCommand):
-                # await self._tool.move(command.coordinate)
-                await self.teststore()
+                await self._tool.move(command.coordinate)
                 return RobotCommandSuccessful(command=command_name)
             elif isinstance(command, IdleCommand):
-                await self.testretrieve() # todo remove
+                await self.idle()
                 return RobotCommandSuccessful(command=command_name)
             elif isinstance(command, StoreItemCommand):
                 payload = getattr(command, "upca", None)
