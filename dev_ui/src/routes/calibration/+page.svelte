@@ -243,6 +243,7 @@
 			<tr>
 				<td colspan="3">
 					<button
+						class="calibrate-button"
 						type="button"
 						on:click={didClickCalibrate}
 						disabled={isMoving === true || isTesting === true}
@@ -369,6 +370,10 @@
 <style>
 	.field-label {
 		margin-right: 0.5em;
+	}
+
+	.calibrate-button {
+		margin-top: 0;
 	}
 
 	.position-table {
