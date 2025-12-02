@@ -45,3 +45,100 @@ async function safeReadError(response: Response): Promise<string> {
 		return `${response.status} ${response.statusText}`;
 	}
 }
+
+export interface Position {
+	x: number;
+	y: number;
+	z_offset: number;
+}
+
+export interface StorageGrid {
+	left_module: Shelf[];
+	right_module: Shelf[];
+}
+
+export interface Shelf {
+	shelf_height: number;
+	shelf_width: number;
+	cells: Cell[];
+	divider_width: number;
+}
+
+export interface Cell {
+	status: string;
+	item: unknown | null;
+	calibration_point: CalibrationPoint | null;
+	dimensions: Dimensions;
+	empty: boolean;
+}
+
+export interface CalibrationPoint {
+	x: number;
+	y: number;
+	s: number;
+	z_offset: number;
+}
+
+export interface Dimensions {
+	length: number;
+	width: number;
+	height: number;
+}
+
+export async function getStorageGrid(): Promise<StorageGrid> {
+	return apiFetch<StorageGrid>("/calibration/storage");
+}
+
+export async function moveToCell(
+	side: string,
+	shelfIdx: number,
+	cellIdx: number
+): Promise<Position> {
+	return apiFetch<Position>("/calibration/move", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ side, shelf_idx: shelfIdx, cell_idx: cellIdx }),
+	});
+}
+
+export async function jogAxis(axis: string, delta: number): Promise<Position> {
+	return apiFetch<Position>("/calibration/jog", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ axis, delta }),
+	});
+}
+
+export async function testGripper(
+	side: string,
+	shelfIdx: number,
+	cellIdx: number
+): Promise<void> {
+	await apiFetch("/calibration/test", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ side, shelf_idx: shelfIdx, cell_idx: cellIdx }),
+	});
+}
+
+export async function saveCalibration(
+	side: string,
+	shelfIdx: number,
+	cellIdx: number,
+	x: number,
+	y: number,
+	zOffset: number
+): Promise<void> {
+	await apiFetch("/calibration/save", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({
+			side,
+			shelf_idx: shelfIdx,
+			cell_idx: cellIdx,
+			x,
+			y,
+			z_offset: zOffset,
+		}),
+	});
+}

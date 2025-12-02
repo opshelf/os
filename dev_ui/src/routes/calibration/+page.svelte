@@ -1,0 +1,366 @@
+<script lang="ts">
+	import { browser } from '$app/environment';
+	import { onMount } from 'svelte';
+	import {
+		getStorageGrid,
+		moveToCell,
+		jogAxis,
+		testGripper,
+		saveCalibration,
+		type StorageGrid,
+		type Position
+	} from '$lib/api';
+	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
+
+	let storageGrid: StorageGrid | null = null;
+	let loading = true;
+	let loadError = '';
+
+	let selectedSide: 'left_module' | 'right_module' = 'left_module';
+	let selectedShelf = 0;
+	let selectedCell = 0;
+
+	let currentPosition: Position | null = null;
+	let isMoving = false;
+	let isTesting = false;
+	let isSaving = false;
+	let error = '';
+	let message = '';
+
+	const JOG_STEP = 0.1;
+
+	onMount(function() {
+		if (browser === false) {
+			return;
+		}
+		loadStorage();
+	});
+
+	async function loadStorage(): Promise<void> {
+		loading = true;
+		loadError = '';
+
+		try {
+			storageGrid = await getStorageGrid();
+			selectedShelf = 0;
+			selectedCell = 0;
+		} catch (err) {
+			loadError = err instanceof Error ? err.message : 'failed to load storage grid';
+		} finally {
+			loading = false;
+		}
+	}
+
+	function getShelves() {
+		if (storageGrid === null) {
+			return [];
+		}
+
+		if (selectedSide === 'left_module') {
+			return storageGrid.left_module;
+		}
+
+		return storageGrid.right_module;
+	}
+
+	function getCells() {
+		const shelves = getShelves();
+
+		if (selectedShelf >= shelves.length) {
+			return [];
+		}
+
+		return shelves[selectedShelf].cells;
+	}
+
+	function didChangeSide(event: Event): void {
+		const target = event.target as HTMLSelectElement;
+
+		selectedSide = target.value as 'left_module' | 'right_module';
+		selectedShelf = 0;
+		selectedCell = 0;
+		currentPosition = null;
+		error = '';
+		message = '';
+	}
+
+	function didChangeShelf(event: Event): void {
+		const target = event.target as HTMLSelectElement;
+
+		selectedShelf = parseInt(target.value, 10);
+		selectedCell = 0;
+		currentPosition = null;
+		error = '';
+		message = '';
+	}
+
+	function didChangeCell(event: Event): void {
+		const target = event.target as HTMLSelectElement;
+
+		selectedCell = parseInt(target.value, 10);
+		currentPosition = null;
+		error = '';
+		message = '';
+	}
+
+	async function didClickCalibrate(): Promise<void> {
+		isMoving = true;
+		error = '';
+		message = '';
+
+		try {
+			currentPosition = await moveToCell(selectedSide, selectedShelf, selectedCell);
+			message = 'moved to cell';
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'failed to move to cell';
+		} finally {
+			isMoving = false;
+		}
+	}
+
+	async function didClickJog(axis: 'x' | 'y' | 'z', delta: number): Promise<void> {
+		isMoving = true;
+		error = '';
+
+		try {
+			currentPosition = await jogAxis(axis, delta);
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'failed to jog axis';
+		} finally {
+			isMoving = false;
+		}
+	}
+
+	async function didClickTest(): Promise<void> {
+		isTesting = true;
+		error = '';
+		message = '';
+
+		try {
+			await testGripper(selectedSide, selectedShelf, selectedCell);
+			message = 'gripper test completed';
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'failed to test gripper';
+		} finally {
+			isTesting = false;
+		}
+	}
+
+	async function didClickSave(): Promise<void> {
+		if (currentPosition === null) {
+			error = 'no position to save';
+			return;
+		}
+
+		isSaving = true;
+		error = '';
+		message = '';
+
+		try {
+			await saveCalibration(
+				selectedSide,
+				selectedShelf,
+				selectedCell,
+				currentPosition.x,
+				currentPosition.y,
+				currentPosition.z_offset
+			);
+			message = 'calibration saved';
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'failed to save calibration';
+		} finally {
+			isSaving = false;
+		}
+	}
+
+	function formatNumber(value: number): string {
+		return value.toFixed(2);
+	}
+</script>
+
+{#if loading === true}
+	<p>loading storage grid...</p>
+{:else if loadError !== ''}
+	<ErrorMessage message={loadError} />
+{:else if storageGrid !== null}
+	<table>
+		<thead>
+			<tr>
+				<th colspan="4">cell selection</th>
+			</tr>
+		</thead>
+		<tbody>
+			<tr>
+				<td>side</td>
+				<td>
+					<select value={selectedSide} on:change={didChangeSide}>
+						<option value="left_module">left module</option>
+						<option value="right_module">right module</option>
+					</select>
+				</td>
+				<td>shelf</td>
+				<td>
+					<select value={selectedShelf} on:change={didChangeShelf}>
+						{#each getShelves() as _, index}
+							<option value={index}>{index}</option>
+						{/each}
+					</select>
+				</td>
+			</tr>
+			<tr>
+				<td>cell</td>
+				<td>
+					<select value={selectedCell} on:change={didChangeCell}>
+						{#each getCells() as _, index}
+							<option value={index}>{index}</option>
+						{/each}
+					</select>
+				</td>
+				<td colspan="2">
+					<button
+						type="button"
+						on:click={didClickCalibrate}
+						disabled={isMoving === true || isTesting === true}
+					>
+						calibrate
+					</button>
+				</td>
+			</tr>
+		</tbody>
+	</table>
+
+	{#if currentPosition !== null}
+		<table class="position-table">
+			<thead>
+				<tr>
+					<th colspan="3">current position</th>
+				</tr>
+			</thead>
+			<tbody>
+				<tr>
+					<td>x: {formatNumber(currentPosition.x)}</td>
+					<td>y: {formatNumber(currentPosition.y)}</td>
+					<td>z: {formatNumber(currentPosition.z_offset)}</td>
+				</tr>
+			</tbody>
+		</table>
+
+		<div class="jog-controls">
+			<div class="jog-axis">
+				<span class="axis-label">X</span>
+				<button
+					type="button"
+					on:click={() => didClickJog('x', -JOG_STEP)}
+					disabled={isMoving === true}
+				>
+					-
+				</button>
+				<button
+					type="button"
+					on:click={() => didClickJog('x', JOG_STEP)}
+					disabled={isMoving === true}
+				>
+					+
+				</button>
+			</div>
+			<div class="jog-axis">
+				<span class="axis-label">Y</span>
+				<button
+					type="button"
+					on:click={() => didClickJog('y', -JOG_STEP)}
+					disabled={isMoving === true}
+				>
+					-
+				</button>
+				<button
+					type="button"
+					on:click={() => didClickJog('y', JOG_STEP)}
+					disabled={isMoving === true}
+				>
+					+
+				</button>
+			</div>
+			<div class="jog-axis">
+				<span class="axis-label">Z</span>
+				<button
+					type="button"
+					on:click={() => didClickJog('z', -JOG_STEP)}
+					disabled={isMoving === true}
+				>
+					-
+				</button>
+				<button
+					type="button"
+					on:click={() => didClickJog('z', JOG_STEP)}
+					disabled={isMoving === true}
+				>
+					+
+				</button>
+			</div>
+		</div>
+
+		<div class="action-buttons">
+			<button
+				type="button"
+				on:click={didClickTest}
+				disabled={isMoving === true || isTesting === true || isSaving === true}
+			>
+				test gripper
+			</button>
+			<button
+				type="button"
+				on:click={didClickSave}
+				disabled={isMoving === true || isTesting === true || isSaving === true}
+			>
+				save
+			</button>
+		</div>
+	{/if}
+
+	{#if message !== ''}
+		<p class="message">{message}</p>
+	{/if}
+
+	{#if error !== ''}
+		<ErrorMessage message={error} />
+	{/if}
+{/if}
+
+<style>
+	.position-table {
+		margin-top: 1em;
+	}
+
+	.jog-controls {
+		display: flex;
+		gap: 2em;
+		margin-top: 1em;
+	}
+
+	.jog-axis {
+		display: flex;
+		align-items: center;
+		gap: 0.5em;
+	}
+
+	.axis-label {
+		font-weight: bold;
+		min-width: 1.5em;
+	}
+
+	.jog-axis button {
+		min-width: 2em;
+		margin-top: 0;
+	}
+
+	.action-buttons {
+		display: flex;
+		gap: 1em;
+		margin-top: 1em;
+	}
+
+	.message {
+		margin-top: 1em;
+		color: green;
+	}
+</style>
