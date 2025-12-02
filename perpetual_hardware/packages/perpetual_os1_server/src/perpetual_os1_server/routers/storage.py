@@ -366,14 +366,13 @@ async def delete_item(
     await migrate_if_needed(session)
     storage_service = StorageService(session)
 
-    success = await storage_service.delete_item(upca)
-    if not success:
-        raise HTTPException(status_code=404, detail="Item not found")
+    deleted = await storage_service.delete_item(upca)
 
-    try:
-        await storage_service.sync_to_json(transaction_committed=True)
-    except Exception as json_error:  # pragma: no cover - best effort logging
-        logging.error(f"JSON sync failed after item deletion: {str(json_error)}")
+    if deleted:
+        try:
+            await storage_service.sync_to_json(transaction_committed=True)
+        except Exception as json_error:  # pragma: no cover - best effort logging
+            logging.error(f"JSON sync failed after item deletion: {str(json_error)}")
 
     return {"message": "Item deleted successfully"}
 
