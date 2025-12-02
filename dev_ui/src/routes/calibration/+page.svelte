@@ -186,37 +186,37 @@
 	<table>
 		<thead>
 			<tr>
-				<th colspan="4">cell selection</th>
+				<th colspan="3">cell selection</th>
 			</tr>
 		</thead>
 		<tbody>
 			<tr>
-				<td>side</td>
 				<td>
+					<span class="field-label">side</span>
 					<select value={selectedSide} on:change={didChangeSide}>
 						<option value="left_module">left module</option>
 						<option value="right_module">right module</option>
 					</select>
 				</td>
-				<td>shelf</td>
 				<td>
+					<span class="field-label">shelf</span>
 					<select value={selectedShelf} on:change={didChangeShelf}>
 						{#each getShelves() as _, index}
 							<option value={index}>{index}</option>
 						{/each}
 					</select>
 				</td>
-			</tr>
-			<tr>
-				<td>cell</td>
 				<td>
+					<span class="field-label">cell</span>
 					<select value={selectedCell} on:change={didChangeCell}>
 						{#each getCells() as _, index}
 							<option value={index}>{index}</option>
 						{/each}
 					</select>
 				</td>
-				<td colspan="2">
+			</tr>
+			<tr>
+				<td colspan="3">
 					<button
 						type="button"
 						on:click={didClickCalibrate}
@@ -327,6 +327,10 @@
 {/if}
 
 <style>
+	.field-label {
+		margin-right: 0.5em;
+	}
+
 	.position-table {
 		margin-top: 1em;
 	}
