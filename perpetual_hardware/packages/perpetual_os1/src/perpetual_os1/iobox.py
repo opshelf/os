@@ -204,10 +204,19 @@ class IOBox:
     # curtain worker?
 
     def _handle_curtain_change(self, state: Optional[bool]) -> None:
+        previous = self._curtain_state
         self._curtain_state = state
         # Force a fresh door read when curtain blocks to avoid stale inference.
         if state:
             self._door_force_refresh_on_block = True
+        self._logger.debug(
+            "Curtain state change",
+            extra={
+                "blocked": state,
+                "previous": previous,
+                "force_door_refresh": bool(state),
+            },
+        )
         if self._curtain_listener:
             try:
                 self._curtain_listener(state)
@@ -228,6 +237,7 @@ class IOBox:
         if self._md is None:
             return self._door_open
         if self._door_force_refresh_on_block:
+            self._logger.debug("Forcing door refresh after curtain block")
             force = True
             self._door_force_refresh_on_block = False
         now = time.monotonic()
@@ -241,6 +251,10 @@ class IOBox:
             return self._door_open
 
         if position_mm is None:
+            self._logger.debug(
+                "Door position read returned None; using cached state",
+                extra={"cached_open": self._door_open},
+            )
             return self._door_open
 
         threshold = self._door_open_threshold_mm

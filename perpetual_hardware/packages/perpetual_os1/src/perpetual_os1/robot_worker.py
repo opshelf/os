@@ -603,6 +603,7 @@ class RobotWorker:
         if (blocked, door_open) == self._last_published_curtain:
             return
         self._last_published_curtain = (blocked, door_open)
+        guard_active = bool(blocked) and bool(door_open)
         try:
             payload = json.dumps(
                 {
@@ -610,18 +611,34 @@ class RobotWorker:
                     "payload": {
                         "blocked": blocked,
                         "door_open": door_open,
-                        "guard_active": bool(blocked) and bool(door_open),
+                        "guard_active": guard_active,
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                     },
                 }
             ).encode()
             await self._nc.publish(self._nats_config.event_queue, payload)
+            self._logger.debug(
+                "Curtain event published",
+                extra={
+                    "blocked": blocked,
+                    "door_open": door_open,
+                    "guard_active": guard_active,
+                },
+            )
         except Exception as err:  # pragma: no cover - observability
             logging.warning("Failed to publish curtain event: %s", err)
 
     def _on_curtain_change(self, state: Optional[bool]) -> None:
         # Fire-and-forget: publish status and curtain event when curtain changes.
         async def _handle() -> None:
+            self._logger.debug(
+                "Curtain sensor change received",
+                extra={
+                    "blocked": state,
+                    "previous": self._curtain_blocked,
+                    "door_open_cached": self._door_open,
+                },
+            )
             self._curtain_blocked = state
             await self._evaluate_curtain_guard()
             await self._publish_status()
@@ -629,11 +646,17 @@ class RobotWorker:
 
     async def _evaluate_curtain_guard(self, *, refresh: bool = True) -> None:
         async with self._guard_lock:
+            previous_door = self._door_open
             if refresh:
                 try:
                     self._door_open = await self._robot.refresh_door_state()
                 except Exception as exc:  # pragma: no cover - robustness
                     logging.debug("Door state refresh failed: %s", exc)
+            if refresh and self._door_open != previous_door:
+                self._logger.debug(
+                    "Door state updated for guard evaluation",
+                    extra={"door_open": self._door_open, "previous": previous_door},
+                )
             # Treat unknown door state as closed: guard only when door is known open.
             guard_active = bool(self._curtain_blocked) and bool(self._door_open)
             guard_changed = guard_active != self._curtain_guard_active
