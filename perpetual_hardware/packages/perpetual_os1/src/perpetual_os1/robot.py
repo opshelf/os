@@ -291,34 +291,13 @@ class Robot:
         if self._io:
             self._io.set_curtain_listener(listener)
 
-    async def pause_for_curtain(self) -> None:
+    def pause_for_curtain(self) -> None:
         self._curtain_safety.block()
-        tool_paused = False
-        io_paused = False
-        try:
-            if self._tool:
-                await self._tool.pause_for_curtain()
-                tool_paused = True
-        except Exception as exc:
-            self._logger.warning("Curtain guard tool pause failed: %s", exc)
-        try:
-            if self._io:
-                await self._io.stop()
-                io_paused = True
-        except Exception as exc:
-            self._logger.warning("Curtain guard IO pause failed: %s", exc)
-        self._logger.info("Curtain guard engaged", extra={"tool_paused": tool_paused, "io_paused": io_paused})
+        self._logger.info("Curtain guard engaged")
 
     def resume_after_curtain(self) -> None:
-        tool_resumed = False
-        try:
-            if self._tool:
-                self._tool.resume_after_curtain()
-                tool_resumed = True
-        except Exception as exc:
-            self._logger.warning("Curtain guard tool resume failed: %s", exc)
         self._curtain_safety.unblock()
-        self._logger.info("Curtain guard cleared", extra={"tool_resumed": tool_resumed})
+        self._logger.info("Curtain guard cleared")
 
     def get_curtain_state(self) -> Optional[bool]:
         if self._io:

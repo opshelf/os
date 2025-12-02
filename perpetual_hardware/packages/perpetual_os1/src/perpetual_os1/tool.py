@@ -239,25 +239,11 @@ class Tool:
             await self._handle_fault(e)
             raise MotorError(f"Failed to clear alarms: {str(e)}") from e
 
-    async def pause_for_curtain(self) -> None:
+    def pause_for_curtain(self) -> None:
         if self._guard_paused:
             return
         self._guard_paused = True
-        stage_pos = None
-        rotate_pos = None
-        try:
-            stage_pos = await self._ms.get_position()
-        except Exception:
-            pass
-        try:
-            rotate_pos = await self._mr.get_position()
-        except Exception:
-            pass
-        await self.stop()
-        self._logger.info(
-            "Curtain guard pausing tool",
-            extra={"stage_position": stage_pos, "rotate_position": rotate_pos},
-        )
+        self._logger.info("Curtain guard pausing tool")
 
     def resume_after_curtain(self) -> None:
         if not self._guard_paused:

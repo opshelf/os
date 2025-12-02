@@ -664,7 +664,7 @@ class RobotWorker:
 
             if guard_changed:
                 if guard_active:
-                    await self._robot.pause_for_curtain()
+                    self._robot.pause_for_curtain()
                 else:
                     self._robot.resume_after_curtain()
                 self._logger.info(
