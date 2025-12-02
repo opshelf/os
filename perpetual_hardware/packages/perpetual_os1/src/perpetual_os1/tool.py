@@ -286,7 +286,11 @@ class Tool:
         try:
             self._mstatus = ToolMotionStatus.MOVING
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
-            await self._mg.move_to_position(1)
+            grip_rpm = await self.get_param("GRIPPER_MOVE_RPM")
+            grip_accel = await self.get_param("GRIPPER_MOVE_ACCEL")
+            if grip_rpm is None or grip_accel is None:
+                raise ConfigError("Missing gripper move speed")
+            await self._mg.move_to_position(1, rpm=grip_rpm, accel=grip_accel)
             await self._ms.move_to_position(1)
             self._mstatus = ToolMotionStatus.IDLE
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
@@ -346,14 +350,16 @@ class Tool:
         try:
             slide_ext = await self._get_slide_extension(coordinate)
             grip_ext = await self.get_param("GRIPPER_EXTENSION_PLACE")
-            if slide_ext is None or grip_ext is None:
+            grip_rpm = await self.get_param("GRIPPER_MOVE_RPM")
+            grip_accel = await self.get_param("GRIPPER_MOVE_ACCEL")
+            if slide_ext is None or grip_ext is None or grip_rpm is None or grip_accel is None:
                 raise ConfigError("Missing extension parameters")
             grip_ext = self._with_gripper_offset(grip_ext, coordinate)
             
             self._mstatus = ToolMotionStatus.MOVING
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
             await self._ms.move_to_position(slide_ext)
-            await self._mg.move_to_position(grip_ext)
+            await self._mg.move_to_position(grip_ext, rpm=grip_rpm, accel=grip_accel)
             self._mstatus = ToolMotionStatus.IDLE
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
         except Exception as e:
@@ -374,14 +380,16 @@ class Tool:
             io_offset = 0
             slide_ext = await self._get_slide_extension(coordinate)
             grip_ext = await self.get_param("GRIPPER_EXTENSION_PLACE")
-            if slide_ext is None or grip_ext is None:
+            grip_rpm = await self.get_param("GRIPPER_MOVE_RPM")
+            grip_accel = await self.get_param("GRIPPER_MOVE_ACCEL")
+            if slide_ext is None or grip_ext is None or grip_rpm is None or grip_accel is None:
                 raise ConfigError("Missing extension parameters")
             grip_ext = self._with_gripper_offset(grip_ext, coordinate)
             
             self._mstatus = ToolMotionStatus.MOVING
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
             await self._ms.move_to_position(slide_ext + io_offset)
-            await self._mg.move_to_position(grip_ext)
+            await self._mg.move_to_position(grip_ext, rpm=grip_rpm, accel=grip_accel)
             self._mstatus = ToolMotionStatus.IDLE
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
         except Exception as e:
@@ -401,14 +409,16 @@ class Tool:
         try:
             slide_ext = await self._get_slide_extension(coordinate)
             grip_ext = await self.get_param("GRIPPER_EXTENSION_PICK")
-            if slide_ext is None or grip_ext is None:
+            grip_rpm = await self.get_param("GRIPPER_MOVE_RPM")
+            grip_accel = await self.get_param("GRIPPER_MOVE_ACCEL")
+            if slide_ext is None or grip_ext is None or grip_rpm is None or grip_accel is None:
                 raise ConfigError("Missing extension parameters")
             grip_ext = self._with_gripper_offset(grip_ext, coordinate)
             
             self._mstatus = ToolMotionStatus.MOVING
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
             await self._ms.move_to_position_no_wait(slide_ext)
-            await self._mg.move_to_position_no_wait(grip_ext)
+            await self._mg.move_to_position_no_wait(grip_ext, rpm=grip_rpm, accel=grip_accel)
             await self.tool_wait(homing=False)
             self._mstatus = ToolMotionStatus.IDLE
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
@@ -429,7 +439,11 @@ class Tool:
             self._mstatus = ToolMotionStatus.MOVING
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
             await self._ms.move_to_position_no_wait(1)
-            await self._mg.move_to_position_no_wait(1)
+            grip_rpm = await self.get_param("GRIPPER_MOVE_RPM")
+            grip_accel = await self.get_param("GRIPPER_MOVE_ACCEL")
+            if grip_rpm is None or grip_accel is None:
+                raise ConfigError("Missing gripper move speed")
+            await self._mg.move_to_position_no_wait(1, rpm=grip_rpm, accel=grip_accel)
             await self.tool_wait(homing=True)
             self._mstatus = ToolMotionStatus.IDLE
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)

@@ -13,6 +13,8 @@
         "SLIDE_EXTENSION_BACK": 45,
         "GRIPPER_EXTENSION_PICK": 161.5,
         "GRIPPER_EXTENSION_PLACE": 160.5,
+        "GRIPPER_MOVE_RPM": 800,
+        "GRIPPER_MOVE_ACCEL": 1200,
         "FAULT_DUMP_POSITION": [869, 410],
         "FRONT": 0.5,
         "BACK": 180.5,
