@@ -62,12 +62,17 @@ class IOBox:
         await self._configure_curtain()
 
     async def _configure_curtain(self) -> None:
-        if not getattr(self._params, "curtain_enabled", True):
+        curtain_cfg = getattr(self._params, "curtain", None)
+        if curtain_cfg is None:
+            self._logger.info("Curtain sensor configuration missing; skipping setup")
+            return
+
+        if not curtain_cfg.enabled:
             self._logger.info("Curtain sensor disabled via config")
             return
 
-        pin = 2
-        poll_interval = 0.01
+        pin = curtain_cfg.pin
+        poll_interval = curtain_cfg.poll_interval_s
 
         self._curtain_sensor = CurtainSensor(pin=pin)
         self._curtain_monitor = CurtainMonitor(
@@ -78,7 +83,7 @@ class IOBox:
         await self._curtain_monitor.start()
         self._logger.info(
             "Curtain monitor started",
-            extra={"pin": pin, "poll_interval": poll_interval},
+            extra={"pin": pin, "poll_interval_s": poll_interval},
         )
 
     async def _ensure_scale_ready(self) -> None:

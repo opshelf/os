@@ -3,10 +3,13 @@ import asyncio
 import logging
 from typing import Optional
 
-import RPi.GPIO as GPIO  # type: ignore[import]
-
-GPIO.setmode(GPIO.BCM)
-GPIO.setwarnings(False)
+try:
+    import RPi.GPIO as GPIO  # type: ignore[import]
+except ModuleNotFoundError:
+    GPIO = None  # type: ignore[assignment]
+else:
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setwarnings(False)
 
 logger = logging.getLogger(__name__).getChild("curtain")
 
@@ -23,6 +26,8 @@ class CurtainSensor:
         *,
         pin: int = 2,
     ) -> None:
+        if GPIO is None:
+            raise RuntimeError("RPi.GPIO not available")
         self.pin = pin
         GPIO.setup(pin, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
         self._last_state: Optional[bool] = None
