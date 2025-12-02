@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
-from pydantic import BaseModel, EmailStr, validator
+from pydantic import BaseModel, EmailStr, field_validator
 
 from ..database.session import get_db
 from ..database.models import User, Role, AccessLevel
@@ -28,9 +28,10 @@ class UserCreate(BaseModel):
 	role_id: int
 	access_level_id: Optional[int] = None
 
-	@validator('pin')
+	@field_validator('pin')
+	@classmethod
 	def validate_pin(cls, v: str) -> str:
-		if not v.isdigit():
+		if v.isdigit() is False:
 			raise ValueError('PIN must contain only digits')
 		if len(v) != 4:
 			raise ValueError('PIN must be exactly 4 digits')
@@ -46,10 +47,11 @@ class UserUpdate(BaseModel):
 	access_level_id: Optional[int] = None
 	is_active: Optional[bool] = None
 
-	@validator('pin')
+	@field_validator('pin')
+	@classmethod
 	def validate_pin(cls, v: Optional[str]) -> Optional[str]:
 		if v is not None:
-			if not v.isdigit():
+			if v.isdigit() is False:
 				raise ValueError('PIN must contain only digits')
 			if len(v) != 4:
 				raise ValueError('PIN must be exactly 4 digits')

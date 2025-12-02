@@ -126,6 +126,8 @@ def _transform_worker_status_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     state_payload = robot_status_payload.get("state") or {"current_cell": None}
     storage_payload = robot_status_payload.get("storage") or {"left_module": [], "right_module": []}
     curtain_blocked = robot_status_payload.get("curtain_blocked")
+    door_open = robot_status_payload.get("door_open")
+    curtain_guard_active = robot_status_payload.get("curtain_guard_active")
     storage_payload = _normalize_storage_payload(storage_payload)
 
     transformed["robot_status"] = {
@@ -141,6 +143,8 @@ def _transform_worker_status_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         },
         "storage": storage_payload,
         "curtain_blocked": curtain_blocked,
+        "door_open": door_open,
+        "curtain_guard_active": curtain_guard_active,
     }
 
     errors: List[Dict[str, Any]] = []
@@ -201,7 +205,12 @@ class RobotWorker:
         self._barcode: Optional[BarcodeService] = None
         self._barcode_task: Optional[asyncio.Task] = None
         self._latest_status_payload: Optional[str] = None
-        self._last_published_curtain: Optional[bool] = None
+        self._last_published_curtain: Optional[tuple[Optional[bool], Optional[bool]]] = None
+        self._curtain_blocked: Optional[bool] = None
+        self._door_open: Optional[bool] = None
+        self._curtain_guard_active: Optional[bool] = None
+        self._guard_lock = asyncio.Lock()
+        self._logger = logging.getLogger(__name__).getChild("worker.guard")
 
     def get_client(self) -> RobotClient:
         return self._client
@@ -375,6 +384,9 @@ class RobotWorker:
     async def _publish_status(self) -> None:
         try:
             robot_status = await self._robot.get_status()
+            if robot_status:
+                self._curtain_blocked = robot_status.curtain_blocked
+                self._door_open = robot_status.door_open
         except Exception as err:
             robot_status = None
             self._report_error(
@@ -385,6 +397,10 @@ class RobotWorker:
                 ),
                 exc=err,
             )
+        await self._evaluate_curtain_guard(refresh=False)
+        if robot_status:
+            robot_status.curtain_guard_active = self._curtain_guard_active
+            robot_status.door_open = self._door_open
 
         if self._use_enhanced_status:
             pending_count, queued_ops = await self._get_pending_messages_info()
@@ -424,7 +440,10 @@ class RobotWorker:
             self._nats_config.status_queue,
             payload_json.encode(),
         )
-        await self._maybe_publish_curtain_event(status_payload.get("robot_status", {}).get("curtain_blocked"))
+        await self._maybe_publish_curtain_event(
+            status_payload.get("robot_status", {}).get("curtain_blocked"),
+            status_payload.get("robot_status", {}).get("door_open"),
+        )
 
     async def process_commands(self) -> None:
         while self._running:
@@ -578,16 +597,20 @@ class RobotWorker:
         except Exception:
             pass
 
-    async def _maybe_publish_curtain_event(self, state: Optional[bool]) -> None:
-        if state == self._last_published_curtain:
+    async def _maybe_publish_curtain_event(
+        self, blocked: Optional[bool], door_open: Optional[bool]
+    ) -> None:
+        if (blocked, door_open) == self._last_published_curtain:
             return
-        self._last_published_curtain = state
+        self._last_published_curtain = (blocked, door_open)
         try:
             payload = json.dumps(
                 {
                     "kind": "curtain_state",
                     "payload": {
-                        "blocked": state,
+                        "blocked": blocked,
+                        "door_open": door_open,
+                        "guard_active": bool(blocked) and bool(door_open),
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                     },
                 }
@@ -599,9 +622,33 @@ class RobotWorker:
     def _on_curtain_change(self, state: Optional[bool]) -> None:
         # Fire-and-forget: publish status and curtain event when curtain changes.
         async def _handle() -> None:
-            if state:
-                await self._robot.pause_for_curtain()
-            else:
-                self._robot.resume_after_curtain()
+            self._curtain_blocked = state
+            await self._evaluate_curtain_guard()
             await self._publish_status()
         asyncio.create_task(_handle())
+
+    async def _evaluate_curtain_guard(self, *, refresh: bool = True) -> None:
+        async with self._guard_lock:
+            if refresh:
+                try:
+                    self._door_open = await self._robot.refresh_door_state()
+                except Exception as exc:  # pragma: no cover - robustness
+                    logging.debug("Door state refresh failed: %s", exc)
+            # Treat unknown door state as closed: guard only when door is known open.
+            guard_active = bool(self._curtain_blocked) and bool(self._door_open)
+            guard_changed = guard_active != self._curtain_guard_active
+            self._curtain_guard_active = guard_active
+
+            if guard_changed:
+                if guard_active:
+                    await self._robot.pause_for_curtain()
+                else:
+                    self._robot.resume_after_curtain()
+                self._logger.info(
+                    "Curtain guard change",
+                    extra={
+                        "curtain_blocked": self._curtain_blocked,
+                        "door_open": self._door_open,
+                        "guard_active": self._curtain_guard_active,
+                    },
+                )

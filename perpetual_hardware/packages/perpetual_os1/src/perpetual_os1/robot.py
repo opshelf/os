@@ -146,6 +146,8 @@ class RobotStatus(BaseModel):
     state: RobotState
     storage: StorageGrid
     curtain_blocked: Optional[bool] = None
+    door_open: Optional[bool] = None
+    curtain_guard_active: Optional[bool] = None
 
 RobotResponse = Union[RobotCommandSuccessful, RobotCommandError, RobotBarcodeResponse]
 
@@ -237,7 +239,7 @@ class Robot:
         await self._tool.move(coord)
         await self._tool.place(coord)
 
-        await self._io._md.home()
+        await self._io.home_door()
         await self._tool.clear_alarms()
 
         # Update state after operation
@@ -262,7 +264,7 @@ class Robot:
         await self._tool.move(coord)
         await self._tool.place(coord)
 
-        await self._io._md.home() # clear alarms io
+        await self._io.home_door() # clear alarms io
         await self._tool.clear_alarms()
 
         # Update state after operation
@@ -292,6 +294,16 @@ class Robot:
     def get_curtain_state(self) -> Optional[bool]:
         if self._io:
             return self._io.get_curtain_state()
+        return None
+
+    def get_door_state(self) -> Optional[bool]:
+        if self._io:
+            return self._io.get_door_state()
+        return None
+
+    async def refresh_door_state(self) -> Optional[bool]:
+        if self._io:
+            return await self._io.refresh_door_state()
         return None
 
     async def print_random_barcode(
@@ -697,12 +709,14 @@ class Robot:
             z_axis=await self._build_axis_status(getattr(self._tool, "_mg", None))
         )
         state = RobotState(current_cell=self._state.current_cell)
+        door_open = await self.refresh_door_state()
         status = RobotStatus(
             gantry=gantry_status,
             tool=tool_status,
             state=state,
             storage=self._grid,
             curtain_blocked=self.get_curtain_state(),
+            door_open=door_open,
         )
         self._status = status
         return status

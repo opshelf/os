@@ -7,14 +7,14 @@ from typing import Any, MutableMapping, Mapping
 
 import structlog
 from structlog.typing import WrappedLogger
-from pythonjsonlogger import jsonlogger
+from pythonjsonlogger.json import JsonFormatter
 
 correlation_id_var: ContextVar[str | None] = ContextVar("correlation_id", default=None)
 device_id_var: ContextVar[str | None] = ContextVar("device_id", default=None)
 user_id_var: ContextVar[int | None] = ContextVar("user_id", default=None)
 
 
-class CustomJsonFormatter(jsonlogger.JsonFormatter):
+class CustomJsonFormatter(JsonFormatter):
 	"""Custom JSON formatter that adds context variables."""
 
 	def add_fields(
