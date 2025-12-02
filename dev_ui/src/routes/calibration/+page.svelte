@@ -379,7 +379,7 @@
 		display: flex;
 		gap: 2em;
 		margin-top: 2em;
-		margin-bottom: 2em;
+		margin-bottom: 1em;
 	}
 
 	.jog-axis,
