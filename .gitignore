@@ -33,10 +33,18 @@ baseline.jpg
 *.log
 
 # Database files
+data
 perpetual_hardware/packages/perpetual_os1_server/data/base.db
 perpetual_hardware/packages/perpetual_os1_server/data/base.db-shm
 perpetual_hardware/packages/perpetual_os1_server/data/base.db-wal
+perpetual_hardware/packages/perpetual_os1_server/data/auth.db
+perpetual_hardware/packages/perpetual_os1_server/data/auth.db-shm
+perpetual_hardware/packages/perpetual_os1_server/data/auth.db-wal
 
 # Claude Code and MCP
 .claude/
 .mcp.json
+
+# Camera files
+frame.png
+mask.png
