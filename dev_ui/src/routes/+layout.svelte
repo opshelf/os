@@ -7,7 +7,8 @@
 	const links = [
 		{ href: '/', label: 'status' },
 		{ href: '/command', label: 'command' },
-		{ href: '/camera', label: 'camera' }
+		{ href: '/camera', label: 'camera' },
+		{ href: '/calibration', label: 'calibration' }
 	];
 
 	let { children } = $props();
