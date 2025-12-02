@@ -5,11 +5,10 @@ from typing import Optional
 
 try:
     import RPi.GPIO as GPIO  # type: ignore[import]
-except ModuleNotFoundError:
-    GPIO = None  # type: ignore[assignment]
-else:
     GPIO.setmode(GPIO.BCM)
     GPIO.setwarnings(False)
+except (ModuleNotFoundError, RuntimeError):
+    GPIO = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__).getChild("curtain")
 
