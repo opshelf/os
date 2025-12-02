@@ -14,3 +14,9 @@ members = [
     "packages/perpetual_os1",
     "packages/perpetual_os1_server",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.1",
+    "ruff>=0.14.6",
+]
