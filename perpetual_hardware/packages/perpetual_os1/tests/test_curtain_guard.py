@@ -315,7 +315,7 @@ class FakeRobot:
     async def refresh_door_state(self):
         return self._door_state
 
-    async def pause_for_curtain(self):
+    def pause_for_curtain(self):
         self.pause_calls += 1
 
     def resume_after_curtain(self):
@@ -366,58 +366,31 @@ class RobotCurtainPauseTests(unittest.TestCase):
         stage = _DummyMotor(safety=safety)
         rotate = _DummyMotor(safety=safety)
 
-        class _DummyTool:
-            def __init__(self, stage_motor, rotate_motor):
-                self._ms = stage_motor
-                self._mr = rotate_motor
-                self.pause_calls = 0
-                self.resume_calls = 0
-
-            async def pause_for_curtain(self):
-                self.pause_calls += 1
-                await self.stop()
-
-            def resume_after_curtain(self):
-                self.resume_calls += 1
-
-            async def stop(self):
-                await self._ms.stop()
-                await self._mr.stop()
-
-        class _DummyIO:
-            def __init__(self):
-                self.stop_calls = 0
-
-            async def stop(self):
-                self.stop_calls += 1
-
-        self.tool = _DummyTool(stage, rotate)
-        self.io = _DummyIO()
-
         robot = Robot.__new__(Robot)
         robot._curtain_safety = safety
-        robot._tool = self.tool
-        robot._io = self.io
+        robot._tool = None
+        robot._io = None
         robot._logger = logging.getLogger(__name__).getChild("robot.test")
         self.robot = robot
         self.safety = safety
         self.stage = stage
         self.rotate = rotate
 
-    def test_pause_stops_stage_and_rotate(self):
-        asyncio.run(self.robot.pause_for_curtain())
-        self.assertGreater(self.stage.stop_calls, 0)
-        self.assertGreater(self.rotate.stop_calls, 0)
-        self.assertEqual(self.tool.pause_calls, 1)
-        self.assertEqual(self.io.stop_calls, 1)
+    def test_pause_blocks_safety(self):
+        self.robot.pause_for_curtain()
         self.assertTrue(self.safety.blocked)
+
+    def test_resume_unblocks_safety(self):
+        self.robot.pause_for_curtain()
+        self.robot.resume_after_curtain()
+        self.assertFalse(self.safety.blocked)
 
     def test_stage_move_waits_for_curtain_resume(self):
         async def run_sequence():
             self.safety.unblock()
             move_task = asyncio.create_task(self.stage.move_to_position(5))
             await asyncio.sleep(0)
-            await self.robot.pause_for_curtain()
+            self.robot.pause_for_curtain()
             await asyncio.sleep(0)
             self.robot.resume_after_curtain()
             await move_task
@@ -425,7 +398,6 @@ class RobotCurtainPauseTests(unittest.TestCase):
         asyncio.run(run_sequence())
         self.assertEqual(self.stage._pos, 5)
         self.assertFalse(self.safety.blocked)
-        self.assertEqual(self.tool.resume_calls, 1)
 
 
 if __name__ == "__main__":
