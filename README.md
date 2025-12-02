@@ -48,6 +48,14 @@ docker compose -f docker-compose.standalone.yml -f docker-compose.hardware.yml u
 
 > **Tip:** The standalone compose file uses the project name `perpetual_os`. Make sure the bundle stack (`opshelf`) is not running at the same time to avoid port conflicts on 8000/8080/4222.
 
+## Running tests (workspace)
+
+From the repository root, run all package tests with uv:
+
+```bash
+uv run --project perpetual_hardware --all-packages pytest
+```
+
 ## Scripts
 
 Convenience scripts are provided in the `scripts/` directory for easier management:

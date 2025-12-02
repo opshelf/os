@@ -174,7 +174,9 @@
       "curtain": {
         "enabled": false,
         "pin": 2,
-        "poll_interval_s": 0.01
+        "poll_interval_s": 0.01,
+        "door_open_threshold_mm": 5.0,
+        "door_debounce_s": 0.02
       }
     },
     "bus": {

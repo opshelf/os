@@ -11,6 +11,7 @@ from hardware.scale import Scale
 from enum import Enum
 import logging
 import sentry_sdk
+import time
 
 
 class IOBoxStatus(Enum):
@@ -40,6 +41,17 @@ class IOBox:
         self._curtain_monitor: Optional[CurtainMonitor] = None
         self._curtain_state: Optional[bool] = None
         self._curtain_listener = None
+        self._door_open: Optional[bool] = None
+        self._door_last_read_at: Optional[float] = None
+        self._door_min_refresh_s = 0.2
+        curtain_cfg = getattr(self._params, "curtain", None)
+        self._door_open_threshold_mm: float = getattr(
+            curtain_cfg, "door_open_threshold_mm", 5.0
+        )
+        self._door_debounce_s: float = getattr(curtain_cfg, "door_debounce_s", 0.0)
+        self._door_candidate_state: Optional[bool] = None
+        self._door_candidate_since: Optional[float] = None
+        self._door_force_refresh_on_block: bool = False
 
 
     async def configure(self):
@@ -59,6 +71,8 @@ class IOBox:
             self._status = IOBoxStatus.ERROR
             raise IOBoxError(f"IOBox configuration failed: {str(e)}") from e
 
+        await self.home_door()
+        await self.refresh_door_state()
         await self._configure_curtain()
 
     async def _configure_curtain(self) -> None:
@@ -142,7 +156,10 @@ class IOBox:
         try:
             if self._md is None:
                 raise IOBoxError("Door motor not configured")
+            if self._curtain_state:
+                raise IOBoxError("Curtain is blocked; refusing to open door")
             await self._md.move_to_position(self._params.motors.by_name("door").lim)  # open position
+            await self.refresh_door_state(force=True)
         except Exception as e:
             self._status = IOBoxStatus.ERROR
             if isinstance(e, IOBoxError):
@@ -161,16 +178,36 @@ class IOBox:
             if self._md is None:
                 raise IOBoxError("Door motor not configured")
             await self._md.move_to_position(0)  # closed position
+            await self.refresh_door_state(force=True)
         except Exception as e:
             self._status = IOBoxStatus.ERROR
             if isinstance(e, IOBoxError):
                 raise
             raise MotorError(f"Failed to close door: {str(e)}") from e
 
+    async def home_door(self) -> None:
+        """
+        Home the door motor, forcing the door closed first when curtain is clear.
+        """
+        try:
+            if self._md is None:
+                raise IOBoxError("Door motor not configured")
+            if not self._curtain_state:
+                await self.close_door()
+            await self._md.home()
+        except Exception as e:
+            self._status = IOBoxStatus.ERROR
+            if isinstance(e, IOBoxError):
+                raise
+            raise MotorError(f"Failed to home door: {str(e)}") from e
+
     # curtain worker?
 
     def _handle_curtain_change(self, state: Optional[bool]) -> None:
         self._curtain_state = state
+        # Force a fresh door read when curtain blocks to avoid stale inference.
+        if state:
+            self._door_force_refresh_on_block = True
         if self._curtain_listener:
             try:
                 self._curtain_listener(state)
@@ -179,6 +216,72 @@ class IOBox:
 
     def get_curtain_state(self) -> Optional[bool]:
         return self._curtain_state
+
+    def get_door_state(self) -> Optional[bool]:
+        return self._door_open
+
+    async def refresh_door_state(self, *, force: bool = False) -> Optional[bool]:
+        """
+        Best-effort inference of door state from motor position.
+        Returns the latest cached state if the read fails.
+        """
+        if self._md is None:
+            return self._door_open
+        if self._door_force_refresh_on_block:
+            force = True
+            self._door_force_refresh_on_block = False
+        now = time.monotonic()
+        if not force and self._door_last_read_at is not None:
+            if now - self._door_last_read_at < self._door_min_refresh_s:
+                return self._door_open
+        try:
+            position_mm = await self._md.get_position()
+        except Exception as exc:
+            self._logger.debug("Door position read failed: %s", exc)
+            return self._door_open
+
+        if position_mm is None:
+            return self._door_open
+
+        threshold = self._door_open_threshold_mm
+        inferred = position_mm > threshold
+
+        if inferred == self._door_open:
+            self._door_candidate_state = None
+            self._door_candidate_since = None
+            self._door_last_read_at = now
+            return self._door_open
+
+        if self._door_debounce_s <= 0:
+            self._door_open = inferred
+            self._door_last_read_at = now
+            self._logger.debug(
+                "Door state inferred",
+                extra={"position_mm": position_mm, "open": inferred, "threshold_mm": threshold},
+            )
+            return self._door_open
+
+        if self._door_candidate_state != inferred:
+            self._door_candidate_state = inferred
+            self._door_candidate_since = now
+            return self._door_open
+
+        assert self._door_candidate_since is not None
+        if now - self._door_candidate_since >= self._door_debounce_s:
+            self._door_open = inferred
+            self._door_last_read_at = now
+            self._door_candidate_state = None
+            self._door_candidate_since = None
+            self._logger.debug(
+                "Door state inferred",
+                extra={
+                    "position_mm": position_mm,
+                    "open": inferred,
+                    "threshold_mm": threshold,
+                    "debounce_s": self._door_debounce_s,
+                },
+            )
+        return self._door_open
 
     def set_curtain_listener(self, listener) -> None:
         self._curtain_listener = listener

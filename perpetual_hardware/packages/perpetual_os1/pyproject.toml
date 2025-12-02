@@ -20,3 +20,9 @@ build-backend = "hatchling.build"
 
 [tool.uv.sources]
 hardware = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "ruff>=0.14.6",
+    "pytest>=8.3.0",
+]
