@@ -268,6 +268,11 @@ class Motor():
         """
         try:
             if self._safety:
+                if self._safety.blocked:
+                    self._logger.debug(
+                        "Curtain guard active before move; waiting to clear",
+                        extra={"motor_id": self._motor_id, "target_mm": value},
+                    )
                 await self._safety.wait_clear()
             await self._start_absolute_move(value, rpm, accel)
             status = await self.wait_for_move(timeout=MOTOR_MOVE_TIMEOUT)
@@ -296,6 +301,11 @@ class Motor():
         """
         try:
             if self._safety:
+                if self._safety.blocked:
+                    self._logger.debug(
+                        "Curtain guard active before move; waiting to clear",
+                        extra={"motor_id": self._motor_id, "target_mm": value},
+                    )
                 await self._safety.wait_clear()
             await self._start_absolute_move(value, rpm, accel)
             
@@ -494,11 +504,22 @@ class Motor():
             now = time.monotonic()
 
             if self._safety and self._safety.blocked:
-                self._logger.info("Curtain guard stop", extra={"motor_id": self._motor_id})
+                pause_started = time.monotonic()
+                self._logger.info(
+                    "Curtain guard stop",
+                    extra={"motor_id": self._motor_id, "position_mm": self._cur_pos},
+                )
                 await self.stop()
                 await self._safety.wait_clear()
                 if self._pending_motion:
-                    self._logger.info("Curtain guard resume", extra={"motor_id": self._motor_id})
+                    self._logger.info(
+                        "Curtain guard resume",
+                        extra={
+                            "motor_id": self._motor_id,
+                            "position_mm": self._cur_pos,
+                            "paused_s": time.monotonic() - pause_started,
+                        },
+                    )
                     await self._pending_motion()
                 start_time = time.monotonic()
                 last_pos = None

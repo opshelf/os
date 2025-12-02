@@ -69,7 +69,7 @@ def add_context_to_event_dict(
 
 def configure_logging() -> None:
 	"""Configure structured logging for the application."""
-	log_level = os.getenv('LOG_LEVEL', 'INFO').upper()
+	log_level = os.getenv('LOG_LEVEL', 'DEBUG').upper()
 
 	logging.basicConfig(
 		level=getattr(logging, log_level),
