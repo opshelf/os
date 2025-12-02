@@ -635,7 +635,18 @@ class Robot:
             upca=resolved_upca
         )
 
-        location = self._grid.find_best_slot_for_item(item)
+        provided_location = None
+        if isinstance(item_payload, dict):
+            provided_location = item_payload.get("location")
+
+        if provided_location is not None:
+            location = StorageModuleCellLocation(
+                side=provided_location.get("side", "L"),
+                shelf_idx=int(provided_location.get("shelf_idx", 0)),
+                cell_idx=int(provided_location.get("cell_idx", 0)),
+            )
+        else:
+            location = self._grid.find_best_slot_for_item(item)
 
         if not location:
             return RobotCommandError(command=command_name, error="No suitable storage location found")
