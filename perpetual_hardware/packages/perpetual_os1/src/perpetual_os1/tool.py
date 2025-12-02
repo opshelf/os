@@ -64,6 +64,7 @@ class Tool:
         self._params = params
         self._fault_recovery_active = False
         self._fault_recovery_attempted = False
+        self._guard_paused = False
         self._logger = logging.getLogger(__name__)
 
         self._mx = Motor(self._motorcontroller, self._params.motors.by_name("x_axis"), safety)
@@ -237,6 +238,32 @@ class Tool:
         except Exception as e:
             await self._handle_fault(e)
             raise MotorError(f"Failed to clear alarms: {str(e)}") from e
+
+    async def pause_for_curtain(self) -> None:
+        if self._guard_paused:
+            return
+        self._guard_paused = True
+        stage_pos = None
+        rotate_pos = None
+        try:
+            stage_pos = await self._ms.get_position()
+        except Exception:
+            pass
+        try:
+            rotate_pos = await self._mr.get_position()
+        except Exception:
+            pass
+        await self.stop()
+        self._logger.info(
+            "Curtain guard pausing tool",
+            extra={"stage_position": stage_pos, "rotate_position": rotate_pos},
+        )
+
+    def resume_after_curtain(self) -> None:
+        if not self._guard_paused:
+            return
+        self._guard_paused = False
+        self._logger.info("Curtain guard cleared for tool")
 
     async def stop(self) -> None:
         """

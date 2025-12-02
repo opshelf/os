@@ -494,9 +494,11 @@ class Motor():
             now = time.monotonic()
 
             if self._safety and self._safety.blocked:
+                self._logger.info("Curtain guard stop", extra={"motor_id": self._motor_id})
                 await self.stop()
                 await self._safety.wait_clear()
                 if self._pending_motion:
+                    self._logger.info("Curtain guard resume", extra={"motor_id": self._motor_id})
                     await self._pending_motion()
                 start_time = time.monotonic()
                 last_pos = None
