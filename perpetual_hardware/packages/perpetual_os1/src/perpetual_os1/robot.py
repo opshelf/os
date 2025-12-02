@@ -640,8 +640,16 @@ class Robot:
             provided_location = item_payload.get("location")
 
         if provided_location is not None:
+            side_raw = provided_location.get("side", "L")
+            if side_raw == "L":
+                side_value = "left_module"
+            elif side_raw == "R":
+                side_value = "right_module"
+            else:
+                side_value = side_raw
+
             location = StorageModuleCellLocation(
-                side=provided_location.get("side", "L"),
+                side=side_value,
                 shelf_idx=int(provided_location.get("shelf_idx", 0)),
                 cell_idx=int(provided_location.get("cell_idx", 0)),
             )
