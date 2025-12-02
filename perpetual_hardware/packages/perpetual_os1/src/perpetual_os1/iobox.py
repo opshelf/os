@@ -177,6 +177,11 @@ class IOBox:
 
     def set_curtain_listener(self, listener) -> None:
         self._curtain_listener = listener
+        if self._curtain_state is not None and self._curtain_listener:
+            try:
+                self._curtain_listener(self._curtain_state)
+            except Exception as exc:
+                self._logger.warning("Curtain listener failed: %s", exc)
 
     # shutdown/teardown
     async def stop(self) -> None:
