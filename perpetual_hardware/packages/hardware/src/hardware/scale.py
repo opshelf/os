@@ -8,23 +8,21 @@ from hardware.controller import SharedModbusController
 
 class Scale:
     """
-    Async driver for Ruishan scale using SharedModbusController (pymodbus async).
+    Async driver for SJ-101D_X using your SharedModbusController (pymodbus async).
 
     Register map (0-based holding registers):
-      0 -> 40001: Weight register 1
-      1 -> 40002: Weight register 2
+      0 -> 40001: Weight high 16 bits
+      1 -> 40002: Weight low  16 bits
       2 -> 40003: Decimal position (0..3)
-      3 -> 40004: Status bits: bit0=zero, bit1=stable, bit2=overload
+      3 -> 40004: Status bits: bit0=stable, bit1=zero, bit2=overload, bit4=valid
       4 -> 40005: Tare (write 1)
-
-    Weight calculation: abs(reg0 - reg1) / 10^decimals
     """
 
-    REG_WEIGHT_1 = 0
-    REG_WEIGHT_2 = 1
-    REG_DECIMALS = 2
-    REG_STATUS = 3
-    REG_TARE = 4
+    REG_WEIGHT_HI = 0
+    REG_WEIGHT_LO = 1
+    REG_DECIMALS  = 2
+    REG_STATUS    = 3
+    REG_TARE      = 4
 
     def __init__(
         self,
@@ -61,7 +59,7 @@ class Scale:
     async def _read_block(self, start: int, count: int) -> Optional[Tuple[int, ...]]:
         """
         Read 'count' registers starting at 'start'.
-        (Controller returns only first register even if count>1, so read individually.)
+        (Your controller returns only first register even if count>1, so read individually.)
         """
         vals = []
         for ofs in range(count):
@@ -72,12 +70,18 @@ class Scale:
         return tuple(vals)
 
     @staticmethod
+    def _to_int32_signed(hi: int, lo: int) -> int:
+        raw = ((hi & 0xFFFF) << 16) | (lo & 0xFFFF)
+        return raw - 0x1_0000_0000 if (raw & 0x8000_0000) else raw
+
+    @staticmethod
     def _interpret_status(v: int) -> Dict[str, bool | int]:
         return {
-            "zero": bool(v & (1 << 0)),
-            "stable": bool(v & (1 << 1)),
+            "stable":   bool(v & (1 << 0)),
+            "zero":     bool(v & (1 << 1)),
             "overload": bool(v & (1 << 2)),
-            "raw": v & 0xFFFF,
+            "valid":    bool(v & (1 << 4)),
+            "raw":      v & 0xFFFF,
         }
 
     # ---------- high-level API ----------
@@ -92,15 +96,15 @@ class Scale:
         got = 0
 
         for i in range(averages):
-            regs = await self._read_block(self.REG_WEIGHT_1, 3)
+            regs = await self._read_block(self.REG_WEIGHT_HI, 3)
             if regs is None:
                 if i < averages - 1:
                     await asyncio.sleep(delay)
                     continue
                 return None
-            w1, w2, decimals = regs
-            raw = abs(w1 - w2)
-            grams = raw / (10 ** int(decimals))
+            hi, lo, decimals = regs
+            raw = self._to_int32_signed(hi, lo)
+            grams = abs(raw * (10 ** (-int(decimals))))
             total += grams
             got += 1
             if i < averages - 1:
@@ -111,20 +115,21 @@ class Scale:
     async def read_weight_data(self) -> Dict[str, Any]:
         """
         Rich read: weight (grams), decimals, status flags, and raw regs.
+        Note: This method returns raw values without abs() - used for debugging.
         """
-        regs = await self._read_block(self.REG_WEIGHT_1, 4)
-        if regs is None:
+        regs = await self._read_block(self.REG_WEIGHT_HI, 4)  # hi, lo, decimals, status
+        if not regs:
             raise RuntimeError("Failed to read weight registers")
-        w1, w2, decimals, status_raw = regs
-        raw = abs(w1 - w2)
-        grams = raw / (10 ** int(decimals))
+        hi, lo, decimals, status_raw = regs
+        raw = self._to_int32_signed(hi, lo)
+        kg = raw * (10 ** (-int(decimals)))
         return {
-            "weight": grams,
+            "weight": kg,
             "decimal_position": int(decimals),
             "status": self._interpret_status(status_raw),
             "raw_registers": {
-                "weight_1": w1,
-                "weight_2": w2,
+                "weight_hi": hi,
+                "weight_lo": lo,
                 "decimals": decimals,
                 "status": status_raw,
             },
