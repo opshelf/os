@@ -184,6 +184,27 @@ async def emit_label_scanned_event(request: LabelScanRequest) -> SuccessResponse
     return SuccessResponse()
 
 
+@router.get("/debug/scale", dependencies=[Depends(check_robot_enabled)])
+async def get_scale_reading(
+    worker: RobotWorker = Depends(get_robot_worker_or_error),
+) -> dict:
+    try:
+        data = await worker.get_scale_data()
+        weight_abs = abs(data["weight"])
+        return {
+            "weight_grams": weight_abs,
+            "decimal_position": data["decimal_position"],
+            "status": data["status"],
+            "raw_registers": data["raw_registers"],
+        }
+    except Exception as exc:
+        logging.error("Failed to read scale: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Failed to read scale: {exc}",
+        ) from exc
+
+
 async def nats_consumer(stop_event: asyncio.Event) -> AsyncGenerator[str, None]:
     nats_client = NATS()
     message_queue: asyncio.Queue[str] = asyncio.Queue()
