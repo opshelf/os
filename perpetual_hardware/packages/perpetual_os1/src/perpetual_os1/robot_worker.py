@@ -215,6 +215,9 @@ class RobotWorker:
     def get_client(self) -> RobotClient:
         return self._client
 
+    async def get_scale_data(self) -> Dict[str, Any]:
+        return await self._robot.get_scale_data()
+
     def get_latest_status_payload(self) -> Optional[str]:
         return self._latest_status_payload
 

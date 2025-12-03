@@ -709,6 +709,9 @@ class Robot:
 
         return await self.retrieve_by_location(location.model_dump())
 
+    async def get_scale_data(self) -> Dict[str, Any]:
+        return await self._io._scale.read_weight_data()
+
     async def _build_axis_status(self, motor: Optional["Motor"]) -> AxisTelemetry:
         position = 0.0
         if motor is None:
