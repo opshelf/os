@@ -33,8 +33,8 @@ class Scale:
     REG_CAL_WEIGHT = 32
     REG_CAL_STATUS = 33
 
-    CAL_STATUS_ZERO_OK = 0x40
-    CAL_STATUS_WEIGHT_OK = 0x80
+    CAL_STATUS_ZERO_OK = 0x04
+    CAL_STATUS_WEIGHT_OK = 0x08
 
     def __init__(
         self,
