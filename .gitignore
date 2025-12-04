@@ -23,6 +23,7 @@ wheels/
 .DS_Store
 
 # Application Files
+config.json
 settings.json
 storage.json
 state.json
