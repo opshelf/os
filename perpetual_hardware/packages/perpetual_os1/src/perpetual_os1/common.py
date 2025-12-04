@@ -231,6 +231,10 @@ class CurtainConfig(BaseModel):
     door_debounce_s: float = Field(0.0, ge=0)
 
 
+class ScaleConfig(BaseModel):
+    enabled: bool = True
+
+
 # --------------------------- Buses ---------------------------
 
 class ModbusBusConfig(BaseModel):
@@ -309,6 +313,7 @@ class IOBlock(BaseModel):
     usb_camera: UsbCamera
     tof_camera: TofCamera
     curtain: CurtainConfig = Field(default_factory=CurtainConfig)
+    scale: ScaleConfig = Field(default_factory=ScaleConfig)
 
     @model_validator(mode="before")
     @classmethod
