@@ -86,3 +86,173 @@ async def test_to_int32_signed():
 	assert Scale._to_int32_signed(0, 100) == 100
 	assert Scale._to_int32_signed(0xFFFF, 0xFF9C) == -100
 	assert Scale._to_int32_signed(0xFFFF, 0xF667) == -2457
+
+
+@pytest.mark.asyncio
+async def test_get_calibration_status_zero_ok(mock_scale_controller):
+	scale = Scale(mock_scale_controller)
+	mock_scale_controller.read_holding_registers.return_value = 0x40
+
+	status = await scale.get_calibration_status()
+
+	assert status["zero_ok"] is True
+	assert status["weight_ok"] is False
+	assert status["raw"] == 0x40
+
+
+@pytest.mark.asyncio
+async def test_get_calibration_status_weight_ok(mock_scale_controller):
+	scale = Scale(mock_scale_controller)
+	mock_scale_controller.read_holding_registers.return_value = 0x80
+
+	status = await scale.get_calibration_status()
+
+	assert status["zero_ok"] is False
+	assert status["weight_ok"] is True
+	assert status["raw"] == 0x80
+
+
+@pytest.mark.asyncio
+async def test_get_calibration_status_both_ok(mock_scale_controller):
+	scale = Scale(mock_scale_controller)
+	mock_scale_controller.read_holding_registers.return_value = 0xC0
+
+	status = await scale.get_calibration_status()
+
+	assert status["zero_ok"] is True
+	assert status["weight_ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_get_calibration_status_failure(mock_scale_controller):
+	scale = Scale(mock_scale_controller)
+	mock_scale_controller.read_holding_registers.return_value = None
+
+	with pytest.raises(RuntimeError, match="Failed to read calibration status"):
+		await scale.get_calibration_status()
+
+
+@pytest.mark.asyncio
+async def test_get_calibration_params(mock_scale_controller):
+	scale = Scale(mock_scale_controller)
+	mock_scale_controller.read_holding_registers.side_effect = [
+		0, 6000,
+		0, 500,
+		1,
+		1,
+	]
+
+	params = await scale.get_calibration_params()
+
+	assert params["full_scale"] == 6000
+	assert params["calibration_weight"] == 500
+	assert params["precision"] == 1
+	assert params["division"] == 1
+
+
+@pytest.mark.asyncio
+async def test_get_calibration_params_failure(mock_scale_controller):
+	scale = Scale(mock_scale_controller)
+	mock_scale_controller.read_holding_registers.return_value = None
+
+	with pytest.raises(RuntimeError, match="Failed to read calibration parameters"):
+		await scale.get_calibration_params()
+
+
+@pytest.mark.asyncio
+async def test_set_calibration_params(mock_scale_controller):
+	scale = Scale(mock_scale_controller)
+	mock_scale_controller.write_single_register.return_value = None
+
+	result = await scale.set_calibration_params(
+		full_scale=6000,
+		calibration_weight=500,
+		precision=1,
+		division=1,
+	)
+
+	assert result is True
+	assert mock_scale_controller.write_single_register.call_count == 6
+
+
+@pytest.mark.asyncio
+async def test_set_calibration_params_failure(mock_scale_controller):
+	scale = Scale(mock_scale_controller)
+	mock_scale_controller.write_single_register.side_effect = Exception("Write failed")
+
+	result = await scale.set_calibration_params(
+		full_scale=6000,
+		calibration_weight=500,
+	)
+
+	assert result is False
+
+
+@pytest.mark.asyncio
+async def test_calibrate_zero_success(mock_scale_controller):
+	scale = Scale(mock_scale_controller)
+	mock_scale_controller.write_single_register.return_value = None
+	mock_scale_controller.read_holding_registers.return_value = 0x40
+
+	result = await scale.calibrate_zero(timeout=1.0)
+
+	assert result["success"] is True
+	assert result["status"]["zero_ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_calibrate_zero_write_failure(mock_scale_controller):
+	scale = Scale(mock_scale_controller)
+	mock_scale_controller.write_single_register.side_effect = Exception("Write failed")
+
+	result = await scale.calibrate_zero(timeout=1.0)
+
+	assert result["success"] is False
+	assert "Failed to write" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_calibrate_zero_timeout(mock_scale_controller):
+	scale = Scale(mock_scale_controller)
+	mock_scale_controller.write_single_register.return_value = None
+	mock_scale_controller.read_holding_registers.return_value = 0x00
+
+	result = await scale.calibrate_zero(timeout=0.3)
+
+	assert result["success"] is False
+	assert "timeout" in result["error"].lower()
+
+
+@pytest.mark.asyncio
+async def test_calibrate_weight_success(mock_scale_controller):
+	scale = Scale(mock_scale_controller)
+	mock_scale_controller.write_single_register.return_value = None
+	mock_scale_controller.read_holding_registers.return_value = 0x80
+
+	result = await scale.calibrate_weight(timeout=1.0)
+
+	assert result["success"] is True
+	assert result["status"]["weight_ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_calibrate_weight_write_failure(mock_scale_controller):
+	scale = Scale(mock_scale_controller)
+	mock_scale_controller.write_single_register.side_effect = Exception("Write failed")
+
+	result = await scale.calibrate_weight(timeout=1.0)
+
+	assert result["success"] is False
+	assert "Failed to write" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_calibrate_weight_timeout(mock_scale_controller):
+	scale = Scale(mock_scale_controller)
+	mock_scale_controller.write_single_register.return_value = None
+	mock_scale_controller.read_holding_registers.return_value = 0x00
+
+	result = await scale.calibrate_weight(timeout=0.3)
+
+	assert result["success"] is False
+	assert "timeout" in result["error"].lower()
