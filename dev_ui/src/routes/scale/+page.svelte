@@ -57,7 +57,7 @@
 				fullScale = calibrationParams.full_scale;
 				calibrationWeight = calibrationParams.calibration_weight;
 				precision = calibrationParams.precision;
-				division = calibrationParams.division;
+				division = calibrationParams.division < 1 ? 1 : calibrationParams.division;
 			}
 		} catch (err) {
 			calibrationError = err instanceof Error ? err.message : 'failed to read calibration params';
