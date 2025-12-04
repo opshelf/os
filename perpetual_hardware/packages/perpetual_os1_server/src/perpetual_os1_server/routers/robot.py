@@ -37,6 +37,13 @@ class LabelScanRequest(BaseModel):
     code: str = Field(..., min_length=1)
 
 
+class ScaleCalibrationParamsRequest(BaseModel):
+    full_scale: int = Field(..., description="Full scale value in grams (e.g., 6000 for 6kg)")
+    calibration_weight: int = Field(..., description="Known calibration weight in grams")
+    precision: int = Field(default=1, ge=0, le=3, description="Decimal precision (0-3)")
+    division: int = Field(default=1, ge=1, description="Division value")
+
+
 async def check_robot_enabled() -> None:
     settings = get_settings()
     if not settings.robot.enabled:
@@ -202,6 +209,83 @@ async def get_scale_reading(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Failed to read scale: {exc}",
+        ) from exc
+
+
+@router.get("/debug/scale/calibration/status", dependencies=[Depends(check_robot_enabled)])
+async def get_scale_calibration_status(
+    worker: RobotWorker = Depends(get_robot_worker_or_error),
+) -> dict:
+    try:
+        return await worker.get_scale_calibration_status()
+    except Exception as exc:
+        logging.error("Failed to read scale calibration status: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Failed to read scale calibration status: {exc}",
+        ) from exc
+
+
+@router.get("/debug/scale/calibration/params", dependencies=[Depends(check_robot_enabled)])
+async def get_scale_calibration_params(
+    worker: RobotWorker = Depends(get_robot_worker_or_error),
+) -> dict:
+    try:
+        return await worker.get_scale_calibration_params()
+    except Exception as exc:
+        logging.error("Failed to read scale calibration params: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Failed to read scale calibration params: {exc}",
+        ) from exc
+
+
+@router.post("/debug/scale/calibration/params", dependencies=[Depends(check_robot_enabled)])
+async def set_scale_calibration_params(
+    request: ScaleCalibrationParamsRequest,
+    worker: RobotWorker = Depends(get_robot_worker_or_error),
+) -> dict:
+    try:
+        ok = await worker.set_scale_calibration_params(
+            full_scale=request.full_scale,
+            calibration_weight=request.calibration_weight,
+            precision=request.precision,
+            division=request.division,
+        )
+        return {"success": ok}
+    except Exception as exc:
+        logging.error("Failed to set scale calibration params: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Failed to set scale calibration params: {exc}",
+        ) from exc
+
+
+@router.post("/debug/scale/calibration/zero", dependencies=[Depends(check_robot_enabled)])
+async def calibrate_scale_zero(
+    worker: RobotWorker = Depends(get_robot_worker_or_error),
+) -> dict:
+    try:
+        return await worker.calibrate_scale_zero()
+    except Exception as exc:
+        logging.error("Failed to calibrate scale zero: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Failed to calibrate scale zero: {exc}",
+        ) from exc
+
+
+@router.post("/debug/scale/calibration/weight", dependencies=[Depends(check_robot_enabled)])
+async def calibrate_scale_weight(
+    worker: RobotWorker = Depends(get_robot_worker_or_error),
+) -> dict:
+    try:
+        return await worker.calibrate_scale_weight()
+    except Exception as exc:
+        logging.error("Failed to calibrate scale weight: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Failed to calibrate scale weight: {exc}",
         ) from exc
 
 

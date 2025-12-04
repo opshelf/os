@@ -20,9 +20,21 @@ class Scale:
 
     REG_WEIGHT_HI = 0
     REG_WEIGHT_LO = 1
-    REG_DECIMALS  = 2
-    REG_STATUS    = 3
-    REG_TARE      = 4
+    REG_DECIMALS = 2
+    REG_STATUS = 3
+    REG_TARE = 4
+    REG_FULL_SCALE_HI = 25
+    REG_FULL_SCALE_LO = 26
+    REG_CAL_WEIGHT_HI = 27
+    REG_CAL_WEIGHT_LO = 28
+    REG_PRECISION = 29
+    REG_DIVISION = 30
+    REG_CAL_ZERO = 31
+    REG_CAL_WEIGHT = 32
+    REG_CAL_STATUS = 33
+
+    CAL_STATUS_ZERO_OK = 0x40
+    CAL_STATUS_WEIGHT_OK = 0x80
 
     def __init__(
         self,
@@ -165,3 +177,92 @@ class Scale:
             await asyncio.sleep(poll_interval)
 
         return None
+
+    async def _write_one(self, addr: int, value: int) -> bool:
+        try:
+            await self.modbus_controller.write_single_register(self.scale_id, addr, value)
+            return True
+        except Exception:
+            return False
+
+    async def get_calibration_status(self) -> Dict[str, Any]:
+        v = await self._read_one(self.REG_CAL_STATUS)
+        if v is None:
+            raise RuntimeError("Failed to read calibration status register")
+        return {
+            "zero_ok": bool(v & self.CAL_STATUS_ZERO_OK),
+            "weight_ok": bool(v & self.CAL_STATUS_WEIGHT_OK),
+            "raw": v,
+        }
+
+    async def get_calibration_params(self) -> Dict[str, Any]:
+        full_scale = await self._read_block(self.REG_FULL_SCALE_HI, 2)
+        cal_weight = await self._read_block(self.REG_CAL_WEIGHT_HI, 2)
+        precision = await self._read_one(self.REG_PRECISION)
+        division = await self._read_one(self.REG_DIVISION)
+
+        if full_scale is None or cal_weight is None or precision is None or division is None:
+            raise RuntimeError("Failed to read calibration parameters")
+
+        full_scale_val = self._to_int32_signed(full_scale[0], full_scale[1])
+        cal_weight_val = self._to_int32_signed(cal_weight[0], cal_weight[1])
+
+        return {
+            "full_scale": full_scale_val,
+            "calibration_weight": cal_weight_val,
+            "precision": precision,
+            "division": division,
+        }
+
+    async def set_calibration_params(
+        self,
+        full_scale: int,
+        calibration_weight: int,
+        precision: int = 1,
+        division: int = 1,
+    ) -> bool:
+        full_scale_hi = (full_scale >> 16) & 0xFFFF
+        full_scale_lo = full_scale & 0xFFFF
+        cal_weight_hi = (calibration_weight >> 16) & 0xFFFF
+        cal_weight_lo = calibration_weight & 0xFFFF
+
+        ok = True
+        ok = ok and await self._write_one(self.REG_FULL_SCALE_HI, full_scale_hi)
+        ok = ok and await self._write_one(self.REG_FULL_SCALE_LO, full_scale_lo)
+        ok = ok and await self._write_one(self.REG_CAL_WEIGHT_HI, cal_weight_hi)
+        ok = ok and await self._write_one(self.REG_CAL_WEIGHT_LO, cal_weight_lo)
+        ok = ok and await self._write_one(self.REG_PRECISION, precision)
+        ok = ok and await self._write_one(self.REG_DIVISION, division)
+        return ok
+
+    async def calibrate_zero(self, timeout: float = 5.0) -> Dict[str, Any]:
+        ok = await self._write_one(self.REG_CAL_ZERO, 1)
+        if ok is False:
+            return {"success": False, "error": "Failed to write zero calibration command"}
+
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + timeout
+
+        while loop.time() < deadline:
+            await asyncio.sleep(0.2)
+            status = await self.get_calibration_status()
+            if status["zero_ok"] is True:
+                return {"success": True, "status": status}
+
+        return {"success": False, "error": "Zero calibration timeout", "status": await self.get_calibration_status()}
+
+    async def calibrate_weight(self, timeout: float = 5.0) -> Dict[str, Any]:
+        ok = await self._write_one(self.REG_CAL_WEIGHT, 1)
+        if ok is False:
+            return {"success": False, "error": "Failed to write weight calibration command"}
+
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + timeout
+
+        while loop.time() < deadline:
+            await asyncio.sleep(0.2)
+            status = await self.get_calibration_status()
+            if status["weight_ok"] is True:
+                return {"success": True, "status": status}
+
+        return {"success": False, "error": "Weight calibration timeout", "status": await self.get_calibration_status()}
