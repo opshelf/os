@@ -8,7 +8,8 @@
 		{ href: '/', label: 'status' },
 		{ href: '/command', label: 'command' },
 		{ href: '/camera', label: 'camera' },
-		{ href: '/calibration', label: 'calibration' }
+		{ href: '/calibration', label: 'calibration' },
+		{ href: '/scale', label: 'scale' }
 	];
 
 	let { children } = $props();
