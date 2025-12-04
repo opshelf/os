@@ -142,3 +142,84 @@ export async function saveCalibration(
 		}),
 	});
 }
+
+export interface ScaleStatus {
+	stable: boolean;
+	zero: boolean;
+	overload: boolean;
+	valid: boolean;
+	raw: number;
+}
+
+export interface ScaleReading {
+	weight_grams: number;
+	decimal_position: number;
+	status: ScaleStatus;
+	raw_registers: {
+		weight_hi: number;
+		weight_lo: number;
+		decimals: number;
+		status: number;
+	};
+}
+
+export interface ScaleCalibrationStatus {
+	zero_ok: boolean;
+	weight_ok: boolean;
+	raw: number;
+}
+
+export interface ScaleCalibrationParams {
+	full_scale: number;
+	calibration_weight: number;
+	precision: number;
+	division: number;
+}
+
+export interface ScaleCalibrationResult {
+	success: boolean;
+	error?: string;
+	status?: ScaleCalibrationStatus;
+}
+
+export async function getScaleReading(): Promise<ScaleReading> {
+	return apiFetch<ScaleReading>("/robot/debug/scale");
+}
+
+export async function getScaleCalibrationStatus(): Promise<ScaleCalibrationStatus> {
+	return apiFetch<ScaleCalibrationStatus>("/robot/debug/scale/calibration/status");
+}
+
+export async function getScaleCalibrationParams(): Promise<ScaleCalibrationParams> {
+	return apiFetch<ScaleCalibrationParams>("/robot/debug/scale/calibration/params");
+}
+
+export async function setScaleCalibrationParams(
+	fullScale: number,
+	calibrationWeight: number,
+	precision: number,
+	division: number
+): Promise<{ success: boolean }> {
+	return apiFetch<{ success: boolean }>("/robot/debug/scale/calibration/params", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({
+			full_scale: fullScale,
+			calibration_weight: calibrationWeight,
+			precision,
+			division,
+		}),
+	});
+}
+
+export async function calibrateScaleZero(): Promise<ScaleCalibrationResult> {
+	return apiFetch<ScaleCalibrationResult>("/robot/debug/scale/calibration/zero", {
+		method: "POST",
+	});
+}
+
+export async function calibrateScaleWeight(): Promise<ScaleCalibrationResult> {
+	return apiFetch<ScaleCalibrationResult>("/robot/debug/scale/calibration/weight", {
+		method: "POST",
+	});
+}
