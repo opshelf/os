@@ -171,6 +171,11 @@ class ToolCameraStreamManager:
 		self.consumer_count = max(0, self.consumer_count - 1)
 		return self.consumer_count
 
+	def _create_capture(self) -> cv2.VideoCapture:
+		cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
+		cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+		return cap
+
 	async def _capture_loop(self) -> None:
 		cap: Optional[cv2.VideoCapture] = None
 
@@ -180,7 +185,7 @@ class ToolCameraStreamManager:
 
 				try:
 					if cap is None or cap.isOpened() is False:
-						cap = cv2.VideoCapture(self.rtsp_url)
+						cap = self._create_capture()
 						if cap.isOpened() is False:
 							logger.warning("tool_camera_connection_failed", rtsp_url=self.rtsp_url)
 							await asyncio.sleep(2.0)
@@ -191,6 +196,8 @@ class ToolCameraStreamManager:
 					def sync_capture() -> Optional[np.ndarray]:
 						if cap is None:
 							return None
+						for _ in range(3):
+							cap.grab()
 						ret, frame = cap.read()
 						if ret is True and frame is not None:
 							return frame
