@@ -91,31 +91,31 @@ async def test_to_int32_signed():
 @pytest.mark.asyncio
 async def test_get_calibration_status_zero_ok(mock_scale_controller):
 	scale = Scale(mock_scale_controller)
-	mock_scale_controller.read_holding_registers.return_value = 0x40
+	mock_scale_controller.read_holding_registers.return_value = 0x04
 
 	status = await scale.get_calibration_status()
 
 	assert status["zero_ok"] is True
 	assert status["weight_ok"] is False
-	assert status["raw"] == 0x40
+	assert status["raw"] == 0x04
 
 
 @pytest.mark.asyncio
 async def test_get_calibration_status_weight_ok(mock_scale_controller):
 	scale = Scale(mock_scale_controller)
-	mock_scale_controller.read_holding_registers.return_value = 0x80
+	mock_scale_controller.read_holding_registers.return_value = 0x08
 
 	status = await scale.get_calibration_status()
 
 	assert status["zero_ok"] is False
 	assert status["weight_ok"] is True
-	assert status["raw"] == 0x80
+	assert status["raw"] == 0x08
 
 
 @pytest.mark.asyncio
 async def test_get_calibration_status_both_ok(mock_scale_controller):
 	scale = Scale(mock_scale_controller)
-	mock_scale_controller.read_holding_registers.return_value = 0xC0
+	mock_scale_controller.read_holding_registers.return_value = 0x0C
 
 	status = await scale.get_calibration_status()
 
@@ -192,7 +192,7 @@ async def test_set_calibration_params_failure(mock_scale_controller):
 async def test_calibrate_zero_success(mock_scale_controller):
 	scale = Scale(mock_scale_controller)
 	mock_scale_controller.write_single_register.return_value = None
-	mock_scale_controller.read_holding_registers.return_value = 0x40
+	mock_scale_controller.read_holding_registers.return_value = 0x04
 
 	result = await scale.calibrate_zero(timeout=1.0)
 
@@ -227,7 +227,7 @@ async def test_calibrate_zero_timeout(mock_scale_controller):
 async def test_calibrate_weight_success(mock_scale_controller):
 	scale = Scale(mock_scale_controller)
 	mock_scale_controller.write_single_register.return_value = None
-	mock_scale_controller.read_holding_registers.return_value = 0x80
+	mock_scale_controller.read_holding_registers.return_value = 0x08
 
 	result = await scale.calibrate_weight(timeout=1.0)
 
