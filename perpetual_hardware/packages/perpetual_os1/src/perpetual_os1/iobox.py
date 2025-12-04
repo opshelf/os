@@ -34,7 +34,9 @@ class IOBox:
         self._md = Motor(controller = self._motorcontroller,
                          params = self._params.motors.by_name("door"),
                          safety = safety)
-        self._scale = Scale(scalecontroller)
+        scale_cfg = getattr(self._params, "scale", None)
+        self._scale_enabled = scale_cfg is None or getattr(scale_cfg, "enabled", True)
+        self._scale = Scale(scalecontroller) if self._scale_enabled is True else None
         self._scale_ready = False
         self._logger = logging.getLogger(__name__).getChild("IOBox")
         self._curtain_sensor: Optional[CurtainSensor] = None
@@ -57,15 +59,18 @@ class IOBox:
     async def configure(self):
         """
         Configure and initialize IOBox components.
-        
+
         Raises:
             IOBoxError: If configuration of any component fails
         """
         try:
             await self._md.configure()
             await self._md.home()
-            await self._scale.tare()
-            self._scale_ready = True
+            if self._scale_enabled is True:
+                await self._scale.tare()
+                self._scale_ready = True
+            else:
+                self._logger.info("Scale disabled via config")
             self._status = IOBoxStatus.IDLE
         except Exception as e:
             self._status = IOBoxStatus.ERROR
@@ -102,6 +107,8 @@ class IOBox:
 
     async def _ensure_scale_ready(self) -> None:
         """Ensure the scale interface is configured before reading."""
+        if self._scale_enabled is False:
+            return
         if self._scale_ready is True:
             return
         await self._scale.configure()
@@ -132,8 +139,10 @@ class IOBox:
     async def get_weight(self) -> Optional[float]:
         """
         Get stable weight reading from scale in grams.
-        Returns None if scale fails (does not raise exception).
+        Returns None if scale fails or is disabled.
         """
+        if self._scale_enabled is False:
+            return None
         try:
             await self._ensure_scale_ready()
             weight = await self._scale.wait_for_stable_weight(timeout=3.0, poll_interval=0.1)
