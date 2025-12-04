@@ -167,7 +167,7 @@
 		{#if reading !== null}
 			<tr>
 				<td>weight</td>
-				<td class="weight-value">{formatWeight(reading.weight_grams)} g</td>
+				<td>{formatWeight(reading.weight_grams)} g</td>
 			</tr>
 			<tr>
 				<td>stable</td>
@@ -337,10 +337,6 @@
 {/if}
 
 <style>
-	.weight-value {
-		font-size: 1.5em;
-		font-weight: bold;
-	}
 
 	.status-ok {
 		color: green;
