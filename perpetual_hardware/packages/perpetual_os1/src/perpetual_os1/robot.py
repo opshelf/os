@@ -712,6 +712,32 @@ class Robot:
     async def get_scale_data(self) -> Dict[str, Any]:
         return await self._io._scale.read_weight_data()
 
+    async def get_scale_calibration_status(self) -> Dict[str, Any]:
+        return await self._io._scale.get_calibration_status()
+
+    async def get_scale_calibration_params(self) -> Dict[str, Any]:
+        return await self._io._scale.get_calibration_params()
+
+    async def set_scale_calibration_params(
+        self,
+        full_scale: int,
+        calibration_weight: int,
+        precision: int = 1,
+        division: int = 1,
+    ) -> bool:
+        return await self._io._scale.set_calibration_params(
+            full_scale=full_scale,
+            calibration_weight=calibration_weight,
+            precision=precision,
+            division=division,
+        )
+
+    async def calibrate_scale_zero(self, timeout: float = 5.0) -> Dict[str, Any]:
+        return await self._io._scale.calibrate_zero(timeout=timeout)
+
+    async def calibrate_scale_weight(self, timeout: float = 5.0) -> Dict[str, Any]:
+        return await self._io._scale.calibrate_weight(timeout=timeout)
+
     async def _build_axis_status(self, motor: Optional["Motor"]) -> AxisTelemetry:
         position = 0.0
         if motor is None:

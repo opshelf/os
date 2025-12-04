@@ -218,6 +218,32 @@ class RobotWorker:
     async def get_scale_data(self) -> Dict[str, Any]:
         return await self._robot.get_scale_data()
 
+    async def get_scale_calibration_status(self) -> Dict[str, Any]:
+        return await self._robot.get_scale_calibration_status()
+
+    async def get_scale_calibration_params(self) -> Dict[str, Any]:
+        return await self._robot.get_scale_calibration_params()
+
+    async def set_scale_calibration_params(
+        self,
+        full_scale: int,
+        calibration_weight: int,
+        precision: int = 1,
+        division: int = 1,
+    ) -> bool:
+        return await self._robot.set_scale_calibration_params(
+            full_scale=full_scale,
+            calibration_weight=calibration_weight,
+            precision=precision,
+            division=division,
+        )
+
+    async def calibrate_scale_zero(self, timeout: float = 5.0) -> Dict[str, Any]:
+        return await self._robot.calibrate_scale_zero(timeout=timeout)
+
+    async def calibrate_scale_weight(self, timeout: float = 5.0) -> Dict[str, Any]:
+        return await self._robot.calibrate_scale_weight(timeout=timeout)
+
     def get_latest_status_payload(self) -> Optional[str]:
         return self._latest_status_payload
 
