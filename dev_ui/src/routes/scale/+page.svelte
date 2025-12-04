@@ -43,6 +43,7 @@
 	async function fetchCalibrationStatus(): Promise<void> {
 		try {
 			calibrationStatus = await getScaleCalibrationStatus();
+			calibrationError = '';
 		} catch (err) {
 			calibrationError = err instanceof Error ? err.message : 'failed to read calibration status';
 		}
@@ -51,6 +52,7 @@
 	async function fetchCalibrationParams(): Promise<void> {
 		try {
 			calibrationParams = await getScaleCalibrationParams();
+			calibrationError = '';
 			if (calibrationParams !== null) {
 				fullScale = calibrationParams.full_scale;
 				calibrationWeight = calibrationParams.calibration_weight;
