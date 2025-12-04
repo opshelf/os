@@ -83,3 +83,44 @@ scripts/stop --hardware
 ```
 
 Both scripts use the standalone Docker Compose configuration by default and include the hardware override file when the `-h` or `--hardware` flag is provided.
+
+## Scale Calibration
+
+The SJ-101D_X scale can be calibrated remotely via the API. This is useful when the scale reports `valid: false` status.
+
+### Calibration Process
+
+1. **Set calibration parameters** (full scale capacity and known weight value):
+
+   ```bash
+   curl -X POST http://<device>:8000/api/robot/debug/scale/calibration/params \
+     -H "Content-Type: application/json" \
+     -d '{"full_scale": 6000, "calibration_weight": 500, "precision": 1, "division": 1}'
+   ```
+
+   - `full_scale`: Maximum scale capacity in grams (e.g., 6000 for 6kg)
+   - `calibration_weight`: Known reference weight in grams
+   - `precision`: Decimal places (0-3, default 1)
+   - `division`: Division value (default 1)
+
+2. **Zero calibration** (ensure scale is empty):
+
+   ```bash
+   curl -X POST http://<device>:8000/api/robot/debug/scale/calibration/zero
+   ```
+
+   Wait for `{"success": true, "status": {"zero_ok": true, ...}}` response.
+
+3. **Weight calibration** (place the known reference weight on scale):
+
+   ```bash
+   curl -X POST http://<device>:8000/api/robot/debug/scale/calibration/weight
+   ```
+
+   Wait for `{"success": true, "status": {"weight_ok": true, ...}}` response.
+
+### Diagnostic Endpoints
+
+- **Read current weight**: `GET /api/robot/debug/scale`
+- **Check calibration status**: `GET /api/robot/debug/scale/calibration/status`
+- **Read calibration parameters**: `GET /api/robot/debug/scale/calibration/params`
