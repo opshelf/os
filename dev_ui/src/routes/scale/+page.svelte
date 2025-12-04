@@ -22,6 +22,7 @@
 	let calibrationError = '';
 	let message = '';
 
+	let isLoading = true;
 	let isRefreshing = false;
 	let isCalibrating = false;
 	let isSavingParams = false;
@@ -146,17 +147,30 @@
 		return '0x' + value.toString(16).toUpperCase().padStart(4, '0');
 	}
 
+	async function initialLoad(): Promise<void> {
+		isLoading = true;
+
+		try {
+			await fetchReading();
+			await fetchCalibrationStatus();
+			await fetchCalibrationParams();
+		} finally {
+			isLoading = false;
+		}
+	}
+
 	onMount(function () {
 		if (browser === false) {
 			return;
 		}
 
-		fetchReading();
-		fetchCalibrationStatus();
-		fetchCalibrationParams();
+		initialLoad();
 	});
 </script>
 
+{#if isLoading === true}
+	<p>loading scale data...</p>
+{:else}
 <table>
 	<thead>
 		<tr>
@@ -334,6 +348,7 @@
 
 {#if calibrationError !== ''}
 	<ErrorMessage message={calibrationError} />
+{/if}
 {/if}
 
 <style>
