@@ -50,10 +50,10 @@
           "motor_name": "stage",
           "motor_id": 3,
           "Ip": 22,
-          "rpm": 200,
+          "rpm": 100,
           "dr": 0,
           "mpr": 50,
-          "accel": 500,
+          "accel": 1000,
           "ret_rpm": 64,
           "lim": 75
         },
