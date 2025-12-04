@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
-	import { onDestroy, onMount } from 'svelte';
+	import { onMount } from 'svelte';
 	import {
 		getScaleReading,
 		getScaleCalibrationStatus,
@@ -22,9 +22,7 @@
 	let calibrationError = '';
 	let message = '';
 
-	let isPolling = true;
-	let pollingInterval: ReturnType<typeof setInterval> | null = null;
-
+	let isRefreshing = false;
 	let isCalibrating = false;
 	let isSavingParams = false;
 
@@ -61,25 +59,6 @@
 			}
 		} catch (err) {
 			calibrationError = err instanceof Error ? err.message : 'failed to read calibration params';
-		}
-	}
-
-	function startPolling(): void {
-		if (pollingInterval !== null) {
-			return;
-		}
-
-		pollingInterval = setInterval(function () {
-			if (isPolling === true) {
-				fetchReading();
-			}
-		}, 500);
-	}
-
-	function stopPolling(): void {
-		if (pollingInterval !== null) {
-			clearInterval(pollingInterval);
-			pollingInterval = null;
 		}
 	}
 
@@ -143,10 +122,18 @@
 		}
 	}
 
-	async function didClickRefreshStatus(): Promise<void> {
+	async function didClickRefresh(): Promise<void> {
+		isRefreshing = true;
 		calibrationError = '';
-		await fetchCalibrationStatus();
-		await fetchCalibrationParams();
+		readingError = '';
+
+		try {
+			await fetchReading();
+			await fetchCalibrationStatus();
+			await fetchCalibrationParams();
+		} finally {
+			isRefreshing = false;
+		}
 	}
 
 	function formatWeight(grams: number): string {
@@ -165,11 +152,6 @@
 		fetchReading();
 		fetchCalibrationStatus();
 		fetchCalibrationParams();
-		startPolling();
-	});
-
-	onDestroy(function () {
-		stopPolling();
 	});
 </script>
 
@@ -317,11 +299,11 @@
 </table>
 
 <div class="action-buttons">
+	<button type="button" on:click={didClickRefresh} disabled={isRefreshing === true || isCalibrating === true}>
+		refresh
+	</button>
 	<button type="button" on:click={didClickSaveParams} disabled={isSavingParams === true || isCalibrating === true}>
 		save params
-	</button>
-	<button type="button" on:click={didClickRefreshStatus} disabled={isCalibrating === true}>
-		refresh status
 	</button>
 </div>
 
