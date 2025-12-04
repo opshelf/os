@@ -59,7 +59,7 @@ async def test_get_scale_calibration_status(client: AsyncClient) -> None:
 	mock_worker.get_scale_calibration_status.return_value = {
 		"zero_ok": True,
 		"weight_ok": False,
-		"raw": 0x04,
+		"raw": 0x40,
 	}
 
 	with patch("perpetual_os1_server.routers.robot.get_settings", return_value=_mock_settings()):
@@ -70,7 +70,7 @@ async def test_get_scale_calibration_status(client: AsyncClient) -> None:
 	data = response.json()
 	assert data["zero_ok"] is True
 	assert data["weight_ok"] is False
-	assert data["raw"] == 0x04
+	assert data["raw"] == 0x40
 
 
 @pytest.mark.anyio
@@ -156,7 +156,7 @@ async def test_calibrate_scale_zero_success(client: AsyncClient) -> None:
 	mock_worker = _mock_worker()
 	mock_worker.calibrate_scale_zero.return_value = {
 		"success": True,
-		"status": {"zero_ok": True, "weight_ok": False, "raw": 0x04},
+		"status": {"zero_ok": True, "weight_ok": False, "raw": 0x40},
 	}
 
 	with patch("perpetual_os1_server.routers.robot.get_settings", return_value=_mock_settings()):
@@ -193,7 +193,7 @@ async def test_calibrate_scale_weight_success(client: AsyncClient) -> None:
 	mock_worker = _mock_worker()
 	mock_worker.calibrate_scale_weight.return_value = {
 		"success": True,
-		"status": {"zero_ok": True, "weight_ok": True, "raw": 0x0C},
+		"status": {"zero_ok": True, "weight_ok": True, "raw": 0xC0},
 	}
 
 	with patch("perpetual_os1_server.routers.robot.get_settings", return_value=_mock_settings()):
@@ -212,7 +212,7 @@ async def test_calibrate_scale_weight_failure(client: AsyncClient) -> None:
 	mock_worker.calibrate_scale_weight.return_value = {
 		"success": False,
 		"error": "Weight calibration timeout",
-		"status": {"zero_ok": True, "weight_ok": False, "raw": 0x04},
+		"status": {"zero_ok": True, "weight_ok": False, "raw": 0x40},
 	}
 
 	with patch("perpetual_os1_server.routers.robot.get_settings", return_value=_mock_settings()):
