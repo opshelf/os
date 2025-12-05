@@ -96,7 +96,11 @@ class Item(Base):
     created_at: Mapped[datetime] = Column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
-    locations: Mapped[List["ItemLocation"]] = relationship("ItemLocation", back_populates="item")
+    locations: Mapped[List["ItemLocation"]] = relationship(
+        "ItemLocation",
+        back_populates="item",
+        order_by="ItemLocation.updated_at.desc()"
+    )
     access_level: Mapped[Optional["AccessLevel"]] = relationship("AccessLevel", back_populates="items")
 
 class ItemLocation(Base):
