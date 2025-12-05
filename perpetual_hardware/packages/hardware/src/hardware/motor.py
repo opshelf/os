@@ -483,7 +483,6 @@ class Motor():
                 raise MotorError(f"Failed to get parameter {register}: {str(e)}") from e
             raise
     
-    #TODO add checks for position following error (crash detection)
     async def wait_for_move(self, timeout: float = MOTOR_WAIT_TIMEOUT, homing: bool = False) -> MotorStatus:
         """Wait for motor movement to complete.
         
@@ -502,7 +501,6 @@ class Motor():
         last_movement_time = start_time
         retry_attempts = 0
         has_moved = False
-        stall_warned = False
 
         self._logger.debug(
             "Waiting for motor motion",
@@ -518,7 +516,7 @@ class Motor():
                 raise MotorError(f"Failed to read motion status from motor {self._motor_id}")
             
             complete = status & (1 << 5)
-            fault = status & 1
+            fault_bit = status & 1
 
             await self.get_position()
             now = time.monotonic()
@@ -544,6 +542,7 @@ class Motor():
                 start_time = time.monotonic()
                 last_pos = None
                 last_movement_time = start_time
+                has_moved = False
                 continue
 
             if last_pos is not None:
@@ -556,29 +555,6 @@ class Motor():
             
             last_pos = self._cur_pos
             
-            # # Check for hardstop stall
-            # if has_moved and (now - last_movement_time > self._stall_timeout):
-            #     await self.stop()
-            #     self._pending_motion = None
-            #     if not homing:
-            #         raise MotorError(f"Motor {self._motor_id} stalled")
-            #     return MotorStatus.STOPPED #add a stalled command?)
-            if (
-                has_moved
-                and not stall_warned
-                and (now - last_movement_time > self._stall_timeout)
-            ):
-                stall_warned = True
-                self._logger.warning(
-                    "No movement detected within stall timeout",
-                    extra={
-                        "motor_id": self._motor_id,
-                        "stall_timeout_s": self._stall_timeout,
-                        "last_motion_age_s": now - last_movement_time,
-                        "homing": homing,
-                    },
-                )
-
             # Normal completion
             if complete:
                 await self.stop()
@@ -593,18 +569,43 @@ class Motor():
                 )
                 return MotorStatus.STOPPED
             
+            # Crash/alarm detection (follow-error, hardstop stall)
+            alarm_code: Optional[int] = None
+            alarm_active = False
+            try:
+                alarm_code = await self.get_param("Current alarm")
+                alarm_active = alarm_code is not None and alarm_code != 0
+            except Exception as alarm_exc:
+                self._logger.warning(
+                    "Failed to read motor alarm register",
+                    extra={"motor_id": self._motor_id, "error": str(alarm_exc)},
+                )
+                raise
+
+            no_progress = (
+                not has_moved and (now - start_time > max(2.0, self._stall_timeout * 6))
+            )
+            stall_detected = (
+                has_moved and (now - last_movement_time > self._stall_timeout)
+            )
+
+            fault = bool(fault_bit or alarm_active or stall_detected or no_progress)
+
             # Check for motor fault
             if fault:
                 await self.stop()
                 if homing:
                     self._pending_motion = None
                     self._logger.warning(
-                        "Stall detected during homing",
+                        "Fault/stall detected during homing (treated as stop)",
                         extra={
                             "motor_id": self._motor_id,
                             "elapsed": time.monotonic() - start_time,
                             "status_word": status,
-                        }
+                            "alarm_code": alarm_code,
+                            "stall_detected": stall_detected,
+                            "no_progress": no_progress,
+                        },
                     )
                     return MotorStatus.STOPPED
 
@@ -616,7 +617,10 @@ class Motor():
                         "homing": homing,
                         "status_word": status,
                         "position_mm": self._cur_pos,
-                    }
+                        "alarm_code": alarm_code,
+                        "stall_detected": stall_detected,
+                        "no_progress": no_progress,
+                    },
                 )
 
                 if retry_attempts >= MAX_FAULT_RETRIES or self._pending_motion is None:
@@ -657,6 +661,7 @@ class Motor():
                 start_time = time.monotonic()
                 last_pos = None
                 last_movement_time = start_time
+                has_moved = False
                 continue
 
 
