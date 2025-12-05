@@ -9,9 +9,15 @@ sys.path.append(str(Path(__file__).parent.parent / "src"))
 from sqlalchemy import select
 from perpetual_os1_server.database.base import engine, Base
 from perpetual_os1_server.database.session import AsyncSessionLocal, AsyncSession
-from perpetual_os1_server.database.models import User, Role
+from perpetual_os1_server.database.models import User, Role, AccessLevel
 from perpetual_os1_server.core.auth import AuthService
 from perpetual_os1_server.settings import get_settings
+
+DEFAULT_ACCESS_LEVELS = [
+	{"name": "Level 1"},
+	{"name": "Level 2"},
+	{"name": "Level 3"},
+]
 
 DEFAULT_ROLES = [
 	{
@@ -76,6 +82,23 @@ DEV_USERS = [
 		"role": "viewer"
 	}
 ]
+
+async def seed_access_levels(db: AsyncSession) -> None:
+	"""Create default access levels if they don't exist."""
+	for level_data in DEFAULT_ACCESS_LEVELS:
+		result = await db.execute(
+			select(AccessLevel).filter_by(name=level_data["name"])
+		)
+		level = result.scalar_one_or_none()
+
+		if level is None:
+			level = AccessLevel(name=str(level_data["name"]))
+			db.add(level)
+			print(f"Created access level: {level_data['name']}")
+		else:
+			print(f"Access level already exists: {level_data['name']}")
+
+	await db.commit()
 
 async def seed_roles(db: AsyncSession) -> None:
 	"""Create default roles if they don't exist."""
@@ -148,12 +171,15 @@ async def main() -> None:
 		await conn.run_sync(Base.metadata.create_all)
 
 	async with AsyncSessionLocal() as db:
-		print("Seeding roles...")
+		print("Seeding access levels...")
+		await seed_access_levels(db)
+
+		print("\nSeeding roles...")
 		await seed_roles(db)
-		
+
 		print("\nSeeding development users...")
 		await seed_dev_users(db)
-		
+
 		print("\nSeeding complete!")
 
 if __name__ == "__main__":
