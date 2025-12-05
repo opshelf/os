@@ -55,7 +55,8 @@ class IdleCommand(BaseModel):
 
 class RetrieveItemCommand(BaseModel):
     command: Literal["retrieve_item"] = "retrieve_item"
-    location: Dict[str, Any]
+    upca: Optional[str] = None
+    location: Optional[Dict[str, Any]] = None
 
 class StoreItemCommand(BaseModel):
     command: Literal["store_item"] = "store_item"
@@ -832,7 +833,11 @@ class Robot:
                     payload = getattr(command, "item", None)
                 return await self.store(payload)
             elif isinstance(command, RetrieveItemCommand):
-                return await self.retrieve_by_location(command.location)
+                if command.upca:
+                    return await self.retrieve_by_upca(command.upca, location_payload=command.location)
+                if command.location:
+                    return await self.retrieve_by_location(command.location)
+                return RobotCommandError(command=command_name, error="Missing upca or location for retrieval")
             else:
                 return RobotCommandError(command=command_name, error="Invalid Robot Command")
         except Exception as exc:
@@ -843,7 +848,53 @@ class Robot:
                 error=f"{type(exc).__name__}: {exc}"
             )
 
-    async def retrieve_by_location(self, location_payload: Dict[str, Any]) -> RobotResponse:
+    async def _find_location_for_upca(self, upca: str) -> Optional[StorageModuleCellLocation]:
+        """Find the storage location for a given UPC in the grid."""
+        for entry in self._grid.get_all_cell_data():
+            cell = entry.cell
+            if cell is None:
+                continue
+            if cell.upca == upca:
+                return entry.location
+            if isinstance(cell.data, dict) and cell.data.get("upca") == upca:
+                return entry.location
+        return None
+
+    async def retrieve_by_upca(
+        self,
+        upca: str,
+        *,
+        location_payload: Optional[Dict[str, Any]] = None,
+    ) -> RobotResponse:
+        """
+        Retrieve an item using its UPC, optionally with a provided location hint.
+        """
+        command_name = "retrieve_item"
+
+        if not self._grid:
+            return RobotCommandError(command=command_name, error="Storage grid not initialized")
+
+        resolved_location: Optional[StorageModuleCellLocation] = None
+
+        # Prefer the client-provided location if present.
+        if location_payload is not None:
+            try:
+                resolved_location = StorageModuleCellLocation(**location_payload)
+            except Exception:
+                return RobotCommandError(command=command_name, error="Invalid location payload")
+
+        if resolved_location is None:
+            resolved_location = await self._find_location_for_upca(upca)
+            if resolved_location is None:
+                return RobotCommandError(command=command_name, error=f"Item '{upca}' not found in storage")
+
+        return await self.retrieve_by_location(resolved_location.model_dump(), upca_hint=upca)
+
+    async def retrieve_by_location(
+        self,
+        location_payload: Dict[str, Any],
+        upca_hint: Optional[str] = None,
+    ) -> RobotResponse:
         """
         Retrieve an item from a specific storage location.
         """
@@ -863,7 +914,7 @@ class Robot:
             return RobotCommandError(command=command_name, error="Location out of range")
 
         cached_item = cell.item
-        if cached_item is None:
+        if cached_item is None and upca_hint is None:
             self._logger.info(
                 "No cached item for location %s/%s/%s; proceeding with retrieval based on command payload",
                 location.side,
@@ -872,7 +923,7 @@ class Robot:
             )
 
         self._state.current_cell = location
-        retrieved_upca = None
+        retrieved_upca = upca_hint
         if cached_item is not None:
             retrieved_upca = cached_item.upca or (cached_item.data.get("upca") if cached_item.data else None)
 
