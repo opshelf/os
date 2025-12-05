@@ -1,8 +1,7 @@
 """Storage service for managing inventory items and locations."""
 import asyncio
 import logging
-import os
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Dict, List, Optional
 from weakref import WeakKeyDictionary
 
 from sqlalchemy import delete, func, select, update
@@ -10,7 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from ..database.models import Item, ItemLocation, StorageCell
-from .sizes import ItemInformation, _coerce_dimensions, get_size_db, get_sizes_filename
 from .validation import LocationValidator, StorageCellValidator, StorageValidator, ValidationError
 
 
@@ -40,109 +38,12 @@ class StorageService:
         return float(weight)
 
     async def detect_migration_needed(self) -> bool:
-        """Check if migration from JSON to database is needed."""
-        filename = get_sizes_filename()
-        json_exists = os.path.isfile(filename)
-
-        if not json_exists:
-            return False
-
-        try:
-            result = await self.session.execute(
-                select(Item).with_for_update()
-            )
-            items_exist = result.scalar() is not None
-        except Exception:
-            result = await self.session.execute(
-                select(Item)
-            )
-            items_exist = result.scalar() is not None
-
-        return json_exists and not items_exist
+        """Legacy JSON migration removed; database is the single source of truth."""
+        return False
 
     async def migrate_from_json(self) -> bool:
-        """Migrate existing JSON data to database."""
-        try:
-            size_db = get_size_db()
-            json_data = size_db.items
-
-            if not json_data:
-                async with self._lock:
-                    await self.session.commit()
-                return True
-
-            validated_items = []
-            for upca, item_info in json_data.items():
-                if not isinstance(item_info.data, dict):
-                    raise ValidationError(f"Invalid item data for UPCA {upca}")
-
-                name = item_info.data.get("name", "Unknown")
-                if not name:
-                    raise ValidationError(f"Missing name for UPCA {upca}")
-
-                weight = item_info.data.get("weight")
-                if weight is not None:
-                    try:
-                        weight = float(weight) if isinstance(weight, (int, float)) else float(str(weight))
-                    except (ValueError, TypeError):
-                        weight = None
-
-                if weight is not None and weight <= 0:
-                    raise ValidationError(f"Invalid weight value for UPCA {upca}")
-
-                validated_items.append({
-                    'upca': upca,
-                    'name': name,
-                    'dimensions': item_info.size.model_dump(),
-                    'weight': self._normalize_weight(weight),
-                    'metadata': item_info.data.get("metadata", {}),
-                    'location_data': {
-                        'shelf_idx': item_info.data.get("shelf_idx"),
-                        'cell_idx': item_info.data.get("cell_idx")
-                    }
-                })
-
-            async with self._lock:
-                await self.session.execute(delete(ItemLocation))
-                await self.session.execute(delete(Item))
-                await self.session.commit()
-
-                for item_data in validated_items:
-                    item = Item(
-                        upca=str(item_data['upca']),
-                        name=str(item_data['name']),
-                        dimensions=cast(Dict[str, Any], item_data['dimensions']),
-                        weight=float(item_data['weight']) if item_data['weight'] is not None else None,
-                        item_metadata=cast(Optional[Dict[str, Any]], item_data['metadata'])
-                    )
-                    self.session.add(item)
-                    await self.session.flush()
-
-                    loc_data = cast(dict[str, Any], item_data['location_data'])
-                    if (loc_data['shelf_idx'] is not None and
-                        loc_data['cell_idx'] is not None and
-                        isinstance(loc_data['shelf_idx'], int) and loc_data['shelf_idx'] >= 0 and
-                        isinstance(loc_data['cell_idx'], int) and loc_data['cell_idx'] >= 0):
-
-                        LocationValidator.validate_location(int(loc_data['shelf_idx']), int(loc_data['cell_idx']))
-
-                        location = ItemLocation(
-                            item_id=item.id,
-                            shelf_idx=loc_data['shelf_idx'],
-                            cell_idx=loc_data['cell_idx']
-                        )
-                        self.session.add(location)
-
-                await self.session.commit()
-            return True
-
-        except ValidationError:
-            await self.session.rollback()
-            raise
-        except Exception as e:
-            logging.error(f"Migration failed: {str(e)}")
-            await self.session.rollback()
-            raise RuntimeError(f"Migration failed: {str(e)}") from e
+        """Legacy JSON migration removed; database is the single source of truth."""
+        return True
 
     async def create_item(self, upca: str, name: str, dimensions: Optional[Dict[str, float]],
                         weight: Optional[float] = None, metadata: Optional[Dict[str, Any]] = None,
@@ -392,78 +293,9 @@ class StorageService:
                 raise
 
     async def sync_to_json(self, transaction_committed: bool = False) -> bool:
-        """Sync database data to JSON file for hardware compatibility.
-
-        Args:
-            transaction_committed: If True, database transaction has been committed and this is a post-sync operation
-        """
-        try:
-            result = await self.session.execute(
-                select(Item)
-                .options(selectinload(Item.locations))
-                .order_by(Item.created_at)
-            )
-            items = result.scalars().all()
-
-            json_data: Dict[str, ItemInformation] = {}
-            for item in items:
-                try:
-                    if not item.upca or not item.name:
-                        raise ValidationError(f"Invalid item data: missing upca or name for item ID {item.id}")
-
-                    if not isinstance(item.dimensions, dict):
-                        raise ValidationError(f"Invalid dimensions format for item {item.upca}")
-
-                    weight_value: float = 0
-                    if item.weight is not None:
-                        try:
-                            weight_value = float(item.weight)
-                        except (ValueError, TypeError):
-                            weight_value = 0
-
-                    location = item.locations[0] if item.locations else None
-
-                    if location:
-                        if location.shelf_idx is not None and location.shelf_idx < 0 or location.cell_idx is not None and location.cell_idx < 0:
-                            raise ValidationError(f"Invalid location for item {item.upca}: negative indices")
-
-                    data_payload: Dict[str, Any] = {
-                        "name": item.name,
-                        "weight": weight_value,
-                        "metadata": item.item_metadata or {},
-                    }
-                    if location:
-                        data_payload["shelf_idx"] = location.shelf_idx
-                        data_payload["cell_idx"] = location.cell_idx
-
-                    item_info = ItemInformation(
-                        size=_coerce_dimensions(item.dimensions),
-                        data=data_payload,
-                    )
-                    json_data[item.upca] = item_info
-
-                except ValidationError:
-                    raise
-                except Exception as conversion_error:
-                    logging.error(f"Failed to convert item {item.upca if item else 'unknown'}: {str(conversion_error)}")
-                    raise ValidationError(f"Failed to convert item data: {str(conversion_error)}")
-
-            size_db = get_size_db()
-            size_db.items = json_data
-
-            try:
-                size_db.save()
-            except (OSError, IOError) as file_error:
-                logging.error(f"Failed to write JSON file: {str(file_error)}")
-                return False
-
-            return True
-
-        except ValidationError:
-            raise
-        except Exception as e:
-            logging.error(f"JSON sync failed: {str(e)}")
-            raise RuntimeError(f"JSON sync failed: {str(e)}") from e
+        """No-op placeholder for deprecated JSON syncing."""
+        logging.debug("sync_to_json skipped; database is authoritative for storage state")
+        return True
 
     async def create_storage_cell(self, shelf_idx: int, cell_idx: int, capacity: str) -> StorageCell:
         """Create a new storage cell."""
