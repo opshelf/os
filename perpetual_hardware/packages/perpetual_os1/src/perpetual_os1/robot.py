@@ -658,7 +658,6 @@ class Robot:
 
             # Update storage grid
             self._grid.store_item(location, item)
-            self._grid.save()
             return RobotCommandSuccessful(command=command_name, location=location, upca=resolved_upca, weight=weight)
         except Exception as exc:
             self._logger.exception("Store command failed for %s", resolved_item_name)
@@ -863,20 +862,24 @@ class Robot:
         except Exception:
             return RobotCommandError(command=command_name, error="Location out of range")
 
-        if cell.status != CellStatus.OCCUPIED or cell.item is None:
-            return RobotCommandError(
-                command=command_name,
-                error=f"No item found at location (shelf: {location.shelf_idx}, cell: {location.cell_idx})"
+        cached_item = cell.item
+        if cached_item is None:
+            self._logger.info(
+                "No cached item for location %s/%s/%s; proceeding with retrieval based on command payload",
+                location.side,
+                location.shelf_idx,
+                location.cell_idx,
             )
 
         self._state.current_cell = location
-        retrieved_upca = cell.item.upca or (cell.item.data.get("upca") if cell.item.data else None)
+        retrieved_upca = None
+        if cached_item is not None:
+            retrieved_upca = cached_item.upca or (cached_item.data.get("upca") if cached_item.data else None)
 
         try:
             coord = self._grid.get_cell_coordinate(location).to_axis_coordinate()
             await self.io_place(coord)
             self._grid.clear_item(location)
-            self._grid.save()
             return RobotCommandSuccessful(command=command_name, location=location, upca=retrieved_upca)
         except Exception as exc:
             self._logger.exception(
