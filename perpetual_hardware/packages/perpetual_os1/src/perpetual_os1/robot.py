@@ -149,6 +149,7 @@ class RobotStatus(BaseModel):
     curtain_blocked: Optional[bool] = None
     door_open: Optional[bool] = None
     curtain_guard_active: Optional[bool] = None
+    awaiting_curtain_ack: bool = False
 
 RobotResponse = Union[RobotCommandSuccessful, RobotCommandError, RobotBarcodeResponse]
 
