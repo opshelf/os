@@ -63,7 +63,6 @@ class Tool:
         self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
         self._params = params
         self._fault_recovery_active = False
-        self._fault_recovery_attempted = False
         self._guard_paused = False
         self._logger = logging.getLogger(__name__)
 
@@ -106,7 +105,6 @@ class Tool:
             CameraError: If camera initialization fails
         """
         try:
-            self._fault_recovery_attempted = False
             await self._gs.configure()
             await self._my.configure()
             await self._mx.configure()
@@ -131,7 +129,7 @@ class Tool:
 
     async def _recover_from_fault(self) -> None:
         """Move to idle and re-home after a fault, logging secondary failures."""
-        if self._fault_recovery_active or self._fault_recovery_attempted:
+        if self._fault_recovery_active:
             return
 
         self._fault_recovery_active = True
@@ -194,7 +192,6 @@ class Tool:
                 )
         finally:
             self._fault_recovery_active = False
-            self._fault_recovery_attempted = True
 
     async def get_param(self, param: str) -> Optional[Any]:
         """Get a parameter value from tool configuration."""
