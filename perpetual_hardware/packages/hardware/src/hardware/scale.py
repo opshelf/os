@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Optional, Dict, Any, Tuple
 
 from hardware.controller import SharedModbusController
+
+logger = logging.getLogger(__name__).getChild("scale")
 
 
 class Scale:
@@ -51,10 +54,19 @@ class Scale:
     # ---------- connection mgmt ----------
 
     async def connect(self) -> bool:
+        logger.debug(
+            "Connecting to scale controller",
+            extra={
+                "unit_id": self.scale_id,
+                "port": getattr(self.modbus_controller, "port", None),
+                "baudrate": getattr(self.modbus_controller, "baudrate", None),
+            },
+        )
         await self.modbus_controller.connect()
         return bool(getattr(self.modbus_controller.client, "connected", True))
 
     async def close(self) -> None:
+        logger.debug("Closing scale controller", extra={"unit_id": self.scale_id})
         await self.modbus_controller.close()
 
     # ---------- helpers ----------
@@ -66,6 +78,10 @@ class Scale:
             if isinstance(val, int):
                 return val & 0xFFFF
             await asyncio.sleep(self.retry_delay)
+        logger.warning(
+            "Scale register read failed",
+            extra={"unit_id": self.scale_id, "address": addr, "retries": self.retries},
+        )
         return None
 
     async def _read_block(self, start: int, count: int) -> Optional[Tuple[int, ...]]:
@@ -77,6 +93,15 @@ class Scale:
         for ofs in range(count):
             v = await self._read_one(start + ofs)
             if v is None:
+                logger.warning(
+                    "Scale block read failed",
+                    extra={
+                        "unit_id": self.scale_id,
+                        "start_address": start,
+                        "count": count,
+                        "offset_failed": ofs,
+                    },
+                )
                 return None
             vals.append(v)
         return tuple(vals)
@@ -113,6 +138,14 @@ class Scale:
                 if i < averages - 1:
                     await asyncio.sleep(delay)
                     continue
+                logger.warning(
+                    "Scale weight read failed after retries",
+                    extra={
+                        "unit_id": self.scale_id,
+                        "samples_requested": averages,
+                        "delay_s": delay,
+                    },
+                )
                 return None
             hi, lo, decimals = regs
             raw = self._to_int32_signed(hi, lo)
@@ -122,6 +155,14 @@ class Scale:
             if i < averages - 1:
                 await asyncio.sleep(delay)
 
+        logger.debug(
+            "Scale weight read",
+            extra={
+                "unit_id": self.scale_id,
+                "averages": averages,
+                "value_grams": (total / got) if got else None,
+            },
+        )
         return (total / got) if got else None
 
     async def read_weight_data(self) -> Dict[str, Any]:
@@ -131,6 +172,10 @@ class Scale:
         """
         regs = await self._read_block(self.REG_WEIGHT_HI, 4)  # hi, lo, decimals, status
         if not regs:
+            logger.error(
+                "Failed to read weight registers",
+                extra={"unit_id": self.scale_id},
+            )
             raise RuntimeError("Failed to read weight registers")
         hi, lo, decimals, status_raw = regs
         raw = self._to_int32_signed(hi, lo)
@@ -150,11 +195,23 @@ class Scale:
     async def tare(self) -> bool:
         """Tare: write 1 to 40005 (address 4)."""
         ok = await self.modbus_controller.write_single_register(self.scale_id, self.REG_TARE, 1)
-        return ok is None or ok is True  # your controller returns None on success
+        success = ok is None or ok is True  # your controller returns None on success
+        if not success:
+            logger.warning(
+                "Scale tare failed",
+                extra={"unit_id": self.scale_id},
+            )
+        else:
+            logger.debug("Scale tare command sent", extra={"unit_id": self.scale_id})
+        return success
 
     async def read_status(self) -> Dict[str, Any]:
         v = await self._read_one(self.REG_STATUS)
         if v is None:
+            logger.error(
+                "Failed to read scale status register",
+                extra={"unit_id": self.scale_id},
+            )
             raise RuntimeError("Failed to read status register")
         return self._interpret_status(v)
 
@@ -173,21 +230,48 @@ class Scale:
         while loop.time() < deadline:
             st = await self.read_status()
             if st["stable"] is True:
-                return await self.read_weight()
+                weight = await self.read_weight()
+                logger.debug(
+                    "Scale reached stable reading",
+                    extra={"unit_id": self.scale_id, "weight_grams": weight},
+                )
+                return weight
             await asyncio.sleep(poll_interval)
 
+        logger.warning(
+            "Scale stability wait timed out",
+            extra={
+                "unit_id": self.scale_id,
+                "timeout_s": timeout,
+                "poll_interval_s": poll_interval,
+            },
+        )
         return None
 
     async def _write_one(self, addr: int, value: int) -> bool:
         try:
             await self.modbus_controller.write_single_register(self.scale_id, addr, value)
             return True
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "Scale register write failed",
+                extra={
+                    "unit_id": self.scale_id,
+                    "address": addr,
+                    "value": value,
+                    "error": str(exc),
+                },
+                exc_info=True,
+            )
             return False
 
     async def get_calibration_status(self) -> Dict[str, Any]:
         v = await self._read_one(self.REG_CAL_STATUS)
         if v is None:
+            logger.error(
+                "Failed to read calibration status",
+                extra={"unit_id": self.scale_id},
+            )
             raise RuntimeError("Failed to read calibration status register")
         return {
             "zero_ok": bool(v & self.CAL_STATUS_ZERO_OK),
@@ -202,6 +286,10 @@ class Scale:
         division = await self._read_one(self.REG_DIVISION)
 
         if full_scale is None or cal_weight is None or precision is None or division is None:
+            logger.error(
+                "Failed to read calibration parameters",
+                extra={"unit_id": self.scale_id},
+            )
             raise RuntimeError("Failed to read calibration parameters")
 
         full_scale_val = self._to_int32_signed(full_scale[0], full_scale[1])
@@ -233,11 +321,26 @@ class Scale:
         ok = ok and await self._write_one(self.REG_CAL_WEIGHT_LO, cal_weight_lo)
         ok = ok and await self._write_one(self.REG_PRECISION, precision)
         ok = ok and await self._write_one(self.REG_DIVISION, division)
+        logger.info(
+            "Scale calibration parameters updated",
+            extra={
+                "unit_id": self.scale_id,
+                "full_scale": full_scale,
+                "calibration_weight": calibration_weight,
+                "precision": precision,
+                "division": division,
+                "success": ok,
+            },
+        )
         return ok
 
     async def calibrate_zero(self, timeout: float = 5.0) -> Dict[str, Any]:
         ok = await self._write_one(self.REG_CAL_ZERO, 1)
         if ok is False:
+            logger.warning(
+                "Failed to trigger zero calibration",
+                extra={"unit_id": self.scale_id},
+            )
             return {"success": False, "error": "Failed to write zero calibration command"}
 
         loop = asyncio.get_event_loop()
@@ -249,11 +352,19 @@ class Scale:
             if status["zero_ok"] is True:
                 return {"success": True, "status": status}
 
+        logger.warning(
+            "Zero calibration timed out",
+            extra={"unit_id": self.scale_id, "timeout_s": timeout},
+        )
         return {"success": False, "error": "Zero calibration timeout", "status": await self.get_calibration_status()}
 
     async def calibrate_weight(self, timeout: float = 5.0) -> Dict[str, Any]:
         ok = await self._write_one(self.REG_CAL_WEIGHT, 1)
         if ok is False:
+            logger.warning(
+                "Failed to trigger weight calibration",
+                extra={"unit_id": self.scale_id},
+            )
             return {"success": False, "error": "Failed to write weight calibration command"}
 
         loop = asyncio.get_event_loop()
@@ -265,4 +376,8 @@ class Scale:
             if status["weight_ok"] is True:
                 return {"success": True, "status": status}
 
+        logger.warning(
+            "Weight calibration timed out",
+            extra={"unit_id": self.scale_id, "timeout_s": timeout},
+        )
         return {"success": False, "error": "Weight calibration timeout", "status": await self.get_calibration_status()}

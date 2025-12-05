@@ -216,6 +216,10 @@ class Motor():
             MotorError: If communication with motor fails
         """
         try:
+            self._logger.info(
+                "Configuring motor",
+                extra={"motor_id": self._motor_id, "limit_mm": self._params.lim},
+            )
             # Clear any existing alarms
             await self.set_param("Control word", 0x1111)
             await self.set_param("Control word", 0x1122)
@@ -235,6 +239,11 @@ class Motor():
             # Configure movement parameters
             await self.move_config()
         except Exception as e:
+            self._logger.error(
+                "Failed to configure motor",
+                extra={"motor_id": self._motor_id, "error": str(e)},
+                exc_info=True,
+            )
             raise MotorConfigError(f"Failed to configure motor {self._motor_id}: {str(e)}") from e
 
     async def _read_status(self) -> MotorStatus:
@@ -346,6 +355,7 @@ class Motor():
         self._logger.debug(
             "Started absolute move",
             extra={
+                "motor_id": self._motor_id,
                 "target_mm": value,
                 "limit_mm": self._params.lim,
                 "rpm": rpm or self._params.rpm,
@@ -491,10 +501,20 @@ class Motor():
         last_pos = None
         last_movement_time = start_time
         retry_attempts = 0
+        has_moved = False
+        stall_warned = False
 
+        self._logger.debug(
+            "Waiting for motor motion",
+            extra={"motor_id": self._motor_id, "timeout": timeout, "homing": homing},
+        )
         while True:
             status = await self.get_param("Motion status")
             if status is None:
+                self._logger.error(
+                    "Failed to read motion status from motor",
+                    extra={"motor_id": self._motor_id},
+                )
                 raise MotorError(f"Failed to read motion status from motor {self._motor_id}")
             
             complete = status & (1 << 5)
@@ -529,6 +549,7 @@ class Motor():
             if last_pos is not None:
                 if self._cur_pos != last_pos:
                     last_movement_time = now
+                    has_moved = True
 
             elif last_movement_time is None:
                 last_movement_time = now  # initialize once
@@ -542,6 +563,21 @@ class Motor():
             #     if not homing:
             #         raise MotorError(f"Motor {self._motor_id} stalled")
             #     return MotorStatus.STOPPED #add a stalled command?)
+            if (
+                has_moved
+                and not stall_warned
+                and (now - last_movement_time > self._stall_timeout)
+            ):
+                stall_warned = True
+                self._logger.warning(
+                    "No movement detected within stall timeout",
+                    extra={
+                        "motor_id": self._motor_id,
+                        "stall_timeout_s": self._stall_timeout,
+                        "last_motion_age_s": now - last_movement_time,
+                        "homing": homing,
+                    },
+                )
 
             # Normal completion
             if complete:
@@ -549,7 +585,11 @@ class Motor():
                 self._pending_motion = None
                 self._logger.debug(
                     "Motion complete",
-                    extra={"homing": homing, "elapsed": time.monotonic() - start_time}
+                    extra={
+                        "motor_id": self._motor_id,
+                        "homing": homing,
+                        "elapsed": time.monotonic() - start_time,
+                    }
                 )
                 return MotorStatus.STOPPED
             
@@ -560,13 +600,23 @@ class Motor():
                     self._pending_motion = None
                     self._logger.warning(
                         "Stall detected during homing",
-                        extra={"elapsed": time.monotonic() - start_time}
+                        extra={
+                            "motor_id": self._motor_id,
+                            "elapsed": time.monotonic() - start_time,
+                            "status_word": status,
+                        }
                     )
                     return MotorStatus.STOPPED
 
                 self._logger.warning(
                     "Fault detected",
-                    extra={"retry_attempts": retry_attempts, "homing": homing}
+                    extra={
+                        "motor_id": self._motor_id,
+                        "retry_attempts": retry_attempts,
+                        "homing": homing,
+                        "status_word": status,
+                        "position_mm": self._cur_pos,
+                    }
                 )
 
                 if retry_attempts >= MAX_FAULT_RETRIES or self._pending_motion is None:
@@ -581,7 +631,11 @@ class Motor():
                     self._pending_motion = None
                     self._logger.error(
                         "Fault recovery homing failed",
-                        extra={"error": str(home_exc)}
+                        extra={
+                            "motor_id": self._motor_id,
+                            "error": str(home_exc),
+                        },
+                        exc_info=True,
                     )
                     return MotorStatus.FAULT
 
@@ -592,7 +646,11 @@ class Motor():
                     self._pending_motion = None
                     self._logger.error(
                         "Failed to restart motion after recovery",
-                        extra={"error": str(restart_exc)}
+                        extra={
+                            "motor_id": self._motor_id,
+                            "error": str(restart_exc),
+                        },
+                        exc_info=True,
                     )
                     return MotorStatus.FAULT
 
@@ -608,7 +666,12 @@ class Motor():
                 self._pending_motion = None
                 self._logger.error(
                     "Motion timeout",
-                    extra={"timeout": timeout, "homing": homing}
+                    extra={
+                        "motor_id": self._motor_id,
+                        "timeout": timeout,
+                        "homing": homing,
+                        "elapsed": time.monotonic() - start_time,
+                    }
                 )
                 return MotorStatus.TIMEOUT
 
