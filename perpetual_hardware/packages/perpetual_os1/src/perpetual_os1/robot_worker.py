@@ -131,6 +131,7 @@ def _transform_worker_status_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     curtain_blocked = robot_status_payload.get("curtain_blocked")
     door_open = robot_status_payload.get("door_open")
     curtain_guard_active = robot_status_payload.get("curtain_guard_active")
+    awaiting_curtain_ack = robot_status_payload.get("awaiting_curtain_ack", False)
     storage_payload = _normalize_storage_payload(storage_payload)
 
     transformed["robot_status"] = {
@@ -148,6 +149,7 @@ def _transform_worker_status_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         "curtain_blocked": curtain_blocked,
         "door_open": door_open,
         "curtain_guard_active": curtain_guard_active,
+        "awaiting_curtain_ack": awaiting_curtain_ack,
     }
 
     errors: List[Dict[str, Any]] = []
@@ -212,6 +214,7 @@ class RobotWorker:
         self._curtain_blocked: Optional[bool] = None
         self._door_open: Optional[bool] = None
         self._curtain_guard_active: Optional[bool] = None
+        self._awaiting_curtain_ack: bool = False
         self._guard_lock = asyncio.Lock()
         self._logger = logging.getLogger(__name__).getChild("worker.guard")
 
@@ -433,6 +436,7 @@ class RobotWorker:
         if robot_status:
             robot_status.curtain_guard_active = self._curtain_guard_active
             robot_status.door_open = self._door_open
+            robot_status.awaiting_curtain_ack = self._awaiting_curtain_ack
 
         if self._use_enhanced_status:
             pending_count, queued_ops = await self._get_pending_messages_info()
@@ -697,13 +701,30 @@ class RobotWorker:
             if guard_changed:
                 if guard_active:
                     self._robot.pause_for_curtain()
-                else:
-                    self._robot.resume_after_curtain()
+                    self._awaiting_curtain_ack = True
                 self._logger.info(
                     "Curtain guard change",
                     extra={
                         "curtain_blocked": self._curtain_blocked,
                         "door_open": self._door_open,
                         "guard_active": self._curtain_guard_active,
+                        "awaiting_ack": self._awaiting_curtain_ack,
                     },
                 )
+
+    async def acknowledge_curtain_guard(self) -> bool:
+        async with self._guard_lock:
+            if self._curtain_blocked:
+                self._logger.info(
+                    "Curtain guard ack rejected: curtain still blocked",
+                    extra={"curtain_blocked": self._curtain_blocked},
+                )
+                return False
+
+            if self._awaiting_curtain_ack:
+                self._awaiting_curtain_ack = False
+                self._robot.resume_after_curtain()
+                self._logger.info("Curtain guard acknowledged, resuming operation")
+
+        await self._publish_status()
+        return True

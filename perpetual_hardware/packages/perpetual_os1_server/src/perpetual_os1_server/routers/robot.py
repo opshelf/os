@@ -176,6 +176,21 @@ async def clear_robot_commands(worker: RobotWorker = Depends(get_robot_worker_or
     return SuccessResponse()
 
 
+@router.post("/curtain_guard/acknowledge", dependencies=[Depends(get_current_user), Depends(require_permissions("robot:control")), Depends(check_robot_enabled)])
+async def acknowledge_curtain_guard(
+    worker: RobotWorker = Depends(get_robot_worker_or_error),
+) -> SuccessResponse:
+    accepted = await worker.acknowledge_curtain_guard()
+
+    if accepted is False:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot acknowledge: light curtain is still blocked",
+        )
+
+    return SuccessResponse()
+
+
 async def _publish_label_scanned(code: str, settings) -> None:
     nats_config = RobotNatsConfiguration(domain=settings.nats.domain, port=settings.nats.port)
     nats_client = NATS()
