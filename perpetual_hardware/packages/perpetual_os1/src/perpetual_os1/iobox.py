@@ -78,9 +78,7 @@ class IOBox:
 
         await self.home_door()
         await self.refresh_door_state()
-        self._door_open = False
         await self._configure_curtain()
-        self._door_force_refresh_on_block = False
 
     async def _configure_curtain(self) -> None:
         curtain_cfg = getattr(self._params, "curtain", None)
