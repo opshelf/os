@@ -20,7 +20,6 @@ os.environ["ENV"] = "test"
 from sqlalchemy import delete
 
 from perpetual_os1_server.database.models import AccessLevel, AuditLog, Item, ItemLocation, Role, StorageCell, User
-from perpetual_os1_server.core import sizes as size_utils
 
 import httpx
 from perpetual_os1_server.main import app
@@ -110,16 +109,6 @@ async def reset_storage_tables(
         yield
         return
 
-    def _reset_size_db() -> None:
-        size_utils.size_database = None
-        size_utils._size_db_path = None
-        size_path = size_utils.get_sizes_filename()
-        if os.path.exists(size_path):
-            try:
-                os.remove(size_path)
-            except OSError:
-                pass
-
     async def _clear(session: AsyncSession) -> None:
         if is_storage:
             await session.execute(delete(ItemLocation))
@@ -135,13 +124,9 @@ async def reset_storage_tables(
 
     async with AsyncSessionLocal() as session:
         await _clear(session)
-    if is_storage:
-        _reset_size_db()
     yield
     async with AsyncSessionLocal() as session:
         await _clear(session)
-    if is_storage:
-        _reset_size_db()
 
 
 @pytest.fixture

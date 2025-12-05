@@ -758,6 +758,7 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "pytest" },
+    { name = "pytest-asyncio" },
     { name = "ruff" },
 ]
 
@@ -767,6 +768,7 @@ requires-dist = [{ name = "opencv-python" }]
 [package.metadata.requires-dev]
 dev = [
     { name = "pytest", specifier = ">=9.0.1" },
+    { name = "pytest-asyncio", specifier = ">=1.3.0" },
     { name = "ruff", specifier = ">=0.14.6" },
 ]
 
