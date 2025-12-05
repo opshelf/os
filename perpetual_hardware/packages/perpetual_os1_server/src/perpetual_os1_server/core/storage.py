@@ -297,6 +297,14 @@ class StorageService:
         logging.debug("sync_to_json skipped; database is authoritative for storage state")
         return True
 
+    async def get_all_occupied_cells(self) -> List[tuple]:
+        """Return list of (side, shelf_idx, cell_idx, upca) for all occupied cells."""
+        result = await self.session.execute(
+            select(ItemLocation.side, ItemLocation.shelf_idx, ItemLocation.cell_idx, Item.upca)
+            .join(Item)
+        )
+        return [(row.side, row.shelf_idx, row.cell_idx, row.upca) for row in result.all()]
+
     async def create_storage_cell(self, shelf_idx: int, cell_idx: int, capacity: str) -> StorageCell:
         """Create a new storage cell."""
         StorageCellValidator.validate_capacity(capacity)

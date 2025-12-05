@@ -19,9 +19,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from perpetual_os1_server.core.robot import get_robot_client, get_robot_worker
+from perpetual_os1_server.core.storage import StorageService
 from perpetual_os1_server.routers.common import SuccessResponse
 from perpetual_os1_server.settings import get_settings
-from perpetual_os1_server.database.session import get_db
+from perpetual_os1_server.database.session import get_db, AsyncSessionLocal
 from perpetual_os1_server.database.models import Item, ItemLocation, User
 from .auth_deps import (
     get_current_user,
@@ -31,6 +32,22 @@ from .auth_deps import (
 )
 
 router = APIRouter(tags=["robot"])
+
+
+def overlay_db_occupancy(payload_json: str, occupied: set[tuple[str, int, int]]) -> str:
+    payload = json.loads(payload_json)
+    storage = payload.get("robot_status", {}).get("storage", {})
+
+    for side in ("left_module", "right_module"):
+        for shelf_idx, shelf in enumerate(storage.get(side, [])):
+            for cell_idx, cell in enumerate(shelf.get("cells", [])):
+                key = (side, shelf_idx, cell_idx)
+                if key in occupied:
+                    cell["status"] = "occupied"
+                elif cell.get("status") == "occupied":
+                    cell["status"] = "available"
+
+    return json.dumps(payload)
 
 
 class LabelScanRequest(BaseModel):
@@ -289,6 +306,13 @@ async def calibrate_scale_weight(
         ) from exc
 
 
+async def get_occupied_cells_from_db() -> set[tuple[str, int, int]]:
+    async with AsyncSessionLocal() as session:
+        service = StorageService(session)
+        rows = await service.get_all_occupied_cells()
+        return {(row[0], row[1], row[2]) for row in rows}
+
+
 async def nats_consumer(stop_event: asyncio.Event) -> AsyncGenerator[str, None]:
     nats_client = NATS()
     message_queue: asyncio.Queue[str] = asyncio.Queue()
@@ -304,7 +328,8 @@ async def nats_consumer(stop_event: asyncio.Event) -> AsyncGenerator[str, None]:
         while not stop_event.is_set():
             try:
                 message = await asyncio.wait_for(message_queue.get(), timeout=1.0)
-                yield message
+                occupied_cells = await get_occupied_cells_from_db()
+                yield overlay_db_occupancy(message, occupied_cells)
             except asyncio.TimeoutError:
                 continue
     finally:
@@ -351,7 +376,10 @@ async def stream_sse(
         worker = None
 
     if worker is not None:
-        initial_payload = await worker.get_status_snapshot(force_refresh=True)
+        raw_payload = await worker.get_status_snapshot(force_refresh=True)
+        if raw_payload is not None:
+            occupied_cells = await get_occupied_cells_from_db()
+            initial_payload = overlay_db_occupancy(raw_payload, occupied_cells)
 
     async def event_generator() -> AsyncGenerator[dict[str, str], None]:
         try:
