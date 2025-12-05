@@ -280,3 +280,37 @@ async def test_detect_migration_needed() -> None:
         # This should be False initially since no JSON file exists in test environment
         # We'll set this as False since the test environment doesn't have the JSON file
         assert migration_needed is False
+
+
+@pytest.mark.anyio
+async def test_get_all_occupied_cells() -> None:
+    """Test retrieving all occupied cells from the database."""
+    async with AsyncSessionLocal() as db:
+        service = StorageService(db)
+
+        result = await service.get_all_occupied_cells()
+        assert result == []
+
+        await service.create_item(
+            upca="item1",
+            name="Item 1",
+            dimensions={"width": 10, "height": 10, "length": 10}
+        )
+        await service.create_item(
+            upca="item2",
+            name="Item 2",
+            dimensions={"width": 20, "height": 20, "length": 20}
+        )
+
+        await service.add_item_location(upca="item1", side="left_module", shelf_idx=0, cell_idx=1)
+        await service.add_item_location(upca="item1", side="right_module", shelf_idx=2, cell_idx=3)
+        await service.add_item_location(upca="item2", side="left_module", shelf_idx=1, cell_idx=0)
+
+        result = await service.get_all_occupied_cells()
+
+        assert len(result) == 3
+
+        occupied_set = {(row[0], row[1], row[2], row[3]) for row in result}
+        assert ("left_module", 0, 1, "item1") in occupied_set
+        assert ("right_module", 2, 3, "item1") in occupied_set
+        assert ("left_module", 1, 0, "item2") in occupied_set
