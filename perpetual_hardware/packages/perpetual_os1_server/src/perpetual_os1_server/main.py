@@ -6,6 +6,7 @@ import subprocess
 import sys
 import traceback
 from contextlib import asynccontextmanager
+import logging
 from pathlib import Path
 from typing import Any, AsyncGenerator
 
@@ -53,7 +54,7 @@ if sentry_dsn:
 		integrations=[
 			StarletteIntegration(transaction_style="endpoint"),
 			FastApiIntegration(transaction_style="endpoint"),
-			LoggingIntegration(event_level=None),
+			LoggingIntegration(level=logging.INFO, event_level=logging.ERROR),
 		],
 		traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.1")),
 		environment=os.getenv("DEPLOYMENT_ENVIRONMENT", "development"),
