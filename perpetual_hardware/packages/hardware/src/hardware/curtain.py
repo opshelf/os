@@ -62,6 +62,14 @@ class CurtainMonitor:
             return
         self._last = self._sensor.read()
         self._on_change(self._last)
+        logger.info(
+            "Curtain monitor started",
+            extra={
+                "pin": getattr(self._sensor, "pin", None),
+                "poll_interval_s": self._poll_interval,
+                "initial_blocked": self._last,
+            },
+        )
         self._task = asyncio.create_task(self._run(), name="curtain-monitor")
 
     async def stop(self) -> None:
@@ -71,6 +79,10 @@ class CurtainMonitor:
                 await self._task
             except asyncio.CancelledError:
                 pass
+            logger.info(
+                "Curtain monitor stopped",
+                extra={"pin": getattr(self._sensor, "pin", None)},
+            )
             self._task = None
 
     async def _run(self) -> None:
@@ -84,4 +96,8 @@ class CurtainMonitor:
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # pragma: no cover - hardware dependent
-            logger.warning("Curtain monitor crashed: %s", exc)
+            logger.warning(
+                "Curtain monitor crashed",
+                extra={"error": str(exc), "pin": getattr(self._sensor, "pin", None)},
+                exc_info=True,
+            )

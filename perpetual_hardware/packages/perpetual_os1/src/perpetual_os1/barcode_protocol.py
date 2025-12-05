@@ -1,7 +1,10 @@
 # barcode_service.py
 import asyncio
+import logging
 import serial_asyncio
 import serial.tools.list_ports
+
+logger = logging.getLogger(__name__).getChild("barcode")
 
 class _BarcodeProtocol(asyncio.Protocol):
     def __init__(self, on_line):
@@ -28,7 +31,10 @@ class _BarcodeProtocol(asyncio.Protocol):
 
     def connection_lost(self, exc):
         # Let the service know the transport closed; reconnect loop handles it.
-        pass
+        logger.warning(
+            "Barcode scanner connection lost",
+            extra={"error": str(exc) if exc else None},
+        )
 
 
 class BarcodeService:
@@ -55,6 +61,10 @@ class BarcodeService:
     async def start(self):
         if self._runner_task is not None:
             return
+        logger.info(
+            "Starting barcode service",
+            extra={"port": self.port, "baudrate": self.baudrate},
+        )
         self._stop_evt.clear()
         self._runner_task = asyncio.create_task(self._run(), name="barcode-runner")
 
@@ -70,6 +80,7 @@ class BarcodeService:
         if self._transport:
             self._transport.close()
             self._transport = None
+        logger.info("Barcode service stopped")
 
     async def get(self):  # await a single barcode
         return await self.queue.get()
@@ -105,20 +116,29 @@ class BarcodeService:
         while not self._stop_evt.is_set():
             try:
                 port = self._choose_port() if self.port is None else self.port
+                logger.debug(
+                    "Attempting barcode scanner connection",
+                    extra={"port": port, "baudrate": self.baudrate},
+                )
                 coro = serial_asyncio.create_serial_connection(
                     loop, lambda: _BarcodeProtocol(on_line), port, baudrate=self.baudrate
                 )
                 self._transport, self._protocol = await coro
                 # Connected; reset backoff
                 backoff = 0.5
+                logger.info("Barcode scanner connected", extra={"port": port})
                 # Wait until transport closes or stop requested
                 while not self._stop_evt.is_set():
                     await asyncio.sleep(0.2)
                 break
             except asyncio.CancelledError:
                 break
-            except Exception:
+            except Exception as exc:
                 # Connection failed or lost; back off and retry
+                logger.warning(
+                    "Barcode scanner connection failed; retrying",
+                    extra={"port": self.port or "auto", "backoff_s": backoff, "error": str(exc)},
+                )
                 await asyncio.sleep(backoff)
                 backoff = min(max_backoff, backoff * 2)
             finally:
@@ -129,6 +149,7 @@ class BarcodeService:
     def _choose_port(self) -> str:
         ports = list(serial.tools.list_ports.comports())
         if not ports:
+            logger.error("No serial ports found for barcode scanner")
             raise RuntimeError("No serial ports found.")
         # Prefer by VID/PID if provided
         if self.prefer_vid_pid:

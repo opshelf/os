@@ -70,9 +70,10 @@ def add_context_to_event_dict(
 def configure_logging() -> None:
 	"""Configure structured logging for the application."""
 	log_level = os.getenv('LOG_LEVEL', 'DEBUG').upper()
+	app_level = getattr(logging, log_level, logging.DEBUG)
 
 	logging.basicConfig(
-		level=getattr(logging, log_level),
+		level=app_level,
 		handlers=[
 			logging.StreamHandler(sys.stdout)
 		]
@@ -105,8 +106,21 @@ def configure_logging() -> None:
 		cache_logger_on_first_use=True,
 	)
 
-	logging.getLogger("aiosqlite").setLevel(logging.WARNING)
-	logging.getLogger("nats").setLevel(logging.INFO)
+	for name in ("perpetual_os1_server", "perpetual_os1", "hardware"):
+		logging.getLogger(name).setLevel(app_level)
+
+	third_party_warning = (
+		"aiosqlite",
+		"asyncio",
+		"nats",
+		"pymodbus",
+		"serial",
+		"serial_asyncio",
+		"urllib3",
+	)
+	for name in third_party_warning:
+		logging.getLogger(name).setLevel(logging.WARNING)
+
 	logging.getLogger("uvicorn.access").setLevel(logging.ERROR)
 	logging.getLogger("uvicorn.error").setLevel(logging.WARNING)
 	logging.getLogger("watchfiles.main").setLevel(logging.ERROR)

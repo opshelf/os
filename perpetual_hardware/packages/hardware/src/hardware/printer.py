@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import errno
 import random
+import logging
 from typing import Optional, List
 
 ESC = b"\x1b"
@@ -36,6 +37,8 @@ def generate_random_upca() -> str:
     check_digit = _calculate_upc_check_digit(digits)
     return "".join(digits) + str(check_digit)
 
+logger = logging.getLogger(__name__).getChild("printer")
+
 
 class USBPrinter:
     """
@@ -51,6 +54,7 @@ class USBPrinter:
         if self._fd is not None:
             return
         # O_SYNC to push bytes promptly; no buffering
+        logger.debug("Opening printer device", extra={"device": self.device})
         self._fd = os.open(self.device, os.O_WRONLY | os.O_CLOEXEC)
 
     def close(self) -> None:
@@ -59,6 +63,7 @@ class USBPrinter:
                 os.close(self._fd)
             finally:
                 self._fd = None
+                logger.debug("Closed printer device", extra={"device": self.device})
 
     def __enter__(self) -> "USBPrinter":
         self.open()
@@ -76,10 +81,19 @@ class USBPrinter:
         except OSError as e:
             # Handle device disappearing mid-job in containers
             if e.errno in (errno.EPIPE, errno.ENODEV, errno.EIO):
+                logger.warning(
+                    "Printer write failed; attempting reopen",
+                    extra={"device": self.device, "errno": e.errno},
+                )
                 self.close()
                 self.open()
                 self._write_all_once(data)
             else:
+                logger.error(
+                    "Printer write failed",
+                    extra={"device": self.device, "errno": e.errno},
+                    exc_info=True,
+                )
                 raise
 
     def _write_all_once(self, data: bytes) -> None:
@@ -144,6 +158,15 @@ class USBPrinter:
         self._write_all(self._build_barcode_cmd(sym, data))
         if feed_after > 0:
             self._write_all(b"\n" * feed_after)
+        logger.info(
+            "Printed barcode",
+            extra={
+                "device": self.device,
+                "symbology": sym,
+                "payload_len": len(payload),
+                "feed_after": feed_after,
+            },
+        )
 
     def print_random_upca(
         self,
@@ -164,4 +187,5 @@ class USBPrinter:
             hri=hri,
             feed_after=feed_after,
         )
+        logger.info("Printed random UPC-A", extra={"device": self.device, "upca": upca})
         return upca
