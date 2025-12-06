@@ -570,11 +570,12 @@ class Motor():
                 return MotorStatus.STOPPED
             
             # Crash/alarm detection (follow-error, hardstop stall)
+            # Note: alarm_code 32 (0x20) is normal "motor stopped at limit" - ignore it
             alarm_code: Optional[int] = None
             alarm_active = False
             try:
                 alarm_code = await self.get_param("Current alarm")
-                alarm_active = alarm_code is not None and alarm_code != 0
+                alarm_active = alarm_code is not None and alarm_code not in (0, 32)
             except Exception as alarm_exc:
                 self._logger.warning(
                     "Failed to read motor alarm register",
