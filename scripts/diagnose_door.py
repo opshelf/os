@@ -7,6 +7,8 @@ threshold configuration for curtain guard logic.
 
 Usage:
     python scripts/diagnose_door.py [--config /path/to/config.json]
+    python scripts/diagnose_door.py --auto          # non-interactive mode
+    python scripts/diagnose_door.py --monitor       # continuous monitoring only
 
 The script will:
 1. Read current door position (assumes door is closed after homing)
@@ -41,6 +43,27 @@ async def main():
         type=float,
         default=0.1,
         help="Interval between samples in seconds",
+    )
+    parser.add_argument(
+        "--auto",
+        action="store_true",
+        help="Non-interactive mode: measure current position only",
+    )
+    parser.add_argument(
+        "--monitor",
+        type=int,
+        default=0,
+        help="Continuous monitoring for N seconds (0=disabled)",
+    )
+    parser.add_argument(
+        "--open-door",
+        action="store_true",
+        help="Command door to open position before measuring",
+    )
+    parser.add_argument(
+        "--close-door",
+        action="store_true",
+        help="Command door to closed position before measuring",
     )
     args = parser.parse_args()
 
@@ -135,76 +158,129 @@ async def main():
             "spread_mm": round(spread, 3),
         }
 
+    async def move_door_to(position: float):
+        print(f"Moving door to position {position} mm...")
+        ppr = await controller.read(params.motor_id, 0x6003)
+        if ppr is None or ppr == 0:
+            ppr = 10000
+        target_pulses = int((position / params.mpr) * ppr)
+        await controller.write(params.motor_id, 0x6200, target_pulses & 0xFFFF)
+        await controller.write(params.motor_id, 0x6201, (target_pulses >> 16) & 0xFFFF)
+        await controller.write(params.motor_id, 0x6002, 0x10)
+        await asyncio.sleep(0.5)
+        for _ in range(100):
+            status = await controller.read(params.motor_id, 0x6000)
+            if status is not None and (status & 0x01) == 0:
+                break
+            await asyncio.sleep(0.1)
+        print(f"Door move complete")
+
     try:
         await controller.connect()
         print("\nConnected to motor controller")
 
-        print("\n" + "-" * 60)
-        print("PHASE 1: Measuring CLOSED position")
-        print("-" * 60)
-        print("Ensure door is physically CLOSED (homed position)")
-        input("Press Enter when ready...")
+        if args.close_door:
+            await move_door_to(0)
+        elif args.open_door:
+            await move_door_to(door_motor_cfg["lim"])
 
-        closed_samples = await read_position_samples(args.samples, args.interval)
-        closed_stats = analyze_samples(closed_samples, "CLOSED")
-        print(f"\nClosed position stats:")
-        for k, v in closed_stats.items():
-            print(f"  {k}: {v}")
+        if args.auto or args.monitor > 0:
+            print("\n" + "-" * 60)
+            print("AUTO MODE: Measuring current position")
+            print("-" * 60)
 
-        print("\n" + "-" * 60)
-        print("PHASE 2: Measuring OPEN position")
-        print("-" * 60)
-        print("Please OPEN the door manually or via API")
-        input("Press Enter when door is OPEN...")
+            samples = await read_position_samples(args.samples, args.interval)
+            stats = analyze_samples(samples, "CURRENT")
+            print(f"\nPosition stats:")
+            for k, v in stats.items():
+                print(f"  {k}: {v}")
 
-        open_samples = await read_position_samples(args.samples, args.interval)
-        open_stats = analyze_samples(open_samples, "OPEN")
-        print(f"\nOpen position stats:")
-        for k, v in open_stats.items():
-            print(f"  {k}: {v}")
+            pos_avg = stats.get("avg_mm", 0)
+            state = "OPEN" if pos_avg > current_threshold else "CLOSED"
+            print(f"\nDetected state: {state}")
+            print(f"Position: {pos_avg} mm (threshold: {current_threshold} mm)")
 
-        print("\n" + "=" * 60)
-        print("ANALYSIS")
-        print("=" * 60)
-
-        closed_max = closed_stats.get("max_mm", 0)
-        open_min = open_stats.get("min_mm", 0)
-        gap = open_min - closed_max
-
-        print(f"\nClosed position range: {closed_stats['min_mm']} - {closed_stats['max_mm']} mm")
-        print(f"Open position range: {open_stats['min_mm']} - {open_stats['max_mm']} mm")
-        print(f"Gap between states: {round(gap, 3)} mm")
-        print(f"Current threshold: {current_threshold} mm")
-
-        if closed_max > current_threshold:
-            print(f"\n[PROBLEM] Closed position ({closed_max} mm) exceeds threshold ({current_threshold} mm)")
-            print("  -> Door will be incorrectly detected as OPEN when closed")
-            print("  -> This causes false curtain guard activations")
-            suggested = closed_max + (gap / 2) if gap > 0 else closed_max + 5.0
-            print(f"\n[SUGGESTION] Increase threshold to: {round(suggested, 1)} mm")
-        elif gap < 5.0:
-            print(f"\n[WARNING] Small gap ({gap} mm) between closed and open positions")
-            print("  -> Consider mechanical inspection or recalibration")
+            if args.monitor > 0:
+                print(f"\n" + "-" * 60)
+                print(f"MONITORING for {args.monitor} seconds")
+                print("-" * 60)
+                end_time = time.time() + args.monitor
+                while time.time() < end_time:
+                    samples = await read_position_samples(1, 0)
+                    if samples:
+                        pos = samples[0]
+                        state = "OPEN" if pos > current_threshold else "CLOSED"
+                        bar_len = int(min(pos / door_motor_cfg["lim"] * 40, 40))
+                        bar = "#" * bar_len + "." * (40 - bar_len)
+                        print(f"  Position: {pos:7.2f} mm [{bar}] -> {state}")
+                    await asyncio.sleep(0.5)
         else:
-            print(f"\n[OK] Current threshold ({current_threshold} mm) appears correct")
-            print(f"  -> Closed max ({closed_max} mm) < threshold < Open min ({open_min} mm)")
+            print("\n" + "-" * 60)
+            print("PHASE 1: Measuring CLOSED position")
+            print("-" * 60)
+            print("Ensure door is physically CLOSED (homed position)")
+            input("Press Enter when ready...")
 
-        print("\n" + "-" * 60)
-        print("CONTINUOUS MONITORING (Ctrl+C to stop)")
-        print("-" * 60)
-        print("Move door and observe position readings...")
-        try:
-            while True:
-                samples = await read_position_samples(1, 0)
-                if samples:
-                    pos = samples[0]
-                    state = "OPEN" if pos > current_threshold else "CLOSED"
-                    bar_len = int(min(pos / door_motor_cfg["lim"] * 40, 40))
-                    bar = "#" * bar_len + "." * (40 - bar_len)
-                    print(f"\r  Position: {pos:7.2f} mm [{bar}] -> {state}   ", end="", flush=True)
-                await asyncio.sleep(0.2)
-        except KeyboardInterrupt:
-            print("\n\nMonitoring stopped")
+            closed_samples = await read_position_samples(args.samples, args.interval)
+            closed_stats = analyze_samples(closed_samples, "CLOSED")
+            print(f"\nClosed position stats:")
+            for k, v in closed_stats.items():
+                print(f"  {k}: {v}")
+
+            print("\n" + "-" * 60)
+            print("PHASE 2: Measuring OPEN position")
+            print("-" * 60)
+            print("Please OPEN the door manually or via API")
+            input("Press Enter when door is OPEN...")
+
+            open_samples = await read_position_samples(args.samples, args.interval)
+            open_stats = analyze_samples(open_samples, "OPEN")
+            print(f"\nOpen position stats:")
+            for k, v in open_stats.items():
+                print(f"  {k}: {v}")
+
+            print("\n" + "=" * 60)
+            print("ANALYSIS")
+            print("=" * 60)
+
+            closed_max = closed_stats.get("max_mm", 0)
+            open_min = open_stats.get("min_mm", 0)
+            gap = open_min - closed_max
+
+            print(f"\nClosed position range: {closed_stats['min_mm']} - {closed_stats['max_mm']} mm")
+            print(f"Open position range: {open_stats['min_mm']} - {open_stats['max_mm']} mm")
+            print(f"Gap between states: {round(gap, 3)} mm")
+            print(f"Current threshold: {current_threshold} mm")
+
+            if closed_max > current_threshold:
+                print(f"\n[PROBLEM] Closed position ({closed_max} mm) exceeds threshold ({current_threshold} mm)")
+                print("  -> Door will be incorrectly detected as OPEN when closed")
+                print("  -> This causes false curtain guard activations")
+                suggested = closed_max + (gap / 2) if gap > 0 else closed_max + 5.0
+                print(f"\n[SUGGESTION] Increase threshold to: {round(suggested, 1)} mm")
+            elif gap < 5.0:
+                print(f"\n[WARNING] Small gap ({gap} mm) between closed and open positions")
+                print("  -> Consider mechanical inspection or recalibration")
+            else:
+                print(f"\n[OK] Current threshold ({current_threshold} mm) appears correct")
+                print(f"  -> Closed max ({closed_max} mm) < threshold < Open min ({open_min} mm)")
+
+            print("\n" + "-" * 60)
+            print("CONTINUOUS MONITORING (Ctrl+C to stop)")
+            print("-" * 60)
+            print("Move door and observe position readings...")
+            try:
+                while True:
+                    samples = await read_position_samples(1, 0)
+                    if samples:
+                        pos = samples[0]
+                        state = "OPEN" if pos > current_threshold else "CLOSED"
+                        bar_len = int(min(pos / door_motor_cfg["lim"] * 40, 40))
+                        bar = "#" * bar_len + "." * (40 - bar_len)
+                        print(f"\r  Position: {pos:7.2f} mm [{bar}] -> {state}   ", end="", flush=True)
+                    await asyncio.sleep(0.2)
+            except KeyboardInterrupt:
+                print("\n\nMonitoring stopped")
 
     except Exception as e:
         print(f"\nError: {e}")
