@@ -266,6 +266,18 @@ class IOBox:
             )
             return self._door_open
 
+        door_limit = self._params.motors.by_name("door").lim
+        if position_mm < 0 or position_mm > door_limit * 1.5:
+            self._logger.warning(
+                "Door position out of range; using cached state",
+                extra={
+                    "position_mm": position_mm,
+                    "door_limit": door_limit,
+                    "cached_open": self._door_open,
+                },
+            )
+            return self._door_open
+
         threshold = self._door_open_threshold_mm
         inferred = position_mm > threshold
 
