@@ -491,7 +491,20 @@ class RobotWorker:
                     msgs = await self.work_consumer.fetch(timeout=1)
                     if msgs:
                         msg = msgs[0]
-                        command = RobotCommandAdapter.validate_json(msg.data.decode())
+                        try:
+                            command = RobotCommandAdapter.validate_json(msg.data.decode())
+                        except Exception as err:
+                            await msg.ack()
+                            self._report_error(
+                                WorkerError(
+                                    error_type="UnexpectedError",
+                                    message=str(err),
+                                    context={"command": None},
+                                    stack_trace=traceback.format_exc(),
+                                ),
+                                exc=err,
+                            )
+                            continue
                         self._current_command = command
                         self._msg = msg
                         self._queued_commands.append(self._snapshot_command(command))
