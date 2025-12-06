@@ -656,10 +656,13 @@ class Robot:
         self._state.current_cell = location
         try:
             coord = self._grid.get_cell_coordinate(location)
+            self._logger.info("Store: starting io_pick at %s", location)
             await self.io_pick(coord.to_axis_coordinate())
+            self._logger.info("Store: io_pick completed")
 
             # Update storage grid
             self._grid.store_item(location, item)
+            self._logger.info("Store: command successful for %s at %s", resolved_item_name, location)
             return RobotCommandSuccessful(command=command_name, location=location, upca=resolved_upca, weight=weight)
         except Exception as exc:
             self._logger.exception("Store command failed for %s", resolved_item_name)
