@@ -198,11 +198,11 @@ class Motor():
     _status: MotorStatus
 
     def __init__(self, controller: SharedModbusController, params: Any, safety: Optional[CurtainSafety] = None) -> None:
-        self._motor_id = params.motor_id        
-        self._controller = controller           
+        self._motor_id = params.motor_id
+        self._controller = controller
         self._params = params
         self._cur_pos = None
-        self._stall_timeout = 0.5                     
+        self._stall_timeout = 2.0
         self._status = MotorStatus.IDLE
         self._pending_motion: Optional[Callable[[], Awaitable[None]]] = None
         self._logger = logger.getChild(f"motor.{self._motor_id}")
