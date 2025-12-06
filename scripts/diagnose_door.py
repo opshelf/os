@@ -128,17 +128,17 @@ async def main():
     async def read_position_samples(n: int, interval: float) -> list[float]:
         samples = []
         for _ in range(n):
-            pos_l = await controller.read(params.motor_id, 0x602C)
-            pos_h = await controller.read(params.motor_id, 0x602D)
-            if pos_l is None or pos_h is None:
-                print("  [WARN] Failed to read position registers")
-                continue
-            pos_pulses = (pos_h << 16) | pos_l
-            ppr = await controller.read(params.motor_id, 0x6003)
-            if ppr is None or ppr == 0:
-                ppr = 10000
-            pos_mm = (pos_pulses / ppr) * params.mpr
-            samples.append(pos_mm)
+            try:
+                pos_l = await controller.read_holding_registers(params.motor_id, 0x602C)
+                pos_h = await controller.read_holding_registers(params.motor_id, 0x602D)
+                pos_pulses = (pos_h << 16) | pos_l
+                ppr = await controller.read_holding_registers(params.motor_id, 0x6003)
+                if ppr == 0:
+                    ppr = 10000
+                pos_mm = (pos_pulses / ppr) * params.mpr
+                samples.append(pos_mm)
+            except Exception as e:
+                print(f"  [WARN] Failed to read position: {e}")
             await asyncio.sleep(interval)
         return samples
 
@@ -160,17 +160,17 @@ async def main():
 
     async def move_door_to(position: float):
         print(f"Moving door to position {position} mm...")
-        ppr = await controller.read(params.motor_id, 0x6003)
-        if ppr is None or ppr == 0:
+        ppr = await controller.read_holding_registers(params.motor_id, 0x6003)
+        if ppr == 0:
             ppr = 10000
         target_pulses = int((position / params.mpr) * ppr)
-        await controller.write(params.motor_id, 0x6200, target_pulses & 0xFFFF)
-        await controller.write(params.motor_id, 0x6201, (target_pulses >> 16) & 0xFFFF)
-        await controller.write(params.motor_id, 0x6002, 0x10)
+        await controller.write_holding_registers(params.motor_id, 0x6200, target_pulses & 0xFFFF)
+        await controller.write_holding_registers(params.motor_id, 0x6201, (target_pulses >> 16) & 0xFFFF)
+        await controller.write_holding_registers(params.motor_id, 0x6002, 0x10)
         await asyncio.sleep(0.5)
         for _ in range(100):
-            status = await controller.read(params.motor_id, 0x6000)
-            if status is not None and (status & 0x01) == 0:
+            status = await controller.read_holding_registers(params.motor_id, 0x6000)
+            if (status & 0x01) == 0:
                 break
             await asyncio.sleep(0.1)
         print(f"Door move complete")
