@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 import traceback
 from datetime import datetime, timezone
 from typing import Optional, List, Any, Dict
@@ -23,6 +24,8 @@ from perpetual_os1.common import RobotNatsConfiguration
 from perpetual_os1.robot_defs import WorkerError, QueuedOperation, WorkerStatus, WorkerStatusWithQueue
 from perpetual_os1.robot_client import RobotClient
 from perpetual_os1.barcode_protocol import BarcodeService
+
+COMMAND_TIMEOUT_SECONDS = 300
 
 RobotCommandAdapter = TypeAdapter[RobotCommands](RobotCommands)
 
@@ -198,6 +201,7 @@ class RobotWorker:
         self._worker_task: Optional[asyncio.Task] = None
         self._current_task: Optional[asyncio.Task] = None
         self._current_command: Optional[RobotCommands] = None
+        self._command_started_at: Optional[float] = None
         self._msg: Optional[Msg] = None
         self._running = False
         self._nats_config = nats_config
@@ -510,8 +514,43 @@ class RobotWorker:
                         self._queued_commands.append(self._snapshot_command(command))
                         await self._publish_status()
                         logging.info("Starting command execution: %s", command.command)
+                        self._command_started_at = time.monotonic()
                         self._current_task = asyncio.create_task(self._robot.handle_command(command))
                 else:
+                    elapsed = time.monotonic() - (self._command_started_at or time.monotonic())
+                    if elapsed > COMMAND_TIMEOUT_SECONDS and not self._current_task.done():
+                        logging.error(
+                            "Command timeout after %.1f seconds: %s",
+                            elapsed,
+                            self._current_command.command if self._current_command else "unknown",
+                        )
+                        self._current_task.cancel()
+                        try:
+                            await self._current_task
+                        except asyncio.CancelledError:
+                            pass
+                        self._report_error(
+                            WorkerError(
+                                error_type="CommandTimeout",
+                                message=f"Command timed out after {elapsed:.1f} seconds",
+                                context={"command": self._current_command.model_dump() if self._current_command else None},
+                                stack_trace="",
+                            ),
+                        )
+                        if self._msg:
+                            await self._msg.ack()
+                        if self._current_command:
+                            self._queued_commands = [
+                                op for op in self._queued_commands
+                                if op.command != self._current_command
+                            ]
+                        self._current_task = None
+                        self._current_command = None
+                        self._command_started_at = None
+                        self._msg = None
+                        await self._publish_status()
+                        continue
+
                     if self._current_task.done():
                         logging.info("Command task completed, processing result")
                         try:
@@ -545,6 +584,7 @@ class RobotWorker:
 
                         self._current_task = None
                         self._current_command = None
+                        self._command_started_at = None
                         self._msg = None
                         await self._publish_status()
 
@@ -554,6 +594,7 @@ class RobotWorker:
                     await self._msg.ack()
                 self._current_task = None
                 self._current_command = None
+                self._command_started_at = None
                 self._msg = None
                 await asyncio.sleep(0.1)
             except asyncio.CancelledError:
@@ -582,6 +623,7 @@ class RobotWorker:
 
                 self._current_task = None
                 self._current_command = None
+                self._command_started_at = None
                 self._msg = None
                 await asyncio.sleep(1)
 
@@ -723,6 +765,9 @@ class RobotWorker:
                 if guard_active:
                     self._robot.pause_for_curtain()
                     self._awaiting_curtain_ack = True
+                elif self._awaiting_curtain_ack:
+                    self._robot.resume_after_curtain()
+                    self._awaiting_curtain_ack = False
                 self._logger.info(
                     "Curtain guard change",
                     extra={

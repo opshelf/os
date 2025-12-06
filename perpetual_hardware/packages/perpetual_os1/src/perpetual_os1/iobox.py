@@ -54,6 +54,9 @@ class IOBox:
         self._door_candidate_state: Optional[bool] = None
         self._door_candidate_since: Optional[float] = None
         self._door_force_refresh_on_block: bool = False
+        self._door_bad_reading_count: int = 0
+        self._door_max_bad_readings: int = 5
+        self._door_max_position_mm: float = 1000.0
 
 
     async def configure(self):
@@ -267,17 +270,39 @@ class IOBox:
             return self._door_open
 
         door_limit = self._params.motors.by_name("door").lim
-        if position_mm < 0 or position_mm > door_limit * 1.5:
+        is_out_of_range = (
+            position_mm < 0
+            or position_mm > door_limit * 1.5
+            or position_mm > self._door_max_position_mm
+        )
+
+        if is_out_of_range:
+            self._door_bad_reading_count += 1
             self._logger.warning(
                 "Door position out of range; using cached state",
                 extra={
                     "position_mm": position_mm,
                     "door_limit": door_limit,
                     "cached_open": self._door_open,
+                    "bad_reading_count": self._door_bad_reading_count,
                 },
             )
+
+            if self._door_bad_reading_count >= self._door_max_bad_readings:
+                self._logger.error(
+                    "Too many bad door readings; attempting door motor recovery",
+                    extra={"bad_reading_count": self._door_bad_reading_count},
+                )
+                self._door_bad_reading_count = 0
+                try:
+                    await self._md.home()
+                    self._logger.info("Door motor homed successfully after bad readings")
+                except Exception as home_exc:
+                    self._logger.error("Door motor recovery failed: %s", home_exc)
+
             return self._door_open
 
+        self._door_bad_reading_count = 0
         threshold = self._door_open_threshold_mm
         inferred = position_mm > threshold
 
