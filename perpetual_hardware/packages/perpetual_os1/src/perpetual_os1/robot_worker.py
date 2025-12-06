@@ -347,6 +347,9 @@ class RobotWorker:
             await self._js.purge_stream(self._nats_config.stream_name)
         self._queued_commands = []
 
+    def clear_errors(self) -> None:
+        self._error_queue = []
+
     def _should_enable_barcode(self) -> bool:
         return os.getenv("PERPETUAL_DISABLE_BARCODE", "false").lower() not in {"1", "true", "yes"}
 
