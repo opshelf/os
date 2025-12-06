@@ -119,7 +119,7 @@ async def main():
     params = MotorParams(door_motor_cfg)
 
     controller = SharedModbusController(
-        ports=[port],
+        port=port,
         baudrate=baudrate,
         parity="N",
         timeout=2.0,
