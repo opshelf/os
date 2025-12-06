@@ -65,6 +65,7 @@ class Tool:
         self._fault_recovery_active = False
         self._guard_paused = False
         self._logger = logging.getLogger(__name__)
+        self._last_pick_coord: Optional[c.AxisCoordinate] = None
 
         self._mx = Motor(self._motorcontroller, self._params.motors.by_name("x_axis"), safety)
         self._my = Motor(self._motorcontroller, self._params.motors.by_name("y_axis"), safety)
@@ -128,57 +129,43 @@ class Tool:
         await self._recover_from_fault()
 
     async def _recover_from_fault(self) -> None:
-        """Move to idle and re-home after a fault, logging secondary failures."""
+        """Retract, home, and attempt to return cell to original location."""
         if self._fault_recovery_active:
             return
 
         self._fault_recovery_active = True
         recovery_errors: List[str] = []
+        return_coord = self._last_pick_coord
 
         try:
-            idle_coord: Optional[c.AxisCoordinate] = None
-            dump_coord: Optional[c.AxisCoordinate] = None
-
             try:
-                idle_position = await self.get_param("IDLE_POSITION")
-                if idle_position is not None:
-                    ix, iy = idle_position
-                    idle_coord = c.AxisCoordinate(ix, iy)
+                await self.retract()
             except Exception as e:
-                recovery_errors.append(f"IDLE_POSITION lookup: {e}")
-                idle_coord = None
-
-            try:
-                dump_position = await self.get_param("FAULT_DUMP_POSITION")
-                if dump_position is not None:
-                    dx, dy = dump_position
-                    dump_coord = c.AxisCoordinate(dx, dy, 1)
-            except Exception as e:
-                recovery_errors.append(f"FAULT_DUMP_POSITION lookup: {e}")
-                dump_coord = None
-
-            if idle_coord is not None:
-                try:
-                    await self.retract()
-                except Exception as e:
-                    recovery_errors.append(f"retract: {e}")
-
-                try:
-                    await self.move(idle_coord)
-                except Exception as e:
-                    recovery_errors.append(f"move to idle: {e}")
+                recovery_errors.append(f"retract: {e}")
 
             try:
                 await self.home()
             except Exception as e:
                 recovery_errors.append(f"home: {e}")
 
-            if dump_coord is not None and idle_coord is not None:
+            if return_coord is not None:
                 try:
-                    await self.place(dump_coord)
-                    await self.move(idle_coord)
+                    await self.place(return_coord)
+                    self._last_pick_coord = None
+                    self._logger.info(
+                        "Fault recovery: returned cell to original location %s",
+                        return_coord
+                    )
                 except Exception as e:
-                    recovery_errors.append(f"dump contents: {e}")
+                    recovery_errors.append(f"return cell to origin: {e}")
+                    self._logger.error(
+                        "Fault recovery: failed to return cell to %s, stopping for manual recovery",
+                        return_coord
+                    )
+                    sentry_sdk.capture_message(
+                        f"Fault recovery failed to return cell - manual intervention required",
+                        level="error"
+                    )
 
             if recovery_errors:
                 self._logger.warning(
@@ -464,7 +451,7 @@ class Tool:
     async def pick(self, coordinate: c.AxisCoordinate) -> None:
         """
         Execute pick sequence at specified coordinates.
-        
+
         Raises:
             MovementError: If any movement fails
             GripperError: If gripper operation fails
@@ -472,9 +459,9 @@ class Tool:
         try:
             self._mstatus = ToolMotionStatus.MOVING
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
-            
-            target_position = "front" if coordinate.s == 0 else "back"
+            self._last_pick_coord = coordinate
 
+            target_position = "front" if coordinate.s == 0 else "back"
 
             await self._gs.safe_open()
             await self.move(coordinate)
@@ -482,11 +469,11 @@ class Tool:
             await self.extend_empty(coordinate)
             await self._gs.open()
             await self.retract()
-            
+
             self._istatus = ToolItemStatus.LOADED
             self._mstatus = ToolMotionStatus.IDLE
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
-        except Exception as e: # add rehoming???
+        except Exception as e:
             await self._handle_fault(e)
             if isinstance(e, MovementError):
                 raise
@@ -495,7 +482,7 @@ class Tool:
     async def place(self, coordinate: c.AxisCoordinate):
         """
         Execute place sequence at specified coordinates.
-        
+
         Raises:
             MovementError: If any movement fails
             GripperError: If gripper operation fails
@@ -503,7 +490,7 @@ class Tool:
         try:
             self._mstatus = ToolMotionStatus.MOVING
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
-            
+
             target_position = "front" if coordinate.s == 0 else "back"
 
             await self.move(coordinate)
@@ -511,10 +498,11 @@ class Tool:
             await self.extend(coordinate)
             await self._gs.close()
             await self.retract_empty()
-            
+
             self._istatus = ToolItemStatus.EMPTY
             self._mstatus = ToolMotionStatus.IDLE
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+            self._last_pick_coord = None
         except Exception as e:
             await self._handle_fault(e)
             if isinstance(e, MovementError):
