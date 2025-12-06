@@ -258,3 +258,56 @@ async def save_calibration(request: SaveRequest):
 	grid.save()
 
 	return {"success": True}
+
+
+@router.post("/place")
+async def place_at_cell(request: MoveRequest):
+	"""Place a cell at the specified location (assumes cell is already on tool)."""
+	try:
+		worker = await get_robot_worker()
+	except ValueError as e:
+		raise HTTPException(
+			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+			detail="Robot is not initialized",
+		) from e
+
+	grid = worker._robot._grid
+	tool = worker._robot._tool
+
+	side_enum = _parse_side(request.side)
+	shelves = grid.get_side(side_enum)
+
+	if request.shelf_idx < 0 or request.shelf_idx >= len(shelves):
+		raise HTTPException(
+			status_code=status.HTTP_400_BAD_REQUEST,
+			detail=f"Invalid shelf_idx: {request.shelf_idx}",
+		)
+
+	shelf = shelves[request.shelf_idx]
+
+	if request.cell_idx < 0 or request.cell_idx >= len(shelf.cells):
+		raise HTTPException(
+			status_code=status.HTTP_400_BAD_REQUEST,
+			detail=f"Invalid cell_idx: {request.cell_idx}",
+		)
+
+	cell = shelf.cells[request.cell_idx]
+
+	if cell.calibration_point is None:
+		raise HTTPException(
+			status_code=status.HTTP_400_BAD_REQUEST,
+			detail="Cell has no calibration point",
+		)
+
+	cal_point = cell.calibration_point
+
+	coord = AxisCoordinate(
+		x=cal_point.x,
+		y=cal_point.y,
+		s=_side_to_s(request.side),
+		z_offset=cal_point.z_offset,
+	)
+
+	await tool.place(coord)
+
+	return {"success": True}
