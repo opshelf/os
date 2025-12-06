@@ -176,6 +176,12 @@ async def clear_robot_commands(worker: RobotWorker = Depends(get_robot_worker_or
     return SuccessResponse()
 
 
+@router.post("/clear_errors", dependencies=[Depends(get_current_user), Depends(require_permissions("robot:control")), Depends(check_robot_enabled)])
+async def clear_robot_errors(worker: RobotWorker = Depends(get_robot_worker_or_error)) -> SuccessResponse:
+    worker.clear_errors()
+    return SuccessResponse()
+
+
 @router.post("/curtain_guard/acknowledge", dependencies=[Depends(get_current_user), Depends(require_permissions("robot:control")), Depends(check_robot_enabled)])
 async def acknowledge_curtain_guard(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
