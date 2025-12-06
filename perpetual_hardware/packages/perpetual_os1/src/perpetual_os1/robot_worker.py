@@ -589,9 +589,34 @@ class RobotWorker:
                         await self._publish_status()
 
                 await asyncio.sleep(0.1)
-            except (nats_errors.TimeoutError, asyncio.TimeoutError):
+            except (nats_errors.TimeoutError, asyncio.TimeoutError) as timeout_err:
+                logging.warning(
+                    "NATS timeout during command processing: %s",
+                    timeout_err,
+                    extra={
+                        "command": self._current_command.command if self._current_command else None,
+                    },
+                )
+                if self._current_task is not None and not self._current_task.done():
+                    logging.warning("Cancelling orphaned command task due to NATS timeout")
+                    self._current_task.cancel()
+                    try:
+                        await self._current_task
+                    except asyncio.CancelledError:
+                        pass
+                    self._report_error(
+                        WorkerError(
+                            error_type="NATSTimeout",
+                            message=f"NATS timeout interrupted command: {timeout_err}",
+                            context={"command": self._current_command.model_dump() if self._current_command else None},
+                            stack_trace="",
+                        ),
+                    )
                 if self._msg:
-                    await self._msg.ack()
+                    try:
+                        await self._msg.ack()
+                    except Exception:
+                        pass
                 self._current_task = None
                 self._current_command = None
                 self._command_started_at = None
@@ -610,6 +635,13 @@ class RobotWorker:
                     ),
                     exc=err,
                 )
+                if self._current_task is not None and not self._current_task.done():
+                    logging.warning("Cancelling command task due to unexpected error")
+                    self._current_task.cancel()
+                    try:
+                        await self._current_task
+                    except asyncio.CancelledError:
+                        pass
                 try:
                     await self._publish_status()
                 except Exception as publish_err:
