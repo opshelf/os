@@ -509,16 +509,21 @@ class RobotWorker:
                         self._msg = msg
                         self._queued_commands.append(self._snapshot_command(command))
                         await self._publish_status()
+                        logging.info("Starting command execution: %s", command.command)
                         self._current_task = asyncio.create_task(self._robot.handle_command(command))
                 else:
                     if self._current_task.done():
+                        logging.info("Command task completed, processing result")
                         try:
                             result: RobotResponse = self._current_task.result()
+                            logging.info("Command result: %s", type(result).__name__)
                             await self._nc.publish(
                                 self._nats_config.event_queue,
                                 result.model_dump_json().encode(),
                             )
+                            logging.info("Published command result to event queue")
                         except Exception as err:
+                            logging.error("Command execution error: %s", err)
                             self._report_error(
                                 WorkerError(
                                     error_type="CommandExecutionError",
