@@ -164,9 +164,9 @@ async def main():
         if ppr == 0:
             ppr = 10000
         target_pulses = int((position / params.mpr) * ppr)
-        await controller.write_holding_registers(params.motor_id, 0x6200, target_pulses & 0xFFFF)
-        await controller.write_holding_registers(params.motor_id, 0x6201, (target_pulses >> 16) & 0xFFFF)
-        await controller.write_holding_registers(params.motor_id, 0x6002, 0x10)
+        await controller.write_single_register(params.motor_id, 0x6200, target_pulses & 0xFFFF)
+        await controller.write_single_register(params.motor_id, 0x6201, (target_pulses >> 16) & 0xFFFF)
+        await controller.write_single_register(params.motor_id, 0x6002, 0x10)
         await asyncio.sleep(0.5)
         for _ in range(100):
             status = await controller.read_holding_registers(params.motor_id, 0x6000)
