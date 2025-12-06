@@ -590,13 +590,6 @@ class RobotWorker:
 
                 await asyncio.sleep(0.1)
             except (nats_errors.TimeoutError, asyncio.TimeoutError) as timeout_err:
-                logging.warning(
-                    "NATS timeout during command processing: %s",
-                    timeout_err,
-                    extra={
-                        "command": self._current_command.command if self._current_command else None,
-                    },
-                )
                 if self._current_task is not None and not self._current_task.done():
                     logging.warning("Cancelling orphaned command task due to NATS timeout")
                     self._current_task.cancel()
