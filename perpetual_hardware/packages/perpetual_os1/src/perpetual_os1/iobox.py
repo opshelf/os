@@ -146,14 +146,27 @@ class IOBox:
         """
         if self._scale_enabled is False:
             return None
+        start_time = time.monotonic()
         try:
             await self._ensure_scale_ready()
-            weight = await self._scale.wait_for_stable_weight(timeout=3.0, poll_interval=0.1)
+            weight = await self._scale.wait_for_stable_weight(timeout=15.0, poll_interval=0.1)
+            elapsed = time.monotonic() - start_time
             if weight is None:
-                self._logger.warning("Scale did not stabilize within timeout")
+                self._logger.warning(
+                    "Scale did not stabilize within timeout",
+                    extra={"elapsed_s": round(elapsed, 3), "timeout_s": 15.0},
+                )
+            else:
+                self._logger.info(
+                    "Scale stabilized",
+                    extra={"elapsed_s": round(elapsed, 3), "weight_grams": weight},
+                )
             return weight
         except Exception as e:
-            self._logger.error("Scale read failed: %s", e)
+            elapsed = time.monotonic() - start_time
+            self._logger.error(
+                "Scale read failed after %.3fs: %s", elapsed, e, extra={"elapsed_s": round(elapsed, 3)}
+            )
             sentry_sdk.capture_exception(e)
             return None
     
