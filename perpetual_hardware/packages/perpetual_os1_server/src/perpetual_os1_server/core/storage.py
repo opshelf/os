@@ -197,12 +197,25 @@ class StorageService:
         )
         item = result.scalar_one_or_none()
 
-        if not item:
+        if item is None:
             return None
 
         StorageValidator.validate_location_assignment(shelf_idx, cell_idx)
 
         async with self._lock:
+            existing = await self.session.execute(
+                select(ItemLocation)
+                .where(ItemLocation.side == side)
+                .where(ItemLocation.shelf_idx == shelf_idx)
+                .where(ItemLocation.cell_idx == cell_idx)
+            )
+            existing_location = existing.scalar_one_or_none()
+
+            if existing_location is not None:
+                raise ValidationError(
+                    f"Cell ({side}, shelf={shelf_idx}, cell={cell_idx}) is already occupied by item_id={existing_location.item_id}"
+                )
+
             try:
                 location = ItemLocation(
                     item_id=item.id,

@@ -1,6 +1,6 @@
 """Database models for authentication and audit system."""
 from typing import List, Dict, Any, Optional
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, JSON, ForeignKey, func, Index, Float
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, JSON, ForeignKey, func, Index, Float, UniqueConstraint
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 from datetime import datetime, timezone
 from .base import Base
@@ -120,7 +120,7 @@ class ItemLocation(Base):
     item: Mapped["Item"] = relationship("Item", back_populates="locations")
 
     __table_args__ = (
-        Index('idx_item_locations_side_shelf_cell', 'side', 'shelf_idx', 'cell_idx'),
+        UniqueConstraint('side', 'shelf_idx', 'cell_idx', name='uq_item_locations_cell'),
         Index('idx_item_locations_item_id', 'item_id'),
     )
 
