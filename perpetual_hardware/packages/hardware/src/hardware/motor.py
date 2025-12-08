@@ -630,6 +630,8 @@ class Motor():
 
                 retry_attempts += 1
 
+                saved_motion = self._pending_motion
+
                 try:
                     await self.home()
                 except Exception as home_exc:
@@ -644,7 +646,15 @@ class Motor():
                     )
                     return MotorStatus.FAULT
 
-                # Re-run the pending motion and reset timers
+                self._pending_motion = saved_motion
+
+                if self._pending_motion is None:
+                    self._logger.error(
+                        "No pending motion to restart after recovery",
+                        extra={"motor_id": self._motor_id},
+                    )
+                    return MotorStatus.FAULT
+
                 try:
                     await self._pending_motion()
                 except Exception as restart_exc:
