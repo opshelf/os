@@ -6,6 +6,8 @@ from perpetual_os1 import robot_client as r_client
 
 from perpetual_os1_server.settings import get_settings
 from perpetual_os1_server.core.robot_events import RobotEventListener
+from perpetual_os1_server.core.storage import StorageService
+from perpetual_os1_server.database.session import AsyncSessionLocal
 
 import logging
 
@@ -19,6 +21,13 @@ async def init_robot_worker() -> None:
     robot = r.Robot()
     await robot.configure()
     logging.info("Built Robot")
+
+    async with AsyncSessionLocal() as session:
+        storage_service = StorageService(session)
+        occupied = await storage_service.get_all_occupied_cells()
+        occupied_tuples = [(side, shelf_idx, cell_idx) for side, shelf_idx, cell_idx, _ in occupied]
+        robot.sync_occupied_cells(occupied_tuples)
+        logging.info("Synced %d occupied cells from database", len(occupied_tuples))
     nats_config = common.RobotNatsConfiguration(
         domain=settings.nats.domain,
         port=settings.nats.port,

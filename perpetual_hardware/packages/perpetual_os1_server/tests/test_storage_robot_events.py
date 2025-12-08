@@ -153,3 +153,21 @@ async def test_process_robot_event_updates_weight_from_scale() -> None:
 
         assert item is not None
         assert item.weight == 152.0
+
+
+@pytest.mark.anyio
+async def test_add_item_location_rejects_occupied_cell() -> None:
+    from perpetual_os1_server.core.validation import ValidationError
+
+    await _seed_item_with_location(upca="666", side="right_module", shelf_idx=3, cell_idx=0)
+
+    async with AsyncSessionLocal() as session:
+        storage = StorageService(session)
+        await storage.create_item(
+            upca="777",
+            name="Second Item",
+            dimensions={"width": 1.0, "height": 1.0, "length": 1.0},
+        )
+
+        with pytest.raises(ValidationError, match="already occupied"):
+            await storage.add_item_location("777", "right_module", 3, 0)
