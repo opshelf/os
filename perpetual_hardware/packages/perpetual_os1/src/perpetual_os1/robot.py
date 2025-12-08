@@ -27,8 +27,6 @@ import sentry_sdk
 if TYPE_CHECKING:
     from hardware.motor import Motor
 
-# from hardware.printer import AsyncPrinter as printer
-
 import os
 STORAGE_PATH = os.path.join(os.path.dirname(__file__), 'storage.json')
 CONFIG_PATH = Path(__file__).resolve().parent / "config.json"
@@ -60,7 +58,6 @@ class RetrieveItemCommand(BaseModel):
 
 class StoreItemCommand(BaseModel):
     command: Literal["store_item"] = "store_item"
-    # location: Dict[str, Any]
     item: Optional[Dict[str, Any]] = None
 
 RobotCommands = Annotated[
@@ -77,7 +74,7 @@ RobotCommands = Annotated[
     Field(discriminator="command"),
 ]
 
-# Define response types
+
 class RobotCommandSuccessful(BaseModel):
     command: str = "unknown"
     message: Literal["success"] = "success"
@@ -95,11 +92,6 @@ class RobotBarcodeResponse(BaseModel):
     message: Literal["success"] = "success"
     upca: str
 
-
-# class RobotState(BaseModel):
-#     # io: IOBoxStatus
-#     # tool: ToolStatus
-#     current_cell: Optional[StorageModuleCellLocation] = None
 
 
 class StatusFlags(BaseModel):
@@ -155,7 +147,6 @@ RobotResponse = Union[RobotCommandSuccessful, RobotCommandError, RobotBarcodeRes
 
 class Robot:
     def __init__(self = None) -> None:
-        # Load State / Configuration
         self._config = load_config_file(CONFIG_PATH)
         self._bus_settings = self._prepare_bus_settings()
         self._logger = logging.getLogger(__name__).getChild("Robot")
@@ -178,13 +169,11 @@ class Robot:
         tool_params = self._config.get("robot.tool", {})
         io_params = self._config.get("robot.io", {})
 
-        # Robot Components
         from hardware.motor import CurtainSafety
         self._curtain_safety = CurtainSafety()
         self._tool = Tool(motorcontroller=self._motorbus, params=tool_params, safety=self._curtain_safety)
         self._io = IOBox(motorcontroller=self._motorbus, scalecontroller=self._scalebus, params=io_params, safety=self._curtain_safety)
 
-        # storage grid to store physical robot state
         if os.path.exists(STORAGE_PATH) is True:
             try:
                 with open(STORAGE_PATH, 'r') as f:
@@ -197,14 +186,10 @@ class Robot:
             self._logger.info("storage_file_missing", path=STORAGE_PATH, action="using_empty_grid")
             self._grid = StorageGrid()
 
-        # Status
-        self._cur_item: StorageModuleCellLocation = None # some kind of unique identifier
+        self._cur_item: StorageModuleCellLocation = None
         self._status: RobotStatus = None
 
-        # self._state: RobotState = RobotState(io=IOBoxStatus.IDLE, tool=ToolStatus(motion=ToolMotionStatus.IDLE, item=ToolItemStatus.EMPTY), )
         self._state: RobotState = RobotState(current_cell=None)
-
-        # State Machine
         self._state_manager = RobotStateManager()
 
 
@@ -223,16 +208,12 @@ class Robot:
             raise ConfigError(f"Failed to get parameter {param}: {str(e)}") from e
 
     async def io_place(self, coord: AxisCoordinate):
-        # Validate state before operation
-        # self._state_manager.update_state(self._state.tool, self._state.io)
-        # self._state_manager.validate_operation('place_iobox')
-
         ppl = await self._tool.get_param("PICKUP_POSITION_L")
         pph = await self._tool.get_param("PICKUP_POSITION_H")
 
         await self._tool.pick(coord)
         await self._tool.rotate_to_position("front")
-        await self._tool.move(AxisCoordinate(ppl[0], ppl[1])) # move to safe height
+        await self._tool.move(AxisCoordinate(ppl[0], ppl[1]))
         await self._io.open_door()
         await self._tool.extend_IO()
         await self._tool.move(AxisCoordinate(pph[0], pph[1]))
@@ -244,33 +225,23 @@ class Robot:
         await self._io.home_door()
         await self._tool.clear_alarms()
 
-        # Update state after operation
-        # self._state_manager.update_state(self._state.tool, self._state.io)
-
     async def io_pick(self, coord):
-        # Validate state before operation
-        # self._state_manager.update_state(self._state.tool, self._state.io)
-        # self._state_manager.validate_operation('pick_iobox')
-
         ppl = await self._tool.get_param("PICKUP_POSITION_L")
         pph = await self._tool.get_param("PICKUP_POSITION_H")
 
         await self._tool.pick(coord)
         await self._tool.rotate_to_position("front")
-        await self._tool.move(AxisCoordinate(pph[0], pph[1])) # move to safe height
+        await self._tool.move(AxisCoordinate(pph[0], pph[1]))
         await self._io.open_door()
         await self._tool.extend()
-        await self._tool.move(AxisCoordinate(ppl[0], ppl[1])) # move to safe height
+        await self._tool.move(AxisCoordinate(ppl[0], ppl[1]))
         await self._tool.retract()
         await self._io.close_door()
         await self._tool.move(coord)
         await self._tool.place(coord)
 
-        await self._io.home_door() # clear alarms io
+        await self._io.home_door()
         await self._tool.clear_alarms()
-
-        # Update state after operation
-        # self._state_manager.update_state(self._state.tool, self._state.io)
 
     async def idle(self) -> None:
         idle_position = await self._tool.get_param("IDLE_POSITION")
@@ -565,7 +536,6 @@ class Robot:
             return RobotCommandError(error=f"Storage calibration failed: {str(e)}")
 
 
-    # plug in sizing from the io box
     async def store(self, item_payload: Any) -> RobotResponse:
         """
         Store an item in the storage grid, finding the best available location based on item dimensions.
@@ -577,18 +547,6 @@ class Robot:
         Returns:
             RobotResponse indicating success or failure
         """
-
-        # # # Poll IOBox to refresh presence state before storing
-        # await self._io.detect_item_presence()
-
-        # # Validate state before storing
-        # self._state = RobotState(io=self._io._status, tool=self._tool._status)
-        # self._state_manager.update_state(self._state.tool, self._state.io)
-        # try:
-        #     self._state_manager.validate_operation('store')
-        # except RobotStateError as exc:
-        #     print("error")
-        #     return RobotCommandError(error=str(exc))
 
         command_name = "store_item"
 
@@ -624,8 +582,6 @@ class Robot:
 
         weight = await self._io.get_weight()
 
-        # Find a suitable empty location for the item
-
         item = CellItem(
             dimensions=Dimensions(
                 width=width,
@@ -633,7 +589,7 @@ class Robot:
                 length=length
             ),
             weight=weight,
-            data={"name": resolved_item_name},  # Store item metadata
+            data={"name": resolved_item_name},
             upca=resolved_upca
         )
 
@@ -659,8 +615,6 @@ class Robot:
             self._logger.info("Store: starting io_pick at %s", location)
             await self.io_pick(coord.to_axis_coordinate())
             self._logger.info("Store: io_pick completed")
-
-            # Update storage grid
             self._grid.store_item(location, item)
             self._logger.info("Store: command successful for %s at %s", resolved_item_name, location)
             return RobotCommandSuccessful(command=command_name, location=location, upca=resolved_upca, weight=weight)
@@ -684,13 +638,6 @@ class Robot:
         Returns:
             RobotResponse indicating success or failure
         """
-        # # Validate state before retrieval
-        # self._state = RobotState(io=self._io._status, tool=self._tool._status)
-        # self._state_manager.update_state(self._state.tool, self._state.io)
-        # try:
-        #     self._state_manager.validate_operation('retrieve')
-        # except RobotStateError as exc:
-        #     return RobotCommandError(error=str(exc))
 
         command_name = "retrieve_item"
 
@@ -772,45 +719,6 @@ class Robot:
         )
         self._status = status
         return status
-    
-
-    async def teststore(self) -> None:
-        await self.store("beb")
-        # await self.retrieve("beb")
-
-    async def testretrieve(self) -> None:
-        # await self.store("beb")
-        await self.retrieve("beb")
-
-    async def testone(self, coordinate) -> None:
-        """Exercise pick/place at every calibrated left-module location."""
-
-        if not self._grid.left_module:
-            self._logger.warning("No left-module shelves available for storage test")
-            return
-
-        for shelf_idx, shelf in enumerate(self._grid.left_module):
-            for cell_idx, cell in enumerate(shelf.cells):
-                calibration_point = cell.calibration_point
-                if calibration_point is None:
-                    self._logger.warning(
-                        "Skipping left-module shelf %s cell %s: missing calibration point",
-                        shelf_idx,
-                        cell_idx,
-                    )
-                    continue
-
-                coordinate = calibration_point.to_axis_coordinate()
-                try:
-                    await self._tool.pick(coordinate)
-                    await self._tool.place(coordinate)
-                except Exception:
-                    self._logger.exception(
-                        "Pick/place sequence failed at left-module shelf %s cell %s",
-                        shelf_idx,
-                        cell_idx,
-                    )
-                    raise
 
 
     async def handle_command(self, command: RobotCommands) -> RobotResponse:
@@ -880,7 +788,6 @@ class Robot:
 
         resolved_location: Optional[StorageModuleCellLocation] = None
 
-        # Prefer the client-provided location if present.
         if location_payload is not None:
             try:
                 resolved_location = StorageModuleCellLocation(**location_payload)

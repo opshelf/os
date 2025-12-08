@@ -766,10 +766,6 @@ class Tool:
     
     async def auto_cal(self):
         """Get shelf positions and anchor points for calibration."""
-        # shelves = await self.get_shelves()
-        # print(shelves)
-        # shelves = [157.704, 381.204, 611.28, 808.724, 957.952, 1108.724]
         shelves =  [59.992, 411.124, 709.3, 1007.82, 1207.96]
         anchors = await self.update_grid(shelves)
         return shelves, anchors
-        # todo eventually make this auto generate the slope of each shelf by having two scan positions in x
