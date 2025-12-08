@@ -616,6 +616,7 @@ class Robot:
             await self.io_pick(coord.to_axis_coordinate())
             self._logger.info("Store: io_pick completed")
             self._grid.store_item(location, item)
+            self._grid.save()
             self._logger.info("Store: command successful for %s at %s", resolved_item_name, location)
             return RobotCommandSuccessful(command=command_name, location=location, upca=resolved_upca, weight=weight)
         except Exception as exc:
@@ -842,6 +843,7 @@ class Robot:
             coord = self._grid.get_cell_coordinate(location).to_axis_coordinate()
             await self.io_place(coord)
             self._grid.clear_item(location)
+            self._grid.save()
             return RobotCommandSuccessful(command=command_name, location=location, upca=retrieved_upca)
         except Exception as exc:
             self._logger.exception(
