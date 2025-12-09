@@ -10,6 +10,8 @@ from perpetual_os1.common import RobotNatsConfiguration
 from perpetual_os1_server.core.storage import StorageService
 from perpetual_os1_server.database.session import AsyncSessionLocal
 
+logger = logger.getLogger(__name__)
+
 
 async def process_robot_event(payload: dict[str, Any]) -> None:
     """
@@ -30,14 +32,14 @@ async def process_robot_event(payload: dict[str, Any]) -> None:
         cell_idx = location.get("cell_idx")
 
         if upca is None or side is None or shelf_idx is None or cell_idx is None:
-            logging.warning("Skipping retrieve_item event with incomplete data: %s", payload)
+            logger.warning("Skipping retrieve_item event with incomplete data: %s", payload)
             return
 
         try:
             shelf_idx_int = int(shelf_idx)
             cell_idx_int = int(cell_idx)
         except (TypeError, ValueError):
-            logging.warning("Skipping retrieve_item event with non-integer location: %s", payload)
+            logger.warning("Skipping retrieve_item event with non-integer location: %s", payload)
             return
 
         async with AsyncSessionLocal() as session:
@@ -48,9 +50,9 @@ async def process_robot_event(payload: dict[str, Any]) -> None:
                     try:
                         await storage_service.sync_to_json(transaction_committed=True)
                     except Exception as sync_err:  # pragma: no cover - best effort logging
-                        logging.warning("Failed to sync storage JSON after retrieval: %s", sync_err)
+                        logger.warning("Failed to sync storage JSON after retrieval: %s", sync_err)
             except Exception as err:
-                logging.exception("Failed to process retrieve_item event for %s: %s", upca, err)
+                logger.exception("Failed to process retrieve_item event for %s: %s", upca, err)
 
     if command == "store_item":
         if message != "success":
@@ -60,7 +62,7 @@ async def process_robot_event(payload: dict[str, Any]) -> None:
         upca = payload.get("upca")
         weight = payload.get("weight")
 
-        logging.info(
+        logger.info(
             "Processing store_item event: upca=%s weight=%s location=%s",
             upca, weight, location
         )
@@ -70,14 +72,14 @@ async def process_robot_event(payload: dict[str, Any]) -> None:
         cell_idx = location.get("cell_idx")
 
         if upca is None or side is None or shelf_idx is None or cell_idx is None:
-            logging.warning("Skipping store_item event with incomplete data: %s", payload)
+            logger.warning("Skipping store_item event with incomplete data: %s", payload)
             return
 
         try:
             shelf_idx_int = int(shelf_idx)
             cell_idx_int = int(cell_idx)
         except (TypeError, ValueError):
-            logging.warning("Skipping store_item event with non-integer location: %s", payload)
+            logger.warning("Skipping store_item event with non-integer location: %s", payload)
             return
 
         normalized_weight = None
@@ -104,7 +106,7 @@ async def process_robot_event(payload: dict[str, Any]) -> None:
                     )
                 elif normalized_weight is not None:
                     if existing_item.weight != normalized_weight:
-                        logging.info(
+                        logger.info(
                             "Updating item weight: upca=%s old=%s new=%s",
                             upca, existing_item.weight, normalized_weight
                         )
@@ -122,9 +124,9 @@ async def process_robot_event(payload: dict[str, Any]) -> None:
                 try:
                     await storage_service.sync_to_json(transaction_committed=True)
                 except Exception as sync_err:  # pragma: no cover - best effort logging
-                    logging.warning("Failed to sync storage JSON after storage event: %s", sync_err)
+                    logger.warning("Failed to sync storage JSON after storage event: %s", sync_err)
             except Exception as err:
-                logging.exception("Failed to process store_item event for %s: %s", upca, err)
+                logger.exception("Failed to process store_item event for %s: %s", upca, err)
 
 
 class RobotEventListener:
@@ -137,31 +139,31 @@ class RobotEventListener:
 
     async def start(self) -> None:
         if self._nc is not None:
-            logging.info("Robot event listener already started")
+            logger.info("Robot event listener already started")
             return
 
-        logging.info("Starting robot event listener, connecting to %s", self._config.connection_string())
+        logger.info("Starting robot event listener, connecting to %s", self._config.connection_string())
         self._nc = NATS()
         await self._nc.connect(self._config.connection_string())
-        logging.info("Connected to NATS for event listener")
+        logger.info("Connected to NATS for event listener")
         self._subscription = await self._nc.subscribe(
             self._config.event_queue, cb=self._handle_message
         )
-        logging.info("Robot event listener subscribed to %s", self._config.event_queue)
+        logger.info("Robot event listener subscribed to %s", self._config.event_queue)
 
     async def stop(self) -> None:
         if self._subscription is not None:
             try:
                 await self._subscription.unsubscribe()
             except Exception as err:
-                logging.warning("Failed to unsubscribe from robot events: %s", err)
+                logger.warning("Failed to unsubscribe from robot events: %s", err)
             self._subscription = None
 
         if self._nc is not None:
             try:
                 await self._nc.drain()
             except Exception as err:
-                logging.warning("Failed to drain NATS connection: %s", err)
+                logger.warning("Failed to drain NATS connection: %s", err)
             finally:
                 try:
                     await self._nc.close()
@@ -170,11 +172,11 @@ class RobotEventListener:
             self._nc = None
 
     async def _handle_message(self, msg: Msg) -> None:
-        logging.info("Received robot event message: %s", msg.data[:200] if msg.data else None)
+        logger.info("Received robot event message: %s", msg.data[:200] if msg.data else None)
         try:
             payload = json.loads(msg.data.decode())
         except Exception:
-            logging.warning("Received malformed robot event: %s", msg.data)
+            logger.warning("Received malformed robot event: %s", msg.data)
             return
 
         await process_robot_event(payload)
