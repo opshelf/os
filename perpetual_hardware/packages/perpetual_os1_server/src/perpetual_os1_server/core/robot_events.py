@@ -137,10 +137,13 @@ class RobotEventListener:
 
     async def start(self) -> None:
         if self._nc is not None:
+            logging.info("Robot event listener already started")
             return
 
+        logging.info("Starting robot event listener, connecting to %s", self._config.connection_string())
         self._nc = NATS()
         await self._nc.connect(self._config.connection_string())
+        logging.info("Connected to NATS for event listener")
         self._subscription = await self._nc.subscribe(
             self._config.event_queue, cb=self._handle_message
         )
@@ -167,6 +170,7 @@ class RobotEventListener:
             self._nc = None
 
     async def _handle_message(self, msg: Msg) -> None:
+        logging.info("Received robot event message: %s", msg.data[:200] if msg.data else None)
         try:
             payload = json.loads(msg.data.decode())
         except Exception:
