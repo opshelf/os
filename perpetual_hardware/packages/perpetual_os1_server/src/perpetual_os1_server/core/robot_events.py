@@ -60,6 +60,11 @@ async def process_robot_event(payload: dict[str, Any]) -> None:
         upca = payload.get("upca")
         weight = payload.get("weight")
 
+        logging.info(
+            "Processing store_item event: upca=%s weight=%s location=%s",
+            upca, weight, location
+        )
+
         side = location.get("side")
         shelf_idx = location.get("shelf_idx")
         cell_idx = location.get("cell_idx")
@@ -99,6 +104,10 @@ async def process_robot_event(payload: dict[str, Any]) -> None:
                     )
                 elif normalized_weight is not None:
                     if existing_item.weight != normalized_weight:
+                        logging.info(
+                            "Updating item weight: upca=%s old=%s new=%s",
+                            upca, existing_item.weight, normalized_weight
+                        )
                         await storage_service.update_item(str(upca), weight=normalized_weight)
 
                 existing_locations = await storage_service.get_item_locations(str(upca))
