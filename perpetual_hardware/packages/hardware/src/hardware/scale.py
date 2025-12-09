@@ -219,19 +219,19 @@ class Scale:
         self,
         timeout: float = 2.0,
         poll_interval: float = 0.05,
-        require_instability: bool = True,
     ) -> Optional[float]:
         """
         Poll status until stable, then return one weight sample in grams.
         Returns None on timeout.
 
-        If require_instability is True, the scale must first report an unstable
-        reading before a stable reading is accepted. This prevents accepting
-        stale stable readings from before an item was placed.
+        If the first stable reading is zero, waits for an unstable-to-stable
+        transition before accepting. This prevents accepting stale zero readings
+        from before an item was placed, while still accepting valid non-zero
+        readings immediately.
         """
         loop = asyncio.get_event_loop()
         deadline = loop.time() + timeout
-        saw_unstable = not require_instability
+        saw_unstable = False
 
         while loop.time() < deadline:
             st = await self.read_status()
@@ -243,13 +243,22 @@ class Scale:
                     extra={"unit_id": self.scale_id},
                 )
 
-            if st["stable"] is True and saw_unstable is True:
+            if st["stable"] is True:
                 weight = await self.read_weight()
-                logger.debug(
-                    "Scale reached stable reading",
-                    extra={"unit_id": self.scale_id, "weight_grams": weight},
-                )
-                return weight
+
+                if weight is not None and weight > 0:
+                    logger.debug(
+                        "Scale reached stable reading",
+                        extra={"unit_id": self.scale_id, "weight_grams": weight},
+                    )
+                    return weight
+
+                if saw_unstable is True:
+                    logger.debug(
+                        "Scale stable at zero after instability",
+                        extra={"unit_id": self.scale_id, "weight_grams": weight},
+                    )
+                    return weight
 
             await asyncio.sleep(poll_interval)
 
