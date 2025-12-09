@@ -228,19 +228,26 @@ class Scale:
         transition before accepting. This prevents accepting stale zero readings
         from before an item was placed, while still accepting valid non-zero
         readings immediately.
+
+        If timeout occurs while unstable, returns an averaged weight from
+        collected readings as fallback (if any non-zero readings were captured).
         """
         loop = asyncio.get_event_loop()
         deadline = loop.time() + timeout
         saw_unstable = False
+        collected_weights: list[float] = []
 
         while loop.time() < deadline:
             st = await self.read_status()
 
             if st["stable"] is False:
                 saw_unstable = True
+                weight = await self.read_weight()
+                if weight is not None and weight > 0:
+                    collected_weights.append(weight)
                 logger.debug(
                     "Scale detected unstable state",
-                    extra={"unit_id": self.scale_id},
+                    extra={"unit_id": self.scale_id, "weight": weight},
                 )
 
             if st["stable"] is True:
@@ -262,6 +269,19 @@ class Scale:
 
             await asyncio.sleep(poll_interval)
 
+        if len(collected_weights) >= 3:
+            avg_weight = sum(collected_weights) / len(collected_weights)
+            logger.warning(
+                "Scale stability timeout, using averaged weight",
+                extra={
+                    "unit_id": self.scale_id,
+                    "timeout_s": timeout,
+                    "samples": len(collected_weights),
+                    "avg_weight_grams": avg_weight,
+                },
+            )
+            return avg_weight
+
         logger.warning(
             "Scale stability wait timed out",
             extra={
@@ -269,6 +289,7 @@ class Scale:
                 "timeout_s": timeout,
                 "poll_interval_s": poll_interval,
                 "saw_unstable": saw_unstable,
+                "samples_collected": len(collected_weights),
             },
         )
         return None
