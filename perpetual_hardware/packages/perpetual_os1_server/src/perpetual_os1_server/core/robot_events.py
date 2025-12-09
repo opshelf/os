@@ -10,7 +10,7 @@ from perpetual_os1.common import RobotNatsConfiguration
 from perpetual_os1_server.core.storage import StorageService
 from perpetual_os1_server.database.session import AsyncSessionLocal
 
-logger = logger.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 
 async def process_robot_event(payload: dict[str, Any]) -> None:
