@@ -374,7 +374,7 @@ class Tool:
             ConfigError: If extension parameters are missing
         """
         try:
-            io_offset = 3
+            io_offset = 6
             slide_ext = await self._get_slide_extension(coordinate)
             grip_ext = await self.get_param("GRIPPER_EXTENSION_PLACE")
             grip_rpm = await self.get_param("GRIPPER_MOVE_RPM")
