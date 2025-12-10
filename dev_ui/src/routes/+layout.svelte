@@ -9,7 +9,8 @@
 		{ href: '/command', label: 'command' },
 		{ href: '/camera', label: 'camera' },
 		{ href: '/calibration', label: 'calibration' },
-		{ href: '/scale', label: 'scale' }
+		{ href: '/scale', label: 'scale' },
+		{ href: '/motors', label: 'motors' }
 	];
 
 	let { children } = $props();
@@ -48,8 +49,6 @@
 	{@render children?.()}
 </main>
 
-<div class="version-label">os-1 dev ui {version}</div>
-
 <div class="logo-container">
 	<table class="logo-table">
 		<tbody>
@@ -61,6 +60,10 @@
 </div>
 
 <style>
+	.version-label {
+		padding: 0.5em;
+	}
+
 	.logo-container {
 		position: fixed;
 		bottom: 2em;

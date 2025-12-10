@@ -872,3 +872,31 @@ class Robot:
                 command=command_name,
                 error=f"{type(exc).__name__}: {exc}"
             )
+
+    def get_motor_names(self) -> Dict[str, List[str]]:
+        return {
+            "io": ["door"],
+            "tool": ["x_axis", "y_axis", "z_axis", "stage", "rotate"],
+        }
+
+    def _get_motor_by_name(self, name: str) -> Optional["Motor"]:
+        tool_motors = {
+            "x_axis": self._tool._mx,
+            "y_axis": self._tool._my,
+            "z_axis": self._tool._mg,
+            "stage": self._tool._ms,
+            "rotate": self._tool._mr,
+        }
+        io_motors = {
+            "door": self._io._md,
+        }
+        return tool_motors.get(name) or io_motors.get(name)
+
+    def simulate_motor_crash(self, motor_name: str) -> bool:
+        motor = self._get_motor_by_name(motor_name)
+
+        if motor is None:
+            return False
+
+        motor.set_fault()
+        return True
