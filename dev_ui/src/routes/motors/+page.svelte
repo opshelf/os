@@ -131,4 +131,8 @@
 		margin-top: 1em;
 		color: green;
 	}
+
+	button {
+		margin-top: 0;
+	}
 </style>
