@@ -60,6 +60,34 @@
 		}
 	}
 
+	function generateRandomUpca(): string {
+		const digits: number[] = [];
+
+		for (let i = 0; i < 11; i++) {
+			digits.push(Math.floor(Math.random() * 10));
+		}
+
+		let oddSum = 0;
+		let evenSum = 0;
+
+		for (let i = 0; i < 11; i++) {
+			if (i % 2 === 0) {
+				oddSum += digits[i];
+			} else {
+				evenSum += digits[i];
+			}
+		}
+
+		const checkDigit = (10 - ((oddSum * 3 + evenSum) % 10)) % 10;
+		digits.push(checkDigit);
+
+		return digits.join('');
+	}
+
+	function didClickGenerate(): void {
+		simulatedCode = generateRandomUpca();
+	}
+
 	function connectEventSource(): void {
 		if (eventSource !== null) {
 			return;
@@ -176,6 +204,7 @@
 			<td>code</td>
 			<td>
 				<input type="text" bind:value={simulatedCode} placeholder="012345678901" />
+				<button type="button" on:click={didClickGenerate}>random</button>
 			</td>
 		</tr>
 	</tbody>
