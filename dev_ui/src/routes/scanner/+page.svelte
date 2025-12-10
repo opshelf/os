@@ -204,7 +204,7 @@
 			<td>code</td>
 			<td>
 				<input type="text" bind:value={simulatedCode} placeholder="012345678901" />
-				<button type="button" on:click={didClickGenerate}>random</button>
+				<button type="button" class="random-button" on:click={didClickGenerate}>random</button>
 			</td>
 		</tr>
 	</tbody>
@@ -247,6 +247,10 @@
 		padding: 4px;
 		border: 1px solid black;
 		font-family: inherit;
+	}
+
+	.random-button {
+		margin-top: 0;
 	}
 
 	.action-buttons {
