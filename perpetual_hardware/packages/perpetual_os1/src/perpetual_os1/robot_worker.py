@@ -254,6 +254,12 @@ class RobotWorker:
     async def calibrate_scale_weight(self, timeout: float = 5.0) -> Dict[str, Any]:
         return await self._robot.calibrate_scale_weight(timeout=timeout)
 
+    def get_scanner_status(self) -> Dict[str, Any]:
+        return {
+            "connected": self._barcode is not None and self._barcode._transport is not None,
+            "enabled": self._should_enable_barcode(),
+        }
+
     def get_motor_names(self) -> Dict[str, List[str]]:
         return self._robot.get_motor_names()
 

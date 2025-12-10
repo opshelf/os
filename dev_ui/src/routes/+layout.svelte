@@ -10,6 +10,7 @@
 		{ href: '/calibration', label: 'calibration' },
 		{ href: '/camera', label: 'cameras' },
 		{ href: '/scale', label: 'scale' },
+		{ href: '/scanner', label: 'scanner' },
 		{ href: '/motors', label: 'motors' }
 	];
 
