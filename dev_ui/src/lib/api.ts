@@ -224,6 +224,23 @@ export async function calibrateScaleWeight(): Promise<ScaleCalibrationResult> {
 	});
 }
 
+export interface ScannerStatus {
+	connected: boolean;
+	enabled: boolean;
+}
+
+export async function getScannerStatus(): Promise<ScannerStatus> {
+	return apiFetch<ScannerStatus>("/robot/debug/scanner/status");
+}
+
+export async function sendScannerScan(code: string): Promise<{ message: string }> {
+	return apiFetch<{ message: string }>("/robot/debug/scanner/scan", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ code }),
+	});
+}
+
 export interface MotorList {
 	io: string[];
 	tool: string[];

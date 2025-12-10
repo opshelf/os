@@ -212,11 +212,18 @@ async def _publish_label_scanned(code: str, settings) -> None:
                 await nats_client.close()
 
 
+@router.get("/debug/scanner/status", dependencies=[Depends(check_robot_enabled)])
+async def get_scanner_status(
+    worker: RobotWorker = Depends(get_robot_worker_or_error),
+) -> dict:
+    return worker.get_scanner_status()
+
+
 @router.post(
-    "/debug/label_scan",
+    "/debug/scanner/scan",
     dependencies=[Depends(require_permissions("robot:control")), Depends(check_robot_enabled)],
 )
-async def emit_label_scanned_event(request: LabelScanRequest) -> SuccessResponse:
+async def emit_scanner_scan_event(request: LabelScanRequest) -> SuccessResponse:
     settings = get_settings()
     try:
         await _publish_label_scanned(request.code, settings)
