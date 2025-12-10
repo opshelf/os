@@ -223,3 +223,18 @@ export async function calibrateScaleWeight(): Promise<ScaleCalibrationResult> {
 		method: "POST",
 	});
 }
+
+export interface MotorList {
+	io: string[];
+	tool: string[];
+}
+
+export async function getMotors(): Promise<MotorList> {
+	return apiFetch<MotorList>("/robot/debug/motors");
+}
+
+export async function simulateMotorCrash(motorName: string): Promise<{ success: boolean }> {
+	return apiFetch<{ success: boolean }>(`/robot/debug/motors/${motorName}/crash`, {
+		method: "POST",
+	});
+}

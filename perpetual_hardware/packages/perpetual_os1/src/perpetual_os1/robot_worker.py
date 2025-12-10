@@ -254,6 +254,12 @@ class RobotWorker:
     async def calibrate_scale_weight(self, timeout: float = 5.0) -> Dict[str, Any]:
         return await self._robot.calibrate_scale_weight(timeout=timeout)
 
+    def get_motor_names(self) -> Dict[str, List[str]]:
+        return self._robot.get_motor_names()
+
+    def simulate_motor_crash(self, motor_name: str) -> bool:
+        return self._robot.simulate_motor_crash(motor_name)
+
     def get_latest_status_payload(self) -> Optional[str]:
         return self._latest_status_payload
 

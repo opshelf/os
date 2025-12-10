@@ -327,6 +327,29 @@ async def calibrate_scale_weight(
         ) from exc
 
 
+@router.get("/debug/motors", dependencies=[Depends(check_robot_enabled)])
+async def get_motors(
+    worker: RobotWorker = Depends(get_robot_worker_or_error),
+) -> dict:
+    return worker.get_motor_names()
+
+
+@router.post("/debug/motors/{motor_name}/crash", dependencies=[Depends(check_robot_enabled)])
+async def simulate_motor_crash(
+    motor_name: str,
+    worker: RobotWorker = Depends(get_robot_worker_or_error),
+) -> dict:
+    success = worker.simulate_motor_crash(motor_name)
+
+    if success is False:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Motor '{motor_name}' not found",
+        )
+
+    return {"success": True, "motor": motor_name}
+
+
 async def get_occupied_cells_from_db() -> set[tuple[str, int, int]]:
     async with AsyncSessionLocal() as session:
         service = StorageService(session)

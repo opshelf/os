@@ -207,6 +207,7 @@ class Motor():
         self._pending_motion: Optional[Callable[[], Awaitable[None]]] = None
         self._logger = logger.getChild(f"motor.{self._motor_id}")
         self._safety = safety
+        self._simulated_fault = False
 
     async def configure(self):
         """Configure the stepper motor with initial parameters.
@@ -590,7 +591,7 @@ class Motor():
                 has_moved and (now - last_movement_time > self._stall_timeout)
             )
 
-            fault = bool(fault_bit or alarm_active or stall_detected or no_progress)
+            fault = bool(fault_bit or alarm_active or stall_detected or no_progress or self._simulated_fault)
 
             # Check for motor fault
             if fault:
@@ -621,6 +622,7 @@ class Motor():
                         "alarm_code": alarm_code,
                         "stall_detected": stall_detected,
                         "no_progress": no_progress,
+                        "simulated_fault": self._simulated_fault,
                     },
                 )
 
@@ -696,19 +698,20 @@ class Motor():
 
     async def home(self) -> None:
         """Home the motor to find its zero position.
-        
+
         The homing direction register follows an inverted definition
         to the motor direction register, so this ends up being the
         opposite direction anyway.
-        
+
         Raises:
             MotorConfigError: If homing configuration fails
             MotorError: If homing movement fails or motor faults
             MotorTimeoutError: If homing takes too long
         """
+        self._simulated_fault = False
+
         try:
-            # Calculate homing direction (inverted from normal direction)
-            home_dir = int(self._params.dr)^1
+            home_dir = int(self._params.dr) ^ 1
             
             try:
                 # Configure homing parameters
@@ -807,20 +810,28 @@ class Motor():
 
     async def stop(self) -> MotorStatus:
         """Stop any current motor movement.
-        
+
         Returns:
             Motor status after stopping
-            
+
         Raises:
             MotorError: If stop command fails
         """
         try:
             await self._controller.write_single_register(
-                self._motor_id, 
+                self._motor_id,
                 motor_helpers.TRIGGER,
                 0x40  # stop command
             )
             return MotorStatus.STOPPED
-            
+
         except Exception as e:
             raise MotorError(f"Failed to stop motor {self._motor_id}: {str(e)}") from e
+
+    def set_fault(self) -> None:
+        self._simulated_fault = True
+        self._status = MotorStatus.FAULT
+        self._logger.warning(
+            "Simulated fault triggered",
+            extra={"motor_id": self._motor_id},
+        )
