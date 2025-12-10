@@ -71,17 +71,18 @@ class CameraStreamManager:
 					await asyncio.sleep(1.0)
 					continue
 
+				camera = self.camera
 				loop = asyncio.get_event_loop()
 
 				if self.depth_enabled is True:
 					def sync_capture_and_process() -> np.ndarray | None:
-						frame_agg = self.camera.measure_sync(n_frames=10)
+						frame_agg = camera.measure_sync(n_frames=10)
 						draw: np.ndarray | None = frame_agg.get("annotated_frame")
 						return draw
 
 					frame = await loop.run_in_executor(None, sync_capture_and_process)
 				else:
-					frame = await loop.run_in_executor(None, self.camera.capture_raw)
+					frame = await loop.run_in_executor(None, camera.capture_raw)
 
 				if frame is None:
 					await asyncio.sleep(1.0)

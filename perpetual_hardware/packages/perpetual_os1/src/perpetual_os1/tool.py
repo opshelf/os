@@ -163,7 +163,7 @@ class Tool:
                         return_coord
                     )
                     sentry_sdk.capture_message(
-                        f"Fault recovery failed to return cell - manual intervention required",
+                        "Fault recovery failed to return cell - manual intervention required",
                         level="error"
                     )
 
