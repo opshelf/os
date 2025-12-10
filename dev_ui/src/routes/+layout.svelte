@@ -7,8 +7,8 @@
 	const links = [
 		{ href: '/', label: 'status' },
 		{ href: '/command', label: 'command' },
-		{ href: '/camera', label: 'camera' },
 		{ href: '/calibration', label: 'calibration' },
+		{ href: '/camera', label: 'cameras' },
 		{ href: '/scale', label: 'scale' },
 		{ href: '/motors', label: 'motors' }
 	];

@@ -611,8 +611,10 @@ class Motor():
                     )
                     return MotorStatus.STOPPED
 
+                fault_type = "Simulated fault" if self._simulated_fault else "Fault"
+
                 self._logger.warning(
-                    "Fault detected",
+                    f"{fault_type} detected",
                     extra={
                         "motor_id": self._motor_id,
                         "retry_attempts": retry_attempts,
@@ -622,7 +624,7 @@ class Motor():
                         "alarm_code": alarm_code,
                         "stall_detected": stall_detected,
                         "no_progress": no_progress,
-                        "simulated_fault": self._simulated_fault,
+                        "simulated": self._simulated_fault,
                     },
                 )
 
