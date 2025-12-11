@@ -222,14 +222,14 @@ except Exception:
 
 
 class MockRobot:
-    def __init__(self, stop_delay: float = 0.0):
-        self.stop_delay = stop_delay
-        self.stop_called = False
+    def __init__(self):
+        self.curtain_paused = False
 
-    async def stop(self):
-        self.stop_called = True
-        if self.stop_delay > 0:
-            await asyncio.sleep(self.stop_delay)
+    def pause_for_curtain(self):
+        self.curtain_paused = True
+
+    def resume_after_curtain(self):
+        self.curtain_paused = False
 
     async def get_status(self):
         return None
@@ -244,10 +244,10 @@ class MockRobotClient:
 
 
 class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
-    async def test_emergency_stop_sets_crash_state_immediately(self):
+    async def test_emergency_stop_sets_crash_state_and_pauses_curtain(self):
         from perpetual_os1.robot_worker import RobotWorker
 
-        robot = MockRobot(stop_delay=0.0)
+        robot = MockRobot()
         RobotWorker._instance = None
         worker = RobotWorker(robot)
         worker._client = MockRobotClient()
@@ -255,19 +255,20 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
         worker._js = _DummyJetStream()
 
         self.assertFalse(worker._is_crashed)
+        self.assertFalse(robot.curtain_paused)
 
         await worker.emergency_stop("test reason")
 
         self.assertTrue(worker._is_crashed)
         self.assertEqual(worker._crash_reason, "test reason")
-        self.assertTrue(robot.stop_called)
+        self.assertTrue(robot.curtain_paused)
 
         RobotWorker._instance = None
 
-    async def test_emergency_stop_returns_quickly_even_with_slow_stop(self):
+    async def test_emergency_stop_is_instant(self):
         from perpetual_os1.robot_worker import RobotWorker
 
-        robot = MockRobot(stop_delay=0.5)
+        robot = MockRobot()
         RobotWorker._instance = None
         worker = RobotWorker(robot)
         worker._client = MockRobotClient()
@@ -278,27 +279,28 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
         await worker.emergency_stop("test")
         elapsed = asyncio.get_event_loop().time() - start
 
-        self.assertLess(elapsed, 1.0)
+        self.assertLess(elapsed, 0.1)
         self.assertTrue(worker._is_crashed)
+        self.assertTrue(robot.curtain_paused)
 
         RobotWorker._instance = None
 
-    async def test_emergency_stop_times_out_slow_robot_stop(self):
+    async def test_clear_crash_state_resumes_curtain(self):
         from perpetual_os1.robot_worker import RobotWorker
 
-        robot = MockRobot(stop_delay=5.0)
+        robot = MockRobot()
         RobotWorker._instance = None
         worker = RobotWorker(robot)
         worker._client = MockRobotClient()
         worker._nc = _DummyNATS()
         worker._js = _DummyJetStream()
 
-        start = asyncio.get_event_loop().time()
         await worker.emergency_stop("test")
-        elapsed = asyncio.get_event_loop().time() - start
+        self.assertTrue(robot.curtain_paused)
 
-        self.assertLess(elapsed, 3.0)
-        self.assertTrue(worker._is_crashed)
+        worker.clear_crash_state()
+        self.assertFalse(worker._is_crashed)
+        self.assertFalse(robot.curtain_paused)
 
         RobotWorker._instance = None
 
