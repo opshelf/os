@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import socket
 from typing import Any, Optional
@@ -44,8 +45,12 @@ def _build_user_context(user: Optional[User]) -> dict[str, Any]:
 async def _build_robot_context() -> dict[str, Any]:
     try:
         worker = await get_robot_worker()
-        status = worker.get_status_snapshot()
+        status_json = await worker.get_status_snapshot()
 
+        if status_json is None:
+            return {"status": "no_status_available"}
+
+        status = json.loads(status_json)
         robot_status = status.get("robot_status", {})
 
         return {
