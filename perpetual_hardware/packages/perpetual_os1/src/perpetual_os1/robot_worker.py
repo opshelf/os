@@ -562,6 +562,7 @@ class RobotWorker:
         )
 
     async def process_commands(self) -> None:
+        logging.info("process_commands loop started, running=%s", self._running)
         while self._running:
             try:
                 if self._current_task is None:
@@ -912,3 +913,6 @@ class RobotWorker:
 
         await self._publish_status()
         return True
+
+    async def release_gripper(self) -> None:
+        await self._robot.release_gripper()
