@@ -586,6 +586,11 @@ class RobotWorker:
                         self._msg = msg
                         self._queued_commands.append(self._snapshot_command(command))
                         await self._publish_status()
+
+                        if isinstance(command, HomeCommand) and self._is_crashed:
+                            self._robot.resume_after_curtain()
+                            logging.info("Resumed curtain safety for homing in crash state")
+
                         logging.info("Starting command execution: %s", command.command)
                         self._command_started_at = time.monotonic()
                         self._current_task = asyncio.create_task(self._robot.handle_command(command))
