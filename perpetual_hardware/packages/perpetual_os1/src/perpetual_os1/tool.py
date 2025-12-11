@@ -62,7 +62,6 @@ class Tool:
         self._mstatus = ToolMotionStatus.IDLE
         self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
         self._params = params
-        self._fault_recovery_active = False
         self._guard_paused = False
         self._logger = logging.getLogger(__name__)
         self._last_pick_coord: Optional[c.AxisCoordinate] = None
@@ -121,64 +120,13 @@ class Tool:
             raise MotorError(f"Tool configuration failed: {str(e)}") from e
 
     async def _handle_fault(self, exc: Exception) -> None:
-        """Mark the tool as faulted and attempt recovery."""
+        """Mark the tool as faulted - manual intervention required."""
         self._mstatus = ToolMotionStatus.ERROR
         self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
-        if self._fault_recovery_active or isinstance(exc, ConfigError):
-            return
-        await self._recover_from_fault()
-
-    async def _recover_from_fault(self) -> None:
-        """Retract, home, and attempt to return cell to original location."""
-        if self._fault_recovery_active:
-            return
-
-        self._fault_recovery_active = True
-        recovery_errors: List[str] = []
-        return_coord = self._last_pick_coord
-
-        try:
-            try:
-                await self.retract()
-            except Exception as e:
-                recovery_errors.append(f"retract: {e}")
-
-            try:
-                await self.home()
-            except Exception as e:
-                recovery_errors.append(f"home: {e}")
-
-            if return_coord is not None:
-                try:
-                    await self.place(return_coord)
-                    self._last_pick_coord = None
-                    self._logger.info(
-                        "Fault recovery: returned cell to original location %s",
-                        return_coord
-                    )
-                except Exception as e:
-                    recovery_errors.append(f"return cell to origin: {e}")
-                    self._logger.error(
-                        "Fault recovery: failed to return cell to %s, stopping for manual recovery",
-                        return_coord
-                    )
-                    sentry_sdk.capture_message(
-                        "Fault recovery failed to return cell - manual intervention required",
-                        level="error"
-                    )
-
-            if recovery_errors:
-                self._logger.warning(
-                    "Fault recovery completed with %d errors: %s",
-                    len(recovery_errors),
-                    "; ".join(recovery_errors)
-                )
-                sentry_sdk.capture_message(
-                    f"Fault recovery completed with {len(recovery_errors)} errors",
-                    level="warning"
-                )
-        finally:
-            self._fault_recovery_active = False
+        self._logger.error(
+            "Tool fault detected - manual intervention required",
+            extra={"error": str(exc)},
+        )
 
     async def get_param(self, param: str) -> Optional[Any]:
         """Get a parameter value from tool configuration."""

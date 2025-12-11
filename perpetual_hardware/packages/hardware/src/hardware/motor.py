@@ -16,7 +16,6 @@ MOTOR_MOVE_TIMEOUT = 180.0
 MOTOR_HOME_TIMEOUT = 180.0
 MOTOR_JOG_TIMEOUT = 10.0
 MOTOR_WAIT_TIMEOUT = 60.0
-MAX_FAULT_RETRIES = 1
 
 logger = logging.getLogger(__name__)
 
@@ -500,7 +499,6 @@ class Motor():
         start_time = time.monotonic()
         last_pos = None
         last_movement_time = start_time
-        retry_attempts = 0
         has_moved = False
 
         self._logger.debug(
@@ -614,10 +612,9 @@ class Motor():
                 fault_type = "Simulated fault" if self._simulated_fault else "Fault"
 
                 self._logger.warning(
-                    f"{fault_type} detected",
+                    f"{fault_type} detected - stopping motor, manual intervention required",
                     extra={
                         "motor_id": self._motor_id,
-                        "retry_attempts": retry_attempts,
                         "homing": homing,
                         "status_word": status,
                         "position_mm": self._cur_pos,
@@ -628,56 +625,8 @@ class Motor():
                     },
                 )
 
-                if retry_attempts >= MAX_FAULT_RETRIES or self._pending_motion is None:
-                    self._pending_motion = None
-                    return MotorStatus.FAULT
-
-                retry_attempts += 1
-
-                saved_motion = self._pending_motion
-
-                try:
-                    await self.home()
-                except Exception as home_exc:
-                    self._pending_motion = None
-                    self._logger.error(
-                        "Fault recovery homing failed",
-                        extra={
-                            "motor_id": self._motor_id,
-                            "error": str(home_exc),
-                        },
-                        exc_info=True,
-                    )
-                    return MotorStatus.FAULT
-
-                self._pending_motion = saved_motion
-
-                if self._pending_motion is None:
-                    self._logger.error(
-                        "No pending motion to restart after recovery",
-                        extra={"motor_id": self._motor_id},
-                    )
-                    return MotorStatus.FAULT
-
-                try:
-                    await self._pending_motion()
-                except Exception as restart_exc:
-                    self._pending_motion = None
-                    self._logger.error(
-                        "Failed to restart motion after recovery",
-                        extra={
-                            "motor_id": self._motor_id,
-                            "error": str(restart_exc),
-                        },
-                        exc_info=True,
-                    )
-                    return MotorStatus.FAULT
-
-                start_time = time.monotonic()
-                last_pos = None
-                last_movement_time = start_time
-                has_moved = False
-                continue
+                self._pending_motion = None
+                return MotorStatus.FAULT
 
 
             # Check for timeout
