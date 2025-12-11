@@ -382,6 +382,40 @@ class RobotWorker:
         self._is_crashed = True
         self._crash_reason = reason
 
+    async def emergency_stop(self, reason: str) -> None:
+        if self._current_task is not None and not self._current_task.done():
+            self._current_task.cancel()
+            try:
+                await self._current_task
+            except asyncio.CancelledError:
+                pass
+
+        try:
+            await self._robot.stop()
+        except Exception as exc:
+            logging.warning("Error during emergency stop: %s", exc)
+
+        if self._msg is not None:
+            try:
+                await self._msg.ack()
+            except Exception:
+                pass
+
+        if self._current_command is not None:
+            self._queued_commands = [
+                op for op in self._queued_commands
+                if op.command != self._current_command
+            ]
+
+        self._current_task = None
+        self._current_command = None
+        self._command_started_at = None
+        self._msg = None
+
+        await self.clear_commands()
+        self.set_crash_state(reason)
+        await self._publish_status()
+
     def _should_enable_barcode(self) -> bool:
         return os.getenv("PERPETUAL_DISABLE_BARCODE", "false").lower() not in {"1", "true", "yes"}
 
