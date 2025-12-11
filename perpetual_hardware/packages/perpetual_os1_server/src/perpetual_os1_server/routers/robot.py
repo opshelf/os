@@ -366,7 +366,7 @@ async def simulate_motor_crash(
     motor_name: str,
     worker: RobotWorker = Depends(get_robot_worker_or_error),
 ) -> dict:
-    success = worker.simulate_motor_crash(motor_name)
+    success = await worker.simulate_motor_crash(motor_name)
 
     if success is False:
         raise HTTPException(
