@@ -7,6 +7,8 @@ import traceback
 from datetime import datetime, timezone
 from typing import Optional, List, Any, Dict
 
+logger = logging.getLogger(__name__)
+
 import sentry_sdk
 from nats.aio.client import Client as NATS
 from nats.aio.msg import Msg
@@ -562,7 +564,7 @@ class RobotWorker:
         )
 
     async def process_commands(self) -> None:
-        logging.info("process_commands loop started, running=%s", self._running)
+        logger.info("process_commands loop started, running=%s", self._running)
         while self._running:
             try:
                 if self._current_task is None:
@@ -747,19 +749,19 @@ class RobotWorker:
                 await asyncio.sleep(1)
 
     async def start(self) -> None:
-        logging.info("RobotWorker.start() called, _running=%s", self._running)
+        logger.info("RobotWorker.start() called, _running=%s", self._running)
         if self._running:
-            logging.info("RobotWorker already running, returning early")
+            logger.info("RobotWorker already running, returning early")
             return
         self._running = True
         if self._worker_task:
             self._worker_task.cancel()
-        logging.info("Creating process_commands task")
+        logger.info("Creating process_commands task")
         self._worker_task = asyncio.create_task(self.process_commands())
-        logging.info("Task created: %s", self._worker_task)
+        logger.info("Task created: %s", self._worker_task)
         self._queued_commands = []
         await self._publish_status()
-        logging.info("RobotWorker.start() complete")
+        logger.info("RobotWorker.start() complete")
 
     async def shutdown(self) -> None:
         logging.info("Shutting down robot worker")
