@@ -196,6 +196,12 @@ async def clear_robot_errors(worker: RobotWorker = Depends(get_robot_worker_or_e
     return SuccessResponse()
 
 
+@router.post("/emergency_stop", dependencies=[Depends(get_current_user), Depends(require_permissions("robot:control")), Depends(check_robot_enabled)])
+async def emergency_stop_robot(worker: RobotWorker = Depends(get_robot_worker_or_error)) -> SuccessResponse:
+    await worker.emergency_stop("User initiated emergency stop")
+    return SuccessResponse()
+
+
 @router.post("/curtain_guard/acknowledge", dependencies=[Depends(get_current_user), Depends(require_permissions("robot:control")), Depends(check_robot_enabled)])
 async def acknowledge_curtain_guard(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
