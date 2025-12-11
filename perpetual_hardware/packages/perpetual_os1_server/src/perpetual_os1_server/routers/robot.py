@@ -94,6 +94,7 @@ async def get_robot_worker_or_error() -> RobotWorker:
 async def robot_commands(
     command: RobotCommands,
     client: RobotClient = Depends(get_robot_client_or_error),
+    worker: RobotWorker = Depends(get_robot_worker_or_error),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ) -> SuccessResponse:
@@ -120,6 +121,19 @@ async def robot_commands(
         logging.info("Final StoreItemCommand: item=%s", command.item)
 
     if isinstance(command, RetrieveItemCommand):
+        try:
+            scale_data = await worker.get_scale_data()
+            weight = abs(scale_data["weight"])
+            if weight > 5.0:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Please remove the item from the IO box before retrieving another",
+                )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logging.warning("Scale read failed during retrieve check: %s", exc)
+
         location_data = command.location or {}
         side = location_data.get("side")
         shelf_idx = location_data.get("shelf_idx")
