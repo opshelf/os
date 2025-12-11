@@ -271,8 +271,14 @@ class RobotWorker:
     def get_motor_names(self) -> Dict[str, List[str]]:
         return self._robot.get_motor_names()
 
-    def simulate_motor_crash(self, motor_name: str) -> bool:
-        return self._robot.simulate_motor_crash(motor_name)
+    async def simulate_motor_crash(self, motor_name: str) -> bool:
+        success = self._robot.simulate_motor_crash(motor_name)
+
+        if success is True:
+            self.set_crash_state(f"Simulated motor fault on {motor_name}")
+            await self._publish_status()
+
+        return success
 
     def get_latest_status_payload(self) -> Optional[str]:
         return self._latest_status_payload
