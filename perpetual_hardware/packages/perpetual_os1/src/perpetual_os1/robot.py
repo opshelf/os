@@ -750,6 +750,7 @@ class Robot:
                 return RobotCommandSuccessful(command=command_name)
             elif isinstance(command, HomeCommand):
                 await self._tool.home()
+                await self._io.home_door()
                 return RobotCommandSuccessful(command=command_name)
             elif isinstance(command, MoveCommand):
                 await self._tool.move(command.coordinate)

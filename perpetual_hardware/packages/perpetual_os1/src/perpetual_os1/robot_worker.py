@@ -383,19 +383,14 @@ class RobotWorker:
     def clear_crash_state(self) -> None:
         self._is_crashed = False
         self._crash_reason = None
+        self._robot.resume_after_curtain()
 
     def set_crash_state(self, reason: str) -> None:
         self._is_crashed = True
         self._crash_reason = reason
 
     async def emergency_stop(self, reason: str) -> None:
-        try:
-            await asyncio.wait_for(self._robot.stop(), timeout=2.0)
-        except asyncio.TimeoutError:
-            logging.warning("Emergency stop timed out after 2s")
-        except Exception as exc:
-            logging.warning("Error during emergency stop: %s", exc)
-
+        self._robot.pause_for_curtain()
         self.set_crash_state(reason)
 
         async def _cleanup_after_stop() -> None:
