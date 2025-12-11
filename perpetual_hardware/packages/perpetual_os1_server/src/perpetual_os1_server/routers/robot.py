@@ -202,6 +202,12 @@ async def emergency_stop_robot(worker: RobotWorker = Depends(get_robot_worker_or
     return SuccessResponse()
 
 
+@router.post("/release_gripper", dependencies=[Depends(get_current_user), Depends(require_permissions("robot:control"))])
+async def release_gripper(worker: RobotWorker = Depends(get_robot_worker_or_error)) -> SuccessResponse:
+    await worker.release_gripper()
+    return SuccessResponse()
+
+
 @router.post("/curtain_guard/acknowledge", dependencies=[Depends(get_current_user), Depends(require_permissions("robot:control")), Depends(check_robot_enabled)])
 async def acknowledge_curtain_guard(
     worker: RobotWorker = Depends(get_robot_worker_or_error),

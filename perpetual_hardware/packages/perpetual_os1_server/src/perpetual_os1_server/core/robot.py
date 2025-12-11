@@ -11,44 +11,46 @@ from perpetual_os1_server.database.session import AsyncSessionLocal
 
 import logging
 
+logger = logging.getLogger(__name__)
+
 robot_worker: Optional[r_worker.RobotWorker] = None
 event_listener: Optional[RobotEventListener] = None
 
 async def init_robot_worker() -> None:
     global robot_worker, event_listener
-    logging.info("Getting Robot")
+    logger.info("Getting Robot")
     settings = get_settings()
     robot = r.Robot()
     await robot.configure()
-    logging.info("Built Robot")
+    logger.info("Built Robot")
 
     async with AsyncSessionLocal() as session:
         storage_service = StorageService(session)
         occupied = await storage_service.get_all_occupied_cells()
         occupied_tuples = [(side, shelf_idx, cell_idx) for side, shelf_idx, cell_idx, _ in occupied]
         robot.sync_occupied_cells(occupied_tuples)
-        logging.info("Synced %d occupied cells from database", len(occupied_tuples))
+        logger.info("Synced %d occupied cells from database", len(occupied_tuples))
     nats_config = common.RobotNatsConfiguration(
         domain=settings.nats.domain,
         port=settings.nats.port,
     )
     robot_worker = r_worker.RobotWorker(robot, nats_config)
-    logging.info("Got Instance")
+    logger.info("Got Instance")
     await robot_worker.connect()
-    logging.info("Started")
+    logger.info("Connected to NATS")
     await robot_worker.start()
-    logging.info("Connected")
+    logger.info("Worker started")
 
     event_listener = RobotEventListener(nats_config)
     await event_listener.start()
-    logging.info("Robot event listener started")
+    logger.info("Robot event listener started")
 
 
 async def stop_robot_worker() -> None:
     global robot_worker, event_listener
     if event_listener is not None:
         await event_listener.stop()
-        logging.info("Robot event listener stopped")
+        logger.info("Robot event listener stopped")
     if robot_worker is not None:
         await robot_worker.shutdown()
 
