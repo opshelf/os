@@ -901,3 +901,6 @@ class Robot:
 
         motor.set_fault()
         return True
+
+    async def release_gripper(self) -> None:
+        await self._tool._gs.close()
