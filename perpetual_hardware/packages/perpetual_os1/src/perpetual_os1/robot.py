@@ -749,7 +749,7 @@ class Robot:
                 await self._tool.configure()
                 return RobotCommandSuccessful(command=command_name)
             elif isinstance(command, HomeCommand):
-                await self.print_random_barcode()
+                await self._tool.home()
                 return RobotCommandSuccessful(command=command_name)
             elif isinstance(command, MoveCommand):
                 await self._tool.move(command.coordinate)

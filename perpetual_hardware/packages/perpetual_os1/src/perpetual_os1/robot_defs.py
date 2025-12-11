@@ -24,6 +24,8 @@ class WorkerStatus(BaseModel):
     running: bool
     current_command: Optional[RobotCommands]
     error_queue: List[WorkerError] = Field(default_factory=list)
+    is_crashed: bool = False
+    crash_reason: Optional[str] = None
 
 class WorkerStatusWithQueue(WorkerStatus):
     queued_operations: List[QueuedOperation] = Field(default_factory=list)

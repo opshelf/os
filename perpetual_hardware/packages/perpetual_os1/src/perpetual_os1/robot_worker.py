@@ -18,12 +18,15 @@ from perpetual_os1.robot import (
     Robot,
     RobotCommands,
     RobotResponse,
+    RobotCommandSuccessful,
     StopCommand,
+    HomeCommand,
 )
 from perpetual_os1.common import RobotNatsConfiguration
 from perpetual_os1.robot_defs import WorkerError, QueuedOperation, WorkerStatus, WorkerStatusWithQueue
 from perpetual_os1.robot_client import RobotClient
 from perpetual_os1.barcode_protocol import BarcodeService
+from perpetual_os1.exceptions import MotorError
 
 COMMAND_TIMEOUT_SECONDS = 300
 
@@ -161,6 +164,9 @@ def _transform_worker_status_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
             errors.append(error)
     transformed["error_queue"] = errors
 
+    transformed["is_crashed"] = payload.get("is_crashed", False)
+    transformed["crash_reason"] = payload.get("crash_reason")
+
     return transformed
 
 
@@ -221,6 +227,8 @@ class RobotWorker:
         self._awaiting_curtain_ack: bool = False
         self._guard_lock = asyncio.Lock()
         self._logger = logging.getLogger(__name__).getChild("worker.guard")
+        self._is_crashed: bool = False
+        self._crash_reason: Optional[str] = None
 
     def get_client(self) -> RobotClient:
         return self._client
@@ -366,6 +374,14 @@ class RobotWorker:
     def clear_errors(self) -> None:
         self._error_queue = []
 
+    def clear_crash_state(self) -> None:
+        self._is_crashed = False
+        self._crash_reason = None
+
+    def set_crash_state(self, reason: str) -> None:
+        self._is_crashed = True
+        self._crash_reason = reason
+
     def _should_enable_barcode(self) -> bool:
         return os.getenv("PERPETUAL_DISABLE_BARCODE", "false").lower() not in {"1", "true", "yes"}
 
@@ -466,6 +482,8 @@ class RobotWorker:
                 queued_operations=queued_ops[:10],
                 queue_length=pending_count,
                 error_queue=list(self._error_queue),
+                is_crashed=self._is_crashed,
+                crash_reason=self._crash_reason,
             )
         else:
             status = WorkerStatus(
@@ -473,6 +491,8 @@ class RobotWorker:
                 running=self._running,
                 current_command=self._current_command,
                 error_queue=list(self._error_queue),
+                is_crashed=self._is_crashed,
+                crash_reason=self._crash_reason,
             )
 
         status_payload = status.model_dump(mode="json")
@@ -568,6 +588,15 @@ class RobotWorker:
                         try:
                             result: RobotResponse = self._current_task.result()
                             logging.info("Command result: %s", type(result).__name__)
+
+                            if (
+                                isinstance(self._current_command, HomeCommand)
+                                and isinstance(result, RobotCommandSuccessful)
+                                and self._is_crashed
+                            ):
+                                self.clear_crash_state()
+                                logging.info("Crash state cleared after successful homing")
+
                             await self._nc.publish(
                                 self._nats_config.event_queue,
                                 result.model_dump_json().encode(),
@@ -575,9 +604,15 @@ class RobotWorker:
                             logging.info("Published command result to event queue")
                         except Exception as err:
                             logging.error("Command execution error: %s", err)
+
+                            is_motor_fault = isinstance(err, MotorError)
+                            if is_motor_fault:
+                                self.set_crash_state(str(err))
+                                logging.warning("Motor fault detected - robot in crash state")
+
                             self._report_error(
                                 WorkerError(
-                                    error_type="CommandExecutionError",
+                                    error_type="MotorFault" if is_motor_fault else "CommandExecutionError",
                                     message=str(err),
                                     context={"command": self._current_command.model_dump() if self._current_command else None},
                                     stack_trace=traceback.format_exc(),
