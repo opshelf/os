@@ -1,7 +1,13 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
 	import { onMount } from 'svelte';
-	import { getMotors, simulateMotorCrash, controlGripper, type MotorList, type GripperState } from '$lib/api';
+	import {
+		getMotors,
+		simulateMotorCrash,
+		controlGripper,
+		type MotorList,
+		type GripperState
+	} from '$lib/api';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 
 	let motors: MotorList | null = null;
@@ -42,19 +48,9 @@
 
 	async function didClickGripper(state: GripperState): Promise<void> {
 		gripperAction = state;
-		error = '';
-		message = '';
 
 		try {
-			const result = await controlGripper(state);
-
-			if (result.success === true) {
-				message = `gripper ${state} completed`;
-			} else {
-				error = `failed to ${state} gripper`;
-			}
-		} catch (err) {
-			error = err instanceof Error ? err.message : `failed to ${state} gripper`;
+			await controlGripper(state);
 		} finally {
 			gripperAction = null;
 		}
@@ -134,9 +130,6 @@
 				</tr>
 			{/each}
 		</tbody>
-	</table>
-
-	<table>
 		<thead>
 			<tr>
 				<th colspan="2">gripper</th>
@@ -151,22 +144,14 @@
 						on:click={() => didClickGripper('grip')}
 						disabled={gripperAction !== null}
 					>
-						{#if gripperAction === 'grip'}
-							gripping...
-						{:else}
-							grip
-						{/if}
+						grip
 					</button>
 					<button
 						type="button"
 						on:click={() => didClickGripper('release')}
 						disabled={gripperAction !== null}
 					>
-						{#if gripperAction === 'release'}
-							releasing...
-						{:else}
-							release
-						{/if}
+						release
 					</button>
 				</td>
 			</tr>
