@@ -1,3 +1,5 @@
+import { getAccessToken, loginAsDeveloper, isAuthenticated } from "./auth";
+
 export function getApiBase(): string {
 	const raw = import.meta.env.VITE_API_BASE_URL ?? `http://${location.hostname}:8000/api`;
 	return raw.endsWith("/") ? raw.slice(0, -1) : raw;
@@ -14,19 +16,50 @@ export function buildApiUrl(path: string): string {
 	return `${base}${normalisedPath}`;
 }
 
+export function buildAuthenticatedUrl(path: string): string {
+	const url = buildApiUrl(path);
+	const token = getAccessToken();
+
+	if (token === null) {
+		return url;
+	}
+
+	const separator = url.includes("?") ? "&" : "?";
+	return `${url}${separator}token=${encodeURIComponent(token)}`;
+}
+
 export async function apiFetch<T = unknown>(path: string, init?: RequestInit): Promise<T> {
-	const response = await fetch(buildApiUrl(path), init);
-	if (!response.ok) {
+	const token = getAccessToken();
+
+	const headers = new Headers(init?.headers);
+	if (token !== null) {
+		headers.set("Authorization", `Bearer ${token}`);
+	}
+
+	const response = await fetch(buildApiUrl(path), {
+		...init,
+		headers,
+	});
+
+	if (response.status === 401 && isAuthenticated() === false) {
+		await loginAsDeveloper();
+		return apiFetch<T>(path, init);
+	}
+
+	if (response.ok === false) {
 		const message = await safeReadError(response);
 		throw new Error(message);
 	}
+
 	if (response.status === 204) {
 		return undefined as T;
 	}
+
 	const text = await response.text();
 	if (text.length === 0) {
 		return undefined as T;
 	}
+
 	try {
 		return JSON.parse(text) as T;
 	} catch (error) {

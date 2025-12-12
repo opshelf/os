@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 from typing import Literal, Optional
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from perpetual_os1.common import AxisCoordinate
 from perpetual_os1.storage import StorageModuleSide, CalibrationCoordinate
 
 from perpetual_os1_server.core.robot import get_robot_worker
+from perpetual_os1_server.routers.auth_deps import get_current_user
 
-router = APIRouter(prefix="/api/calibration", tags=["calibration"])
+router = APIRouter(prefix="/api/calibration", tags=["calibration"], dependencies=[Depends(get_current_user)])
 
 
 class PositionResponse(BaseModel):

@@ -1,5 +1,8 @@
 <script lang="ts">
 	import { page } from '$app/stores';
+	import { browser } from '$app/environment';
+	import { onMount } from 'svelte';
+	import { loginAsDeveloper, isAuthenticated } from '$lib';
 	import '../app.css';
 
 	const version = import.meta.env.PUBLIC_VERSION;
@@ -15,6 +18,7 @@
 	];
 
 	let { children } = $props();
+	let authReady = $state(false);
 
 	function isActiveLink(href: string, currentPath: string): boolean {
 		if (href === '/') {
@@ -22,6 +26,22 @@
 		}
 		return currentPath.startsWith(href);
 	}
+
+	onMount(async () => {
+		if (browser === false) {
+			return;
+		}
+
+		if (isAuthenticated() === false) {
+			try {
+				await loginAsDeveloper();
+			} catch (error) {
+				console.error('failed to authenticate as developer:', error);
+			}
+		}
+
+		authReady = true;
+	});
 </script>
 
 <svelte:head>
@@ -47,7 +67,11 @@
 </nav>
 
 <main>
-	{@render children?.()}
+	{#if authReady === true}
+		{@render children?.()}
+	{:else}
+		<p>authenticating...</p>
+	{/if}
 </main>
 
 <div class="logo-container">

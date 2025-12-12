@@ -26,7 +26,6 @@ from perpetual_os1_server.database.session import get_db, AsyncSessionLocal
 from perpetual_os1_server.database.models import Item, ItemLocation, User
 from .auth_deps import (
     get_current_user,
-    get_current_user_optional,
     require_permissions,
     can_user_retrieve_item,
 )
@@ -90,7 +89,7 @@ async def get_robot_worker_or_error() -> RobotWorker:
         ) from e
 
 
-@router.post("/commands", dependencies=[Depends(require_permissions("robot:control")), Depends(check_robot_enabled)])
+@router.post("/commands", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
 async def robot_commands(
     command: RobotCommands,
     client: RobotClient = Depends(get_robot_client_or_error),
@@ -190,19 +189,19 @@ async def clear_robot_commands(worker: RobotWorker = Depends(get_robot_worker_or
     return SuccessResponse()
 
 
-@router.post("/clear_errors", dependencies=[Depends(get_current_user), Depends(require_permissions("robot:control")), Depends(check_robot_enabled)])
+@router.post("/clear_errors", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
 async def clear_robot_errors(worker: RobotWorker = Depends(get_robot_worker_or_error)) -> SuccessResponse:
     worker.clear_errors()
     return SuccessResponse()
 
 
-@router.post("/emergency_stop", dependencies=[Depends(get_current_user), Depends(require_permissions("robot:control")), Depends(check_robot_enabled)])
+@router.post("/emergency_stop", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
 async def emergency_stop_robot(worker: RobotWorker = Depends(get_robot_worker_or_error)) -> SuccessResponse:
     await worker.emergency_stop("User initiated emergency stop")
     return SuccessResponse()
 
 
-@router.post("/gripper", dependencies=[Depends(get_current_user), Depends(require_permissions("robot:control"))])
+@router.post("/gripper", dependencies=[Depends(get_current_user)])
 async def control_gripper(
     state: Literal["grip", "release"],
     worker: RobotWorker = Depends(get_robot_worker_or_error),
@@ -214,7 +213,7 @@ async def control_gripper(
     return SuccessResponse()
 
 
-@router.post("/curtain_guard/acknowledge", dependencies=[Depends(get_current_user), Depends(require_permissions("robot:control")), Depends(check_robot_enabled)])
+@router.post("/curtain_guard/acknowledge", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
 async def acknowledge_curtain_guard(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
 ) -> SuccessResponse:
@@ -244,7 +243,7 @@ async def _publish_label_scanned(code: str, settings) -> None:
                 await nats_client.close()
 
 
-@router.get("/debug/scanner/status", dependencies=[Depends(check_robot_enabled)])
+@router.get("/debug/scanner/status", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
 async def get_scanner_status(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
 ) -> dict:
@@ -268,7 +267,7 @@ async def emit_scanner_scan_event(request: LabelScanRequest) -> SuccessResponse:
     return SuccessResponse()
 
 
-@router.get("/debug/scale", dependencies=[Depends(check_robot_enabled)])
+@router.get("/debug/scale", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
 async def get_scale_reading(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
 ) -> dict:
@@ -289,7 +288,7 @@ async def get_scale_reading(
         ) from exc
 
 
-@router.get("/debug/scale/calibration/status", dependencies=[Depends(check_robot_enabled)])
+@router.get("/debug/scale/calibration/status", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
 async def get_scale_calibration_status(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
 ) -> dict:
@@ -303,7 +302,7 @@ async def get_scale_calibration_status(
         ) from exc
 
 
-@router.get("/debug/scale/calibration/params", dependencies=[Depends(check_robot_enabled)])
+@router.get("/debug/scale/calibration/params", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
 async def get_scale_calibration_params(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
 ) -> dict:
@@ -317,7 +316,7 @@ async def get_scale_calibration_params(
         ) from exc
 
 
-@router.post("/debug/scale/calibration/params", dependencies=[Depends(check_robot_enabled)])
+@router.post("/debug/scale/calibration/params", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
 async def set_scale_calibration_params(
     request: ScaleCalibrationParamsRequest,
     worker: RobotWorker = Depends(get_robot_worker_or_error),
@@ -338,7 +337,7 @@ async def set_scale_calibration_params(
         ) from exc
 
 
-@router.post("/debug/scale/calibration/zero", dependencies=[Depends(check_robot_enabled)])
+@router.post("/debug/scale/calibration/zero", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
 async def calibrate_scale_zero(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
 ) -> dict:
@@ -352,7 +351,7 @@ async def calibrate_scale_zero(
         ) from exc
 
 
-@router.post("/debug/scale/calibration/weight", dependencies=[Depends(check_robot_enabled)])
+@router.post("/debug/scale/calibration/weight", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
 async def calibrate_scale_weight(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
 ) -> dict:
@@ -366,14 +365,14 @@ async def calibrate_scale_weight(
         ) from exc
 
 
-@router.get("/debug/motors", dependencies=[Depends(check_robot_enabled)])
+@router.get("/debug/motors", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
 async def get_motors(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
 ) -> dict:
     return worker.get_motor_names()
 
 
-@router.post("/debug/motors/{motor_name}/crash", dependencies=[Depends(check_robot_enabled)])
+@router.post("/debug/motors/{motor_name}/crash", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
 async def simulate_motor_crash(
     motor_name: str,
     worker: RobotWorker = Depends(get_robot_worker_or_error),
@@ -446,10 +445,8 @@ async def event_consumer(stop_event: asyncio.Event) -> AsyncGenerator[str, None]
         await nats_client.close()
 
 
-@router.get("/status")
-async def stream_sse(
-    current_user: dict | None = Depends(get_current_user_optional)
-) -> EventSourceResponse:
+@router.get("/status", dependencies=[Depends(get_current_user)])
+async def stream_sse() -> EventSourceResponse:
     stop_event = asyncio.Event()
 
     initial_payload: Optional[str] = None
@@ -477,10 +474,8 @@ async def stream_sse(
     return EventSourceResponse(event_generator())
 
 
-@router.get("/events")
-async def stream_events(
-    current_user: dict | None = Depends(get_current_user_optional)
-) -> EventSourceResponse:
+@router.get("/events", dependencies=[Depends(get_current_user)])
+async def stream_events() -> EventSourceResponse:
     stop_event = asyncio.Event()
 
     async def event_generator() -> AsyncGenerator[dict[str, str], None]:

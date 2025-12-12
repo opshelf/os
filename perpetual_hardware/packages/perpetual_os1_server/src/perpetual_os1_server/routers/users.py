@@ -88,15 +88,15 @@ async def list_users(
 	current_user: User = Depends(get_current_user)
 ) -> UserListResponse:
 	"""List all users with pagination."""
-	query = select(User).options(selectinload(User.role), selectinload(User.access_level))
-	
+	query = select(User).options(selectinload(User.role), selectinload(User.access_level)).filter(~User.is_system)
+
 	if is_active is not None:
 		query = query.filter(User.is_active == is_active)
-	
+
 	if role_id is not None:
 		query = query.filter(User.role_id == role_id)
-	
-	count_query = select(func.count()).select_from(User)
+
+	count_query = select(func.count()).select_from(User).filter(~User.is_system)
 	if is_active is not None:
 		count_query = count_query.filter(User.is_active == is_active)
 	if role_id is not None:
@@ -207,7 +207,7 @@ async def get_user(
 	current_user: User = Depends(get_current_user)
 ) -> UserResponse:
 	"""Get a specific user."""
-	user_result = await db.execute(select(User).options(selectinload(User.role), selectinload(User.access_level)).filter(User.id == user_id))
+	user_result = await db.execute(select(User).options(selectinload(User.role), selectinload(User.access_level)).filter(User.id == user_id, ~User.is_system))
 	user = user_result.scalar_one_or_none()
 	if user is None:
 		raise HTTPException(
@@ -237,7 +237,7 @@ async def update_user(
 	current_user: User = Depends(get_current_user)
 ) -> UserResponse:
 	"""Update a user."""
-	user_result = await db.execute(select(User).options(selectinload(User.role), selectinload(User.access_level)).filter(User.id == user_id))
+	user_result = await db.execute(select(User).options(selectinload(User.role), selectinload(User.access_level)).filter(User.id == user_id, ~User.is_system))
 	user = user_result.scalar_one_or_none()
 	if user is None:
 		raise HTTPException(
@@ -325,7 +325,7 @@ async def delete_user(
 	current_user: User = Depends(get_current_user)
 ) -> dict:
 	"""Soft delete a user by setting inactive."""
-	user_result = await db.execute(select(User).options(selectinload(User.role), selectinload(User.access_level)).filter(User.id == user_id))
+	user_result = await db.execute(select(User).options(selectinload(User.role), selectinload(User.access_level)).filter(User.id == user_id, ~User.is_system))
 	user = user_result.scalar_one_or_none()
 	if user is None:
 		raise HTTPException(

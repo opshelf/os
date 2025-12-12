@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
 	import { onDestroy, onMount } from 'svelte';
-	import { apiFetch, buildApiUrl, getApiBase } from '$lib';
+	import { apiFetch, buildAuthenticatedUrl, getApiBase } from '$lib';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 
 	type WorkerStatusPayload = {
@@ -110,7 +110,7 @@
 			return;
 		}
 
-		const source = new EventSource(buildApiUrl('/robot/status'));
+		const source = new EventSource(buildAuthenticatedUrl('/robot/status'));
 		eventSource = source;
 
 		source.onopen = () => {
@@ -174,7 +174,7 @@
 			</tr>
 		</thead>
 		<tbody>
-			<tr valign="top">
+			<tr style="vertical-align: top;">
 				<td>robot status</td>
 				<td>
 					{#if status.robot_status}

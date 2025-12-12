@@ -9,16 +9,16 @@ from perpetual_os1_server.database.models import User, AuditLog
 
 
 @pytest.mark.anyio
-async def test_audit_logs_without_auth_header(client: AsyncClient) -> None:
-	# Make request without auth header
-	resp = await client.get("/api/health")
+async def test_audit_logs_without_auth_header(unauthenticated_client: AsyncClient) -> None:
+	# Make request without auth header to a public endpoint
+	resp = await unauthenticated_client.get("/api/auth/users")
 	assert resp.status_code == 200
 
 	# Verify audit log was created without user_id
 	async with AsyncSessionLocal() as db:
 		res = await db.execute(
 			select(AuditLog)
-			.filter(AuditLog.endpoint == "/api/health")
+			.filter(AuditLog.endpoint == "/api/auth/users")
 			.order_by(AuditLog.id.desc())
 			.limit(1)
 		)
@@ -30,11 +30,11 @@ async def test_audit_logs_without_auth_header(client: AsyncClient) -> None:
 
 
 @pytest.mark.anyio
-async def test_audit_logs_with_invalid_auth_token(client: AsyncClient) -> None:
+async def test_audit_logs_with_invalid_auth_token(unauthenticated_client: AsyncClient) -> None:
 	headers = {"Authorization": "Bearer invalid_token_here"}
-	
+
 	# Request with invalid token should still be logged
-	resp = await client.get("/api/users", headers=headers)
+	resp = await unauthenticated_client.get("/api/users", headers=headers)
 	assert resp.status_code == 401
 
 	# Verify audit log was created
@@ -116,19 +116,20 @@ async def test_audit_logs_different_methods(client: AsyncClient) -> None:
 
 
 @pytest.mark.anyio
-async def test_audit_logs_client_info(client: AsyncClient) -> None:
+async def test_audit_logs_client_info(unauthenticated_client: AsyncClient) -> None:
 	# Custom headers to test user agent and IP tracking
 	headers = {
 		"User-Agent": "TestClient/1.0",
 	}
-	
-	resp = await client.get("/api/health", headers=headers)
+
+	resp = await unauthenticated_client.get("/api/auth/users", headers=headers)
 	assert resp.status_code == 200
 
 	async with AsyncSessionLocal() as db:
 		res = await db.execute(
 			select(AuditLog)
-			.filter(AuditLog.endpoint == "/api/health")
+			.filter(AuditLog.endpoint == "/api/auth/users")
+			.filter(AuditLog.user_agent == "TestClient/1.0")
 			.order_by(AuditLog.id.desc())
 			.limit(1)
 		)
@@ -230,15 +231,15 @@ async def test_audit_logs_errors_in_endpoint(client: AsyncClient) -> None:
 
 
 @pytest.mark.anyio
-async def test_audit_duration_tracking(client: AsyncClient) -> None:
+async def test_audit_duration_tracking(unauthenticated_client: AsyncClient) -> None:
 	# Make a request and verify duration is tracked
-	resp = await client.get("/api/health")
+	resp = await unauthenticated_client.get("/api/auth/users")
 	assert resp.status_code == 200
 
 	async with AsyncSessionLocal() as db:
 		res = await db.execute(
 			select(AuditLog)
-			.filter(AuditLog.endpoint == "/api/health")
+			.filter(AuditLog.endpoint == "/api/auth/users")
 			.order_by(AuditLog.id.desc())
 			.limit(1)
 		)

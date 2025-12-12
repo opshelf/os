@@ -62,7 +62,7 @@ async def get_public_users(
 	result = await db.execute(
 		select(User)
 		.options(selectinload(User.role), selectinload(User.access_level))
-		.filter(User.is_active)
+		.filter(User.is_active, ~User.is_system)
 		.order_by(User.id)
 	)
 	users = result.scalars().all()

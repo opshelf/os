@@ -130,7 +130,32 @@ async def reset_storage_tables(
 
 
 @pytest.fixture
-async def client(seeded_db: AsyncGenerator[None, None]) -> AsyncGenerator[httpx.AsyncClient, None]:
+def auth_headers(seeded_db: AsyncGenerator[None, None]) -> dict[str, str]:
+    """Create auth headers with a valid admin token."""
+    settings = get_settings()
+    auth = AuthService(settings.auth.jwt_secret, settings.auth.jwt_algorithm)
+    token = auth.create_access_token(
+        user_id=1,
+        email="admin@opshelf.com",
+        role="admin",
+        permissions=["users:read", "users:write", "robot:control", "storage:read", "storage:write"],
+        access_level=None,
+        expires_minutes=60,
+    )
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture
+async def client(seeded_db: AsyncGenerator[None, None], auth_headers: dict[str, str]) -> AsyncGenerator[httpx.AsyncClient, None]:
+    from httpx import AsyncClient, ASGITransport
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test", follow_redirects=True, headers=auth_headers) as ac:
+        yield ac
+
+
+@pytest.fixture
+async def unauthenticated_client(seeded_db: AsyncGenerator[None, None]) -> AsyncGenerator[httpx.AsyncClient, None]:
+    """Client without authentication headers for testing unauthenticated requests."""
     from httpx import AsyncClient, ASGITransport
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test", follow_redirects=True) as ac:
