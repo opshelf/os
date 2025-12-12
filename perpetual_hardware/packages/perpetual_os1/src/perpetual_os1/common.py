@@ -235,6 +235,62 @@ class ScaleConfig(BaseModel):
     enabled: bool = True
 
 
+# --------------------------- App Settings ---------------------------
+
+class StorageSettings(BaseModel):
+    filename: str = "data/storage.json"
+
+
+class SizesSettings(BaseModel):
+    filename: str = "data/size.json"
+
+
+class PrinterSettings(BaseModel):
+    enabled: bool = False
+    queue: Optional[str] = None
+
+
+class ScannerSettings(BaseModel):
+    enabled: bool = False
+
+
+class CameraAppSettings(BaseModel):
+    enabled: bool = False
+    depth_enabled: bool = False
+
+
+class ToolCameraSettings(BaseModel):
+    enabled: bool = False
+    rtsp_url: str = ""
+
+
+class NatsSettings(BaseModel):
+    domain: str = "nats"
+    port: int = Field(4222, ge=1, le=65535)
+
+    def connection_string(self) -> str:
+        return f"nats://{self.domain}:{self.port}"
+
+
+class AuthSettings(BaseModel):
+    enabled: bool = True
+    require_auth: bool = True
+    jwt_secret: Optional[str] = None
+    jwt_algorithm: str = "HS256"
+    jwt_expire_minutes: int = Field(30, gt=0)
+    jwt_refresh_expire_days: int = Field(7, gt=0)
+    dev_mode: bool = False
+    dev_auto_user: Optional[str] = None
+
+
+class RobotAppSettings(BaseModel):
+    enabled: bool = False
+
+
+class ScaleAppSettings(BaseModel):
+    enabled: bool = False
+
+
 # --------------------------- Buses ---------------------------
 
 class ModbusBusConfig(BaseModel):
@@ -371,6 +427,27 @@ class RootConfig(BaseModel):
     robot: Robot
     status: Literal["idle", "running", "error"] = "idle"
 
+    storage: StorageSettings = Field(default_factory=StorageSettings)
+    sizes: SizesSettings = Field(default_factory=SizesSettings)
+    printer: PrinterSettings = Field(default_factory=PrinterSettings)
+    scanner: ScannerSettings = Field(default_factory=ScannerSettings)
+    camera: CameraAppSettings = Field(default_factory=CameraAppSettings)
+    tool_camera: ToolCameraSettings = Field(default_factory=ToolCameraSettings)
+    scale: ScaleAppSettings = Field(default_factory=ScaleAppSettings)
+    nats: NatsSettings = Field(default_factory=NatsSettings)
+    auth: AuthSettings = Field(default_factory=AuthSettings)
+    robot_app: RobotAppSettings = Field(default_factory=RobotAppSettings)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_robot_enabled(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+        if isinstance(values, dict) and "robot_app" not in values:
+            if "robot" in values and isinstance(values["robot"], dict):
+                robot_enabled = values["robot"].pop("enabled", None)
+                if robot_enabled is not None:
+                    values["robot_app"] = {"enabled": robot_enabled}
+        return values
+
     # ----------- Convenience Getters (typed) -----------
 
     # status
@@ -445,26 +522,86 @@ class RootConfig(BaseModel):
 
 # ----------------------- Loader / Validator -----------------------
 
-def load_and_validate_config(cfg: Union[Dict[str, Any], str]) -> RootConfig:
-    """
-    Validate and return a RootConfig.
-    - If `cfg` is a dict, it is validated directly.
-    - If `cfg` is a JSON string, it is parsed/validated.
-    """
+class ConfigError(Exception):
+    pass
+
+
+class ConfigValidationError(ConfigError):
+    def __init__(self, errors: List[Dict[str, Any]], path: Optional[str] = None):
+        self.errors = errors
+        self.path = path
+        super().__init__(self._format_message())
+
+    def _format_message(self) -> str:
+        lines = ["Configuration validation failed:"]
+        if self.path is not None:
+            lines.append(f"  File: {self.path}")
+        lines.append("")
+        for err in self.errors:
+            loc = ".".join(str(x) for x in err.get("loc", []))
+            msg = err.get("msg", "unknown error")
+            lines.append(f"  - {loc}: {msg}")
+        return "\n".join(lines)
+
+
+class ConfigMissingError(ConfigError):
+    def __init__(self, path: str):
+        self.path = path
+        super().__init__(f"Configuration file not found: {path}")
+
+
+def load_and_validate_config(cfg: Union[Dict[str, Any], str], source_path: Optional[str] = None) -> RootConfig:
     data: Dict[str, Any]
+
     if isinstance(cfg, str):
         data = json.loads(cfg)
     else:
         data = cfg
+
     try:
-        # Pydantic v2 API
         return RootConfig.model_validate(data)
     except ValidationError as e:
-        raise ValueError(f"Invalid configuration:\n{e}") from e
+        raise ConfigValidationError(e.errors(), source_path) from e
 
 
-def load_config_file(path: str) -> RootConfig:
+def load_config_file(path: Union[str, Any]) -> RootConfig:
     import io
-    with io.open(path, "r", encoding="utf-8") as f:
-        raw = json.load(f)
-    return load_and_validate_config(raw)
+    from pathlib import Path
+
+    path_obj = Path(path) if isinstance(path, str) else path
+
+    if path_obj.exists() is False:
+        raise ConfigMissingError(str(path_obj))
+
+    with io.open(path_obj, "r", encoding="utf-8") as f:
+        try:
+            raw = json.load(f)
+        except json.JSONDecodeError as e:
+            raise ConfigError(f"Invalid JSON in {path_obj}: {e}") from e
+
+    return load_and_validate_config(raw, str(path_obj))
+
+
+def assert_config(config: RootConfig, requirements: Optional[List[str]] = None) -> None:
+    errors: List[str] = []
+
+    if requirements is None:
+        requirements = []
+
+    for req in requirements:
+        try:
+            value = config.get(req)
+            if value is None:
+                errors.append(f"Required config '{req}' is None")
+        except KeyError:
+            errors.append(f"Required config '{req}' is missing")
+
+    if config.auth.jwt_secret is None and config.auth.require_auth is True:
+        errors.append("auth.jwt_secret is required when auth.require_auth is True")
+
+    if config.robot_app.enabled is True:
+        if config.robot.bus is None:
+            errors.append("robot.bus is required when robot is enabled")
+
+    if errors:
+        raise ConfigError("Configuration assertion failed:\n  - " + "\n  - ".join(errors))

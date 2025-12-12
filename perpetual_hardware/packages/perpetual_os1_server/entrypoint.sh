@@ -16,11 +16,14 @@ if command -v uv >/dev/null 2>&1; then
 	fi
 fi
 
-# Resolve printer queue/URI
-if [ -z "${PRINTER_QUEUE:-}" ] && [ -z "${PRINTER:-}" ] && [ -f "/app/perpetual_hardware/packages/perpetual_os1_server/data/settings.json" ] && command -v python3 >/dev/null 2>&1; then
-	QUEUE_FROM_SETTINGS=$(python3 - <<'PY'
-import json, pathlib
-path = pathlib.Path("/app/perpetual_hardware/packages/perpetual_os1_server/data/settings.json")
+# Resolve printer queue/URI from config.json
+QUEUE_FROM_CONFIG=""
+if [ -z "${PRINTER_QUEUE:-}" ] && [ -z "${PRINTER:-}" ] && command -v python3 >/dev/null 2>&1; then
+	for config_path in "/app/perpetual_hardware/packages/perpetual_os1_server/data/config.json" "/app/perpetual_hardware/packages/perpetual_os1_server/data/settings.json"; do
+		if [ -f "$config_path" ]; then
+			QUEUE_FROM_CONFIG=$(python3 - "$config_path" <<'PY'
+import json, pathlib, sys
+path = pathlib.Path(sys.argv[1])
 try:
     data = json.loads(path.read_text())
     queue = data.get("printer", {}).get("queue")
@@ -30,11 +33,12 @@ except Exception:
     pass
 PY
 )
-else
-	QUEUE_FROM_SETTINGS=""
+			break
+		fi
+	done
 fi
 
-QUEUE="${PRINTER_QUEUE:-${PRINTER:-${QUEUE_FROM_SETTINGS}}}"
+QUEUE="${PRINTER_QUEUE:-${PRINTER:-${QUEUE_FROM_CONFIG}}}"
 if [ -z "$QUEUE" ]; then
 	QUEUE="Caysn_T9E-US"
 fi

@@ -3,10 +3,17 @@ from enum import Enum
 from typing import Optional, List, Self, Tuple, Mapping, Iterable, Union, Dict
 from perpetual_os1.common import AxisCoordinate
 import os
+import json
+import shutil
+from datetime import datetime
 
 type Json = Dict[str, Union[str, int, float, Mapping, Iterable]]
 
 STORAGE_PATH = os.path.join(os.path.dirname(__file__), "storage.json")
+
+
+class StorageValidationError(Exception):
+	pass
 
 class StorageModuleSide(str, Enum):
     RIGHT = "right_module"
@@ -152,7 +159,46 @@ class StorageGrid(BaseModel):
     def _force_storage_path(cls, _: object) -> str:
         return STORAGE_PATH
 
+    @classmethod
+    def load_from_file(cls, path: str | None = None) -> "StorageGrid":
+        target_path = path or STORAGE_PATH
+
+        if os.path.exists(target_path) is False:
+            raise StorageValidationError(f"storage file not found: {target_path}")
+
+        with open(target_path, "r") as f:
+            raw_content = f.read()
+
+        try:
+            data = json.loads(raw_content)
+        except json.JSONDecodeError as e:
+            raise StorageValidationError(f"invalid json in storage file: {e}") from e
+
+        try:
+            grid = cls.model_validate(data)
+        except ValidationError as e:
+            raise StorageValidationError(f"storage schema validation failed: {e}") from e
+
+        return grid
+
+    def _create_backup(self, filename: str) -> str | None:
+        if os.path.exists(filename) is False:
+            return None
+
+        directory = os.path.dirname(filename)
+        base_name = os.path.basename(filename)
+        name_part, ext = os.path.splitext(base_name)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_name = f"{name_part}_{timestamp}{ext}"
+        backup_path = os.path.join(directory, backup_name)
+
+        shutil.copy2(filename, backup_path)
+
+        return backup_path
+
     def save_to_file(self, filename: str) -> None:
+        self._create_backup(filename)
+
         with open(filename, "w+") as f:
             f.write(self.model_dump_json())
 
