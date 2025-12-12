@@ -1,6 +1,6 @@
 """Authentication dependencies for FastAPI routes."""
 from typing import Optional, List, Callable
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Query
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -14,8 +14,18 @@ from ..core.permissions import has_permission
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
 
+
+def get_token_from_request(
+	bearer_token: Optional[str] = Depends(oauth2_scheme),
+	query_token: Optional[str] = Query(None, alias="token"),
+) -> Optional[str]:
+	"""Extract token from Authorization header or query parameter."""
+	if bearer_token is not None:
+		return bearer_token
+	return query_token
+
 async def get_current_user_optional(
-	token: Optional[str] = Depends(oauth2_scheme),
+	token: Optional[str] = Depends(get_token_from_request),
 	db: AsyncSession = Depends(get_db)
 ) -> Optional[User]:
 	"""Get current user if authenticated, otherwise None (for dev mode)."""
@@ -59,7 +69,7 @@ async def get_current_user_optional(
 	return None
 
 async def get_current_user(
-	token: Optional[str] = Depends(oauth2_scheme),
+	token: Optional[str] = Depends(get_token_from_request),
 	db: AsyncSession = Depends(get_db)
 ) -> User:
 	"""Get current authenticated user or raise 401."""

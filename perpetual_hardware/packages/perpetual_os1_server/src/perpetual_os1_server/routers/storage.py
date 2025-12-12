@@ -13,7 +13,6 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..database.models import Item, ItemLocation, User
 from ..core.storage import StorageService
-from ..core.sizes import migrate_if_needed
 from ..core.validation import ValidationError
 from .auth_deps import can_user_retrieve_item, get_current_user, require_permissions
 from ..database.session import get_db
@@ -252,7 +251,6 @@ async def get_items(
     current_user: User = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """Get all items with pagination."""
-    await migrate_if_needed(session)
     storage_service = StorageService(session)
 
     items = await storage_service.get_all_items(skip=skip, limit=limit)
@@ -283,7 +281,6 @@ async def get_item(
     current_user: User = Depends(get_current_user),
 ) -> ItemWithLocations:
     """Get a specific item by UPCA."""
-    await migrate_if_needed(session)
     storage_service = StorageService(session)
 
     item = await storage_service.get_item(upca)
@@ -301,7 +298,6 @@ async def create_item(
     current_user: User = Depends(get_current_user),
 ) -> ItemWithLocations:
     """Create a new item."""
-    await migrate_if_needed(session)
     storage_service = StorageService(session)
 
     try:
@@ -332,7 +328,6 @@ async def update_item(
     current_user: User = Depends(get_current_user),
 ) -> ItemWithLocations:
     """Update an existing item."""
-    await migrate_if_needed(session)
     storage_service = StorageService(session)
 
     updated_item = await storage_service.update_item(
@@ -363,7 +358,6 @@ async def delete_item(
     session: AsyncSession = Depends(get_db),
 ) -> Dict[str, str]:
     """Delete an item."""
-    await migrate_if_needed(session)
     storage_service = StorageService(session)
 
     deleted = await storage_service.delete_item(upca)
@@ -390,7 +384,6 @@ async def add_item_location(
     current_user: User = Depends(get_current_user),
 ) -> ItemWithLocations:
     """Add a location for an item."""
-    await migrate_if_needed(session)
     storage_service = StorageService(session)
 
     db_item = await storage_service.get_item(upca)
@@ -442,7 +435,6 @@ async def remove_item_location(
     current_user: User = Depends(get_current_user),
 ) -> ItemWithLocations:
     """Remove a specific location for an item."""
-    await migrate_if_needed(session)
     storage_service = StorageService(session)
 
     await _remove_item_location_impl(upca, side, shelf_idx, cell_idx, storage_service)
@@ -462,7 +454,6 @@ async def remove_item_location_by_path(
     current_user: User = Depends(get_current_user),
 ) -> ItemWithLocations:
     """Remove a specific location using path parameters."""
-    await migrate_if_needed(session)
     storage_service = StorageService(session)
 
     await _remove_item_location_impl(upca, side, shelf_idx, cell_idx, storage_service)
@@ -480,7 +471,6 @@ async def create_storage_cell(
     session: AsyncSession = Depends(get_db),
 ) -> StorageCellResponse:
     """Create a new storage cell."""
-    await migrate_if_needed(session)
     storage_service = StorageService(session)
 
     try:
@@ -513,7 +503,6 @@ async def get_storage_cells(
     session: AsyncSession = Depends(get_db),
 ) -> List[StorageCellResponse]:
     """Get storage cells with optional filtering."""
-    await migrate_if_needed(session)
     storage_service = StorageService(session)
 
     cells = await storage_service.get_storage_cells(shelf_idx=shelf_idx, cell_idx=cell_idx)
@@ -540,7 +529,6 @@ async def update_storage_cell(
     session: AsyncSession = Depends(get_db),
 ) -> StorageCellResponse:
     """Update storage cell status or capacity."""
-    await migrate_if_needed(session)
     storage_service = StorageService(session)
 
     status_value = cell_update.status.lower() if cell_update.status else None

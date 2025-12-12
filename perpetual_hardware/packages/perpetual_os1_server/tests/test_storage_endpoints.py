@@ -3,14 +3,14 @@ from httpx import AsyncClient
 
 
 @pytest.mark.anyio
-async def test_storage_items_endpoint_unauthorized(client: AsyncClient) -> None:
+async def test_storage_items_endpoint_unauthorized(unauthenticated_client: AsyncClient) -> None:
     """Test storage endpoints without authorization."""
     # Test GET /api/storage/items without auth
-    response = await client.get("/api/storage/items")
+    response = await unauthenticated_client.get("/api/storage/items")
     assert response.status_code == 401
 
     # Test POST /api/storage/items without auth
-    response = await client.post("/api/storage/items", json={
+    response = await unauthenticated_client.post("/api/storage/items", json={
         "upca": "123456789012",
         "name": "Test Item",
         "dimensions": {"width": 10.0, "height": 20.0, "length": 30.0}

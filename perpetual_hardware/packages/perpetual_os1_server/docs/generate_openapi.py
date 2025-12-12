@@ -26,7 +26,6 @@ def generate_openapi_json() -> dict:
         {"name": "scanner", "description": "Barcode scanning operations"},
         {"name": "scale", "description": "Scale and weight measurements"},
         {"name": "printer", "description": "Label printing operations"},
-        {"name": "sizes", "description": "File size management"},
         {"name": "users", "description": "User management"},
         {"name": "roles", "description": "Role and permission management"},
         {"name": "audit", "description": "Audit logging"}

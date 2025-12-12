@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import socket
-from typing import Any, Optional
+from typing import Any
 
 import sentry_sdk
 from fastapi import APIRouter, Depends
@@ -13,7 +13,7 @@ from perpetual_os1_server.core.camera import camera_registry
 from perpetual_os1_server.core.logging_config import get_logger
 from perpetual_os1_server.core.robot import get_robot_worker
 from perpetual_os1_server.database.models import User
-from perpetual_os1_server.routers.auth_deps import get_current_user_optional
+from perpetual_os1_server.routers.auth_deps import get_current_user
 
 logger = get_logger(__name__)
 
@@ -28,10 +28,7 @@ class ReportErrorResponse(BaseModel):
     status: str
 
 
-def _build_user_context(user: Optional[User]) -> dict[str, Any]:
-    if user is None:
-        return {"authenticated": False}
-
+def _build_user_context(user: User) -> dict[str, Any]:
     return {
         "authenticated": True,
         "id": user.id,
@@ -87,10 +84,10 @@ async def _capture_camera_images() -> dict[str, bytes]:
     return images
 
 
-@router.post("/report-error", response_model=ReportErrorResponse)
+@router.post("/report_error", response_model=ReportErrorResponse)
 async def submit_error_report(
     request: ReportErrorRequest,
-    current_user: Optional[User] = Depends(get_current_user_optional),
+    current_user: User = Depends(get_current_user),
 ) -> ReportErrorResponse:
     user_context = _build_user_context(current_user)
     robot_context = await _build_robot_context()
@@ -98,9 +95,7 @@ async def submit_error_report(
     camera_images = await _capture_camera_images()
 
     hostname = socket.gethostname()
-    user_name = "anonymous"
-    if current_user is not None:
-        user_name = f"{current_user.first_name} {current_user.last_name}"
+    user_name = f"{current_user.first_name} {current_user.last_name}"
 
     logger.info(
         "user_error_report_submitted",

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
 	import { onMount } from 'svelte';
-	import { apiFetch, buildApiUrl } from '$lib';
+	import { apiFetch, buildAuthenticatedUrl } from '$lib';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 
 	type CameraInfo = {
@@ -22,7 +22,7 @@
 	let streamError = false;
 	let loading = true;
 
-	$: streamUrl = selectedCameraId !== '' ? buildApiUrl(`/camera/${selectedCameraId}`) : '';
+	$: streamUrl = selectedCameraId !== '' ? buildAuthenticatedUrl(`/camera/${selectedCameraId}`) : '';
 	$: selectedCamera = cameras.find((c) => c.id === selectedCameraId) ?? null;
 
 	onMount(() => {

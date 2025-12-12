@@ -9,10 +9,6 @@ class StorageSettings(BaseModel):
     filename: str = "data/storage.json"
 
 
-class SizeDatabaseSettings(BaseModel):
-    filename: str = "data/size.json"
-
-
 class PrinterSettings(BaseModel):
     enabled: bool = False
 
@@ -60,7 +56,6 @@ class ScaleSettings(BaseModel):
 
 class Settings(BaseModel):
     storage: StorageSettings
-    sizes: SizeDatabaseSettings
     printer: PrinterSettings
     scanner: ScannerSettings
     robot: RobotSettings
@@ -82,8 +77,6 @@ def get_settings() -> Settings:
     
     if "storage" not in data:
         data["storage"] = {"filename": "data/storage.json"}
-    if "sizes" not in data:
-        data["sizes"] = {"filename": "data/size.json"}
     if "printer" not in data:
         data["printer"] = {"enabled": False}
     if "scanner" not in data:

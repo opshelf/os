@@ -15,7 +15,7 @@ from perpetual_os1_server.core.camera import (
 	start_camera_stream_by_id,
 	stop_camera_stream_by_id,
 )
-from .auth_deps import get_current_user_optional
+from .auth_deps import get_current_user
 
 router = APIRouter(tags=["camera"])
 
@@ -72,20 +72,17 @@ async def mjpeg_stream_generator_for_camera(
 		pass
 
 
-@router.get("")
-async def list_cameras(
-	current_user: dict | None = Depends(get_current_user_optional),
-) -> dict:
+@router.get("", dependencies=[Depends(get_current_user)])
+async def list_cameras() -> dict:
 	cameras = get_all_cameras_status()
 
 	return {"cameras": cameras}
 
 
-@router.get("/{camera_id}")
+@router.get("/{camera_id}", dependencies=[Depends(get_current_user)])
 async def stream_camera(
 	camera_id: str,
 	request: Request,
-	current_user: dict | None = Depends(get_current_user_optional),
 ) -> StreamingResponse:
 	manager = get_camera_manager_by_id(camera_id)
 

@@ -20,7 +20,6 @@ from sentry_sdk.integrations.starlette import StarletteIntegration
 
 from perpetual_os1_server.core.logging_config import configure_logging, get_logger
 from perpetual_os1_server.core.robot import init_robot_worker, stop_robot_worker
-from perpetual_os1_server.core.sizes import init_file_sizes, migrate_if_needed
 from perpetual_os1_server.core.storage import StorageService
 from perpetual_os1_server.core.camera import init_tool_camera_manager, init_camera_manager
 from perpetual_os1_server.settings import Settings
@@ -28,7 +27,7 @@ from perpetual_os1_server.database.base import Base, engine, get_database_url
 from perpetual_os1_server.database.session import AsyncSessionLocal
 from perpetual_os1_server.middleware.audit import AuditMiddleware
 from perpetual_os1_server.middleware.correlation import CorrelationIdMiddleware
-from perpetual_os1_server.routers import access_levels, audit, auth, calibration, camera, printer, report, robot, roles, sizes, storage, users
+from perpetual_os1_server.routers import access_levels, audit, auth, calibration, camera, printer, report, robot, roles, storage, users
 from perpetual_os1_server.settings import get_settings
 
 configure_logging()
@@ -166,6 +165,47 @@ def _get_io_camera_config() -> tuple[dict, dict | None] | None:
 	return None
 
 
+async def _ensure_developer_user() -> None:
+	from sqlalchemy import select
+	from argon2 import PasswordHasher
+	from perpetual_os1_server.database.models import User, Role
+	from perpetual_os1_server.database.session import AsyncSessionLocal
+
+	async with AsyncSessionLocal() as db:
+		result = await db.execute(
+			select(User).filter(User.email == "developer@opshelf.com")
+		)
+		existing_user = result.scalar_one_or_none()
+
+		if existing_user is not None:
+			logger.info("developer_user_exists", email="developer@opshelf.com")
+			return
+
+		role_result = await db.execute(select(Role).filter(Role.name == "admin"))
+		admin_role = role_result.scalar_one_or_none()
+
+		if admin_role is None:
+			logger.warning("admin_role_not_found", action="skipping_developer_user_creation")
+			return
+
+		ph = PasswordHasher()
+		pin_hash = ph.hash("1111")
+
+		developer_user = User(
+			email="developer@opshelf.com",
+			first_name="Developer",
+			last_name="System",
+			pin_hash=pin_hash,
+			role_id=admin_role.id,
+			is_active=True,
+			is_system=True,
+		)
+
+		db.add(developer_user)
+		await db.commit()
+		logger.info("developer_user_created", email="developer@opshelf.com")
+
+
 async def _seed_auth_if_requested() -> None:
 	from sqlalchemy import select
 	from perpetual_os1_server.database.models import User
@@ -202,6 +242,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 		await conn.run_sync(Base.metadata.create_all)
 
 	await _seed_auth_if_requested()
+	await _ensure_developer_user()
 
 	robot_started = False
 	storage_override_set = False
@@ -228,8 +269,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 		logger.error("robot_setup_error", error=str(e), exc_info=True)
 		if sentry_dsn is not None:
 			sentry_sdk.capture_exception(e)
-
-	init_file_sizes()
 
 	tool_camera_url = _get_tool_camera_url(settings)
 	if tool_camera_url is not None and tool_camera_url != "":
@@ -261,7 +300,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 	async def get_storage_session() -> AsyncGenerator[StorageService, None]:
 		async with AsyncSessionLocal() as session:
-			await migrate_if_needed(session)
 			yield StorageService(session)
 
 	app.dependency_overrides[StorageService] = get_storage_session
@@ -335,7 +373,6 @@ app.include_router(access_levels.router)
 app.include_router(audit.router)
 app.include_router(camera.router, prefix="/api/camera")
 app.include_router(robot.router, prefix="/api/robot")
-app.include_router(sizes.router, prefix="/api/sizes")
 app.include_router(storage.router, prefix="/api/storage")
 app.include_router(printer.router, prefix="/api/print")
 app.include_router(calibration.router)
