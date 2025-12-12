@@ -397,6 +397,8 @@ class RobotWorker:
     async def emergency_stop(self, reason: str) -> None:
         self._robot.pause_for_curtain()
         self.set_crash_state(reason)
+        await self._publish_status()
+        logging.info("Emergency stop triggered: %s", reason)
 
         async def _cleanup_after_stop() -> None:
             if self._current_task is not None and not self._current_task.done():

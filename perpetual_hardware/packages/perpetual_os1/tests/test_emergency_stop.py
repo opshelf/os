@@ -338,6 +338,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_emergency_stop_clears_command_state_in_background(self):
         from perpetual_os1.robot_worker import RobotWorker
+        from perpetual_os1.robot import HomeCommand
 
         robot = MockRobot()
         RobotWorker._instance = None
@@ -346,12 +347,13 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
         worker._nc = _DummyNATS()
         worker._js = _DummyJetStream()
 
-        worker._current_command = "dummy"
+        mock_command = HomeCommand(command="home")
+        worker._current_command = mock_command
         worker._command_started_at = 12345.0
 
         await worker.emergency_stop("test")
 
-        self.assertEqual(worker._current_command, "dummy")
+        self.assertEqual(worker._current_command, mock_command)
 
         await asyncio.sleep(0.1)
 
