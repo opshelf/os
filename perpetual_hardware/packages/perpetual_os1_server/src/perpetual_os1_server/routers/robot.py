@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import AsyncGenerator, Optional
+from typing import AsyncGenerator, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from nats.aio.client import Client as NATS
@@ -202,9 +202,15 @@ async def emergency_stop_robot(worker: RobotWorker = Depends(get_robot_worker_or
     return SuccessResponse()
 
 
-@router.post("/release_gripper", dependencies=[Depends(get_current_user), Depends(require_permissions("robot:control"))])
-async def release_gripper(worker: RobotWorker = Depends(get_robot_worker_or_error)) -> SuccessResponse:
-    await worker.release_gripper()
+@router.post("/gripper", dependencies=[Depends(get_current_user), Depends(require_permissions("robot:control"))])
+async def control_gripper(
+    state: Literal["grip", "release"],
+    worker: RobotWorker = Depends(get_robot_worker_or_error),
+) -> SuccessResponse:
+    if state == "release":
+        await worker.release_gripper()
+    else:
+        await worker.grip()
     return SuccessResponse()
 
 
