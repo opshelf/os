@@ -1,4 +1,4 @@
-import { getAccessToken, loginAsDeveloper, isAuthenticated } from "./auth";
+import { getAccessToken, loginAsDeveloper, refreshAccessToken } from "./auth";
 
 export function getApiBase(): string {
 	const raw = import.meta.env.VITE_API_BASE_URL ?? `http://${location.hostname}:8000/api`;
@@ -41,8 +41,12 @@ export async function apiFetch<T = unknown>(path: string, init?: RequestInit): P
 		headers,
 	});
 
-	if (response.status === 401 && isAuthenticated() === false) {
-		await loginAsDeveloper();
+	if (response.status === 401) {
+		try {
+			await refreshAccessToken();
+		} catch {
+			await loginAsDeveloper();
+		}
 		return apiFetch<T>(path, init);
 	}
 
