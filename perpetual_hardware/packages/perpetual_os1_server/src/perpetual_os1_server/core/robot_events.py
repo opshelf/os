@@ -87,15 +87,34 @@ async def process_robot_event(payload: dict[str, Any]) -> None:
             try:
                 normalized_weight = float(weight)
                 if normalized_weight <= 0:
+                    logger.warning(
+                        "Weight normalization: raw=%s normalized to None (<=0)",
+                        weight
+                    )
                     normalized_weight = None
             except (TypeError, ValueError):
+                logger.warning(
+                    "Weight normalization failed: raw=%s type=%s",
+                    weight, type(weight).__name__
+                )
                 normalized_weight = None
+
+        logger.info(
+            "Weight after normalization: raw=%s normalized=%s",
+            weight, normalized_weight
+        )
 
         async with AsyncSessionLocal() as session:
             storage_service = StorageService(session)
             try:
                 existing_item = await storage_service.get_item(str(upca))
+                logger.info(
+                    "Existing item lookup: upca=%s found=%s existing_weight=%s",
+                    upca, existing_item is not None,
+                    existing_item.weight if existing_item else None
+                )
                 if existing_item is None:
+                    logger.info("Creating new item with weight=%s", normalized_weight)
                     await storage_service.create_item(
                         upca=str(upca),
                         name=str(upca),
@@ -105,12 +124,25 @@ async def process_robot_event(payload: dict[str, Any]) -> None:
                         sync_to_json=False,
                     )
                 elif normalized_weight is not None:
-                    if existing_item.weight != normalized_weight:
+                    weights_differ = existing_item.weight != normalized_weight
+                    logger.info(
+                        "Weight comparison: existing=%s new=%s differ=%s",
+                        existing_item.weight, normalized_weight, weights_differ
+                    )
+                    if weights_differ:
                         logger.info(
                             "Updating item weight: upca=%s old=%s new=%s",
                             upca, existing_item.weight, normalized_weight
                         )
-                        await storage_service.update_item(str(upca), weight=normalized_weight)
+                        result = await storage_service.update_item(str(upca), weight=normalized_weight)
+                        logger.info(
+                            "Update result: success=%s new_weight=%s",
+                            result is not None, result.weight if result else None
+                        )
+                    else:
+                        logger.info("Weights equal, skipping update")
+                else:
+                    logger.info("Normalized weight is None, skipping update")
 
                 existing_locations = await storage_service.get_item_locations(str(upca))
                 already_assigned = any(
