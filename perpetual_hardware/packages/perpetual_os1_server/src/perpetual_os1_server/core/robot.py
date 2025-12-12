@@ -3,8 +3,14 @@ from perpetual_os1 import robot as r
 from perpetual_os1 import common
 from perpetual_os1 import robot_worker as r_worker
 from perpetual_os1 import robot_client as r_client
+from perpetual_os1.common import (
+    ConfigError,
+    ConfigValidationError,
+    ConfigMissingError,
+    assert_config,
+)
 
-from perpetual_os1_server.settings import get_settings
+from perpetual_os1_server.settings import get_settings, get_root_config
 from perpetual_os1_server.core.robot_events import RobotEventListener
 from perpetual_os1_server.core.storage import StorageService
 from perpetual_os1_server.database.session import AsyncSessionLocal
@@ -16,8 +22,33 @@ logger = logging.getLogger(__name__)
 robot_worker: Optional[r_worker.RobotWorker] = None
 event_listener: Optional[RobotEventListener] = None
 
+
+def validate_robot_config() -> None:
+    try:
+        config = get_root_config()
+        assert_config(config, requirements=[
+            "robot.tool.parameters.IDLE_POSITION",
+            "robot.tool.parameters.PICKUP_POSITION_L",
+            "robot.tool.parameters.PICKUP_POSITION_H",
+        ])
+        logger.info("Robot config validated successfully")
+    except ConfigMissingError as e:
+        logger.error("Config file not found: %s", e.path)
+        raise
+    except ConfigValidationError as e:
+        logger.error("Config validation failed:\n%s", e)
+        raise
+    except ConfigError as e:
+        logger.error("Config assertion failed: %s", e)
+        raise
+
+
 async def init_robot_worker() -> None:
     global robot_worker, event_listener
+
+    logger.info("Validating robot configuration")
+    validate_robot_config()
+
     logger.info("Getting Robot")
     settings = get_settings()
     robot = r.Robot()

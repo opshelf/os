@@ -5,16 +5,14 @@ from perpetual_os1.iobox import IOBox
 from perpetual_os1.tool import Tool
 from perpetual_os1.storage import (
     StorageGrid, Shelf, Cell, CellStatus, CalibrationCoordinate,
-    Dimensions, StorageModuleSide, CellItem, StorageModuleCellLocation
+    Dimensions, StorageModuleSide, CellItem, StorageModuleCellLocation,
+    StorageValidationError, STORAGE_PATH
 )
 
-from perpetual_os1.exceptions import (
-    ConfigError,
-)
+from perpetual_os1.common import ConfigError
 
 from perpetual_os1.robot_state import RobotStateManager
 
-import json
 import logging
 from pathlib import Path
 from typing import Any, Dict, Optional, Union, Literal, Annotated, List, TYPE_CHECKING
@@ -27,8 +25,6 @@ import sentry_sdk
 if TYPE_CHECKING:
     from hardware.motor import Motor
 
-import os
-STORAGE_PATH = os.path.join(os.path.dirname(__file__), 'storage.json')
 CONFIG_PATH = Path(__file__).resolve().parent / "config.json"
 
 class StopCommand(BaseModel):
@@ -174,16 +170,10 @@ class Robot:
         self._tool = Tool(motorcontroller=self._motorbus, params=tool_params, safety=self._curtain_safety)
         self._io = IOBox(motorcontroller=self._motorbus, scalecontroller=self._scalebus, params=io_params, safety=self._curtain_safety)
 
-        if os.path.exists(STORAGE_PATH) is True:
-            try:
-                with open(STORAGE_PATH, 'r') as f:
-                    data = json.load(f)
-                self._grid = StorageGrid.model_validate(data)
-            except (json.JSONDecodeError, Exception) as e:
-                self._logger.warning("storage_load_failed", path=STORAGE_PATH, error=str(e))
-                self._grid = StorageGrid()
-        else:
-            self._logger.info("storage_file_missing", path=STORAGE_PATH, action="using_empty_grid")
+        try:
+            self._grid = StorageGrid.load_from_file(STORAGE_PATH)
+        except StorageValidationError as e:
+            self._logger.warning("storage_load_failed", path=STORAGE_PATH, error=str(e))
             self._grid = StorageGrid()
 
         self._cur_item: StorageModuleCellLocation = None
