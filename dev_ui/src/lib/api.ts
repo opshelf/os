@@ -261,6 +261,12 @@ export async function calibrateScaleWeight(): Promise<ScaleCalibrationResult> {
 	});
 }
 
+export async function tareScale(): Promise<{ success: boolean }> {
+	return apiFetch<{ success: boolean }>("/robot/debug/scale/calibration/tare", {
+		method: "POST",
+	});
+}
+
 export interface ScannerStatus {
 	connected: boolean;
 	enabled: boolean;

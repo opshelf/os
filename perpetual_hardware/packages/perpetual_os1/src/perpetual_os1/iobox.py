@@ -70,7 +70,6 @@ class IOBox:
             await self._md.configure()
             await self._md.home()
             if self._scale_enabled is True:
-                await self._scale.tare()
                 self._scale_ready = True
             else:
                 self._logger.info("Scale disabled via config")

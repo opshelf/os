@@ -264,6 +264,9 @@ class RobotWorker:
     async def calibrate_scale_weight(self, timeout: float = 5.0) -> Dict[str, Any]:
         return await self._robot.calibrate_scale_weight(timeout=timeout)
 
+    async def scale_tare(self) -> bool:
+        return await self._robot.scale_tare()
+
     def get_scanner_status(self) -> Dict[str, Any]:
         return {
             "connected": self._barcode is not None and self._barcode._transport is not None,

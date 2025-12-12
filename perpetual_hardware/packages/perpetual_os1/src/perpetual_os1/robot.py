@@ -697,6 +697,9 @@ class Robot:
     async def calibrate_scale_weight(self, timeout: float = 5.0) -> Dict[str, Any]:
         return await self._io._scale.calibrate_weight(timeout=timeout)
 
+    async def scale_tare(self) -> bool:
+        return await self._io._scale.tare()
+
     async def _build_axis_status(self, motor: Optional["Motor"]) -> AxisTelemetry:
         position = 0.0
         if motor is None:
