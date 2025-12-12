@@ -10,13 +10,14 @@ from perpetual_os1.storage import (
 )
 
 from perpetual_os1.common import ConfigError
+from perpetual_os1.exceptions import MotorError, MovementError, ToolError
 
 from perpetual_os1.robot_state import RobotStateManager
 
 import logging
 from pathlib import Path
 from typing import Any, Dict, Optional, Union, Literal, Annotated, List, TYPE_CHECKING
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 import asyncio
 import sentry_sdk
@@ -55,6 +56,19 @@ class RetrieveItemCommand(BaseModel):
 class StoreItemCommand(BaseModel):
     command: Literal["store_item"] = "store_item"
     item: Optional[Dict[str, Any]] = None
+
+    @model_validator(mode="after")
+    def validate_item_data(self) -> "StoreItemCommand":
+        if self.item is None or len(self.item) == 0:
+            raise ValueError("item field is required with 'upca' or 'dimensions'")
+
+        has_upca = self.item.get("upca") is not None
+        has_dimensions = self.item.get("dimensions") is not None
+
+        if has_upca is False and has_dimensions is False:
+            raise ValueError("item must contain 'upca' or 'dimensions'")
+
+        return self
 
 RobotCommands = Annotated[
     Union[
@@ -626,6 +640,8 @@ class Robot:
             self._grid.store_item(location, item)
             self._logger.info("Store: command successful for %s at %s", resolved_item_name, location)
             return RobotCommandSuccessful(command=command_name, location=location, upca=resolved_upca, weight=weight)
+        except (MotorError, MovementError, ToolError):
+            raise
         except Exception as exc:
             self._logger.exception("Store command failed for %s", resolved_item_name)
             sentry_sdk.capture_exception(exc)
@@ -764,6 +780,8 @@ class Robot:
                 return RobotCommandError(command=command_name, error="Missing upca or location for retrieval")
             else:
                 return RobotCommandError(command=command_name, error="Invalid Robot Command")
+        except (MotorError, MovementError, ToolError):
+            raise
         except Exception as exc:
             self._logger.exception("Unhandled error while processing command %s", command_name)
             sentry_sdk.capture_exception(exc)
@@ -855,6 +873,8 @@ class Robot:
             await self.io_place(coord)
             self._grid.clear_item(location)
             return RobotCommandSuccessful(command=command_name, location=location, upca=retrieved_upca)
+        except (MotorError, MovementError, ToolError):
+            raise
         except Exception as exc:
             self._logger.exception(
                 "Retrieve command failed at shelf %s cell %s",
