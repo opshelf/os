@@ -28,7 +28,7 @@ from perpetual_os1.common import RobotNatsConfiguration
 from perpetual_os1.robot_defs import WorkerError, QueuedOperation, WorkerStatus, WorkerStatusWithQueue
 from perpetual_os1.robot_client import RobotClient
 from perpetual_os1.barcode_protocol import BarcodeService
-from perpetual_os1.exceptions import MotorError
+from perpetual_os1.exceptions import MotorError, MovementError, ToolError
 
 COMMAND_TIMEOUT_SECONDS = 300
 
@@ -662,14 +662,14 @@ class RobotWorker:
                         except Exception as err:
                             logging.error("Command execution error: %s", err)
 
-                            is_motor_fault = isinstance(err, MotorError)
-                            if is_motor_fault:
+                            is_hardware_fault = isinstance(err, (MotorError, MovementError, ToolError))
+                            if is_hardware_fault:
                                 self.set_crash_state(str(err))
-                                logging.warning("Motor fault detected - robot in crash state")
+                                logging.warning("Hardware fault detected - robot in crash state: %s", type(err).__name__)
 
                             self._report_error(
                                 WorkerError(
-                                    error_type="MotorFault" if is_motor_fault else "CommandExecutionError",
+                                    error_type="HardwareFault" if is_hardware_fault else "CommandExecutionError",
                                     message=str(err),
                                     context={"command": self._current_command.model_dump() if self._current_command else None},
                                     stack_trace=traceback.format_exc(),
