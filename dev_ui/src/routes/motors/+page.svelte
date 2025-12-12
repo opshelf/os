@@ -136,31 +136,42 @@
 		</tbody>
 	</table>
 
-	<div class="gripper-section">
-		<span>gripper</span>
-		<button
-			type="button"
-			on:click={() => didClickGripper('grip')}
-			disabled={gripperAction !== null}
-		>
-			{#if gripperAction === 'grip'}
-				gripping...
-			{:else}
-				grip
-			{/if}
-		</button>
-		<button
-			type="button"
-			on:click={() => didClickGripper('release')}
-			disabled={gripperAction !== null}
-		>
-			{#if gripperAction === 'release'}
-				releasing...
-			{:else}
-				release
-			{/if}
-		</button>
-	</div>
+	<table>
+		<thead>
+			<tr>
+				<th colspan="2">gripper</th>
+			</tr>
+		</thead>
+		<tbody>
+			<tr>
+				<td>control</td>
+				<td>
+					<button
+						type="button"
+						on:click={() => didClickGripper('grip')}
+						disabled={gripperAction !== null}
+					>
+						{#if gripperAction === 'grip'}
+							gripping...
+						{:else}
+							grip
+						{/if}
+					</button>
+					<button
+						type="button"
+						on:click={() => didClickGripper('release')}
+						disabled={gripperAction !== null}
+					>
+						{#if gripperAction === 'release'}
+							releasing...
+						{:else}
+							release
+						{/if}
+					</button>
+				</td>
+			</tr>
+		</tbody>
+	</table>
 
 	{#if message !== ''}
 		<p class="message">{message}</p>
@@ -181,16 +192,5 @@
 
 	button {
 		margin-top: 0;
-	}
-
-	.gripper-section {
-		margin-top: 1em;
-		display: flex;
-		align-items: center;
-		gap: 0.5em;
-	}
-
-	.gripper-section span {
-		font-weight: bold;
 	}
 </style>
