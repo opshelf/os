@@ -365,6 +365,21 @@ async def calibrate_scale_weight(
         ) from exc
 
 
+@router.post("/debug/scale/calibration/tare", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
+async def scale_tare(
+    worker: RobotWorker = Depends(get_robot_worker_or_error),
+) -> dict:
+    try:
+        ok = await worker.scale_tare()
+        return {"success": ok}
+    except Exception as exc:
+        logging.error("Failed to tare scale: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Failed to tare scale: {exc}",
+        ) from exc
+
+
 @router.get("/debug/motors", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
 async def get_motors(
     worker: RobotWorker = Depends(get_robot_worker_or_error),

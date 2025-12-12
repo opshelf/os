@@ -8,6 +8,7 @@
 		setScaleCalibrationParams,
 		calibrateScaleZero,
 		calibrateScaleWeight,
+		tareScale,
 		type ScaleReading,
 		type ScaleCalibrationStatus,
 		type ScaleCalibrationParams
@@ -26,6 +27,7 @@
 	let isRefreshing = false;
 	let isCalibrating = false;
 	let isSavingParams = false;
+	let isTaring = false;
 
 	let fullScale = 6000;
 	let calibrationWeight = 500;
@@ -122,6 +124,26 @@
 			calibrationError = err instanceof Error ? err.message : 'failed to calibrate weight';
 		} finally {
 			isCalibrating = false;
+		}
+	}
+
+	async function didClickTare(): Promise<void> {
+		isTaring = true;
+		calibrationError = '';
+		message = '';
+
+		try {
+			const result = await tareScale();
+			if (result.success === true) {
+				message = 'tare successful';
+				await fetchReading();
+			} else {
+				calibrationError = 'tare failed';
+			}
+		} catch (err) {
+			calibrationError = err instanceof Error ? err.message : 'failed to tare';
+		} finally {
+			isTaring = false;
 		}
 	}
 
@@ -315,8 +337,11 @@
 </table>
 
 <div class="action-buttons">
-	<button type="button" on:click={didClickRefresh} disabled={isRefreshing === true || isCalibrating === true}>
+	<button type="button" on:click={didClickRefresh} disabled={isRefreshing === true || isCalibrating === true || isTaring === true}>
 		refresh
+	</button>
+	<button type="button" on:click={didClickTare} disabled={isTaring === true || isCalibrating === true}>
+		tare
 	</button>
 	<button type="button" on:click={didClickSaveParams} disabled={isSavingParams === true || isCalibrating === true}>
 		save params
