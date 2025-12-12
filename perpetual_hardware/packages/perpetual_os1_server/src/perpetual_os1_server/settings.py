@@ -75,6 +75,13 @@ def _load_legacy_settings(path: Path) -> dict:
 
 
 def _build_minimal_config(data: dict) -> dict:
+	legacy_robot = data.pop("robot", None)
+
+	if legacy_robot is not None and "enabled" in legacy_robot:
+		if "robot_app" not in data:
+			data["robot_app"] = {}
+		data["robot_app"]["enabled"] = legacy_robot.get("enabled", True)
+
 	return {
 		"name": "perpetual_os1",
 		"version": "0.1.0",
