@@ -10,17 +10,6 @@ logger = logging.getLogger(__name__).getChild("scale")
 
 
 class Scale:
-    """
-    Async driver for SJ-101D_X using your SharedModbusController (pymodbus async).
-
-    Register map (0-based holding registers):
-      0 -> 40001: Weight high 16 bits
-      1 -> 40002: Weight low  16 bits
-      2 -> 40003: Decimal position (0..3)
-      3 -> 40004: Status bits: bit0=stable, bit1=zero, bit2=overload, bit4=valid
-      4 -> 40005: Tare (write 1)
-    """
-
     REG_WEIGHT_HI = 0
     REG_WEIGHT_LO = 1
     REG_DECIMALS = 2
@@ -72,7 +61,6 @@ class Scale:
     # ---------- helpers ----------
 
     async def _read_one(self, addr: int) -> Optional[int]:
-        """Read a single holding register with retries."""
         for _ in range(self.retries + 1):
             val = await self.modbus_controller.read_holding_registers(self.scale_id, addr, 1)
             if isinstance(val, int):
@@ -85,10 +73,6 @@ class Scale:
         return None
 
     async def _read_block(self, start: int, count: int) -> Optional[Tuple[int, ...]]:
-        """
-        Read 'count' registers starting at 'start'.
-        (Your controller returns only first register even if count>1, so read individually.)
-        """
         vals = []
         for ofs in range(count):
             v = await self._read_one(start + ofs)
@@ -124,10 +108,6 @@ class Scale:
     # ---------- high-level API ----------
 
     async def read_weight(self, averages: int = 1, delay: float = 0.1) -> Optional[float]:
-        """
-        Return current weight in grams (absolute value for inverted mount).
-        Optionally average N samples.
-        """
         averages = max(1, int(averages))
         total = 0.0
         got = 0
@@ -166,11 +146,7 @@ class Scale:
         return (total / got) if got else None
 
     async def read_weight_data(self) -> Dict[str, Any]:
-        """
-        Rich read: weight (grams), decimals, status flags, and raw regs.
-        Note: This method returns raw values without abs() - used for debugging.
-        """
-        regs = await self._read_block(self.REG_WEIGHT_HI, 4)  # hi, lo, decimals, status
+        regs = await self._read_block(self.REG_WEIGHT_HI, 4)
         if not regs:
             logger.error(
                 "Failed to read weight registers",
@@ -193,9 +169,8 @@ class Scale:
         }
 
     async def tare(self) -> bool:
-        """Tare: write 1 to 40005 (address 4)."""
         ok = await self.modbus_controller.write_single_register(self.scale_id, self.REG_TARE, 1)
-        success = ok is None or ok is True  # your controller returns None on success
+        success = ok is None or ok is True
         if not success:
             logger.warning(
                 "Scale tare failed",
@@ -220,18 +195,6 @@ class Scale:
         timeout: float = 2.0,
         poll_interval: float = 0.05,
     ) -> Optional[float]:
-        """
-        Poll status until stable, then return one weight sample in grams.
-        Returns None on timeout.
-
-        If the first stable reading is zero, waits for an unstable-to-stable
-        transition before accepting. This prevents accepting stale zero readings
-        from before an item was placed, while still accepting valid non-zero
-        readings immediately.
-
-        If timeout occurs while unstable, returns an averaged weight from
-        collected readings as fallback (if any non-zero readings were captured).
-        """
         loop = asyncio.get_event_loop()
         deadline = loop.time() + timeout
         saw_unstable = False
