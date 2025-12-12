@@ -565,11 +565,16 @@ class RobotWorker:
 
     async def process_commands(self) -> None:
         logger.info("process_commands loop started, running=%s", self._running)
+        loop_count = 0
         while self._running:
             try:
                 if self._current_task is None:
+                    loop_count += 1
+                    if loop_count % 30 == 1:
+                        logger.debug("process_commands polling, loop=%d", loop_count)
                     msgs = await self.work_consumer.fetch(timeout=1)
                     if msgs:
+                        logger.info("Received %d message(s) from queue", len(msgs))
                         msg = msgs[0]
                         try:
                             command = RobotCommandAdapter.validate_json(msg.data.decode())
@@ -923,3 +928,6 @@ class RobotWorker:
 
     async def release_gripper(self) -> None:
         await self._robot.release_gripper()
+
+    async def grip(self) -> None:
+        await self._robot.grip()

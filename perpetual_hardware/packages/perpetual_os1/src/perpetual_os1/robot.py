@@ -904,3 +904,6 @@ class Robot:
 
     async def release_gripper(self) -> None:
         await self._tool._gs.close()
+
+    async def grip(self) -> None:
+        await self._tool._gs.open()
