@@ -1,12 +1,13 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
 	import { onMount } from 'svelte';
-	import { getMotors, simulateMotorCrash, type MotorList } from '$lib/api';
+	import { getMotors, simulateMotorCrash, controlGripper, type MotorList, type GripperState } from '$lib/api';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 
 	let motors: MotorList | null = null;
 	let isLoading = true;
 	let crashingMotor: string | null = null;
+	let gripperAction: GripperState | null = null;
 	let error = '';
 	let message = '';
 
@@ -36,6 +37,26 @@
 			error = err instanceof Error ? err.message : `failed to simulate crash for ${motorName}`;
 		} finally {
 			crashingMotor = null;
+		}
+	}
+
+	async function didClickGripper(state: GripperState): Promise<void> {
+		gripperAction = state;
+		error = '';
+		message = '';
+
+		try {
+			const result = await controlGripper(state);
+
+			if (result.success === true) {
+				message = `gripper ${state} completed`;
+			} else {
+				error = `failed to ${state} gripper`;
+			}
+		} catch (err) {
+			error = err instanceof Error ? err.message : `failed to ${state} gripper`;
+		} finally {
+			gripperAction = null;
 		}
 	}
 
@@ -115,6 +136,32 @@
 		</tbody>
 	</table>
 
+	<div class="gripper-section">
+		<span>gripper</span>
+		<button
+			type="button"
+			on:click={() => didClickGripper('grip')}
+			disabled={gripperAction !== null}
+		>
+			{#if gripperAction === 'grip'}
+				gripping...
+			{:else}
+				grip
+			{/if}
+		</button>
+		<button
+			type="button"
+			on:click={() => didClickGripper('release')}
+			disabled={gripperAction !== null}
+		>
+			{#if gripperAction === 'release'}
+				releasing...
+			{:else}
+				release
+			{/if}
+		</button>
+	</div>
+
 	{#if message !== ''}
 		<p class="message">{message}</p>
 	{/if}
@@ -134,5 +181,16 @@
 
 	button {
 		margin-top: 0;
+	}
+
+	.gripper-section {
+		margin-top: 1em;
+		display: flex;
+		align-items: center;
+		gap: 0.5em;
+	}
+
+	.gripper-section span {
+		font-weight: bold;
 	}
 </style>
