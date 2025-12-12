@@ -24,11 +24,18 @@ from ..routers.auth_deps import get_current_user_optional
 
 nats_commands_context: ContextVar[List[Dict[str, Any]]] = ContextVar('nats_commands', default=[])
 
+EXCLUDED_ENDPOINTS = frozenset([
+	"/api/health",
+])
+
 class AuditMiddleware(BaseHTTPMiddleware):
 	"""Middleware to log all API requests and responses."""
-	
+
 	async def dispatch(self, request: Request, call_next: Callable) -> Response:
 		"""Process and log each request."""
+		if request.url.path in EXCLUDED_ENDPOINTS:
+			return await call_next(request)
+
 		nats_commands_context.set([])
 		
 		start_time = time.time()
