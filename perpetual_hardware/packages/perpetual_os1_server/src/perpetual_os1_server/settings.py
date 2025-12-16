@@ -16,6 +16,7 @@ from perpetual_os1.common import (
 	ScannerSettings,
 	CameraAppSettings,
 	ToolCameraSettings,
+	OverheadCameraSettings,
 	NatsSettings,
 	AuthSettings,
 	ScaleAppSettings,
@@ -40,6 +41,7 @@ class Settings(BaseModel):
 	nats: NatsSettings
 	camera: CameraAppSettings
 	tool_camera: ToolCameraSettings
+	overhead_camera: OverheadCameraSettings
 	auth: AuthSettings
 
 	@classmethod
@@ -53,6 +55,7 @@ class Settings(BaseModel):
 			nats=config.nats,
 			camera=config.camera,
 			tool_camera=config.tool_camera,
+			overhead_camera=config.overhead_camera,
 			auth=config.auth,
 		)
 

@@ -264,6 +264,11 @@ class ToolCameraSettings(BaseModel):
     rtsp_url: str = ""
 
 
+class OverheadCameraSettings(BaseModel):
+    enabled: bool = False
+    rtsp_url: str = ""
+
+
 class NatsSettings(BaseModel):
     domain: str = "nats"
     port: int = Field(4222, ge=1, le=65535)
@@ -433,6 +438,7 @@ class RootConfig(BaseModel):
     scanner: ScannerSettings = Field(default_factory=ScannerSettings)
     camera: CameraAppSettings = Field(default_factory=CameraAppSettings)
     tool_camera: ToolCameraSettings = Field(default_factory=ToolCameraSettings)
+    overhead_camera: OverheadCameraSettings = Field(default_factory=OverheadCameraSettings)
     scale: ScaleAppSettings = Field(default_factory=ScaleAppSettings)
     nats: NatsSettings = Field(default_factory=NatsSettings)
     auth: AuthSettings = Field(default_factory=AuthSettings)
