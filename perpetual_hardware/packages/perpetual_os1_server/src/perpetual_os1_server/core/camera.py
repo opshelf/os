@@ -236,6 +236,7 @@ class ToolCameraStreamManager:
 
 camera_manager: Optional[CameraStreamManager] = None
 tool_camera_manager: Optional[ToolCameraStreamManager] = None
+overhead_camera_manager: Optional[ToolCameraStreamManager] = None
 
 async def init_camera_manager(camera: AFSCam, depth_enabled: bool = False) -> None:
 	global camera_manager, camera_registry
@@ -255,6 +256,18 @@ async def init_tool_camera_manager(rtsp_url: str) -> None:
 	tool_camera_manager = ToolCameraStreamManager(rtsp_url=rtsp_url)
 	camera_registry["tool"] = tool_camera_manager
 	logger.info("tool_camera_registered", rtsp_url=rtsp_url)
+
+
+async def init_overhead_camera_manager(rtsp_url: str) -> None:
+	global overhead_camera_manager, camera_registry
+
+	if rtsp_url is None or rtsp_url == "":
+		logger.warning("overhead_camera_not_configured", reason="no_rtsp_url")
+		return
+
+	overhead_camera_manager = ToolCameraStreamManager(rtsp_url=rtsp_url)
+	camera_registry["overhead"] = overhead_camera_manager
+	logger.info("overhead_camera_registered", rtsp_url=rtsp_url)
 
 
 async def start_camera_stream() -> None:
@@ -319,6 +332,8 @@ def get_all_cameras_status() -> list[dict]:
 	for camera_id, manager in camera_registry.items():
 		if isinstance(manager, CameraStreamManager):
 			camera_type = "IOCamera (depth)" if manager.depth_enabled is True else "IOCamera"
+		elif camera_id == "overhead":
+			camera_type = "OverheadCamera"
 		else:
 			camera_type = "ToolCamera"
 

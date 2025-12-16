@@ -21,7 +21,7 @@ from sentry_sdk.integrations.starlette import StarletteIntegration
 from perpetual_os1_server.core.logging_config import configure_logging, get_logger
 from perpetual_os1_server.core.robot import init_robot_worker, stop_robot_worker
 from perpetual_os1_server.core.storage import StorageService
-from perpetual_os1_server.core.camera import init_tool_camera_manager, init_camera_manager
+from perpetual_os1_server.core.camera import init_tool_camera_manager, init_camera_manager, init_overhead_camera_manager
 from perpetual_os1_server.settings import Settings
 from perpetual_os1_server.database.base import Base, engine, get_database_url
 from perpetual_os1_server.database.session import AsyncSessionLocal
@@ -135,6 +135,12 @@ def _get_tool_camera_url(settings: Settings) -> str | None:
 		except Exception as e:
 			logger.warning("failed_to_read_config", config_path=str(config_path), error=str(e))
 
+	return None
+
+
+def _get_overhead_camera_url(settings: Settings) -> str | None:
+	if settings.overhead_camera.enabled is True and settings.overhead_camera.rtsp_url != "":
+		return settings.overhead_camera.rtsp_url
 	return None
 
 
@@ -277,6 +283,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 			logger.info("tool_camera_initialized", rtsp_url=tool_camera_url)
 		except Exception as e:
 			logger.error("tool_camera_initialization_failed", error=str(e), exc_info=True)
+
+	overhead_camera_url = _get_overhead_camera_url(settings)
+	if overhead_camera_url is not None and overhead_camera_url != "":
+		try:
+			await init_overhead_camera_manager(overhead_camera_url)
+			logger.info("overhead_camera_initialized", rtsp_url=overhead_camera_url)
+		except Exception as e:
+			logger.error("overhead_camera_initialization_failed", error=str(e), exc_info=True)
 
 	if settings.camera.enabled is True:
 		io_camera_config = _get_io_camera_config()
