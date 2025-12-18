@@ -82,7 +82,7 @@ button {
 	background-color: white;
 	margin-top: 1em;
 	text-transform: uppercase;
-	box-shadow: 4px 4px 0 #cccccc;
+	box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.25);
 	cursor: pointer;
 }
 
