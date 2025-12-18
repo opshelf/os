@@ -335,6 +335,7 @@ class Parameters(BaseModel):
     GRIPPER_EXTENSION_PLACE: float
     GRIPPER_MOVE_RPM: int = Field(..., gt=0)
     GRIPPER_MOVE_ACCEL: int = Field(..., gt=0)
+    IO_STAGE_OFFSET: Union[int, float] = 8
     FRONT: float
     BACK: float
     JOG_X: Union[int, float]

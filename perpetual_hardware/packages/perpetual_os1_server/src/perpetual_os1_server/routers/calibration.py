@@ -9,6 +9,7 @@ from perpetual_os1.storage import StorageModuleSide, CalibrationCoordinate
 
 from perpetual_os1_server.core.robot import get_robot_worker
 from perpetual_os1_server.routers.auth_deps import get_current_user
+from perpetual_os1_server.settings import get_root_config, save_root_config
 
 router = APIRouter(prefix="/api/calibration", tags=["calibration"], dependencies=[Depends(get_current_user)])
 
@@ -310,5 +311,213 @@ async def place_at_cell(request: MoveRequest):
 	)
 
 	await tool.place(coord)
+
+	return {"success": True}
+
+
+class IOBoxPositionResponse(BaseModel):
+	pickup_low_x: float
+	pickup_low_y: float
+	pickup_high_x: float
+	pickup_high_y: float
+	gripper_extension: float
+	slide_extension: float
+	io_stage_offset: float
+
+
+class IOBoxJogRequest(BaseModel):
+	position: Literal["low", "high"]
+	axis: Literal["x", "y", "gripper", "stage"]
+	delta: float
+
+
+class IOBoxSaveRequest(BaseModel):
+	pickup_low_x: float
+	pickup_low_y: float
+	pickup_high_x: float
+	pickup_high_y: float
+	gripper_extension: float
+	slide_extension: float
+	io_stage_offset: float
+
+
+_iobox_position: Literal["low", "high"] = "low"
+_iobox_current: Optional[IOBoxPositionResponse] = None
+
+
+@router.get("/iobox", response_model=IOBoxPositionResponse)
+async def get_iobox_calibration() -> IOBoxPositionResponse:
+	global _iobox_current
+
+	config = get_root_config()
+	params = config.robot.tool.parameters
+
+	_iobox_current = IOBoxPositionResponse(
+		pickup_low_x=params.PICKUP_POSITION_L[0],
+		pickup_low_y=params.PICKUP_POSITION_L[1],
+		pickup_high_x=params.PICKUP_POSITION_H[0],
+		pickup_high_y=params.PICKUP_POSITION_H[1],
+		gripper_extension=params.GRIPPER_EXTENSION_PLACE,
+		slide_extension=params.SLIDE_EXTENSION_FRONT,
+		io_stage_offset=params.IO_STAGE_OFFSET,
+	)
+
+	return _iobox_current
+
+
+@router.post("/iobox/move", response_model=IOBoxPositionResponse)
+async def move_to_iobox_position(position: Literal["low", "high"]) -> IOBoxPositionResponse:
+	global _iobox_position, _iobox_current
+
+	try:
+		worker = await get_robot_worker()
+	except ValueError as e:
+		raise HTTPException(
+			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+			detail="Robot is not initialized",
+		) from e
+
+	if _iobox_current is None:
+		await get_iobox_calibration()
+
+	tool = worker._robot._tool
+
+	if position == "low":
+		x = _iobox_current.pickup_low_x
+		y = _iobox_current.pickup_low_y
+	else:
+		x = _iobox_current.pickup_high_x
+		y = _iobox_current.pickup_high_y
+
+	await tool.rotate_to_position("front")
+	await tool.move(AxisCoordinate(x, y))
+
+	_iobox_position = position
+
+	return _iobox_current
+
+
+@router.post("/iobox/jog", response_model=IOBoxPositionResponse)
+async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
+	global _iobox_current, _iobox_position
+
+	if _iobox_current is None:
+		raise HTTPException(
+			status_code=status.HTTP_400_BAD_REQUEST,
+			detail="No active IO box calibration session. Get IO box calibration first.",
+		)
+
+	try:
+		worker = await get_robot_worker()
+	except ValueError as e:
+		raise HTTPException(
+			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+			detail="Robot is not initialized",
+		) from e
+
+	tool = worker._robot._tool
+	_iobox_position = request.position
+
+	if request.axis == "x":
+		if request.position == "low":
+			_iobox_current.pickup_low_x += request.delta
+			await tool.move(AxisCoordinate(_iobox_current.pickup_low_x, _iobox_current.pickup_low_y))
+		else:
+			_iobox_current.pickup_high_x += request.delta
+			await tool.move(AxisCoordinate(_iobox_current.pickup_high_x, _iobox_current.pickup_high_y))
+	elif request.axis == "y":
+		if request.position == "low":
+			_iobox_current.pickup_low_y += request.delta
+			await tool.move(AxisCoordinate(_iobox_current.pickup_low_x, _iobox_current.pickup_low_y))
+		else:
+			_iobox_current.pickup_high_y += request.delta
+			await tool.move(AxisCoordinate(_iobox_current.pickup_high_x, _iobox_current.pickup_high_y))
+	elif request.axis == "gripper":
+		_iobox_current.gripper_extension += request.delta
+	elif request.axis == "stage":
+		_iobox_current.io_stage_offset += request.delta
+
+	return _iobox_current
+
+
+@router.post("/iobox/test")
+async def test_iobox_sequence():
+	global _iobox_current
+
+	if _iobox_current is None:
+		raise HTTPException(
+			status_code=status.HTTP_400_BAD_REQUEST,
+			detail="No active IO box calibration session. Get IO box calibration first.",
+		)
+
+	try:
+		worker = await get_robot_worker()
+	except ValueError as e:
+		raise HTTPException(
+			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+			detail="Robot is not initialized",
+		) from e
+
+	tool = worker._robot._tool
+	io = worker._robot._io
+
+	await tool.rotate_to_position("front")
+	await io.open_door()
+
+	await tool.move(AxisCoordinate(_iobox_current.pickup_low_x, _iobox_current.pickup_low_y))
+
+	slide_ext = _iobox_current.slide_extension
+	grip_ext = _iobox_current.gripper_extension
+	io_offset = _iobox_current.io_stage_offset
+	grip_rpm = await tool.get_param("GRIPPER_MOVE_RPM")
+	grip_accel = await tool.get_param("GRIPPER_MOVE_ACCEL")
+
+	await tool._ms.move_to_position(slide_ext + io_offset)
+	await tool._mg.move_to_position(grip_ext, rpm=grip_rpm, accel=grip_accel)
+
+	await tool.move(AxisCoordinate(_iobox_current.pickup_high_x, _iobox_current.pickup_high_y))
+
+	await tool.retract()
+
+	return {"success": True}
+
+
+@router.post("/iobox/save")
+async def save_iobox_calibration(request: IOBoxSaveRequest):
+	global _iobox_current
+
+	try:
+		worker = await get_robot_worker()
+	except ValueError as e:
+		raise HTTPException(
+			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+			detail="Robot is not initialized",
+		) from e
+
+	config = get_root_config()
+
+	params_dict = config.robot.tool.parameters.model_dump()
+	params_dict["PICKUP_POSITION_L"] = (int(request.pickup_low_x), int(request.pickup_low_y))
+	params_dict["PICKUP_POSITION_H"] = (int(request.pickup_high_x), int(request.pickup_high_y))
+	params_dict["GRIPPER_EXTENSION_PLACE"] = request.gripper_extension
+	params_dict["SLIDE_EXTENSION_FRONT"] = request.slide_extension
+	params_dict["IO_STAGE_OFFSET"] = request.io_stage_offset
+
+	from perpetual_os1.common import Parameters
+	config.robot.tool.parameters = Parameters.model_validate(params_dict)
+
+	save_root_config(config)
+
+	await worker._robot._tool.home()
+
+	_iobox_current = IOBoxPositionResponse(
+		pickup_low_x=request.pickup_low_x,
+		pickup_low_y=request.pickup_low_y,
+		pickup_high_x=request.pickup_high_x,
+		pickup_high_y=request.pickup_high_y,
+		gripper_extension=request.gripper_extension,
+		slide_extension=request.slide_extension,
+		io_stage_offset=request.io_stage_offset,
+	)
 
 	return {"success": True}

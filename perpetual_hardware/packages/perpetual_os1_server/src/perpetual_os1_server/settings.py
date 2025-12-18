@@ -62,6 +62,7 @@ class Settings(BaseModel):
 
 _cached_config: Optional[RootConfig] = None
 _cached_settings: Optional[Settings] = None
+_cached_config_path: Optional[Path] = None
 
 
 def _find_config_path() -> Optional[Path]:
@@ -199,7 +200,7 @@ def _migrate_legacy_settings(settings_path: Path, config_path: Path) -> None:
 
 
 def get_root_config() -> RootConfig:
-	global _cached_config
+	global _cached_config, _cached_config_path
 
 	if _cached_config is not None:
 		return _cached_config
@@ -218,9 +219,11 @@ def get_root_config() -> RootConfig:
 		data = _apply_env_overrides(data)
 		from perpetual_os1.common import load_and_validate_config
 		_cached_config = load_and_validate_config(data)
+		_cached_config_path = Path("data/config.json")
 		return _cached_config
 
 	logger.info("Loading config from %s", found_path)
+	_cached_config_path = found_path
 
 	if found_path.name == "settings.json":
 		logger.warning(
@@ -260,3 +263,26 @@ def clear_config_cache() -> None:
 	global _cached_config, _cached_settings
 	_cached_config = None
 	_cached_settings = None
+
+
+def get_config_path() -> Optional[Path]:
+	return _cached_config_path
+
+
+def save_root_config(config: RootConfig) -> None:
+	global _cached_config, _cached_settings, _cached_config_path
+
+	if _cached_config_path is None:
+		_cached_config_path = Path("data/config.json")
+
+	_cached_config_path.parent.mkdir(parents=True, exist_ok=True)
+
+	data = config.model_dump(mode="json")
+
+	with open(_cached_config_path, "w") as f:
+		json.dump(data, f, indent="\t")
+
+	_cached_config = config
+	_cached_settings = None
+
+	logger.info("Config saved to %s", _cached_config_path)

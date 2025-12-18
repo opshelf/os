@@ -306,3 +306,49 @@ export async function controlGripper(state: GripperState): Promise<{ success: bo
 		method: "POST",
 	});
 }
+
+export interface IOBoxPosition {
+	pickup_low_x: number;
+	pickup_low_y: number;
+	pickup_high_x: number;
+	pickup_high_y: number;
+	gripper_extension: number;
+	slide_extension: number;
+	io_stage_offset: number;
+}
+
+export async function getIOBoxCalibration(): Promise<IOBoxPosition> {
+	return apiFetch<IOBoxPosition>("/calibration/iobox");
+}
+
+export async function moveToIOBoxPosition(position: "low" | "high"): Promise<IOBoxPosition> {
+	return apiFetch<IOBoxPosition>(`/calibration/iobox/move?position=${position}`, {
+		method: "POST",
+	});
+}
+
+export async function jogIOBoxAxis(
+	position: "low" | "high",
+	axis: "x" | "y" | "gripper" | "stage",
+	delta: number
+): Promise<IOBoxPosition> {
+	return apiFetch<IOBoxPosition>("/calibration/iobox/jog", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ position, axis, delta }),
+	});
+}
+
+export async function testIOBoxSequence(): Promise<{ success: boolean }> {
+	return apiFetch<{ success: boolean }>("/calibration/iobox/test", {
+		method: "POST",
+	});
+}
+
+export async function saveIOBoxCalibration(params: IOBoxPosition): Promise<{ success: boolean }> {
+	return apiFetch<{ success: boolean }>("/calibration/iobox/save", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(params),
+	});
+}
