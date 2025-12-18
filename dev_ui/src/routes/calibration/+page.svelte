@@ -1,6 +1,6 @@
 <script lang="ts">
-	import CellCalibration from './CellCalibration.svelte';
-	import IOBoxCalibration from './IOBoxCalibration.svelte';
+	import CellCalibration from '$lib/components/calibration/CellCalibration.svelte';
+	import IOBoxCalibration from '$lib/components/calibration/IOBoxCalibration.svelte';
 </script>
 
 <CellCalibration />
