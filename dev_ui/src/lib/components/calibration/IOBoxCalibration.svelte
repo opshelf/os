@@ -19,6 +19,7 @@
 	let isMoving = false;
 	let isTesting = false;
 	let isSaving = false;
+	let isPositioned = false;
 	let jogStep = 1;
 
 	const JOG_STEPS = [
@@ -55,6 +56,7 @@
 		const target = event.target as HTMLSelectElement;
 
 		selectedPosition = target.value as 'low' | 'high';
+		isPositioned = false;
 		error = '';
 		message = '';
 	}
@@ -66,6 +68,7 @@
 
 		try {
 			ioboxPosition = await moveToIOBoxPosition(selectedPosition);
+			isPositioned = true;
 			message = `moved to ${selectedPosition} position`;
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'failed to move to io box position';
@@ -164,6 +167,7 @@
 				</td>
 				<td colspan="2">
 					<button
+						class="move-button"
 						type="button"
 						on:click={didClickMove}
 						disabled={isMoving === true || isTesting === true}
@@ -186,7 +190,7 @@
 	</tbody>
 </table>
 
-{#if ioboxPosition !== null}
+{#if ioboxPosition !== null && isPositioned === true}
 	<div class="jog-controls">
 		<div class="jog-axis">
 			<span class="axis-label">X</span>
@@ -206,6 +210,8 @@
 				+
 			</button>
 		</div>
+	</div>
+	<div class="jog-controls">
 		<div class="jog-axis">
 			<span class="axis-label">grip</span>
 			<button
@@ -240,6 +246,8 @@
 				+
 			</button>
 		</div>
+	</div>
+	<div class="jog-controls">
 		<div class="jog-step">
 			<span class="axis-label">step</span>
 			<select bind:value={jogStep}>
@@ -323,5 +331,9 @@
 	.message {
 		margin-top: 1em;
 		color: green;
+	}
+
+	.move-button {
+		margin-top: 0;
 	}
 </style>

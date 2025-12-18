@@ -381,6 +381,7 @@ async def move_to_iobox_position(position: Literal["low", "high"]) -> IOBoxPosit
 		await get_iobox_calibration()
 
 	tool = worker._robot._tool
+	io = worker._robot._io
 
 	if position == "low":
 		x = _iobox_current.pickup_low_x
@@ -390,6 +391,7 @@ async def move_to_iobox_position(position: Literal["low", "high"]) -> IOBoxPosit
 		y = _iobox_current.pickup_high_y
 
 	await tool.rotate_to_position("front")
+	await io.open_door()
 	await tool.move(AxisCoordinate(x, y))
 
 	_iobox_position = position
@@ -434,8 +436,13 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 			await tool.move(AxisCoordinate(_iobox_current.pickup_high_x, _iobox_current.pickup_high_y))
 	elif request.axis == "gripper":
 		_iobox_current.gripper_extension += request.delta
+		grip_rpm = await tool.get_param("GRIPPER_MOVE_RPM")
+		grip_accel = await tool.get_param("GRIPPER_MOVE_ACCEL")
+		await tool._mg.move_to_position(_iobox_current.gripper_extension, rpm=grip_rpm, accel=grip_accel)
 	elif request.axis == "stage":
 		_iobox_current.io_stage_offset += request.delta
+		slide_ext = _iobox_current.slide_extension
+		await tool._ms.move_to_position(slide_ext + _iobox_current.io_stage_offset)
 
 	return _iobox_current
 

@@ -323,6 +323,8 @@
 					+
 				</button>
 			</div>
+		</div>
+		<div class="jog-controls">
 			<div class="jog-step">
 				<span class="axis-label">step</span>
 				<select bind:value={jogStep}>
