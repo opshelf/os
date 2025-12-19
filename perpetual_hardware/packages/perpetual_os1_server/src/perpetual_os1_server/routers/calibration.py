@@ -440,29 +440,35 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 	tool = worker._robot._tool
 	_iobox_position = request.position
 
-	if request.axis == "x":
-		if request.position == "low":
-			_iobox_current.pickup_low_x += request.delta
-			await tool.move(AxisCoordinate(_iobox_current.pickup_low_x, _iobox_current.pickup_low_y))
-		else:
-			_iobox_current.pickup_high_x += request.delta
-			await tool.move(AxisCoordinate(_iobox_current.pickup_high_x, _iobox_current.pickup_high_y))
-	elif request.axis == "y":
-		if request.position == "low":
-			_iobox_current.pickup_low_y += request.delta
-			await tool.move(AxisCoordinate(_iobox_current.pickup_low_x, _iobox_current.pickup_low_y))
-		else:
-			_iobox_current.pickup_high_y += request.delta
-			await tool.move(AxisCoordinate(_iobox_current.pickup_high_x, _iobox_current.pickup_high_y))
-	elif request.axis == "gripper":
-		_iobox_current.gripper_extension += request.delta
-		grip_rpm = await tool.get_param("GRIPPER_MOVE_RPM")
-		grip_accel = await tool.get_param("GRIPPER_MOVE_ACCEL")
-		await tool._mg.move_to_position(_iobox_current.gripper_extension, rpm=grip_rpm, accel=grip_accel)
-	elif request.axis == "stage":
-		_iobox_current.io_stage_offset += request.delta
-		slide_ext = _iobox_current.slide_extension
-		await tool._ms.move_to_position(slide_ext + _iobox_current.io_stage_offset)
+	try:
+		if request.axis == "x":
+			if request.position == "low":
+				_iobox_current.pickup_low_x += request.delta
+				await tool.move(AxisCoordinate(_iobox_current.pickup_low_x, _iobox_current.pickup_low_y))
+			else:
+				_iobox_current.pickup_high_x += request.delta
+				await tool.move(AxisCoordinate(_iobox_current.pickup_high_x, _iobox_current.pickup_high_y))
+		elif request.axis == "y":
+			if request.position == "low":
+				_iobox_current.pickup_low_y += request.delta
+				await tool.move(AxisCoordinate(_iobox_current.pickup_low_x, _iobox_current.pickup_low_y))
+			else:
+				_iobox_current.pickup_high_y += request.delta
+				await tool.move(AxisCoordinate(_iobox_current.pickup_high_x, _iobox_current.pickup_high_y))
+		elif request.axis == "gripper":
+			_iobox_current.gripper_extension += request.delta
+			grip_rpm = await tool.get_param("GRIPPER_MOVE_RPM")
+			grip_accel = await tool.get_param("GRIPPER_MOVE_ACCEL")
+			await tool._mg.move_to_position(_iobox_current.gripper_extension, rpm=grip_rpm, accel=grip_accel)
+		elif request.axis == "stage":
+			_iobox_current.io_stage_offset += request.delta
+			slide_ext = _iobox_current.slide_extension
+			await tool._ms.move_to_position(slide_ext + _iobox_current.io_stage_offset)
+	except (MotorError, HardwareMotorError) as e:
+		raise HTTPException(
+			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+			detail=f"Motor error: {str(e)}",
+		) from e
 
 	return _iobox_current
 
