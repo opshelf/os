@@ -105,7 +105,8 @@ class Tool:
             CameraError: If camera initialization fails
         """
         try:
-            await self._gs.configure()
+            if self._params.gripper.enabled is True:
+                await self._gs.configure()
             await self._my.configure()
             await self._mx.configure()
             await self._mg.configure()
