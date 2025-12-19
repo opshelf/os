@@ -125,6 +125,8 @@ class Motor(BaseModel):
     position_reg_high: int = Field(default=0x602C)
     position_reg_low: int = Field(default=0x602D)
     status_reg: int = Field(default=0x1003)
+    status_fault_bit: Optional[int] = Field(default=0)
+    status_complete_bit: int = Field(default=5)
 
     @field_validator("motor_name")
     @classmethod

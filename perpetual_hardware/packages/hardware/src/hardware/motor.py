@@ -519,9 +519,12 @@ class Motor():
                     extra={"motor_id": self._motor_id},
                 )
                 raise MotorError(f"Failed to read motion status from motor {self._motor_id}")
-            
-            complete = status & (1 << 5)
-            fault_bit = status & 1
+
+            complete_bit = getattr(self._params, "status_complete_bit", 5)
+            fault_bit_num = getattr(self._params, "status_fault_bit", 0)
+
+            complete = status & (1 << complete_bit)
+            fault_bit = (status & (1 << fault_bit_num)) if fault_bit_num is not None else 0
 
             await self.get_position()
             now = time.monotonic()
