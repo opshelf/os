@@ -487,10 +487,26 @@ async def test_iobox_sequence():
 	tool = worker._robot._tool
 	io = worker._robot._io
 
-	await tool.rotate_to_position("front")
-	await io.open_door()
+	try:
+		await tool.rotate_to_position("front")
+	except MotorError as e:
+		raise HTTPException(
+			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+			detail=f"Motor error: {str(e)}",
+		) from e
 
-	await tool.move(AxisCoordinate(_iobox_current.pickup_low_x, _iobox_current.pickup_low_y))
+	try:
+		await io.open_door()
+	except (IOBoxError, MotorError) as e:
+		logging.getLogger(__name__).warning(f"Door open failed (continuing): {e}")
+
+	try:
+		await tool.move(AxisCoordinate(_iobox_current.pickup_low_x, _iobox_current.pickup_low_y))
+	except MotorError as e:
+		raise HTTPException(
+			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+			detail=f"Motor error: {str(e)}",
+		) from e
 
 	slide_ext = _iobox_current.slide_extension
 	grip_ext = _iobox_current.gripper_extension
@@ -498,12 +514,16 @@ async def test_iobox_sequence():
 	grip_rpm = await tool.get_param("GRIPPER_MOVE_RPM")
 	grip_accel = await tool.get_param("GRIPPER_MOVE_ACCEL")
 
-	await tool._ms.move_to_position(slide_ext + io_offset)
-	await tool._mg.move_to_position(grip_ext, rpm=grip_rpm, accel=grip_accel)
-
-	await tool.move(AxisCoordinate(_iobox_current.pickup_high_x, _iobox_current.pickup_high_y))
-
-	await tool.retract()
+	try:
+		await tool._ms.move_to_position(slide_ext + io_offset)
+		await tool._mg.move_to_position(grip_ext, rpm=grip_rpm, accel=grip_accel)
+		await tool.move(AxisCoordinate(_iobox_current.pickup_high_x, _iobox_current.pickup_high_y))
+		await tool.retract()
+	except MotorError as e:
+		raise HTTPException(
+			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+			detail=f"Motor error: {str(e)}",
+		) from e
 
 	return {"success": True}
 
