@@ -680,3 +680,47 @@ async def debug_motor30_registers():
 			results[desc] = {"error": str(e)}
 
 	return results
+
+
+@router.get("/debug/motor30-status-scan")
+async def debug_motor30_status_scan():
+	"""Scan motor 30 registers to find correct status register."""
+	try:
+		worker = await get_robot_worker()
+	except ValueError as e:
+		raise HTTPException(
+			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+			detail="Robot is not initialized",
+		) from e
+
+	tool = worker._robot._tool
+	controller = tool._mg._controller
+	motor_id = 30
+
+	results = {}
+
+	registers_to_scan = [
+		0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A,
+		0x48, 0x49, 0x4A, 0x4B, 0x4C, 0x4D, 0x4E, 0x4F,
+		0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5A,
+		0x1003,
+	]
+
+	for reg in registers_to_scan:
+		try:
+			val = await controller.read_holding_registers(motor_id, reg, 1)
+			if val is not None:
+				results[f"0x{reg:04X}"] = {
+					"decimal": val,
+					"hex": f"0x{val:04X}",
+					"binary": f"{val:016b}",
+					"bit0": val & 1,
+					"bit5": (val >> 5) & 1,
+					"bit6": (val >> 6) & 1,
+				}
+			else:
+				results[f"0x{reg:04X}"] = None
+		except Exception as e:
+			results[f"0x{reg:04X}"] = {"error": str(e)}
+
+	return results

@@ -511,7 +511,8 @@ class Motor():
             extra={"motor_id": self._motor_id, "timeout": timeout, "homing": homing},
         )
         while True:
-            status = await self.get_param("Motion status")
+            status_reg = getattr(self._params, "status_reg", 0x1003)
+            status = await self._controller.read_holding_registers(self._motor_id, status_reg)
             if status is None:
                 self._logger.error(
                     "Failed to read motion status from motor",
