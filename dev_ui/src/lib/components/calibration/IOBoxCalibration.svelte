@@ -184,7 +184,7 @@
 				<td>high y: {formatNumber(ioboxPosition.pickup_high_y)}</td>
 			</tr>
 			<tr>
-				<td colspan="2">gripper: {formatNumber(ioboxPosition.gripper_extension)}</td>
+				<td colspan="2">Z: {formatNumber(ioboxPosition.gripper_extension)}</td>
 				<td colspan="2">stage offset: {formatNumber(ioboxPosition.io_stage_offset)}</td>
 			</tr>
 		{/if}
@@ -214,7 +214,7 @@
 	</div>
 	<div class="jog-controls">
 		<div class="jog-axis">
-			<span class="axis-label">grip</span>
+			<span class="axis-label">Z</span>
 			<button
 				type="button"
 				on:click={() => didClickJog('gripper', -jogStep)}
