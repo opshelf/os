@@ -71,7 +71,7 @@ class Tool:
         self._mg = Motor(self._motorcontroller, self._params.motors.by_name("z_axis"), safety)
         self._ms = Motor(self._motorcontroller, self._params.motors.by_name("stage"), safety)
         self._mr = Motor(self._motorcontroller, self._params.motors.by_name("rotate"), safety)
-        self._gs = Servo(self._motorcontroller)
+        self._gs = Servo(self._motorcontroller, self._params.gripper.model_dump())
 
         self._cam = ToolCamera(self._params.poe_camera)
 
