@@ -48,16 +48,19 @@ class MotorStatus(Enum):
 class Servo:
     """Controls a servo motor via Modbus."""
 
-    def __init__(self, controller: SharedModbusController):
+    def __init__(self, controller: SharedModbusController, params: dict = None):
         """Initialize servo controller.
-        
+
         Args:
             controller: Shared Modbus controller instance
+            params: Optional dict with motor_id, control_reg, status_reg
         """
-        self._motor_id = 0x9                  # slave id
+        if params is None:
+            params = {}
+        self._motor_id = int(params.get("motor_id", 0x9))
         self._controller = controller
-        self._control_reg = 0x3E8
-        self._status_reg = 0x07D0            # status register
+        self._control_reg = int(params.get("control_reg", 0x3E8))
+        self._status_reg = int(params.get("status_reg", 0x07D0))
 
     async def configure(self) -> None:
         """Configure the servo with initial settings.
