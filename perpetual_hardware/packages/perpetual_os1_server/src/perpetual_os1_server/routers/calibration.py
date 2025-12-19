@@ -627,3 +627,56 @@ async def save_rotation_angles(request: RotateSaveRequest):
 	save_root_config(config)
 
 	return {"success": True}
+
+
+@router.get("/debug/motor30-registers")
+async def debug_motor30_registers():
+	"""Probe motor 30 registers to find correct position addresses."""
+	try:
+		worker = await get_robot_worker()
+	except ValueError as e:
+		raise HTTPException(
+			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+			detail="Robot is not initialized",
+		) from e
+
+	tool = worker._robot._tool
+	controller = tool._mg._controller
+	motor_id = 30
+	mpr = 1.9992
+	ppr = 10000
+
+	results = {}
+
+	register_pairs = [
+		(0x602C, 0x602D, "CANopen style (current)"),
+		(0x602D, 0x602C, "CANopen reversed"),
+		(0x0050, 0x0051, "Variant A"),
+		(0x0051, 0x0050, "Variant A reversed"),
+		(0x6028, 0x6029, "Variant B"),
+		(0x6030, 0x6031, "Variant C"),
+	]
+
+	for reg_h, reg_l, desc in register_pairs:
+		try:
+			val_h = await controller.read_holding_registers(motor_id, reg_h, 1)
+			val_l = await controller.read_holding_registers(motor_id, reg_l, 1)
+
+			if val_h is not None and val_l is not None:
+				combined = (val_h << 16) | val_l
+				pos_mm = (combined / ppr) * mpr
+
+				results[desc] = {
+					"reg_high": f"0x{reg_h:04X}",
+					"reg_low": f"0x{reg_l:04X}",
+					"val_high": val_h,
+					"val_low": val_l,
+					"combined_pulses": combined,
+					"position_mm": round(pos_mm, 4),
+				}
+			else:
+				results[desc] = {"error": "read returned None"}
+		except Exception as e:
+			results[desc] = {"error": str(e)}
+
+	return results

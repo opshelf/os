@@ -122,6 +122,8 @@ class Motor(BaseModel):
     accel: int = Field(..., gt=0)
     ret_rpm: int = Field(..., gt=0)
     lim: Union[int, float] = Field(..., gt=0)
+    position_reg_high: int = Field(default=0x602C)
+    position_reg_low: int = Field(default=0x602D)
 
     @field_validator("motor_name")
     @classmethod
