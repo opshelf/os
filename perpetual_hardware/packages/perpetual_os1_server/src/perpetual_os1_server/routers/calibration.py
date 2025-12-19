@@ -330,7 +330,7 @@ class IOBoxPositionResponse(BaseModel):
 
 class IOBoxJogRequest(BaseModel):
 	position: Literal["low", "high"]
-	axis: Literal["x", "y", "gripper", "stage"]
+	axis: Literal["x", "y", "z", "stage"]
 	delta: float
 
 
@@ -452,11 +452,13 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 			else:
 				_iobox_current.pickup_high_y += request.delta
 				await tool.move(AxisCoordinate(_iobox_current.pickup_high_x, _iobox_current.pickup_high_y))
-		elif request.axis == "gripper":
-			_iobox_current.gripper_extension += request.delta
+		elif request.axis == "z":
+			current_z = await tool._mg.get_position()
+			new_z = current_z + request.delta
+			_iobox_current.gripper_extension = new_z
 			grip_rpm = await tool.get_param("GRIPPER_MOVE_RPM")
 			grip_accel = await tool.get_param("GRIPPER_MOVE_ACCEL")
-			await tool._mg.move_to_position(_iobox_current.gripper_extension, rpm=grip_rpm, accel=grip_accel)
+			await tool._mg.move_to_position(new_z, rpm=grip_rpm, accel=grip_accel)
 		elif request.axis == "stage":
 			_iobox_current.io_stage_offset += request.delta
 			slide_ext = _iobox_current.slide_extension
