@@ -367,6 +367,7 @@ class Parameters(BaseModel):
 
 
 class Gripper(BaseModel):
+    enabled: bool = Field(default=True)
     motor_id: int = Field(default=9, ge=0)
     control_reg: int = Field(default=0x03E8)
     status_reg: int = Field(default=0x07D0)
