@@ -364,10 +364,17 @@ class Parameters(BaseModel):
         return _positive(v, info.field_name)
 
 
+class Gripper(BaseModel):
+    motor_id: int = Field(default=9, ge=0)
+    control_reg: int = Field(default=0x03E8)
+    status_reg: int = Field(default=0x07D0)
+
+
 class Tool(BaseModel):
     parameters: Parameters
     motors: Motors
     poe_camera: PoeCamera
+    gripper: Gripper = Field(default_factory=Gripper)
 
 
 class IOBlock(BaseModel):

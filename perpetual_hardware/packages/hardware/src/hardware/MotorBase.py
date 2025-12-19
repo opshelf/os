@@ -13,11 +13,13 @@ class MotorStatus(Enum):
     ERROR = 3
 
 class Servo():
-    def __init__(self, controller: SharedModbusController):
-            self._motor_id = 0x9                            # slave id
+    def __init__(self, controller: SharedModbusController, params: dict = None):
+            if params is None:
+                params = {}
+            self._motor_id = int(params.get("motor_id", 0x9))
             self._controller = controller
-            self._control_reg = 0x3E8
-            self._status_reg = 0x07D0                        # status register
+            self._control_reg = int(params.get("control_reg", 0x3E8))
+            self._status_reg = int(params.get("status_reg", 0x07D0))
 
     async def configure(self):
         await self._controller.write_single_register(self._motor_id, self._control_reg, 0x0) #clear
