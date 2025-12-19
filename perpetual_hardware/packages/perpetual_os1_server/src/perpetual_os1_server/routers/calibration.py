@@ -528,3 +528,57 @@ async def save_iobox_calibration(request: IOBoxSaveRequest):
 	)
 
 	return {"success": True}
+
+
+class RotationAnglesResponse(BaseModel):
+	front: float
+	back: float
+
+
+class RotateSaveRequest(BaseModel):
+	front: float
+	back: float
+
+
+@router.get("/rotation", response_model=RotationAnglesResponse)
+async def get_rotation_angles() -> RotationAnglesResponse:
+	config = get_root_config()
+	params = config.robot.tool.parameters
+
+	return RotationAnglesResponse(
+		front=params.FRONT,
+		back=params.BACK,
+	)
+
+
+@router.post("/rotation/rotate")
+async def rotate_to_angle(angle: float):
+	try:
+		worker = await get_robot_worker()
+	except ValueError as e:
+		raise HTTPException(
+			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+			detail="Robot is not initialized",
+		) from e
+
+	tool = worker._robot._tool
+
+	await tool._mr.move_to_position(angle)
+
+	return {"success": True}
+
+
+@router.post("/rotation/save")
+async def save_rotation_angles(request: RotateSaveRequest):
+	config = get_root_config()
+
+	params_dict = config.robot.tool.parameters.model_dump()
+	params_dict["FRONT"] = request.front
+	params_dict["BACK"] = request.back
+
+	from perpetual_os1.common import Parameters
+	config.robot.tool.parameters = Parameters.model_validate(params_dict)
+
+	save_root_config(config)
+
+	return {"success": True}

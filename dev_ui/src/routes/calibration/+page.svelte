@@ -1,8 +1,9 @@
 <script lang="ts">
 	import CellCalibration from '$lib/components/calibration/CellCalibration.svelte';
 	import IOBoxCalibration from '$lib/components/calibration/IOBoxCalibration.svelte';
+	import RotationCalibration from '$lib/components/calibration/RotationCalibration.svelte';
 
-	let selectedView: 'cell' | 'io' = 'cell';
+	let selectedView: 'cell' | 'io' | 'rotation' = 'cell';
 
 	function didSelectCell(): void {
 		selectedView = 'cell';
@@ -10,6 +11,10 @@
 
 	function didSelectIO(): void {
 		selectedView = 'io';
+	}
+
+	function didSelectRotation(): void {
+		selectedView = 'rotation';
 	}
 </script>
 
@@ -20,12 +25,17 @@
 	<button type="button" class:selected={selectedView === 'io'} on:click={didSelectIO}>
 		io box
 	</button>
+	<button type="button" class:selected={selectedView === 'rotation'} on:click={didSelectRotation}>
+		rotation
+	</button>
 </div>
 
 {#if selectedView === 'cell'}
 	<CellCalibration />
-{:else}
+{:else if selectedView === 'io'}
 	<IOBoxCalibration />
+{:else}
+	<RotationCalibration />
 {/if}
 
 <style>

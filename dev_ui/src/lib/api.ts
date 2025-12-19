@@ -352,3 +352,26 @@ export async function saveIOBoxCalibration(params: IOBoxPosition): Promise<{ suc
 		body: JSON.stringify(params),
 	});
 }
+
+export interface RotationAngles {
+	front: number;
+	back: number;
+}
+
+export async function getRotationAngles(): Promise<RotationAngles> {
+	return apiFetch<RotationAngles>("/calibration/rotation");
+}
+
+export async function rotateToAngle(angle: number): Promise<{ success: boolean }> {
+	return apiFetch<{ success: boolean }>(`/calibration/rotation/rotate?angle=${angle}`, {
+		method: "POST",
+	});
+}
+
+export async function saveRotationAngles(front: number, back: number): Promise<{ success: boolean }> {
+	return apiFetch<{ success: boolean }>("/calibration/rotation/save", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ front, back }),
+	});
+}
