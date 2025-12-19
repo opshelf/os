@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from perpetual_os1.common import AxisCoordinate
 from perpetual_os1.storage import StorageModuleSide, CalibrationCoordinate
 from perpetual_os1.exceptions import IOBoxError, MotorError
+from hardware.exceptions import MotorError as HardwareMotorError
 
 from perpetual_os1_server.core.robot import get_robot_worker
 from perpetual_os1_server.routers.auth_deps import get_current_user
@@ -394,7 +395,7 @@ async def move_to_iobox_position(position: Literal["low", "high"]) -> IOBoxPosit
 
 	try:
 		await tool.rotate_to_position("front")
-	except MotorError as e:
+	except (MotorError, HardwareMotorError) as e:
 		raise HTTPException(
 			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
 			detail=f"Motor error: {str(e)}",
@@ -402,12 +403,12 @@ async def move_to_iobox_position(position: Literal["low", "high"]) -> IOBoxPosit
 
 	try:
 		await io.open_door()
-	except (IOBoxError, MotorError) as e:
+	except (IOBoxError, MotorError, HardwareMotorError) as e:
 		logging.getLogger(__name__).warning(f"Door open failed (continuing): {e}")
 
 	try:
 		await tool.move(AxisCoordinate(x, y))
-	except MotorError as e:
+	except (MotorError, HardwareMotorError) as e:
 		raise HTTPException(
 			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
 			detail=f"Motor error: {str(e)}",
@@ -489,7 +490,7 @@ async def test_iobox_sequence():
 
 	try:
 		await tool.rotate_to_position("front")
-	except MotorError as e:
+	except (MotorError, HardwareMotorError) as e:
 		raise HTTPException(
 			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
 			detail=f"Motor error: {str(e)}",
@@ -497,12 +498,12 @@ async def test_iobox_sequence():
 
 	try:
 		await io.open_door()
-	except (IOBoxError, MotorError) as e:
+	except (IOBoxError, MotorError, HardwareMotorError) as e:
 		logging.getLogger(__name__).warning(f"Door open failed (continuing): {e}")
 
 	try:
 		await tool.move(AxisCoordinate(_iobox_current.pickup_low_x, _iobox_current.pickup_low_y))
-	except MotorError as e:
+	except (MotorError, HardwareMotorError) as e:
 		raise HTTPException(
 			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
 			detail=f"Motor error: {str(e)}",
@@ -519,7 +520,7 @@ async def test_iobox_sequence():
 		await tool._mg.move_to_position(grip_ext, rpm=grip_rpm, accel=grip_accel)
 		await tool.move(AxisCoordinate(_iobox_current.pickup_high_x, _iobox_current.pickup_high_y))
 		await tool.retract()
-	except MotorError as e:
+	except (MotorError, HardwareMotorError) as e:
 		raise HTTPException(
 			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
 			detail=f"Motor error: {str(e)}",
