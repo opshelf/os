@@ -724,3 +724,52 @@ async def debug_motor30_status_scan():
 			results[f"0x{reg:04X}"] = {"error": str(e)}
 
 	return results
+
+
+class SetPositionRequest(BaseModel):
+	position_mm: float
+
+
+@router.post("/debug/motor30-set-position")
+async def debug_motor30_set_position(request: SetPositionRequest):
+	"""Set motor 30 current position in mm."""
+	try:
+		worker = await get_robot_worker()
+	except ValueError as e:
+		raise HTTPException(
+			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+			detail="Robot is not initialized",
+		) from e
+
+	tool = worker._robot._tool
+	controller = tool._mg._controller
+	motor_id = 30
+	mpr = 19.992
+	ppr = 10000
+
+	pulses = int((request.position_mm / mpr) * ppr)
+	high = (pulses >> 16) & 0xFFFF
+	low = pulses & 0xFFFF
+
+	try:
+		await controller.write_register(motor_id, 0x602C, high)
+		await controller.write_register(motor_id, 0x602D, low)
+
+		val_h = await controller.read_holding_registers(motor_id, 0x602C, 1)
+		val_l = await controller.read_holding_registers(motor_id, 0x602D, 1)
+		actual_pulses = (val_h << 16) | val_l
+		actual_mm = (actual_pulses / ppr) * mpr
+
+		return {
+			"requested_mm": request.position_mm,
+			"requested_pulses": pulses,
+			"high": high,
+			"low": low,
+			"actual_pulses": actual_pulses,
+			"actual_mm": round(actual_mm, 4),
+		}
+	except Exception as e:
+		raise HTTPException(
+			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+			detail=f"Failed to set position: {e}",
+		) from e
