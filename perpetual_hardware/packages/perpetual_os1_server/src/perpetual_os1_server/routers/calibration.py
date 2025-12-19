@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from perpetual_os1.common import AxisCoordinate
 from perpetual_os1.storage import StorageModuleSide, CalibrationCoordinate
+from perpetual_os1.exceptions import IOBoxError, MotorError
 
 from perpetual_os1_server.core.robot import get_robot_worker
 from perpetual_os1_server.routers.auth_deps import get_current_user
@@ -390,9 +391,20 @@ async def move_to_iobox_position(position: Literal["low", "high"]) -> IOBoxPosit
 		x = _iobox_current.pickup_high_x
 		y = _iobox_current.pickup_high_y
 
-	await tool.rotate_to_position("front")
-	await io.open_door()
-	await tool.move(AxisCoordinate(x, y))
+	try:
+		await tool.rotate_to_position("front")
+		await io.open_door()
+		await tool.move(AxisCoordinate(x, y))
+	except IOBoxError as e:
+		raise HTTPException(
+			status_code=status.HTTP_409_CONFLICT,
+			detail=str(e),
+		) from e
+	except MotorError as e:
+		raise HTTPException(
+			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+			detail=f"Motor error: {str(e)}",
+		) from e
 
 	_iobox_position = position
 
