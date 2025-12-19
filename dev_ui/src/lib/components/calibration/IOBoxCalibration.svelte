@@ -190,7 +190,7 @@
 	</tbody>
 </table>
 
-{#if ioboxPosition !== null && isPositioned === true}
+{#if ioboxPosition !== null}
 	<div class="jog-controls">
 		<div class="jog-axis">
 			<span class="axis-label">X</span>
