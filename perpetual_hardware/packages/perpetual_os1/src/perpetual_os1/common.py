@@ -124,6 +124,7 @@ class Motor(BaseModel):
     lim: Union[int, float] = Field(..., gt=0)
     position_reg_high: int = Field(default=0x602C)
     position_reg_low: int = Field(default=0x602D)
+    status_reg: int = Field(default=0x1003)
 
     @field_validator("motor_name")
     @classmethod
