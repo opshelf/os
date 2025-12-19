@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -393,13 +394,19 @@ async def move_to_iobox_position(position: Literal["low", "high"]) -> IOBoxPosit
 
 	try:
 		await tool.rotate_to_position("front")
-		await io.open_door()
-		await tool.move(AxisCoordinate(x, y))
-	except IOBoxError as e:
+	except MotorError as e:
 		raise HTTPException(
-			status_code=status.HTTP_409_CONFLICT,
-			detail=str(e),
+			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+			detail=f"Motor error: {str(e)}",
 		) from e
+
+	try:
+		await io.open_door()
+	except (IOBoxError, MotorError) as e:
+		logging.getLogger(__name__).warning(f"Door open failed (continuing): {e}")
+
+	try:
+		await tool.move(AxisCoordinate(x, y))
 	except MotorError as e:
 		raise HTTPException(
 			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
