@@ -387,17 +387,19 @@ class Motor():
         
     async def get_position(self) -> float:
         """Get the current motor position in millimeters.
-        
+
         Raises:
             MotorError: If position read fails or calculation fails
-            
+
         Returns:
             Current position in millimeters
         """
         try:
-            # Read position registers
-            pos_l = await self.get_param("Position Low (Actual)") 
-            pos_h = await self.get_param("Position High (Actual)")
+            reg_high = getattr(self._params, "position_reg_high", 0x602C)
+            reg_low = getattr(self._params, "position_reg_low", 0x602D)
+
+            pos_l = await self._controller.read_holding_registers(self._motor_id, reg_low)
+            pos_h = await self._controller.read_holding_registers(self._motor_id, reg_high)
             
             if pos_l is None or pos_h is None:
                 raise MotorError(f"Failed to read position registers for motor {self._motor_id}")
