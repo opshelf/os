@@ -424,10 +424,7 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 	global _iobox_current, _iobox_position
 
 	if _iobox_current is None:
-		raise HTTPException(
-			status_code=status.HTTP_400_BAD_REQUEST,
-			detail="No active IO box calibration session. Get IO box calibration first.",
-		)
+		await get_iobox_calibration()
 
 	try:
 		worker = await get_robot_worker()
@@ -478,10 +475,7 @@ async def test_iobox_sequence():
 	global _iobox_current
 
 	if _iobox_current is None:
-		raise HTTPException(
-			status_code=status.HTTP_400_BAD_REQUEST,
-			detail="No active IO box calibration session. Get IO box calibration first.",
-		)
+		await get_iobox_calibration()
 
 	try:
 		worker = await get_robot_worker()
