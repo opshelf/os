@@ -454,6 +454,9 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 				await tool.move(AxisCoordinate(_iobox_current.pickup_high_x, _iobox_current.pickup_high_y))
 		elif request.axis == "z":
 			current_z = await tool._mg.get_position()
+			z_limit = tool._mg._params.lim
+			if current_z < 0 or current_z > z_limit:
+				current_z = _iobox_current.gripper_extension
 			new_z = current_z + request.delta
 			_iobox_current.gripper_extension = new_z
 			grip_rpm = await tool.get_param("GRIPPER_MOVE_RPM")
