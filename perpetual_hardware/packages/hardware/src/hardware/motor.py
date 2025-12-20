@@ -386,7 +386,7 @@ class Motor():
     
     async def move_config(self) -> None:
         """Configure motor movement parameters.
-        
+
         Raises:
             MotorConfigError: If configuration fails
         """
@@ -394,12 +394,15 @@ class Motor():
             # Clear any alarms
             await self.set_param("Control word", 0x1111)
             await self.set_param("Control word", 0x1122)
-            
+
+            # Disable auto-homing after control word writes (which may reset it)
+            await self._controller.write_single_register(self._motor_id, 0x6000, 0x0000)
+
             # Configure movement parameters
             await self.set_param("Motion of Path 0", 0x1)  # abs pos 0x1
             await self.set_param("Motor direction", self._params.dr)
             await self.set_param("Velocity", self._params.rpm)
-            
+
         except Exception as e:
             raise MotorConfigError(f"Failed to configure movement parameters: {str(e)}") from e
         
