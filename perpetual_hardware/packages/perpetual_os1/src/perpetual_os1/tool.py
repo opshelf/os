@@ -270,9 +270,13 @@ class Tool:
             )
             await self.retract_empty()
 
-    async def move(self, coordinate: c.AxisCoordinate) -> None:
+    async def move(self, coordinate: c.AxisCoordinate, *, _nested: bool = False) -> None:
         """
         Move gantry to specified coordinates.
+
+        Args:
+            coordinate: Target coordinates
+            _nested: Internal flag - when True, doesn't manage motion status
 
         Raises:
             MovementError: If movement fails or times out
@@ -282,21 +286,26 @@ class Tool:
             raise MotorError("Gantry motors (x_axis, y_axis) required for movement")
 
         try:
-            self._mstatus = ToolMotionStatus.MOVING
-            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+            if _nested is False:
+                self._mstatus = ToolMotionStatus.MOVING
+                self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
             await self._ensure_retracted()
             await self._my.move_to_position_no_wait(coordinate.y)
             await self._mx.move_to_position_no_wait(coordinate.x)
             await self.gantry_wait()
-            self._mstatus = ToolMotionStatus.IDLE
-            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+            if _nested is False:
+                self._mstatus = ToolMotionStatus.IDLE
+                self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
         except Exception as e:
             await self._handle_fault(e)
             raise MovementError(f"Gantry movement failed: {str(e)}") from e
 
-    async def retract(self) -> None:
+    async def retract(self, *, _nested: bool = False) -> None:
         """
         Retract gripper and slide to home positions.
+
+        Args:
+            _nested: Internal flag - when True, doesn't manage motion status
 
         Raises:
             MovementError: If retraction fails
@@ -306,16 +315,18 @@ class Tool:
             raise MotorError("Tool motors (z_axis, stage) required for retraction")
 
         try:
-            self._mstatus = ToolMotionStatus.MOVING
-            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+            if _nested is False:
+                self._mstatus = ToolMotionStatus.MOVING
+                self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
             grip_rpm = await self.get_param("GRIPPER_MOVE_RPM")
             grip_accel = await self.get_param("GRIPPER_MOVE_ACCEL")
             if grip_rpm is None or grip_accel is None:
                 raise ConfigError("Missing gripper move speed")
             await self._mg.move_to_position(1, rpm=grip_rpm, accel=grip_accel)
             await self._ms.move_to_position(3.0)
-            self._mstatus = ToolMotionStatus.IDLE
-            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+            if _nested is False:
+                self._mstatus = ToolMotionStatus.IDLE
+                self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
         except Exception as e:
             await self._handle_fault(e)
             raise MovementError(f"Tool retraction failed: {str(e)}") from e
@@ -336,9 +347,13 @@ class Tool:
             return front_ext
         return front_ext if coordinate.s == 0 else back_ext
 
-    async def rotate_to_position(self, position: Literal["front", "back"]) -> None:
+    async def rotate_to_position(self, position: Literal["front", "back"], *, _nested: bool = False) -> None:
         """
         Rotate the tool to the configured front or back angle.
+
+        Args:
+            position: Target rotation position
+            _nested: Internal flag - when True, doesn't manage motion status
 
         Raises:
             MovementError: If rotation fails
@@ -354,20 +369,26 @@ class Tool:
             if target_angle is None:
                 raise ConfigError(f"Missing rotation parameter: {param}")
 
-            self._mstatus = ToolMotionStatus.MOVING
-            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+            if _nested is False:
+                self._mstatus = ToolMotionStatus.MOVING
+                self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
             await self._mr.move_to_position(target_angle)
-            self._mstatus = ToolMotionStatus.IDLE
-            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+            if _nested is False:
+                self._mstatus = ToolMotionStatus.IDLE
+                self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
         except Exception as e:
             await self._handle_fault(e)
             if isinstance(e, ConfigError):
                 raise
             raise MovementError(f"Tool rotation failed: {str(e)}") from e
 
-    async def extend(self, coordinate: Optional[c.AxisCoordinate] = None) -> None:
+    async def extend(self, coordinate: Optional[c.AxisCoordinate] = None, *, _nested: bool = False) -> None:
         """
         Extend gripper and slide to operation positions.
+
+        Args:
+            coordinate: Target coordinates
+            _nested: Internal flag - when True, doesn't manage motion status
 
         Raises:
             MovementError: If extension fails
@@ -386,12 +407,14 @@ class Tool:
                 raise ConfigError("Missing extension parameters")
             grip_ext = self._with_gripper_offset(grip_ext, coordinate)
 
-            self._mstatus = ToolMotionStatus.MOVING
-            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+            if _nested is False:
+                self._mstatus = ToolMotionStatus.MOVING
+                self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
             await self._ms.move_to_position(slide_ext)
             await self._mg.move_to_position(grip_ext, rpm=grip_rpm, accel=grip_accel)
-            self._mstatus = ToolMotionStatus.IDLE
-            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+            if _nested is False:
+                self._mstatus = ToolMotionStatus.IDLE
+                self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
         except Exception as e:
             await self._handle_fault(e)
             if isinstance(e, ConfigError):
@@ -439,6 +462,10 @@ class Tool:
         """
         Extend empty tool without waiting between moves.
 
+        Note: This is a helper operation that doesn't manage motion status.
+        The caller is responsible for setting status to MOVING before calling
+        and IDLE after the complete operation finishes.
+
         Raises:
             MovementError: If extension fails
             ConfigError: If extension parameters are missing
@@ -456,13 +483,9 @@ class Tool:
                 raise ConfigError("Missing extension parameters")
             grip_ext = self._with_gripper_offset(grip_ext, coordinate)
 
-            self._mstatus = ToolMotionStatus.MOVING
-            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
             await self._ms.move_to_position_no_wait(slide_ext)
             await self._mg.move_to_position_no_wait(grip_ext, rpm=grip_rpm, accel=grip_accel)
             await self.tool_wait(homing=False)
-            self._mstatus = ToolMotionStatus.IDLE
-            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
         except Exception as e:
             await self._handle_fault(e)
             if isinstance(e, ConfigError):
@@ -473,6 +496,10 @@ class Tool:
         """
         Retract empty tool without waiting between moves.
 
+        Note: This is a helper operation that doesn't manage motion status.
+        The caller is responsible for setting status to MOVING before calling
+        and IDLE after the complete operation finishes.
+
         Raises:
             MovementError: If retraction fails
             MotorError: If required tool motors are disabled
@@ -481,8 +508,6 @@ class Tool:
             raise MotorError("Tool motors (z_axis, stage) required for empty retraction")
 
         try:
-            self._mstatus = ToolMotionStatus.MOVING
-            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
             await self._ms.move_to_position_no_wait(3.0)
             grip_rpm = await self.get_param("GRIPPER_MOVE_RPM")
             grip_accel = await self.get_param("GRIPPER_MOVE_ACCEL")
@@ -490,8 +515,6 @@ class Tool:
                 raise ConfigError("Missing gripper move speed")
             await self._mg.move_to_position_no_wait(1, rpm=grip_rpm, accel=grip_accel)
             await self.tool_wait(homing=True)
-            self._mstatus = ToolMotionStatus.IDLE
-            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
         except Exception as e:
             await self._handle_fault(e)
             raise MovementError(f"Tool empty retraction failed: {str(e)}") from e
@@ -512,11 +535,11 @@ class Tool:
             target_position = "front" if coordinate.s == 0 else "back"
 
             await self._gs.safe_open()
-            await self.move(coordinate)
-            await self.rotate_to_position(target_position)
+            await self.move(coordinate, _nested=True)
+            await self.rotate_to_position(target_position, _nested=True)
             await self.extend_empty(coordinate)
             await self._gs.open()
-            await self.retract()
+            await self.retract(_nested=True)
 
             self._istatus = ToolItemStatus.LOADED
             self._mstatus = ToolMotionStatus.IDLE
@@ -541,9 +564,9 @@ class Tool:
 
             target_position = "front" if coordinate.s == 0 else "back"
 
-            await self.move(coordinate)
-            await self.rotate_to_position(target_position)
-            await self.extend(coordinate)
+            await self.move(coordinate, _nested=True)
+            await self.rotate_to_position(target_position, _nested=True)
+            await self.extend(coordinate, _nested=True)
             await self._gs.close()
             await self.retract_empty()
 
