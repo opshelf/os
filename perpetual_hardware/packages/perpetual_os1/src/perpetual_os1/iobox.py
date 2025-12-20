@@ -44,7 +44,7 @@ class IOBox:
     def __init__(self,
                  motorcontroller: Controller,
                  scalecontroller: Controller,
-                 params: dict,
+                 params: c.IOBlock,
                  safety=None,
                  ):
         self._scalecontroller = scalecontroller
@@ -60,6 +60,7 @@ class IOBox:
         self._scale_enabled = scale_cfg is None or getattr(scale_cfg, "enabled", True)
         self._scale = Scale(scalecontroller) if self._scale_enabled is True else None
         self._scale_ready = False
+        self._printer = None
         self._curtain_sensor: Optional[CurtainSensor] = None
         self._curtain_monitor: Optional[CurtainMonitor] = None
         self._curtain_state: Optional[bool] = None
@@ -137,7 +138,6 @@ class IOBox:
             return
         if self._scale_ready is True:
             return
-        await self._scale.configure()
         self._scale_ready = True
 
     def print_random_barcode(
@@ -167,7 +167,7 @@ class IOBox:
         Get stable weight reading from scale in grams.
         Returns None if scale fails or is disabled.
         """
-        if self._scale_enabled is False:
+        if self._scale_enabled is False or self._scale is None:
             return None
         start_time = time.monotonic()
         try:

@@ -12,6 +12,11 @@ from perpetual_os1.storage import (
 from perpetual_os1.common import ConfigError
 from perpetual_os1.exceptions import MotorError, MovementError, ToolError
 
+
+class RobotConfigError(Exception):
+    """Exception raised for robot configuration errors."""
+    pass
+
 from perpetual_os1.robot_state import RobotStateManager
 
 import logging
@@ -156,7 +161,7 @@ class RobotStatus(BaseModel):
 RobotResponse = Union[RobotCommandSuccessful, RobotCommandError, RobotBarcodeResponse]
 
 class Robot:
-    def __init__(self = None) -> None:
+    def __init__(self) -> None:
         self._config = load_config_file(CONFIG_PATH)
         self._bus_settings = self._prepare_bus_settings()
         self._logger = logging.getLogger(__name__).getChild("Robot")
@@ -187,11 +192,11 @@ class Robot:
         try:
             self._grid = StorageGrid.load_from_file(STORAGE_PATH)
         except StorageValidationError as e:
-            self._logger.warning("storage_load_failed", path=STORAGE_PATH, error=str(e))
+            self._logger.warning("storage_load_failed: %s - %s", STORAGE_PATH, str(e))
             self._grid = StorageGrid()
 
-        self._cur_item: StorageModuleCellLocation = None
-        self._status: RobotStatus = None
+        self._cur_item: StorageModuleCellLocation | None = None
+        self._status: RobotStatus | None = None
 
         self._state: RobotState = RobotState(current_cell=None)
         self._state_manager = RobotStateManager()
@@ -232,6 +237,8 @@ class Robot:
     async def io_place(self, coord: AxisCoordinate):
         ppl = await self._tool.get_param("PICKUP_POSITION_L")
         pph = await self._tool.get_param("PICKUP_POSITION_H")
+        if ppl is None or pph is None:
+            raise ConfigError("Missing PICKUP_POSITION_L or PICKUP_POSITION_H parameter")
 
         await self._tool.pick(coord)
         await self._tool.rotate_to_position("front")
@@ -247,9 +254,11 @@ class Robot:
         await self._io.home_door()
         await self._tool.clear_alarms()
 
-    async def io_pick(self, coord):
+    async def io_pick(self, coord: AxisCoordinate):
         ppl = await self._tool.get_param("PICKUP_POSITION_L")
         pph = await self._tool.get_param("PICKUP_POSITION_H")
+        if ppl is None or pph is None:
+            raise ConfigError("Missing PICKUP_POSITION_L or PICKUP_POSITION_H parameter")
 
         await self._tool.pick(coord)
         await self._tool.rotate_to_position("front")
@@ -428,11 +437,11 @@ class Robot:
 
             def _expand_per_shelf(value, name, caster):
                 if value is None:
-                    raise RobotCommandError(error=f"{name} is not defined")
+                    raise RobotConfigError(f"{name} is not defined")
                 if isinstance(value, list):
                     if len(value) != num_shelves:
-                        raise RobotCommandError(
-                            error=f"{name} length ({len(value)}) does not match detected shelves ({num_shelves})"
+                        raise RobotConfigError(
+                            f"{name} length ({len(value)}) does not match detected shelves ({num_shelves})"
                         )
                     return [caster(x) for x in value]
                 return [caster(value)] * num_shelves
@@ -446,14 +455,14 @@ class Robot:
 
                 if isinstance(raw_value, list) and raw_value and all(isinstance(entry, (list, tuple)) for entry in raw_value):
                     if len(raw_value) != num_shelves:
-                        raise RobotCommandError(
-                            error=f"CELLS_PER_SHELF length ({len(raw_value)}) does not match detected shelves ({num_shelves})"
+                        raise RobotConfigError(
+                            f"CELLS_PER_SHELF length ({len(raw_value)}) does not match detected shelves ({num_shelves})"
                         )
                     left_vals = []
                     right_vals = []
                     for entry in raw_value:
                         if len(entry) != 2:
-                            raise RobotCommandError(error="Each CELLS_PER_SHELF entry must have [left, right] counts")
+                            raise RobotConfigError("Each CELLS_PER_SHELF entry must have [left, right] counts")
                         left_vals.append(int(entry[0]))
                         right_vals.append(int(entry[1]))
                     totals = [left + right for left, right in zip(left_vals, right_vals)]
@@ -468,8 +477,8 @@ class Robot:
                 cells_per_shelf, per_side_counts = _normalize_cells_per_shelf(raw_cells_per_shelf)
                 cell_spacings = _expand_per_shelf(raw_cell_spacings, "CELL_SPACINGS", float)
                 cell_heights = _expand_per_shelf(raw_cell_heights, "CELL_HEIGHTS", float)
-            except RobotCommandError as exc:
-                return exc
+            except RobotConfigError as exc:
+                return RobotCommandError(error=str(exc))
             except Exception as exc:
                 return RobotCommandError(error=str(exc))
 
@@ -489,7 +498,7 @@ class Robot:
             def _cell_width_for_index(index: int) -> float:
                 if isinstance(cell_widths, list):
                     if index >= len(cell_widths):
-                        raise RobotCommandError(error="CELL_WIDTHS list is shorter than total cell count")
+                        raise RobotConfigError("CELL_WIDTHS list is shorter than total cell count")
                     return float(cell_widths[index])
                 return float(cell_widths)
 
@@ -520,7 +529,7 @@ class Robot:
                         Cell(
                             status=CellStatus.AVAILABLE,
                             item=None,
-                            calibration_point=CalibrationCoordinate(x=coord.x, y=coord.y, z=z_offset),
+                            calibration_point=CalibrationCoordinate(x=coord.x, y=coord.y, z_offset=z_offset),
                             dimensions=Dimensions(width=_cell_width_for_index(offset), height=shelf_height, length=400.0)
                         )
                     )
@@ -619,6 +628,8 @@ class Robot:
         if isinstance(item_payload, dict):
             provided_location = item_payload.get("location")
 
+        location: StorageModuleCellLocation | None
+
         if provided_location is not None:
             location = StorageModuleCellLocation(
                 side=provided_location.get("side", "L"),
@@ -684,14 +695,19 @@ class Robot:
 
         return await self.retrieve_by_location(location.model_dump())
 
+    def _require_scale(self):
+        if self._io._scale is None:
+            raise ConfigError("Scale is not enabled")
+        return self._io._scale
+
     async def get_scale_data(self) -> Dict[str, Any]:
-        return await self._io._scale.read_weight_data()
+        return await self._require_scale().read_weight_data()
 
     async def get_scale_calibration_status(self) -> Dict[str, Any]:
-        return await self._io._scale.get_calibration_status()
+        return await self._require_scale().get_calibration_status()
 
     async def get_scale_calibration_params(self) -> Dict[str, Any]:
-        return await self._io._scale.get_calibration_params()
+        return await self._require_scale().get_calibration_params()
 
     async def set_scale_calibration_params(
         self,
@@ -700,7 +716,7 @@ class Robot:
         precision: int = 1,
         division: int = 1,
     ) -> bool:
-        return await self._io._scale.set_calibration_params(
+        return await self._require_scale().set_calibration_params(
             full_scale=full_scale,
             calibration_weight=calibration_weight,
             precision=precision,
@@ -708,13 +724,13 @@ class Robot:
         )
 
     async def calibrate_scale_zero(self, timeout: float = 5.0) -> Dict[str, Any]:
-        return await self._io._scale.calibrate_zero(timeout=timeout)
+        return await self._require_scale().calibrate_zero(timeout=timeout)
 
     async def calibrate_scale_weight(self, timeout: float = 5.0) -> Dict[str, Any]:
-        return await self._io._scale.calibrate_weight(timeout=timeout)
+        return await self._require_scale().calibrate_weight(timeout=timeout)
 
     async def scale_tare(self) -> bool:
-        return await self._io._scale.tare()
+        return await self._require_scale().tare()
 
     async def _build_axis_status(self, motor: Optional["Motor"]) -> AxisTelemetry:
         position = 0.0
@@ -864,9 +880,10 @@ class Robot:
             )
 
         self._state.current_cell = location
-        retrieved_upca = upca_hint
+        retrieved_upca: str | None = upca_hint
         if cached_item is not None:
-            retrieved_upca = cached_item.upca or (cached_item.data.get("upca") if cached_item.data else None)
+            upca_from_data = cached_item.data.get("upca") if cached_item.data else None
+            retrieved_upca = cached_item.upca or (str(upca_from_data) if upca_from_data is not None else None)
 
         try:
             coord = self._grid.get_cell_coordinate(location).to_axis_coordinate()

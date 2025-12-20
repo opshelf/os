@@ -7,11 +7,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Sequence, Tuple
 
 Coordinate = Tuple[float, float, float]
+Coordinate2D = Tuple[float, float]
 ShelfOffsets = Sequence[float]
 ShelfCoordinates = List[Coordinate]
 
-# Base shelf coordinates expressed as (x, y).
-sl: ShelfCoordinates = [
+sl: List[Coordinate2D] = [
     (900.664+6.5, 157.704-1),
     (909.304+6.5, 381.204-1),
     (910.88+6.5, 611.28-1),
@@ -20,7 +20,7 @@ sl: ShelfCoordinates = [
     (888.888+6.5, 1108.724-1),
 ]
 
-sr: ShelfCoordinates = [
+sr: List[Coordinate2D] = [
     (874.856-8, 59.992-1),
     (877.008-8, 411.124-1),
     (875.968-8, 709.3+1),

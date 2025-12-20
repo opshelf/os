@@ -77,7 +77,7 @@ GANTRY_OUTER_TIMEOUT = 120.0
 TOOL_OUTER_TIMEOUT = 60.0
 
 class Tool:
-    def __init__(self, motorcontroller: Controller, params: c.Parameters, safety=None):
+    def __init__(self, motorcontroller: Controller, params: c.Tool, safety=None):
         self._motorcontroller = motorcontroller
         self._istatus = ToolItemStatus.EMPTY
         self._mstatus = ToolMotionStatus.IDLE
@@ -532,7 +532,7 @@ class Tool:
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
             self._last_pick_coord = coordinate
 
-            target_position = "front" if coordinate.s == 0 else "back"
+            target_position: Literal["front", "back"] = "front" if coordinate.s == 0 else "back"
 
             await self._gs.safe_open()
             await self.move(coordinate, _nested=True)
@@ -562,7 +562,7 @@ class Tool:
             self._mstatus = ToolMotionStatus.MOVING
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
 
-            target_position = "front" if coordinate.s == 0 else "back"
+            target_position: Literal["front", "back"] = "front" if coordinate.s == 0 else "back"
 
             await self.move(coordinate, _nested=True)
             await self.rotate_to_position(target_position, _nested=True)
@@ -679,6 +679,8 @@ class Tool:
             await self.rotate_to_position("back")
             reg = FiducialRegistry()
             s = await self.get_param("SCAN_POSITION")
+            if s is None:
+                raise ConfigError("SCAN_POSITION parameter is not configured")
             await self.move(c.AxisCoordinate(s[0]-25, s[1]))
 
             while True:
@@ -707,6 +709,8 @@ class Tool:
                     _, dy = self._cam.get_center(frame, rect)
                     if dy > 0:
                         pymm = await self.get_param("PYMM")
+                        if pymm is None:
+                            raise ConfigError("PYMM parameter is not configured")
                         await self._my.jog(dy/pymm)
 
                         frame = await self._cam.capture()
@@ -727,8 +731,11 @@ class Tool:
                                     self._logger.info("Shelf detected at y=%s", yw)
 
                 end_y = await self._my.get_position()
-                lim = self._params.motors.by_name("y_axis").lim
+                motor_cfg = self._params.motors.by_name("y_axis")
+                lim = motor_cfg.lim if motor_cfg is not None else 0.0
                 jog_y = await self.get_param("JOG_Y")
+                if jog_y is None:
+                    raise ConfigError("JOG_Y parameter is not configured")
                 if end_y + jog_y > lim:
                     break
                 await self._my.jog(jog_y)
@@ -770,6 +777,8 @@ class Tool:
             await self._mx.move_to_position(100)
             await self.rotate_to_position("back")
             scan_pos = await self.get_param("SCAN_POSITION")
+            if scan_pos is None:
+                raise ConfigError("SCAN_POSITION parameter is not configured")
             await self.move(c.AxisCoordinate(scan_pos[0]-25, scan_pos[1]))
 
             for shelf_idx, shelf_y in enumerate(shelves):
@@ -797,6 +806,8 @@ class Tool:
                     dx, _ = self._cam.get_center(frame, rect)
                     if dx is not None:
                         pxmm = await self.get_param("PXMM")
+                        if pxmm is None:
+                            raise ConfigError("PXMM parameter is not configured")
                         await self._mx.jog(-dx / pxmm)
 
                         frame = await self._cam.capture()

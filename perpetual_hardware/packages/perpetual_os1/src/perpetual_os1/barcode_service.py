@@ -45,7 +45,7 @@ class BarcodeService:
         self.port = port
         self.baudrate = baudrate
         self.prefer_vid_pid = prefer_vid_pid
-        self.queue = asyncio.Queue(maxsize=queue_maxsize)
+        self.queue: asyncio.Queue[str] = asyncio.Queue(maxsize=queue_maxsize)
         self._transport = None
         self._protocol = None
         self._runner_task: asyncio.Task | None = None

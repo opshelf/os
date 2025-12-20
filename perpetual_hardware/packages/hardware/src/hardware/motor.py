@@ -48,7 +48,7 @@ class MotorStatus(Enum):
 class Servo:
     """Controls a servo motor via Modbus."""
 
-    def __init__(self, controller: SharedModbusController, params: dict = None):
+    def __init__(self, controller: SharedModbusController, params: dict | None = None):
         """Initialize servo controller.
 
         Args:
