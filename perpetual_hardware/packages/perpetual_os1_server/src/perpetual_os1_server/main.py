@@ -400,10 +400,14 @@ def start() -> None:
 	log_config["loggers"]["uvicorn.access"]["level"] = "ERROR"
 	log_config["loggers"]["watchfiles"] = {"level": "ERROR"}
 
+	import os
+
+	reload_enabled = os.environ.get("UVICORN_RELOAD", "false").lower() == "true"
+
 	uvicorn.run(
 		"perpetual_os1_server.main:app",
 		host="0.0.0.0",
 		port=8000,
-		reload=True,
+		reload=reload_enabled,
 		log_config=log_config,
 	)
