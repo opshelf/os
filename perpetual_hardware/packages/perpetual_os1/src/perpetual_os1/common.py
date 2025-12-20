@@ -115,6 +115,7 @@ def _pair_len2(v: List[Union[int, float]], name: str) -> Tuple[Union[int, float]
 class Motor(BaseModel):
     motor_name: str = Field(..., min_length=1)
     motor_id: int = Field(..., ge=0)  # tighten if desired
+    enabled: bool = Field(default=True)
     Ip: int = Field(..., ge=0)        # keeping exact key casing
     rpm: int = Field(..., gt=0)
     dr: Literal[0, 1]
