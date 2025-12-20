@@ -382,6 +382,11 @@ async def move_to_iobox_position(position: Literal["low", "high"]) -> IOBoxPosit
 
 	if _iobox_current is None:
 		await get_iobox_calibration()
+	if _iobox_current is None:
+		raise HTTPException(
+			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+			detail="Failed to initialize IOBox calibration",
+		)
 
 	tool = worker._robot._tool
 	io = worker._robot._io
@@ -425,6 +430,11 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 
 	if _iobox_current is None:
 		await get_iobox_calibration()
+	if _iobox_current is None:
+		raise HTTPException(
+			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+			detail="Failed to initialize IOBox calibration",
+		)
 
 	try:
 		worker = await get_robot_worker()
@@ -453,6 +463,8 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 				_iobox_current.pickup_high_y += request.delta
 				await tool.move(AxisCoordinate(_iobox_current.pickup_high_x, _iobox_current.pickup_high_y))
 		elif request.axis == "z":
+			if tool._mg is None:
+				raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Gripper motor not configured")
 			current_z = await tool._mg.get_position()
 			z_limit = tool._mg._params.lim
 			if current_z < 0 or current_z > z_limit:
@@ -463,6 +475,8 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 			grip_accel = await tool.get_param("GRIPPER_MOVE_ACCEL")
 			await tool._mg.move_to_position(new_z, rpm=grip_rpm, accel=grip_accel)
 		elif request.axis == "stage":
+			if tool._ms is None:
+				raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Stage motor not configured")
 			_iobox_current.io_stage_offset += request.delta
 			slide_ext = _iobox_current.slide_extension
 			await tool._ms.move_to_position(slide_ext + _iobox_current.io_stage_offset)
@@ -481,6 +495,11 @@ async def test_iobox_sequence():
 
 	if _iobox_current is None:
 		await get_iobox_calibration()
+	if _iobox_current is None:
+		raise HTTPException(
+			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+			detail="Failed to initialize IOBox calibration",
+		)
 
 	try:
 		worker = await get_robot_worker()
@@ -519,6 +538,9 @@ async def test_iobox_sequence():
 	io_offset = _iobox_current.io_stage_offset
 	grip_rpm = await tool.get_param("GRIPPER_MOVE_RPM")
 	grip_accel = await tool.get_param("GRIPPER_MOVE_ACCEL")
+
+	if tool._ms is None or tool._mg is None:
+		raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Motors not configured")
 
 	try:
 		await tool._ms.move_to_position(slide_ext + io_offset)
@@ -607,6 +629,8 @@ async def rotate_to_angle(angle: float):
 		) from e
 
 	tool = worker._robot._tool
+	if tool._mr is None:
+		raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Rotation motor not configured")
 
 	await tool._mr.move_to_position(angle)
 
@@ -641,6 +665,8 @@ async def debug_motor30_registers():
 		) from e
 
 	tool = worker._robot._tool
+	if tool._mg is None:
+		raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Gripper motor not configured")
 	controller = tool._mg._controller
 	motor_id = 30
 	mpr = 1.9992
@@ -694,6 +720,8 @@ async def debug_motor30_status_scan():
 		) from e
 
 	tool = worker._robot._tool
+	if tool._mg is None:
+		raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Gripper motor not configured")
 	controller = tool._mg._controller
 	motor_id = 30
 
@@ -742,6 +770,8 @@ async def debug_motor30_set_position(request: SetPositionRequest):
 		) from e
 
 	tool = worker._robot._tool
+	if tool._mg is None:
+		raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Gripper motor not configured")
 	controller = tool._mg._controller
 	motor_id = 30
 	mpr = 19.992
@@ -752,8 +782,8 @@ async def debug_motor30_set_position(request: SetPositionRequest):
 	low = pulses & 0xFFFF
 
 	try:
-		await controller.write_register(motor_id, 0x602C, high)
-		await controller.write_register(motor_id, 0x602D, low)
+		await controller.write_single_register(motor_id, 0x602C, high)
+		await controller.write_single_register(motor_id, 0x602D, low)
 
 		val_h = await controller.read_holding_registers(motor_id, 0x602C, 1)
 		val_l = await controller.read_holding_registers(motor_id, 0x602D, 1)

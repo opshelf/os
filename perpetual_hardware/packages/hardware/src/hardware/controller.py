@@ -123,6 +123,7 @@ class SharedModbusController:
                     raise ModbusError(f"Modbus read failed after reconnect: {str(e)}") from e
                 except Exception as e:
                     raise ModbusError(f"Unexpected error reading from unit {unit_id}: {str(e)}") from e
+        raise ModbusError(f"Failed to read from unit {unit_id} after retries")
 
     async def write_single_register(
         self,

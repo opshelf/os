@@ -7,8 +7,6 @@ import traceback
 from datetime import datetime, timezone
 from typing import Optional, List, Any, Dict
 
-logger = logging.getLogger(__name__)
-
 import sentry_sdk
 from nats.aio.client import Client as NATS
 from nats.aio.msg import Msg
@@ -29,6 +27,8 @@ from perpetual_os1.robot_defs import WorkerError, QueuedOperation, WorkerStatus,
 from perpetual_os1.robot_client import RobotClient
 from perpetual_os1.barcode_protocol import BarcodeService
 from perpetual_os1.exceptions import MotorError, MovementError, ToolError
+
+logger = logging.getLogger(__name__)
 
 COMMAND_TIMEOUT_SECONDS = 300
 
@@ -180,7 +180,7 @@ def _normalize_storage_payload(storage: Dict[str, Any]) -> Dict[str, Any]:
             cell["status"] = status.lower()
         return cell
 
-    normalized_storage = {"left_module": [], "right_module": []}
+    normalized_storage: Dict[str, List[Dict[str, Any]]] = {"left_module": [], "right_module": []}
 
     for side in ("left_module", "right_module"):
         shelves = storage.get(side) or []
@@ -215,7 +215,7 @@ class RobotWorker:
         self._nats_config = nats_config
         self._client = RobotClient(nats_config)
         self._nc = NATS()
-        self._js = None  # Will be set in connect()
+        self._js: Any = None  # Will be set in connect()
         self._error_queue: List[WorkerError] = []
         self._queued_commands: List[QueuedOperation] = []
         self._use_enhanced_status = True
@@ -520,6 +520,8 @@ class RobotWorker:
             robot_status.curtain_guard_active = self._curtain_guard_active
             robot_status.door_open = self._door_open
             robot_status.awaiting_curtain_ack = self._awaiting_curtain_ack
+
+        status: WorkerStatus | WorkerStatusWithQueue
 
         if self._use_enhanced_status:
             pending_count, queued_ops = await self._get_pending_messages_info()

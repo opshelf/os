@@ -169,16 +169,16 @@ class Scale:
         }
 
     async def tare(self) -> bool:
-        ok = await self.modbus_controller.write_single_register(self.scale_id, self.REG_TARE, 1)
-        success = ok is None or ok is True
-        if not success:
+        try:
+            await self.modbus_controller.write_single_register(self.scale_id, self.REG_TARE, 1)
+            logger.debug("Scale tare command sent", extra={"unit_id": self.scale_id})
+            return True
+        except Exception:
             logger.warning(
                 "Scale tare failed",
                 extra={"unit_id": self.scale_id},
             )
-        else:
-            logger.debug("Scale tare command sent", extra={"unit_id": self.scale_id})
-        return success
+            return False
 
     async def read_status(self) -> Dict[str, Any]:
         v = await self._read_one(self.REG_STATUS)

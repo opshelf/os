@@ -117,9 +117,13 @@ def get_register_by_name(param_name: str) -> Optional[int]:
         return None
         
     for entry in register_dict_list:
-        if entry.get("Name", "").strip().lower() == param_name.strip().lower():
+        name = entry.get("Name", "")
+        if isinstance(name, str) and name.strip().lower() == param_name.strip().lower():
+            register = entry.get("Register")
+            if register is None:
+                continue
             try:
-                return int(entry.get("Register"), 16)
+                return int(str(register), 16)
             except (ValueError, TypeError) as e:
                 raise ValueError(f"Invalid register value for {param_name}: {e}") from e
     return None
