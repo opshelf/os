@@ -328,13 +328,14 @@ class Motor():
 
     async def _start_absolute_move(self, value: float, rpm: Optional[int] = None, accel: Optional[int] = None) -> None:
         """Setup and trigger an absolute move, tracking it for retries."""
-        if value > self._params.lim:
+        if value < 0 or value > self._params.lim:
             raise MotorLimitError(
-                f"Target position {value}mm exceeds motor limit {self._params.lim}mm"
+                f"Target position {value}mm out of range [0, {self._params.lim}mm]"
             )
 
-        # Convert mm to pulses
-        pulse = motor_helpers.rev_to_pulse(motor_helpers.mm_to_rev(value, self._params.mpr))
+        physical_pos = self._params.logical_to_physical(value)
+
+        pulse = motor_helpers.rev_to_pulse(motor_helpers.mm_to_rev(physical_pos, self._params.mpr))
 
         if rpm is not None:
             await self.set_param("Velocity", int(rpm))
@@ -409,16 +410,16 @@ class Motor():
             if not pos:
                 return 0.0
                 
-            # Get pulses per revolution
             ppr = await self.get_param("Pulse/revolution")
             if not ppr:
                 DEFAULT_PULSES_PER_REV = 10000
                 ppr = DEFAULT_PULSES_PER_REV
-                
-            # Convert to millimeters
-            pos = (pos/ppr) * self._params.mpr
-            self._cur_pos = pos
-            return pos
+
+            physical_pos = (pos / ppr) * self._params.mpr
+            logical_pos = self._params.physical_to_logical(physical_pos)
+
+            self._cur_pos = logical_pos
+            return logical_pos
             
         except Exception as e:
             if not isinstance(e, MotorError):
@@ -723,20 +724,21 @@ class Motor():
     
     async def jog(self, dist: float) -> MotorStatus:
         """Move the motor by a relative distance.
-        
+
         Args:
-            dist: Distance to move in millimeters
-            
+            dist: Distance to move in millimeters (logical)
+
         Returns:
             Final motor status
-            
+
         Raises:
             MotorError: If movement fails
             MotorTimeoutError: If operation times out
         """
         try:
-            # Convert to pulses
-            pulse = motor_helpers.rev_to_pulse(motor_helpers.mm_to_rev(dist, self._params.mpr))
+            physical_dist = self._params.logical_to_physical_delta(dist)
+
+            pulse = motor_helpers.rev_to_pulse(motor_helpers.mm_to_rev(physical_dist, self._params.mpr))
             
             # Configure for relative movement
             await self.set_param("Control word", 0x1111)  # clear alarm if any
