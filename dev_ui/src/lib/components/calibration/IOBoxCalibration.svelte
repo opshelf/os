@@ -192,72 +192,74 @@
 </table>
 
 {#if ioboxPosition !== null}
-	<div class="jog-controls">
-		<div class="jog-axis">
-			<span class="axis-label">X</span>
-			<button type="button" on:click={() => didClickJog('x', -jogStep)} disabled={isMoving === true}>
-				-
-			</button>
-			<button type="button" on:click={() => didClickJog('x', jogStep)} disabled={isMoving === true}>
-				+
-			</button>
+	{#if isPositioned === true}
+		<div class="jog-controls">
+			<div class="jog-axis">
+				<span class="axis-label">X</span>
+				<button type="button" on:click={() => didClickJog('x', -jogStep)} disabled={isMoving === true}>
+					-
+				</button>
+				<button type="button" on:click={() => didClickJog('x', jogStep)} disabled={isMoving === true}>
+					+
+				</button>
+			</div>
+			<div class="jog-axis">
+				<span class="axis-label">Y</span>
+				<button type="button" on:click={() => didClickJog('y', -jogStep)} disabled={isMoving === true}>
+					-
+				</button>
+				<button type="button" on:click={() => didClickJog('y', jogStep)} disabled={isMoving === true}>
+					+
+				</button>
+			</div>
 		</div>
-		<div class="jog-axis">
-			<span class="axis-label">Y</span>
-			<button type="button" on:click={() => didClickJog('y', -jogStep)} disabled={isMoving === true}>
-				-
-			</button>
-			<button type="button" on:click={() => didClickJog('y', jogStep)} disabled={isMoving === true}>
-				+
-			</button>
+		<div class="jog-controls">
+			<div class="jog-axis">
+				<span class="axis-label">Z</span>
+				<button
+					type="button"
+					on:click={() => didClickJog('z', -jogStep)}
+					disabled={isMoving === true}
+				>
+					-
+				</button>
+				<button
+					type="button"
+					on:click={() => didClickJog('z', jogStep)}
+					disabled={isMoving === true}
+				>
+					+
+				</button>
+			</div>
+			<div class="jog-axis">
+				<span class="axis-label">stage</span>
+				<button
+					type="button"
+					on:click={() => didClickJog('stage', -jogStep)}
+					disabled={isMoving === true}
+				>
+					-
+				</button>
+				<button
+					type="button"
+					on:click={() => didClickJog('stage', jogStep)}
+					disabled={isMoving === true}
+				>
+					+
+				</button>
+			</div>
 		</div>
-	</div>
-	<div class="jog-controls">
-		<div class="jog-axis">
-			<span class="axis-label">Z</span>
-			<button
-				type="button"
-				on:click={() => didClickJog('z', -jogStep)}
-				disabled={isMoving === true}
-			>
-				-
-			</button>
-			<button
-				type="button"
-				on:click={() => didClickJog('z', jogStep)}
-				disabled={isMoving === true}
-			>
-				+
-			</button>
+		<div class="jog-controls">
+			<div class="jog-step">
+				<span class="axis-label">step</span>
+				<select bind:value={jogStep}>
+					{#each JOG_STEPS as step}
+						<option value={step.value}>{step.label}</option>
+					{/each}
+				</select>
+			</div>
 		</div>
-		<div class="jog-axis">
-			<span class="axis-label">stage</span>
-			<button
-				type="button"
-				on:click={() => didClickJog('stage', -jogStep)}
-				disabled={isMoving === true}
-			>
-				-
-			</button>
-			<button
-				type="button"
-				on:click={() => didClickJog('stage', jogStep)}
-				disabled={isMoving === true}
-			>
-				+
-			</button>
-		</div>
-	</div>
-	<div class="jog-controls">
-		<div class="jog-step">
-			<span class="axis-label">step</span>
-			<select bind:value={jogStep}>
-				{#each JOG_STEPS as step}
-					<option value={step.value}>{step.label}</option>
-				{/each}
-			</select>
-		</div>
-	</div>
+	{/if}
 
 	<div class="action-buttons">
 		<button
