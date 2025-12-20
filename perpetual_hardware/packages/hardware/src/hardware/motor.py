@@ -226,7 +226,10 @@ class Motor():
             # Clear any existing alarms
             await self.set_param("Control word", 0x1111)
             await self.set_param("Control word", 0x1122)
-            
+
+            # Disable auto-homing to prevent blocking motion commands
+            await self._controller.write_single_register(self._motor_id, 0x6000, 0x0000)
+
             # Configure motor parameters
             await self.set_param("SO2 output function", 0xA1)  # brake output
             await self._controller.write_single_register(self._motor_id, 0x0167, 100)
