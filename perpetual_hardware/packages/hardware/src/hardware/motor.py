@@ -346,6 +346,17 @@ class Motor():
         # Set target position
         await self.set_param("Position High", pulse[0])
         await self.set_param("Position Low", pulse[1])
+        self._logger.debug(
+            "Set position registers",
+            extra={
+                "motor_id": self._motor_id,
+                "target_logical_mm": value,
+                "physical_mm": physical_pos,
+                "pulse_high": pulse[0],
+                "pulse_low": pulse[1],
+                "total_pulses": (pulse[0] << 16) | pulse[1],
+            }
+        )
 
         # Start movement
         await self._controller.write_single_register(
