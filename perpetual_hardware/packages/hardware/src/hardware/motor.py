@@ -692,8 +692,11 @@ class Motor():
         self._simulated_fault = False
 
         try:
-            home_dir = int(self._params.dr) ^ 1
-            
+            p0 = self._params.phys_at_zero if self._params.phys_at_zero is not None else 0
+            pm = self._params.phys_at_max if self._params.phys_at_max is not None else self._params.lim
+            is_inverted = p0 > pm
+            home_dir = int(self._params.dr) ^ 1 ^ (1 if is_inverted else 0)
+
             try:
                 # Configure homing parameters
                 await self.set_param("Control word", 0x1111)  # clear alarm if any
