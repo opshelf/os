@@ -218,14 +218,14 @@
 				<span class="axis-label">Z</span>
 				<button
 					type="button"
-					on:click={() => didClickJog('z', -jogStep)}
+					on:click={() => didClickJog('z', jogStep)}
 					disabled={isMoving === true}
 				>
 					-
 				</button>
 				<button
 					type="button"
-					on:click={() => didClickJog('z', jogStep)}
+					on:click={() => didClickJog('z', -jogStep)}
 					disabled={isMoving === true}
 				>
 					+
