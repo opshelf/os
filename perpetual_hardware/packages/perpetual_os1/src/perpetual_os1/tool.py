@@ -1,4 +1,5 @@
 import perpetual_os1.common as c
+from perpetual_os1.common import Motor as MotorConfig
 
 from hardware.controller import SharedModbusController as Controller
 from hardware.motor import Motor, Servo, MotorStatus, MOTOR_WAIT_TIMEOUT
@@ -17,6 +18,26 @@ import sentry_sdk
 from enum import Enum
 from dataclasses import dataclass, field
 from typing import Optional, Literal, List, Any
+
+
+def _create_motor_if_enabled(
+    controller: Controller,
+    motors: c.Motors,
+    name: str,
+    safety,
+    logger: logging.Logger,
+) -> Optional[Motor]:
+    try:
+        cfg: MotorConfig = motors.by_name(name)
+    except KeyError:
+        logger.info("Motor '%s' not found in config; skipping", name)
+        return None
+
+    if cfg.enabled is False:
+        logger.info("Motor '%s' disabled via config; skipping", name)
+        return None
+
+    return Motor(controller, cfg, safety)
 
 @dataclass
 class FiducialRegistry:
@@ -66,11 +87,22 @@ class Tool:
         self._logger = logging.getLogger(__name__)
         self._last_pick_coord: Optional[c.AxisCoordinate] = None
 
-        self._mx = Motor(self._motorcontroller, self._params.motors.by_name("x_axis"), safety)
-        self._my = Motor(self._motorcontroller, self._params.motors.by_name("y_axis"), safety)
-        self._mg = Motor(self._motorcontroller, self._params.motors.by_name("z_axis"), safety)
-        self._ms = Motor(self._motorcontroller, self._params.motors.by_name("stage"), safety)
-        self._mr = Motor(self._motorcontroller, self._params.motors.by_name("rotate"), safety)
+        motors = self._params.motors
+        self._mx: Optional[Motor] = _create_motor_if_enabled(
+            motorcontroller, motors, "x_axis", safety, self._logger
+        )
+        self._my: Optional[Motor] = _create_motor_if_enabled(
+            motorcontroller, motors, "y_axis", safety, self._logger
+        )
+        self._mg: Optional[Motor] = _create_motor_if_enabled(
+            motorcontroller, motors, "z_axis", safety, self._logger
+        )
+        self._ms: Optional[Motor] = _create_motor_if_enabled(
+            motorcontroller, motors, "stage", safety, self._logger
+        )
+        self._mr: Optional[Motor] = _create_motor_if_enabled(
+            motorcontroller, motors, "rotate", safety, self._logger
+        )
         self._gs = Servo(self._motorcontroller, self._params.gripper.model_dump())
 
         self._cam = ToolCamera(self._params.poe_camera)
@@ -99,7 +131,7 @@ class Tool:
     async def configure(self):
         """
         Configure all motors and home the tool.
-        
+
         Raises:
             MotorError: If motor configuration or homing fails
             CameraError: If camera initialization fails
@@ -107,14 +139,17 @@ class Tool:
         try:
             if self._params.gripper.enabled is True:
                 await self._gs.configure()
-            await self._my.configure()
-            await self._mx.configure()
-            await self._mg.configure()
-            await self._ms.configure()
-            await self._mr.configure()
+            if self._my is not None:
+                await self._my.configure()
+            if self._mx is not None:
+                await self._mx.configure()
+            if self._mg is not None:
+                await self._mg.configure()
+            if self._ms is not None:
+                await self._ms.configure()
+            if self._mr is not None:
+                await self._mr.configure()
             await self.home()
-            # if not self._has_cached_camera_calibration():
-            # self._cam.get_correct()
             self._mstatus = ToolMotionStatus.IDLE
         except Exception as e:
             await self._handle_fault(e)
@@ -141,17 +176,22 @@ class Tool:
     async def home(self) -> None:
         """
         Home all motors in a specific sequence.
-        
+
         Raises:
             MotorError: If any motor fails to home
         """
         try:
-            await self._ms.home()
-            await self._mg.home()
-            await self._mr.home()
-            await self._mx.home()
-            await self._my.jog(5)
-            await self._my.home()
+            if self._ms is not None:
+                await self._ms.home()
+            if self._mg is not None:
+                await self._mg.home()
+            if self._mr is not None:
+                await self._mr.home()
+            if self._mx is not None:
+                await self._mx.home()
+            if self._my is not None:
+                await self._my.jog(5)
+                await self._my.home()
             self._mstatus = ToolMotionStatus.IDLE
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
         except Exception as e:
@@ -161,13 +201,15 @@ class Tool:
     async def clear_alarms(self) -> None:
         """
         Clear alarms by homing gripper and stage motors.
-        
+
         Raises:
             MotorError: If homing fails during alarm clear
         """
         try:
-            await self._mg.home()
-            await self._ms.home()
+            if self._mg is not None:
+                await self._mg.home()
+            if self._ms is not None:
+                await self._ms.home()
         except Exception as e:
             await self._handle_fault(e)
             raise MotorError(f"Failed to clear alarms: {str(e)}") from e
@@ -187,16 +229,21 @@ class Tool:
     async def stop(self) -> None:
         """
         Stop all motors immediately.
-        
+
         Raises:
             MotorError: If any motor fails to stop
         """
         try:
-            await self._mx.stop()
-            await self._mg.stop()
-            await self._mr.stop()
-            await self._ms.stop()
-            await self._my.stop()
+            if self._mx is not None:
+                await self._mx.stop()
+            if self._mg is not None:
+                await self._mg.stop()
+            if self._mr is not None:
+                await self._mr.stop()
+            if self._ms is not None:
+                await self._ms.stop()
+            if self._my is not None:
+                await self._my.stop()
             self._mstatus = ToolMotionStatus.IDLE
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
         except Exception as e:
@@ -206,10 +253,14 @@ class Tool:
     async def move(self, coordinate: c.AxisCoordinate) -> None:
         """
         Move gantry to specified coordinates.
-        
+
         Raises:
             MovementError: If movement fails or times out
+            MotorError: If required gantry motors are disabled
         """
+        if self._mx is None or self._my is None:
+            raise MotorError("Gantry motors (x_axis, y_axis) required for movement")
+
         try:
             self._mstatus = ToolMotionStatus.MOVING
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
@@ -225,10 +276,14 @@ class Tool:
     async def retract(self) -> None:
         """
         Retract gripper and slide to home positions.
-        
+
         Raises:
             MovementError: If retraction fails
+            MotorError: If required tool motors are disabled
         """
+        if self._mg is None or self._ms is None:
+            raise MotorError("Tool motors (z_axis, stage) required for retraction")
+
         try:
             self._mstatus = ToolMotionStatus.MOVING
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
@@ -267,7 +322,11 @@ class Tool:
         Raises:
             MovementError: If rotation fails
             ConfigError: If rotation parameters are missing
+            MotorError: If rotate motor is disabled
         """
+        if self._mr is None:
+            raise MotorError("Rotate motor required for rotation")
+
         try:
             param = "FRONT" if position == "front" else "BACK"
             target_angle = await self.get_param(param)
@@ -288,11 +347,15 @@ class Tool:
     async def extend(self, coordinate: Optional[c.AxisCoordinate] = None) -> None:
         """
         Extend gripper and slide to operation positions.
-        
+
         Raises:
             MovementError: If extension fails
             ConfigError: If extension parameters are missing
+            MotorError: If required tool motors are disabled
         """
+        if self._mg is None or self._ms is None:
+            raise MotorError("Tool motors (z_axis, stage) required for extension")
+
         try:
             slide_ext = await self._get_slide_extension(coordinate)
             grip_ext = await self.get_param("GRIPPER_EXTENSION_PLACE")
@@ -301,7 +364,7 @@ class Tool:
             if slide_ext is None or grip_ext is None or grip_rpm is None or grip_accel is None:
                 raise ConfigError("Missing extension parameters")
             grip_ext = self._with_gripper_offset(grip_ext, coordinate)
-            
+
             self._mstatus = ToolMotionStatus.MOVING
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
             await self._ms.move_to_position(slide_ext)
@@ -317,11 +380,15 @@ class Tool:
     async def extend_IO(self, coordinate: Optional[c.AxisCoordinate] = None) -> None:
         """
         Extend gripper and slide to operation positions.
-        
+
         Raises:
             MovementError: If extension fails
             ConfigError: If extension parameters are missing
+            MotorError: If required tool motors are disabled
         """
+        if self._mg is None or self._ms is None:
+            raise MotorError("Tool motors (z_axis, stage) required for IO extension")
+
         try:
             io_offset = await self.get_param("IO_STAGE_OFFSET")
             slide_ext = await self._get_slide_extension(coordinate)
@@ -333,7 +400,7 @@ class Tool:
             if slide_ext is None or grip_ext is None or grip_rpm is None or grip_accel is None:
                 raise ConfigError("Missing extension parameters")
             grip_ext = self._with_gripper_offset(grip_ext, coordinate)
-            
+
             self._mstatus = ToolMotionStatus.MOVING
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
             await self._ms.move_to_position(slide_ext + io_offset)
@@ -350,11 +417,15 @@ class Tool:
     async def extend_empty(self, coordinate: Optional[c.AxisCoordinate] = None) -> None:
         """
         Extend empty tool without waiting between moves.
-        
+
         Raises:
             MovementError: If extension fails
             ConfigError: If extension parameters are missing
+            MotorError: If required tool motors are disabled
         """
+        if self._mg is None or self._ms is None:
+            raise MotorError("Tool motors (z_axis, stage) required for empty extension")
+
         try:
             slide_ext = await self._get_slide_extension(coordinate)
             grip_ext = await self.get_param("GRIPPER_EXTENSION_PICK")
@@ -363,7 +434,7 @@ class Tool:
             if slide_ext is None or grip_ext is None or grip_rpm is None or grip_accel is None:
                 raise ConfigError("Missing extension parameters")
             grip_ext = self._with_gripper_offset(grip_ext, coordinate)
-            
+
             self._mstatus = ToolMotionStatus.MOVING
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
             await self._ms.move_to_position_no_wait(slide_ext)
@@ -380,10 +451,14 @@ class Tool:
     async def retract_empty(self) -> None:
         """
         Retract empty tool without waiting between moves.
-        
+
         Raises:
             MovementError: If retraction fails
+            MotorError: If required tool motors are disabled
         """
+        if self._mg is None or self._ms is None:
+            raise MotorError("Tool motors (z_axis, stage) required for empty retraction")
+
         try:
             self._mstatus = ToolMotionStatus.MOVING
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
@@ -468,7 +543,11 @@ class Tool:
         Raises:
             MotorWaitTimeoutError: If outer timeout exceeded
             MovementError: If motors error during wait
+            MotorError: If required gantry motors are disabled
         """
+        if self._mx is None or self._my is None:
+            raise MotorError("Gantry motors (x_axis, y_axis) required for gantry wait")
+
         start_time = time.monotonic()
         terminal_error_states = {MotorStatus.ERROR, MotorStatus.FAULT, MotorStatus.TIMEOUT}
 
@@ -502,7 +581,11 @@ class Tool:
         Raises:
             MotorWaitTimeoutError: If outer timeout exceeded
             MovementError: If motors error during wait
+            MotorError: If required tool motors are disabled
         """
+        if self._mg is None or self._ms is None:
+            raise MotorError("Tool motors (z_axis, stage) required for tool wait")
+
         start_time = time.monotonic()
         terminal_error_states = {MotorStatus.ERROR, MotorStatus.FAULT, MotorStatus.TIMEOUT}
 
@@ -530,17 +613,19 @@ class Tool:
             raise MovementError(f"Tool wait failed: {str(e)}") from e
             
     async def get_pos(self):
-        # get each motor position. return tuple of axis and tool coordinate?
-        x = await self._mx.get_position()
-        y = await self._my.get_position()
-        g = await self._mg.get_position()
-        s = await self._ms.get_position()
-        r = await self._mr.get_position()
-        return (c.AxisCoordinate(x, y), c.ToolCoordinate(g,s,r))
+        x = await self._mx.get_position() if self._mx is not None else 0.0
+        y = await self._my.get_position() if self._my is not None else 0.0
+        g = await self._mg.get_position() if self._mg is not None else 0.0
+        s = await self._ms.get_position() if self._ms is not None else 0.0
+        r = await self._mr.get_position() if self._mr is not None else 0.0
+        return (c.AxisCoordinate(x, y), c.ToolCoordinate(g, s, r))
     
     ### CAMERA
 
     async def get_shelves(self, timeout_seconds: float = SHELF_SCAN_TIMEOUT) -> List[float]:
+        if self._mx is None or self._my is None:
+            raise MotorError("Gantry motors (x_axis, y_axis) required for shelf scanning")
+
         start_time = time.monotonic()
         shelves: List[float] = []
 
@@ -631,6 +716,9 @@ class Tool:
     async def update_grid(
         self, shelves: List[float], timeout_per_shelf: float = GRID_UPDATE_TIMEOUT_PER_SHELF
     ) -> List[float]:
+        if self._mx is None or self._my is None:
+            raise MotorError("Gantry motors (x_axis, y_axis) required for grid update")
+
         anchors: List[float] = []
 
         try:

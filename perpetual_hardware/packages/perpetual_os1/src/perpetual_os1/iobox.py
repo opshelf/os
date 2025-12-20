@@ -6,6 +6,7 @@ from hardware.curtain import CurtainSensor, CurtainMonitor
 from perpetual_os1.exceptions import (
     IOBoxError, MotorError
 )
+import perpetual_os1.common as c
 
 from hardware.scale import Scale
 from enum import Enum
@@ -14,15 +15,35 @@ import sentry_sdk
 import time
 
 
+def _create_motor_if_enabled(
+    controller: Controller,
+    motors: c.Motors,
+    name: str,
+    safety,
+    logger: logging.Logger,
+) -> Optional[Motor]:
+    try:
+        cfg = motors.by_name(name)
+    except KeyError:
+        logger.info("Motor '%s' not found in config; skipping", name)
+        return None
+
+    if cfg.enabled is False:
+        logger.info("Motor '%s' disabled via config; skipping", name)
+        return None
+
+    return Motor(controller, cfg, safety)
+
+
 class IOBoxStatus(Enum):
     IDLE = 0
     READY = 1
     ERROR = 2
 
 class IOBox:
-    def __init__(self, 
+    def __init__(self,
                  motorcontroller: Controller,
-                 scalecontroller: Controller, 
+                 scalecontroller: Controller,
                  params: dict,
                  safety=None,
                  ):
@@ -30,15 +51,15 @@ class IOBox:
         self._motorcontroller = motorcontroller
         self._status = IOBoxStatus.IDLE
         self._params = params
+        self._logger = logging.getLogger(__name__).getChild("IOBox")
 
-        self._md = Motor(controller = self._motorcontroller,
-                         params = self._params.motors.by_name("door"),
-                         safety = safety)
+        self._md: Optional[Motor] = _create_motor_if_enabled(
+            motorcontroller, self._params.motors, "door", safety, self._logger
+        )
         scale_cfg = getattr(self._params, "scale", None)
         self._scale_enabled = scale_cfg is None or getattr(scale_cfg, "enabled", True)
         self._scale = Scale(scalecontroller) if self._scale_enabled is True else None
         self._scale_ready = False
-        self._logger = logging.getLogger(__name__).getChild("IOBox")
         self._curtain_sensor: Optional[CurtainSensor] = None
         self._curtain_monitor: Optional[CurtainMonitor] = None
         self._curtain_state: Optional[bool] = None
@@ -67,8 +88,11 @@ class IOBox:
             IOBoxError: If configuration of any component fails
         """
         try:
-            await self._md.configure()
-            await self._md.home()
+            if self._md is not None:
+                await self._md.configure()
+                await self._md.home()
+            else:
+                self._logger.info("Door motor disabled via config")
             if self._scale_enabled is True:
                 self._scale_ready = True
             else:
@@ -172,17 +196,18 @@ class IOBox:
     async def open_door(self):
         """
         Open IOBox door.
-        
+
         Raises:
-            IOBoxError: If door motor is not configured
+            IOBoxError: If door motor is not configured or disabled
             MotorError: If door movement fails
         """
+        if self._md is None:
+            raise IOBoxError("Door motor not configured or disabled")
+
         try:
-            if self._md is None:
-                raise IOBoxError("Door motor not configured")
             if self._curtain_state:
                 raise IOBoxError("Curtain is blocked; refusing to open door")
-            await self._md.move_to_position(self._params.motors.by_name("door").lim)  # open position
+            await self._md.move_to_position(self._params.motors.by_name("door").lim)
             await self.refresh_door_state(force=True)
         except Exception as e:
             self._status = IOBoxStatus.ERROR
@@ -193,15 +218,16 @@ class IOBox:
     async def close_door(self):
         """
         Close IOBox door.
-        
+
         Raises:
-            IOBoxError: If door motor is not configured
+            IOBoxError: If door motor is not configured or disabled
             MotorError: If door movement fails
         """
+        if self._md is None:
+            raise IOBoxError("Door motor not configured or disabled")
+
         try:
-            if self._md is None:
-                raise IOBoxError("Door motor not configured")
-            await self._md.move_to_position(0)  # closed position
+            await self._md.move_to_position(0)
             await self.refresh_door_state(force=True)
         except Exception as e:
             self._status = IOBoxStatus.ERROR
@@ -213,9 +239,11 @@ class IOBox:
         """
         Home the door motor, forcing the door closed first when curtain is clear.
         """
+        if self._md is None:
+            self._logger.info("Door motor not configured; skipping home")
+            return
+
         try:
-            if self._md is None:
-                raise IOBoxError("Door motor not configured")
             if not self._curtain_state:
                 await self.close_door()
             await self._md.home()
