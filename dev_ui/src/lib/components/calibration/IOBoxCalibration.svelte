@@ -196,10 +196,10 @@
 		<div class="jog-controls">
 			<div class="jog-axis">
 				<span class="axis-label">X</span>
-				<button type="button" on:click={() => didClickJog('x', -jogStep)} disabled={isMoving === true}>
+				<button type="button" on:click={() => didClickJog('x', jogStep)} disabled={isMoving === true}>
 					-
 				</button>
-				<button type="button" on:click={() => didClickJog('x', jogStep)} disabled={isMoving === true}>
+				<button type="button" on:click={() => didClickJog('x', -jogStep)} disabled={isMoving === true}>
 					+
 				</button>
 			</div>
