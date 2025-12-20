@@ -250,6 +250,26 @@ class Tool:
             await self._handle_fault(e)
             raise MotorError(f"Failed to stop tool: {str(e)}") from e
 
+    async def _ensure_retracted(self) -> None:
+        """
+        Ensure gripper and stage are retracted before gantry movement.
+        Uses parallel retraction if either axis is extended beyond safe threshold.
+        """
+        if self._mg is None or self._ms is None:
+            return
+
+        SAFE_THRESHOLD = 5.0
+
+        grip_pos = await self._mg.get_position()
+        slide_pos = await self._ms.get_position()
+
+        if grip_pos > SAFE_THRESHOLD or slide_pos > SAFE_THRESHOLD:
+            self._logger.info(
+                "Retracting before gantry move: grip=%.1f, slide=%.1f",
+                grip_pos, slide_pos
+            )
+            await self.retract_empty()
+
     async def move(self, coordinate: c.AxisCoordinate) -> None:
         """
         Move gantry to specified coordinates.
@@ -264,6 +284,7 @@ class Tool:
         try:
             self._mstatus = ToolMotionStatus.MOVING
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+            await self._ensure_retracted()
             await self._my.move_to_position_no_wait(coordinate.y)
             await self._mx.move_to_position_no_wait(coordinate.x)
             await self.gantry_wait()
