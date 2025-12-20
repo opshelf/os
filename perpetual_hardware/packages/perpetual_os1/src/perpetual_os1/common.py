@@ -122,6 +122,8 @@ class Motor(BaseModel):
     accel: int = Field(..., gt=0)
     ret_rpm: int = Field(..., gt=0)
     lim: Union[int, float] = Field(..., gt=0)
+    phys_at_zero: Optional[Union[int, float]] = Field(default=None)
+    phys_at_max: Optional[Union[int, float]] = Field(default=None)
     position_reg_high: int = Field(default=0x602C)
     position_reg_low: int = Field(default=0x602D)
     status_reg: int = Field(default=0x1003)
@@ -140,6 +142,50 @@ class Motor(BaseModel):
     @classmethod
     def _lim_positive(cls, v):
         return _positive(v, "lim")
+
+    @model_validator(mode="after")
+    def _validate_physical_endpoints(self) -> "Motor":
+        p0 = self.phys_at_zero if self.phys_at_zero is not None else 0
+        pm = self.phys_at_max if self.phys_at_max is not None else self.lim
+
+        if p0 == pm:
+            raise ValueError(
+                f"Motor '{self.motor_name}': phys_at_zero ({p0}) and phys_at_max ({pm}) "
+                "cannot be equal"
+            )
+
+        phys_min = min(p0, pm)
+        phys_max = max(p0, pm)
+
+        if phys_min < 0:
+            raise ValueError(
+                f"Motor '{self.motor_name}': physical endpoints must be >= 0, "
+                f"got phys_at_zero={p0}, phys_at_max={pm}"
+            )
+
+        if phys_max > self.lim:
+            raise ValueError(
+                f"Motor '{self.motor_name}': physical endpoints must be <= lim ({self.lim}), "
+                f"got phys_at_zero={p0}, phys_at_max={pm}"
+            )
+
+        return self
+
+    def logical_to_physical(self, logical: float) -> float:
+        p0 = self.phys_at_zero if self.phys_at_zero is not None else 0
+        pm = self.phys_at_max if self.phys_at_max is not None else self.lim
+        return p0 + (logical / self.lim) * (pm - p0)
+
+    def physical_to_logical(self, physical: float) -> float:
+        p0 = self.phys_at_zero if self.phys_at_zero is not None else 0
+        pm = self.phys_at_max if self.phys_at_max is not None else self.lim
+        return (physical - p0) / (pm - p0) * self.lim
+
+    def logical_to_physical_delta(self, logical_delta: float) -> float:
+        p0 = self.phys_at_zero if self.phys_at_zero is not None else 0
+        pm = self.phys_at_max if self.phys_at_max is not None else self.lim
+        scale = (pm - p0) / self.lim
+        return logical_delta * scale
 
 
 class Motors(RootModel[List[Motor]]):
