@@ -354,6 +354,9 @@ class Motor():
             0x10  # start path 0
         )
 
+        # Small delay to allow motor driver to clear complete bit
+        await asyncio.sleep(0.1)
+
         self._status = MotorStatus.MOVING
         self._pending_motion = functools.partial(self._start_absolute_move, value, rpm, accel)
         self._logger.debug(
@@ -563,9 +566,11 @@ class Motor():
                 last_movement_time = now  # initialize once
             
             last_pos = self._cur_pos
-            
-            # Normal completion
-            if complete:
+
+            # Normal completion - only accept if motor moved or enough time passed
+            # This prevents false completion from stale status bit
+            elapsed = now - start_time
+            if complete and (has_moved or elapsed > 0.5):
                 await self.stop()
                 self._pending_motion = None
                 self._logger.debug(
@@ -573,7 +578,8 @@ class Motor():
                     extra={
                         "motor_id": self._motor_id,
                         "homing": homing,
-                        "elapsed": time.monotonic() - start_time,
+                        "elapsed": elapsed,
+                        "has_moved": has_moved,
                     }
                 )
                 return MotorStatus.STOPPED
