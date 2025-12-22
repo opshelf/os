@@ -268,7 +268,7 @@
 					<td>x: {formatNumber(currentPosition.x)}</td>
 					<td>y: {formatNumber(currentPosition.y)}</td>
 					<td>z: {formatNumber(currentPosition.z_offset)}</td>
-					<td>stage: {formatNumber(currentPosition.slide_extension)}</td>
+					<td>s: {formatNumber(currentPosition.slide_extension)}</td>
 				</tr>
 			</tbody>
 		</table>
@@ -308,6 +308,8 @@
 					+
 				</button>
 			</div>
+		</div>
+		<div class="jog-controls">
 			<div class="jog-axis">
 				<span class="axis-label">Z</span>
 				<button
@@ -326,7 +328,7 @@
 				</button>
 			</div>
 			<div class="jog-axis">
-				<span class="axis-label">Stage</span>
+				<span class="axis-label">S</span>
 				<button
 					type="button"
 					on:click={() => didClickJog('stage', -jogStep)}
