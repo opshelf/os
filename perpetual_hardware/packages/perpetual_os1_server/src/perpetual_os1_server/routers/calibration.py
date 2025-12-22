@@ -469,7 +469,7 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 			z_limit = tool._mg._params.lim
 			if current_z < 0 or current_z > z_limit:
 				current_z = _iobox_current.gripper_extension
-			new_z = current_z + request.delta
+			new_z = max(0, min(z_limit, current_z + request.delta))
 			_iobox_current.gripper_extension = new_z
 			grip_rpm = await tool.get_param("GRIPPER_MOVE_RPM")
 			grip_accel = await tool.get_param("GRIPPER_MOVE_ACCEL")
@@ -481,7 +481,7 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 			stage_limit = tool._ms._params.lim
 			if current_stage < 0 or current_stage > stage_limit:
 				current_stage = _iobox_current.slide_extension + _iobox_current.io_stage_offset
-			new_stage = current_stage + request.delta
+			new_stage = max(0, min(stage_limit, current_stage + request.delta))
 			_iobox_current.io_stage_offset = new_stage - _iobox_current.slide_extension
 			await tool._ms.move_to_position(new_stage)
 	except (MotorError, HardwareMotorError) as e:
