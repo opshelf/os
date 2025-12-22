@@ -405,7 +405,24 @@ class Motor():
 
         except Exception as e:
             raise MotorConfigError(f"Failed to configure movement parameters: {str(e)}") from e
-        
+
+    async def clear_alarm(self) -> None:
+        """Clear motor alarms without homing.
+
+        Sends control word sequence to reset fault state and reconfigure for movement.
+
+        Raises:
+            MotorError: If alarm clear fails
+        """
+        try:
+            await self.set_param("Control word", 0x1111)
+            await self.set_param("Control word", 0x1122)
+            await self._controller.write_single_register(self._motor_id, 0x6000, 0x0000)
+            await self.move_config()
+            self._status = MotorStatus.STOPPED
+        except Exception as e:
+            raise MotorError(f"Failed to clear motor alarm: {str(e)}") from e
+
     async def get_position(self) -> float:
         """Get the current motor position in millimeters.
 

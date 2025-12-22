@@ -403,6 +403,45 @@ async def simulate_motor_crash(
     return {"success": True, "motor": motor_name}
 
 
+@router.post("/debug/motors/{motor_name}/clear", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
+async def clear_motor_fault(
+    motor_name: str,
+    worker: RobotWorker = Depends(get_robot_worker_or_error),
+) -> dict:
+    motor = worker._robot._get_motor_by_name(motor_name)
+
+    if motor is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Motor '{motor_name}' not found",
+        )
+
+    await motor.clear_alarm()
+    return {"success": True, "motor": motor_name}
+
+
+@router.post("/debug/motors/{motor_name}/jog", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
+async def jog_motor(
+    motor_name: str,
+    delta: float,
+    worker: RobotWorker = Depends(get_robot_worker_or_error),
+) -> dict:
+    motor = worker._robot._get_motor_by_name(motor_name)
+
+    if motor is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Motor '{motor_name}' not found",
+        )
+
+    current_pos = await motor.get_position()
+    motor_limit = motor._params.lim
+    new_pos = max(0, min(motor_limit, current_pos + delta))
+    await motor.move_to_position(new_pos)
+
+    return {"success": True, "motor": motor_name, "position": new_pos}
+
+
 async def get_occupied_cells_from_db() -> set[tuple[str, int, int]]:
     async with AsyncSessionLocal() as session:
         service = StorageService(session)
