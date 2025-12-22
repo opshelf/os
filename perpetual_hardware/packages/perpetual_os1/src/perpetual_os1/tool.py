@@ -338,11 +338,21 @@ class Tool:
         return value + getattr(coordinate, "z_offset", 0.0)
 
     async def _get_slide_extension(self, coordinate: Optional[c.AxisCoordinate]) -> float:
-        """Select slide extension for front/back shelves."""
+        """Select slide extension for IO box operations."""
         front_ext = await self.get_param("SLIDE_EXTENSION_FRONT")
         back_ext = await self.get_param("SLIDE_EXTENSION_BACK")
         if front_ext is None or back_ext is None:
             raise ConfigError("Missing slide extension parameters")
+        if coordinate is None:
+            return front_ext
+        return front_ext if coordinate.s == 0 else back_ext
+
+    async def _get_shelf_slide_extension(self, coordinate: Optional[c.AxisCoordinate]) -> float:
+        """Select slide extension for shelf pick/place operations."""
+        front_ext = await self.get_param("SHELF_SLIDE_EXTENSION_FRONT")
+        back_ext = await self.get_param("SHELF_SLIDE_EXTENSION_BACK")
+        if front_ext is None or back_ext is None:
+            raise ConfigError("Missing shelf slide extension parameters")
         if coordinate is None:
             return front_ext
         return front_ext if coordinate.s == 0 else back_ext
@@ -399,7 +409,7 @@ class Tool:
             raise MotorError("Tool motors (z_axis, stage) required for extension")
 
         try:
-            slide_ext = await self._get_slide_extension(coordinate)
+            slide_ext = await self._get_shelf_slide_extension(coordinate)
             grip_ext = await self.get_param("GRIPPER_EXTENSION_PLACE")
             grip_rpm = await self.get_param("GRIPPER_MOVE_RPM")
             grip_accel = await self.get_param("GRIPPER_MOVE_ACCEL")
@@ -475,7 +485,7 @@ class Tool:
             raise MotorError("Tool motors (z_axis, stage) required for empty extension")
 
         try:
-            slide_ext = await self._get_slide_extension(coordinate)
+            slide_ext = await self._get_shelf_slide_extension(coordinate)
             grip_ext = await self.get_param("GRIPPER_EXTENSION_PICK")
             grip_rpm = await self.get_param("GRIPPER_MOVE_RPM")
             grip_accel = await self.get_param("GRIPPER_MOVE_ACCEL")
