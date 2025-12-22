@@ -136,13 +136,17 @@ async def move_to_cell(request: MoveRequest) -> PositionResponse:
 	slide_param = "SHELF_SLIDE_EXTENSION_FRONT" if request.side == "left_module" else "SHELF_SLIDE_EXTENSION_BACK"
 	slide_ext = await tool.get_param(slide_param)
 
+	if slide_ext is None:
+		fallback_param = "SLIDE_EXTENSION_FRONT" if request.side == "left_module" else "SLIDE_EXTENSION_BACK"
+		slide_ext = await tool.get_param(fallback_param)
+
 	_current_side = coord.s
 	_current_side_name = request.side
 	_current_position = PositionResponse(
 		x=coord.x,
 		y=coord.y,
 		z_offset=coord.z_offset,
-		slide_extension=slide_ext,
+		slide_extension=slide_ext or 0,
 	)
 
 	return _current_position
