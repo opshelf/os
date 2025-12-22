@@ -87,6 +87,7 @@ export interface Position {
 	x: number;
 	y: number;
 	z_offset: number;
+	slide_extension: number;
 }
 
 export interface StorageGrid {
@@ -138,7 +139,7 @@ export async function moveToCell(
 	});
 }
 
-export async function jogAxis(axis: string, delta: number): Promise<Position> {
+export async function jogAxis(axis: "x" | "y" | "z" | "stage", delta: number): Promise<Position> {
 	return apiFetch<Position>("/calibration/jog", {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
@@ -164,7 +165,8 @@ export async function saveCalibration(
 	cellIdx: number,
 	x: number,
 	y: number,
-	zOffset: number
+	zOffset: number,
+	slideExtension: number
 ): Promise<void> {
 	await apiFetch("/calibration/save", {
 		method: "POST",
@@ -176,6 +178,7 @@ export async function saveCalibration(
 			x,
 			y,
 			z_offset: zOffset,
+			slide_extension: slideExtension,
 		}),
 	});
 }

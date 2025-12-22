@@ -21,6 +21,7 @@ class PositionResponse(BaseModel):
 	x: float
 	y: float
 	z_offset: float
+	slide_extension: float
 
 
 class MoveRequest(BaseModel):
@@ -30,7 +31,7 @@ class MoveRequest(BaseModel):
 
 
 class JogRequest(BaseModel):
-	axis: Literal["x", "y", "z"]
+	axis: Literal["x", "y", "z", "stage"]
 	delta: float
 
 
@@ -47,10 +48,12 @@ class SaveRequest(BaseModel):
 	x: float
 	y: float
 	z_offset: float
+	slide_extension: float
 
 
 _current_position: Optional[PositionResponse] = None
 _current_side: int = 0
+_current_side_name: str = "left_module"
 
 
 def _parse_side(side: str) -> StorageModuleSide:
@@ -81,7 +84,7 @@ async def get_storage():
 
 @router.post("/move", response_model=PositionResponse)
 async def move_to_cell(request: MoveRequest) -> PositionResponse:
-	global _current_position, _current_side
+	global _current_position, _current_side, _current_side_name
 
 	try:
 		worker = await get_robot_worker()
@@ -130,11 +133,16 @@ async def move_to_cell(request: MoveRequest) -> PositionResponse:
 
 	await tool.move(coord)
 
+	slide_param = "SLIDE_EXTENSION_FRONT" if request.side == "left_module" else "SLIDE_EXTENSION_BACK"
+	slide_ext = await tool.get_param(slide_param)
+
 	_current_side = coord.s
+	_current_side_name = request.side
 	_current_position = PositionResponse(
 		x=coord.x,
 		y=coord.y,
 		z_offset=coord.z_offset,
+		slide_extension=slide_ext,
 	)
 
 	return _current_position
@@ -162,10 +170,12 @@ async def jog_axis(request: JogRequest) -> PositionResponse:
 
 	x_limit = tool._mx._params.lim if tool._mx is not None else 1000
 	y_limit = tool._my._params.lim if tool._my is not None else 1500
+	stage_limit = tool._ms._params.lim if tool._ms is not None else 75
 
 	new_x = _current_position.x
 	new_y = _current_position.y
 	new_z = _current_position.z_offset
+	new_slide = _current_position.slide_extension
 
 	try:
 		if request.axis == "x":
@@ -191,6 +201,15 @@ async def jog_axis(request: JogRequest) -> PositionResponse:
 			grip_rpm = await tool.get_param("GRIPPER_MOVE_RPM")
 			grip_accel = await tool.get_param("GRIPPER_MOVE_ACCEL")
 			await tool._mg.move_to_position(new_gripper_pos, rpm=grip_rpm, accel=grip_accel)
+		elif request.axis == "stage":
+			if tool._ms is None:
+				raise HTTPException(
+					status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+					detail="Stage motor not configured",
+				)
+			await tool._ms.clear_alarm()
+			new_slide = max(0, min(stage_limit, new_slide + request.delta))
+			await tool._ms.move_to_position(new_slide)
 	except (MotorError, HardwareMotorError) as e:
 		raise HTTPException(
 			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -201,6 +220,7 @@ async def jog_axis(request: JogRequest) -> PositionResponse:
 		x=new_x,
 		y=new_y,
 		z_offset=new_z,
+		slide_extension=new_slide,
 	)
 
 	return _current_position
@@ -296,6 +316,15 @@ async def save_calibration(request: SaveRequest):
 	shelf.cells[request.cell_idx].calibration_point = new_cal
 
 	grid.save()
+
+	config = get_root_config()
+	params_dict = config.robot.tool.parameters.model_dump()
+	slide_param = "SLIDE_EXTENSION_FRONT" if request.side == "left_module" else "SLIDE_EXTENSION_BACK"
+	params_dict[slide_param] = request.slide_extension
+
+	from perpetual_os1.common import Parameters
+	config.robot.tool.parameters = Parameters.model_validate(params_dict)
+	save_root_config(config)
 
 	return {"success": True}
 
