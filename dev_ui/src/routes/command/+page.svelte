@@ -312,7 +312,7 @@
 		</form>
 
 		{#if submitMessage}
-			<p>{submitMessage}</p>
+			<p style="margin-top: 1em">{submitMessage}</p>
 		{/if}
 
 		{#if submitError}
