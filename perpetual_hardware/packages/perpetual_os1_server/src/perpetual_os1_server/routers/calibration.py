@@ -160,14 +160,17 @@ async def jog_axis(request: JogRequest) -> PositionResponse:
 
 	tool = worker._robot._tool
 
+	x_limit = tool._mx._params.lim if tool._mx is not None else 1000
+	y_limit = tool._my._params.lim if tool._my is not None else 1500
+
 	new_x = _current_position.x
 	new_y = _current_position.y
 	new_z = _current_position.z_offset
 
 	if request.axis == "x":
-		new_x += request.delta
+		new_x = max(0, min(x_limit, new_x + request.delta))
 	elif request.axis == "y":
-		new_y += request.delta
+		new_y = max(0, min(y_limit, new_y + request.delta))
 	elif request.axis == "z":
 		new_z += request.delta
 
@@ -447,20 +450,23 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 	tool = worker._robot._tool
 	_iobox_position = request.position
 
+	x_limit = tool._mx._params.lim if tool._mx is not None else 1000
+	y_limit = tool._my._params.lim if tool._my is not None else 1500
+
 	try:
 		if request.axis == "x":
 			if request.position == "low":
-				_iobox_current.pickup_low_x += request.delta
+				_iobox_current.pickup_low_x = max(0, min(x_limit, _iobox_current.pickup_low_x + request.delta))
 				await tool.move(AxisCoordinate(_iobox_current.pickup_low_x, _iobox_current.pickup_low_y))
 			else:
-				_iobox_current.pickup_high_x += request.delta
+				_iobox_current.pickup_high_x = max(0, min(x_limit, _iobox_current.pickup_high_x + request.delta))
 				await tool.move(AxisCoordinate(_iobox_current.pickup_high_x, _iobox_current.pickup_high_y))
 		elif request.axis == "y":
 			if request.position == "low":
-				_iobox_current.pickup_low_y += request.delta
+				_iobox_current.pickup_low_y = max(0, min(y_limit, _iobox_current.pickup_low_y + request.delta))
 				await tool.move(AxisCoordinate(_iobox_current.pickup_low_x, _iobox_current.pickup_low_y))
 			else:
-				_iobox_current.pickup_high_y += request.delta
+				_iobox_current.pickup_high_y = max(0, min(y_limit, _iobox_current.pickup_high_y + request.delta))
 				await tool.move(AxisCoordinate(_iobox_current.pickup_high_x, _iobox_current.pickup_high_y))
 		elif request.axis == "z":
 			if tool._mg is None:
@@ -636,7 +642,9 @@ async def rotate_to_angle(angle: float):
 	if tool._mr is None:
 		raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Rotation motor not configured")
 
-	await tool._mr.move_to_position(angle)
+	rotation_limit = tool._mr._params.lim
+	clamped_angle = max(0, min(rotation_limit, angle))
+	await tool._mr.move_to_position(clamped_angle)
 
 	return {"success": True}
 
