@@ -36,7 +36,10 @@
 		{ value: 1, label: '1mm' },
 		{ value: 2, label: '2mm' },
 		{ value: 5, label: '5mm' },
-		{ value: 10, label: '1cm' }
+		{ value: 10, label: '1cm' },
+		{ value: 20, label: '2cm' },
+		{ value: 50, label: '5cm' },
+		{ value: 100, label: '10cm' }
 	];
 
 	onMount(function () {
