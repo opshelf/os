@@ -167,21 +167,35 @@ async def jog_axis(request: JogRequest) -> PositionResponse:
 	new_y = _current_position.y
 	new_z = _current_position.z_offset
 
-	if request.axis == "x":
-		new_x = max(0, min(x_limit, new_x + request.delta))
-	elif request.axis == "y":
-		new_y = max(0, min(y_limit, new_y + request.delta))
-	elif request.axis == "z":
-		new_z += request.delta
-
-	if request.axis in ("x", "y"):
-		coord = AxisCoordinate(
-			x=new_x,
-			y=new_y,
-			s=_current_side,
-			z_offset=new_z,
-		)
-		await tool.move(coord)
+	try:
+		if request.axis == "x":
+			new_x = max(0, min(x_limit, new_x + request.delta))
+			coord = AxisCoordinate(x=new_x, y=new_y, s=_current_side, z_offset=new_z)
+			await tool.move(coord)
+		elif request.axis == "y":
+			new_y = max(0, min(y_limit, new_y + request.delta))
+			coord = AxisCoordinate(x=new_x, y=new_y, s=_current_side, z_offset=new_z)
+			await tool.move(coord)
+		elif request.axis == "z":
+			if tool._mg is None:
+				raise HTTPException(
+					status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+					detail="Gripper motor not configured",
+				)
+			await tool._mg.clear_alarm()
+			grip_ext = await tool.get_param("GRIPPER_EXTENSION_PLACE")
+			current_gripper_pos = grip_ext + _current_position.z_offset
+			z_limit = tool._mg._params.lim
+			new_gripper_pos = max(0, min(z_limit, current_gripper_pos + request.delta))
+			new_z = new_gripper_pos - grip_ext
+			grip_rpm = await tool.get_param("GRIPPER_MOVE_RPM")
+			grip_accel = await tool.get_param("GRIPPER_MOVE_ACCEL")
+			await tool._mg.move_to_position(new_gripper_pos, rpm=grip_rpm, accel=grip_accel)
+	except (MotorError, HardwareMotorError) as e:
+		raise HTTPException(
+			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+			detail=f"Motor error: {str(e)}",
+		) from e
 
 	_current_position = PositionResponse(
 		x=new_x,
@@ -212,6 +226,14 @@ async def test_gripper(request: TestRequest):
 
 	tool = worker._robot._tool
 
+	try:
+		await tool.retract()
+	except (MotorError, HardwareMotorError) as e:
+		raise HTTPException(
+			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+			detail=f"Failed to retract: {str(e)}",
+		) from e
+
 	coord = AxisCoordinate(
 		x=_current_position.x,
 		y=_current_position.y,
@@ -219,8 +241,14 @@ async def test_gripper(request: TestRequest):
 		z_offset=_current_position.z_offset,
 	)
 
-	await tool.pick(coord)
-	await tool.place(coord)
+	try:
+		await tool.pick(coord)
+		await tool.place(coord)
+	except (MotorError, HardwareMotorError) as e:
+		raise HTTPException(
+			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+			detail=f"Test failed: {str(e)}",
+		) from e
 
 	return {"success": True}
 
