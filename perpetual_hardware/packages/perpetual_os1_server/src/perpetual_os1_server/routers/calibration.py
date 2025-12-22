@@ -227,6 +227,10 @@ async def test_gripper(request: TestRequest):
 	tool = worker._robot._tool
 
 	try:
+		if tool._mg is not None:
+			await tool._mg.clear_alarm()
+		if tool._ms is not None:
+			await tool._ms.clear_alarm()
 		await tool.retract()
 	except (MotorError, HardwareMotorError) as e:
 		raise HTTPException(
