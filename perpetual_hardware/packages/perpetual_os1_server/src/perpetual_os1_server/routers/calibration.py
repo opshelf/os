@@ -133,7 +133,7 @@ async def move_to_cell(request: MoveRequest) -> PositionResponse:
 
 	await tool.move(coord)
 
-	slide_param = "SLIDE_EXTENSION_FRONT" if request.side == "left_module" else "SLIDE_EXTENSION_BACK"
+	slide_param = "SHELF_SLIDE_EXTENSION_FRONT" if request.side == "left_module" else "SHELF_SLIDE_EXTENSION_BACK"
 	slide_ext = await tool.get_param(slide_param)
 
 	_current_side = coord.s
@@ -319,7 +319,7 @@ async def save_calibration(request: SaveRequest):
 
 	config = get_root_config()
 	params_dict = config.robot.tool.parameters.model_dump()
-	slide_param = "SLIDE_EXTENSION_FRONT" if request.side == "left_module" else "SLIDE_EXTENSION_BACK"
+	slide_param = "SHELF_SLIDE_EXTENSION_FRONT" if request.side == "left_module" else "SHELF_SLIDE_EXTENSION_BACK"
 	params_dict[slide_param] = request.slide_extension
 
 	from perpetual_os1.common import Parameters
