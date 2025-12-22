@@ -471,6 +471,7 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 		elif request.axis == "z":
 			if tool._mg is None:
 				raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Gripper motor not configured")
+			await tool._mg.clear_alarm()
 			current_z = await tool._mg.get_position()
 			z_limit = tool._mg._params.lim
 			if current_z < 0 or current_z > z_limit:
@@ -483,6 +484,7 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 		elif request.axis == "stage":
 			if tool._ms is None:
 				raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Stage motor not configured")
+			await tool._ms.clear_alarm()
 			current_stage = await tool._ms.get_position()
 			stage_limit = tool._ms._params.lim
 			if current_stage < 0 or current_stage > stage_limit:

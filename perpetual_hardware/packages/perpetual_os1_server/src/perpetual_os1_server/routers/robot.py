@@ -434,6 +434,7 @@ async def jog_motor(
             detail=f"Motor '{motor_name}' not found",
         )
 
+    await motor.clear_alarm()
     current_pos = await motor.get_position()
     motor_limit = motor._params.lim
     new_pos = max(0, min(motor_limit, current_pos + delta))
