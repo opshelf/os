@@ -128,7 +128,7 @@
 		}
 	}
 
-	async function didClickJog(axis: 'x' | 'y' | 'z', delta: number): Promise<void> {
+	async function didClickJog(axis: 'x' | 'y' | 'z' | 'stage', delta: number): Promise<void> {
 		isMoving = true;
 		error = '';
 
@@ -173,7 +173,8 @@
 				selectedCell,
 				currentPosition.x,
 				currentPosition.y,
-				currentPosition.z_offset
+				currentPosition.z_offset,
+				currentPosition.slide_extension
 			);
 			message = 'calibration saved';
 		} catch (err) {
@@ -259,7 +260,7 @@
 		<table class="position-table">
 			<thead>
 				<tr>
-					<th colspan="3">current position</th>
+					<th colspan="4">current position</th>
 				</tr>
 			</thead>
 			<tbody>
@@ -267,6 +268,7 @@
 					<td>x: {formatNumber(currentPosition.x)}</td>
 					<td>y: {formatNumber(currentPosition.y)}</td>
 					<td>z: {formatNumber(currentPosition.z_offset)}</td>
+					<td>stage: {formatNumber(currentPosition.slide_extension)}</td>
 				</tr>
 			</tbody>
 		</table>
@@ -318,6 +320,23 @@
 				<button
 					type="button"
 					on:click={() => didClickJog('z', jogStep)}
+					disabled={isMoving === true}
+				>
+					+
+				</button>
+			</div>
+			<div class="jog-axis">
+				<span class="axis-label">Stage</span>
+				<button
+					type="button"
+					on:click={() => didClickJog('stage', -jogStep)}
+					disabled={isMoving === true}
+				>
+					-
+				</button>
+				<button
+					type="button"
+					on:click={() => didClickJog('stage', jogStep)}
 					disabled={isMoving === true}
 				>
 					+
