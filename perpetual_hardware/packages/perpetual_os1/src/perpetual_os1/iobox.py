@@ -82,11 +82,9 @@ class IOBox:
 
     def reload_parameters(self) -> None:
         """Reload IO parameters from config.json without restarting."""
-        from pathlib import Path
         from perpetual_os1.common import load_config_file
 
-        config_path = Path(__file__).resolve().parent / "config.json"
-        config = load_config_file(config_path)
+        config = load_config_file(c.CONFIG_PATH)
         io_config = config.get("robot.io", None)
 
         if io_config is None:
