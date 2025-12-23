@@ -2,8 +2,9 @@
 	import CellCalibration from '$lib/components/calibration/CellCalibration.svelte';
 	import IOBoxCalibration from '$lib/components/calibration/IOBoxCalibration.svelte';
 	import RotationCalibration from '$lib/components/calibration/RotationCalibration.svelte';
+	import CycleTest from '$lib/components/calibration/CycleTest.svelte';
 
-	let selectedView: 'cell' | 'io' | 'rotation' = 'cell';
+	let selectedView: 'cell' | 'io' | 'rotation' | 'cycle' = 'cell';
 
 	function didSelectCell(): void {
 		selectedView = 'cell';
@@ -15,6 +16,10 @@
 
 	function didSelectRotation(): void {
 		selectedView = 'rotation';
+	}
+
+	function didSelectCycle(): void {
+		selectedView = 'cycle';
 	}
 </script>
 
@@ -28,14 +33,20 @@
 	<button type="button" class:selected={selectedView === 'rotation'} on:click={didSelectRotation}>
 		rotation
 	</button>
+	<div class="divider"></div>
+	<button type="button" class:selected={selectedView === 'cycle'} on:click={didSelectCycle}>
+		cycle
+	</button>
 </div>
 
 {#if selectedView === 'cell'}
 	<CellCalibration />
 {:else if selectedView === 'io'}
 	<IOBoxCalibration />
-{:else}
+{:else if selectedView === 'rotation'}
 	<RotationCalibration />
+{:else if selectedView === 'cycle'}
+	<CycleTest />
 {/if}
 
 <style>
@@ -43,6 +54,7 @@
 		display: inline-flex;
 		margin-bottom: 1.5em;
 		gap: 1em;
+		align-items: center;
 	}
 
 	.toggle-group button {
@@ -55,5 +67,11 @@
 	.toggle-group button.selected {
 		background: black;
 		color: #fff;
+	}
+
+	.divider {
+		width: 55px;
+		height: 1px;
+		border-top: 2px black dashed;
 	}
 </style>

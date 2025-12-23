@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
 	import { onDestroy, onMount } from 'svelte';
-	import { apiFetch, buildAuthenticatedUrl, getApiBase } from '$lib';
+	import { apiFetch, buildAuthenticatedUrl, getApiBase, isApiConnected } from '$lib';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 
 	type WorkerStatusPayload = {
@@ -41,6 +41,7 @@
 			statusConnected = true;
 			statusError = '';
 			lastStatusUpdate = new Date().toLocaleString();
+			isApiConnected.set(true);
 		} catch (error) {
 			statusError = 'failed to parse robot status payload';
 		}
@@ -116,6 +117,7 @@
 		source.onopen = () => {
 			statusConnected = true;
 			statusError = '';
+			isApiConnected.set(true);
 		};
 
 		source.onmessage = (event: MessageEvent<string>) => {
@@ -125,6 +127,7 @@
 		source.onerror = () => {
 			statusConnected = false;
 			statusError = 'lost connection to robot status stream';
+			isApiConnected.set(false);
 		};
 
 		return () => {

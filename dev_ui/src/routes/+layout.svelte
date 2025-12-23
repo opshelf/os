@@ -2,7 +2,7 @@
 	import { page } from '$app/stores';
 	import { browser } from '$app/environment';
 	import { onMount } from 'svelte';
-	import { loginAsDeveloper, isAuthenticated } from '$lib';
+	import { loginAsDeveloper, isAuthenticated, isApiConnected } from '$lib';
 	import '../app.css';
 
 	const version = import.meta.env.PUBLIC_VERSION;
@@ -50,13 +50,15 @@
 
 <nav>
 	<ul>
-		{#each links as link}
-			<li>
-				<a href={link.href} class:active={isActiveLink(link.href, $page.url.pathname)}>
-					{link.label}
-				</a>
-			</li>
-		{/each}
+		{#if $isApiConnected === true}
+			{#each links as link}
+				<li>
+					<a href={link.href} class:active={isActiveLink(link.href, $page.url.pathname)}>
+						{link.label}
+					</a>
+				</li>
+			{/each}
+		{/if}
 
 		<li class="spacer-flexible"></li>
 
@@ -67,7 +69,9 @@
 </nav>
 
 <main>
-	{#if authReady === true}
+	{#if $isApiConnected === false}
+		<p class="offline-message">API is offline, re-connecting...</p>
+	{:else if authReady === true}
 		{@render children?.()}
 	{:else}
 		<p>authenticating...</p>
@@ -87,6 +91,13 @@
 <style>
 	.version-label {
 		padding: 0.5em;
+	}
+
+	.offline-message {
+		padding: 2em;
+		text-align: center;
+		color: #888;
+		font-size: 1.2em;
 	}
 
 	.logo-container {

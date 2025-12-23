@@ -378,3 +378,15 @@ export async function saveRotationAngles(front: number, back: number): Promise<{
 		body: JSON.stringify({ front, back }),
 	});
 }
+
+export async function runCycleTest(
+	side: string,
+	shelfIdx: number,
+	cellIdx: number
+): Promise<{ success: boolean }> {
+	return apiFetch<{ success: boolean }>("/calibration/cycle_test", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ side, shelf_idx: shelfIdx, cell_idx: cellIdx }),
+	});
+}
