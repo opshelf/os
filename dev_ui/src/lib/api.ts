@@ -310,6 +310,14 @@ export async function controlGripper(state: GripperState): Promise<{ success: bo
 	});
 }
 
+export type DoorAction = "open" | "close" | "home";
+
+export async function controlDoor(action: DoorAction): Promise<{ success: boolean }> {
+	return apiFetch<{ success: boolean }>(`/robot/debug/door?action=${action}`, {
+		method: "POST",
+	});
+}
+
 export interface IOBoxPosition {
 	pickup_low_x: number;
 	pickup_low_y: number;

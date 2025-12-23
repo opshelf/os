@@ -443,6 +443,28 @@ async def jog_motor(
     return {"success": True, "motor": motor_name, "position": new_pos}
 
 
+@router.post("/debug/door", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
+async def control_door(
+    action: Literal["open", "close", "home"],
+    worker: RobotWorker = Depends(get_robot_worker_or_error),
+) -> dict:
+    try:
+        if action == "open":
+            await worker._robot.io_open_door()
+        elif action == "close":
+            await worker._robot.io_close_door()
+        elif action == "home":
+            await worker._robot.io_home_door()
+
+        return {"success": True, "action": action}
+    except Exception as exc:
+        logging.error("Door control failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Door {action} failed: {exc}",
+        ) from exc
+
+
 async def get_occupied_cells_from_db() -> set[tuple[str, int, int]]:
     async with AsyncSessionLocal() as session:
         service = StorageService(session)
