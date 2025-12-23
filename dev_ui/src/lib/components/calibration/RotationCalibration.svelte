@@ -193,7 +193,7 @@
 {/if}
 
 {#if message !== ''}
-	<p class="message">{message}</p>
+	<div class="message">{message}</div>
 {/if}
 
 {#if error !== ''}
