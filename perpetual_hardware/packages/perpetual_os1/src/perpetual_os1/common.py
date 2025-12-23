@@ -131,6 +131,7 @@ class Motor(BaseModel):
     status_fault_bit: Optional[int] = Field(default=0)
     status_complete_bit: int = Field(default=5)
     ppr: int = Field(default=10000, ge=200, le=100000)
+    max_following_error: int = Field(default=4000, ge=100, le=65535)
 
     @field_validator("motor_name")
     @classmethod
