@@ -330,6 +330,12 @@ async def save_calibration(request: SaveRequest):
 	config.robot.tool.parameters = Parameters.model_validate(params_dict)
 	save_root_config(config)
 
+	try:
+		worker = await get_robot_worker()
+		worker._robot.reload_parameters()
+	except ValueError:
+		pass
+
 	return {"success": True}
 
 
@@ -659,6 +665,8 @@ async def save_iobox_calibration(request: IOBoxSaveRequest):
 
 	save_root_config(config)
 
+	worker._robot.reload_parameters()
+
 	await worker._robot._tool.home()
 
 	_iobox_current = IOBoxPositionResponse(
@@ -728,6 +736,12 @@ async def save_rotation_angles(request: RotateSaveRequest):
 	config.robot.tool.parameters = Parameters.model_validate(params_dict)
 
 	save_root_config(config)
+
+	try:
+		worker = await get_robot_worker()
+		worker._robot.reload_parameters()
+	except ValueError:
+		pass
 
 	return {"success": True}
 
