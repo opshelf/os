@@ -265,7 +265,7 @@ class Robot:
         await self._tool.move(AxisCoordinate(pph[0], pph[1]))
         await self._io.open_door()
         await self._tool.extend()
-        await self._tool.move(AxisCoordinate(ppl[0], ppl[1]))
+        await self._tool._my.move_to_position(ppl[1])
         await self._tool.retract()
         await self._io.close_door()
         await self._tool.move(coord)
