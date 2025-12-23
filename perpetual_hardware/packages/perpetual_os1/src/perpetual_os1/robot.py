@@ -17,15 +17,15 @@ class RobotConfigError(Exception):
     """Exception raised for robot configuration errors."""
     pass
 
-from perpetual_os1.robot_state import RobotStateManager
+from perpetual_os1.robot_state import RobotStateManager  # noqa: E402
 
-import logging
-from pathlib import Path
-from typing import Any, Dict, Optional, Union, Literal, Annotated, List, TYPE_CHECKING
-from pydantic import BaseModel, Field, model_validator
+import logging  # noqa: E402
+from pathlib import Path  # noqa: E402
+from typing import Any, Dict, Optional, Union, Literal, Annotated, List, TYPE_CHECKING  # noqa: E402
+from pydantic import BaseModel, Field, model_validator  # noqa: E402
 
-import asyncio
-import sentry_sdk
+import asyncio  # noqa: E402
+import sentry_sdk  # noqa: E402
 
 
 if TYPE_CHECKING:
