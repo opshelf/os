@@ -155,6 +155,8 @@
 		</tbody>
 	</table>
 
+	<br /><br />
+
 	{#if message !== ''}
 		<p class="message">{message}</p>
 	{/if}
@@ -175,6 +177,5 @@
 
 	.message {
 		margin-top: 1em;
-		color: green;
 	}
 </style>

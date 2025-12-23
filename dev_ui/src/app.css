@@ -93,12 +93,9 @@ button:active {
 }
 
 .error {
-	border: 2px solid red;
-	margin-top: 1em;
-	display: inline-block;
-	padding: 5px;
-	color: red;
+	display: block;
 	white-space: pre-wrap;
+	text-transform: lowercase;
 }
 
 nav a.active {
