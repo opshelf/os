@@ -143,22 +143,14 @@
 							on:click={() => didClickHome(motor)}
 							disabled={activeMotor !== null || doorAction !== null}
 						>
-							{#if activeMotor === motor && activeAction === 'home'}
-								homing...
-							{:else}
-								home
-							{/if}
+							home
 						</button>
 						<button
 							type="button"
 							on:click={() => didClickCrash(motor)}
 							disabled={activeMotor !== null || doorAction !== null}
 						>
-							{#if activeMotor === motor && activeAction === 'crash'}
-								crashing...
-							{:else}
-								crash
-							{/if}
+							crash
 						</button>
 					</td>
 				</tr>
@@ -171,44 +163,28 @@
 						on:click={() => didClickHome('door')}
 						disabled={activeMotor !== null || doorAction !== null}
 					>
-						{#if activeMotor === 'door' && activeAction === 'home'}
-							homing...
-						{:else}
-							home
-						{/if}
+						home
 					</button>
 					<button
 						type="button"
 						on:click={() => didClickCrash('door')}
 						disabled={activeMotor !== null || doorAction !== null}
 					>
-						{#if activeMotor === 'door' && activeAction === 'crash'}
-							crashing...
-						{:else}
-							crash
-						{/if}
+						crash
 					</button>
 					<button
 						type="button"
 						on:click={() => didClickDoor('open')}
 						disabled={doorAction !== null || activeMotor !== null}
 					>
-						{#if doorAction === 'open'}
-							opening...
-						{:else}
-							open
-						{/if}
+						open
 					</button>
 					<button
 						type="button"
 						on:click={() => didClickDoor('close')}
 						disabled={doorAction !== null || activeMotor !== null}
 					>
-						{#if doorAction === 'close'}
-							closing...
-						{:else}
-							close
-						{/if}
+						close
 					</button>
 				</td>
 			</tr>
@@ -229,22 +205,14 @@
 							on:click={() => didClickHome(motor)}
 							disabled={activeMotor !== null || gripperAction !== null}
 						>
-							{#if activeMotor === motor && activeAction === 'home'}
-								homing...
-							{:else}
-								home
-							{/if}
+							home
 						</button>
 						<button
 							type="button"
 							on:click={() => didClickCrash(motor)}
 							disabled={activeMotor !== null || gripperAction !== null}
 						>
-							{#if activeMotor === motor && activeAction === 'crash'}
-								crashing...
-							{:else}
-								crash
-							{/if}
+							crash
 						</button>
 					</td>
 				</tr>
@@ -257,22 +225,14 @@
 						on:click={() => didClickGripper('grip')}
 						disabled={gripperAction !== null || activeMotor !== null}
 					>
-						{#if gripperAction === 'grip'}
-							gripping...
-						{:else}
-							grip
-						{/if}
+						grip
 					</button>
 					<button
 						type="button"
 						on:click={() => didClickGripper('release')}
 						disabled={gripperAction !== null || activeMotor !== null}
 					>
-						{#if gripperAction === 'release'}
-							releasing...
-						{:else}
-							release
-						{/if}
+						release
 					</button>
 				</td>
 			</tr>

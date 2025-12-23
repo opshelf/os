@@ -475,11 +475,11 @@ async def control_door(
 ) -> dict:
     try:
         if action == "open":
-            await worker._robot.io_open_door()
+            await worker._robot._io.open_door()
         elif action == "close":
-            await worker._robot.io_close_door()
+            await worker._robot._io.close_door()
         elif action == "home":
-            await worker._robot.io_home_door()
+            await worker._robot._io.home_door()
 
         return {"success": True, "action": action}
     except Exception as exc:
