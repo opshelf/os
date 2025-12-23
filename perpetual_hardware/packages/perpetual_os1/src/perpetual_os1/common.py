@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Tuple, Union, TypeVar
 
 from pydantic import (
@@ -14,6 +15,8 @@ from pydantic import (
 
 C = TypeVar("C")
 S = TypeVar("S")
+
+CONFIG_PATH = Path("data/config.json")
 
 # ---------------------- NATS Config ----------------------
 

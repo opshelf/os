@@ -1,4 +1,4 @@
-from perpetual_os1.common import AxisCoordinate, ToolCoordinate, load_config_file
+from perpetual_os1.common import AxisCoordinate, ToolCoordinate, load_config_file, CONFIG_PATH
 
 from hardware.controller import SharedModbusController as Controller
 from perpetual_os1.iobox import IOBox
@@ -20,7 +20,6 @@ class RobotConfigError(Exception):
 from perpetual_os1.robot_state import RobotStateManager  # noqa: E402
 
 import logging  # noqa: E402
-from pathlib import Path  # noqa: E402
 from typing import Any, Dict, Optional, Union, Literal, Annotated, List, TYPE_CHECKING  # noqa: E402
 from pydantic import BaseModel, Field, model_validator  # noqa: E402
 
@@ -31,7 +30,6 @@ import sentry_sdk  # noqa: E402
 if TYPE_CHECKING:
     from hardware.motor import Motor
 
-CONFIG_PATH = Path(__file__).resolve().parent / "config.json"
 
 class StopCommand(BaseModel):
     command: Literal["stop"] = "stop"
