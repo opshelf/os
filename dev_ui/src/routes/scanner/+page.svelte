@@ -1,12 +1,7 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
 	import { onMount, onDestroy } from 'svelte';
-	import {
-		getScannerStatus,
-		sendScannerScan,
-		getApiBase,
-		type ScannerStatus
-	} from '$lib/api';
+	import { getScannerStatus, sendScannerScan, getApiBase, type ScannerStatus } from '$lib/api';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 
 	let status: ScannerStatus | null = null;
@@ -151,81 +146,91 @@
 {#if isLoading === true}
 	<p>loading scanner data...</p>
 {:else}
-<table>
-	<thead>
-		<tr>
-			<th colspan="2">scanner status</th>
-		</tr>
-	</thead>
-	<tbody>
-		{#if status !== null}
+	<table>
+		<thead>
 			<tr>
-				<td>enabled</td>
-				<td class:status-ok={status.enabled === true} class:status-error={status.enabled === false}>
-					{status.enabled ? 'yes' : 'no'}
+				<th colspan="2">scanner status</th>
+			</tr>
+		</thead>
+		<tbody>
+			{#if status !== null}
+				<tr>
+					<td>enabled</td>
+					<td
+						class:status-ok={status.enabled === true}
+						class:status-error={status.enabled === false}
+					>
+						{status.enabled ? 'yes' : 'no'}
+					</td>
+				</tr>
+				<tr>
+					<td>connected</td>
+					<td
+						class:status-ok={status.connected === true}
+						class:status-error={status.connected === false}
+					>
+						{status.connected ? 'yes' : 'no'}
+					</td>
+				</tr>
+			{:else if statusError === ''}
+				<tr>
+					<td colspan="2">loading...</td>
+				</tr>
+			{/if}
+			{#if statusError !== ''}
+				<tr>
+					<td colspan="2"><ErrorMessage message={statusError} /></td>
+				</tr>
+			{/if}
+		</tbody>
+
+		<thead>
+			<tr>
+				<th colspan="2">latest reading</th>
+			</tr>
+		</thead>
+		<tbody>
+			<tr>
+				<td colspan="2" class="reading">{latestReading !== '' ? latestReading : '-'}</td>
+			</tr>
+		</tbody>
+
+		<thead>
+			<tr>
+				<th colspan="2">simulated scan</th>
+			</tr>
+		</thead>
+		<tbody>
+			<tr>
+				<td>code</td>
+				<td>
+					<input type="text" bind:value={simulatedCode} placeholder="012345678901" />
+					<button type="button" class="random-button" on:click={didClickGenerate}>random</button>
 				</td>
 			</tr>
-			<tr>
-				<td>connected</td>
-				<td class:status-ok={status.connected === true} class:status-error={status.connected === false}>
-					{status.connected ? 'yes' : 'no'}
-				</td>
-			</tr>
-		{:else if statusError === ''}
-			<tr>
-				<td colspan="2">loading...</td>
-			</tr>
-		{/if}
-		{#if statusError !== ''}
-			<tr>
-				<td colspan="2"><ErrorMessage message={statusError} /></td>
-			</tr>
-		{/if}
-	</tbody>
+		</tbody>
+	</table>
 
-	<thead>
-		<tr>
-			<th colspan="2">latest reading</th>
-		</tr>
-	</thead>
-	<tbody>
-		<tr>
-			<td colspan="2" class="reading">{latestReading !== '' ? latestReading : '-'}</td>
-		</tr>
-	</tbody>
+	<div class="action-buttons">
+		<button type="button" on:click={didClickRefresh} disabled={isRefreshing === true}>
+			refresh
+		</button>
+		<button
+			type="button"
+			on:click={didClickSend}
+			disabled={isSending === true || simulatedCode.length === 0}
+		>
+			send scan
+		</button>
+	</div>
 
-	<thead>
-		<tr>
-			<th colspan="2">simulated scan</th>
-		</tr>
-	</thead>
-	<tbody>
-		<tr>
-			<td>code</td>
-			<td>
-				<input type="text" bind:value={simulatedCode} placeholder="012345678901" />
-				<button type="button" class="random-button" on:click={didClickGenerate}>random</button>
-			</td>
-		</tr>
-	</tbody>
-</table>
+	{#if message !== ''}
+		<div class="message">{message}</div>
+	{/if}
 
-<div class="action-buttons">
-	<button type="button" on:click={didClickRefresh} disabled={isRefreshing === true}>
-		refresh
-	</button>
-	<button type="button" on:click={didClickSend} disabled={isSending === true || simulatedCode.length === 0}>
-		send scan
-	</button>
-</div>
-
-{#if message !== ''}
-	<p class="message">{message}</p>
-{/if}
-
-{#if scanError !== ''}
-	<ErrorMessage message={scanError} />
-{/if}
+	{#if scanError !== ''}
+		<ErrorMessage message={scanError} />
+	{/if}
 {/if}
 
 <style>
