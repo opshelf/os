@@ -78,7 +78,7 @@
 		}
 	}
 
-	async function didClickJog(axis: 'x' | 'y' | 'z' | 'stage', delta: number): Promise<void> {
+	async function didClickJog(axis: 'x' | 'y' | 'gripper' | 'stage', delta: number): Promise<void> {
 		isMoving = true;
 		error = '';
 
@@ -234,14 +234,14 @@
 				<span class="axis-label">Z</span>
 				<button
 					type="button"
-					on:click={() => didClickJog('z', -jogStep)}
+					on:click={() => didClickJog('gripper', -jogStep)}
 					disabled={isMoving === true}
 				>
 					-
 				</button>
 				<button
 					type="button"
-					on:click={() => didClickJog('z', jogStep)}
+					on:click={() => didClickJog('gripper', jogStep)}
 					disabled={isMoving === true}
 				>
 					+
