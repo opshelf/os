@@ -5,8 +5,10 @@
 		getMotors,
 		simulateMotorCrash,
 		controlGripper,
+		controlDoor,
 		type MotorList,
-		type GripperState
+		type GripperState,
+		type DoorAction
 	} from '$lib/api';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 
@@ -14,6 +16,7 @@
 	let isLoading = true;
 	let crashingMotor: string | null = null;
 	let gripperAction: GripperState | null = null;
+	let doorAction: DoorAction | null = null;
 	let error = '';
 	let message = '';
 
@@ -53,6 +56,21 @@
 			await controlGripper(state);
 		} finally {
 			gripperAction = null;
+		}
+	}
+
+	async function didClickDoor(action: DoorAction): Promise<void> {
+		doorAction = action;
+		error = '';
+		message = '';
+
+		try {
+			await controlDoor(action);
+			message = `door ${action} complete`;
+		} catch (err) {
+			error = err instanceof Error ? err.message : `door ${action} failed`;
+		} finally {
+			doorAction = null;
 		}
 	}
 
@@ -152,6 +170,51 @@
 						disabled={gripperAction !== null}
 					>
 						release
+					</button>
+				</td>
+			</tr>
+		</tbody>
+		<thead>
+			<tr>
+				<th colspan="2">door</th>
+			</tr>
+		</thead>
+		<tbody>
+			<tr>
+				<td>control</td>
+				<td>
+					<button
+						type="button"
+						on:click={() => didClickDoor('open')}
+						disabled={doorAction !== null}
+					>
+						{#if doorAction === 'open'}
+							opening...
+						{:else}
+							open
+						{/if}
+					</button>
+					<button
+						type="button"
+						on:click={() => didClickDoor('close')}
+						disabled={doorAction !== null}
+					>
+						{#if doorAction === 'close'}
+							closing...
+						{:else}
+							close
+						{/if}
+					</button>
+					<button
+						type="button"
+						on:click={() => didClickDoor('home')}
+						disabled={doorAction !== null}
+					>
+						{#if doorAction === 'home'}
+							homing...
+						{:else}
+							home
+						{/if}
 					</button>
 				</td>
 			</tr>
