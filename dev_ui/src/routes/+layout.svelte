@@ -46,6 +46,7 @@
 
 <svelte:head>
 	<link rel="icon" href="/favicon.svg" />
+	<title>openshelf ┈ dev ui</title>
 </svelte:head>
 
 <nav>
@@ -70,7 +71,7 @@
 
 <main>
 	{#if $isApiConnected === false}
-		<p class="offline-message">API is offline, re-connecting...</p>
+		<p class="offline-message">api is offline, re-connecting...</p>
 	{:else if authReady === true}
 		{@render children?.()}
 	{:else}
@@ -94,10 +95,9 @@
 	}
 
 	.offline-message {
-		padding: 2em;
-		text-align: center;
-		color: #888;
-		font-size: 1.2em;
+		position: fixed;
+		bottom: 2em;
+		left: 2em;
 	}
 
 	.logo-container {

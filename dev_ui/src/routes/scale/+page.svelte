@@ -73,7 +73,12 @@
 		message = '';
 
 		try {
-			const result = await setScaleCalibrationParams(fullScale, calibrationWeight, precision, division);
+			const result = await setScaleCalibrationParams(
+				fullScale,
+				calibrationWeight,
+				precision,
+				division
+			);
 			if (result.success === true) {
 				message = 'calibration parameters saved';
 				await fetchCalibrationParams();
@@ -81,7 +86,8 @@
 				calibrationError = 'failed to save calibration parameters';
 			}
 		} catch (err) {
-			calibrationError = err instanceof Error ? err.message : 'failed to save calibration parameters';
+			calibrationError =
+				err instanceof Error ? err.message : 'failed to save calibration parameters';
 		} finally {
 			isSavingParams = false;
 		}
@@ -193,199 +199,214 @@
 {#if isLoading === true}
 	<p>loading scale data...</p>
 {:else}
-<table>
-	<thead>
-		<tr>
-			<th colspan="2">scale reading</th>
-		</tr>
-	</thead>
-	<tbody>
-		{#if reading !== null}
+	<table>
+		<thead>
 			<tr>
-				<td>weight</td>
-				<td>{formatWeight(reading.weight_grams)} g</td>
+				<th colspan="2">scale reading</th>
 			</tr>
+		</thead>
+		<tbody>
+			{#if reading !== null}
+				<tr>
+					<td>weight</td>
+					<td>{formatWeight(reading.weight_grams)} g</td>
+				</tr>
+				<tr>
+					<td>stable</td>
+					<td
+						class:status-ok={reading.status.stable === true}
+						class:status-error={reading.status.stable === false}
+					>
+						{reading.status.stable ? 'yes' : 'no'}
+					</td>
+				</tr>
+				<tr>
+					<td>valid</td>
+					<td
+						class:status-ok={reading.status.valid === true}
+						class:status-error={reading.status.valid === false}
+					>
+						{reading.status.valid ? 'yes' : 'no'}
+					</td>
+				</tr>
+				<tr>
+					<td>zero</td>
+					<td>{reading.status.zero ? 'yes' : 'no'}</td>
+				</tr>
+				<tr>
+					<td>overload</td>
+					<td class:status-error={reading.status.overload === true}>
+						{reading.status.overload ? 'yes' : 'no'}
+					</td>
+				</tr>
+				<tr>
+					<td>decimal position</td>
+					<td>{reading.decimal_position}</td>
+				</tr>
+			{:else if readingError === ''}
+				<tr>
+					<td colspan="2">loading...</td>
+				</tr>
+			{/if}
+			{#if readingError !== ''}
+				<tr>
+					<td colspan="2"><ErrorMessage message={readingError} /></td>
+				</tr>
+			{/if}
+		</tbody>
+
+		<thead>
 			<tr>
-				<td>stable</td>
-				<td class:status-ok={reading.status.stable === true} class:status-error={reading.status.stable === false}>
-					{reading.status.stable ? 'yes' : 'no'}
+				<th colspan="2">raw registers</th>
+			</tr>
+		</thead>
+		<tbody>
+			{#if reading !== null}
+				<tr>
+					<td>weight hi</td>
+					<td>{formatHex(reading.raw_registers.weight_hi)}</td>
+				</tr>
+				<tr>
+					<td>weight lo</td>
+					<td>{formatHex(reading.raw_registers.weight_lo)}</td>
+				</tr>
+				<tr>
+					<td>decimals</td>
+					<td>{reading.raw_registers.decimals}</td>
+				</tr>
+				<tr>
+					<td>status</td>
+					<td>{formatHex(reading.raw_registers.status)}</td>
+				</tr>
+			{:else}
+				<tr>
+					<td colspan="2">-</td>
+				</tr>
+			{/if}
+		</tbody>
+
+		<thead>
+			<tr>
+				<th colspan="2">calibration status</th>
+			</tr>
+		</thead>
+		<tbody>
+			{#if calibrationStatus !== null}
+				<tr>
+					<td>zero calibrated</td>
+					<td
+						class:status-ok={calibrationStatus.zero_ok === true}
+						class:status-error={calibrationStatus.zero_ok === false}
+					>
+						{calibrationStatus.zero_ok ? 'yes' : 'no'}
+					</td>
+				</tr>
+				<tr>
+					<td>weight calibrated</td>
+					<td
+						class:status-ok={calibrationStatus.weight_ok === true}
+						class:status-error={calibrationStatus.weight_ok === false}
+					>
+						{calibrationStatus.weight_ok ? 'yes' : 'no'}
+					</td>
+				</tr>
+				<tr>
+					<td>raw status</td>
+					<td>{formatHex(calibrationStatus.raw)}</td>
+				</tr>
+			{:else}
+				<tr>
+					<td colspan="2">loading...</td>
+				</tr>
+			{/if}
+		</tbody>
+
+		<thead>
+			<tr>
+				<th colspan="2">calibration parameters</th>
+			</tr>
+		</thead>
+		<tbody>
+			<tr>
+				<td>full scale (g)</td>
+				<td>
+					<input type="number" bind:value={fullScale} min="1" max="100000" />
 				</td>
 			</tr>
 			<tr>
-				<td>valid</td>
-				<td class:status-ok={reading.status.valid === true} class:status-error={reading.status.valid === false}>
-					{reading.status.valid ? 'yes' : 'no'}
+				<td>calibration weight (g)</td>
+				<td>
+					<input type="number" bind:value={calibrationWeight} min="1" max="100000" />
 				</td>
 			</tr>
 			<tr>
-				<td>zero</td>
-				<td>{reading.status.zero ? 'yes' : 'no'}</td>
-			</tr>
-			<tr>
-				<td>overload</td>
-				<td class:status-error={reading.status.overload === true}>
-					{reading.status.overload ? 'yes' : 'no'}
+				<td>precision (0-3)</td>
+				<td>
+					<input type="number" bind:value={precision} min="0" max="3" />
 				</td>
 			</tr>
 			<tr>
-				<td>decimal position</td>
-				<td>{reading.decimal_position}</td>
-			</tr>
-		{:else if readingError === ''}
-			<tr>
-				<td colspan="2">loading...</td>
-			</tr>
-		{/if}
-		{#if readingError !== ''}
-			<tr>
-				<td colspan="2"><ErrorMessage message={readingError} /></td>
-			</tr>
-		{/if}
-	</tbody>
-
-	<thead>
-		<tr>
-			<th colspan="2">raw registers</th>
-		</tr>
-	</thead>
-	<tbody>
-		{#if reading !== null}
-			<tr>
-				<td>weight hi</td>
-				<td>{formatHex(reading.raw_registers.weight_hi)}</td>
-			</tr>
-			<tr>
-				<td>weight lo</td>
-				<td>{formatHex(reading.raw_registers.weight_lo)}</td>
-			</tr>
-			<tr>
-				<td>decimals</td>
-				<td>{reading.raw_registers.decimals}</td>
-			</tr>
-			<tr>
-				<td>status</td>
-				<td>{formatHex(reading.raw_registers.status)}</td>
-			</tr>
-		{:else}
-			<tr>
-				<td colspan="2">-</td>
-			</tr>
-		{/if}
-	</tbody>
-
-	<thead>
-		<tr>
-			<th colspan="2">calibration status</th>
-		</tr>
-	</thead>
-	<tbody>
-		{#if calibrationStatus !== null}
-			<tr>
-				<td>zero calibrated</td>
-				<td class:status-ok={calibrationStatus.zero_ok === true} class:status-error={calibrationStatus.zero_ok === false}>
-					{calibrationStatus.zero_ok ? 'yes' : 'no'}
+				<td>division</td>
+				<td>
+					<input type="number" bind:value={division} min="1" max="100" />
 				</td>
 			</tr>
-			<tr>
-				<td>weight calibrated</td>
-				<td class:status-ok={calibrationStatus.weight_ok === true} class:status-error={calibrationStatus.weight_ok === false}>
-					{calibrationStatus.weight_ok ? 'yes' : 'no'}
-				</td>
-			</tr>
-			<tr>
-				<td>raw status</td>
-				<td>{formatHex(calibrationStatus.raw)}</td>
-			</tr>
-		{:else}
-			<tr>
-				<td colspan="2">loading...</td>
-			</tr>
-		{/if}
-	</tbody>
+		</tbody>
+	</table>
 
-	<thead>
-		<tr>
-			<th colspan="2">calibration parameters</th>
-		</tr>
-	</thead>
-	<tbody>
-		<tr>
-			<td>full scale (g)</td>
-			<td>
-				<input type="number" bind:value={fullScale} min="1" max="100000" />
-			</td>
-		</tr>
-		<tr>
-			<td>calibration weight (g)</td>
-			<td>
-				<input type="number" bind:value={calibrationWeight} min="1" max="100000" />
-			</td>
-		</tr>
-		<tr>
-			<td>precision (0-3)</td>
-			<td>
-				<input type="number" bind:value={precision} min="0" max="3" />
-			</td>
-		</tr>
-		<tr>
-			<td>division</td>
-			<td>
-				<input type="number" bind:value={division} min="1" max="100" />
-			</td>
-		</tr>
-	</tbody>
-</table>
+	<div class="action-buttons">
+		<button
+			type="button"
+			on:click={didClickRefresh}
+			disabled={isRefreshing === true || isCalibrating === true || isTaring === true}
+		>
+			refresh
+		</button>
+		<button
+			type="button"
+			on:click={didClickTare}
+			disabled={isTaring === true || isCalibrating === true}
+		>
+			tare
+		</button>
+		<button
+			type="button"
+			on:click={didClickSaveParams}
+			disabled={isSavingParams === true || isCalibrating === true}
+		>
+			save params
+		</button>
+	</div>
 
-<div class="action-buttons">
-	<button type="button" on:click={didClickRefresh} disabled={isRefreshing === true || isCalibrating === true || isTaring === true}>
-		refresh
-	</button>
-	<button type="button" on:click={didClickTare} disabled={isTaring === true || isCalibrating === true}>
-		tare
-	</button>
-	<button type="button" on:click={didClickSaveParams} disabled={isSavingParams === true || isCalibrating === true}>
-		save params
-	</button>
-</div>
+	<div class="calibration-buttons">
+		<button
+			type="button"
+			class="calibrate-button"
+			on:click={didClickCalibrateZero}
+			disabled={isCalibrating === true || isSavingParams === true}
+		>
+			1. calibrate zero (empty scale)
+		</button>
+		<button
+			type="button"
+			class="calibrate-button"
+			on:click={didClickCalibrateWeight}
+			disabled={isCalibrating === true || isSavingParams === true}
+		>
+			2. calibrate weight (place {calibrationWeight}g)
+		</button>
+	</div>
 
-<div class="calibration-buttons">
-	<button
-		type="button"
-		class="calibrate-button"
-		on:click={didClickCalibrateZero}
-		disabled={isCalibrating === true || isSavingParams === true}
-	>
-		1. calibrate zero (empty scale)
-	</button>
-	<button
-		type="button"
-		class="calibrate-button"
-		on:click={didClickCalibrateWeight}
-		disabled={isCalibrating === true || isSavingParams === true}
-	>
-		2. calibrate weight (place {calibrationWeight}g)
-	</button>
-</div>
+	{#if message !== ''}
+		<p class="message">{message}</p>
+	{/if}
 
-{#if message !== ''}
-	<p class="message">{message}</p>
-{/if}
-
-{#if calibrationError !== ''}
-	<ErrorMessage message={calibrationError} />
-{/if}
+	{#if calibrationError !== ''}
+		<ErrorMessage message={calibrationError} />
+	{/if}
 {/if}
 
 <style>
-
-	.status-ok {
-		color: green;
-	}
-
-	.status-error {
-		color: red;
-	}
-
 	input[type='number'] {
 		width: 8em;
 		padding: 4px;
@@ -401,16 +422,12 @@
 
 	.calibration-buttons {
 		display: flex;
-		gap: 1em;
-		margin-top: 1em;
-	}
-
-	.calibrate-button {
-		background-color: #f0f0f0;
+		flex-direction: column;
+		align-items: flex-start;
+		margin-bottom: 1em;
 	}
 
 	.message {
 		margin-top: 1em;
-		color: green;
 	}
 </style>

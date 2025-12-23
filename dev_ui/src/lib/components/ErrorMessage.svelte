@@ -21,4 +21,4 @@
 	});
 </script>
 
-<p class="error">{formattedMessage()}</p>
+<div class="error">{formattedMessage()}</div>

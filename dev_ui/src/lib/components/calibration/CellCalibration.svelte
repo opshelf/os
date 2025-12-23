@@ -440,6 +440,5 @@
 
 	.message {
 		margin-top: 1em;
-		color: green;
 	}
 </style>

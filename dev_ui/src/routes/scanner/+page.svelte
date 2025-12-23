@@ -229,14 +229,6 @@
 {/if}
 
 <style>
-	.status-ok {
-		color: green;
-	}
-
-	.status-error {
-		color: red;
-	}
-
 	.reading {
 		font-family: monospace;
 		font-size: 1.2em;
@@ -261,6 +253,5 @@
 
 	.message {
 		margin-top: 1em;
-		color: green;
 	}
 </style>
