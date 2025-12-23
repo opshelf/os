@@ -134,7 +134,7 @@
 			</tr>
 		</thead>
 		<tbody>
-			{#each motors.io as motor}
+			{#each motors.io.filter((m) => m !== 'door') as motor}
 				<tr>
 					<td>{motor}</td>
 					<td>
@@ -168,6 +168,28 @@
 				<td>
 					<button
 						type="button"
+						on:click={() => didClickHome('door')}
+						disabled={activeMotor !== null || doorAction !== null}
+					>
+						{#if activeMotor === 'door' && activeAction === 'home'}
+							homing...
+						{:else}
+							home
+						{/if}
+					</button>
+					<button
+						type="button"
+						on:click={() => didClickCrash('door')}
+						disabled={activeMotor !== null || doorAction !== null}
+					>
+						{#if activeMotor === 'door' && activeAction === 'crash'}
+							crashing...
+						{:else}
+							crash
+						{/if}
+					</button>
+					<button
+						type="button"
 						on:click={() => didClickDoor('open')}
 						disabled={doorAction !== null || activeMotor !== null}
 					>
@@ -186,17 +208,6 @@
 							closing...
 						{:else}
 							close
-						{/if}
-					</button>
-					<button
-						type="button"
-						on:click={() => didClickDoor('home')}
-						disabled={doorAction !== null || activeMotor !== null}
-					>
-						{#if doorAction === 'home'}
-							homing...
-						{:else}
-							home
 						{/if}
 					</button>
 				</td>
