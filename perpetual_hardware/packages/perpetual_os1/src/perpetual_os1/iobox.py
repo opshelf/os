@@ -4,7 +4,7 @@ from hardware.controller import SharedModbusController as Controller
 from hardware.motor import Motor
 from hardware.curtain import CurtainSensor, CurtainMonitor
 from perpetual_os1.exceptions import (
-    IOBoxError, MotorError
+    IOBoxError, MotorError, ConfigError
 )
 import perpetual_os1.common as c
 
@@ -80,6 +80,20 @@ class IOBox:
         self._door_max_bad_readings: int = 5
         self._door_max_position_mm: float = 1000.0
 
+    def reload_parameters(self) -> None:
+        """Reload IO parameters from config.json without restarting."""
+        from pathlib import Path
+        from perpetual_os1.common import load_config_file
+
+        config_path = Path(__file__).resolve().parent / "config.json"
+        config = load_config_file(config_path)
+        io_config = config.get("robot.io", None)
+
+        if io_config is None:
+            raise ConfigError("robot.io not found in config")
+
+        self._params = io_config
+        self._logger.info("IO parameters reloaded from config.json")
 
     async def configure(self):
         """

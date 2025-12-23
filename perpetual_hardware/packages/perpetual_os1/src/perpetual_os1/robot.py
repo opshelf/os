@@ -938,6 +938,7 @@ class Robot:
     async def grip(self) -> None:
         await self._tool._gs.open()
 
-    def reload_tool_parameters(self) -> None:
-        """Reload tool parameters from config.json without restarting."""
+    def reload_parameters(self) -> None:
+        """Reload tool and IO parameters from config.json without restarting."""
         self._tool.reload_parameters()
+        self._io.reload_parameters()

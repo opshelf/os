@@ -951,12 +951,12 @@ async def debug_motor30_set_position(request: SetPositionRequest):
 
 @router.post("/reload_config")
 async def reload_config():
-	"""Reload tool parameters from config.json without restarting the API."""
+	"""Reload tool and IO parameters from config.json without restarting the API."""
 	try:
 		worker = await get_robot_worker()
 		robot = worker._robot
-		robot.reload_tool_parameters()
-		return {"success": True, "message": "Tool parameters reloaded"}
+		robot.reload_parameters()
+		return {"success": True, "message": "Parameters reloaded"}
 	except Exception as e:
 		raise HTTPException(
 			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
