@@ -338,7 +338,8 @@ class Motor():
 
         physical_pos = self._params.logical_to_physical(value)
 
-        pulse = motor_helpers.rev_to_pulse(motor_helpers.mm_to_rev(physical_pos, self._params.mpr))
+        ppr = getattr(self._params, "ppr", 10000)
+        pulse = motor_helpers.rev_to_pulse(motor_helpers.mm_to_rev(physical_pos, self._params.mpr), ppr)
 
         if rpm is not None:
             await self.set_param("Velocity", int(rpm))
@@ -447,10 +448,7 @@ class Motor():
             if not pos:
                 return 0.0
                 
-            ppr = await self.get_param("Pulse/revolution")
-            if not ppr:
-                DEFAULT_PULSES_PER_REV = 10000
-                ppr = DEFAULT_PULSES_PER_REV
+            ppr = getattr(self._params, "ppr", 10000)
 
             physical_pos = (pos / ppr) * self._params.mpr
             logical_pos = self._params.physical_to_logical(physical_pos)
@@ -781,7 +779,8 @@ class Motor():
         try:
             physical_dist = self._params.logical_to_physical_delta(dist)
 
-            pulse = motor_helpers.rev_to_pulse(motor_helpers.mm_to_rev(physical_dist, self._params.mpr))
+            ppr = getattr(self._params, "ppr", 10000)
+            pulse = motor_helpers.rev_to_pulse(motor_helpers.mm_to_rev(physical_dist, self._params.mpr), ppr)
             
             # Configure for relative movement
             await self.set_param("Control word", 0x1111)  # clear alarm if any

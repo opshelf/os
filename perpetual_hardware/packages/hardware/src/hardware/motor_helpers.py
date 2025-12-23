@@ -128,24 +128,24 @@ def get_register_by_name(param_name: str) -> Optional[int]:
                 raise ValueError(f"Invalid register value for {param_name}: {e}") from e
     return None
 
-def rev_to_pulse(rev: float) -> tuple[int, int]:
+def rev_to_pulse(rev: float, ppr: int = 10000) -> tuple[int, int]:
     """Convert motor revolutions to pulse counts.
-    
+
     Args:
         rev: Number of motor revolutions
-        
+        ppr: Pulses per revolution (default 10000)
+
     Returns:
         Tuple of (high_bytes, low_bytes) for 32-bit pulse count
-        
+
     Raises:
         ValueError: If input value is invalid
     """
     if not isinstance(rev, (int, float)):
         raise ValueError(f"Revolution count must be a number, got {type(rev)}")
-        
+
     try:
-        pulse_rev = 10000  # TODO: read from motor
-        val = int(rev * pulse_rev)
+        val = int(rev * ppr)
         top_bytes = (val >> 16) & 0xFFFF
         bottom_bytes = val & 0xFFFF
         return top_bytes, bottom_bytes
