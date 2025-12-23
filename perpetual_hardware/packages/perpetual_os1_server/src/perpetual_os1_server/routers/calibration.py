@@ -837,6 +837,71 @@ class SetPositionRequest(BaseModel):
 	position_mm: float
 
 
+class CycleTestRequest(BaseModel):
+	side: Literal["left_module", "right_module"]
+	shelf_idx: int
+	cell_idx: int
+
+
+@router.post("/cycle_test")
+async def run_cycle_test(request: CycleTestRequest):
+	"""Run a retrieve-store cycle test on a specific cell to verify calibration accuracy."""
+	try:
+		worker = await get_robot_worker()
+	except ValueError as e:
+		raise HTTPException(
+			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+			detail="Robot is not initialized",
+		) from e
+
+	grid = worker._robot._grid
+	robot = worker._robot
+
+	side_enum = _parse_side(request.side)
+	shelves = grid.get_side(side_enum)
+
+	if request.shelf_idx < 0 or request.shelf_idx >= len(shelves):
+		raise HTTPException(
+			status_code=status.HTTP_400_BAD_REQUEST,
+			detail=f"Invalid shelf_idx: {request.shelf_idx}",
+		)
+
+	shelf = shelves[request.shelf_idx]
+
+	if request.cell_idx < 0 or request.cell_idx >= len(shelf.cells):
+		raise HTTPException(
+			status_code=status.HTTP_400_BAD_REQUEST,
+			detail=f"Invalid cell_idx: {request.cell_idx}",
+		)
+
+	cell = shelf.cells[request.cell_idx]
+
+	if cell.calibration_point is None:
+		raise HTTPException(
+			status_code=status.HTTP_400_BAD_REQUEST,
+			detail="Cell has no calibration point",
+		)
+
+	cal_point = cell.calibration_point
+	coord = AxisCoordinate(
+		x=cal_point.x,
+		y=cal_point.y,
+		s=_side_to_s(request.side),
+		z_offset=cal_point.z_offset,
+	)
+
+	try:
+		await robot.io_place(coord)
+		await robot.io_pick(coord)
+	except (MotorError, HardwareMotorError) as e:
+		raise HTTPException(
+			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+			detail=f"Cycle test failed: {str(e)}",
+		) from e
+
+	return {"success": True}
+
+
 @router.post("/debug/motor30-set-position")
 async def debug_motor30_set_position(request: SetPositionRequest):
 	"""Set motor 30 current position in mm."""
