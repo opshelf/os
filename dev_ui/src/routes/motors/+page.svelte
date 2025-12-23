@@ -4,6 +4,7 @@
 	import {
 		getMotors,
 		simulateMotorCrash,
+		homeMotor,
 		controlGripper,
 		controlDoor,
 		type MotorList,
@@ -14,7 +15,8 @@
 
 	let motors: MotorList | null = null;
 	let isLoading = true;
-	let crashingMotor: string | null = null;
+	let activeMotor: string | null = null;
+	let activeAction: string | null = null;
 	let gripperAction: GripperState | null = null;
 	let doorAction: DoorAction | null = null;
 	let error = '';
@@ -29,8 +31,9 @@
 		}
 	}
 
-	async function didClickSimulateCrash(motorName: string): Promise<void> {
-		crashingMotor = motorName;
+	async function didClickCrash(motorName: string): Promise<void> {
+		activeMotor = motorName;
+		activeAction = 'crash';
 		error = '';
 		message = '';
 
@@ -43,17 +46,45 @@
 				error = `failed to simulate crash for ${motorName}`;
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : `failed to simulate crash for ${motorName}`;
+			error = err instanceof Error ? err.message : `crash failed for ${motorName}`;
 		} finally {
-			crashingMotor = null;
+			activeMotor = null;
+			activeAction = null;
+		}
+	}
+
+	async function didClickHome(motorName: string): Promise<void> {
+		activeMotor = motorName;
+		activeAction = 'home';
+		error = '';
+		message = '';
+
+		try {
+			const result = await homeMotor(motorName);
+
+			if (result.success === true) {
+				message = `${motorName} homed`;
+			} else {
+				error = `failed to home ${motorName}`;
+			}
+		} catch (err) {
+			error = err instanceof Error ? err.message : `home failed for ${motorName}`;
+		} finally {
+			activeMotor = null;
+			activeAction = null;
 		}
 	}
 
 	async function didClickGripper(state: GripperState): Promise<void> {
 		gripperAction = state;
+		error = '';
+		message = '';
 
 		try {
 			await controlGripper(state);
+			message = `gripper ${state}`;
+		} catch (err) {
+			error = err instanceof Error ? err.message : `gripper ${state} failed`;
 		} finally {
 			gripperAction = null;
 		}
@@ -109,18 +140,67 @@
 					<td>
 						<button
 							type="button"
-							on:click={() => didClickSimulateCrash(motor)}
-							disabled={crashingMotor !== null}
+							on:click={() => didClickHome(motor)}
+							disabled={activeMotor !== null || doorAction !== null}
 						>
-							{#if crashingMotor === motor}
-								simulating...
+							{#if activeMotor === motor && activeAction === 'home'}
+								homing...
 							{:else}
-								simulate crash
+								home
+							{/if}
+						</button>
+						<button
+							type="button"
+							on:click={() => didClickCrash(motor)}
+							disabled={activeMotor !== null || doorAction !== null}
+						>
+							{#if activeMotor === motor && activeAction === 'crash'}
+								crashing...
+							{:else}
+								crash
 							{/if}
 						</button>
 					</td>
 				</tr>
 			{/each}
+			<tr>
+				<td>door</td>
+				<td>
+					<button
+						type="button"
+						on:click={() => didClickDoor('open')}
+						disabled={doorAction !== null || activeMotor !== null}
+					>
+						{#if doorAction === 'open'}
+							opening...
+						{:else}
+							open
+						{/if}
+					</button>
+					<button
+						type="button"
+						on:click={() => didClickDoor('close')}
+						disabled={doorAction !== null || activeMotor !== null}
+					>
+						{#if doorAction === 'close'}
+							closing...
+						{:else}
+							close
+						{/if}
+					</button>
+					<button
+						type="button"
+						on:click={() => didClickDoor('home')}
+						disabled={doorAction !== null || activeMotor !== null}
+					>
+						{#if doorAction === 'home'}
+							homing...
+						{:else}
+							home
+						{/if}
+					</button>
+				</td>
+			</tr>
 		</tbody>
 
 		<thead>
@@ -135,85 +215,52 @@
 					<td>
 						<button
 							type="button"
-							on:click={() => didClickSimulateCrash(motor)}
-							disabled={crashingMotor !== null}
+							on:click={() => didClickHome(motor)}
+							disabled={activeMotor !== null || gripperAction !== null}
 						>
-							{#if crashingMotor === motor}
-								simulating...
+							{#if activeMotor === motor && activeAction === 'home'}
+								homing...
 							{:else}
-								simulate crash
+								home
+							{/if}
+						</button>
+						<button
+							type="button"
+							on:click={() => didClickCrash(motor)}
+							disabled={activeMotor !== null || gripperAction !== null}
+						>
+							{#if activeMotor === motor && activeAction === 'crash'}
+								crashing...
+							{:else}
+								crash
 							{/if}
 						</button>
 					</td>
 				</tr>
 			{/each}
-		</tbody>
-		<thead>
 			<tr>
-				<th colspan="2">gripper</th>
-			</tr>
-		</thead>
-		<tbody>
-			<tr>
-				<td>control</td>
+				<td>gripper</td>
 				<td>
 					<button
 						type="button"
 						on:click={() => didClickGripper('grip')}
-						disabled={gripperAction !== null}
+						disabled={gripperAction !== null || activeMotor !== null}
 					>
-						grip
+						{#if gripperAction === 'grip'}
+							gripping...
+						{:else}
+							grip
+						{/if}
 					</button>
 					<button
 						type="button"
 						on:click={() => didClickGripper('release')}
-						disabled={gripperAction !== null}
+						disabled={gripperAction !== null || activeMotor !== null}
 					>
-						release
-					</button>
-				</td>
-			</tr>
-		</tbody>
-		<thead>
-			<tr>
-				<th colspan="2">door</th>
-			</tr>
-		</thead>
-		<tbody>
-			<tr>
-				<td>control</td>
-				<td>
-					<button
-						type="button"
-						on:click={() => didClickDoor('open')}
-						disabled={doorAction !== null}
-					>
-						{#if doorAction === 'open'}
-							opening...
+						{#if gripperAction === 'release'}
+							releasing...
 						{:else}
-							open
-						{/if}
-					</button>
-					<button
-						type="button"
-						on:click={() => didClickDoor('close')}
-						disabled={doorAction !== null}
-					>
-						{#if doorAction === 'close'}
-							closing...
-						{:else}
-							close
-						{/if}
-					</button>
-					<button
-						type="button"
-						on:click={() => didClickDoor('home')}
-						disabled={doorAction !== null}
-					>
-						{#if doorAction === 'home'}
-							homing...
-						{:else}
-							home
+							release
 						{/if}
 					</button>
 				</td>
