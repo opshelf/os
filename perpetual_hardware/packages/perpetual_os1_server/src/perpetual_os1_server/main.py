@@ -145,28 +145,24 @@ def _get_overhead_camera_url(settings: Settings) -> str | None:
 
 
 def _get_io_camera_config() -> tuple[dict, dict | None] | None:
-	config_paths = [
-		Path(__file__).parent.parent.parent / "perpetual_os1" / "src" / "perpetual_os1" / "config.json",
-		Path("/app/perpetual_hardware/packages/perpetual_os1/src/perpetual_os1/config.json"),
-	]
+	from perpetual_os1.common import CONFIG_PATH
 
-	for config_path in config_paths:
-		if config_path.exists() is False:
-			continue
+	if CONFIG_PATH.exists() is False:
+		return None
 
-		try:
-			with open(config_path) as f:
-				config = json.load(f)
+	try:
+		with open(CONFIG_PATH) as f:
+			config = json.load(f)
 
-			io_config = config.get("robot", {}).get("io", {})
-			usb_camera = io_config.get("usb_camera")
-			tof_camera = io_config.get("tof_camera")
+		io_config = config.get("robot", {}).get("io", {})
+		usb_camera = io_config.get("usb_camera")
+		tof_camera = io_config.get("tof_camera")
 
-			if usb_camera is not None:
-				logger.info("io_camera_config_found", config_path=str(config_path))
-				return (usb_camera, tof_camera)
-		except Exception as e:
-			logger.warning("failed_to_read_io_camera_config", config_path=str(config_path), error=str(e))
+		if usb_camera is not None:
+			logger.info("io_camera_config_found", config_path=str(CONFIG_PATH))
+			return (usb_camera, tof_camera)
+	except Exception as e:
+		logger.warning("failed_to_read_io_camera_config", config_path=str(CONFIG_PATH), error=str(e))
 
 	return None
 
