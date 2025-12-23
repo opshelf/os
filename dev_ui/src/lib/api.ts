@@ -346,7 +346,7 @@ export async function moveToIOBoxPosition(position: "low" | "high"): Promise<IOB
 
 export async function jogIOBoxAxis(
 	position: "low" | "high",
-	axis: "x" | "y" | "gripper" | "stage",
+	axis: "x" | "y" | "z" | "stage",
 	delta: number
 ): Promise<IOBoxPosition> {
 	return apiFetch<IOBoxPosition>("/calibration/iobox/jog", {
