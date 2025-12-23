@@ -173,6 +173,21 @@ class Tool:
         except Exception as e:
             raise ConfigError(f"Failed to get parameter {param}: {str(e)}") from e
 
+    def reload_parameters(self) -> None:
+        """Reload tool parameters from config.json without restarting."""
+        from pathlib import Path
+        from perpetual_os1.common import load_config_file
+
+        config_path = Path(__file__).resolve().parent / "config.json"
+        config = load_config_file(config_path)
+        tool_config = config.get("robot.tool", None)
+
+        if tool_config is None:
+            raise ConfigError("robot.tool not found in config")
+
+        self._params = tool_config
+        self._logger.info("Tool parameters reloaded from config.json")
+
     async def home(self) -> None:
         """
         Home all motors in a specific sequence.
