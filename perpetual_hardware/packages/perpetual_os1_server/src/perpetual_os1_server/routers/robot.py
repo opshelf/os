@@ -443,6 +443,31 @@ async def jog_motor(
     return {"success": True, "motor": motor_name, "position": new_pos}
 
 
+@router.post("/debug/motors/{motor_name}/home", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
+async def home_motor(
+    motor_name: str,
+    worker: RobotWorker = Depends(get_robot_worker_or_error),
+) -> dict:
+    motor = worker._robot._get_motor_by_name(motor_name)
+
+    if motor is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Motor '{motor_name}' not found",
+        )
+
+    try:
+        await motor.clear_alarm()
+        await motor.home()
+        return {"success": True, "motor": motor_name}
+    except Exception as exc:
+        logging.error("Motor home failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Motor home failed: {exc}",
+        ) from exc
+
+
 @router.post("/debug/door", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
 async def control_door(
     action: Literal["open", "close", "home"],

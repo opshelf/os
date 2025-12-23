@@ -302,6 +302,12 @@ export async function simulateMotorCrash(motorName: string): Promise<{ success: 
 	});
 }
 
+export async function homeMotor(motorName: string): Promise<{ success: boolean }> {
+	return apiFetch<{ success: boolean }>(`/robot/debug/motors/${motorName}/home`, {
+		method: "POST",
+	});
+}
+
 export type GripperState = "grip" | "release";
 
 export async function controlGripper(state: GripperState): Promise<{ success: boolean }> {
