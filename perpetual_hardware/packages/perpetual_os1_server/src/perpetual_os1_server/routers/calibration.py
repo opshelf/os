@@ -556,13 +556,12 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 			if tool._ms is None:
 				raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Stage motor not configured")
 			await tool._ms.clear_alarm()
-			current_stage = await tool._ms.get_position()
 			stage_limit = tool._ms._params.lim
-			if current_stage < 0 or current_stage > stage_limit:
-				current_stage = _iobox_current.slide_extension + _iobox_current.io_stage_offset
-			new_stage = max(0, min(stage_limit, current_stage + request.delta))
-			_iobox_current.io_stage_offset = new_stage - _iobox_current.slide_extension
-			await tool._ms.move_to_position(new_stage)
+			new_offset = _iobox_current.io_stage_offset + request.delta
+			target_position = _iobox_current.slide_extension + new_offset
+			target_position = max(0, min(stage_limit, target_position))
+			_iobox_current.io_stage_offset = target_position - _iobox_current.slide_extension
+			await tool._ms.move_to_position(target_position)
 	except (MotorError, HardwareMotorError) as e:
 		raise HTTPException(
 			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
