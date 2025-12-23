@@ -155,8 +155,6 @@
 		</tbody>
 	</table>
 
-	<br /><br />
-
 	{#if message !== ''}
 		<div class="message">{message}</div>
 	{/if}
