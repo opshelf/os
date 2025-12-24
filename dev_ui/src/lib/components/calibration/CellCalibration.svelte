@@ -11,6 +11,7 @@
 		type Position
 	} from '$lib/api';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
+	import ShelfCalibration from '$lib/components/calibration/ShelfCalibration.svelte';
 
 	let storageGrid: StorageGrid | null = null;
 	let loading = true;
@@ -263,7 +264,7 @@
 		<table class="position-table">
 			<thead>
 				<tr>
-					<th colspan="4">current position</th>
+					<th colspan="3">current position</th>
 				</tr>
 			</thead>
 			<tbody>
@@ -271,7 +272,6 @@
 					<td>x: {formatNumber(currentPosition.x)}</td>
 					<td>y: {formatNumber(currentPosition.y)}</td>
 					<td>z: {formatNumber(currentPosition.z_offset)}</td>
-					<td>s: {formatNumber(currentPosition.slide_extension)}</td>
 				</tr>
 			</tbody>
 		</table>
@@ -330,23 +330,6 @@
 					+
 				</button>
 			</div>
-			<div class="jog-axis">
-				<span class="axis-label">S</span>
-				<button
-					type="button"
-					on:click={() => didClickJog('stage', -jogStep)}
-					disabled={isMoving === true}
-				>
-					-
-				</button>
-				<button
-					type="button"
-					on:click={() => didClickJog('stage', jogStep)}
-					disabled={isMoving === true}
-				>
-					+
-				</button>
-			</div>
 		</div>
 		<div class="jog-controls">
 			<div class="jog-step">
@@ -391,9 +374,19 @@
 	{#if error !== ''}
 		<ErrorMessage message={error} />
 	{/if}
+
+	<div class="shelf-section">
+		<ShelfCalibration />
+	</div>
 {/if}
 
 <style>
+	.shelf-section {
+		margin-top: 3em;
+		padding-top: 2em;
+		border-top: 1px solid #ccc;
+	}
+
 	.field-label {
 		margin-right: 0.5em;
 	}

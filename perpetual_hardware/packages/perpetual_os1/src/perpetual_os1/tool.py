@@ -361,11 +361,11 @@ class Tool:
 
     async def _get_shelf_slide_extension(self, coordinate: Optional[c.AxisCoordinate]) -> float:
         """Select slide extension for shelf pick/place operations."""
-        front_ext = await self.get_param("SHELF_SLIDE_EXTENSION_FRONT")
-        back_ext = await self.get_param("SHELF_SLIDE_EXTENSION_BACK")
+        front_ext = await self.get_param("STAGE_EXTENSION_SHELF_FRONT")
+        back_ext = await self.get_param("STAGE_EXTENSION_SHELF_BACK")
 
         if front_ext is None or back_ext is None:
-            raise ConfigError("Missing SHELF_SLIDE_EXTENSION_FRONT/BACK parameters")
+            raise ConfigError("Missing STAGE_EXTENSION_SHELF_FRONT/BACK parameters")
 
         if coordinate is None:
             return front_ext

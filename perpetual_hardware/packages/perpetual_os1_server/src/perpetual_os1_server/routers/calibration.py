@@ -739,6 +739,49 @@ async def save_rotation_angles(request: RotateSaveRequest):
 	return {"success": True}
 
 
+class ShelfStageExtensionResponse(BaseModel):
+	front: float
+	back: float
+
+
+class ShelfStageExtensionSaveRequest(BaseModel):
+	front: float
+	back: float
+
+
+@router.get("/shelf", response_model=ShelfStageExtensionResponse)
+async def get_shelf_stage_extension() -> ShelfStageExtensionResponse:
+	config = get_root_config()
+	params = config.robot.tool.parameters
+
+	return ShelfStageExtensionResponse(
+		front=params.STAGE_EXTENSION_SHELF_FRONT,
+		back=params.STAGE_EXTENSION_SHELF_BACK,
+	)
+
+
+@router.post("/shelf/save")
+async def save_shelf_stage_extension(request: ShelfStageExtensionSaveRequest):
+	config = get_root_config()
+
+	params_dict = config.robot.tool.parameters.model_dump()
+	params_dict["STAGE_EXTENSION_SHELF_FRONT"] = request.front
+	params_dict["STAGE_EXTENSION_SHELF_BACK"] = request.back
+
+	from perpetual_os1.common import Parameters
+	config.robot.tool.parameters = Parameters.model_validate(params_dict)
+
+	save_root_config(config)
+
+	try:
+		worker = await get_robot_worker()
+		worker._robot.reload_parameters()
+	except ValueError:
+		pass
+
+	return {"success": True}
+
+
 @router.get("/debug/motor30-registers")
 async def debug_motor30_registers():
 	"""Probe motor 30 registers to find correct position addresses."""
