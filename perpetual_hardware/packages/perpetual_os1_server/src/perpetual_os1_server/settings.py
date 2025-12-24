@@ -86,31 +86,35 @@ def _build_minimal_config(data: dict) -> dict:
 			data["robot_app"] = {}
 		data["robot_app"]["enabled"] = legacy_robot.get("enabled", True)
 
+	# These are minimal defaults for testing only.
+	# Production deployments MUST provide data/config.json with real calibrated values.
+	# The application will fail to start if config.json is missing in production.
 	return {
 		"name": "perpetual_os1",
 		"version": "0.1.0",
 		"description": "Perpetual OS1 configuration",
+		"robot_app": {"enabled": False},
 		"robot": {
 			"tool": {
 				"parameters": {
-					"IDLE_POSITION": [100, 100],
-					"PICKUP_POSITION_L": [46, 465],
-					"PICKUP_POSITION_H": [46, 723],
-					"SCAN_POSITION": [930, 1],
-					"STAGE_EXTENSION_IO_BOX": 44,
-					"STAGE_NUDGE": 8,
-					"STAGE_EXTENSION_SHELF_FRONT": 51,
-					"STAGE_EXTENSION_SHELF_BACK": 45,
-					"Z_EXTENSION_PICK": 161.5,
-					"Z_EXTENSION_PLACE": 160.5,
-					"Z_MOVE_RPM": 800,
-					"Z_MOVE_ACCEL": 1200,
-					"ROTATION_FRONT": 0.5,
-					"ROTATION_BACK": 180.5,
-					"JOG_X": 5,
-					"JOG_Y": 25,
-					"PXMM": 10,
-					"PYMM": 10,
+					"IDLE_POSITION": [0, 0],
+					"PICKUP_POSITION_L": [0, 0],
+					"PICKUP_POSITION_H": [0, 0],
+					"SCAN_POSITION": [0, 0],
+					"STAGE_EXTENSION_IO_BOX": 0,
+					"STAGE_NUDGE": 0,
+					"STAGE_EXTENSION_SHELF_FRONT": 0,
+					"STAGE_EXTENSION_SHELF_BACK": 0,
+					"Z_EXTENSION_PICK": 0,
+					"Z_EXTENSION_PLACE": 0,
+					"Z_MOVE_RPM": 1,
+					"Z_MOVE_ACCEL": 1,
+					"ROTATION_FRONT": 0,
+					"ROTATION_BACK": 0,
+					"JOG_X": 0,
+					"JOG_Y": 0,
+					"PXMM": 1,
+					"PYMM": 1,
 				},
 				"motors": [],
 				"poe_camera": {

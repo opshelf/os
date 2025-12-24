@@ -385,11 +385,10 @@ class Parameters(BaseModel):
     PICKUP_POSITION_L: TwoInt
     PICKUP_POSITION_H: TwoInt
     SCAN_POSITION: TwoInt
-    FAULT_DUMP_POSITION: Optional[TwoInt] = None
     STAGE_EXTENSION_IO_BOX: Union[int, float]
-    STAGE_NUDGE: Union[int, float] = 8
-    STAGE_EXTENSION_SHELF_FRONT: Union[int, float] = 51
-    STAGE_EXTENSION_SHELF_BACK: Union[int, float] = 40
+    STAGE_NUDGE: Union[int, float]
+    STAGE_EXTENSION_SHELF_FRONT: Union[int, float]
+    STAGE_EXTENSION_SHELF_BACK: Union[int, float]
     Z_EXTENSION_PICK: float
     Z_EXTENSION_PLACE: float
     Z_MOVE_RPM: int = Field(..., gt=0)
@@ -406,13 +405,10 @@ class Parameters(BaseModel):
         "PICKUP_POSITION_L",
         "PICKUP_POSITION_H",
         "SCAN_POSITION",
-        "FAULT_DUMP_POSITION",
         mode="before",
     )
     @classmethod
     def _pairs_to_tuple(cls, v):
-        if v is None:
-            return None
         a, b = _pair_len2(v, "position")
         return int(a), int(b)
 
