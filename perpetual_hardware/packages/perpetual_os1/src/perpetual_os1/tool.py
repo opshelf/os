@@ -458,22 +458,21 @@ class Tool:
         if self._mg is None or self._ms is None:
             raise MotorError("Tool motors (z_axis, stage) required for IO extension")
 
-        STAGE_NUDGE = 8
-
         try:
             slide_ext = await self._get_io_box_stage_extension()
+            stage_nudge = await self.get_param("STAGE_NUDGE")
             grip_ext = await self.get_param("GRIPPER_EXTENSION_PLACE")
             grip_rpm = await self.get_param("GRIPPER_MOVE_RPM")
             grip_accel = await self.get_param("GRIPPER_MOVE_ACCEL")
 
-            if grip_ext is None or grip_rpm is None or grip_accel is None:
+            if stage_nudge is None or grip_ext is None or grip_rpm is None or grip_accel is None:
                 raise ConfigError("Missing gripper extension parameters")
 
             self._mstatus = ToolMotionStatus.MOVING
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
             await self._ms.move_to_position(slide_ext)
             await self._mg.move_to_position(grip_ext, rpm=grip_rpm, accel=grip_accel)
-            await self._ms.move_to_position(slide_ext + STAGE_NUDGE)
+            await self._ms.move_to_position(slide_ext + stage_nudge)
             self._mstatus = ToolMotionStatus.IDLE
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
         except Exception as e:
