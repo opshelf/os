@@ -217,10 +217,14 @@
 	.action-buttons {
 		display: flex;
 		gap: 1em;
-		margin-top: 1.5em;
+		margin-top: 1em;
 	}
 
 	.message {
 		margin-top: 1em;
+	}
+
+	button {
+		margin: 0;
 	}
 </style>

@@ -22,3 +22,9 @@
 </script>
 
 <div class="error">{formattedMessage()}</div>
+
+<style>
+	.error {
+		margin-top: 1em;
+	}
+</style>

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { browser } from '$app/environment';
-	import { getStorageGrid, runCycleTest, type StorageGrid } from '$lib/api';
+	import { getStorageGrid, runCycleTest, abortCycleTest, type StorageGrid } from '$lib/api';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 
 	let storageGrid: StorageGrid | null = null;
@@ -13,6 +13,7 @@
 	let selectedCell = 0;
 
 	let isRunning = false;
+	let isAborting = false;
 	let error = '';
 	let message = '';
 
@@ -96,9 +97,26 @@
 			await runCycleTest(selectedSide, selectedShelf, selectedCell);
 			message = 'cycle test completed successfully';
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'cycle test failed';
+			if (isAborting === false) {
+				error = err instanceof Error ? err.message : 'cycle test failed';
+			}
 		} finally {
 			isRunning = false;
+		}
+	}
+
+	async function didClickAbort(): Promise<void> {
+		isAborting = true;
+		error = '';
+		message = '';
+
+		try {
+			await abortCycleTest();
+			message = 'cycle aborted and tool homed';
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'abort failed';
+		} finally {
+			isAborting = false;
 		}
 	}
 </script>
@@ -150,6 +168,14 @@
 					>
 						{isRunning === true ? 'running...' : 'run cycle'}
 					</button>
+					<button
+						class="abort-button"
+						type="button"
+						on:click={didClickAbort}
+						disabled={isRunning === false || isAborting === true}
+					>
+						{isAborting === true ? 'aborting...' : 'abort'}
+					</button>
 				</td>
 			</tr>
 		</tbody>
@@ -170,6 +196,10 @@
 	}
 
 	.run-cycle-button {
+		margin-top: 0;
+	}
+
+	.abort-button {
 		margin-top: 0;
 	}
 

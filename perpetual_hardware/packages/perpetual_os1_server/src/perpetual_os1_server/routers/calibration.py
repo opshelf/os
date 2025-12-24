@@ -975,3 +975,26 @@ async def reload_config():
 			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
 			detail=f"Failed to reload config: {e}",
 		) from e
+
+
+@router.post("/abort")
+async def abort_calibration():
+	"""Abort current calibration operation and home the tool."""
+	try:
+		worker = await get_robot_worker()
+	except ValueError as e:
+		raise HTTPException(
+			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+			detail="Robot is not initialized",
+		) from e
+
+	tool = worker._robot._tool
+
+	try:
+		await tool.home()
+		return {"success": True}
+	except (MotorError, HardwareMotorError) as e:
+		raise HTTPException(
+			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+			detail=f"Abort failed: {str(e)}",
+		) from e

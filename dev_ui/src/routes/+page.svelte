@@ -177,16 +177,6 @@
 			</tr>
 		</thead>
 		<tbody>
-			<tr style="vertical-align: top;">
-				<td>robot status</td>
-				<td>
-					{#if status.robot_status}
-						<pre>{JSON.stringify(status.robot_status, null, 2)}</pre>
-					{:else}
-						unknown
-					{/if}
-				</td>
-			</tr>
 			<tr>
 				<td>worker running</td>
 				<td>{status.running ? 'yes' : 'no'}</td>

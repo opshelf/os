@@ -404,3 +404,9 @@ export async function runCycleTest(
 		body: JSON.stringify({ side, shelf_idx: shelfIdx, cell_idx: cellIdx }),
 	});
 }
+
+export async function abortCycleTest(): Promise<{ success: boolean }> {
+	return apiFetch<{ success: boolean }>("/calibration/abort", {
+		method: "POST",
+	});
+}
