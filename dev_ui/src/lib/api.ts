@@ -165,8 +165,7 @@ export async function saveCalibration(
 	cellIdx: number,
 	x: number,
 	y: number,
-	zOffset: number,
-	slideExtension: number
+	zOffset: number
 ): Promise<void> {
 	await apiFetch("/calibration/save", {
 		method: "POST",
@@ -178,7 +177,6 @@ export async function saveCalibration(
 			x,
 			y,
 			z_offset: zOffset,
-			slide_extension: slideExtension,
 		}),
 	});
 }
