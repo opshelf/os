@@ -382,9 +382,9 @@
 
 <style>
 	.shelf-section {
-		margin-top: 3em;
+		margin-top: 2em;
 		padding-top: 2em;
-		border-top: 1px solid #ccc;
+		border-top: 2px dashed #000;
 	}
 
 	.field-label {

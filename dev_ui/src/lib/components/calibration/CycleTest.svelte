@@ -160,22 +160,24 @@
 			</tr>
 			<tr>
 				<td colspan="3">
-					<button
-						class="run-cycle-button"
-						type="button"
-						on:click={didClickRunCycle}
-						disabled={isRunning === true}
-					>
-						{isRunning === true ? 'running...' : 'run cycle'}
-					</button>
-					<button
-						class="abort-button"
-						type="button"
-						on:click={didClickAbort}
-						disabled={isRunning === false || isAborting === true}
-					>
-						{isAborting === true ? 'aborting...' : 'abort'}
-					</button>
+					<div class="action-buttons">
+						<button
+							class="run-cycle-button"
+							type="button"
+							on:click={didClickRunCycle}
+							disabled={isRunning === true}
+						>
+							{isRunning === true ? 'running...' : 'run cycle'}
+						</button>
+						<button
+							class="abort-button"
+							type="button"
+							on:click={didClickAbort}
+							disabled={isRunning === false || isAborting === true}
+						>
+							{isAborting === true ? 'aborting...' : 'abort'}
+						</button>
+					</div>
 				</td>
 			</tr>
 		</tbody>
@@ -193,6 +195,11 @@
 <style>
 	.field-label {
 		margin-right: 0.5em;
+	}
+
+	.action-buttons {
+		display: flex;
+		gap: 1em;
 	}
 
 	.run-cycle-button {

@@ -81,38 +81,20 @@
 			<tr>
 				<td>
 					<span class="field-label">front</span>
-					<input
-						type="number"
-						step="0.5"
-						bind:value={frontValue}
-						disabled={isSaving === true}
-					/>
+					<input type="number" step="0.5" bind:value={frontValue} disabled={isSaving === true} />
 				</td>
 				<td>
 					<span class="field-label">back</span>
-					<input
-						type="number"
-						step="0.5"
-						bind:value={backValue}
-						disabled={isSaving === true}
-					/>
+					<input type="number" step="0.5" bind:value={backValue} disabled={isSaving === true} />
 				</td>
 			</tr>
 			<tr>
 				<td colspan="2">
 					<div class="action-buttons">
-						<button
-							type="button"
-							on:click={didClickReset}
-							disabled={isSaving === true}
-						>
+						<button type="button" on:click={didClickReset} disabled={isSaving === true}>
 							reset
 						</button>
-						<button
-							type="button"
-							on:click={didClickSave}
-							disabled={isSaving === true}
-						>
+						<button type="button" on:click={didClickSave} disabled={isSaving === true}>
 							save
 						</button>
 					</div>
@@ -135,7 +117,7 @@
 		margin-right: 0.5em;
 	}
 
-	input[type="number"] {
+	input[type='number'] {
 		width: 5em;
 	}
 
