@@ -185,7 +185,7 @@
 			</tr>
 			<tr>
 				<td colspan="2">Z: {formatNumber(ioboxPosition.gripper_extension)}</td>
-				<td colspan="2">stage offset: {formatNumber(ioboxPosition.io_stage_offset)}</td>
+				<td colspan="2">stage: {formatNumber(ioboxPosition.stage_extension)}</td>
 			</tr>
 		{/if}
 	</tbody>

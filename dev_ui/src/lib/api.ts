@@ -330,8 +330,7 @@ export interface IOBoxPosition {
 	pickup_high_x: number;
 	pickup_high_y: number;
 	gripper_extension: number;
-	slide_extension: number;
-	io_stage_offset: number;
+	stage_extension: number;
 }
 
 export async function getIOBoxCalibration(): Promise<IOBoxPosition> {

@@ -398,8 +398,7 @@ class IOBoxPositionResponse(BaseModel):
 	pickup_high_x: float
 	pickup_high_y: float
 	gripper_extension: float
-	slide_extension: float
-	io_stage_offset: float
+	stage_extension: float
 
 
 class IOBoxJogRequest(BaseModel):
@@ -414,8 +413,7 @@ class IOBoxSaveRequest(BaseModel):
 	pickup_high_x: float
 	pickup_high_y: float
 	gripper_extension: float
-	slide_extension: float
-	io_stage_offset: float
+	stage_extension: float
 
 
 _iobox_position: Literal["low", "high"] = "low"
@@ -435,8 +433,7 @@ async def get_iobox_calibration() -> IOBoxPositionResponse:
 		pickup_high_x=params.PICKUP_POSITION_H[0],
 		pickup_high_y=params.PICKUP_POSITION_H[1],
 		gripper_extension=params.GRIPPER_EXTENSION_PLACE,
-		slide_extension=params.SLIDE_EXTENSION_FRONT,
-		io_stage_offset=params.IO_STAGE_OFFSET,
+		stage_extension=params.STAGE_EXTENSION_IO_BOX,
 	)
 
 	return _iobox_current
@@ -557,11 +554,9 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 				raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Stage motor not configured")
 			await tool._ms.clear_alarm()
 			stage_limit = tool._ms._params.lim
-			new_offset = _iobox_current.io_stage_offset + request.delta
-			target_position = _iobox_current.slide_extension + new_offset
-			target_position = max(0, min(stage_limit, target_position))
-			_iobox_current.io_stage_offset = target_position - _iobox_current.slide_extension
-			await tool._ms.move_to_position(target_position)
+			new_stage = max(0, min(stage_limit, _iobox_current.stage_extension + request.delta))
+			_iobox_current.stage_extension = new_stage
+			await tool._ms.move_to_position(new_stage)
 	except (MotorError, HardwareMotorError) as e:
 		raise HTTPException(
 			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -615,9 +610,8 @@ async def test_iobox_sequence():
 			detail=f"Motor error: {str(e)}",
 		) from e
 
-	slide_ext = _iobox_current.slide_extension
+	stage_ext = _iobox_current.stage_extension
 	grip_ext = _iobox_current.gripper_extension
-	io_offset = _iobox_current.io_stage_offset
 	grip_rpm = await tool.get_param("GRIPPER_MOVE_RPM")
 	grip_accel = await tool.get_param("GRIPPER_MOVE_ACCEL")
 
@@ -625,7 +619,7 @@ async def test_iobox_sequence():
 		raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Motors not configured")
 
 	try:
-		await tool._ms.move_to_position(slide_ext + io_offset)
+		await tool._ms.move_to_position(stage_ext)
 		await tool._mg.move_to_position(grip_ext, rpm=grip_rpm, accel=grip_accel)
 		await tool.move(AxisCoordinate(_iobox_current.pickup_high_x, _iobox_current.pickup_high_y))
 		await tool.retract()
@@ -656,8 +650,7 @@ async def save_iobox_calibration(request: IOBoxSaveRequest):
 	params_dict["PICKUP_POSITION_L"] = (int(request.pickup_low_x), int(request.pickup_low_y))
 	params_dict["PICKUP_POSITION_H"] = (int(request.pickup_high_x), int(request.pickup_high_y))
 	params_dict["GRIPPER_EXTENSION_PLACE"] = request.gripper_extension
-	params_dict["SLIDE_EXTENSION_FRONT"] = request.slide_extension
-	params_dict["IO_STAGE_OFFSET"] = request.io_stage_offset
+	params_dict["STAGE_EXTENSION_IO_BOX"] = request.stage_extension
 
 	from perpetual_os1.common import Parameters
 	config.robot.tool.parameters = Parameters.model_validate(params_dict)
@@ -674,8 +667,7 @@ async def save_iobox_calibration(request: IOBoxSaveRequest):
 		pickup_high_x=request.pickup_high_x,
 		pickup_high_y=request.pickup_high_y,
 		gripper_extension=request.gripper_extension,
-		slide_extension=request.slide_extension,
-		io_stage_offset=request.io_stage_offset,
+		stage_extension=request.stage_extension,
 	)
 
 	return {"success": True}
