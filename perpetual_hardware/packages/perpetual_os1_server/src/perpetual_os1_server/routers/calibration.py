@@ -619,6 +619,9 @@ async def test_iobox_sequence():
 	if tool._ms is None or tool._mg is None:
 		raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Motors not configured")
 
+	if stage_nudge is None:
+		raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="STAGE_NUDGE not configured")
+
 	try:
 		await tool._ms.move_to_position(stage_ext)
 		await tool._mg.move_to_position(grip_ext, rpm=grip_rpm, accel=grip_accel)
