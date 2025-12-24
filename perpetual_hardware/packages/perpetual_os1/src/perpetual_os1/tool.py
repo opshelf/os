@@ -389,7 +389,7 @@ class Tool:
             raise MotorError("Rotate motor required for rotation")
 
         try:
-            param = "FRONT" if position == "front" else "BACK"
+            param = "ROTATION_FRONT" if position == "front" else "ROTATION_BACK"
             target_angle = await self.get_param(param)
             if target_angle is None:
                 raise ConfigError(f"Missing rotation parameter: {param}")

@@ -696,8 +696,8 @@ async def get_rotation_angles() -> RotationAnglesResponse:
 	params = config.robot.tool.parameters
 
 	return RotationAnglesResponse(
-		front=params.FRONT,
-		back=params.BACK,
+		front=params.ROTATION_FRONT,
+		back=params.ROTATION_BACK,
 	)
 
 
@@ -727,8 +727,8 @@ async def save_rotation_angles(request: RotateSaveRequest):
 	config = get_root_config()
 
 	params_dict = config.robot.tool.parameters.model_dump()
-	params_dict["FRONT"] = request.front
-	params_dict["BACK"] = request.back
+	params_dict["ROTATION_FRONT"] = request.front
+	params_dict["ROTATION_BACK"] = request.back
 
 	from perpetual_os1.common import Parameters
 	config.robot.tool.parameters = Parameters.model_validate(params_dict)

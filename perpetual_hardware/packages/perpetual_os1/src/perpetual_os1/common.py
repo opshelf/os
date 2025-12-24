@@ -394,8 +394,8 @@ class Parameters(BaseModel):
     Z_EXTENSION_PLACE: float
     Z_MOVE_RPM: int = Field(..., gt=0)
     Z_MOVE_ACCEL: int = Field(..., gt=0)
-    FRONT: float
-    BACK: float
+    ROTATION_FRONT: float
+    ROTATION_BACK: float
     JOG_X: Union[int, float]
     JOG_Y: Union[int, float]
     PXMM: float
