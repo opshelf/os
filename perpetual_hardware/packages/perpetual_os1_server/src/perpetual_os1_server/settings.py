@@ -98,6 +98,7 @@ def _build_minimal_config(data: dict) -> dict:
 					"PICKUP_POSITION_H": [46, 723],
 					"SCAN_POSITION": [930, 1],
 					"STAGE_EXTENSION_IO_BOX": 44,
+					"STAGE_NUDGE": 8,
 					"SHELF_SLIDE_EXTENSION_FRONT": 51,
 					"SHELF_SLIDE_EXTENSION_BACK": 45,
 					"GRIPPER_EXTENSION_PICK": 161.5,
