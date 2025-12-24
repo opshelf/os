@@ -392,6 +392,23 @@ export async function saveRotationAngles(front: number, back: number): Promise<{
 	});
 }
 
+export interface ShelfStageExtension {
+	front: number;
+	back: number;
+}
+
+export async function getShelfStageExtension(): Promise<ShelfStageExtension> {
+	return apiFetch<ShelfStageExtension>("/calibration/shelf");
+}
+
+export async function saveShelfStageExtension(front: number, back: number): Promise<{ success: boolean }> {
+	return apiFetch<{ success: boolean }>("/calibration/shelf/save", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ front, back }),
+	});
+}
+
 export async function runCycleTest(
 	side: string,
 	shelfIdx: number,

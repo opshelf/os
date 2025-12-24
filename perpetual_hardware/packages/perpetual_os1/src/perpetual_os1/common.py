@@ -388,8 +388,8 @@ class Parameters(BaseModel):
     FAULT_DUMP_POSITION: Optional[TwoInt] = None
     STAGE_EXTENSION_IO_BOX: Union[int, float]
     STAGE_NUDGE: Union[int, float] = 8
-    SHELF_SLIDE_EXTENSION_FRONT: Union[int, float] = 51
-    SHELF_SLIDE_EXTENSION_BACK: Union[int, float] = 40
+    STAGE_EXTENSION_SHELF_FRONT: Union[int, float] = 51
+    STAGE_EXTENSION_SHELF_BACK: Union[int, float] = 40
     GRIPPER_EXTENSION_PICK: float
     GRIPPER_EXTENSION_PLACE: float
     GRIPPER_MOVE_RPM: int = Field(..., gt=0)
