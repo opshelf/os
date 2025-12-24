@@ -331,8 +331,8 @@ class Tool:
             if _nested is False:
                 self._mstatus = ToolMotionStatus.MOVING
                 self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
-            grip_rpm = await self.get_param("GRIPPER_MOVE_RPM")
-            grip_accel = await self.get_param("GRIPPER_MOVE_ACCEL")
+            grip_rpm = await self.get_param("Z_MOVE_RPM")
+            grip_accel = await self.get_param("Z_MOVE_ACCEL")
             if grip_rpm is None or grip_accel is None:
                 raise ConfigError("Missing gripper move speed")
             await self._mg.move_to_position(1, rpm=grip_rpm, accel=grip_accel)
@@ -425,9 +425,9 @@ class Tool:
 
         try:
             slide_ext = await self._get_shelf_slide_extension(coordinate)
-            grip_ext = await self.get_param("GRIPPER_EXTENSION_PLACE")
-            grip_rpm = await self.get_param("GRIPPER_MOVE_RPM")
-            grip_accel = await self.get_param("GRIPPER_MOVE_ACCEL")
+            grip_ext = await self.get_param("Z_EXTENSION_PLACE")
+            grip_rpm = await self.get_param("Z_MOVE_RPM")
+            grip_accel = await self.get_param("Z_MOVE_ACCEL")
             if slide_ext is None or grip_ext is None or grip_rpm is None or grip_accel is None:
                 raise ConfigError("Missing extension parameters")
             grip_ext = self._with_gripper_offset(grip_ext, coordinate)
@@ -461,9 +461,9 @@ class Tool:
         try:
             slide_ext = await self._get_io_box_stage_extension()
             stage_nudge = await self.get_param("STAGE_NUDGE")
-            grip_ext = await self.get_param("GRIPPER_EXTENSION_PLACE")
-            grip_rpm = await self.get_param("GRIPPER_MOVE_RPM")
-            grip_accel = await self.get_param("GRIPPER_MOVE_ACCEL")
+            grip_ext = await self.get_param("Z_EXTENSION_PLACE")
+            grip_rpm = await self.get_param("Z_MOVE_RPM")
+            grip_accel = await self.get_param("Z_MOVE_ACCEL")
 
             if stage_nudge is None or grip_ext is None or grip_rpm is None or grip_accel is None:
                 raise ConfigError("Missing gripper extension parameters")
@@ -499,9 +499,9 @@ class Tool:
 
         try:
             slide_ext = await self._get_shelf_slide_extension(coordinate)
-            grip_ext = await self.get_param("GRIPPER_EXTENSION_PICK")
-            grip_rpm = await self.get_param("GRIPPER_MOVE_RPM")
-            grip_accel = await self.get_param("GRIPPER_MOVE_ACCEL")
+            grip_ext = await self.get_param("Z_EXTENSION_PICK")
+            grip_rpm = await self.get_param("Z_MOVE_RPM")
+            grip_accel = await self.get_param("Z_MOVE_ACCEL")
             if slide_ext is None or grip_ext is None or grip_rpm is None or grip_accel is None:
                 raise ConfigError("Missing extension parameters")
             grip_ext = self._with_gripper_offset(grip_ext, coordinate)
@@ -532,8 +532,8 @@ class Tool:
 
         try:
             await self._ms.move_to_position_no_wait(3.0)
-            grip_rpm = await self.get_param("GRIPPER_MOVE_RPM")
-            grip_accel = await self.get_param("GRIPPER_MOVE_ACCEL")
+            grip_rpm = await self.get_param("Z_MOVE_RPM")
+            grip_accel = await self.get_param("Z_MOVE_ACCEL")
             if grip_rpm is None or grip_accel is None:
                 raise ConfigError("Missing gripper move speed")
             await self._mg.move_to_position_no_wait(1, rpm=grip_rpm, accel=grip_accel)

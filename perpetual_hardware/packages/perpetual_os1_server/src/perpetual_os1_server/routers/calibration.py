@@ -197,13 +197,15 @@ async def jog_axis(request: JogRequest) -> PositionResponse:
 					detail="Gripper motor not configured",
 				)
 			await tool._mg.clear_alarm()
-			grip_ext = await tool.get_param("GRIPPER_EXTENSION_PLACE")
+			grip_ext = await tool.get_param("Z_EXTENSION_PLACE")
+			if grip_ext is None:
+				raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Z_EXTENSION_PLACE not configured")
 			current_gripper_pos = grip_ext + _current_position.z_offset
 			z_limit = tool._mg._params.lim
 			new_gripper_pos = max(0, min(z_limit, current_gripper_pos + request.delta))
 			new_z = new_gripper_pos - grip_ext
-			grip_rpm = await tool.get_param("GRIPPER_MOVE_RPM")
-			grip_accel = await tool.get_param("GRIPPER_MOVE_ACCEL")
+			grip_rpm = await tool.get_param("Z_MOVE_RPM")
+			grip_accel = await tool.get_param("Z_MOVE_ACCEL")
 			await tool._mg.move_to_position(new_gripper_pos, rpm=grip_rpm, accel=grip_accel)
 		elif request.axis == "stage":
 			if tool._ms is None:
@@ -397,7 +399,7 @@ class IOBoxPositionResponse(BaseModel):
 	pickup_low_y: float
 	pickup_high_x: float
 	pickup_high_y: float
-	gripper_extension: float
+	z_extension: float
 	stage_extension: float
 
 
@@ -412,7 +414,7 @@ class IOBoxSaveRequest(BaseModel):
 	pickup_low_y: float
 	pickup_high_x: float
 	pickup_high_y: float
-	gripper_extension: float
+	z_extension: float
 	stage_extension: float
 
 
@@ -432,7 +434,7 @@ async def get_iobox_calibration() -> IOBoxPositionResponse:
 		pickup_low_y=params.PICKUP_POSITION_L[1],
 		pickup_high_x=params.PICKUP_POSITION_H[0],
 		pickup_high_y=params.PICKUP_POSITION_H[1],
-		gripper_extension=params.GRIPPER_EXTENSION_PLACE,
+		z_extension=params.Z_EXTENSION_PLACE,
 		stage_extension=params.STAGE_EXTENSION_IO_BOX,
 	)
 
@@ -543,11 +545,11 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 			current_z = await tool._mg.get_position()
 			z_limit = tool._mg._params.lim
 			if current_z < 0 or current_z > z_limit:
-				current_z = _iobox_current.gripper_extension
+				current_z = _iobox_current.z_extension
 			new_z = max(0, min(z_limit, current_z + request.delta))
-			_iobox_current.gripper_extension = new_z
-			grip_rpm = await tool.get_param("GRIPPER_MOVE_RPM")
-			grip_accel = await tool.get_param("GRIPPER_MOVE_ACCEL")
+			_iobox_current.z_extension = new_z
+			grip_rpm = await tool.get_param("Z_MOVE_RPM")
+			grip_accel = await tool.get_param("Z_MOVE_ACCEL")
 			await tool._mg.move_to_position(new_z, rpm=grip_rpm, accel=grip_accel)
 		elif request.axis == "stage":
 			if tool._ms is None:
@@ -611,9 +613,9 @@ async def test_iobox_sequence():
 		) from e
 
 	stage_ext = _iobox_current.stage_extension
-	grip_ext = _iobox_current.gripper_extension
-	grip_rpm = await tool.get_param("GRIPPER_MOVE_RPM")
-	grip_accel = await tool.get_param("GRIPPER_MOVE_ACCEL")
+	grip_ext = _iobox_current.z_extension
+	grip_rpm = await tool.get_param("Z_MOVE_RPM")
+	grip_accel = await tool.get_param("Z_MOVE_ACCEL")
 	stage_nudge = await tool.get_param("STAGE_NUDGE")
 
 	if tool._ms is None or tool._mg is None:
@@ -654,7 +656,7 @@ async def save_iobox_calibration(request: IOBoxSaveRequest):
 	params_dict = config.robot.tool.parameters.model_dump()
 	params_dict["PICKUP_POSITION_L"] = (int(request.pickup_low_x), int(request.pickup_low_y))
 	params_dict["PICKUP_POSITION_H"] = (int(request.pickup_high_x), int(request.pickup_high_y))
-	params_dict["GRIPPER_EXTENSION_PLACE"] = request.gripper_extension
+	params_dict["Z_EXTENSION_PLACE"] = request.z_extension
 	params_dict["STAGE_EXTENSION_IO_BOX"] = request.stage_extension
 
 	from perpetual_os1.common import Parameters
@@ -671,7 +673,7 @@ async def save_iobox_calibration(request: IOBoxSaveRequest):
 		pickup_low_y=request.pickup_low_y,
 		pickup_high_x=request.pickup_high_x,
 		pickup_high_y=request.pickup_high_y,
-		gripper_extension=request.gripper_extension,
+		z_extension=request.z_extension,
 		stage_extension=request.stage_extension,
 	)
 

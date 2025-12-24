@@ -390,10 +390,10 @@ class Parameters(BaseModel):
     STAGE_NUDGE: Union[int, float] = 8
     STAGE_EXTENSION_SHELF_FRONT: Union[int, float] = 51
     STAGE_EXTENSION_SHELF_BACK: Union[int, float] = 40
-    GRIPPER_EXTENSION_PICK: float
-    GRIPPER_EXTENSION_PLACE: float
-    GRIPPER_MOVE_RPM: int = Field(..., gt=0)
-    GRIPPER_MOVE_ACCEL: int = Field(..., gt=0)
+    Z_EXTENSION_PICK: float
+    Z_EXTENSION_PLACE: float
+    Z_MOVE_RPM: int = Field(..., gt=0)
+    Z_MOVE_ACCEL: int = Field(..., gt=0)
     FRONT: float
     BACK: float
     JOG_X: Union[int, float]

@@ -184,7 +184,7 @@
 				<td>high y: {formatNumber(ioboxPosition.pickup_high_y)}</td>
 			</tr>
 			<tr>
-				<td colspan="2">Z: {formatNumber(ioboxPosition.gripper_extension)}</td>
+				<td colspan="2">Z: {formatNumber(ioboxPosition.z_extension)}</td>
 				<td colspan="2">stage: {formatNumber(ioboxPosition.stage_extension)}</td>
 			</tr>
 		{/if}

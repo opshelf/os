@@ -329,7 +329,7 @@ export interface IOBoxPosition {
 	pickup_low_y: number;
 	pickup_high_x: number;
 	pickup_high_y: number;
-	gripper_extension: number;
+	z_extension: number;
 	stage_extension: number;
 }
 
