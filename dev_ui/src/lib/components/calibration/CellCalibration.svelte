@@ -177,8 +177,7 @@
 				selectedCell,
 				currentPosition.x,
 				currentPosition.y,
-				currentPosition.z_offset,
-				currentPosition.slide_extension
+				currentPosition.z_offset
 			);
 			message = 'calibration saved';
 		} catch (err) {

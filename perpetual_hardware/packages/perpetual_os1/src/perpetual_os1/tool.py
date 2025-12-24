@@ -350,6 +350,14 @@ class Tool:
             return value
         return value + getattr(coordinate, "z_offset", 0.0)
 
+    def _assert_stage_target(self, value: float, label: str) -> None:
+        """Ensure stage target stays within motor limits."""
+        if self._ms is None:
+            return
+        limit = self._ms._params.lim
+        if value < 0 or value > limit:
+            raise ConfigError(f"{label} {value} out of range [0, {limit}]")
+
     async def _get_io_box_stage_extension(self) -> float:
         """Get stage extension for IO box operations."""
         ext = await self.get_param("STAGE_EXTENSION_IO_BOX")
@@ -366,6 +374,9 @@ class Tool:
 
         if front_ext is None or back_ext is None:
             raise ConfigError("Missing STAGE_EXTENSION_SHELF_FRONT/BACK parameters")
+
+        self._assert_stage_target(front_ext, "STAGE_EXTENSION_SHELF_FRONT")
+        self._assert_stage_target(back_ext, "STAGE_EXTENSION_SHELF_BACK")
 
         if coordinate is None:
             return front_ext
@@ -458,16 +469,19 @@ class Tool:
         if self._mg is None or self._ms is None:
             raise MotorError("Tool motors (z_axis, stage) required for IO extension")
 
+        slide_ext = await self._get_io_box_stage_extension()
+        stage_nudge = await self.get_param("STAGE_NUDGE")
+        grip_ext = await self.get_param("Z_EXTENSION_PLACE")
+        grip_rpm = await self.get_param("Z_MOVE_RPM")
+        grip_accel = await self.get_param("Z_MOVE_ACCEL")
+
+        if stage_nudge is None or grip_ext is None or grip_rpm is None or grip_accel is None:
+            raise ConfigError("Missing gripper extension parameters")
+
+        self._assert_stage_target(slide_ext, "STAGE_EXTENSION_IO_BOX")
+        self._assert_stage_target(slide_ext + stage_nudge, "STAGE_EXTENSION_IO_BOX + STAGE_NUDGE")
+
         try:
-            slide_ext = await self._get_io_box_stage_extension()
-            stage_nudge = await self.get_param("STAGE_NUDGE")
-            grip_ext = await self.get_param("Z_EXTENSION_PLACE")
-            grip_rpm = await self.get_param("Z_MOVE_RPM")
-            grip_accel = await self.get_param("Z_MOVE_ACCEL")
-
-            if stage_nudge is None or grip_ext is None or grip_rpm is None or grip_accel is None:
-                raise ConfigError("Missing gripper extension parameters")
-
             self._mstatus = ToolMotionStatus.MOVING
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
             await self._ms.move_to_position(slide_ext)

@@ -48,7 +48,6 @@ class SaveRequest(BaseModel):
 	x: float
 	y: float
 	z_offset: float
-	slide_extension: float
 
 
 _current_position: Optional[PositionResponse] = None
@@ -66,6 +65,31 @@ def _side_to_s(side: str) -> int:
 	if side == "left_module":
 		return 0
 	return 1
+
+
+def _get_stage_limit(tool) -> float:
+	if tool._ms is None:
+		raise HTTPException(
+			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+			detail="Stage motor not configured",
+		)
+	return tool._ms._params.lim
+
+
+def _get_stage_limit_from_config(config) -> Optional[float]:
+	try:
+		stage_motor = config.robot.tool.motors.by_name("stage")
+	except KeyError:
+		return None
+	return stage_motor.lim
+
+
+def _validate_stage_target(value: float, limit: float, label: str) -> None:
+	if value < 0 or value > limit:
+		raise HTTPException(
+			status_code=status.HTTP_400_BAD_REQUEST,
+			detail=f"{label} must be between 0 and {limit} (got {value})",
+		)
 
 
 @router.get("/storage")
@@ -322,21 +346,6 @@ async def save_calibration(request: SaveRequest):
 	shelf.cells[request.cell_idx].calibration_point = new_cal
 
 	grid.save()
-
-	config = get_root_config()
-	params_dict = config.robot.tool.parameters.model_dump()
-	slide_param = "STAGE_EXTENSION_SHELF_FRONT" if request.side == "left_module" else "STAGE_EXTENSION_SHELF_BACK"
-	params_dict[slide_param] = request.slide_extension
-
-	from perpetual_os1.common import Parameters
-	config.robot.tool.parameters = Parameters.model_validate(params_dict)
-	save_root_config(config)
-
-	try:
-		worker = await get_robot_worker()
-		worker._robot.reload_parameters()
-	except ValueError:
-		pass
 
 	return {"success": True}
 
@@ -624,6 +633,10 @@ async def test_iobox_sequence():
 	if stage_nudge is None:
 		raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="STAGE_NUDGE not configured")
 
+	stage_limit = _get_stage_limit(tool)
+	_validate_stage_target(stage_ext, stage_limit, "STAGE_EXTENSION_IO_BOX")
+	_validate_stage_target(stage_ext + stage_nudge, stage_limit, "STAGE_EXTENSION_IO_BOX + STAGE_NUDGE")
+
 	try:
 		await tool._ms.move_to_position(stage_ext)
 		await tool._mg.move_to_position(grip_ext, rpm=grip_rpm, accel=grip_accel)
@@ -652,6 +665,11 @@ async def save_iobox_calibration(request: IOBoxSaveRequest):
 		) from e
 
 	config = get_root_config()
+
+	stage_limit = _get_stage_limit(worker._robot._tool)
+	stage_nudge = config.robot.tool.parameters.STAGE_NUDGE
+	_validate_stage_target(request.stage_extension, stage_limit, "STAGE_EXTENSION_IO_BOX")
+	_validate_stage_target(request.stage_extension + stage_nudge, stage_limit, "STAGE_EXTENSION_IO_BOX + STAGE_NUDGE")
 
 	params_dict = config.robot.tool.parameters.model_dump()
 	params_dict["PICKUP_POSITION_L"] = (int(request.pickup_low_x), int(request.pickup_low_y))
@@ -768,6 +786,21 @@ async def get_shelf_stage_extension() -> ShelfStageExtensionResponse:
 @router.post("/shelf/save")
 async def save_shelf_stage_extension(request: ShelfStageExtensionSaveRequest):
 	config = get_root_config()
+
+	try:
+		worker = await get_robot_worker()
+		stage_limit = _get_stage_limit(worker._robot._tool)
+	except ValueError:
+		stage_limit = _get_stage_limit_from_config(config)
+
+	if stage_limit is None:
+		raise HTTPException(
+			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+			detail="Stage motor limit unavailable",
+		)
+
+	_validate_stage_target(request.front, stage_limit, "STAGE_EXTENSION_SHELF_FRONT")
+	_validate_stage_target(request.back, stage_limit, "STAGE_EXTENSION_SHELF_BACK")
 
 	params_dict = config.robot.tool.parameters.model_dump()
 	params_dict["STAGE_EXTENSION_SHELF_FRONT"] = request.front
