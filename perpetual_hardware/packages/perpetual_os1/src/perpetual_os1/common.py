@@ -386,15 +386,13 @@ class Parameters(BaseModel):
     PICKUP_POSITION_H: TwoInt
     SCAN_POSITION: TwoInt
     FAULT_DUMP_POSITION: Optional[TwoInt] = None
-    SLIDE_EXTENSION_FRONT: Union[int, float]
-    SLIDE_EXTENSION_BACK: Union[int, float]
+    STAGE_EXTENSION_IO_BOX: Union[int, float]
     SHELF_SLIDE_EXTENSION_FRONT: Union[int, float] = 51
     SHELF_SLIDE_EXTENSION_BACK: Union[int, float] = 40
     GRIPPER_EXTENSION_PICK: float
     GRIPPER_EXTENSION_PLACE: float
     GRIPPER_MOVE_RPM: int = Field(..., gt=0)
     GRIPPER_MOVE_ACCEL: int = Field(..., gt=0)
-    IO_STAGE_OFFSET: Union[int, float] = 8
     FRONT: float
     BACK: float
     JOG_X: Union[int, float]

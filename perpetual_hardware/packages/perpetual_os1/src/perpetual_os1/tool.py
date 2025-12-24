@@ -350,15 +350,14 @@ class Tool:
             return value
         return value + getattr(coordinate, "z_offset", 0.0)
 
-    async def _get_slide_extension(self, coordinate: Optional[c.AxisCoordinate]) -> float:
-        """Select slide extension for IO box operations."""
-        front_ext = await self.get_param("SLIDE_EXTENSION_FRONT")
-        back_ext = await self.get_param("SLIDE_EXTENSION_BACK")
-        if front_ext is None or back_ext is None:
-            raise ConfigError("Missing slide extension parameters")
-        if coordinate is None:
-            return front_ext
-        return front_ext if coordinate.s == 0 else back_ext
+    async def _get_io_box_stage_extension(self) -> float:
+        """Get stage extension for IO box operations."""
+        ext = await self.get_param("STAGE_EXTENSION_IO_BOX")
+
+        if ext is None:
+            raise ConfigError("Missing STAGE_EXTENSION_IO_BOX parameter")
+
+        return ext
 
     async def _get_shelf_slide_extension(self, coordinate: Optional[c.AxisCoordinate]) -> float:
         """Select slide extension for shelf pick/place operations."""
@@ -366,11 +365,7 @@ class Tool:
         back_ext = await self.get_param("SHELF_SLIDE_EXTENSION_BACK")
 
         if front_ext is None or back_ext is None:
-            front_ext = await self.get_param("SLIDE_EXTENSION_FRONT")
-            back_ext = await self.get_param("SLIDE_EXTENSION_BACK")
-
-        if front_ext is None or back_ext is None:
-            raise ConfigError("Missing shelf slide extension parameters")
+            raise ConfigError("Missing SHELF_SLIDE_EXTENSION_FRONT/BACK parameters")
 
         if coordinate is None:
             return front_ext
@@ -451,9 +446,9 @@ class Tool:
                 raise
             raise MovementError(f"Tool extension failed: {str(e)}") from e
         
-    async def extend_IO(self, coordinate: Optional[c.AxisCoordinate] = None) -> None:
+    async def extend_IO(self) -> None:
         """
-        Extend gripper and slide to operation positions.
+        Extend gripper and slide to IO box position, then nudge to push item.
 
         Raises:
             MovementError: If extension fails
@@ -463,30 +458,29 @@ class Tool:
         if self._mg is None or self._ms is None:
             raise MotorError("Tool motors (z_axis, stage) required for IO extension")
 
+        STAGE_NUDGE = 8
+
         try:
-            io_offset = await self.get_param("IO_STAGE_OFFSET")
-            slide_ext = await self._get_slide_extension(coordinate)
+            slide_ext = await self._get_io_box_stage_extension()
             grip_ext = await self.get_param("GRIPPER_EXTENSION_PLACE")
             grip_rpm = await self.get_param("GRIPPER_MOVE_RPM")
             grip_accel = await self.get_param("GRIPPER_MOVE_ACCEL")
-            if io_offset is None:
-                io_offset = 8
-            if slide_ext is None or grip_ext is None or grip_rpm is None or grip_accel is None:
-                raise ConfigError("Missing extension parameters")
-            grip_ext = self._with_gripper_offset(grip_ext, coordinate)
+
+            if grip_ext is None or grip_rpm is None or grip_accel is None:
+                raise ConfigError("Missing gripper extension parameters")
 
             self._mstatus = ToolMotionStatus.MOVING
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
             await self._ms.move_to_position(slide_ext)
             await self._mg.move_to_position(grip_ext, rpm=grip_rpm, accel=grip_accel)
-            await self._ms.move_to_position(slide_ext + io_offset)
+            await self._ms.move_to_position(slide_ext + STAGE_NUDGE)
             self._mstatus = ToolMotionStatus.IDLE
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
         except Exception as e:
             await self._handle_fault(e)
             if isinstance(e, ConfigError):
                 raise
-            raise MovementError(f"Tool extension failed: {str(e)}") from e
+            raise MovementError(f"Tool IO extension failed: {str(e)}") from e
 
     async def extend_empty(self, coordinate: Optional[c.AxisCoordinate] = None) -> None:
         """
