@@ -477,9 +477,9 @@ class Tool:
 
             self._mstatus = ToolMotionStatus.MOVING
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
-            await self._ms.move_to_position(slide_ext + io_offset)
-            await self._mg.move_to_position(grip_ext, rpm=grip_rpm, accel=grip_accel)
             await self._ms.move_to_position(slide_ext)
+            await self._mg.move_to_position(grip_ext, rpm=grip_rpm, accel=grip_accel)
+            await self._ms.move_to_position(slide_ext + io_offset)
             self._mstatus = ToolMotionStatus.IDLE
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
         except Exception as e:
