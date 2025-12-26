@@ -638,17 +638,15 @@ async def test_iobox_sequence(with_gripper: bool = False):
 	_validate_stage_target(stage_ext + stage_nudge, stage_limit, "STAGE_EXTENSION_IO_BOX + STAGE_NUDGE")
 
 	try:
-		if with_gripper is True:
-			await tool._gs.safe_open()
-
 		await tool._ms.move_to_position(stage_ext)
 		await tool._mg.move_to_position(grip_ext, rpm=grip_rpm, accel=grip_accel)
 		await tool._ms.move_to_position(stage_ext + stage_nudge)
-		await tool.move(AxisCoordinate(_iobox_current.pickup_high_x, _iobox_current.pickup_high_y))
-		await tool.retract()
 
 		if with_gripper is True:
-			await tool._gs.close()
+			await tool._gs.open()
+
+		await tool.move(AxisCoordinate(_iobox_current.pickup_high_x, _iobox_current.pickup_high_y))
+		await tool.retract()
 	except (MotorError, HardwareMotorError) as e:
 		raise HTTPException(
 			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
