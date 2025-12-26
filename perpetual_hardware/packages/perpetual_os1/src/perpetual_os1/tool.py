@@ -474,12 +474,12 @@ class Tool:
 
         slide_ext = await self._get_io_box_stage_extension()
         stage_nudge = await self.get_param("STAGE_NUDGE")
-        grip_ext = await self.get_param("Z_EXTENSION_PLACE")
+        grip_ext = await self.get_param("Z_EXTENSION_IO")
         grip_rpm = await self.get_param("Z_MOVE_RPM")
         grip_accel = await self.get_param("Z_MOVE_ACCEL")
 
         if stage_nudge is None or grip_ext is None or grip_rpm is None or grip_accel is None:
-            raise ConfigError("Missing gripper extension parameters")
+            raise ConfigError("Missing IO box extension parameters")
 
         self._warn_stage_target(slide_ext, "STAGE_EXTENSION_IO_BOX")
         self._warn_stage_target(slide_ext + stage_nudge, "STAGE_EXTENSION_IO_BOX + STAGE_NUDGE")

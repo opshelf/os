@@ -391,6 +391,7 @@ class Parameters(BaseModel):
     STAGE_EXTENSION_SHELF_BACK: Union[int, float]
     Z_EXTENSION_PICK: float
     Z_EXTENSION_PLACE: float
+    Z_EXTENSION_IO: float
     Z_MOVE_RPM: int = Field(..., gt=0)
     Z_MOVE_ACCEL: int = Field(..., gt=0)
     ROTATION_FRONT: float
