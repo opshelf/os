@@ -109,6 +109,7 @@ def _build_minimal_config(data: dict) -> dict:
 					"STAGE_EXTENSION_SHELF_BACK": 0,
 					"Z_EXTENSION_PICK": 0,
 					"Z_EXTENSION_PLACE": 0,
+					"Z_EXTENSION_IO": 0,
 					"Z_MOVE_RPM": 1,
 					"Z_MOVE_ACCEL": 1,
 					"ROTATION_FRONT": 0,
