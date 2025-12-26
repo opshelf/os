@@ -647,6 +647,9 @@ async def test_iobox_sequence(with_gripper: bool = False):
 
 		await tool.move(AxisCoordinate(_iobox_current.pickup_high_x, _iobox_current.pickup_high_y))
 		await tool.retract()
+
+		if with_gripper is True:
+			await tool._gs.close()
 	except (MotorError, HardwareMotorError) as e:
 		raise HTTPException(
 			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
