@@ -185,6 +185,32 @@
 				<td>queued commands</td>
 				<td>{status.queue_length ?? 0}</td>
 			</tr>
+			<tr>
+				<td>light curtain</td>
+				<td>
+					{#if status.robot_status?.curtain_blocked === null}
+						disabled
+					{:else if status.robot_status?.curtain_blocked === true}
+						blocked
+					{:else if status.robot_status?.curtain_blocked === false}
+						clear
+					{:else}
+						unknown
+					{/if}
+				</td>
+			</tr>
+			<tr>
+				<td>door</td>
+				<td>
+					{#if status.robot_status?.door_open === null}
+						unknown
+					{:else if status.robot_status?.door_open === true}
+						open
+					{:else}
+						closed
+					{/if}
+				</td>
+			</tr>
 		</tbody>
 
 		{#if status.current_command}
