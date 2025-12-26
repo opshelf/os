@@ -443,7 +443,7 @@ async def get_iobox_calibration() -> IOBoxPositionResponse:
 		pickup_low_y=params.PICKUP_POSITION_L[1],
 		pickup_high_x=params.PICKUP_POSITION_H[0],
 		pickup_high_y=params.PICKUP_POSITION_H[1],
-		z_extension=params.Z_EXTENSION_PLACE,
+		z_extension=params.Z_EXTENSION_IO,
 		stage_extension=params.STAGE_EXTENSION_IO_BOX,
 	)
 
@@ -681,7 +681,7 @@ async def save_iobox_calibration(request: IOBoxSaveRequest):
 	params_dict = config.robot.tool.parameters.model_dump()
 	params_dict["PICKUP_POSITION_L"] = (int(request.pickup_low_x), int(request.pickup_low_y))
 	params_dict["PICKUP_POSITION_H"] = (int(request.pickup_high_x), int(request.pickup_high_y))
-	params_dict["Z_EXTENSION_PLACE"] = request.z_extension
+	params_dict["Z_EXTENSION_IO"] = request.z_extension
 	params_dict["STAGE_EXTENSION_IO_BOX"] = request.stage_extension
 
 	from perpetual_os1.common import Parameters
