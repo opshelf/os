@@ -646,7 +646,7 @@ async def test_iobox_sequence(with_gripper: bool = False):
 			await tool._gs.open()
 
 		await tool._mg.move_to_position(1, rpm=grip_rpm, accel=grip_accel)
-		await tool.move(AxisCoordinate(_iobox_current.pickup_high_x, _iobox_current.pickup_high_y))
+		await tool._my.move_to_position(_iobox_current.pickup_high_y)
 		await tool._ms.move_to_position(3.0)
 
 		if with_gripper is True:
