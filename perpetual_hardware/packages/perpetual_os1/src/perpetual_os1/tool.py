@@ -350,13 +350,16 @@ class Tool:
             return value
         return value + getattr(coordinate, "z_offset", 0.0)
 
-    def _assert_stage_target(self, value: float, label: str) -> None:
-        """Ensure stage target stays within motor limits."""
+    def _warn_stage_target(self, value: float, label: str) -> None:
+        """Warn if stage target exceeds motor limits (motor will clamp)."""
         if self._ms is None:
             return
         limit = self._ms._params.lim
         if value < 0 or value > limit:
-            raise ConfigError(f"{label} {value} out of range [0, {limit}]")
+            self._logger.warning(
+                "Stage target will be clamped to motor limits",
+                extra={"label": label, "requested_mm": value, "limit_mm": limit},
+            )
 
     async def _get_io_box_stage_extension(self) -> float:
         """Get stage extension for IO box operations."""
@@ -375,8 +378,8 @@ class Tool:
         if front_ext is None or back_ext is None:
             raise ConfigError("Missing STAGE_EXTENSION_SHELF_FRONT/BACK parameters")
 
-        self._assert_stage_target(front_ext, "STAGE_EXTENSION_SHELF_FRONT")
-        self._assert_stage_target(back_ext, "STAGE_EXTENSION_SHELF_BACK")
+        self._warn_stage_target(front_ext, "STAGE_EXTENSION_SHELF_FRONT")
+        self._warn_stage_target(back_ext, "STAGE_EXTENSION_SHELF_BACK")
 
         if coordinate is None:
             return front_ext
@@ -478,8 +481,8 @@ class Tool:
         if stage_nudge is None or grip_ext is None or grip_rpm is None or grip_accel is None:
             raise ConfigError("Missing gripper extension parameters")
 
-        self._assert_stage_target(slide_ext, "STAGE_EXTENSION_IO_BOX")
-        self._assert_stage_target(slide_ext + stage_nudge, "STAGE_EXTENSION_IO_BOX + STAGE_NUDGE")
+        self._warn_stage_target(slide_ext, "STAGE_EXTENSION_IO_BOX")
+        self._warn_stage_target(slide_ext + stage_nudge, "STAGE_EXTENSION_IO_BOX + STAGE_NUDGE")
 
         try:
             self._mstatus = ToolMotionStatus.MOVING

@@ -332,9 +332,22 @@ class Motor():
 
     async def _start_absolute_move(self, value: float, rpm: Optional[int] = None, accel: Optional[int] = None) -> None:
         """Setup and trigger an absolute move, tracking it for retries."""
-        if value < 0 or value > self._params.lim:
-            raise MotorLimitError(
-                f"Target position {value}mm out of range [0, {self._params.lim}mm]"
+        original_value = value
+
+        if value < 0:
+            value = 0
+        if value > self._params.lim:
+            value = self._params.lim
+
+        if value != original_value:
+            self._logger.warning(
+                "Target position clamped to motor limits",
+                extra={
+                    "motor_id": self._motor_id,
+                    "requested_mm": original_value,
+                    "clamped_mm": value,
+                    "limit_mm": self._params.lim,
+                },
             )
 
         physical_pos = self._params.logical_to_physical(value)
