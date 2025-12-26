@@ -97,10 +97,25 @@
 		message = '';
 
 		try {
-			await testIOBoxSequence();
+			await testIOBoxSequence(false);
 			message = 'io box test sequence completed';
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'failed to run io box test sequence';
+		} finally {
+			isTesting = false;
+		}
+	}
+
+	async function didClickTestWithGripper(): Promise<void> {
+		isTesting = true;
+		error = '';
+		message = '';
+
+		try {
+			await testIOBoxSequence(true);
+			message = 'io box test sequence with gripper completed';
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'failed to run io box test sequence with gripper';
 		} finally {
 			isTesting = false;
 		}
@@ -284,6 +299,13 @@
 			disabled={isMoving === true || isTesting === true || isSaving === true}
 		>
 			test sequence
+		</button>
+		<button
+			type="button"
+			on:click={didClickTestWithGripper}
+			disabled={isMoving === true || isTesting === true || isSaving === true}
+		>
+			test with gripper
 		</button>
 		<button
 			type="button"

@@ -353,8 +353,17 @@ export async function jogIOBoxAxis(
 	});
 }
 
-export async function testIOBoxSequence(): Promise<{ success: boolean }> {
-	return apiFetch<{ success: boolean }>("/calibration/iobox/test", {
+export async function testIOBoxSequence(withGripper: boolean = false): Promise<{ success: boolean }> {
+	const params = new URLSearchParams();
+
+	if (withGripper === true) {
+		params.set("with_gripper", "true");
+	}
+
+	const query = params.toString();
+	const url = `/calibration/iobox/test${query !== "" ? `?${query}` : ""}`;
+
+	return apiFetch<{ success: boolean }>(url, {
 		method: "POST",
 	});
 }
