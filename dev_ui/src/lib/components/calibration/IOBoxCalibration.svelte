@@ -298,14 +298,14 @@
 			on:click={didClickTest}
 			disabled={isMoving === true || isTesting === true || isSaving === true}
 		>
-			test sequence
+			test
 		</button>
 		<button
 			type="button"
 			on:click={didClickTestWithGripper}
 			disabled={isMoving === true || isTesting === true || isSaving === true}
 		>
-			test with gripper
+			test gripper
 		</button>
 		<button
 			type="button"
