@@ -4,6 +4,8 @@ import json
 import logging
 import os
 import secrets
+import shutil
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -275,6 +277,20 @@ def get_config_path() -> Optional[Path]:
 	return _cached_config_path
 
 
+def _create_config_backup(config_path: Path) -> Optional[Path]:
+	if config_path.exists() is False:
+		return None
+
+	timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+	backup_name = f"{config_path.stem}_{timestamp}{config_path.suffix}"
+	backup_path = config_path.parent / backup_name
+
+	shutil.copy2(config_path, backup_path)
+	logger.info("Config backup created: %s", backup_path)
+
+	return backup_path
+
+
 def save_root_config(config: RootConfig) -> None:
 	global _cached_config, _cached_settings, _cached_config_path
 
@@ -282,6 +298,8 @@ def save_root_config(config: RootConfig) -> None:
 		_cached_config_path = Path("data/config.json")
 
 	_cached_config_path.parent.mkdir(parents=True, exist_ok=True)
+
+	_create_config_backup(_cached_config_path)
 
 	data = config.model_dump(mode="json")
 
