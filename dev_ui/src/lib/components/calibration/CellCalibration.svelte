@@ -453,9 +453,7 @@
 	}
 
 	.message {
-		position: fixed;
-		bottom: 2em;
-		left: 2em;
+		margin-top: 2em;
 		text-transform: uppercase;
 	}
 
