@@ -189,12 +189,6 @@ async def clear_robot_commands(worker: RobotWorker = Depends(get_robot_worker_or
     return SuccessResponse()
 
 
-@router.post("/clear_errors", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
-async def clear_robot_errors(worker: RobotWorker = Depends(get_robot_worker_or_error)) -> SuccessResponse:
-    worker.clear_errors()
-    return SuccessResponse()
-
-
 @router.post("/emergency_stop", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
 async def emergency_stop_robot(worker: RobotWorker = Depends(get_robot_worker_or_error)) -> SuccessResponse:
     await worker.emergency_stop("User initiated emergency stop")
@@ -401,46 +395,6 @@ async def simulate_motor_crash(
         )
 
     return {"success": True, "motor": motor_name}
-
-
-@router.post("/debug/motors/{motor_name}/clear", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
-async def clear_motor_fault(
-    motor_name: str,
-    worker: RobotWorker = Depends(get_robot_worker_or_error),
-) -> dict:
-    motor = worker._robot._get_motor_by_name(motor_name)
-
-    if motor is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Motor '{motor_name}' not found",
-        )
-
-    await motor.clear_alarm()
-    return {"success": True, "motor": motor_name}
-
-
-@router.post("/debug/motors/{motor_name}/jog", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
-async def jog_motor(
-    motor_name: str,
-    delta: float,
-    worker: RobotWorker = Depends(get_robot_worker_or_error),
-) -> dict:
-    motor = worker._robot._get_motor_by_name(motor_name)
-
-    if motor is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Motor '{motor_name}' not found",
-        )
-
-    await motor.clear_alarm()
-    current_pos = await motor.get_position()
-    motor_limit = motor._params.lim
-    new_pos = max(0, min(motor_limit, current_pos + delta))
-    await motor.move_to_position(new_pos)
-
-    return {"success": True, "motor": motor_name, "position": new_pos}
 
 
 @router.post("/debug/motors/{motor_name}/home", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
