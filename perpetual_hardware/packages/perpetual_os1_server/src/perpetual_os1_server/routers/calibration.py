@@ -840,6 +840,44 @@ async def save_shelf_stage_extension(request: ShelfStageExtensionSaveRequest):
 	return {"success": True}
 
 
+class StageMoveRequest(BaseModel):
+	position: float
+
+
+@router.post("/stage/move")
+async def move_stage(request: StageMoveRequest):
+	try:
+		worker = await get_robot_worker()
+	except ValueError as e:
+		raise HTTPException(
+			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+			detail="Robot is not initialized",
+		) from e
+
+	tool = worker._robot._tool
+
+	if tool._ms is None:
+		raise HTTPException(
+			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+			detail="Stage motor not configured",
+		)
+
+	stage_limit = tool._ms._params.lim
+
+	target = max(0, min(stage_limit, request.position))
+
+	try:
+		await tool._ms.clear_alarm()
+		await tool._ms.move_to_position(target)
+	except (MotorError, HardwareMotorError) as e:
+		raise HTTPException(
+			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+			detail=f"Motor error: {str(e)}",
+		) from e
+
+	return {"position": target}
+
+
 @router.get("/debug/motor30-registers")
 async def debug_motor30_registers():
 	"""Probe motor 30 registers to find correct position addresses."""

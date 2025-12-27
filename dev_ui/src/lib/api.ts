@@ -425,6 +425,14 @@ export async function saveShelfStageExtension(front: number, back: number): Prom
 	});
 }
 
+export async function moveStage(position: number): Promise<{ position: number }> {
+	return apiFetch<{ position: number }>("/calibration/stage/move", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ position }),
+	});
+}
+
 export async function runCycleTest(
 	side: string,
 	shelfIdx: number,
