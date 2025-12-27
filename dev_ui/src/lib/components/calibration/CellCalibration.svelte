@@ -128,15 +128,15 @@
 		message = '';
 
 		try {
+			storageGrid = await getStorageGrid();
+			currentPosition = await moveToCell(selectedSide, selectedShelf, selectedCell);
+
 			const rotationAngles = await getRotationAngles();
 			const targetAngle = selectedSide === 'right_module'
 				? rotationAngles.back
 				: rotationAngles.front;
 
 			await rotateToAngle(targetAngle);
-
-			storageGrid = await getStorageGrid();
-			currentPosition = await moveToCell(selectedSide, selectedShelf, selectedCell);
 
 			const cells = getCells();
 			if (cells[selectedCell] !== undefined) {
