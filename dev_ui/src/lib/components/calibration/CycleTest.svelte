@@ -32,7 +32,7 @@
 		try {
 			storageGrid = await getStorageGrid();
 			selectedShelf = 0;
-			selectedCell = 0;
+			selectedCell = getFirstEnabledCell();
 		} catch (err) {
 			loadError = err instanceof Error ? err.message : 'failed to load storage grid';
 		} finally {
@@ -62,12 +62,24 @@
 		return shelves[selectedShelf].cells;
 	}
 
+	function getFirstEnabledCell(): number {
+		const cells = getCells();
+
+		for (let i = 0; i < cells.length; i++) {
+			if (cells[i].status !== 'disabled') {
+				return i;
+			}
+		}
+
+		return 0;
+	}
+
 	function didChangeSide(event: Event): void {
 		const target = event.target as HTMLSelectElement;
 
 		selectedSide = target.value as 'left_module' | 'right_module';
 		selectedShelf = 0;
-		selectedCell = 0;
+		selectedCell = getFirstEnabledCell();
 		error = '';
 		message = '';
 	}
@@ -76,7 +88,7 @@
 		const target = event.target as HTMLSelectElement;
 
 		selectedShelf = parseInt(target.value, 10);
-		selectedCell = 0;
+		selectedCell = getFirstEnabledCell();
 		error = '';
 		message = '';
 	}
@@ -153,8 +165,10 @@
 				<td>
 					<span class="field-label">cell</span>
 					<select value={selectedCell} on:change={didChangeCell}>
-						{#each getCells() as _, index}
-							<option value={index}>{index}</option>
+						{#each getCells() as cell, index}
+							<option value={index} disabled={cell.status === 'disabled'}>
+								{index}{cell.status === 'disabled' ? ' (disabled)' : ''}
+							</option>
 						{/each}
 					</select>
 				</td>
