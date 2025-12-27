@@ -4,7 +4,7 @@
 	import {
 		getShelfStageExtension,
 		saveShelfStageExtension,
-		jogAxis,
+		moveStage,
 		type ShelfStageExtension
 	} from '$lib/api';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
@@ -14,7 +14,6 @@
 	let backValue = 0;
 	let loading = false;
 	let isSaving = false;
-	let currentSlidePosition = 0;
 	let error = '';
 	let message = '';
 
@@ -33,10 +32,6 @@
 			stageExtension = await getShelfStageExtension();
 			frontValue = stageExtension.front;
 			backValue = stageExtension.back;
-
-			const position = await jogAxis('stage', 0);
-
-			currentSlidePosition = position.slide_extension;
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'failed to load shelf stage extension';
 		} finally {
@@ -76,10 +71,7 @@
 		message = '';
 
 		try {
-			const delta = target - currentSlidePosition;
-			const result = await jogAxis('stage', delta);
-
-			currentSlidePosition = result.slide_extension;
+			await moveStage(target);
 			message = 'stage extended';
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'failed to extend stage';
@@ -91,9 +83,7 @@
 		message = '';
 
 		try {
-			const result = await jogAxis('stage', -1000);
-
-			currentSlidePosition = result.slide_extension;
+			await moveStage(0);
 			message = 'stage retracted';
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'failed to retract stage';
