@@ -14,6 +14,7 @@
 	let backValue = 0;
 	let loading = false;
 	let isSaving = false;
+	let isMovingStage = false;
 	let error = '';
 	let message = '';
 
@@ -67,6 +68,7 @@
 	}
 
 	async function didClickExtend(target: number): Promise<void> {
+		isMovingStage = true;
 		error = '';
 		message = '';
 
@@ -75,10 +77,13 @@
 			message = 'stage extended';
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'failed to extend stage';
+		} finally {
+			isMovingStage = false;
 		}
 	}
 
 	async function didClickRetract(): Promise<void> {
+		isMovingStage = true;
 		error = '';
 		message = '';
 
@@ -87,6 +92,8 @@
 			message = 'stage retracted';
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'failed to retract stage';
+		} finally {
+			isMovingStage = false;
 		}
 	}
 </script>
@@ -107,18 +114,18 @@
 				<td>
 					<span class="field-label">front</span>
 					<input type="number" step="0.5" bind:value={frontValue} disabled={isSaving === true} />
-					<button type="button" on:click={() => didClickExtend(frontValue)}>extend</button>
+					<button type="button" on:click={() => didClickExtend(frontValue)} disabled={isMovingStage === true}>extend</button>
 				</td>
 				<td>
 					<span class="field-label">back</span>
 					<input type="number" step="0.5" bind:value={backValue} disabled={isSaving === true} />
-					<button type="button" on:click={() => didClickExtend(backValue)}>extend</button>
+					<button type="button" on:click={() => didClickExtend(backValue)} disabled={isMovingStage === true}>extend</button>
 				</td>
 			</tr>
 			<tr>
 				<td colspan="2">
 					<div class="action-buttons">
-						<button type="button" on:click={didClickRetract}>retract</button>
+						<button type="button" on:click={didClickRetract} disabled={isMovingStage === true}>retract</button>
 						<div class="divider"></div>
 						<button type="button" on:click={didClickReset} disabled={isSaving === true}>
 							reset
