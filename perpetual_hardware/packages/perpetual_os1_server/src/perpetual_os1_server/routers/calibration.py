@@ -903,8 +903,9 @@ async def debug_stage_position():
 	mpr = tool._ms._params.mpr
 	ppr = getattr(tool._ms._params, "ppr", 10000)
 
-	pos_hi = await controller.read_holding_register(motor_id, 0x602C)
-	pos_lo = await controller.read_holding_register(motor_id, 0x602D)
+	regs = await controller.read_holding_registers(motor_id, 0x602C, 2)
+	pos_hi = regs[0]
+	pos_lo = regs[1]
 	total_pulses = (pos_hi << 16) | pos_lo
 
 	revs = total_pulses / ppr
