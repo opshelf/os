@@ -4,6 +4,7 @@
 	import {
 		getShelfStageExtension,
 		saveShelfStageExtension,
+		jogAxis,
 		type ShelfStageExtension
 	} from '$lib/api';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
@@ -13,6 +14,10 @@
 	let backValue = 0;
 	let loading = false;
 	let isSaving = false;
+	let isExtending = false;
+	let isStageExtended = false;
+	let selectedSide: 'front' | 'back' = 'front';
+	let currentSlidePosition = 0;
 	let error = '';
 	let message = '';
 
@@ -64,6 +69,43 @@
 			message = 'values reset';
 		}
 	}
+
+	function didChangeSide(event: Event): void {
+		const target = event.target as HTMLSelectElement;
+
+		selectedSide = target.value as 'front' | 'back';
+		isStageExtended = false;
+	}
+
+	async function didClickStageToggle(): Promise<void> {
+		isExtending = true;
+		error = '';
+		message = '';
+
+		try {
+			const targetExtension = selectedSide === 'front' ? frontValue : backValue;
+
+			if (isStageExtended === true) {
+				const delta = 3 - currentSlidePosition;
+				const result = await jogAxis('stage', delta);
+
+				currentSlidePosition = result.slide_extension;
+				isStageExtended = false;
+				message = 'stage retracted';
+			} else {
+				const delta = targetExtension - currentSlidePosition;
+				const result = await jogAxis('stage', delta);
+
+				currentSlidePosition = result.slide_extension;
+				isStageExtended = true;
+				message = 'stage extended';
+			}
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'failed to move stage';
+		} finally {
+			isExtending = false;
+		}
+	}
 </script>
 
 <table>
@@ -91,6 +133,18 @@
 			<tr>
 				<td colspan="2">
 					<div class="action-buttons">
+						<select value={selectedSide} on:change={didChangeSide} disabled={isExtending === true}>
+							<option value="front">front</option>
+							<option value="back">back</option>
+						</select>
+						<button
+							type="button"
+							on:click={didClickStageToggle}
+							disabled={isSaving === true || isExtending === true}
+						>
+							{isStageExtended === true ? 'retract' : 'extend'}
+						</button>
+						<div class="divider"></div>
 						<button type="button" on:click={didClickReset} disabled={isSaving === true}>
 							reset
 						</button>
@@ -124,6 +178,7 @@
 	.action-buttons {
 		display: flex;
 		gap: 1em;
+		align-items: center;
 	}
 
 	.action-buttons button {
@@ -132,5 +187,11 @@
 
 	.message {
 		margin-top: 1em;
+	}
+
+	.divider {
+		width: 30px;
+		height: 1px;
+		border-top: 2px black dashed;
 	}
 </style>
