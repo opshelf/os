@@ -8,6 +8,7 @@
 		type RotationAngles
 	} from '$lib/api';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
+	import StatusMessage from '$lib/components/StatusMessage.svelte';
 
 	let angles: RotationAngles | null = null;
 	let loading = false;
@@ -193,7 +194,7 @@
 {/if}
 
 {#if message !== ''}
-	<div class="message">{message}</div>
+	<StatusMessage {message} />
 {/if}
 
 {#if error !== ''}
@@ -217,10 +218,6 @@
 	.action-buttons {
 		display: flex;
 		gap: 1em;
-		margin-top: 1em;
-	}
-
-	.message {
 		margin-top: 1em;
 	}
 

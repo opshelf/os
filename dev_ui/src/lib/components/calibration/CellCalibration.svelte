@@ -13,6 +13,7 @@
 		type Position
 	} from '$lib/api';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
+	import StatusMessage from '$lib/components/StatusMessage.svelte';
 	import ShelfCalibration from '$lib/components/calibration/ShelfCalibration.svelte';
 
 	let storageGrid: StorageGrid | null = null;
@@ -397,7 +398,7 @@
 	{/if}
 
 	{#if message !== ''}
-		<div class="message">{message}</div>
+		<StatusMessage {message} />
 	{/if}
 
 	{#if error !== ''}
@@ -459,11 +460,6 @@
 		gap: 1em;
 		margin-top: 2em;
 		align-items: center;
-	}
-
-	.message {
-		margin-top: 2em;
-		text-transform: uppercase;
 	}
 
 	button {

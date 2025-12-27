@@ -10,6 +10,7 @@
 		type IOBoxPosition
 	} from '$lib/api';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
+	import StatusMessage from '$lib/components/StatusMessage.svelte';
 
 	let ioboxPosition: IOBoxPosition | null = null;
 	let loading = false;
@@ -325,7 +326,7 @@
 {/if}
 
 {#if message !== ''}
-	<div class="message">{message}</div>
+	<StatusMessage {message} />
 {/if}
 
 {#if error !== ''}
@@ -353,23 +354,19 @@
 
 	.axis-label {
 		font-weight: bold;
-		min-width: 1.5em;
 	}
 
 	.jog-axis button {
-		min-width: 3em;
-		min-height: 3em;
+		min-width: 2em;
+		min-height: 2em;
 		font-size: 1.5em;
 		margin-top: 0;
+		padding: 2.5px;
 	}
 
 	.action-buttons {
 		display: flex;
 		gap: 1em;
-	}
-
-	.message {
-		margin-top: 1em;
 	}
 
 	.move-button {
