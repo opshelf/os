@@ -433,6 +433,7 @@ export async function moveStage(position: number): Promise<{ position: number }>
 	});
 }
 
+
 export async function runCycleTest(
 	side: string,
 	shelfIdx: number,

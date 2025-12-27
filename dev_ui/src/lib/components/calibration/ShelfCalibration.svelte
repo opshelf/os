@@ -5,6 +5,7 @@
 		getShelfStageExtension,
 		saveShelfStageExtension,
 		moveStage,
+		homeMotor,
 		type ShelfStageExtension
 	} from '$lib/api';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
@@ -88,7 +89,7 @@
 		message = '';
 
 		try {
-			await moveStage(0.5);
+			await homeMotor('stage');
 			message = 'stage retracted';
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'failed to retract stage';
