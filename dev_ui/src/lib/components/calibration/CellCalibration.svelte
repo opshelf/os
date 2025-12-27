@@ -7,6 +7,8 @@
 		jogAxis,
 		testGripper,
 		saveCalibration,
+		getRotationAngles,
+		rotateToAngle,
 		type StorageGrid,
 		type Position
 	} from '$lib/api';
@@ -126,6 +128,13 @@
 		message = '';
 
 		try {
+			const rotationAngles = await getRotationAngles();
+			const targetAngle = selectedSide === 'right_module'
+				? rotationAngles.back
+				: rotationAngles.front;
+
+			await rotateToAngle(targetAngle);
+
 			storageGrid = await getStorageGrid();
 			currentPosition = await moveToCell(selectedSide, selectedShelf, selectedCell);
 
