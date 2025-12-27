@@ -14,10 +14,6 @@
 	let backValue = 0;
 	let loading = false;
 	let isSaving = false;
-	let isExtending = false;
-	let isStageExtended = false;
-	let selectedSide: 'front' | 'back' = 'front';
-	let currentSlidePosition = 0;
 	let error = '';
 	let message = '';
 
@@ -70,40 +66,27 @@
 		}
 	}
 
-	function didChangeSide(event: Event): void {
-		const target = event.target as HTMLSelectElement;
-
-		selectedSide = target.value as 'front' | 'back';
-		isStageExtended = false;
-	}
-
-	async function didClickStageToggle(): Promise<void> {
-		isExtending = true;
+	async function didClickExtend(target: number): Promise<void> {
 		error = '';
 		message = '';
 
 		try {
-			const targetExtension = selectedSide === 'front' ? frontValue : backValue;
-
-			if (isStageExtended === true) {
-				const delta = 3 - currentSlidePosition;
-				const result = await jogAxis('stage', delta);
-
-				currentSlidePosition = result.slide_extension;
-				isStageExtended = false;
-				message = 'stage retracted';
-			} else {
-				const delta = targetExtension - currentSlidePosition;
-				const result = await jogAxis('stage', delta);
-
-				currentSlidePosition = result.slide_extension;
-				isStageExtended = true;
-				message = 'stage extended';
-			}
+			await jogAxis('stage', target);
+			message = 'stage extended';
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'failed to move stage';
-		} finally {
-			isExtending = false;
+			error = err instanceof Error ? err.message : 'failed to extend stage';
+		}
+	}
+
+	async function didClickRetract(): Promise<void> {
+		error = '';
+		message = '';
+
+		try {
+			await jogAxis('stage', -1000);
+			message = 'stage retracted';
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'failed to retract stage';
 		}
 	}
 </script>
@@ -124,26 +107,18 @@
 				<td>
 					<span class="field-label">front</span>
 					<input type="number" step="0.5" bind:value={frontValue} disabled={isSaving === true} />
+					<button type="button" on:click={() => didClickExtend(frontValue)}>extend</button>
 				</td>
 				<td>
 					<span class="field-label">back</span>
 					<input type="number" step="0.5" bind:value={backValue} disabled={isSaving === true} />
+					<button type="button" on:click={() => didClickExtend(backValue)}>extend</button>
 				</td>
 			</tr>
 			<tr>
 				<td colspan="2">
 					<div class="action-buttons">
-						<select value={selectedSide} on:change={didChangeSide} disabled={isExtending === true}>
-							<option value="front">front</option>
-							<option value="back">back</option>
-						</select>
-						<button
-							type="button"
-							on:click={didClickStageToggle}
-							disabled={isSaving === true || isExtending === true}
-						>
-							{isStageExtended === true ? 'retract' : 'extend'}
-						</button>
+						<button type="button" on:click={didClickRetract}>retract</button>
 						<div class="divider"></div>
 						<button type="button" on:click={didClickReset} disabled={isSaving === true}>
 							reset
