@@ -3,6 +3,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { getScannerStatus, sendScannerScan, getApiBase, type ScannerStatus } from '$lib/api';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
+	import StatusMessage from '$lib/components/StatusMessage.svelte';
 
 	let status: ScannerStatus | null = null;
 	let latestReading = '';
@@ -225,7 +226,7 @@
 	</div>
 
 	{#if message !== ''}
-		<div class="message">{message}</div>
+		<StatusMessage {message} />
 	{/if}
 
 	{#if scanError !== ''}
@@ -256,7 +257,4 @@
 		margin-top: 1em;
 	}
 
-	.message {
-		margin-top: 1em;
-	}
 </style>

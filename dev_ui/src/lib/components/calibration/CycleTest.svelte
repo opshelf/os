@@ -3,6 +3,7 @@
 	import { browser } from '$app/environment';
 	import { getStorageGrid, runCycleTest, abortCycleTest, type StorageGrid } from '$lib/api';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
+	import StatusMessage from '$lib/components/StatusMessage.svelte';
 
 	let storageGrid: StorageGrid | null = null;
 	let loading = true;
@@ -184,7 +185,7 @@
 	</table>
 
 	{#if message !== ''}
-		<div class="message">{message}</div>
+		<StatusMessage {message} />
 	{/if}
 
 	{#if error !== ''}
@@ -210,7 +211,4 @@
 		margin-top: 0;
 	}
 
-	.message {
-		margin-top: 1em;
-	}
 </style>

@@ -12,6 +12,7 @@
 		type DoorAction
 	} from '$lib/api';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
+	import StatusMessage from '$lib/components/StatusMessage.svelte';
 
 	let motors: MotorList | null = null;
 	let isLoading = true;
@@ -240,7 +241,7 @@
 	</table>
 
 	{#if message !== ''}
-		<div class="message">{message}</div>
+		<StatusMessage {message} />
 	{/if}
 
 	{#if error !== ''}
@@ -251,10 +252,6 @@
 {/if}
 
 <style>
-	.message {
-		margin-top: 1em;
-	}
-
 	button {
 		margin-top: 0;
 	}

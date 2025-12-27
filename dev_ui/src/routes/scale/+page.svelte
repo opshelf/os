@@ -14,6 +14,7 @@
 		type ScaleCalibrationParams
 	} from '$lib/api';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
+	import StatusMessage from '$lib/components/StatusMessage.svelte';
 
 	let reading: ScaleReading | null = null;
 	let calibrationStatus: ScaleCalibrationStatus | null = null;
@@ -398,7 +399,7 @@
 	</div>
 
 	{#if message !== ''}
-		<div class="message">{message}</div>
+		<StatusMessage {message} />
 	{/if}
 
 	{#if calibrationError !== ''}
@@ -427,7 +428,4 @@
 		margin-bottom: 1em;
 	}
 
-	.message {
-		margin-top: 1em;
-	}
 </style>

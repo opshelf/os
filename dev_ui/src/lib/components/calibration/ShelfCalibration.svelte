@@ -9,6 +9,7 @@
 		type ShelfStageExtension
 	} from '$lib/api';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
+	import StatusMessage from '$lib/components/StatusMessage.svelte';
 
 	let stageExtension: ShelfStageExtension | null = null;
 	let frontValue = 0;
@@ -142,7 +143,7 @@
 </table>
 
 {#if message !== ''}
-	<div class="message">{message}</div>
+	<StatusMessage {message} />
 {/if}
 
 {#if error !== ''}
@@ -170,10 +171,6 @@
 
 	td button {
 		margin-top: 0;
-	}
-
-	.message {
-		margin-top: 1em;
 	}
 
 	.divider {

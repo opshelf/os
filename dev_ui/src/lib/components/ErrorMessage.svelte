@@ -25,6 +25,7 @@
 
 <style>
 	.error {
-		margin-top: 1em;
+		margin-top: 2em;
+		text-transform: uppercase;
 	}
 </style>
