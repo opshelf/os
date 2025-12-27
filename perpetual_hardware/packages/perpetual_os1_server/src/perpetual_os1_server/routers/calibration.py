@@ -864,11 +864,12 @@ async def move_stage(request: StageMoveRequest):
 
 	stage_limit = tool._ms._params.lim
 
-	target = max(0, min(stage_limit, request.position))
+	target = max(3, min(stage_limit, request.position))
 
 	try:
 		await tool._ms.clear_alarm()
 		await tool._ms.move_to_position(target)
+		await tool._ms.stop()
 	except (MotorError, HardwareMotorError) as e:
 		raise HTTPException(
 			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
