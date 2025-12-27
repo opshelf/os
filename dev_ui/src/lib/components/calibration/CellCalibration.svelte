@@ -20,6 +20,9 @@
 	let selectedSide: 'left_module' | 'right_module' = 'left_module';
 	let selectedShelf = 0;
 	let selectedCell = 0;
+	let selectedStatus = 'available';
+
+	const CELL_STATUSES = ['available', 'occupied', 'maintenance', 'disabled'];
 
 	let currentPosition: Position | null = null;
 	let isMoving = false;
@@ -123,7 +126,14 @@
 		message = '';
 
 		try {
+			storageGrid = await getStorageGrid();
 			currentPosition = await moveToCell(selectedSide, selectedShelf, selectedCell);
+
+			const cells = getCells();
+			if (cells[selectedCell] !== undefined) {
+				selectedStatus = cells[selectedCell].status;
+			}
+
 			message = 'moved to cell';
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'failed to move to cell';
@@ -177,8 +187,12 @@
 				selectedCell,
 				currentPosition.x,
 				currentPosition.y,
-				currentPosition.z_offset
+				currentPosition.z_offset,
+				selectedStatus
 			);
+
+			storageGrid = await getStorageGrid();
+
 			message = 'calibration saved';
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'failed to save calibration';
@@ -260,14 +274,22 @@
 	</table>
 
 	{#if currentPosition !== null}
-		<table class="position-table">
+		<table class="status-table">
 			<thead>
 				<tr>
-					<th colspan="3">current position</th>
+					<th colspan="4">cell configuration</th>
 				</tr>
 			</thead>
 			<tbody>
 				<tr>
+					<td>
+						<span class="field-label">status</span>
+						<select bind:value={selectedStatus}>
+							{#each CELL_STATUSES as cellStatus}
+								<option value={cellStatus}>{cellStatus}</option>
+							{/each}
+						</select>
+					</td>
 					<td>x: {formatNumber(currentPosition.x)}</td>
 					<td>y: {formatNumber(currentPosition.y)}</td>
 					<td>z: {formatNumber(currentPosition.z_offset)}</td>
@@ -310,8 +332,6 @@
 					+
 				</button>
 			</div>
-		</div>
-		<div class="jog-controls">
 			<div class="jog-axis">
 				<span class="axis-label">Z</span>
 				<button
@@ -349,6 +369,7 @@
 			>
 				test gripper
 			</button>
+			<div class="divider"></div>
 			<button
 				type="button"
 				on:click={didClickReset}
@@ -394,7 +415,7 @@
 		margin-top: 0;
 	}
 
-	.position-table {
+	.status-table {
 		margin-top: 1em;
 	}
 
@@ -428,9 +449,23 @@
 		display: flex;
 		gap: 1em;
 		margin-top: 1em;
+		align-items: center;
 	}
 
 	.message {
-		margin-top: 1em;
+		position: fixed;
+		bottom: 2em;
+		left: 2em;
+		text-transform: uppercase;
+	}
+
+	button {
+		margin-top: 0;
+	}
+
+	.divider {
+		width: 55px;
+		height: 1px;
+		border-top: 2px black dashed;
 	}
 </style>

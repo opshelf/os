@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from perpetual_os1.common import AxisCoordinate
-from perpetual_os1.storage import StorageModuleSide, CalibrationCoordinate
+from perpetual_os1.storage import StorageModuleSide, CalibrationCoordinate, CellStatus
 from perpetual_os1.exceptions import IOBoxError, MotorError
 from hardware.exceptions import MotorError as HardwareMotorError
 
@@ -48,6 +48,7 @@ class SaveRequest(BaseModel):
 	x: float
 	y: float
 	z_offset: float
+	status: Optional[str] = None
 
 
 _current_position: Optional[PositionResponse] = None
@@ -336,6 +337,8 @@ async def save_calibration(request: SaveRequest):
 			detail=f"Invalid cell_idx: {request.cell_idx}",
 		)
 
+	cell = shelf.cells[request.cell_idx]
+
 	new_cal = CalibrationCoordinate(
 		x=request.x,
 		y=request.y,
@@ -343,7 +346,17 @@ async def save_calibration(request: SaveRequest):
 		z_offset=request.z_offset,
 	)
 
-	shelf.cells[request.cell_idx].calibration_point = new_cal
+	cell.calibration_point = new_cal
+
+	if request.status is not None:
+		try:
+			new_status = CellStatus(request.status)
+			cell.status = new_status
+		except ValueError:
+			raise HTTPException(
+				status_code=status.HTTP_400_BAD_REQUEST,
+				detail=f"Invalid status: {request.status}. Must be one of: available, occupied, maintenance, disabled",
+			)
 
 	grid.save()
 
