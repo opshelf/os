@@ -7,7 +7,6 @@
 		jogAxis,
 		testGripper,
 		saveCalibration,
-		getShelfStageExtension,
 		type StorageGrid,
 		type Position
 	} from '$lib/api';
@@ -33,8 +32,6 @@
 	let message = '';
 
 	let jogStep = 1;
-	let isStageExtended = false;
-	let isExtending = false;
 
 	const JOG_STEPS = [
 		{ value: 0.1, label: '0.1mm' },
@@ -100,7 +97,6 @@
 		selectedShelf = 0;
 		selectedCell = 0;
 		currentPosition = null;
-		isStageExtended = false;
 		error = '';
 		message = '';
 	}
@@ -132,7 +128,6 @@
 		try {
 			storageGrid = await getStorageGrid();
 			currentPosition = await moveToCell(selectedSide, selectedShelf, selectedCell);
-			isStageExtended = false;
 
 			const cells = getCells();
 			if (cells[selectedCell] !== undefined) {
@@ -213,7 +208,6 @@
 
 		try {
 			currentPosition = await moveToCell(selectedSide, selectedShelf, selectedCell);
-			isStageExtended = false;
 			message = 'position reset';
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'failed to reset position';
@@ -224,35 +218,6 @@
 
 	function formatNumber(value: number): string {
 		return value.toFixed(2);
-	}
-
-	async function didClickStageToggle(): Promise<void> {
-		isExtending = true;
-		error = '';
-
-		try {
-			const shelfExtension = await getShelfStageExtension();
-			const currentSlide = currentPosition?.slide_extension ?? 0;
-
-			const targetExtension =
-				selectedSide === 'left_module' ? shelfExtension.front : shelfExtension.back;
-
-			if (isStageExtended === true) {
-				const delta = 3 - currentSlide;
-
-				currentPosition = await jogAxis('stage', delta);
-				isStageExtended = false;
-			} else {
-				const delta = targetExtension - currentSlide;
-
-				currentPosition = await jogAxis('stage', delta);
-				isStageExtended = true;
-			}
-		} catch (err) {
-			error = err instanceof Error ? err.message : 'failed to move stage';
-		} finally {
-			isExtending = false;
-		}
 	}
 </script>
 
@@ -394,14 +359,6 @@
 					{/each}
 				</select>
 			</div>
-			<button
-				type="button"
-				class="stage-toggle"
-				on:click={didClickStageToggle}
-				disabled={isMoving === true || isExtending === true}
-			>
-				{isStageExtended === true ? 'retract stage' : 'extend stage'}
-			</button>
 		</div>
 
 		<div class="action-buttons">
@@ -508,9 +465,5 @@
 		width: 55px;
 		height: 1px;
 		border-top: 2px black dashed;
-	}
-
-	.stage-toggle {
-		min-height: 2em;
 	}
 </style>
