@@ -14,6 +14,7 @@
 	let backValue = 0;
 	let loading = false;
 	let isSaving = false;
+	let currentSlidePosition = 0;
 	let error = '';
 	let message = '';
 
@@ -71,7 +72,10 @@
 		message = '';
 
 		try {
-			await jogAxis('stage', target);
+			const delta = target - currentSlidePosition;
+			const result = await jogAxis('stage', delta);
+
+			currentSlidePosition = result.slide_extension;
 			message = 'stage extended';
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'failed to extend stage';
@@ -83,7 +87,9 @@
 		message = '';
 
 		try {
-			await jogAxis('stage', -1000);
+			const result = await jogAxis('stage', -1000);
+
+			currentSlidePosition = result.slide_extension;
 			message = 'stage retracted';
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'failed to retract stage';
