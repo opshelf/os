@@ -879,6 +879,48 @@ async def move_stage(request: StageMoveRequest):
 	return {"position": target}
 
 
+@router.get("/debug/stage-position")
+async def debug_stage_position():
+	"""Read current stage motor position registers."""
+	try:
+		worker = await get_robot_worker()
+	except ValueError as e:
+		raise HTTPException(
+			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+			detail="Robot is not initialized",
+		) from e
+
+	tool = worker._robot._tool
+
+	if tool._ms is None:
+		raise HTTPException(
+			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+			detail="Stage motor not configured",
+		)
+
+	controller = tool._ms._controller
+	motor_id = tool._ms._motor_id
+	mpr = tool._ms._params.mpr
+	ppr = getattr(tool._ms._params, "ppr", 10000)
+
+	pos_hi = await controller.read_holding_register(motor_id, 0x602C)
+	pos_lo = await controller.read_holding_register(motor_id, 0x602D)
+	total_pulses = (pos_hi << 16) | pos_lo
+
+	revs = total_pulses / ppr
+	position_mm = revs * mpr
+
+	return {
+		"motor_id": motor_id,
+		"pos_hi": pos_hi,
+		"pos_lo": pos_lo,
+		"total_pulses": total_pulses,
+		"position_mm": position_mm,
+		"mpr": mpr,
+		"ppr": ppr,
+	}
+
+
 @router.get("/debug/motor30-registers")
 async def debug_motor30_registers():
 	"""Probe motor 30 registers to find correct position addresses."""
