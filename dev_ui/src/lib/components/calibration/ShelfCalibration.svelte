@@ -169,7 +169,7 @@
 	}
 
 	.divider {
-		width: 30px;
+		width: 55px;
 		height: 1px;
 		border-top: 2px black dashed;
 	}
