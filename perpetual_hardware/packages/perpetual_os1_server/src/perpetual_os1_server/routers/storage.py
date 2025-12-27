@@ -85,14 +85,6 @@ class ItemLocationCreate(BaseModel):
     cell_idx: int
 
 
-class StorageCellCreate(BaseModel):
-    """Request payload for creating a storage cell."""
-
-    shelf_idx: int
-    cell_idx: int
-    capacity: Union[str, DimensionsPayload]
-
-
 class StorageCellUpdate(BaseModel):
     """Request payload for updating a storage cell."""
 
@@ -463,37 +455,6 @@ async def remove_item_location_by_path(
 # ---------------------------------------------------------------------------
 # Storage cell endpoints
 # ---------------------------------------------------------------------------
-
-
-@router.post("/locations", dependencies=[Depends(require_permissions("storage:write"))])
-async def create_storage_cell(
-    cell: StorageCellCreate,
-    session: AsyncSession = Depends(get_db),
-) -> StorageCellResponse:
-    """Create a new storage cell."""
-    storage_service = StorageService(session)
-
-    try:
-        storage_cell = await storage_service.create_storage_cell(
-            shelf_idx=cell.shelf_idx,
-            cell_idx=cell.cell_idx,
-            capacity=_serialize_capacity(cell.capacity) or "",
-        )
-
-        return StorageCellResponse(
-            id=int(storage_cell.id),
-            shelf_idx=int(storage_cell.shelf_idx),
-            cell_idx=int(storage_cell.cell_idx),
-            capacity=_deserialize_capacity(storage_cell.capacity),
-            status=str(storage_cell.status),
-            created_at=storage_cell.created_at.isoformat(),
-            updated_at=storage_cell.updated_at.isoformat(),
-        )
-
-    except ValidationError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/locations", dependencies=[Depends(require_permissions("storage:read"))])
