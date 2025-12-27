@@ -864,7 +864,7 @@ async def move_stage(request: StageMoveRequest):
 
 	stage_limit = tool._ms._params.lim
 
-	target = max(0, min(stage_limit, request.position))
+	target = max(0.5, min(stage_limit, request.position))
 
 	try:
 		await tool._ms.clear_alarm()
