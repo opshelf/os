@@ -208,10 +208,14 @@ async def jog_axis(request: JogRequest) -> PositionResponse:
 
 	try:
 		if request.axis == "x":
+			if tool._mx is not None:
+				await tool._mx.clear_alarm()
 			new_x = max(0, min(x_limit, new_x + request.delta))
 			coord = AxisCoordinate(x=new_x, y=new_y, s=_current_side, z_offset=new_z)
 			await tool.move(coord)
 		elif request.axis == "y":
+			if tool._my is not None:
+				await tool._my.clear_alarm()
 			new_y = max(0, min(y_limit, new_y + request.delta))
 			coord = AxisCoordinate(x=new_x, y=new_y, s=_current_side, z_offset=new_z)
 			await tool.move(coord)
@@ -547,6 +551,8 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 
 	try:
 		if request.axis == "x":
+			if tool._mx is not None:
+				await tool._mx.clear_alarm()
 			if request.position == "low":
 				_iobox_current.pickup_low_x = max(0, min(x_limit, _iobox_current.pickup_low_x + request.delta))
 				await tool.move(AxisCoordinate(_iobox_current.pickup_low_x, _iobox_current.pickup_low_y))
@@ -554,6 +560,8 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 				_iobox_current.pickup_high_x = max(0, min(x_limit, _iobox_current.pickup_high_x + request.delta))
 				await tool.move(AxisCoordinate(_iobox_current.pickup_high_x, _iobox_current.pickup_high_y))
 		elif request.axis == "y":
+			if tool._my is not None:
+				await tool._my.clear_alarm()
 			if request.position == "low":
 				_iobox_current.pickup_low_y = max(0, min(y_limit, _iobox_current.pickup_low_y + request.delta))
 				await tool.move(AxisCoordinate(_iobox_current.pickup_low_x, _iobox_current.pickup_low_y))
