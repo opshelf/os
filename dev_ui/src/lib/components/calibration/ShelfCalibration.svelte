@@ -160,6 +160,10 @@
 		margin-top: 0;
 	}
 
+	td button {
+		margin-top: 0;
+	}
+
 	.message {
 		margin-top: 1em;
 	}
