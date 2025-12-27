@@ -124,7 +124,8 @@ export interface Dimensions {
 }
 
 export async function getStorageGrid(): Promise<StorageGrid> {
-	return apiFetch<StorageGrid>("/calibration/storage");
+	const timestamp = Date.now();
+	return apiFetch<StorageGrid>(`/calibration/storage?_t=${timestamp}`);
 }
 
 export async function moveToCell(
@@ -165,19 +166,27 @@ export async function saveCalibration(
 	cellIdx: number,
 	x: number,
 	y: number,
-	zOffset: number
+	zOffset: number,
+	status?: string
 ): Promise<void> {
+
+	const payload: Record<string, unknown> = {
+		side,
+		shelf_idx: shelfIdx,
+		cell_idx: cellIdx,
+		x,
+		y,
+		z_offset: zOffset,
+	};
+
+	if (status !== undefined) {
+		payload.status = status;
+	}
+
 	await apiFetch("/calibration/save", {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({
-			side,
-			shelf_idx: shelfIdx,
-			cell_idx: cellIdx,
-			x,
-			y,
-			z_offset: zOffset,
-		}),
+		body: JSON.stringify(payload),
 	});
 }
 
