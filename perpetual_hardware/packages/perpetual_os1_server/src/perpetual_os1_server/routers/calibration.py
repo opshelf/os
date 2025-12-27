@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from perpetual_os1.common import AxisCoordinate
-from perpetual_os1.storage import StorageModuleSide, CalibrationCoordinate, CellStatus
+from perpetual_os1.storage import StorageModuleSide, CalibrationCoordinate, CellStatus, StorageGrid
 from perpetual_os1.exceptions import IOBoxError, MotorError
 from hardware.exceptions import MotorError as HardwareMotorError
 
@@ -1158,6 +1158,21 @@ async def reload_config():
 		raise HTTPException(
 			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
 			detail=f"Failed to reload config: {e}",
+		) from e
+
+
+@router.post("/reload_storage")
+async def reload_storage():
+	"""Reload storage grid from storage.json without restarting the API."""
+	try:
+		worker = await get_robot_worker()
+		robot = worker._robot
+		robot._grid = StorageGrid.load_from_file()
+		return {"success": True, "message": "Storage reloaded"}
+	except Exception as e:
+		raise HTTPException(
+			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+			detail=f"Failed to reload storage: {e}",
 		) from e
 
 
