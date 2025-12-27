@@ -33,6 +33,10 @@
 			stageExtension = await getShelfStageExtension();
 			frontValue = stageExtension.front;
 			backValue = stageExtension.back;
+
+			const position = await jogAxis('stage', 0);
+
+			currentSlidePosition = position.slide_extension;
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'failed to load shelf stage extension';
 		} finally {
