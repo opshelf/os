@@ -88,7 +88,7 @@
 		message = '';
 
 		try {
-			await moveStage(2.5);
+			await moveStage(3);
 			message = 'stage retracted';
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'failed to retract stage';
