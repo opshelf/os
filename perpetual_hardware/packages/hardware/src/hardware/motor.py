@@ -425,18 +425,26 @@ class Motor():
         """Clear motor alarms without homing.
 
         Sends control word sequence to reset fault state and reconfigure for movement.
+        Verifies the alarm actually cleared by reading the alarm register.
 
         Raises:
-            MotorError: If alarm clear fails
+            MotorError: If alarm clear fails or alarm persists after clear
         """
         try:
             await self.set_param("Control word", 0x1111)
             await self.set_param("Control word", 0x1122)
             await self._controller.write_single_register(self._motor_id, 0x6000, 0x0000)
             await self.move_config()
+
+            alarm_code = await self.get_param("Current alarm")
+            if alarm_code is not None and alarm_code not in (0, 32):
+                raise MotorError(f"Alarm {alarm_code} persists after clear attempt")
+
             self._status = MotorStatus.STOPPED
         except Exception as e:
-            raise MotorError(f"Failed to clear motor alarm: {str(e)}") from e
+            if not isinstance(e, MotorError):
+                raise MotorError(f"Failed to clear motor alarm: {str(e)}") from e
+            raise
 
     async def get_position(self) -> float:
         """Get the current motor position in millimeters.
