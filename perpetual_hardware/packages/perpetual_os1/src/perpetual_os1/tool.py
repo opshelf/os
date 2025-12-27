@@ -213,16 +213,16 @@ class Tool:
 
     async def clear_alarms(self) -> None:
         """
-        Clear alarms by homing gripper and stage motors.
+        Clear alarms on gripper and stage motors without homing.
 
         Raises:
-            MotorError: If homing fails during alarm clear
+            MotorError: If alarm clear fails
         """
         try:
             if self._mg is not None:
-                await self._mg.home()
+                await self._mg.clear_alarm()
             if self._ms is not None:
-                await self._ms.home()
+                await self._ms.clear_alarm()
         except Exception as e:
             await self._handle_fault(e)
             raise MotorError(f"Failed to clear alarms: {str(e)}") from e
