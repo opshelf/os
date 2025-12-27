@@ -738,9 +738,13 @@ class Motor():
             home_dir = int(self._params.dr) ^ 1 ^ (1 if is_inverted else 0)
 
             try:
+                # Clear any existing fault/alarm before homing
+                await self.set_param("Control word", 0x1111)
+                await self.set_param("Control word", 0x1122)
+                await self._controller.write_single_register(self._motor_id, 0x6000, 0x0000)
+                self._status = MotorStatus.STOPPED
+
                 # Configure homing parameters
-                await self.set_param("Control word", 0x1111)  # clear alarm if any
-                await self.set_param("Control word", 0x1122)  # clear alarm if any
                 await self.set_param("Motion of Path 0", 0x2)  # velocity mode
                 await self.set_param("Motor direction", home_dir)
                 await self.set_param("Velocity", self._params.ret_rpm)
