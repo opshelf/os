@@ -671,12 +671,16 @@ class Motor():
             
             # Crash/alarm detection (follow-error, hardstop stall)
             # alarm_code 32 (0x20) means "stopped at limit" during homing, but collision during normal moves
+            # only treat alarm_code 32 as collision if motor has actually started moving (not stale from previous op)
             alarm_code: Optional[int] = None
             alarm_active = False
             try:
                 alarm_code = await self.get_param("Current alarm")
                 if alarm_code is not None and alarm_code != 0:
-                    alarm_active = alarm_code != 32 or not homing
+                    if alarm_code == 32:
+                        alarm_active = not homing and has_moved
+                    else:
+                        alarm_active = True
             except Exception as alarm_exc:
                 self._logger.warning(
                     "Failed to read motor alarm register",
