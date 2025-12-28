@@ -5,7 +5,7 @@
 
 	let { message }: Props = $props();
 
-	const formattedMessage = $derived(() => {
+	const formattedMessage = $derived.by(() => {
 		const trimmed = message.trim();
 
 		if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
@@ -21,4 +21,4 @@
 	});
 </script>
 
-<div class="message error">{formattedMessage()}</div>
+<div class="message error">{formattedMessage}</div>

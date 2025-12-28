@@ -17,21 +17,21 @@
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import StatusMessage from '$lib/components/StatusMessage.svelte';
 
-	let ioboxPosition: IOBoxPosition | null = null;
-	let loading = false;
-	let error = '';
-	let message = '';
-	let warning = '';
-	let needsHome = false;
-	let needsHomeReason = '';
-	let needsHomeAxes: string[] = [];
-	let isHoming = false;
-	let selectedPosition: 'low' | 'high' = 'low';
-	let isMoving = false;
-	let isTesting = false;
-	let isSaving = false;
-	let isPositioned = false;
-	let jogStep = 1;
+	let ioboxPosition = $state<IOBoxPosition | null>(null);
+	let loading = $state<boolean>(false);
+	let error = $state<string>('');
+	let message = $state<string>('');
+	let warning = $state<string>('');
+	let needsHome = $state<boolean>(false);
+	let needsHomeReason = $state<string>('');
+	let needsHomeAxes = $state<string[]>([]);
+	let isHoming = $state<boolean>(false);
+	let selectedPosition = $state<'low' | 'high'>('low');
+	let isMoving = $state<boolean>(false);
+	let isTesting = $state<boolean>(false);
+	let isSaving = $state<boolean>(false);
+	let isPositioned = $state<boolean>(false);
+	let jogStep = $state<number>(1);
 
 	const JOG_STEPS = [
 		{ value: 0.1, label: '0.1mm' },
@@ -46,12 +46,28 @@
 
 	const TOOL_AXES = new Set(['z_axis', 'stage']);
 
-	$: needsToolHome = needsHome && needsHomeAxes.some((axis) => TOOL_AXES.has(axis));
-	$: needsOtherHome =
-		needsHome && (needsHomeAxes.length === 0 || needsHomeAxes.some((axis) => !TOOL_AXES.has(axis)));
-	$: homeMessage = needsHome
-		? `home required${needsHomeReason !== '' ? `: ${needsHomeReason}` : ''}`
-		: '';
+	const needsToolHome = $derived(needsHome && needsHomeAxes.some((axis) => TOOL_AXES.has(axis)));
+	const needsOtherHome = $derived(
+		needsHome &&
+			(needsHomeAxes.length === 0 || needsHomeAxes.some((axis) => !TOOL_AXES.has(axis)))
+	);
+	const homeMessage = $derived(
+		needsHome ? `home required${needsHomeReason !== '' ? `: ${needsHomeReason}` : ''}` : ''
+	);
+	const duplicateHomeError = $derived.by(() => {
+		if (needsHome !== true || error === '') {
+			return false;
+		}
+
+		const errorLower = error.toLowerCase();
+		const reasonLower = needsHomeReason.toLowerCase();
+
+		if (needsHomeReason !== '' && errorLower.includes(reasonLower)) {
+			return true;
+		}
+
+		return needsHomeReason === '' && errorLower.includes('home required');
+	});
 
 	onMount(function () {
 		if (browser === false) {
@@ -263,7 +279,7 @@
 			<tr>
 				<td colspan="2">
 					<span class="field-label">position</span>
-					<select value={selectedPosition} on:change={didChangePosition}>
+					<select value={selectedPosition} onchange={didChangePosition}>
 						<option value="low">pickup low</option>
 						<option value="high">pickup high</option>
 					</select>
@@ -272,7 +288,7 @@
 					<button
 						class="move-button"
 						type="button"
-						on:click={didClickMove}
+						onclick={didClickMove}
 						disabled={isMoving === true || isTesting === true || needsHome === true || isHoming === true}
 					>
 						move
@@ -301,7 +317,7 @@
 	<div class="action-buttons">
 		<button
 			type="button"
-			on:click={didClickHomeToolMotors}
+			onclick={didClickHomeToolMotors}
 			disabled={isHoming === true || isMoving === true || isTesting === true || isSaving === true}
 		>
 			{isHoming === true ? 'homing...' : 'home tool motors'}
@@ -320,14 +336,14 @@
 				<span class="axis-label">X</span>
 				<button
 					type="button"
-					on:click={() => didClickJog('x', jogStep)}
+					onclick={() => didClickJog('x', jogStep)}
 					disabled={isMoving === true || needsHome === true || isHoming === true}
 				>
 					-
 				</button>
 				<button
 					type="button"
-					on:click={() => didClickJog('x', -jogStep)}
+					onclick={() => didClickJog('x', -jogStep)}
 					disabled={isMoving === true || needsHome === true || isHoming === true}
 				>
 					+
@@ -337,14 +353,14 @@
 				<span class="axis-label">Y</span>
 				<button
 					type="button"
-					on:click={() => didClickJog('y', -jogStep)}
+					onclick={() => didClickJog('y', -jogStep)}
 					disabled={isMoving === true || needsHome === true || isHoming === true}
 				>
 					-
 				</button>
 				<button
 					type="button"
-					on:click={() => didClickJog('y', jogStep)}
+					onclick={() => didClickJog('y', jogStep)}
 					disabled={isMoving === true || needsHome === true || isHoming === true}
 				>
 					+
@@ -356,14 +372,14 @@
 				<span class="axis-label">Z</span>
 				<button
 					type="button"
-					on:click={() => didClickJog('z', -jogStep)}
+					onclick={() => didClickJog('z', -jogStep)}
 					disabled={isMoving === true || needsHome === true || isHoming === true}
 				>
 					-
 				</button>
 				<button
 					type="button"
-					on:click={() => didClickJog('z', jogStep)}
+					onclick={() => didClickJog('z', jogStep)}
 					disabled={isMoving === true || needsHome === true || isHoming === true}
 				>
 					+
@@ -373,14 +389,14 @@
 				<span class="axis-label">S</span>
 				<button
 					type="button"
-					on:click={() => didClickJog('stage', -jogStep)}
+					onclick={() => didClickJog('stage', -jogStep)}
 					disabled={isMoving === true || needsHome === true || isHoming === true}
 				>
 					-
 				</button>
 				<button
 					type="button"
-					on:click={() => didClickJog('stage', jogStep)}
+					onclick={() => didClickJog('stage', jogStep)}
 					disabled={isMoving === true || needsHome === true || isHoming === true}
 				>
 					+
@@ -402,28 +418,28 @@
 	<div class="action-buttons">
 	<button
 		type="button"
-		on:click={didClickTest}
+		onclick={didClickTest}
 		disabled={isMoving === true || isTesting === true || isSaving === true || needsHome === true || isHoming === true}
 	>
 			test
 		</button>
 	<button
 		type="button"
-		on:click={didClickTestWithGripper}
+		onclick={didClickTestWithGripper}
 		disabled={isMoving === true || isTesting === true || isSaving === true || needsHome === true || isHoming === true}
 	>
 			test gripper
 		</button>
 	<button
 		type="button"
-		on:click={didClickReset}
+		onclick={didClickReset}
 		disabled={isMoving === true || isTesting === true || isSaving === true || needsHome === true || isHoming === true}
 	>
 			reset
 		</button>
 	<button
 		type="button"
-		on:click={didClickSave}
+		onclick={didClickSave}
 		disabled={isMoving === true || isTesting === true || isSaving === true || needsHome === true || isHoming === true}
 	>
 			save
@@ -439,7 +455,7 @@
 	<StatusMessage message={`warning: ${warning}`} />
 {/if}
 
-{#if error !== ''}
+{#if error !== '' && duplicateHomeError === false}
 	<ErrorMessage message={error} />
 {/if}
 
