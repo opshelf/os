@@ -21,11 +21,4 @@
 	});
 </script>
 
-<div class="error">{formattedMessage()}</div>
-
-<style>
-	.error {
-		margin-top: 2em;
-		text-transform: uppercase;
-	}
-</style>
+<div class="message error">{formattedMessage()}</div>

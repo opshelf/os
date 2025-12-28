@@ -92,10 +92,15 @@ button:active {
 	box-shadow: none;
 }
 
-.error {
-	display: block;
+.message {
+	margin-top: 2em;
+	text-transform: uppercase;
+	color: oklch(0.5318 0.2399 256.98999);
+}
+
+.message.error {
+	color: #c40000;
 	white-space: pre-wrap;
-	text-transform: lowercase;
 }
 
 nav a.active {

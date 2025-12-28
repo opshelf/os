@@ -6,11 +6,4 @@
 	let { message }: Props = $props();
 </script>
 
-<div class="status">{message}</div>
-
-<style>
-	.status {
-		margin-top: 2em;
-		text-transform: uppercase;
-	}
-</style>
+<div class="message status">{message}</div>
