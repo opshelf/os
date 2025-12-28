@@ -168,6 +168,8 @@ def _transform_worker_status_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     transformed["is_crashed"] = payload.get("is_crashed", False)
     transformed["crash_reason"] = payload.get("crash_reason")
+    transformed["needs_home"] = payload.get("needs_home", False)
+    transformed["needs_home_reason"] = payload.get("needs_home_reason")
 
     return transformed
 
@@ -231,6 +233,8 @@ class RobotWorker:
         self._logger = logging.getLogger(__name__).getChild("worker.guard")
         self._is_crashed: bool = False
         self._crash_reason: Optional[str] = None
+        self._needs_home: bool = False
+        self._needs_home_reason: Optional[str] = None
 
     def get_client(self) -> RobotClient:
         return self._client
@@ -281,12 +285,19 @@ class RobotWorker:
 
         if success is True:
             self.set_crash_state(f"Simulated motor fault on {motor_name}")
+            self.set_needs_home(f"Simulated motor fault on {motor_name}")
             await self._publish_status()
 
         return success
 
     def get_latest_status_payload(self) -> Optional[str]:
         return self._latest_status_payload
+
+    def needs_home(self) -> bool:
+        return self._needs_home
+
+    def needs_home_reason(self) -> Optional[str]:
+        return self._needs_home_reason
 
     async def get_status_snapshot(self, force_refresh: bool = False) -> Optional[str]:
         if force_refresh or self._latest_status_payload is None:
@@ -389,10 +400,19 @@ class RobotWorker:
         self._is_crashed = False
         self._crash_reason = None
         self._robot.resume_after_curtain()
+        self.clear_needs_home()
 
     def set_crash_state(self, reason: str) -> None:
         self._is_crashed = True
         self._crash_reason = reason
+
+    def clear_needs_home(self) -> None:
+        self._needs_home = False
+        self._needs_home_reason = None
+
+    def set_needs_home(self, reason: str) -> None:
+        self._needs_home = True
+        self._needs_home_reason = reason
 
     async def emergency_stop(self, reason: str) -> None:
         self._robot.pause_for_curtain()
@@ -534,6 +554,8 @@ class RobotWorker:
                 error_queue=list(self._error_queue),
                 is_crashed=self._is_crashed,
                 crash_reason=self._crash_reason,
+                needs_home=self._needs_home,
+                needs_home_reason=self._needs_home_reason,
             )
         else:
             status = WorkerStatus(
@@ -543,6 +565,8 @@ class RobotWorker:
                 error_queue=list(self._error_queue),
                 is_crashed=self._is_crashed,
                 crash_reason=self._crash_reason,
+                needs_home=self._needs_home,
+                needs_home_reason=self._needs_home_reason,
             )
 
         status_payload = status.model_dump(mode="json")
@@ -653,10 +677,13 @@ class RobotWorker:
                             if (
                                 isinstance(self._current_command, HomeCommand)
                                 and isinstance(result, RobotCommandSuccessful)
-                                and self._is_crashed
                             ):
-                                self.clear_crash_state()
-                                logging.info("Crash state cleared after successful homing")
+                                if self._is_crashed:
+                                    self.clear_crash_state()
+                                    logging.info("Crash state cleared after successful homing")
+                                elif self._needs_home:
+                                    self.clear_needs_home()
+                                    logging.info("Needs-home flag cleared after successful homing")
 
                             await self._nc.publish(
                                 self._nats_config.event_queue,
@@ -669,6 +696,7 @@ class RobotWorker:
                             is_hardware_fault = isinstance(err, (MotorError, MovementError, ToolError))
                             if is_hardware_fault:
                                 self.set_crash_state(str(err))
+                                self.set_needs_home(str(err))
                                 logging.warning("Hardware fault detected - robot in crash state: %s", type(err).__name__)
 
                             self._report_error(

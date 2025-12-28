@@ -28,6 +28,27 @@ export function buildAuthenticatedUrl(path: string): string {
 	return `${url}${separator}token=${encodeURIComponent(token)}`;
 }
 
+export type ApiErrorDetail = {
+	message?: string;
+	code?: string;
+	needs_home?: boolean;
+	reason?: string;
+	warnings?: string[];
+	correlation_id?: string;
+};
+
+export class ApiError extends Error {
+	status: number;
+	detail?: ApiErrorDetail;
+
+	constructor(message: string, status: number, detail?: ApiErrorDetail) {
+		super(message);
+		this.name = "ApiError";
+		this.status = status;
+		this.detail = detail;
+	}
+}
+
 export async function apiFetch<T = unknown>(path: string, init?: RequestInit): Promise<T> {
 	const token = getAccessToken();
 
@@ -36,10 +57,16 @@ export async function apiFetch<T = unknown>(path: string, init?: RequestInit): P
 		headers.set("Authorization", `Bearer ${token}`);
 	}
 
-	const response = await fetch(buildApiUrl(path), {
-		...init,
-		headers,
-	});
+	let response: Response;
+	try {
+		response = await fetch(buildApiUrl(path), {
+			...init,
+			headers,
+		});
+	} catch (error) {
+		const message = error instanceof Error ? error.message : "network error";
+		throw new ApiError(`Network error: ${message}`, 0);
+	}
 
 	if (response.status === 401) {
 		try {
@@ -51,8 +78,9 @@ export async function apiFetch<T = unknown>(path: string, init?: RequestInit): P
 	}
 
 	if (response.ok === false) {
-		const message = await safeReadError(response);
-		throw new Error(message);
+		const { message, detail } = await readErrorDetail(response);
+		const finalMessage = formatErrorMessage(message, detail);
+		throw new ApiError(finalMessage, response.status, detail);
 	}
 
 	if (response.status === 204) {
@@ -71,16 +99,61 @@ export async function apiFetch<T = unknown>(path: string, init?: RequestInit): P
 	}
 }
 
-async function safeReadError(response: Response): Promise<string> {
-	try {
-		const payload = await response.json();
-		if (payload && typeof payload === "object" && "detail" in payload) {
-			return String(payload.detail);
-		}
-		return JSON.stringify(payload);
-	} catch {
-		return `${response.status} ${response.statusText}`;
+function formatErrorMessage(message: string, detail?: ApiErrorDetail): string {
+	let output = message;
+	if (detail?.reason && detail.reason !== message) {
+		output = `${output} (${detail.reason})`;
 	}
+	if (detail?.needs_home) {
+		const lower = output.toLowerCase();
+		if (!lower.includes("home")) {
+			output = `${output} (home required)`;
+		}
+	}
+	return output;
+}
+
+async function readErrorDetail(
+	response: Response
+): Promise<{ message: string; detail?: ApiErrorDetail }> {
+	const fallback = `${response.status} ${response.statusText}`;
+	let text = "";
+
+	try {
+		text = await response.text();
+	} catch {
+		return { message: fallback };
+	}
+
+	if (text.length === 0) {
+		return { message: fallback };
+	}
+
+	try {
+		const payload = JSON.parse(text);
+		if (payload && typeof payload === "object") {
+			if ("detail" in payload) {
+				const detail = (payload as { detail?: unknown }).detail;
+				if (typeof detail === "string") {
+					return { message: detail, detail: { message: detail } };
+				}
+				if (detail && typeof detail === "object") {
+					const detailObject = detail as ApiErrorDetail;
+					const message =
+						typeof detailObject.message === "string"
+							? detailObject.message
+							: JSON.stringify(detailObject);
+					return { message, detail: detailObject };
+				}
+			}
+
+			return { message: JSON.stringify(payload) };
+		}
+	} catch {
+		return { message: text };
+	}
+
+	return { message: text };
 }
 
 export interface Position {
@@ -88,6 +161,7 @@ export interface Position {
 	y: number;
 	z_offset: number;
 	slide_extension: number;
+	warnings?: string[];
 }
 
 export interface StorageGrid {
@@ -338,6 +412,7 @@ export interface IOBoxPosition {
 	pickup_high_y: number;
 	z_extension: number;
 	stage_extension: number;
+	warnings?: string[];
 }
 
 export async function getIOBoxCalibration(): Promise<IOBoxPosition> {
@@ -425,8 +500,10 @@ export async function saveShelfStageExtension(front: number, back: number): Prom
 	});
 }
 
-export async function moveStage(position: number): Promise<{ position: number }> {
-	return apiFetch<{ position: number }>("/calibration/stage/move", {
+export async function moveStage(
+	position: number
+): Promise<{ position: number; warnings?: string[] }> {
+	return apiFetch<{ position: number; warnings?: string[] }>("/calibration/stage/move", {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({ position }),

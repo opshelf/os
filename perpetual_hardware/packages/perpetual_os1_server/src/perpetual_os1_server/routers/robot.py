@@ -413,6 +413,8 @@ async def home_motor(
     try:
         await motor.clear_alarm()
         await motor.home()
+        worker.clear_needs_home()
+        await worker.get_status_snapshot(force_refresh=True)
         return {"success": True, "motor": motor_name}
     except Exception as exc:
         logging.error("Motor home failed: %s", exc)

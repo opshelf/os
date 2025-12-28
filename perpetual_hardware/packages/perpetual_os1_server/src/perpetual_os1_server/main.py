@@ -368,7 +368,11 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
 		correlation_id=correlation_id,
 		exc_info=True,
 	)
-	return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+	detail: dict[str, str] = {"message": "Internal server error", "code": "internal_error"}
+	if correlation_id:
+		detail["correlation_id"] = correlation_id
+		detail["reason"] = f"correlation_id={correlation_id}"
+	return JSONResponse(status_code=500, content={"detail": detail})
 
 
 @app.get("/api/health")
