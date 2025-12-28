@@ -336,6 +336,12 @@ class Motor():
         """Setup and trigger an absolute move, tracking it for retries."""
         original_value = value
 
+        # Clear any stale alarm before starting move (e.g. alarm_code 32 from previous limit stop)
+        alarm_code = await self.get_param("Current alarm")
+        if alarm_code is not None and alarm_code != 0:
+            await self.set_param("Control word", 0x1111)
+            await self.set_param("Control word", 0x1122)
+
         if value < 0:
             value = 0
         if value > self._params.lim:
