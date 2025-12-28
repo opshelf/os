@@ -1,17 +1,22 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { createEventDispatcher, onMount } from 'svelte';
 	import { browser } from '$app/environment';
 	import {
+		ApiError,
+		getCalibrationStatus,
 		getShelfStageExtension,
 		saveShelfStageExtension,
 		moveStage,
 		homeMotor,
+		type CalibrationStatus,
 		type ShelfStageExtension
 	} from '$lib/api';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import StatusMessage from '$lib/components/StatusMessage.svelte';
 
 	export let disabled = false;
+
+	const dispatch = createEventDispatcher<{ needsHome: CalibrationStatus }>();
 
 	let stageExtension: ShelfStageExtension | null = null;
 	let frontValue = 0;
@@ -86,6 +91,7 @@
 			message = 'stage extended';
 			warning = result.warnings && result.warnings.length > 0 ? result.warnings.join('; ') : '';
 		} catch (err) {
+			await notifyNeedsHome(err);
 			error = err instanceof Error ? err.message : 'failed to extend stage';
 		} finally {
 			isMovingStage = false;
@@ -102,9 +108,28 @@
 			await homeMotor('stage');
 			message = 'stage retracted';
 		} catch (err) {
+			await notifyNeedsHome(err);
 			error = err instanceof Error ? err.message : 'failed to retract stage';
 		} finally {
 			isMovingStage = false;
+		}
+	}
+
+	async function notifyNeedsHome(err: unknown): Promise<void> {
+		if (err instanceof ApiError && err.detail?.needs_home) {
+			dispatch('needsHome', {
+				needs_home: true,
+				needs_home_reason: err.detail.reason ?? err.detail.message ?? '',
+				needs_home_axes: err.detail.needs_home_axes ?? []
+			});
+			return;
+		}
+
+		try {
+			const status = await getCalibrationStatus();
+			dispatch('needsHome', status);
+		} catch {
+			// Ignore status polling failures; caller will surface the error.
 		}
 	}
 </script>
@@ -213,11 +238,5 @@
 
 	td button {
 		margin-top: 0;
-	}
-
-	.divider {
-		width: 55px;
-		height: 1px;
-		border-top: 2px black dashed;
 	}
 </style>

@@ -33,7 +33,6 @@
 	<button type="button" class:selected={selectedView === 'rotation'} on:click={didSelectRotation}>
 		rotation
 	</button>
-	<div class="divider"></div>
 	<button type="button" class:selected={selectedView === 'cycle'} on:click={didSelectCycle}>
 		cycle
 	</button>
@@ -67,11 +66,5 @@
 	.toggle-group button.selected {
 		background: black;
 		color: #fff;
-	}
-
-	.divider {
-		width: 55px;
-		height: 1px;
-		border-top: 2px black dashed;
 	}
 </style>
