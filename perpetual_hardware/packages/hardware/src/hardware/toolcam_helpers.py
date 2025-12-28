@@ -370,40 +370,6 @@ def rectify_with_H(
             raise
         raise RuntimeError(f"Image rectification failed: {str(e)}") from e
 
-def order_quad(pts: np.ndarray) -> np.ndarray:
-    """
-    Order quadrilateral points in clockwise order from top-left.
-    
-    Args:
-        pts: Array of 4 points (x,y)
-        
-    Returns:
-        Ordered points [top-left, top-right, bottom-right, bottom-left]
-        
-    Raises:
-        ValueError: If input is not 4 points
-        RuntimeError: If ordering fails
-    """
-    try:
-        if not isinstance(pts, np.ndarray) or pts.shape != (4, 2):
-            raise ValueError("Input must be array of 4 2D points")
-            
-        pts = np.array(pts, dtype=np.float32)
-        s = pts.sum(axis=1)
-        d = np.diff(pts, axis=1).ravel()
-        
-        tl = pts[np.argmin(s)]
-        br = pts[np.argmax(s)]
-        tr = pts[np.argmin(d)]
-        bl = pts[np.argmax(d)]
-        
-        return np.array([tl, tr, br, bl], dtype=np.float32)
-        
-    except Exception as e:
-        if isinstance(e, ValueError):
-            raise
-        raise RuntimeError(f"Failed to order quad points: {str(e)}") from e
-
 def order_corners(pts: np.ndarray) -> np.ndarray:
     """
     Order corner points in clockwise order from top-left.
