@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 import traceback
 from datetime import datetime, timezone
@@ -31,6 +32,8 @@ from perpetual_os1.exceptions import MotorError, MovementError, ToolError
 logger = logging.getLogger(__name__)
 
 COMMAND_TIMEOUT_SECONDS = 300
+
+_MOTOR_ID_RE = re.compile(r"motor\s+(\d+)", re.IGNORECASE)
 
 RobotCommandAdapter = TypeAdapter[RobotCommands](RobotCommands)
 
@@ -422,7 +425,35 @@ class RobotWorker:
         if not self._needs_home_axes and not self._needs_home_unknown:
             self._needs_home_reason = None
 
+    def _infer_needs_home_axes(self, reason: str) -> Optional[list[str]]:
+        match = _MOTOR_ID_RE.search(reason)
+        if not match:
+            return None
+
+        try:
+            motor_id = int(match.group(1))
+        except ValueError:
+            return None
+
+        tool = self._robot._tool
+        io = self._robot._io
+        axis_lookup = {
+            "x_axis": tool._mx,
+            "y_axis": tool._my,
+            "z_axis": tool._mg,
+            "stage": tool._ms,
+            "rotate": tool._mr,
+            "door": io._md,
+        }
+        for axis, motor in axis_lookup.items():
+            if motor is not None and getattr(motor, "_motor_id", None) == motor_id:
+                return [axis]
+
+        return None
+
     def set_needs_home(self, reason: str, axes: Optional[list[str]] = None) -> None:
+        if axes is None:
+            axes = self._infer_needs_home_axes(reason)
         if axes:
             self._needs_home_axes.update(axes)
         else:

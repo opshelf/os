@@ -75,6 +75,9 @@
 
 		return needsHomeReason === '' && errorLower.includes('home required');
 	});
+	const homingDisabled = $derived(
+		isHoming === true || isMoving === true || isTesting === true || isSaving === true || !needsToolHome
+	);
 
 	onMount(function () {
 		if (browser === false) {
@@ -257,14 +260,26 @@
 		error = '';
 		message = '';
 		warning = '';
+		let resetComplete = false;
 
 		try {
 			ioboxPosition = await getIOBoxCalibration();
 			syncEditValues();
-			message = 'io box position reset from config';
+			resetComplete = true;
+			const status = await homeToolMotors();
+			applyNeedsHomeStatus(status);
+			message = 'io box position reset from config and tool motors homed';
 		} catch (err) {
 			handleNeedsHomeError(err);
-			error = err instanceof Error ? err.message : 'failed to reset io box position';
+			if (resetComplete) {
+				message = 'io box position reset from config';
+				error =
+					err instanceof Error
+						? err.message
+						: 'failed to home tool motors after reset';
+			} else {
+				error = err instanceof Error ? err.message : 'failed to reset io box position';
+			}
 		} finally {
 			isMoving = false;
 		}
@@ -510,26 +525,6 @@
 	</tbody>
 </table>
 
-{#if homeMessage !== ''}
-	<ErrorMessage message={homeMessage} />
-{/if}
-
-{#if needsToolHome === true}
-	<div class="action-buttons">
-		<button
-			type="button"
-			onclick={didClickHomeToolMotors}
-			disabled={isHoming === true || isMoving === true || isTesting === true || isSaving === true}
-		>
-			{isHoming === true ? 'homing...' : 'home tool motors'}
-		</button>
-	</div>
-{/if}
-
-{#if needsOtherHome === true}
-	<StatusMessage message="other motors require homing; use the motors page" />
-{/if}
-
 {#if ioboxPosition !== null}
 	{#if isPositioned === true}
 		<div class="jog-controls">
@@ -660,6 +655,22 @@
 	<ErrorMessage message={error} />
 {/if}
 
+<div class="section-divider"></div>
+
+<div class="action-buttons home-actions">
+	<button type="button" onclick={didClickHomeToolMotors} disabled={homingDisabled}>
+		{isHoming === true ? 'homing...' : 'home tool motors'}
+	</button>
+</div>
+
+{#if homeMessage !== ''}
+	<ErrorMessage message={homeMessage} />
+{/if}
+
+{#if needsOtherHome === true}
+	<StatusMessage message="other motors require homing; use the motors page" />
+{/if}
+
 <style>
 	.field-label {
 		margin-right: 0.5em;
@@ -694,6 +705,20 @@
 	.action-buttons {
 		display: flex;
 		gap: 1em;
+	}
+
+	.section-divider {
+		margin-top: 2em;
+		border-top: 2px black dashed;
+	}
+
+	.home-actions {
+		margin-top: 2em;
+		align-items: center;
+	}
+
+	.home-actions button {
+		margin-top: 0;
 	}
 
 	.move-button {

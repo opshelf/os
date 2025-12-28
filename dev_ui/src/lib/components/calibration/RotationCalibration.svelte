@@ -117,13 +117,13 @@
 <table>
 	<thead>
 		<tr>
-			<th colspan="3">rotation calibration</th>
+			<th colspan="2">rotation calibration</th>
 		</tr>
 	</thead>
 	<tbody>
 		{#if loading === true}
 			<tr>
-				<td colspan="3">loading rotation angles...</td>
+				<td colspan="2">loading rotation angles...</td>
 			</tr>
 		{:else if angles !== null}
 			<tr>
@@ -136,9 +136,6 @@
 						on:change={didChangeFrontAngle}
 						disabled={isRotating === true || isSaving === true}
 					/>
-					<span class="unit">deg</span>
-				</td>
-				<td>
 					<button
 						type="button"
 						on:click={didClickRotateFront}
@@ -158,9 +155,6 @@
 						on:change={didChangeBackAngle}
 						disabled={isRotating === true || isSaving === true}
 					/>
-					<span class="unit">deg</span>
-				</td>
-				<td>
 					<button
 						type="button"
 						on:click={didClickRotateBack}
@@ -203,16 +197,11 @@
 
 <style>
 	.label-cell {
-		font-weight: bold;
 		white-space: nowrap;
 	}
 
 	input[type='number'] {
 		width: 5em;
-	}
-
-	.unit {
-		margin-left: 0.25em;
 	}
 
 	.action-buttons {
