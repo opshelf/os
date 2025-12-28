@@ -39,7 +39,7 @@ table {
 
 td,
 th {
-	padding: 5px;
+	padding: 0.5em;
 	border: 1px solid black;
 	text-align: left;
 }
