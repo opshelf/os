@@ -25,10 +25,6 @@ from hardware.exceptions import (
 
 # ============================ Linux /dev/ helper ============================
 
-INNOMAKER_PRODUCT = "Innomaker-U20CAM-1080p-S1"
-INNOMAKER_MANUFACTURER = "Innomaker"     # optional guard
-INNOMAKER_SERIAL = "SN0001"              # optional guard; set to None to ignore
-
 
 def _find_innomaker_device() -> int:
     """Return the /dev/video index for the Innomaker camera."""
