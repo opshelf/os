@@ -64,8 +64,9 @@ class Cell(BaseModel):
     empty: bool = False
 
     def clear(self) -> None:
-        self.status = CellStatus.AVAILABLE
-        self.item = None
+        if self.status == CellStatus.OCCUPIED:
+            self.status = CellStatus.AVAILABLE
+            self.item = None
 
 
 class StorageModuleCellLocation(BaseModel):
