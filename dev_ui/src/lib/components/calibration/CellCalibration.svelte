@@ -21,32 +21,32 @@
 	import StatusMessage from '$lib/components/StatusMessage.svelte';
 	import ShelfCalibration from '$lib/components/calibration/ShelfCalibration.svelte';
 
-	let storageGrid: StorageGrid | null = null;
-	let loading = true;
-	let loadError = '';
+	let storageGrid = $state<StorageGrid | null>(null);
+	let loading = $state<boolean>(true);
+	let loadError = $state<string>('');
 
-	let selectedSide: 'left_module' | 'right_module' = 'left_module';
-	let selectedShelf = 0;
-	let selectedCell = 0;
-	let selectedStatus = 'available';
+	let selectedSide = $state<'left_module' | 'right_module'>('left_module');
+	let selectedShelf = $state<number>(0);
+	let selectedCell = $state<number>(0);
+	let selectedStatus = $state<string>('available');
 
 	const CELL_STATUSES = ['available', 'occupied', 'maintenance', 'disabled'];
 
-	let currentPosition: Position | null = null;
-	let isMoving = false;
-	let isTesting = false;
-	let isSaving = false;
-	let error = '';
-	let message = '';
-	let warning = '';
-	let needsHome = false;
-	let needsHomeReason = '';
-	let needsHomeAxes: string[] = [];
-	let isHoming = false;
+	let currentPosition = $state<Position | null>(null);
+	let isMoving = $state<boolean>(false);
+	let isTesting = $state<boolean>(false);
+	let isSaving = $state<boolean>(false);
+	let error = $state<string>('');
+	let message = $state<string>('');
+	let warning = $state<string>('');
+	let needsHome = $state<boolean>(false);
+	let needsHomeReason = $state<string>('');
+	let needsHomeAxes = $state<string[]>([]);
+	let isHoming = $state<boolean>(false);
 
 	const TOOL_AXES = new Set(['z_axis', 'stage']);
 
-	let jogStep = 1;
+	let jogStep = $state<number>(1);
 
 	const JOG_STEPS = [
 		{ value: 0.1, label: '0.1mm' },
@@ -61,18 +61,31 @@
 		{ value: 100, label: '10cm' }
 	];
 
-	$: needsToolHome = needsHome && needsHomeAxes.some((axis) => TOOL_AXES.has(axis));
-	$: needsOtherHome =
-		needsHome && (needsHomeAxes.length === 0 || needsHomeAxes.some((axis) => !TOOL_AXES.has(axis)));
-	$: homeMessage = needsHome
-		? `home required${needsHomeReason !== '' ? `: ${needsHomeReason}` : ''}`
-		: '';
-	$: homingDisabled =
-		isHoming === true ||
-		isMoving === true ||
-		isTesting === true ||
-		isSaving === true ||
-		needsToolHome === false;
+	const needsToolHome = $derived(needsHome && needsHomeAxes.some((axis) => TOOL_AXES.has(axis)));
+	const needsOtherHome = $derived(
+		needsHome &&
+			(needsHomeAxes.length === 0 || needsHomeAxes.some((axis) => !TOOL_AXES.has(axis)))
+	);
+	const homeMessage = $derived(
+		needsHome ? `home required${needsHomeReason !== '' ? `: ${needsHomeReason}` : ''}` : ''
+	);
+	const duplicateHomeError = $derived.by(() => {
+		if (needsHome !== true || error === '') {
+			return false;
+		}
+
+		const errorLower = error.toLowerCase();
+		const reasonLower = needsHomeReason.toLowerCase();
+
+		if (needsHomeReason !== '' && errorLower.includes(reasonLower)) {
+			return true;
+		}
+
+		return needsHomeReason === '' && errorLower.includes('home required');
+	});
+	const homingDisabled = $derived(
+		isHoming === true || isMoving === true || isTesting === true || isSaving === true || !needsToolHome
+	);
 
 	onMount(function () {
 		if (browser === false) {
@@ -340,14 +353,14 @@
 			<tr>
 				<td>
 					<span class="field-label">side</span>
-					<select value={selectedSide} on:change={didChangeSide}>
+					<select value={selectedSide} onchange={didChangeSide}>
 						<option value="left_module">left module</option>
 						<option value="right_module">right module</option>
 					</select>
 				</td>
 				<td>
 					<span class="field-label">shelf</span>
-					<select value={selectedShelf} on:change={didChangeShelf}>
+					<select value={selectedShelf} onchange={didChangeShelf}>
 						{#each getShelves() as _, index}
 							<option value={index}>{index}</option>
 						{/each}
@@ -355,7 +368,7 @@
 				</td>
 				<td>
 					<span class="field-label">cell</span>
-					<select value={selectedCell} on:change={didChangeCell}>
+					<select value={selectedCell} onchange={didChangeCell}>
 						{#each getCells() as _, index}
 							<option value={index}>{index}</option>
 						{/each}
@@ -367,7 +380,7 @@
 					<button
 						class="calibrate-button"
 						type="button"
-						on:click={didClickCalibrate}
+						onclick={didClickCalibrate}
 						disabled={isMoving === true ||
 							isTesting === true ||
 							needsHome === true ||
@@ -409,14 +422,14 @@
 				<span class="axis-label">X</span>
 				<button
 					type="button"
-					on:click={() => didClickJog('x', -jogStep)}
+					onclick={() => didClickJog('x', -jogStep)}
 					disabled={isMoving === true || needsHome === true || isHoming === true}
 				>
 					-
 				</button>
 				<button
 					type="button"
-					on:click={() => didClickJog('x', jogStep)}
+					onclick={() => didClickJog('x', jogStep)}
 					disabled={isMoving === true || needsHome === true || isHoming === true}
 				>
 					+
@@ -426,14 +439,14 @@
 				<span class="axis-label">Y</span>
 				<button
 					type="button"
-					on:click={() => didClickJog('y', -jogStep)}
+					onclick={() => didClickJog('y', -jogStep)}
 					disabled={isMoving === true || needsHome === true || isHoming === true}
 				>
 					-
 				</button>
 				<button
 					type="button"
-					on:click={() => didClickJog('y', jogStep)}
+					onclick={() => didClickJog('y', jogStep)}
 					disabled={isMoving === true || needsHome === true || isHoming === true}
 				>
 					+
@@ -443,14 +456,14 @@
 				<span class="axis-label">Z</span>
 				<button
 					type="button"
-					on:click={() => didClickJog('z', -jogStep)}
+					onclick={() => didClickJog('z', -jogStep)}
 					disabled={isMoving === true || needsHome === true || isHoming === true}
 				>
 					-
 				</button>
 				<button
 					type="button"
-					on:click={() => didClickJog('z', jogStep)}
+					onclick={() => didClickJog('z', jogStep)}
 					disabled={isMoving === true || needsHome === true || isHoming === true}
 				>
 					+
@@ -471,7 +484,7 @@
 		<div class="action-buttons">
 			<button
 				type="button"
-				on:click={didClickTest}
+				onclick={didClickTest}
 				disabled={isMoving === true ||
 					isTesting === true ||
 					isSaving === true ||
@@ -482,7 +495,7 @@
 			</button>
 			<button
 				type="button"
-				on:click={didClickReset}
+				onclick={didClickReset}
 				disabled={isMoving === true ||
 					isTesting === true ||
 					isSaving === true ||
@@ -493,7 +506,7 @@
 			</button>
 			<button
 				type="button"
-				on:click={didClickSave}
+				onclick={didClickSave}
 				disabled={isMoving === true ||
 					isTesting === true ||
 					isSaving === true ||
@@ -513,7 +526,7 @@
 		<StatusMessage message={`warning: ${warning}`} />
 	{/if}
 
-	{#if error !== ''}
+	{#if error !== '' && duplicateHomeError === false}
 		<ErrorMessage message={error} />
 	{/if}
 
@@ -527,7 +540,7 @@
 	<div class="section-divider"></div>
 
 	<div class="action-buttons">
-		<button type="button" on:click={didClickHomeToolMotors} disabled={homingDisabled}>
+		<button type="button" onclick={didClickHomeToolMotors} disabled={homingDisabled}>
 			{isHoming === true ? 'homing...' : 'home tool motors'}
 		</button>
 	</div>
