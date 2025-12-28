@@ -16,6 +16,7 @@ MOTOR_MOVE_TIMEOUT = 180.0
 MOTOR_HOME_TIMEOUT = 180.0
 MOTOR_JOG_TIMEOUT = 10.0
 MOTOR_WAIT_TIMEOUT = 60.0
+POSITION_TOLERANCE_MM = 1.0
 
 logger = logging.getLogger(__name__)
 
@@ -207,6 +208,7 @@ class Motor():
         self._stall_timeout = 2.0
         self._status = MotorStatus.IDLE
         self._pending_motion: Optional[Callable[[], Awaitable[None]]] = None
+        self._target_pos: Optional[float] = None
         self._logger = logger.getChild(f"motor.{self._motor_id}")
         self._safety = safety
         self._simulated_fault = False
@@ -350,6 +352,7 @@ class Motor():
                 },
             )
 
+        self._target_pos = value
         physical_pos = self._params.logical_to_physical(value)
 
         ppr = getattr(self._params, "ppr", 10000)
@@ -632,6 +635,29 @@ class Motor():
             if complete and (has_moved or elapsed > 0.5):
                 await self.stop()
                 self._pending_motion = None
+                if self._target_pos is not None:
+                    try:
+                        current_pos = await self.get_position()
+                        position_error = abs(current_pos - self._target_pos)
+                        if position_error > POSITION_TOLERANCE_MM:
+                            self._logger.warning(
+                                "Motor stopped away from target",
+                                extra={
+                                    "motor_id": self._motor_id,
+                                    "target_mm": self._target_pos,
+                                    "position_mm": current_pos,
+                                    "position_error_mm": position_error,
+                                    "tolerance_mm": POSITION_TOLERANCE_MM,
+                                },
+                            )
+                            self._target_pos = None
+                            return MotorStatus.FAULT
+                    except Exception as position_exc:
+                        self._logger.warning(
+                            "Failed to verify motor position after move",
+                            extra={"motor_id": self._motor_id, "error": str(position_exc)},
+                        )
+                self._target_pos = None
                 self._logger.debug(
                     "Motion complete",
                     extra={
@@ -669,6 +695,7 @@ class Motor():
             # Check for motor fault
             if fault:
                 await self.stop()
+                self._target_pos = None
                 if homing:
                     self._pending_motion = None
                     self._logger.warning(
@@ -708,6 +735,7 @@ class Motor():
             if time.monotonic() - start_time > timeout:
                 await self.stop()
                 self._pending_motion = None
+                self._target_pos = None
                 self._logger.error(
                     "Motion timeout",
                     extra={

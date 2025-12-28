@@ -32,6 +32,7 @@ export type ApiErrorDetail = {
 	message?: string;
 	code?: string;
 	needs_home?: boolean;
+	needs_home_axes?: string[];
 	reason?: string;
 	warnings?: string[];
 	correlation_id?: string;
@@ -164,6 +165,12 @@ export interface Position {
 	warnings?: string[];
 }
 
+export interface CalibrationStatus {
+	needs_home: boolean;
+	needs_home_reason?: string | null;
+	needs_home_axes?: string[];
+}
+
 export interface StorageGrid {
 	left_module: Shelf[];
 	right_module: Shelf[];
@@ -200,6 +207,16 @@ export interface Dimensions {
 export async function getStorageGrid(): Promise<StorageGrid> {
 	const timestamp = Date.now();
 	return apiFetch<StorageGrid>(`/calibration/storage?_t=${timestamp}`);
+}
+
+export async function getCalibrationStatus(): Promise<CalibrationStatus> {
+	return apiFetch<CalibrationStatus>("/calibration/status");
+}
+
+export async function homeToolMotors(): Promise<CalibrationStatus> {
+	return apiFetch<CalibrationStatus>("/calibration/home_tool_motors", {
+		method: "POST",
+	});
 }
 
 export async function moveToCell(

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from perpetual_os1.common import AxisCoordinate
 from perpetual_os1.storage import StorageModuleSide, CalibrationCoordinate, CellStatus
@@ -15,6 +16,8 @@ from perpetual_os1_server.routers.auth_deps import get_current_user
 from perpetual_os1_server.settings import get_root_config, save_root_config
 
 router = APIRouter(prefix="/api/calibration", tags=["calibration"], dependencies=[Depends(get_current_user)])
+
+_MOTOR_ID_RE = re.compile(r"motor\s+(\d+)", re.IGNORECASE)
 
 
 class PositionResponse(BaseModel):
@@ -52,6 +55,12 @@ class SaveRequest(BaseModel):
 	status: Optional[str] = None
 
 
+class CalibrationStatusResponse(BaseModel):
+	needs_home: bool
+	needs_home_reason: Optional[str] = None
+	needs_home_axes: list[str] = Field(default_factory=list)
+
+
 _current_position: Optional[PositionResponse] = None
 _current_side: int = 0
 _current_side_name: str = "left_module"
@@ -62,11 +71,14 @@ def _build_error_detail(
 	*,
 	code: str,
 	needs_home: bool = False,
+	needs_home_axes: Optional[list[str]] = None,
 	reason: Optional[str] = None,
 ) -> dict[str, object]:
 	detail: dict[str, object] = {"message": message, "code": code}
 	if needs_home:
 		detail["needs_home"] = True
+		if needs_home_axes is not None:
+			detail["needs_home_axes"] = needs_home_axes
 	if reason:
 		detail["reason"] = reason
 	return detail
@@ -80,6 +92,7 @@ def _ensure_ready(worker) -> None:
 				"Home required before calibration movement.",
 				code="home_required",
 				needs_home=True,
+				needs_home_axes=worker.needs_home_axes(),
 				reason=worker.needs_home_reason(),
 			),
 		)
@@ -92,6 +105,31 @@ def _clamp_value(value: float, limit: float, label: str, warnings: list[str]) ->
 			f"{label} limit reached; requested {value:.2f}mm, clamped to {clamped:.2f}mm (limit {limit:.2f}mm)"
 		)
 	return clamped
+
+
+def _infer_axes_from_error(worker, exc: Exception) -> Optional[list[str]]:
+	match = _MOTOR_ID_RE.search(str(exc))
+	if not match:
+		return None
+
+	try:
+		motor_id = int(match.group(1))
+	except ValueError:
+		return None
+
+	tool = worker._robot._tool
+	axis_lookup = {
+		"x_axis": tool._mx,
+		"y_axis": tool._my,
+		"z_axis": tool._mg,
+		"stage": tool._ms,
+		"rotate": tool._mr,
+	}
+	for axis, motor in axis_lookup.items():
+		if motor is not None and getattr(motor, "_motor_id", None) == motor_id:
+			return [axis]
+
+	return None
 
 
 async def _clear_motor_alarm(motor) -> None:
@@ -118,12 +156,25 @@ async def _clear_motors_for_move(
 		await _clear_motor_alarm(tool._mr)
 
 
-async def _raise_motor_error(worker, message: str, exc: Exception) -> None:
-	worker.set_needs_home(message)
+async def _raise_motor_error(
+	worker,
+	message: str,
+	exc: Exception,
+	*,
+	axes: Optional[list[str]] = None,
+) -> None:
+	if axes is None:
+		axes = _infer_axes_from_error(worker, exc)
+	worker.set_needs_home(message, axes=axes)
 	await worker.get_status_snapshot(force_refresh=True)
 	raise HTTPException(
 		status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-		detail=_build_error_detail(message, code="motor_fault", needs_home=True),
+		detail=_build_error_detail(
+			message,
+			code="motor_fault",
+			needs_home=True,
+			needs_home_axes=worker.needs_home_axes(),
+		),
 	) from exc
 
 
@@ -164,6 +215,23 @@ def _validate_stage_target(value: float, limit: float, label: str) -> None:
 		)
 
 
+@router.get("/status", response_model=CalibrationStatusResponse)
+async def get_calibration_status() -> CalibrationStatusResponse:
+	try:
+		worker = await get_robot_worker()
+	except ValueError as e:
+		raise HTTPException(
+			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+			detail="Robot is not initialized",
+		) from e
+
+	return CalibrationStatusResponse(
+		needs_home=worker.needs_home(),
+		needs_home_reason=worker.needs_home_reason(),
+		needs_home_axes=worker.needs_home_axes(),
+	)
+
+
 @router.get("/storage")
 async def get_storage():
 	try:
@@ -173,8 +241,6 @@ async def get_storage():
 			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
 			detail="Robot is not initialized",
 		) from e
-
-	_ensure_ready(worker)
 
 	grid = worker._robot._grid
 	return grid.model_dump()
@@ -324,7 +390,12 @@ async def jog_axis(request: JogRequest) -> PositionResponse:
 			new_slide = _clamp_value(new_slide + request.delta, stage_limit, "Stage", warnings)
 			await tool._ms.move_to_position(new_slide)
 	except (MotorError, HardwareMotorError) as e:
-		await _raise_motor_error(worker, f"Motor error: {str(e)}", e)
+		axes: Optional[list[str]] = None
+		if request.axis == "z":
+			axes = ["z_axis"]
+		elif request.axis == "stage":
+			axes = ["stage"]
+		await _raise_motor_error(worker, f"Motor error: {str(e)}", e, axes=axes)
 
 	warnings_payload = warnings if warnings else None
 	_current_position = PositionResponse(
@@ -437,6 +508,40 @@ async def save_calibration(request: SaveRequest):
 	return {"success": True}
 
 
+@router.post("/home_tool_motors", response_model=CalibrationStatusResponse)
+async def home_tool_motors() -> CalibrationStatusResponse:
+	try:
+		worker = await get_robot_worker()
+	except ValueError as e:
+		raise HTTPException(
+			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+			detail="Robot is not initialized",
+		) from e
+
+	tool = worker._robot._tool
+
+	if tool._ms is None or tool._mg is None:
+		raise HTTPException(
+			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+			detail="Tool motors not configured",
+		)
+
+	try:
+		await tool._ms.home()
+		await tool._mg.home()
+	except (MotorError, HardwareMotorError) as e:
+		await _raise_motor_error(worker, f"Failed to home tool motors: {str(e)}", e, axes=["stage", "z_axis"])
+
+	worker.clear_needs_home_axes(["stage", "z_axis"])
+	await worker.get_status_snapshot(force_refresh=True)
+
+	return CalibrationStatusResponse(
+		needs_home=worker.needs_home(),
+		needs_home_reason=worker.needs_home_reason(),
+		needs_home_axes=worker.needs_home_axes(),
+	)
+
+
 class IOBoxPositionResponse(BaseModel):
 	pickup_low_x: float
 	pickup_low_y: float
@@ -521,7 +626,7 @@ async def move_to_iobox_position(position: Literal["low", "high"]) -> IOBoxPosit
 		await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
 		await tool.rotate_to_position("front")
 	except (MotorError, HardwareMotorError) as e:
-		await _raise_motor_error(worker, f"Motor error: {str(e)}", e)
+		await _raise_motor_error(worker, f"Motor error: {str(e)}", e, axes=["rotate"])
 
 	try:
 		await io.open_door()
@@ -612,7 +717,12 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 			await tool._ms.move_to_position(new_stage)
 			_iobox_current.stage_extension = new_stage
 	except (MotorError, HardwareMotorError) as e:
-		await _raise_motor_error(worker, f"Motor error: {str(e)}", e)
+		axes: Optional[list[str]] = None
+		if request.axis == "z":
+			axes = ["z_axis"]
+		elif request.axis == "stage":
+			axes = ["stage"]
+		await _raise_motor_error(worker, f"Motor error: {str(e)}", e, axes=axes)
 
 	_iobox_current.warnings = warnings if warnings else None
 
@@ -789,7 +899,7 @@ async def rotate_to_angle(angle: float):
 		await _clear_motors_for_move(tool, rotation=True)
 		await tool._mr.move_to_position(clamped_angle)
 	except (MotorError, HardwareMotorError) as e:
-		await _raise_motor_error(worker, f"Rotation failed: {str(e)}", e)
+		await _raise_motor_error(worker, f"Rotation failed: {str(e)}", e, axes=["rotate"])
 
 	return {"success": True}
 

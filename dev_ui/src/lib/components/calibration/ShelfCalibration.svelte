@@ -11,6 +11,8 @@
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import StatusMessage from '$lib/components/StatusMessage.svelte';
 
+	export let disabled = false;
+
 	let stageExtension: ShelfStageExtension | null = null;
 	let frontValue = 0;
 	let backValue = 0;
@@ -122,24 +124,47 @@
 			<tr>
 				<td>
 					<span class="field-label">front</span>
-					<input type="number" step="0.5" bind:value={frontValue} disabled={isSaving === true} />
-					<button type="button" on:click={() => didClickExtend(frontValue)} disabled={isMovingStage === true}>extend</button>
+					<input
+						type="number"
+						step="0.5"
+						bind:value={frontValue}
+						disabled={isSaving === true || disabled === true}
+					/>
+					<button
+						type="button"
+						on:click={() => didClickExtend(frontValue)}
+						disabled={isMovingStage === true || disabled === true}>extend</button
+					>
 				</td>
 				<td>
 					<span class="field-label">back</span>
-					<input type="number" step="0.5" bind:value={backValue} disabled={isSaving === true} />
-					<button type="button" on:click={() => didClickExtend(backValue)} disabled={isMovingStage === true}>extend</button>
+					<input
+						type="number"
+						step="0.5"
+						bind:value={backValue}
+						disabled={isSaving === true || disabled === true}
+					/>
+					<button
+						type="button"
+						on:click={() => didClickExtend(backValue)}
+						disabled={isMovingStage === true || disabled === true}>extend</button
+					>
 				</td>
 			</tr>
 			<tr>
 				<td colspan="2">
 					<div class="action-buttons">
-						<button type="button" on:click={didClickRetract} disabled={isMovingStage === true}>retract</button>
+						<button
+							type="button"
+							on:click={didClickRetract}
+							disabled={isMovingStage === true || disabled === true}
+							>retract</button
+						>
 						<div class="divider"></div>
-						<button type="button" on:click={didClickReset} disabled={isSaving === true}>
+						<button type="button" on:click={didClickReset} disabled={isSaving === true || disabled === true}>
 							reset
 						</button>
-						<button type="button" on:click={didClickSave} disabled={isSaving === true}>
+						<button type="button" on:click={didClickSave} disabled={isSaving === true || disabled === true}>
 							save
 						</button>
 					</div>

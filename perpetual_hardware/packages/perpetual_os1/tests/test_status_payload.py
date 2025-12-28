@@ -102,9 +102,11 @@ def test_transform_worker_payload_includes_needs_home() -> None:
         "error_queue": [],
         "needs_home": True,
         "needs_home_reason": "Axis stall",
+        "needs_home_axes": ["z_axis", "stage"],
     }
 
     result = _transform_worker_status_payload(payload)
 
     assert result["needs_home"] is True
     assert result["needs_home_reason"] == "Axis stall"
+    assert result["needs_home_axes"] == ["z_axis", "stage"]

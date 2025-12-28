@@ -28,6 +28,7 @@ class WorkerStatus(BaseModel):
     crash_reason: Optional[str] = None
     needs_home: bool = False
     needs_home_reason: Optional[str] = None
+    needs_home_axes: List[str] = Field(default_factory=list)
 
 class WorkerStatusWithQueue(WorkerStatus):
     queued_operations: List[QueuedOperation] = Field(default_factory=list)
