@@ -1,7 +1,17 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { browser } from '$app/environment';
-	import { getStorageGrid, runCycleTest, abortCycleTest, type StorageGrid } from '$lib/api';
+	import {
+		ApiError,
+		getStorageGrid,
+		getCalibrationStatus,
+		homeToolMotors,
+		runCycleTest,
+		abortCycleTest,
+		type ApiErrorDetail,
+		type CalibrationStatus,
+		type StorageGrid
+	} from '$lib/api';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import StatusMessage from '$lib/components/StatusMessage.svelte';
 
@@ -17,12 +27,48 @@
 	let isAborting = false;
 	let error = '';
 	let message = '';
+	let needsHome = false;
+	let needsHomeReason = '';
+	let needsHomeAxes: string[] = [];
+	let isHoming = false;
+
+	const TOOL_AXES = new Set(['z_axis', 'stage']);
+
+	let needsToolHome = false;
+	let needsOtherHome = false;
+	let homeMessage = '';
+	let duplicateHomeError = false;
+	let homingDisabled = false;
+
+	$: needsToolHome = needsHome && needsHomeAxes.some((axis) => TOOL_AXES.has(axis));
+	$: needsOtherHome =
+		needsHome &&
+		(needsHomeAxes.length === 0 || needsHomeAxes.some((axis) => !TOOL_AXES.has(axis)));
+	$: homeMessage =
+		needsHome ? `home required${needsHomeReason !== '' ? `: ${needsHomeReason}` : ''}` : '';
+	$: duplicateHomeError = (() => {
+		if (needsHome !== true || error === '') {
+			return false;
+		}
+
+		const errorLower = error.toLowerCase();
+		const reasonLower = needsHomeReason.toLowerCase();
+
+		if (needsHomeReason !== '' && errorLower.includes(reasonLower)) {
+			return true;
+		}
+
+		return needsHomeReason === '' && errorLower.includes('home required');
+	})();
+	$: homingDisabled =
+		isHoming === true || isRunning === true || isAborting === true || needsToolHome !== true;
 
 	onMount(function () {
 		if (browser === false) {
 			return;
 		}
 		loadStorage();
+		loadCalibrationStatus();
 	});
 
 	async function loadStorage(): Promise<void> {
@@ -34,9 +80,57 @@
 			selectedShelf = 0;
 			selectedCell = getFirstEnabledCell();
 		} catch (err) {
+			handleNeedsHomeError(err);
 			loadError = err instanceof Error ? err.message : 'failed to load storage grid';
 		} finally {
 			loading = false;
+		}
+	}
+
+	async function loadCalibrationStatus(): Promise<void> {
+		try {
+			const status = await getCalibrationStatus();
+			applyNeedsHomeStatus(status);
+		} catch {
+			// Ignore status polling failures; calibration actions will surface errors.
+		}
+	}
+
+	function applyNeedsHomeStatus(status: CalibrationStatus): void {
+		needsHome = status.needs_home;
+		needsHomeReason = status.needs_home_reason ?? '';
+		needsHomeAxes = status.needs_home_axes ?? [];
+	}
+
+	function applyNeedsHomeDetail(detail?: ApiErrorDetail): void {
+		if (detail?.needs_home !== true) {
+			return;
+		}
+		needsHome = true;
+		needsHomeReason = detail.reason ?? detail.message ?? needsHomeReason;
+		needsHomeAxes = detail.needs_home_axes ?? [];
+	}
+
+	function handleNeedsHomeError(err: unknown): void {
+		if (err instanceof ApiError) {
+			applyNeedsHomeDetail(err.detail);
+		}
+	}
+
+	async function didClickHomeToolMotors(): Promise<void> {
+		isHoming = true;
+		error = '';
+		message = '';
+
+		try {
+			const status = await homeToolMotors();
+			applyNeedsHomeStatus(status);
+			message = 'tool motors homed';
+		} catch (err) {
+			handleNeedsHomeError(err);
+			error = err instanceof Error ? err.message : 'failed to home tool motors';
+		} finally {
+			isHoming = false;
 		}
 	}
 
@@ -110,6 +204,7 @@
 			await runCycleTest(selectedSide, selectedShelf, selectedCell);
 			message = 'cycle test completed successfully';
 		} catch (err) {
+			handleNeedsHomeError(err);
 			if (isAborting === false) {
 				error = err instanceof Error ? err.message : 'cycle test failed';
 			}
@@ -125,8 +220,10 @@
 
 		try {
 			await abortCycleTest();
+			await loadCalibrationStatus();
 			message = 'cycle aborted and tool homed';
 		} catch (err) {
+			handleNeedsHomeError(err);
 			error = err instanceof Error ? err.message : 'abort failed';
 		} finally {
 			isAborting = false;
@@ -180,7 +277,7 @@
 							class="run-cycle-button"
 							type="button"
 							on:click={didClickRunCycle}
-							disabled={isRunning === true}
+							disabled={isRunning === true || needsHome === true || isHoming === true}
 						>
 							{isRunning === true ? 'running...' : 'run cycle'}
 						</button>
@@ -203,7 +300,25 @@
 	{/if}
 
 	{#if error !== ''}
-		<ErrorMessage message={error} />
+		{#if duplicateHomeError === false}
+			<ErrorMessage message={error} />
+		{/if}
+	{/if}
+
+	<div class="section-divider"></div>
+
+	<div class="action-buttons home-actions">
+		<button type="button" on:click={didClickHomeToolMotors} disabled={homingDisabled}>
+			{isHoming === true ? 'homing...' : 'home tool motors'}
+		</button>
+	</div>
+
+	{#if homeMessage !== ''}
+		<ErrorMessage message={homeMessage} />
+	{/if}
+
+	{#if needsOtherHome === true}
+		<StatusMessage message="other motors require homing; use the motors page" />
 	{/if}
 {/if}
 
@@ -222,6 +337,20 @@
 	}
 
 	.abort-button {
+		margin-top: 0;
+	}
+
+	.section-divider {
+		margin-top: 2em;
+		border-top: 2px black dashed;
+	}
+
+	.home-actions {
+		margin-top: 2em;
+		align-items: center;
+	}
+
+	.home-actions button {
 		margin-top: 0;
 	}
 

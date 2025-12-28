@@ -1085,7 +1085,7 @@ async def run_cycle_test(request: CycleTestRequest):
 		await robot.io_place(coord)
 		await robot.io_pick(coord)
 	except (MotorError, HardwareMotorError) as e:
-		await _raise_motor_error(worker, f"Cycle test failed: {str(e)}", e)
+		await _raise_motor_error(worker, f"Cycle test motor fault: {str(e)}", e)
 
 	return {"success": True}
 

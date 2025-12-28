@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from typing import AsyncGenerator, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -31,6 +32,28 @@ from .auth_deps import (
 )
 
 router = APIRouter(tags=["robot"])
+
+_MOTOR_ID_RE = re.compile(r"motor\s+(\d+)", re.IGNORECASE)
+
+
+def _reason_matches_motor(reason: Optional[str], motor_name: str, motor) -> bool:
+    if not reason:
+        return False
+
+    reason_lower = reason.lower()
+    if motor_name.lower() in reason_lower:
+        return True
+
+    match = _MOTOR_ID_RE.search(reason)
+    if not match:
+        return False
+
+    try:
+        motor_id = int(match.group(1))
+    except ValueError:
+        return False
+
+    return getattr(motor, "_motor_id", None) == motor_id
 
 
 def overlay_db_occupancy(payload_json: str, occupied: set[tuple[str, int, int]]) -> str:
@@ -414,6 +437,9 @@ async def home_motor(
         await motor.clear_alarm()
         await motor.home()
         worker.clear_needs_home_axes([motor_name])
+        if worker.needs_home() and worker.needs_home_axes() == []:
+            if _reason_matches_motor(worker.needs_home_reason(), motor_name, motor):
+                worker.clear_needs_home()
         await worker.get_status_snapshot(force_refresh=True)
         return {"success": True, "motor": motor_name}
     except Exception as exc:
