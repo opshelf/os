@@ -483,6 +483,32 @@ class Motor():
             physical_pos = (pos / ppr) * self._params.mpr
             logical_pos = self._params.physical_to_logical(physical_pos)
 
+            max_valid = self._params.lim * 2
+            if abs(logical_pos) > max_valid:
+                self._logger.warning(
+                    "Garbage position detected, retrying",
+                    extra={
+                        "motor_id": self._motor_id,
+                        "raw_pos": pos,
+                        "logical_pos": logical_pos,
+                        "limit": self._params.lim,
+                    },
+                )
+                await asyncio.sleep(0.1)
+                pos_l = await self._controller.read_holding_registers(self._motor_id, reg_low)
+                pos_h = await self._controller.read_holding_registers(self._motor_id, reg_high)
+                if pos_l is None or pos_h is None:
+                    raise MotorError(f"Failed to re-read position for motor {self._motor_id}")
+                pos = (pos_h << 16) | pos_l
+                physical_pos = (pos / ppr) * self._params.mpr
+                logical_pos = self._params.physical_to_logical(physical_pos)
+                if abs(logical_pos) > max_valid:
+                    self._logger.error(
+                        "Garbage position persists after retry",
+                        extra={"motor_id": self._motor_id, "logical_pos": logical_pos},
+                    )
+                    return 0.0
+
             self._cur_pos = logical_pos
             return logical_pos
             
