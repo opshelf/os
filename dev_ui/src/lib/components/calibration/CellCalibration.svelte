@@ -33,6 +33,7 @@
 	let isSaving = false;
 	let error = '';
 	let message = '';
+	let warning = '';
 
 	let jogStep = 1;
 
@@ -102,6 +103,7 @@
 		currentPosition = null;
 		error = '';
 		message = '';
+		warning = '';
 	}
 
 	function didChangeShelf(event: Event): void {
@@ -112,6 +114,7 @@
 		currentPosition = null;
 		error = '';
 		message = '';
+		warning = '';
 	}
 
 	function didChangeCell(event: Event): void {
@@ -121,12 +124,14 @@
 		currentPosition = null;
 		error = '';
 		message = '';
+		warning = '';
 	}
 
 	async function didClickCalibrate(): Promise<void> {
 		isMoving = true;
 		error = '';
 		message = '';
+		warning = '';
 
 		try {
 			storageGrid = await getStorageGrid();
@@ -155,9 +160,13 @@
 	async function didClickJog(axis: 'x' | 'y' | 'z' | 'stage', delta: number): Promise<void> {
 		isMoving = true;
 		error = '';
+		message = '';
+		warning = '';
 
 		try {
 			currentPosition = await jogAxis(axis, delta);
+			const warnings = currentPosition?.warnings ?? [];
+			warning = warnings.length > 0 ? warnings.join('; ') : '';
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'failed to jog axis';
 		} finally {
@@ -169,6 +178,7 @@
 		isTesting = true;
 		error = '';
 		message = '';
+		warning = '';
 
 		try {
 			await testGripper(selectedSide, selectedShelf, selectedCell);
@@ -189,6 +199,7 @@
 		isSaving = true;
 		error = '';
 		message = '';
+		warning = '';
 
 		try {
 			await saveCalibration(
@@ -215,6 +226,7 @@
 		isMoving = true;
 		error = '';
 		message = '';
+		warning = '';
 
 		try {
 			currentPosition = await moveToCell(selectedSide, selectedShelf, selectedCell);
@@ -397,13 +409,17 @@
 		</div>
 	{/if}
 
-	{#if message !== ''}
-		<StatusMessage {message} />
-	{/if}
+{#if message !== ''}
+	<StatusMessage {message} />
+{/if}
 
-	{#if error !== ''}
-		<ErrorMessage message={error} />
-	{/if}
+{#if warning !== ''}
+	<StatusMessage message={`warning: ${warning}`} />
+{/if}
+
+{#if error !== ''}
+	<ErrorMessage message={error} />
+{/if}
 
 	<div class="shelf-section">
 		<ShelfCalibration />

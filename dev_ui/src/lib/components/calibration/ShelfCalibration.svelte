@@ -19,6 +19,7 @@
 	let isMovingStage = false;
 	let error = '';
 	let message = '';
+	let warning = '';
 
 	onMount(function () {
 		if (browser === false) {
@@ -30,6 +31,7 @@
 	async function loadStageExtension(): Promise<void> {
 		loading = true;
 		error = '';
+		warning = '';
 
 		try {
 			stageExtension = await getShelfStageExtension();
@@ -46,6 +48,7 @@
 		isSaving = true;
 		error = '';
 		message = '';
+		warning = '';
 
 		try {
 			await saveShelfStageExtension(frontValue, backValue);
@@ -61,6 +64,7 @@
 	async function didClickReset(): Promise<void> {
 		error = '';
 		message = '';
+		warning = '';
 
 		if (stageExtension !== null) {
 			frontValue = stageExtension.front;
@@ -73,10 +77,12 @@
 		isMovingStage = true;
 		error = '';
 		message = '';
+		warning = '';
 
 		try {
-			await moveStage(target);
+			const result = await moveStage(target);
 			message = 'stage extended';
+			warning = result.warnings && result.warnings.length > 0 ? result.warnings.join('; ') : '';
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'failed to extend stage';
 		} finally {
@@ -88,6 +94,7 @@
 		isMovingStage = true;
 		error = '';
 		message = '';
+		warning = '';
 
 		try {
 			await homeMotor('stage');
@@ -144,6 +151,10 @@
 
 {#if message !== ''}
 	<StatusMessage {message} />
+{/if}
+
+{#if warning !== ''}
+	<StatusMessage message={`warning: ${warning}`} />
 {/if}
 
 {#if error !== ''}

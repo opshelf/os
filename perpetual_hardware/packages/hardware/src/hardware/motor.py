@@ -436,7 +436,12 @@ class Motor():
             await self._controller.write_single_register(self._motor_id, 0x6000, 0x0000)
             await self.move_config()
 
-            alarm_code = await self.get_param("Current alarm")
+            alarm_code: Optional[int] = None
+            for _ in range(3):
+                alarm_code = await self.get_param("Current alarm")
+                if alarm_code is None or alarm_code in (0, 32):
+                    break
+                await asyncio.sleep(0.05)
             if alarm_code is not None and alarm_code not in (0, 32):
                 raise MotorError(f"Alarm {alarm_code} persists after clear attempt")
 

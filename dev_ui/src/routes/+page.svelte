@@ -11,6 +11,8 @@
 		queue_length?: number;
 		error_queue?: Array<Record<string, unknown>>;
 		queued_operations?: Array<{ command?: Record<string, unknown>; timestamp?: string }>;
+		needs_home?: boolean;
+		needs_home_reason?: string | null;
 	};
 
 	type StorageCell = {
@@ -208,6 +210,16 @@
 						open
 					{:else}
 						closed
+					{/if}
+				</td>
+			</tr>
+			<tr>
+				<td>home required</td>
+				<td>
+					{#if status.needs_home}
+						yes{#if status.needs_home_reason} ({status.needs_home_reason}){/if}
+					{:else}
+						no
 					{/if}
 				</td>
 			</tr>

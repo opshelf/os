@@ -16,6 +16,7 @@
 	let loading = false;
 	let error = '';
 	let message = '';
+	let warning = '';
 	let selectedPosition: 'low' | 'high' = 'low';
 	let isMoving = false;
 	let isTesting = false;
@@ -61,12 +62,14 @@
 		isPositioned = false;
 		error = '';
 		message = '';
+		warning = '';
 	}
 
 	async function didClickMove(): Promise<void> {
 		isMoving = true;
 		error = '';
 		message = '';
+		warning = '';
 
 		try {
 			ioboxPosition = await moveToIOBoxPosition(selectedPosition);
@@ -82,9 +85,13 @@
 	async function didClickJog(axis: 'x' | 'y' | 'z' | 'stage', delta: number): Promise<void> {
 		isMoving = true;
 		error = '';
+		message = '';
+		warning = '';
 
 		try {
 			ioboxPosition = await jogIOBoxAxis(selectedPosition, axis, delta);
+			const warnings = ioboxPosition?.warnings ?? [];
+			warning = warnings.length > 0 ? warnings.join('; ') : '';
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'failed to jog io box axis';
 		} finally {
@@ -96,6 +103,7 @@
 		isTesting = true;
 		error = '';
 		message = '';
+		warning = '';
 
 		try {
 			await testIOBoxSequence(false);
@@ -111,6 +119,7 @@
 		isTesting = true;
 		error = '';
 		message = '';
+		warning = '';
 
 		try {
 			await testIOBoxSequence(true);
@@ -131,6 +140,7 @@
 		isSaving = true;
 		error = '';
 		message = '';
+		warning = '';
 
 		try {
 			await saveIOBoxCalibration(ioboxPosition);
@@ -146,6 +156,7 @@
 		isMoving = true;
 		error = '';
 		message = '';
+		warning = '';
 
 		try {
 			ioboxPosition = await getIOBoxCalibration();
@@ -327,6 +338,10 @@
 
 {#if message !== ''}
 	<StatusMessage {message} />
+{/if}
+
+{#if warning !== ''}
+	<StatusMessage message={`warning: ${warning}`} />
 {/if}
 
 {#if error !== ''}
