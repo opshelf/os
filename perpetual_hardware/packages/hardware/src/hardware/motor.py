@@ -336,27 +336,44 @@ class Motor():
         """Setup and trigger an absolute move, tracking it for retries."""
         original_value = value
 
-        # Clear any stale alarm before starting move (e.g. alarm_code 32 from previous limit stop)
-        # alarm_code 32 is treated as OK by clear_alarm() but must be cleared before normal moves
+        # Read motor state before move for diagnostics
         alarm_code = await self.get_param("Current alarm")
-        if alarm_code is not None and alarm_code != 0:
-            self._logger.debug(
-                "Clearing alarm before move",
-                extra={"motor_id": self._motor_id, "alarm_code": alarm_code},
-            )
-            await self.set_param("Control word", 0x1111)
-            await self.set_param("Control word", 0x1122)
-            await self._controller.write_single_register(self._motor_id, 0x6000, 0x0000)
-            await self.move_config()
-            await asyncio.sleep(0.05)
+        status_word = await self.get_param("Status word")
+        current_pos = await self.get_position()
 
-            # Verify alarm cleared
-            new_alarm = await self.get_param("Current alarm")
-            if new_alarm is not None and new_alarm != 0:
-                self._logger.warning(
-                    "Alarm persists after clear attempt",
-                    extra={"motor_id": self._motor_id, "original_alarm": alarm_code, "current_alarm": new_alarm},
-                )
+        self._logger.debug(
+            "Pre-move motor state",
+            extra={
+                "motor_id": self._motor_id,
+                "alarm_code": alarm_code,
+                "status_word": status_word,
+                "current_position_mm": current_pos,
+                "target_mm": value,
+            },
+        )
+
+        # Always clear alarms and reconfigure before move to ensure clean state
+        # This helps with intermittent failures after prolonged operation
+        if alarm_code is not None and alarm_code != 0:
+            self._logger.warning(
+                "Clearing alarm before move",
+                extra={"motor_id": self._motor_id, "alarm_code": alarm_code, "status_word": status_word},
+            )
+
+        await self.set_param("Control word", 0x1111)
+        await self.set_param("Control word", 0x1122)
+        await self._controller.write_single_register(self._motor_id, 0x6000, 0x0000)
+        await self.move_config()
+        await asyncio.sleep(0.05)
+
+        # Verify state after reset
+        new_alarm = await self.get_param("Current alarm")
+        new_status = await self.get_param("Status word")
+        if new_alarm is not None and new_alarm != 0:
+            self._logger.warning(
+                "Alarm persists after clear attempt",
+                extra={"motor_id": self._motor_id, "original_alarm": alarm_code, "current_alarm": new_alarm, "status_word": new_status},
+            )
 
         if value < 0:
             value = 0
