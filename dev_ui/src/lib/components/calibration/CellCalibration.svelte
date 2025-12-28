@@ -206,9 +206,8 @@
 			currentPosition = await moveToCell(selectedSide, selectedShelf, selectedCell);
 
 			const rotationAngles = await getRotationAngles();
-			const targetAngle = selectedSide === 'right_module'
-				? rotationAngles.back
-				: rotationAngles.front;
+			const targetAngle =
+				selectedSide === 'right_module' ? rotationAngles.back : rotationAngles.front;
 
 			await rotateToAngle(targetAngle);
 
@@ -311,6 +310,10 @@
 		}
 	}
 
+	function handleShelfNeedsHome(event: CustomEvent<CalibrationStatus>): void {
+		applyNeedsHomeStatus(event.detail);
+	}
+
 	function formatNumber(value: number): string {
 		return value.toFixed(2);
 	}
@@ -359,7 +362,10 @@
 						class="calibrate-button"
 						type="button"
 						on:click={didClickCalibrate}
-						disabled={isMoving === true || isTesting === true || needsHome === true || isHoming === true}
+						disabled={isMoving === true ||
+							isTesting === true ||
+							needsHome === true ||
+							isHoming === true}
 					>
 						calibrate
 					</button>
@@ -480,42 +486,56 @@
 			<button
 				type="button"
 				on:click={didClickTest}
-				disabled={isMoving === true || isTesting === true || isSaving === true || needsHome === true || isHoming === true}
+				disabled={isMoving === true ||
+					isTesting === true ||
+					isSaving === true ||
+					needsHome === true ||
+					isHoming === true}
 			>
 				test gripper
 			</button>
-			<div class="divider"></div>
 			<button
 				type="button"
 				on:click={didClickReset}
-				disabled={isMoving === true || isTesting === true || isSaving === true || needsHome === true || isHoming === true}
+				disabled={isMoving === true ||
+					isTesting === true ||
+					isSaving === true ||
+					needsHome === true ||
+					isHoming === true}
 			>
 				reset
 			</button>
 			<button
 				type="button"
 				on:click={didClickSave}
-				disabled={isMoving === true || isTesting === true || isSaving === true || needsHome === true || isHoming === true}
+				disabled={isMoving === true ||
+					isTesting === true ||
+					isSaving === true ||
+					needsHome === true ||
+					isHoming === true}
 			>
 				save
 			</button>
 		</div>
 	{/if}
 
-{#if message !== ''}
-	<StatusMessage {message} />
-{/if}
+	{#if message !== ''}
+		<StatusMessage {message} />
+	{/if}
 
-{#if warning !== ''}
-	<StatusMessage message={`warning: ${warning}`} />
-{/if}
+	{#if warning !== ''}
+		<StatusMessage message={`warning: ${warning}`} />
+	{/if}
 
-{#if error !== ''}
-	<ErrorMessage message={error} />
-{/if}
+	{#if error !== ''}
+		<ErrorMessage message={error} />
+	{/if}
 
 	<div class="shelf-section">
-		<ShelfCalibration disabled={needsHome === true || isHoming === true} />
+		<ShelfCalibration
+			disabled={needsHome === true || isHoming === true}
+			on:needsHome={handleShelfNeedsHome}
+		/>
 	</div>
 {/if}
 
@@ -573,11 +593,5 @@
 
 	button {
 		margin-top: 0;
-	}
-
-	.divider {
-		width: 55px;
-		height: 1px;
-		border-top: 2px black dashed;
 	}
 </style>
