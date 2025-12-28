@@ -67,6 +67,12 @@
 	$: homeMessage = needsHome
 		? `home required${needsHomeReason !== '' ? `: ${needsHomeReason}` : ''}`
 		: '';
+	$: homingDisabled =
+		isHoming === true ||
+		isMoving === true ||
+		isTesting === true ||
+		isSaving === true ||
+		needsToolHome === false;
 
 	onMount(function () {
 		if (browser === false) {
@@ -374,26 +380,6 @@
 		</tbody>
 	</table>
 
-	{#if homeMessage !== ''}
-		<ErrorMessage message={homeMessage} />
-	{/if}
-
-	{#if needsToolHome === true}
-		<div class="action-buttons">
-			<button
-				type="button"
-				on:click={didClickHomeToolMotors}
-				disabled={isHoming === true || isMoving === true || isTesting === true || isSaving === true}
-			>
-				{isHoming === true ? 'homing...' : 'home tool motors'}
-			</button>
-		</div>
-	{/if}
-
-	{#if needsOtherHome === true}
-		<StatusMessage message="other motors require homing; use the motors page" />
-	{/if}
-
 	{#if currentPosition !== null}
 		<table class="status-table">
 			<thead>
@@ -537,6 +523,22 @@
 			on:needsHome={handleShelfNeedsHome}
 		/>
 	</div>
+
+	<div class="section-divider"></div>
+
+	<div class="action-buttons">
+		<button type="button" on:click={didClickHomeToolMotors} disabled={homingDisabled}>
+			{isHoming === true ? 'homing...' : 'home tool motors'}
+		</button>
+	</div>
+
+	{#if homeMessage !== ''}
+		<ErrorMessage message={homeMessage} />
+	{/if}
+
+	{#if needsOtherHome === true}
+		<StatusMessage message="other motors require homing; use the motors page" />
+	{/if}
 {/if}
 
 <style>
@@ -589,6 +591,11 @@
 		gap: 1em;
 		margin-top: 2em;
 		align-items: center;
+	}
+
+	.section-divider {
+		margin-top: 2em;
+		border-top: 2px black dashed;
 	}
 
 	button {
