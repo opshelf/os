@@ -33,6 +33,13 @@
 	let isPositioned = $state<boolean>(false);
 	let jogStep = $state<number>(1);
 
+	let editLowX = $state<number>(0);
+	let editLowY = $state<number>(0);
+	let editHighX = $state<number>(0);
+	let editHighY = $state<number>(0);
+	let editZ = $state<number>(0);
+	let editStage = $state<number>(0);
+
 	const JOG_STEPS = [
 		{ value: 0.1, label: '0.1mm' },
 		{ value: 0.25, label: '0.25mm' },
@@ -83,6 +90,7 @@
 
 		try {
 			ioboxPosition = await getIOBoxCalibration();
+			syncEditValues();
 		} catch (err) {
 			handleNeedsHomeError(err);
 			error = err instanceof Error ? err.message : 'failed to load io box calibration';
@@ -157,6 +165,7 @@
 
 		try {
 			ioboxPosition = await moveToIOBoxPosition(selectedPosition);
+			syncEditValues();
 			isPositioned = true;
 			message = `moved to ${selectedPosition} position`;
 		} catch (err) {
@@ -175,6 +184,7 @@
 
 		try {
 			ioboxPosition = await jogIOBoxAxis(selectedPosition, axis, delta);
+			syncEditValues();
 			const warnings = ioboxPosition?.warnings ?? [];
 			warning = warnings.length > 0 ? warnings.join('; ') : '';
 		} catch (err) {
@@ -250,6 +260,7 @@
 
 		try {
 			ioboxPosition = await getIOBoxCalibration();
+			syncEditValues();
 			message = 'io box position reset from config';
 		} catch (err) {
 			handleNeedsHomeError(err);
@@ -262,18 +273,118 @@
 	function formatNumber(value: number): string {
 		return value.toFixed(2);
 	}
+
+	function syncEditValues(): void {
+		if (ioboxPosition === null) {
+			return;
+		}
+		editLowX = ioboxPosition.pickup_low_x;
+		editLowY = ioboxPosition.pickup_low_y;
+		editHighX = ioboxPosition.pickup_high_x;
+		editHighY = ioboxPosition.pickup_high_y;
+		editZ = ioboxPosition.z_extension;
+		editStage = ioboxPosition.stage_extension;
+	}
+
+	async function didClickMoveLowX(): Promise<void> {
+		if (ioboxPosition === null) {
+			return;
+		}
+
+		const delta = editLowX - ioboxPosition.pickup_low_x;
+
+		if (delta === 0) {
+			return;
+		}
+
+		selectedPosition = 'low';
+		await didClickJog('x', -delta);
+	}
+
+	async function didClickMoveLowY(): Promise<void> {
+		if (ioboxPosition === null) {
+			return;
+		}
+
+		const delta = editLowY - ioboxPosition.pickup_low_y;
+
+		if (delta === 0) {
+			return;
+		}
+
+		selectedPosition = 'low';
+		await didClickJog('y', delta);
+	}
+
+	async function didClickMoveHighX(): Promise<void> {
+		if (ioboxPosition === null) {
+			return;
+		}
+
+		const delta = editHighX - ioboxPosition.pickup_high_x;
+
+		if (delta === 0) {
+			return;
+		}
+
+		selectedPosition = 'high';
+		await didClickJog('x', -delta);
+	}
+
+	async function didClickMoveHighY(): Promise<void> {
+		if (ioboxPosition === null) {
+			return;
+		}
+
+		const delta = editHighY - ioboxPosition.pickup_high_y;
+
+		if (delta === 0) {
+			return;
+		}
+
+		selectedPosition = 'high';
+		await didClickJog('y', delta);
+	}
+
+	async function didClickMoveZ(): Promise<void> {
+		if (ioboxPosition === null) {
+			return;
+		}
+
+		const delta = editZ - ioboxPosition.z_extension;
+
+		if (delta === 0) {
+			return;
+		}
+
+		await didClickJog('z', delta);
+	}
+
+	async function didClickMoveStage(): Promise<void> {
+		if (ioboxPosition === null) {
+			return;
+		}
+
+		const delta = editStage - ioboxPosition.stage_extension;
+
+		if (delta === 0) {
+			return;
+		}
+
+		await didClickJog('stage', delta);
+	}
 </script>
 
 <table>
 	<thead>
 		<tr>
-			<th colspan="4">io box calibration</th>
+			<th colspan="2">io box calibration</th>
 		</tr>
 	</thead>
 	<tbody>
 		{#if loading === true}
 			<tr>
-				<td colspan="4">loading io box calibration...</td>
+				<td colspan="2">loading io box calibration...</td>
 			</tr>
 		{:else if ioboxPosition !== null}
 			<tr>
@@ -283,8 +394,6 @@
 						<option value="low">pickup low</option>
 						<option value="high">pickup high</option>
 					</select>
-				</td>
-				<td colspan="2">
 					<button
 						class="move-button"
 						type="button"
@@ -296,14 +405,106 @@
 				</td>
 			</tr>
 			<tr>
-				<td>low x: {formatNumber(ioboxPosition.pickup_low_x)}</td>
-				<td>low y: {formatNumber(ioboxPosition.pickup_low_y)}</td>
-				<td>high x: {formatNumber(ioboxPosition.pickup_high_x)}</td>
-				<td>high y: {formatNumber(ioboxPosition.pickup_high_y)}</td>
+				<td>
+					<span class="field-label">low x</span>
+					<input
+						type="number"
+						step="0.5"
+						bind:value={editLowX}
+						disabled={isMoving === true || needsHome === true || isHoming === true}
+					/>
+					<button
+						type="button"
+						onclick={didClickMoveLowX}
+						disabled={isMoving === true || needsHome === true || isHoming === true}
+					>
+						move
+					</button>
+				</td>
+				<td>
+					<span class="field-label">low y</span>
+					<input
+						type="number"
+						step="0.5"
+						bind:value={editLowY}
+						disabled={isMoving === true || needsHome === true || isHoming === true}
+					/>
+					<button
+						type="button"
+						onclick={didClickMoveLowY}
+						disabled={isMoving === true || needsHome === true || isHoming === true}
+					>
+						move
+					</button>
+				</td>
 			</tr>
 			<tr>
-				<td colspan="2">Z: {formatNumber(ioboxPosition.z_extension)}</td>
-				<td colspan="2">stage: {formatNumber(ioboxPosition.stage_extension)}</td>
+				<td>
+					<span class="field-label">high x</span>
+					<input
+						type="number"
+						step="0.5"
+						bind:value={editHighX}
+						disabled={isMoving === true || needsHome === true || isHoming === true}
+					/>
+					<button
+						type="button"
+						onclick={didClickMoveHighX}
+						disabled={isMoving === true || needsHome === true || isHoming === true}
+					>
+						move
+					</button>
+				</td>
+				<td>
+					<span class="field-label">high y</span>
+					<input
+						type="number"
+						step="0.5"
+						bind:value={editHighY}
+						disabled={isMoving === true || needsHome === true || isHoming === true}
+					/>
+					<button
+						type="button"
+						onclick={didClickMoveHighY}
+						disabled={isMoving === true || needsHome === true || isHoming === true}
+					>
+						move
+					</button>
+				</td>
+			</tr>
+			<tr>
+				<td>
+					<span class="field-label">z</span>
+					<input
+						type="number"
+						step="0.5"
+						bind:value={editZ}
+						disabled={isMoving === true || needsHome === true || isHoming === true}
+					/>
+					<button
+						type="button"
+						onclick={didClickMoveZ}
+						disabled={isMoving === true || needsHome === true || isHoming === true}
+					>
+						move
+					</button>
+				</td>
+				<td>
+					<span class="field-label">stage</span>
+					<input
+						type="number"
+						step="0.5"
+						bind:value={editStage}
+						disabled={isMoving === true || needsHome === true || isHoming === true}
+					/>
+					<button
+						type="button"
+						onclick={didClickMoveStage}
+						disabled={isMoving === true || needsHome === true || isHoming === true}
+					>
+						move
+					</button>
+				</td>
 			</tr>
 		{/if}
 	</tbody>
@@ -428,7 +629,7 @@
 		onclick={didClickTestWithGripper}
 		disabled={isMoving === true || isTesting === true || isSaving === true || needsHome === true || isHoming === true}
 	>
-			test gripper
+			test with gripper
 		</button>
 	<button
 		type="button"
@@ -496,6 +697,14 @@
 	}
 
 	.move-button {
+		margin-top: 0;
+	}
+
+	input[type='number'] {
+		width: 5em;
+	}
+
+	td button {
 		margin-top: 0;
 	}
 </style>

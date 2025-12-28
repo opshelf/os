@@ -48,6 +48,10 @@
 
 	let jogStep = $state<number>(1);
 
+	let editX = $state<number>(0);
+	let editY = $state<number>(0);
+	let editZ = $state<number>(0);
+
 	const JOG_STEPS = [
 		{ value: 0.1, label: '0.1mm' },
 		{ value: 0.25, label: '0.25mm' },
@@ -235,6 +239,7 @@
 				selectedStatus = cells[selectedCell].status;
 			}
 
+			syncEditValues();
 			message = 'moved to cell';
 		} catch (err) {
 			handleNeedsHomeError(err);
@@ -242,6 +247,57 @@
 		} finally {
 			isMoving = false;
 		}
+	}
+
+	function syncEditValues(): void {
+		if (currentPosition === null) {
+			return;
+		}
+		editX = currentPosition.x;
+		editY = currentPosition.y;
+		editZ = currentPosition.z_offset;
+	}
+
+	async function didClickMoveX(): Promise<void> {
+		if (currentPosition === null) {
+			return;
+		}
+
+		const delta = editX - currentPosition.x;
+
+		if (delta === 0) {
+			return;
+		}
+
+		await didClickJog('x', delta);
+	}
+
+	async function didClickMoveY(): Promise<void> {
+		if (currentPosition === null) {
+			return;
+		}
+
+		const delta = editY - currentPosition.y;
+
+		if (delta === 0) {
+			return;
+		}
+
+		await didClickJog('y', delta);
+	}
+
+	async function didClickMoveZ(): Promise<void> {
+		if (currentPosition === null) {
+			return;
+		}
+
+		const delta = editZ - currentPosition.z_offset;
+
+		if (delta === 0) {
+			return;
+		}
+
+		await didClickJog('z', delta);
 	}
 
 	async function didClickJog(axis: 'x' | 'y' | 'z' | 'stage', delta: number): Promise<void> {
@@ -252,6 +308,7 @@
 
 		try {
 			currentPosition = await jogAxis(axis, delta);
+			syncEditValues();
 			const warnings = currentPosition?.warnings ?? [];
 			warning = warnings.length > 0 ? warnings.join('; ') : '';
 		} catch (err) {
@@ -320,6 +377,7 @@
 
 		try {
 			currentPosition = await moveToCell(selectedSide, selectedShelf, selectedCell);
+			syncEditValues();
 			message = 'position reset';
 		} catch (err) {
 			handleNeedsHomeError(err);
@@ -397,12 +455,12 @@
 		<table class="status-table">
 			<thead>
 				<tr>
-					<th colspan="4">cell configuration</th>
+					<th colspan="3">cell configuration</th>
 				</tr>
 			</thead>
 			<tbody>
 				<tr>
-					<td>
+					<td colspan="3">
 						<span class="field-label">status</span>
 						<select bind:value={selectedStatus}>
 							{#each CELL_STATUSES as cellStatus}
@@ -410,9 +468,56 @@
 							{/each}
 						</select>
 					</td>
-					<td>x: {formatNumber(currentPosition.x)}</td>
-					<td>y: {formatNumber(currentPosition.y)}</td>
-					<td>z: {formatNumber(currentPosition.z_offset)}</td>
+				</tr>
+				<tr>
+					<td>
+						<span class="field-label">x</span>
+						<input
+							type="number"
+							step="0.5"
+							bind:value={editX}
+							disabled={isMoving === true || needsHome === true || isHoming === true}
+						/>
+						<button
+							type="button"
+							onclick={didClickMoveX}
+							disabled={isMoving === true || needsHome === true || isHoming === true}
+						>
+							move
+						</button>
+					</td>
+					<td>
+						<span class="field-label">y</span>
+						<input
+							type="number"
+							step="0.5"
+							bind:value={editY}
+							disabled={isMoving === true || needsHome === true || isHoming === true}
+						/>
+						<button
+							type="button"
+							onclick={didClickMoveY}
+							disabled={isMoving === true || needsHome === true || isHoming === true}
+						>
+							move
+						</button>
+					</td>
+					<td>
+						<span class="field-label">z</span>
+						<input
+							type="number"
+							step="0.5"
+							bind:value={editZ}
+							disabled={isMoving === true || needsHome === true || isHoming === true}
+						/>
+						<button
+							type="button"
+							onclick={didClickMoveZ}
+							disabled={isMoving === true || needsHome === true || isHoming === true}
+						>
+							move
+						</button>
+					</td>
 				</tr>
 			</tbody>
 		</table>
@@ -613,5 +718,9 @@
 
 	button {
 		margin-top: 0;
+	}
+
+	input[type='number'] {
+		width: 5em;
 	}
 </style>
