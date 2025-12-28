@@ -338,7 +338,8 @@ class Motor():
 
         # Read motor state before move for diagnostics
         alarm_code = await self.get_param("Current alarm")
-        status_word = await self.get_param("Status word")
+        status_reg = getattr(self._params, "status_reg", 0x1003)
+        status_word = await self._controller.read_holding_registers(self._motor_id, status_reg)
         current_pos = await self.get_position()
 
         self._logger.debug(
@@ -368,7 +369,7 @@ class Motor():
 
         # Verify state after reset
         new_alarm = await self.get_param("Current alarm")
-        new_status = await self.get_param("Status word")
+        new_status = await self._controller.read_holding_registers(self._motor_id, status_reg)
         if new_alarm is not None and new_alarm != 0:
             self._logger.warning(
                 "Alarm persists after clear attempt",
