@@ -896,6 +896,22 @@ class Motor():
         except Exception as e:
             raise MotorError(f"Failed to stop motor {self._motor_id}: {str(e)}") from e
 
+    async def idle(self) -> None:
+        """Reduce holding current to prevent overheating when motor is idle."""
+        try:
+            await self.set_param("Closed loop holding current %", 10)
+            await self.set_param("Standby current %", 10)
+        except Exception as e:
+            self._logger.warning("Failed to set idle mode: %s", e)
+
+    async def ready(self) -> None:
+        """Restore holding current for active operation."""
+        try:
+            await self.set_param("Closed loop holding current %", 50)
+            await self.set_param("Standby current %", 50)
+        except Exception as e:
+            self._logger.warning("Failed to set ready mode: %s", e)
+
     def set_fault(self) -> None:
         self._simulated_fault = True
         self._status = MotorStatus.FAULT
