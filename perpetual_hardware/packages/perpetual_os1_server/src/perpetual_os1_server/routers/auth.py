@@ -85,7 +85,7 @@ async def login_json(
 	"""JSON login endpoint (alternative to form)."""
 	settings = get_settings()
 	auth_service = AuthService(
-		settings.auth.jwt_secret,
+		settings.auth.jwt_secret or "",
 		settings.auth.jwt_algorithm
 	)
 	
@@ -134,7 +134,7 @@ async def refresh_token(
 	"""Refresh access token using refresh token."""
 	settings = get_settings()
 	auth_service = AuthService(
-		settings.auth.jwt_secret,
+		settings.auth.jwt_secret or "",
 		settings.auth.jwt_algorithm
 	)
 	

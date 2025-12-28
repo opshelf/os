@@ -160,7 +160,7 @@ def lid_mask_tuned(bgr,
     cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     roi_area = w * h
     best = None
-    best_area = 0
+    best_area = 0.0
 
     for c in cnts:
         area = cv2.contourArea(c)
@@ -328,5 +328,5 @@ def pick_main_contour(mask: np.ndarray) -> Optional[np.ndarray]:
 def measure_contour_px(contour: np.ndarray) -> Tuple[float, float, np.ndarray, Tuple[int, int]]:
     rect = cv2.minAreaRect(contour)
     (cx, cy), (w_px, h_px), _angle = rect
-    box = np.int32(np.round(cv2.boxPoints(rect)))  # shape (4,2)
+    box = np.array(np.round(cv2.boxPoints(rect)), dtype=np.int32)
     return float(w_px), float(h_px), box, (int(round(cx)), int(round(cy)))

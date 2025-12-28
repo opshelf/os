@@ -6,6 +6,7 @@ import os
 import json
 import shutil
 from datetime import datetime
+from dataclasses import replace as dataclass_replace
 
 type Json = Dict[str, Union[str, int, float, Mapping, Iterable]]
 
@@ -95,7 +96,7 @@ class Shelf(BaseModel):
                 raise Exception("Invalid Calibration Point")
             else:
                 x_value = cal_point.x
-                cal_point = cal_point.copy()
+                cal_point = dataclass_replace(cal_point)
                 cal_idx = 1
                 while cal_idx <= location:
                     if self.cells[cal_idx].dimensions.width == 50:
@@ -531,10 +532,10 @@ class StorageGrid(BaseModel):
         )
         
         # Always use find_best_slot_for_item to optimize space usage
-        location = self._grid.find_best_slot_for_item(temp_item)
-            
+        location = self.find_best_slot_for_item(temp_item)
+
         if location:
-            cal_coord = self._grid.get_cell_coordinate(location)
+            cal_coord = self.get_cell_coordinate(location)
             return cal_coord.to_axis_coordinate()
             
         return None

@@ -130,7 +130,7 @@ async def seed_dev_users(db: AsyncSession) -> None:
 	
 	settings = get_settings()
 	auth_service = AuthService(
-		settings.auth.jwt_secret,
+		settings.auth.jwt_secret or "",
 		settings.auth.jwt_algorithm
 	)
 

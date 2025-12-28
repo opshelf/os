@@ -97,12 +97,12 @@ def detect_pattern_size_and_corners(img_bgr: np.ndarray) -> Tuple[Tuple[int, int
         ]
         ps, corners = try_find_board(gray, candidates)
         
-        if ps is None:
+        if ps is None or corners is None:
             raise RuntimeError(
                 "Chessboard not found with any candidate size. "
                 "Check that the pattern is visible and not occluded."
             )
-            
+
         return ps, corners
         
     except Exception as e:
@@ -146,7 +146,7 @@ def get_image_files() -> List[Path]:
             raise
         raise RuntimeError(f"Failed to get image files: {str(e)}") from e
 
-def get_undistortion(pattern_size: Tuple[int, int] = (14,7), square_size: float = 10.0) -> Tuple[List[npt.NDArray[np.float32]], List[npt.NDArray[np.float32]], Optional[Tuple[int, int]]]:
+def get_undistortion(pattern_size: Tuple[int, int] = (14,7), square_size: float = 10.0) -> Tuple[List[npt.NDArray[np.float32]], List[npt.NDArray[np.float32]], Tuple[int, int]]:
     """
     Calculate camera undistortion parameters from calibration images.
     
@@ -173,9 +173,9 @@ def get_undistortion(pattern_size: Tuple[int, int] = (14,7), square_size: float 
         objp[:, :2] = np.indices(pattern_size).T.reshape(-1, 2)  # (x,y) grid
         objp *= square_size
 
-        obj_points_3D = []  # list of (N,3) float32
-        img_points_2D = []  # list of (N,1,2) float32
-        image_size = None
+        obj_points_3D: List[npt.NDArray[np.float32]] = []
+        img_points_2D: List[npt.NDArray[np.float32]] = []
+        image_size: Optional[Tuple[int, int]] = None
 
         criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 1e-3)
 
@@ -187,7 +187,7 @@ def get_undistortion(pattern_size: Tuple[int, int] = (14,7), square_size: float 
                     continue
 
                 if image_size is None:
-                    image_size = (img.shape[1], img.shape[0])  # (w,h)
+                    image_size = (int(img.shape[1]), int(img.shape[0]))
                 elif image_size != (img.shape[1], img.shape[0]):
                     print(f"Skip {fn}: inconsistent image size {img.shape[::-1]}")
                     continue
@@ -211,9 +211,9 @@ def get_undistortion(pattern_size: Tuple[int, int] = (14,7), square_size: float 
                 print(f"Skip {fn}: processing failed: {str(e)}")
                 continue
 
-        if not obj_points_3D:
+        if not obj_points_3D or image_size is None:
             raise RuntimeError("No valid checkerboard patterns found in any image")
-            
+
         return obj_points_3D, img_points_2D, image_size
         
     except Exception as e:
@@ -261,11 +261,12 @@ def rectify_from_chessboard(
                 raise ValueError("pattern_size must be (width, height) tuple")
                 
             gray = cv2.cvtColor(img_u, cv2.COLOR_BGR2GRAY)
-            ps, pts_img = try_find_board(gray, [pattern_size])
-            if ps is None:
+            ps, pts_img_result = try_find_board(gray, [pattern_size])
+            if ps is None or pts_img_result is None:
                 raise RuntimeError(
                     f"Checkerboard ({pattern_size[0]}x{pattern_size[1]}) not found"
                 )
+            pts_img = pts_img_result
 
         cols, rows = pattern_size
 

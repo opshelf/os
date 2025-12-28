@@ -437,8 +437,8 @@ class IOBlock(BaseModel):
     motors: Motors
     usb_camera: UsbCamera
     tof_camera: TofCamera
-    curtain: CurtainConfig = Field(default_factory=CurtainConfig)
-    scale: ScaleConfig = Field(default_factory=ScaleConfig)
+    curtain: CurtainConfig = Field(default_factory=CurtainConfig)  # type: ignore[arg-type]
+    scale: ScaleConfig = Field(default_factory=ScaleConfig)  # type: ignore[arg-type]
 
     @model_validator(mode="before")
     @classmethod
@@ -504,8 +504,8 @@ class RootConfig(BaseModel):
     tool_camera: ToolCameraSettings = Field(default_factory=ToolCameraSettings)
     overhead_camera: OverheadCameraSettings = Field(default_factory=OverheadCameraSettings)
     scale: ScaleAppSettings = Field(default_factory=ScaleAppSettings)
-    nats: NatsSettings = Field(default_factory=NatsSettings)
-    auth: AuthSettings = Field(default_factory=AuthSettings)
+    nats: NatsSettings = Field(default_factory=NatsSettings)  # type: ignore[arg-type]
+    auth: AuthSettings = Field(default_factory=AuthSettings)  # type: ignore[arg-type]
     robot_app: RobotAppSettings = Field(default_factory=RobotAppSettings)
 
     @model_validator(mode="before")
@@ -631,7 +631,8 @@ def load_and_validate_config(cfg: Union[Dict[str, Any], str], source_path: Optio
     try:
         return RootConfig.model_validate(data)
     except ValidationError as e:
-        raise ConfigValidationError(e.errors(), source_path) from e
+        errors = [dict(err) for err in e.errors()]
+        raise ConfigValidationError(errors, source_path) from e
 
 
 def load_config_file(path: Union[str, Any]) -> RootConfig:

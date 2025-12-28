@@ -225,24 +225,6 @@ class AFSCam:
                 raise CameraError(f"Camera initialization failed: {str(e)}") from e
             raise
             
-    def _cleanup_tof(self) -> None:
-        """Clean up TOF camera resources."""
-        if self._tof is not None:
-            try:
-                self._tof.close()
-            except Exception:
-                pass  # Best effort cleanup
-            self._tof = None
-            
-    def _cleanup_usb(self) -> None:
-        """Clean up USB camera resources."""
-        if self._usb is not None:
-            try:
-                self._usb.release()
-            except Exception:
-                pass  # Best effort cleanup
-            self._usb = None
-            
     def _cleanup(self) -> None:
         """Clean up all camera resources."""
         self._cleanup_tof()
@@ -435,8 +417,9 @@ class AFSCam:
                         H_u, W_u = gray.shape[:2]
                         H_d = getattr(self, "_depth_h", None)
                         W_d = getattr(self, "_depth_w", None)
-                        if (H_d is None or W_d is None) and getattr(self, "_depth", None) is not None and hasattr(self._depth, "shape"):
-                            H_d, W_d = self._depth.shape[:2]
+                        depth = getattr(self, "_depth", None)
+                        if (H_d is None or W_d is None) and depth is not None and hasattr(depth, "shape"):
+                            H_d, W_d = depth.shape[:2]
 
                         if H_d and W_d:
                             sx = W_d / float(W_u)
@@ -761,8 +744,9 @@ class AFSCam:
                         H_u, W_u = gray.shape[:2]
                         H_d = getattr(self, "_depth_h", None)
                         W_d = getattr(self, "_depth_w", None)
-                        if (H_d is None or W_d is None) and getattr(self, "_depth", None) is not None and hasattr(self._depth, "shape"):
-                            H_d, W_d = self._depth.shape[:2]
+                        depth = getattr(self, "_depth", None)
+                        if (H_d is None or W_d is None) and depth is not None and hasattr(depth, "shape"):
+                            H_d, W_d = depth.shape[:2]
 
                         if H_d and W_d:
                             sx = W_d / float(W_u)
@@ -993,6 +977,8 @@ class AFSCam:
         if self._depth is None or self._conf is None:
             return None
 
+        depth_arr = self._depth
+        conf_arr = self._conf
         usb_h, usb_w = usb_shape
         x_u, y_u = u_xy
 
@@ -1000,7 +986,7 @@ class AFSCam:
         sx = self._depth_w / float(usb_w)
         sy = self._depth_h / float(usb_h)
 
-        # Start with no disparity; we’ll estimate depth, then refine center with disparity
+        # Start with no disparity; we'll estimate depth, then refine center with disparity
         x_center = x_u * sx
         y_center = y_u * sy
 
@@ -1015,8 +1001,8 @@ class AFSCam:
             if x0 >= x1 or y0 >= y1:
                 return None
 
-            depth_win = self._depth[y0:y1, x0:x1]
-            conf_win  = self._conf[y0:y1, x0:x1]
+            depth_win = depth_arr[y0:y1, x0:x1]
+            conf_win = conf_arr[y0:y1, x0:x1]
             valid = (
                 (conf_win >= self.confidence_min)
                 & (depth_win > 0)
