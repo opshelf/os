@@ -936,6 +936,48 @@ class Motor():
         except Exception as e:
             raise MotorError(f"Failed to stop motor {self._motor_id}: {str(e)}") from e
 
+    async def servo_standby(self, current_pct: int = 10) -> None:
+        """Put motor in low-power standby mode.
+
+        Reduces holding current to minimize heat and noise when motor is idle.
+
+        Args:
+            current_pct: Holding current percentage (0-50, default 10)
+        """
+        try:
+            current_pct = max(0, min(50, current_pct))
+            await self.set_param("Closed loop holding current %", current_pct)
+            await self.set_param("Open loop holding current %", current_pct)
+            await self.set_param("Standby current %", current_pct)
+            self._logger.debug(
+                "Motor set to standby",
+                extra={"motor_id": self._motor_id, "holding_current_pct": current_pct},
+            )
+        except Exception as e:
+            self._logger.warning(
+                "Failed to set standby mode",
+                extra={"motor_id": self._motor_id, "error": str(e)},
+            )
+
+    async def servo_active(self) -> None:
+        """Restore motor to full power mode.
+
+        Restores holding current to configured peak current for active operation.
+        """
+        try:
+            await self.set_param("Closed loop holding current %", 50)
+            await self.set_param("Open loop holding current %", 50)
+            await self.set_param("Standby current %", 50)
+            self._logger.debug(
+                "Motor set to active",
+                extra={"motor_id": self._motor_id},
+            )
+        except Exception as e:
+            self._logger.warning(
+                "Failed to set active mode",
+                extra={"motor_id": self._motor_id, "error": str(e)},
+            )
+
     def set_fault(self) -> None:
         self._simulated_fault = True
         self._status = MotorStatus.FAULT

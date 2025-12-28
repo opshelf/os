@@ -90,10 +90,6 @@
 </div>
 
 <style>
-	.version-label {
-		padding: 0.5em;
-	}
-
 	.offline-message {
 		position: fixed;
 		bottom: 2em;
