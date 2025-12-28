@@ -157,14 +157,20 @@
 						<button
 							type="button"
 							on:click={didClickRetract}
-							disabled={isMovingStage === true || disabled === true}
-							>retract</button
+							disabled={isMovingStage === true || disabled === true}>retract</button
 						>
-						<div class="divider"></div>
-						<button type="button" on:click={didClickReset} disabled={isSaving === true || disabled === true}>
+						<button
+							type="button"
+							on:click={didClickReset}
+							disabled={isSaving === true || disabled === true}
+						>
 							reset
 						</button>
-						<button type="button" on:click={didClickSave} disabled={isSaving === true || disabled === true}>
+						<button
+							type="button"
+							on:click={didClickSave}
+							disabled={isSaving === true || disabled === true}
+						>
 							save
 						</button>
 					</div>
