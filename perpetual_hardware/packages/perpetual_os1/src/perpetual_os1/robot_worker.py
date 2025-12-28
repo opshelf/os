@@ -22,6 +22,7 @@ from perpetual_os1.robot import (
     RobotCommandSuccessful,
     StopCommand,
     HomeCommand,
+    InitializeCommand,
 )
 from perpetual_os1.common import RobotNatsConfiguration
 from perpetual_os1.robot_defs import WorkerError, QueuedOperation, WorkerStatus, WorkerStatusWithQueue
@@ -723,13 +724,13 @@ class RobotWorker:
                             logging.info("Command result: %s", type(result).__name__)
 
                             if (
-                                isinstance(self._current_command, HomeCommand)
+                                isinstance(self._current_command, (HomeCommand, InitializeCommand))
                                 and isinstance(result, RobotCommandSuccessful)
                             ):
                                 if self._is_crashed:
                                     self.clear_crash_state()
-                                    logging.info("Crash state cleared after successful homing")
-                                elif self.needs_home():
+                                    logging.info("Crash state cleared after successful %s", self._current_command.command)
+                                if self.needs_home() and isinstance(self._current_command, HomeCommand):
                                     self.clear_needs_home()
                                     logging.info("Needs-home flag cleared after successful homing")
 
