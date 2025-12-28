@@ -597,6 +597,7 @@ class Motor():
         last_pos = None
         last_movement_time = start_time
         has_moved = False
+        retry_count = 0
 
         self._logger.debug(
             "Waiting for motor motion",
@@ -726,8 +727,9 @@ class Motor():
             # Check for motor fault
             if fault:
                 await self.stop()
-                self._target_pos = None
+
                 if homing:
+                    self._target_pos = None
                     self._pending_motion = None
                     self._logger.warning(
                         "Fault/stall detected during homing (treated as stop)",
@@ -742,7 +744,35 @@ class Motor():
                     )
                     return MotorStatus.STOPPED
 
+                # For alarm_code 32 during normal moves, try to clear and resume once
+                if alarm_code == 32 and not self._simulated_fault and retry_count < 1:
+                    self._logger.warning(
+                        "Alarm 32 detected, attempting clear and resume",
+                        extra={
+                            "motor_id": self._motor_id,
+                            "position_mm": self._cur_pos,
+                            "target_mm": self._target_pos,
+                            "retry_count": retry_count,
+                        },
+                    )
+                    try:
+                        await self.set_param("Control word", 0x1111)
+                        await self.set_param("Control word", 0x1122)
+                        await self._controller.write_single_register(self._motor_id, 0x6000, 0x0000)
+                        await asyncio.sleep(0.1)
+                        retry_count += 1
+                        last_movement_time = time.monotonic()
+                        if self._pending_motion is not None:
+                            await self._pending_motion()
+                        continue
+                    except Exception as retry_exc:
+                        self._logger.warning(
+                            "Failed to clear alarm and resume",
+                            extra={"motor_id": self._motor_id, "error": str(retry_exc)},
+                        )
+
                 fault_type = "Simulated fault" if self._simulated_fault else "Fault"
+                self._target_pos = None
 
                 self._logger.warning(
                     f"{fault_type} detected - stopping motor, manual intervention required",
