@@ -127,9 +127,10 @@ class ToolCamera:
                 raise ValueError(f"Invalid image dimensions: {w}x{h}")
             
             try:
-                self.newcameramtx, self.roi = cv2.getOptimalNewCameraMatrix(
+                self.newcameramtx, roi = cv2.getOptimalNewCameraMatrix(
                     self.mtx, self.dist, (w, h), alpha=1, newImgSize=(w, h)
                 )
+                self.roi = (roi[0], roi[1], roi[2], roi[3])
             except cv2.error as e:
                 raise CalibrationError(
                     f"Failed to compute optimal camera matrix: {str(e)}"

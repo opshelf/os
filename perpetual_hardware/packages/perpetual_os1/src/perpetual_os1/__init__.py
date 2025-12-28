@@ -1,17 +1,18 @@
 import logging
 import os
+from typing import Any, List
 
 import sentry_sdk
 
 try:
 	from sentry_sdk.integrations.logging import LoggingIntegration
 except Exception:  # pragma: no cover - optional dependency guard for tests
-	LoggingIntegration = None  # type: ignore[assignment]
+	LoggingIntegration = None  # type: ignore[misc, assignment]
 
 sentry_dsn = os.getenv("SENTRY_DSN_HARDWARE", "")
 
 if sentry_dsn:
-	integrations = []
+	integrations: List[Any] = []
 	if LoggingIntegration is not None:
 		integrations.append(LoggingIntegration(level=logging.INFO, event_level=logging.ERROR))
 
@@ -19,7 +20,7 @@ if sentry_dsn:
 		dsn=sentry_dsn,
 		traces_sample_rate=0.1,
 		environment=os.getenv("DEPLOYMENT_ENVIRONMENT", "development"),
-		integrations=integrations or None,
+		integrations=integrations if integrations else None,  # type: ignore[arg-type]
 	)
 	logging.info("Sentry initialized for perpetual_os1")
 else:

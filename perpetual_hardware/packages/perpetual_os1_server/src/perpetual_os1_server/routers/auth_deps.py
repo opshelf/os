@@ -34,7 +34,7 @@ async def get_current_user_optional(
 	# First try to get user from token if provided
 	if token is not None:
 		auth_service = AuthService(
-			settings.auth.jwt_secret,
+			settings.auth.jwt_secret or "",
 			settings.auth.jwt_algorithm
 		)
 		
@@ -95,10 +95,10 @@ async def get_current_user(
 		)
 	
 	auth_service = AuthService(
-		settings.auth.jwt_secret,
+		settings.auth.jwt_secret or "",
 		settings.auth.jwt_algorithm
 	)
-	
+
 	payload = auth_service.decode_token(token)
 	if payload is None or payload.get("type") != "access":
 		raise HTTPException(

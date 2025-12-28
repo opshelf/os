@@ -164,10 +164,10 @@ async def create_user(
 	
 	settings = get_settings()
 	auth_service = AuthService(
-		settings.auth.jwt_secret,
+		settings.auth.jwt_secret or "",
 		settings.auth.jwt_algorithm
 	)
-	
+
 	user = User(
 		email=request.email,
 		first_name=request.first_name,
@@ -269,7 +269,7 @@ async def update_user(
 	if request.pin is not None:
 		settings = get_settings()
 		auth_service = AuthService(
-			settings.auth.jwt_secret,
+			settings.auth.jwt_secret or "",
 			settings.auth.jwt_algorithm
 		)
 		user.pin_hash = str(auth_service.hash_pin(request.pin))

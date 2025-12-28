@@ -238,6 +238,9 @@ class Robot:
         if ppl is None or pph is None:
             raise ConfigError("Missing PICKUP_POSITION_L or PICKUP_POSITION_H parameter")
 
+        if self._tool._my is None:
+            raise ConfigError("Y-axis motor not configured")
+
         await self._tool.pick(coord)
         await self._tool.rotate_to_position("front")
         await self._tool.move(AxisCoordinate(ppl[0], ppl[1]))
@@ -257,6 +260,9 @@ class Robot:
         pph = await self._tool.get_param("PICKUP_POSITION_H")
         if ppl is None or pph is None:
             raise ConfigError("Missing PICKUP_POSITION_L or PICKUP_POSITION_H parameter")
+
+        if self._tool._my is None:
+            raise ConfigError("Y-axis motor not configured")
 
         await self._tool.pick(coord)
         await self._tool.rotate_to_position("front")

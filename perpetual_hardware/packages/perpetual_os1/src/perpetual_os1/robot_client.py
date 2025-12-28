@@ -14,6 +14,7 @@ class RobotClient:
         self._nc = NATS()
         self._js: Optional[JetStreamContext] = None
         self._status_adapter = TypeAdapter(WorkerStatus)
+        self._storage_adapter = TypeAdapter(StorageGrid)
 
     async def connect(self) -> None:
         await self._nc.connect(servers=[self._config.connection_string()])

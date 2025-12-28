@@ -296,6 +296,9 @@ class Camera:
 
         # Scale H if current size != reference size used to compute H
         w0, h0 = self.H_ref_size
+        if self.H is None:
+            return img
+
         if (w, h) != (w0, h0):
             S_in = np.array([[w0 / w, 0, 0],
                              [0, h0 / h, 0],
