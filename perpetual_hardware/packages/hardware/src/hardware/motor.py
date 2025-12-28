@@ -337,10 +337,26 @@ class Motor():
         original_value = value
 
         # Clear any stale alarm before starting move (e.g. alarm_code 32 from previous limit stop)
+        # alarm_code 32 is treated as OK by clear_alarm() but must be cleared before normal moves
         alarm_code = await self.get_param("Current alarm")
         if alarm_code is not None and alarm_code != 0:
+            self._logger.debug(
+                "Clearing alarm before move",
+                extra={"motor_id": self._motor_id, "alarm_code": alarm_code},
+            )
             await self.set_param("Control word", 0x1111)
             await self.set_param("Control word", 0x1122)
+            await self._controller.write_single_register(self._motor_id, 0x6000, 0x0000)
+            await self.move_config()
+            await asyncio.sleep(0.05)
+
+            # Verify alarm cleared
+            new_alarm = await self.get_param("Current alarm")
+            if new_alarm is not None and new_alarm != 0:
+                self._logger.warning(
+                    "Alarm persists after clear attempt",
+                    extra={"motor_id": self._motor_id, "original_alarm": alarm_code, "current_alarm": new_alarm},
+                )
 
         if value < 0:
             value = 0
