@@ -337,7 +337,6 @@ class Tool:
                 raise ConfigError("Missing gripper move speed")
             await self._mg.move_to_position(1, rpm=grip_rpm, accel=grip_accel)
             await self._ms.move_to_position(3.0)
-            await self._ms.servo_standby()
             if _nested is False:
                 self._mstatus = ToolMotionStatus.IDLE
                 self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
@@ -450,7 +449,6 @@ class Tool:
             if _nested is False:
                 self._mstatus = ToolMotionStatus.MOVING
                 self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
-            await self._ms.servo_active()
             await self._ms.move_to_position(slide_ext)
             await self._mg.move_to_position(grip_ext, rpm=grip_rpm, accel=grip_accel)
             if _nested is False:
@@ -489,7 +487,6 @@ class Tool:
         try:
             self._mstatus = ToolMotionStatus.MOVING
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
-            await self._ms.servo_active()
             await self._ms.move_to_position(slide_ext)
             await self._mg.move_to_position(grip_ext, rpm=grip_rpm, accel=grip_accel)
             await self._ms.move_to_position(slide_ext + stage_nudge)
@@ -526,7 +523,6 @@ class Tool:
                 raise ConfigError("Missing extension parameters")
             grip_ext = self._with_gripper_offset(grip_ext, coordinate)
 
-            await self._ms.servo_active()
             await self._ms.move_to_position_no_wait(slide_ext)
             await self._mg.move_to_position_no_wait(grip_ext, rpm=grip_rpm, accel=grip_accel)
             await self.tool_wait(homing=False)
@@ -559,7 +555,6 @@ class Tool:
                 raise ConfigError("Missing gripper move speed")
             await self._mg.move_to_position_no_wait(1, rpm=grip_rpm, accel=grip_accel)
             await self.tool_wait(homing=True)
-            await self._ms.servo_standby()
         except Exception as e:
             await self._handle_fault(e)
             raise MovementError(f"Tool empty retraction failed: {str(e)}") from e

@@ -336,46 +336,6 @@ class Motor():
         """Setup and trigger an absolute move, tracking it for retries."""
         original_value = value
 
-        # Read motor state before move for diagnostics
-        alarm_code = await self.get_param("Current alarm")
-        status_reg = getattr(self._params, "status_reg", 0x1003)
-        status_word = await self._controller.read_holding_registers(self._motor_id, status_reg)
-        current_pos = await self.get_position()
-
-        self._logger.debug(
-            "Pre-move motor state",
-            extra={
-                "motor_id": self._motor_id,
-                "alarm_code": alarm_code,
-                "status_word": status_word,
-                "current_position_mm": current_pos,
-                "target_mm": value,
-            },
-        )
-
-        # Always clear alarms and reconfigure before move to ensure clean state
-        # This helps with intermittent failures after prolonged operation
-        if alarm_code is not None and alarm_code != 0:
-            self._logger.warning(
-                "Clearing alarm before move",
-                extra={"motor_id": self._motor_id, "alarm_code": alarm_code, "status_word": status_word},
-            )
-
-        await self.set_param("Control word", 0x1111)
-        await self.set_param("Control word", 0x1122)
-        await self._controller.write_single_register(self._motor_id, 0x6000, 0x0000)
-        await self.move_config()
-        await asyncio.sleep(0.05)
-
-        # Verify state after reset
-        new_alarm = await self.get_param("Current alarm")
-        new_status = await self._controller.read_holding_registers(self._motor_id, status_reg)
-        if new_alarm is not None and new_alarm != 0:
-            self._logger.warning(
-                "Alarm persists after clear attempt",
-                extra={"motor_id": self._motor_id, "original_alarm": alarm_code, "current_alarm": new_alarm, "status_word": new_status},
-            )
-
         if value < 0:
             value = 0
         if value > self._params.lim:
@@ -935,48 +895,6 @@ class Motor():
 
         except Exception as e:
             raise MotorError(f"Failed to stop motor {self._motor_id}: {str(e)}") from e
-
-    async def servo_standby(self, current_pct: int = 10) -> None:
-        """Put motor in low-power standby mode.
-
-        Reduces holding current to minimize heat and noise when motor is idle.
-
-        Args:
-            current_pct: Holding current percentage (0-50, default 10)
-        """
-        try:
-            current_pct = max(0, min(50, current_pct))
-            await self.set_param("Closed loop holding current %", current_pct)
-            await self.set_param("Open loop holding current %", current_pct)
-            await self.set_param("Standby current %", current_pct)
-            self._logger.debug(
-                "Motor set to standby",
-                extra={"motor_id": self._motor_id, "holding_current_pct": current_pct},
-            )
-        except Exception as e:
-            self._logger.warning(
-                "Failed to set standby mode",
-                extra={"motor_id": self._motor_id, "error": str(e)},
-            )
-
-    async def servo_active(self) -> None:
-        """Restore motor to full power mode.
-
-        Restores holding current to configured peak current for active operation.
-        """
-        try:
-            await self.set_param("Closed loop holding current %", 50)
-            await self.set_param("Open loop holding current %", 50)
-            await self.set_param("Standby current %", 50)
-            self._logger.debug(
-                "Motor set to active",
-                extra={"motor_id": self._motor_id},
-            )
-        except Exception as e:
-            self._logger.warning(
-                "Failed to set active mode",
-                extra={"motor_id": self._motor_id, "error": str(e)},
-            )
 
     def set_fault(self) -> None:
         self._simulated_fault = True
