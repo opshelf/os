@@ -15,38 +15,34 @@
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import StatusMessage from '$lib/components/StatusMessage.svelte';
 
-	let storageGrid: StorageGrid | null = null;
-	let loading = true;
-	let loadError = '';
+	let storageGrid = $state<StorageGrid | null>(null);
+	let loading = $state<boolean>(true);
+	let loadError = $state<string>('');
 
-	let selectedSide: 'left_module' | 'right_module' = 'left_module';
-	let selectedShelf = 0;
-	let selectedCell = 0;
+	let selectedSide = $state<'left_module' | 'right_module'>('left_module');
+	let selectedShelf = $state<number>(0);
+	let selectedCell = $state<number>(0);
 
-	let isRunning = false;
-	let isAborting = false;
-	let error = '';
-	let message = '';
-	let needsHome = false;
-	let needsHomeReason = '';
-	let needsHomeAxes: string[] = [];
-	let isHoming = false;
+	let isRunning = $state<boolean>(false);
+	let isAborting = $state<boolean>(false);
+	let error = $state<string>('');
+	let message = $state<string>('');
+	let needsHome = $state<boolean>(false);
+	let needsHomeReason = $state<string>('');
+	let needsHomeAxes = $state<string[]>([]);
+	let isHoming = $state<boolean>(false);
 
 	const TOOL_AXES = new Set(['z_axis', 'stage']);
 
-	let needsToolHome = false;
-	let needsOtherHome = false;
-	let homeMessage = '';
-	let duplicateHomeError = false;
-	let homingDisabled = false;
-
-	$: needsToolHome = needsHome && needsHomeAxes.some((axis) => TOOL_AXES.has(axis));
-	$: needsOtherHome =
+	const needsToolHome = $derived(needsHome && needsHomeAxes.some((axis) => TOOL_AXES.has(axis)));
+	const needsOtherHome = $derived(
 		needsHome &&
-		(needsHomeAxes.length === 0 || needsHomeAxes.some((axis) => !TOOL_AXES.has(axis)));
-	$: homeMessage =
-		needsHome ? `home required${needsHomeReason !== '' ? `: ${needsHomeReason}` : ''}` : '';
-	$: duplicateHomeError = (() => {
+			(needsHomeAxes.length === 0 || needsHomeAxes.some((axis) => !TOOL_AXES.has(axis)))
+	);
+	const homeMessage = $derived(
+		needsHome ? `home required${needsHomeReason !== '' ? `: ${needsHomeReason}` : ''}` : ''
+	);
+	const duplicateHomeError = $derived.by(() => {
 		if (needsHome !== true || error === '') {
 			return false;
 		}
@@ -59,9 +55,10 @@
 		}
 
 		return needsHomeReason === '' && errorLower.includes('home required');
-	})();
-	$: homingDisabled =
-		isHoming === true || isRunning === true || isAborting === true || needsToolHome !== true;
+	});
+	const homingDisabled = $derived(
+		isHoming === true || isRunning === true || isAborting === true || needsToolHome !== true
+	);
 
 	onMount(function () {
 		if (browser === false) {
@@ -246,14 +243,14 @@
 			<tr>
 				<td>
 					<span class="field-label">side</span>
-					<select value={selectedSide} on:change={didChangeSide}>
+					<select value={selectedSide} onchange={didChangeSide}>
 						<option value="left_module">left module</option>
 						<option value="right_module">right module</option>
 					</select>
 				</td>
 				<td>
 					<span class="field-label">shelf</span>
-					<select value={selectedShelf} on:change={didChangeShelf}>
+					<select value={selectedShelf} onchange={didChangeShelf}>
 						{#each getShelves() as _, index}
 							<option value={index}>{index}</option>
 						{/each}
@@ -261,7 +258,7 @@
 				</td>
 				<td>
 					<span class="field-label">cell</span>
-					<select value={selectedCell} on:change={didChangeCell}>
+					<select value={selectedCell} onchange={didChangeCell}>
 						{#each getCells() as cell, index}
 							<option value={index} disabled={cell.status === 'disabled'}>
 								{index}{cell.status === 'disabled' ? ' (disabled)' : ''}
@@ -276,7 +273,7 @@
 						<button
 							class="run-cycle-button"
 							type="button"
-							on:click={didClickRunCycle}
+							onclick={didClickRunCycle}
 							disabled={isRunning === true || needsHome === true || isHoming === true}
 						>
 							{isRunning === true ? 'running...' : 'run cycle'}
@@ -284,7 +281,7 @@
 						<button
 							class="abort-button"
 							type="button"
-							on:click={didClickAbort}
+							onclick={didClickAbort}
 							disabled={isRunning === false || isAborting === true}
 						>
 							{isAborting === true ? 'aborting...' : 'abort'}
@@ -308,7 +305,7 @@
 	<div class="section-divider"></div>
 
 	<div class="action-buttons home-actions">
-		<button type="button" on:click={didClickHomeToolMotors} disabled={homingDisabled}>
+		<button type="button" onclick={didClickHomeToolMotors} disabled={homingDisabled}>
 			{isHoming === true ? 'homing...' : 'home tool motors'}
 		</button>
 	</div>
