@@ -6,12 +6,14 @@ def test_build_error_detail_includes_needs_home() -> None:
         "Motor error",
         code="motor_fault",
         needs_home=True,
+        needs_home_axes=["stage", "z_axis"],
         reason="Axis stall",
     )
 
     assert detail["message"] == "Motor error"
     assert detail["code"] == "motor_fault"
     assert detail["needs_home"] is True
+    assert detail["needs_home_axes"] == ["stage", "z_axis"]
     assert detail["reason"] == "Axis stall"
 
 

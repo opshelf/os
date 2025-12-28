@@ -2,13 +2,18 @@
 	import { onMount } from 'svelte';
 	import { browser } from '$app/environment';
 	import {
+		ApiError,
 		getStorageGrid,
+		getCalibrationStatus,
+		homeToolMotors,
 		moveToCell,
 		jogAxis,
 		testGripper,
 		saveCalibration,
 		getRotationAngles,
 		rotateToAngle,
+		type ApiErrorDetail,
+		type CalibrationStatus,
 		type StorageGrid,
 		type Position
 	} from '$lib/api';
@@ -34,6 +39,12 @@
 	let error = '';
 	let message = '';
 	let warning = '';
+	let needsHome = false;
+	let needsHomeReason = '';
+	let needsHomeAxes: string[] = [];
+	let isHoming = false;
+
+	const TOOL_AXES = new Set(['z_axis', 'stage']);
 
 	let jogStep = 1;
 
@@ -50,11 +61,19 @@
 		{ value: 100, label: '10cm' }
 	];
 
+	$: needsToolHome = needsHome && needsHomeAxes.some((axis) => TOOL_AXES.has(axis));
+	$: needsOtherHome =
+		needsHome && (needsHomeAxes.length === 0 || needsHomeAxes.some((axis) => !TOOL_AXES.has(axis)));
+	$: homeMessage = needsHome
+		? `home required${needsHomeReason !== '' ? `: ${needsHomeReason}` : ''}`
+		: '';
+
 	onMount(function () {
 		if (browser === false) {
 			return;
 		}
 		loadStorage();
+		loadCalibrationStatus();
 	});
 
 	async function loadStorage(): Promise<void> {
@@ -66,9 +85,58 @@
 			selectedShelf = 0;
 			selectedCell = 0;
 		} catch (err) {
+			handleNeedsHomeError(err);
 			loadError = err instanceof Error ? err.message : 'failed to load storage grid';
 		} finally {
 			loading = false;
+		}
+	}
+
+	async function loadCalibrationStatus(): Promise<void> {
+		try {
+			const status = await getCalibrationStatus();
+			applyNeedsHomeStatus(status);
+		} catch {
+			// Ignore status polling failures; calibration actions will surface errors.
+		}
+	}
+
+	function applyNeedsHomeStatus(status: CalibrationStatus): void {
+		needsHome = status.needs_home;
+		needsHomeReason = status.needs_home_reason ?? '';
+		needsHomeAxes = status.needs_home_axes ?? [];
+	}
+
+	function applyNeedsHomeDetail(detail?: ApiErrorDetail): void {
+		if (detail?.needs_home !== true) {
+			return;
+		}
+		needsHome = true;
+		needsHomeReason = detail.reason ?? detail.message ?? needsHomeReason;
+		needsHomeAxes = detail.needs_home_axes ?? [];
+	}
+
+	function handleNeedsHomeError(err: unknown): void {
+		if (err instanceof ApiError) {
+			applyNeedsHomeDetail(err.detail);
+		}
+	}
+
+	async function didClickHomeToolMotors(): Promise<void> {
+		isHoming = true;
+		error = '';
+		message = '';
+		warning = '';
+
+		try {
+			const status = await homeToolMotors();
+			applyNeedsHomeStatus(status);
+			message = 'tool motors homed';
+		} catch (err) {
+			handleNeedsHomeError(err);
+			error = err instanceof Error ? err.message : 'failed to home tool motors';
+		} finally {
+			isHoming = false;
 		}
 	}
 
@@ -151,6 +219,7 @@
 
 			message = 'moved to cell';
 		} catch (err) {
+			handleNeedsHomeError(err);
 			error = err instanceof Error ? err.message : 'failed to move to cell';
 		} finally {
 			isMoving = false;
@@ -168,6 +237,7 @@
 			const warnings = currentPosition?.warnings ?? [];
 			warning = warnings.length > 0 ? warnings.join('; ') : '';
 		} catch (err) {
+			handleNeedsHomeError(err);
 			error = err instanceof Error ? err.message : 'failed to jog axis';
 		} finally {
 			isMoving = false;
@@ -184,6 +254,7 @@
 			await testGripper(selectedSide, selectedShelf, selectedCell);
 			message = 'gripper test completed';
 		} catch (err) {
+			handleNeedsHomeError(err);
 			error = err instanceof Error ? err.message : 'failed to test gripper';
 		} finally {
 			isTesting = false;
@@ -216,6 +287,7 @@
 
 			message = 'calibration saved';
 		} catch (err) {
+			handleNeedsHomeError(err);
 			error = err instanceof Error ? err.message : 'failed to save calibration';
 		} finally {
 			isSaving = false;
@@ -232,6 +304,7 @@
 			currentPosition = await moveToCell(selectedSide, selectedShelf, selectedCell);
 			message = 'position reset';
 		} catch (err) {
+			handleNeedsHomeError(err);
 			error = err instanceof Error ? err.message : 'failed to reset position';
 		} finally {
 			isMoving = false;
@@ -286,7 +359,7 @@
 						class="calibrate-button"
 						type="button"
 						on:click={didClickCalibrate}
-						disabled={isMoving === true || isTesting === true}
+						disabled={isMoving === true || isTesting === true || needsHome === true || isHoming === true}
 					>
 						calibrate
 					</button>
@@ -294,6 +367,26 @@
 			</tr>
 		</tbody>
 	</table>
+
+	{#if homeMessage !== ''}
+		<ErrorMessage message={homeMessage} />
+	{/if}
+
+	{#if needsToolHome === true}
+		<div class="action-buttons">
+			<button
+				type="button"
+				on:click={didClickHomeToolMotors}
+				disabled={isHoming === true || isMoving === true || isTesting === true || isSaving === true}
+			>
+				{isHoming === true ? 'homing...' : 'home tool motors'}
+			</button>
+		</div>
+	{/if}
+
+	{#if needsOtherHome === true}
+		<StatusMessage message="other motors require homing; use the motors page" />
+	{/if}
 
 	{#if currentPosition !== null}
 		<table class="status-table">
@@ -325,14 +418,14 @@
 				<button
 					type="button"
 					on:click={() => didClickJog('x', -jogStep)}
-					disabled={isMoving === true}
+					disabled={isMoving === true || needsHome === true || isHoming === true}
 				>
 					-
 				</button>
 				<button
 					type="button"
 					on:click={() => didClickJog('x', jogStep)}
-					disabled={isMoving === true}
+					disabled={isMoving === true || needsHome === true || isHoming === true}
 				>
 					+
 				</button>
@@ -342,14 +435,14 @@
 				<button
 					type="button"
 					on:click={() => didClickJog('y', -jogStep)}
-					disabled={isMoving === true}
+					disabled={isMoving === true || needsHome === true || isHoming === true}
 				>
 					-
 				</button>
 				<button
 					type="button"
 					on:click={() => didClickJog('y', jogStep)}
-					disabled={isMoving === true}
+					disabled={isMoving === true || needsHome === true || isHoming === true}
 				>
 					+
 				</button>
@@ -359,14 +452,14 @@
 				<button
 					type="button"
 					on:click={() => didClickJog('z', -jogStep)}
-					disabled={isMoving === true}
+					disabled={isMoving === true || needsHome === true || isHoming === true}
 				>
 					-
 				</button>
 				<button
 					type="button"
 					on:click={() => didClickJog('z', jogStep)}
-					disabled={isMoving === true}
+					disabled={isMoving === true || needsHome === true || isHoming === true}
 				>
 					+
 				</button>
@@ -375,7 +468,7 @@
 		<div class="jog-controls">
 			<div class="jog-step">
 				<span class="axis-label">step</span>
-				<select bind:value={jogStep}>
+				<select bind:value={jogStep} disabled={needsHome === true || isHoming === true}>
 					{#each JOG_STEPS as step}
 						<option value={step.value}>{step.label}</option>
 					{/each}
@@ -387,7 +480,7 @@
 			<button
 				type="button"
 				on:click={didClickTest}
-				disabled={isMoving === true || isTesting === true || isSaving === true}
+				disabled={isMoving === true || isTesting === true || isSaving === true || needsHome === true || isHoming === true}
 			>
 				test gripper
 			</button>
@@ -395,14 +488,14 @@
 			<button
 				type="button"
 				on:click={didClickReset}
-				disabled={isMoving === true || isTesting === true || isSaving === true}
+				disabled={isMoving === true || isTesting === true || isSaving === true || needsHome === true || isHoming === true}
 			>
 				reset
 			</button>
 			<button
 				type="button"
 				on:click={didClickSave}
-				disabled={isMoving === true || isTesting === true || isSaving === true}
+				disabled={isMoving === true || isTesting === true || isSaving === true || needsHome === true || isHoming === true}
 			>
 				save
 			</button>
@@ -422,7 +515,7 @@
 {/if}
 
 	<div class="shelf-section">
-		<ShelfCalibration />
+		<ShelfCalibration disabled={needsHome === true || isHoming === true} />
 	</div>
 {/if}
 

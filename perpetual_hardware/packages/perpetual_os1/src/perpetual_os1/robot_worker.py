@@ -170,6 +170,7 @@ def _transform_worker_status_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     transformed["crash_reason"] = payload.get("crash_reason")
     transformed["needs_home"] = payload.get("needs_home", False)
     transformed["needs_home_reason"] = payload.get("needs_home_reason")
+    transformed["needs_home_axes"] = payload.get("needs_home_axes", [])
 
     return transformed
 
@@ -233,7 +234,8 @@ class RobotWorker:
         self._logger = logging.getLogger(__name__).getChild("worker.guard")
         self._is_crashed: bool = False
         self._crash_reason: Optional[str] = None
-        self._needs_home: bool = False
+        self._needs_home_axes: set[str] = set()
+        self._needs_home_unknown: bool = False
         self._needs_home_reason: Optional[str] = None
 
     def get_client(self) -> RobotClient:
@@ -285,7 +287,7 @@ class RobotWorker:
 
         if success is True:
             self.set_crash_state(f"Simulated motor fault on {motor_name}")
-            self.set_needs_home(f"Simulated motor fault on {motor_name}")
+            self.set_needs_home(f"Simulated motor fault on {motor_name}", axes=[motor_name])
             await self._publish_status()
 
         return success
@@ -294,10 +296,13 @@ class RobotWorker:
         return self._latest_status_payload
 
     def needs_home(self) -> bool:
-        return self._needs_home
+        return self._needs_home_unknown or bool(self._needs_home_axes)
 
     def needs_home_reason(self) -> Optional[str]:
         return self._needs_home_reason
+
+    def needs_home_axes(self) -> list[str]:
+        return sorted(self._needs_home_axes)
 
     async def get_status_snapshot(self, force_refresh: bool = False) -> Optional[str]:
         if force_refresh or self._latest_status_payload is None:
@@ -407,11 +412,21 @@ class RobotWorker:
         self._crash_reason = reason
 
     def clear_needs_home(self) -> None:
-        self._needs_home = False
+        self._needs_home_axes.clear()
+        self._needs_home_unknown = False
         self._needs_home_reason = None
 
-    def set_needs_home(self, reason: str) -> None:
-        self._needs_home = True
+    def clear_needs_home_axes(self, axes: list[str]) -> None:
+        for axis in axes:
+            self._needs_home_axes.discard(axis)
+        if not self._needs_home_axes and not self._needs_home_unknown:
+            self._needs_home_reason = None
+
+    def set_needs_home(self, reason: str, axes: Optional[list[str]] = None) -> None:
+        if axes:
+            self._needs_home_axes.update(axes)
+        else:
+            self._needs_home_unknown = True
         self._needs_home_reason = reason
 
     async def emergency_stop(self, reason: str) -> None:
@@ -554,8 +569,9 @@ class RobotWorker:
                 error_queue=list(self._error_queue),
                 is_crashed=self._is_crashed,
                 crash_reason=self._crash_reason,
-                needs_home=self._needs_home,
+                needs_home=self.needs_home(),
                 needs_home_reason=self._needs_home_reason,
+                needs_home_axes=self.needs_home_axes(),
             )
         else:
             status = WorkerStatus(
@@ -565,8 +581,9 @@ class RobotWorker:
                 error_queue=list(self._error_queue),
                 is_crashed=self._is_crashed,
                 crash_reason=self._crash_reason,
-                needs_home=self._needs_home,
+                needs_home=self.needs_home(),
                 needs_home_reason=self._needs_home_reason,
+                needs_home_axes=self.needs_home_axes(),
             )
 
         status_payload = status.model_dump(mode="json")
@@ -681,7 +698,7 @@ class RobotWorker:
                                 if self._is_crashed:
                                     self.clear_crash_state()
                                     logging.info("Crash state cleared after successful homing")
-                                elif self._needs_home:
+                                elif self.needs_home():
                                     self.clear_needs_home()
                                     logging.info("Needs-home flag cleared after successful homing")
 
