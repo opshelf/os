@@ -960,9 +960,9 @@ class Motor():
             self._logger.warning("Failed to idle motor: %s", e)
 
     async def ready(self) -> None:
-        """Re-enable motor after idle/stop by reconfiguring for movement."""
+        """Re-enable motor after idle/stop by clearing alarms and reconfiguring."""
         try:
-            await self.move_config()
+            await self.clear_alarm()
         except Exception as e:
             self._logger.warning("Failed to ready motor: %s", e)
 
