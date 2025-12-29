@@ -960,8 +960,11 @@ class Motor():
             self._logger.warning("Failed to idle motor: %s", e)
 
     async def ready(self) -> None:
-        """Prepare motor for active operation (no-op, motor re-energizes on move)."""
-        pass
+        """Re-enable motor after idle/stop by reconfiguring for movement."""
+        try:
+            await self.move_config()
+        except Exception as e:
+            self._logger.warning("Failed to ready motor: %s", e)
 
     def set_fault(self) -> None:
         self._simulated_fault = True
