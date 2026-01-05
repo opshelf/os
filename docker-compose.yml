@@ -42,9 +42,11 @@ services:
       context: ./dev_ui
       dockerfile: Dockerfile
     network_mode: "host"
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     volumes:
       - ./dev_ui:/app
-      - /app/node_modules
     environment:
       - NODE_ENV=development
     depends_on:
