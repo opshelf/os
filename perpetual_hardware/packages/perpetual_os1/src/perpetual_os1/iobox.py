@@ -239,7 +239,8 @@ class IOBox:
             raise IOBoxError("Door motor not configured or disabled")
 
         try:
-            await self._md.move_to_position(0)
+            door_cfg = self._params.motors.by_name("door")
+            await self._md.move_to_position(0, rpm=door_cfg.ret_rpm)
             await self.refresh_door_state(force=True)
         except Exception as e:
             self._status = IOBoxStatus.ERROR
