@@ -9,7 +9,8 @@ RUN npm config set fetch-retries 5 && \
     npm install --prefer-offline --no-audit
 
 COPY . .
+RUN npm run build
 
 EXPOSE 8080
 
-CMD ["npm", "run", "develop", "--", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["npm", "run", "preview", "--", "--host", "0.0.0.0", "--port", "8080"]

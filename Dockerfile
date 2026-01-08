@@ -32,17 +32,19 @@ RUN git clone --depth 1 https://github.com/joan2937/lg /tmp/lg && \
 	rm -rf /tmp/lg
 
 	
-WORKDIR /app/perpetual_hardware/packages/perpetual_os1_server
+WORKDIR /app
+
+COPY perpetual_hardware/ /app/perpetual_hardware/
 
 RUN mkdir -p /app/perpetual_hardware/packages/perpetual_os1_server/data && \
 	chmod -R 777 /app/perpetual_hardware/packages/perpetual_os1_server/data && \
 	echo 'export "PATH=$PATH:my_path"' >> /etc/profile
 
+WORKDIR /app/perpetual_hardware/packages/perpetual_os1_server
+
 EXPOSE 8000
 EXPOSE 4222
 EXPOSE 8222
-
-COPY perpetual_hardware/packages/perpetual_os1_server/entrypoint.sh /app/perpetual_hardware/packages/perpetual_os1_server/entrypoint.sh
 RUN chmod +x /app/perpetual_hardware/packages/perpetual_os1_server/entrypoint.sh
 
 ENTRYPOINT ["/bin/sh", "/app/perpetual_hardware/packages/perpetual_os1_server/entrypoint.sh"]
