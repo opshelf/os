@@ -15,7 +15,6 @@ services:
       dockerfile: ./Dockerfile
     network_mode: "host"
     volumes:
-      - ./perpetual_hardware/:/app/perpetual_hardware/
       - /etc/cups:/etc/cups:ro
     depends_on:
       - nats
@@ -45,8 +44,6 @@ services:
     dns:
       - 8.8.8.8
       - 1.1.1.1
-    volumes:
-      - ./dev_ui:/app
     environment:
       - NODE_ENV=development
     depends_on:
