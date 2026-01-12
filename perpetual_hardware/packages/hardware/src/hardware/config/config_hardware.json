@@ -1,0 +1,17 @@
+{
+    "motor":
+    {
+        "motor_move_timeout": 180.0,
+        "motor_home_timeout": 180.0,
+        "motor_job_timeout": 10.0,
+        "motor_wait_timeout": 60.0,
+        "servo": 
+        {
+            "activation_timeout_s": 3
+        },
+        "motor": 
+        {   
+            "motor_"
+        }
+    }
+}

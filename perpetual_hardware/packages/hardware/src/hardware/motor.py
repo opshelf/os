@@ -1,4 +1,5 @@
 from hardware import motor_helpers
+from motor_helpers import ICL_RS_CONTROL_WORD_FUNCTIONS
 from hardware.controller import SharedModbusController
 import time
 import asyncio
@@ -12,14 +13,31 @@ from hardware.exceptions import (
     MotorConfigError
 )
 
+'''
+TASKS:
+1. In Motor class, replace self._controller.write_single_register with self.set_param 
+using readable names, not numbers, for the register address:
+
+await self._controller.write_single_register(self._motor_id, 0x6000, 0x0000)
+becomes
+await self.set_param("PR global control", 0x0000)
+
+'''
+
+# TODO: Move these config variables.
 MOTOR_MOVE_TIMEOUT = 180.0
 MOTOR_HOME_TIMEOUT = 180.0
 MOTOR_JOG_TIMEOUT = 10.0
 MOTOR_WAIT_TIMEOUT = 60.0
 POSITION_TOLERANCE_MM = 1.0
 
-logger = logging.getLogger(__name__)
+# Servo config
+MOTOR_ACTIVATION_TIMEOUT_S = 3
 
+# Stepper config
+STEPPER_STALL_TIMEOUT_S = 2.0
+
+logger = logging.getLogger(__name__)
 
 class CurtainSafety:
     def __init__(self) -> None:
@@ -46,6 +64,8 @@ class MotorStatus(Enum):
     FAULT = 4
     TIMEOUT = 5
 
+# Seperate Servo and Stepper classes into dedicated files.
+# Servo used for the end effector
 class Servo:
     """Controls a servo motor via Modbus."""
 
@@ -58,6 +78,7 @@ class Servo:
         """
         if params is None:
             params = {}
+        # TODO: What do these default values represent?
         self._motor_id = int(params.get("motor_id", 0x9))
         self._controller = controller
         self._control_reg = int(params.get("control_reg", 0x3E8))
@@ -126,11 +147,12 @@ class Servo:
             if status is None:
                 raise MotorError("Failed to read motor status during activation")
 
+            # TODO: DEFINE USING A BITFIELD/BITMASK
             activation_status = status & (1<<5)
             if activation_status:
                 return
 
-            if time.monotonic() - start_time > 3:
+            if time.monotonic() - start_time > MOTOR_ACTIVATION_TIMEOUT_S:
                 raise MotorTimeoutError("Motor activation timed out after 3 seconds")
 
             await asyncio.sleep(0.01)
@@ -190,8 +212,8 @@ class Servo:
     async def close(self):
         await self._controller.write_single_register(self._motor_id, self._control_reg, 0x090B) 
         await self.wait_for_servo()
-         
-# stepper
+
+# Stepper motor controller (iCL-RS) 
 class Motor():
     _motor_id: int
     _controller: SharedModbusController
@@ -205,7 +227,7 @@ class Motor():
         self._controller = controller
         self._params = params
         self._cur_pos = None
-        self._stall_timeout = 2.0
+        self._stall_timeout = STEPPER_STALL_TIMEOUT_S
         self._status = MotorStatus.IDLE
         self._pending_motion: Optional[Callable[[], Awaitable[None]]] = None
         self._target_pos: Optional[float] = None
@@ -221,26 +243,40 @@ class Motor():
             MotorError: If communication with motor fails
         """
         try:
-            self._logger.info(
-                "Configuring motor",
+            self._logger.info("Configuring motor",
                 extra={"motor_id": self._motor_id, "limit_mm": self._params.lim},
             )
-            # Clear any existing alarms
-            await self.set_param("Control word", 0x1111)
-            await self.set_param("Control word", 0x1122)
+            # Clear any existing alarms.
+            await self.set_param("Control word",
+                ICL_RS_CONTROL_WORD_FUNCTIONS["RESET_CURRENT_ALARM"].value)
+            await self.set_param("Control word",
+                ICL_RS_CONTROL_WORD_FUNCTIONS["RESET_HISTORY_ALARM"].value)
+            
+            # Disable auto-homing to prevent blocking motion commands.
+            await self.set_param("PR global control", 0b0000)
+            # await self._controller.write_single_register(self._motor_id, 0x6000, 0x0000)
 
-            # Disable auto-homing to prevent blocking motion commands
-            await self._controller.write_single_register(self._motor_id, 0x6000, 0x0000)
+            # Configure brake output.
+            STEPPER_BRAKE_RELEASE_DELAY_MS = 100
+            STEPPER_BRAKE_LOCKED_DELAY_MS = 100
+            STEPPER_THRESHOLD_VALUE_OF_BRAKE_LOCKING_VELOCITY = 10
+            await self.set_param("SO2 output function", 0xA1)          
+            await self.set_param("Delay of brake released", STEPPER_BRAKE_RELEASE_DELAY_MS)        
+            await self.set_param("Delay of brake locked", STEPPER_BRAKE_LOCKED_DELAY_MS)        
+            await self.set_param("Threshold value of brake locking velocity", STEPPER_THRESHOLD_VALUE_OF_BRAKE_LOCKING_VELOCITY)        
 
+            # await self._controller.write_single_register(self._motor_id, 0x0167, 100)
+            # await self._controller.write_single_register(self._motor_id, 0x0169, 100)
+            # await self._controller.write_single_register(self._motor_id, 0x016B, 10)
+            
             # Configure motor parameters
-            await self.set_param("SO2 output function", 0xA1)  # brake output
-            await self._controller.write_single_register(self._motor_id, 0x0167, 100)
-            await self._controller.write_single_register(self._motor_id, 0x0169, 100)
-            await self._controller.write_single_register(self._motor_id, 0x016B, 10)
+            
+            STEPPER_POSITION_LOOP_KP = 50
+            STEPPER_MAX_STOP_TIME = 100
             max_following_error = getattr(self._params, "max_following_error", 4000)
             await self.set_param("Allowed max position following error", max_following_error)
-            await self.set_param("Position loop Kp", 50)
-            await self.set_param("Max stop time", 100)
+            await self.set_param("Position loop Kp", STEPPER_POSITION_LOOP_KP)
+            await self.set_param("Max stop time", STEPPER_MAX_STOP_TIME)
             await self.set_param("Acceleration", self._params.accel)
             await self.set_param("Deceleration", self._params.accel)
             await self.set_param("Peak current", self._params.Ip)

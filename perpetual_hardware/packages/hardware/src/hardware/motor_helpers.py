@@ -1,10 +1,41 @@
 
 from collections import OrderedDict
 from typing import List, Dict, Union, Optional
+from enum import IntEnum
+import ctypes
 
 TRIGGER = 0x6002
 
-# Full list of parsed register-parameter pairs from the datasheet, formatted for readability and export
+# Bitfield for "PR global control function"
+class PrGlobalControlFunctionBits(ctypes.Structure):
+    _fields_ = [
+        ("ctrg effective edge", ctypes.c_uint, 1),      # 1-bit field
+        ("soft_limit", ctypes.c_uint, 1),               # 2-bit field
+        ("homing after power on", ctypes.c_uint, 1),    # 3-bit field (padding)
+        ("ctrg trigger type", ctypes.c_uint, 1),        # 4-bit field
+    ]
+
+class PrGlobalControlFunction(ctypes.Union):
+    _fields_ = [("b", PrGlobalControlFunctionBits), ("asbyte", ctypes.c_uint8)]
+
+# Values and functions descriptions for the Control Word register (address = 0x1801)
+class ICL_RS_CONTROL_WORD_FUNCTIONS(IntEnum):
+    RESET_CURRENT_ALARM = 0X1111
+    RESET_HISTORY_ALARM = 0X1122
+    SAVE_ALL_PARAMETERS_TO_EEPROM = 0X2211
+    PARAMETER_RESET_EXCLUDE_MOTOR_PARAMETERS = 0X2222
+    PARAMETER_RESET_ALL = 0X2233
+    SAVE_ALL_MAPPINGS_INTO_EEPROM = 0X2244
+    JOG_CW = 0X4001
+    JOG_CCW = 0X4002
+
+
+
+# Full list of parsed register-parameter pairs from the datasheet, formatted for readability and export.
+# Device series: iCL-RS Series Modbus RS485
+# Datasheet filename: iCL-RS_Series_User_Manual.pdf
+# Section(s): 4.3.1 - 4.3.5
+# TODO: Needs review and cleanup. Some columns are misaligned. 
 motor_registers = [
     # Format: Register, Param No., Name, Description, Range, Default, Unit
     (0x0001, "Pr0.00", "Pulse/revolution", "Pulse count per revolution", "200-51200", 10000, "P/R"),
@@ -33,6 +64,10 @@ motor_registers = [
     (0x0157, "Pr4.11", "SO1 output function", "DO1 output config", "0-65535", 0, "--"),
     (0x0159, "Pr4.12", "SO2 output function", "DO2 output config", "0-65535", 0, "--"),
     (0x015B, "Pr4.13", "SO3 output function", "DO3 output config", "0-65535", 0, "--"),
+    (0x0167, "Pr4.19", "Delay of brake released", "Keep default normally", "0-1500", 250, "ms")
+    (0x0169, "Pr4.20", "Delay of brake locked", "Keep default normally", "0-1500", 250, "ms")
+    (0x016B, "Pr4.21", "Threshold value of brake locking velocity", "Keep default normally", "0-500", 10, "ms")
+
     (0x016D, "Pr4.22", "Alarm detection", "Bitmask of active alarm types", "0-65535", 0, "--"),
     (0x0171, "Pr4.24", "In-position pulse threshold", "Distance for in-position signal", "0-1500", 200, "CPR"),
     (0x0177, "Pr4.27", "Bus voltage", "Measured bus voltage", "0-65535", 0, "0.1V"),
@@ -74,7 +109,8 @@ motor_registers = [
     (0x6011, None, "Homing acceleration", "Acceleration during homing", "ms/1000rpm", "--", "--"),
     (0x6012, None, "Homing deceleration", "Deceleration during homing", "ms/1000rpm", "--", "--"),
     # (0x6002, None, "Set current position to 0", "Write 0x21 to set current motor position to zero", "--", "--", "--"),
-    (0x6000, None, "Auto-homing enable", "bit2 = 1 enables auto-homing at power-on", "--", "bitfield", "--"),
+    (0x6000, "Pr8.00", "PR global control", "--", "0-0b1111", 0b0000, "bitfield"),
+    # (0x6000, None, "Auto-homing enable", "bit2 = 1 enables auto-homing at power-on", "--", "bitfield", "--"),
     (0x602D, None, "Position Low (Actual)", "", "--", "bitfield", "--"),
     (0x602C, None, "Position High (Actual)", "", "--", "bitfield", "--"),
     (0x6200, "Pr9.00", "Motion of Path 0", "Path config: type, interrupt, jump, relative", "--", None, "--"),
@@ -86,9 +122,7 @@ motor_registers = [
     (0x6206, "Pr9.06", "Pause Time", "Pause duration after move", "--", None, "ms"),
     (0x6207, "Pr9.07", "Special Parameter", "Path 0 links to Pr8.02, others reserved", "--", None, "--")
 ]
-
 # the other 15 paths are exactly the same 8 register structure
-
 
 # Convert to list of dicts for exporting or interactive usage
 register_dict_list: List[Dict[str, Union[str, int, None]]] = [
@@ -232,3 +266,18 @@ def accel_time_to_mms2(accel_time: float, mpr: float) -> float:
         
     except (ValueError, TypeError) as e:
         raise ValueError(f"Failed to convert {accel_time}ms/1000rpm at {mpr}mm/rev: {str(e)}") from e
+
+if __name__ == "__main__":
+    print('Test')
+    print(hex(ICL_RS_CONTROL_WORD_FUNCTIONS.RESET_CURRENT_ALARM.value))
+    register = get_register_by_name("Control mode")
+    print(register)
+    
+    reg = PrGlobalControlFunction()
+    print(reg)
+    print(reg.asbyte)
+    reg.b["homing after power on"] = 1
+    print(reg.asbyte)
+
+
+    # print(register_dict_list)
