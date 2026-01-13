@@ -35,7 +35,7 @@ class ICL_RS_CONTROL_WORD_FUNCTIONS(IntEnum):
 # Device series: iCL-RS Series Modbus RS485
 # Datasheet filename: iCL-RS_Series_User_Manual.pdf
 # Section(s): 4.3.1 - 4.3.5
-# TODO: Needs review and cleanup. Some columns are misaligned. 
+# TODO: Needs review and cleanup. Some columns are misaligned.
 motor_registers = [
     # Format: Register, Param No., Name, Description, Range, Default, Unit
     (0x0001, "Pr0.00", "Pulse/revolution", "Pulse count per revolution", "200-51200", 10000, "P/R"),
@@ -140,16 +140,16 @@ register_dict_list: List[Dict[str, Union[str, int, None]]] = [
 
 def get_register_by_name(param_name: str) -> Optional[int]:
     """Get a register address by its parameter name.
-    
+
     Args:
         param_name: Name of the register parameter
-        
+
     Returns:
         Register address as an integer, or None if not found
     """
     if not param_name:
         return None
-        
+
     for entry in register_dict_list:
         name = entry.get("Name", "")
         if isinstance(name, str) and name.strip().lower() == param_name.strip().lower():
@@ -188,23 +188,23 @@ def rev_to_pulse(rev: float, ppr: int = 10000) -> tuple[int, int]:
 
 def mm_to_rev(mm: float, mpr: float) -> float:
     """Convert millimeters to motor revolutions.
-    
+
     Args:
         mm: Distance in millimeters
         mpr: Millimeters per revolution
-        
+
     Returns:
         Number of motor revolutions
-        
+
     Raises:
         ValueError: If input values are invalid or mpr is zero
     """
     if not isinstance(mm, (int, float)) or not isinstance(mpr, (int, float)):
         raise ValueError("Distance and mpr must be numbers")
-        
+
     if mpr == 0:
         raise ValueError("Millimeters per revolution cannot be zero")
-        
+
     try:
         return float(mm / mpr)
     except (ValueError, TypeError) as e:
@@ -212,58 +212,58 @@ def mm_to_rev(mm: float, mpr: float) -> float:
 
 def rpm_to_mms(rpm: float, mpr: float) -> float:
     """Convert RPM to millimeters per second.
-    
+
     Args:
         rpm: Motor speed in revolutions per minute
         mpr: Millimeters per revolution
-        
+
     Returns:
         Speed in millimeters per second
-        
+
     Raises:
         ValueError: If input values are invalid
     """
     if not isinstance(rpm, (int, float)) or not isinstance(mpr, (int, float)):
         raise ValueError("RPM and mpr must be numbers")
-        
+
     try:
         mm_per_min = rpm * mpr
         return mm_per_min / 60.0
     except (ValueError, TypeError) as e:
         raise ValueError(f"Failed to convert {rpm}RPM at {mpr}mm/rev: {str(e)}") from e
-        
+
 def accel_time_to_mms2(accel_time: float, mpr: float) -> float:
     """Convert acceleration time from ms/1000rpm to mm/s².
-    
+
     The motor's acceleration parameter is specified in milliseconds to reach 1000 RPM.
     This function converts it to real-world acceleration in mm/s².
-    
+
     Args:
         accel_time: Time in milliseconds to reach 1000 RPM
         mpr: Millimeters per revolution
-        
+
     Returns:
         Acceleration in millimeters per second squared
-        
+
     Raises:
         ValueError: If input values are invalid or accel_time is zero
     """
     if not isinstance(accel_time, (int, float)) or not isinstance(mpr, (int, float)):
         raise ValueError("Acceleration time and mpr must be numbers")
-        
+
     if accel_time <= 0:
         raise ValueError("Acceleration time must be positive")
-        
+
     try:
         # Convert acceleration time to seconds
         accel_seconds = accel_time / 1000.0
-        
+
         # Convert target speed (1000 RPM) to mm/s
         target_speed = rpm_to_mms(1000.0, mpr)
-        
+
         # Calculate acceleration (v = a*t, so a = v/t)
         return target_speed / accel_seconds
-        
+
     except (ValueError, TypeError) as e:
         raise ValueError(f"Failed to convert {accel_time}ms/1000rpm at {mpr}mm/rev: {str(e)}") from e
 
@@ -272,7 +272,7 @@ if __name__ == "__main__":
     print(hex(ICL_RS_CONTROL_WORD_FUNCTIONS.RESET_CURRENT_ALARM.value))
     register = get_register_by_name("Control mode")
     print(register)
-    
+
     reg = PrGlobalControlFunction()
     print(reg)
     print(reg.asbyte)
