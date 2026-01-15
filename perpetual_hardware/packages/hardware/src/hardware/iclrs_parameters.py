@@ -4,7 +4,7 @@ Tests in ./tests/test_iclrs_parameters.py
 from dataclasses import dataclass, field, fields
 from enum import IntEnum
 import csv
-from typing import Union
+from typing import Union, ClassVar
 
 class ModbusErrorCode(IntEnum):
   INVALID_FUNCTION_CODE = 0x01
@@ -63,7 +63,6 @@ class DigitalInputFilter(IntEnum):
   FILTER_200_MS = 0b1110
   FILTER_500_MS = 0b1111
 
-
 class DigitalOutputFunction(IntEnum):
   '''Represents digital output function setting
   '''
@@ -113,10 +112,8 @@ class DigitalOutputSettings():
       self.value = self.mode << 7  | self.function
     else:
       # value was given, parse value to get settings fields
-      self.function = DigitalInputFunction(self.value & 0b111111)
+      self.function = DigitalOutputFunction(self.value & 0b111111)
       self.mode = DigitalInputOutputMode(self.value >> 7 & 0b1)
-
-
   def __str__(self):
     return f'{self.mode.name} | {self.function.name} -> {self.value}'
 
@@ -130,7 +127,6 @@ class DigitalInputStates():
   si_5: int = field(init=False)
   si_6: int = field(init=False)
   si_7: int = field(init=False)
-
   def __post_init__(self):
     self.si_7 = self.value >> 6 & 0b1
     self.si_6 = self.value >> 5 & 0b1
@@ -139,6 +135,15 @@ class DigitalInputStates():
     self.si_3 = self.value >> 2 & 0b1
     self.si_2 = self.value >> 1 & 0b1
     self.si_1 = self.value & 0b1
+  def __str__(self):
+    return (f'Digital inputs:\n'
+      'DI1: {self.si_1}\n'
+      'DI2: {self.si_2}\n'
+      'DI3: {self.si_3}\n'
+      'DI4: {self.si_4}\n'
+      'DI5: {self.si_5}\n'
+      'DI6: {self.si_5}\n'
+      'DI7: {self.si_5}\n')
 
 @dataclass
 class DigitalOutputStates():
@@ -148,24 +153,66 @@ class DigitalOutputStates():
   value: int = field(init=False)
   def __post_init__(self):
     self.value = self.so_3<<2 | self.so_2<<1 | self.so_1
+  def __str__(self):
+    return (f'Digital outputs:\n'
+      'D01: {self.so_1}\n'
+      'D02: {self.so_2}\n'
+      'D03: {self.so_3}\n')
 
 # Motion state
 @dataclass
-class MotionState():
+class MotionStatus():
   value: int
-  is_normal: bool = field(init=False)
+  is_fault: bool = field(init=False)
   is_enabled: bool = field(init=False)
   is_running: bool = field(init=False)
   command_completed: bool = field(init=False)
   path_completed: bool = field(init=False)
   homing_completed: bool = field(init=False)
   def __post_init__(self):
-    self.is_normal = self.value >> 0 & 0b1
-    self.is_enabled = self.value >> 1 & 0b1
-    self.is_running = self.value >> 2 & 0b1
-    self.command_completed = self.value >> 4 & 0b1
-    self.path_completed = self.value >> 5 & 0b1
-    self.homing_completed = self.value >> 6 & 0b1
+    self.is_fault = bool(self.value >> 0 & 0b1)
+    self.is_enabled = bool(self.value >> 1 & 0b1)
+    self.is_running = bool(self.value >> 2 & 0b1)
+    self.command_completed = bool(self.value >> 4 & 0b1)
+    self.path_completed = bool(self.value >> 5 & 0b1)
+    self.homing_completed = bool(self.value >> 6 & 0b1)
+  def __str__(self):
+    return (f'MOTION STATUS:\n'
+      f'Fault: {self.is_fault}\n'
+      f'Enabled: {self.is_enabled}\n'
+      f'Running: {self.is_running}\n'
+      f'Command completed: {self.command_completed}\n'
+      f'Path completed: {self.path_completed}\n'
+      f'Homing completed: {self.homing_completed}'
+      ) 
+
+@dataclass
+class IsEnabled():
+  value: int = field(init=False)
+  enable: bool = field(default=False)
+  def __post_init__(self):
+    self.value = int(self.enable)
+
+@dataclass
+class BaudRate():
+  value: int = field(init=False) 
+  baud_rate: str
+
+  def __post_init__(self):
+    mapping = {
+      '2400': 0,
+      '4800': 1,
+      '9600': 2,
+      '19200': 3,
+      '38400': 4,
+      '57600': 5,
+      '115200': 6
+    }
+    try:
+      self.value = mapping[self.baud_rate]
+    except KeyError as e:
+      raise KeyError('Invalid baud rate')
+
 
 # Control and status
 class ControlWordFunction(IntEnum):
@@ -178,27 +225,27 @@ class ControlWordFunction(IntEnum):
   JOG_CW = 0X4001
   JOG_CCW = 0X4002
 
-class StatusWordResponses(IntEnum):
+class ControlWordStatus(IntEnum):
   OK = 0x5555
   FAULT = 0xAAAA
 
-@dataclass
-class ControlWord():
-  function: ControlWordFunction
-  value: int = field(init=False)
-  def __post_init__(self):
-    self.value = self.function
-  def __str__(self):
-    return f'{self.function.name}'
+# @dataclass
+# class ControlWord():
+#   function: ControlWordFunction
+#   value: int = field(init=False)
+#   def __post_init__(self):
+#     self.value = self.function
+#   def __str__(self):
+#     return f'{self.function.name}'
 
-@dataclass
-class StatusWord():
-  response: StatusWordResponses
-  value: int = field(init=False)
-  def __post_init__(self):
-    self.value = self.response
-  def __str__(self):
-    return f'{self.response.name}'
+# @dataclass
+# class StatusWord():
+#   response: StatusWordResponse = field(init=False)
+#   value: int 
+#   def __post_init__(self):
+#     self.response = StatusWordResponse(self.value)
+#   def __str__(self):
+#     return f'{self.response.name}'
 
 # Alarms
 @dataclass
@@ -228,28 +275,31 @@ class AlarmCode(IntEnum):
 
 @dataclass
 class Alarm():
-  code: AlarmCode
+  code: AlarmCode = field(init=False)
   troubleshooting: str = field(init=False)
+  value: int
+  ALARM_MAP: ClassVar[dict] = {
+  AlarmCode.OVER_CURRENT: ('1. Restart the controller\n'
+    '2. If error persists, check if the motor is short-circuited or '
+    'disconnected from the controller.'),
+  AlarmCode.OVER_VOLTAGE: ('1. Restart the controller\n'
+    '2. If error persists, check the voltage of the power supply.'),
+  AlarmCode.ADC_SAMPLING_ERROR: ('1. Restart the controller\n'
+    '2. If error persists, there is a hardware failure.'),
+  AlarmCode.SHAFT_LOCKING_ERROR: ('1. Check if the motor wire is broken.'),
+  AlarmCode.EEPROM_ERROR: ('1. Connect controller to the Leadshine software '
+    'and reset to factory parameters.\n'
+    '2. If error persists, there is a hardware failure.'),
+  AlarmCode.AUTO_TUNING_ERROR: ('1. Restart the controller\n'
+    '2. If error persists, disable auto-tuning by register 0x01AB.')
+  }
   def __post_init__(self):
-    if self.code == AlarmCode.OVER_CURRENT:
-      self.troubleshooting = ('1. Restart the controller\n'
-                              '2. If error persists, check if the motor is '
-                              'short-circuited or disconnected from the '
-                              'controller.')
-    if self.code == AlarmCode.OVER_VOLTAGE:
-      self.troubleshooting = ('1. Restart the controller\n'
-                              '2. If error persists, check the voltage of the '
-                              'power supply.')
-    if self.code == AlarmCode.ADC_SAMPLING_ERROR:
-      self.troubleshooting = ('1. Restart the controller\n'
-                              '2. If error persists, there is a hardware '
-                              'failure.')
-    if self.code == AlarmCode.SHAFT_LOCKING_ERROR:
-      self.troubleshooting = ('1. Check if the motor wire is broken.')
-    if self.code == AlarmCode.EEPROM_ERROR:
-      self.troubleshooting = ('1. Connect controller to the Leadshine software '
-                              'and reset to factory parameters.\n2. If error '
-                              'persists, there is a hardware failure.')
+    self.code = AlarmCode(self.value)
+    self.troubleshooting = self.ALARM_MAP[self.code]
+  def __str__(self):
+    alarm_name = self.code.name.replace('_', ' ')
+    text = f'ALARM: {alarm_name}\nTo troubleshoot:\n{self.troubleshooting}'
+    return text
 
 # Path control register
 class PathControlRegisterCommand(IntEnum):
@@ -306,7 +356,7 @@ class HomingDirection(IntEnum):
   CCW = 0
   CW = 1
 
-class HomingMode(IntEnum):
+class HomingType(IntEnum):
   DETECTED_BY_LIMIT_SWITCH = 0
   DETECTED_BY_HOME_SWITCH = 1
 
@@ -314,7 +364,7 @@ class HomingMode(IntEnum):
 class HomingMode():
   direction: HomingDirection
   move_to_specified_point_after_homing: bool
-  mode: HomingMode
+  mode: HomingType
   value: int = field(init=False)
   def __post_init__(self):
     self.value = (self.mode << 2 |
@@ -347,17 +397,17 @@ class PathOperationMode(IntEnum):
   HOMING_MODE = 3
 
 class PathCoordinate(IntEnum):
-  ABSOLUTE_POSITION = 0
-  RELATIVE_POSITION = 1
+  ABSOLUTE = 0
+  RELATIVE = 1
 
 @dataclass
 class PathSettings():
-  mode: PathOperationMode
-  enable_interrupt: bool
-  enable_overlapping: bool
-  coordinate: PathCoordinate
-  jump_to: int
-  enable_jump: bool
+  mode: PathOperationMode = PathOperationMode.NO_ACTION
+  enable_interrupt: bool = False
+  enable_overlapping: bool = False
+  coordinate: PathCoordinate = PathCoordinate.ABSOLUTE
+  jump_to: int = 0
+  enable_jump: bool = False
   value: int = field(init=False)
   def __post_init__(self):
     self.value = (self.enable_jump << 14 |
@@ -408,7 +458,7 @@ def csv_to_list_dict(filename):
 filename = '/Users/nickwong-openshelf/Documents/embedded_dev/perpetual_os/perpetual_hardware/packages/hardware/src/hardware/data/iclrs_registers.csv'
 registers = csv_to_list_dict(filename)
 
-def get_register_by_name(name: str):
+def get_register_by_name(name: str) -> dict:
   found_register = next((d for d in registers if d.get('Name').strip().lower() == name.strip().lower()), None)
   return found_register
 

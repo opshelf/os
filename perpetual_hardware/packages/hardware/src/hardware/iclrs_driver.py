@@ -21,6 +21,13 @@ initial_parameters = {
         "Delay of brake released": 100, # [ms]
         "Delay of brake locked": 100,   # [ms]
         "Threshold value of brake locking velocity": 10,
+        "Allowed max position following error": 4000, #[CPR]
+        'Position loop Kp': 50,
+        'Max stop time': 100, #[ms]
+        'Path 0 acceleration': 500, #[ms/1000rpm]
+        'Path 0 deceleration': 500, #[ms/1000rpm]
+        'Peak current': 
+
     }
 }
 
@@ -37,7 +44,7 @@ class IclRs():
     # _controller: SharedModbusController
 
     # def __init__(self, params: , safety: Optional[CurtainSafety] = None) -> None:
-    def __init__(self, motor_id: int, params: IclRsParameters) -> None:
+    def __init__(self, motor_id: int, params: dict) -> None:
         self._motor_id = motor_id
         self._params = params
         self._status = IclRsStatus.IDLE
@@ -59,30 +66,21 @@ class IclRs():
             MotorError: If communication with motor fails
         """
         try:
+
             # Clear existing alarms
             ControlWord(ControlWordFunction.RESET_CURRENT_ALARM).value
             ControlWord(ControlWordFunction.RESET_HISTORY_ALARM).value
             # Disable auto-homing at powerup
             PathGlobalControl(enable_autohoming_after_powerup=False).value
-            # Configure digital output 2 to a toggle when path is completed
-            await self.set_param("SO2", 
-                DigitalOutputSettings(
-                    DigitalOutputFunction.PATH_COMPLETE, 
-                    DigitalInputOutputMode.NORMALLY_CLOSED).value)          
-            await self.set_param("Delay of brake released", STEPPER_BRAKE_RELEASE_DELAY_MS)        
-            await self.set_param("Delay of brake locked", STEPPER_BRAKE_LOCKED_DELAY_MS)        
-            await self.set_param("Threshold value of brake locking velocity", STEPPER_THRESHOLD_VALUE_OF_BRAKE_LOCKING_VELOCITY)        
 
 
-            STEPPER_BRAKE_RELEASE_DELAY_MS = 100
-            STEPPER_BRAKE_LOCKED_DELAY_MS = 100
-            STEPPER_THRESHOLD_VALUE_OF_BRAKE_LOCKING_VELOCITY = 10
-            await self.set_param("SO2 output function", 0xA1)          
-            await self.set_param("Delay of brake released", STEPPER_BRAKE_RELEASE_DELAY_MS)        
-            await self.set_param("Delay of brake locked", STEPPER_BRAKE_LOCKED_DELAY_MS)        
-            await self.set_param("Threshold value of brake locking velocity", STEPPER_THRESHOLD_VALUE_OF_BRAKE_LOCKING_VELOCITY)        
-
-
+            # STEPPER_BRAKE_RELEASE_DELAY_MS = 100
+            # STEPPER_BRAKE_LOCKED_DELAY_MS = 100
+            # STEPPER_THRESHOLD_VALUE_OF_BRAKE_LOCKING_VELOCITY = 10
+            # await self.set_param("SO2 output function", 0xA1)          
+            # await self.set_param("Delay of brake released", STEPPER_BRAKE_RELEASE_DELAY_MS)        
+            # await self.set_param("Delay of brake locked", STEPPER_BRAKE_LOCKED_DELAY_MS)        
+            # await self.set_param("Threshold value of brake locking velocity", STEPPER_THRESHOLD_VALUE_OF_BRAKE_LOCKING_VELOCITY)        
 
             self._logger.info("Configure motor",
                 extra={"motor_id": self._motor_id, "limit_mm": self._params.lim},
@@ -278,27 +276,27 @@ class IclRs():
     #         }
     #     )
     
-    # async def move_config(self) -> None:
-    #     """Configure motor movement parameters.
+    async def move_config(self) -> None:
+        """Configure motor movement parameters.
 
-    #     Raises:
-    #         MotorConfigError: If configuration fails
-    #     """
-    #     try:
-    #         # Clear any alarms
-    #         await self.set_param("Control word", 0x1111)
-    #         await self.set_param("Control word", 0x1122)
+        Raises:
+            MotorConfigError: If configuration fails
+        """
+        try:
+            # Clear any alarms
+            await self.set_param("Control word", 0x1111)
+            await self.set_param("Control word", 0x1122)
 
-    #         # Disable auto-homing after control word writes (which may reset it)
-    #         await self._controller.write_single_register(self._motor_id, 0x6000, 0x0000)
+            # Disable auto-homing after control word writes (which may reset it)
+            await self._controller.write_single_register(self._motor_id, 0x6000, 0x0000)
 
-    #         # Configure movement parameters
-    #         await self.set_param("Motion of Path 0", 0x1)  # abs pos 0x1
-    #         await self.set_param("Motor direction", self._params.dr)
-    #         await self.set_param("Velocity", self._params.rpm)
+            # Configure movement parameters
+            await self.set_param("Motion of Path 0", 0x1)  # abs pos 0x1
+            await self.set_param("Motor direction", self._params.dr)
+            await self.set_param("Velocity", self._params.rpm)
 
-    #     except Exception as e:
-    #         raise MotorConfigError(f"Failed to configure movement parameters: {str(e)}") from e
+        except Exception as e:
+            raise MotorConfigError(f"Failed to configure movement parameters: {str(e)}") from e
 
     # async def clear_alarm(self) -> None:
     #     """Clear motor alarms without homing.
@@ -340,7 +338,7 @@ class IclRs():
     #         Current position in millimeters
     #     """
     #     try:
-    #         reg_high = getattr(self._params, "position_reg_high", 0x602C)
+    #         reg_high = getattr(self._params, "position_reg_high", )
     #         reg_low = getattr(self._params, "position_reg_low", 0x602D)
 
     #         pos_l = await self._controller.read_holding_registers(self._motor_id, reg_low)
