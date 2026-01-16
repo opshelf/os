@@ -2,6 +2,7 @@ from src.hardware.device_registers import (csv_to_registers,
   get_classes_in_module, DeviceRegisters)
 import src.hardware.iclrs_register_types as iclrs_register_types
 import pytest
+import json
 
 # Create DeviceRegister for the Icl-RS motor controller.
 registers_filename = '../src/hardware/device_docs/icl-rs/ICL42.csv'
@@ -21,28 +22,69 @@ def test_get_register_by_name(address, name):
   register = iclrs_registers.get_register_by_name(name)
   assert register.address == address
 
-print(iclrs_registers.to_json_dict(0x0001, 250))
-print(iclrs_registers.to_json_dict(0x0003, 2))
-print(iclrs_registers.to_json_dict(0x0007, 1))
-print(iclrs_registers.to_json_dict(0x000F, 1))
-print(iclrs_registers.to_json_dict(0x0145, 0b0000000010100110))
-print(iclrs_registers.to_json_dict(0x0179, 0b0101010))
-print(iclrs_registers.to_json_dict(0x017B, 0x101))
-print(iclrs_registers.to_json_dict(0x01BD, 6))
-print(iclrs_registers.to_json_dict(0x1801, 0x2211))
-print(iclrs_registers.to_json_dict(0x1901, 0x5555))
+# Load sample config JSON
+config_json_filename = './data/config_hardware_a.json'
+try:
+  with open(config_json_filename, 'r') as file:
+    data = json.load(file)
+except FileNotFoundError:
+    print("Error: The file 'data.json' was not found.")
+except json.JSONDecodeError as e:
+    print(f"Failed to decode JSON: {e}")
+config_dict = data['motors'][0]['write_initial_registers']
+name_field_tuples = [(k,v) for k,v in config_dict.items()]
 
-print(iclrs_registers.to_json_dict(0x1003, 0b111111))
+@pytest.mark.parametrize("name, field", name_field_tuples)
+def test_encode_decode(name, field):
+  address_value_tuple = iclrs_registers.encode(name, field)
+  name_field_dict = iclrs_registers.decode(*address_value_tuple)
+  assert name_field_dict == {name.lower(): field}
 
-print(iclrs_registers.to_json_dict(0x2203, 0x01))
-print(iclrs_registers.to_json_dict(0x2203, 0x02))
-print(iclrs_registers.to_json_dict(0x2203, 0x40))
-print(iclrs_registers.to_json_dict(0x2203, 0x80))
-print(iclrs_registers.to_json_dict(0x2203, 0x100))
-print(iclrs_registers.to_json_dict(0x2203, 0x200))
+# # Load sample config JSON
+# config_json_filename = './data/invalid_register_values.json'
+# try:
+#   with open(config_json_filename, 'r') as file:
+#     config_dict = json.load(file)
+# except FileNotFoundError:
+#     print("Error: The file 'data.json' was not found.")
+# except json.JSONDecodeError as e:
+#     print(f"Failed to decode JSON: {e}")
+# name_field_tuples = [(k,v) for k,v in config_dict.items()]
 
+# @pytest.mark.parametrize("name, field", name_field_tuples)
+# def test_encode_invalid_values(name, field):
+#   exception_caught = False
+#   try:
+#     address_value_tuple = iclrs_registers.encode(name, field)
+#   except Exception as e:
+#      print(e)
+#      exception_caught = True
+#   assert exception_caught
 
-print(iclrs_registers.to_json_dict(0x6200, 0b100000001000001))
-print(iclrs_registers.to_json_dict(0x6200, 0b100000101110010))
-print(iclrs_registers.to_json_dict(0x6200, 0b000111100100100))
-print(iclrs_registers.to_json_dict(0x6200, 0b000010101011000))
+@pytest.mark.parametrize("code", [0x01, 0x02, 0x40, 0x80, 0x100, 0x200])
+def test_readable_alarms(code):
+  print(iclrs_registers.readable(0x2203, code))
+  assert True
+
+@pytest.mark.parametrize("code", [0x5555, 0xAAAA])
+def test_readable_control_word_stats(code):
+  print(iclrs_registers.readable(0x1901, code))
+  assert True
+
+print(iclrs_registers.decode(0x0001, 250))
+print(iclrs_registers.decode(0x0003, 2))
+print(iclrs_registers.decode(0x0007, 1))
+print(iclrs_registers.decode(0x000F, 1))
+print(iclrs_registers.decode(0x0145, 0b0000000010100110))
+print(iclrs_registers.decode(0x0159, 0x20))
+print(iclrs_registers.decode(0x0179, 0b0101010))
+print(iclrs_registers.decode(0x017B, 0x101))
+print(iclrs_registers.decode(0x01BD, 6))
+print(iclrs_registers.decode(0x1801, 0x2211))
+print(iclrs_registers.decode(0x1901, 0x5555))
+print(iclrs_registers.decode(0x1003, 0b111111))
+print(iclrs_registers.decode(0x6200, 0b100000001000001))
+print(iclrs_registers.decode(0x6200, 0b100000101110010))
+print(iclrs_registers.decode(0x6200, 0b000111100100100))
+print(iclrs_registers.decode(0x6200, 0b000010101011000))
+

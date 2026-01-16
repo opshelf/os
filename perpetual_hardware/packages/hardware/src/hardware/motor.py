@@ -7,7 +7,6 @@ import functools
 import logging
 from enum import Enum
 from typing import Any, Optional, Callable, Awaitable
-
 from hardware.exceptions import (
     MotorError, MotorTimeoutError, MotorLimitError,
     MotorConfigError
@@ -15,7 +14,7 @@ from hardware.exceptions import (
 
 '''
 TASKS:
-1. In Motor class, replace self._controller.write_single_register with self.set_param 
+1. In Motor class, replace self._controller.write_single_register with self.set_param
 using readable names, not numbers, for the register address:
 
 await self._controller.write_single_register(self._motor_id, 0x6000, 0x0000)
@@ -86,7 +85,7 @@ class Servo:
 
     async def configure(self) -> None:
         """Configure the servo with initial settings.
-        
+
         Raises:
             MotorError: If configuration fails
             MotorTimeoutError: If activation times out
@@ -94,13 +93,13 @@ class Servo:
         try:
             # Activate
             await self._controller.write_single_register(
-                self._motor_id, 
-                self._control_reg, 
+                self._motor_id,
+                self._control_reg,
                 0x0  # clear
             )
             await self._controller.write_single_register(
-                self._motor_id, 
-                self._control_reg, 
+                self._motor_id,
+                self._control_reg,
                 0x1  # enable
             )
             await self.wait_for_activate()
@@ -108,20 +107,20 @@ class Servo:
             # Static position settings
             # Open
             await self._controller.write_single_register(
-                self._motor_id, 
-                0x03EB, 
+                self._motor_id,
+                0x03EB,
                 0x8020  # 0x80|0x20
             )
             # Close
             await self._controller.write_single_register(
-                self._motor_id, 
-                0x03ED, 
+                self._motor_id,
+                0x03ED,
                 0x80FE  # 0x80|0xFE
             )
             # Safe open
             await self._controller.write_single_register(
-                self._motor_id, 
-                0x03EF, 
+                self._motor_id,
+                0x03EF,
                 0x80C0  # 0x80|0xFF
             )
 
@@ -129,13 +128,13 @@ class Servo:
             await self._controller.write_single_register(self._motor_id, 0x03EC, 0x80)
             await self._controller.write_single_register(self._motor_id, 0x03EE, 0x80)
             await self._controller.write_single_register(self._motor_id, 0x03F0, 0x80)
-            
+
         except Exception as e:
             raise MotorError(f"Failed to configure servo: {str(e)}") from e
 
     async def wait_for_activate(self):
         """Wait for motor to activate.
-        
+
         Raises:
             MotorTimeoutError: If activation takes too long
             MotorError: If motor status read fails
@@ -159,10 +158,10 @@ class Servo:
 
     async def wait_for_servo(self, timeout: float = 5.0) -> MotorStatus:
         """Wait for servo to complete its motion.
-        
+
         Args:
             timeout: Maximum time to wait in seconds
-            
+
         Raises:
             MotorTimeoutError: If servo motion takes longer than timeout
             MotorError: If motor status read fails
@@ -173,19 +172,19 @@ class Servo:
             status = await self._controller.read_holding_registers(self._motor_id, self._status_reg)
             if status is None:
                 raise MotorError("Failed to read motor status during servo motion")
-                
+
             move_status = (status & (1<<6)) or (status & (1<<7))
             if move_status:
                 return MotorStatus.STOPPED
-                
+
             if time.monotonic() - start_time > timeout:
                 raise MotorTimeoutError(f"Servo motion timed out after {timeout} seconds")
-                
+
             await asyncio.sleep(0.01)
 
     async def open(self):
         """Open the servo to maximum position.
-        
+
         Raises:
             MotorError: If servo control fails
             MotorTimeoutError: If operation times out
@@ -198,7 +197,7 @@ class Servo:
 
     async def safe_open(self):
         """Open the servo to a safe intermediate position.
-        
+
         Raises:
             MotorError: If servo control fails
             MotorTimeoutError: If operation times out
@@ -210,10 +209,10 @@ class Servo:
             raise MotorError(f"Failed to safe-open servo: {str(e)}") from e
 
     async def close(self):
-        await self._controller.write_single_register(self._motor_id, self._control_reg, 0x090B) 
+        await self._controller.write_single_register(self._motor_id, self._control_reg, 0x090B)
         await self.wait_for_servo()
 
-# Stepper motor controller (iCL-RS) 
+# Stepper motor controller (iCL-RS)
 class Motor():
     _motor_id: int
     _controller: SharedModbusController
@@ -237,7 +236,7 @@ class Motor():
 
     async def configure(self):
         """Configure the stepper motor with initial parameters.
-        
+
         Raises:
             MotorConfigError: If any configuration parameter fails to set
             MotorError: If communication with motor fails
@@ -251,7 +250,7 @@ class Motor():
                 ICL_RS_CONTROL_WORD_FUNCTIONS["RESET_CURRENT_ALARM"].value)
             await self.set_param("Control word",
                 ICL_RS_CONTROL_WORD_FUNCTIONS["RESET_HISTORY_ALARM"].value)
-            
+
             # Disable auto-homing to prevent blocking motion commands.
             await self.set_param("PR global control", 0b0000)
             # await self._controller.write_single_register(self._motor_id, 0x6000, 0x0000)
@@ -260,17 +259,17 @@ class Motor():
             STEPPER_BRAKE_RELEASE_DELAY_MS = 100
             STEPPER_BRAKE_LOCKED_DELAY_MS = 100
             STEPPER_THRESHOLD_VALUE_OF_BRAKE_LOCKING_VELOCITY = 10
-            await self.set_param("SO2 output function", 0xA1)          
-            await self.set_param("Delay of brake released", STEPPER_BRAKE_RELEASE_DELAY_MS)        
-            await self.set_param("Delay of brake locked", STEPPER_BRAKE_LOCKED_DELAY_MS)        
-            await self.set_param("Threshold value of brake locking velocity", STEPPER_THRESHOLD_VALUE_OF_BRAKE_LOCKING_VELOCITY)        
+            await self.set_param("SO2 output function", 0xA1)
+            await self.set_param("Delay of brake released", STEPPER_BRAKE_RELEASE_DELAY_MS)
+            await self.set_param("Delay of brake locked", STEPPER_BRAKE_LOCKED_DELAY_MS)
+            await self.set_param("Threshold value of brake locking velocity", STEPPER_THRESHOLD_VALUE_OF_BRAKE_LOCKING_VELOCITY)
 
             # await self._controller.write_single_register(self._motor_id, 0x0167, 100)
             # await self._controller.write_single_register(self._motor_id, 0x0169, 100)
             # await self._controller.write_single_register(self._motor_id, 0x016B, 10)
-            
+
             # Configure motor parameters
-            
+
             STEPPER_POSITION_LOOP_KP = 50
             STEPPER_MAX_STOP_TIME = 100
             max_following_error = getattr(self._params, "max_following_error", 4000)
@@ -280,7 +279,7 @@ class Motor():
             await self.set_param("Acceleration", self._params.accel)
             await self.set_param("Deceleration", self._params.accel)
             await self.set_param("Peak current", self._params.Ip)
-            
+
             # Configure movement parameters
             await self.move_config()
         except Exception as e:
@@ -310,12 +309,12 @@ class Motor():
     # TODO add axis limits
     async def move_to_position(self, value: float, rpm: Optional[int] = None, accel: Optional[int] = None) -> None:  # mm
         """Move the motor to an absolute position in millimeters.
-        
+
         Args:
             value: Target position in millimeters
             rpm: Optional velocity override in RPM
             accel: Optional acceleration/deceleration override in ms/1000rpm
-            
+
         Raises:
             MotorLimitError: If target position exceeds motor limits
             MotorError: If movement fails or times out
@@ -330,25 +329,25 @@ class Motor():
                 await self._safety.wait_clear()
             await self._start_absolute_move(value, rpm, accel)
             status = await self.wait_for_move(timeout=MOTOR_MOVE_TIMEOUT)
-            
+
             if status != MotorStatus.STOPPED:
                 raise MotorError(
                     f"Movement failed for motor {self._motor_id} (status={status.name})"
                 )
-                
+
         except Exception as e:
             if not isinstance(e, MotorError):
                 raise MotorError(f"Failed to move motor {self._motor_id} to position {value}mm: {str(e)}") from e
             raise
-    
+
     async def move_to_position_no_wait(self, value: float, rpm: Optional[int] = None, accel: Optional[int] = None) -> None:
         """Move motor to position without waiting for completion.
-        
+
         Args:
             value: Target position in millimeters
             rpm: Optional velocity override in RPM
             accel: Optional acceleration/deceleration override in ms/1000rpm
-            
+
         Raises:
             MotorLimitError: If target position exceeds motor limits
             MotorError: If movement setup fails
@@ -362,7 +361,7 @@ class Motor():
                     )
                 await self._safety.wait_clear()
             await self._start_absolute_move(value, rpm, accel)
-            
+
         except Exception as e:
             if not isinstance(e, (MotorError, MotorLimitError)):
                 raise MotorError(f"Failed to start movement to {value}mm: {str(e)}") from e
@@ -437,7 +436,7 @@ class Motor():
                 "accel": accel or self._params.accel,
             }
         )
-    
+
     async def move_config(self) -> None:
         """Configure motor movement parameters.
 
@@ -505,15 +504,15 @@ class Motor():
 
             pos_l = await self._controller.read_holding_registers(self._motor_id, reg_low)
             pos_h = await self._controller.read_holding_registers(self._motor_id, reg_high)
-            
+
             if pos_l is None or pos_h is None:
                 raise MotorError(f"Failed to read position registers for motor {self._motor_id}")
-            
+
             # Combine high and low position values
             pos = (pos_h << 16) | pos_l
             if not pos:
                 return 0.0
-                
+
             ppr = getattr(self._params, "ppr", 10000)
 
             physical_pos = (pos / ppr) * self._params.mpr
@@ -547,20 +546,20 @@ class Motor():
 
             self._cur_pos = logical_pos
             return logical_pos
-            
+
         except Exception as e:
             if not isinstance(e, MotorError):
                 raise MotorError(f"Failed to get position for motor {self._motor_id}: {str(e)}") from e
             raise
-    
+
     # TODO add guards on setters and getters
     async def set_param(self, register: str, value: int) -> None:
         """Set a motor parameter register.
-        
+
         Args:
             register: Name of the register to set
             value: Value to write to the register
-            
+
         Raises:
             MotorError: If parameter write fails
             ValueError: If register name is invalid
@@ -569,31 +568,31 @@ class Motor():
             reg_addr = motor_helpers.get_register_by_name(register)
             if reg_addr is None:
                 raise ValueError(f"Invalid register name: {register}")
-                
+
             await self._controller.write_single_register(
                 self._motor_id,
                 reg_addr,
                 value
             )
-            
+
             # if result is None:
             #     raise MotorError(f"Failed to write {value} to register {register}")
-                
+
         except Exception as e:
             if not isinstance(e, (MotorError, ValueError)):
                 raise MotorError(f"Failed to set parameter {register}: {str(e)}") from e
             raise
-    
+
     async def get_param(self, register: str) -> Optional[int]:
         """Get a motor parameter register value.
-        
+
         Args:
             register: Name of the register to read
-            
+
         Raises:
             MotorError: If parameter read fails
             ValueError: If register name is invalid
-            
+
         Returns:
             Register value as integer, or None if read fails
         """
@@ -601,31 +600,31 @@ class Motor():
             reg_addr = motor_helpers.get_register_by_name(register)
             if reg_addr is None:
                 raise ValueError(f"Invalid register name: {register}")
-                
+
             val = await self._controller.read_holding_registers(
-                self._motor_id, 
+                self._motor_id,
                 reg_addr
             )
-            
+
             if val is not None:
                 return int(val)
             raise MotorError(f"Failed to read register {register}")
-            
+
         except Exception as e:
             if not isinstance(e, (MotorError, ValueError)):
                 raise MotorError(f"Failed to get parameter {register}: {str(e)}") from e
             raise
-    
+
     async def wait_for_move(self, timeout: float = MOTOR_WAIT_TIMEOUT, homing: bool = False) -> MotorStatus:
         """Wait for motor movement to complete.
-        
+
         Args:
             timeout: Maximum time to wait in seconds
-            
+
         Raises:
             MotorTimeoutError: If movement takes longer than timeout
             MotorError: If motor status read fails or motor faults
-            
+
         Returns:
             MotorStatus indicating final state
         """
@@ -689,7 +688,7 @@ class Motor():
 
             elif last_movement_time is None:
                 last_movement_time = now  # initialize once
-            
+
             last_pos = self._cur_pos
 
             # Normal completion - only accept if motor moved or enough time passed
@@ -731,7 +730,7 @@ class Motor():
                     }
                 )
                 return MotorStatus.STOPPED
-            
+
             # Crash/alarm detection (follow-error, hardstop stall)
             # alarm_code 32 (0x20) means "stopped at limit" during homing, but collision during normal moves
             # only treat alarm_code 32 as collision if motor has actually started moving (not stale from previous op)
@@ -880,22 +879,22 @@ class Motor():
                 await self.set_param("Velocity", self._params.ret_rpm)
             except Exception as e:
                 raise MotorConfigError(f"Failed to configure homing parameters: {str(e)}") from e
-            
+
             try:
                 # Start homing movement
                 await self._controller.write_single_register(
-                    self._motor_id, 
+                    self._motor_id,
                     motor_helpers.TRIGGER,
                     0x10  # start path 0
                 )
-                
+
                 self._status = MotorStatus.MOVING
             except Exception as e:
                 raise MotorError(f"Failed to start homing movement: {str(e)}") from e
 
             # Wait for homing to complete (longer timeout for homing)
             stop = await self.wait_for_move(timeout=MOTOR_HOME_TIMEOUT, homing=True)
-            
+
             if stop == MotorStatus.STOPPED:
                 try:
                     # Set current position as zero
@@ -906,19 +905,19 @@ class Motor():
                     )
                 except Exception as e:
                     raise MotorError(f"Failed to set home position as zero: {str(e)}") from e
-                
+
                 # Reconfigure for normal movement
                 await self.move_config()
             elif stop == MotorStatus.FAULT:
                 raise MotorError(f"Motor {self._motor_id} faulted during homing")
             else:
                 raise MotorTimeoutError(f"Motor {self._motor_id} homing timed out")
-                
+
         except Exception as e:
             if not isinstance(e, (MotorError, MotorConfigError, MotorTimeoutError)):
                 raise MotorError(f"Unexpected error during homing: {str(e)}") from e
             raise
-    
+
     async def jog(self, dist: float) -> MotorStatus:
         """Move the motor by a relative distance.
 
@@ -937,7 +936,7 @@ class Motor():
 
             ppr = getattr(self._params, "ppr", 10000)
             pulse = motor_helpers.rev_to_pulse(motor_helpers.mm_to_rev(physical_dist, self._params.mpr), ppr)
-            
+
             # Configure for relative movement
             await self.set_param("Control word", 0x1111)  # clear alarm if any
             await self.set_param("Control word", 0x1122)  # clear alarm if any
@@ -948,21 +947,21 @@ class Motor():
             await self.set_param("Deceleration", self._params.accel)
             await self.set_param("Position High", pulse[0])
             await self.set_param("Position Low", pulse[1])
-            
+
             # Start movement
             await self._controller.write_single_register(
-                self._motor_id, 
+                self._motor_id,
                 motor_helpers.TRIGGER,
                 0x10  # start path 0
             )
-            
+
             # Wait for completion
             result = await self.wait_for_move(timeout=MOTOR_JOG_TIMEOUT, homing=True)
             if result != MotorStatus.STOPPED:
                 raise MotorError(f"Relative move failed (status={result.name})")
             await self.move_config()
             return MotorStatus.STOPPED
-            
+
         except Exception as e:
             if not isinstance(e, (MotorError, MotorTimeoutError)):
                 raise MotorError(f"Relative move failed: {str(e)}") from e

@@ -1,9 +1,11 @@
 import csv
 import inspect
 from enum import Enum
-from typing import Any, Union, Dict
+from typing import Any, Union, Dict, Type
 from pydantic import (BaseModel, ValidationError, Field, field_validator,
-  model_validator)
+  model_validator, create_model)
+from pydantic.dataclasses import dataclass as pydantic_dataclass
+import copy
 
 class Register(BaseModel):
     # This field will accept a standard int, or a hex string, and store it as an int
@@ -41,6 +43,27 @@ class Register(BaseModel):
         raise ValueError("Register's min must be less than its max")
       return self
 
+def create_pydantic_model(register:Register, type:Type):
+  type_str = register.type
+  if type_str == 'int':
+    model = create_model('model',
+      value = (int, Field(ge=register.min, le=register.max)),
+    )
+    return model
+  if type_str == 'bool':
+    model = create_model('model',
+      value = bool,
+    )
+    return model
+  if issubclass(type, Enum):
+    model = create_model('model',
+      value = type,
+    )
+    return model
+  else:
+    pydantic_type = pydantic_dataclass(type)
+    return pydantic_type
+
 def csv_to_registers(filename:str) -> Union[list[Register], None]:
   with open(filename, mode='r', encoding='utf-8') as csvfile:
     dict_reader = csv.DictReader(csvfile)
@@ -53,7 +76,14 @@ def csv_to_registers(filename:str) -> Union[list[Register], None]:
     ]
     if list_of_dicts != None:
       try:
-        register_descriptions = [Register(**dict) for dict in list_of_dicts]
+        register_descriptions = [Register(address = d['address'],
+                                          name = d['name'],
+                                          min = d['min'],
+                                          max = d['max'],
+                                          unit = d['unit'],
+                                          description = d['description'],
+                                          type = d['type'])
+                                for d in list_of_dicts]
         return register_descriptions
       except ValidationError as e:
         print(f'Error importing csv: {e}')
@@ -74,6 +104,7 @@ class DeviceRegisters():
   def __init__(self, registers: Union[list[Register], None], types: Union[list, None]):
     self.registers = registers
     self.types = types
+    self.types.extend([int, bool])
     self.name_type_mapping = {type.__name__:type for type in types}
     for type in types:
       if issubclass(type, Enum):
@@ -95,117 +126,89 @@ class DeviceRegisters():
     register = next((d for d in self.registers if d.address == address), None)
     return register
 
-  def translate_to_address_value(self, name: str, value: Any) -> tuple[int, int]|tuple[None,None]:
+  def encode(self, name: str, value: Any) -> tuple[int, int]|tuple[None,None]:
     register = self.get_register_by_name(name)
-    BOOL_MAP = {
-        'true': True,
-        'false': False,
-        'yes': True,
-        'no': False,
-        '1': True,
-        '0': False,
-    }
     if register == None:
       return (None, None)
     address = register.address
-
-    if register.type == 'int':
-      min = register.min
-      max = register.max
-      if not self._is_value_in_range(value, min, max):
-        raise ValueError("Value not in the register's valid range")
-      return (address, value)
-
-    if register.type == 'bool':
-
-      if isinstance(value, int):
-        bool_value = bool(value)
-        value = int(bool_value)
-      if isinstance(value, bool):
-        value = int(value)
-      if isinstance(value, str):
-        try:
-          value = int(BOOL_MAP[value])
-        except KeyError:
-          raise ValueError("Invalid value for bool-type")
-      return (address, value)
-
-    # if register.type == 'BaudRate':
-    #   value = BaudRate(**value).value
-    #   return (address, value)
-
-    if type(value) == dict:
-      print('dict')
-      register_type = register.type
-      MyClass = self.name_type_mapping[register_type]
-      for k,v in value.items():
-        if isinstance(v, str):
-          try:
-            value[k] = BOOL_MAP[v.lower()]
-            continue
-          except KeyError as e:
-            pass
-          try:
-            value[k] = self.name_type_mapping[v]
-          except:
-            value[k] = v
-      instance = MyClass(**value)
-      value = instance.value
-      return (address, value)
-
+    # Pre-process values
     if isinstance(value, str):
-      if value in self.name_type_mapping:
-        value = self.name_type_mapping[value]
-        if type(value).__name__ == register.type:
-          return (address, value.value)
-        else:
-          raise TypeError("Value's type is invalid")
-      else:
-        raise TypeError("Value's type is invalid")
-
-
-    if type(value) in self.types:
+      value = self.name_type_mapping[value]
+    if type(value) == dict:
+      value_copy = copy.deepcopy(value)
+      for k,v in value_copy.items():
+        try:
+          value_copy[k] = self.name_type_mapping[v]
+        except:
+          pass
+      value = value_copy
+    # Create validator
+    _type = self.name_type_mapping[register.type]
+    validator = create_pydantic_model(register, _type)
+    # Apply validation
+    if type(value) in self.types and type(value) not in [int, bool]:
       if type(value).__name__ == register.type:
-        return (address, value.value)
-      else:
-        raise TypeError("Value's type is invalid")
+        validated_value = value.value
+    if type(value) == dict:
+      validated_value = validator(**value).value
     else:
-      raise TypeError("Value's type is invalid")
+      validated_value = validator(value = value).value
 
-  def translate_from(self, address:int, value:int) -> tuple[str, Any]:
+    return (address, validated_value)
+
+  def decode(self, address:int, value:int) -> Dict[str, Any]:
     register = self.get_register_by_address(address)
-    register_type = self.name_type_mapping[register.type]
-    typed_value = register_type(value)
-    return typed_value
-
-  def to_json_dict(self, address:int, value:int) -> Dict:
-    register = self.get_register_by_address(address)
-    response_dict = {
-      'address': register.address,
-      'address': register.address,
-      'value': value,
-      'name': register.name,
-      'unit': register.unit,
-    }
-
     if register.type == 'int':
-      response_dict['readable'] = f'{register.name} = {value} {register.unit}'
-      return response_dict
-
+      decode_dict = {
+        register.name: value,
+      }
+      return decode_dict
     if register.type == 'bool':
-      response_dict['readable'] = f'{register.name} = {bool(value)}'
-      return response_dict
+      decode_dict = {
+        register.name: bool(value),
+      }
+      return decode_dict
+    type = self.name_type_mapping[register.type]
+    if type in self.types:
+      if issubclass(type, Enum):
+        enum_str = self._enum_to_string(type(value))
+        decode_dict = {
+          register.name: enum_str,
+        }
+        return decode_dict
+      else:
+        fields = vars(type(value = value))
+        del fields['value']
+        for name, value in fields.items():
+          if isinstance(value, Enum):
+            fields[name] = self._enum_to_string(value)
+        decode_dict = {
+          register.name: fields,
+        }
+        return decode_dict
 
+  def readable(self, address:int, value:int) -> str:
+    register = self.get_register_by_address(address)
+    if register.type == 'int':
+      readable = f'{register.name} = {value} {register.unit}'
+      return readable
+    if register.type == 'bool':
+      readable = f'{register.name} = {bool(value)}'
+      return readable
     type = self.name_type_mapping[register.type]
     if type in self.types:
       if issubclass(type, Enum):
         typed_value = type(value)
-        response_dict['readable'] = f'{register.name} = {typed_value.name.lower().replace('_',' ')}'
-        return response_dict
+        readable = f'{register.name} = {typed_value.name.lower().replace('_',' ')}'
+        return readable
       else:
         typed_value = type(value = value)
-        response_dict['readable'] = f'{register.name} = {typed_value}'
-        return response_dict
+        readable = f'{register.name} = {typed_value}'
+        return readable
+
+  def _enum_to_string(self, value):
+    enum_value = repr(value).replace('<','').replace('>','').split(':')[0]
+    return enum_value
 
   def _is_value_in_range(self, value, min, max):
     if min <= value and value <= max:

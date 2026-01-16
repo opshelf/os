@@ -78,8 +78,8 @@ address,name,default value,unit,description,type,min,max
 0x6010,homing low velocity,,rpm,The 2nd segment velocity of homing,int,0,65535
 0x6011,homing acceleration,,ms/1000rpm,Homing acceleration,int,0,65535
 0x6012,homing deceleration,,ms/1000rpm,Homing deceleration,int,0,65535
-0x6013,"torque zero, return time",,ms,Torque retention time for torque zero return,int,0,65535
-0x6014,"torque zero, return value",,%,"The force value of torque zero return mode, the step is the set current percentage",int,0,65535
+0x6013,torque zero return time,,ms,Torque retention time for torque zero return,int,0,65535
+0x6014,torque zero return value,,%,"The force value of torque zero return mode, the step is the set current percentage",int,0,65535
 0x6015,homing over-travel,,,"If value is set, the motor strops when it reaches this set distance even if homing is not completed",int,0,65535
 0x6016,soft limit quick stop time,,ms,Deceleration time after triggering the soft limit,int,0,65535
 0x6017,stop time,,ms,Deceleration time after quick stop,int,0,65535
@@ -91,3 +91,27 @@ address,name,default value,unit,description,type,min,max
 0x6205,path 0 deceleration,,ms/1000rpm,,int,0,65535
 0x6206,path 0 pause time,,,,int,0,65535
 0x6207,path 0 special parameter,,,,int,0,65535
+0x6208,path 1 settings,,,,PathSettings,0,65535
+0x6209,path 1 position (high bits),,,,int,0,65535
+0x620A,path 1 position (low bits),,,,int,0,65535
+0x620B,path 1 velocity,,rpm,,int,0,65535
+0x620C,path 1 acceleration,,ms/1000rpm,,int,0,65535
+0x620D,path 1 deceleration,,ms/1000rpm,,int,0,65535
+0x620E,path 1 pause time,,,,int,0,65535
+0x620F,path 1 special parameter,,,,int,0,65535
+0x6210,path 2 settings,,,,PathSettings,0,65535
+0x6211,path 2 position (high bits),,,,int,0,65535
+0x6212,path 2 position (low bits),,,,int,0,65535
+0x6213,path 2 velocity,,rpm,,int,0,65535
+0x6214,path 2 acceleration,,ms/1000rpm,,int,0,65535
+0x6215,path 2 deceleration,,ms/1000rpm,,int,0,65535
+0x6216,path 2 pause time,,,,int,0,65535
+0x6217,path 2 special parameter,,,,int,0,65535
+0x6218,path 3 settings,,,,PathSettings,0,65535
+0x6219,path 3 position (high bits),,,,int,0,65535
+0x621A,path 3 position (low bits),,,,int,0,65535
+0x621B,path 3 velocity,,rpm,,int,0,65535
+0x621C,path 3 acceleration,,ms/1000rpm,,int,0,65535
+0x621D,path 3 deceleration,,ms/1000rpm,,int,0,65535
+0x621E,path 3 pause time,,,,int,0,65535
+0x621F,path 3 special parameter,,,,int,0,65535

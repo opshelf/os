@@ -64,9 +64,9 @@ motor_registers = [
     (0x0157, "Pr4.11", "SO1 output function", "DO1 output config", "0-65535", 0, "--"),
     (0x0159, "Pr4.12", "SO2 output function", "DO2 output config", "0-65535", 0, "--"),
     (0x015B, "Pr4.13", "SO3 output function", "DO3 output config", "0-65535", 0, "--"),
-    (0x0167, "Pr4.19", "Delay of brake released", "Keep default normally", "0-1500", 250, "ms")
-    (0x0169, "Pr4.20", "Delay of brake locked", "Keep default normally", "0-1500", 250, "ms")
-    (0x016B, "Pr4.21", "Threshold value of brake locking velocity", "Keep default normally", "0-500", 10, "ms")
+    (0x0167, "Pr4.19", "Delay of brake released", "Keep default normally", "0-1500", 250, "ms"),
+    (0x0169, "Pr4.20", "Delay of brake locked", "Keep default normally", "0-1500", 250, "ms"),
+    (0x016B, "Pr4.21", "Threshold value of brake locking velocity", "Keep default normally", "0-500", 10, "ms"),
 
     (0x016D, "Pr4.22", "Alarm detection", "Bitmask of active alarm types", "0-65535", 0, "--"),
     (0x0171, "Pr4.24", "In-position pulse threshold", "Distance for in-position signal", "0-1500", 200, "CPR"),

@@ -1,15 +1,6 @@
-'''
-Tests in ./tests/test_iclrs_parameters.py
-'''
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Union, ClassVar
-
-class ModbusErrorCode(IntEnum):
-  INVALID_FUNCTION_CODE = 0x01
-  INVALID_ADDRESS = 0x02
-  INVALID_DATA = 0x03
-  INVALID_CRC = 0x08
 
 # Control mode
 class ControlMode(IntEnum):
@@ -272,7 +263,6 @@ class AlarmCode(IntEnum):
 @dataclass
 class Alarm():
   code: AlarmCode = field(init=False)
-  troubleshooting: str = field(init=False)
   value: int
   ALARM_MAP: ClassVar[dict] = {
   AlarmCode.OVER_CURRENT: ('Restart the controller. '
@@ -291,10 +281,9 @@ class Alarm():
   }
   def __post_init__(self):
     self.code = AlarmCode(self.value)
-    self.troubleshooting = self.ALARM_MAP[self.code]
   def __str__(self):
     alarm_name = self.code.name.lower().replace('_', ' ')
-    text = f'{alarm_name}. To troubleshoot: {self.troubleshooting}'
+    text = f'{alarm_name}. To troubleshoot: {self.ALARM_MAP[self.code]}'
     return text
 
 # Path control register
@@ -398,13 +387,13 @@ class PathCoordinate(IntEnum):
 
 @dataclass
 class PathSettings():
-  mode: PathOperationMode = None
-  enable_interrupt: bool = None
-  enable_overlap: bool = None
-  coordinate: PathCoordinate = None
-  jump_to: int = None
-  enable_jump: bool = None
   value: int = None
+  mode: PathOperationMode = PathOperationMode.NO_ACTION
+  enable_interrupt: bool = False
+  enable_overlap: bool = False
+  coordinate: PathCoordinate = PathCoordinate.ABSOLUTE
+  jump_to: int = 0
+  enable_jump: bool = False
   def __post_init__(self):
     if self.value == None:
       self.value = (self.enable_jump << 14 |
