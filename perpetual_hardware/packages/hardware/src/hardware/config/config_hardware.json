@@ -19,15 +19,15 @@
             "Max stop time": 100,
             "Path 0 settings": {
                 "mode": "PathOperationMode.POSITION_MODE",
-                "enable_interrupt": "False",
+                "enable_interrupt": false,
                 "enable_overlapping": "False",
                 "coordinate": "PathCoordinate.ABSOLUTE",
                 "jump_to": 0,
-                "enable_jump": "False"
+                "enable_jump": false
             },
             "Path 0 velocity": 2000,
-            "Path 0 acceleration": 750, 
-            "Path 0 deceleration": 750, 
+            "Path 0 acceleration": 750,
+            "Path 0 deceleration": 750,
             "Peak current": 16,
             "Motor direction": "MotorDirection.CCW",
             "Homing high velocity": 500,

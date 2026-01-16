@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field, Optional, List
 from enum import IntEnum
-from iclrs_parameters import (ControlWord, ControlWordFunction, 
+from perpetual_hardware.packages.hardware.src.hardware.iclrs_register_types import (ControlWord, ControlWordFunction,
     PathGlobalControl, DigitalOutputSettings, DigitalOutputFunction, DigitalInputOutputMode)
 from typing import Any, Dict
 
@@ -13,7 +13,7 @@ class IclRsStatus(IntEnum):
     TIMEOUT = 5
 
 initial_parameters = {
-    "initial_device_registers": { 
+    "initial_device_registers": {
         "SO2": {
             "function": DigitalOutputFunction.PATH_COMPLETE,
             "mode": DigitalInputOutputMode.NORMALLY_OPENED
@@ -26,7 +26,7 @@ initial_parameters = {
         'Max stop time': 100, #[ms]
         'Path 0 acceleration': 500, #[ms/1000rpm]
         'Path 0 deceleration': 500, #[ms/1000rpm]
-        'Peak current': 
+        'Peak current':
 
     }
 }
@@ -48,7 +48,7 @@ class IclRs():
         self._motor_id = motor_id
         self._params = params
         self._status = IclRsStatus.IDLE
- 
+
         # self._controller = controller
         # self._cur_pos = None
         # self._stall_timeout = STEPPER_STALL_TIMEOUT_S
@@ -60,7 +60,7 @@ class IclRs():
 
     async def configure(self):
         """Configure the stepper motor with initial parameters.
-        
+
         Raises:
             MotorConfigError: If any configuration parameter fails to set
             MotorError: If communication with motor fails
@@ -77,10 +77,10 @@ class IclRs():
             # STEPPER_BRAKE_RELEASE_DELAY_MS = 100
             # STEPPER_BRAKE_LOCKED_DELAY_MS = 100
             # STEPPER_THRESHOLD_VALUE_OF_BRAKE_LOCKING_VELOCITY = 10
-            # await self.set_param("SO2 output function", 0xA1)          
-            # await self.set_param("Delay of brake released", STEPPER_BRAKE_RELEASE_DELAY_MS)        
-            # await self.set_param("Delay of brake locked", STEPPER_BRAKE_LOCKED_DELAY_MS)        
-            # await self.set_param("Threshold value of brake locking velocity", STEPPER_THRESHOLD_VALUE_OF_BRAKE_LOCKING_VELOCITY)        
+            # await self.set_param("SO2 output function", 0xA1)
+            # await self.set_param("Delay of brake released", STEPPER_BRAKE_RELEASE_DELAY_MS)
+            # await self.set_param("Delay of brake locked", STEPPER_BRAKE_LOCKED_DELAY_MS)
+            # await self.set_param("Threshold value of brake locking velocity", STEPPER_THRESHOLD_VALUE_OF_BRAKE_LOCKING_VELOCITY)
 
             self._logger.info("Configure motor",
                 extra={"motor_id": self._motor_id, "limit_mm": self._params.lim},
@@ -98,17 +98,17 @@ class IclRs():
             STEPPER_BRAKE_RELEASE_DELAY_MS = 100
             STEPPER_BRAKE_LOCKED_DELAY_MS = 100
             STEPPER_THRESHOLD_VALUE_OF_BRAKE_LOCKING_VELOCITY = 10
-            await self.set_param("SO2 output function", 0xA1)          
-            await self.set_param("Delay of brake released", STEPPER_BRAKE_RELEASE_DELAY_MS)        
-            await self.set_param("Delay of brake locked", STEPPER_BRAKE_LOCKED_DELAY_MS)        
-            await self.set_param("Threshold value of brake locking velocity", STEPPER_THRESHOLD_VALUE_OF_BRAKE_LOCKING_VELOCITY)        
+            await self.set_param("SO2 output function", 0xA1)
+            await self.set_param("Delay of brake released", STEPPER_BRAKE_RELEASE_DELAY_MS)
+            await self.set_param("Delay of brake locked", STEPPER_BRAKE_LOCKED_DELAY_MS)
+            await self.set_param("Threshold value of brake locking velocity", STEPPER_THRESHOLD_VALUE_OF_BRAKE_LOCKING_VELOCITY)
 
             # await self._controller.write_single_register(self._motor_id, 0x0167, 100)
             # await self._controller.write_single_register(self._motor_id, 0x0169, 100)
             # await self._controller.write_single_register(self._motor_id, 0x016B, 10)
-            
+
             # Configure motor parameters
-            
+
             STEPPER_POSITION_LOOP_KP = 50
             STEPPER_MAX_STOP_TIME = 100
             max_following_error = getattr(self._params, "max_following_error", 4000)
@@ -118,7 +118,7 @@ class IclRs():
             await self.set_param("Acceleration", self._params.accel)
             await self.set_param("Deceleration", self._params.accel)
             await self.set_param("Peak current", self._params.Ip)
-            
+
             # Configure movement parameters
             await self.move_config()
         except Exception as e:
@@ -148,12 +148,12 @@ class IclRs():
     # # TODO add axis limits
     # async def move_to_position(self, value: float, rpm: Optional[int] = None, accel: Optional[int] = None) -> None:  # mm
     #     """Move the motor to an absolute position in millimeters.
-        
+
     #     Args:
     #         value: Target position in millimeters
     #         rpm: Optional velocity override in RPM
     #         accel: Optional acceleration/deceleration override in ms/1000rpm
-            
+
     #     Raises:
     #         MotorLimitError: If target position exceeds motor limits
     #         MotorError: If movement fails or times out
@@ -168,25 +168,25 @@ class IclRs():
     #             await self._safety.wait_clear()
     #         await self._start_absolute_move(value, rpm, accel)
     #         status = await self.wait_for_move(timeout=MOTOR_MOVE_TIMEOUT)
-            
+
     #         if status != MotorStatus.STOPPED:
     #             raise MotorError(
     #                 f"Movement failed for motor {self._motor_id} (status={status.name})"
     #             )
-                
+
     #     except Exception as e:
     #         if not isinstance(e, MotorError):
     #             raise MotorError(f"Failed to move motor {self._motor_id} to position {value}mm: {str(e)}") from e
     #         raise
-    
+
     # async def move_to_position_no_wait(self, value: float, rpm: Optional[int] = None, accel: Optional[int] = None) -> None:
     #     """Move motor to position without waiting for completion.
-        
+
     #     Args:
     #         value: Target position in millimeters
     #         rpm: Optional velocity override in RPM
     #         accel: Optional acceleration/deceleration override in ms/1000rpm
-            
+
     #     Raises:
     #         MotorLimitError: If target position exceeds motor limits
     #         MotorError: If movement setup fails
@@ -200,7 +200,7 @@ class IclRs():
     #                 )
     #             await self._safety.wait_clear()
     #         await self._start_absolute_move(value, rpm, accel)
-            
+
     #     except Exception as e:
     #         if not isinstance(e, (MotorError, MotorLimitError)):
     #             raise MotorError(f"Failed to start movement to {value}mm: {str(e)}") from e
@@ -275,7 +275,7 @@ class IclRs():
     #             "accel": accel or self._params.accel,
     #         }
     #     )
-    
+
     async def move_config(self) -> None:
         """Configure motor movement parameters.
 
@@ -343,15 +343,15 @@ class IclRs():
 
     #         pos_l = await self._controller.read_holding_registers(self._motor_id, reg_low)
     #         pos_h = await self._controller.read_holding_registers(self._motor_id, reg_high)
-            
+
     #         if pos_l is None or pos_h is None:
     #             raise MotorError(f"Failed to read position registers for motor {self._motor_id}")
-            
+
     #         # Combine high and low position values
     #         pos = (pos_h << 16) | pos_l
     #         if not pos:
     #             return 0.0
-                
+
     #         ppr = getattr(self._params, "ppr", 10000)
 
     #         physical_pos = (pos / ppr) * self._params.mpr
@@ -385,20 +385,20 @@ class IclRs():
 
     #         self._cur_pos = logical_pos
     #         return logical_pos
-            
+
     #     except Exception as e:
     #         if not isinstance(e, MotorError):
     #             raise MotorError(f"Failed to get position for motor {self._motor_id}: {str(e)}") from e
     #         raise
-    
+
     # # TODO add guards on setters and getters
     # async def set_param(self, register: str, value: int) -> None:
     #     """Set a motor parameter register.
-        
+
     #     Args:
     #         register: Name of the register to set
     #         value: Value to write to the register
-            
+
     #     Raises:
     #         MotorError: If parameter write fails
     #         ValueError: If register name is invalid
@@ -407,31 +407,31 @@ class IclRs():
     #         reg_addr = motor_helpers.get_register_by_name(register)
     #         if reg_addr is None:
     #             raise ValueError(f"Invalid register name: {register}")
-                
+
     #         await self._controller.write_single_register(
     #             self._motor_id,
     #             reg_addr,
     #             value
     #         )
-            
+
     #         # if result is None:
     #         #     raise MotorError(f"Failed to write {value} to register {register}")
-                
+
     #     except Exception as e:
     #         if not isinstance(e, (MotorError, ValueError)):
     #             raise MotorError(f"Failed to set parameter {register}: {str(e)}") from e
     #         raise
-    
+
     # async def get_param(self, register: str) -> Optional[int]:
     #     """Get a motor parameter register value.
-        
+
     #     Args:
     #         register: Name of the register to read
-            
+
     #     Raises:
     #         MotorError: If parameter read fails
     #         ValueError: If register name is invalid
-            
+
     #     Returns:
     #         Register value as integer, or None if read fails
     #     """
@@ -439,31 +439,31 @@ class IclRs():
     #         reg_addr = motor_helpers.get_register_by_name(register)
     #         if reg_addr is None:
     #             raise ValueError(f"Invalid register name: {register}")
-                
+
     #         val = await self._controller.read_holding_registers(
-    #             self._motor_id, 
+    #             self._motor_id,
     #             reg_addr
     #         )
-            
+
     #         if val is not None:
     #             return int(val)
     #         raise MotorError(f"Failed to read register {register}")
-            
+
     #     except Exception as e:
     #         if not isinstance(e, (MotorError, ValueError)):
     #             raise MotorError(f"Failed to get parameter {register}: {str(e)}") from e
     #         raise
-    
+
     # async def wait_for_move(self, timeout: float = MOTOR_WAIT_TIMEOUT, homing: bool = False) -> MotorStatus:
     #     """Wait for motor movement to complete.
-        
+
     #     Args:
     #         timeout: Maximum time to wait in seconds
-            
+
     #     Raises:
     #         MotorTimeoutError: If movement takes longer than timeout
     #         MotorError: If motor status read fails or motor faults
-            
+
     #     Returns:
     #         MotorStatus indicating final state
     #     """
@@ -527,7 +527,7 @@ class IclRs():
 
     #         elif last_movement_time is None:
     #             last_movement_time = now  # initialize once
-            
+
     #         last_pos = self._cur_pos
 
     #         # Normal completion - only accept if motor moved or enough time passed
@@ -569,7 +569,7 @@ class IclRs():
     #                 }
     #             )
     #             return MotorStatus.STOPPED
-            
+
     #         # Crash/alarm detection (follow-error, hardstop stall)
     #         # alarm_code 32 (0x20) means "stopped at limit" during homing, but collision during normal moves
     #         # only treat alarm_code 32 as collision if motor has actually started moving (not stale from previous op)
@@ -718,22 +718,22 @@ class IclRs():
     #             await self.set_param("Velocity", self._params.ret_rpm)
     #         except Exception as e:
     #             raise MotorConfigError(f"Failed to configure homing parameters: {str(e)}") from e
-            
+
     #         try:
     #             # Start homing movement
     #             await self._controller.write_single_register(
-    #                 self._motor_id, 
+    #                 self._motor_id,
     #                 motor_helpers.TRIGGER,
     #                 0x10  # start path 0
     #             )
-                
+
     #             self._status = MotorStatus.MOVING
     #         except Exception as e:
     #             raise MotorError(f"Failed to start homing movement: {str(e)}") from e
 
     #         # Wait for homing to complete (longer timeout for homing)
     #         stop = await self.wait_for_move(timeout=MOTOR_HOME_TIMEOUT, homing=True)
-            
+
     #         if stop == MotorStatus.STOPPED:
     #             try:
     #                 # Set current position as zero
@@ -744,19 +744,19 @@ class IclRs():
     #                 )
     #             except Exception as e:
     #                 raise MotorError(f"Failed to set home position as zero: {str(e)}") from e
-                
+
     #             # Reconfigure for normal movement
     #             await self.move_config()
     #         elif stop == MotorStatus.FAULT:
     #             raise MotorError(f"Motor {self._motor_id} faulted during homing")
     #         else:
     #             raise MotorTimeoutError(f"Motor {self._motor_id} homing timed out")
-                
+
     #     except Exception as e:
     #         if not isinstance(e, (MotorError, MotorConfigError, MotorTimeoutError)):
     #             raise MotorError(f"Unexpected error during homing: {str(e)}") from e
     #         raise
-    
+
     # async def jog(self, dist: float) -> MotorStatus:
     #     """Move the motor by a relative distance.
 
@@ -775,7 +775,7 @@ class IclRs():
 
     #         ppr = getattr(self._params, "ppr", 10000)
     #         pulse = motor_helpers.rev_to_pulse(motor_helpers.mm_to_rev(physical_dist, self._params.mpr), ppr)
-            
+
     #         # Configure for relative movement
     #         await self.set_param("Control word", 0x1111)  # clear alarm if any
     #         await self.set_param("Control word", 0x1122)  # clear alarm if any
@@ -786,21 +786,21 @@ class IclRs():
     #         await self.set_param("Deceleration", self._params.accel)
     #         await self.set_param("Position High", pulse[0])
     #         await self.set_param("Position Low", pulse[1])
-            
+
     #         # Start movement
     #         await self._controller.write_single_register(
-    #             self._motor_id, 
+    #             self._motor_id,
     #             motor_helpers.TRIGGER,
     #             0x10  # start path 0
     #         )
-            
+
     #         # Wait for completion
     #         result = await self.wait_for_move(timeout=MOTOR_JOG_TIMEOUT, homing=True)
     #         if result != MotorStatus.STOPPED:
     #             raise MotorError(f"Relative move failed (status={result.name})")
     #         await self.move_config()
     #         return MotorStatus.STOPPED
-            
+
     #     except Exception as e:
     #         if not isinstance(e, (MotorError, MotorTimeoutError)):
     #             raise MotorError(f"Relative move failed: {str(e)}") from e

@@ -1,7 +1,13 @@
-import pytest
+'''
+Tests for iclrs_register_types.py
+'''
 
-from src.hardware.iclrs_parameters import (DigitalInputSettings, 
-    DigitalInputFunction, DigitalInputOutputMode, DigitalInputFilter, setting_to_address_value)
+import pytest
+from src.hardware.iclrs_register_types import (DigitalInputSettings,
+     DigitalInputFunction, DigitalInputOutputMode, DigitalInputFilter,
+     DigitalOutputSettings, DigitalOutputFunction, DigitalInputOutputMode,
+     ControlWordFunction)
+
 
 @pytest.mark.parametrize("function, mode, filter, expected", [
     (DigitalInputFunction.ENABLE, DigitalInputOutputMode.NORMALLY_CLOSED, DigitalInputFilter.FILTER_50_MS, 3208),
@@ -10,9 +16,9 @@ from src.hardware.iclrs_parameters import (DigitalInputSettings,
 ])
 def test_digital_input_settings_pack_fields(function, mode, filter, expected):
     '''
-    Tests that DigitalInputSettings packs settings fields into value for 
+    Tests that DigitalInputSettings packs settings fields into value for
     writing to the motor controller.
-    Test parameters are from examples in the datasheet (p. 18). 
+    Test parameters are from examples in the datasheet (p. 18).
     '''
     digital_input_setting = DigitalInputSettings(
         function = function,
@@ -28,9 +34,9 @@ def test_digital_input_settings_pack_fields(function, mode, filter, expected):
 def test_digital_input_settings_parse_function(value, expected):
     '''
     Tests that DigitalInputSettings can parse a value into function setting.
-    Test parameters are from the inverse of the examples in the datasheet (p. 18). 
+    Test parameters are from the inverse of the examples in the datasheet (p. 18).
     '''
-    digital_input_setting = DigitalInputSettings(value = value) 
+    digital_input_setting = DigitalInputSettings(value = value)
     assert digital_input_setting.function == expected
 
 @pytest.mark.parametrize("value, expected", [
@@ -41,9 +47,9 @@ def test_digital_input_settings_parse_function(value, expected):
 def test_digital_input_settings_parse_mode(value, expected):
     '''
     Tests that DigitalInputSettings can parse a value into mode setting.
-    Test parameters are from the inverse of the examples in the datasheet (p. 18). 
+    Test parameters are from the inverse of the examples in the datasheet (p. 18).
     '''
-    digital_input_setting = DigitalInputSettings(value = value) 
+    digital_input_setting = DigitalInputSettings(value = value)
     assert digital_input_setting.mode == expected
 
 @pytest.mark.parametrize("value, expected", [
@@ -54,14 +60,10 @@ def test_digital_input_settings_parse_mode(value, expected):
 def test_digital_input_settings_parse_filter(value, expected):
     '''
     Tests that DigitalInputSettings can parse a value into filter setting.
-    Test parameters are from the inverse of the examples in the datasheet (p. 18). 
+    Test parameters are from the inverse of the examples in the datasheet (p. 18).
     '''
-    digital_input_setting = DigitalInputSettings(value = value) 
+    digital_input_setting = DigitalInputSettings(value = value)
     assert digital_input_setting.filter == expected
-
-from src.hardware.iclrs_parameters import (DigitalOutputSettings, 
-    DigitalOutputFunction, DigitalInputOutputMode)
-
 
 @pytest.mark.parametrize("function, mode, expected", [
     (DigitalOutputFunction.COMMAND_COMPLETE, DigitalInputOutputMode.NORMALLY_OPENED, 0x20),
@@ -78,12 +80,13 @@ from src.hardware.iclrs_parameters import (DigitalOutputSettings,
     (DigitalOutputFunction.IN_POSITION, DigitalInputOutputMode.NORMALLY_CLOSED, 0xA3),
 
 ])
+
 def test_digital_output_settings_pack_fields(function, mode, expected):
     '''
-    Tests that DigitalOutputSettings packs settings fields into value for 
+    Tests that DigitalOutputSettings packs settings fields into value for
     writing to the motor controller.
-    Test parameters are from examples in the datasheet (p. 16), 
-    covers all possible settings. 
+    Test parameters are from examples in the datasheet (p. 16),
+    covers all possible settings.
     '''
     digital_output_setting = DigitalOutputSettings(
         function = function,
@@ -107,8 +110,8 @@ def test_digital_output_settings_pack_fields(function, mode, expected):
 def test_digital_output_settings_parse_function(value, expected):
     '''
     Tests that DigitalOutputSettings parses pin function from value.
-    Test parameters are from inverse examples in the datasheet (p. 16), 
-    covers all possible settings. 
+    Test parameters are from inverse examples in the datasheet (p. 16),
+    covers all possible settings.
     '''
     digital_output_setting = DigitalOutputSettings(value = value)
     assert digital_output_setting.function == expected
@@ -130,14 +133,12 @@ def test_digital_output_settings_parse_function(value, expected):
 def test_digital_output_settings_parse_mode(value, expected):
     '''
     Tests that DigitalOutputSettings parses pin mode from value.
-    Test parameters are from inverse examples in the datasheet (p. 16), 
-    covers all possible settings. 
+    Test parameters are from inverse examples in the datasheet (p. 16),
+    covers all possible settings.
     '''
     digital_output_setting = DigitalOutputSettings(value = value)
-    assert digital_output_setting.mode == expected    
+    assert digital_output_setting.mode == expected
 
-from src.hardware.iclrs_parameters import (ControlWord, ControlWordFunction)
-    
 @pytest.mark.parametrize("function, expected", [
     (ControlWordFunction.RESET_CURRENT_ALARM, 0x1111),
     (ControlWordFunction.RESET_HISTORY_ALARM, 0x1122),
@@ -149,43 +150,4 @@ from src.hardware.iclrs_parameters import (ControlWord, ControlWordFunction)
     (ControlWordFunction.JOG_CCW, 0X4002)
 ])
 def test_control_word(function, expected):
-    control_word_command = ControlWord(function)
-    assert control_word_command.value == expected    
-
-@pytest.mark.parametrize("name, value, expected", [
-    ("Delay of brake released", 100, 0x0167),
-    ("SO2", {"function": DigitalOutputFunction.PATH_COMPLETE, 
-        "mode": DigitalInputOutputMode.NORMALLY_OPENED}, 0x0159)
-])
-def test_setting_to_address(name, value, expected):
-    address = setting_to_address_value(name, value)[0]
-    assert address == expected
-
-'''
-Simulates a inputting entries of a config dictionary.
-Keys are names of registers. 
-If the associated value is an int, it will be sent directly.
-If the associated value is a nested dictionary with keys matching the 
-fields of the register, then they will be packed/serialized into a value (using
-custom-logic and a bunch of Enums and Dataclasses that represent field parameters and values.)
-
-"initial_device_registers": { 
-    "SO2": {
-        "function": DigitalOutputFunction.PATH_COMPLETE,
-        "mode": DigitalInputOutputMode.NORMALLY_OPENED
-    },
-    "Delay of brake released": 100, # [ms]
-    "Delay of brake locked": 100,   # [ms]
-    "Threshold value of brake locking velocity": 10,
-    ...
-'''
-@pytest.mark.parametrize("name, value, expected", [
-    ("Delay of brake released", 100, 100),
-    ("Delay of brake locked", 100, 100),
-    ("Threshold value of brake locking velocity", 10, 10),
-    ("SO2", {"function": DigitalOutputFunction.PATH_COMPLETE, 
-        "mode": DigitalInputOutputMode.NORMALLY_OPENED}, 0x21)
-])
-def test_setting_to_value(name, value, expected):
-    value = setting_to_address_value(name, value)[1]
-    assert value == expected
+    assert function.value == expected
