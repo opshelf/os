@@ -3,7 +3,7 @@ Tests for iclrs_register_types.py
 '''
 
 import pytest
-from src.hardware.iclrs_register_types import (DigitalInputSettings,
+from hardware.drivers.iclrs_register_types import (DigitalInputSettings,
      DigitalInputFunction, DigitalInputOutputMode, DigitalInputFilter,
      DigitalOutputSettings, DigitalOutputFunction, DigitalInputOutputMode,
      ControlWordFunction)

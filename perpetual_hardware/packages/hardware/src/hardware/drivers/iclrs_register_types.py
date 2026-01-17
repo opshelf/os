@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import Union, ClassVar
+from typing import ClassVar
 
 # Control mode
 class ControlMode(IntEnum):

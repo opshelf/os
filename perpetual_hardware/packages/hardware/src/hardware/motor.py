@@ -1,5 +1,5 @@
 from hardware import motor_helpers
-from motor_helpers import ICL_RS_CONTROL_WORD_FUNCTIONS
+from hardware.motor_helpers import ICL_RS_CONTROL_WORD_FUNCTIONS
 from hardware.controller import SharedModbusController
 import time
 import asyncio

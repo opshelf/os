@@ -1,13 +1,12 @@
-from src.hardware.device_registers import (csv_to_registers,
-  get_classes_in_module, DeviceRegisters)
-import src.hardware.iclrs_register_types as iclrs_register_types
+from hardware.device_registers import DeviceRegisters
+import hardware.drivers.iclrs_register_types as iclrs_register_types
 import pytest
 import json
 
 # Create DeviceRegister for the Icl-RS motor controller.
 registers_filename = '../src/hardware/device_docs/icl-rs/ICL42.csv'
-registers = csv_to_registers(registers_filename)
-types = get_classes_in_module(iclrs_register_types)
+registers = DeviceRegisters.csv_to_registers(registers_filename)
+types = DeviceRegisters.get_classes_in_module(iclrs_register_types)
 iclrs_registers = DeviceRegisters(registers, types)
 
 address_name_tuples = [(register.address, register.name) for register in registers]
