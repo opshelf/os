@@ -30,7 +30,7 @@ exclude = [
 ]
 
 # Same as Black.
-line-length = 100
+line-length = 70
 indent-width = 4
 
 # Assume Python 3.9
@@ -41,3 +41,6 @@ quote-style = "double"
 indent-style = "space"
 skip-magic-trailing-comma = false
 line-ending = "auto"
+
+[lint]
+extend-select = ["I"]

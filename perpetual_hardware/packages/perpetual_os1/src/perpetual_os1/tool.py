@@ -1,6 +1,5 @@
 import perpetual_os1.common as c
 from perpetual_os1.common import Motor as MotorConfig
-
 from hardware.controller import SharedModbusController as Controller
 from hardware.motor import Motor, Servo, MotorStatus, MOTOR_WAIT_TIMEOUT
 from hardware.toolcam import ToolCamera
@@ -52,7 +51,7 @@ class FiducialRegistry:
 
     def add(self, yw: float):
         self.items.append(yw)
- 
+
 class ToolMotionStatus(Enum):
     IDLE = 0
     MOVING = 1
@@ -700,7 +699,7 @@ class Tool:
         except Exception as e:
             await self._handle_fault(e)
             raise MovementError(f"Tool wait failed: {str(e)}") from e
-            
+
     async def get_pos(self):
         x = await self._mx.get_position() if self._mx is not None else 0.0
         y = await self._my.get_position() if self._my is not None else 0.0
@@ -708,7 +707,7 @@ class Tool:
         s = await self._ms.get_position() if self._ms is not None else 0.0
         r = await self._mr.get_position() if self._mr is not None else 0.0
         return (c.AxisCoordinate(x, y), c.ToolCoordinate(g, s, r))
-    
+
     ### CAMERA
 
     async def get_shelves(self, timeout_seconds: float = SHELF_SCAN_TIMEOUT) -> List[float]:
@@ -903,7 +902,7 @@ class Tool:
             self._logger.exception("update_grid failed after processing %d/%d shelves", len(anchors), len(shelves))
             sentry_sdk.capture_exception(e)
             raise CameraError(f"Grid update failed: {e}") from e
-    
+
     async def auto_cal(self):
         """Get shelf positions and anchor points for calibration."""
         shelves =  [59.992, 411.124, 709.3, 1007.82, 1207.96]

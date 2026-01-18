@@ -845,7 +845,6 @@ class Motor():
 
             await asyncio.sleep(0.01)
 
-
     async def home(self) -> None:
         """Home the motor to find its zero position.
 

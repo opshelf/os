@@ -1,11 +1,19 @@
+import copy
 import csv
 import inspect
-from enum import Enum
-from typing import Any, Union, Dict, Type
-from pydantic import (BaseModel, ValidationError, Field, field_validator,
-  model_validator, create_model)
+from enum import Enum, IntEnum
+from typing import Any, Dict, Type, Union
+
+from pydantic import (
+    BaseModel,
+    Field,
+    ValidationError,
+    create_model,
+    field_validator,
+    model_validator,
+)
 from pydantic.dataclasses import dataclass as pydantic_dataclass
-import copy
+
 
 class Register(BaseModel):
     # This field will accept a standard int, or a hex string, and store it as an int
@@ -43,9 +51,10 @@ class Register(BaseModel):
         raise ValueError("Register's min must be less than its max")
       return self
 
-class DeviceRegisters():
+class DeviceRegisters:
   def __init__(self, registers: list[Register], types: list[Type]):
     self.registers = registers
+    self.names = [register.name for register in registers]
     self.types = types
     self.types.extend([int, bool])
     self.str_to_type_mapping = {type.__name__:type for type in types}
@@ -61,33 +70,34 @@ class DeviceRegisters():
       with open(filename, mode='r', encoding='utf-8') as csvfile:
         dict_reader = csv.DictReader(csvfile)
         list_of_dicts = list(dict_reader)
-    except FileNotFoundError as e:
+    except FileNotFoundError:
       print(f'Error: The file {filename} was not found.')
-      raise
-    except IOError as e:
-      print(f'Error: An I/O error occured while opening the file.')
       raise
     except csv.Error as e:
       print(f'Error: CSV processing error: {e}')
       raise
+    except IOError:
+      print('Error: An I/O error occured while opening the file.')
+      raise
     except Exception as e:
       print(f'An unexcepted error occured: {e}')
       raise
-    # Defensively lowercase key names
-    list_of_dicts = [
-      {k.lower():v for k,v in dict.items()} for dict in list_of_dicts
-    ]
-    # Remove unnecessary keys
-    keep_keys = [field_name for field_name in list(Register.model_fields.keys())]
-    list_of_dicts = [
-      {k:v for k,v in dict.items() if k in keep_keys} for dict in list_of_dicts
-    ]
-    try:
-      register_descriptions = [Register(**d) for d in list_of_dicts]
-    except ValidationError as e:
-      print(f'Error importing csv: {e}')
-      raise
-    return register_descriptions
+    else:
+      # Defensively lowercase key names
+      list_of_dicts = [
+        {k.lower():v for k,v in dict.items()} for dict in list_of_dicts
+      ]
+      # Remove unnecessary keys
+      keep_keys = [field_name for field_name in list(Register.model_fields.keys())]
+      list_of_dicts = [
+        {k:v for k,v in dict.items() if k in keep_keys} for dict in list_of_dicts
+      ]
+      try:
+        registers = [Register(**d) for d in list_of_dicts]
+      except ValidationError as e:
+        print(f'Error: Invalid entry in registers csv: {e}')
+        raise
+      return registers
 
   @staticmethod
   def get_classes_in_module(module):
@@ -102,18 +112,22 @@ class DeviceRegisters():
             classes.append(member)
     return classes
 
-  def get_register_by_name(self, name: str) -> Register|None:
-    register = next((d for d in self.registers if d.name.strip().lower() == name.strip().lower()), None)
+  def get_register_by_name(self, name: str) -> Register:
+    try:
+      register = next((d for d in self.registers if d.name.strip().lower() == name.strip().lower()))
+    except StopIteration:
+      raise ValueError(f'Invalid register name {name}')
     return register
 
   def get_register_by_address(self, address: int) -> Register|None:
-    register = next((d for d in self.registers if d.address == address), None)
+    try:
+      register = next((d for d in self.registers if d.address == address), None)
+    except StopIteration:
+      ValueError(f'Invalid register address {address}')
     return register
 
-  def encode(self, name: str, value: Any) -> tuple[int, int]|tuple[None,None]:
+  def encode(self, name: str, value: Any) -> tuple[int, int]:
     register = self.get_register_by_name(name)
-    if register == None:
-      return (None, None)
     address = register.address
     # Pre-process values
     if isinstance(value, str):
@@ -130,13 +144,15 @@ class DeviceRegisters():
     _type = self.str_to_type_mapping[register.type]
     validator = DeviceRegisters._create_pydantic_model(register, _type)
     # Apply validation
-    if type(value) in self.types and type(value) not in [int, bool]:
-      if type(value).__name__ == register.type:
-        validated_value = value.value
     if type(value) == dict:
       validated_value = validator(**value).value
+    # elif type(value) in self.types and type(value) not in [int, bool]:
+    #   if type(value).__name__ == register.type:
+    #     validated_value = value.value
     else:
       validated_value = validator(value = value).value
+      if isinstance(value, IntEnum):
+        validated_value = validated_value.value
     return (address, validated_value)
 
   def decode(self, address:int, value:int) -> Dict[str, Any]:
@@ -209,4 +225,3 @@ class DeviceRegisters():
   def _enum_to_string(self, value:str) -> str:
     enum_value = repr(value).replace('<','').replace('>','').split(':')[0]
     return enum_value
-

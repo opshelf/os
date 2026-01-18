@@ -95,17 +95,13 @@ class RobotCommandSuccessful(BaseModel):
     upca: Optional[str] = None
     weight: Optional[float] = None
 
-
 class RobotCommandError(BaseModel):
     command: str = "unknown"
     error: str
 
-
 class RobotBarcodeResponse(BaseModel):
     message: Literal["success"] = "success"
     upca: str
-
-
 
 class StatusFlags(BaseModel):
     value: int = 0

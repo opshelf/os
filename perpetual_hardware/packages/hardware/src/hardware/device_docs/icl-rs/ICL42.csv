@@ -1,5 +1,5 @@
 address,name,default value,unit,description,type,min,max
-0x0001,pulse per revolution,10000,pulse/rev,10000,int,200,51200
+0x0001,pulse per revolution,10000,pulse per revolution,Pulse per revolution,int,200,51200
 0x0003,control mode,2,,0: open-loop; 2: closed-loop,ControlMode,0,255
 0x0005,control mode source,1,,Invalid,int,0,10
 0x0007,motor direction,0,,0: CW; 1: CCW,MotorDirection,0,1
@@ -15,16 +15,16 @@ address,name,default value,unit,description,type,min,max
 0x00A5,velocity switching point: closed loop to open loop,12,0.1RPS,Recommended to keep default value,int,0,200
 0x00A7,delay time of open loop to closed loop,5,ms,Recommended to keep default value,int,0,32767
 0x00A9,delay time of closed loop to open loop,250,ms,Recommended to keep default value,int,0,32767
-0x0145,si1,136,,"Configures digital input, see DigitalInputSettings class",DigitalInputSettings,0,65535
-0x0147,si2,0,,"Configures digital input, see DigitalInputSettings class",DigitalInputSettings,0,65535
-0x0149,si3,0,,"Configures digital input, see DigitalInputSettings class",DigitalInputSettings,0,65535
-0x014B,si4,0,,"Configures digital input, see DigitalInputSettings class",DigitalInputSettings,0,65535
-0x014D,si5,0,,"Configures digital input, see DigitalInputSettings class",DigitalInputSettings,0,65535
-0x014F,si6,0,,"Configures digital input, see DigitalInputSettings class",DigitalInputSettings,0,65535
-0x0151,si7,0,,"Configures digital input, see DigitalInputSettings class",DigitalInputSettings,0,65535
-0x0157,so1,0,,"Configures digital output, see DigitalOutputSettings class",DigitalOutputSettings,0,65535
-0x0159,so2,0,,"Configures digital output, see DigitalOutputSettings class",DigitalOutputSettings,0,65535
-0x015B,so3,0,,"Configures digital output, see DigitalOutputSettings class",DigitalOutputSettings,0,65535
+0x0145,si1,136,,"Settings for digital input 1, see DigitalInputSettings class",DigitalInputSettings,0,65535
+0x0147,si2,0,,"Settings for digital input 2, see DigitalInputSettings class",DigitalInputSettings,0,65535
+0x0149,si3,0,,"Settings for digital input 3, see DigitalInputSettings class",DigitalInputSettings,0,65535
+0x014B,si4,0,,"Settings for digital input 4, see DigitalInputSettings class",DigitalInputSettings,0,65535
+0x014D,si5,0,,"Settings for digital input 5, see DigitalInputSettings class",DigitalInputSettings,0,65535
+0x014F,si6,0,,"Settings for digital input 6, see DigitalInputSettings class",DigitalInputSettings,0,65535
+0x0151,si7,0,,"Settings for digital input 7, see DigitalInputSettings class",DigitalInputSettings,0,65535
+0x0157,so1,0,,"Settings for digital output 1, see DigitalOutputSettings class",DigitalOutputSettings,0,65535
+0x0159,so2,0,,"Settings for digital output 2, see DigitalOutputSettings class",DigitalOutputSettings,0,65535
+0x015B,so3,0,,"Settings for digital output 3, see DigitalOutputSettings class",DigitalOutputSettings,0,65535
 0x0167,delay of brake released,250,ms,Recommended to keep default value,int,0,1500
 0x0169,delay of brake locked,250,ms,Recommended to keep default value,int,0,1500
 0x016B,threshold value of brake locking velocity,10,,Recommended to keep default value,int,0,500
@@ -60,10 +60,20 @@ address,name,default value,unit,description,type,min,max
 0x023D,current loop kc,300,,Invalid,int,0,32767
 0x0243,over-voltage threshold,90,V,Invalid,int,0,1000
 0x1003,motion status,,,"Read-only, see MotionStatus class",MotionStatus,0,65535
+0x1010,position error (high bits),,pulse,Position error after move (high bits),,0,65535
+0x1011,position error (low bits),,pulse,Position error after move (low bits),,0,65535
+0x1012,profile position (high bits),,pulse,Position setpoint (high bits),,0,65535
+0x1013,profile position (low bits),,pulse,Position setpoint (low bits),,0,65535
+0x1014,feedback position (high bits),,pulse,Position actual (high bits),,0,65535
+0x1015,feedback position (low bits),,pulse,Position actual (low bits),,0,65535
+0x1044,profile velocity (high bits),,rpm,Velocity setpoint (high bits),,0,65535
+0x1045,profile velocity (low bits),,rpm,Velocity setpoint (low bits),,0,65535
+0x1046,feedback velocity (high bits),,rpm,Velocity actual (high bits),,0,65535
+0x1047,feedback velocity (low bits),,rpm,Velocity actual (low bits),,0,65535
 0x1801,control word,,,Various commands,ControlWordFunction,0,65535
 0x1901,control word status,,,"Read-only, response status to the control word, see StatusWord class",ControlWordStatus,0,65535
 0x2203,current alarm,,,"Read-only, see Alarm class",Alarm,0,65535
-0x6000,pr global control function,,,,PathGlobalControl,0,32767
+0x6000,pr global control,,,,PathGlobalControl,0,32767
 0x6002,pr control register,,,,int,0,65535
 0x6006,soft limit+ (high bits),0x7FFF,,High 16-bits of the positive soft limit,int,0,32767
 0x6007,soft limit+ (low bits),0xFFFF,,Low 16-bits of the positive soft limit,int,0,32767

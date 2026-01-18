@@ -1,4 +1,4 @@
-from hardware.device_registers import DeviceRegisters
+from hardware.drivers.registers import DeviceRegisters
 import hardware.drivers.iclrs_register_types as iclrs_register_types
 import pytest
 import json
@@ -26,11 +26,12 @@ config_json_filename = './data/config_hardware_a.json'
 try:
   with open(config_json_filename, 'r') as file:
     data = json.load(file)
+    print(data)
 except FileNotFoundError:
-    print("Error: The file 'data.json' was not found.")
+    print(f"Error: The file {config_json_filename} was not found.")
 except json.JSONDecodeError as e:
     print(f"Failed to decode JSON: {e}")
-config_dict = data['motors'][0]['write_initial_registers']
+config_dict = data['motors'][0]["initial_register_values"]
 name_field_tuples = [(k,v) for k,v in config_dict.items()]
 
 @pytest.mark.parametrize("name, field", name_field_tuples)

@@ -39,7 +39,6 @@ class RobotNatsConfiguration(BaseModel):
 
 
 # ---------------------- Coordinates ----------------------
-
 @dataclass
 class AxisCoordinate:
     x: float
@@ -114,20 +113,19 @@ def _pair_len2(v: List[Union[int, float]], name: str) -> Tuple[Union[int, float]
 
 
 # --------------------------- Motor -----------------------------
-
 class Motor(BaseModel):
     motor_name: str = Field(..., min_length=1)
     motor_id: int = Field(..., ge=0)  # tighten if desired
     enabled: bool = Field(default=True)
+    lim: Union[int, float] = Field(..., gt=0)
+    phys_at_zero: Optional[Union[int, float]] = Field(default=None)
+    phys_at_max: Optional[Union[int, float]] = Field(default=None)
     Ip: int = Field(..., ge=0)        # keeping exact key casing
     rpm: int = Field(..., gt=0)
     dr: Literal[0, 1]
     mpr: float = Field(..., gt=0)
     accel: int = Field(..., gt=0)
     ret_rpm: int = Field(..., gt=0)
-    lim: Union[int, float] = Field(..., gt=0)
-    phys_at_zero: Optional[Union[int, float]] = Field(default=None)
-    phys_at_max: Optional[Union[int, float]] = Field(default=None)
     position_reg_high: int = Field(default=0x602C)
     position_reg_low: int = Field(default=0x602D)
     status_reg: int = Field(default=0x1003)
@@ -193,7 +191,6 @@ class Motor(BaseModel):
         scale = (pm - p0) / self.lim
         return logical_delta * scale
 
-
 class Motors(RootModel[List[Motor]]):
 
     def by_name(self, name: str) -> Motor:
@@ -214,9 +211,7 @@ class Motors(RootModel[List[Motor]]):
     def ids(self) -> List[int]:
         return [m.motor_id for m in self.root]
 
-
 # --------------------------- Cameras ---------------------------
-
 class PoeCamera(BaseModel):
     ip: str
     port: int = Field(..., ge=1, le=65535)
@@ -591,10 +586,8 @@ class RootConfig(BaseModel):
 
 
 # ----------------------- Loader / Validator -----------------------
-
 class ConfigError(Exception):
     pass
-
 
 class ConfigValidationError(ConfigError):
     def __init__(self, errors: List[Dict[str, Any]], path: Optional[str] = None):
@@ -613,12 +606,10 @@ class ConfigValidationError(ConfigError):
             lines.append(f"  - {loc}: {msg}")
         return "\n".join(lines)
 
-
 class ConfigMissingError(ConfigError):
     def __init__(self, path: str):
         self.path = path
         super().__init__(f"Configuration file not found: {path}")
-
 
 def load_and_validate_config(cfg: Union[Dict[str, Any], str], source_path: Optional[str] = None) -> RootConfig:
     data: Dict[str, Any]
@@ -633,7 +624,6 @@ def load_and_validate_config(cfg: Union[Dict[str, Any], str], source_path: Optio
     except ValidationError as e:
         errors = [dict(err) for err in e.errors()]
         raise ConfigValidationError(errors, source_path) from e
-
 
 def load_config_file(path: Union[str, Any]) -> RootConfig:
     import io

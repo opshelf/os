@@ -23,7 +23,6 @@ class SharedModbusController:
         self.parity = parity
         self.client = None
         self.lock = asyncio.Lock()  # ensures only one coroutine accesses the bus at a time
-        
 
     async def _reconnect(self) -> bool:
         """Attempt to reconnect to the Modbus device. Returns True if successful."""
@@ -38,7 +37,7 @@ class SharedModbusController:
     async def connect(self) -> None:
         """
         Initialize and connect to the Modbus device.
-        
+
         Raises:
             ModbusConnectionError: If connection fails
             ModbusConfigError: If client configuration is invalid
@@ -54,14 +53,14 @@ class SharedModbusController:
                 stopbits=1,
                 framer=pymodbus.FramerType.RTU
             )
-            
+
             connected = await self.client.connect()
             if not connected or not self.client.connected:
                 raise ModbusConnectionError(
                     f"Failed to connect to Modbus device on port {self.port} "
                     f"(baudrate={self.baudrate}, parity={self.parity})"
                 )
-                
+
         except ModbusException as e:
             raise ModbusConnectionError(f"Modbus connection error: {str(e)}") from e
         except Exception as e:
@@ -72,24 +71,24 @@ class SharedModbusController:
             self.client.close()
 
     async def read_holding_registers(
-        self, 
-        unit_id: int, 
-        address: int, 
+        self,
+        unit_id: int,
+        address: int,
         count: int = 1
     ) -> int:
         """
         Read value(s) from holding registers.
-        
+
         Args:
             unit_id: Modbus device ID
             address: Register address to read from
             count: Number of registers to read
-            
+
         Raises:
             ModbusError: If read operation fails
             ModbusTimeoutError: If operation times out
             ModbusConnectionError: If connection is lost
-            
+
         Returns:
             Integer value read from register
         """
@@ -133,12 +132,12 @@ class SharedModbusController:
     ) -> None:
         """
         Write a value to a single register.
-        
+
         Args:
             unit_id: Modbus device ID
             address: Register address to write to
             value: Value to write
-            
+
         Raises:
             ModbusError: If write operation fails
             ModbusTimeoutError: If operation times out
@@ -183,12 +182,12 @@ class SharedModbusController:
     ) -> None:
         """
         Write values to multiple consecutive registers.
-        
+
         Args:
             unit_id: Modbus device ID
-            address: Starting register address 
+            address: Starting register address
             values: List of values to write
-            
+
         Raises:
             ModbusError: If write operation fails
             ModbusTimeoutError: If operation times out

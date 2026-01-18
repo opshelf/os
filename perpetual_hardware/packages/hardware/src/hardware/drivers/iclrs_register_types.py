@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import ClassVar
 
+
 # Control mode
 class ControlMode(IntEnum):
   OPEN_LOOP = 0x00
@@ -208,12 +209,12 @@ class BaudRate():
     if self.value == None:
       try:
         self.value = mapping[self.baud_rate]
-      except KeyError as e:
+      except KeyError:
         raise ValueError('Invalid baud rate')
     else:
       try:
         self.baud_rate = next((k for k, v in mapping.items() if v == self.value))
-      except StopIteration as e:
+      except StopIteration:
         raise ValueError('Invalid baud rate')
   def __str__(self):
     return f'{self.baud_rate}'

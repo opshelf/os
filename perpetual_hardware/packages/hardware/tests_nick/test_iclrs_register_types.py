@@ -3,10 +3,15 @@ Tests for iclrs_register_types.py
 '''
 
 import pytest
-from hardware.drivers.iclrs_register_types import (DigitalInputSettings,
-     DigitalInputFunction, DigitalInputOutputMode, DigitalInputFilter,
-     DigitalOutputSettings, DigitalOutputFunction, DigitalInputOutputMode,
-     ControlWordFunction)
+from hardware.drivers.iclrs_register_types import (
+    ControlWordFunction,
+    DigitalInputFilter,
+    DigitalInputFunction,
+    DigitalInputOutputMode,
+    DigitalInputSettings,
+    DigitalOutputFunction,
+    DigitalOutputSettings,
+)
 
 
 @pytest.mark.parametrize("function, mode, filter, expected", [
