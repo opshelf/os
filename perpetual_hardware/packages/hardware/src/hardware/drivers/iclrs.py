@@ -1,6 +1,13 @@
 import logging
 from enum import IntEnum
-from typing import Any, Awaitable, Callable, List, Optional, Union
+from typing import (
+    Any,
+    Awaitable,
+    Callable,
+    List,
+    Optional,
+    Union,
+)
 
 from pydantic import (
     BaseModel,
@@ -39,7 +46,7 @@ iclrs_registers = DeviceRegisters(registers)
 # Icl-Rs Register BaseModel
 class IclrsRegister(BaseModel):
     # Either 'name' or 'address' must be provided as input.
-    name: str|None = None       # 'name' is the register name.
+    name: str                   # 'name' is the register name.
     address: int|None = None    # 'address' is the register address.
     value: Any                  # 'value' is the input representation of the value.
     # Post-validation fields:
@@ -64,7 +71,9 @@ class IclrsRegister(BaseModel):
     @field_validator("name", mode="before")
     def name_must_in_registers_list(cls, v: str) -> str:
         v = v.lower()
-        if v not in iclrs_registers.names:
+        try:
+            iclrs_registers.get_register_by_name(v)
+        except ValueError:
             raise ValueError("Invalid register name")
         return v
 
@@ -90,8 +99,6 @@ class IclrsRegister(BaseModel):
         name = self.name
         value = self.value
         model = iclrs_registers.get_register_model(name)
-        if self.address is None:
-            self.address = iclrs_registers.get_register_by_name(name).address
         try:
             if isinstance(self.value, dict):
                 valid_value = model(**value).value
@@ -103,6 +110,7 @@ class IclrsRegister(BaseModel):
             raise ValueError('Invalid value for register') from e
         # Post-validation processing:
         address = iclrs_registers.get_register_by_name(name).address
+        self.address = address
         self.modbus = (address, valid_value)
         self.typed = iclrs_registers.apply_type(name, valid_value)
         self.message = iclrs_registers.get_message(name, valid_value)

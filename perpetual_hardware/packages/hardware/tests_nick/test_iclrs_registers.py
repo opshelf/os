@@ -9,7 +9,7 @@ from hardware.drivers.registers import DeviceRegisters
 types = DeviceRegisters.get_classes_in_module(iclrs_register_types)
 registers_filename = '../src/hardware/device_docs/icl-rs/ICL42.csv'
 registers = DeviceRegisters.csv_to_registers(registers_filename, types)
-iclrs_registers = DeviceRegisters(registers, types)
+iclrs_registers = DeviceRegisters(registers)
 
 address_name_tuples = [(register.address, register.name) for register in registers]
 

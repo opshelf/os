@@ -26,23 +26,21 @@ class Register(BaseModel):
 
     @field_validator('address', mode='before')
     @classmethod
-    def validate_int_str(cls, v: Union[int, str]) -> int | None:
-      if isinstance(v, str):
-        v = v.lower()
-        if v.startswith('0x'):
-          # formatted as a hex string
-          try:
-            return int(v, 16)
-          except:
-            return None
-        if v.startswith('0b'):
-          # formatted as a binary string
-          try:
-            return int(v, 2)
-          except:
-            return None
-      if isinstance(v, int):
-        return v
+    def validate_int_str(cls, v: Union[int, str]) -> int:
+        if isinstance(v, str):
+            v = v.lower()
+            try:
+                if v.startswith('0x'):
+                    number = int(v, 16)
+                elif v.startswith('0b'):
+                    number = int(v, 2)
+                else:
+                    raise TypeError("String address must start with '0x' or '0b'")
+            except ValueError as e:
+                raise TypeError("Invalid string representation of address integer") from e
+            return number
+        else:
+            return v
 
     @model_validator(mode='after')
     def check_max_greater_than_min(self) -> 'Register':
@@ -53,7 +51,6 @@ class Register(BaseModel):
 class DeviceRegisters:
     def __init__(self, registers: list[Register]):
         self.registers = registers
-        self.names = [register.name for register in registers]
         self.str_to_enum_mapping = {}
         reg_types = set([register.type for register in registers])
         # Find IntEnums used directly as register types
@@ -61,7 +58,7 @@ class DeviceRegisters:
         # Find IntEnums used as fields of registers types
         for t in reg_types:
             if t != int and t != bool and not issubclass(t, IntEnum):
-                a = DeviceRegisters.find_enums_in_class_annotations(t)
+                a = DeviceRegisters._find_enums_in_class_annotations(t)
                 enums.update(a)
             for enum in enums:
                 mapping = DeviceRegisters._create_map_of_names_to_enum_members(enum)
@@ -119,29 +116,6 @@ class DeviceRegisters:
             if member.__module__ == module.__name__:
                 classes.append(member)
         return classes
-
-    @staticmethod
-    def get_enums_in_module(module):
-        """
-        Returns a list of all Enum classes defined within a given module.
-        """
-        enums = []
-        # Get all members of the module and check if they are a class
-        for name, member in inspect.getmembers(module, inspect.isclass):
-            # Ensure the class is defined in the module's own namespace (not imported)
-            if member.__module__ == module.__name__:
-                if issubclass(member, Enum):
-                    enums.append(member)
-        return enums
-
-    @staticmethod
-    def find_enums_in_class_annotations(cls):
-        enums_used = set()
-        for name, type_hint in cls.__annotations__.items():
-            # Check if the type hint is an Enum class or a subclass
-            if isinstance(type_hint, EnumMeta):
-                enums_used.add(type_hint)
-        return list(enums_used)
 
     def get_register_by_name(self, name: str) -> Register:
         try:
@@ -209,6 +183,15 @@ class DeviceRegisters:
         else:
             pydantic_type = pydantic_dataclass(type)
             return pydantic_type
+
+    @staticmethod
+    def _find_enums_in_class_annotations(cls):
+        enums_used = set()
+        for name, type_hint in cls.__annotations__.items():
+            # Check if the type hint is an Enum class or a subclass
+            if isinstance(type_hint, EnumMeta):
+                enums_used.add(type_hint)
+        return list(enums_used)
 
     @staticmethod
     def _create_map_of_names_to_enum_members(enum):
