@@ -1,11 +1,12 @@
 import logging
+from enum import IntEnum
 from typing import Any, Awaitable, Callable, List, Optional, Union
 
 from pydantic import (
     BaseModel,
     Field,
     RootModel,
-    ValidationInfo,
+    ValidationError,
     field_validator,
     model_validator,
 )
@@ -31,30 +32,84 @@ MAX_FOLLOWING_ERROR = 4000
 
 # Icl-Rs DeviceRegister.
 REGISTERS_FILENAME = "../src/hardware/device_docs/icl-rs/ICL42.csv"
-registers = DeviceRegisters.csv_to_registers(REGISTERS_FILENAME)
 TYPES = DeviceRegisters.get_classes_in_module(iclrs_register_types)
-iclrs_registers = DeviceRegisters(registers, TYPES)
+registers = DeviceRegisters.csv_to_registers(REGISTERS_FILENAME, TYPES)
+iclrs_registers = DeviceRegisters(registers)
 
 # Icl-Rs Register BaseModel
 class IclrsRegister(BaseModel):
-    name: str   # Maps to the register name
-    value: Any  # representation of the
+    # Either 'name' or 'address' must be provided as input.
+    name: str|None = None       # 'name' is the register name.
+    address: int|None = None    # 'address' is the register address.
+    value: Any                  # 'value' is the input representation of the value.
+    # Post-validation fields:
+    modbus: tuple[int,int]|None = None  # 'modbus' is (address, value).
+    typed: Any|None = None              # 'typed' is the value with type applied.
+    message: str|None = None            # 'message' is any human-readable message.
+
+    @model_validator(mode="before")
+    @classmethod
+    def name_address_check(cls, values: Any) -> Any:
+        if isinstance(values, dict) and 'address' in values:
+            address = values['address']
+            try:
+                register = iclrs_registers.get_register_by_address(address)
+            except ValueError:
+                raise ValueError("Invalid register address")
+            if 'name' in values and values['name'] != register.name:
+                raise ValueError("Provided name does not match address")
+            values['name'] = register.name
+        return values
 
     @field_validator("name", mode="before")
     def name_must_in_registers_list(cls, v: str) -> str:
         v = v.lower()
         if v not in iclrs_registers.names:
-            raise ValueError("invalid register name")
+            raise ValueError("Invalid register name")
         return v
 
     @field_validator("value", mode="before")
-    def value_must_be_valid_for_register(cls, v: Any, info: ValidationInfo) -> int:
-        name = info.data["name"]
-        address, val = iclrs_registers.encode(name, v)
-        return val
+    def value_must_be_of_a_valid_type(cls, v: Any) -> Any:
+        # Must be int, bool, dict, or an acceptable IntEnum.
+        # If a string, coerce it into an acceptable IntEnum.
+        if isinstance(v, str):
+            try:
+                v = iclrs_registers.str_to_enum(v)
+            except ValueError as e:
+                raise ValueError("Invalid string for register value") from e
+        # If a dict, coerce any strings in the dict into acceptable IntEnums.
+        if isinstance(v, dict):
+            try:
+                v = {_k: iclrs_registers.str_to_enum(_v) for _k, _v in v.items() if isinstance(_v, str)}
+            except ValueError as e:
+                raise ValueError("Invalid string in dict for register value") from e
+        return v
+
+    @model_validator(mode='after')
+    def valid_value_for_name(self) -> 'IclrsRegister':
+        name = self.name
+        value = self.value
+        model = iclrs_registers.get_register_model(name)
+        if self.address is None:
+            self.address = iclrs_registers.get_register_by_name(name).address
+        try:
+            if isinstance(self.value, dict):
+                valid_value = model(**value).value
+            elif isinstance(self.value, IntEnum):
+                valid_value = model(value = value).value.value
+            else:
+                valid_value = model(value = value).value
+        except ValidationError as e:
+            raise ValueError('Invalid value for register') from e
+        # Post-validation processing:
+        address = iclrs_registers.get_register_by_name(name).address
+        self.modbus = (address, valid_value)
+        self.typed = iclrs_registers.apply_type(name, valid_value)
+        self.message = iclrs_registers.get_message(name, valid_value)
+        return self
 
 class IclrsRegisters(RootModel):
-    # The 'root' attribute holds the list of Person models
+    # The 'root' attribute holds the list of Iclrs models
     root: List[IclrsRegister]
 
 # Icl-Rs Config BaseModel

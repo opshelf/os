@@ -21,6 +21,12 @@ def test_iclrs_basemodel(register):
   IclrsRegister.model_validate(register)
   assert True # Passes if there's no exception
 
+def test_iclrs_register_by_address():
+  register = IclrsRegister(address = 0x01, value = 1234)
+  print(register)
+  assert True # Passes if there's no exception
+
+
 def test_iclrs_import_json_to_config():
     try:
         with open(config_json_filename, 'r', encoding='utf-8') as f:
@@ -30,7 +36,8 @@ def test_iclrs_import_json_to_config():
     except Exception as e:
         print(f"An error occurred: {e}")
     else:
-        IclrsConfig.model_validate_json(raw_json)
+        validated = IclrsConfig.model_validate_json(raw_json)
+        print(validated)
         assert True
 
 @pytest.fixture

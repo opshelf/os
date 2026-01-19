@@ -1,12 +1,14 @@
-from hardware.drivers.registers import DeviceRegisters
-import hardware.drivers.iclrs_register_types as iclrs_register_types
-import pytest
 import json
 
+import hardware.drivers.iclrs_register_types as iclrs_register_types
+import pytest
+from hardware.drivers.iclrs import IclrsRegister
+from hardware.drivers.registers import DeviceRegisters
+
 # Create DeviceRegister for the Icl-RS motor controller.
-registers_filename = '../src/hardware/device_docs/icl-rs/ICL42.csv'
-registers = DeviceRegisters.csv_to_registers(registers_filename)
 types = DeviceRegisters.get_classes_in_module(iclrs_register_types)
+registers_filename = '../src/hardware/device_docs/icl-rs/ICL42.csv'
+registers = DeviceRegisters.csv_to_registers(registers_filename, types)
 iclrs_registers = DeviceRegisters(registers, types)
 
 address_name_tuples = [(register.address, register.name) for register in registers]
@@ -63,12 +65,12 @@ def test_encode_decode(name, field):
 
 @pytest.mark.parametrize("code", [0x01, 0x02, 0x40, 0x80, 0x100, 0x200])
 def test_readable_alarms(code):
-  print(iclrs_registers.readable(0x2203, code))
+  print(IclrsRegister(address = 0x2203, value = code).message)
   assert True
 
 @pytest.mark.parametrize("code", [0x5555, 0xAAAA])
-def test_readable_control_word_stats(code):
-  print(iclrs_registers.readable(0x1901, code))
+def test_readable_control_word_status(code):
+  print(IclrsRegister(address = 0x1901, value = code).message)
   assert True
 
 print(iclrs_registers.decode(0x0001, 250))
