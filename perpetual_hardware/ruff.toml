@@ -44,3 +44,4 @@ line-ending = "auto"
 
 [lint]
 extend-select = ["I"]
+unfixable = ["F401"]

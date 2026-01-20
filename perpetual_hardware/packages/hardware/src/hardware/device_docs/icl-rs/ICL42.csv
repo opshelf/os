@@ -1,4 +1,4 @@
-address,name,default value,unit,description,type,min,max
+address,name,default,unit,description,type,min,max
 0x0001,pulse per revolution,10000,pulse per revolution,Pulse per revolution,int,200,51200
 0x0003,control mode,2,,0: open-loop; 2: closed-loop,ControlMode,0,255
 0x0005,control mode source,1,,Invalid,int,0,10
@@ -75,10 +75,10 @@ address,name,default value,unit,description,type,min,max
 0x2203,current alarm,,,"Read-only, see Alarm class",Alarm,0,65535
 0x6000,pr global control,,,,PathGlobalControl,0,32767
 0x6002,pr control register,,,,int,0,65535
-0x6006,soft limit+ (high bits),0x7FFF,,High 16-bits of the positive soft limit,int,0,32767
-0x6007,soft limit+ (low bits),0xFFFF,,Low 16-bits of the positive soft limit,int,0,32767
-0x6008,soft limit- (high bits),0x8000,,High 16-bits of the negative soft limit,int,0,32767
-0x6009,soft limit- (low bits),0,,Low 16-bits of the negative soft limit,int,0,32767
+0x6006,soft limit+ (high bits),0x7FFF,pulse,High 16-bits of the positive soft limit,int,0,32767
+0x6007,soft limit+ (low bits),0xFFFF,pulse,Low 16-bits of the positive soft limit,int,0,65535
+0x6008,soft limit- (high bits),0x8000,pulse,High 16-bits of the negative soft limit,int,0,32768
+0x6009,soft limit- (low bits),0,pulse,Low 16-bits of the negative soft limit,int,0,32767
 0x600A,homing mode,,,,int,0,7
 0x600B,home switch position (high bits),,,High 16-bits of the home switch absolute position ,int,0,65535
 0x600C,home switch position (low bits),,,Low 16-bits of the home switch absolute position ,int,0,65535

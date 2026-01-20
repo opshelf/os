@@ -1,0 +1,96 @@
+Register Address,Software Par. #,Name,Range,Default Value,Unit,Description,Type
+0x0001,Pr0.00,Pulse/revolution,200-51200,10000,P/R,10000,
+0x0003,Pr0.01,Control mode,0-255,2,,0: open-loop; 2: closed-loop,ControlMode
+0x0005,Pr0.02,Control mode source,0-10,1,,Invalid,
+0x0007,Pr0.03,Motor direction,0-1,0,,0: CW; 1: CCW,MotorDirection
+0x0009,Pr0.04,Motor inductance,0-10000,1499,0.001mH,Invalid,
+0x000B,Pr0.05,Allowed max position following error,0-65535,4000,CPR,Allowed max pulse count of position errors,
+0x000F,Pr0.07,Forced enable by software,0-1,0,,0: IO Enable only; 1: force Enable regardless of IO,
+0x0051,Pr1.00,Position loop Kp,0-3000,25,,"Increasing this value will reduce position following error, but could result in motor vibration",
+0x0053,Pr1.01,Velocity loop Ki,0-3000,0,,This parameter is used for tuning Velocity loop proportional gain,
+0x0055,Pr1.02,Velocity loop Kp,0-3000,25,,Increase the value can increase velocity stiffness,
+0x0065,Pr1.10,Position loop KpH,0-3000,0,,Recommended to keep default value,
+0x00A1,Pr2.00,Command filter time,0-512,15,0.1ms,Internal command filtering time,
+0x00A3,Pr2.01,Velocity switching point: open loop to closed loop,0-200,18,0.1RPS,"Usually keep the default value, only change it when it causes motor vibration at this mode switching velocity point",
+0x00A5,Pr2.02,Velocity switching point: closed loop to open loop,0-200,12,0.1RPS,Recommended to keep default value,
+0x00A7,Pr2.03,Delay time of open loop to closed loop,0-32767,5,ms,Recommended to keep default value,
+0x00A9,Pr2.04,Delay time of closed loop to open loop,0-32767,250,ms,Recommended to keep default value,
+0x0145,Pr4.02,SI1,0-65535,136,,"Configures digital input, see DigitalInputSettings class",DigitalInputSettings
+0x0147,Pr4.03,SI2,0-65535,0,,"Configures digital input, see DigitalInputSettings class",DigitalInputSettings
+0x0149,Pr4.04,SI3,0-65535,0,,"Configures digital input, see DigitalInputSettings class",DigitalInputSettings
+0x014B,Pr4.05,SI4,0-65535,0,,"Configures digital input, see DigitalInputSettings class",DigitalInputSettings
+0x014D,Pr4.06,SI5,0-65535,0,,"Configures digital input, see DigitalInputSettings class",DigitalInputSettings
+0x014F,Pr4.07,SI6,0-65535,0,,"Configures digital input, see DigitalInputSettings class",DigitalInputSettings
+0x0151,Pr4.08,SI7,0-65535,0,,"Configures digital input, see DigitalInputSettings class",DigitalInputSettings
+0x0157,Pr4.11,SO1,0-65535,0,,"Configures digital output, see DigitalOutputSettings class",DigitalOutputSettings
+0x0159,Pr4.12,SO2,0-65535,0,,"Configures digital output, see DigitalOutputSettings class",DigitalOutputSettings
+0x015B,Pr4.13,SO3,0-65535,0,,"Configures digital output, see DigitalOutputSettings class",DigitalOutputSettings
+0x0167,Pr4.19,Delay of brake released,0-1500,250,ms,Recommended to keep default value,
+0x0169,Pr4.20,Delay of brake locked,0-1500,250,ms,Recommended to keep default value,
+0x016B,Pr4.21,Threshold value of brake locking velocity,0-500,10,,Recommended to keep default value,
+0x016D,Pr4.22,Alarm detection selection,0-65535,0,,"Configures which alarms are enabled, see AlarmDetectionSelection class",
+0x0177,Pr4.27,Bus voltage,0-65535,0,0.1V,Supply voltage,
+0x0179,Pr4.28,Digital input state,0-65535,0,,"Bit0–Bit6: SI1–SI7, see DigitalInputStates class",DigitalInputStates
+0x017B,Pr4.29,Digital output state,0-65535,0,,"Bit0–Bit2: SO1–SO3, see DigitalOutputStates class",DigitalOutputStates
+0x0187,Pr4.35,DIP switch status,0-65535,0,,,
+0x0191,Pr5.00,Peak current,0-30,10,0.1A,≈ motor phase current ×1.4,
+0x0193,Pr5.01,Closed-loop holding current %,0-50,50,%,Not recommended to modify to prevent motor overheating,
+0x0195,Pr5.02,Open-loop holding current %,0-50,50,%,Not recommended to modify to prevent motor overheating,
+0x0197,Pr5.03,Shaft locked current %,0-100,100,,Recommended to keep default value,
+0x0199,Pr5.04,Shaft locked duration,0-1500,200,ms,Recommended to keep default value,
+0x019F,Pr5.07,Rising time of locked current,1-60,1,100ms,Recommended to keep default value,
+0x01A3,Pr5.09,Self test,0-1,0,,"0:disable, 1: enable",IsEnabled
+0x01A5,Pr5.10,Max stop time,100-1000,1000,ms,Recommended to keep default value,
+0x01AB,Pr5.13,Auto-tuning at power on,0-1,1,,0:disable; 1:enable,IsEnabled
+0x01BD,Pr5.22,RS485 baud rate,0-6,4,,0–6 mapped to baud rates,BaudRate
+0x01BF,Pr5.23,RS485 ID,0-127,1,,,
+0x01C1,Pr5.24,RS485 data type selection,0-11,4,,Parity/stop-bit selection,
+0x01C3,Pr5.25,RS485 control word,0-32767,0,,,
+0x01C4,Pr5.26,Communication bit delay,0-100,35,bit,,
+0x01D1,Pr5.32,Switching time to standby,10-65535,200,ms,,
+0x01D3,Pr5.33,Standby current percentage,0-100,50,,,
+0x01E1,Pr6.00,JOG velocity,0-5000,60,r/min,For RS485 triggered JOG,
+0x01E3,Pr6.01,Interval,0-10000,100,ms,For RS485 triggered JOG,
+0x01E5,Pr6.02,Running times,0-30000,1,,For RS485 triggered JOG,
+0x01E7,Pr6.03,Acceleration/Deceleration time,0-10000,200,,For RS485 triggered JOG,
+0x01FF,Pr6.15,Version information,0-65535,0,,Read-only,
+0x0201,Pr6.16,Firmware information,0-65535,0,,Read-only,
+0x0231,Pr7.00,Motor model,0-100,0,,Invalid,
+0x0235,Pr7.02,Back EMF coefficient,0-32767,100,1ms,Invalid,
+0x0237,Pr7.03,Current loop KP,0-3000,1500,,Invalid,
+0x0239,Pr7.04,Current loop Ki,0-1500,300,,Recommended to keep factory value,
+0x023B,Pr7.05,Current loop Kp,0-1024,100,,Recommended to keep factory value,
+0x023D,Pr7.06,Current loop Kc,0-32767,300,,Invalid,
+0x0243,Pr7.09,Over-voltage threshold,0-1000,90,V,Invalid,
+0x1003,,Motion status,,,,"Read-only, see MotionStatus class","MotionStatus"
+0x1801,,Control word,,,,"Various commands, see ControlWord class",ControlWordFunction
+0x1901,,Save parameter status word,,,,"Read-only, response status to the control word, see StatusWord class",ControlWordStatus
+0x2203,,Current alarm,,,,"Read-only, see Alarm class","Alarm"
+0x6000,Pr8.00,PR global control function,0-32767,,,,
+0x6002,Pr8.02,PR control register,,,,,
+0x6006,Pr8.06,Soft limit+ (high bits),0-32767,0x7FFF,,High 16-bits of the positive soft limit,
+0x6007,Pr8.07,Soft limit+ (low bits),0-32767,0xFFFF,,Low 16-bits of the positive soft limit,
+0x6008,Pr8.08,Soft limit- (high bits),0-32767,0x8000,,High 16-bits of the negative soft limit,
+0x6009,Pr8.09,Soft limit- (low bits),0-32767,0,,Low 16-bits of the negative soft limit,
+0x600A,Pr8.10,Homing mode,0-7,,,,HomingMode
+0x600B,Pr8.11,Home switch position (high bits),,,,High 16-bits of the home switch absolute position ,
+0x600C,Pr8.12,Home switch position (high bits),,,,Low 16-bits of the home switch absolute position ,
+0x600D,Pr8.13,Homing stop position (high bites),,,,"High 16-bits of the absolute position the motor moves to after homing, (must be enabled in Homing mode)",
+0x600E,Pr8.14,Homing stop position (low bites),,,,"Low 16-bits of the absolute position the motor moves to after homing, (must be enabled in Homing mode)",
+0x600F,Pr8.15,Homing high velocity,,,rpm,The 1st segment velocity of homing,
+0x6010,Pr8.16,Homing low velocity,,,rpm,The 2nd segment velocity of homing,
+0x6011,Pr8.17,Homing acceleration,,,ms/1000rpm,Homing acceleration,
+0x6012,Pr8.18,Homing deceleration,,,ms/1000rpm,Homing deceleration,
+0x6013,Pr8.19,"Torque zero, return time",,,ms,Torque retention time for torque zero return,
+0x6014,Pr8.20,"Torque zero, return value",,,%,"The force value of torque zero return mode, the step is the set current percentage",
+0x6015,Pr8.21,Homing over-travel,,,,"If value is set, the motor strops when it reaches this set distance even if homing is not completed",
+0x6016,Pr8.22,Soft limit quick stop time,,,ms,Deceleration time after triggering the soft limit,
+Pr6017,Pr8.23,Stop time,,,ms,Deceleration time after quick stop,
+0x6200,Pr9.00,Path 0 settings,,,,,PathSettings
+0x6201,Pr9.01,Path 0 position (high bits),,,,,
+0x6202,Pr9.02,Path 0 position (low bits),,,,,
+0x6203,Pr9.03,Path 0 velocity,,,rpm,,
+0x6204,Pr9.04,Path 0 acceleration,,,ms/1000rpm,,
+0x6205,Pr9.05,Path 0 deceleration,,,ms/1000rpm,,
+0x6206,Pr9.06,Path 0 pause time,,,,,
+0x6207,Pr9.07,Path 0 special parameter,,,,,

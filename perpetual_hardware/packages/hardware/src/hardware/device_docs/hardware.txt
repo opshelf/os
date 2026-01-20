@@ -1,0 +1,30 @@
+Device RS485 connector cable ("DEV")
+COLOR,      NAME,   PIN,    
+red,        D+,     1,       
+redwhite,   D-,     2,       
+blue,       GND,    3,      
+blueblack,  GND,    4,      
+
+RS485 to USB cable ("USB")
+COLOR,      NAME,   
+red,        +5V,
+green,      D-,
+white,      D+,
+black,      GND,
+
+Mapping:
+NAME    USB     DEV                  
+D+      white   red            
+D-      green   redwhite        
+GND     black   blue+blueblack  
+
+DIP Switches:
+Slave ID,   SW5,    SW4,    SW3,    SW2,    SW1
+31          off,    off,    off,    off,    off
+slave id = !SW5 | !SW4 | !SW3 | !SW2 | !SW1
+
+Baud rate,  S6,     S7   
+9600        off,    off,
+19200       on,     off,
+38400       off,    on,
+115200      on,     on

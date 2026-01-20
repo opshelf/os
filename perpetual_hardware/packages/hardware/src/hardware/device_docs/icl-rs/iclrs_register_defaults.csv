@@ -1,0 +1,127 @@
+name,address,default
+pulse per revolution,1,10000
+control mode,3,2
+control mode source,5,1
+motor direction,7,0
+motor inductance,9,4000
+allowed max position following error,11,65535
+forced enable by software,15,0
+position loop kp,81,25
+velocity loop ki,83,0
+velocity loop kp,85,20
+position loop kph,101,0
+command filter time,161,100
+velocity switching point: open loop to closed loop,163,18
+velocity switching point: closed loop to open loop,165,12
+delay time of open loop to closed loop,167,5
+delay time of closed loop to open loop,169,10
+si1,325,136
+si2,327,0
+si3,329,0
+si4,331,0
+si5,333,0
+si6,335,0
+si7,337,0
+so1,343,0
+so2,345,0
+so3,347,0
+delay of brake released,359,0
+delay of brake locked,361,250
+threshold value of brake locking velocity,363,10
+alarm detection selection,365,65535
+bus voltage,375,238
+digital input state,377,1
+digital output state,379,0
+dip switch status,391,31
+peak current,401,22
+closed-loop holding current %,403,50
+open-loop holding current %,405,50
+shaft locked current %,407,100
+shaft locked duration,409,200
+rising time of locked current,415,1
+enable self test,419,0
+max stop time,421,1000
+enable auto-tuning at power on,427,0
+rs485 baud rate,445,2
+rs485 id,447,1
+rs485 data type selection,449,4
+rs485 control word,451,0
+communication bit delay,452,0
+switching time to standby,465,200
+standby current percentage,467,50
+jog velocity,481,60
+interval,483,100
+running times,485,1
+acceleration/deceleration time,487,200
+version information,511,0
+firmware information,513,0
+current loop ki,569,300
+current loop kp,571,100
+current loop kc,573,300
+over-voltage threshold,579,40
+motion status,4099,50
+position error (high bits),4112,0
+position error (low bits),4113,3072
+profile position (high bits),4114,0
+profile position (low bits),4115,0
+feedback position (high bits),4116,65535
+feedback position (low bits),4117,65522
+profile velocity (high bits),4164,0
+profile velocity (low bits),4165,0
+feedback velocity (high bits),4166,0
+feedback velocity (low bits),4167,0
+control word,6145,0
+control word status,6401,4369
+current alarm,8707,0
+pr global control,24576,0
+pr control register,24578,0
+soft limit+ (high bits),24582,32767
+soft limit+ (low bits),24583,65535
+soft limit- (high bits),24584,32768
+soft limit- (low bits),24585,0
+homing mode,24586,2
+home switch position (high bits),24587,0
+home switch position (low bits),24588,0
+homing stop position (high bits),24589,0
+homing stop position (low bits),24590,0
+homing high velocity,24591,200
+homing low velocity,24592,50
+homing acceleration,24593,100
+homing deceleration,24594,100
+torque zero return time,24595,100
+torque zero return value,24596,50
+homing over-travel,24597,0
+soft limit quick stop time,24598,10
+stop time,24599,50
+path 0 settings,25088,0
+path 0 position (high bits),25089,0
+path 0 position (low bits),25090,0
+path 0 velocity,25091,0
+path 0 acceleration,25092,100
+path 0 deceleration,25093,100
+path 0 pause time,25094,0
+path 0 special parameter,25095,0
+path 1 settings,25096,0
+path 1 position (high bits),25097,0
+path 1 position (low bits),25098,0
+path 1 velocity,25099,0
+path 1 acceleration,25100,100
+path 1 deceleration,25101,100
+path 1 pause time,25102,0
+path 1 special parameter,25103,0
+path 2 settings,25104,0
+path 2 position (high bits),25105,0
+path 2 position (low bits),25106,0
+path 2 velocity,25107,0
+path 2 acceleration,25108,100
+path 2 deceleration,25109,100
+path 2 pause time,25110,0
+path 2 special parameter,25111,0
+path 3 settings,25112,0
+path 3 position (high bits),25113,0
+path 3 position (low bits),25114,0
+path 3 velocity,25115,0
+path 3 acceleration,25116,100
+path 3 deceleration,25117,100
+path 3 pause time,25118,0
+path 3 special parameter,25119,0

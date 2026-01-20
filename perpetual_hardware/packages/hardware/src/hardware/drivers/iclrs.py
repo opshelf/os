@@ -20,10 +20,9 @@ from pydantic import (
 
 from hardware.controller import SharedModbusController
 from hardware.drivers import iclrs_register_types
+from hardware.drivers.iclrs_register_types import ControlWordFunction
 from hardware.drivers.registers import DeviceRegisters
-from hardware.exceptions import (
-    MotorConfigError,
-)
+from hardware.exceptions import MotorConfigError, MotorError
 from hardware.motor import CurtainSafety, MotorStatus
 
 logger = logging.getLogger(__name__)
@@ -40,36 +39,51 @@ MAX_FOLLOWING_ERROR = 4000
 # Icl-Rs DeviceRegister.
 REGISTERS_FILENAME = "../src/hardware/device_docs/icl-rs/ICL42.csv"
 TYPES = DeviceRegisters.get_classes_in_module(iclrs_register_types)
-registers = DeviceRegisters.csv_to_registers(REGISTERS_FILENAME, TYPES)
+registers = DeviceRegisters.csv_to_registers(
+    REGISTERS_FILENAME, TYPES
+)
 iclrs_registers = DeviceRegisters(registers)
+
 
 # Icl-Rs Register BaseModel
 class IclrsRegister(BaseModel):
     # Either 'name' or 'address' must be provided as input.
-    name: str                   # 'name' is the register name.
-    address: int|None = None    # 'address' is the register address.
-    value: Any                  # 'value' is the input representation of the value.
+    name: str  # 'name' is the register name.
+    address: int | None = None  # 'address' is the register address.
+    value: Any | None = (
+        None  # 'value' is the input representation of the value.
+    )
     # Post-validation fields:
-    modbus: tuple[int,int]|None = None  # 'modbus' is (address, value).
-    typed: Any|None = None              # 'typed' is the value with type applied.
-    message: str|None = None            # 'message' is any human-readable message.
+    modbus: tuple[int, int] | None = (
+        None  # 'modbus' is (address, value).
+    )
+    typed: Any | None = (
+        None  # 'typed' is the value with type applied.
+    )
+    message: str | None = (
+        None  # 'message' is any human-readable message.
+    )
 
     @model_validator(mode="before")
     @classmethod
     def name_address_check(cls, values: Any) -> Any:
-        if isinstance(values, dict) and 'address' in values:
-            address = values['address']
+        if isinstance(values, dict) and "address" in values:
+            address = values["address"]
             try:
-                register = iclrs_registers.get_register_by_address(address)
+                register = iclrs_registers.get_register_by_address(
+                    address
+                )
             except ValueError:
                 raise ValueError("Invalid register address")
-            if 'name' in values and values['name'] != register.name:
-                raise ValueError("Provided name does not match address")
-            values['name'] = register.name
+            if "name" in values and values["name"] != register.name:
+                raise ValueError(
+                    "Provided name does not match address"
+                )
+            values["name"] = register.name
         return values
 
     @field_validator("name", mode="before")
-    def name_must_in_registers_list(cls, v: str) -> str:
+    def valid_register_name(cls, v: str) -> str:
         v = v.lower()
         try:
             iclrs_registers.get_register_by_name(v)
@@ -78,47 +92,64 @@ class IclrsRegister(BaseModel):
         return v
 
     @field_validator("value", mode="before")
-    def value_must_be_of_a_valid_type(cls, v: Any) -> Any:
+    def value_must_be_of_a_valid_type(
+        cls, v: Any | None
+    ) -> Any | None:
         # Must be int, bool, dict, or an acceptable IntEnum.
         # If a string, coerce it into an acceptable IntEnum.
+        if v is None:
+            return v
         if isinstance(v, str):
             try:
                 v = iclrs_registers.str_to_enum(v)
             except ValueError as e:
-                raise ValueError("Invalid string for register value") from e
+                raise ValueError(
+                    "Invalid string for register value"
+                ) from e
         # If a dict, coerce any strings in the dict into acceptable IntEnums.
         if isinstance(v, dict):
             try:
-                v = {_k: iclrs_registers.str_to_enum(_v) for _k, _v in v.items() if isinstance(_v, str)}
+                v = {
+                    _k: iclrs_registers.str_to_enum(_v)
+                    for _k, _v in v.items()
+                    if isinstance(_v, str)
+                }
             except ValueError as e:
-                raise ValueError("Invalid string in dict for register value") from e
+                raise ValueError(
+                    "Invalid string in dict for register value"
+                ) from e
         return v
 
-    @model_validator(mode='after')
-    def valid_value_for_name(self) -> 'IclrsRegister':
+    @model_validator(mode="after")
+    def valid_value_for_name(self) -> "IclrsRegister":
         name = self.name
-        value = self.value
-        model = iclrs_registers.get_register_model(name)
-        try:
-            if isinstance(self.value, dict):
-                valid_value = model(**value).value
-            elif isinstance(self.value, IntEnum):
-                valid_value = model(value = value).value.value
-            else:
-                valid_value = model(value = value).value
-        except ValidationError as e:
-            raise ValueError('Invalid value for register') from e
-        # Post-validation processing:
         address = iclrs_registers.get_register_by_name(name).address
         self.address = address
-        self.modbus = (address, valid_value)
-        self.typed = iclrs_registers.apply_type(name, valid_value)
-        self.message = iclrs_registers.get_message(name, valid_value)
+        value = self.value
+        if value is not None:
+            model = iclrs_registers.get_register_model(name)
+            try:
+                if isinstance(self.value, dict):
+                    valid_value = model(**value).value
+                elif isinstance(self.value, IntEnum):
+                    valid_value = model(value=value).value.value
+                else:
+                    valid_value = model(value=value).value
+            except ValidationError as e:
+                raise ValueError("Invalid value for register") from e
+            # Post-validation processing:
+            self.modbus = (address, valid_value)
+            self.typed = iclrs_registers.apply_type(name, valid_value)
+            self.message = iclrs_registers.get_message(
+                name, valid_value
+            )
         return self
+
 
 class IclrsRegisters(RootModel):
     # The 'root' attribute holds the list of Iclrs models
     root: List[IclrsRegister]
+
 
 # Icl-Rs Config BaseModel
 class IclrsConfig(BaseModel):
@@ -147,7 +178,11 @@ class IclrsConfig(BaseModel):
     @model_validator(mode="after")
     def _validate_physical_endpoints(self) -> "IclrsConfig":
         p0 = self.phys_at_zero if self.phys_at_zero is not None else 0
-        pm = self.phys_at_max if self.phys_at_max is not None else self.lim
+        pm = (
+            self.phys_at_max
+            if self.phys_at_max is not None
+            else self.lim
+        )
 
         if p0 == pm:
             raise ValueError(
@@ -174,19 +209,34 @@ class IclrsConfig(BaseModel):
 
     def logical_to_physical(self, logical: float) -> float:
         p0 = self.phys_at_zero if self.phys_at_zero is not None else 0
-        pm = self.phys_at_max if self.phys_at_max is not None else self.lim
+        pm = (
+            self.phys_at_max
+            if self.phys_at_max is not None
+            else self.lim
+        )
         return p0 + (logical / self.lim) * (pm - p0)
 
     def physical_to_logical(self, physical: float) -> float:
         p0 = self.phys_at_zero if self.phys_at_zero is not None else 0
-        pm = self.phys_at_max if self.phys_at_max is not None else self.lim
+        pm = (
+            self.phys_at_max
+            if self.phys_at_max is not None
+            else self.lim
+        )
         return (physical - p0) / (pm - p0) * self.lim
 
-    def logical_to_physical_delta(self, logical_delta: float) -> float:
+    def logical_to_physical_delta(
+        self, logical_delta: float
+    ) -> float:
         p0 = self.phys_at_zero if self.phys_at_zero is not None else 0
-        pm = self.phys_at_max if self.phys_at_max is not None else self.lim
+        pm = (
+            self.phys_at_max
+            if self.phys_at_max is not None
+            else self.lim
+        )
         scale = (pm - p0) / self.lim
         return logical_delta * scale
+
 
 class Iclrs:
     _motor_id: int
@@ -209,11 +259,85 @@ class Iclrs:
         self._cur_pos = None
         self._stall_timeout = STEPPER_STALL_TIMEOUT_S
         self._status = MotorStatus.IDLE
-        self._pending_motion: Optional[Callable[[], Awaitable[None]]] = None
+        self._pending_motion: Optional[
+            Callable[[], Awaitable[None]]
+        ] = None
         self._target_pos: Optional[float] = None
         self._logger = logger.getChild(f"motor.{self._motor_id}")
         self._safety = safety
         self._simulated_fault = False
+
+    async def read_register(self, name: str) -> IclrsRegister:
+        """Get a motor parameter register value.
+
+        Args:
+            register: Name of the register to read
+
+        Raises:
+            MotorError: If parameter read fails
+            ValueError: If register name is invalid
+
+        Returns:
+            Register value as integer, or None if read fails
+        """
+        # Get address from name
+        try:
+            register = IclrsRegister(name=name)
+        except ValidationError as e:
+            raise ValueError(f"Invalid register name: {name}") from e
+        address = register.address
+        # Read address via Modbus
+        try:
+            value = await self._controller.read_holding_registers(
+                self._motor_id, address
+            )
+        except Exception as e:
+            if not isinstance(e, (MotorError, ValueError)):
+                raise MotorError(
+                    f"Failed to get parameter {register}: {str(e)}"
+                ) from e
+            raise
+
+        if value is None:
+            raise MotorError(f"Failed to read register {register}")
+        else:
+            return IclrsRegister(name=name, value=value)
+
+    async def write_register(self, name: str, value: Any) -> None:
+        """Set a motor parameter register.
+
+                Args:
+            register: Name of the register to set
+            value: Value to write to the register
+
+        Raises:
+            MotorError: If parameter write fails
+            ValueError: If register name is invalid
+        """
+
+        # Get address from name
+        try:
+            register = IclrsRegister(name=name, value=value)
+        except ValidationError as e:
+            raise ValueError("Invalid register: ") from e
+        # Write register via modbus
+        try:
+            await self._controller.write_single_register(
+                self._motor_id, register.modbus[0], register.modbus[1]
+            )
+        except Exception as e:
+            if not isinstance(e, (MotorError, ValueError)):
+                raise MotorError(
+                    f"Failed to set parameter {register}: {str(e)}"
+                ) from e
+            raise
+
+    async def write_control_word_and_read_status(
+        self, function: ControlWordFunction
+    ) -> IclrsRegister:
+        await self.write_register("control word", value=function)
+        register = await self.read_register("control word status")
+        return register
 
     async def configure(self):
         """Configure the stepper motor with initial parameters.
@@ -227,7 +351,10 @@ class Iclrs:
         try:
             self._logger.info(
                 "Configuring motor",
-                extra={"motor_id": self._motor_id, "limit_mm": self._config.lim},
+                extra={
+                    "motor_id": self._motor_id,
+                    "limit_mm": self._config.lim,
+                },
             )
             # await self.clear_alarms()
             for r in self._config.configuration_registers.root:
