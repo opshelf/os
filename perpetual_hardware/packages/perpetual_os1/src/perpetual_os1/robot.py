@@ -202,7 +202,15 @@ class Robot:
 
     async def configure(self):
         await self._connect_controller("motor", self._motorbus, self._bus_settings["motor"])
-        await self._connect_controller("scale", self._scalebus, self._bus_settings["scale"])
+
+        io_scale_config = self._config.get("robot.io.scale", {})
+        scale_enabled = io_scale_config.get("enabled", True) if isinstance(io_scale_config, dict) else True
+
+        if scale_enabled is True:
+            await self._connect_controller("scale", self._scalebus, self._bus_settings["scale"])
+        else:
+            self._logger.info("scale_bus_skipped: scale is disabled in config")
+
         await self._tool.configure()
         await self._io.configure()
 
