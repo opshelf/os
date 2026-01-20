@@ -406,6 +406,31 @@ export async function homeMotor(motorName: string): Promise<{ success: boolean }
 	});
 }
 
+export interface MotorProbeResult {
+	motor_name: string;
+	responsive: boolean;
+	position_mm: number | null;
+	error: string | null;
+}
+
+export interface MotorProbeResponse {
+	results: MotorProbeResult[];
+}
+
+export async function probeMotors(): Promise<MotorProbeResponse> {
+	return apiFetch<MotorProbeResponse>("/robot/debug/motors/probe", {
+		method: "POST",
+	});
+}
+
+export async function moveMotor(motorName: string, positionMm: number): Promise<{ success: boolean }> {
+	return apiFetch<{ success: boolean }>(`/robot/debug/motors/${motorName}/move`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ position_mm: positionMm }),
+	});
+}
+
 export type GripperState = "grip" | "release";
 
 export async function controlGripper(state: GripperState): Promise<{ success: boolean }> {
