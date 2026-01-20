@@ -51,7 +51,7 @@ address,name,default,unit,description,type,min,max
 0x01D3,standby current percentage,50,,,int,0,100
 0x01E1,jog velocity,60,r/min,For RS485 triggered JOG,int,0,5000
 0x01E3,interval,100,ms,For RS485 triggered JOG,int,0,10000
-0x01E5,running times,1,,For RS485 triggered JOG,int,0,30000
+0x01E5,running times,1,count,For RS485 triggered JOG,int,0,30000
 0x01E7,acceleration/deceleration time,200,,For RS485 triggered JOG,int,0,10000
 0x01FF,version information,0,,Read-only,int,0,65535
 0x0201,firmware information,0,,Read-only,int,0,65535
