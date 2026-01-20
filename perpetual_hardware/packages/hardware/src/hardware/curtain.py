@@ -24,17 +24,20 @@ class CurtainSensor:
         self,
         *,
         pin: int = 2,
+        inverted: bool = False,
     ) -> None:
         if GPIO is None:
             raise RuntimeError("RPi.GPIO not available")
         self.pin = pin
+        self._inverted = inverted
         GPIO.setup(pin, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
         self._last_state: Optional[bool] = None
 
     def read(self) -> bool:
         raw = GPIO.input(self.pin) == GPIO.HIGH  # type: ignore[arg-type]
-        self._last_state = raw
-        return raw
+        result = not raw if self._inverted else raw
+        self._last_state = result
+        return result
 
     def cleanup(self) -> None:
         GPIO.cleanup(self.pin)  # type: ignore[arg-type]
