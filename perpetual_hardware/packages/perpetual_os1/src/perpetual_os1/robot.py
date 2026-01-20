@@ -203,8 +203,8 @@ class Robot:
     async def configure(self):
         await self._connect_controller("motor", self._motorbus, self._bus_settings["motor"])
 
-        io_scale_config = self._config.get("robot.io.scale", {})
-        scale_enabled = io_scale_config.get("enabled", True) if isinstance(io_scale_config, dict) else True
+        io_scale_config = self._config.get("robot.io.scale", None)
+        scale_enabled = getattr(io_scale_config, "enabled", True) if io_scale_config is not None else True
 
         if scale_enabled is True:
             await self._connect_controller("scale", self._scalebus, self._bus_settings["scale"])
