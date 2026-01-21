@@ -3,20 +3,20 @@ from enum import IntEnum
 from typing import ClassVar
 
 
-# Control mode
+# --- Control mode ---
 class ControlMode(IntEnum):
     OPEN_LOOP = 0x00
     RESERVED = 0x01
     CLOSED_LOOP = 0x02
 
 
-# Motor direction
+# --- Motor direction ---
 class MotorDirection(IntEnum):
     CW = 0x00
     CCW = 0x01
 
 
-# Digital I/O
+# --- Digital I/O settings ---
 class DigitalInputFunction(IntEnum):
     """Represents digital input function setting"""
 
@@ -70,7 +70,7 @@ class DigitalOutputFunction(IntEnum):
     IN_POSITION = 0x23
 
 
-class DigitalInputOutputMode(IntEnum):
+class NormallyOpenedOrClosed(IntEnum):
     """Represents digital input and output mode setting"""
 
     NORMALLY_OPENED = 0
@@ -82,22 +82,20 @@ class DigitalInputSettings:
     """Represents digital input settings for iCL-RS series motor"""
 
     function: DigitalInputFunction = None
-    mode: DigitalInputOutputMode = None
+    mode: NormallyOpenedOrClosed = None
     filter: DigitalInputFilter = None
     value: int = None
 
     def __post_init__(self):
         if self.value is None:
-            # value was not given, create it with the settings fields
             self.value = (
                 self.filter << 8 | self.mode << 7 | self.function
             )
         else:
-            # value was given, parse value to get settings fields
             self.function = DigitalInputFunction(
                 self.value & 0b111111
             )
-            self.mode = DigitalInputOutputMode(self.value >> 7 & 0b1)
+            self.mode = NormallyOpenedOrClosed(self.value >> 7 & 0b1)
             self.filter = DigitalInputFilter(self.value >> 8 & 0b1111)
 
     def __str__(self):
@@ -114,7 +112,7 @@ class DigitalOutputSettings:
     """Represents digital output settings for iCL-RS series motor"""
 
     function: DigitalOutputFunction = None
-    mode: DigitalInputOutputMode = None
+    mode: NormallyOpenedOrClosed = None
     value: int = None
 
     def __post_init__(self):
@@ -126,7 +124,7 @@ class DigitalOutputSettings:
             self.function = DigitalOutputFunction(
                 self.value & 0b111111
             )
-            self.mode = DigitalInputOutputMode(self.value >> 7 & 0b1)
+            self.mode = NormallyOpenedOrClosed(self.value >> 7 & 0b1)
 
     def __str__(self):
         mode_str = (
@@ -134,6 +132,9 @@ class DigitalOutputSettings:
         )
         function_str = f"function = {self.function.name.lower().replace('_', ' ')}"
         return f"settings({function_str}, {mode_str})"
+
+
+# --- Digital I/O states ---
 
 
 @dataclass
@@ -195,7 +196,7 @@ class DigitalOutputStates:
         )
 
 
-# Motion state
+# --- Motion state ---
 @dataclass
 class MotionStatus:
     value: int = None
@@ -233,48 +234,7 @@ class MotionStatus:
         )
 
 
-# @dataclass
-# class IsEnabled:
-#     value: int = field(init=False)
-#     enable: bool = field(default=False)
-
-#     def __post_init__(self):
-#         self.value = int(self.enable)
-
-
-@dataclass
-class BaudRate:
-    value: int = None
-    baud_rate: str = None
-
-    def __post_init__(self):
-        mapping = {
-            "2400": 0,
-            "4800": 1,
-            "9600": 2,
-            "19200": 3,
-            "38400": 4,
-            "57600": 5,
-            "115200": 6,
-        }
-        if self.value == None:
-            try:
-                self.value = mapping[self.baud_rate]
-            except KeyError:
-                raise ValueError("Invalid baud rate")
-        else:
-            try:
-                self.baud_rate = next(
-                    (k for k, v in mapping.items() if v == self.value)
-                )
-            except StopIteration:
-                raise ValueError("Invalid baud rate")
-
-    def __str__(self):
-        return f"{self.baud_rate}"
-
-
-# Control and status
+# --- Control word and status response
 class ControlWordFunction(IntEnum):
     INVALID = 0x0000
     RESET_CURRENT_ALARM = 0x1111
@@ -293,7 +253,7 @@ class ControlWordStatus(IntEnum):
     FAULT = 0xAAAA
 
 
-# Alarms
+# --- Alarms ---
 @dataclass
 class AlarmDetectionSelection:
     enable_over_current: bool
@@ -369,7 +329,7 @@ class Alarm:
         return text
 
 
-# --- PR CONTROL ("pr control")---
+# --- Path control ("pr control")---
 class PathControlCommand(IntEnum):
     STATUS_DONE_AND_READY = 0x0000
     STATUS_RUNNING = 0x0100
@@ -382,11 +342,9 @@ class PathControlCommand(IntEnum):
 
 class PathControlStatus(IntEnum):
     NONE = 0
-    PATH_COMPLETE = 1
-    NOT_RESPONDING = 2
-    PATH_RUNNING = 3
-    COMMAND_COMPLETED = 4
-    PATH_ERROR = 5
+    PATH_RUNNING = 1
+    PATH_COMPLETE = 2
+    COMMAND_COMPLETED = 3
 
 
 @dataclass
@@ -405,7 +363,7 @@ class PathControl:
             else:
                 self.value = self.command
         else:
-            # Commands
+            # Commands (written to register)
             if self.value & 0xF0 == PathControlCommand.PATH_MOTION:
                 self.command = PathControlCommand.PATH_MOTION
                 self.path = self.value & 0x0F
@@ -413,7 +371,7 @@ class PathControl:
             elif self.value & 0xF0 > 0:
                 self.command = self.value
                 self.status = PathControlStatus.NONE
-            # Status
+            # Status (read from register)
             if self.value & 0xFF0 == 0x100:
                 self.status = PathControlStatus.PATH_RUNNING
                 self.path = self.value & 0xF
@@ -421,62 +379,9 @@ class PathControl:
                 self.status = PathControlStatus.PATH_COMPLETE
             elif self.value == 0x200:
                 self.status = PathControlStatus.COMMAND_COMPLETED
-            # if self.value == 0x0200:
-            #     self.status = PathControlCommand.COMMAND_COMPLETE_WAIT_FOR_POSITIONING
-            # elif (self.value & 0xFFF0 == 0x0200) and (
-            #     self.value & 0x1
-            # ) != 0:
-            #     self.status = PathControlStatus.PATH_ERROR
-            #     self.path = self.value & 0x1
-            # elif (
-            #     self.value & 0xFFF0
-            #     == PathControlCommand.STATUS_DONE_AND_READY
-            # ):
-            #     self.status = PathControlCommand.STATUS_DONE_AND_READY
-            #     self.path = self.value & 0xF
-            # elif (
-            #     self.value & 0xFFF0
-            #     == PathControlCommand.STATUS_RUNNING
-            # ):
-            #     self.status = PathControlCommand.STATUS_RUNNNING
-            #     self.path = self.value & 0xF
-            # elif self.value == 0x0200:
-            #     self.status = PathControlCommand.COMMAND_COMPLETE_WAIT_FOR_POSITIONING
 
 
-@dataclass
-class PathControlRegisterRead:
-    value: int
-    status: PathControlRegisterStatus = field(init=False)
-    path: int = field(init=False)
-
-    def __post_init__(self):
-        if (self.value & 0xFFF0) == 0x000:
-            self.status = PathControlRegisterStatus.PATH_COMPLETE
-            self.path = self.value & 0x000F
-        if (self.value & 0xFFF0) == 0x001:
-            self.status = PathControlRegisterStatus.NOT_RESPONDING
-            self.path = self.value & 0x000F
-        if self.value == 0x0020:
-            self.status = PathControlRegisterStatus.NOT_RESPONDING
-        if self.value == 0x0040:
-            self.status = PathControlRegisterStatus.NOT_RESPONDING
-        if (self.value & 0xFFF0) == 0x0100:
-            self.status = PathControlRegisterStatus.PATH_RUNNING
-            self.path = self.value & 0x000F
-        if self.value == 0x0200:
-            self.status = PathControlRegisterStatus.COMMAND_COMPLETED
-        if (self.value & 0xFFF0) == 0x0200:
-            self.status = (
-                PathControlRegisterStatus.POSITION_FOLLOW_ERROR
-            )
-            self.path = self.value & 0x000F
-
-
-# ---
-
-
-# Homing
+# --- Homing ---
 class HomingDirection(IntEnum):
     CCW = 0
     CW = 1
@@ -531,18 +436,12 @@ class HomingStopPosition:
         self.low_bits = self.value & 0xFFFF
 
 
-# PR path
+# --- Path settings ---
 class PathOperationMode(IntEnum):
-    NO_ACTION = 0b0000
-    # NO_ACTION_1 = 0b0001
+    NO_ACTION = 0
     POSITION_MODE = 1
     VELOCITY_MODE = 2
     HOMING_MODE = 3
-    # NO_ACTION = 0b0000
-    # NO_ACTION_1 = 0b0001
-    # POSITION_MODE = 0b1
-    # VELOCITY_MODE = 0b0100
-    # HOMING_MODE = 0b1000
 
 
 class PathCoordinate(IntEnum):
@@ -611,3 +510,35 @@ class PathGlobalControl:
                 | self.enable_soft_limit << 1
                 | self.ctrg_trigger
             )
+
+
+@dataclass
+class BaudRate:
+    value: int = None
+    baud_rate: str = None
+
+    def __post_init__(self):
+        mapping = {
+            "2400": 0,
+            "4800": 1,
+            "9600": 2,
+            "19200": 3,
+            "38400": 4,
+            "57600": 5,
+            "115200": 6,
+        }
+        if self.value == None:
+            try:
+                self.value = mapping[self.baud_rate]
+            except KeyError:
+                raise ValueError("Invalid baud rate")
+        else:
+            try:
+                self.baud_rate = next(
+                    (k for k, v in mapping.items() if v == self.value)
+                )
+            except StopIteration:
+                raise ValueError("Invalid baud rate")
+
+    def __str__(self):
+        return f"{self.baud_rate}"
