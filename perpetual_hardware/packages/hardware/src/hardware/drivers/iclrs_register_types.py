@@ -253,7 +253,7 @@ class ControlWordStatus(IntEnum):
     FAULT = 0xAAAA
 
 
-# --- Alarms ---
+# --- Alarm ---
 @dataclass
 class AlarmDetectionSelection:
     enable_over_current: bool
@@ -368,7 +368,7 @@ class PathControl:
                 self.command = PathControlCommand.PATH_MOTION
                 self.path = self.value & 0x0F
                 self.status = PathControlStatus.NONE
-            elif self.value & 0xF0 > 0:
+            elif self.value:
                 self.command = self.value
                 self.status = PathControlStatus.NONE
             # Status (read from register)
@@ -489,27 +489,42 @@ class PathSettings:
         )
 
 
-class CtrgTriggerMode(IntEnum):
+# -- Path global control ("pr global control" ---
+
+
+class CtrgEdge(IntEnum):
     RISING_EDGE = 0
     DOUBLE_EDGE = 1
 
 
+class CtrgType(IntEnum):
+    USE_CTRG_EDGE = 0
+    LEVEL = 1
+
+
 @dataclass
 class PathGlobalControl:
-    ctrg_trigger: CtrgTriggerMode = field(
-        default=CtrgTriggerMode.RISING_EDGE
-    )
-    enable_soft_limit: bool = field(default=False)
-    enable_autohoming_after_powerup: bool = field(default=False)
+    ctrg_edge: CtrgEdge = CtrgEdge.RISING_EDGE
+    enable_soft_limit: bool = False
+    enable_autohoming_after_powerup: bool = False
+    ctrg_trigger_type: CtrgType = CtrgType.USE_CTRG_EDGE
     value: int = None
 
     def __post_init__(self):
-        if self.value == None:
+        if self.value is None:
             self.value = (
-                self.enable_autohoming_after_powerup << 2
+                self.ctrg_trigger_type << 4
+                | self.enable_autohoming_after_powerup << 2
                 | self.enable_soft_limit << 1
-                | self.ctrg_trigger
+                | self.ctrg_edge
             )
+        else:
+            self.ctrg_edge = CtrgEdge(self.value & 0b1)
+            self.enable_soft_limit = bool(self.value >> 1) & 0b1
+            self.enable_autohoming_after_powerup = (
+                bool(self.value >> 1) & 0b1
+            )
+            self.ctrg_trigger_type = CtrgType(self.value >> 4 & 0b1)
 
 
 @dataclass

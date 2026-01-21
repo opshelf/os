@@ -16,6 +16,7 @@ from pydantic import (
     Field,
     RootModel,
     ValidationError,
+    create_model,
     field_validator,
     model_validator,
 )
@@ -23,12 +24,13 @@ from pydantic import (
 from hardware.controller import SharedModbusController
 from hardware.drivers import iclrs_register_types
 from hardware.drivers.iclrs_register_types import (
+    Alarm,
     AlarmCode,
     ControlWordFunction,
     HomingDirection,
     HomingType,
+    MotionStatus,
     PathControlCommand,
-    PathControlStatus,
     PathOperationMode,
 )
 from hardware.drivers.registers import DeviceRegisters
@@ -50,7 +52,7 @@ STEPPER_POSITION_LOOP_KP = 50
 STEPPER_MAX_STOP_TIME = 100
 MAX_FOLLOWING_ERROR = 4000
 
-# Icl-Rs DeviceRegister.
+# --- Icl-Rs DeviceRegister ---
 REGISTERS_FILENAME = "../src/hardware/device_docs/icl-rs/ICL42.csv"
 TYPES = DeviceRegisters.get_classes_in_module(iclrs_register_types)
 registers = DeviceRegisters.csv_to_registers(
@@ -59,7 +61,7 @@ registers = DeviceRegisters.csv_to_registers(
 iclrs_registers = DeviceRegisters(registers)
 
 
-# Icl-Rs Register BaseModel
+# --- Icl-Rs Register BaseModel ---
 class IclrsRegister(BaseModel):
     # Either 'name' or 'address' must be provided as input.
     name: str  # 'name' is the register name.
@@ -169,7 +171,7 @@ class IclrsRegisters(RootModel):
     root: List[IclrsRegister]
 
 
-# Icl-Rs Config BaseModel
+# --- Icl-Rs Config BaseModel ---
 class IclrsConfig(BaseModel):
     motor_name: str = Field(..., min_length=1)
     motor_id: int = Field(..., ge=0)  # tighten if desired
@@ -187,11 +189,6 @@ class IclrsConfig(BaseModel):
         if not s:
             raise ValueError("motor_name cannot be empty/whitespace")
         return s
-
-    # @field_validator("lim")
-    # @classmethod
-    # def _lim_positive(cls, v):
-    #     return _positive(v, "lim")
 
     @model_validator(mode="after")
     def _validate_physical_endpoints(self) -> "IclrsConfig":
@@ -256,6 +253,23 @@ class IclrsConfig(BaseModel):
         return logical_delta * scale
 
 
+# --- Validator for clamped value ---
+@model_validator(mode="after")
+def clamp_value(model_instance: BaseModel) -> BaseModel:
+    model_field = model_instance.__class__.model_fields[
+        "clamped_value"
+    ]
+    ge = model_field.metadata[0].ge
+    le = model_field.metadata[1].le
+    if model_instance.value > le:
+        model_instance.clamped_value = le
+    elif model_instance.value < ge:
+        model_instance.clamped_value = ge
+    else:
+        model_instance.clamped_value = model_instance.value
+    return model_instance
+
+
 class Iclrs:
     _motor_id: int
     _controller: SharedModbusController
@@ -284,6 +298,10 @@ class Iclrs:
         self._logger = logger.getChild(f"motor.{self._motor_id}")
         self._safety = safety
         self._simulated_fault = False
+        self._position_validator = (
+            Iclrs._create_position_with_limits_model(0, 0xFFFFFFFF)
+        )
+        self._stop_event = asyncio.Event()
 
     async def read_register(self, name: str) -> IclrsRegister:
         """Get a motor parameter register value.
@@ -350,13 +368,6 @@ class Iclrs:
                 ) from e
             raise
 
-    async def write_control_word_and_read_status(
-        self, function: ControlWordFunction
-    ) -> IclrsRegister:
-        await self.write_register("control word", value=function)
-        register = await self.read_register("control word status")
-        return register
-
     async def configure(self):
         """Configure the stepper motor with initial parameters.
         NOTE: Configuration register values should be explicitly defined in the
@@ -375,8 +386,12 @@ class Iclrs:
                 },
             )
             # await self.clear_alarms()
+            await self.write_register(
+                name="Control word",
+                value=ControlWordFunction.RESET_ALL_PARAMETERS,
+            )
             for r in self._config.configuration_registers.root:
-                print(r)
+                await self.write_register(r.name, r.value)
         except Exception as e:
             self._logger.error(
                 "Failed to configure motor",
@@ -477,7 +492,34 @@ class Iclrs:
                 f"Motor {self._motor_id} faulted during homing"
             )
 
-    async def wait_for_idle(self, timeout_s:int=10) -> None:
+    async def move_to_position_no_wait(
+        self,
+        value: int,
+        rpm: int,
+        accel: int = 100,
+    ) -> None:
+        position_hb = value >> 16
+        position_lb = value & 0xFFFF
+        # Configure path
+        await self.write_register(
+            "path 0 settings",
+            value={"mode": PathOperationMode.POSITION_MODE},
+        )
+        await self.write_register(
+            "path 0 position (high bits)", value=position_hb
+        )
+        await self.write_register(
+            "path 0 position (low bits)", value=position_lb
+        )
+        await self.write_register("path 0 velocity", value=rpm)
+        await self.write_register("path 0 acceleration", value=accel)
+        await self.write_register("path 0 deceleration", value=accel)
+        # Trigger path
+        await self.trigger_path()
+        # Clear stop_event
+        self._stop_event.clear()
+
+    async def wait_for_idle(self, timeout_s: int = 10) -> None:
         start_time_s = time.monotonic()
         while True:
             await asyncio.sleep(0.2)
@@ -491,6 +533,12 @@ class Iclrs:
                 raise MotorTimeoutError(
                     f"Motor {self._motor_id} wait for idle timed out"
                 )
+            if self._stop_event.is_set():
+                break
+
+    async def read_alarm(self) -> Alarm:
+        alarm = await self.read_register("alarm")
+        return alarm
 
     async def clear_alarms(self) -> None:
         # Clear any existing alarms.
@@ -533,3 +581,75 @@ class Iclrs:
         position_lb = await self.read_register("position (low bits)")
         position = position_hb.value << 16 | position_lb.value
         return position
+
+    async def read_status(self) -> MotionStatus:
+        status = await self.read_register("motion status")
+        return status.typed
+
+    async def stop(self) -> None:
+        self._stop_event.set()
+        await self.write_register(
+            name="pr control",
+            value={"command": PathControlCommand.QUICK_STOP},
+        )
+
+    async def set_soft_limit(self, limit_position: int) -> None:
+        bytes = limit_position.to_bytes(2)
+        await self.write_register(
+            name="soft limit+ (high bits)", value=bytes[0]
+        )
+        await self.write_register(
+            name="soft limit- (high bits)", value=bytes[1]
+        )
+
+    async def write_control_word_and_read_status(
+        self, function: ControlWordFunction
+    ) -> IclrsRegister:
+        await self.write_register("control word", value=function)
+        register = await self.read_register("control word status")
+        return register
+
+    @staticmethod
+    def calculate_mpr_to_ppr(
+        mpr: int, mm_per_pulse: float = 0.001
+    ) -> int:
+        # mpr - mm per revolution
+        # mm_per_pulse - mm per pulse
+
+        ppr = int(1 / mm_per_pulse * mpr)
+        print(ppr)
+        return ppr
+
+    @staticmethod
+    def _create_position_with_limits_model(
+        min: Union[int, float] = 0,
+        max: Union[int, float] = 0xFFFFFFFF,
+    ):
+        model = create_model(
+            f"position_with_limits_{min}_{max}",
+            value=(int | float, Field(default=0)),
+            clamped_value=(
+                int | float | None,
+                Field(ge=min, le=max, default=None),
+            ),
+            __validators__={"clamp_value": clamp_value},
+        )
+        return model
+
+    def set_position_limit_mm(self, limit: int | float = 0xFFFFFFFF):
+        self._position_validator = (
+            Iclrs._create_position_with_limits_model(0, limit)
+        )
+
+    async def reset_registers(self):
+        status = await self.write_control_word_and_read_status(
+            ControlWordFunction.RESET_ALL_PARAMETERS
+        )
+        await asyncio.sleep(0.5)
+
+
+# TODO
+# 1. Add Position Basemodel for valid range validation - DONE
+# 2. Implement soft limit
+# 3. stop() - DONE
+# 4. calculate_ppr() - DONE
