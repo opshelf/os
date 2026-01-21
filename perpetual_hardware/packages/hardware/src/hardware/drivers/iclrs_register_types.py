@@ -233,13 +233,13 @@ class MotionStatus:
         )
 
 
-@dataclass
-class IsEnabled:
-    value: int = field(init=False)
-    enable: bool = field(default=False)
+# @dataclass
+# class IsEnabled:
+#     value: int = field(init=False)
+#     enable: bool = field(default=False)
 
-    def __post_init__(self):
-        self.value = int(self.enable)
+#     def __post_init__(self):
+#         self.value = int(self.enable)
 
 
 @dataclass
@@ -319,6 +319,7 @@ class AlarmCode(IntEnum):
     NO_ALARM = 0x00
     OVER_CURRENT = 0x01
     OVER_VOLTAGE = 0x02
+    STALL_TORQUE = 0x020
     ADC_SAMPLING_ERROR = 0x40
     SHAFT_LOCKING_ERROR = 0x80
     AUTO_TUNING_ERROR = 0x100
@@ -340,6 +341,7 @@ class Alarm:
             "Restart the controller. "
             "If error persists, check the voltage of the power supply."
         ),
+        AlarmCode.STALL_TORQUE: ("Intentional during homing."),
         AlarmCode.ADC_SAMPLING_ERROR: (
             "Restart the controller. "
             "If error persists, there is a hardware failure."
@@ -367,32 +369,79 @@ class Alarm:
         return text
 
 
-# Path control register
-class PathControlRegisterCommand(IntEnum):
+# --- PR CONTROL ("pr control")---
+class PathControlCommand(IntEnum):
+    STATUS_DONE_AND_READY = 0x0000
+    STATUS_RUNNING = 0x0100
     PATH_MOTION = 0x10
     HOMING = 0x20
-    SET_ZERO_POSITION = 0x21
+    ZERO_CURRENT_POSITION = 0x21
     QUICK_STOP = 0x40
+    COMMAND_COMPLETE_WAIT_FOR_POSITIONING = 0x200
 
 
-@dataclass
-class PathControlRegisterWrite:
-    command: PathControlRegisterCommand
-    path: int = field(default=0)
-    value: int = field(init=False)
-
-    def __post_init__(self):
-        if self.command == PathControlRegisterCommand.PATH_MOTION:
-            self.command = self.command | (self.path & 0xF)
-        self.value = self.command
-
-
-class PathControlRegisterStatus(IntEnum):
+class PathControlStatus(IntEnum):
+    NONE = 0
     PATH_COMPLETE = 1
     NOT_RESPONDING = 2
     PATH_RUNNING = 3
     COMMAND_COMPLETED = 4
-    POSITION_FOLLOW_ERROR = 5
+    PATH_ERROR = 5
+
+
+@dataclass
+class PathControl:
+    command: PathControlCommand = PathControlCommand.PATH_MOTION
+    status: PathControlStatus = PathControlStatus.NONE
+    path: int = 0
+    value: int | None = None
+
+    def __post_init__(self):
+        if self.value is None:
+            if self.command == PathControlCommand.PATH_MOTION:
+                self.value = (
+                    PathControlCommand.PATH_MOTION + self.path
+                )
+            else:
+                self.value = self.command
+        else:
+            # Commands
+            if self.value & 0xF0 == PathControlCommand.PATH_MOTION:
+                self.command = PathControlCommand.PATH_MOTION
+                self.path = self.value & 0x0F
+                self.status = PathControlStatus.NONE
+            elif self.value & 0xF0 > 0:
+                self.command = self.value
+                self.status = PathControlStatus.NONE
+            # Status
+            if self.value & 0xFF0 == 0x100:
+                self.status = PathControlStatus.PATH_RUNNING
+                self.path = self.value & 0xF
+            elif self.value == 0:
+                self.status = PathControlStatus.PATH_COMPLETE
+            elif self.value == 0x200:
+                self.status = PathControlStatus.COMMAND_COMPLETED
+            # if self.value == 0x0200:
+            #     self.status = PathControlCommand.COMMAND_COMPLETE_WAIT_FOR_POSITIONING
+            # elif (self.value & 0xFFF0 == 0x0200) and (
+            #     self.value & 0x1
+            # ) != 0:
+            #     self.status = PathControlStatus.PATH_ERROR
+            #     self.path = self.value & 0x1
+            # elif (
+            #     self.value & 0xFFF0
+            #     == PathControlCommand.STATUS_DONE_AND_READY
+            # ):
+            #     self.status = PathControlCommand.STATUS_DONE_AND_READY
+            #     self.path = self.value & 0xF
+            # elif (
+            #     self.value & 0xFFF0
+            #     == PathControlCommand.STATUS_RUNNING
+            # ):
+            #     self.status = PathControlCommand.STATUS_RUNNNING
+            #     self.path = self.value & 0xF
+            # elif self.value == 0x0200:
+            #     self.status = PathControlCommand.COMMAND_COMPLETE_WAIT_FOR_POSITIONING
 
 
 @dataclass
@@ -424,6 +473,9 @@ class PathControlRegisterRead:
             self.path = self.value & 0x000F
 
 
+# ---
+
+
 # Homing
 class HomingDirection(IntEnum):
     CCW = 0
@@ -437,17 +489,24 @@ class HomingType(IntEnum):
 
 @dataclass
 class HomingMode:
-    direction: HomingDirection
-    move_to_specified_point_after_homing: bool
-    mode: HomingType
-    value: int = field(init=False)
+    direction: HomingDirection = HomingDirection.CCW
+    move_to_specified_point_after_homing: bool = True
+    mode: HomingType = HomingType.DETECTED_BY_LIMIT_SWITCH
+    value: int | None = None
 
     def __post_init__(self):
-        self.value = (
-            self.mode << 2
-            | self.move_to_specified_point_after_homing << 1
-            | self.direction
-        )
+        if self.value is None:
+            self.value = (
+                self.mode << 2
+                | self.move_to_specified_point_after_homing << 1
+                | self.direction
+            )
+        else:
+            self.mode = HomingType(self.value >> 2 & 0b1)
+            self.move_to_specified_point_after_homing = bool(
+                self.value >> 1 & 0b1
+            )
+            self.direction = HomingDirection(self.value & 0b1)
 
 
 @dataclass
@@ -475,10 +534,15 @@ class HomingStopPosition:
 # PR path
 class PathOperationMode(IntEnum):
     NO_ACTION = 0b0000
-    NO_ACTION_1 = 0b0001
-    POSITION_MODE = 0b0010
-    VELOCITY_MODE = 0b0100
-    HOMING_MODE = 0b1000
+    # NO_ACTION_1 = 0b0001
+    POSITION_MODE = 1
+    VELOCITY_MODE = 2
+    HOMING_MODE = 3
+    # NO_ACTION = 0b0000
+    # NO_ACTION_1 = 0b0001
+    # POSITION_MODE = 0b1
+    # VELOCITY_MODE = 0b0100
+    # HOMING_MODE = 0b1000
 
 
 class PathCoordinate(IntEnum):
@@ -488,7 +552,7 @@ class PathCoordinate(IntEnum):
 
 @dataclass
 class PathSettings:
-    value: int = None
+    value: int | None = None
     mode: PathOperationMode = PathOperationMode.NO_ACTION
     enable_interrupt: bool = False
     enable_overlap: bool = False
@@ -497,7 +561,7 @@ class PathSettings:
     enable_jump: bool = False
 
     def __post_init__(self):
-        if self.value == None:
+        if self.value is None:
             self.value = (
                 self.enable_jump << 14
                 | self.jump_to << 8

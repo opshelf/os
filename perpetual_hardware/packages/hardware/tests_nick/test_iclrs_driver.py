@@ -6,7 +6,11 @@ from hardware.drivers.iclrs import Iclrs, IclrsConfig
 from hardware.drivers.iclrs import registers as ALL_REGISTERS
 from hardware.drivers.iclrs_register_types import (
     ControlWordFunction,
-    ControlWordStatus,
+)
+from hardware.exceptions import (
+    MotorConfigError,
+    MotorError,
+    MotorTimeoutError,
 )
 
 # Config
@@ -55,50 +59,85 @@ async def test_connect():
     assert True
 
 
-# @pytest.mark.asyncio(loop_scope="session")
-# async def test_read_register():
-#     async with shared_lock:
-#         register = await driver.read_register("pulse per revolution")
-#         assert register.modbus[1] == 10000
-
-
-# @pytest.mark.asyncio(loop_scope="session")
-# async def test_write_register():
-#     async with shared_lock:
-#         value = 12345
-#         original_register = await driver.read_register(
-#             "pulse per revolution"
-#         )
-#         # Write and read-back
-#         await driver.write_register(
-#             "pulse per revolution", value=value
-#         )
-#         register = await driver.read_register("pulse per revolution")
-#         # Restore
-#         await driver.write_register(
-#             "pulse per revolution", value=original_register.modbus[1]
-#         )
-#         assert register.modbus[1] == value
+@pytest.mark.asyncio(loop_scope="session")
+async def test_read_register():
+    async with shared_lock:
+        register = await driver.read_register("pulse per revolution")
+        assert register.modbus[1] == 10000
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_get_defaults():
-    # Reset parameters
-    register = await driver.write_control_word_and_read_status(
-        ControlWordFunction.RESET_ALL_PARAMETERS
-    )
-    if register.value == ControlWordStatus.OK:
-        read_registers = []
-        for register in ALL_REGISTERS:
-            name = register.name
-            read_register = await driver.read_register(name)
-            read_registers.append(read_register)
-        # Print
-        for register in read_registers:
-            print(
-                f"{register.name},{register.address},{register.value}"
-            )
-    assert True
+async def test_write_register():
+    async with shared_lock:
+        value = 12345
+        original_register = await driver.read_register(
+            "pulse per revolution"
+        )
+        # Write and read-back
+        await driver.write_register(
+            "pulse per revolution", value=value
+        )
+        register = await driver.read_register("pulse per revolution")
+        # Restore
+        await driver.write_register(
+            "pulse per revolution", value=original_register.modbus[1]
+        )
+        assert register.modbus[1] == value
+
+
+# @pytest.mark.asyncio(loop_scope="session")
+# async def test_get_defaults():
+#     # Reset parameters
+#     register = await driver.write_control_word_and_read_status(
+#         ControlWordFunction.RESET_ALL_PARAMETERS
+#     )
+#     if register.value == ControlWordStatus.OK:
+#         read_registers = []
+#         # Scan defaults
+#         for register in ALL_REGISTERS:
+#             name = register.name
+#             read_register = await driver.read_register(name)
+#             read_registers.append(read_register)
+#         print("\nname,address,default")
+#         for register in read_registers:
+#             print(
+#                 f"{register.name},{register.address},{register.value}"
+#             )
+#     assert True
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_home():
+    async with shared_lock:
+        await driver.write_control_word_and_read_status(
+            ControlWordFunction.RESET_ALL_PARAMETERS
+        )
+        await driver.home()
+        position = await driver.read_position()
+
+        error = abs(0 - position)
+    assert error <= 20
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_move():
+    async with shared_lock:
+        await driver.move_to_position(0xFFFF, 300, 2000)
+        position = await driver.read_position()
+        error = abs(0xFFFF - position)
+    assert error <= 20
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_crash():
+    async with shared_lock:
+        # Purposely crash to test crash response.
+        crashed = False
+        try:
+            await driver.move_to_position(0xFFFFF, 300, 2000)
+        except MotorError:
+            crashed = True
+    assert crashed == True
 
 
 # @pytest.mark.asyncio

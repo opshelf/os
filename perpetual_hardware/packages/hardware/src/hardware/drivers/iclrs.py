@@ -1,4 +1,6 @@
+import asyncio
 import logging
+import time
 from enum import IntEnum
 from typing import (
     Any,
@@ -20,9 +22,21 @@ from pydantic import (
 
 from hardware.controller import SharedModbusController
 from hardware.drivers import iclrs_register_types
-from hardware.drivers.iclrs_register_types import ControlWordFunction
+from hardware.drivers.iclrs_register_types import (
+    AlarmCode,
+    ControlWordFunction,
+    HomingDirection,
+    HomingType,
+    PathControlCommand,
+    PathControlStatus,
+    PathOperationMode,
+)
 from hardware.drivers.registers import DeviceRegisters
-from hardware.exceptions import MotorConfigError, MotorError
+from hardware.exceptions import (
+    MotorConfigError,
+    MotorError,
+    MotorTimeoutError,
+)
 from hardware.motor import CurtainSafety, MotorStatus
 
 logger = logging.getLogger(__name__)
@@ -87,8 +101,8 @@ class IclrsRegister(BaseModel):
         v = v.lower()
         try:
             iclrs_registers.get_register_by_name(v)
-        except ValueError:
-            raise ValueError("Invalid register name")
+        except ValueError as e:
+            raise ValueError("Invalid register name") from e
         return v
 
     @field_validator("value", mode="before")
@@ -109,11 +123,14 @@ class IclrsRegister(BaseModel):
         # If a dict, coerce any strings in the dict into acceptable IntEnums.
         if isinstance(v, dict):
             try:
-                v = {
-                    _k: iclrs_registers.str_to_enum(_v)
-                    for _k, _v in v.items()
-                    if isinstance(_v, str)
-                }
+
+                def f(_v):
+                    if isinstance(_v, str):
+                        return iclrs_registers.str_to_enum(_v)
+                    else:
+                        return _v
+
+                v = {_k: f(_v) for _k, _v in v.items()}
             except ValueError as e:
                 raise ValueError(
                     "Invalid string in dict for register value"
@@ -129,9 +146,10 @@ class IclrsRegister(BaseModel):
         if value is not None:
             model = iclrs_registers.get_register_model(name)
             try:
-                if isinstance(self.value, dict):
-                    valid_value = model(**value).value
-                elif isinstance(self.value, IntEnum):
+                if isinstance(value, dict):
+                    v = model(**value)
+                    valid_value = v.value
+                elif isinstance(value, IntEnum):
                     valid_value = model(value=value).value.value
                 else:
                     valid_value = model(value=value).value
@@ -319,7 +337,7 @@ class Iclrs:
         try:
             register = IclrsRegister(name=name, value=value)
         except ValidationError as e:
-            raise ValueError("Invalid register: ") from e
+            raise ValueError(f"Invalid register: {e}") from e
         # Write register via modbus
         try:
             await self._controller.write_single_register(
@@ -369,79 +387,246 @@ class Iclrs:
                 f"Failed to configure motor {self._motor_id}: {str(e)}"
             ) from e
 
-    # async def clear_alarms(self):
-    #   # Clear any existing alarms.
-    #   await self.set_param("Control word", ControlWordFunction.RESET_CURRENT_ALARM)
-    #   await self.set_param("Control word", ControlWordFunction.RESET_HISTORY_ALARM)
+    async def _read_status(self) -> MotorStatus:
+        pass
 
-    # async def move_config(self) -> None:
-    #   """Configure motor movement parameters.
+    async def get_position(self) -> float:
+        pass
 
-    #   Raises:
-    #       MotorConfigError: If configuration fails
-    #   """
-    #   try:
-    #     await self.clear_alarms()
-    #     # Disable auto-homing on power-on to prevent blocking motion commands.
-    #     value = self._registers.encode("pr global control", {})[1] # 0x0000
-    #     await self.set_param("pr global control", value)
-    #     # Configure movement parameters
-    #     await self.set_param("Motor direction", self._params.dr)
-    #     await self.set_param("Velocity", self._params.rpm)
-    #     await self.set_param("Motion of Path 0", 0x1)  # abs pos 0x1
-    #   except Exception as e:
-    #     raise MotorConfigError(f"Failed to configure movement parameters: {str(e)}") from e
+    async def home(self) -> None:
+        # We home by the method of "stall zeroing," which uses stall condition as the
+        # home switch.
+        # Relevant parameters:
+        # 'torque zero return time' [ms]
+        # 'torque zero return value' [% of max current]
+        # Set homing parameters:
 
-    # # TODO add guards on setters and getters
-    # async def set_param(self, register_name: str, value: int) -> None:
-    #   """Set a motor parameter register.
+        await self.write_register(
+            name="homing mode",
+            value={
+                "direction": HomingDirection.CCW,
+                "move_to_specified_point_after_homing": True,
+                "mode": HomingType.DETECTED_BY_LIMIT_SWITCH,
+            },
+        )
+        await self.write_register(
+            name="torque zero return time", value=50
+        )
+        await self.write_register(
+            name="torque zero return value", value=5
+        )
+        # These are the device default values, to be tuned if needed.
+        await self.write_register(
+            name="homing stop position (low bits)", value=0
+        )
+        await self.write_register(
+            name="homing high velocity", value=200
+        )
+        await self.write_register(
+            name="homing low velocity", value=50
+        )
+        await self.write_register(
+            name="homing acceleration", value=100
+        )
+        await self.write_register(
+            name="homing deceleration", value=100
+        )
+        # Clear alarm
+        await self.clear_alarms()
+        # Trigger
+        await self.write_register(
+            name="pr control",
+            value={
+                "command": PathControlCommand.HOMING,
+            },
+        )
+        # Wait for homing to complete
+        TIMEOUT_S = 10
+        start_time_s = time.monotonic()
+        while True:
+            await asyncio.sleep(0.5)
+            # Poll for status.
+            status = await self.read_register("motion status")
+            alarm = await self.read_register("alarm")
+            path_status = await self.read_register("pr control")
+            print(path_status)
+            if not status.typed.is_running:
+                if alarm.typed.code == AlarmCode.STALL_TORQUE:
+                    # Stall zero achieved.
+                    await self.write_register(
+                        name="Control word",
+                        value=ControlWordFunction.RESET_CURRENT_ALARM,
+                    )
+                    await self.write_register(
+                        name="pr control",
+                        value={
+                            "command": PathControlCommand.ZERO_CURRENT_POSITION,
+                        },
+                    )
+                    await asyncio.sleep(0.5)
+                    path_status = await self.read_register(
+                        "pr control"
+                    )
+                    print(f"POST-ZERO: {path_status}")
+                    break  # Stop waiting
+                else:
+                    # Stopped without stall torque.
+                    raise MotorError(
+                        f"Motor {self._motor_id} faulted during homing"
+                    )
+            # Fault detected
+            if status.typed.is_fault:
+                raise MotorError(
+                    f"Motor {self._motor_id} faulted during homing"
+                )
+            # Timeout
+            elapsed_s = start_time_s - time.monotonic()
+            if elapsed_s > TIMEOUT_S:
+                raise MotorTimeoutError(
+                    f"Motor {self._motor_id} homing timed out"
+                )
 
-    #   Args:
-    #       register: Name of the register to set
-    #       value: Value to write to the register
+    async def clear_alarms(self) -> None:
+        # Clear any existing alarms.
+        await self.write_register(
+            name="Control word",
+            value=ControlWordFunction.RESET_CURRENT_ALARM,
+        )
+        await self.write_register(
+            name="Control word",
+            value=ControlWordFunction.RESET_HISTORY_ALARM,
+        )
 
-    #   Raises:
-    #       MotorError: If parameter write fails
-    #       ValueError: If register name is invalid
-    #   """
-    #   try:
-    #     register = self._registers.get_register_by_name(register_name)
-    #     if register is None:
-    #       raise ValueError(f"Invalid register name: {register}")
-    #     await self._controller.write_single_register(self._motor_id, register.address, value)
-    #   # if result is None:
-    #   #     raise MotorError(f"Failed to write {value} to register {register}")
-    #   except Exception as e:
-    #     if not isinstance(e, (MotorError, ValueError)):
-    #       raise MotorError(f"Failed to set parameter {register_name}: {str(e)}") from e
+    async def move_to_position(
+        self,
+        value: int,
+        rpm: int,
+        accel: int = 100,
+    ) -> None:
+        position_hb = value >> 16
+        position_lb = value & 0xFFFF
+        # Configure path
+        await self.write_register(
+            "path 0 settings",
+            value={"mode": PathOperationMode.POSITION_MODE},
+        )
+        await self.write_register(
+            "path 0 position (high bits)", value=position_hb
+        )
+        await self.write_register(
+            "path 0 position (low bits)", value=position_lb
+        )
+        await self.write_register("path 0 velocity", value=rpm)
+        await self.write_register("path 0 acceleration", value=accel)
+        await self.write_register("path 0 deceleration", value=accel)
+        # Trigger path
+        await self.write_register(
+            name="pr control",
+            value={
+                "command": PathControlCommand.PATH_MOTION,
+                "path": 0,
+            },
+        )
+        # Wait to finish
+        TIMEOUT_S = 10
+        start_time_s = time.monotonic()
+        while True:
+            await asyncio.sleep(0.2)
+            # Poll for status.
+            status = await self.read_register("motion status")
+            # Check if done running.
+            if not status.typed.is_running:
+                break  # Stop waiting
+            # Timeout
+            elapsed_s = start_time_s - time.monotonic()
+            if elapsed_s > TIMEOUT_S:
+                raise MotorTimeoutError(
+                    f"Motor {self._motor_id} homing timed out"
+                )
+        # Motor is now done running, but need to check if it stopped because of fault
+        # or because it actually completed the path.
+        status = await self.read_register("motion status")
+        if status.typed.is_fault:
+            raise MotorError(
+                f"Motor {self._motor_id} faulted during homing"
+            )
+        #
 
-    # # TODO add guards on setters and getters
-    # async def write_register(self, name: str, value: Any) -> None:
-    #   """Set a motor parameter register.
+    async def read_position(self) -> int:
+        position_hb = await self.read_register("position (high bits)")
+        position_lb = await self.read_register("position (low bits)")
+        position = position_hb.value << 16 | position_lb.value
+        return position
 
-    #   Args:
-    #       register: Name of the register to set
-    #       value: Value to write to the register. May be an int, bool, dict, or an
-    #       IntEnum that can be encoded into a valid value for the register.
 
-    #   Raises:
-    #       MotorError: If parameter write fails
-    #       ValueError: If register name is invalid
-    #   """
-    #   try:
-    #     register = self._registers.get_register_by_name(name)
-    #     if register is None:
-    #       raise ValueError(f"Invalid register name: {name}")
-    #     address, encoded_value = self._registers.encode(name, {
-    #       "function": "DigitalOutputFunction.PATH_COMPLETE",
-    #       "mode": "DigitalInputOutputMode.NORMALLY_OPENED"}
-    #     )
-    #     if address == None:
-    #       raise ValueError(f"Invalid register name: {name}")
-    #     elif encoded_value == None:
-    #       raise ValueError(f"Invalid register value: {value}")
-    #     else:
-    #       await self._controller.write_single_register(self._motor_id, address, encoded_value)
-    #   except Exception as e:
-    #     if not isinstance(e, (MotorError, ValueError)):
-    #       raise MotorError(f"Failed to write register {name}: {str(e)}") from e
+# async def move_config(self) -> None:
+#   """Configure motor movement parameters.
+
+#   Raises:
+#       MotorConfigError: If configuration fails
+#   """
+#   try:
+#     await self.clear_alarms()
+#     # Disable auto-homing on power-on to prevent blocking motion commands.
+#     value = self._registers.encode("pr global control", {})[1] # 0x0000
+#     await self.set_param("pr global control", value)
+#     # Configure movement parameters
+#     await self.set_param("Motor direction", self._params.dr)
+#     await self.set_param("Velocity", self._params.rpm)
+#     await self.set_param("Motion of Path 0", 0x1)  # abs pos 0x1
+#   except Exception as e:
+#     raise MotorConfigError(f"Failed to configure movement parameters: {str(e)}") from e
+
+# # TODO add guards on setters and getters
+# async def set_param(self, register_name: str, value: int) -> None:
+#   """Set a motor parameter register.
+
+#   Args:
+#       register: Name of the register to set
+#       value: Value to write to the register
+
+#   Raises:
+#       MotorError: If parameter write fails
+#       ValueError: If register name is invalid
+#   """
+#   try:
+#     register = self._registers.get_register_by_name(register_name)
+#     if register is None:
+#       raise ValueError(f"Invalid register name: {register}")
+#     await self._controller.write_single_register(self._motor_id, register.address, value)
+#   # if result is None:
+#   #     raise MotorError(f"Failed to write {value} to register {register}")
+#   except Exception as e:
+#     if not isinstance(e, (MotorError, ValueError)):
+#       raise MotorError(f"Failed to set parameter {register_name}: {str(e)}") from e
+
+# # TODO add guards on setters and getters
+# async def write_register(self, name: str, value: Any) -> None:
+#   """Set a motor parameter register.
+
+#   Args:
+#       register: Name of the register to set
+#       value: Value to write to the register. May be an int, bool, dict, or an
+#       IntEnum that can be encoded into a valid value for the register.
+
+#   Raises:
+#       MotorError: If parameter write fails
+#       ValueError: If register name is invalid
+#   """
+#   try:
+#     register = self._registers.get_register_by_name(name)
+#     if register is None:
+#       raise ValueError(f"Invalid register name: {name}")
+#     address, encoded_value = self._registers.encode(name, {
+#       "function": "DigitalOutputFunction.PATH_COMPLETE",
+#       "mode": "DigitalInputOutputMode.NORMALLY_OPENED"}
+#     )
+#     if address == None:
+#       raise ValueError(f"Invalid register name: {name}")
+#     elif encoded_value == None:
+#       raise ValueError(f"Invalid register value: {value}")
+#     else:
+#       await self._controller.write_single_register(self._motor_id, address, encoded_value)
+#   except Exception as e:
+#     if not isinstance(e, (MotorError, ValueError)):
+#       raise MotorError(f"Failed to write register {name}: {str(e)}") from e

@@ -41,7 +41,7 @@ address,name,default,unit,description,type,min,max
 0x019F,rising time of locked current,1,100ms,Recommended to keep default value,int,1,60
 0x01A3,enable self test,0,,"False:disable, True: enable",bool,0,1
 0x01A5,max stop time,1000,ms,Recommended to keep default value,int,100,1000
-0x01AB,enable auto-tuning at power on,0,,False:disable; True:enable,bool,0,1
+0x01AB,enable auto-tuning at power on,1,,False:disable; True:enable,bool,0,1
 0x01BD,rs485 baud rate,2,,0-6 mapped to baud rates,BaudRate,0,6
 0x01BF,rs485 id,1,,,int,0,127
 0x01C1,rs485 data type selection,4,,Parity/stop-bit selection,int,0,11
@@ -61,11 +61,11 @@ address,name,default,unit,description,type,min,max
 0x0243,over-voltage threshold,40,V,Invalid,int,0,1000
 0x1003,motion status,50,,"Read-only, see MotionStatus class",MotionStatus,0,65535
 0x1010,position error (high bits),0,pulse,Position error after move (high bits),,0,65535
-0x1011,position error (low bits),3072,pulse,Position error after move (low bits),,0,65535
+0x1011,position error (low bits),1792,pulse,Position error after move (low bits),,0,65535
 0x1012,profile position (high bits),0,pulse,Position setpoint (high bits),,0,65535
 0x1013,profile position (low bits),0,pulse,Position setpoint (low bits),,0,65535
 0x1014,feedback position (high bits),65535,pulse,Position actual (high bits),,0,65535
-0x1015,feedback position (low bits),65522,pulse,Position actual (low bits),,0,65535
+0x1015,feedback position (low bits),65529,pulse,Position actual (low bits),,0,65535
 0x1044,profile velocity (high bits),0,rpm,Velocity setpoint (high bits),,0,65535
 0x1045,profile velocity (low bits),0,rpm,Velocity setpoint (low bits),,0,65535
 0x1046,feedback velocity (high bits),0,rpm,Velocity actual (high bits),,0,65535

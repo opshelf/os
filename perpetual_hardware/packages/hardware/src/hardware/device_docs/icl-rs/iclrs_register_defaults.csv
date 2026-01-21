@@ -41,7 +41,7 @@ shaft locked duration,409,200
 rising time of locked current,415,1
 enable self test,419,0
 max stop time,421,1000
-enable auto-tuning at power on,427,0
+enable auto-tuning at power on,427,1
 rs485 baud rate,445,2
 rs485 id,447,1
 rs485 data type selection,449,4
@@ -61,11 +61,11 @@ current loop kc,573,300
 over-voltage threshold,579,40
 motion status,4099,50
 position error (high bits),4112,0
-position error (low bits),4113,3072
+position error (low bits),4113,1792
 profile position (high bits),4114,0
 profile position (low bits),4115,0
 feedback position (high bits),4116,65535
-feedback position (low bits),4117,65522
+feedback position (low bits),4117,65529
 profile velocity (high bits),4164,0
 profile velocity (low bits),4165,0
 feedback velocity (high bits),4166,0

@@ -35,6 +35,8 @@ defaults_filename = "iclrs_register_defaults.csv"
 register_dicts = csv_to_list_dict(registers_filename)
 default_dicts = csv_to_list_dict(defaults_filename)
 
+print(default_dicts)
+
 count = 0
 for register in register_dicts:
     print(register)
