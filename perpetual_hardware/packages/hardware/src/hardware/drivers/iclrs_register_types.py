@@ -81,10 +81,12 @@ class NormallyOpenedOrClosed(IntEnum):
 class DigitalInputSettings:
     """Represents digital input settings for iCL-RS series motor"""
 
-    function: DigitalInputFunction = None
-    mode: NormallyOpenedOrClosed = None
-    filter: DigitalInputFilter = None
-    value: int = None
+    function: DigitalInputFunction = DigitalInputFunction.INVALID
+    mode: NormallyOpenedOrClosed = (
+        NormallyOpenedOrClosed.NORMALLY_OPENED
+    )
+    filter: DigitalInputFilter = DigitalInputFilter.FILTER_10_MS
+    value: int | None = None
 
     def __post_init__(self):
         if self.value is None:
@@ -92,11 +94,9 @@ class DigitalInputSettings:
                 self.filter << 8 | self.mode << 7 | self.function
             )
         else:
-            self.function = DigitalInputFunction(
-                self.value & 0b111111
-            )
-            self.mode = NormallyOpenedOrClosed(self.value >> 7 & 0b1)
-            self.filter = DigitalInputFilter(self.value >> 8 & 0b1111)
+            self.function = DigitalInputFunction(extract_bits(self.value, 0, 7))
+            self.mode = NormallyOpenedOrClosed(extract_bits(self.value, 7, 1))
+            self.filter = DigitalInputFilter(extract_bits(self.value, 8, 4))
 
     def __str__(self):
         filter_str = f"filter = {self.filter.name.lower().replace('filter', '').replace('_', '')}"
@@ -111,9 +111,11 @@ class DigitalInputSettings:
 class DigitalOutputSettings:
     """Represents digital output settings for iCL-RS series motor"""
 
-    function: DigitalOutputFunction = None
-    mode: NormallyOpenedOrClosed = None
-    value: int = None
+    function: DigitalOutputFunction = DigitalOutputFunction.INVALID
+    mode: NormallyOpenedOrClosed = (
+        NormallyOpenedOrClosed.NORMALLY_OPENED
+    )
+    value: int | None = None
 
     def __post_init__(self):
         if self.value is None:
@@ -139,14 +141,14 @@ class DigitalOutputSettings:
 
 @dataclass
 class DigitalInputStates:
-    value: int = None
-    si_1: int = None
-    si_2: int = None
-    si_3: int = None
-    si_4: int = None
-    si_5: int = None
-    si_6: int = None
-    si_7: int = None
+    value: int | None = None
+    si_1: int = 0
+    si_2: int = 0
+    si_3: int = 0
+    si_4: int = 0
+    si_5: int = 0
+    si_6: int = 0
+    si_7: int = 0
 
     def __post_init__(self):
         if self.value == None:
@@ -160,13 +162,13 @@ class DigitalInputStates:
                 | self.si_1
             )
         else:
-            self.si_7 = self.value >> 6 & 0b1
-            self.si_6 = self.value >> 5 & 0b1
-            self.si_5 = self.value >> 4 & 0b1
-            self.si_4 = self.value >> 3 & 0b1
-            self.si_3 = self.value >> 2 & 0b1
-            self.si_2 = self.value >> 1 & 0b1
-            self.si_1 = self.value & 0b1
+            self.si_7 = self.value >> 6 & 1
+            self.si_6 = self.value >> 5 & 1
+            self.si_5 = self.value >> 4 & 1
+            self.si_4 = self.value >> 3 & 1
+            self.si_3 = self.value >> 2 & 1
+            self.si_2 = self.value >> 1 & 1
+            self.si_1 = self.value & 1
 
     def __str__(self):
         return (
@@ -177,18 +179,18 @@ class DigitalInputStates:
 
 @dataclass
 class DigitalOutputStates:
-    so_1: int = None
-    so_2: int = None
-    so_3: int = None
-    value: int = None
+    so_1: int = 0
+    so_2: int = 0
+    so_3: int = 0
+    value: int | None = None
 
     def __post_init__(self):
-        if self.value == None:
+        if self.value is None:
             self.value = self.so_3 << 2 | self.so_2 << 1 | self.so_1
         else:
-            self.so_3 = self.value >> 2 & 0b1
-            self.so_2 = self.value >> 1 & 0b1
-            self.so_1 = self.value & 0b1
+            self.so_3 = self.value >> 2 & 1
+            self.so_2 = self.value >> 1 & 1
+            self.so_1 = self.value & 1
 
     def __str__(self):
         return (
@@ -199,16 +201,16 @@ class DigitalOutputStates:
 # --- Motion state ---
 @dataclass
 class MotionStatus:
-    value: int = None
-    is_fault: bool = None
-    is_enabled: bool = None
-    is_running: bool = None
-    command_completed: bool = None
-    path_completed: bool = None
-    homing_completed: bool = None
+    value: int | None = None
+    is_fault: bool = False
+    is_enabled: bool = False
+    is_running: bool = False
+    command_completed: bool = False
+    path_completed: bool = False
+    homing_completed: bool = False
 
     def __post_init__(self):
-        if self.value == None:
+        if self.value is None:
             self.value = (
                 self.homing_completed << 5
                 | self.path_completed << 4
@@ -218,12 +220,12 @@ class MotionStatus:
                 | self.is_fault
             )
         else:
-            self.is_fault = bool(self.value >> 0 & 0b1)
-            self.is_enabled = bool(self.value >> 1 & 0b1)
-            self.is_running = bool(self.value >> 2 & 0b1)
-            self.command_completed = bool(self.value >> 4 & 0b1)
-            self.path_completed = bool(self.value >> 5 & 0b1)
-            self.homing_completed = bool(self.value >> 6 & 0b1)
+            self.is_fault = bool(self.value >> 0 & 1)
+            self.is_enabled = bool(self.value >> 1 & 1)
+            self.is_running = bool(self.value >> 2 & 1)
+            self.command_completed = bool(self.value >> 4 & 1)
+            self.path_completed = bool(self.value >> 5 & 1)
+            self.homing_completed = bool(self.value >> 6 & 1)
 
     def __str__(self):
         return (
@@ -369,7 +371,7 @@ class PathControl:
                 self.path = self.value & 0x0F
                 self.status = PathControlStatus.NONE
             elif self.value:
-                self.command = self.value
+                self.command = PathControlCommand(self.value)
                 self.status = PathControlStatus.NONE
             # Status (read from register)
             if self.value & 0xFF0 == 0x100:
@@ -508,7 +510,7 @@ class PathGlobalControl:
     enable_soft_limit: bool = False
     enable_autohoming_after_powerup: bool = False
     ctrg_trigger_type: CtrgType = CtrgType.USE_CTRG_EDGE
-    value: int = None
+    value: int | None = None
 
     def __post_init__(self):
         if self.value is None:
@@ -519,17 +521,17 @@ class PathGlobalControl:
                 | self.ctrg_edge
             )
         else:
-            self.ctrg_edge = CtrgEdge(self.value & 0b1)
-            self.enable_soft_limit = bool(self.value >> 1) & 0b1
-            self.enable_autohoming_after_powerup = (
-                bool(self.value >> 1) & 0b1
+            self.ctrg_edge = CtrgEdge(self.value & 1)
+            self.enable_soft_limit = bool(self.value >> 1 & 1)
+            self.enable_autohoming_after_powerup = bool(
+                self.value >> 1 & 1
             )
-            self.ctrg_trigger_type = CtrgType(self.value >> 4 & 0b1)
+            self.ctrg_trigger_type = CtrgType(self.value >> 4 & 1)
 
 
 @dataclass
 class BaudRate:
-    value: int = None
+    value: int | None = None
     baud_rate: str = None
 
     def __post_init__(self):
@@ -542,7 +544,7 @@ class BaudRate:
             "57600": 5,
             "115200": 6,
         }
-        if self.value == None:
+        if self.value is None:
             try:
                 self.value = mapping[self.baud_rate]
             except KeyError:
@@ -557,3 +559,19 @@ class BaudRate:
 
     def __str__(self):
         return f"{self.baud_rate}"
+
+
+# --- Utility functions ---
+def extract_bits(value: int, start_bit: int, num_bits: int) -> int:
+    """Extracts bits from an integer value.
+
+    Args:
+        value (int): The integer value to extract bits from.
+        start_bit (int): The starting bit position (0-indexed).
+        num_bits (int): The number of bits to extract.
+
+    Returns:
+        int: The extracted bits as an integer.
+    """
+    mask = (1 << num_bits) - 1
+    return (value >> start_bit) & mask

@@ -1,16 +1,19 @@
-from hardware import motor_helpers
-from hardware.motor_helpers import ICL_RS_CONTROL_WORD_FUNCTIONS
-from hardware.controller import SharedModbusController
-import time
 import asyncio
 import functools
 import logging
+import time
 from enum import Enum
-from typing import Any, Optional, Callable, Awaitable
+from typing import Any, Awaitable, Callable, Optional
+
+from hardware import motor_helpers
+from hardware.controller import SharedModbusController
 from hardware.exceptions import (
-    MotorError, MotorTimeoutError, MotorLimitError,
-    MotorConfigError
+    MotorConfigError,
+    MotorError,
+    MotorLimitError,
+    MotorTimeoutError,
 )
+from hardware.motor_helpers import ICL_RS_CONTROL_WORD_FUNCTIONS
 
 '''
 TASKS:
