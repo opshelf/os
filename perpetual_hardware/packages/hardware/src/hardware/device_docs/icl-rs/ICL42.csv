@@ -62,11 +62,8 @@ address,name,default,unit,description,type,min,max
 0x1003,motion status,50,,"Read-only, see MotionStatus class",MotionStatus,0,65535
 0x1010,position error (high bits),0,pulse,Position error after move (high bits),,0,65535
 0x1011,position error (low bits),3072,pulse,Position error after move (low bits),,0,65535
-
-
 0x1012,position (high bits),0,pulse,Position setpoint (high bits),,0,65535
 0x1013,position (low bits),0,pulse,Position setpoint (low bits),,0,65535
-
 0x1014,feedback position (high bits),65535,pulse,Position actual (high bits),,0,65535
 0x1015,feedback position (low bits),65520,pulse,Position actual (low bits),,0,65535
 0x1044,profile velocity (high bits),0,rpm,Velocity setpoint (high bits),,0,65535
@@ -76,7 +73,6 @@ address,name,default,unit,description,type,min,max
 0x1801,control word,0,,Various commands,ControlWordFunction,0,65535
 0x1901,control word status,4369,,"Read-only, response status to the control word, see StatusWord class",ControlWordStatus,0,65535
 0x2203,alarm,0,,"Read-only, see Alarm class",Alarm,0,65535
-
 0x6000,pr global control,0,,,PathGlobalControl,0,32767
 0x6002,pr control,0,,,PathControl,0,65535
 0x6006,soft limit+ (high bits),32767,pulse,High 16-bits of the positive soft limit,int,0,32767
@@ -97,13 +93,10 @@ address,name,default,unit,description,type,min,max
 0x6015,homing over-travel,0,,"If value is set, the motor strops when it reaches this set distance even if homing is not completed",int,0,65535
 0x6016,soft limit quick stop time,10,ms,Deceleration time after triggering the soft limit,int,0,65535
 0x6017,stop time,50,ms,Deceleration time after quick stop,int,0,65535
-
 0x602A,profile position (high bits),0,pulse,Position setpoint (high bits),,0,65535
 0x602B,profile position (low bits),0,pulse,Position setpoint (low bits),,0,65535
-
 0x602C,actual position (high bits),0,pulse,Position setpoint (high bits),,0,65535
 0x602D,actual position (low bits),0,pulse,Position setpoint (low bits),,0,65535
-
 0x6200,path 0 settings,0,,,PathSettings,0,65535
 0x6201,path 0 position (high bits),0,,,int,0,65535
 0x6202,path 0 position (low bits),0,,,int,0,65535

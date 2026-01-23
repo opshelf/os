@@ -1,11 +1,11 @@
 import asyncio
 import logging
 import time
-from enum import IntEnum
 from typing import (
     Any,
     Awaitable,
     Callable,
+    ClassVar,
     List,
     Optional,
     Union,
@@ -33,7 +33,10 @@ from hardware.drivers.iclrs_register_types import (
     PathControlCommand,
     PathOperationMode,
 )
-from hardware.drivers.registers import DeviceRegisters
+from hardware.drivers.registers import (
+    DeviceRegisters,
+    DeviceRegistersModel,
+)
 from hardware.exceptions import (
     MotorConfigError,
     MotorError,
@@ -61,109 +64,9 @@ registers = DeviceRegisters.csv_to_registers(
 iclrs_registers = DeviceRegisters(registers)
 
 
-# --- Icl-Rs Register BaseModel ---
-class IclrsRegister(BaseModel):
-    # Either 'name' or 'address' must be provided as input.
-    name: str  # 'name' is the register name.
-    address: int | None = None  # 'address' is the register address.
-    value: Any | None = (
-        None  # 'value' is the input representation of the value.
-    )
-    # Post-validation fields:
-    modbus: tuple[int, int] | None = (
-        None  # 'modbus' is (address, value).
-    )
-    typed: Any | None = (
-        None  # 'typed' is the value with type applied.
-    )
-    message: str | None = (
-        None  # 'message' is any human-readable message.
-    )
-
-    @model_validator(mode="before")
-    @classmethod
-    def name_address_check(cls, values: Any) -> Any:
-        if isinstance(values, dict) and "address" in values:
-            address = values["address"]
-            try:
-                register = iclrs_registers.get_register_by_address(
-                    address
-                )
-            except ValueError:
-                raise ValueError("Invalid register address")
-            if "name" in values and values["name"] != register.name:
-                raise ValueError(
-                    "Provided name does not match address"
-                )
-            values["name"] = register.name
-        return values
-
-    @field_validator("name", mode="before")
-    def valid_register_name(cls, v: str) -> str:
-        v = v.lower()
-        try:
-            iclrs_registers.get_register_by_name(v)
-        except ValueError as e:
-            raise ValueError("Invalid register name") from e
-        return v
-
-    @field_validator("value", mode="before")
-    def value_must_be_of_a_valid_type(
-        cls, v: Any | None
-    ) -> Any | None:
-        # Must be int, bool, dict, or an acceptable IntEnum.
-        # If a string, coerce it into an acceptable IntEnum.
-        if v is None:
-            return v
-        if isinstance(v, str):
-            try:
-                v = iclrs_registers.str_to_enum(v)
-            except ValueError as e:
-                raise ValueError(
-                    "Invalid string for register value"
-                ) from e
-        # If a dict, coerce any strings in the dict into acceptable IntEnums.
-        if isinstance(v, dict):
-            try:
-
-                def f(_v):
-                    if isinstance(_v, str):
-                        return iclrs_registers.str_to_enum(_v)
-                    else:
-                        return _v
-
-                v = {_k: f(_v) for _k, _v in v.items()}
-            except ValueError as e:
-                raise ValueError(
-                    "Invalid string in dict for register value"
-                ) from e
-        return v
-
-    @model_validator(mode="after")
-    def valid_value_for_name(self) -> "IclrsRegister":
-        name = self.name
-        address = iclrs_registers.get_register_by_name(name).address
-        self.address = address
-        value = self.value
-        if value is not None:
-            model = iclrs_registers.get_register_model(name)
-            try:
-                if isinstance(value, dict):
-                    v = model(**value)
-                    valid_value = v.value
-                elif isinstance(value, IntEnum):
-                    valid_value = model(value=value).value.value
-                else:
-                    valid_value = model(value=value).value
-            except ValidationError as e:
-                raise ValueError("Invalid value for register") from e
-            # Post-validation processing:
-            self.modbus = (address, valid_value)
-            self.typed = iclrs_registers.apply_type(name, valid_value)
-            self.message = iclrs_registers.get_message(
-                name, valid_value
-            )
-        return self
+# --- Icl-Rs DeviceRegisterModel ---
+class IclrsRegister(DeviceRegistersModel):
+    REGISTERS: ClassVar[DeviceRegisters] = iclrs_registers
 
 
 class IclrsRegisters(RootModel):
@@ -646,10 +549,3 @@ class Iclrs:
             ControlWordFunction.RESET_ALL_PARAMETERS
         )
         await asyncio.sleep(0.5)
-
-
-# TODO
-# 1. Add Position Basemodel for valid range validation - DONE
-# 2. Implement soft limit
-# 3. stop() - DONE
-# 4. calculate_ppr() - DONE

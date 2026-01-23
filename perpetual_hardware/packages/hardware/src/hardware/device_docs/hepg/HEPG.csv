@@ -1,0 +1,24 @@
+address,name,default,unit,description,type,min,max
+0x03E8, control,0,,"Control register for setting modes and triggering functions",ControlRegister,0,0xFFFF
+0x03E9, position setting,0,,"Position (high-byte) setting,PositionSetting,0,0xFF00
+0x03EA, speed and force setting,0,,"Speed (low-byte) and force (high-byte)",SpeedForceSetting,0,0xFFFF
+0x03EB, position and speed preset 1,0,,"Position (low-byte) and speed (high-byte) preset 1",PositionSpeedPreset,0,0xFFFF
+0x03EC, force preset 1,0,,"Grip force preset 1",int,0,0x00FF
+0x03ED, position and speed preset 2,0,,"Position (low-byte) and speed (high-byte) preset 2",PositionSpeedPreset,0,0xFFFF
+0x03EE, force preset 2,0,,"Grip force preset 2",int,0,0x00FF
+0x03EF, position and speed preset 3,0,,"Position (low-byte) and speed (high-byte) preset 3",PositionSpeedPreset,0,0xFFFF
+0x03F0, force preset 3,0,,"Grip force preset 3",int,0,0x00FF
+0x03F1, position and speed preset 4,0,,"Position (low-byte) and speed (high-byte) preset 3",PositionSpeedPreset,0,0xFFFF
+0x03F2, force preset 4,0,,"Grip force preset 4",int,0,0x00FF
+0x03F3, position and speed preset 5,0,,"Position (low-byte) and speed (high-byte) preset 5",PositionSpeedPreset,0,0xFFFF
+0x03F4, force preset 5,0,,"Grip force preset 5",int,0,0x00FF
+0x03F5, position and speed preset 6,0,,"Position (low-byte) and speed (high-byte) preset 6",PositionSpeedPreset,0,0xFFFF
+0x03F6, force preset 6,0,,"Grip force preset 6",int,0,0x00FF
+0x03F7, position and speed preset 7,0,,"Position (low-byte) and speed (high-byte) preset 7",PositionSpeedPreset,0,0xFFFF
+0x03F8, force preset 7,0,,"Grip force preset 7",int,0,0x00FF
+0x03F9, position and speed preset 8,0,,"Position (low-byte) and speed (high-byte) preset 8",PositionSpeedPreset,0,0xFFFF
+0x03FA, force preset 8,0,,"Grip force preset 8",int,0,0x00FF
+0x07D0, gripper status,0,,"General gripper status",GripperStatus,0,0x00FF
+0x07D1, fault and position status,0,,"Fault (low-byte) and position (high-byte) status",FaultPositionStatus,0,0xFFFF
+0x07D2, speed and force status,0,,"Speed (low-byte) and force (high-byte) status", SpeedForceStatus,0,0xFFFF
+0x07D3, voltage and temperature status,0,,"Voltage (low-byte) and temperature (high-byte) status", VoltageTemperatureStatus,0,0xFFFF

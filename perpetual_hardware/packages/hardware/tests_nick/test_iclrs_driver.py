@@ -1,6 +1,7 @@
 import asyncio
 
 import pytest
+import pytest_asyncio
 from hardware.controller import SharedModbusController
 from hardware.drivers.iclrs import Iclrs, IclrsConfig
 from hardware.drivers.iclrs import registers as ALL_REGISTERS
@@ -15,6 +16,14 @@ from hardware.exceptions import (
     MotorError,
     MotorTimeoutError,
 )
+from pydantic import BaseModel, ValidationError
+
+CONFIG_JSON_FILENAME = "iclrs_config.json"
+
+
+class Config(BaseModel):
+    stepper: IclrsConfig
+
 
 # Config
 config = {
@@ -25,68 +34,81 @@ config = {
             "parity": "N",
             "timeout": 2.0,
             "retry_delay_s": 0.25,
-        },
-    },
-    "tool": {
-        "motors": [
-            {
-                "motor_name": "z_axis",
-                "motor_id": 31,
-                "enabled": True,
-                "lim": 180,
-                "mpr": 1.9992,
-                "configuration_registers": [
-                    {"name": "pulse per revolution", "value": 11111},
-                    {
-                        "name": "so2",
-                        "value": {
-                            "function": DigitalOutputFunction.PATH_COMPLETE,
-                            "mode": NormallyOpenedOrClosed.NORMALLY_CLOSED,
-                        },
-                    },
-                    {"name": "delay of brake released", "value": 100},
-                    {"name": "delay of brake locked", "value": 100},
-                    {"name": "peak current", "value": 16},
-                    {
-                        "name": "motor direction",
-                        "value": MotorDirection.CCW,
-                    },
-                ],
-            }
-        ]
-    },
+        }
+    }
 }
-
-bus_config = config["bus"]["motor"]
-controller = SharedModbusController(
-    port=bus_config["ports"][0], baudrate=bus_config["baudrate"]
-)
-
-motor_config = config["tool"]["motors"][0]
-validated_motor_config = IclrsConfig(**motor_config)
-driver = Iclrs(controller=controller, params=validated_motor_config)
 
 shared_lock = asyncio.Lock()
 
 
-# Connect modbus controller
-@pytest.mark.asyncio(loop_scope="session")
-async def test_setup():
-    async with shared_lock:
-        await controller.connect()
-        await driver.reset_registers()
-    assert True
+# --- Fixtures ---
+@pytest.fixture(scope="session")
+def config_json_path(request):
+    tests_path = request.node.items[0].path.parent
+    json_file_path = tests_path / "data" / CONFIG_JSON_FILENAME
+    return json_file_path
+
+
+@pytest.fixture(scope="session")
+def config_json_str(config_json_path):
+    try:
+        with open(config_json_path, "r", encoding="utf-8") as f:
+            json_string = f.read()
+    except FileNotFoundError:
+        print(f"Error: The file '{config_json_path}' was not found.")
+    except Exception as e:
+        print(f"An error occured: {e}")
+    else:
+        return json_string
+
+
+@pytest.fixture(scope="session")
+def stepper_config(config_json_str):
+    try:
+        return Config.model_validate_json(config_json_str).stepper
+    except ValidationError:
+        return None
+
+
+@pytest_asyncio.fixture(scope="session")
+async def modbus_controller():
+    port = "/dev/tty.usbserial-B002IJ8G"
+    baudrate = 115200
+    controller = SharedModbusController(port=port, baudrate=baudrate)
+    await controller.connect()
+    yield controller
+    await controller.close()
+
+
+@pytest_asyncio.fixture(scope="session")
+async def driver(modbus_controller, stepper_config):
+    driver = Iclrs(
+        controller=modbus_controller, params=stepper_config
+    )
+    await driver.reset_registers()
+    yield driver
+
+
+# --- Tests ---
+def test_read_config_json(config_json_str):
+    try:
+        Config.model_validate_json(config_json_str)
+    except ValidationError as e:
+        print(f"Error: config file not valid: {e}")
+        assert False
+    else:
+        assert True
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_read_register():
+async def test_read_register(driver):
     async with shared_lock:
         register = await driver.read_register("pulse per revolution")
         assert register.modbus[1] == 10000
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_write_register():
+async def test_write_register(driver):
     async with shared_lock:
         value = 12345
         original_register = await driver.read_register(
@@ -105,7 +127,7 @@ async def test_write_register():
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_configure():
+async def test_configure(driver):
     async with shared_lock:
         await driver.configure()
         register = await driver.read_register("peak current")
@@ -113,12 +135,134 @@ async def test_configure():
 
 
 @pytest.mark.asyncio(loop_scope="session")
-async def test_home():
+async def test_home(driver):
     async with shared_lock:
         await driver.home()
         position = await driver.read_position()
         error = abs(0 - position)
     assert error <= 20
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_clear_alarm(driver):
+    async with shared_lock:
+        # Force an alarm
+        try:
+            await driver.move_to_position(0xFFFFF, 300, 200)
+        except MotorError:
+            # Stall should have been detected.
+            # Alarm code should be 32 ("stall torque").
+            pass
+        alarm = await driver.read_alarm()
+        await driver.clear_alarms()
+        alarm = await driver.read_alarm()
+        # Reset position
+        await driver.home()
+    assert alarm.typed.code == AlarmCode.NO_ALARM
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_move(driver):
+    async with shared_lock:
+        destination = 0xFFFF
+        await driver.clear_alarms()
+        await driver.move_to_position_no_wait(destination, 300, 2000)
+        wait_task = asyncio.create_task(driver.wait_for_idle())
+
+        while not wait_task.done():
+            await asyncio.sleep(0.5)
+
+        position = await driver.read_position()
+        error = abs(destination - position)
+    assert error <= 20
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_stop(driver):
+    async with shared_lock:
+        await driver.clear_alarms()
+        await driver.move_to_position_no_wait(0x1FFFF, 300, 2000)
+        wait_task = asyncio.create_task(driver.wait_for_idle())
+
+        while not wait_task.done():
+            await asyncio.sleep(1)
+            await driver.stop()
+
+        status = await driver.read_status()
+    assert not status.is_running
+
+
+# @pytest.mark.asyncio(loop_scope="session")
+# async def test_setup(modbus_controller, stepper_config):
+#     async with shared_lock:
+#         global iclrs_driver
+#         iclrs_driver = Iclrs(
+#             controller=modbus_controller, params=stepper_config
+#         )
+#         # await iclrs_driver.reset_registers()
+#         await modbus_controller.connect()
+#     assert True
+
+
+# @pytest.mark.asyncio(loop_scope="session")
+# async def test_read_register(driver):
+#     async with shared_lock:
+#         register = await driver.read_register("pulse per revolution")
+#         assert register.modbus[1] == 10000
+
+
+# Connect modbus controller
+# @pytest.mark.asyncio(loop_scope="session")
+# async def test_setup():
+#     async with shared_lock:
+#         await controller.connect()
+#         await iclrs_driver.reset_registers()
+#     assert True
+
+
+# @pytest.mark.asyncio(loop_scope="session")
+# async def test_read_register():
+#     async with shared_lock:
+#         register = await iclrs_driver.read_register(
+#             "pulse per revolution"
+#         )
+#         assert register.modbus[1] == 10000
+
+
+# @pytest.mark.asyncio(loop_scope="session")
+# async def test_write_register():
+#     async with shared_lock:
+#         value = 12345
+#         original_register = await driver.read_register(
+#             "pulse per revolution"
+#         )
+#         # Write and read-back
+#         await driver.write_register(
+#             "pulse per revolution", value=value
+#         )
+#         register = await driver.read_register("pulse per revolution")
+#         # Restore
+#         await driver.write_register(
+#             "pulse per revolution", value=original_register.modbus[1]
+#         )
+#         assert register.modbus[1] == value
+
+
+# @pytest.mark.asyncio(loop_scope="session")
+# async def test_configure():
+#     async with shared_lock:
+#         await driver.configure()
+#         register = await driver.read_register("peak current")
+#         assert register.value == 16
+
+
+# @pytest.mark.asyncio(loop_scope="session")
+# async def test_home():
+#     async with shared_lock:
+#         await driver.home()
+#         position = await driver.read_position()
+#         error = abs(0 - position)
+#     assert error <= 20
 
 
 # @pytest.mark.asyncio(loop_scope="session")
@@ -139,34 +283,34 @@ async def test_home():
 #     assert alarm.typed.code == AlarmCode.NO_ALARM
 
 
-@pytest.mark.asyncio(loop_scope="session")
-async def test_move():
-    async with shared_lock:
-        await driver.clear_alarms()
-        await driver.move_to_position_no_wait(0xFFFF, 300, 2000)
-        wait_task = asyncio.create_task(driver.wait_for_idle())
+# @pytest.mark.asyncio(loop_scope="session")
+# async def test_move():
+#     async with shared_lock:
+#         await driver.clear_alarms()
+#         await driver.move_to_position_no_wait(0xFFFF, 300, 2000)
+#         wait_task = asyncio.create_task(driver.wait_for_idle())
 
-        while not wait_task.done():
-            await asyncio.sleep(0.5)
+#         while not wait_task.done():
+#             await asyncio.sleep(0.5)
 
-        position = await driver.read_position()
-        error = abs(0xFFFF - position)
-    assert error <= 20
+#         position = await driver.read_position()
+#         error = abs(0xFFFF - position)
+#     assert error <= 20
 
 
-@pytest.mark.asyncio(loop_scope="session")
-async def test_stop():
-    async with shared_lock:
-        await driver.clear_alarms()
-        await driver.move_to_position_no_wait(0x1FFFF, 300, 2000)
-        wait_task = asyncio.create_task(driver.wait_for_idle())
+# @pytest.mark.asyncio(loop_scope="session")
+# async def test_stop():
+#     async with shared_lock:
+#         await driver.clear_alarms()
+#         await driver.move_to_position_no_wait(0x1FFFF, 300, 2000)
+#         wait_task = asyncio.create_task(driver.wait_for_idle())
 
-        while not wait_task.done():
-            await asyncio.sleep(1)
-            await driver.stop()
+#         while not wait_task.done():
+#             await asyncio.sleep(1)
+#             await driver.stop()
 
-        status = await driver.read_status()
-    assert not status.is_running
+#         status = await driver.read_status()
+#     assert not status.is_running
 
 
 # @pytest.mark.asyncio(loop_scope="session")

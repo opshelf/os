@@ -2,6 +2,8 @@ from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import ClassVar
 
+from hardware.drivers.utilty_functions import extract_bits
+
 
 # --- Control mode ---
 class ControlMode(IntEnum):
@@ -94,9 +96,15 @@ class DigitalInputSettings:
                 self.filter << 8 | self.mode << 7 | self.function
             )
         else:
-            self.function = DigitalInputFunction(extract_bits(self.value, 0, 7))
-            self.mode = NormallyOpenedOrClosed(extract_bits(self.value, 7, 1))
-            self.filter = DigitalInputFilter(extract_bits(self.value, 8, 4))
+            self.function = DigitalInputFunction(
+                extract_bits(self.value, 0, 7)
+            )
+            self.mode = NormallyOpenedOrClosed(
+                extract_bits(self.value, 7, 1)
+            )
+            self.filter = DigitalInputFilter(
+                extract_bits(self.value, 8, 4)
+            )
 
     def __str__(self):
         filter_str = f"filter = {self.filter.name.lower().replace('filter', '').replace('_', '')}"
@@ -559,19 +567,3 @@ class BaudRate:
 
     def __str__(self):
         return f"{self.baud_rate}"
-
-
-# --- Utility functions ---
-def extract_bits(value: int, start_bit: int, num_bits: int) -> int:
-    """Extracts bits from an integer value.
-
-    Args:
-        value (int): The integer value to extract bits from.
-        start_bit (int): The starting bit position (0-indexed).
-        num_bits (int): The number of bits to extract.
-
-    Returns:
-        int: The extracted bits as an integer.
-    """
-    mask = (1 << num_bits) - 1
-    return (value >> start_bit) & mask
