@@ -1,0 +1,13 @@
+{
+    "Delay of brake released": 1000000000000,
+    "Motor direction": 2,
+    "forced enable by software": 3,
+    "Path 0 settings": {
+        "mode": "PathOperationMode.POSITION_MODE",
+        "enable_interrupt": false,
+        "enable_overlap": false,
+        "coordinate": "PathCoordinate.ABSOLUTE",
+        "jump_to": 0,
+        "enable_jump": false
+    }
+}

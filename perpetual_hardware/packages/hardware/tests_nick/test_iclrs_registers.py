@@ -5,14 +5,36 @@ import pytest
 from hardware.drivers.iclrs import IclrsRegister
 from hardware.drivers.registers import DeviceRegisters
 
+REGISTERS_CSV_FILENAME = 'ICL42.csv'
+CONFIG_JSON_FILENAME = 'config_hardware_a.json'
+
+# --- Fixtures ---
+@pytest.fixture(scope="module")
+def test_path(request):
+    file_path = request.module.__file__
+    module_dir = file_path.parent
+    print(file_path)
+    print(module_dir)
+    return module_dir
+
+@pytest.fixture(scope="module")
+def config_json_path(test_path):
+    json_file_path = test_path / "test_data" / CONFIG_JSON_FILENAME
+    return json_file_path
+
+@pytest.fixture(scope="module")
+def registers_csv_path(test_path):
+    registers_csv_path = test_path / "test_data" / REGISTERS_CSV_FILENAME
+    return registers_csv_path
+
 # Create DeviceRegister for the Icl-RS motor controller.
 types = DeviceRegisters.get_classes_in_module(iclrs_register_types)
 registers_filename = '../src/hardware/device_docs/icl-rs/ICL42.csv'
 registers = DeviceRegisters.csv_to_registers(registers_filename, types)
 iclrs_registers = DeviceRegisters(registers)
 
+# --- Tests ---
 address_name_tuples = [(register.address, register.name) for register in registers]
-
 @pytest.mark.parametrize("address, name", address_name_tuples)
 def test_get_register_by_address(address, name):
   register = iclrs_registers.get_register_by_address(address)
@@ -24,7 +46,7 @@ def test_get_register_by_name(address, name):
   assert register.address == address
 
 # Load sample config JSON
-config_json_filename = './data/config_hardware_a.json'
+config_json_filename = './test_data/config_hardware_a.json'
 try:
   with open(config_json_filename, 'r') as file:
     data = json.load(file)
@@ -88,4 +110,3 @@ print(iclrs_registers.decode(0x1003, 0b111111))
 print(iclrs_registers.decode(0x6200, 0b100000001000001))
 print(iclrs_registers.decode(0x6200, 0b100000101110010))
 print(iclrs_registers.decode(0x6200, 0b000111100100011))
-

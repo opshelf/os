@@ -71,11 +71,28 @@ class Register(BaseModel):
         else:
             raise TypeError("min and max must be int or str")
 
+    @field_validator("type", mode="before")
+    @classmethod
+    def validate_type(cls, v: Union[str,Type], info:ValidationInfo) -> Type:
+        if isinstance(v, str):
+            if info.context is None:
+                raise ValueError("no context provided for string-type mapping")
+            str_to_type_mapping:Dict[str, Type] = info.context.get("str_to_type_mapping", {})
+            try:
+                type = str_to_type_mapping[v]
+            except KeyError:
+                raise ValueError(f"Invalid type string {v}")
+            return type
+        elif inspect.isclass(v):
+            return v
+        else:
+            raise TypeError("type must be str or Type")
+
     @model_validator(mode="after")
     def check_max_greater_than_min(self) -> "Register":
         if self.min > self.max:
             raise ValueError(
-                "Register's min must be less than its max"
+                "register's min must be less than its max"
             )
         return self
 
@@ -144,12 +161,6 @@ class DeviceRegisters:
                 {k: v for k, v in dict.items() if k in keep_keys}
                 for dict in list_of_dicts
             ]
-            # # Strip whitespace
-            # list_of_dicts = [
-            #     {k: v.strip() for k, v in dict.items()}
-            #     for dict in list_of_dicts
-            # ]
-            # Convert type strings with actual types
             str_to_type_mapping = {
                 type.__name__: type for type in types
             }
@@ -158,10 +169,8 @@ class DeviceRegisters:
                 "bool": bool,
                 "": int, # default to int if no type specified
             }
-            for dict in list_of_dicts:
-                dict["type"] = str_to_type_mapping[dict["type"]]
-            # Validate and create Register instances
-            registers = [Register(**d) for d in list_of_dicts]
+            context_data = {"str_to_type_mapping": str_to_type_mapping}
+            registers = [Register.model_validate(d, context=context_data) for d in list_of_dicts]
             return registers
 
     @staticmethod
@@ -255,24 +264,6 @@ class DeviceRegisters:
         else:
             pydantic_type = pydantic_dataclass(type)
             return pydantic_type
-
-    @staticmethod
-    def _find_enums_in_class_annotations(cls):
-        enums_used = set()
-        for name, type_hint in cls.__annotations__.items():
-            # Check if the type hint is an Enum class or a subclass
-            if isinstance(type_hint, EnumMeta):
-                enums_used.add(type_hint)
-        return list(enums_used)
-
-    @staticmethod
-    def _create_map_of_names_to_enum_members(enum):
-        names = [member.name for member in enum]
-        enum_name = enum.__name__
-        mapping = {
-            f"{enum_name}.{name}": enum[name] for name in names
-        }
-        return mapping
 
     @staticmethod
     def _enum_to_string(value: str) -> str:
@@ -430,6 +421,8 @@ class DeviceRegistersModel(BaseModel):
                     valid_value = model(value=value).value.value
                 else:
                     valid_value = model(value=value).value
+                    if isinstance(valid_value, bool):
+                        valid_value = int(valid_value)
             except ValidationError as e:
                 raise ValueError("Invalid value for register") from e
             # Post-validation processing:
@@ -442,6 +435,11 @@ class DeviceRegistersModel(BaseModel):
             )
         return self
 
+def registers_model_factory(registers:list[Register]):
+    device_registers = DeviceRegisters(registers)
+    class DeviceRegisterModel(DeviceRegistersModel):
+        REGISTERS = device_registers
+    return DeviceRegisterModel
 
 class DeviceRegistersCommunication:
     def __init__(

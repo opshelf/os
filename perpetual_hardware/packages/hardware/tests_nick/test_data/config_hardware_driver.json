@@ -1,0 +1,86 @@
+{
+    "motor_name": "z_axis",
+    "motor_id": 30,
+    "mpr": 1.9992,
+    "lim": 180,
+    "position_reg_high": 80,
+    "position_reg_low": 81,
+    "configuration_registers": [
+        {
+            "name":"so2",
+            "value": {
+                "function": "DigitalOutputFunction.PATH_COMPLETE",
+                "mode": "DigitalInputOutputMode.NORMALLY_OPENED"
+            }
+        },
+        {
+            "name":"delay of brake released",
+            "value": 100
+        },
+        {
+            "name":"delay of brake locked",
+            "value": 100
+        },
+        {
+            "name":"threshold value of brake locking velocity",
+            "value": 10
+        },
+        {
+            "name":"allowed max position following error",
+            "value": 4000
+        },
+        {
+            "name":"position loop Kp",
+            "value": 50
+        },
+        {
+            "name":"max stop time",
+            "value": 100
+        },
+        {
+            "name":"pr global control",
+            "value": {
+                "enable_autohoming_after_powerup": false
+            }
+        },
+        {
+            "name":"path 0 settings",
+            "value": {
+                "mode": "PathOperationMode.POSITION_MODE",
+                "enable_interrupt": false,
+                "enable_overlap": false,
+                "coordinate": "PathCoordinate.ABSOLUTE",
+                "jump_to": 0,
+                "enable_jump": false
+            }
+        },
+        {
+            "name":"path 0 velocity",
+            "value": 2000
+        },
+        {
+            "name":"path 0 acceleration",
+            "value": 750
+        },
+        {
+            "name":"path 0 deceleration",
+            "value": 750
+        },
+        {
+            "name":"peak current",
+            "value": 16
+        },
+        {
+            "name":"motor direction",
+            "value": "MotorDirection.CCW"
+        },
+        {
+            "name":"homing high velocity",
+            "value": 500
+        },
+        {
+            "name":"homing low velocity",
+            "value": 100
+        }
+    ]
+}

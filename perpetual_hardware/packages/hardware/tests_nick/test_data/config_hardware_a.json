@@ -1,0 +1,37 @@
+{
+    "motors": [
+    {
+        "motor_name": "z_axis",
+        "motor_id": 30,
+        "mm per revolution": 1.9992,
+        "lim": 180,
+        "driver": "iclrs",
+        "initial_register_values": {
+            "so2": {
+                "function": "DigitalOutputFunction.PATH_COMPLETE",
+                "mode": "NormallyOpenedOrClosed.NORMALLY_OPENED"
+            },
+            "delay of brake released": 100,
+            "delay of brake locked": 100,
+            "threshold value of brake locking velocity": 10,
+            "allowed max position following error": 4000,
+            "position loop Kp": 50,
+            "max stop time": 100,
+            "path 0 settings": {
+                "mode": "PathOperationMode.POSITION_MODE",
+                "enable_interrupt": false,
+                "enable_overlap": false,
+                "coordinate": "PathCoordinate.ABSOLUTE",
+                "jump_to": 0,
+                "enable_jump": false
+            },
+            "path 0 velocity": 2000,
+            "path 0 acceleration": 750,
+            "path 0 deceleration": 750,
+            "peak current": 16,
+            "motor direction": "MotorDirection.CCW",
+            "homing high velocity": 500,
+            "homing low velocity": 100
+        }
+    }]
+}

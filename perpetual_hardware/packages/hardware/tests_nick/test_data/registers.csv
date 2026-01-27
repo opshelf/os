@@ -1,0 +1,5 @@
+address,name,default,unit,description,type,min,max
+0x0001,int register,0,integer,Value is an integer,int,0,1000
+0x0002,bool register,True,,Value is a bool,bool,0,1
+0x0003,color,1,,Value is a Color enum,Color,1,3
+0x0004,motion settings,0,,Value is a MotionSetting,MotionSettings,0,0xFFFF
