@@ -40,21 +40,6 @@ def registers_csv_path(test_path):
     return registers_csv_path
 
 
-# @pytest.fixture(scope="module")
-# def register_types_module(test_path):
-#     register_types_module_path = (
-#         test_path / "test_data" / TYPES_MODULE
-#     )
-#     # Dynamically load the module from the specified file path
-#     spec = importlib.util.spec_from_file_location(
-#         "register_types", register_types_module_path
-#     )
-#     register_types_module = importlib.util.module_from_spec(spec)
-#     sys.modules["register_types"] = register_types_module
-#     spec.loader.exec_module(register_types_module)
-#     return register_types_module
-
-
 @pytest.fixture(scope="module")
 def registers(registers_csv_path):
     types = DeviceRegisters.get_classes_in_module(register_types)
@@ -89,9 +74,7 @@ def config_json_str(config_json_path):
 
 # --- Tests ---
 def test_get_classes_in_module():
-    types = set(
-        DeviceRegisters.get_classes_in_module(register_types)
-    )
+    types = set(DeviceRegisters.get_classes_in_module(register_types))
     expected_types = set(
         [
             register_types.Color,
