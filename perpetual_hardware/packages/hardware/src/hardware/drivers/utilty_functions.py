@@ -1,4 +1,11 @@
-# --- Utility functions ---
+import inspect
+from enum import IntEnum
+from typing import Any, Dict, Union, get_type_hints
+
+from pydantic import BaseModel, Field, create_model, model_validator
+
+
+# --- Bit handling functions ---
 def extract_bits(value: int, start_bit: int, num_bits: int) -> int:
     """Extracts bits from an integer value.
 
@@ -32,6 +39,32 @@ def pack_bits(bits: list[tuple[int, int, int]]) -> int:
         value = value | ((bit_value & mask) << start_bit)
     return value
 
+# --- Enum processing functions ---
+def find_enums_in_class_type_hints(cls):
+    type_hints = get_type_hints(cls)
+    enums_used = set()
+    for name, type_hint in type_hints.items():
+        # Check if the type hint is an Enum class or a subclass
+        if inspect.isclass(type_hint) and issubclass(type_hint, IntEnum):
+            enums_used.add(type_hint)
+    return list(enums_used)
+
+def create_map_of_names_to_enum_members(enum:type[IntEnum]) -> Dict[str, IntEnum]:
+    names = [member.name for member in enum]
+    enum_name = enum.__name__
+    mapping = {
+        f"{enum_name}.{name}": enum[name] for name in names
+    }
+    return mapping
+
+def enum_to_string(value: str) -> str:
+    enum_value = (
+        repr(value)
+        .replace("<", "")
+        .replace(">", "")
+        .split(":")[0]
+    )
+    return enum_value
 
 def coerce_str_to_int(v_string: str) -> int:
     """Coerces string representations like "0xFFF" or "0b1111" into equivalent int.
@@ -49,3 +82,33 @@ def coerce_str_to_int(v_string: str) -> int:
             raise ValueError(
                 f"literal does not start with '0x' or '0b': '{v_string}'"
             )
+
+# --- Clamped value basemodel ---
+def create_clamped_value_model(
+    name: str,
+    min: Union[int, float] = 0,
+    max: Union[int, float] = 0xFFFFFFFF,
+) -> type[BaseModel]:
+
+    @model_validator(mode="after")
+    def clamp_value(self):
+        model_field = self.__class__.model_fields["clamped_value"]
+        ge = model_field.metadata[0].ge
+        le = model_field.metadata[1].le
+        if self.value > le:
+            self.clamped_value = le
+        elif self.value < ge:
+            self.clamped_value = ge
+        else:
+            self.clamped_value = self.value
+        return self
+
+    fields: Dict[str, Any] = {
+        "value": (int | float),
+        "clamped_value": (
+            int | float | None,
+            Field(ge=min, le=max, default=None),
+        ),
+        "__validators__": {"clamp_value": clamp_value},
+    }
+    return create_model(name, **fields)

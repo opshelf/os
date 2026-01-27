@@ -5,7 +5,6 @@ from typing import (
     Any,
     Awaitable,
     Callable,
-    ClassVar,
     List,
     Optional,
     Union,
@@ -16,7 +15,6 @@ from pydantic import (
     Field,
     RootModel,
     ValidationError,
-    create_model,
     field_validator,
     model_validator,
 )
@@ -27,6 +25,7 @@ from hardware.drivers.iclrs_register_types import (
     Alarm,
     AlarmCode,
     ControlWordFunction,
+    ControlWordStatus,
     HomingDirection,
     HomingType,
     MotionStatus,
@@ -36,6 +35,9 @@ from hardware.drivers.iclrs_register_types import (
 from hardware.drivers.registers import (
     DeviceRegisters,
     DeviceRegistersModel,
+)
+from hardware.drivers.utilty_functions import (
+    create_clamped_value_model,
 )
 from hardware.exceptions import (
     MotorConfigError,
@@ -66,7 +68,7 @@ iclrs_registers = DeviceRegisters(registers)
 
 # --- Icl-Rs DeviceRegisterModel ---
 class IclrsRegister(DeviceRegistersModel):
-    REGISTERS: ClassVar[DeviceRegisters] = iclrs_registers
+    REGISTERS = iclrs_registers
 
 
 class IclrsRegisters(RootModel):
@@ -155,24 +157,7 @@ class IclrsConfig(BaseModel):
         scale = (pm - p0) / self.lim
         return logical_delta * scale
 
-
-# --- Validator for clamped value ---
-@model_validator(mode="after")
-def clamp_value(model_instance: BaseModel) -> BaseModel:
-    model_field = model_instance.__class__.model_fields[
-        "clamped_value"
-    ]
-    ge = model_field.metadata[0].ge
-    le = model_field.metadata[1].le
-    if model_instance.value > le:
-        model_instance.clamped_value = le
-    elif model_instance.value < ge:
-        model_instance.clamped_value = ge
-    else:
-        model_instance.clamped_value = model_instance.value
-    return model_instance
-
-
+# --- Icl-Rs Driver ---
 class Iclrs:
     _motor_id: int
     _controller: SharedModbusController
@@ -201,9 +186,7 @@ class Iclrs:
         self._logger = logger.getChild(f"motor.{self._motor_id}")
         self._safety = safety
         self._simulated_fault = False
-        self._position_validator = (
-            Iclrs._create_position_with_limits_model(0, 0xFFFFFFFF)
-        )
+        self._position_validator = create_clamped_value_model("clamped_position", 0, params.lim)
         self._stop_event = asyncio.Event()
 
     async def read_register(self, name: str) -> IclrsRegister:
@@ -288,7 +271,6 @@ class Iclrs:
                     "limit_mm": self._config.lim,
                 },
             )
-            # await self.clear_alarms()
             await self.write_register(
                 name="Control word",
                 value=ControlWordFunction.RESET_ALL_PARAMETERS,
@@ -509,8 +491,8 @@ class Iclrs:
         self, function: ControlWordFunction
     ) -> IclrsRegister:
         await self.write_register("control word", value=function)
-        register = await self.read_register("control word status")
-        return register
+        status_register = await self.read_register("control word status")
+        return status_register
 
     @staticmethod
     def calculate_mpr_to_ppr(
@@ -523,29 +505,13 @@ class Iclrs:
         print(ppr)
         return ppr
 
-    @staticmethod
-    def _create_position_with_limits_model(
-        min: Union[int, float] = 0,
-        max: Union[int, float] = 0xFFFFFFFF,
-    ):
-        model = create_model(
-            f"position_with_limits_{min}_{max}",
-            value=(int | float, Field(default=0)),
-            clamped_value=(
-                int | float | None,
-                Field(ge=min, le=max, default=None),
-            ),
-            __validators__={"clamp_value": clamp_value},
-        )
-        return model
-
-    def set_position_limit_mm(self, limit: int | float = 0xFFFFFFFF):
-        self._position_validator = (
-            Iclrs._create_position_with_limits_model(0, limit)
-        )
-
     async def reset_registers(self):
-        status = await self.write_control_word_and_read_status(
+        status_register = await self.write_control_word_and_read_status(
             ControlWordFunction.RESET_ALL_PARAMETERS
         )
+        status_code = status_register.typed
+        if status_code == ControlWordStatus.OK:
+            pass
+        elif status_code == ControlWordStatus.FAULT:
+            pass
         await asyncio.sleep(0.5)

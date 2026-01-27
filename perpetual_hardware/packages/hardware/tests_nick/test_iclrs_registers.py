@@ -87,6 +87,5 @@ print(iclrs_registers.decode(0x1901, 0x5555))
 print(iclrs_registers.decode(0x1003, 0b111111))
 print(iclrs_registers.decode(0x6200, 0b100000001000001))
 print(iclrs_registers.decode(0x6200, 0b100000101110010))
-print(iclrs_registers.decode(0x6200, 0b000111100100100))
-print(iclrs_registers.decode(0x6200, 0b000010101011000))
+print(iclrs_registers.decode(0x6200, 0b000111100100011))
 

@@ -15,11 +15,13 @@ from pydantic import (
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from hardware.controller import SharedModbusController
-from hardware.drivers.utilty_functions import coerce_str_to_int
+from hardware.drivers.utilty_functions import (
+    coerce_str_to_int,
+    create_map_of_names_to_enum_members,
+    find_enums_in_class_type_hints,
+)
 from hardware.exceptions import (
-    MotorConfigError,
     MotorError,
-    MotorTimeoutError,
 )
 
 
@@ -32,6 +34,23 @@ class Register(BaseModel):
     unit: str
     description: str
     type: Type = int
+
+    @field_validator('*')
+    @classmethod
+    def clean_up_str(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            v = v.strip()
+        return v
+
+    @field_validator("address", mode="before")
+    @classmethod
+    def validate_address(cls, v: Union[int, str]) -> int:
+        if isinstance(v, str):
+            return coerce_str_to_int(v)
+        elif isinstance(v, int):
+            return v
+        else:
+            raise TypeError("address must be int or str")
 
     @field_validator("min", "max", mode="before")
     @classmethod
@@ -47,28 +66,10 @@ class Register(BaseModel):
                 return default
             else:
                 return coerce_str_to_int(v)
-
-    @field_validator("address", mode="before")
-    @classmethod
-    def validate_int_str(cls, v: Union[int, str]) -> int:
-        if isinstance(v, str):
-            v = v.lower()
-            try:
-                if v.startswith("0x"):
-                    number = int(v, 16)
-                elif v.startswith("0b"):
-                    number = int(v, 2)
-                else:
-                    raise TypeError(
-                        f"String address {v} must start with '0x' or '0b'"
-                    )
-            except ValueError as e:
-                raise TypeError(
-                    "Invalid string representation of address integer"
-                ) from e
-            return number
-        else:
+        elif isinstance(v, int):
             return v
+        else:
+            raise TypeError("min and max must be int or str")
 
     @model_validator(mode="after")
     def check_max_greater_than_min(self) -> "Register":
@@ -77,7 +78,6 @@ class Register(BaseModel):
                 "Register's min must be less than its max"
             )
         return self
-
 
 class DeviceRegisters:
     def __init__(self, registers: list[Register]):
@@ -95,14 +95,10 @@ class DeviceRegisters:
                 and t is not bool
                 and not issubclass(t, IntEnum)
             ):
-                a = DeviceRegisters._find_enums_in_class_annotations(
-                    t
-                )
+                a = find_enums_in_class_type_hints(t)
                 enums.update(a)
             for enum in enums:
-                mapping = DeviceRegisters._create_map_of_names_to_enum_members(
-                    enum
-                )
+                mapping = create_map_of_names_to_enum_members(enum)
                 self.str_to_enum_mapping = (
                     self.str_to_enum_mapping | mapping
                 )
@@ -116,7 +112,9 @@ class DeviceRegisters:
                 filename, mode="r", encoding="utf-8"
             ) as csvfile:
                 dict_reader = csv.DictReader(csvfile)
-                # Pre-processing:
+                # Process headers:
+                if dict_reader.fieldnames is None:
+                    raise ValueError("CSV file has no header row")
                 dict_reader.fieldnames = [
                     field.strip().lower()
                     for field in dict_reader.fieldnames
@@ -146,27 +144,24 @@ class DeviceRegisters:
                 {k: v for k, v in dict.items() if k in keep_keys}
                 for dict in list_of_dicts
             ]
-            # Strip whitespace
-            list_of_dicts = [
-                {k: v.strip() for k, v in dict.items()}
-                for dict in list_of_dicts
-            ]
-            # Replace type strings with actual types
+            # # Strip whitespace
+            # list_of_dicts = [
+            #     {k: v.strip() for k, v in dict.items()}
+            #     for dict in list_of_dicts
+            # ]
+            # Convert type strings with actual types
             str_to_type_mapping = {
                 type.__name__: type for type in types
             }
             str_to_type_mapping = str_to_type_mapping | {
                 "int": int,
                 "bool": bool,
-                "": int,
+                "": int, # default to int if no type specified
             }
             for dict in list_of_dicts:
                 dict["type"] = str_to_type_mapping[dict["type"]]
-            try:
-                registers = [Register(**d) for d in list_of_dicts]
-            except ValidationError as e:
-                print(f"Error: Invalid entry in registers csv: {e}")
-                raise
+            # Validate and create Register instances
+            registers = [Register(**d) for d in list_of_dicts]
             return registers
 
     @staticmethod
@@ -200,12 +195,11 @@ class DeviceRegisters:
     def get_register_by_address(self, address: int) -> Register:
         try:
             register = next(
-                (d for d in self.registers if d.address == address),
-                None,
-            )
+                (d for d in self.registers if d.address == address))
         except StopIteration:
-            ValueError(f"Invalid register address {address}")
-        return register
+            raise ValueError(f"Invalid register address {address}")
+        else:
+            return register
 
     def str_to_enum(self, value: str) -> Any:
         try:
@@ -357,7 +351,7 @@ class DeviceRegistersModel(BaseModel):
         None  # 'message' is any human-readable message.
     )
     # set registers to a specific DeviceRegister
-    REGISTERS: None = None
+    REGISTERS:ClassVar[DeviceRegisters]
 
     @model_validator(mode="before")
     @classmethod
@@ -454,7 +448,7 @@ class DeviceRegistersCommunication:
         self,
         com: SharedModbusController,
         id: int,
-        register_model: DeviceRegistersModel,
+        register_model: type[DeviceRegistersModel],
     ):
         self._com = com
         self._id = id
