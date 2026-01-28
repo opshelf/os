@@ -302,7 +302,8 @@ class StorageGrid(BaseModel):
 
     def store_item(self, location: StorageModuleCellLocation, item: Optional[CellItem]) -> None:
         cell = self.get_side(location.side)[location.shelf_idx].cells[location.cell_idx]
-        cell.status = CellStatus.OCCUPIED
+        if cell.status not in (CellStatus.DISABLED, CellStatus.MAINTENANCE):
+            cell.status = CellStatus.OCCUPIED
         cell.item = item
 
     def clear_item(self, location: StorageModuleCellLocation) -> None:

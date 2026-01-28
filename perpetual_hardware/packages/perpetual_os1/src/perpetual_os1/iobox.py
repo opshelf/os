@@ -131,8 +131,9 @@ class IOBox:
 
         pin = curtain_cfg.pin
         poll_interval = curtain_cfg.poll_interval_s
+        inverted = getattr(curtain_cfg, "inverted", False)
 
-        self._curtain_sensor = CurtainSensor(pin=pin)
+        self._curtain_sensor = CurtainSensor(pin=pin, inverted=inverted)
         self._curtain_monitor = CurtainMonitor(
             self._curtain_sensor,
             poll_interval=poll_interval,

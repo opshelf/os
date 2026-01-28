@@ -40,6 +40,9 @@ RUN mkdir -p /app/perpetual_hardware/packages/perpetual_os1_server/data && \
 	chmod -R 777 /app/perpetual_hardware/packages/perpetual_os1_server/data && \
 	echo 'export "PATH=$PATH:my_path"' >> /etc/profile
 
+WORKDIR /app/perpetual_hardware
+RUN uv sync && uv pip install -e packages/hardware -e packages/perpetual_os1 -e packages/perpetual_os1_server
+
 WORKDIR /app/perpetual_hardware/packages/perpetual_os1_server
 
 EXPOSE 8000

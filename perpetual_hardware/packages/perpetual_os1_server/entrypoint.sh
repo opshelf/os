@@ -58,4 +58,4 @@ else
 	echo "Printer queue not configured or lpadmin missing; printing may fail"
 fi
 
-exec uv run --no-dev start
+cd /app/perpetual_hardware && exec uv run start

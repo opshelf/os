@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from typing import AsyncGenerator, Literal, Optional
+from typing import AsyncGenerator, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from nats.aio.client import Client as NATS
@@ -81,6 +81,17 @@ class ScaleCalibrationParamsRequest(BaseModel):
     calibration_weight: int = Field(..., description="Known calibration weight in grams")
     precision: int = Field(default=1, ge=0, le=3, description="Decimal precision (0-3)")
     division: int = Field(default=1, ge=1, description="Division value")
+
+
+class MotorProbeResult(BaseModel):
+    motor_name: str
+    responsive: bool
+    position_mm: Optional[float] = None
+    error: Optional[str] = None
+
+
+class MotorMoveRequest(BaseModel):
+    position_mm: float = Field(..., description="Target position in millimeters")
 
 
 async def check_robot_enabled() -> None:
@@ -447,6 +458,70 @@ async def home_motor(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Motor home failed: {exc}",
+        ) from exc
+
+
+@router.post("/debug/motors/probe", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
+async def probe_motors(
+    worker: RobotWorker = Depends(get_robot_worker_or_error),
+) -> Dict[str, List[MotorProbeResult]]:
+    motor_names = worker.get_motor_names()
+    results: List[MotorProbeResult] = []
+
+    all_motors: List[str] = []
+    for section_motors in motor_names.values():
+        all_motors.extend(section_motors)
+
+    for motor_name in all_motors:
+        motor = worker._robot._get_motor_by_name(motor_name)
+
+        if motor is None:
+            results.append(MotorProbeResult(
+                motor_name=motor_name,
+                responsive=False,
+                error="motor not found",
+            ))
+            continue
+
+        try:
+            position = await motor.get_position()
+            results.append(MotorProbeResult(
+                motor_name=motor_name,
+                responsive=True,
+                position_mm=position,
+            ))
+        except Exception as exc:
+            results.append(MotorProbeResult(
+                motor_name=motor_name,
+                responsive=False,
+                error=str(exc),
+            ))
+
+    return {"results": results}
+
+
+@router.post("/debug/motors/{motor_name}/move", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
+async def move_motor(
+    motor_name: str,
+    request: MotorMoveRequest,
+    worker: RobotWorker = Depends(get_robot_worker_or_error),
+) -> dict:
+    motor = worker._robot._get_motor_by_name(motor_name)
+
+    if motor is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Motor '{motor_name}' not found",
+        )
+
+    try:
+        await motor.move_to_position(request.position_mm)
+        return {"success": True, "motor": motor_name, "position_mm": request.position_mm}
+    except Exception as exc:
+        logging.error("Motor move failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Motor move failed: {exc}",
         ) from exc
 
 
