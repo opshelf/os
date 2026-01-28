@@ -1,12 +1,23 @@
+import asyncio
+import time
 from typing import ClassVar, List
 
-from pydantic import BaseModel, Field, RootModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 from hardware.controller import SharedModbusController
 from hardware.drivers import hepg_register_types
+from hardware.drivers.hepg_register_types import (
+    ControlFunction,
+    FingerStatus,
+    GripperCommand,
+    GripperMode,
+    StatusCode,
+)
 from hardware.drivers.registers import (
     DeviceRegisters,
-    DeviceRegistersModel,
+    DriverClient,
+    RegistersModel,
+    registers_model_factory,
 )
 from hardware.exceptions import (
     MotorConfigError,
@@ -20,24 +31,19 @@ TYPES = DeviceRegisters.get_classes_in_module(hepg_register_types)
 registers = DeviceRegisters.csv_to_registers(
     REGISTERS_FILENAME, TYPES
 )
-hepg_registers = DeviceRegisters(registers)
-
 
 # --- HEPG DeviceRegisterModel ---
-class HepgRegister(DeviceRegistersModel):
-    REGISTERS: ClassVar[DeviceRegisters] = hepg_registers
-
-
-class HepgRegisters(RootModel):
-    # The 'root' attribute holds the list of Iclrs models
-    root: List[HepgRegister]
+HepgRegister: type[RegistersModel] = registers_model_factory(
+    registers
+)
 
 
 # --- HEPG Config BaseModel ---
 class HepgConfig(BaseModel):
     modbus_address: int = Field(default=9, ge=0)
     enabled: bool = Field(default=True)
-    configuration_registers: HepgRegisters
+    activation_timeout_s: int = Field(default=3)
+    configuration_registers: List[HepgRegister]
 
 
 # Seperate Servo and Stepper classes into dedicated files.
@@ -53,71 +59,10 @@ class Hepg:
         self._controller = controller
         self._config = params
         self._motor_id = params.modbus_address
-
-    async def read_register(self, name: str) -> HepgRegister:
-        """Get a motor parameter register value.
-
-        Args:
-            register: Name of the register to read
-
-        Raises:
-            MotorError: If parameter read fails
-            ValueError: If register name is invalid
-
-        Returns:
-            Register value as integer, or None if read fails
-        """
-        # Get address from name
-        try:
-            register = HepgRegister(name=name)
-        except ValidationError as e:
-            raise ValueError(f"Invalid register name: {name}") from e
-        address = register.address
-        # Read address via Modbus
-        try:
-            value = await self._controller.read_holding_registers(
-                self._motor_id, address
-            )
-        except Exception as e:
-            if not isinstance(e, (MotorError, ValueError)):
-                raise MotorError(
-                    f"Failed to get parameter {register}: {str(e)}"
-                ) from e
-            raise
-
-        if value is None:
-            raise MotorError(f"Failed to read register {register}")
-        else:
-            return HepgRegister(name=name, value=value)
-
-    async def write_register(self, name: str, value: Any) -> None:
-        """Set a motor parameter register.
-
-                Args:
-            register: Name of the register to set
-            value: Value to write to the register
-
-        Raises:
-            MotorError: If parameter write fails
-            ValueError: If register name is invalid
-        """
-
-        # Get address from name
-        try:
-            register = HepgRegister(name=name, value=value)
-        except ValidationError as e:
-            raise ValueError(f"Invalid register: {e}") from e
-        # Write register via modbus
-        try:
-            await self._controller.write_single_register(
-                self._motor_id, register.modbus[0], register.modbus[1]
-            )
-        except Exception as e:
-            if not isinstance(e, (MotorError, ValueError)):
-                raise MotorError(
-                    f"Failed to set parameter {register}: {str(e)}"
-                ) from e
-            raise
+        self.activation_timeout_s = params.activation_timeout_s
+        self.client: DriverClient = DriverClient(
+            self._controller, self._motor_id, HepgRegister
+        )
 
     async def configure(self) -> None:
         """Configure the servo with initial settings.
@@ -127,87 +72,62 @@ class Hepg:
             MotorTimeoutError: If activation times out
         """
         try:
-            # Activate
-            await self._controller.write_single_register(
-                self._motor_id,
-                self._control_reg,
-                0x0,  # clear
-            )
-            await self._controller.write_single_register(
-                self._motor_id,
-                self._control_reg,
-                0x1,  # enable
-            )
-            await self.wait_for_activate()
+            # Reset the gripper (clearing all fault status) and then activating.
+            await self.reset()
 
-            # Static position settings
-            # Open
-            await self._controller.write_single_register(
-                self._motor_id,
-                0x03EB,
-                0x8020,  # 0x80|0x20
-            )
-            # Close
-            await self._controller.write_single_register(
-                self._motor_id,
-                0x03ED,
-                0x80FE,  # 0x80|0xFE
-            )
-            # Safe open
-            await self._controller.write_single_register(
-                self._motor_id,
-                0x03EF,
-                0x80C0,  # 0x80|0xFF
-            )
+            # start = time.monotonic()
+            # # Write configuration register values.
+            # for r in self._config.configuration_registers:
+            #     await self.client.write_register(r.name, r.value)
+            # end = time.monotonic()
+            # print(f"duration: {end - start}")
 
-            # Set configuration values
-            await self._controller.write_single_register(
-                self._motor_id, 0x03EC, 0x80
-            )
-            await self._controller.write_single_register(
-                self._motor_id, 0x03EE, 0x80
-            )
-            await self._controller.write_single_register(
-                self._motor_id, 0x03F0, 0x80
-            )
+            start = time.monotonic()
+            list_regs = [
+                (r.name, r.value)
+                for r in self._config.configuration_registers
+            ]
+            await self.client.write_registers(list_regs)
+            end = time.monotonic()
+            print(f"duration: {end - start}")
 
         except Exception as e:
             raise MotorError(
                 f"Failed to configure servo: {str(e)}"
             ) from e
 
-    async def wait_for_activate(self):
+    async def reset(self):
         """Wait for motor to activate.
 
         Raises:
             MotorTimeoutError: If activation takes too long
             MotorError: If motor status read fails
         """
+        # Disable the gripper, resetting it and clearing all fault status
+        await self.client.write_register(
+            name="control", value={"enable_gripper": False}
+        )
+        # Enable the gripper
+        await self.client.write_register(
+            name="control", value={"enable_gripper": True}
+        )
+
         start_time = time.monotonic()
-
         while True:
-            status = await self._controller.read_holding_registers(
-                self._motor_id, self._status_reg
+            response = await self.client.read_register(
+                name="gripper status"
             )
-            if status is None:
-                raise MotorError(
-                    "Failed to read motor status during activation"
-                )
-
-            # TODO: DEFINE USING A BITFIELD/BITMASK
-            activation_status = status & (1 << 5)
-            if activation_status:
+            activation_status = response.typed.status
+            if activation_status == StatusCode.ACTIVATED:
                 return
-
             if (
                 time.monotonic() - start_time
-                > MOTOR_ACTIVATION_TIMEOUT_S
+                > self.activation_timeout_s
             ):
                 raise MotorTimeoutError(
                     "Motor activation timed out after 3 seconds"
                 )
-
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(0.5)
 
     async def wait_for_servo(
         self, timeout: float = 5.0
@@ -243,6 +163,62 @@ class Hepg:
 
             await asyncio.sleep(0.01)
 
+    async def move(self, command: ControlFunction):
+        try:
+            await self.client.write_register(
+                name="control",
+                value={
+                    "enable_gripper": True,
+                    "mode": GripperMode.PRESET_CONTROL,
+                    "command": GripperCommand.MOVE_TO_TARGET_POSITION,
+                    "function": command,
+                },
+            )
+        except Exception as e:
+            raise MotorError(f"Failed to open servo: {str(e)}") from e
+        start_time = time.monotonic()
+        while True:
+            response = await self.client.read_register(
+                name="gripper status"
+            )
+            finger_status = response.typed.finger_status
+            if not finger_status == FingerStatus.MOVING_TO_POSITION:
+                print(finger_status)
+                return response
+            if (
+                time.monotonic() - start_time
+                > self.activation_timeout_s
+            ):
+                raise MotorTimeoutError(
+                    "Motor activation timed out after 3 seconds"
+                )
+            await asyncio.sleep(0.1)
+
+    async def stop(self):
+        await self.client.write_register(
+            name="control",
+            value={
+                "enable_gripper": True,
+                "command": GripperCommand.STOP,
+            },
+        )
+        start_time = time.monotonic()
+        while True:
+            response = await self.client.read_register(
+                name="gripper status"
+            )
+            command = response.typed.command
+            if command == GripperCommand.STOP:
+                return response
+            if (
+                time.monotonic() - start_time
+                > self.activation_timeout_s
+            ):
+                raise MotorTimeoutError(
+                    "Motor activation timed out after 3 seconds"
+                )
+            await asyncio.sleep(0.1)
+
     async def open(self):
         """Open the servo to maximum position.
 
@@ -251,10 +227,7 @@ class Hepg:
             MotorTimeoutError: If operation times out
         """
         try:
-            await self._controller.write_single_register(
-                self._motor_id, self._control_reg, 0x080B
-            )
-            await self.wait_for_servo()
+            self.move(command=ControlFunction.PRESET_1)
         except Exception as e:
             raise MotorError(f"Failed to open servo: {str(e)}") from e
 
@@ -266,17 +239,16 @@ class Hepg:
             MotorTimeoutError: If operation times out
         """
         try:
-            await self._controller.write_single_register(
-                self._motor_id, self._control_reg, 0x0A0B
-            )
-            await self.wait_for_servo()
+            self.move(command=ControlFunction.PRESET_1)
         except Exception as e:
             raise MotorError(
                 f"Failed to safe-open servo: {str(e)}"
             ) from e
 
     async def close(self):
-        await self._controller.write_single_register(
-            self._motor_id, self._control_reg, 0x090B
-        )
-        await self.wait_for_servo()
+        try:
+            self.move(command=ControlFunction.PRESET_2)
+        except Exception as e:
+            raise MotorError(
+                f"Failed to close servo: {str(e)}"
+            ) from e

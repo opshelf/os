@@ -1,0 +1,17 @@
+{
+    "registers":
+    [
+        {"name": "int register", "value": 100},
+        {"name": "bool register", "value": false},
+        {"name": "color", "value": "Color.RED"},
+        {
+            "name": "motion settings", 
+            "value":
+            {
+                "enabled": true,
+                "direction": "Direction.RIGHT",
+                "speed": 100
+            }
+        }
+    ]
+}

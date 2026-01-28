@@ -7,7 +7,7 @@ from hardware.drivers.utilty_functions import extract_bits, pack_bits
 # --- Control ("control") ---
 class GripperMode(IntEnum):
     PARAMETER_CONTROL = 0x0
-    NO_INPUT_CONTROL = 0x1
+    PRESET_CONTROL = 0x1
 
 
 class GripperCommand(IntEnum):
@@ -44,8 +44,8 @@ class ControlRegister:
     functions such as electric gripper enabling, mode switching and motion control, etc"""
 
     value: int | None = None
-    enable_gripper: bool = False
-    mode: GripperMode = GripperMode.PARAMETER_CONTROL
+    enable_gripper: bool = True
+    mode: GripperMode = GripperMode.PRESET_CONTROL
     command: GripperCommand = GripperCommand.STOP
     enable_self_check: bool = False
     self_check_direction: SelfCheckDirection = (

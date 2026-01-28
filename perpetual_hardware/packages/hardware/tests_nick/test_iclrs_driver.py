@@ -1,20 +1,16 @@
 import asyncio
+import time
+from pathlib import Path
 
 import pytest
 import pytest_asyncio
 from hardware.controller import SharedModbusController
 from hardware.drivers.iclrs import Iclrs, IclrsConfig
-from hardware.drivers.iclrs import registers as ALL_REGISTERS
 from hardware.drivers.iclrs_register_types import (
     AlarmCode,
-    DigitalOutputFunction,
-    MotorDirection,
-    NormallyOpenedOrClosed,
 )
 from hardware.exceptions import (
-    MotorConfigError,
     MotorError,
-    MotorTimeoutError,
 )
 from pydantic import BaseModel, ValidationError
 
@@ -42,14 +38,14 @@ shared_lock = asyncio.Lock()
 
 
 # --- Fixtures ---
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="module")
 def config_json_path(request):
-    tests_path = request.node.items[0].path.parent
+    tests_path = Path(request.module.__file__).parent
     json_file_path = tests_path / "data" / CONFIG_JSON_FILENAME
     return json_file_path
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="module")
 def config_json_str(config_json_path):
     try:
         with open(config_json_path, "r", encoding="utf-8") as f:
@@ -62,7 +58,7 @@ def config_json_str(config_json_path):
         return json_string
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="module")
 def stepper_config(config_json_str):
     try:
         return Config.model_validate_json(config_json_str).stepper
@@ -70,7 +66,7 @@ def stepper_config(config_json_str):
         return None
 
 
-@pytest_asyncio.fixture(scope="session")
+@pytest_asyncio.fixture(scope="module")
 async def modbus_controller():
     port = "/dev/tty.usbserial-B002IJ8G"
     baudrate = 115200
@@ -80,7 +76,7 @@ async def modbus_controller():
     await controller.close()
 
 
-@pytest_asyncio.fixture(scope="session")
+@pytest_asyncio.fixture(scope="module")
 async def driver(modbus_controller, stepper_config):
     driver = Iclrs(
         controller=modbus_controller, params=stepper_config
@@ -100,41 +96,45 @@ def test_read_config_json(config_json_str):
         assert True
 
 
-@pytest.mark.asyncio(loop_scope="session")
+@pytest.mark.asyncio(loop_scope="module")
 async def test_read_register(driver):
     async with shared_lock:
-        register = await driver.read_register("pulse per revolution")
+        register = await driver.client.read_register(
+            "pulse per revolution"
+        )
         assert register.modbus[1] == 10000
 
 
-@pytest.mark.asyncio(loop_scope="session")
+@pytest.mark.asyncio(loop_scope="module")
 async def test_write_register(driver):
     async with shared_lock:
         value = 12345
-        original_register = await driver.read_register(
+        original_register = await driver.client.read_register(
             "pulse per revolution"
         )
         # Write and read-back
-        await driver.write_register(
+        await driver.client.write_register(
             "pulse per revolution", value=value
         )
-        register = await driver.read_register("pulse per revolution")
+        register = await driver.client.read_register(
+            "pulse per revolution"
+        )
         # Restore
-        await driver.write_register(
+        await driver.client.write_register(
             "pulse per revolution", value=original_register.modbus[1]
         )
         assert register.modbus[1] == value
 
 
-@pytest.mark.asyncio(loop_scope="session")
+@pytest.mark.asyncio(loop_scope="module")
 async def test_configure(driver):
     async with shared_lock:
         await driver.configure()
-        register = await driver.read_register("peak current")
+        register = await driver.client.read_register("peak current")
         assert register.value == 16
 
 
-@pytest.mark.asyncio(loop_scope="session")
+@pytest.mark.asyncio(loop_scope="module")
 async def test_home(driver):
     async with shared_lock:
         await driver.home()
@@ -143,7 +143,7 @@ async def test_home(driver):
     assert error <= 20
 
 
-@pytest.mark.asyncio(loop_scope="session")
+@pytest.mark.asyncio(loop_scope="module")
 async def test_clear_alarm(driver):
     async with shared_lock:
         # Force an alarm
@@ -161,7 +161,7 @@ async def test_clear_alarm(driver):
     assert alarm.typed.code == AlarmCode.NO_ALARM
 
 
-@pytest.mark.asyncio(loop_scope="session")
+@pytest.mark.asyncio(loop_scope="module")
 async def test_move(driver):
     async with shared_lock:
         destination = 0xFFFF
@@ -177,7 +177,7 @@ async def test_move(driver):
     assert error <= 20
 
 
-@pytest.mark.asyncio(loop_scope="session")
+@pytest.mark.asyncio(loop_scope="module")
 async def test_stop(driver):
     async with shared_lock:
         await driver.clear_alarms()

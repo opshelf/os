@@ -13,8 +13,6 @@ from typing import (
 from pydantic import (
     BaseModel,
     Field,
-    RootModel,
-    ValidationError,
     field_validator,
     model_validator,
 )
@@ -26,15 +24,15 @@ from hardware.drivers.iclrs_register_types import (
     AlarmCode,
     ControlWordFunction,
     ControlWordStatus,
-    HomingDirection,
-    HomingType,
     MotionStatus,
     PathControlCommand,
     PathOperationMode,
 )
 from hardware.drivers.registers import (
     DeviceRegisters,
-    DeviceRegistersModel,
+    DriverClient,
+    RegistersModel,
+    registers_model_factory,
 )
 from hardware.drivers.utilty_functions import (
     create_clamped_value_model,
@@ -57,23 +55,15 @@ STEPPER_POSITION_LOOP_KP = 50
 STEPPER_MAX_STOP_TIME = 100
 MAX_FOLLOWING_ERROR = 4000
 
-# --- Icl-Rs DeviceRegister ---
+# --- Create register model ---
 REGISTERS_FILENAME = "../src/hardware/device_docs/icl-rs/ICL42.csv"
 TYPES = DeviceRegisters.get_classes_in_module(iclrs_register_types)
 registers = DeviceRegisters.csv_to_registers(
     REGISTERS_FILENAME, TYPES
 )
-iclrs_registers = DeviceRegisters(registers)
-
-
-# --- Icl-Rs DeviceRegisterModel ---
-class IclrsRegister(DeviceRegistersModel):
-    REGISTERS = iclrs_registers
-
-
-class IclrsRegisters(RootModel):
-    # The 'root' attribute holds the list of Iclrs models
-    root: List[IclrsRegister]
+IclrsRegister: type[RegistersModel] = registers_model_factory(
+    registers
+)
 
 
 # --- Icl-Rs Config BaseModel ---
@@ -85,7 +75,7 @@ class IclrsConfig(BaseModel):
     mpr: float = Field(..., gt=0)
     phys_at_zero: Optional[Union[int, float]] = Field(default=None)
     phys_at_max: Optional[Union[int, float]] = Field(default=None)
-    configuration_registers: IclrsRegisters
+    configuration_registers: List[IclrsRegister]
 
     @field_validator("motor_name")
     @classmethod
@@ -157,15 +147,16 @@ class IclrsConfig(BaseModel):
         scale = (pm - p0) / self.lim
         return logical_delta * scale
 
+
 # --- Icl-Rs Driver ---
 class Iclrs:
-    _motor_id: int
-    _controller: SharedModbusController
-    _params: Any
+    # _motor_id: int
+    # _controller: SharedModbusController
+    # _params: Any
+    # _registers: DeviceRegisters
     _stall_timeout: float
     _status: MotorStatus
     _cur_pos: Optional[int]
-    _registers: DeviceRegisters
 
     def __init__(
         self,
@@ -173,9 +164,12 @@ class Iclrs:
         params: IclrsConfig,
         safety: Optional[CurtainSafety] = None,
     ) -> None:
-        self._controller = controller
-        self._config = params
-        self._motor_id = params.motor_id
+        self._controller: SharedModbusController = controller
+        self._config: IclrsConfig = params
+        self._motor_id: int = params.motor_id
+        self.client: DriverClient = DriverClient(
+            self._controller, self._motor_id, IclrsRegister
+        )
         self._cur_pos = None
         self._stall_timeout = STEPPER_STALL_TIMEOUT_S
         self._status = MotorStatus.IDLE
@@ -186,73 +180,10 @@ class Iclrs:
         self._logger = logger.getChild(f"motor.{self._motor_id}")
         self._safety = safety
         self._simulated_fault = False
-        self._position_validator = create_clamped_value_model("clamped_position", 0, params.lim)
+        self._position_validator = create_clamped_value_model(
+            "clamped_position", 0, params.lim
+        )
         self._stop_event = asyncio.Event()
-
-    async def read_register(self, name: str) -> IclrsRegister:
-        """Get a motor parameter register value.
-
-        Args:
-            register: Name of the register to read
-
-        Raises:
-            MotorError: If parameter read fails
-            ValueError: If register name is invalid
-
-        Returns:
-            Register value as integer, or None if read fails
-        """
-        # Get address from name
-        try:
-            register = IclrsRegister(name=name)
-        except ValidationError as e:
-            raise ValueError(f"Invalid register name: {name}") from e
-        address = register.address
-        # Read address via Modbus
-        try:
-            value = await self._controller.read_holding_registers(
-                self._motor_id, address
-            )
-        except Exception as e:
-            if not isinstance(e, (MotorError, ValueError)):
-                raise MotorError(
-                    f"Failed to get parameter {register}: {str(e)}"
-                ) from e
-            raise
-
-        if value is None:
-            raise MotorError(f"Failed to read register {register}")
-        else:
-            return IclrsRegister(name=name, value=value)
-
-    async def write_register(self, name: str, value: Any) -> None:
-        """Set a motor parameter register.
-
-                Args:
-            register: Name of the register to set
-            value: Value to write to the register
-
-        Raises:
-            MotorError: If parameter write fails
-            ValueError: If register name is invalid
-        """
-
-        # Get address from name
-        try:
-            register = IclrsRegister(name=name, value=value)
-        except ValidationError as e:
-            raise ValueError(f"Invalid register: {e}") from e
-        # Write register via modbus
-        try:
-            await self._controller.write_single_register(
-                self._motor_id, register.modbus[0], register.modbus[1]
-            )
-        except Exception as e:
-            if not isinstance(e, (MotorError, ValueError)):
-                raise MotorError(
-                    f"Failed to set parameter {register}: {str(e)}"
-                ) from e
-            raise
 
     async def configure(self):
         """Configure the stepper motor with initial parameters.
@@ -271,12 +202,25 @@ class Iclrs:
                     "limit_mm": self._config.lim,
                 },
             )
-            await self.write_register(
+            await self.client.write_register(
                 name="Control word",
                 value=ControlWordFunction.RESET_ALL_PARAMETERS,
             )
-            for r in self._config.configuration_registers.root:
-                await self.write_register(r.name, r.value)
+            # start = time.monotonic()
+            # for r in self._config.configuration_registers:
+            #     await self.client.write_register(r.name, r.value)
+            # end = time.monotonic()
+            # print(f"duration: {end - start}")
+
+            start = time.monotonic()
+            list_regs = [
+                (r.name, r.value)
+                for r in self._config.configuration_registers
+            ]
+            await self.client.write_registers(list_regs)
+            end = time.monotonic()
+            print(f"duration: {end - start}")
+
         except Exception as e:
             self._logger.error(
                 "Failed to configure motor",
@@ -293,46 +237,18 @@ class Iclrs:
     async def home(self) -> None:
         # We home by the method of "stall zeroing," which uses stall condition as the
         # home switch.
-        await self.write_register(
-            name="homing mode",
-            value={
-                "direction": HomingDirection.CCW,
-                "move_to_specified_point_after_homing": True,
-                "mode": HomingType.DETECTED_BY_LIMIT_SWITCH,
-            },
-        )
-        await self.write_register(
-            name="torque zero return time", value=50
-        )
-        await self.write_register(
-            name="torque zero return value", value=5
-        )
-        # These are the device default values, to be tuned if needed.
-        await self.write_register(
-            name="homing stop position (low bits)", value=0
-        )
-        await self.write_register(
-            name="homing high velocity", value=200
-        )
-        await self.write_register(
-            name="homing low velocity", value=50
-        )
-        await self.write_register(
-            name="homing acceleration", value=100
-        )
-        await self.write_register(
-            name="homing deceleration", value=100
-        )
+        # Homing settings (stall time, speed, etc) are set in the config file.
+
         # Clear alarms before homing, so that we can detect any new alarms, in
         # particular the alarm for stall torque.
         await self.clear_alarms()
         await self.trigger_homing()
         await self.wait_for_idle(timeout_s=20)
         # Status checks:
-        alarm = await self.read_register("alarm")
+        alarm = await self.client.read_register("alarm")
         if alarm.typed.code == AlarmCode.STALL_TORQUE:
             # Stall torque achieved, indicating home position.
-            await self.write_register(
+            await self.client.write_register(
                 name="Control word",
                 value=ControlWordFunction.RESET_CURRENT_ALARM,
             )
@@ -352,26 +268,30 @@ class Iclrs:
         position_hb = value >> 16
         position_lb = value & 0xFFFF
         # Configure path
-        await self.write_register(
+        await self.client.write_register(
             "path 0 settings",
             value={"mode": PathOperationMode.POSITION_MODE},
         )
-        await self.write_register(
+        await self.client.write_register(
             "path 0 position (high bits)", value=position_hb
         )
-        await self.write_register(
+        await self.client.write_register(
             "path 0 position (low bits)", value=position_lb
         )
-        await self.write_register("path 0 velocity", value=rpm)
-        await self.write_register("path 0 acceleration", value=accel)
-        await self.write_register("path 0 deceleration", value=accel)
+        await self.client.write_register("path 0 velocity", value=rpm)
+        await self.client.write_register(
+            "path 0 acceleration", value=accel
+        )
+        await self.client.write_register(
+            "path 0 deceleration", value=accel
+        )
         # Trigger path
         await self.trigger_path()
         # Wait to finish
         await self.wait_for_idle(timeout_s=30)
         # Motor is now done running, but need to check if it stopped because of fault
         # or because it actually completed the path.
-        status = await self.read_register("motion status")
+        status = await self.client.read_register("motion status")
         if status.typed.is_fault:
             raise MotorError(
                 f"Motor {self._motor_id} faulted during homing"
@@ -386,19 +306,23 @@ class Iclrs:
         position_hb = value >> 16
         position_lb = value & 0xFFFF
         # Configure path
-        await self.write_register(
+        await self.client.write_register(
             "path 0 settings",
             value={"mode": PathOperationMode.POSITION_MODE},
         )
-        await self.write_register(
+        await self.client.write_register(
             "path 0 position (high bits)", value=position_hb
         )
-        await self.write_register(
+        await self.client.write_register(
             "path 0 position (low bits)", value=position_lb
         )
-        await self.write_register("path 0 velocity", value=rpm)
-        await self.write_register("path 0 acceleration", value=accel)
-        await self.write_register("path 0 deceleration", value=accel)
+        await self.client.write_register("path 0 velocity", value=rpm)
+        await self.client.write_register(
+            "path 0 acceleration", value=accel
+        )
+        await self.client.write_register(
+            "path 0 deceleration", value=accel
+        )
         # Trigger path
         await self.trigger_path()
         # Clear stop_event
@@ -409,7 +333,7 @@ class Iclrs:
         while True:
             await asyncio.sleep(0.2)
             # Poll status
-            status = await self.read_register("motion status")
+            status = await self.client.read_register("motion status")
             if not status.typed.is_running:
                 break  # Stop waiting
             # Timeout
@@ -422,22 +346,22 @@ class Iclrs:
                 break
 
     async def read_alarm(self) -> Alarm:
-        alarm = await self.read_register("alarm")
+        alarm = await self.client.read_register("alarm")
         return alarm
 
     async def clear_alarms(self) -> None:
         # Clear any existing alarms.
-        await self.write_register(
+        await self.client.write_register(
             name="Control word",
             value=ControlWordFunction.RESET_CURRENT_ALARM,
         )
-        await self.write_register(
+        await self.client.write_register(
             name="Control word",
             value=ControlWordFunction.RESET_HISTORY_ALARM,
         )
 
     async def trigger_path(self, path: int = 0) -> None:
-        await self.write_register(
+        await self.client.write_register(
             name="pr control",
             value={
                 "command": PathControlCommand.PATH_MOTION,
@@ -446,7 +370,7 @@ class Iclrs:
         )
 
     async def trigger_homing(self) -> None:
-        await self.write_register(
+        await self.client.write_register(
             name="pr control",
             value={
                 "command": PathControlCommand.HOMING,
@@ -454,7 +378,7 @@ class Iclrs:
         )
 
     async def zero_position(self) -> None:
-        await self.write_register(
+        await self.client.write_register(
             name="pr control",
             value={
                 "command": PathControlCommand.ZERO_CURRENT_POSITION,
@@ -462,36 +386,44 @@ class Iclrs:
         )
 
     async def read_position(self) -> int:
-        position_hb = await self.read_register("position (high bits)")
-        position_lb = await self.read_register("position (low bits)")
+        position_hb = await self.client.read_register(
+            "position (high bits)"
+        )
+        position_lb = await self.client.read_register(
+            "position (low bits)"
+        )
         position = position_hb.value << 16 | position_lb.value
         return position
 
     async def read_status(self) -> MotionStatus:
-        status = await self.read_register("motion status")
+        status = await self.client.read_register("motion status")
         return status.typed
 
     async def stop(self) -> None:
         self._stop_event.set()
-        await self.write_register(
+        await self.client.write_register(
             name="pr control",
             value={"command": PathControlCommand.QUICK_STOP},
         )
 
     async def set_soft_limit(self, limit_position: int) -> None:
         bytes = limit_position.to_bytes(2)
-        await self.write_register(
+        await self.client.write_register(
             name="soft limit+ (high bits)", value=bytes[0]
         )
-        await self.write_register(
+        await self.client.write_register(
             name="soft limit- (high bits)", value=bytes[1]
         )
 
     async def write_control_word_and_read_status(
         self, function: ControlWordFunction
     ) -> IclrsRegister:
-        await self.write_register("control word", value=function)
-        status_register = await self.read_register("control word status")
+        await self.client.write_register(
+            "control word", value=function
+        )
+        status_register = await self.client.read_register(
+            "control word status"
+        )
         return status_register
 
     @staticmethod
@@ -506,8 +438,10 @@ class Iclrs:
         return ppr
 
     async def reset_registers(self):
-        status_register = await self.write_control_word_and_read_status(
-            ControlWordFunction.RESET_ALL_PARAMETERS
+        status_register = (
+            await self.write_control_word_and_read_status(
+                ControlWordFunction.RESET_ALL_PARAMETERS
+            )
         )
         status_code = status_register.typed
         if status_code == ControlWordStatus.OK:

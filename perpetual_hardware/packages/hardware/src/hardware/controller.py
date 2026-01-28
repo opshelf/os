@@ -25,7 +25,7 @@ class SharedModbusController:
         port: str,
         baudrate: int,
         parity: str = "N",
-        timeout: float = 2.0,
+        timeout: float = 0.5,
     ) -> None:
         self.port = port
         self.baudrate = baudrate
@@ -61,7 +61,7 @@ class SharedModbusController:
                 timeout=self.timeout,
                 parity=self.parity,
                 bytesize=8,
-                retries=3,
+                retries=2,
                 stopbits=1,
                 framer=pymodbus.FramerType.RTU,
             )
@@ -87,7 +87,11 @@ class SharedModbusController:
             self.client.close()
 
     async def read_holding_registers(
-        self, unit_id: int, address: int, count: int = 1
+        self,
+        unit_id: int,
+        address: int,
+        count: int = 1,
+        attempts: int = 2,
     ) -> int:
         """
         Read value(s) from holding registers.
@@ -111,7 +115,7 @@ class SharedModbusController:
             )
 
         async with self.lock:
-            for attempt in range(2):
+            for attempt in range(attempts):
                 try:
                     result = await self.client.read_holding_registers(
                         address=address,

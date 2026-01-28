@@ -1,6 +1,8 @@
 import csv
 import inspect
 from enum import Enum, EnumMeta, IntEnum
+from itertools import groupby
+from operator import itemgetter
 from typing import Any, ClassVar, Dict, Type, Union
 
 from pydantic import (
@@ -33,13 +35,13 @@ class Register(BaseModel):
     max: int = Field(0xFFFF, ge=0, le=0xFFFF)
     unit: str
     description: str
-    type: Type = int
+    type: Type
 
-    @field_validator('*')
+    @field_validator("*", mode="before")
     @classmethod
     def clean_up_str(cls, v: Any) -> Any:
         if isinstance(v, str):
-            v = v.strip()
+            return v.strip()
         return v
 
     @field_validator("address", mode="before")
@@ -73,11 +75,19 @@ class Register(BaseModel):
 
     @field_validator("type", mode="before")
     @classmethod
-    def validate_type(cls, v: Union[str,Type], info:ValidationInfo) -> Type:
+    def validate_type(
+        cls, v: Union[str, Type], info: ValidationInfo
+    ) -> Type:
         if isinstance(v, str):
             if info.context is None:
-                raise ValueError("no context provided for string-type mapping")
-            str_to_type_mapping:Dict[str, Type] = info.context.get("str_to_type_mapping", {})
+                raise ValueError(
+                    "no string-type mapping provided in context"
+                )
+            str_to_type_mapping: Dict[str, Type] = info.context.get(
+                "str_to_type_mapping", {}
+            )
+            v = v.strip()
+            # print(v)
             try:
                 type = str_to_type_mapping[v]
             except KeyError:
@@ -95,6 +105,7 @@ class Register(BaseModel):
                 "register's min must be less than its max"
             )
         return self
+
 
 class DeviceRegisters:
     def __init__(self, registers: list[Register]):
@@ -167,10 +178,15 @@ class DeviceRegisters:
             str_to_type_mapping = str_to_type_mapping | {
                 "int": int,
                 "bool": bool,
-                "": int, # default to int if no type specified
+                "": int,  # default to int if no type specified
             }
-            context_data = {"str_to_type_mapping": str_to_type_mapping}
-            registers = [Register.model_validate(d, context=context_data) for d in list_of_dicts]
+            context_data = {
+                "str_to_type_mapping": str_to_type_mapping
+            }
+            registers = [
+                Register.model_validate(d, context=context_data)
+                for d in list_of_dicts
+            ]
             return registers
 
     @staticmethod
@@ -204,7 +220,8 @@ class DeviceRegisters:
     def get_register_by_address(self, address: int) -> Register:
         try:
             register = next(
-                (d for d in self.registers if d.address == address))
+                (d for d in self.registers if d.address == address)
+            )
         except StopIteration:
             raise ValueError(f"Invalid register address {address}")
         else:
@@ -324,7 +341,7 @@ class DeviceRegisters:
 
 
 # --- Generic Register BaseModel ---
-class DeviceRegistersModel(BaseModel):
+class RegistersModel(BaseModel):
     # Either 'name' or 'address' must be provided as input.
     name: str  # 'name' is the register name.
     address: int | None = None  # 'address' is the register address.
@@ -342,7 +359,7 @@ class DeviceRegistersModel(BaseModel):
         None  # 'message' is any human-readable message.
     )
     # set registers to a specific DeviceRegister
-    REGISTERS:ClassVar[DeviceRegisters]
+    REGISTERS: ClassVar[DeviceRegisters]
 
     @model_validator(mode="before")
     @classmethod
@@ -376,16 +393,22 @@ class DeviceRegistersModel(BaseModel):
         cls, v: Any | None
     ) -> Any | None:
         # Must be int, bool, dict, or an acceptable IntEnum.
-        # If a string, coerce it into an acceptable IntEnum.
         if v is None:
             return v
+        # If a string, try coercing it into an acceptable int or IntEnum.
         if isinstance(v, str):
             try:
+                v = coerce_str_to_int(v)
+            except ValueError:
+                pass
+            try:
                 v = cls.REGISTERS.str_to_enum(v)
-            except ValueError as e:
+            except ValueError:
+                pass
+            if not isinstance(v, int):
                 raise ValueError(
-                    "Invalid string for register value"
-                ) from e
+                    f"could not coerce '{v}' into an int"
+                )
         # If a dict, coerce any strings in the dict into acceptable IntEnums.
         if isinstance(v, dict):
             try:
@@ -435,24 +458,52 @@ class DeviceRegistersModel(BaseModel):
             )
         return self
 
-def registers_model_factory(registers:list[Register]):
-    device_registers = DeviceRegisters(registers)
-    class DeviceRegisterModel(DeviceRegistersModel):
-        REGISTERS = device_registers
-    return DeviceRegisterModel
 
-class DeviceRegistersCommunication:
+def registers_model_factory(
+    registers: list[Register],
+) -> Type[RegistersModel]:
+    device_registers = DeviceRegisters(registers)
+
+    class RegistersSpecificModel(RegistersModel):
+        REGISTERS = device_registers
+
+    return RegistersSpecificModel
+
+
+class DriverClient:
     def __init__(
         self,
         com: SharedModbusController,
         id: int,
-        register_model: type[DeviceRegistersModel],
+        register_model: type[RegistersModel],
     ):
         self._com = com
         self._id = id
         self._register_model = register_model
 
-    async def read_register(self, name: str) -> DeviceRegistersModel:
+    async def scan(self, name: str):
+        device_id = None
+        # Get address from name
+        try:
+            register = self._register_model(name=name)
+        except ValidationError as e:
+            raise ValueError(f"Invalid register name: {name}") from e
+        address = register.address
+
+        for id in range(1, 248):
+            print(f"scanning: {id}")
+            try:
+                value = await self._com.read_holding_registers(
+                    id, address, attempts=1
+                )
+                device_id = id
+                break
+            except Exception:
+                pass
+        print(device_id)
+        return device_id
+
+    async def read_register(self, name: str) -> RegistersModel:
         """Get a motor parameter register value.
 
         Args:
@@ -516,3 +567,38 @@ class DeviceRegistersCommunication:
                     f"Failed to set parameter {register}: {str(e)}"
                 ) from e
             raise
+
+    async def write_registers(
+        self, names_values: list[(str, Any)]
+    ) -> None:
+        registers_modbus = [
+            self._register_model(
+                name=name_value[0], value=name_value[1]
+            ).modbus
+            for name_value in names_values
+        ]
+        # Sort
+        registers_modbus.sort()
+        # Get contiguous addresses
+        contiguous_registers_groups = (
+            DriverClient._group_by_contiguous(
+                registers_modbus, index=0
+            )
+        )
+        print(contiguous_registers_groups)
+        for group in contiguous_registers_groups:
+            starting_reg = group[0][0]
+            values = [r[1] for r in group]
+            await self._com.write_multiple_registers(
+                self._id, starting_reg, values
+            )
+
+    @staticmethod
+    def _group_by_contiguous(lst, index=0):
+        sequences = []
+        for k, g in groupby(
+            enumerate(lst), lambda i_x: i_x[0] - i_x[1][0]
+        ):
+            values = list(map(itemgetter(1), g))
+            sequences.append(values)
+        return sequences
