@@ -264,6 +264,7 @@ class MotorWithDriver(Motor):
     polling_period_s: float = Field(..., ge=0.05, le=0.5)
     default_velocity_mm_per_s: float = Field(..., gt=0, le=500)
     default_acceleration_mm_per_s2: float = Field(..., gt=0, le=5)
+    move_try_agains: int = Field(..., gt=0, le=5)
     driver_config: IclrsConfig
 
 

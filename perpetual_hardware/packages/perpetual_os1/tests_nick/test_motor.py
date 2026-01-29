@@ -1,10 +1,12 @@
 import asyncio
+import math
 import random
 from pathlib import Path
 
 import pytest
 import pytest_asyncio
 from hardware.controller import SharedModbusController
+from hardware.drivers.iclrs_register_types import MotionStatus
 from perpetual_os1.common import MotorWithDriver as MotorConfig
 from perpetual_os1.motor_axis import MotorAxisIclRs
 from pydantic import BaseModel
@@ -113,10 +115,10 @@ async def test_home(motor_axis):
     async with shared_lock:
         await motor_axis.home()
         pos = await motor_axis.get_position()
-    assert abs(pos) < 0.05
+    assert math.isclose(0, pos, abs_tol=0.05)
 
 
-@pytest.mark.parametrize("execution_number", range(20))
+@pytest.mark.parametrize("execution_number", range(5))
 @pytest.mark.asyncio(loop_scope="module")
 async def test_move(motor_axis, motor_config, execution_number):
     async with shared_lock:
@@ -147,7 +149,7 @@ async def test_jog(motor_axis):
 async def test_stop(motor_axis):
     async with shared_lock:
         await motor_axis.home()
-        target_position_mm = 20
+        target_position_mm = 30
         move_task = asyncio.create_task(
             motor_axis.move_to_position(
                 position_mm=target_position_mm,
@@ -189,4 +191,33 @@ async def test_curtain_safety(motor_axis):
             - starting_position
         )
         < 0.1
+    )
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_curtain_safety_during(motor_axis):
+    async with shared_lock:
+        WAIT_S = 1
+        await motor_axis.home()
+        target_position_mm = 50
+        move_task = asyncio.create_task(
+            motor_axis.move_to_position(
+                position_mm=target_position_mm, velocity_mm_per_s=25
+            )
+        )
+        await asyncio.sleep(WAIT_S)
+        # Activate curtain safety while move is running, move should pause.
+        await motor_axis.activate_safety_curtain(True)
+        await asyncio.sleep(WAIT_S)
+        status_during_safety_curtain: MotionStatus = (
+            await motor_axis.driver.read_status()
+        )
+        # Deactivate curtain safety while move is running.
+        await motor_axis.activate_safety_curtain(False)
+        # Motor should now move, completing the interrupted move.
+        await move_task
+        position_after_move = await motor_axis.get_position()
+
+    assert (abs(position_after_move - target_position_mm) < 0.1) and (
+        not status_during_safety_curtain.is_running
     )

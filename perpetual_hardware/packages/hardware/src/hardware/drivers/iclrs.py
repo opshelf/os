@@ -168,7 +168,7 @@ class Iclrs:
 
     async def read_alarm(self) -> Alarm:
         alarm = await self.client.read_register("alarm")
-        return alarm
+        return alarm.typed
 
     async def clear_current_alarm(self) -> None:
         await self.client.write_register(
@@ -188,19 +188,18 @@ class Iclrs:
         )
         # Confirm that alarms were cleared.
         alarm = await self.read_alarm()
-        alarm_code = alarm.typed.code
-        if alarm.typed.code != AlarmCode.NO_ALARM:
+        if alarm.code != AlarmCode.NO_ALARM:
             raise MotorError(
                 f"Alarm {alarm_code} persists after clear attempt"
             )
 
-    async def trigger_homing(self) -> None:
-        await self.client.write_register(
-            name="pr control",
-            value={
-                "command": PathControlCommand.HOMING,
-            },
-        )
+    # async def trigger_homing(self) -> None:
+    #     await self.client.write_register(
+    #         name="pr control",
+    #         value={
+    #             "command": PathControlCommand.HOMING,
+    #         },
+    #     )
 
     async def zero_position(self) -> None:
         await self.client.write_register(
