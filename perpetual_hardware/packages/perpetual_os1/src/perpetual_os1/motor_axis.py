@@ -1,4 +1,5 @@
 import asyncio
+import math
 import time
 from abc import ABC, abstractmethod
 from typing import Any, Awaitable, Dict, Union
@@ -114,30 +115,8 @@ class MotorAxisIclRs(MotorAxis):
     def __init__(
         self, controller: SharedModbusController, params: MotorConfig
     ):
-        self.motor_id = params.motor_id
-        self.mm_per_revolution = params.mpr
-        self.limit_mm = params.lim
-        self.driver = Iclrs(
-            controller=controller,
-            config=params.driver_config,
-        )
-        self.position_limiter = create_clamped_value_model(
-            name="LimitedPosition", min=0, max=self.limit_mm
-        )
-        # --- Timeouts ---
-        self.homing_timeout_s = params.homing_timeout_s
-        self.move_timeout_s = params.move_timeout_s
-        # --- Polling ---
-        self.polling_delay_s = params.polling_delay_s
-        self.polling_period_s = params.polling_period_s
-        # --- Default velocity and acceleration ---
-        self.default_velocity_mm_per_s = (
-            params.default_velocity_mm_per_s
-        )
-        self.default_acceleration_mm_per_s2 = (
-            params.default_acceleration_mm_per_s2
-        )
-        self.move_try_agains = params.move_try_agains
+        self.controller = controller
+        self.params = params
         # --- Event handling ---
         self.stop_event = asyncio.Event()
         self.stop_event.clear()
@@ -152,8 +131,33 @@ class MotorAxisIclRs(MotorAxis):
         # To be set when read from device after homing.
         self.zero_offset_pulse: int = None
 
+    def load_params(self) -> None:
+        self.motor_id = self.params.motor_id
+        self.mm_per_revolution = self.params.mpr
+        self.limit_mm = self.params.lim
+        self.position_limiter = create_clamped_value_model(
+            name="LimitedPosition", min=0, max=self.limit_mm
+        )
+        self.driver = Iclrs(
+            controller=self.controller,
+            config=self.params.driver_config,
+        )
+        self.homing_timeout_s = self.params.homing_timeout_s
+        self.move_timeout_s = self.params.move_timeout_s
+        self.polling_delay_s = self.params.polling_delay_s
+        self.polling_period_s = self.params.polling_period_s
+        self.default_velocity_mm_per_s = (
+            self.params.default_velocity_mm_per_s
+        )
+        self.default_acceleration_mm_per_s2 = (
+            self.params.default_acceleration_mm_per_s2
+        )
+        self.move_try_agains = self.params.move_try_agains
+        self.position_tolerance_mm = self.params.position_tolerance_mm
+
     # --- Implement abstract base class methods
     async def configure(self) -> None:
+        self.load_params()
         try:
             await self.driver.configure()
             self.pulse_per_revolution = (
@@ -161,27 +165,8 @@ class MotorAxisIclRs(MotorAxis):
             )
         except Exception as e:
             raise MotorConfigError(
-                f"Failed to configure motor {self._motor_id}: {e}"
+                f"Failed to configure motor {self.motor_id}: {e}"
             ) from e
-
-    # async def home(self) -> None:
-    #     await self.safety_curtain_inactive_event.wait()
-    #     await self.driver.write_homing_command()
-    #     await self.wait_for_move(timeout_s=self.homing_timeout_s)
-    #     # Status checks:
-    #     alarm = await self.driver.read_alarm()
-    #     if alarm.code == AlarmCode.STALL_TORQUE:
-    #         # Home via stall torque achieved, as indicated by the alarm.
-    #         # Clear the alarm.
-    #         await self.driver.clear_current_alarm()
-    #         await self.driver.zero_position()
-    #     else:
-    #         # Stopped without stall torque, due to some other unintended fault.
-    #         raise MotorError(
-    #             f"Motor {self.motor_id} faulted during homing"
-    #         )
-
-    #     self.zero_offset_pulse = await self.driver.read_position()
 
     async def home(self) -> None:
         for _ in range(self.move_try_agains):
@@ -258,31 +243,16 @@ class MotorAxisIclRs(MotorAxis):
                 elif status.command_completed:
                     # Move successfully complete: confirm position.
                     current_position_mm = await self.get_position()
-                    if abs(current_position_mm - position_mm) < 0.1:
+                    if math.isclose(
+                        current_position_mm,
+                        position_mm,
+                        abs_tol=self.position_tolerance_mm,
+                    ):
                         # Target position reached: terminate.
                         return
                     else:
                         # Target position not reached: try again.
                         continue
-
-    # async def move_to_position(
-    #     self,
-    #     position_mm: float,
-    #     velocity_mm_per_s: float | None = None,
-    #     acceleration_mm_per_s2: float | None = None,
-    # ) -> None:
-    #     await self.move_to_position_no_wait(
-    #         position_mm, velocity_mm_per_s, acceleration_mm_per_s2
-    #     )
-    #     await self.wait_for_move(timeout_s=self.move_timeout_s)
-    #     # Motor is now done running, but need to check if it stopped because of fault
-    #     # or because it actually completed the path.
-    #     status: MotionStatus = await self.driver.read_status()
-    #     if status.is_fault:
-    #         alarm = await self.driver.read_alarm()
-    #         raise MotorError(
-    #             f"Motor {self.motor_id} faulted while moving: {alarm.message}"
-    #         )
 
     async def move_to_position_no_wait(
         self,

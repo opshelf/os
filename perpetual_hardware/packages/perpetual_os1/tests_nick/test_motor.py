@@ -12,6 +12,7 @@ from perpetual_os1.motor_axis import MotorAxisIclRs
 from pydantic import BaseModel
 
 CONFIG_JSON_FILENAME = "motor_config.json"
+CONFIG_JSON_B_FILENAME = "motor_config_b.json"
 
 
 class Config(BaseModel):
@@ -36,6 +37,13 @@ shared_lock = asyncio.Lock()
 
 # --- Fixtures ---
 @pytest.fixture(scope="module")
+def config_dir(request):
+    tests_path = Path(request.module.__file__).parent
+    config_dir = tests_path / "data"
+    return config_dir
+
+
+@pytest.fixture(scope="module")
 def config_json_path(request):
     tests_path = Path(request.module.__file__).parent
     json_file_path = tests_path / "data" / CONFIG_JSON_FILENAME
@@ -58,6 +66,20 @@ def config_json_str(config_json_path):
 @pytest.fixture(scope="module")
 def motor_config(config_json_str):
     return Config.model_validate_json(config_json_str).motor
+
+
+@pytest.fixture(scope="module")
+def motor_config_b(config_dir):
+    config_file_path = config_dir / CONFIG_JSON_B_FILENAME
+    try:
+        with open(config_file_path, "r", encoding="utf-8") as f:
+            json_string = f.read()
+    except FileNotFoundError:
+        print(f"Error: The file '{config_json_path}' was not found.")
+    except Exception as e:
+        print(f"An error occured: {e}")
+    else:
+        return Config.model_validate_json(json_string).motor
 
 
 @pytest_asyncio.fixture(scope="module")
@@ -104,6 +126,19 @@ async def test_configure(motor_axis):
 
 
 @pytest.mark.asyncio(loop_scope="module")
+async def test_update_config(
+    motor_axis, motor_config, motor_config_b
+):
+    async with shared_lock:
+        motor_axis.params = motor_config_b
+        await motor_axis.configure()
+        assert (
+            motor_axis.homing_timeout_s
+            == motor_config_b.homing_timeout_s
+        )
+
+
+@pytest.mark.asyncio(loop_scope="module")
 async def test_clear_alarm(motor_axis):
     async with shared_lock:
         await motor_axis.clear_alarm()
@@ -118,7 +153,7 @@ async def test_home(motor_axis):
     assert math.isclose(0, pos, abs_tol=0.05)
 
 
-@pytest.mark.parametrize("execution_number", range(5))
+@pytest.mark.parametrize("execution_number", range(30))
 @pytest.mark.asyncio(loop_scope="module")
 async def test_move(motor_axis, motor_config, execution_number):
     async with shared_lock:
