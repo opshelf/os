@@ -28,15 +28,16 @@ motor_helpers
     Motor register definitions and constants
 """
 
-# from .controller import SharedModbusController
-# from .motor import Servo, MotorStatus
-# from .iocam import AFSCam
-# from .toolcam import ToolCamera
+from .controller import SharedModbusController
+from .iocam import AFSCam
+from .motor import MotorStatus, Servo
+from .toolcam import ToolCamera
 
-# __all__ = [
-#     'SharedModbusController',
-#     'Servo',
-#     'MotorStatus',
-#     'AFSCam',
-#     'ToolCamera'
-# ]
+__all__ = [
+    "SharedModbusController",
+    "Servo",
+    "MotorStatus",
+    "AFSCam",
+    "ToolCamera",
+    "ModbusErrorCode",
+]

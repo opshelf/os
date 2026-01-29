@@ -1,22 +1,31 @@
-import perpetual_os1.common as c
-from perpetual_os1.common import Motor as MotorConfig
-from hardware.controller import SharedModbusController as Controller
-from hardware.motor import Motor, Servo, MotorStatus, MOTOR_WAIT_TIMEOUT
-from hardware.toolcam import ToolCamera
-from perpetual_os1.exceptions import (
-    MotorError, ConfigError, CameraError,
-    GripperError, MovementError,
-    ScanTimeoutError, MotorWaitTimeoutError
-)
-
 import logging
 import time
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any, List, Literal, Optional
+
 import cv2
 import sentry_sdk
+from hardware.controller import SharedModbusController as Controller
+from hardware.motor import (
+    MOTOR_WAIT_TIMEOUT,
+    Motor,
+    MotorStatus,
+    Servo,
+)
+from hardware.toolcam import ToolCamera
 
-from enum import Enum
-from dataclasses import dataclass, field
-from typing import Optional, Literal, List, Any
+import perpetual_os1.common as c
+from perpetual_os1.common import Motor as MotorConfig
+from perpetual_os1.exceptions import (
+    CameraError,
+    ConfigError,
+    GripperError,
+    MotorError,
+    MotorWaitTimeoutError,
+    MovementError,
+    ScanTimeoutError,
+)
 
 
 def _create_motor_if_enabled(
@@ -38,6 +47,7 @@ def _create_motor_if_enabled(
 
     return Motor(controller, cfg, safety)
 
+
 @dataclass
 class FiducialRegistry:
     # store world positions (motor coordinates) to avoid double counting
@@ -52,15 +62,18 @@ class FiducialRegistry:
     def add(self, yw: float):
         self.items.append(yw)
 
+
 class ToolMotionStatus(Enum):
     IDLE = 0
     MOVING = 1
     ERROR = 2
 
+
 class ToolItemStatus(Enum):
     EMPTY = 0
     LOADED = 1
     ERROR = 2
+
 
 @dataclass
 class ToolStatus:
@@ -75,12 +88,17 @@ GRID_UPDATE_TIMEOUT_PER_SHELF = 60.0
 GANTRY_OUTER_TIMEOUT = 120.0
 TOOL_OUTER_TIMEOUT = 60.0
 
+
 class Tool:
-    def __init__(self, motorcontroller: Controller, params: c.Tool, safety=None):
+    def __init__(
+        self, motorcontroller: Controller, params: c.Tool, safety=None
+    ):
         self._motorcontroller = motorcontroller
         self._istatus = ToolItemStatus.EMPTY
         self._mstatus = ToolMotionStatus.IDLE
-        self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+        self._status = ToolStatus(
+            motion=self._mstatus, item=self._istatus
+        )
         self._params = params
         self._guard_paused = False
         self._logger = logging.getLogger(__name__)
@@ -102,13 +120,15 @@ class Tool:
         self._mr: Optional[Motor] = _create_motor_if_enabled(
             motorcontroller, motors, "rotate", safety, self._logger
         )
-        self._gs = Servo(self._motorcontroller, self._params.gripper.model_dump())
+        self._gs = Servo(
+            self._motorcontroller, self._params.gripper.model_dump()
+        )
 
         self._cam = ToolCamera(self._params.poe_camera)
 
         # LEDs
 
-## MOTORS
+    ## MOTORS
     def _has_cached_camera_calibration(self) -> bool:
         """Return True when calibration data has been persisted in configuration."""
         camera_cfg = self._params.poe_camera
@@ -122,9 +142,10 @@ class Tool:
             camera_cfg.board_H_mm,
             camera_cfg.square_size_mm,
         )
-        return (
-            getattr(camera_cfg, "calibration_status", None) == "calibrated"
-            and all(value is not None for value in required)
+        return getattr(
+            camera_cfg, "calibration_status", None
+        ) == "calibrated" and all(
+            value is not None for value in required
         )
 
     async def configure(self):
@@ -152,12 +173,16 @@ class Tool:
             self._mstatus = ToolMotionStatus.IDLE
         except Exception as e:
             await self._handle_fault(e)
-            raise MotorError(f"Tool configuration failed: {str(e)}") from e
+            raise MotorError(
+                f"Tool configuration failed: {str(e)}"
+            ) from e
 
     async def _handle_fault(self, exc: Exception) -> None:
         """Mark the tool as faulted - manual intervention required."""
         self._mstatus = ToolMotionStatus.ERROR
-        self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+        self._status = ToolStatus(
+            motion=self._mstatus, item=self._istatus
+        )
         self._logger.error(
             "Tool fault detected - manual intervention required",
             extra={"error": str(exc)},
@@ -170,7 +195,9 @@ class Tool:
                 raise KeyError(f"Parameter '{param}' not found")
             return getattr(self._params.parameters, param)
         except Exception as e:
-            raise ConfigError(f"Failed to get parameter {param}: {str(e)}") from e
+            raise ConfigError(
+                f"Failed to get parameter {param}: {str(e)}"
+            ) from e
 
     def reload_parameters(self) -> None:
         """Reload tool parameters from config.json without restarting."""
@@ -205,7 +232,9 @@ class Tool:
                 await self._my.jog(5)
                 await self._my.home()
             self._mstatus = ToolMotionStatus.IDLE
-            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+            self._status = ToolStatus(
+                motion=self._mstatus, item=self._istatus
+            )
         except Exception as e:
             await self._handle_fault(e)
             raise MotorError(f"Failed to home tool: {str(e)}") from e
@@ -224,7 +253,9 @@ class Tool:
                 await self._ms.clear_alarm()
         except Exception as e:
             await self._handle_fault(e)
-            raise MotorError(f"Failed to clear alarms: {str(e)}") from e
+            raise MotorError(
+                f"Failed to clear alarms: {str(e)}"
+            ) from e
 
     def pause_for_curtain(self) -> None:
         if self._guard_paused:
@@ -257,7 +288,9 @@ class Tool:
             if self._my is not None:
                 await self._my.stop()
             self._mstatus = ToolMotionStatus.IDLE
-            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+            self._status = ToolStatus(
+                motion=self._mstatus, item=self._istatus
+            )
         except Exception as e:
             await self._handle_fault(e)
             raise MotorError(f"Failed to stop tool: {str(e)}") from e
@@ -278,11 +311,14 @@ class Tool:
         if grip_pos > SAFE_THRESHOLD or slide_pos > SAFE_THRESHOLD:
             self._logger.info(
                 "Retracting before gantry move: grip=%.1f, slide=%.1f",
-                grip_pos, slide_pos
+                grip_pos,
+                slide_pos,
             )
             await self.retract_empty()
 
-    async def move(self, coordinate: c.AxisCoordinate, *, _nested: bool = False) -> None:
+    async def move(
+        self, coordinate: c.AxisCoordinate, *, _nested: bool = False
+    ) -> None:
         """
         Move gantry to specified coordinates.
 
@@ -295,22 +331,30 @@ class Tool:
             MotorError: If required gantry motors are disabled
         """
         if self._mx is None or self._my is None:
-            raise MotorError("Gantry motors (x_axis, y_axis) required for movement")
+            raise MotorError(
+                "Gantry motors (x_axis, y_axis) required for movement"
+            )
 
         try:
             if _nested is False:
                 self._mstatus = ToolMotionStatus.MOVING
-                self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+                self._status = ToolStatus(
+                    motion=self._mstatus, item=self._istatus
+                )
             await self._ensure_retracted()
             await self._my.move_to_position_no_wait(coordinate.y)
             await self._mx.move_to_position_no_wait(coordinate.x)
             await self.gantry_wait()
             if _nested is False:
                 self._mstatus = ToolMotionStatus.IDLE
-                self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+                self._status = ToolStatus(
+                    motion=self._mstatus, item=self._istatus
+                )
         except Exception as e:
             await self._handle_fault(e)
-            raise MovementError(f"Gantry movement failed: {str(e)}") from e
+            raise MovementError(
+                f"Gantry movement failed: {str(e)}"
+            ) from e
 
     async def retract(self, *, _nested: bool = False) -> None:
         """
@@ -324,27 +368,39 @@ class Tool:
             MotorError: If required tool motors are disabled
         """
         if self._mg is None or self._ms is None:
-            raise MotorError("Tool motors (z_axis, stage) required for retraction")
+            raise MotorError(
+                "Tool motors (z_axis, stage) required for retraction"
+            )
 
         try:
             if _nested is False:
                 self._mstatus = ToolMotionStatus.MOVING
-                self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+                self._status = ToolStatus(
+                    motion=self._mstatus, item=self._istatus
+                )
             grip_rpm = await self.get_param("Z_MOVE_RPM")
             grip_accel = await self.get_param("Z_MOVE_ACCEL")
             if grip_rpm is None or grip_accel is None:
                 raise ConfigError("Missing gripper move speed")
-            await self._mg.move_to_position(1, rpm=grip_rpm, accel=grip_accel)
+            await self._mg.move_to_position(
+                1, rpm=grip_rpm, accel=grip_accel
+            )
             await self._ms.move_to_position(3.0)
             await self._ms.idle()
             if _nested is False:
                 self._mstatus = ToolMotionStatus.IDLE
-                self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+                self._status = ToolStatus(
+                    motion=self._mstatus, item=self._istatus
+                )
         except Exception as e:
             await self._handle_fault(e)
-            raise MovementError(f"Tool retraction failed: {str(e)}") from e
+            raise MovementError(
+                f"Tool retraction failed: {str(e)}"
+            ) from e
 
-    def _with_gripper_offset(self, value: float, coordinate: Optional[c.AxisCoordinate]) -> float:
+    def _with_gripper_offset(
+        self, value: float, coordinate: Optional[c.AxisCoordinate]
+    ) -> float:
         """Apply per-cell z offset to the configured gripper extension."""
         if coordinate is None:
             return value
@@ -358,7 +414,11 @@ class Tool:
         if value < 0 or value > limit:
             self._logger.warning(
                 "Stage target will be clamped to motor limits",
-                extra={"label": label, "requested_mm": value, "limit_mm": limit},
+                extra={
+                    "label": label,
+                    "requested_mm": value,
+                    "limit_mm": limit,
+                },
             )
 
     async def _get_io_box_stage_extension(self) -> float:
@@ -366,27 +426,44 @@ class Tool:
         ext = await self.get_param("STAGE_EXTENSION_IO_BOX")
 
         if ext is None:
-            raise ConfigError("Missing STAGE_EXTENSION_IO_BOX parameter")
+            raise ConfigError(
+                "Missing STAGE_EXTENSION_IO_BOX parameter"
+            )
 
         return ext
 
-    async def _get_shelf_slide_extension(self, coordinate: Optional[c.AxisCoordinate]) -> float:
+    async def _get_shelf_slide_extension(
+        self, coordinate: Optional[c.AxisCoordinate]
+    ) -> float:
         """Select slide extension for shelf pick/place operations."""
-        front_ext = await self.get_param("STAGE_EXTENSION_SHELF_FRONT")
+        front_ext = await self.get_param(
+            "STAGE_EXTENSION_SHELF_FRONT"
+        )
         back_ext = await self.get_param("STAGE_EXTENSION_SHELF_BACK")
 
         if front_ext is None or back_ext is None:
-            raise ConfigError("Missing STAGE_EXTENSION_SHELF_FRONT/BACK parameters")
+            raise ConfigError(
+                "Missing STAGE_EXTENSION_SHELF_FRONT/BACK parameters"
+            )
 
-        self._warn_stage_target(front_ext, "STAGE_EXTENSION_SHELF_FRONT")
-        self._warn_stage_target(back_ext, "STAGE_EXTENSION_SHELF_BACK")
+        self._warn_stage_target(
+            front_ext, "STAGE_EXTENSION_SHELF_FRONT"
+        )
+        self._warn_stage_target(
+            back_ext, "STAGE_EXTENSION_SHELF_BACK"
+        )
 
         if coordinate is None:
             return front_ext
 
         return front_ext if coordinate.s == 0 else back_ext
 
-    async def rotate_to_position(self, position: Literal["front", "back"], *, _nested: bool = False) -> None:
+    async def rotate_to_position(
+        self,
+        position: Literal["front", "back"],
+        *,
+        _nested: bool = False,
+    ) -> None:
         """
         Rotate the tool to the configured front or back angle.
 
@@ -403,25 +480,42 @@ class Tool:
             raise MotorError("Rotate motor required for rotation")
 
         try:
-            param = "ROTATION_FRONT" if position == "front" else "ROTATION_BACK"
+            param = (
+                "ROTATION_FRONT"
+                if position == "front"
+                else "ROTATION_BACK"
+            )
             target_angle = await self.get_param(param)
             if target_angle is None:
-                raise ConfigError(f"Missing rotation parameter: {param}")
+                raise ConfigError(
+                    f"Missing rotation parameter: {param}"
+                )
 
             if _nested is False:
                 self._mstatus = ToolMotionStatus.MOVING
-                self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+                self._status = ToolStatus(
+                    motion=self._mstatus, item=self._istatus
+                )
             await self._mr.move_to_position(target_angle)
             if _nested is False:
                 self._mstatus = ToolMotionStatus.IDLE
-                self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+                self._status = ToolStatus(
+                    motion=self._mstatus, item=self._istatus
+                )
         except Exception as e:
             await self._handle_fault(e)
             if isinstance(e, ConfigError):
                 raise
-            raise MovementError(f"Tool rotation failed: {str(e)}") from e
+            raise MovementError(
+                f"Tool rotation failed: {str(e)}"
+            ) from e
 
-    async def extend(self, coordinate: Optional[c.AxisCoordinate] = None, *, _nested: bool = False) -> None:
+    async def extend(
+        self,
+        coordinate: Optional[c.AxisCoordinate] = None,
+        *,
+        _nested: bool = False,
+    ) -> None:
         """
         Extend gripper and slide to operation positions.
 
@@ -435,31 +529,48 @@ class Tool:
             MotorError: If required tool motors are disabled
         """
         if self._mg is None or self._ms is None:
-            raise MotorError("Tool motors (z_axis, stage) required for extension")
+            raise MotorError(
+                "Tool motors (z_axis, stage) required for extension"
+            )
 
         try:
-            slide_ext = await self._get_shelf_slide_extension(coordinate)
+            slide_ext = await self._get_shelf_slide_extension(
+                coordinate
+            )
             grip_ext = await self.get_param("Z_EXTENSION_PLACE")
             grip_rpm = await self.get_param("Z_MOVE_RPM")
             grip_accel = await self.get_param("Z_MOVE_ACCEL")
-            if slide_ext is None or grip_ext is None or grip_rpm is None or grip_accel is None:
+            if (
+                slide_ext is None
+                or grip_ext is None
+                or grip_rpm is None
+                or grip_accel is None
+            ):
                 raise ConfigError("Missing extension parameters")
             grip_ext = self._with_gripper_offset(grip_ext, coordinate)
 
             if _nested is False:
                 self._mstatus = ToolMotionStatus.MOVING
-                self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+                self._status = ToolStatus(
+                    motion=self._mstatus, item=self._istatus
+                )
             await self._ms.ready()
             await self._ms.move_to_position(slide_ext)
-            await self._mg.move_to_position(grip_ext, rpm=grip_rpm, accel=grip_accel)
+            await self._mg.move_to_position(
+                grip_ext, rpm=grip_rpm, accel=grip_accel
+            )
             if _nested is False:
                 self._mstatus = ToolMotionStatus.IDLE
-                self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+                self._status = ToolStatus(
+                    motion=self._mstatus, item=self._istatus
+                )
         except Exception as e:
             await self._handle_fault(e)
             if isinstance(e, ConfigError):
                 raise
-            raise MovementError(f"Tool extension failed: {str(e)}") from e
+            raise MovementError(
+                f"Tool extension failed: {str(e)}"
+            ) from e
 
     async def extend_IO(self) -> None:
         """
@@ -471,7 +582,9 @@ class Tool:
             MotorError: If required tool motors are disabled
         """
         if self._mg is None or self._ms is None:
-            raise MotorError("Tool motors (z_axis, stage) required for IO extension")
+            raise MotorError(
+                "Tool motors (z_axis, stage) required for IO extension"
+            )
 
         slide_ext = await self._get_io_box_stage_extension()
         stage_nudge = await self.get_param("STAGE_NUDGE")
@@ -479,28 +592,46 @@ class Tool:
         grip_rpm = await self.get_param("Z_MOVE_RPM")
         grip_accel = await self.get_param("Z_MOVE_ACCEL")
 
-        if stage_nudge is None or grip_ext is None or grip_rpm is None or grip_accel is None:
+        if (
+            stage_nudge is None
+            or grip_ext is None
+            or grip_rpm is None
+            or grip_accel is None
+        ):
             raise ConfigError("Missing IO box extension parameters")
 
         self._warn_stage_target(slide_ext, "STAGE_EXTENSION_IO_BOX")
-        self._warn_stage_target(slide_ext + stage_nudge, "STAGE_EXTENSION_IO_BOX + STAGE_NUDGE")
+        self._warn_stage_target(
+            slide_ext + stage_nudge,
+            "STAGE_EXTENSION_IO_BOX + STAGE_NUDGE",
+        )
 
         try:
             self._mstatus = ToolMotionStatus.MOVING
-            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+            self._status = ToolStatus(
+                motion=self._mstatus, item=self._istatus
+            )
             await self._ms.ready()
             await self._ms.move_to_position(slide_ext)
-            await self._mg.move_to_position(grip_ext, rpm=grip_rpm, accel=grip_accel)
+            await self._mg.move_to_position(
+                grip_ext, rpm=grip_rpm, accel=grip_accel
+            )
             await self._ms.move_to_position(slide_ext + stage_nudge)
             self._mstatus = ToolMotionStatus.IDLE
-            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+            self._status = ToolStatus(
+                motion=self._mstatus, item=self._istatus
+            )
         except Exception as e:
             await self._handle_fault(e)
             if isinstance(e, ConfigError):
                 raise
-            raise MovementError(f"Tool IO extension failed: {str(e)}") from e
+            raise MovementError(
+                f"Tool IO extension failed: {str(e)}"
+            ) from e
 
-    async def extend_empty(self, coordinate: Optional[c.AxisCoordinate] = None) -> None:
+    async def extend_empty(
+        self, coordinate: Optional[c.AxisCoordinate] = None
+    ) -> None:
         """
         Extend empty tool without waiting between moves.
 
@@ -514,26 +645,39 @@ class Tool:
             MotorError: If required tool motors are disabled
         """
         if self._mg is None or self._ms is None:
-            raise MotorError("Tool motors (z_axis, stage) required for empty extension")
+            raise MotorError(
+                "Tool motors (z_axis, stage) required for empty extension"
+            )
 
         try:
-            slide_ext = await self._get_shelf_slide_extension(coordinate)
+            slide_ext = await self._get_shelf_slide_extension(
+                coordinate
+            )
             grip_ext = await self.get_param("Z_EXTENSION_PICK")
             grip_rpm = await self.get_param("Z_MOVE_RPM")
             grip_accel = await self.get_param("Z_MOVE_ACCEL")
-            if slide_ext is None or grip_ext is None or grip_rpm is None or grip_accel is None:
+            if (
+                slide_ext is None
+                or grip_ext is None
+                or grip_rpm is None
+                or grip_accel is None
+            ):
                 raise ConfigError("Missing extension parameters")
             grip_ext = self._with_gripper_offset(grip_ext, coordinate)
 
             await self._ms.ready()
             await self._ms.move_to_position_no_wait(slide_ext)
-            await self._mg.move_to_position_no_wait(grip_ext, rpm=grip_rpm, accel=grip_accel)
+            await self._mg.move_to_position_no_wait(
+                grip_ext, rpm=grip_rpm, accel=grip_accel
+            )
             await self.tool_wait(homing=False)
         except Exception as e:
             await self._handle_fault(e)
             if isinstance(e, ConfigError):
                 raise
-            raise MovementError(f"Tool empty extension failed: {str(e)}") from e
+            raise MovementError(
+                f"Tool empty extension failed: {str(e)}"
+            ) from e
 
     async def retract_empty(self) -> None:
         """
@@ -548,7 +692,9 @@ class Tool:
             MotorError: If required tool motors are disabled
         """
         if self._mg is None or self._ms is None:
-            raise MotorError("Tool motors (z_axis, stage) required for empty retraction")
+            raise MotorError(
+                "Tool motors (z_axis, stage) required for empty retraction"
+            )
 
         try:
             await self._ms.move_to_position_no_wait(3.0)
@@ -556,12 +702,16 @@ class Tool:
             grip_accel = await self.get_param("Z_MOVE_ACCEL")
             if grip_rpm is None or grip_accel is None:
                 raise ConfigError("Missing gripper move speed")
-            await self._mg.move_to_position_no_wait(1, rpm=grip_rpm, accel=grip_accel)
+            await self._mg.move_to_position_no_wait(
+                1, rpm=grip_rpm, accel=grip_accel
+            )
             await self.tool_wait(homing=True)
             await self._ms.idle()
         except Exception as e:
             await self._handle_fault(e)
-            raise MovementError(f"Tool empty retraction failed: {str(e)}") from e
+            raise MovementError(
+                f"Tool empty retraction failed: {str(e)}"
+            ) from e
 
     async def pick(self, coordinate: c.AxisCoordinate) -> None:
         """
@@ -573,26 +723,36 @@ class Tool:
         """
         try:
             self._mstatus = ToolMotionStatus.MOVING
-            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+            self._status = ToolStatus(
+                motion=self._mstatus, item=self._istatus
+            )
             self._last_pick_coord = coordinate
 
-            target_position: Literal["front", "back"] = "front" if coordinate.s == 0 else "back"
+            target_position: Literal["front", "back"] = (
+                "front" if coordinate.s == 0 else "back"
+            )
 
             await self._gs.safe_open()
             await self.move(coordinate, _nested=True)
-            await self.rotate_to_position(target_position, _nested=True)
+            await self.rotate_to_position(
+                target_position, _nested=True
+            )
             await self.extend_empty(coordinate)
             await self._gs.open()
             await self.retract(_nested=True)
 
             self._istatus = ToolItemStatus.LOADED
             self._mstatus = ToolMotionStatus.IDLE
-            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+            self._status = ToolStatus(
+                motion=self._mstatus, item=self._istatus
+            )
         except Exception as e:
             await self._handle_fault(e)
             if isinstance(e, MovementError):
                 raise
-            raise GripperError(f"Pick operation failed: {str(e)}") from e
+            raise GripperError(
+                f"Pick operation failed: {str(e)}"
+            ) from e
 
     async def place(self, coordinate: c.AxisCoordinate):
         """
@@ -604,27 +764,39 @@ class Tool:
         """
         try:
             self._mstatus = ToolMotionStatus.MOVING
-            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+            self._status = ToolStatus(
+                motion=self._mstatus, item=self._istatus
+            )
 
-            target_position: Literal["front", "back"] = "front" if coordinate.s == 0 else "back"
+            target_position: Literal["front", "back"] = (
+                "front" if coordinate.s == 0 else "back"
+            )
 
             await self.move(coordinate, _nested=True)
-            await self.rotate_to_position(target_position, _nested=True)
+            await self.rotate_to_position(
+                target_position, _nested=True
+            )
             await self.extend(coordinate, _nested=True)
             await self._gs.close()
             await self.retract_empty()
 
             self._istatus = ToolItemStatus.EMPTY
             self._mstatus = ToolMotionStatus.IDLE
-            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+            self._status = ToolStatus(
+                motion=self._mstatus, item=self._istatus
+            )
             self._last_pick_coord = None
         except Exception as e:
             await self._handle_fault(e)
             if isinstance(e, MovementError):
                 raise
-            raise GripperError(f"Place operation failed: {str(e)}") from e
+            raise GripperError(
+                f"Place operation failed: {str(e)}"
+            ) from e
 
-    async def gantry_wait(self, timeout_seconds: float = GANTRY_OUTER_TIMEOUT) -> None:
+    async def gantry_wait(
+        self, timeout_seconds: float = GANTRY_OUTER_TIMEOUT
+    ) -> None:
         """
         Wait for gantry motors to complete movement.
 
@@ -634,35 +806,63 @@ class Tool:
             MotorError: If required gantry motors are disabled
         """
         if self._mx is None or self._my is None:
-            raise MotorError("Gantry motors (x_axis, y_axis) required for gantry wait")
+            raise MotorError(
+                "Gantry motors (x_axis, y_axis) required for gantry wait"
+            )
 
         start_time = time.monotonic()
-        terminal_error_states = {MotorStatus.ERROR, MotorStatus.FAULT, MotorStatus.TIMEOUT}
+        terminal_error_states = {
+            MotorStatus.ERROR,
+            MotorStatus.FAULT,
+            MotorStatus.TIMEOUT,
+        }
 
         try:
             while True:
                 if time.monotonic() - start_time > timeout_seconds:
-                    raise MotorWaitTimeoutError(f"Gantry wait exceeded {timeout_seconds}s timeout")
+                    raise MotorWaitTimeoutError(
+                        f"Gantry wait exceeded {timeout_seconds}s timeout"
+                    )
 
-                mx_f = await self._mx.wait_for_move(timeout=GANTRY_WAIT_TIMEOUT)
-                my_f = await self._my.wait_for_move(timeout=GANTRY_WAIT_TIMEOUT)
+                mx_f = await self._mx.wait_for_move(
+                    timeout=GANTRY_WAIT_TIMEOUT
+                )
+                my_f = await self._my.wait_for_move(
+                    timeout=GANTRY_WAIT_TIMEOUT
+                )
 
-                if mx_f == MotorStatus.STOPPED and my_f == MotorStatus.STOPPED:
+                if (
+                    mx_f == MotorStatus.STOPPED
+                    and my_f == MotorStatus.STOPPED
+                ):
                     return
 
-                if mx_f in terminal_error_states or my_f in terminal_error_states:
-                    raise MovementError(f"Gantry motor error during wait: x={mx_f.name}, y={my_f.name}")
+                if (
+                    mx_f in terminal_error_states
+                    or my_f in terminal_error_states
+                ):
+                    raise MovementError(
+                        f"Gantry motor error during wait: x={mx_f.name}, y={my_f.name}"
+                    )
 
         except MotorWaitTimeoutError:
             raise
         except MovementError:
-            await self._handle_fault(MovementError("Gantry motor error"))
+            await self._handle_fault(
+                MovementError("Gantry motor error")
+            )
             raise
         except Exception as e:
             await self._handle_fault(e)
-            raise MovementError(f"Gantry wait failed: {str(e)}") from e
+            raise MovementError(
+                f"Gantry wait failed: {str(e)}"
+            ) from e
 
-    async def tool_wait(self, homing: bool, timeout_seconds: float = TOOL_OUTER_TIMEOUT) -> None:
+    async def tool_wait(
+        self,
+        homing: bool,
+        timeout_seconds: float = TOOL_OUTER_TIMEOUT,
+    ) -> None:
         """
         Wait for tool motors to complete movement.
 
@@ -672,47 +872,93 @@ class Tool:
             MotorError: If required tool motors are disabled
         """
         if self._mg is None or self._ms is None:
-            raise MotorError("Tool motors (z_axis, stage) required for tool wait")
+            raise MotorError(
+                "Tool motors (z_axis, stage) required for tool wait"
+            )
 
         start_time = time.monotonic()
-        terminal_error_states = {MotorStatus.ERROR, MotorStatus.FAULT, MotorStatus.TIMEOUT}
+        terminal_error_states = {
+            MotorStatus.ERROR,
+            MotorStatus.FAULT,
+            MotorStatus.TIMEOUT,
+        }
 
         try:
             while True:
                 if time.monotonic() - start_time > timeout_seconds:
-                    raise MotorWaitTimeoutError(f"Tool wait exceeded {timeout_seconds}s timeout")
+                    raise MotorWaitTimeoutError(
+                        f"Tool wait exceeded {timeout_seconds}s timeout"
+                    )
 
-                mg_f = await self._mg.wait_for_move(timeout=TOOL_WAIT_TIMEOUT, homing=homing)
-                ms_f = await self._ms.wait_for_move(timeout=TOOL_WAIT_TIMEOUT, homing=homing)
+                mg_f = await self._mg.wait_for_move(
+                    timeout=TOOL_WAIT_TIMEOUT, homing=homing
+                )
+                ms_f = await self._ms.wait_for_move(
+                    timeout=TOOL_WAIT_TIMEOUT, homing=homing
+                )
 
-                if mg_f == MotorStatus.STOPPED and ms_f == MotorStatus.STOPPED:
+                if (
+                    mg_f == MotorStatus.STOPPED
+                    and ms_f == MotorStatus.STOPPED
+                ):
                     return
 
-                if mg_f in terminal_error_states or ms_f in terminal_error_states:
-                    raise MovementError(f"Tool motor error during wait: gripper={mg_f.name}, stage={ms_f.name}")
+                if (
+                    mg_f in terminal_error_states
+                    or ms_f in terminal_error_states
+                ):
+                    raise MovementError(
+                        f"Tool motor error during wait: gripper={mg_f.name}, stage={ms_f.name}"
+                    )
 
         except MotorWaitTimeoutError:
             raise
         except MovementError:
-            await self._handle_fault(MovementError("Tool motor error"))
+            await self._handle_fault(
+                MovementError("Tool motor error")
+            )
             raise
         except Exception as e:
             await self._handle_fault(e)
             raise MovementError(f"Tool wait failed: {str(e)}") from e
 
     async def get_pos(self):
-        x = await self._mx.get_position() if self._mx is not None else 0.0
-        y = await self._my.get_position() if self._my is not None else 0.0
-        g = await self._mg.get_position() if self._mg is not None else 0.0
-        s = await self._ms.get_position() if self._ms is not None else 0.0
-        r = await self._mr.get_position() if self._mr is not None else 0.0
+        x = (
+            await self._mx.get_position()
+            if self._mx is not None
+            else 0.0
+        )
+        y = (
+            await self._my.get_position()
+            if self._my is not None
+            else 0.0
+        )
+        g = (
+            await self._mg.get_position()
+            if self._mg is not None
+            else 0.0
+        )
+        s = (
+            await self._ms.get_position()
+            if self._ms is not None
+            else 0.0
+        )
+        r = (
+            await self._mr.get_position()
+            if self._mr is not None
+            else 0.0
+        )
         return (c.AxisCoordinate(x, y), c.ToolCoordinate(g, s, r))
 
     ### CAMERA
 
-    async def get_shelves(self, timeout_seconds: float = SHELF_SCAN_TIMEOUT) -> List[float]:
+    async def get_shelves(
+        self, timeout_seconds: float = SHELF_SCAN_TIMEOUT
+    ) -> List[float]:
         if self._mx is None or self._my is None:
-            raise MotorError("Gantry motors (x_axis, y_axis) required for shelf scanning")
+            raise MotorError(
+                "Gantry motors (x_axis, y_axis) required for shelf scanning"
+            )
 
         start_time = time.monotonic()
         shelves: List[float] = []
@@ -724,8 +970,10 @@ class Tool:
             reg = FiducialRegistry()
             s = await self.get_param("SCAN_POSITION")
             if s is None:
-                raise ConfigError("SCAN_POSITION parameter is not configured")
-            await self.move(c.AxisCoordinate(s[0]-25, s[1]))
+                raise ConfigError(
+                    "SCAN_POSITION parameter is not configured"
+                )
+            await self.move(c.AxisCoordinate(s[0] - 25, s[1]))
 
             while True:
                 if time.monotonic() - start_time > timeout_seconds:
@@ -736,15 +984,21 @@ class Tool:
                 try:
                     frame = await self._cam.capture()
                 except Exception as e:
-                    raise CameraError(f"Camera capture failed during shelf scan: {e}") from e
+                    raise CameraError(
+                        f"Camera capture failed during shelf scan: {e}"
+                    ) from e
 
                 if frame is None:
-                    raise CameraError("Camera returned empty frame during shelf scan")
+                    raise CameraError(
+                        "Camera returned empty frame during shelf scan"
+                    )
 
                 try:
                     frame = self._cam.correct(frame)
                 except Exception as e:
-                    raise CameraError(f"Frame correction failed: {e}") from e
+                    raise CameraError(
+                        f"Frame correction failed: {e}"
+                    ) from e
 
                 cv2.imwrite("frame_correct.png", frame)
                 rect = self._cam.detect_white_squares(frame)
@@ -754,32 +1008,40 @@ class Tool:
                     if dy > 0:
                         pymm = await self.get_param("PYMM")
                         if pymm is None:
-                            raise ConfigError("PYMM parameter is not configured")
-                        await self._my.jog(dy/pymm)
+                            raise ConfigError(
+                                "PYMM parameter is not configured"
+                            )
+                        await self._my.jog(dy / pymm)
 
                         frame = await self._cam.capture()
                         if frame is None:
-                            raise CameraError("Camera returned empty frame during correction")
+                            raise CameraError(
+                                "Camera returned empty frame during correction"
+                            )
 
                         frame = self._cam.correct(frame)
                         rect = self._cam.detect_white_squares(frame)
                         if rect is not None:
                             _, dy = self._cam.get_center(frame, rect)
                             if dy is not None:
-                                await self._my.jog(dy/pymm)
+                                await self._my.jog(dy / pymm)
                                 posy = await self._my.get_position()
-                                yw = round(posy+26, 4)
+                                yw = round(posy + 26, 4)
                                 if not reg.seen(yw, 20):
                                     reg.add(yw)
                                     shelves.append(yw)
-                                    self._logger.info("Shelf detected at y=%s", yw)
+                                    self._logger.info(
+                                        "Shelf detected at y=%s", yw
+                                    )
 
                 end_y = await self._my.get_position()
                 motor_cfg = self._params.motors.by_name("y_axis")
                 lim = motor_cfg.lim if motor_cfg is not None else 0.0
                 jog_y = await self.get_param("JOG_Y")
                 if jog_y is None:
-                    raise ConfigError("JOG_Y parameter is not configured")
+                    raise ConfigError(
+                        "JOG_Y parameter is not configured"
+                    )
                 if end_y + jog_y > lim:
                     break
                 await self._my.jog(jog_y)
@@ -789,7 +1051,8 @@ class Tool:
         except ScanTimeoutError as e:
             self._logger.warning(
                 "get_shelves timed out after finding %d shelves: %s",
-                len(shelves), e
+                len(shelves),
+                e,
             )
             with sentry_sdk.push_scope() as scope:
                 scope.set_tag("operation", "get_shelves")
@@ -799,20 +1062,28 @@ class Tool:
         except CameraError as e:
             self._logger.warning(
                 "get_shelves camera error after finding %d shelves: %s",
-                len(shelves), e
+                len(shelves),
+                e,
             )
             sentry_sdk.capture_exception(e)
             raise
         except Exception as e:
-            self._logger.exception("get_shelves failed after finding %d shelves", len(shelves))
+            self._logger.exception(
+                "get_shelves failed after finding %d shelves",
+                len(shelves),
+            )
             sentry_sdk.capture_exception(e)
             raise CameraError(f"Shelf detection failed: {e}") from e
 
     async def update_grid(
-        self, shelves: List[float], timeout_per_shelf: float = GRID_UPDATE_TIMEOUT_PER_SHELF
+        self,
+        shelves: List[float],
+        timeout_per_shelf: float = GRID_UPDATE_TIMEOUT_PER_SHELF,
     ) -> List[float]:
         if self._mx is None or self._my is None:
-            raise MotorError("Gantry motors (x_axis, y_axis) required for grid update")
+            raise MotorError(
+                "Gantry motors (x_axis, y_axis) required for grid update"
+            )
 
         anchors: List[float] = []
 
@@ -822,26 +1093,36 @@ class Tool:
             await self.rotate_to_position("back")
             scan_pos = await self.get_param("SCAN_POSITION")
             if scan_pos is None:
-                raise ConfigError("SCAN_POSITION parameter is not configured")
-            await self.move(c.AxisCoordinate(scan_pos[0]-25, scan_pos[1]))
+                raise ConfigError(
+                    "SCAN_POSITION parameter is not configured"
+                )
+            await self.move(
+                c.AxisCoordinate(scan_pos[0] - 25, scan_pos[1])
+            )
 
             for shelf_idx, shelf_y in enumerate(shelves):
                 start_time = time.monotonic()
 
-                await self._my.move_to_position(shelf_y-26)
+                await self._my.move_to_position(shelf_y - 26)
 
                 try:
                     frame = await self._cam.capture()
                 except Exception as e:
-                    raise CameraError(f"Camera capture failed for shelf {shelf_idx}: {e}") from e
+                    raise CameraError(
+                        f"Camera capture failed for shelf {shelf_idx}: {e}"
+                    ) from e
 
                 if frame is None:
-                    raise CameraError(f"Camera returned empty frame for shelf {shelf_idx}")
+                    raise CameraError(
+                        f"Camera returned empty frame for shelf {shelf_idx}"
+                    )
 
                 try:
                     frame = self._cam.correct(frame)
                 except Exception as e:
-                    raise CameraError(f"Frame correction failed for shelf {shelf_idx}: {e}") from e
+                    raise CameraError(
+                        f"Frame correction failed for shelf {shelf_idx}: {e}"
+                    ) from e
 
                 cv2.imwrite("frame_correct.png", frame)
                 rect = self._cam.detect_white_squares(frame)
@@ -851,17 +1132,21 @@ class Tool:
                     if dx is not None:
                         pxmm = await self.get_param("PXMM")
                         if pxmm is None:
-                            raise ConfigError("PXMM parameter is not configured")
+                            raise ConfigError(
+                                "PXMM parameter is not configured"
+                            )
                         await self._mx.jog(-dx / pxmm)
 
                         frame = await self._cam.capture()
                         if frame is None:
-                            raise CameraError(f"Camera returned empty frame during correction for shelf {shelf_idx}")
+                            raise CameraError(
+                                f"Camera returned empty frame during correction for shelf {shelf_idx}"
+                            )
 
                         frame = self._cam.correct(frame)
                         _, width = frame.shape[:2]
                         third = width // 3
-                        frame = frame[:, third:2 * third]
+                        frame = frame[:, third : 2 * third]
                         rect = self._cam.detect_white_squares(frame)
                         if rect is not None:
                             dx, _ = self._cam.get_center(frame, rect)
@@ -870,7 +1155,11 @@ class Tool:
                                 posx = await self._mx.get_position()
                                 xw = round(posx, 4)
                                 anchors.append(xw)
-                                self._logger.info("Anchor point for shelf %d at x=%s", shelf_idx, xw)
+                                self._logger.info(
+                                    "Anchor point for shelf %d at x=%s",
+                                    shelf_idx,
+                                    xw,
+                                )
 
                 elapsed = time.monotonic() - start_time
                 if elapsed > timeout_per_shelf:
@@ -883,7 +1172,9 @@ class Tool:
         except ScanTimeoutError as e:
             self._logger.warning(
                 "update_grid timed out after processing %d/%d shelves: %s",
-                len(anchors), len(shelves), e
+                len(anchors),
+                len(shelves),
+                e,
             )
             with sentry_sdk.push_scope() as scope:
                 scope.set_tag("operation", "update_grid")
@@ -894,17 +1185,23 @@ class Tool:
         except CameraError as e:
             self._logger.warning(
                 "update_grid camera error after processing %d/%d shelves: %s",
-                len(anchors), len(shelves), e
+                len(anchors),
+                len(shelves),
+                e,
             )
             sentry_sdk.capture_exception(e)
             raise
         except Exception as e:
-            self._logger.exception("update_grid failed after processing %d/%d shelves", len(anchors), len(shelves))
+            self._logger.exception(
+                "update_grid failed after processing %d/%d shelves",
+                len(anchors),
+                len(shelves),
+            )
             sentry_sdk.capture_exception(e)
             raise CameraError(f"Grid update failed: {e}") from e
 
     async def auto_cal(self):
         """Get shelf positions and anchor points for calibration."""
-        shelves =  [59.992, 411.124, 709.3, 1007.82, 1207.96]
+        shelves = [59.992, 411.124, 709.3, 1007.82, 1207.96]
         anchors = await self.update_grid(shelves)
         return shelves, anchors

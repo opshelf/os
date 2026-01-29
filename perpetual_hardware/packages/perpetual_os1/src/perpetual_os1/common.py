@@ -1,14 +1,25 @@
 from __future__ import annotations
+
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Tuple, Union, TypeVar
+from typing import (
+    Any,
+    Dict,
+    List,
+    Literal,
+    Optional,
+    Tuple,
+    TypeVar,
+    Union,
+)
 
+from hardware.drivers.iclrs import IclrsConfig
 from pydantic import (
     BaseModel,
     Field,
-    ValidationError,
     RootModel,
+    ValidationError,
     field_validator,
     model_validator,
 )
@@ -19,6 +30,7 @@ S = TypeVar("S")
 CONFIG_PATH = Path("data/config.json")
 
 # ---------------------- NATS Config ----------------------
+
 
 class RobotNatsConfiguration(BaseModel):
     stream_name: str = "robot"
@@ -48,11 +60,17 @@ class AxisCoordinate:
 
     def __post_init__(self) -> None:
         if self.s not in (0, 1):
-            raise ValueError("AxisCoordinate.s must be 0 (left) or 1 (right)")
+            raise ValueError(
+                "AxisCoordinate.s must be 0 (left) or 1 (right)"
+            )
 
-    def _assert_same_side(self, other: "AxisCoordinate", op: str) -> None:
+    def _assert_same_side(
+        self, other: "AxisCoordinate", op: str
+    ) -> None:
         if not isinstance(other, AxisCoordinate):
-            raise TypeError(f"Cannot {op} AxisCoordinate with {type(other)!r}")
+            raise TypeError(
+                f"Cannot {op} AxisCoordinate with {type(other)!r}"
+            )
         if self.s != other.s:
             raise ValueError(
                 f"Cannot {op} AxisCoordinate instances from different sides "
@@ -85,10 +103,14 @@ class ToolCoordinate:
     r: float  # rotation (only 0 or 180) -- does not add/subtract
 
     def __add__(self, other: "ToolCoordinate") -> "ToolCoordinate":
-        return ToolCoordinate(g=self.g + other.g, s=self.s + other.s, r=self.r)
+        return ToolCoordinate(
+            g=self.g + other.g, s=self.s + other.s, r=self.r
+        )
 
     def __sub__(self, other: "ToolCoordinate") -> "ToolCoordinate":
-        return ToolCoordinate(g=self.g - other.g, s=self.s - other.s, r=self.r)
+        return ToolCoordinate(
+            g=self.g - other.g, s=self.s - other.s, r=self.r
+        )
 
 
 # --------------------------- Helpers ---------------------------
@@ -101,12 +123,16 @@ TwoFloat = Tuple[float, float]
 #         raise ValueError(f"{name} must be >= 0")
 #     return v
 
+
 def _positive(v: Union[int, float], name: str) -> Union[int, float]:
     if v <= 0:
         raise ValueError(f"{name} must be > 0")
     return v
 
-def _pair_len2(v: List[Union[int, float]], name: str) -> Tuple[Union[int, float], Union[int, float]]:
+
+def _pair_len2(
+    v: List[Union[int, float]], name: str
+) -> Tuple[Union[int, float], Union[int, float]]:
     if len(v) != 2:
         raise ValueError(f"{name} must be a 2-element list/tuple")
     return v[0], v[1]
@@ -120,7 +146,7 @@ class Motor(BaseModel):
     lim: Union[int, float] = Field(..., gt=0)
     phys_at_zero: Optional[Union[int, float]] = Field(default=None)
     phys_at_max: Optional[Union[int, float]] = Field(default=None)
-    Ip: int = Field(..., ge=0)        # keeping exact key casing
+    Ip: int = Field(..., ge=0)  # keeping exact key casing
     rpm: int = Field(..., gt=0)
     dr: Literal[0, 1]
     mpr: float = Field(..., gt=0)
@@ -150,7 +176,11 @@ class Motor(BaseModel):
     @model_validator(mode="after")
     def _validate_physical_endpoints(self) -> "Motor":
         p0 = self.phys_at_zero if self.phys_at_zero is not None else 0
-        pm = self.phys_at_max if self.phys_at_max is not None else self.lim
+        pm = (
+            self.phys_at_max
+            if self.phys_at_max is not None
+            else self.lim
+        )
 
         if p0 == pm:
             raise ValueError(
@@ -177,22 +207,36 @@ class Motor(BaseModel):
 
     def logical_to_physical(self, logical: float) -> float:
         p0 = self.phys_at_zero if self.phys_at_zero is not None else 0
-        pm = self.phys_at_max if self.phys_at_max is not None else self.lim
+        pm = (
+            self.phys_at_max
+            if self.phys_at_max is not None
+            else self.lim
+        )
         return p0 + (logical / self.lim) * (pm - p0)
 
     def physical_to_logical(self, physical: float) -> float:
         p0 = self.phys_at_zero if self.phys_at_zero is not None else 0
-        pm = self.phys_at_max if self.phys_at_max is not None else self.lim
+        pm = (
+            self.phys_at_max
+            if self.phys_at_max is not None
+            else self.lim
+        )
         return (physical - p0) / (pm - p0) * self.lim
 
-    def logical_to_physical_delta(self, logical_delta: float) -> float:
+    def logical_to_physical_delta(
+        self, logical_delta: float
+    ) -> float:
         p0 = self.phys_at_zero if self.phys_at_zero is not None else 0
-        pm = self.phys_at_max if self.phys_at_max is not None else self.lim
+        pm = (
+            self.phys_at_max
+            if self.phys_at_max is not None
+            else self.lim
+        )
         scale = (pm - p0) / self.lim
         return logical_delta * scale
 
-class Motors(RootModel[List[Motor]]):
 
+class Motors(RootModel[List[Motor]]):
     def by_name(self, name: str) -> Motor:
         for m in self.root:
             if m.motor_name == name:
@@ -211,13 +255,27 @@ class Motors(RootModel[List[Motor]]):
     def ids(self) -> List[int]:
         return [m.motor_id for m in self.root]
 
+
+# --------------------------- Motor with Driver -----------------
+class MotorWithDriver(Motor):
+    homing_timeout_s: float = Field(..., gt=0, le=180)
+    move_timeout_s: float = Field(..., gt=0, le=180)
+    polling_delay_s: float = Field(..., ge=0.5, le=1)
+    polling_period_s: float = Field(..., ge=0.05, le=0.5)
+    default_velocity_mm_per_s: float = Field(..., gt=0, le=500)
+    default_acceleration_mm_per_s2: float = Field(..., gt=0, le=5)
+    driver_config: IclrsConfig
+
+
 # --------------------------- Cameras ---------------------------
 class PoeCamera(BaseModel):
     ip: str
     port: int = Field(..., ge=1, le=65535)
     url: str
 
-    calibration_status: Literal["uncalibrated", "calibrated"] = "uncalibrated"
+    calibration_status: Literal["uncalibrated", "calibrated"] = (
+        "uncalibrated"
+    )
     mtx: Optional[List[List[float]]] = None
     dist: Optional[List[float]] = None
     rvecs: Optional[List[List[float]]] = None
@@ -266,7 +324,9 @@ class TofCamera(BaseModel):
     max_distance_mm: int = Field(..., gt=0)
     confidence_min: float = Field(..., ge=0)
     depth_unit: Literal["mm"] = "mm"
-    calibration_status: Literal["uncalibrated", "calibrated"] = "uncalibrated"
+    calibration_status: Literal["uncalibrated", "calibrated"] = (
+        "uncalibrated"
+    )
 
     @field_validator("resolution", mode="before")
     @classmethod
@@ -288,6 +348,7 @@ class ScaleConfig(BaseModel):
 
 
 # --------------------------- App Settings ---------------------------
+
 
 class StorageSettings(BaseModel):
     filename: str = "data/storage.json"
@@ -350,6 +411,7 @@ class ScaleAppSettings(BaseModel):
 
 # --------------------------- Buses ---------------------------
 
+
 class ModbusBusConfig(BaseModel):
     ports: List[str] = Field(default_factory=list)
     baudrate: int = Field(..., gt=0)
@@ -364,7 +426,9 @@ class ModbusBusConfig(BaseModel):
             raise ValueError("ports must contain at least one entry")
         cleaned = [p.strip() for p in v if p and p.strip()]
         if not cleaned:
-            raise ValueError("ports must contain at least one non-empty entry")
+            raise ValueError(
+                "ports must contain at least one non-empty entry"
+            )
         return cleaned
 
 
@@ -374,6 +438,7 @@ class RobotBus(BaseModel):
 
 
 # ----------------------- Parameters / IO -----------------------
+
 
 class Parameters(BaseModel):
     IDLE_POSITION: TwoInt
@@ -438,7 +503,11 @@ class IOBlock(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _coerce_legacy_curtain(cls, value):
-        if isinstance(value, dict) and "curtain" not in value and "curtain_enabled" in value:
+        if (
+            isinstance(value, dict)
+            and "curtain" not in value
+            and "curtain_enabled" in value
+        ):
             data = dict(value)
             data["curtain"] = {"enabled": data.pop("curtain_enabled")}
             return data
@@ -447,8 +516,12 @@ class IOBlock(BaseModel):
 
 class GridConfig(BaseModel):
     path: str = Field(..., min_length=1)
-    cell_spacing_per_shelf: Optional[Union[float, List[Union[int, float]]]] = None
-    cells_per_shelf: Optional[Union[int, List[int], List[List[int]], Dict[str, List[int]]]] = None
+    cell_spacing_per_shelf: Optional[
+        Union[float, List[Union[int, float]]]
+    ] = None
+    cells_per_shelf: Optional[
+        Union[int, List[int], List[List[int]], Dict[str, List[int]]]
+    ] = None
 
     @model_validator(mode="before")
     @classmethod
@@ -495,19 +568,31 @@ class RootConfig(BaseModel):
     sizes: SizesSettings = Field(default_factory=SizesSettings)
     printer: PrinterSettings = Field(default_factory=PrinterSettings)
     scanner: ScannerSettings = Field(default_factory=ScannerSettings)
-    camera: CameraAppSettings = Field(default_factory=CameraAppSettings)
-    tool_camera: ToolCameraSettings = Field(default_factory=ToolCameraSettings)
-    overhead_camera: OverheadCameraSettings = Field(default_factory=OverheadCameraSettings)
+    camera: CameraAppSettings = Field(
+        default_factory=CameraAppSettings
+    )
+    tool_camera: ToolCameraSettings = Field(
+        default_factory=ToolCameraSettings
+    )
+    overhead_camera: OverheadCameraSettings = Field(
+        default_factory=OverheadCameraSettings
+    )
     scale: ScaleAppSettings = Field(default_factory=ScaleAppSettings)
     nats: NatsSettings = Field(default_factory=NatsSettings)  # type: ignore[arg-type]
     auth: AuthSettings = Field(default_factory=AuthSettings)  # type: ignore[arg-type]
-    robot_app: RobotAppSettings = Field(default_factory=RobotAppSettings)
+    robot_app: RobotAppSettings = Field(
+        default_factory=RobotAppSettings
+    )
 
     @model_validator(mode="before")
     @classmethod
-    def _migrate_robot_enabled(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+    def _migrate_robot_enabled(
+        cls, values: Dict[str, Any]
+    ) -> Dict[str, Any]:
         if isinstance(values, dict) and "robot_app" not in values:
-            if "robot" in values and isinstance(values["robot"], dict):
+            if "robot" in values and isinstance(
+                values["robot"], dict
+            ):
                 robot_enabled = values["robot"].pop("enabled", None)
                 if robot_enabled is not None:
                     values["robot_app"] = {"enabled": robot_enabled}
@@ -536,16 +621,29 @@ class RootConfig(BaseModel):
         return self.robot.tool.parameters.IDLE_POSITION
 
     # motors
-    def list_motors(self, section: Literal["tool", "io"]) -> List[str]:
+    def list_motors(
+        self, section: Literal["tool", "io"]
+    ) -> List[str]:
         motors: Motors = getattr(self.robot, section).motors
         return motors.names()
 
-    def get_motor(self, section: Literal["tool", "io"], *, name: Optional[str] = None,
-                  motor_id: Optional[int] = None) -> Motor:
+    def get_motor(
+        self,
+        section: Literal["tool", "io"],
+        *,
+        name: Optional[str] = None,
+        motor_id: Optional[int] = None,
+    ) -> Motor:
         motors: Motors = getattr(self.robot, section).motors
         if (name is None) == (motor_id is None):
-            raise ValueError("Provide exactly one of name or motor_id")
-        return motors.by_name(name) if name is not None else motors.by_id(motor_id)  # type: ignore[arg-type]
+            raise ValueError(
+                "Provide exactly one of name or motor_id"
+            )
+        return (
+            motors.by_name(name)
+            if name is not None
+            else motors.by_id(motor_id)
+        )  # type: ignore[arg-type]
 
     # cameras
     def get_poe_camera(self) -> PoeCamera:
@@ -562,7 +660,7 @@ class RootConfig(BaseModel):
         return self.robot.grid.model_dump()
 
     # generic dotted path
-    def get(self, dotted_path: str, default: Any = ... ) -> Any:
+    def get(self, dotted_path: str, default: Any = ...) -> Any:
         """
         Fetch via dotted path (e.g., 'robot.tool.poe_camera.ip' or
         'robot.tool.parameters.PICKUP_POSITION_L').
@@ -589,8 +687,11 @@ class RootConfig(BaseModel):
 class ConfigError(Exception):
     pass
 
+
 class ConfigValidationError(ConfigError):
-    def __init__(self, errors: List[Dict[str, Any]], path: Optional[str] = None):
+    def __init__(
+        self, errors: List[Dict[str, Any]], path: Optional[str] = None
+    ):
         self.errors = errors
         self.path = path
         super().__init__(self._format_message())
@@ -606,12 +707,16 @@ class ConfigValidationError(ConfigError):
             lines.append(f"  - {loc}: {msg}")
         return "\n".join(lines)
 
+
 class ConfigMissingError(ConfigError):
     def __init__(self, path: str):
         self.path = path
         super().__init__(f"Configuration file not found: {path}")
 
-def load_and_validate_config(cfg: Union[Dict[str, Any], str], source_path: Optional[str] = None) -> RootConfig:
+
+def load_and_validate_config(
+    cfg: Union[Dict[str, Any], str], source_path: Optional[str] = None
+) -> RootConfig:
     data: Dict[str, Any]
 
     if isinstance(cfg, str):
@@ -624,6 +729,7 @@ def load_and_validate_config(cfg: Union[Dict[str, Any], str], source_path: Optio
     except ValidationError as e:
         errors = [dict(err) for err in e.errors()]
         raise ConfigValidationError(errors, source_path) from e
+
 
 def load_config_file(path: Union[str, Any]) -> RootConfig:
     import io
@@ -638,12 +744,16 @@ def load_config_file(path: Union[str, Any]) -> RootConfig:
         try:
             raw = json.load(f)
         except json.JSONDecodeError as e:
-            raise ConfigError(f"Invalid JSON in {path_obj}: {e}") from e
+            raise ConfigError(
+                f"Invalid JSON in {path_obj}: {e}"
+            ) from e
 
     return load_and_validate_config(raw, str(path_obj))
 
 
-def assert_config(config: RootConfig, requirements: Optional[List[str]] = None) -> None:
+def assert_config(
+    config: RootConfig, requirements: Optional[List[str]] = None
+) -> None:
     errors: List[str] = []
 
     if requirements is None:
@@ -657,12 +767,22 @@ def assert_config(config: RootConfig, requirements: Optional[List[str]] = None) 
         except KeyError:
             errors.append(f"Required config '{req}' is missing")
 
-    if config.auth.jwt_secret is None and config.auth.require_auth is True:
-        errors.append("auth.jwt_secret is required when auth.require_auth is True")
+    if (
+        config.auth.jwt_secret is None
+        and config.auth.require_auth is True
+    ):
+        errors.append(
+            "auth.jwt_secret is required when auth.require_auth is True"
+        )
 
     if config.robot_app.enabled is True:
         if config.robot.bus is None:
-            errors.append("robot.bus is required when robot is enabled")
+            errors.append(
+                "robot.bus is required when robot is enabled"
+            )
 
     if errors:
-        raise ConfigError("Configuration assertion failed:\n  - " + "\n  - ".join(errors))
+        raise ConfigError(
+            "Configuration assertion failed:\n  - "
+            + "\n  - ".join(errors)
+        )
