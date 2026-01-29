@@ -137,7 +137,7 @@ async def test_configure(driver):
 @pytest.mark.asyncio(loop_scope="module")
 async def test_home(driver):
     async with shared_lock:
-        await driver.home()
+        await driver.home(timeout_s=10)
         position = await driver.read_position()
         error = abs(0 - position)
     assert error <= 20

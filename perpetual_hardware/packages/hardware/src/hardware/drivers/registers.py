@@ -585,7 +585,6 @@ class DriverClient:
                 registers_modbus, index=0
             )
         )
-        print(contiguous_registers_groups)
         for group in contiguous_registers_groups:
             starting_reg = group[0][0]
             values = [r[1] for r in group]

@@ -311,7 +311,9 @@ class Alarm:
             "Restart the controller. "
             "If error persists, check the voltage of the power supply."
         ),
-        AlarmCode.STALL_TORQUE: ("Intentional during homing."),
+        AlarmCode.STALL_TORQUE: (
+            "Motor has stalled. Intentional during homing."
+        ),
         AlarmCode.ADC_SAMPLING_ERROR: (
             "Restart the controller. "
             "If error persists, there is a hardware failure."
@@ -335,7 +337,10 @@ class Alarm:
 
     def __str__(self):
         alarm_name = self.code.name.lower().replace("_", " ")
-        text = f"{alarm_name}. To troubleshoot: {self.ALARM_MAP[self.code]}"
+        if self.code == AlarmCode.NO_ALARM:
+            text = f"{alarm_name}."
+        else:
+            text = f"{alarm_name}. To troubleshoot: {self.ALARM_MAP[self.code]}"
         return text
 
 
@@ -354,7 +359,7 @@ class PathControlStatus(IntEnum):
     NONE = 0
     PATH_RUNNING = 1
     PATH_COMPLETE = 2
-    COMMAND_COMPLETED = 3
+    COMMAND_COMPLETE_WAIT_FOR_POSITIONING = 3
 
 
 @dataclass
@@ -385,10 +390,11 @@ class PathControl:
             if self.value & 0xFF0 == 0x100:
                 self.status = PathControlStatus.PATH_RUNNING
                 self.path = self.value & 0xF
-            elif self.value == 0:
+            elif self.value & 0xFFF0 == 0x0000:
                 self.status = PathControlStatus.PATH_COMPLETE
+                self.path = self.value & 0xF
             elif self.value == 0x200:
-                self.status = PathControlStatus.COMMAND_COMPLETED
+                self.status = PathControlStatus.COMMAND_COMPLETE_WAIT_FOR_POSITIONING
 
 
 # --- Homing ---
@@ -400,6 +406,7 @@ class HomingDirection(IntEnum):
 class HomingType(IntEnum):
     DETECTED_BY_LIMIT_SWITCH = 0
     DETECTED_BY_HOME_SWITCH = 1
+    DETECTED_BY_STALL_TORQUE = 2
 
 
 @dataclass
