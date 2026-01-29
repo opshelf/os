@@ -16,6 +16,7 @@ services:
     network_mode: "host"
     volumes:
       - /etc/cups:/etc/cups:ro
+      - ./perpetual_hardware/packages/perpetual_os1_server/data/storage.json:/app/perpetual_hardware/packages/perpetual_os1/src/perpetual_os1/storage.json
     depends_on:
       - nats
     environment:
