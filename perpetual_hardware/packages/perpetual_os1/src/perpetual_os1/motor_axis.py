@@ -78,8 +78,8 @@ class MotorAxis(ABC):
     async def move_to_position(
         self,
         position_mm: float,
-        velocity_mmps: float,
-        acceleration_mmps2: float,
+        velocity_mm_per_s: float,
+        acceleration_mm_per_s2: float,
     ):
         pass
 
@@ -87,8 +87,8 @@ class MotorAxis(ABC):
     async def move_to_position_no_wait(
         self,
         position_mm: float,
-        velocity_mmps: float,
-        acceleration_mmps2: float,
+        velocity_mm_per_s: float,
+        acceleration_mm_per_s2: float,
     ):
         pass
 
@@ -105,7 +105,7 @@ class MotorAxis(ABC):
         pass
 
     @abstractmethod
-    async def jog(self):
+    async def jog(self, distance_mm: float):
         pass
 
 
@@ -122,14 +122,13 @@ class MotorAxisIclRs(MotorAxis):
         self.stop_event.clear()
         self.safety_curtain_inactive_event = asyncio.Event()
         self.safety_curtain_inactive_event.set()
-        self.pending_motion: Awaitable[None] | None
         # --- Kinematics parameters ---
         # Used to scale motor position units [pulses] to mm.
         # To be set when read from device after configuration.
-        self.pulse_per_revolution: int = None
+        self.pulse_per_revolution: int|None = None
         # Used to translate motor controller coordinate to machine coordinate.
         # To be set when read from device after homing.
-        self.zero_offset_pulse: int = None
+        self.zero_offset_pulse: int|None = None
 
     def load_params(self) -> None:
         self.motor_id = self.params.motor_id
@@ -173,31 +172,30 @@ class MotorAxisIclRs(MotorAxis):
             await self.safety_curtain_inactive_event.wait()
             await self.driver.write_homing_command()
             await self.wait_for_move(timeout_s=self.move_timeout_s)
+            # Check reason for wait to end.
             status: MotionStatus = await self.driver.read_status()
-            # Check reason for move end.
             if not self.safety_curtain_inactive_event.is_set():
                 # Safety curtain activated: wait for it to clear, then try again.
-                await self.safety_curtain_inactive_event.wait()
                 continue
             elif self.stop_event.is_set():
                 # Stop command (not from curtain safety) was made: terminate.
                 return
             elif not status.is_running:
                 if status.is_fault:
-                    # Fault was detected: read alarm, clear alarm, then try again.
                     alarm = await self.driver.read_alarm()
                     if alarm.code == AlarmCode.STALL_TORQUE:
-                        # Home via stall torque achieved: terminate.
+                        # Home via stall torque achieved: update zero, then terminate.
                         await self.driver.clear_current_alarm()
                         await self.driver.zero_position()
-                        self.zero_offset_pulse = (
-                            await self.driver.read_position()
-                        )
+                        self.zero_offset_pulse = await self.driver.read_position()
                         return
                     else:
                         # Stopped due to some other unintended fault: clear alarm, the try again.
                         await self.clear_alarm()
                         continue
+                else:
+                    continue
+
         raise MotorError(
             f"Motor {self.motor_id} faulted during homing"
         )
@@ -359,8 +357,8 @@ To-do:
 2. Add more specific exceptions and messages
 
 Questions:
-1. What to do when position exceeds configured limit? Currently it clamps the position 
+1. What to do when position exceeds configured limit? Currently it clamps the position
 value if out-of-limit, then goes to clamped position. I recommend instead for it to
-throw an error and not move.   
-2. What to do post curtain safety? 
+throw an error and not move.
+2. What to do post curtain safety?
 """
