@@ -2,6 +2,7 @@ import asyncio
 import math
 import time
 from abc import ABC, abstractmethod
+from enum import IntEnum
 from typing import Any, Awaitable, Dict, Union
 
 from hardware import SharedModbusController
@@ -19,6 +20,17 @@ from hardware.exceptions import (
 from pydantic import BaseModel, Field, create_model, model_validator
 
 from perpetual_os1.common import Motor as MotorConfig
+
+
+class MotorStatus(IntEnum):
+    IDLE = 0
+    MOVING = 1
+    STOPPED = 2
+    ERROR = 3
+    FAULT = 4
+    TIMEOUT = 5
+    SAFETY_STOPPED = 6
+    MOVE_COMPLETE = 7
 
 
 # --- Clamped value basemodel ---
@@ -93,7 +105,7 @@ class MotorAxis(ABC):
         pass
 
     @abstractmethod
-    async def wait_for_move(self):
+    async def wait_for_move(self) -> MotorStatus:
         pass
 
     @abstractmethod
@@ -125,10 +137,10 @@ class MotorAxisIclRs(MotorAxis):
         # --- Kinematics parameters ---
         # Used to scale motor position units [pulses] to mm.
         # To be set when read from device after configuration.
-        self.pulse_per_revolution: int|None = None
+        self.pulse_per_revolution: int | None = None
         # Used to translate motor controller coordinate to machine coordinate.
         # To be set when read from device after homing.
-        self.zero_offset_pulse: int|None = None
+        self.zero_offset_pulse: int | None = None
 
     def load_params(self) -> None:
         self.motor_id = self.params.motor_id
@@ -136,10 +148,6 @@ class MotorAxisIclRs(MotorAxis):
         self.limit_mm = self.params.lim
         self.position_limiter = create_clamped_value_model(
             name="LimitedPosition", min=0, max=self.limit_mm
-        )
-        self.driver = Iclrs(
-            controller=self.controller,
-            config=self.params.driver_config,
         )
         self.homing_timeout_s = self.params.homing_timeout_s
         self.move_timeout_s = self.params.move_timeout_s
@@ -156,8 +164,18 @@ class MotorAxisIclRs(MotorAxis):
 
     # --- Implement abstract base class methods
     async def configure(self) -> None:
-        self.load_params()
+        # Put stepper in safe state
         try:
+            await self.stop()
+        except AttributeError:
+            # self.driver not yet instantiated -- expected first for first configure
+            pass
+        try:
+            self.load_params()
+            self.driver = Iclrs(
+                controller=self.controller,
+                config=self.params.driver_config,
+            )
             await self.driver.configure()
             self.pulse_per_revolution = (
                 await self.driver.read_pulse_per_revolution()
@@ -171,33 +189,33 @@ class MotorAxisIclRs(MotorAxis):
         for _ in range(self.move_try_agains):
             await self.safety_curtain_inactive_event.wait()
             await self.driver.write_homing_command()
-            await self.wait_for_move(timeout_s=self.move_timeout_s)
-            # Check reason for wait to end.
-            status: MotionStatus = await self.driver.read_status()
-            if not self.safety_curtain_inactive_event.is_set():
-                # Safety curtain activated: wait for it to clear, then try again.
-                continue
-            elif self.stop_event.is_set():
-                # Stop command (not from curtain safety) was made: terminate.
-                return
-            elif not status.is_running:
-                if status.is_fault:
-                    alarm = await self.driver.read_alarm()
-                    if alarm.code == AlarmCode.STALL_TORQUE:
-                        # Home via stall torque achieved: update zero, then terminate.
-                        await self.driver.clear_current_alarm()
-                        await self.driver.zero_position()
-                        self.zero_offset_pulse = await self.driver.read_position()
-                        return
-                    else:
-                        # Stopped due to some other unintended fault: clear alarm, the try again.
-                        await self.clear_alarm()
-                        continue
+            motor_status: MotorStatus = await self.wait_for_move(
+                timeout_s=self.move_timeout_s
+            )
+            if motor_status == MotorStatus.FAULT:
+                alarm = await self.driver.read_alarm()
+                if alarm.code == AlarmCode.STALL_TORQUE:
+                    # Home via stall torque achieved.
+                    await self.driver.clear_current_alarm()
+                    await self.driver.zero_position()
+                    self.zero_offset_pulse = (
+                        await self.driver.read_position()
+                    )
+                    return  # Terminate (success)
                 else:
-                    continue
-
+                    # Stopped due to some other unintended fault.
+                    await self.clear_alarm()
+                    continue  # Try again
+            if motor_status == MotorStatus.MOVE_COMPLETE:
+                # Shouldn't reach here during homing operation.
+                continue  # Try again
+            if motor_status == MotorStatus.STOPPED:
+                return  # Terminate
+            if motor_status == MotorStatus.SAFETY_STOPPED:
+                continue  # Try again
+        alarm = await self.driver.read_alarm()
         raise MotorError(
-            f"Motor {self.motor_id} faulted during homing"
+            f"Motor {self.motor_id} faulted during homing: {alarm}"
         )
 
     async def clear_alarm(self) -> None:
@@ -222,35 +240,30 @@ class MotorAxisIclRs(MotorAxis):
             await self.move_to_position_no_wait(
                 position_mm, velocity_mm_per_s, acceleration_mm_per_s2
             )
-            await self.wait_for_move(timeout_s=self.move_timeout_s)
-            status: MotionStatus = await self.driver.read_status()
-            # Check reason for move end.
-            if not self.safety_curtain_inactive_event.is_set():
-                # Safety curtain activated: wait for it to clear, then try again.
-                await self.safety_curtain_inactive_event.wait()
-                continue
-            elif self.stop_event.is_set():
-                # Stop command (not from curtain safety) was made: terminate.
-                return
-            elif not status.is_running:
-                if status.is_fault:
-                    # Fault was detected: read alarm, clear alarm, then try again.
-                    alarm = await self.driver.read_alarm()
-                    await self.clear_alarm()
-                    continue
-                elif status.command_completed:
-                    # Move successfully complete: confirm position.
-                    current_position_mm = await self.get_position()
-                    if math.isclose(
-                        current_position_mm,
-                        position_mm,
-                        abs_tol=self.position_tolerance_mm,
-                    ):
-                        # Target position reached: terminate.
-                        return
-                    else:
-                        # Target position not reached: try again.
-                        continue
+            motor_status: MotorStatus = await self.wait_for_move(
+                timeout_s=self.move_timeout_s
+            )
+            if motor_status == MotorStatus.MOVE_COMPLETE:
+                current_position_mm = await self.get_position()
+                if math.isclose(
+                    current_position_mm,
+                    position_mm,
+                    abs_tol=self.position_tolerance_mm,
+                ):
+                    # Target position reached:
+                    return  # Terminate
+                else:
+                    # Target position not reached:
+                    continue  # Try again
+            if motor_status == MotorStatus.FAULT:
+                alarm = await self.driver.read_alarm()
+                # To-do: add alarm specific responses
+                await self.clear_alarm()
+                continue  # Try again
+            if motor_status == MotorStatus.STOPPED:
+                return  # Terminate
+            if motor_status == MotorStatus.SAFETY_STOPPED:
+                continue  # Try again, will wait for safety to clear upon next iteration
 
     async def move_to_position_no_wait(
         self,
@@ -275,7 +288,7 @@ class MotorAxisIclRs(MotorAxis):
             position=pulses, rpm=rpm, accel=accel
         )
 
-    async def wait_for_move(self, timeout_s: int) -> None:
+    async def wait_for_move(self, timeout_s: int) -> MotorStatus:
         start_time_s = time.monotonic()
         self.stop_event.clear()
         # Delay here to let values settle.
@@ -289,19 +302,18 @@ class MotorAxisIclRs(MotorAxis):
             # Use 'motion status' instead.
             status: MotionStatus = await self.driver.read_status()
             if not status.is_running:
-                break
-            # Timeout
+                if status.is_fault:
+                    return MotorStatus.FAULT
+                elif status.command_completed:
+                    return MotorStatus.MOVE_COMPLETE
+            if not self.safety_curtain_inactive_event.is_set():
+                await self.stop()
+                return MotorStatus.SAFETY_STOPPED
+            if self.stop_event.is_set():
+                return MotorStatus.STOPPED
             elapsed_s = time.monotonic() - start_time_s
             if elapsed_s > timeout_s:
-                raise MotorTimeoutError(
-                    f"Motor {self.motor_id} wait for idle timed out"
-                )
-            if not self.safety_curtain_inactive_event.is_set():
-                # Curtain safety is active
-                await self.stop()
-            # Stop
-            if self.stop_event.is_set():
-                break
+                return MotorStatus.TIMEOUT
 
     async def idle(self):
         # Not needed, do nothing.
