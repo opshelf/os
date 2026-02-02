@@ -143,8 +143,21 @@ class Iclrs:
     async def write_move_to_position(
         self, position: int, rpm: int, accel: int
     ) -> None:
-        position_hb = position >> 16
-        position_lb = position & 0xFFFF
+        # Position is given as an signed int, convert it to representative unsigned int.
+        # This ensures that we don't signed negative values to the register.
+        # signed=True: use two's complement for negative numbers.
+        position_bytes = position.to_bytes(
+            4, byteorder="big", signed=True
+        )
+        position_hb = int.from_bytes(
+            position_bytes[0:2], byteorder="big", signed=False
+        )
+        position_lb = int.from_bytes(
+            position_bytes[2:4], byteorder="big", signed=False
+        )
+
+        # position_hb = position >> 16
+        # position_lb = position & 0xFFFF
         move_command_registers = [
             (
                 "path 0 settings",

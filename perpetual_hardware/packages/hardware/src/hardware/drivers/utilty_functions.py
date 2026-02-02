@@ -93,3 +93,8 @@ def coerce_str_to_int(v_string: str) -> int:
 def get_data_path(filename):
     with importlib.resources.path("hardware.data", filename) as p:
         return Path(p)
+
+
+# --- Data conversion ---
+def round_to_nearest(value: float, multiple: float) -> float:
+    return round(value / multiple) * multiple

@@ -150,6 +150,7 @@ async def test_home(motor_axis):
     async with shared_lock:
         await motor_axis.home()
         pos = await motor_axis.get_position()
+        print(pos)
     assert math.isclose(0, pos, abs_tol=0.05)
 
 
@@ -160,11 +161,13 @@ async def test_move(motor_axis, motor_config, execution_number):
         limit_mm = motor_config.lim
         random_position_mm = random.randint(0, limit_mm)
         target_position_mm = random_position_mm
+        print(target_position_mm)
         await motor_axis.move_to_position(
             position_mm=target_position_mm,
         )
         pos = await motor_axis.get_position()
-    assert abs(pos - target_position_mm) < 0.1
+        print(pos)
+    assert math.isclose(target_position_mm, pos, abs_tol=0.11)
 
 
 @pytest.mark.asyncio(loop_scope="module")

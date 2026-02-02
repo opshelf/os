@@ -11,6 +11,7 @@ from hardware.drivers.iclrs_register_types import (
     AlarmCode,
     MotionStatus,
 )
+from hardware.drivers.utilty_functions import round_to_nearest
 from hardware.exceptions import (
     MotorConfigError,
     MotorError,
@@ -340,15 +341,19 @@ class MotorAxisIclRs(MotorAxis):
 
     # --- Helper functions ---
     def pulse_to_mm(self, position_pulse: int) -> float:
-        return (
+        position_mm = (
             float(position_pulse - self.zero_offset_pulse)
             / self.pulse_per_revolution
             * self.mm_per_revolution
         )
+        round_position_mm = round_to_nearest(
+            position_mm, self.position_tolerance_mm
+        )
+        return round_position_mm
 
     def mm_to_pulse(self, position_mm: int) -> int:
         return (
-            int(
+            round(
                 position_mm
                 * self.pulse_per_revolution
                 / self.mm_per_revolution
@@ -357,10 +362,10 @@ class MotorAxisIclRs(MotorAxis):
         )
 
     def mm_per_s_to_rpm(self, mm_per_s: float) -> int:
-        return int(mm_per_s * 60 / self.mm_per_revolution)
+        return round(mm_per_s * 60 / self.mm_per_revolution)
 
     def mm_per_s2_to_s_per_rpm(self, mm_per_s2: float) -> int:
-        return int(60 * self.mm_per_revolution * (1 / mm_per_s2))
+        return round(60 * self.mm_per_revolution * (1 / mm_per_s2))
 
 
 """
