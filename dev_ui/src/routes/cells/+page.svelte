@@ -192,26 +192,27 @@
 		<section class="module">
 			<h2>{module.label}</h2>
 
-			{#each [...module.shelves].reverse() as shelf, reverseIdx}
-			{@const shelfIdx = module.shelves.length - 1 - reverseIdx}
-				<div class="shelf">
-					<span class="shelf-label">shelf {shelfIdx}</span>
-					<div class="cells" style="grid-template-columns: repeat({shelf.cells.length}, 1fr);">
-						{#each [...shelf.cells].reverse() as cell, reverseCellIdx}
-							{@const cellIdx = shelf.cells.length - 1 - reverseCellIdx}
-							<button
-								type="button"
-								class="cell"
-								class:selected={isCellSelected(module.side, shelfIdx, cellIdx)}
-								style="background-color: {statusColor(cell.status)};"
-								onclick={(e) => didClickCell(module.side, shelfIdx, cellIdx, e)}
-							>
-								{shelfIdx}:{cellIdx}
-							</button>
-						{/each}
+			<div class="shelves">
+				{#each module.shelves as shelf, shelfIdx}
+					<div class="shelf">
+						<span class="shelf-label">shelf {shelfIdx}</span>
+						<div class="cells" style="grid-template-columns: repeat({shelf.cells.length}, 1fr);">
+							{#each [...shelf.cells].reverse() as cell, reverseCellIdx}
+								{@const cellIdx = shelf.cells.length - 1 - reverseCellIdx}
+								<button
+									type="button"
+									class="cell"
+									class:selected={isCellSelected(module.side, shelfIdx, cellIdx)}
+									style="background-color: {statusColor(cell.status)};"
+									onclick={(e) => didClickCell(module.side, shelfIdx, cellIdx, e)}
+								>
+									{shelfIdx}:{cellIdx}
+								</button>
+							{/each}
+						</div>
 					</div>
-				</div>
-			{/each}
+				{/each}
+			</div>
 		</section>
 	{/each}
 
@@ -249,6 +250,11 @@
 <style>
 	.module {
 		margin-bottom: 2em;
+	}
+
+	.shelves {
+		display: flex;
+		flex-direction: column-reverse;
 	}
 
 	h2 {
