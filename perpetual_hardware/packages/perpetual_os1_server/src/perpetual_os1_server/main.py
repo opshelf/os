@@ -380,6 +380,22 @@ async def health() -> dict[str, str]:
 	return {"status": "ok"}
 
 
+@app.get("/api/system/info")
+async def system_info() -> dict[str, str | None]:
+	import socket
+
+	lan_ip: str | None = None
+	try:
+		s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+		s.connect(("8.8.8.8", 80))
+		lan_ip = s.getsockname()[0]
+		s.close()
+	except OSError:
+		pass
+
+	return {"lan_ip": lan_ip}
+
+
 app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(roles.router)
