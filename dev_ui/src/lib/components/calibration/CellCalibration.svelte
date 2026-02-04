@@ -15,6 +15,7 @@
 		moveStage,
 		homeMotor,
 		getShelfStageExtension,
+		controlGripper,
 		type ApiErrorDetail,
 		type CalibrationStatus,
 		type StorageGrid,
@@ -378,12 +379,48 @@
 
 		try {
 			await testGripper(selectedSide, selectedShelf, selectedCell);
+			currentPosition = await moveToCell(selectedSide, selectedShelf, selectedCell);
+			syncEditValues();
 			message = 'gripper test completed';
 		} catch (err) {
 			handleNeedsHomeError(err);
 			error = err instanceof Error ? err.message : 'failed to test gripper';
 		} finally {
 			isTesting = false;
+		}
+	}
+
+	async function didClickGripperOpen(): Promise<void> {
+		isMoving = true;
+		error = '';
+		message = '';
+		warning = '';
+
+		try {
+			await controlGripper('release');
+			message = 'gripper opened';
+		} catch (err) {
+			handleNeedsHomeError(err);
+			error = err instanceof Error ? err.message : 'failed to open gripper';
+		} finally {
+			isMoving = false;
+		}
+	}
+
+	async function didClickGripperClose(): Promise<void> {
+		isMoving = true;
+		error = '';
+		message = '';
+		warning = '';
+
+		try {
+			await controlGripper('grip');
+			message = 'gripper closed';
+		} catch (err) {
+			handleNeedsHomeError(err);
+			error = err instanceof Error ? err.message : 'failed to close gripper';
+		} finally {
+			isMoving = false;
 		}
 	}
 
@@ -665,6 +702,28 @@
 					isHoming === true}
 			>
 				test gripper
+			</button>
+			<button
+				type="button"
+				onclick={didClickGripperOpen}
+				disabled={isMoving === true ||
+					isTesting === true ||
+					isSaving === true ||
+					needsHome === true ||
+					isHoming === true}
+			>
+				open
+			</button>
+			<button
+				type="button"
+				onclick={didClickGripperClose}
+				disabled={isMoving === true ||
+					isTesting === true ||
+					isSaving === true ||
+					needsHome === true ||
+					isHoming === true}
+			>
+				close
 			</button>
 			<button
 				type="button"
