@@ -30,6 +30,8 @@
 	let statusConnected = false;
 	let lastStatusUpdate = '';
 
+	let lanIp = '';
+
 	let storageCells: StorageCell[] = [];
 	let storageError = '';
 	let storageLoading = true;
@@ -107,8 +109,19 @@
 		return JSON.stringify(value);
 	}
 
+	async function loadSystemInfo(): Promise<void> {
+		try {
+			const data = await apiFetch<{ lan_ip: string | null }>('/system/info');
+
+			lanIp = data.lan_ip ?? '';
+		} catch {
+			lanIp = '';
+		}
+	}
+
 	onMount(() => {
 		loadStorage();
+		loadSystemInfo();
 		if (!browser) {
 			return;
 		}
@@ -156,6 +169,10 @@
 		<tr>
 			<td>device id</td>
 			<td>{hostname}</td>
+		</tr>
+		<tr>
+			<td>lan ip</td>
+			<td>{lanIp || 'loading...'}</td>
 		</tr>
 		<tr>
 			<td>stream status</td>
