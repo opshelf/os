@@ -298,6 +298,14 @@ async def move_to_cell(request: MoveRequest) -> PositionResponse:
 	try:
 		await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True)
 		await tool.move(coord)
+
+		if tool._mg is not None:
+			grip_ext = await tool.get_param("Z_EXTENSION_PLACE")
+			if grip_ext is not None:
+				grip_rpm = await tool.get_param("Z_MOVE_RPM")
+				grip_accel = await tool.get_param("Z_MOVE_ACCEL")
+				target_z = grip_ext + coord.z_offset
+				await tool._mg.move_to_position(target_z, rpm=grip_rpm, accel=grip_accel)
 	except (MotorError, HardwareMotorError) as e:
 		await _raise_motor_error(worker, f"Failed to move to cell: {str(e)}", e)
 
