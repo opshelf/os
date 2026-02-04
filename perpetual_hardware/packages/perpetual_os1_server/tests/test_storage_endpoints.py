@@ -420,3 +420,63 @@ async def test_storage_endpoint_filtering(client: AsyncClient) -> None:
     # All returned cells should have cell_idx = 1 (if any exist)
     for cell in data:
         assert cell["cell_idx"] == 1
+
+
+@pytest.mark.anyio
+async def test_batch_update_storage_cell_status(client: AsyncClient) -> None:
+    login_response = await client.post("/api/auth/login/json", json={
+        "email": "admin@opshelf.com",
+        "pin": "1234"
+    })
+    assert login_response.status_code == 200
+    token = login_response.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    response = await client.put(
+        "/api/storage/locations/0/0",
+        json={"status": "available"},
+        headers=headers,
+    )
+
+    if response.status_code == 404:
+        pytest.skip("no storage cells seeded")
+
+    response = await client.put(
+        "/api/storage/locations/0/1",
+        json={"status": "available"},
+        headers=headers,
+    )
+
+    if response.status_code == 404:
+        pytest.skip("not enough storage cells seeded")
+
+    response = await client.put(
+        "/api/storage/locations/batch-status",
+        json={
+            "cells": [
+                {"shelf_idx": 0, "cell_idx": 0},
+                {"shelf_idx": 0, "cell_idx": 1},
+            ],
+            "status": "maintenance",
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert isinstance(data, list)
+    assert len(data) == 2
+
+    for cell in data:
+        assert cell["status"] == "maintenance"
+
+    response = await client.put(
+        "/api/storage/locations/batch-status",
+        json={
+            "cells": [{"shelf_idx": 0, "cell_idx": 0}],
+            "status": "invalid_status",
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 422

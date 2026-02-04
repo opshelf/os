@@ -570,3 +570,21 @@ export async function abortCycleTest(): Promise<{ success: boolean }> {
 		method: "POST",
 	});
 }
+
+export type CellIdentifier = {
+	shelf_idx: number;
+	cell_idx: number;
+};
+
+export const CELL_STATUSES = ["available", "occupied", "maintenance", "disabled"] as const;
+
+export async function updateCellsBatchStatus(
+	cells: CellIdentifier[],
+	status: string
+): Promise<unknown[]> {
+	return apiFetch<unknown[]>("/storage/locations/batch-status", {
+		method: "PUT",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ cells, status }),
+	});
+}
