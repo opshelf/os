@@ -270,11 +270,9 @@ class Robot:
         await self._tool.extend_IO()
         await self._tool._my.move_to_position(pph[1])
         await self._tool.retract()
-        await self._io.close_door()
+        await self._io.home_door()
         await self._tool.move(coord)
         await self._tool.place(coord)
-
-        await self._io.home_door()
         await self._tool.clear_alarms()
 
     async def io_pick(self, coord: AxisCoordinate):
@@ -293,11 +291,9 @@ class Robot:
         await self._tool.extend()
         await self._tool._my.move_to_position(ppl[1])
         await self._tool.retract()
-        await self._io.close_door()
+        await self._io.home_door()
         await self._tool.move(coord)
         await self._tool.place(coord)
-
-        await self._io.home_door()
         await self._tool.clear_alarms()
 
     async def idle(self) -> None:
