@@ -228,17 +228,39 @@ class IOBox:
                 raise
             raise MotorError(f"Failed to open door: {str(e)}") from e
 
+    async def close_door(self):
+        """
+        Close IOBox door.
+
+        Raises:
+            IOBoxError: If door motor is not configured or disabled
+            MotorError: If door movement fails
+        """
+        if self._md is None:
+            raise IOBoxError("Door motor not configured or disabled")
+
+        try:
+            door_cfg = self._params.motors.by_name("door")
+            await self._md.move_to_position(0, rpm=door_cfg.ret_rpm)
+            await self.refresh_door_state(force=True)
+        except Exception as e:
+            self._status = IOBoxStatus.ERROR
+            if isinstance(e, IOBoxError):
+                raise
+            raise MotorError(f"Failed to close door: {str(e)}") from e
+
     async def home_door(self) -> None:
+        """
+        Home the door motor, forcing the door closed first when curtain is clear.
+        """
         if self._md is None:
             self._logger.info("Door motor not configured; skipping home")
             return
 
         try:
-            if self._curtain_state:
-                raise IOBoxError("Curtain is blocked; refusing to close door")
-            door_cfg = self._params.motors.by_name("door")
-            await self._md.home(rpm=door_cfg.ret_rpm // 2)
-            await self.refresh_door_state(force=True)
+            if not self._curtain_state:
+                await self.close_door()
+            await self._md.home()
         except Exception as e:
             self._status = IOBoxStatus.ERROR
             if isinstance(e, IOBoxError):

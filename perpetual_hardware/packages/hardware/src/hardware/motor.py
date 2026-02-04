@@ -818,7 +818,7 @@ class Motor():
             await asyncio.sleep(0.01)
 
 
-    async def home(self, rpm: Optional[int] = None) -> None:
+    async def home(self) -> None:
         """Home the motor to find its zero position.
 
         The homing direction register follows an inverted definition
@@ -848,7 +848,7 @@ class Motor():
                 # Configure homing parameters
                 await self.set_param("Motion of Path 0", 0x2)  # velocity mode
                 await self.set_param("Motor direction", home_dir)
-                await self.set_param("Velocity", rpm if rpm is not None else self._params.ret_rpm)
+                await self.set_param("Velocity", self._params.ret_rpm)
             except Exception as e:
                 raise MotorConfigError(f"Failed to configure homing parameters: {str(e)}") from e
             
