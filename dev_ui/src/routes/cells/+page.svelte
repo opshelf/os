@@ -197,7 +197,8 @@
 				<div class="shelf">
 					<span class="shelf-label">shelf {shelfIdx}</span>
 					<div class="cells" style="grid-template-columns: repeat({shelf.cells.length}, 1fr);">
-						{#each shelf.cells as cell, cellIdx}
+						{#each [...shelf.cells].reverse() as cell, reverseCellIdx}
+							{@const cellIdx = shelf.cells.length - 1 - reverseCellIdx}
 							<button
 								type="button"
 								class="cell"
