@@ -343,8 +343,10 @@ class Motor():
         """Setup and trigger an absolute move, tracking it for retries."""
         original_value = value
 
-        if value < 0:
-            value = 0
+        lower_lim = getattr(self._params, "lower_lim", 0)
+
+        if value < lower_lim:
+            value = lower_lim
         if value > self._params.lim:
             value = self._params.lim
 
