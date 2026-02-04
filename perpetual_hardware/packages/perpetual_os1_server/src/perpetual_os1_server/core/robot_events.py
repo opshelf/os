@@ -5,12 +5,43 @@ from typing import Any, Optional
 from nats.aio.client import Client as NATS
 from nats.aio.msg import Msg
 from nats.aio.subscription import Subscription
+from sqlalchemy import select
 
 from perpetual_os1.common import RobotNatsConfiguration
 from perpetual_os1_server.core.storage import StorageService
+from perpetual_os1_server.database.models import Telemetry
 from perpetual_os1_server.database.session import AsyncSessionLocal
 
 logger = logging.getLogger(__name__)
+
+
+async def flush_telemetry(is_cycle: bool) -> None:
+    from perpetual_os1_server.core.robot import robot_worker
+
+    motor_seconds = 0.0
+    if robot_worker is not None:
+        motor_seconds = robot_worker.drain_motor_time()
+
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(Telemetry).where(Telemetry.id == 1))
+            row = result.scalar_one_or_none()
+
+            if row is None:
+                row = Telemetry(
+                    id=1,
+                    cycle_count=1 if is_cycle is True else 0,
+                    motor_movement_seconds=motor_seconds,
+                )
+                session.add(row)
+            else:
+                if is_cycle is True:
+                    row.cycle_count += 1
+                row.motor_movement_seconds += motor_seconds
+
+            await session.commit()
+    except Exception as err:
+        logger.warning("Failed to flush telemetry: %s", err)
 
 
 async def process_robot_event(payload: dict[str, Any]) -> None:
@@ -53,6 +84,8 @@ async def process_robot_event(payload: dict[str, Any]) -> None:
                         logger.warning("Failed to sync storage JSON after retrieval: %s", sync_err)
             except Exception as err:
                 logger.exception("Failed to process retrieve_item event for %s: %s", upca, err)
+
+        await flush_telemetry(is_cycle=True)
 
     if command == "store_item":
         if message != "success":
@@ -159,6 +192,8 @@ async def process_robot_event(payload: dict[str, Any]) -> None:
                     logger.warning("Failed to sync storage JSON after storage event: %s", sync_err)
             except Exception as err:
                 logger.exception("Failed to process store_item event for %s: %s", upca, err)
+
+        await flush_telemetry(is_cycle=True)
 
 
 class RobotEventListener:
