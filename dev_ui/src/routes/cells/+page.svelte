@@ -202,7 +202,7 @@
 		display: flex;
 		align-items: center;
 		gap: 0.5em;
-		margin-bottom: 0.5em;
+		margin-bottom: 4px;
 	}
 
 	.shelf-label {
