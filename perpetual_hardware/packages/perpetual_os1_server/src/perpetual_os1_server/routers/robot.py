@@ -533,7 +533,9 @@ async def control_door(
     try:
         if action == "open":
             await worker._robot._io.open_door()
-        elif action == "close" or action == "home":
+        elif action == "close":
+            await worker._robot._io.close_door()
+        elif action == "home":
             await worker._robot._io.home_door()
 
         return {"success": True, "action": action}
