@@ -192,7 +192,8 @@
 		<section class="module">
 			<h2>{module.label}</h2>
 
-			{#each module.shelves as shelf, shelfIdx}
+			{#each [...module.shelves].reverse() as shelf, reverseIdx}
+			{@const shelfIdx = module.shelves.length - 1 - reverseIdx}
 				<div class="shelf">
 					<span class="shelf-label">shelf {shelfIdx}</span>
 					<div class="cells" style="grid-template-columns: repeat({shelf.cells.length}, 1fr);">
