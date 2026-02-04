@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..database.models import Item, ItemLocation, User
 from ..core.storage import StorageService
-from ..core.validation import ValidationError
+from ..core.validation import StorageCellValidator, ValidationError
 from .auth_deps import can_user_retrieve_item, get_current_user, require_permissions
 from ..database.session import get_db
 
@@ -90,6 +90,16 @@ class StorageCellUpdate(BaseModel):
 
     capacity: Optional[Union[str, DimensionsPayload]] = None
     status: Optional[str] = None
+
+
+class CellIdentifier(BaseModel):
+    shelf_idx: int
+    cell_idx: int
+
+
+class BatchStatusUpdate(BaseModel):
+    cells: List[CellIdentifier]
+    status: str
 
 
 class ItemWithLocations(BaseModel):
@@ -517,3 +527,58 @@ async def update_storage_cell(
         created_at=cell.created_at.isoformat(),
         updated_at=cell.updated_at.isoformat(),
     )
+
+
+@router.put("/locations/batch-status", dependencies=[Depends(require_permissions("storage:write"))])
+async def batch_update_storage_cell_status(
+    payload: BatchStatusUpdate,
+    session: AsyncSession = Depends(get_db),
+) -> List[StorageCellResponse]:
+    storage_service = StorageService(session)
+
+    try:
+        StorageCellValidator.validate_status(payload.status)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    status_value = payload.status.lower()
+    results: List[StorageCellResponse] = []
+
+    for cell_id in payload.cells:
+        success = await storage_service.update_storage_cell(
+            shelf_idx=cell_id.shelf_idx,
+            cell_idx=cell_id.cell_idx,
+            status=status_value,
+        )
+
+        if success is False:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Storage cell {cell_id.shelf_idx}:{cell_id.cell_idx} not found",
+            )
+
+        cells = await storage_service.get_storage_cells(
+            shelf_idx=cell_id.shelf_idx,
+            cell_idx=cell_id.cell_idx,
+        )
+
+        if not cells:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Storage cell {cell_id.shelf_idx}:{cell_id.cell_idx} not found",
+            )
+
+        cell = cells[0]
+        results.append(
+            StorageCellResponse(
+                id=int(cell.id),
+                shelf_idx=int(cell.shelf_idx),
+                cell_idx=int(cell.cell_idx),
+                capacity=_deserialize_capacity(str(cell.capacity)),
+                status=str(cell.status),
+                created_at=cell.created_at.isoformat(),
+                updated_at=cell.updated_at.isoformat(),
+            )
+        )
+
+    return results

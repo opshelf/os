@@ -1,0 +1,266 @@
+<script lang="ts">
+	import { browser } from '$app/environment';
+	import { onMount } from 'svelte';
+	import {
+		getStorageGrid,
+		updateCellsBatchStatus,
+		CELL_STATUSES,
+		type StorageGrid,
+		type CellIdentifier
+	} from '$lib/api';
+	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
+	import StatusMessage from '$lib/components/StatusMessage.svelte';
+
+	let grid: StorageGrid | null = $state(null);
+	let selectedCells: Set<string> = $state(new Set());
+	let selectedStatus: string = $state(CELL_STATUSES[0]);
+	let isLoading = $state(true);
+	let isApplying = $state(false);
+	let error = $state('');
+	let message = $state('');
+
+	const isDisabled = $derived.by(function () {
+		if (selectedCells.size === 0) {
+			return true;
+		}
+		if (isApplying === true) {
+			return true;
+		}
+		return false;
+	});
+
+	function cellKey(shelfIdx: number, cellIdx: number): string {
+		return `${shelfIdx}:${cellIdx}`;
+	}
+
+	function parseCellKey(key: string): CellIdentifier {
+		const [shelf, cell] = key.split(':');
+		return { shelf_idx: parseInt(shelf, 10), cell_idx: parseInt(cell, 10) };
+	}
+
+	function isCellSelected(shelfIdx: number, cellIdx: number): boolean {
+		return selectedCells.has(cellKey(shelfIdx, cellIdx));
+	}
+
+	function didClickCell(shelfIdx: number, cellIdx: number, event: MouseEvent): void {
+		const key = cellKey(shelfIdx, cellIdx);
+
+		if (event.shiftKey === true) {
+			const next = new Set(selectedCells);
+
+			if (next.has(key) === true) {
+				next.delete(key);
+			} else {
+				next.add(key);
+			}
+
+			selectedCells = next;
+			return;
+		}
+
+		if (selectedCells.has(key) === true && selectedCells.size === 1) {
+			selectedCells = new Set();
+			return;
+		}
+
+		selectedCells = new Set([key]);
+	}
+
+	async function didClickApply(): Promise<void> {
+		if (selectedCells.size === 0) {
+			return;
+		}
+
+		isApplying = true;
+		error = '';
+		message = '';
+
+		const cells = Array.from(selectedCells).map(parseCellKey);
+
+		try {
+			await updateCellsBatchStatus(cells, selectedStatus);
+			message = `updated ${cells.length} cell${cells.length > 1 ? 's' : ''} to ${selectedStatus}`;
+			selectedCells = new Set();
+			grid = await getStorageGrid();
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'failed to update cells';
+		} finally {
+			isApplying = false;
+		}
+	}
+
+	function statusColor(status: string): string {
+		switch (status) {
+			case 'occupied':
+				return '#00a210';
+			case 'maintenance':
+				return '#e8a800';
+			case 'disabled':
+				return '#c40000';
+			default:
+				return '#ffffff';
+		}
+	}
+
+	function statusTextColor(status: string): string {
+		if (status === 'available') {
+			return '#000000';
+		}
+		return '#ffffff';
+	}
+
+	async function initialLoad(): Promise<void> {
+		isLoading = true;
+
+		try {
+			grid = await getStorageGrid();
+			error = '';
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'failed to load storage grid';
+		} finally {
+			isLoading = false;
+		}
+	}
+
+	onMount(function () {
+		if (browser === false) {
+			return;
+		}
+
+		initialLoad();
+	});
+</script>
+
+{#if isLoading === true}
+	<p>loading storage grid...</p>
+{:else if grid !== null}
+	{#each [{ label: 'left module', shelves: grid.left_module }, { label: 'right module', shelves: grid.right_module }] as module}
+		<section class="module">
+			<h2>{module.label}</h2>
+
+			{#each module.shelves as shelf, shelfIdx}
+				<div class="shelf">
+					<span class="shelf-label">shelf {shelfIdx}</span>
+					<div class="cells" style="grid-template-columns: repeat({shelf.cells.length}, 1fr);">
+						{#each shelf.cells as cell, cellIdx}
+							<button
+								type="button"
+								class="cell"
+								class:selected={isCellSelected(shelfIdx, cellIdx)}
+								style="background-color: {statusColor(cell.status)}; color: {statusTextColor(cell.status)};"
+								onclick={(e) => didClickCell(shelfIdx, cellIdx, e)}
+							>
+								{shelfIdx}:{cellIdx}
+							</button>
+						{/each}
+					</div>
+				</div>
+			{/each}
+		</section>
+	{/each}
+
+	<div class="controls">
+		<select bind:value={selectedStatus}>
+			{#each CELL_STATUSES as status}
+				<option value={status}>{status}</option>
+			{/each}
+		</select>
+
+		<button type="button" disabled={isDisabled} onclick={didClickApply}>
+			apply
+		</button>
+
+		{#if selectedCells.size > 0}
+			<span class="selection-count">{selectedCells.size} selected</span>
+		{/if}
+	</div>
+
+	{#if message !== ''}
+		<StatusMessage {message} />
+	{/if}
+
+	{#if error !== ''}
+		<ErrorMessage message={error} />
+	{/if}
+{:else if error !== ''}
+	<ErrorMessage message={error} />
+{/if}
+
+<style>
+	.module {
+		margin-bottom: 2em;
+	}
+
+	h2 {
+		text-transform: uppercase;
+		margin-bottom: 0.5em;
+		border-bottom: 2px solid black;
+		padding-bottom: 0.25em;
+	}
+
+	.shelf {
+		display: flex;
+		align-items: center;
+		gap: 0.5em;
+		margin-bottom: 0.5em;
+	}
+
+	.shelf-label {
+		width: 5em;
+		text-transform: uppercase;
+		flex-shrink: 0;
+	}
+
+	.cells {
+		display: grid;
+		gap: 4px;
+		flex: 1;
+	}
+
+	.cell {
+		aspect-ratio: 1;
+		border: 2px solid black;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		cursor: pointer;
+		padding: 0;
+		margin: 0;
+		box-shadow: none;
+		min-width: 3em;
+		min-height: 3em;
+		text-transform: none;
+	}
+
+	.cell:active {
+		transform: none;
+	}
+
+	.cell.selected {
+		border: 3px solid oklch(0.5318 0.2399 256.98999);
+		outline: 2px solid oklch(0.5318 0.2399 256.98999);
+	}
+
+	.controls {
+		display: flex;
+		align-items: center;
+		gap: 1em;
+		margin-top: 1em;
+	}
+
+	.controls button {
+		margin-top: 0;
+	}
+
+	.controls select {
+		padding: 5px;
+		border: 2px solid black;
+		background-color: white;
+		text-transform: uppercase;
+		font-family: inherit;
+	}
+
+	.selection-count {
+		text-transform: uppercase;
+	}
+</style>
