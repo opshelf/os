@@ -272,10 +272,9 @@
 			const result = await moveStage(stageExtensionValue);
 
 			message = 'stage extended';
-			warning =
-				result.warnings !== undefined && result.warnings.length > 0
-					? result.warnings.join('; ')
-					: '';
+			const warnings = result.warnings ?? [];
+
+			warning = warnings.length > 0 ? warnings.join('; ') : '';
 		} catch (err) {
 			handleNeedsHomeError(err);
 			error = err instanceof Error ? err.message : 'failed to extend stage';
