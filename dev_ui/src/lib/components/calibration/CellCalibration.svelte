@@ -583,7 +583,7 @@
 									needsHome === true ||
 									isHoming === true}
 							>
-								&#x2194;&#xFE0E;
+								&#x2192;&#x2190;
 							</button>
 							<button
 								type="button"
@@ -593,7 +593,7 @@
 									needsHome === true ||
 									isHoming === true}
 							>
-								&#x2192;&#x2190;
+								&#x2194;&#xFE0E;
 							</button>
 						{/if}
 					</div>
