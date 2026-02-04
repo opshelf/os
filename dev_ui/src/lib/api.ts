@@ -572,6 +572,7 @@ export async function abortCycleTest(): Promise<{ success: boolean }> {
 }
 
 export type CellIdentifier = {
+	side: string;
 	shelf_idx: number;
 	cell_idx: number;
 };
