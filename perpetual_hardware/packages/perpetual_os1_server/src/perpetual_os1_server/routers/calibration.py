@@ -362,15 +362,13 @@ async def jog_axis(request: JogRequest) -> PositionResponse:
 
 	try:
 		if request.axis == "x":
-			await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True)
+			await _clear_motors_for_move(tool, gantry=True)
 			new_x = _clamp_value(new_x + request.delta, x_limit, "X axis", warnings)
-			coord = AxisCoordinate(x=new_x, y=new_y, s=_current_side, z_offset=new_z)
-			await tool.move(coord)
+			await tool._mx.move_to_position(new_x)
 		elif request.axis == "y":
-			await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True)
+			await _clear_motors_for_move(tool, gantry=True)
 			new_y = _clamp_value(new_y + request.delta, y_limit, "Y axis", warnings)
-			coord = AxisCoordinate(x=new_x, y=new_y, s=_current_side, z_offset=new_z)
-			await tool.move(coord)
+			await tool._my.move_to_position(new_y)
 		elif request.axis == "z":
 			if tool._mg is None:
 				raise HTTPException(
