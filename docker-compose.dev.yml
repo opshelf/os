@@ -1,0 +1,11 @@
+services:
+  api:
+    volumes:
+      - ./perpetual_hardware/packages/hardware/src/hardware:/app/perpetual_hardware/packages/hardware/src/hardware
+      - ./perpetual_hardware/packages/perpetual_os1/src/perpetual_os1:/app/perpetual_hardware/packages/perpetual_os1/src/perpetual_os1
+      - ./perpetual_hardware/packages/perpetual_os1_server/src/perpetual_os1_server:/app/perpetual_hardware/packages/perpetual_os1_server/src/perpetual_os1_server
+
+  dev_ui:
+    volumes:
+      - ./dev_ui/src:/app/src
+    command: ["npm", "run", "develop", "--", "--host", "0.0.0.0", "--port", "8080"]
