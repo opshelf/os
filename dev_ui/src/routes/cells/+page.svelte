@@ -66,6 +66,24 @@
 		selectedCells = new Set([key]);
 	}
 
+	function didClickSelectAll(): void {
+		if (grid === null) {
+			return;
+		}
+
+		const all = new Set<string>();
+
+		for (const [side, shelves] of [['left_module', grid.left_module], ['right_module', grid.right_module]] as const) {
+			for (let shelfIdx = 0; shelfIdx < shelves.length; shelfIdx++) {
+				for (let cellIdx = 0; cellIdx < shelves[shelfIdx].cells.length; cellIdx++) {
+					all.add(cellKey(side, shelfIdx, cellIdx));
+				}
+			}
+		}
+
+		selectedCells = all;
+	}
+
 	async function didClickApply(): Promise<void> {
 		if (selectedCells.size === 0) {
 			return;
@@ -161,6 +179,10 @@
 
 		<button type="button" disabled={isDisabled} onclick={didClickApply}>
 			apply
+		</button>
+
+		<button type="button" onclick={didClickSelectAll}>
+			select all
 		</button>
 
 		{#if selectedCells.size > 0}
