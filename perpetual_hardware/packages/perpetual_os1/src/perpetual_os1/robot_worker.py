@@ -375,6 +375,17 @@ class RobotWorker:
             ],
         )
         await self._client.connect()
+        try:
+            consumer_info = await self._js.consumer_info(
+                self._nats_config.stream_name, self._nats_config.command_queue
+            )
+            if consumer_info.config.filter_subject != self._nats_config.command_queue:
+                await self._js.delete_consumer(
+                    self._nats_config.stream_name, self._nats_config.command_queue
+                )
+                logger.info("Deleted stale durable consumer with wrong filter_subject")
+        except NotFoundError:
+            pass
         self.work_consumer = await self._js.pull_subscribe(
             self._nats_config.command_queue, durable=self._nats_config.command_queue
         )
@@ -659,6 +670,10 @@ class RobotWorker:
                     if msgs:
                         logger.info("Received %d message(s) from queue", len(msgs))
                         msg = msgs[0]
+                        if msg.subject != self._nats_config.command_queue:
+                            await msg.ack()
+                            logger.debug("Skipped non-command message on subject=%s", msg.subject)
+                            continue
                         try:
                             command = RobotCommandAdapter.validate_json(msg.data.decode())
                         except Exception as err:
