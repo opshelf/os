@@ -382,13 +382,16 @@ async def health() -> dict[str, str]:
 
 @app.get("/api/system/info")
 async def system_info() -> dict[str, str | None]:
+	import fcntl
 	import socket
+	import struct
 
 	lan_ip: str | None = None
 	try:
 		s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-		s.connect(("8.8.8.8", 80))
-		lan_ip = s.getsockname()[0]
+		lan_ip = socket.inet_ntoa(
+			fcntl.ioctl(s.fileno(), 0x8915, struct.pack("256s", b"wlan0"))[20:24]
+		)
 		s.close()
 	except OSError:
 		pass
