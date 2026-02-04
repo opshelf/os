@@ -236,7 +236,15 @@ class IOBox:
         try:
             if self._curtain_state:
                 raise IOBoxError("Curtain is blocked; refusing to close door")
-            await self._md.home(rpm=100)
+
+            door_cfg = self._params.motors.by_name("door")
+
+            try:
+                await self._md.move_to_position(0, rpm=door_cfg.ret_rpm)
+            except MotorError:
+                self._logger.warning("Door move faulted; clearing alarm")
+                await self._md.clear_alarm()
+
             await self.refresh_door_state(force=True)
         except Exception as e:
             self._status = IOBoxStatus.ERROR
