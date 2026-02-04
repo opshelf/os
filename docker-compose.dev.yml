@@ -6,6 +6,8 @@ services:
       - ./perpetual_hardware/packages/perpetual_os1_server/src/perpetual_os1_server:/app/perpetual_hardware/packages/perpetual_os1_server/src/perpetual_os1_server
 
   dev_ui:
+    build:
+      context: ./dev_ui
+      dockerfile: Dockerfile.dev
     volumes:
       - ./dev_ui/src:/app/src
-    command: ["npm", "run", "develop", "--", "--host", "0.0.0.0", "--port", "8080"]
