@@ -534,8 +534,7 @@ async def update_storage_cell(
 async def batch_update_storage_cell_status(
     payload: BatchStatusUpdate,
 ) -> Dict[str, Any]:
-    from perpetual_os1.storage import CellStatus, StorageModuleSide
-    from ..core.robot import get_robot_worker
+    from perpetual_os1.storage import CellStatus, StorageGrid, StorageModuleSide
 
     try:
         cell_status = CellStatus(payload.status.lower())
@@ -547,14 +546,12 @@ async def batch_update_storage_cell_status(
         )
 
     try:
-        worker = await get_robot_worker()
-    except ValueError as exc:
+        grid = StorageGrid.load_from_file()
+    except Exception as exc:
         raise HTTPException(
-            status_code=503,
-            detail="Robot is not initialized",
+            status_code=500,
+            detail=f"Failed to load storage grid: {exc}",
         ) from exc
-
-    grid = worker._robot._grid
 
     for cell_id in payload.cells:
         side_enum = StorageModuleSide.LEFT if cell_id.side == "left_module" else StorageModuleSide.RIGHT
