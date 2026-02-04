@@ -2,9 +2,8 @@
 	import CellCalibration from '$lib/components/calibration/CellCalibration.svelte';
 	import IOBoxCalibration from '$lib/components/calibration/IOBoxCalibration.svelte';
 	import RotationCalibration from '$lib/components/calibration/RotationCalibration.svelte';
-	import CycleTest from '$lib/components/calibration/CycleTest.svelte';
 
-	let selectedView: 'cell' | 'io' | 'rotation' | 'cycle' = 'cell';
+	let selectedView: 'cell' | 'io' | 'rotation' = 'cell';
 
 	function didSelectCell(): void {
 		selectedView = 'cell';
@@ -16,10 +15,6 @@
 
 	function didSelectRotation(): void {
 		selectedView = 'rotation';
-	}
-
-	function didSelectCycle(): void {
-		selectedView = 'cycle';
 	}
 </script>
 
@@ -33,9 +28,6 @@
 	<button type="button" class:selected={selectedView === 'rotation'} on:click={didSelectRotation}>
 		rotation
 	</button>
-	<button type="button" class:selected={selectedView === 'cycle'} on:click={didSelectCycle}>
-		cycle
-	</button>
 </div>
 
 {#if selectedView === 'cell'}
@@ -44,8 +36,6 @@
 	<IOBoxCalibration />
 {:else if selectedView === 'rotation'}
 	<RotationCalibration />
-{:else if selectedView === 'cycle'}
-	<CycleTest />
 {/if}
 
 <style>
