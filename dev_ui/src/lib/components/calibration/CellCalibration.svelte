@@ -12,6 +12,9 @@
 		saveCalibration,
 		getRotationAngles,
 		rotateToAngle,
+		moveStage,
+		homeMotor,
+		getShelfStageExtension,
 		type ApiErrorDetail,
 		type CalibrationStatus,
 		type StorageGrid,
@@ -47,6 +50,8 @@
 	let editX = $state<number>(0);
 	let editY = $state<number>(0);
 	let editZ = $state<number>(0);
+	let isExtending = $state<boolean>(false);
+	let stageExtensionValue = $state<number>(0);
 
 	const JOG_STEPS = [
 		{ value: 0.1, label: '0.1mm' },
@@ -229,6 +234,7 @@
 				selectedSide === 'right_module' ? rotationAngles.back : rotationAngles.front;
 
 			await rotateToAngle(targetAngle);
+			await loadStageExtensionForSide();
 
 			syncEditValues();
 			message = 'moved to cell';
@@ -237,6 +243,60 @@
 			error = err instanceof Error ? err.message : 'failed to move to cell';
 		} finally {
 			isMoving = false;
+		}
+	}
+
+	async function loadStageExtensionForSide(): Promise<void> {
+		try {
+			const ext = await getShelfStageExtension();
+
+			stageExtensionValue =
+				selectedSide === 'left_module' ? ext.front : ext.back;
+		} catch {
+			stageExtensionValue = 0;
+		}
+	}
+
+	async function didClickExtend(): Promise<void> {
+		if (stageExtensionValue === 0) {
+			return;
+		}
+
+		isExtending = true;
+		error = '';
+		message = '';
+		warning = '';
+
+		try {
+			const result = await moveStage(stageExtensionValue);
+
+			message = 'stage extended';
+			warning =
+				result.warnings !== undefined && result.warnings.length > 0
+					? result.warnings.join('; ')
+					: '';
+		} catch (err) {
+			handleNeedsHomeError(err);
+			error = err instanceof Error ? err.message : 'failed to extend stage';
+		} finally {
+			isExtending = false;
+		}
+	}
+
+	async function didClickRetract(): Promise<void> {
+		isExtending = true;
+		error = '';
+		message = '';
+		warning = '';
+
+		try {
+			await homeMotor('stage');
+			message = 'stage retracted';
+		} catch (err) {
+			handleNeedsHomeError(err);
+			error = err instanceof Error ? err.message : 'failed to retract stage';
+		} finally {
+			isExtending = false;
 		}
 	}
 
@@ -425,17 +485,45 @@
 			</tr>
 			<tr>
 				<td colspan="3">
-					<button
-						class="calibrate-button"
-						type="button"
-						onclick={didClickCalibrate}
-						disabled={isMoving === true ||
-							isTesting === true ||
-							needsHome === true ||
-							isHoming === true}
-					>
-						calibrate
-					</button>
+					<div class="calibrate-row">
+						<button
+							class="calibrate-button"
+							type="button"
+							onclick={didClickCalibrate}
+							disabled={isMoving === true ||
+								isTesting === true ||
+								isExtending === true ||
+								needsHome === true ||
+								isHoming === true}
+						>
+							calibrate
+						</button>
+						{#if currentPosition !== null}
+							<button
+								type="button"
+								onclick={didClickExtend}
+								disabled={isMoving === true ||
+									isTesting === true ||
+									isExtending === true ||
+									needsHome === true ||
+									isHoming === true ||
+									stageExtensionValue === 0}
+							>
+								extend
+							</button>
+							<button
+								type="button"
+								onclick={didClickRetract}
+								disabled={isMoving === true ||
+									isTesting === true ||
+									isExtending === true ||
+									needsHome === true ||
+									isHoming === true}
+							>
+								retract
+							</button>
+						{/if}
+					</div>
 				</td>
 			</tr>
 		</tbody>
@@ -648,6 +736,12 @@
 
 	.field-label {
 		margin-right: 0.5em;
+	}
+
+	.calibrate-row {
+		display: flex;
+		gap: 1em;
+		align-items: center;
 	}
 
 	.calibrate-button {
