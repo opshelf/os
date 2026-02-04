@@ -410,5 +410,6 @@ def start() -> None:
 		host="0.0.0.0",
 		port=8000,
 		reload=reload_enabled,
+		reload_excludes=["*.json", "*.db", "*.db-shm", "*.db-wal"] if reload_enabled else None,
 		log_config=log_config,
 	)
