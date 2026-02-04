@@ -28,10 +28,6 @@
 	let selectedSide = $state<'left_module' | 'right_module'>('left_module');
 	let selectedShelf = $state<number>(0);
 	let selectedCell = $state<number>(0);
-	let selectedStatus = $state<string>('available');
-
-	const CELL_STATUSES = ['available', 'occupied', 'maintenance', 'disabled'];
-
 	let currentPosition = $state<Position | null>(null);
 	let isMoving = $state<boolean>(false);
 	let isTesting = $state<boolean>(false);
@@ -234,11 +230,6 @@
 
 			await rotateToAngle(targetAngle);
 
-			const cells = getCells();
-			if (cells[selectedCell] !== undefined) {
-				selectedStatus = cells[selectedCell].status;
-			}
-
 			syncEditValues();
 			message = 'moved to cell';
 		} catch (err) {
@@ -354,8 +345,7 @@
 				selectedCell,
 				currentPosition.x,
 				currentPosition.y,
-				currentPosition.z_offset,
-				selectedStatus
+				currentPosition.z_offset
 			);
 
 			storageGrid = await getStorageGrid();
@@ -459,16 +449,6 @@
 				</tr>
 			</thead>
 			<tbody>
-				<tr>
-					<td colspan="3">
-						<span class="field-label">status</span>
-						<select bind:value={selectedStatus}>
-							{#each CELL_STATUSES as cellStatus}
-								<option value={cellStatus}>{cellStatus}</option>
-							{/each}
-						</select>
-					</td>
-				</tr>
 				<tr>
 					<td>
 						<span class="field-label">x</span>

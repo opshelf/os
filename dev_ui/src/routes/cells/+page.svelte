@@ -4,6 +4,7 @@
 	import {
 		getStorageGrid,
 		updateCellsBatchStatus,
+		runCycleTest,
 		CELL_STATUSES,
 		type StorageGrid,
 		type CellIdentifier
@@ -16,6 +17,7 @@
 	let selectedStatus: string = $state(CELL_STATUSES[0]);
 	let isLoading = $state(true);
 	let isApplying = $state(false);
+	let isCycling = $state(false);
 	let error = $state('');
 	let message = $state('');
 
@@ -24,6 +26,9 @@
 			return true;
 		}
 		if (isApplying === true) {
+			return true;
+		}
+		if (isCycling === true) {
 			return true;
 		}
 		return false;
@@ -150,6 +155,34 @@
 		}
 	}
 
+	async function didClickCycleTest(): Promise<void> {
+		if (selectedCells.size === 0) {
+			return;
+		}
+
+		isCycling = true;
+		error = '';
+		message = '';
+
+		const cells = Array.from(selectedCells).map(parseCellKey);
+
+		let currentCell = '';
+
+		try {
+			for (const cell of cells) {
+				currentCell = `${cell.shelf_idx}:${cell.cell_idx}`;
+				await runCycleTest(cell.side, cell.shelf_idx, cell.cell_idx);
+			}
+
+			message = `cycle test passed for ${cells.length} cell${cells.length > 1 ? 's' : ''}`;
+		} catch (err) {
+			const detail = err instanceof Error ? err.message : 'unknown error';
+			error = `cycle test failed at ${currentCell}: ${detail}`;
+		} finally {
+			isCycling = false;
+		}
+	}
+
 	function statusColor(status: string): string {
 		switch (status) {
 			case 'occupied':
@@ -194,27 +227,34 @@
 
 			<div class="shelves">
 				{#each module.shelves as shelf, shelfIdx}
-					<div class="shelf">
-						<span class="shelf-label">shelf {shelfIdx}</span>
-						<div class="cells" style="grid-template-columns: repeat({shelf.cells.length}, 1fr);">
-							{#each [...shelf.cells].reverse() as cell, reverseCellIdx}
-								{@const cellIdx = shelf.cells.length - 1 - reverseCellIdx}
-								<button
-									type="button"
-									class="cell"
-									class:selected={isCellSelected(module.side, shelfIdx, cellIdx)}
-									style="background-color: {statusColor(cell.status)};"
-									onclick={(e) => didClickCell(module.side, shelfIdx, cellIdx, e)}
-								>
-									{shelfIdx}:{cellIdx}
-								</button>
-							{/each}
-						</div>
+					<div class="shelf-row">
+						{#each [...shelf.cells].reverse() as cell, reverseCellIdx}
+							{@const cellIdx = shelf.cells.length - 1 - reverseCellIdx}
+							<button
+								type="button"
+								class="cell"
+								class:selected={isCellSelected(module.side, shelfIdx, cellIdx)}
+								style="background-color: {statusColor(cell.status)};"
+								onclick={(e) => didClickCell(module.side, shelfIdx, cellIdx, e)}
+							>
+								{shelfIdx}:{cellIdx}
+							</button>
+						{/each}
 					</div>
 				{/each}
 			</div>
 		</section>
 	{/each}
+
+	{#if message !== ''}
+		<StatusMessage {message} />
+	{/if}
+
+	{#if error !== ''}
+		<ErrorMessage message={error} />
+	{/if}
+
+	<div class="toolbar-spacer"></div>
 
 	<div class="controls">
 		<select bind:value={selectedStatus}>
@@ -231,18 +271,15 @@
 			select all
 		</button>
 
-		{#if selectedCells.size > 0}
-			<span class="selection-count">{selectedCells.size} selected</span>
-		{/if}
+		<button
+			type="button"
+			disabled={selectedCells.size === 0 || isCycling === true}
+			onclick={didClickCycleTest}
+		>
+			cycle test
+		</button>
+
 	</div>
-
-	{#if message !== ''}
-		<StatusMessage {message} />
-	{/if}
-
-	{#if error !== ''}
-		<ErrorMessage message={error} />
-	{/if}
 {:else if error !== ''}
 	<ErrorMessage message={error} />
 {/if}
@@ -252,11 +289,6 @@
 		margin-bottom: 2em;
 	}
 
-	.shelves {
-		display: flex;
-		flex-direction: column-reverse;
-	}
-
 	h2 {
 		text-transform: uppercase;
 		margin-bottom: 0.5em;
@@ -264,27 +296,20 @@
 		padding-bottom: 0.25em;
 	}
 
-	.shelf {
+	.shelves {
 		display: flex;
-		align-items: center;
-		gap: 0.5em;
-		margin-bottom: 4px;
+		flex-direction: column-reverse;
 	}
 
-	.shelf-label {
-		width: 5em;
-		text-transform: uppercase;
-		flex-shrink: 0;
-	}
-
-	.cells {
-		display: grid;
-		gap: 4px;
-		flex: 1;
+	.shelf-row {
+		display: flex;
+		gap: 2px;
+		margin-bottom: 2px;
 	}
 
 	.cell {
-		aspect-ratio: 1;
+		width: 60px;
+		height: 60px;
 		border: 2px solid black;
 		display: flex;
 		align-items: center;
@@ -293,9 +318,9 @@
 		padding: 0;
 		margin: 0;
 		box-shadow: none;
-		min-width: 3em;
-		min-height: 3em;
 		text-transform: none;
+		font-size: 0.85em;
+		direction: ltr;
 	}
 
 	.cell:active {
@@ -311,7 +336,15 @@
 		display: flex;
 		align-items: center;
 		gap: 1em;
-		margin-top: 1em;
+		position: fixed;
+		bottom: 2em;
+		left: 2em;
+		width: fit-content;
+		padding: 1em;
+		background-color: white;
+		border: 3px solid black;
+		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+		z-index: 100;
 	}
 
 	.controls button {
@@ -326,7 +359,7 @@
 		font-family: inherit;
 	}
 
-	.selection-count {
-		text-transform: uppercase;
+	.toolbar-spacer {
+		height: 5em;
 	}
 </style>
