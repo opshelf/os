@@ -371,20 +371,36 @@
 		}
 	}
 
-	async function didClickTest(): Promise<void> {
+	async function didClickSaveAndTest(): Promise<void> {
+		if (currentPosition === null) {
+			error = 'no position to save';
+			return;
+		}
+
 		isTesting = true;
 		error = '';
 		message = '';
 		warning = '';
 
 		try {
+			await saveCalibration(
+				selectedSide,
+				selectedShelf,
+				selectedCell,
+				currentPosition.x,
+				currentPosition.y,
+				currentPosition.z_offset
+			);
+
+			storageGrid = await getStorageGrid();
+
 			await testGripper(selectedSide, selectedShelf, selectedCell);
 			currentPosition = await moveToCell(selectedSide, selectedShelf, selectedCell);
 			syncEditValues();
-			message = 'gripper test completed';
+			message = 'saved and test completed';
 		} catch (err) {
 			handleNeedsHomeError(err);
-			error = err instanceof Error ? err.message : 'failed to test gripper';
+			error = err instanceof Error ? err.message : 'failed to save and test';
 		} finally {
 			isTesting = false;
 		}
@@ -559,6 +575,26 @@
 							>
 								retract
 							</button>
+							<button
+								type="button"
+								onclick={didClickGripperOpen}
+								disabled={isMoving === true ||
+									isTesting === true ||
+									needsHome === true ||
+									isHoming === true}
+							>
+								open
+							</button>
+							<button
+								type="button"
+								onclick={didClickGripperClose}
+								disabled={isMoving === true ||
+									isTesting === true ||
+									needsHome === true ||
+									isHoming === true}
+							>
+								close
+							</button>
 						{/if}
 					</div>
 				</td>
@@ -694,39 +730,6 @@
 		<div class="action-buttons">
 			<button
 				type="button"
-				onclick={didClickTest}
-				disabled={isMoving === true ||
-					isTesting === true ||
-					isSaving === true ||
-					needsHome === true ||
-					isHoming === true}
-			>
-				test gripper
-			</button>
-			<button
-				type="button"
-				onclick={didClickGripperOpen}
-				disabled={isMoving === true ||
-					isTesting === true ||
-					isSaving === true ||
-					needsHome === true ||
-					isHoming === true}
-			>
-				open
-			</button>
-			<button
-				type="button"
-				onclick={didClickGripperClose}
-				disabled={isMoving === true ||
-					isTesting === true ||
-					isSaving === true ||
-					needsHome === true ||
-					isHoming === true}
-			>
-				close
-			</button>
-			<button
-				type="button"
 				onclick={didClickReset}
 				disabled={isMoving === true ||
 					isTesting === true ||
@@ -746,6 +749,17 @@
 					isHoming === true}
 			>
 				save
+			</button>
+			<button
+				type="button"
+				onclick={didClickSaveAndTest}
+				disabled={isMoving === true ||
+					isTesting === true ||
+					isSaving === true ||
+					needsHome === true ||
+					isHoming === true}
+			>
+				save & test
 			</button>
 		</div>
 	{/if}
