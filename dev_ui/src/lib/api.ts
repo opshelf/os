@@ -206,7 +206,7 @@ export interface Dimensions {
 
 export async function getStorageGrid(): Promise<StorageGrid> {
 	const timestamp = Date.now();
-	return apiFetch<StorageGrid>(`/calibration/storage?_t=${timestamp}`);
+	return apiFetch<StorageGrid>(`/storage/grid?_t=${timestamp}`);
 }
 
 export async function getCalibrationStatus(): Promise<CalibrationStatus> {

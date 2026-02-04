@@ -530,6 +530,21 @@ async def update_storage_cell(
     )
 
 
+@router.get("/grid", dependencies=[Depends(require_permissions("storage:read"))])
+async def get_storage_grid() -> Dict[str, Any]:
+    from perpetual_os1.storage import StorageGrid
+
+    try:
+        grid = StorageGrid.load_from_file()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to load storage grid: {exc}",
+        ) from exc
+
+    return grid.model_dump()
+
+
 @router.put("/locations/batch-status", dependencies=[Depends(require_permissions("storage:write"))])
 async def batch_update_storage_cell_status(
     payload: BatchStatusUpdate,
