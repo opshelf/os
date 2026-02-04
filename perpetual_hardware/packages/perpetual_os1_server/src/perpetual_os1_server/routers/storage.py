@@ -530,12 +530,21 @@ async def update_storage_cell(
     )
 
 
-@router.get("/grid", dependencies=[Depends(require_permissions("storage:read"))])
-async def get_storage_grid() -> Dict[str, Any]:
+def _get_robot_grid():
+    from ..core.robot import robot_worker
+
+    if robot_worker is not None and robot_worker._robot._grid is not None:
+        return robot_worker._robot._grid
+
     from perpetual_os1.storage import StorageGrid
 
+    return StorageGrid.load_from_file()
+
+
+@router.get("/grid", dependencies=[Depends(require_permissions("storage:read"))])
+async def get_storage_grid() -> Dict[str, Any]:
     try:
-        grid = StorageGrid.load_from_file()
+        grid = _get_robot_grid()
     except Exception as exc:
         raise HTTPException(
             status_code=500,
@@ -549,7 +558,7 @@ async def get_storage_grid() -> Dict[str, Any]:
 async def batch_update_storage_cell_status(
     payload: BatchStatusUpdate,
 ) -> Dict[str, Any]:
-    from perpetual_os1.storage import CellStatus, StorageGrid, StorageModuleSide
+    from perpetual_os1.storage import CellStatus, StorageModuleSide
 
     try:
         cell_status = CellStatus(payload.status.lower())
@@ -561,7 +570,7 @@ async def batch_update_storage_cell_status(
         )
 
     try:
-        grid = StorageGrid.load_from_file()
+        grid = _get_robot_grid()
     except Exception as exc:
         raise HTTPException(
             status_code=500,
