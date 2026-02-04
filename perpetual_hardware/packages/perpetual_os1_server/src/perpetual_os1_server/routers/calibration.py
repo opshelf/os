@@ -682,24 +682,24 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 
 	try:
 		if request.axis == "x":
-			await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True)
+			await _clear_motors_for_move(tool, gantry=True)
 			if request.position == "low":
 				new_x = _clamp_value(_iobox_current.pickup_low_x + request.delta, x_limit, "X axis", warnings)
-				await tool.move(AxisCoordinate(new_x, _iobox_current.pickup_low_y))
+				await tool._mx.move_to_position(new_x)
 				_iobox_current.pickup_low_x = new_x
 			else:
 				new_x = _clamp_value(_iobox_current.pickup_high_x + request.delta, x_limit, "X axis", warnings)
-				await tool.move(AxisCoordinate(new_x, _iobox_current.pickup_high_y))
+				await tool._mx.move_to_position(new_x)
 				_iobox_current.pickup_high_x = new_x
 		elif request.axis == "y":
-			await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True)
+			await _clear_motors_for_move(tool, gantry=True)
 			if request.position == "low":
 				new_y = _clamp_value(_iobox_current.pickup_low_y + request.delta, y_limit, "Y axis", warnings)
-				await tool.move(AxisCoordinate(_iobox_current.pickup_low_x, new_y))
+				await tool._my.move_to_position(new_y)
 				_iobox_current.pickup_low_y = new_y
 			else:
 				new_y = _clamp_value(_iobox_current.pickup_high_y + request.delta, y_limit, "Y axis", warnings)
-				await tool.move(AxisCoordinate(_iobox_current.pickup_high_x, new_y))
+				await tool._my.move_to_position(new_y)
 				_iobox_current.pickup_high_y = new_y
 		elif request.axis == "z":
 			if tool._mg is None:

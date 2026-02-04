@@ -3,9 +3,13 @@
 	import { browser } from '$app/environment';
 	import {
 		ApiError,
+		controlGripper,
 		getCalibrationStatus,
 		getIOBoxCalibration,
+		homeMotor,
 		homeToolMotors,
+		moveMotor,
+		moveStage,
 		moveToIOBoxPosition,
 		jogIOBoxAxis,
 		testIOBoxSequence,
@@ -308,10 +312,6 @@
 
 		const delta = editLowX - ioboxPosition.pickup_low_x;
 
-		if (delta === 0) {
-			return;
-		}
-
 		selectedPosition = 'low';
 		await didClickJog('x', -delta);
 	}
@@ -322,10 +322,6 @@
 		}
 
 		const delta = editLowY - ioboxPosition.pickup_low_y;
-
-		if (delta === 0) {
-			return;
-		}
 
 		selectedPosition = 'low';
 		await didClickJog('y', delta);
@@ -338,10 +334,6 @@
 
 		const delta = editHighX - ioboxPosition.pickup_high_x;
 
-		if (delta === 0) {
-			return;
-		}
-
 		selectedPosition = 'high';
 		await didClickJog('x', -delta);
 	}
@@ -352,10 +344,6 @@
 		}
 
 		const delta = editHighY - ioboxPosition.pickup_high_y;
-
-		if (delta === 0) {
-			return;
-		}
 
 		selectedPosition = 'high';
 		await didClickJog('y', delta);
@@ -368,10 +356,6 @@
 
 		const delta = editZ - ioboxPosition.z_extension;
 
-		if (delta === 0) {
-			return;
-		}
-
 		await didClickJog('z', delta);
 	}
 
@@ -382,11 +366,80 @@
 
 		const delta = editStage - ioboxPosition.stage_extension;
 
-		if (delta === 0) {
+		await didClickJog('stage', delta);
+	}
+
+	async function didClickExtend(): Promise<void> {
+		if (ioboxPosition === null) {
 			return;
 		}
 
-		await didClickJog('stage', delta);
+		isMoving = true;
+		error = '';
+		message = '';
+		warning = '';
+
+		try {
+			await moveMotor('z_axis', ioboxPosition.z_extension);
+			await moveStage(ioboxPosition.stage_extension);
+			message = 'stage and z extended';
+		} catch (err) {
+			handleNeedsHomeError(err);
+			error = err instanceof Error ? err.message : 'failed to extend';
+		} finally {
+			isMoving = false;
+		}
+	}
+
+	async function didClickRetract(): Promise<void> {
+		isMoving = true;
+		error = '';
+		message = '';
+		warning = '';
+
+		try {
+			await homeMotor('stage');
+			await homeMotor('z_axis');
+			await loadCalibration();
+			message = 'stage and z retracted';
+		} catch (err) {
+			handleNeedsHomeError(err);
+			error = err instanceof Error ? err.message : 'failed to retract';
+		} finally {
+			isMoving = false;
+		}
+	}
+
+	async function didClickGrip(): Promise<void> {
+		isMoving = true;
+		error = '';
+		message = '';
+		warning = '';
+
+		try {
+			await controlGripper('grip');
+			message = 'gripper gripped';
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'failed to grip';
+		} finally {
+			isMoving = false;
+		}
+	}
+
+	async function didClickRelease(): Promise<void> {
+		isMoving = true;
+		error = '';
+		message = '';
+		warning = '';
+
+		try {
+			await controlGripper('release');
+			message = 'gripper released';
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'failed to release gripper';
+		} finally {
+			isMoving = false;
+		}
 	}
 </script>
 
@@ -518,6 +571,38 @@
 						disabled={isMoving === true || needsHome === true || isHoming === true}
 					>
 						move
+					</button>
+				</td>
+			</tr>
+			<tr>
+				<td colspan="2">
+					<button
+						type="button"
+						onclick={didClickExtend}
+						disabled={isMoving === true || needsHome === true || isHoming === true || isPositioned === false}
+					>
+						extend
+					</button>
+					<button
+						type="button"
+						onclick={didClickRetract}
+						disabled={isMoving === true || needsHome === true || isHoming === true || isPositioned === false}
+					>
+						retract
+					</button>
+					<button
+						type="button"
+						onclick={didClickGrip}
+						disabled={isMoving === true || needsHome === true || isHoming === true}
+					>
+						&#x2194;&#xFE0E;
+					</button>
+					<button
+						type="button"
+						onclick={didClickRelease}
+						disabled={isMoving === true || needsHome === true || isHoming === true}
+					>
+						&#x2192;&#x2190;
 					</button>
 				</td>
 			</tr>
