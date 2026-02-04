@@ -38,14 +38,48 @@
 		return { side, shelf_idx: parseInt(shelf, 10), cell_idx: parseInt(cell, 10) };
 	}
 
+	let anchorCell: { side: string; shelfIdx: number; cellIdx: number } | null = $state(null);
+
 	function isCellSelected(side: string, shelfIdx: number, cellIdx: number): boolean {
 		return selectedCells.has(cellKey(side, shelfIdx, cellIdx));
 	}
 
+	function regionKeys(
+		from: { side: string; shelfIdx: number; cellIdx: number },
+		to: { side: string; shelfIdx: number; cellIdx: number }
+	): Set<string> {
+		const keys = new Set<string>();
+
+		if (grid === null) {
+			return keys;
+		}
+
+		const sides = from.side === to.side
+			? [from.side]
+			: ['left_module', 'right_module'];
+
+		for (const side of sides) {
+			const shelves = side === 'left_module' ? grid.left_module : grid.right_module;
+			const minShelf = Math.min(from.shelfIdx, to.shelfIdx);
+			const maxShelf = Math.max(from.shelfIdx, to.shelfIdx);
+			const minCell = Math.min(from.cellIdx, to.cellIdx);
+			const maxCell = Math.max(from.cellIdx, to.cellIdx);
+
+			for (let s = minShelf; s <= maxShelf && s < shelves.length; s++) {
+				for (let c = minCell; c <= maxCell && c < shelves[s].cells.length; c++) {
+					keys.add(cellKey(side, s, c));
+				}
+			}
+		}
+
+		return keys;
+	}
+
 	function didClickCell(side: string, shelfIdx: number, cellIdx: number, event: MouseEvent): void {
 		const key = cellKey(side, shelfIdx, cellIdx);
+		const isCtrl = event.ctrlKey === true || event.metaKey === true;
 
-		if (event.shiftKey === true) {
+		if (isCtrl === true) {
 			const next = new Set(selectedCells);
 
 			if (next.has(key) === true) {
@@ -55,15 +89,24 @@
 			}
 
 			selectedCells = next;
+			anchorCell = { side, shelfIdx, cellIdx };
+			return;
+		}
+
+		if (event.shiftKey === true && anchorCell !== null) {
+			const region = regionKeys(anchorCell, { side, shelfIdx, cellIdx });
+			selectedCells = new Set([...selectedCells, ...region]);
 			return;
 		}
 
 		if (selectedCells.has(key) === true && selectedCells.size === 1) {
 			selectedCells = new Set();
+			anchorCell = null;
 			return;
 		}
 
 		selectedCells = new Set([key]);
+		anchorCell = { side, shelfIdx, cellIdx };
 	}
 
 	function didClickSelectAll(): void {
