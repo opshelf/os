@@ -92,21 +92,14 @@
 	function statusColor(status: string): string {
 		switch (status) {
 			case 'occupied':
-				return '#00a210';
+				return '#e0e0e0';
 			case 'maintenance':
-				return '#e8a800';
+				return '#fff3cd';
 			case 'disabled':
-				return '#c40000';
+				return '#f8d7da';
 			default:
-				return '#ffffff';
+				return 'transparent';
 		}
-	}
-
-	function statusTextColor(status: string): string {
-		if (status === 'available') {
-			return '#000000';
-		}
-		return '#ffffff';
 	}
 
 	async function initialLoad(): Promise<void> {
@@ -147,7 +140,7 @@
 								type="button"
 								class="cell"
 								class:selected={isCellSelected(module.side, shelfIdx, cellIdx)}
-								style="background-color: {statusColor(cell.status)}; color: {statusTextColor(cell.status)};"
+								style="background-color: {statusColor(cell.status)};"
 								onclick={(e) => didClickCell(module.side, shelfIdx, cellIdx, e)}
 							>
 								{shelfIdx}:{cellIdx}
