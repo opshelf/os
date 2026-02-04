@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..database.models import Item, ItemLocation, User
 from ..core.storage import StorageService
-from ..core.validation import StorageCellValidator, ValidationError
+from ..core.validation import ValidationError
 from .auth_deps import can_user_retrieve_item, get_current_user, require_permissions
 from ..database.session import get_db
 
@@ -93,6 +93,7 @@ class StorageCellUpdate(BaseModel):
 
 
 class CellIdentifier(BaseModel):
+    side: str
     shelf_idx: int
     cell_idx: int
 
@@ -532,53 +533,49 @@ async def update_storage_cell(
 @router.put("/locations/batch-status", dependencies=[Depends(require_permissions("storage:write"))])
 async def batch_update_storage_cell_status(
     payload: BatchStatusUpdate,
-    session: AsyncSession = Depends(get_db),
-) -> List[StorageCellResponse]:
-    storage_service = StorageService(session)
+) -> Dict[str, Any]:
+    from perpetual_os1.storage import CellStatus, StorageModuleSide
+    from ..core.robot import get_robot_worker
 
     try:
-        StorageCellValidator.validate_status(payload.status)
-    except ValidationError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        cell_status = CellStatus(payload.status.lower())
+    except ValueError:
+        valid = [s.value for s in CellStatus]
+        raise HTTPException(
+            status_code=422,
+            detail=f"Status must be one of: {', '.join(valid)}",
+        )
 
-    status_value = payload.status.lower()
-    results: List[StorageCellResponse] = []
+    try:
+        worker = await get_robot_worker()
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Robot is not initialized",
+        ) from exc
+
+    grid = worker._robot._grid
 
     for cell_id in payload.cells:
-        success = await storage_service.update_storage_cell(
-            shelf_idx=cell_id.shelf_idx,
-            cell_idx=cell_id.cell_idx,
-            status=status_value,
-        )
+        side_enum = StorageModuleSide.LEFT if cell_id.side == "left_module" else StorageModuleSide.RIGHT
+        shelves = grid.get_side(side_enum)
 
-        if success is False:
+        if cell_id.shelf_idx < 0 or cell_id.shelf_idx >= len(shelves):
             raise HTTPException(
-                status_code=404,
-                detail=f"Storage cell {cell_id.shelf_idx}:{cell_id.cell_idx} not found",
+                status_code=400,
+                detail=f"Invalid shelf_idx: {cell_id.shelf_idx}",
             )
 
-        cells = await storage_service.get_storage_cells(
-            shelf_idx=cell_id.shelf_idx,
-            cell_idx=cell_id.cell_idx,
-        )
+        shelf = shelves[cell_id.shelf_idx]
 
-        if not cells:
+        if cell_id.cell_idx < 0 or cell_id.cell_idx >= len(shelf.cells):
             raise HTTPException(
-                status_code=404,
-                detail=f"Storage cell {cell_id.shelf_idx}:{cell_id.cell_idx} not found",
+                status_code=400,
+                detail=f"Invalid cell_idx: {cell_id.cell_idx}",
             )
 
-        cell = cells[0]
-        results.append(
-            StorageCellResponse(
-                id=int(cell.id),
-                shelf_idx=int(cell.shelf_idx),
-                cell_idx=int(cell.cell_idx),
-                capacity=_deserialize_capacity(str(cell.capacity)),
-                status=str(cell.status),
-                created_at=cell.created_at.isoformat(),
-                updated_at=cell.updated_at.isoformat(),
-            )
-        )
+        shelf.cells[cell_id.cell_idx].status = cell_status
 
-    return results
+    grid.save()
+
+    return {"updated": len(payload.cells)}

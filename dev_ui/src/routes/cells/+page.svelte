@@ -29,21 +29,21 @@
 		return false;
 	});
 
-	function cellKey(shelfIdx: number, cellIdx: number): string {
-		return `${shelfIdx}:${cellIdx}`;
+	function cellKey(side: string, shelfIdx: number, cellIdx: number): string {
+		return `${side}:${shelfIdx}:${cellIdx}`;
 	}
 
 	function parseCellKey(key: string): CellIdentifier {
-		const [shelf, cell] = key.split(':');
-		return { shelf_idx: parseInt(shelf, 10), cell_idx: parseInt(cell, 10) };
+		const [side, shelf, cell] = key.split(':');
+		return { side, shelf_idx: parseInt(shelf, 10), cell_idx: parseInt(cell, 10) };
 	}
 
-	function isCellSelected(shelfIdx: number, cellIdx: number): boolean {
-		return selectedCells.has(cellKey(shelfIdx, cellIdx));
+	function isCellSelected(side: string, shelfIdx: number, cellIdx: number): boolean {
+		return selectedCells.has(cellKey(side, shelfIdx, cellIdx));
 	}
 
-	function didClickCell(shelfIdx: number, cellIdx: number, event: MouseEvent): void {
-		const key = cellKey(shelfIdx, cellIdx);
+	function didClickCell(side: string, shelfIdx: number, cellIdx: number, event: MouseEvent): void {
+		const key = cellKey(side, shelfIdx, cellIdx);
 
 		if (event.shiftKey === true) {
 			const next = new Set(selectedCells);
@@ -134,7 +134,7 @@
 {#if isLoading === true}
 	<p>loading storage grid...</p>
 {:else if grid !== null}
-	{#each [{ label: 'left module', shelves: grid.left_module }, { label: 'right module', shelves: grid.right_module }] as module}
+	{#each [{ label: 'left module', side: 'left_module', shelves: grid.left_module }, { label: 'right module', side: 'right_module', shelves: grid.right_module }] as module}
 		<section class="module">
 			<h2>{module.label}</h2>
 
@@ -146,9 +146,9 @@
 							<button
 								type="button"
 								class="cell"
-								class:selected={isCellSelected(shelfIdx, cellIdx)}
+								class:selected={isCellSelected(module.side, shelfIdx, cellIdx)}
 								style="background-color: {statusColor(cell.status)}; color: {statusTextColor(cell.status)};"
-								onclick={(e) => didClickCell(shelfIdx, cellIdx, e)}
+								onclick={(e) => didClickCell(module.side, shelfIdx, cellIdx, e)}
 							>
 								{shelfIdx}:{cellIdx}
 							</button>
