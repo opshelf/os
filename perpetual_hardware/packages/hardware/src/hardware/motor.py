@@ -212,6 +212,7 @@ class Motor():
         self._logger = logger.getChild(f"motor.{self._motor_id}")
         self._safety = safety
         self._simulated_fault = False
+        self._on_move_complete: Optional[Callable[[float], None]] = None
 
     async def configure(self):
         """Configure the stepper motor with initial parameters.
@@ -292,14 +293,20 @@ class Motor():
                         extra={"motor_id": self._motor_id, "target_mm": value},
                     )
                 await self._safety.wait_clear()
+
+            t0 = time.monotonic()
             await self._start_absolute_move(value, rpm, accel)
             status = await self.wait_for_move(timeout=MOTOR_MOVE_TIMEOUT)
-            
+            elapsed = time.monotonic() - t0
+
+            if self._on_move_complete is not None:
+                self._on_move_complete(elapsed)
+
             if status != MotorStatus.STOPPED:
                 raise MotorError(
                     f"Movement failed for motor {self._motor_id} (status={status.name})"
                 )
-                
+
         except Exception as e:
             if not isinstance(e, MotorError):
                 raise MotorError(f"Failed to move motor {self._motor_id} to position {value}mm: {str(e)}") from e
@@ -848,17 +855,21 @@ class Motor():
             try:
                 # Start homing movement
                 await self._controller.write_single_register(
-                    self._motor_id, 
+                    self._motor_id,
                     motor_helpers.TRIGGER,
                     0x10  # start path 0
                 )
-                
+
                 self._status = MotorStatus.MOVING
             except Exception as e:
                 raise MotorError(f"Failed to start homing movement: {str(e)}") from e
 
-            # Wait for homing to complete (longer timeout for homing)
+            t0 = time.monotonic()
             stop = await self.wait_for_move(timeout=MOTOR_HOME_TIMEOUT, homing=True)
+            elapsed = time.monotonic() - t0
+
+            if self._on_move_complete is not None:
+                self._on_move_complete(elapsed)
             
             if stop == MotorStatus.STOPPED:
                 try:
@@ -915,13 +926,18 @@ class Motor():
             
             # Start movement
             await self._controller.write_single_register(
-                self._motor_id, 
+                self._motor_id,
                 motor_helpers.TRIGGER,
                 0x10  # start path 0
             )
-            
-            # Wait for completion
+
+            t0 = time.monotonic()
             result = await self.wait_for_move(timeout=MOTOR_JOG_TIMEOUT, homing=True)
+            elapsed = time.monotonic() - t0
+
+            if self._on_move_complete is not None:
+                self._on_move_complete(elapsed)
+
             if result != MotorStatus.STOPPED:
                 raise MotorError(f"Relative move failed (status={result.name})")
             await self.move_config()

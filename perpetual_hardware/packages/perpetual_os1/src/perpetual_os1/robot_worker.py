@@ -245,6 +245,9 @@ class RobotWorker:
     def get_client(self) -> RobotClient:
         return self._client
 
+    def drain_motor_time(self) -> float:
+        return self._robot.drain_motor_time()
+
     async def get_scale_data(self) -> Dict[str, Any]:
         return await self._robot.get_scale_data()
 

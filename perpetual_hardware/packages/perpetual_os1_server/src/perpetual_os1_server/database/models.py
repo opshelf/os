@@ -125,6 +125,15 @@ class ItemLocation(Base):
 		Index('idx_item_locations_item_id', 'item_id'),
 	)
 
+class Telemetry(Base):
+	__tablename__ = "telemetry"
+
+	id: Mapped[int] = mapped_column(Integer, primary_key=True)
+	cycle_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+	motor_movement_seconds: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+	updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
 class StorageCell(Base):
 	"""StorageCell model for defining available storage locations."""
 	__tablename__ = "storage_cells"

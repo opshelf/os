@@ -27,7 +27,7 @@ from perpetual_os1_server.database.base import Base, engine, get_database_url
 from perpetual_os1_server.database.session import AsyncSessionLocal
 from perpetual_os1_server.middleware.audit import AuditMiddleware
 from perpetual_os1_server.middleware.correlation import CorrelationIdMiddleware
-from perpetual_os1_server.routers import access_levels, audit, auth, calibration, camera, printer, report, robot, roles, storage, users
+from perpetual_os1_server.routers import access_levels, audit, auth, calibration, camera, printer, report, robot, roles, storage, telemetry, users
 from perpetual_os1_server.settings import get_settings
 
 configure_logging()
@@ -391,6 +391,7 @@ app.include_router(storage.router, prefix="/api/storage")
 app.include_router(printer.router, prefix="/api/print")
 app.include_router(calibration.router)
 app.include_router(report.router, prefix="/api")
+app.include_router(telemetry.router, prefix="/api")
 
 
 def start() -> None:

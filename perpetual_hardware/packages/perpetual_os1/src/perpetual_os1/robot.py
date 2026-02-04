@@ -198,7 +198,16 @@ class Robot:
 
         self._state: RobotState = RobotState(current_cell=None)
         self._state_manager = RobotStateManager()
+        self._motor_time_accumulator: float = 0.0
 
+
+    def _did_complete_motor_move(self, elapsed: float) -> None:
+        self._motor_time_accumulator += elapsed
+
+    def drain_motor_time(self) -> float:
+        value = self._motor_time_accumulator
+        self._motor_time_accumulator = 0.0
+        return value
 
     async def configure(self):
         await self._connect_controller("motor", self._motorbus, self._bus_settings["motor"])
@@ -213,6 +222,11 @@ class Robot:
 
         await self._tool.configure()
         await self._io.configure()
+
+        for name in ["x_axis", "y_axis", "z_axis", "stage", "rotate", "door"]:
+            motor = self._get_motor_by_name(name)
+            if motor is not None:
+                motor._on_move_complete = self._did_complete_motor_move
 
     def sync_occupied_cells(self, occupied: list[tuple[str, int, int]]) -> None:
         if self._grid is None:
