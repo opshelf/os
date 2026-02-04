@@ -241,7 +241,7 @@ class IOBox:
 
         try:
             door_cfg = self._params.motors.by_name("door")
-            await self._md.move_to_position(0, rpm=door_cfg.ret_rpm)
+            await self._md.move_to_position(door_cfg.lower_lim, rpm=door_cfg.ret_rpm)
             await self.refresh_door_state(force=True)
         except Exception as e:
             self._status = IOBoxStatus.ERROR

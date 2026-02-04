@@ -126,6 +126,7 @@ class Motor(BaseModel):
     accel: int = Field(..., gt=0)
     ret_rpm: int = Field(..., gt=0)
     lim: Union[int, float] = Field(..., gt=0)
+    lower_lim: Union[int, float] = Field(default=0, ge=0)
     phys_at_zero: Optional[Union[int, float]] = Field(default=None)
     phys_at_max: Optional[Union[int, float]] = Field(default=None)
     position_reg_high: int = Field(default=0x602C)
