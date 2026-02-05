@@ -9,7 +9,6 @@
 
 	const links = [
 		{ href: '/', label: 'status' },
-		{ href: '/command', label: 'command' },
 		{ href: '/calibration', label: 'calibration' },
 		{ href: '/cells', label: 'cells' },
 		{ href: '/camera', label: 'cameras' },

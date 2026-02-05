@@ -537,8 +537,12 @@ def _get_robot_grid():
         return robot_worker._robot._grid
 
     from perpetual_os1.storage import StorageGrid
+    from perpetual_os1.common import resolve_grid_path, load_config_file, CONFIG_PATH
 
-    return StorageGrid.load_from_file()
+    config = load_config_file(CONFIG_PATH)
+    grid_path = resolve_grid_path(config)
+
+    return StorageGrid.load_from_file(grid_path)
 
 
 @router.get("/grid", dependencies=[Depends(require_permissions("storage:read"))])

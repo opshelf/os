@@ -1,7 +1,7 @@
 import json as _json
 from pathlib import Path as _Path
 
-from perpetual_os1.common import AxisCoordinate, ToolCoordinate, load_config_file, CONFIG_PATH
+from perpetual_os1.common import AxisCoordinate, ToolCoordinate, load_config_file, CONFIG_PATH, resolve_grid_path
 
 from hardware.controller import SharedModbusController as Controller
 from perpetual_os1.iobox import IOBox
@@ -9,7 +9,7 @@ from perpetual_os1.tool import Tool
 from perpetual_os1.storage import (
     StorageGrid, Shelf, Cell, CellStatus, CalibrationCoordinate,
     Dimensions, StorageModuleSide, CellItem, StorageModuleCellLocation,
-    StorageValidationError, STORAGE_PATH
+    StorageValidationError,
 )
 
 from perpetual_os1.common import ConfigError
@@ -190,10 +190,12 @@ class Robot:
         self._tool = Tool(motorcontroller=self._motorbus, params=tool_params, safety=self._curtain_safety)
         self._io = IOBox(motorcontroller=self._motorbus, scalecontroller=self._scalebus, params=io_params, safety=self._curtain_safety)
 
+        self._grid_path = resolve_grid_path(self._config)
+
         try:
-            self._grid = StorageGrid.load_from_file(STORAGE_PATH)
+            self._grid = StorageGrid.load_from_file(self._grid_path)
         except StorageValidationError as e:
-            self._logger.warning("storage_load_failed: %s - %s", STORAGE_PATH, str(e))
+            self._logger.warning("storage_load_failed: %s - %s", self._grid_path, str(e))
             self._grid = StorageGrid()
 
         self._cur_item: StorageModuleCellLocation | None = None
@@ -634,7 +636,7 @@ class Robot:
             storage_grid = StorageGrid(
                 left_module=left_module,
                 right_module=right_module,
-                filename=str(CONFIG_PATH.parent / "storage_grid.json")
+                filename=self._grid_path,
             )
             storage_grid.save()
             self._grid = storage_grid

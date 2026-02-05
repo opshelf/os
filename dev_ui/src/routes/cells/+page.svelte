@@ -59,9 +59,7 @@
 			return keys;
 		}
 
-		const sides = from.side === to.side
-			? [from.side]
-			: ['left_module', 'right_module'];
+		const sides = from.side === to.side ? [from.side] : ['left_module', 'right_module'];
 
 		for (const side of sides) {
 			const shelves = side === 'left_module' ? grid.left_module : grid.right_module;
@@ -121,7 +119,10 @@
 
 		const all = new Set<string>();
 
-		for (const [side, shelves] of [['left_module', grid.left_module], ['right_module', grid.right_module]] as const) {
+		for (const [side, shelves] of [
+			['left_module', grid.left_module],
+			['right_module', grid.right_module]
+		] as const) {
 			for (let shelfIdx = 0; shelfIdx < shelves.length; shelfIdx++) {
 				for (let cellIdx = 0; cellIdx < shelves[shelfIdx].cells.length; cellIdx++) {
 					all.add(cellKey(side, shelfIdx, cellIdx));
@@ -263,13 +264,9 @@
 			{/each}
 		</select>
 
-		<button type="button" disabled={isDisabled} onclick={didClickApply}>
-			apply
-		</button>
+		<button type="button" disabled={isDisabled} onclick={didClickApply}> apply </button>
 
-		<button type="button" onclick={didClickSelectAll}>
-			select all
-		</button>
+		<button type="button" onclick={didClickSelectAll}> select all </button>
 
 		<button
 			type="button"
@@ -278,7 +275,6 @@
 		>
 			cycle test
 		</button>
-
 	</div>
 {:else if error !== ''}
 	<ErrorMessage message={error} />
@@ -286,14 +282,12 @@
 
 <style>
 	.module {
-		margin-bottom: 2em;
+		margin-bottom: 4em;
 	}
 
 	h2 {
 		text-transform: uppercase;
-		margin-bottom: 0.5em;
-		border-bottom: 2px solid black;
-		padding-bottom: 0.25em;
+		margin-bottom: 1em;
 	}
 
 	.shelves {
@@ -303,8 +297,8 @@
 
 	.shelf-row {
 		display: flex;
-		gap: 2px;
-		margin-bottom: 2px;
+		gap: 4px;
+		margin-bottom: 4px;
 	}
 
 	.cell {
@@ -319,7 +313,7 @@
 		margin: 0;
 		box-shadow: none;
 		text-transform: none;
-		font-size: 0.85em;
+		font-size: 1em;
 		direction: ltr;
 	}
 
@@ -328,8 +322,7 @@
 	}
 
 	.cell.selected {
-		border: 3px solid oklch(0.5318 0.2399 256.98999);
-		outline: 2px solid oklch(0.5318 0.2399 256.98999);
+		border: 6px solid black;
 	}
 
 	.controls {
@@ -342,8 +335,8 @@
 		width: fit-content;
 		padding: 1em;
 		background-color: white;
-		border: 3px solid black;
-		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+		border: 2px solid black;
+		box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.25);
 		z-index: 100;
 	}
 
@@ -357,9 +350,10 @@
 		background-color: white;
 		text-transform: uppercase;
 		font-family: inherit;
+		height: 34px;
 	}
 
 	.toolbar-spacer {
-		height: 5em;
+		height: 1px;
 	}
 </style>

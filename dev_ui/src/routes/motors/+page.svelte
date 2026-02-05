@@ -9,6 +9,7 @@
 		controlDoor,
 		probeMotors,
 		moveMotor,
+		apiFetch,
 		type MotorList,
 		type MotorProbeResult,
 		type GripperState,
@@ -28,6 +29,7 @@
 
 	let probeResults: Record<string, MotorProbeResult> = {};
 	let isProbing = false;
+	let isHomingAll = false;
 	let moveTargets: Record<string, string> = {};
 	let movingMotor: string | null = null;
 
@@ -145,6 +147,25 @@
 		}
 	}
 
+	async function didClickHomeAll(): Promise<void> {
+		isHomingAll = true;
+		error = '';
+		message = '';
+
+		try {
+			await apiFetch('/robot/commands', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ command: 'home' })
+			});
+			message = 'home command sent';
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'home command failed';
+		} finally {
+			isHomingAll = false;
+		}
+	}
+
 	async function didClickMove(motorName: string): Promise<void> {
 		const targetValue = moveTargets[motorName];
 
@@ -200,9 +221,16 @@
 		<button
 			type="button"
 			on:click={didClickProbe}
-			disabled={isProbing === true || activeMotor !== null || movingMotor !== null}
+			disabled={isProbing === true || activeMotor !== null || movingMotor !== null || isHomingAll === true}
 		>
 			{isProbing === true ? 'probing...' : 'probe all motors'}
+		</button>
+		<button
+			type="button"
+			on:click={didClickHomeAll}
+			disabled={isHomingAll === true || activeMotor !== null || movingMotor !== null || isProbing === true}
+		>
+			{isHomingAll === true ? 'homing...' : 'home all motors'}
 		</button>
 	</div>
 

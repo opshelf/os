@@ -660,6 +660,10 @@ def load_config_file(path: Union[str, Any]) -> RootConfig:
     return load_and_validate_config(raw, str(path_obj))
 
 
+def resolve_grid_path(config: RootConfig) -> str:
+    return str((CONFIG_PATH.parent / config.robot.grid.path).resolve())
+
+
 def assert_config(config: RootConfig, requirements: Optional[List[str]] = None) -> None:
     errors: List[str] = []
 
