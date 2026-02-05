@@ -235,6 +235,7 @@
 		warning = '';
 
 		try {
+			await controlGripper('release');
 			storageGrid = await getStorageGrid();
 			currentPosition = await moveToCell(selectedSide, selectedShelf, selectedCell);
 
