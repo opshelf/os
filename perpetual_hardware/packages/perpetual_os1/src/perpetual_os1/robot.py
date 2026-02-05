@@ -1,3 +1,6 @@
+import json as _json
+from pathlib import Path as _Path
+
 from perpetual_os1.common import AxisCoordinate, ToolCoordinate, load_config_file, CONFIG_PATH
 
 from hardware.controller import SharedModbusController as Controller
@@ -200,6 +203,38 @@ class Robot:
         self._state_manager = RobotStateManager()
         self._motor_time_accumulator: float = 0.0
 
+        self._demo_cell_map: dict[str, StorageModuleCellLocation] | None = None
+        if self._config.demo.enabled is True:
+            self._demo_cell_map = self._load_demo_cell_map(self._config.demo.cell_map_path)
+
+
+    @staticmethod
+    def _parse_demo_location(value: str) -> StorageModuleCellLocation:
+        side_map = {"L": StorageModuleSide.LEFT, "R": StorageModuleSide.RIGHT}
+        parts = value.split(":")
+        if len(parts) != 3 or parts[0] not in side_map:
+            raise ValueError(f"invalid demo location format: {value!r}")
+
+        return StorageModuleCellLocation(
+            side=side_map[parts[0]],
+            shelf_idx=int(parts[1]),
+            cell_idx=int(parts[2]),
+        )
+
+    def _load_demo_cell_map(self, path: str) -> dict[str, StorageModuleCellLocation] | None:
+        file_path = _Path(path)
+        if file_path.exists() is False:
+            self._logger.warning("demo_cell_map_missing: %s", path)
+            return None
+
+        raw = _json.loads(file_path.read_text(encoding="utf-8"))
+        cell_map: dict[str, StorageModuleCellLocation] = {}
+
+        for barcode, loc_str in raw.items():
+            cell_map[barcode] = self._parse_demo_location(loc_str)
+
+        self._logger.info("demo_cell_map_loaded: %d entries from %s", len(cell_map), path)
+        return cell_map
 
     def _did_complete_motor_move(self, elapsed: float) -> None:
         self._motor_time_accumulator += elapsed
@@ -650,20 +685,27 @@ class Robot:
             upca=resolved_upca
         )
 
-        provided_location = None
-        if isinstance(item_payload, dict):
-            provided_location = item_payload.get("location")
-
-        location: StorageModuleCellLocation | None
-
-        if provided_location is not None:
-            location = StorageModuleCellLocation(
-                side=provided_location.get("side", "L"),
-                shelf_idx=int(provided_location.get("shelf_idx", 0)),
-                cell_idx=int(provided_location.get("cell_idx", 0)),
-            )
+        if self._demo_cell_map is not None:
+            demo_location = self._demo_cell_map.get(resolved_upca)
+            if demo_location is None:
+                return RobotCommandError(
+                    command=command_name,
+                    error=f"barcode {resolved_upca} not in demo mapping",
+                )
+            location = demo_location
         else:
-            location = self._grid.find_best_slot_for_item(item)
+            provided_location = None
+            if isinstance(item_payload, dict):
+                provided_location = item_payload.get("location")
+
+            if provided_location is not None:
+                location = StorageModuleCellLocation(
+                    side=provided_location.get("side", "L"),
+                    shelf_idx=int(provided_location.get("shelf_idx", 0)),
+                    cell_idx=int(provided_location.get("cell_idx", 0)),
+                )
+            else:
+                location = self._grid.find_best_slot_for_item(item)
 
         if not location:
             return RobotCommandError(command=command_name, error="No suitable storage location found")
