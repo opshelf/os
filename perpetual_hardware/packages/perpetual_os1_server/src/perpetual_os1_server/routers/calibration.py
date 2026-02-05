@@ -852,6 +852,12 @@ async def save_iobox_calibration(request: IOBoxSaveRequest):
 		await worker._robot._tool.home()
 	except (MotorError, HardwareMotorError) as e:
 		await _raise_motor_error(worker, f"Failed to home tool: {str(e)}", e)
+
+	try:
+		await worker._robot._io.home_door()
+	except Exception:
+		pass
+
 	worker.clear_needs_home()
 	await worker.get_status_snapshot(force_refresh=True)
 
