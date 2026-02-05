@@ -11,7 +11,6 @@
 		moveMotor,
 		apiFetch,
 		type MotorList,
-		type MotorProbeResult,
 		type GripperState,
 		type DoorAction
 	} from '$lib/api';
@@ -27,8 +26,9 @@
 	let error = '';
 	let message = '';
 
-	let probeResults: Record<string, MotorProbeResult> = {};
-	let isProbing = false;
+	let testResults: Record<string, 'ok' | 'err'> = {};
+	let isTesting = false;
+	let testingMotor: string | null = null;
 	let isHomingAll = false;
 	let moveTargets: Record<string, string> = {};
 	let movingMotor: string | null = null;
@@ -126,25 +126,61 @@
 		}
 	}
 
-	async function didClickProbe(): Promise<void> {
-		isProbing = true;
+	async function testSingleMotor(motorName: string): Promise<void> {
+		testingMotor = motorName;
+
+		try {
+			await moveMotor(motorName, 10);
+
+			const response = await probeMotors();
+			const result = response.results.find((r) => r.motor_name === motorName);
+
+			const isPositionCorrect =
+				result !== undefined &&
+				result.responsive === true &&
+				Math.abs((result.position_mm ?? 0) - 10) < 1;
+
+			await homeMotor(motorName);
+
+			testResults[motorName] = isPositionCorrect === true ? 'ok' : 'err';
+		} catch {
+			testResults[motorName] = 'err';
+		}
+	}
+
+	async function testGripper(): Promise<void> {
+		testingMotor = 'gripper';
+
+		try {
+			await controlGripper('grip');
+			await controlGripper('release');
+			testResults['gripper'] = 'ok';
+		} catch {
+			testResults['gripper'] = 'err';
+		}
+	}
+
+	async function didClickTestAll(): Promise<void> {
+		if (motors === null) {
+			return;
+		}
+
+		isTesting = true;
+		testResults = {};
 		error = '';
 		message = '';
 
-		try {
-			const response = await probeMotors();
+		const allMotors = [...motors.io, ...motors.tool];
 
-			probeResults = {};
-			for (const result of response.results) {
-				probeResults[result.motor_name] = result;
-			}
-
-			message = 'probe complete';
-		} catch (err) {
-			error = err instanceof Error ? err.message : 'probe failed';
-		} finally {
-			isProbing = false;
+		for (const motor of allMotors) {
+			await testSingleMotor(motor);
 		}
+
+		await testGripper();
+
+		testingMotor = null;
+		isTesting = false;
+		message = 'test complete';
 	}
 
 	async function didClickHomeAll(): Promise<void> {
@@ -220,15 +256,15 @@
 	<div class="actions">
 		<button
 			type="button"
-			on:click={didClickProbe}
-			disabled={isProbing === true || activeMotor !== null || movingMotor !== null || isHomingAll === true}
+			on:click={didClickTestAll}
+			disabled={isTesting === true || activeMotor !== null || movingMotor !== null || isHomingAll === true}
 		>
-			{isProbing === true ? 'probing...' : 'probe all motors'}
+			{isTesting === true ? 'testing...' : 'test all motors'}
 		</button>
 		<button
 			type="button"
 			on:click={didClickHomeAll}
-			disabled={isHomingAll === true || activeMotor !== null || movingMotor !== null || isProbing === true}
+			disabled={isHomingAll === true || activeMotor !== null || movingMotor !== null || isTesting === true}
 		>
 			{isHomingAll === true ? 'homing...' : 'home all motors'}
 		</button>
@@ -251,12 +287,12 @@
 				<tr>
 					<td>{motor}</td>
 					<td>
-						{#if probeResults[motor] !== undefined}
-							{#if probeResults[motor].responsive === true}
-								<span class="status-ok">{probeResults[motor].position_mm?.toFixed(2)}mm</span>
-							{:else}
-								<span class="status-error">no response</span>
-							{/if}
+						{#if testingMotor === motor}
+							<span class="status-testing">testing...</span>
+						{:else if testResults[motor] === 'ok'}
+							<span class="status-ok">OK</span>
+						{:else if testResults[motor] === 'err'}
+							<span class="status-error">ERR</span>
 						{:else}
 							<span class="status-unknown">-</span>
 						{/if}
@@ -268,12 +304,12 @@
 							placeholder="mm"
 							value={moveTargets[motor] ?? ''}
 							on:input={(e) => didInputTarget(motor, e)}
-							disabled={movingMotor !== null || activeMotor !== null}
+							disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
 						/>
 						<button
 							type="button"
 							on:click={() => didClickMove(motor)}
-							disabled={movingMotor !== null || activeMotor !== null}
+							disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
 						>
 							{movingMotor === motor ? '...' : 'go'}
 						</button>
@@ -282,14 +318,14 @@
 						<button
 							type="button"
 							on:click={() => didClickHome(motor)}
-							disabled={activeMotor !== null || doorAction !== null || movingMotor !== null}
+							disabled={activeMotor !== null || doorAction !== null || movingMotor !== null || isTesting === true}
 						>
 							home
 						</button>
 						<button
 							type="button"
 							on:click={() => didClickCrash(motor)}
-							disabled={activeMotor !== null || doorAction !== null || movingMotor !== null}
+							disabled={activeMotor !== null || doorAction !== null || movingMotor !== null || isTesting === true}
 						>
 							crash
 						</button>
@@ -299,12 +335,12 @@
 			<tr>
 				<td>door</td>
 				<td>
-					{#if probeResults['door'] !== undefined}
-						{#if probeResults['door'].responsive === true}
-							<span class="status-ok">{probeResults['door'].position_mm?.toFixed(2)}mm</span>
-						{:else}
-							<span class="status-error">no response</span>
-						{/if}
+					{#if testingMotor === 'door'}
+						<span class="status-testing">testing...</span>
+					{:else if testResults['door'] === 'ok'}
+						<span class="status-ok">OK</span>
+					{:else if testResults['door'] === 'err'}
+						<span class="status-error">ERR</span>
 					{:else}
 						<span class="status-unknown">-</span>
 					{/if}
@@ -316,12 +352,12 @@
 						placeholder="mm"
 						value={moveTargets['door'] ?? ''}
 						on:input={(e) => didInputTarget('door', e)}
-						disabled={movingMotor !== null || activeMotor !== null}
+						disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
 					/>
 					<button
 						type="button"
 						on:click={() => didClickMove('door')}
-						disabled={movingMotor !== null || activeMotor !== null}
+						disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
 					>
 						{movingMotor === 'door' ? '...' : 'go'}
 					</button>
@@ -330,28 +366,28 @@
 					<button
 						type="button"
 						on:click={() => didClickHome('door')}
-						disabled={activeMotor !== null || doorAction !== null || movingMotor !== null}
+						disabled={activeMotor !== null || doorAction !== null || movingMotor !== null || isTesting === true}
 					>
 						home
 					</button>
 					<button
 						type="button"
 						on:click={() => didClickCrash('door')}
-						disabled={activeMotor !== null || doorAction !== null || movingMotor !== null}
+						disabled={activeMotor !== null || doorAction !== null || movingMotor !== null || isTesting === true}
 					>
 						crash
 					</button>
 					<button
 						type="button"
 						on:click={() => didClickDoor('open')}
-						disabled={doorAction !== null || activeMotor !== null || movingMotor !== null}
+						disabled={doorAction !== null || activeMotor !== null || movingMotor !== null || isTesting === true}
 					>
 						open
 					</button>
 					<button
 						type="button"
 						on:click={() => didClickDoor('close')}
-						disabled={doorAction !== null || activeMotor !== null || movingMotor !== null}
+						disabled={doorAction !== null || activeMotor !== null || movingMotor !== null || isTesting === true}
 					>
 						close
 					</button>
@@ -375,12 +411,12 @@
 				<tr>
 					<td>{motor}</td>
 					<td>
-						{#if probeResults[motor] !== undefined}
-							{#if probeResults[motor].responsive === true}
-								<span class="status-ok">{probeResults[motor].position_mm?.toFixed(2)}mm</span>
-							{:else}
-								<span class="status-error">no response</span>
-							{/if}
+						{#if testingMotor === motor}
+							<span class="status-testing">testing...</span>
+						{:else if testResults[motor] === 'ok'}
+							<span class="status-ok">OK</span>
+						{:else if testResults[motor] === 'err'}
+							<span class="status-error">ERR</span>
 						{:else}
 							<span class="status-unknown">-</span>
 						{/if}
@@ -392,12 +428,12 @@
 							placeholder="mm"
 							value={moveTargets[motor] ?? ''}
 							on:input={(e) => didInputTarget(motor, e)}
-							disabled={movingMotor !== null || activeMotor !== null}
+							disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
 						/>
 						<button
 							type="button"
 							on:click={() => didClickMove(motor)}
-							disabled={movingMotor !== null || activeMotor !== null}
+							disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
 						>
 							{movingMotor === motor ? '...' : 'go'}
 						</button>
@@ -406,14 +442,14 @@
 						<button
 							type="button"
 							on:click={() => didClickHome(motor)}
-							disabled={activeMotor !== null || gripperAction !== null || movingMotor !== null}
+							disabled={activeMotor !== null || gripperAction !== null || movingMotor !== null || isTesting === true}
 						>
 							home
 						</button>
 						<button
 							type="button"
 							on:click={() => didClickCrash(motor)}
-							disabled={activeMotor !== null || gripperAction !== null || movingMotor !== null}
+							disabled={activeMotor !== null || gripperAction !== null || movingMotor !== null || isTesting === true}
 						>
 							crash
 						</button>
@@ -422,20 +458,30 @@
 			{/each}
 			<tr>
 				<td>gripper</td>
-				<td>-</td>
+				<td>
+					{#if testingMotor === 'gripper'}
+						<span class="status-testing">testing...</span>
+					{:else if testResults['gripper'] === 'ok'}
+						<span class="status-ok">OK</span>
+					{:else if testResults['gripper'] === 'err'}
+						<span class="status-error">ERR</span>
+					{:else}
+						<span class="status-unknown">-</span>
+					{/if}
+				</td>
 				<td>-</td>
 				<td>
 					<button
 						type="button"
 						on:click={() => didClickGripper('grip')}
-						disabled={gripperAction !== null || activeMotor !== null || movingMotor !== null}
+						disabled={gripperAction !== null || activeMotor !== null || movingMotor !== null || isTesting === true}
 					>
 						grip
 					</button>
 					<button
 						type="button"
 						on:click={() => didClickGripper('release')}
-						disabled={gripperAction !== null || activeMotor !== null || movingMotor !== null}
+						disabled={gripperAction !== null || activeMotor !== null || movingMotor !== null || isTesting === true}
 					>
 						release
 					</button>
@@ -479,5 +525,9 @@
 
 	.status-unknown {
 		color: gray;
+	}
+
+	.status-testing {
+		color: orange;
 	}
 </style>
