@@ -462,7 +462,7 @@ class Tool:
                 raise
             raise MovementError(f"Tool extension failed: {str(e)}") from e
 
-    async def extend_IO(self) -> None:
+    async def extend_IO(self, nudge_override: float | None = None) -> None:
         """
         Extend gripper and slide to IO box position, then nudge to push item.
 
@@ -475,7 +475,7 @@ class Tool:
             raise MotorError("Tool motors (z_axis, stage) required for IO extension")
 
         slide_ext = await self._get_io_box_stage_extension()
-        stage_nudge = await self.get_param("STAGE_NUDGE")
+        stage_nudge = nudge_override if nudge_override is not None else await self.get_param("STAGE_NUDGE")
         grip_ext = await self.get_param("Z_EXTENSION_IO")
         grip_rpm = await self.get_param("Z_MOVE_RPM")
         grip_accel = await self.get_param("Z_MOVE_ACCEL")
