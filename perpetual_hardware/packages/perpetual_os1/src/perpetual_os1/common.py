@@ -346,6 +346,11 @@ class AuthSettings(BaseModel):
     dev_auto_user: Optional[str] = None
 
 
+class DemoSettings(BaseModel):
+    enabled: bool = True
+    cell_map_path: str = "data/demo.json"
+
+
 class RobotAppSettings(BaseModel):
     enabled: bool = False
 
@@ -508,6 +513,7 @@ class RootConfig(BaseModel):
     nats: NatsSettings = Field(default_factory=NatsSettings)  # type: ignore[arg-type]
     auth: AuthSettings = Field(default_factory=AuthSettings)  # type: ignore[arg-type]
     robot_app: RobotAppSettings = Field(default_factory=RobotAppSettings)
+    demo: DemoSettings = Field(default_factory=DemoSettings)
 
     @model_validator(mode="before")
     @classmethod
