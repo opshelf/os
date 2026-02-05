@@ -25,11 +25,19 @@
 	import StatusMessage from '$lib/components/StatusMessage.svelte';
 	import ShelfCalibration from '$lib/components/calibration/ShelfCalibration.svelte';
 
+	interface Props {
+		initialSide?: 'left_module' | 'right_module';
+		initialShelf?: number;
+		initialCell?: number;
+	}
+
+	let { initialSide, initialShelf, initialCell }: Props = $props();
+
 	let storageGrid = $state<StorageGrid | null>(null);
 	let loading = $state<boolean>(true);
 	let loadError = $state<string>('');
 
-	let selectedSide = $state<'left_module' | 'right_module'>('left_module');
+	let selectedSide = $state<'left_module' | 'right_module'>(initialSide ?? 'left_module');
 	let selectedShelf = $state<number>(0);
 	let selectedCell = $state<number>(0);
 	let currentPosition = $state<Position | null>(null);
@@ -107,8 +115,8 @@
 
 		try {
 			storageGrid = await getStorageGrid();
-			selectedShelf = 0;
-			selectedCell = 0;
+			selectedShelf = initialShelf ?? 0;
+			selectedCell = initialCell ?? 0;
 		} catch (err) {
 			handleNeedsHomeError(err);
 			loadError = err instanceof Error ? err.message : 'failed to load storage grid';

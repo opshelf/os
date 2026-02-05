@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
+	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import {
 		getStorageGrid,
@@ -184,6 +185,17 @@
 		}
 	}
 
+	function didClickCalibrate(): void {
+		if (selectedCells.size !== 1) {
+			return;
+		}
+
+		const key = Array.from(selectedCells)[0];
+		const cell = parseCellKey(key);
+
+		goto(`/calibration?side=${cell.side}&shelf=${cell.shelf_idx}&cell=${cell.cell_idx}`);
+	}
+
 	function statusColor(status: string): string {
 		switch (status) {
 			case 'occupied':
@@ -274,6 +286,14 @@
 			onclick={didClickCycleTest}
 		>
 			cycle test
+		</button>
+
+		<button
+			type="button"
+			disabled={selectedCells.size !== 1}
+			onclick={didClickCalibrate}
+		>
+			calibrate
 		</button>
 	</div>
 {:else if error !== ''}
