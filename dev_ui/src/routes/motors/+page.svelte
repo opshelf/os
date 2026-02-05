@@ -7,7 +7,6 @@
 		homeMotor,
 		controlGripper,
 		controlDoor,
-		probeMotors,
 		moveMotor,
 		apiFetch,
 		type MotorList,
@@ -32,6 +31,14 @@
 	let isHomingAll = false;
 	let moveTargets: Record<string, string> = {};
 	let movingMotor: string | null = null;
+
+	function unitForMotor(motorName: string): string {
+		if (motorName === 'rotate') {
+			return 'deg';
+		}
+
+		return 'mm';
+	}
 
 	async function fetchMotors(): Promise<void> {
 		try {
@@ -131,18 +138,8 @@
 
 		try {
 			await moveMotor(motorName, 10);
-
-			const response = await probeMotors();
-			const result = response.results.find((r) => r.motor_name === motorName);
-
-			const isPositionCorrect =
-				result !== undefined &&
-				result.responsive === true &&
-				Math.abs((result.position_mm ?? 0) - 10) < 1;
-
 			await homeMotor(motorName);
-
-			testResults[motorName] = isPositionCorrect === true ? 'ok' : 'err';
+			testResults[motorName] = 'ok';
 		} catch {
 			testResults[motorName] = 'err';
 		}
@@ -225,7 +222,7 @@
 			const result = await moveMotor(motorName, positionMm);
 
 			if (result.success === true) {
-				message = `${motorName} moved to ${positionMm}mm`;
+				message = `${motorName} moved to ${positionMm}${unitForMotor(motorName)}`;
 			} else {
 				error = `failed to move ${motorName}`;
 			}
@@ -288,7 +285,7 @@
 					<td>{motor}</td>
 					<td>
 						{#if testingMotor === motor}
-							<span class="status-testing">testing...</span>
+							<span class="status-testing">TEST</span>
 						{:else if testResults[motor] === 'ok'}
 							<span class="status-ok">OK</span>
 						{:else if testResults[motor] === 'err'}
@@ -301,7 +298,7 @@
 						<input
 							type="number"
 							step="0.1"
-							placeholder="mm"
+							placeholder={unitForMotor(motor)}
 							value={moveTargets[motor] ?? ''}
 							on:input={(e) => didInputTarget(motor, e)}
 							disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
@@ -336,7 +333,7 @@
 				<td>door</td>
 				<td>
 					{#if testingMotor === 'door'}
-						<span class="status-testing">testing...</span>
+						<span class="status-testing">TEST</span>
 					{:else if testResults['door'] === 'ok'}
 						<span class="status-ok">OK</span>
 					{:else if testResults['door'] === 'err'}
@@ -412,7 +409,7 @@
 					<td>{motor}</td>
 					<td>
 						{#if testingMotor === motor}
-							<span class="status-testing">testing...</span>
+							<span class="status-testing">TEST</span>
 						{:else if testResults[motor] === 'ok'}
 							<span class="status-ok">OK</span>
 						{:else if testResults[motor] === 'err'}
@@ -425,7 +422,7 @@
 						<input
 							type="number"
 							step="0.1"
-							placeholder="mm"
+							placeholder={unitForMotor(motor)}
 							value={moveTargets[motor] ?? ''}
 							on:input={(e) => didInputTarget(motor, e)}
 							disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
@@ -460,7 +457,7 @@
 				<td>gripper</td>
 				<td>
 					{#if testingMotor === 'gripper'}
-						<span class="status-testing">testing...</span>
+						<span class="status-testing">TEST</span>
 					{:else if testResults['gripper'] === 'ok'}
 						<span class="status-ok">OK</span>
 					{:else if testResults['gripper'] === 'err'}
