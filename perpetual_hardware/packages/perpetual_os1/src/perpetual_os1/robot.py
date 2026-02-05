@@ -204,6 +204,7 @@ class Robot:
         self._motor_time_accumulator: float = 0.0
 
         self._demo_cell_map: dict[str, StorageModuleCellLocation] | None = None
+        self._demo_nudge_map: dict[tuple[str, int, int], float] = {}
         if self._config.demo.enabled is True:
             self._demo_cell_map = self._load_demo_cell_map(self._config.demo.cell_map_path)
 
@@ -228,13 +229,29 @@ class Robot:
             return None
 
         raw = _json.loads(file_path.read_text(encoding="utf-8"))
-        cell_map: dict[str, StorageModuleCellLocation] = {}
 
-        for barcode, loc_str in raw.items():
+        mapping = raw.get("code_cell_mapping", raw)
+        cell_map: dict[str, StorageModuleCellLocation] = {}
+        for barcode, loc_str in mapping.items():
             cell_map[barcode] = self._parse_demo_location(loc_str)
 
-        self._logger.info("demo_cell_map_loaded: %d entries from %s", len(cell_map), path)
+        nudge_raw = raw.get("nudge_override_mm", {})
+        for loc_str, nudge_mm in nudge_raw.items():
+            loc = self._parse_demo_location(loc_str)
+            self._demo_nudge_map[(loc.side.value, loc.shelf_idx, loc.cell_idx)] = float(nudge_mm)
+
+        self._logger.info(
+            "demo_cell_map_loaded: %d entries, %d nudge overrides from %s",
+            len(cell_map),
+            len(self._demo_nudge_map),
+            path,
+        )
         return cell_map
+
+    def _get_demo_nudge(self, location: StorageModuleCellLocation) -> float | None:
+        return self._demo_nudge_map.get(
+            (location.side.value, location.shelf_idx, location.cell_idx)
+        )
 
     def _did_complete_motor_move(self, elapsed: float) -> None:
         self._motor_time_accumulator += elapsed
@@ -289,7 +306,7 @@ class Robot:
         except Exception as e:
             raise ConfigError(f"Failed to get parameter {param}: {str(e)}") from e
 
-    async def io_place(self, coord: AxisCoordinate):
+    async def io_place(self, coord: AxisCoordinate, nudge_override: float | None = None):
         ppl = await self._tool.get_param("PICKUP_POSITION_L")
         pph = await self._tool.get_param("PICKUP_POSITION_H")
         if ppl is None or pph is None:
@@ -302,7 +319,7 @@ class Robot:
         await self._tool.rotate_to_position("front")
         await self._tool.move(AxisCoordinate(ppl[0], ppl[1]))
         await self._io.open_door()
-        await self._tool.extend_IO()
+        await self._tool.extend_IO(nudge_override=nudge_override)
         await self._tool._my.move_to_position(pph[1])
         await self._tool.retract()
         await self._io.close_door()
@@ -955,7 +972,10 @@ class Robot:
 
         try:
             coord = self._grid.get_cell_coordinate(location).to_axis_coordinate()
-            await self.io_place(coord)
+
+            nudge_override = self._get_demo_nudge(location) if self._demo_cell_map is not None else None
+
+            await self.io_place(coord, nudge_override=nudge_override)
             self._grid.clear_item(location)
             return RobotCommandSuccessful(command=command_name, location=location, upca=retrieved_upca)
         except (MotorError, MovementError, ToolError):
