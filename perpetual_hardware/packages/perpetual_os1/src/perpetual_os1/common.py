@@ -125,6 +125,7 @@ class Motor(BaseModel):
     mpr: float = Field(..., gt=0)
     accel: int = Field(..., gt=0)
     ret_rpm: int = Field(..., gt=0)
+    home_rpm: Optional[int] = Field(default=None, gt=0)
     lim: Union[int, float] = Field(..., gt=0)
     lower_lim: Union[int, float] = Field(default=0, ge=0)
     phys_at_zero: Optional[Union[int, float]] = Field(default=None)

@@ -850,7 +850,8 @@ class Motor():
                 # Configure homing parameters
                 await self.set_param("Motion of Path 0", 0x2)  # velocity mode
                 await self.set_param("Motor direction", home_dir)
-                await self.set_param("Velocity", 150)
+                home_rpm = self._params.home_rpm or self._params.ret_rpm
+                await self.set_param("Velocity", home_rpm)
             except Exception as e:
                 raise MotorConfigError(f"Failed to configure homing parameters: {str(e)}") from e
             
