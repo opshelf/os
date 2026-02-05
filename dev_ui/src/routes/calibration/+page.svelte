@@ -1,7 +1,21 @@
 <script lang="ts">
+	import { page } from '$app/state';
 	import CellCalibration from '$lib/components/calibration/CellCalibration.svelte';
 	import IOBoxCalibration from '$lib/components/calibration/IOBoxCalibration.svelte';
 	import RotationCalibration from '$lib/components/calibration/RotationCalibration.svelte';
+
+	const sideParam = page.url.searchParams.get('side');
+
+	const initialSide =
+		sideParam === 'left_module' || sideParam === 'right_module' ? sideParam : undefined;
+
+	const initialShelf = page.url.searchParams.has('shelf')
+		? parseInt(page.url.searchParams.get('shelf')!, 10)
+		: undefined;
+
+	const initialCell = page.url.searchParams.has('cell')
+		? parseInt(page.url.searchParams.get('cell')!, 10)
+		: undefined;
 
 	let selectedView: 'cell' | 'io' | 'rotation' = 'cell';
 
@@ -31,7 +45,7 @@
 </div>
 
 {#if selectedView === 'cell'}
-	<CellCalibration />
+	<CellCalibration {initialSide} {initialShelf} {initialCell} />
 {:else if selectedView === 'io'}
 	<IOBoxCalibration />
 {:else if selectedView === 'rotation'}
