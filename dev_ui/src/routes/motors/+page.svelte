@@ -137,7 +137,9 @@
 		testingMotor = motorName;
 
 		try {
-			await moveMotor(motorName, 10);
+			const testDistance = motorName === 'rotate' ? 1 : 10;
+
+			await moveMotor(motorName, testDistance);
 			await homeMotor(motorName);
 			testResults[motorName] = 'ok';
 		} catch {
