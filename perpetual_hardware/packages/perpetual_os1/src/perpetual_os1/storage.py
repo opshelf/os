@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ValidationError, model_validator, field_validator, Field
+from pydantic import BaseModel, ValidationError, model_validator, Field
 from enum import Enum
 from typing import Optional, List, Self, Tuple, Mapping, Iterable, Union, Dict
 from perpetual_os1.common import AxisCoordinate
@@ -9,8 +9,6 @@ from datetime import datetime
 from dataclasses import replace as dataclass_replace
 
 type Json = Dict[str, Union[str, int, float, Mapping, Iterable]]
-
-STORAGE_PATH = os.path.join(os.path.dirname(__file__), "storage.json")
 
 
 class StorageValidationError(Exception):
@@ -153,17 +151,11 @@ class CellLocationData(BaseModel):
 class StorageGrid(BaseModel):
     left_module: List[Shelf] = Field(default_factory=list)
     right_module: List[Shelf] = Field(default_factory=list)
-    # filename: str = "./storage.json"
-    filename: str = STORAGE_PATH
-
-    @field_validator("filename", mode="before")
-    @classmethod
-    def _force_storage_path(cls, _: object) -> str:
-        return STORAGE_PATH
+    filename: str = ""
 
     @classmethod
-    def load_from_file(cls, path: str | None = None) -> "StorageGrid":
-        target_path = path or STORAGE_PATH
+    def load_from_file(cls, path: str) -> "StorageGrid":
+        target_path = path
 
         if os.path.exists(target_path) is False:
             raise StorageValidationError(f"storage file not found: {target_path}")

@@ -129,7 +129,7 @@ def _build_minimal_config(data: dict) -> dict:
 					"square_size_mm": 25.0,
 				},
 			},
-			"grid": {"path": "./storage.json"},
+			"grid": {"path": "storage.json"},
 			"io": {
 				"motors": [],
 				"usb_camera": {
