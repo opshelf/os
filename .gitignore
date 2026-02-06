@@ -29,6 +29,7 @@ storage.json
 state.json
 size.json
 baseline.jpg
+data/demo.json
 
 # Log files
 *.log
