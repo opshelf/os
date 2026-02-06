@@ -155,7 +155,7 @@ class StorageGrid(BaseModel):
 
     @classmethod
     def load_from_file(cls, path: str) -> "StorageGrid":
-        target_path = path
+        target_path = os.path.abspath(path)
 
         if os.path.exists(target_path) is False:
             raise StorageValidationError(f"storage file not found: {target_path}")
@@ -173,6 +173,7 @@ class StorageGrid(BaseModel):
         except ValidationError as e:
             raise StorageValidationError(f"storage schema validation failed: {e}") from e
 
+        grid.filename = target_path
         return grid
 
     def _create_backup(self, filename: str) -> str | None:
@@ -191,9 +192,11 @@ class StorageGrid(BaseModel):
         return backup_path
 
     def save_to_file(self, filename: str) -> None:
-        self._create_backup(filename)
+        target_path = os.path.abspath(filename)
+        self._create_backup(target_path)
+        self.filename = target_path
 
-        with open(filename, "w+") as f:
+        with open(target_path, "w+") as f:
             f.write(self.model_dump_json())
 
     def save(self) -> None:
