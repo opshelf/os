@@ -1,9 +1,17 @@
 {
-	"code_cell_mapping": {
-		"049000042566": "L:0:0",
-		"049000050103": "L:0:1"
+	"049000042566": {
+		"cell": "L:0:0",
+		"data": {
+			"name": "Hydrochloric Acid",
+			"weight": 590
+		}
 	},
-	"nudge_override_mm": {
-		"L:0:1": 10
+	"049000050103": {
+		"cell": "L:0:1",
+		"nudge_override_mm": 10,
+		"data": {
+			"name": "Sodium Hydroxide",
+			"weight": 1220
+		}
 	}
 }

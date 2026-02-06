@@ -213,13 +213,22 @@ class Robot:
 
     @staticmethod
     def _parse_demo_location(value: str) -> StorageModuleCellLocation:
-        side_map = {"L": StorageModuleSide.LEFT, "R": StorageModuleSide.RIGHT}
+        side_map = {
+            "L": StorageModuleSide.LEFT,
+            "R": StorageModuleSide.RIGHT,
+            "LEFT_MODULE": StorageModuleSide.LEFT,
+            "RIGHT_MODULE": StorageModuleSide.RIGHT,
+        }
         parts = value.split(":")
-        if len(parts) != 3 or parts[0] not in side_map:
+        if len(parts) != 3:
+            raise ValueError(f"invalid demo location format: {value!r}")
+
+        side_key = parts[0].strip().upper()
+        if side_key not in side_map:
             raise ValueError(f"invalid demo location format: {value!r}")
 
         return StorageModuleCellLocation(
-            side=side_map[parts[0]],
+            side=side_map[side_key],
             shelf_idx=int(parts[1]),
             cell_idx=int(parts[2]),
         )
@@ -231,16 +240,46 @@ class Robot:
             return None
 
         raw = _json.loads(file_path.read_text(encoding="utf-8"))
+        if isinstance(raw, dict) is False:
+            raise ValueError("demo mapping must be a JSON object")
 
-        mapping = raw.get("code_cell_mapping", raw)
+        self._demo_nudge_map = {}
         cell_map: dict[str, StorageModuleCellLocation] = {}
-        for barcode, loc_str in mapping.items():
-            cell_map[barcode] = self._parse_demo_location(loc_str)
 
-        nudge_raw = raw.get("nudge_override_mm", {})
-        for loc_str, nudge_mm in nudge_raw.items():
-            loc = self._parse_demo_location(loc_str)
-            self._demo_nudge_map[(loc.side.value, loc.shelf_idx, loc.cell_idx)] = float(nudge_mm)
+        legacy_mapping = raw.get("code_cell_mapping")
+        if isinstance(legacy_mapping, dict):
+            for barcode, loc_str in legacy_mapping.items():
+                if isinstance(loc_str, str) is False:
+                    raise ValueError(f"invalid legacy demo cell mapping for {barcode!r}")
+                cell_map[str(barcode)] = self._parse_demo_location(loc_str)
+
+            nudge_raw = raw.get("nudge_override_mm", {})
+            if isinstance(nudge_raw, dict) is False:
+                raise ValueError("legacy nudge_override_mm must be an object")
+            for loc_str, nudge_mm in nudge_raw.items():
+                if isinstance(loc_str, str) is False:
+                    raise ValueError("legacy nudge_override_mm keys must be location strings")
+                loc = self._parse_demo_location(loc_str)
+                self._demo_nudge_map[(loc.side.value, loc.shelf_idx, loc.cell_idx)] = float(nudge_mm)
+        else:
+            for barcode, payload in raw.items():
+                if isinstance(payload, str):
+                    cell_map[str(barcode)] = self._parse_demo_location(payload)
+                    continue
+
+                if isinstance(payload, dict) is False:
+                    raise ValueError(f"invalid demo entry payload for {barcode!r}")
+
+                cell_value = payload.get("cell")
+                if isinstance(cell_value, str) is False:
+                    raise ValueError(f"demo entry for {barcode!r} must include string field 'cell'")
+
+                location = self._parse_demo_location(cell_value)
+                cell_map[str(barcode)] = location
+
+                nudge_mm = payload.get("nudge_override_mm")
+                if nudge_mm is not None:
+                    self._demo_nudge_map[(location.side.value, location.shelf_idx, location.cell_idx)] = float(nudge_mm)
 
         self._logger.info(
             "demo_cell_map_loaded: %d entries, %d nudge overrides from %s",
