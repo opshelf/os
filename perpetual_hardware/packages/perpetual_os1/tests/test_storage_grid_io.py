@@ -225,7 +225,7 @@ class TestFilenameField:
 
 		grid = StorageGrid.load_from_file(str(f))
 
-		assert grid.filename == "/some/path"
+		assert grid.filename == str(f.resolve())
 
 
 class TestSaveToFile:
@@ -282,3 +282,14 @@ class TestSaveToFile:
 		assert len(reloaded.right_module) == len(original.right_module)
 		assert reloaded.right_module[0].cells[0].item is not None
 		assert reloaded.right_module[0].cells[0].item.weight == 1.5
+
+	def test_save_to_file_updates_filename_field_and_payload(self, tmp_path):
+		out = tmp_path / "saved.json"
+		grid = StorageGrid(filename="/stale/path.json")
+
+		grid.save_to_file(str(out))
+
+		assert grid.filename == str(out.resolve())
+
+		payload = json.loads(out.read_text())
+		assert payload["filename"] == str(out.resolve())
