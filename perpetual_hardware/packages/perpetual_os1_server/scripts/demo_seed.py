@@ -430,6 +430,10 @@ def build_seed_records(grid: StorageGrid, demo_entries: Dict[str, Dict[str, Any]
 	for location, cell in iter_grid_cells(grid):
 		all_cells[location_key(location)] = cell
 
+	demo_rank_by_upca: Dict[str, int] = {}
+	for demo_rank, demo_upca in enumerate(demo_entries.keys()):
+		demo_rank_by_upca[demo_upca] = demo_rank
+
 	mapped_by_location: Dict[tuple[str, int, int], tuple[str, Dict[str, Any]]] = {}
 	for upca, entry in demo_entries.items():
 		location = parse_demo_location(str(entry["cell"]))
@@ -493,12 +497,17 @@ def build_seed_records(grid: StorageGrid, demo_entries: Dict[str, Dict[str, Any]
 			placeholder_seed = f"{location.side.value}:{location.shelf_idx}:{location.cell_idx}"
 			template = choose_placeholder_template(placeholder_seed, name_counts, reserved_demo_name_keys)
 			data = build_placeholder_data(placeholder_seed, template)
+			data["is_demo_physical"] = False
+			data["demo_rank"] = None
 			upca = generate_placeholder_upca(placeholder_counter, used_upcas)
 			placeholder_counter += 1
 			placeholder_count += 1
 		else:
 			upca = mapped_entry[0]
 			data = dict(mapped_entry[1].get("data", {}))
+			data["is_demo_physical"] = True
+			if isinstance(data.get("demo_rank"), int) is False:
+				data["demo_rank"] = demo_rank_by_upca.get(upca)
 			if upca in used_upcas:
 				pass
 			else:
