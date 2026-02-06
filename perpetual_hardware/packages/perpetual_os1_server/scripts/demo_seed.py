@@ -190,6 +190,14 @@ def location_key(location: SeedLocation) -> tuple[str, int, int]:
 	return (location.side.value, location.shelf_idx, location.cell_idx)
 
 
+def format_cell_coordinate(location: SeedLocation) -> str:
+	side = "L"
+	if location.side == StorageModuleSide.RIGHT:
+		side = "R"
+
+	return f"{side}:{location.shelf_idx}:{location.cell_idx}"
+
+
 def coerce_positive_float(value: Any) -> Optional[float]:
 	if isinstance(value, (int, float)) is False:
 		return None
@@ -518,6 +526,9 @@ def build_seed_records(grid: StorageGrid, demo_entries: Dict[str, Dict[str, Any]
 			"height": float(cell.dimensions.height),
 			"length": float(cell.dimensions.length),
 		}
+
+		if location.shelf_idx == 12:
+			data["name"] = f"Well plate {format_cell_coordinate(location)}"
 
 		dimensions = resolve_dimensions(data, cell_dimensions)
 		name = resolve_name(data, upca)
