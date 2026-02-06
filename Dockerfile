@@ -36,14 +36,14 @@ WORKDIR /app
 
 COPY perpetual_hardware/ /app/perpetual_hardware/
 
-RUN mkdir -p /app/perpetual_hardware/packages/perpetual_os1_server/data && \
-	chmod -R 777 /app/perpetual_hardware/packages/perpetual_os1_server/data && \
+RUN mkdir -p /app/perpetual_hardware/data && \
+	chmod -R 777 /app/perpetual_hardware/data && \
 	echo 'export "PATH=$PATH:my_path"' >> /etc/profile
 
 WORKDIR /app/perpetual_hardware
 RUN uv sync && uv pip install -e packages/hardware -e packages/perpetual_os1 -e packages/perpetual_os1_server
 
-WORKDIR /app/perpetual_hardware/packages/perpetual_os1_server
+WORKDIR /app/perpetual_hardware
 
 EXPOSE 8000
 EXPOSE 4222

@@ -19,7 +19,7 @@ fi
 # Resolve printer queue/URI from config.json
 QUEUE_FROM_CONFIG=""
 if [ -z "${PRINTER_QUEUE:-}" ] && [ -z "${PRINTER:-}" ] && command -v python3 >/dev/null 2>&1; then
-	for config_path in "/app/perpetual_hardware/packages/perpetual_os1_server/data/config.json" "/app/perpetual_hardware/packages/perpetual_os1_server/data/settings.json"; do
+	for config_path in "/app/perpetual_hardware/data/config.json" "/app/perpetual_hardware/data/settings.json"; do
 		if [ -f "$config_path" ]; then
 			QUEUE_FROM_CONFIG=$(python3 - "$config_path" <<'PY'
 import json, pathlib, sys
