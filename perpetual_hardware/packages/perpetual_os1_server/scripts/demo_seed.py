@@ -37,6 +37,22 @@ class PlaceholderTemplate:
 	weight_max: float
 	expires_in_days_min: int
 	expires_in_days_max: int
+	fill_ratio_min: float
+	fill_ratio_max: float
+
+
+@dataclass(frozen=True)
+class PlaceholderProfile:
+	name: str
+	cas_number: str
+	hazard_class: str
+	storage_conditions: str
+	weight_min: float
+	weight_max: float
+	expires_in_days_min: int
+	expires_in_days_max: int
+	concentration_options: tuple[str, ...]
+	quantity_options: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -56,177 +72,84 @@ class SeedRecord:
 	location: SeedLocation
 
 
-PLACEHOLDER_TEMPLATES: tuple[PlaceholderTemplate, ...] = (
-	PlaceholderTemplate(
-		name="Hydrochloric Acid",
-		chemical_name="Hydrochloric Acid",
-		cas_number="7647-01-0",
-		concentration="1M",
-		quantity="500mL",
-		hazard_class="Corrosive",
-		storage_conditions="Room Temperature",
-		weight_min=560.0,
-		weight_max=620.0,
-		expires_in_days_min=240,
-		expires_in_days_max=780,
-	),
-	PlaceholderTemplate(
-		name="Sodium Hydroxide",
-		chemical_name="Sodium Hydroxide",
-		cas_number="1310-73-2",
-		concentration="1M",
-		quantity="1L",
-		hazard_class="Corrosive",
-		storage_conditions="Room Temperature",
-		weight_min=1150.0,
-		weight_max=1260.0,
-		expires_in_days_min=300,
-		expires_in_days_max=900,
-	),
-	PlaceholderTemplate(
-		name="Sulfuric Acid",
-		chemical_name="Sulfuric Acid",
-		cas_number="7664-93-9",
-		concentration="18M",
-		quantity="250mL",
-		hazard_class="Corrosive",
-		storage_conditions="Cool, Dry Place",
-		weight_min=420.0,
-		weight_max=520.0,
-		expires_in_days_min=180,
-		expires_in_days_max=720,
-	),
-	PlaceholderTemplate(
-		name="Ethanol",
-		chemical_name="Ethanol (Absolute)",
-		cas_number="64-17-5",
-		concentration="99.5%",
-		quantity="1L",
-		hazard_class="Flammable",
-		storage_conditions="Flammable Cabinet",
-		weight_min=810.0,
-		weight_max=930.0,
-		expires_in_days_min=360,
-		expires_in_days_max=1080,
-	),
-	PlaceholderTemplate(
-		name="Acetone",
-		chemical_name="Acetone",
-		cas_number="67-64-1",
-		concentration="99.9%",
-		quantity="500mL",
-		hazard_class="Flammable",
-		storage_conditions="Flammable Cabinet",
-		weight_min=390.0,
-		weight_max=470.0,
-		expires_in_days_min=300,
-		expires_in_days_max=950,
-	),
-	PlaceholderTemplate(
-		name="Methanol",
-		chemical_name="Methanol",
-		cas_number="67-56-1",
-		concentration="99.8%",
-		quantity="4L",
-		hazard_class="Toxic, Flammable",
-		storage_conditions="Flammable Cabinet",
-		weight_min=3000.0,
-		weight_max=3500.0,
-		expires_in_days_min=180,
-		expires_in_days_max=700,
-	),
-	PlaceholderTemplate(
-		name="Hydrogen Peroxide",
-		chemical_name="Hydrogen Peroxide",
-		cas_number="7722-84-1",
-		concentration="30%",
-		quantity="500mL",
-		hazard_class="Oxidizer",
-		storage_conditions="Refrigerator (4C)",
-		weight_min=520.0,
-		weight_max=620.0,
-		expires_in_days_min=120,
-		expires_in_days_max=540,
-	),
-	PlaceholderTemplate(
-		name="Ammonium Hydroxide",
-		chemical_name="Ammonium Hydroxide",
-		cas_number="1336-21-6",
-		concentration="28-30%",
-		quantity="1L",
-		hazard_class="Corrosive",
-		storage_conditions="Fume Hood",
-		weight_min=860.0,
-		weight_max=980.0,
-		expires_in_days_min=220,
-		expires_in_days_max=760,
-	),
-	PlaceholderTemplate(
-		name="Nitric Acid",
-		chemical_name="Nitric Acid",
-		cas_number="7697-37-2",
-		concentration="70%",
-		quantity="250mL",
-		hazard_class="Corrosive, Oxidizer",
-		storage_conditions="Acid Cabinet",
-		weight_min=410.0,
-		weight_max=520.0,
-		expires_in_days_min=120,
-		expires_in_days_max=660,
-	),
-	PlaceholderTemplate(
-		name="Formaldehyde",
-		chemical_name="Formaldehyde Solution",
-		cas_number="50-00-0",
-		concentration="37%",
-		quantity="500mL",
-		hazard_class="Toxic, Carcinogen",
-		storage_conditions="Fume Hood",
-		weight_min=570.0,
-		weight_max=700.0,
-		expires_in_days_min=130,
-		expires_in_days_max=640,
-	),
-	PlaceholderTemplate(
-		name="Potassium Permanganate",
-		chemical_name="Potassium Permanganate",
-		cas_number="7722-64-7",
-		concentration="ACS Grade",
-		quantity="100g",
-		hazard_class="Oxidizer",
-		storage_conditions="Cool, Dry Place",
-		weight_min=95.0,
-		weight_max=150.0,
-		expires_in_days_min=500,
-		expires_in_days_max=1200,
-	),
-	PlaceholderTemplate(
-		name="Copper(II) Sulfate",
-		chemical_name="Copper(II) Sulfate Pentahydrate",
-		cas_number="7758-99-8",
-		concentration="ACS Grade",
-		quantity="250g",
-		hazard_class="Toxic",
-		storage_conditions="Room Temperature",
-		weight_min=220.0,
-		weight_max=320.0,
-		expires_in_days_min=420,
-		expires_in_days_max=1080,
-	),
-	PlaceholderTemplate(
-		name="Silver Nitrate",
-		chemical_name="Silver Nitrate",
-		cas_number="7761-88-8",
-		concentration="ACS Grade",
-		quantity="25g",
-		hazard_class="Oxidizer, Toxic",
-		storage_conditions="Dark Bottle, Cool Place",
-		weight_min=65.0,
-		weight_max=95.0,
-		expires_in_days_min=180,
-		expires_in_days_max=720,
-	),
+PLACEHOLDER_TEMPLATES: tuple[PlaceholderTemplate, ...] = tuple()
+
+
+MAX_PLACEHOLDER_NAME_DUPLICATES = 5
+
+
+PLACEHOLDER_PROFILES: tuple[PlaceholderProfile, ...] = (
+	PlaceholderProfile("Hydrochloric Acid", "7647-01-0", "Corrosive", "Acid Cabinet", 540.0, 640.0, 240, 780, ("0.5M", "1M"), ("500mL", "1L")),
+	PlaceholderProfile("Sodium Hydroxide", "1310-73-2", "Corrosive", "Base Cabinet", 1080.0, 1300.0, 300, 900, ("0.5M", "1M"), ("500mL", "1L")),
+	PlaceholderProfile("Sulfuric Acid", "7664-93-9", "Corrosive", "Acid Cabinet", 420.0, 520.0, 180, 720, ("9M", "18M"), ("250mL", "500mL")),
+	PlaceholderProfile("Ethanol", "64-17-5", "Flammable", "Flammable Cabinet", 780.0, 940.0, 360, 1080, ("70%", "99.5%"), ("500mL", "1L")),
+	PlaceholderProfile("Acetone", "67-64-1", "Flammable", "Flammable Cabinet", 380.0, 470.0, 300, 950, ("95%", "99.9%"), ("500mL", "1L")),
+	PlaceholderProfile("Methanol", "67-56-1", "Toxic, Flammable", "Flammable Cabinet", 900.0, 3500.0, 180, 700, ("95%", "99.8%"), ("1L", "4L")),
+	PlaceholderProfile("Hydrogen Peroxide", "7722-84-1", "Oxidizer", "Refrigerator", 520.0, 640.0, 120, 540, ("3%", "30%"), ("500mL", "1L")),
+	PlaceholderProfile("Ammonium Hydroxide", "1336-21-6", "Corrosive", "Fume Hood", 850.0, 980.0, 220, 760, ("10%", "28%"), ("500mL", "1L")),
+	PlaceholderProfile("Nitric Acid", "7697-37-2", "Corrosive, Oxidizer", "Acid Cabinet", 410.0, 520.0, 120, 660, ("35%", "70%"), ("250mL", "500mL")),
+	PlaceholderProfile("Formaldehyde", "50-00-0", "Toxic", "Fume Hood", 540.0, 700.0, 130, 640, ("10%", "37%"), ("250mL", "500mL")),
+	PlaceholderProfile("Isopropanol", "67-63-0", "Flammable", "Flammable Cabinet", 760.0, 980.0, 320, 980, ("70%", "99%"), ("500mL", "1L")),
+	PlaceholderProfile("Acetic Acid", "64-19-7", "Corrosive, Flammable", "Acid Cabinet", 520.0, 620.0, 260, 900, ("10%", "99.7%"), ("500mL", "1L")),
+	PlaceholderProfile("Sodium Chloride", "7647-14-5", "Non-hazardous", "Room Temperature", 450.0, 650.0, 500, 1400, ("ACS", "USP"), ("500g", "1kg")),
+	PlaceholderProfile("Potassium Permanganate", "7722-64-7", "Oxidizer", "Cool, Dry Place", 90.0, 160.0, 500, 1200, ("ACS", "Lab Grade"), ("100g", "250g")),
+	PlaceholderProfile("Copper(II) Sulfate", "7758-99-8", "Toxic", "Room Temperature", 220.0, 320.0, 420, 1080, ("ACS", "Lab Grade"), ("250g", "500g")),
+	PlaceholderProfile("Silver Nitrate", "7761-88-8", "Oxidizer, Toxic", "Dark Bottle", 60.0, 100.0, 180, 720, ("ACS", "99%"), ("25g", "100g")),
+	PlaceholderProfile("Calcium Chloride", "10043-52-4", "Irritant", "Dry Place", 500.0, 650.0, 500, 1400, ("Anhydrous", "Dihydrate"), ("500g", "1kg")),
+	PlaceholderProfile("Magnesium Sulfate", "7487-88-9", "Irritant", "Dry Place", 350.0, 520.0, 480, 1320, ("ACS", "USP"), ("500g", "1kg")),
+	PlaceholderProfile("Potassium Chloride", "7447-40-7", "Non-hazardous", "Room Temperature", 480.0, 700.0, 520, 1380, ("ACS", "USP"), ("500g", "1kg")),
+	PlaceholderProfile("Sodium Phosphate", "7558-79-4", "Irritant", "Room Temperature", 420.0, 650.0, 520, 1360, ("Monobasic", "Dibasic"), ("500g", "1kg")),
+	PlaceholderProfile("Tris Buffer", "77-86-1", "Irritant", "Room Temperature", 220.0, 420.0, 480, 1240, ("0.1M", "1M"), ("500g", "1kg")),
+	PlaceholderProfile("EDTA Disodium Salt", "6381-92-6", "Irritant", "Room Temperature", 320.0, 500.0, 500, 1320, ("ACS", "Molecular Biology"), ("500g", "1kg")),
+	PlaceholderProfile("Citric Acid", "77-92-9", "Irritant", "Dry Place", 400.0, 620.0, 520, 1400, ("Anhydrous", "Monohydrate"), ("500g", "1kg")),
+	PlaceholderProfile("Sodium Bicarbonate", "144-55-8", "Non-hazardous", "Dry Place", 420.0, 650.0, 520, 1400, ("ACS", "USP"), ("500g", "1kg")),
+	PlaceholderProfile("Ammonium Chloride", "12125-02-9", "Irritant", "Room Temperature", 420.0, 640.0, 500, 1320, ("ACS", "USP"), ("500g", "1kg")),
+	PlaceholderProfile("Potassium Iodide", "7681-11-0", "Irritant", "Dark Bottle", 220.0, 420.0, 420, 1200, ("ACS", "99%"), ("250g", "500g")),
+	PlaceholderProfile("Lithium Chloride", "7447-41-8", "Irritant", "Dry Place", 180.0, 320.0, 420, 1200, ("ACS", "99%"), ("100g", "250g")),
+	PlaceholderProfile("Urea", "57-13-6", "Low Hazard", "Room Temperature", 420.0, 700.0, 520, 1400, ("ACS", "Molecular Biology"), ("500g", "1kg")),
+	PlaceholderProfile("Glycine", "56-40-6", "Low Hazard", "Room Temperature", 220.0, 480.0, 520, 1400, ("ACS", "Cell Culture"), ("500g", "1kg")),
+	PlaceholderProfile("Trisodium Citrate", "6132-04-3", "Low Hazard", "Room Temperature", 320.0, 580.0, 500, 1320, ("Dihydrate", "Tribasic"), ("500g", "1kg")),
+	PlaceholderProfile("Sodium Acetate", "127-09-3", "Low Hazard", "Room Temperature", 320.0, 580.0, 500, 1320, ("Anhydrous", "Trihydrate"), ("500g", "1kg")),
+	PlaceholderProfile("Chloroform", "67-66-3", "Toxic", "Flammable Cabinet", 1350.0, 1650.0, 200, 640, ("Stabilized", "HPLC"), ("500mL", "1L")),
+	PlaceholderProfile("Hexane", "110-54-3", "Flammable", "Flammable Cabinet", 560.0, 760.0, 260, 900, ("95%", "99%"), ("500mL", "1L")),
+	PlaceholderProfile("Toluene", "108-88-3", "Flammable", "Flammable Cabinet", 700.0, 960.0, 260, 900, ("Reagent", "HPLC"), ("500mL", "1L")),
+	PlaceholderProfile("Dimethyl Sulfoxide", "67-68-5", "Irritant", "Room Temperature", 520.0, 720.0, 320, 980, ("99%", "Molecular Biology"), ("500mL", "1L")),
+	PlaceholderProfile("Acetonitrile", "75-05-8", "Flammable", "Flammable Cabinet", 620.0, 820.0, 260, 900, ("HPLC", "LC-MS"), ("500mL", "1L")),
+	PlaceholderProfile("Sodium Hypochlorite", "7681-52-9", "Corrosive, Oxidizer", "Cool, Dark Place", 920.0, 1280.0, 60, 240, ("5%", "12%"), ("1L", "4L")),
+	PlaceholderProfile("Boric Acid", "10043-35-3", "Irritant", "Room Temperature", 420.0, 700.0, 500, 1380, ("ACS", "USP"), ("500g", "1kg")),
+	PlaceholderProfile("Phosphoric Acid", "7664-38-2", "Corrosive", "Acid Cabinet", 700.0, 1040.0, 240, 860, ("10%", "85%"), ("500mL", "1L")),
+	PlaceholderProfile("Sodium Carbonate", "497-19-8", "Irritant", "Dry Place", 420.0, 700.0, 520, 1400, ("Anhydrous", "Monohydrate"), ("500g", "1kg")),
 )
+
+
+def build_placeholder_templates() -> tuple[PlaceholderTemplate, ...]:
+	templates: list[PlaceholderTemplate] = []
+	for profile in PLACEHOLDER_PROFILES:
+		option_count = max(len(profile.concentration_options), len(profile.quantity_options))
+		for option_index in range(option_count):
+			concentration = profile.concentration_options[option_index % len(profile.concentration_options)]
+			quantity = profile.quantity_options[option_index % len(profile.quantity_options)]
+			templates.append(
+				PlaceholderTemplate(
+					name=f"{profile.name} {concentration}",
+					chemical_name=profile.name,
+					cas_number=profile.cas_number,
+					concentration=concentration,
+					quantity=quantity,
+					hazard_class=profile.hazard_class,
+					storage_conditions=profile.storage_conditions,
+					weight_min=profile.weight_min,
+					weight_max=profile.weight_max,
+					expires_in_days_min=profile.expires_in_days_min,
+					expires_in_days_max=profile.expires_in_days_max,
+					fill_ratio_min=0.32,
+					fill_ratio_max=0.98,
+				)
+			)
+	return tuple(templates)
+
+
+PLACEHOLDER_TEMPLATES = build_placeholder_templates()
 
 
 def resolve_default_paths() -> tuple[Path, Path]:
@@ -343,9 +266,59 @@ def generate_placeholder_upca(counter: int, used: set[str]) -> str:
 		index += 1
 
 
+def make_name_key(value: str) -> str:
+	return value.strip().casefold()
+
+
+def choose_placeholder_template(
+	seed: str,
+	name_counts: Dict[str, int],
+	reserved_name_keys: set[str],
+) -> PlaceholderTemplate:
+	candidate_indices = list(range(len(PLACEHOLDER_TEMPLATES)))
+	random.Random(f"{seed}:template").shuffle(candidate_indices)
+
+	for template_index in candidate_indices:
+		template = PLACEHOLDER_TEMPLATES[template_index]
+		name_key = make_name_key(template.name)
+		if name_key in reserved_name_keys:
+			continue
+
+		count = name_counts.get(template.name, 0)
+		if count < MAX_PLACEHOLDER_NAME_DUPLICATES:
+			return template
+
+	for template_index in candidate_indices:
+		template = PLACEHOLDER_TEMPLATES[template_index]
+		count = name_counts.get(template.name, 0)
+		if count < MAX_PLACEHOLDER_NAME_DUPLICATES:
+			return template
+
+	non_reserved_templates = [
+		template for template in PLACEHOLDER_TEMPLATES if make_name_key(template.name) not in reserved_name_keys
+	]
+	if len(non_reserved_templates) > 0:
+		return min(
+			non_reserved_templates,
+			key=lambda template: (name_counts.get(template.name, 0), template.name),
+		)
+
+	return min(
+		PLACEHOLDER_TEMPLATES,
+		key=lambda template: (name_counts.get(template.name, 0), template.name),
+	)
+
+
 def build_placeholder_data(seed: str, template: PlaceholderTemplate) -> Dict[str, Any]:
 	rng = random.Random(seed)
-	weight = round(rng.uniform(template.weight_min, template.weight_max), 1)
+	initial_weight = round(rng.uniform(template.weight_min, template.weight_max), 1)
+	fill_ratio = rng.uniform(template.fill_ratio_min, template.fill_ratio_max)
+	weight = round(initial_weight * fill_ratio, 1)
+	if weight <= 0:
+		weight = round(initial_weight * template.fill_ratio_min, 1)
+	if weight > initial_weight:
+		weight = initial_weight
+
 	expires_days = rng.randint(template.expires_in_days_min, template.expires_in_days_max)
 	stored_days_ago = rng.randint(1, 120)
 
@@ -357,14 +330,19 @@ def build_placeholder_data(seed: str, template: PlaceholderTemplate) -> Dict[str
 		"name": template.name,
 		"weight": weight,
 		"chemical_name": template.chemical_name,
+		"chemicalName": template.chemical_name,
 		"cas_number": template.cas_number,
+		"casNumber": template.cas_number,
 		"concentration": template.concentration,
 		"quantity": template.quantity,
 		"hazard_class": template.hazard_class,
+		"hazardClass": template.hazard_class,
 		"storage_conditions": template.storage_conditions,
+		"storageConditions": template.storage_conditions,
 		"expires_at": expires_at,
 		"stored_at": stored_at,
-		"initial_weight": weight,
+		"initial_weight": initial_weight,
+		"fill_ratio": round(weight / initial_weight, 4),
 	}
 
 
@@ -478,6 +456,25 @@ def build_seed_records(grid: StorageGrid, demo_entries: Dict[str, Dict[str, Any]
 
 		mapped_by_location[key] = (upca, entry)
 
+	demo_name_to_upca: Dict[str, str] = {}
+	for mapped_upca, mapped_entry in mapped_by_location.values():
+		mapped_data = mapped_entry.get("data", {})
+		if isinstance(mapped_data, dict) is False:
+			mapped_data = {}
+
+		mapped_name = resolve_name(mapped_data, mapped_upca)
+		name_key = make_name_key(mapped_name)
+		existing_upca = demo_name_to_upca.get(name_key)
+		if existing_upca is not None and existing_upca != mapped_upca:
+			raise ValueError(
+				f"demo items must have unique names: {mapped_upca!r} and {existing_upca!r} both use {mapped_name!r}"
+			)
+
+		demo_name_to_upca[name_key] = mapped_upca
+
+	reserved_demo_name_keys = set(demo_name_to_upca.keys())
+	name_counts: Dict[str, int] = {}
+
 	used_upcas: set[str] = set(demo_entries.keys())
 	placeholder_counter = 0
 	placeholder_count = 0
@@ -493,8 +490,8 @@ def build_seed_records(grid: StorageGrid, demo_entries: Dict[str, Dict[str, Any]
 
 		mapped_entry = mapped_by_location.get(key)
 		if mapped_entry is None:
-			template = PLACEHOLDER_TEMPLATES[placeholder_counter % len(PLACEHOLDER_TEMPLATES)]
 			placeholder_seed = f"{location.side.value}:{location.shelf_idx}:{location.cell_idx}"
+			template = choose_placeholder_template(placeholder_seed, name_counts, reserved_demo_name_keys)
 			data = build_placeholder_data(placeholder_seed, template)
 			upca = generate_placeholder_upca(placeholder_counter, used_upcas)
 			placeholder_counter += 1
@@ -515,6 +512,7 @@ def build_seed_records(grid: StorageGrid, demo_entries: Dict[str, Dict[str, Any]
 
 		dimensions = resolve_dimensions(data, cell_dimensions)
 		name = resolve_name(data, upca)
+		name_counts[name] = name_counts.get(name, 0) + 1
 		weight = coerce_positive_float(data.get("weight"))
 		if weight is None:
 			weight = coerce_positive_float(data.get("initial_weight"))
