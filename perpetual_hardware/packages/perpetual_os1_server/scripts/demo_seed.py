@@ -506,7 +506,8 @@ def build_seed_records(grid: StorageGrid, demo_entries: Dict[str, Dict[str, Any]
 			template = choose_placeholder_template(placeholder_seed, name_counts, reserved_demo_name_keys)
 			data = build_placeholder_data(placeholder_seed, template)
 			data["is_demo_physical"] = False
-			data["demo_rank"] = None
+			if "demo_rank" in data:
+				del data["demo_rank"]
 			upca = generate_placeholder_upca(placeholder_counter, used_upcas)
 			placeholder_counter += 1
 			placeholder_count += 1
@@ -558,6 +559,8 @@ def build_seed_records(grid: StorageGrid, demo_entries: Dict[str, Dict[str, Any]
 		metadata: Dict[str, Any] = {}
 		for meta_key, meta_value in data.items():
 			if meta_key in {"weight", "dimensions", "storedAt", "expiresAt", "initialWeight"}:
+				continue
+			if meta_value is None:
 				continue
 			metadata[meta_key] = meta_value
 
