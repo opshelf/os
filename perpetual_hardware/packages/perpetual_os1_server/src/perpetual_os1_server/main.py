@@ -114,9 +114,11 @@ def _get_tool_camera_url(settings: Settings) -> str | None:
 	if settings.tool_camera.enabled is True and settings.tool_camera.rtsp_url != "":
 		return settings.tool_camera.rtsp_url
 
+	from perpetual_os1.common import CONFIG_PATH
+
 	config_paths = [
-		Path(__file__).parent.parent.parent / "perpetual_os1" / "src" / "perpetual_os1" / "config.json",
-		Path("/app/perpetual_hardware/packages/perpetual_os1/src/perpetual_os1/config.json"),
+		CONFIG_PATH,
+		Path("/app/perpetual_hardware/data/config.json"),
 	]
 
 	for config_path in config_paths:

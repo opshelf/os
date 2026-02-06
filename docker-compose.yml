@@ -17,7 +17,6 @@ services:
     volumes:
       - /etc/cups:/etc/cups:ro
       - ./perpetual_hardware/data:/app/perpetual_hardware/data
-      - ./perpetual_hardware/packages/perpetual_os1_server/data:/app/perpetual_hardware/packages/perpetual_os1_server/data
     depends_on:
       - nats
     environment:
