@@ -347,17 +347,40 @@ class CurtainGuardTests(unittest.TestCase):
         self.assertEqual(self.robot.pause_calls, 0)
 
     def test_guard_resumes_when_curtain_clears(self):
-        # Start guarded
         self.worker._curtain_blocked = True
         self.robot.set_door_state(True)
         asyncio.run(self.worker._evaluate_curtain_guard())
 
-        # Clear curtain
         self.worker._curtain_blocked = False
         asyncio.run(self.worker._evaluate_curtain_guard())
 
         self.assertFalse(self.worker._curtain_guard_active)
         self.assertEqual(self.robot.resume_calls, 1)
+
+    def test_demo_cycling_skips_ack(self):
+        self.worker._demo_cycling = True
+        self.worker._curtain_blocked = True
+        self.robot.set_door_state(True)
+        asyncio.run(self.worker._evaluate_curtain_guard())
+
+        self.assertTrue(self.worker._curtain_guard_active)
+        self.assertEqual(self.robot.pause_calls, 1)
+        self.assertFalse(self.worker._awaiting_curtain_ack)
+
+        self.worker._curtain_blocked = False
+        asyncio.run(self.worker._evaluate_curtain_guard())
+
+        self.assertFalse(self.worker._curtain_guard_active)
+        self.assertEqual(self.robot.resume_calls, 1)
+        self.assertFalse(self.worker._awaiting_curtain_ack)
+
+    def test_demo_cycling_off_requires_ack(self):
+        self.worker._demo_cycling = False
+        self.worker._curtain_blocked = True
+        self.robot.set_door_state(True)
+        asyncio.run(self.worker._evaluate_curtain_guard())
+
+        self.assertTrue(self.worker._awaiting_curtain_ack)
 
 
 class RobotCurtainPauseTests(unittest.TestCase):

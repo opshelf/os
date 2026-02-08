@@ -234,6 +234,7 @@ class RobotWorker:
         self._door_open: Optional[bool] = None
         self._curtain_guard_active: Optional[bool] = None
         self._awaiting_curtain_ack: bool = False
+        self._demo_cycling: bool = False
         self._guard_lock = asyncio.Lock()
         self._logger = logging.getLogger(__name__).getChild("worker.guard")
         self._is_crashed: bool = False
@@ -997,8 +998,8 @@ class RobotWorker:
             if guard_changed:
                 if guard_active:
                     self._robot.pause_for_curtain()
-                    self._awaiting_curtain_ack = True
-                elif self._awaiting_curtain_ack:
+                    self._awaiting_curtain_ack = self._demo_cycling is False
+                elif self._awaiting_curtain_ack or self._demo_cycling:
                     self._robot.resume_after_curtain()
                     self._awaiting_curtain_ack = False
                 self._logger.info(

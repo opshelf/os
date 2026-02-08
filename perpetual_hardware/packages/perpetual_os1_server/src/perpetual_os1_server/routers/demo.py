@@ -89,6 +89,7 @@ async def _run_demo_cycle(worker, cells: list[tuple[StorageModuleCellLocation, A
 		worker.set_needs_home(f"Demo cycle crashed: {exc}")
 		await worker.get_status_snapshot(force_refresh=True)
 	finally:
+		worker._demo_cycling = False
 		_is_running = False
 		_current_cell_index = None
 		_total_cells = None
@@ -133,6 +134,7 @@ async def start_demo_cycle() -> SuccessResponse:
 	_is_running = True
 	_current_cell_index = 0
 	_total_cells = len(cells)
+	worker._demo_cycling = True
 	_demo_task = asyncio.create_task(_run_demo_cycle(worker, cells))
 
 	return SuccessResponse()
