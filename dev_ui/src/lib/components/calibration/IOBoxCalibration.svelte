@@ -59,8 +59,7 @@
 
 	const needsToolHome = $derived(needsHome && needsHomeAxes.some((axis) => TOOL_AXES.has(axis)));
 	const needsOtherHome = $derived(
-		needsHome &&
-			(needsHomeAxes.length === 0 || needsHomeAxes.some((axis) => !TOOL_AXES.has(axis)))
+		needsHome && (needsHomeAxes.length === 0 || needsHomeAxes.some((axis) => !TOOL_AXES.has(axis)))
 	);
 	const homeMessage = $derived(
 		needsHome ? `home required${needsHomeReason !== '' ? `: ${needsHomeReason}` : ''}` : ''
@@ -80,7 +79,11 @@
 		return needsHomeReason === '' && errorLower.includes('home required');
 	});
 	const homingDisabled = $derived(
-		isHoming === true || isMoving === true || isTesting === true || isSaving === true || !needsToolHome
+		isHoming === true ||
+			isMoving === true ||
+			isTesting === true ||
+			isSaving === true ||
+			!needsToolHome
 	);
 
 	onMount(function () {
@@ -230,7 +233,8 @@
 			message = 'io box test sequence with gripper completed';
 		} catch (err) {
 			handleNeedsHomeError(err);
-			error = err instanceof Error ? err.message : 'failed to run io box test sequence with gripper';
+			error =
+				err instanceof Error ? err.message : 'failed to run io box test sequence with gripper';
 		} finally {
 			isTesting = false;
 		}
@@ -277,10 +281,7 @@
 			handleNeedsHomeError(err);
 			if (resetComplete) {
 				message = 'io box position reset from config';
-				error =
-					err instanceof Error
-						? err.message
-						: 'failed to home tool motors after reset';
+				error = err instanceof Error ? err.message : 'failed to home tool motors after reset';
 			} else {
 				error = err instanceof Error ? err.message : 'failed to reset io box position';
 			}
@@ -466,7 +467,10 @@
 						class="move-button"
 						type="button"
 						onclick={didClickMove}
-						disabled={isMoving === true || isTesting === true || needsHome === true || isHoming === true}
+						disabled={isMoving === true ||
+							isTesting === true ||
+							needsHome === true ||
+							isHoming === true}
 					>
 						move
 					</button>
@@ -579,14 +583,20 @@
 					<button
 						type="button"
 						onclick={didClickExtend}
-						disabled={isMoving === true || needsHome === true || isHoming === true || isPositioned === false}
+						disabled={isMoving === true ||
+							needsHome === true ||
+							isHoming === true ||
+							isPositioned === false}
 					>
 						extend
 					</button>
 					<button
 						type="button"
 						onclick={didClickRetract}
-						disabled={isMoving === true || needsHome === true || isHoming === true || isPositioned === false}
+						disabled={isMoving === true ||
+							needsHome === true ||
+							isHoming === true ||
+							isPositioned === false}
 					>
 						retract
 					</button>
@@ -697,32 +707,48 @@
 	{/if}
 
 	<div class="action-buttons">
-	<button
-		type="button"
-		onclick={didClickTest}
-		disabled={isMoving === true || isTesting === true || isSaving === true || needsHome === true || isHoming === true}
-	>
+		<button
+			type="button"
+			onclick={didClickTest}
+			disabled={isMoving === true ||
+				isTesting === true ||
+				isSaving === true ||
+				needsHome === true ||
+				isHoming === true}
+		>
 			test
 		</button>
-	<button
-		type="button"
-		onclick={didClickTestWithGripper}
-		disabled={isMoving === true || isTesting === true || isSaving === true || needsHome === true || isHoming === true}
-	>
+		<button
+			type="button"
+			onclick={didClickTestWithGripper}
+			disabled={isMoving === true ||
+				isTesting === true ||
+				isSaving === true ||
+				needsHome === true ||
+				isHoming === true}
+		>
 			test with gripper
 		</button>
-	<button
-		type="button"
-		onclick={didClickReset}
-		disabled={isMoving === true || isTesting === true || isSaving === true || needsHome === true || isHoming === true}
-	>
+		<button
+			type="button"
+			onclick={didClickReset}
+			disabled={isMoving === true ||
+				isTesting === true ||
+				isSaving === true ||
+				needsHome === true ||
+				isHoming === true}
+		>
 			reset
 		</button>
-	<button
-		type="button"
-		onclick={didClickSave}
-		disabled={isMoving === true || isTesting === true || isSaving === true || needsHome === true || isHoming === true}
-	>
+		<button
+			type="button"
+			onclick={didClickSave}
+			disabled={isMoving === true ||
+				isTesting === true ||
+				isSaving === true ||
+				needsHome === true ||
+				isHoming === true}
+		>
 			save
 		</button>
 	</div>

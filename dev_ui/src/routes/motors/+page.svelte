@@ -256,14 +256,20 @@
 		<button
 			type="button"
 			on:click={didClickTestAll}
-			disabled={isTesting === true || activeMotor !== null || movingMotor !== null || isHomingAll === true}
+			disabled={isTesting === true ||
+				activeMotor !== null ||
+				movingMotor !== null ||
+				isHomingAll === true}
 		>
 			{isTesting === true ? 'testing...' : 'test all motors'}
 		</button>
 		<button
 			type="button"
 			on:click={didClickHomeAll}
-			disabled={isHomingAll === true || activeMotor !== null || movingMotor !== null || isTesting === true}
+			disabled={isHomingAll === true ||
+				activeMotor !== null ||
+				movingMotor !== null ||
+				isTesting === true}
 		>
 			{isHomingAll === true ? 'homing...' : 'home all motors'}
 		</button>
@@ -317,14 +323,20 @@
 						<button
 							type="button"
 							on:click={() => didClickHome(motor)}
-							disabled={activeMotor !== null || doorAction !== null || movingMotor !== null || isTesting === true}
+							disabled={activeMotor !== null ||
+								doorAction !== null ||
+								movingMotor !== null ||
+								isTesting === true}
 						>
 							home
 						</button>
 						<button
 							type="button"
 							on:click={() => didClickCrash(motor)}
-							disabled={activeMotor !== null || doorAction !== null || movingMotor !== null || isTesting === true}
+							disabled={activeMotor !== null ||
+								doorAction !== null ||
+								movingMotor !== null ||
+								isTesting === true}
 						>
 							crash
 						</button>
@@ -365,28 +377,40 @@
 					<button
 						type="button"
 						on:click={() => didClickHome('door')}
-						disabled={activeMotor !== null || doorAction !== null || movingMotor !== null || isTesting === true}
+						disabled={activeMotor !== null ||
+							doorAction !== null ||
+							movingMotor !== null ||
+							isTesting === true}
 					>
 						home
 					</button>
 					<button
 						type="button"
 						on:click={() => didClickCrash('door')}
-						disabled={activeMotor !== null || doorAction !== null || movingMotor !== null || isTesting === true}
+						disabled={activeMotor !== null ||
+							doorAction !== null ||
+							movingMotor !== null ||
+							isTesting === true}
 					>
 						crash
 					</button>
 					<button
 						type="button"
 						on:click={() => didClickDoor('open')}
-						disabled={doorAction !== null || activeMotor !== null || movingMotor !== null || isTesting === true}
+						disabled={doorAction !== null ||
+							activeMotor !== null ||
+							movingMotor !== null ||
+							isTesting === true}
 					>
 						open
 					</button>
 					<button
 						type="button"
 						on:click={() => didClickDoor('close')}
-						disabled={doorAction !== null || activeMotor !== null || movingMotor !== null || isTesting === true}
+						disabled={doorAction !== null ||
+							activeMotor !== null ||
+							movingMotor !== null ||
+							isTesting === true}
 					>
 						close
 					</button>
@@ -441,14 +465,20 @@
 						<button
 							type="button"
 							on:click={() => didClickHome(motor)}
-							disabled={activeMotor !== null || gripperAction !== null || movingMotor !== null || isTesting === true}
+							disabled={activeMotor !== null ||
+								gripperAction !== null ||
+								movingMotor !== null ||
+								isTesting === true}
 						>
 							home
 						</button>
 						<button
 							type="button"
 							on:click={() => didClickCrash(motor)}
-							disabled={activeMotor !== null || gripperAction !== null || movingMotor !== null || isTesting === true}
+							disabled={activeMotor !== null ||
+								gripperAction !== null ||
+								movingMotor !== null ||
+								isTesting === true}
 						>
 							crash
 						</button>
@@ -473,14 +503,20 @@
 					<button
 						type="button"
 						on:click={() => didClickGripper('grip')}
-						disabled={gripperAction !== null || activeMotor !== null || movingMotor !== null || isTesting === true}
+						disabled={gripperAction !== null ||
+							activeMotor !== null ||
+							movingMotor !== null ||
+							isTesting === true}
 					>
 						grip
 					</button>
 					<button
 						type="button"
 						on:click={() => didClickGripper('release')}
-						disabled={gripperAction !== null || activeMotor !== null || movingMotor !== null || isTesting === true}
+						disabled={gripperAction !== null ||
+							activeMotor !== null ||
+							movingMotor !== null ||
+							isTesting === true}
 					>
 						release
 					</button>

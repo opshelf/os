@@ -288,11 +288,7 @@
 			cycle test
 		</button>
 
-		<button
-			type="button"
-			disabled={selectedCells.size !== 1}
-			onclick={didClickCalibrate}
-		>
+		<button type="button" disabled={selectedCells.size !== 1} onclick={didClickCalibrate}>
 			calibrate
 		</button>
 	</div>

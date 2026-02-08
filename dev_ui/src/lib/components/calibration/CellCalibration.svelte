@@ -77,8 +77,7 @@
 
 	const needsToolHome = $derived(needsHome && needsHomeAxes.some((axis) => TOOL_AXES.has(axis)));
 	const needsOtherHome = $derived(
-		needsHome &&
-			(needsHomeAxes.length === 0 || needsHomeAxes.some((axis) => !TOOL_AXES.has(axis)))
+		needsHome && (needsHomeAxes.length === 0 || needsHomeAxes.some((axis) => !TOOL_AXES.has(axis)))
 	);
 	const homeMessage = $derived(
 		needsHome ? `home required${needsHomeReason !== '' ? `: ${needsHomeReason}` : ''}` : ''
@@ -98,7 +97,11 @@
 		return needsHomeReason === '' && errorLower.includes('home required');
 	});
 	const homingDisabled = $derived(
-		isHoming === true || isMoving === true || isTesting === true || isSaving === true || !needsToolHome
+		isHoming === true ||
+			isMoving === true ||
+			isTesting === true ||
+			isSaving === true ||
+			!needsToolHome
 	);
 
 	onMount(function () {
@@ -260,8 +263,7 @@
 		try {
 			const ext = await getShelfStageExtension();
 
-			stageExtensionValue =
-				selectedSide === 'left_module' ? ext.front : ext.back;
+			stageExtensionValue = selectedSide === 'left_module' ? ext.front : ext.back;
 		} catch {
 			stageExtensionValue = 0;
 		}

@@ -234,7 +234,8 @@
 				<td>home required</td>
 				<td>
 					{#if status.needs_home}
-						yes{#if status.needs_home_reason} ({status.needs_home_reason}){/if}
+						yes{#if status.needs_home_reason}
+							({status.needs_home_reason}){/if}
 					{:else}
 						no
 					{/if}
