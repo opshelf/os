@@ -1,4 +1,4 @@
-import { getApiBase } from "./api";
+import { getApiBase } from './api';
 
 interface TokenResponse {
 	access_token: string;
@@ -24,13 +24,13 @@ export async function login(email: string, pin: string): Promise<void> {
 	const url = `${apiBase}/auth/login/json`;
 
 	const response = await fetch(url, {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ email, pin }),
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ email, pin })
 	});
 
 	if (response.ok === false) {
-		throw new Error("login failed");
+		throw new Error('login failed');
 	}
 
 	const data = (await response.json()) as TokenResponse;
@@ -42,23 +42,23 @@ export async function login(email: string, pin: string): Promise<void> {
 
 export async function refreshAccessToken(): Promise<void> {
 	if (refreshToken === null) {
-		throw new Error("no refresh token available");
+		throw new Error('no refresh token available');
 	}
 
 	const apiBase = getApiBase();
 	const url = `${apiBase}/auth/refresh`;
 
 	const response = await fetch(url, {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ refresh_token: refreshToken }),
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ refresh_token: refreshToken })
 	});
 
 	if (response.ok === false) {
 		accessToken = null;
 		refreshToken = null;
 		tokenExpiresAt = null;
-		throw new Error("token refresh failed");
+		throw new Error('token refresh failed');
 	}
 
 	const data = (await response.json()) as TokenResponse;
@@ -69,7 +69,7 @@ export async function refreshAccessToken(): Promise<void> {
 
 export async function ensureValidToken(): Promise<string> {
 	if (accessToken === null) {
-		throw new Error("not authenticated");
+		throw new Error('not authenticated');
 	}
 
 	if (tokenExpiresAt !== null && Date.now() > tokenExpiresAt - 60000) {
@@ -86,5 +86,5 @@ export function logout(): void {
 }
 
 export async function loginAsDeveloper(): Promise<void> {
-	await login("developer@opshelf.com", "1111");
+	await login('developer@opshelf.com', '1111');
 }

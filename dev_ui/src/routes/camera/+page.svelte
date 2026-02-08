@@ -22,7 +22,8 @@
 	let streamError = false;
 	let loading = true;
 
-	$: streamUrl = selectedCameraId !== '' ? buildAuthenticatedUrl(`/camera/${selectedCameraId}`) : '';
+	$: streamUrl =
+		selectedCameraId !== '' ? buildAuthenticatedUrl(`/camera/${selectedCameraId}`) : '';
 	$: selectedCamera = cameras.find((c) => c.id === selectedCameraId) ?? null;
 
 	onMount(() => {
@@ -66,59 +67,55 @@
 
 {#if loading}
 	<p>loading cameras...</p>
+{:else if statusError !== ''}
+	<ErrorMessage message={statusError} />
 {:else}
-	{#if statusError !== ''}
-		<ErrorMessage message={statusError} />
-	{:else}
-		<table>
-			<thead>
+	<table>
+		<thead>
+			<tr>
+				<th colspan="2">camera selection</th>
+			</tr>
+		</thead>
+		<tbody>
+			{#if cameras.length === 0}
 				<tr>
-					<th colspan="2">camera selection</th>
+					<td colspan="2">no cameras available</td>
 				</tr>
-			</thead>
-			<tbody>
-				{#if cameras.length === 0}
+			{:else}
+				<tr>
+					<td>camera</td>
+					<td>
+						<select value={selectedCameraId} on:change={didSelectCamera}>
+							{#each cameras as camera}
+								<option value={camera.id}>{camera.id} ({camera.type})</option>
+							{/each}
+						</select>
+					</td>
+				</tr>
+				{#if selectedCamera !== null}
 					<tr>
-						<td colspan="2">no cameras available</td>
+						<td>type</td>
+						<td>{selectedCamera.type}</td>
 					</tr>
-				{:else}
 					<tr>
-						<td>camera</td>
-						<td>
-							<select value={selectedCameraId} on:change={didSelectCamera}>
-								{#each cameras as camera}
-									<option value={camera.id}>{camera.id} ({camera.type})</option>
-								{/each}
-							</select>
-						</td>
+						<td>consumers</td>
+						<td>{selectedCamera.consumers}</td>
 					</tr>
-					{#if selectedCamera !== null}
-						<tr>
-							<td>type</td>
-							<td>{selectedCamera.type}</td>
-						</tr>
-						<tr>
-							<td>consumers</td>
-							<td>{selectedCamera.consumers}</td>
-						</tr>
-					{/if}
 				{/if}
-			</tbody>
-		</table>
+			{/if}
+		</tbody>
+	</table>
 
-		<button type="button" on:click={loadCameras}>refresh</button>
+	<button type="button" on:click={loadCameras}>refresh</button>
 
-		{#if streamUrl !== '' && streamError === false}
-			<div class="stream-container">
-				<img src={streamUrl} alt="camera feed" on:error={didStreamError} on:load={didStreamLoad} />
-			</div>
-		{/if}
+	{#if streamUrl !== '' && streamError === false}
+		<div class="stream-container">
+			<img src={streamUrl} alt="camera feed" on:error={didStreamError} on:load={didStreamLoad} />
+		</div>
+	{/if}
 
-		{#if streamError === true}
-			<ErrorMessage
-				message="unable to display the camera stream. verify the camera is running."
-			/>
-		{/if}
+	{#if streamError === true}
+		<ErrorMessage message="unable to display the camera stream. verify the camera is running." />
 	{/if}
 {/if}
 

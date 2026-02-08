@@ -427,5 +427,4 @@
 		align-items: flex-start;
 		margin-bottom: 1em;
 	}
-
 </style>

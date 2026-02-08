@@ -1,8 +1,8 @@
-import { getAccessToken, loginAsDeveloper, refreshAccessToken } from "./auth";
+import { getAccessToken, loginAsDeveloper, refreshAccessToken } from './auth';
 
 export function getApiBase(): string {
 	const raw = import.meta.env.VITE_API_BASE_URL ?? `http://${location.hostname}:8000/api`;
-	return raw.endsWith("/") ? raw.slice(0, -1) : raw;
+	return raw.endsWith('/') ? raw.slice(0, -1) : raw;
 }
 
 export function getApiOrigin(): string {
@@ -12,7 +12,7 @@ export function getApiOrigin(): string {
 
 export function buildApiUrl(path: string): string {
 	const base = getApiBase();
-	const normalisedPath = path.startsWith("/") ? path : `/${path}`;
+	const normalisedPath = path.startsWith('/') ? path : `/${path}`;
 	return `${base}${normalisedPath}`;
 }
 
@@ -24,7 +24,7 @@ export function buildAuthenticatedUrl(path: string): string {
 		return url;
 	}
 
-	const separator = url.includes("?") ? "&" : "?";
+	const separator = url.includes('?') ? '&' : '?';
 	return `${url}${separator}token=${encodeURIComponent(token)}`;
 }
 
@@ -44,7 +44,7 @@ export class ApiError extends Error {
 
 	constructor(message: string, status: number, detail?: ApiErrorDetail) {
 		super(message);
-		this.name = "ApiError";
+		this.name = 'ApiError';
 		this.status = status;
 		this.detail = detail;
 	}
@@ -55,17 +55,17 @@ export async function apiFetch<T = unknown>(path: string, init?: RequestInit): P
 
 	const headers = new Headers(init?.headers);
 	if (token !== null) {
-		headers.set("Authorization", `Bearer ${token}`);
+		headers.set('Authorization', `Bearer ${token}`);
 	}
 
 	let response: Response;
 	try {
 		response = await fetch(buildApiUrl(path), {
 			...init,
-			headers,
+			headers
 		});
 	} catch (error) {
-		const message = error instanceof Error ? error.message : "network error";
+		const message = error instanceof Error ? error.message : 'network error';
 		throw new ApiError(`Network error: ${message}`, 0);
 	}
 
@@ -96,7 +96,7 @@ export async function apiFetch<T = unknown>(path: string, init?: RequestInit): P
 	try {
 		return JSON.parse(text) as T;
 	} catch (error) {
-		throw new Error("failed to parse response body as json");
+		throw new Error('failed to parse response body as json');
 	}
 }
 
@@ -107,7 +107,7 @@ function formatErrorMessage(message: string, detail?: ApiErrorDetail): string {
 	}
 	if (detail?.needs_home) {
 		const lower = output.toLowerCase();
-		if (!lower.includes("home")) {
+		if (!lower.includes('home')) {
 			output = `${output} (home required)`;
 		}
 	}
@@ -118,7 +118,7 @@ async function readErrorDetail(
 	response: Response
 ): Promise<{ message: string; detail?: ApiErrorDetail }> {
 	const fallback = `${response.status} ${response.statusText}`;
-	let text = "";
+	let text = '';
 
 	try {
 		text = await response.text();
@@ -132,16 +132,16 @@ async function readErrorDetail(
 
 	try {
 		const payload = JSON.parse(text);
-		if (payload && typeof payload === "object") {
-			if ("detail" in payload) {
+		if (payload && typeof payload === 'object') {
+			if ('detail' in payload) {
 				const detail = (payload as { detail?: unknown }).detail;
-				if (typeof detail === "string") {
+				if (typeof detail === 'string') {
 					return { message: detail, detail: { message: detail } };
 				}
-				if (detail && typeof detail === "object") {
+				if (detail && typeof detail === 'object') {
 					const detailObject = detail as ApiErrorDetail;
 					const message =
-						typeof detailObject.message === "string"
+						typeof detailObject.message === 'string'
 							? detailObject.message
 							: JSON.stringify(detailObject);
 					return { message, detail: detailObject };
@@ -210,12 +210,12 @@ export async function getStorageGrid(): Promise<StorageGrid> {
 }
 
 export async function getCalibrationStatus(): Promise<CalibrationStatus> {
-	return apiFetch<CalibrationStatus>("/calibration/status");
+	return apiFetch<CalibrationStatus>('/calibration/status');
 }
 
 export async function homeToolMotors(): Promise<CalibrationStatus> {
-	return apiFetch<CalibrationStatus>("/calibration/home_tool_motors", {
-		method: "POST",
+	return apiFetch<CalibrationStatus>('/calibration/home_tool_motors', {
+		method: 'POST'
 	});
 }
 
@@ -224,30 +224,26 @@ export async function moveToCell(
 	shelfIdx: number,
 	cellIdx: number
 ): Promise<Position> {
-	return apiFetch<Position>("/calibration/move", {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ side, shelf_idx: shelfIdx, cell_idx: cellIdx }),
+	return apiFetch<Position>('/calibration/move', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ side, shelf_idx: shelfIdx, cell_idx: cellIdx })
 	});
 }
 
-export async function jogAxis(axis: "x" | "y" | "z" | "stage", delta: number): Promise<Position> {
-	return apiFetch<Position>("/calibration/jog", {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ axis, delta }),
+export async function jogAxis(axis: 'x' | 'y' | 'z' | 'stage', delta: number): Promise<Position> {
+	return apiFetch<Position>('/calibration/jog', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ axis, delta })
 	});
 }
 
-export async function testGripper(
-	side: string,
-	shelfIdx: number,
-	cellIdx: number
-): Promise<void> {
-	await apiFetch("/calibration/test", {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ side, shelf_idx: shelfIdx, cell_idx: cellIdx }),
+export async function testGripper(side: string, shelfIdx: number, cellIdx: number): Promise<void> {
+	await apiFetch('/calibration/test', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ side, shelf_idx: shelfIdx, cell_idx: cellIdx })
 	});
 }
 
@@ -260,24 +256,23 @@ export async function saveCalibration(
 	zOffset: number,
 	status?: string
 ): Promise<void> {
-
 	const payload: Record<string, unknown> = {
 		side,
 		shelf_idx: shelfIdx,
 		cell_idx: cellIdx,
 		x,
 		y,
-		z_offset: zOffset,
+		z_offset: zOffset
 	};
 
 	if (status !== undefined) {
 		payload.status = status;
 	}
 
-	await apiFetch("/calibration/save", {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify(payload),
+	await apiFetch('/calibration/save', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(payload)
 	});
 }
 
@@ -321,15 +316,15 @@ export interface ScaleCalibrationResult {
 }
 
 export async function getScaleReading(): Promise<ScaleReading> {
-	return apiFetch<ScaleReading>("/robot/debug/scale");
+	return apiFetch<ScaleReading>('/robot/debug/scale');
 }
 
 export async function getScaleCalibrationStatus(): Promise<ScaleCalibrationStatus> {
-	return apiFetch<ScaleCalibrationStatus>("/robot/debug/scale/calibration/status");
+	return apiFetch<ScaleCalibrationStatus>('/robot/debug/scale/calibration/status');
 }
 
 export async function getScaleCalibrationParams(): Promise<ScaleCalibrationParams> {
-	return apiFetch<ScaleCalibrationParams>("/robot/debug/scale/calibration/params");
+	return apiFetch<ScaleCalibrationParams>('/robot/debug/scale/calibration/params');
 }
 
 export async function setScaleCalibrationParams(
@@ -338,33 +333,33 @@ export async function setScaleCalibrationParams(
 	precision: number,
 	division: number
 ): Promise<{ success: boolean }> {
-	return apiFetch<{ success: boolean }>("/robot/debug/scale/calibration/params", {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
+	return apiFetch<{ success: boolean }>('/robot/debug/scale/calibration/params', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({
 			full_scale: fullScale,
 			calibration_weight: calibrationWeight,
 			precision,
-			division,
-		}),
+			division
+		})
 	});
 }
 
 export async function calibrateScaleZero(): Promise<ScaleCalibrationResult> {
-	return apiFetch<ScaleCalibrationResult>("/robot/debug/scale/calibration/zero", {
-		method: "POST",
+	return apiFetch<ScaleCalibrationResult>('/robot/debug/scale/calibration/zero', {
+		method: 'POST'
 	});
 }
 
 export async function calibrateScaleWeight(): Promise<ScaleCalibrationResult> {
-	return apiFetch<ScaleCalibrationResult>("/robot/debug/scale/calibration/weight", {
-		method: "POST",
+	return apiFetch<ScaleCalibrationResult>('/robot/debug/scale/calibration/weight', {
+		method: 'POST'
 	});
 }
 
 export async function tareScale(): Promise<{ success: boolean }> {
-	return apiFetch<{ success: boolean }>("/robot/debug/scale/calibration/tare", {
-		method: "POST",
+	return apiFetch<{ success: boolean }>('/robot/debug/scale/calibration/tare', {
+		method: 'POST'
 	});
 }
 
@@ -374,14 +369,14 @@ export interface ScannerStatus {
 }
 
 export async function getScannerStatus(): Promise<ScannerStatus> {
-	return apiFetch<ScannerStatus>("/robot/debug/scanner/status");
+	return apiFetch<ScannerStatus>('/robot/debug/scanner/status');
 }
 
 export async function sendScannerScan(code: string): Promise<{ message: string }> {
-	return apiFetch<{ message: string }>("/robot/debug/scanner/scan", {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ code }),
+	return apiFetch<{ message: string }>('/robot/debug/scanner/scan', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ code })
 	});
 }
 
@@ -391,18 +386,18 @@ export interface MotorList {
 }
 
 export async function getMotors(): Promise<MotorList> {
-	return apiFetch<MotorList>("/robot/debug/motors");
+	return apiFetch<MotorList>('/robot/debug/motors');
 }
 
 export async function simulateMotorCrash(motorName: string): Promise<{ success: boolean }> {
 	return apiFetch<{ success: boolean }>(`/robot/debug/motors/${motorName}/crash`, {
-		method: "POST",
+		method: 'POST'
 	});
 }
 
 export async function homeMotor(motorName: string): Promise<{ success: boolean }> {
 	return apiFetch<{ success: boolean }>(`/robot/debug/motors/${motorName}/home`, {
-		method: "POST",
+		method: 'POST'
 	});
 }
 
@@ -418,32 +413,35 @@ export interface MotorProbeResponse {
 }
 
 export async function probeMotors(): Promise<MotorProbeResponse> {
-	return apiFetch<MotorProbeResponse>("/robot/debug/motors/probe", {
-		method: "POST",
+	return apiFetch<MotorProbeResponse>('/robot/debug/motors/probe', {
+		method: 'POST'
 	});
 }
 
-export async function moveMotor(motorName: string, positionMm: number): Promise<{ success: boolean }> {
+export async function moveMotor(
+	motorName: string,
+	positionMm: number
+): Promise<{ success: boolean }> {
 	return apiFetch<{ success: boolean }>(`/robot/debug/motors/${motorName}/move`, {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ position_mm: positionMm }),
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ position_mm: positionMm })
 	});
 }
 
-export type GripperState = "grip" | "release";
+export type GripperState = 'grip' | 'release';
 
 export async function controlGripper(state: GripperState): Promise<{ success: boolean }> {
 	return apiFetch<{ success: boolean }>(`/robot/gripper?state=${state}`, {
-		method: "POST",
+		method: 'POST'
 	});
 }
 
-export type DoorAction = "open" | "close" | "home";
+export type DoorAction = 'open' | 'close' | 'home';
 
 export async function controlDoor(action: DoorAction): Promise<{ success: boolean }> {
 	return apiFetch<{ success: boolean }>(`/robot/debug/door?action=${action}`, {
-		method: "POST",
+		method: 'POST'
 	});
 }
 
@@ -458,47 +456,49 @@ export interface IOBoxPosition {
 }
 
 export async function getIOBoxCalibration(): Promise<IOBoxPosition> {
-	return apiFetch<IOBoxPosition>("/calibration/iobox");
+	return apiFetch<IOBoxPosition>('/calibration/iobox');
 }
 
-export async function moveToIOBoxPosition(position: "low" | "high"): Promise<IOBoxPosition> {
+export async function moveToIOBoxPosition(position: 'low' | 'high'): Promise<IOBoxPosition> {
 	return apiFetch<IOBoxPosition>(`/calibration/iobox/move?position=${position}`, {
-		method: "POST",
+		method: 'POST'
 	});
 }
 
 export async function jogIOBoxAxis(
-	position: "low" | "high",
-	axis: "x" | "y" | "z" | "stage",
+	position: 'low' | 'high',
+	axis: 'x' | 'y' | 'z' | 'stage',
 	delta: number
 ): Promise<IOBoxPosition> {
-	return apiFetch<IOBoxPosition>("/calibration/iobox/jog", {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ position, axis, delta }),
+	return apiFetch<IOBoxPosition>('/calibration/iobox/jog', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ position, axis, delta })
 	});
 }
 
-export async function testIOBoxSequence(withGripper: boolean = false): Promise<{ success: boolean }> {
+export async function testIOBoxSequence(
+	withGripper: boolean = false
+): Promise<{ success: boolean }> {
 	const params = new URLSearchParams();
 
 	if (withGripper === true) {
-		params.set("with_gripper", "true");
+		params.set('with_gripper', 'true');
 	}
 
 	const query = params.toString();
-	const url = `/calibration/iobox/test${query !== "" ? `?${query}` : ""}`;
+	const url = `/calibration/iobox/test${query !== '' ? `?${query}` : ''}`;
 
 	return apiFetch<{ success: boolean }>(url, {
-		method: "POST",
+		method: 'POST'
 	});
 }
 
 export async function saveIOBoxCalibration(params: IOBoxPosition): Promise<{ success: boolean }> {
-	return apiFetch<{ success: boolean }>("/calibration/iobox/save", {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify(params),
+	return apiFetch<{ success: boolean }>('/calibration/iobox/save', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(params)
 	});
 }
 
@@ -508,20 +508,23 @@ export interface RotationAngles {
 }
 
 export async function getRotationAngles(): Promise<RotationAngles> {
-	return apiFetch<RotationAngles>("/calibration/rotation");
+	return apiFetch<RotationAngles>('/calibration/rotation');
 }
 
 export async function rotateToAngle(angle: number): Promise<{ success: boolean }> {
 	return apiFetch<{ success: boolean }>(`/calibration/rotation/rotate?angle=${angle}`, {
-		method: "POST",
+		method: 'POST'
 	});
 }
 
-export async function saveRotationAngles(front: number, back: number): Promise<{ success: boolean }> {
-	return apiFetch<{ success: boolean }>("/calibration/rotation/save", {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ front, back }),
+export async function saveRotationAngles(
+	front: number,
+	back: number
+): Promise<{ success: boolean }> {
+	return apiFetch<{ success: boolean }>('/calibration/rotation/save', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ front, back })
 	});
 }
 
@@ -531,43 +534,39 @@ export interface ShelfStageExtension {
 }
 
 export async function getShelfStageExtension(): Promise<ShelfStageExtension> {
-	return apiFetch<ShelfStageExtension>("/calibration/shelf");
+	return apiFetch<ShelfStageExtension>('/calibration/shelf');
 }
 
-export async function saveShelfStageExtension(front: number, back: number): Promise<{ success: boolean }> {
-	return apiFetch<{ success: boolean }>("/calibration/shelf/save", {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ front, back }),
+export async function saveShelfStageExtension(
+	front: number,
+	back: number
+): Promise<{ success: boolean }> {
+	return apiFetch<{ success: boolean }>('/calibration/shelf/save', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ front, back })
 	});
 }
 
 export async function moveStage(
 	position: number
 ): Promise<{ position: number; warnings?: string[] }> {
-	return apiFetch<{ position: number; warnings?: string[] }>("/calibration/stage/move", {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ position }),
+	return apiFetch<{ position: number; warnings?: string[] }>('/calibration/stage/move', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ position })
 	});
 }
-
 
 export async function runCycleTest(
 	side: string,
 	shelfIdx: number,
 	cellIdx: number
 ): Promise<{ success: boolean }> {
-	return apiFetch<{ success: boolean }>("/calibration/cycle_test", {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ side, shelf_idx: shelfIdx, cell_idx: cellIdx }),
-	});
-}
-
-export async function abortCycleTest(): Promise<{ success: boolean }> {
-	return apiFetch<{ success: boolean }>("/calibration/abort", {
-		method: "POST",
+	return apiFetch<{ success: boolean }>('/calibration/cycle_test', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ side, shelf_idx: shelfIdx, cell_idx: cellIdx })
 	});
 }
 
@@ -577,15 +576,15 @@ export type CellIdentifier = {
 	cell_idx: number;
 };
 
-export const CELL_STATUSES = ["available", "occupied", "maintenance", "disabled"] as const;
+export const CELL_STATUSES = ['available', 'occupied', 'maintenance', 'disabled'] as const;
 
 export async function updateCellsBatchStatus(
 	cells: CellIdentifier[],
 	status: string
 ): Promise<unknown[]> {
-	return apiFetch<unknown[]>("/storage/locations/batch-status", {
-		method: "PUT",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ cells, status }),
+	return apiFetch<unknown[]>('/storage/locations/batch-status', {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ cells, status })
 	});
 }
