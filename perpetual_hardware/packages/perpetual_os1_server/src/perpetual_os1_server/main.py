@@ -27,8 +27,8 @@ from perpetual_os1_server.database.base import Base, engine, get_database_url
 from perpetual_os1_server.database.session import AsyncSessionLocal
 from perpetual_os1_server.middleware.audit import AuditMiddleware
 from perpetual_os1_server.middleware.correlation import CorrelationIdMiddleware
-from perpetual_os1_server.routers import access_levels, audit, auth, calibration, camera, demo, printer, report, robot, roles, storage, telemetry, users
-from perpetual_os1_server.settings import get_settings
+from perpetual_os1_server.routers import access_levels, audit, auth, calibration, camera, demo, printer, report, robot, roles, storage, system, telemetry, users
+from perpetual_os1_server.settings import get_settings, get_operating_mode
 
 configure_logging()
 logger = get_logger(__name__)
@@ -234,6 +234,43 @@ async def _seed_auth_if_requested() -> None:
 			logger.info("skipping_seed_script", user_count=user_count, reason="users_exist")
 
 
+async def _seed_demo_if_needed() -> None:
+	from perpetual_os1.common import OperatingMode
+	from sqlalchemy import select, func
+	from perpetual_os1_server.database.models import Item
+
+	mode = get_operating_mode()
+	if mode != OperatingMode.demo:
+		return
+
+	async with AsyncSessionLocal() as db:
+		result = await db.execute(select(func.count()).select_from(Item))
+		count = result.scalar_one()
+
+		if count > 0:
+			logger.info("demo_seed_skipped", reason="items_exist", count=count)
+			return
+
+	script_path = Path(__file__).parent.parent.parent / "scripts" / "demo_seed.py"
+	if script_path.exists() is False:
+		logger.warning("demo_seed_script_not_found", script_path=str(script_path))
+		return
+
+	logger.info("running_demo_seed", script_path=str(script_path))
+	result = subprocess.run(
+		[sys.executable, str(script_path)],
+		env={**os.environ},
+		check=False,
+		capture_output=True,
+		text=True,
+	)
+
+	if result.returncode == 0:
+		logger.info("demo_seed_complete", stdout=result.stdout.strip())
+	else:
+		logger.error("demo_seed_failed", returncode=result.returncode, stderr=result.stderr.strip())
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 	logger.info("application_starting", app_title=app.title)
@@ -247,6 +284,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 	await _seed_auth_if_requested()
 	await _ensure_developer_user()
+	await _seed_demo_if_needed()
 
 	robot_started = False
 	storage_override_set = False
@@ -379,7 +417,7 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
 
 @app.get("/api/health")
 async def health() -> dict[str, str]:
-	return {"status": "ok"}
+	return {"status": "ok", "mode": get_operating_mode().value}
 
 
 @app.get("/api/system/info")
@@ -412,6 +450,7 @@ app.include_router(storage.router, prefix="/api/storage")
 app.include_router(printer.router, prefix="/api/print")
 app.include_router(calibration.router)
 app.include_router(demo.router)
+app.include_router(system.router, prefix="/api/system")
 app.include_router(report.router, prefix="/api")
 app.include_router(telemetry.router, prefix="/api")
 

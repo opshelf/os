@@ -34,6 +34,9 @@ data/demo.json
 # Log files
 *.log
 
+# Runtime mode
+perpetual_hardware/data/.mode
+
 # Database files
 data
 perpetual_hardware/packages/perpetual_os1_server/data/base.db

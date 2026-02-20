@@ -24,6 +24,7 @@ from perpetual_os1.common import (
 	ScaleAppSettings,
 	RobotAppSettings,
 	ConfigValidationError,
+	OperatingMode,
 )
 
 logger = logging.getLogger(__name__)
@@ -65,6 +66,25 @@ class Settings(BaseModel):
 _cached_config: Optional[RootConfig] = None
 _cached_settings: Optional[Settings] = None
 _cached_config_path: Optional[Path] = None
+_cached_operating_mode: Optional[OperatingMode] = None
+
+
+def get_operating_mode() -> OperatingMode:
+	global _cached_operating_mode
+
+	if _cached_operating_mode is not None:
+		return _cached_operating_mode
+
+	raw = os.getenv("OPERATING_MODE", "").strip().lower()
+
+	mode_map = {
+		"demo": OperatingMode.demo,
+		"development": OperatingMode.development,
+		"production": OperatingMode.production,
+	}
+
+	_cached_operating_mode = mode_map.get(raw, OperatingMode.development)
+	return _cached_operating_mode
 
 
 def _find_config_path() -> Optional[Path]:
@@ -161,6 +181,13 @@ def _apply_env_overrides(data: dict) -> dict:
 		data["auth"] = {}
 
 	env = os.getenv("ENV", "").lower()
+
+	if env == "":
+		mode = get_operating_mode()
+		if mode == OperatingMode.production:
+			env = "production"
+		else:
+			env = "dev"
 
 	if env in ["dev", "development"]:
 		data["auth"]["dev_mode"] = True
@@ -269,9 +296,10 @@ def get_settings() -> Settings:
 
 
 def clear_config_cache() -> None:
-	global _cached_config, _cached_settings
+	global _cached_config, _cached_settings, _cached_operating_mode
 	_cached_config = None
 	_cached_settings = None
+	_cached_operating_mode = None
 
 
 def get_config_path() -> Optional[Path]:

@@ -20,7 +20,8 @@ services:
     depends_on:
       - nats
     environment:
-      - ENV=dev
+      - ENV=${ENV:-dev}
+      - OPERATING_MODE=${OPERATING_MODE:-development}
       - PERPETUAL_BARCODE_PORT=/dev/ttyACM0
       - PERPETUAL_BARCODE_BAUDRATE=115200
       - JWT_SECRET=${JWT_SECRET:-INSECURE_JWT_SECRET}
