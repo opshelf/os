@@ -22,7 +22,7 @@ from sqlalchemy import select
 from perpetual_os1_server.core.robot import get_robot_client, get_robot_worker
 from perpetual_os1_server.core.storage import StorageService
 from perpetual_os1_server.routers.common import SuccessResponse
-from perpetual_os1_server.settings import get_settings
+from perpetual_os1_server.settings import get_settings, get_operating_mode
 from perpetual_os1_server.database.session import get_db, AsyncSessionLocal
 from perpetual_os1_server.database.models import Item, ItemLocation, User
 from .auth_deps import (
@@ -69,6 +69,12 @@ def overlay_db_occupancy(payload_json: str, occupied: set[tuple[str, int, int]])
                 elif cell.get("status") == "occupied":
                     cell["status"] = "available"
 
+    return json.dumps(payload)
+
+
+def inject_mode_field(payload_json: str) -> str:
+    payload = json.loads(payload_json)
+    payload["mode"] = get_operating_mode().value
     return json.dumps(payload)
 
 
@@ -570,7 +576,7 @@ async def nats_consumer(stop_event: asyncio.Event) -> AsyncGenerator[str, None]:
             try:
                 message = await asyncio.wait_for(message_queue.get(), timeout=1.0)
                 occupied_cells = await get_occupied_cells_from_db()
-                yield overlay_db_occupancy(message, occupied_cells)
+                yield inject_mode_field(overlay_db_occupancy(message, occupied_cells))
             except asyncio.TimeoutError:
                 continue
     finally:
@@ -618,7 +624,7 @@ async def stream_sse() -> EventSourceResponse:
         raw_payload = await worker.get_status_snapshot(force_refresh=True)
         if raw_payload is not None:
             occupied_cells = await get_occupied_cells_from_db()
-            initial_payload = overlay_db_occupancy(raw_payload, occupied_cells)
+            initial_payload = inject_mode_field(overlay_db_occupancy(raw_payload, occupied_cells))
 
     async def event_generator() -> AsyncGenerator[dict[str, str], None]:
         try:

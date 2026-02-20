@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Tuple, Union, TypeVar
 
@@ -17,6 +18,12 @@ C = TypeVar("C")
 S = TypeVar("S")
 
 CONFIG_PATH = Path("data/config.json")
+
+
+class OperatingMode(str, Enum):
+	demo = "demo"
+	development = "development"
+	production = "production"
 
 # ---------------------- NATS Config ----------------------
 

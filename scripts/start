@@ -1,8 +1,11 @@
 #!/bin/bash
 
+MODE_FILE="perpetual_hardware/data/.mode"
+
 HARDWARE=false
 BUILD=false
 DETACHED=false
+MODE=""
 
 while [[ $# -gt 0 ]]; do
 	case $1 in
@@ -18,15 +21,65 @@ while [[ $# -gt 0 ]]; do
 			DETACHED=true
 			shift
 			;;
+		-m|--mode)
+			MODE="$2"
+			shift 2
+			;;
 		*)
 			echo "Unknown option: $1"
-			echo "Usage: $0 [-h|--hardware] [-b|--build] [-d|--detached]"
+			echo "Usage: $0 [-h|--hardware] [-b|--build] [-d|--detached] [-m|--mode demo|development|production]"
 			exit 1
 			;;
 	esac
 done
 
+if [[ -z "$MODE" ]]; then
+	if [[ -f "$MODE_FILE" ]]; then
+		MODE=$(cat "$MODE_FILE" | tr -d '[:space:]')
+	fi
+fi
+
+if [[ -z "$MODE" ]]; then
+	MODE="development"
+fi
+
+case "$MODE" in
+	demo|development|production) ;;
+	*)
+		echo "Invalid mode: $MODE (must be demo, development, or production)"
+		exit 1
+		;;
+esac
+
+mkdir -p "$(dirname "$MODE_FILE")"
+echo -n "$MODE" > "$MODE_FILE"
+
+case "$MODE" in
+	demo)
+		export ENV=dev
+		export OPERATING_MODE=demo
+		export SENTRY_ENVIRONMENT=demo
+		;;
+	development)
+		export ENV=dev
+		export OPERATING_MODE=development
+		export SENTRY_ENVIRONMENT=development
+		;;
+	production)
+		export ENV=production
+		export OPERATING_MODE=production
+		export SENTRY_ENVIRONMENT=production
+		;;
+esac
+
+echo "starting in $MODE mode"
+
 COMPOSE_CMD="docker compose -f docker-compose.yml"
+
+if [[ "$MODE" == "development" ]]; then
+	COMPOSE_CMD="$COMPOSE_CMD -f docker-compose.dev.yml"
+fi
+
 if [[ "$HARDWARE" == true ]]; then
 	COMPOSE_CMD="$COMPOSE_CMD -f docker-compose.hardware.yml"
 fi

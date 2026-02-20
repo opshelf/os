@@ -4,6 +4,8 @@ services:
       - ./perpetual_hardware/packages/hardware/src/hardware:/app/perpetual_hardware/packages/hardware/src/hardware
       - ./perpetual_hardware/packages/perpetual_os1/src/perpetual_os1:/app/perpetual_hardware/packages/perpetual_os1/src/perpetual_os1
       - ./perpetual_hardware/packages/perpetual_os1_server/src/perpetual_os1_server:/app/perpetual_hardware/packages/perpetual_os1_server/src/perpetual_os1_server
+    environment:
+      - UVICORN_RELOAD=true
 
   dev_ui:
     build:
