@@ -234,6 +234,32 @@ async def _seed_auth_if_requested() -> None:
 			logger.info("skipping_seed_script", user_count=user_count, reason="users_exist")
 
 
+DEMO_SEEDED_MARKER = Path("data/.demo_seeded")
+
+
+async def _unseed_demo_if_needed() -> None:
+	from perpetual_os1.common import OperatingMode
+	from sqlalchemy import delete
+	from perpetual_os1_server.database.models import Item, ItemLocation
+
+	mode = get_operating_mode()
+	if mode == OperatingMode.demo:
+		return
+
+	if DEMO_SEEDED_MARKER.exists() is False:
+		return
+
+	logger.info("cleaning_demo_data", reason="mode_changed_from_demo")
+
+	async with AsyncSessionLocal() as session:
+		await session.execute(delete(ItemLocation))
+		await session.execute(delete(Item))
+		await session.commit()
+
+	DEMO_SEEDED_MARKER.unlink(missing_ok=True)
+	logger.info("demo_data_cleaned")
+
+
 async def _seed_demo_if_needed() -> None:
 	from perpetual_os1.common import OperatingMode
 	from sqlalchemy import select, func
@@ -266,6 +292,8 @@ async def _seed_demo_if_needed() -> None:
 	)
 
 	if result.returncode == 0:
+		DEMO_SEEDED_MARKER.parent.mkdir(parents=True, exist_ok=True)
+		DEMO_SEEDED_MARKER.touch()
 		logger.info("demo_seed_complete", stdout=result.stdout.strip())
 	else:
 		logger.error("demo_seed_failed", returncode=result.returncode, stderr=result.stderr.strip())
@@ -284,6 +312,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 	await _seed_auth_if_requested()
 	await _ensure_developer_user()
+	await _unseed_demo_if_needed()
 	await _seed_demo_if_needed()
 
 	robot_started = False
