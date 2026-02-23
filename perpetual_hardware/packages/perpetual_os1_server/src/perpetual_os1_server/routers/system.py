@@ -1,17 +1,20 @@
 from __future__ import annotations
 
-from pathlib import Path
+import asyncio
+import os
+import signal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from perpetual_os1.common import OperatingMode
-from perpetual_os1_server.settings import get_operating_mode
+from perpetual_os1_server.core.logging_config import get_logger
+from perpetual_os1_server.settings import get_operating_mode, MODE_FILE
 from perpetual_os1_server.routers.auth_deps import get_current_user
 
-router = APIRouter(tags=["system"])
+logger = get_logger(__name__)
 
-MODE_FILE = Path("data/.mode")
+router = APIRouter(tags=["system"])
 
 
 class ModeResponse(BaseModel):
@@ -54,7 +57,10 @@ async def set_mode(request: ModeUpdateRequest) -> ModeUpdateResponse:
 	MODE_FILE.parent.mkdir(parents=True, exist_ok=True)
 	MODE_FILE.write_text(raw, encoding="utf-8")
 
+	logger.info("operating_mode_changed", previous=current.value, new=raw)
+	asyncio.get_event_loop().call_later(1.0, os.kill, os.getpid(), signal.SIGTERM)
+
 	return ModeUpdateResponse(
 		mode=raw,
-		message="Mode written. Restart required for changes to take effect.",
+		message="Mode set. Restarting...",
 	)

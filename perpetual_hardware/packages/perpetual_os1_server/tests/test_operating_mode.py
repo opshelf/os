@@ -37,44 +37,72 @@ class TestGetOperatingMode:
 	def teardown_method(self) -> None:
 		clear_config_cache()
 
+	def _no_mode_file(self):
+		fake = Path("/nonexistent/.mode")
+		return patch("perpetual_os1_server.settings.MODE_FILE", fake)
+
 	def test_defaults_to_development(self) -> None:
-		with patch.dict(os.environ, {}, clear=False):
+		with patch.dict(os.environ, {}, clear=False), self._no_mode_file():
 			os.environ.pop("OPERATING_MODE", None)
 			clear_config_cache()
 			assert get_operating_mode() == OperatingMode.development
 
-	def test_reads_demo(self) -> None:
-		with patch.dict(os.environ, {"OPERATING_MODE": "demo"}):
+	def test_reads_demo_from_env(self) -> None:
+		with patch.dict(os.environ, {"OPERATING_MODE": "demo"}), self._no_mode_file():
 			clear_config_cache()
 			assert get_operating_mode() == OperatingMode.demo
 
-	def test_reads_production(self) -> None:
-		with patch.dict(os.environ, {"OPERATING_MODE": "production"}):
+	def test_reads_production_from_env(self) -> None:
+		with patch.dict(os.environ, {"OPERATING_MODE": "production"}), self._no_mode_file():
 			clear_config_cache()
 			assert get_operating_mode() == OperatingMode.production
 
-	def test_reads_development(self) -> None:
-		with patch.dict(os.environ, {"OPERATING_MODE": "development"}):
+	def test_reads_development_from_env(self) -> None:
+		with patch.dict(os.environ, {"OPERATING_MODE": "development"}), self._no_mode_file():
 			clear_config_cache()
 			assert get_operating_mode() == OperatingMode.development
 
+	def test_file_takes_precedence_over_env(self) -> None:
+		with tempfile.TemporaryDirectory() as tmpdir:
+			mode_file = Path(tmpdir) / ".mode"
+			mode_file.write_text("production")
+
+			with (
+				patch.dict(os.environ, {"OPERATING_MODE": "demo"}),
+				patch("perpetual_os1_server.settings.MODE_FILE", mode_file),
+			):
+				clear_config_cache()
+				assert get_operating_mode() == OperatingMode.production
+
+	def test_file_invalid_falls_back_to_env(self) -> None:
+		with tempfile.TemporaryDirectory() as tmpdir:
+			mode_file = Path(tmpdir) / ".mode"
+			mode_file.write_text("staging")
+
+			with (
+				patch.dict(os.environ, {"OPERATING_MODE": "demo"}),
+				patch("perpetual_os1_server.settings.MODE_FILE", mode_file),
+			):
+				clear_config_cache()
+				assert get_operating_mode() == OperatingMode.demo
+
 	def test_case_insensitive(self) -> None:
-		with patch.dict(os.environ, {"OPERATING_MODE": "DEMO"}):
+		with patch.dict(os.environ, {"OPERATING_MODE": "DEMO"}), self._no_mode_file():
 			clear_config_cache()
 			assert get_operating_mode() == OperatingMode.demo
 
 	def test_strips_whitespace(self) -> None:
-		with patch.dict(os.environ, {"OPERATING_MODE": "  production  "}):
+		with patch.dict(os.environ, {"OPERATING_MODE": "  production  "}), self._no_mode_file():
 			clear_config_cache()
 			assert get_operating_mode() == OperatingMode.production
 
-	def test_invalid_falls_back_to_development(self) -> None:
-		with patch.dict(os.environ, {"OPERATING_MODE": "staging"}):
+	def test_invalid_env_falls_back_to_development(self) -> None:
+		with patch.dict(os.environ, {"OPERATING_MODE": "staging"}), self._no_mode_file():
 			clear_config_cache()
 			assert get_operating_mode() == OperatingMode.development
 
 	def test_caches_result(self) -> None:
-		with patch.dict(os.environ, {"OPERATING_MODE": "demo"}):
+		with patch.dict(os.environ, {"OPERATING_MODE": "demo"}), self._no_mode_file():
 			clear_config_cache()
 			first = get_operating_mode()
 
@@ -85,11 +113,11 @@ class TestGetOperatingMode:
 		assert second == OperatingMode.demo
 
 	def test_clear_cache_resets(self) -> None:
-		with patch.dict(os.environ, {"OPERATING_MODE": "demo"}):
+		with patch.dict(os.environ, {"OPERATING_MODE": "demo"}), self._no_mode_file():
 			clear_config_cache()
 			assert get_operating_mode() == OperatingMode.demo
 
-		with patch.dict(os.environ, {"OPERATING_MODE": "production"}):
+		with patch.dict(os.environ, {"OPERATING_MODE": "production"}), self._no_mode_file():
 			clear_config_cache()
 			assert get_operating_mode() == OperatingMode.production
 
@@ -156,13 +184,14 @@ class TestSystemModeEndpoints:
 		assert response.json()["mode"] == "demo"
 
 	@pytest.mark.anyio
-	async def test_put_mode_writes_file(self, client: httpx.AsyncClient) -> None:
+	async def test_put_mode_writes_file_and_schedules_restart(self, client: httpx.AsyncClient) -> None:
 		with tempfile.TemporaryDirectory() as tmpdir:
 			mode_file = Path(tmpdir) / ".mode"
 
 			with (
 				patch("perpetual_os1_server.routers.system.get_operating_mode", return_value=OperatingMode.development),
 				patch("perpetual_os1_server.routers.system.MODE_FILE", mode_file),
+				patch("perpetual_os1_server.routers.system.asyncio") as mock_asyncio,
 			):
 				response = await client.put("/api/system/mode", json={"mode": "production"})
 
@@ -171,6 +200,7 @@ class TestSystemModeEndpoints:
 			assert body["mode"] == "production"
 			assert "restart" in body["message"].lower()
 			assert mode_file.read_text() == "production"
+			mock_asyncio.get_event_loop.return_value.call_later.assert_called_once()
 
 	@pytest.mark.anyio
 	async def test_put_mode_same_returns_409(self, client: httpx.AsyncClient) -> None:

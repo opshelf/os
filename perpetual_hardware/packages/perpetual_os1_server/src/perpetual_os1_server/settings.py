@@ -63,6 +63,8 @@ class Settings(BaseModel):
 		)
 
 
+MODE_FILE = Path("data/.mode")
+
 _cached_config: Optional[RootConfig] = None
 _cached_settings: Optional[Settings] = None
 _cached_config_path: Optional[Path] = None
@@ -75,14 +77,19 @@ def get_operating_mode() -> OperatingMode:
 	if _cached_operating_mode is not None:
 		return _cached_operating_mode
 
-	raw = os.getenv("OPERATING_MODE", "").strip().lower()
-
 	mode_map = {
 		"demo": OperatingMode.demo,
 		"development": OperatingMode.development,
 		"production": OperatingMode.production,
 	}
 
+	if MODE_FILE.exists() is True:
+		raw = MODE_FILE.read_text(encoding="utf-8").strip().lower()
+		if raw in mode_map:
+			_cached_operating_mode = mode_map[raw]
+			return _cached_operating_mode
+
+	raw = os.getenv("OPERATING_MODE", "").strip().lower()
 	_cached_operating_mode = mode_map.get(raw, OperatingMode.development)
 	return _cached_operating_mode
 

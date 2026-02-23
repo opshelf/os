@@ -1,7 +1,10 @@
 #!/bin/bash
 
-MODE_FILE="perpetual_hardware/data/.mode"
-LAST_MODE_FILE="perpetual_hardware/data/.last_start_mode"
+SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+DATA_DIR="$SCRIPT_DIR/perpetual_hardware/data"
+
+MODE_FILE="$DATA_DIR/.mode"
+LAST_MODE_FILE="$DATA_DIR/.last_start_mode"
 
 HARDWARE=false
 BUILD=false
@@ -111,4 +114,4 @@ if [[ "$DETACHED" == true ]]; then
 fi
 
 echo -n "$MODE" > "$LAST_MODE_FILE"
-eval $COMPOSE_CMD
+cd "$SCRIPT_DIR" && eval $COMPOSE_CMD
