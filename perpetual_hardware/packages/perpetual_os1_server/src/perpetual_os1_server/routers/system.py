@@ -58,7 +58,7 @@ async def set_mode(request: ModeUpdateRequest) -> ModeUpdateResponse:
 	MODE_FILE.write_text(raw, encoding="utf-8")
 
 	logger.info("operating_mode_changed", previous=current.value, new=raw)
-	asyncio.get_event_loop().call_later(1.0, os.kill, os.getpid(), signal.SIGTERM)
+	asyncio.get_running_loop().call_later(1.0, os.kill, os.getpid(), signal.SIGTERM)
 
 	return ModeUpdateResponse(
 		mode=raw,
