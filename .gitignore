@@ -36,6 +36,7 @@ data/demo.json
 
 # Runtime mode
 perpetual_hardware/data/.mode
+perpetual_hardware/data/.last_start_mode
 
 # Database files
 data
