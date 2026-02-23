@@ -200,7 +200,7 @@ class TestSystemModeEndpoints:
 			assert body["mode"] == "production"
 			assert "restart" in body["message"].lower()
 			assert mode_file.read_text() == "production"
-			mock_asyncio.get_event_loop.return_value.call_later.assert_called_once()
+			mock_asyncio.get_running_loop.return_value.call_later.assert_called_once()
 
 	@pytest.mark.anyio
 	async def test_put_mode_same_returns_409(self, client: httpx.AsyncClient) -> None:
