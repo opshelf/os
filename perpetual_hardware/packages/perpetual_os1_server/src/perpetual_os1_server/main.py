@@ -234,55 +234,53 @@ async def _seed_auth_if_requested() -> None:
 			logger.info("skipping_seed_script", user_count=user_count, reason="users_exist")
 
 
-DEMO_SEEDED_MARKER = Path("data/.demo_seeded")
+LAST_MODE_FILE = Path("data/.last_mode")
 
 
-async def _unseed_demo_if_needed() -> None:
-	from perpetual_os1.common import OperatingMode
+async def _wipe_inventory() -> None:
 	from sqlalchemy import delete
 	from perpetual_os1_server.database.models import Item, ItemLocation
-
-	mode = get_operating_mode()
-	if mode == OperatingMode.demo:
-		return
-
-	if DEMO_SEEDED_MARKER.exists() is False:
-		return
-
-	logger.info("cleaning_demo_data", reason="mode_changed_from_demo")
 
 	async with AsyncSessionLocal() as session:
 		await session.execute(delete(ItemLocation))
 		await session.execute(delete(Item))
 		await session.commit()
 
-	DEMO_SEEDED_MARKER.unlink(missing_ok=True)
-	logger.info("demo_data_cleaned")
 
+def _reset_storage_grid() -> None:
+	from perpetual_os1.common import CONFIG_PATH, load_config_file, resolve_grid_path
+	from perpetual_os1.storage import StorageGrid
 
-async def _seed_demo_if_needed() -> None:
-	from perpetual_os1.common import OperatingMode
-	from sqlalchemy import select, func
-	from perpetual_os1_server.database.models import Item
-
-	mode = get_operating_mode()
-	if mode != OperatingMode.demo:
+	if CONFIG_PATH.exists() is False:
 		return
 
-	async with AsyncSessionLocal() as db:
-		result = await db.execute(select(func.count()).select_from(Item))
-		count = result.scalar_one()
+	try:
+		config = load_config_file(CONFIG_PATH)
+		grid_path = resolve_grid_path(config)
+	except Exception as e:
+		logger.warning("storage_grid_reset_skipped", reason="config_load_failed", error=str(e))
+		return
 
-		if count > 0:
-			logger.info("demo_seed_skipped", reason="items_exist", count=count)
-			return
+	if Path(grid_path).exists() is False:
+		return
 
+	try:
+		grid = StorageGrid.load_from_file(grid_path)
+		grid.clear_all_items()
+		grid.save_to_file(grid_path)
+		logger.info("storage_grid_reset", path=grid_path)
+	except Exception as e:
+		logger.warning("storage_grid_reset_failed", error=str(e))
+
+
+def _run_demo_seed() -> bool:
 	script_path = Path(__file__).parent.parent.parent / "scripts" / "demo_seed.py"
 	if script_path.exists() is False:
 		logger.warning("demo_seed_script_not_found", script_path=str(script_path))
-		return
+		return False
 
 	logger.info("running_demo_seed", script_path=str(script_path))
+
 	result = subprocess.run(
 		[sys.executable, str(script_path)],
 		env={**os.environ},
@@ -292,11 +290,39 @@ async def _seed_demo_if_needed() -> None:
 	)
 
 	if result.returncode == 0:
-		DEMO_SEEDED_MARKER.parent.mkdir(parents=True, exist_ok=True)
-		DEMO_SEEDED_MARKER.touch()
 		logger.info("demo_seed_complete", stdout=result.stdout.strip())
+		return True
+
+	logger.error("demo_seed_failed", returncode=result.returncode, stderr=result.stderr.strip())
+	return False
+
+
+async def _apply_mode_transition() -> None:
+	from perpetual_os1.common import OperatingMode
+
+	mode = get_operating_mode()
+
+	last_mode = None
+	if LAST_MODE_FILE.exists() is True:
+		raw = LAST_MODE_FILE.read_text(encoding="utf-8").strip().lower()
+		if raw in {m.value for m in OperatingMode}:
+			last_mode = raw
+
+	LAST_MODE_FILE.parent.mkdir(parents=True, exist_ok=True)
+	LAST_MODE_FILE.write_text(mode.value, encoding="utf-8")
+
+	if last_mode == mode.value:
+		return
+
+	logger.info("mode_transition", previous=last_mode, current=mode.value)
+
+	if mode == OperatingMode.demo:
+		_run_demo_seed()
 	else:
-		logger.error("demo_seed_failed", returncode=result.returncode, stderr=result.stderr.strip())
+		logger.info("wiping_inventory", reason="mode_switch")
+		await _wipe_inventory()
+		_reset_storage_grid()
+		logger.info("inventory_wiped")
 
 
 @asynccontextmanager
@@ -312,8 +338,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 	await _seed_auth_if_requested()
 	await _ensure_developer_user()
-	await _unseed_demo_if_needed()
-	await _seed_demo_if_needed()
+	await _apply_mode_transition()
 
 	robot_started = False
 	storage_override_set = False
