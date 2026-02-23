@@ -1,6 +1,7 @@
 #!/bin/bash
 
 MODE_FILE="perpetual_hardware/data/.mode"
+LAST_MODE_FILE="perpetual_hardware/data/.last_start_mode"
 
 HARDWARE=false
 BUILD=false
@@ -72,6 +73,21 @@ case "$MODE" in
 		;;
 esac
 
+LAST_MODE=""
+if [[ -f "$LAST_MODE_FILE" ]]; then
+	LAST_MODE=$(cat "$LAST_MODE_FILE" | tr -d '[:space:]')
+fi
+
+if [[ -n "$LAST_MODE" && "$LAST_MODE" != "$MODE" && "$BUILD" == false ]]; then
+	LAST_IS_DEV=$([[ "$LAST_MODE" == "development" ]] && echo true || echo false)
+	CURR_IS_DEV=$([[ "$MODE" == "development" ]] && echo true || echo false)
+
+	if [[ "$LAST_IS_DEV" != "$CURR_IS_DEV" ]]; then
+		echo "mode switch ($LAST_MODE -> $MODE) crosses build boundary, forcing rebuild"
+		BUILD=true
+	fi
+fi
+
 echo "starting in $MODE mode"
 
 COMPOSE_CMD="docker compose -f docker-compose.yml"
@@ -94,4 +110,5 @@ if [[ "$DETACHED" == true ]]; then
 	COMPOSE_CMD="$COMPOSE_CMD -d"
 fi
 
+echo -n "$MODE" > "$LAST_MODE_FILE"
 eval $COMPOSE_CMD
