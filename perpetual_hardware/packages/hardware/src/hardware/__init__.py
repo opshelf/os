@@ -31,6 +31,7 @@ motor_helpers
 from .controller import SharedModbusController
 from .motor import Servo, MotorStatus
 from .iocam import AFSCam
+from .laser import LaserSensor
 from .toolcam import ToolCamera
 
 __all__ = [
@@ -38,5 +39,6 @@ __all__ = [
     'Servo',
     'MotorStatus',
     'AFSCam',
+    'LaserSensor',
     'ToolCamera'
 ]

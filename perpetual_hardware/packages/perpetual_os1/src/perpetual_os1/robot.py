@@ -169,6 +169,7 @@ class Robot:
 
         motor_bus = self._bus_settings["motor"]
         scale_bus = self._bus_settings["scale"]
+        laser_bus = self._bus_settings["laser"]
         self._motorbus = Controller(
             port=motor_bus["ports"][0],
             baudrate=motor_bus["baudrate"],
@@ -181,13 +182,24 @@ class Robot:
             parity=scale_bus["parity"],
             timeout=scale_bus["timeout"],
         )
+        self._laserbus = Controller(
+            port=laser_bus["ports"][0],
+            baudrate=laser_bus["baudrate"],
+            parity=laser_bus["parity"],
+            timeout=laser_bus["timeout"],
+        )
 
         tool_params = self._config.get("robot.tool", {})
         io_params = self._config.get("robot.io", {})
 
         from hardware.motor import CurtainSafety
         self._curtain_safety = CurtainSafety()
-        self._tool = Tool(motorcontroller=self._motorbus, params=tool_params, safety=self._curtain_safety)
+        self._tool = Tool(
+            motorcontroller=self._motorbus,
+            lasercontroller=self._laserbus,
+            params=tool_params,
+            safety=self._curtain_safety,
+        )
         self._io = IOBox(motorcontroller=self._motorbus, scalecontroller=self._scalebus, params=io_params, safety=self._curtain_safety)
 
         self._grid_path = resolve_grid_path(self._config)
@@ -307,11 +319,20 @@ class Robot:
 
         io_scale_config = self._config.get("robot.io.scale", None)
         scale_enabled = getattr(io_scale_config, "enabled", True) if io_scale_config is not None else True
+        laser_config = self._config.get("robot.tool.laser", None)
+        laser_enabled = getattr(laser_config, "enabled", False) if laser_config is not None else False
 
         if scale_enabled is True:
             await self._connect_controller("scale", self._scalebus, self._bus_settings["scale"])
         else:
             self._logger.info("scale_bus_skipped: scale is disabled in config")
+
+        if laser_enabled is True:
+            if self._config.robot.bus is None or self._config.robot.bus.laser is None:
+                raise ConfigError("Laser bus configuration is required when laser is enabled")
+            await self._connect_controller("laser", self._laserbus, self._bus_settings["laser"])
+        else:
+            self._logger.info("laser_bus_skipped: laser is disabled in config")
 
         await self._tool.configure()
         await self._io.configure()
@@ -409,6 +430,8 @@ class Robot:
             await self._motorbus.close()
         if self._scalebus:
             await self._scalebus.close()
+        if self._laserbus:
+            await self._laserbus.close()
 
     def register_curtain_listener(self, listener) -> None:
         if self._io:
@@ -485,6 +508,13 @@ class Robot:
                 "timeout": 2.0,
                 "retry_delay_s": 0.25,
             },
+            "laser": {
+                "ports": ["/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_B001K430-if00-port0"],
+                "baudrate": 9600,
+                "parity": "N",
+                "timeout": 2.0,
+                "retry_delay_s": 0.25,
+            },
         }
 
         bus_cfg = getattr(self._config.robot, "bus", None)
@@ -504,7 +534,11 @@ class Robot:
                 )
             return settings
 
-        return {"motor": build("motor"), "scale": build("scale")}
+        return {
+            "motor": build("motor"),
+            "scale": build("scale"),
+            "laser": build("laser"),
+        }
 
     async def _connect_controller(self, label: str, controller: Controller, settings: Dict[str, Any]) -> None:
         errors: List[str] = []
@@ -826,8 +860,16 @@ class Robot:
             raise ConfigError("Scale is not enabled")
         return self._io._scale
 
+    def _require_laser(self):
+        if self._tool._laser is None or self._tool._laser_enabled is False:
+            raise ConfigError("Laser is not enabled")
+        return self._tool._laser
+
     async def get_scale_data(self) -> Dict[str, Any]:
         return await self._require_scale().read_weight_data()
+
+    async def get_laser_distance(self) -> float:
+        return await self._require_laser().read_distance_mm()
 
     async def get_scale_calibration_status(self) -> Dict[str, Any]:
         return await self._require_scale().get_calibration_status()
