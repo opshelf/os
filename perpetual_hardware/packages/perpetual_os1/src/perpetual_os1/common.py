@@ -301,6 +301,22 @@ class ScaleConfig(BaseModel):
     enabled: bool = True
 
 
+class LaserConfig(BaseModel):
+    enabled: bool = False
+    device_id: int = Field(1, ge=0, le=255)
+    register_address: int = Field(0, ge=0, le=65535)
+    register_count: int = Field(2, ge=1, le=125)
+    distance_register_index: int = Field(1, ge=0, le=124)
+    distance_scale_mm: float = Field(0.01, gt=0)
+
+    @model_validator(mode="after")
+    def _validate_register_index(self) -> "LaserConfig":
+        if self.distance_register_index >= self.register_count:
+            raise ValueError("distance_register_index must be smaller than register_count")
+
+        return self
+
+
 # --------------------------- App Settings ---------------------------
 
 class StorageSettings(BaseModel):
@@ -390,6 +406,7 @@ class ModbusBusConfig(BaseModel):
 class RobotBus(BaseModel):
     motor: ModbusBusConfig
     scale: ModbusBusConfig
+    laser: Optional[ModbusBusConfig] = None
 
 
 # ----------------------- Parameters / IO -----------------------
@@ -445,6 +462,7 @@ class Tool(BaseModel):
     motors: Motors
     poe_camera: PoeCamera
     gripper: Gripper = Field(default_factory=Gripper)
+    laser: LaserConfig = Field(default_factory=LaserConfig)
 
 
 class IOBlock(BaseModel):
@@ -577,6 +595,9 @@ class RootConfig(BaseModel):
     def get_tof_camera(self) -> TofCamera:
         return self.robot.io.tof_camera
 
+    def get_tool_laser(self) -> LaserConfig:
+        return self.robot.tool.laser
+
     # grid
     def get_grid(self) -> Dict[str, Any]:
         return self.robot.grid.model_dump()
@@ -692,6 +713,12 @@ def assert_config(config: RootConfig, requirements: Optional[List[str]] = None) 
     if config.robot_app.enabled is True:
         if config.robot.bus is None:
             errors.append("robot.bus is required when robot is enabled")
+
+    if config.robot.tool.laser.enabled is True:
+        if config.robot.bus is None:
+            errors.append("robot.bus is required when robot.tool.laser.enabled is True")
+        elif config.robot.bus.laser is None:
+            errors.append("robot.bus.laser is required when robot.tool.laser.enabled is True")
 
     if errors:
         raise ConfigError("Configuration assertion failed:\n  - " + "\n  - ".join(errors))

@@ -2,6 +2,7 @@ import perpetual_os1.common as c
 from perpetual_os1.common import Motor as MotorConfig
 
 from hardware.controller import SharedModbusController as Controller
+from hardware.laser import LaserSensor
 from hardware.motor import Motor, Servo, MotorStatus, MOTOR_WAIT_TIMEOUT
 from hardware.toolcam import ToolCamera
 from perpetual_os1.exceptions import (
@@ -77,8 +78,15 @@ GANTRY_OUTER_TIMEOUT = 120.0
 TOOL_OUTER_TIMEOUT = 60.0
 
 class Tool:
-    def __init__(self, motorcontroller: Controller, params: c.Tool, safety=None):
+    def __init__(
+        self,
+        motorcontroller: Controller,
+        lasercontroller: Controller,
+        params: c.Tool,
+        safety=None,
+    ):
         self._motorcontroller = motorcontroller
+        self._lasercontroller = lasercontroller
         self._istatus = ToolItemStatus.EMPTY
         self._mstatus = ToolMotionStatus.IDLE
         self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
@@ -106,6 +114,20 @@ class Tool:
         self._gs = Servo(self._motorcontroller, self._params.gripper.model_dump())
 
         self._cam = ToolCamera(self._params.poe_camera)
+        self._laser_enabled = self._params.laser.enabled
+        self._laser_ready = False
+        self._laser = None
+
+        if self._laser_enabled is True:
+            laser_cfg = self._params.laser
+            self._laser = LaserSensor(
+                modbus_controller=self._lasercontroller,
+                device_id=laser_cfg.device_id,
+                register_address=laser_cfg.register_address,
+                register_count=laser_cfg.register_count,
+                distance_register_index=laser_cfg.distance_register_index,
+                distance_scale_mm=laser_cfg.distance_scale_mm,
+            )
 
         # LEDs
 
@@ -149,6 +171,11 @@ class Tool:
                 await self._ms.configure()
             if self._mr is not None:
                 await self._mr.configure()
+            if self._laser is not None:
+                await self._laser.initialize()
+                self._laser_ready = True
+            else:
+                self._logger.info("Laser disabled via config")
             await self.home()
             self._mstatus = ToolMotionStatus.IDLE
         except Exception as e:
@@ -262,6 +289,15 @@ class Tool:
         except Exception as e:
             await self._handle_fault(e)
             raise MotorError(f"Failed to stop tool: {str(e)}") from e
+
+    async def get_laser_distance(self) -> Optional[float]:
+        if self._laser_enabled is False or self._laser is None:
+            return None
+
+        if self._laser_ready is False:
+            raise ConfigError("Laser is not initialized")
+
+        return await self._laser.read_distance_mm()
 
     async def _ensure_retracted(self) -> None:
         """
