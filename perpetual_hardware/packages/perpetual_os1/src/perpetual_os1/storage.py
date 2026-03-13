@@ -1,12 +1,14 @@
-from pydantic import BaseModel, ValidationError, model_validator, Field
-from enum import Enum
-from typing import Optional, List, Self, Tuple, Mapping, Iterable, Union, Dict
-from perpetual_os1.common import AxisCoordinate
-import os
-import json
-import shutil
-from datetime import datetime
 from dataclasses import replace as dataclass_replace
+from datetime import datetime
+import json
+import os
+import shutil
+from enum import Enum
+from typing import Dict, Iterable, List, Mapping, Optional, Self, Tuple, Union
+
+from pydantic import BaseModel, Field, ValidationError, model_validator
+
+from perpetual_os1.common import AxisCoordinate
 
 type Json = Dict[str, Union[str, int, float, Mapping, Iterable]]
 
@@ -14,555 +16,578 @@ type Json = Dict[str, Union[str, int, float, Mapping, Iterable]]
 class StorageValidationError(Exception):
 	pass
 
+
 class StorageModuleSide(str, Enum):
-    RIGHT = "right_module"
-    LEFT = "left_module"
+	RIGHT = "right_module"
+	LEFT = "left_module"
 
 
 class CalibrationCoordinate(AxisCoordinate):
+	def __add__(self, rhs: "CalibrationCoordinate") -> "CalibrationCoordinate":  # type: ignore[override]
+		self._assert_same_side(rhs, "add")
+		return CalibrationCoordinate(
+			x=self.x + rhs.x,
+			y=self.y + rhs.y,
+			z_offset=self.z_offset + rhs.z_offset,
+			s=self.s,
+		)
 
+	def __sub__(self, rhs: "CalibrationCoordinate") -> "CalibrationCoordinate":  # type: ignore[override]
+		self._assert_same_side(rhs, "subtract")
+		return CalibrationCoordinate(
+			x=self.x - rhs.x,
+			y=self.y - rhs.y,
+			z_offset=self.z_offset - rhs.z_offset,
+			s=self.s,
+		)
 
-    def __add__(self, rhs: "CalibrationCoordinate") -> "CalibrationCoordinate":  # type: ignore[override]
-        self._assert_same_side(rhs, "add")
-        return CalibrationCoordinate(x=self.x + rhs.x, y=self.y + rhs.y, z_offset=self.z_offset + rhs.z_offset, s=self.s)
-
-    def __sub__(self, rhs: "CalibrationCoordinate") -> "CalibrationCoordinate":  # type: ignore[override]
-        self._assert_same_side(rhs, "subtract")
-        return CalibrationCoordinate(x=self.x - rhs.x, y=self.y - rhs.y, z_offset=self.z_offset - rhs.z_offset, s=self.s)
-
-    def to_axis_coordinate(self) -> AxisCoordinate:
-        return AxisCoordinate(x=self.x, y=self.y, s=self.s, z_offset=self.z_offset)
+	def to_axis_coordinate(self) -> AxisCoordinate:
+		return AxisCoordinate(x=self.x, y=self.y, s=self.s, z_offset=self.z_offset)
 
 
 class Dimensions(BaseModel):
-    length: float
-    width: float
-    height: float
+	length: float
+	width: float
+	height: float
 
 
 class CellStatus(str, Enum):
-    OCCUPIED = "occupied"
-    AVAILABLE = "available"
-    MAINTENANCE = "maintenance"
-    DISABLED = "disabled"
+	OCCUPIED = "occupied"
+	AVAILABLE = "available"
+	MAINTENANCE = "maintenance"
+	DISABLED = "disabled"
 
 
 class CellItem(BaseModel):
-    weight: Optional[float] = None
-    dimensions: Dimensions
-    data: Optional[Json] = None
-    upca: Optional[str] = None
+	weight: Optional[float] = None
+	dimensions: Dimensions
+	data: Optional[Json] = None
+	upca: Optional[str] = None
 
 
 class Cell(BaseModel):
-    status: CellStatus
-    item: Optional[CellItem]
-    calibration_point: Optional[CalibrationCoordinate]
-    dimensions: Dimensions
-    empty: bool = False
+	cell_idx: int = Field(default=0, ge=0)
+	status: CellStatus
+	item: Optional[CellItem]
+	calibration_point: Optional[CalibrationCoordinate]
+	dimensions: Dimensions
+	empty: bool = False
 
-    def clear(self) -> None:
-        if self.status == CellStatus.OCCUPIED:
-            self.status = CellStatus.AVAILABLE
-            self.item = None
+	def clear(self) -> None:
+		if self.status == CellStatus.OCCUPIED:
+			self.status = CellStatus.AVAILABLE
+			self.item = None
 
 
 class StorageModuleCellLocation(BaseModel):
-    side: StorageModuleSide
-    shelf_idx: int
-    cell_idx: int
+	side: StorageModuleSide
+	shelf_idx: int
+	cell_idx: int
 
 
 class Shelf(BaseModel):
-    shelf_height: float
-    shelf_width: float
-    cells: List[Cell]
-    divider_width: float = 8.00
+	shelf_idx: int = Field(default=0, ge=0)
+	shelf_height: float
+	shelf_width: float
+	cells: List[Cell]
+	divider_width: float = 8.0
 
-    @model_validator(mode="after")
-    def verify_tray_heights(self) -> Self:
-        if all([self.shelf_height >= cell.dimensions.height for cell in self.cells]):
-            return self
-        raise ValidationError("All Trays must be less than the height of the containing shelf")
+	@model_validator(mode="after")
+	def verify_tray_heights(self) -> Self:
+		if all(self.shelf_height >= cell.dimensions.height for cell in self.cells):
+			return self
+		raise ValidationError("All Trays must be less than the height of the containing shelf")
 
-    def get_cell_location(self, location: int) -> CalibrationCoordinate:
-        cal_point = self.cells[location].calibration_point
-        if cal_point:
-            return cal_point
-        else:
-            cal_point = self.cells[0].calibration_point
-            if cal_point is None:
-                raise Exception("Invalid Calibration Point")
-            else:
-                x_value = cal_point.x
-                cal_point = dataclass_replace(cal_point)
-                cal_idx = 1
-                while cal_idx <= location:
-                    if self.cells[cal_idx].dimensions.width == 50:
-                        x_value += 61.0
-                    elif self.cells[cal_idx].dimensions.width == 100:
-                        x_value += 111.0
-                    else:
-                        x_value += 156.0
-                    cal_idx += 1
-                cal_point.x = x_value
-                return cal_point
+	@model_validator(mode="after")
+	def sort_cells(self) -> Self:
+		self.cells.sort(key=lambda cell: cell.cell_idx)
+		return self
 
-    def get_next_optimal_slot(self, item: CellItem) -> Optional[int]:
-        cell_idx = 0
-        locations = []
-        while cell_idx < len(self.cells):
-            if (
-                self.cells[cell_idx].dimensions.width >= item.dimensions.width
-                and self.cells[cell_idx].dimensions.height >= item.dimensions.height
-            ):
-                if self.cells[cell_idx].status == CellStatus.AVAILABLE:
-                    locations.append(cell_idx)
-            cell_idx += 1
-        for location in locations:
-            if item.dimensions.width <= 50:
-                if self.cells[location].dimensions.width == 50:
-                    return location
-            elif item.dimensions.width <= 100:
-                if self.cells[location].dimensions.width == 100:
-                    return location
-            else:
-                return location
-        return None
+	def get_cell(self, cell_idx: int) -> Cell:
+		for cell in self.cells:
+			if cell.cell_idx == cell_idx:
+				return cell
+		raise IndexError(f"Invalid cell_idx: {cell_idx}")
 
-    def get_next_free_slot(self, item: CellItem) -> Optional[int]:
-        cell_idx = 0
-        while cell_idx < len(self.cells):
-            if (
-                self.cells[cell_idx].dimensions.width > item.dimensions.width
-                and self.cells[cell_idx].dimensions.height >= item.dimensions.height
-            ):
-                if self.cells[cell_idx].status == CellStatus.AVAILABLE:
-                    return cell_idx
-            cell_idx += 1
-        return None
+	def get_cell_location(self, cell_idx: int) -> CalibrationCoordinate:
+		cell = self.get_cell(cell_idx)
+		if cell.calibration_point is None:
+			raise Exception("Invalid Calibration Point")
+		return dataclass_replace(cell.calibration_point)
+
+	def get_next_optimal_slot(self, item: CellItem) -> Optional[int]:
+		matching_cell_indices: List[int] = []
+
+		for cell in self.cells:
+			if cell.dimensions.width >= item.dimensions.width and cell.dimensions.height >= item.dimensions.height:
+				if cell.status == CellStatus.AVAILABLE:
+					matching_cell_indices.append(cell.cell_idx)
+
+		for cell_idx in matching_cell_indices:
+			cell = self.get_cell(cell_idx)
+			if item.dimensions.width <= 50:
+				if cell.dimensions.width == 50:
+					return cell_idx
+			elif item.dimensions.width <= 100:
+				if cell.dimensions.width == 100:
+					return cell_idx
+			else:
+				return cell_idx
+
+		return None
+
+	def get_next_free_slot(self, item: CellItem) -> Optional[int]:
+		for cell in self.cells:
+			if cell.dimensions.width > item.dimensions.width and cell.dimensions.height >= item.dimensions.height:
+				if cell.status == CellStatus.AVAILABLE:
+					return cell.cell_idx
+		return None
 
 
 class CellLocationData(BaseModel):
-    cell: Optional[CellItem]
-    location: StorageModuleCellLocation
+	cell: Optional[CellItem]
+	location: StorageModuleCellLocation
 
 
 class StorageGrid(BaseModel):
-    left_module: List[Shelf] = Field(default_factory=list)
-    right_module: List[Shelf] = Field(default_factory=list)
-    filename: str = ""
+	left_module: List[Shelf] = Field(default_factory=list)
+	right_module: List[Shelf] = Field(default_factory=list)
+	filename: str = ""
 
-    @classmethod
-    def load_from_file(cls, path: str) -> "StorageGrid":
-        target_path = os.path.abspath(path)
+	@staticmethod
+	def _normalize_layout_indices(data: object) -> object:
+		if isinstance(data, dict) is False:
+			return data
 
-        if os.path.exists(target_path) is False:
-            raise StorageValidationError(f"storage file not found: {target_path}")
+		normalized = dict(data)
 
-        with open(target_path, "r") as f:
-            raw_content = f.read()
+		for side_key in ("left_module", "right_module"):
+			shelves_raw = normalized.get(side_key)
+			if isinstance(shelves_raw, list) is False:
+				continue
 
-        try:
-            data = json.loads(raw_content)
-        except json.JSONDecodeError as e:
-            raise StorageValidationError(f"invalid json in storage file: {e}") from e
+			normalized_shelves: List[dict] = []
 
-        try:
-            grid = cls.model_validate(data)
-        except ValidationError as e:
-            raise StorageValidationError(f"storage schema validation failed: {e}") from e
+			for shelf_position, shelf_raw in enumerate(shelves_raw):
+				if isinstance(shelf_raw, Shelf):
+					normalized_shelves.append(shelf_raw)
+					continue
 
-        grid.filename = target_path
-        return grid
+				if isinstance(shelf_raw, dict) is False:
+					continue
 
-    def _create_backup(self, filename: str) -> str | None:
-        if os.path.exists(filename) is False:
-            return None
+				shelf_data = dict(shelf_raw)
+				if "shelf_idx" not in shelf_data:
+					shelf_data["shelf_idx"] = shelf_position
 
-        directory = os.path.dirname(filename)
-        base_name = os.path.basename(filename)
-        name_part, ext = os.path.splitext(base_name)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_name = f"{name_part}_{timestamp}{ext}"
-        backup_path = os.path.join(directory, backup_name)
+				cells_raw = shelf_data.get("cells")
+				if isinstance(cells_raw, list) is True:
+					normalized_cells: List[dict] = []
 
-        shutil.copy2(filename, backup_path)
+					for cell_position, cell_raw in enumerate(cells_raw):
+						if isinstance(cell_raw, Cell):
+							normalized_cells.append(cell_raw)
+							continue
 
-        return backup_path
+						if isinstance(cell_raw, dict) is False:
+							continue
 
-    def save_to_file(self, filename: str) -> None:
-        target_path = os.path.abspath(filename)
-        self._create_backup(target_path)
-        self.filename = target_path
+						cell_data = dict(cell_raw)
+						if "cell_idx" not in cell_data:
+							cell_data["cell_idx"] = cell_position
 
-        with open(target_path, "w+") as f:
-            f.write(self.model_dump_json())
+						normalized_cells.append(cell_data)
 
-    def save(self) -> None:
-        self.save_to_file(self.filename)
+					shelf_data["cells"] = normalized_cells
 
-    def update(self, updates: "StorageGrid") -> None:
-        self.left_module = updates.left_module.copy()
-        self.right_module = updates.right_module.copy()
-        self.save()
+				normalized_shelves.append(shelf_data)
 
-    def get_next_free_location(self, item: CellItem) -> Optional[StorageModuleCellLocation]:
-        left_shelves: List[StorageModuleCellLocation] = []
-        for ix, shelf in enumerate(self.left_module):
-            location = shelf.get_next_optimal_slot(item)
-            if location:
-                left_shelves.append(
-                    StorageModuleCellLocation(
-                        side=StorageModuleSide.LEFT,
-                        shelf_idx=ix,
-                        cell_idx=location,
-                    )
-                )
+			normalized[side_key] = normalized_shelves
 
-        right_shelves: List[StorageModuleCellLocation] = []
-        for ix, shelf in enumerate(self.right_module):
-            location = shelf.get_next_optimal_slot(item)
-            if location:
-                right_shelves.append(
-                    StorageModuleCellLocation(
-                        side=StorageModuleSide.RIGHT,
-                        shelf_idx=ix,
-                        cell_idx=location,
-                    )
-                )
+		return normalized
 
-        cell_locations: List[StorageModuleCellLocation] = left_shelves + right_shelves
-        for cell_location in cell_locations:
-            if cell_location.side == StorageModuleSide.LEFT:
-                if (
-                    item.dimensions.width <= 50
-                    and self.left_module[cell_location.shelf_idx]
-                    .cells[cell_location.cell_idx]
-                    .dimensions.width
-                    == 50
-                ):
-                    return cell_location
-                elif (
-                    item.dimensions.width <= 100
-                    and self.left_module[cell_location.shelf_idx]
-                    .cells[cell_location.cell_idx]
-                    .dimensions.width
-                    == 100
-                ):
-                    return cell_location
-                else:
-                    return cell_location
-            else:
-                if (
-                    item.dimensions.width <= 50
-                    and self.right_module[cell_location.shelf_idx]
-                    .cells[cell_location.cell_idx]
-                    .dimensions.width
-                    == 50
-                ):
-                    return cell_location
-                elif (
-                    item.dimensions.width <= 100
-                    and self.right_module[cell_location.shelf_idx]
-                    .cells[cell_location.cell_idx]
-                    .dimensions.width
-                    == 100
-                ):
-                    return cell_location
-                else:
-                    return cell_location
-        return None
+	@model_validator(mode="before")
+	@classmethod
+	def migrate_sparse_layout(cls, data: object) -> object:
+		return cls._normalize_layout_indices(data)
 
-    def get_tray(self, location: StorageModuleCellLocation) -> Cell:
-        return self.get_side(location.side)[location.shelf_idx].cells[location.cell_idx]
+	@model_validator(mode="after")
+	def sort_shelves(self) -> Self:
+		self.left_module.sort(key=lambda shelf: shelf.shelf_idx)
+		self.right_module.sort(key=lambda shelf: shelf.shelf_idx)
+		return self
 
-    def get_side(self, side: StorageModuleSide) -> List[Shelf]:
-        if side == StorageModuleSide.RIGHT:
-            return self.right_module
-        else:
-            return self.left_module
+	@classmethod
+	def load_from_file(cls, path: str) -> "StorageGrid":
+		target_path = os.path.abspath(path)
 
-    def get_cell(self, location: StorageModuleCellLocation) -> Cell:
-        if location.side == StorageModuleSide.LEFT:
-            return self.left_module[location.shelf_idx].cells[location.cell_idx]
-        else:
-            return self.right_module[location.shelf_idx].cells[location.cell_idx]
+		if os.path.exists(target_path) is False:
+			raise StorageValidationError(f"storage file not found: {target_path}")
 
-    def get_cell_coordinate(self, location: StorageModuleCellLocation) -> CalibrationCoordinate:
-        if location.side == StorageModuleSide.LEFT:
-            return self.left_module[location.shelf_idx].get_cell_location(location.cell_idx)
-        else:
-            return self.right_module[location.shelf_idx].get_cell_location(location.cell_idx)
+		with open(target_path, "r") as f:
+			raw_content = f.read()
 
-    def store_item(self, location: StorageModuleCellLocation, item: Optional[CellItem]) -> None:
-        cell = self.get_side(location.side)[location.shelf_idx].cells[location.cell_idx]
-        if cell.status not in (CellStatus.DISABLED, CellStatus.MAINTENANCE):
-            cell.status = CellStatus.OCCUPIED
-        cell.item = item
+		try:
+			data = json.loads(raw_content)
+		except json.JSONDecodeError as e:
+			raise StorageValidationError(f"invalid json in storage file: {e}") from e
 
-    def clear_item(self, location: StorageModuleCellLocation) -> None:
-        self.get_side(location.side)[location.shelf_idx].cells[location.cell_idx].clear()
+		try:
+			grid = cls.model_validate(data)
+		except ValidationError as e:
+			raise StorageValidationError(f"storage schema validation failed: {e}") from e
 
-    def clear_all_items(self) -> None:
-        for shelf_idx, shelf in enumerate(self.left_module):
-            for cell_idx, tray in enumerate(shelf.cells):
-                self.left_module[shelf_idx].cells[cell_idx].clear()
-        for shelf_idx, shelf in enumerate(self.right_module):
-            for cell_idx, tray in enumerate(shelf.cells):
-                self.right_module[shelf_idx].cells[cell_idx].clear()
+		grid.filename = target_path
+		return grid
 
-    def get_all_items(self) -> List[StorageModuleCellLocation]:
-        items = []
-        for shelf_idx, shelf in enumerate(self.left_module):
-            for cell_idx, cell in enumerate(shelf.cells):
-                if cell.status == CellStatus.OCCUPIED:
-                    items.append(
-                        StorageModuleCellLocation(
-                            shelf_idx=shelf_idx,
-                            cell_idx=cell_idx,
-                            side=StorageModuleSide.LEFT,
-                        )
-                    )
-        for shelf_idx, shelf in enumerate(self.right_module):
-            for cell_idx, cell in enumerate(shelf.cells):
-                if cell.status == CellStatus.OCCUPIED:
-                    items.append(
-                        StorageModuleCellLocation(
-                            shelf_idx=shelf_idx,
-                            cell_idx=cell_idx,
-                            side=StorageModuleSide.RIGHT,
-                        )
-                    )
-        return items
+	def _create_backup(self, filename: str) -> str | None:
+		if os.path.exists(filename) is False:
+			return None
 
-    def get_all_free_cells(self) -> List[StorageModuleCellLocation]:
-        locations: List[StorageModuleCellLocation] = []
-        for shelf_idx, shelf in enumerate(self.left_module):
-            for cell_idx, cell in enumerate(shelf.cells):
-                if cell.status == CellStatus.AVAILABLE:
-                    locations.append(
-                        StorageModuleCellLocation(
-                            shelf_idx=shelf_idx,
-                            cell_idx=cell_idx,
-                            side=StorageModuleSide.LEFT,
-                        )
-                    )
-        for shelf_idx, shelf in enumerate(self.right_module):
-            for cell_idx, cell in enumerate(shelf.cells):
-                if cell.status == CellStatus.AVAILABLE:
-                    locations.append(
-                        StorageModuleCellLocation(
-                            shelf_idx=shelf_idx,
-                            cell_idx=cell_idx,
-                            side=StorageModuleSide.RIGHT,
-                        )
-                    )
-        return locations
+		directory = os.path.dirname(filename)
+		base_name = os.path.basename(filename)
+		name_part, ext = os.path.splitext(base_name)
+		timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+		backup_name = f"{name_part}_{timestamp}{ext}"
+		backup_path = os.path.join(directory, backup_name)
 
-    def get_all_cells(self) -> List[Cell]:
-        cells: List[Cell] = []
-        for shelf_idx, shelf in enumerate(self.left_module):
-            for cell_idx, cell in enumerate(shelf.cells):
-                cells.append(cell)
-                    
-        for shelf_idx, shelf in enumerate(self.right_module):
-            for cell_idx, cell in enumerate(shelf.cells):
-                cells.append(cell)
+		shutil.copy2(filename, backup_path)
 
-        return cells
+		return backup_path
 
+	def save_to_file(self, filename: str) -> None:
+		target_path = os.path.abspath(filename)
+		self._create_backup(target_path)
+		self.filename = target_path
 
-    def get_all_cell_data(self) -> List[CellLocationData]:
-        items: List[CellLocationData] = []
-        for shelf_idx, shelf in enumerate(self.left_module):
-            for cell_idx, cell in enumerate(shelf.cells):
-                if cell.status == CellStatus.OCCUPIED:
-                    items.append(
-                        CellLocationData(
-                            cell=cell.item,
-                            location=StorageModuleCellLocation(
-                                shelf_idx=shelf_idx,
-                                cell_idx=cell_idx,
-                                side=StorageModuleSide.LEFT,
-                            ),
-                        )
-                    )
-        for shelf_idx, shelf in enumerate(self.right_module):
-            for cell_idx, cell in enumerate(shelf.cells):
-                if cell.status == CellStatus.OCCUPIED:
-                    items.append(
-                        CellLocationData(
-                            cell=cell.item,
-                            location=StorageModuleCellLocation(
-                                shelf_idx=shelf_idx,
-                                cell_idx=cell_idx,
-                                side=StorageModuleSide.RIGHT,
-                            ),
-                        )
-                    )
-        return items
+		with open(target_path, "w+") as f:
+			f.write(self.model_dump_json())
 
-    def find_best_slot_for_item(self, item: CellItem) -> Optional[StorageModuleCellLocation]:
-        possible_slots: List[Tuple[StorageModuleCellLocation, float]] = []
-        for shelf_idx, shelf in enumerate(self.left_module):
-            for cell_idx, cell in enumerate(shelf.cells):
-                if cell.status == CellStatus.AVAILABLE and (
-                    cell.dimensions.width >= item.dimensions.width
-                    and cell.dimensions.length >= item.dimensions.length
-                    and cell.dimensions.height >= item.dimensions.height
-                ):
-                    unused_space = (
-                        cell.dimensions.width * cell.dimensions.height
-                        - item.dimensions.width * item.dimensions.height
-                    )
-                    possible_slots.append(
-                        (
-                            StorageModuleCellLocation(
-                                side=StorageModuleSide.LEFT,
-                                shelf_idx=shelf_idx,
-                                cell_idx=cell_idx,
-                            ),
-                            unused_space,
-                        )
-                    )
-        for shelf_idx, shelf in enumerate(self.right_module):
-            for cell_idx, cell in enumerate(shelf.cells):
-                if cell.status == CellStatus.AVAILABLE and (
-                    cell.dimensions.width >= item.dimensions.width
-                    and cell.dimensions.length >= item.dimensions.length
-                    and cell.dimensions.height >= item.dimensions.height
-                ):
-                    unused_space = (
-                        cell.dimensions.width * cell.dimensions.height
-                        - item.dimensions.width * item.dimensions.height
-                    )
-                    possible_slots.append(
-                        (
-                            StorageModuleCellLocation(
-                                side=StorageModuleSide.RIGHT,
-                                shelf_idx=shelf_idx,
-                                cell_idx=cell_idx,
-                            ),
-                            unused_space,
-                        )
-                    )
-        possible_slots.sort(key=lambda x: x[1])
-        return possible_slots[0][0] if possible_slots else None
-    
-# returns item coordinates
-    async def find_item_location(
-        self, 
-        item_name: Optional[str] = None,
-        upca: Optional[str] = None,
-        cell_location: Optional[StorageModuleCellLocation] = None
-    ) -> Optional[AxisCoordinate]:
-        """
-        Find an item in the storage grid by name, UPCA code, or specific location.
-        Returns the AxisCoordinate for the item's position if found.
-        
-        Args:
-            item_name: Name or identifier stored in item data
-            upca: UPCA barcode of the item
-            cell_location: Specific storage cell location
-            
-        Returns:
-            AxisCoordinate if item is found, None otherwise
-        """
-        print("finding")
-            
-        # # If we have a specific cell location, use that directly
-        if cell_location:
-            cal_coord = self.get_cell_coordinate(cell_location)
-            return cal_coord.to_axis_coordinate()
-        
-        # # Search through all cells for matching item
-        all_cells = self.get_all_cell_data()
+	def save(self) -> None:
+		self.save_to_file(self.filename)
 
-        for cell_data in all_cells:
-            if not cell_data.cell:  # Skip empty cells
-                continue
+	def update(self, updates: "StorageGrid") -> None:
+		self.left_module = list(updates.left_module)
+		self.right_module = list(updates.right_module)
+		self.save()
 
-            # Match by UPCA if provided
-            if upca and cell_data.cell.upca == upca:
-                cal_coord = self.get_cell_coordinate(cell_data.location)
-                return cal_coord.to_axis_coordinate()
+	def get_side(self, side: StorageModuleSide) -> List[Shelf]:
+		if side == StorageModuleSide.RIGHT:
+			return self.right_module
+		return self.left_module
 
-            # Match by item name in data
-            if item_name and cell_data.cell.data:
-                item_data = cell_data.cell.data
-                if isinstance(item_data, dict) and item_data.get("name") == item_name:
-                    cal_coord = self.get_cell_coordinate(cell_data.location)
-                    return cal_coord.to_axis_coordinate()
+	def get_shelf(self, side: StorageModuleSide, shelf_idx: int) -> Shelf:
+		for shelf in self.get_side(side):
+			if shelf.shelf_idx == shelf_idx:
+				return shelf
+		raise IndexError(f"Invalid shelf_idx: {shelf_idx}")
 
-        return None
+	def get_next_free_location(self, item: CellItem) -> Optional[StorageModuleCellLocation]:
+		possible_locations: List[StorageModuleCellLocation] = []
 
-    async def find_next_available_cell(
-        self,
-        width: float,
-        height: float,
-        length: float = 400.0
-    ) -> Optional[AxisCoordinate]:
-        """
-        Find the next available cell that can fit an item of given dimensions,
-        optimizing for minimal wasted space.
-        Returns the AxisCoordinate for the cell's position.
-        
-        Args:
-            width: Width of the item in mm
-            height: Height of the item in mm
-            length: Length of the item in mm (default 400.0)
-            
-        Returns:
-            AxisCoordinate if suitable cell is found, None otherwise
-        """
-        # if not self._grid:
-        #     return None
-            
-        # Create a temporary item to use storage grid's sizing logic
-        temp_item = CellItem(
-            dimensions=Dimensions(
-                width=width,
-                height=height,
-                length=length
-            )
-        )
-        
-        # Always use find_best_slot_for_item to optimize space usage
-        location = self.find_best_slot_for_item(temp_item)
+		for shelf in self.left_module:
+			cell_idx = shelf.get_next_optimal_slot(item)
+			if cell_idx is not None:
+				possible_locations.append(
+					StorageModuleCellLocation(
+						side=StorageModuleSide.LEFT,
+						shelf_idx=shelf.shelf_idx,
+						cell_idx=cell_idx,
+					)
+				)
 
-        if location:
-            cal_coord = self.get_cell_coordinate(location)
-            return cal_coord.to_axis_coordinate()
-            
-        return None
-    
-    async def calculate_storage_positions(
-        self,
-        shelf_y_positions: List[float],
-        cells_per_shelf: List[int],
-        cell_spacings: List[float],
-        x_anchor_points: List[float]
-    ) -> List[List[AxisCoordinate]]:
-        """Calculate positions for all storage cells based on detected shelf positions."""
-        if not (len(shelf_y_positions) == len(cells_per_shelf) == len(cell_spacings) == len(x_anchor_points)):
-            raise ValueError("All input lists must have the same length (one entry per shelf)")
-            
-        shelf_positions: List[List[AxisCoordinate]] = []
-        
-        for shelf_idx, (y_pos, num_cells, spacing, x_anchor) in enumerate(
-            zip(shelf_y_positions, cells_per_shelf, cell_spacings, x_anchor_points)
-        ):
-            shelf_cells: List[AxisCoordinate] = []
-            
-            for cell_idx in range(num_cells):
-                x_pos = x_anchor + (cell_idx * spacing)
-                cell_coord = AxisCoordinate(
-                    x=round(x_pos, 4),
-                    y=round(y_pos, 4)
-                )
-                shelf_cells.append(cell_coord)
-            
-            shelf_positions.append(shelf_cells)
-            
-        return shelf_positions
+		for shelf in self.right_module:
+			cell_idx = shelf.get_next_optimal_slot(item)
+			if cell_idx is not None:
+				possible_locations.append(
+					StorageModuleCellLocation(
+						side=StorageModuleSide.RIGHT,
+						shelf_idx=shelf.shelf_idx,
+						cell_idx=cell_idx,
+					)
+				)
+
+		for location in possible_locations:
+			cell = self.get_cell(location)
+			if location.side == StorageModuleSide.LEFT:
+				if item.dimensions.width <= 50 and cell.dimensions.width == 50:
+					return location
+				if item.dimensions.width <= 100 and cell.dimensions.width == 100:
+					return location
+				return location
+
+			if item.dimensions.width <= 50 and cell.dimensions.width == 50:
+				return location
+			if item.dimensions.width <= 100 and cell.dimensions.width == 100:
+				return location
+			return location
+
+		return None
+
+	def get_tray(self, location: StorageModuleCellLocation) -> Cell:
+		return self.get_cell(location)
+
+	def get_cell(self, location: StorageModuleCellLocation) -> Cell:
+		shelf = self.get_shelf(location.side, location.shelf_idx)
+		return shelf.get_cell(location.cell_idx)
+
+	def get_cell_coordinate(self, location: StorageModuleCellLocation) -> CalibrationCoordinate:
+		shelf = self.get_shelf(location.side, location.shelf_idx)
+		return shelf.get_cell_location(location.cell_idx)
+
+	def store_item(self, location: StorageModuleCellLocation, item: Optional[CellItem]) -> None:
+		cell = self.get_cell(location)
+		if cell.status not in (CellStatus.DISABLED, CellStatus.MAINTENANCE):
+			cell.status = CellStatus.OCCUPIED
+		cell.item = item
+
+	def clear_item(self, location: StorageModuleCellLocation) -> None:
+		self.get_cell(location).clear()
+
+	def clear_all_items(self) -> None:
+		for shelf in self.left_module:
+			for cell in shelf.cells:
+				cell.clear()
+
+		for shelf in self.right_module:
+			for cell in shelf.cells:
+				cell.clear()
+
+	def get_all_items(self) -> List[StorageModuleCellLocation]:
+		items: List[StorageModuleCellLocation] = []
+
+		for shelf in self.left_module:
+			for cell in shelf.cells:
+				if cell.status == CellStatus.OCCUPIED:
+					items.append(
+						StorageModuleCellLocation(
+							shelf_idx=shelf.shelf_idx,
+							cell_idx=cell.cell_idx,
+							side=StorageModuleSide.LEFT,
+						)
+					)
+
+		for shelf in self.right_module:
+			for cell in shelf.cells:
+				if cell.status == CellStatus.OCCUPIED:
+					items.append(
+						StorageModuleCellLocation(
+							shelf_idx=shelf.shelf_idx,
+							cell_idx=cell.cell_idx,
+							side=StorageModuleSide.RIGHT,
+						)
+					)
+
+		return items
+
+	def get_all_free_cells(self) -> List[StorageModuleCellLocation]:
+		locations: List[StorageModuleCellLocation] = []
+
+		for shelf in self.left_module:
+			for cell in shelf.cells:
+				if cell.status == CellStatus.AVAILABLE:
+					locations.append(
+						StorageModuleCellLocation(
+							shelf_idx=shelf.shelf_idx,
+							cell_idx=cell.cell_idx,
+							side=StorageModuleSide.LEFT,
+						)
+					)
+
+		for shelf in self.right_module:
+			for cell in shelf.cells:
+				if cell.status == CellStatus.AVAILABLE:
+					locations.append(
+						StorageModuleCellLocation(
+							shelf_idx=shelf.shelf_idx,
+							cell_idx=cell.cell_idx,
+							side=StorageModuleSide.RIGHT,
+						)
+					)
+
+		return locations
+
+	def get_all_cells(self) -> List[Cell]:
+		cells: List[Cell] = []
+
+		for shelf in self.left_module:
+			for cell in shelf.cells:
+				cells.append(cell)
+
+		for shelf in self.right_module:
+			for cell in shelf.cells:
+				cells.append(cell)
+
+		return cells
+
+	def get_all_cell_data(self) -> List[CellLocationData]:
+		items: List[CellLocationData] = []
+
+		for shelf in self.left_module:
+			for cell in shelf.cells:
+				if cell.status == CellStatus.OCCUPIED:
+					items.append(
+						CellLocationData(
+							cell=cell.item,
+							location=StorageModuleCellLocation(
+								shelf_idx=shelf.shelf_idx,
+								cell_idx=cell.cell_idx,
+								side=StorageModuleSide.LEFT,
+							),
+						)
+					)
+
+		for shelf in self.right_module:
+			for cell in shelf.cells:
+				if cell.status == CellStatus.OCCUPIED:
+					items.append(
+						CellLocationData(
+							cell=cell.item,
+							location=StorageModuleCellLocation(
+								shelf_idx=shelf.shelf_idx,
+								cell_idx=cell.cell_idx,
+								side=StorageModuleSide.RIGHT,
+							),
+						)
+					)
+
+		return items
+
+	def find_best_slot_for_item(self, item: CellItem) -> Optional[StorageModuleCellLocation]:
+		possible_slots: List[Tuple[StorageModuleCellLocation, float]] = []
+
+		for shelf in self.left_module:
+			for cell in shelf.cells:
+				if cell.status == CellStatus.AVAILABLE and (
+					cell.dimensions.width >= item.dimensions.width
+					and cell.dimensions.length >= item.dimensions.length
+					and cell.dimensions.height >= item.dimensions.height
+				):
+					unused_space = (
+						cell.dimensions.width * cell.dimensions.height
+						- item.dimensions.width * item.dimensions.height
+					)
+					possible_slots.append(
+						(
+							StorageModuleCellLocation(
+								side=StorageModuleSide.LEFT,
+								shelf_idx=shelf.shelf_idx,
+								cell_idx=cell.cell_idx,
+							),
+							unused_space,
+						)
+					)
+
+		for shelf in self.right_module:
+			for cell in shelf.cells:
+				if cell.status == CellStatus.AVAILABLE and (
+					cell.dimensions.width >= item.dimensions.width
+					and cell.dimensions.length >= item.dimensions.length
+					and cell.dimensions.height >= item.dimensions.height
+				):
+					unused_space = (
+						cell.dimensions.width * cell.dimensions.height
+						- item.dimensions.width * item.dimensions.height
+					)
+					possible_slots.append(
+						(
+							StorageModuleCellLocation(
+								side=StorageModuleSide.RIGHT,
+								shelf_idx=shelf.shelf_idx,
+								cell_idx=cell.cell_idx,
+							),
+							unused_space,
+						)
+					)
+
+		possible_slots.sort(key=lambda entry: entry[1])
+		if possible_slots:
+			return possible_slots[0][0]
+		return None
+
+	async def find_item_location(
+		self,
+		item_name: Optional[str] = None,
+		upca: Optional[str] = None,
+		cell_location: Optional[StorageModuleCellLocation] = None,
+	) -> Optional[AxisCoordinate]:
+		if cell_location is not None:
+			cal_coord = self.get_cell_coordinate(cell_location)
+			return cal_coord.to_axis_coordinate()
+
+		all_cells = self.get_all_cell_data()
+
+		for cell_data in all_cells:
+			if cell_data.cell is None:
+				continue
+
+			if upca and cell_data.cell.upca == upca:
+				cal_coord = self.get_cell_coordinate(cell_data.location)
+				return cal_coord.to_axis_coordinate()
+
+			if item_name and cell_data.cell.data:
+				item_data = cell_data.cell.data
+				if isinstance(item_data, dict) and item_data.get("name") == item_name:
+					cal_coord = self.get_cell_coordinate(cell_data.location)
+					return cal_coord.to_axis_coordinate()
+
+		return None
+
+	async def find_next_available_cell(
+		self,
+		width: float,
+		height: float,
+		length: float = 400.0,
+	) -> Optional[AxisCoordinate]:
+		temp_item = CellItem(
+			dimensions=Dimensions(
+				width=width,
+				height=height,
+				length=length,
+			)
+		)
+
+		location = self.find_best_slot_for_item(temp_item)
+
+		if location is not None:
+			cal_coord = self.get_cell_coordinate(location)
+			return cal_coord.to_axis_coordinate()
+
+		return None
+
+	async def calculate_storage_positions(
+		self,
+		shelf_y_positions: List[float],
+		cells_per_shelf: List[int],
+		cell_spacings: List[float],
+		x_anchor_points: List[float],
+	) -> List[List[AxisCoordinate]]:
+		if not (
+			len(shelf_y_positions) == len(cells_per_shelf)
+			and len(cells_per_shelf) == len(cell_spacings)
+			and len(cell_spacings) == len(x_anchor_points)
+		):
+			raise ValueError("All input lists must have the same length (one entry per shelf)")
+
+		shelf_positions: List[List[AxisCoordinate]] = []
+
+		for y_pos, num_cells, spacing, x_anchor in zip(
+			shelf_y_positions,
+			cells_per_shelf,
+			cell_spacings,
+			x_anchor_points,
+		):
+			shelf_cells: List[AxisCoordinate] = []
+
+			for cell_idx in range(num_cells):
+				x_pos = x_anchor + (cell_idx * spacing)
+				shelf_cells.append(
+					AxisCoordinate(
+						x=round(x_pos, 4),
+						y=round(y_pos, 4),
+					)
+				)
+
+			shelf_positions.append(shelf_cells)
+
+		return shelf_positions

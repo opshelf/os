@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from typing import Literal, Optional
@@ -7,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from perpetual_os1.common import AxisCoordinate
+from perpetual_os1.laser_scan import ScanBounds
 from perpetual_os1.storage import StorageModuleSide, CalibrationCoordinate, CellStatus
 from perpetual_os1.exceptions import IOBoxError, MotorError
 from hardware.exceptions import MotorError as HardwareMotorError
@@ -61,9 +63,42 @@ class CalibrationStatusResponse(BaseModel):
 	needs_home_axes: list[str] = Field(default_factory=list)
 
 
+class ScanRequest(BaseModel):
+	side: Literal["left_module", "right_module"]
+	x_min: Optional[float] = None
+	x_max: Optional[float] = None
+	y_min: Optional[float] = None
+	y_max: Optional[float] = None
+	step_mm: float = Field(default=5.0, gt=0)
+	settle_ms: int = Field(default=50, ge=0)
+	samples_per_point: int = Field(default=3, ge=1)
+	laser_offset_x_mm: float = 0.0
+	laser_offset_y_mm: float = 0.0
+	depth_threshold_mm: float = Field(default=10.0, gt=0)
+	min_component_points: int = Field(default=4, ge=1)
+	stage_extension_mm: Optional[float] = None
+	apply: bool = True
+
+
+class ScanStatusResponse(BaseModel):
+	state: Literal["idle", "running", "completed", "failed", "cancelled"] = "idle"
+	run_id: Optional[str] = None
+	side: Optional[Literal["left_module", "right_module"]] = None
+	bounds: Optional[ScanBounds] = None
+	total_points: int = 0
+	completed_points: int = 0
+	current_x_mm: Optional[float] = None
+	current_y_mm: Optional[float] = None
+	current_depth_mm: Optional[float] = None
+	error: Optional[str] = None
+	result: Optional[dict] = None
+
+
 _current_position: Optional[PositionResponse] = None
 _current_side: int = 0
 _current_side_name: str = "left_module"
+_scan_task: Optional[asyncio.Task] = None
+_scan_status = ScanStatusResponse()
 
 
 def _build_error_detail(
@@ -190,6 +225,26 @@ def _side_to_s(side: str) -> int:
 	return 1
 
 
+def _get_shelf(grid, side: StorageModuleSide, shelf_idx: int):
+	try:
+		return grid.get_shelf(side, shelf_idx)
+	except IndexError as e:
+		raise HTTPException(
+			status_code=status.HTTP_400_BAD_REQUEST,
+			detail=f"Invalid shelf_idx: {shelf_idx}",
+		) from e
+
+
+def _get_cell(shelf, cell_idx: int):
+	try:
+		return shelf.get_cell(cell_idx)
+	except IndexError as e:
+		raise HTTPException(
+			status_code=status.HTTP_400_BAD_REQUEST,
+			detail=f"Invalid cell_idx: {cell_idx}",
+		) from e
+
+
 def _get_stage_limit(tool) -> float:
 	if tool._ms is None:
 		raise HTTPException(
@@ -246,6 +301,162 @@ async def get_storage():
 	return grid.model_dump()
 
 
+def _derive_scan_bounds(grid, side: StorageModuleSide, request: ScanRequest) -> ScanBounds:
+	explicit_bounds = [
+		request.x_min,
+		request.x_max,
+		request.y_min,
+		request.y_max,
+	]
+
+	if all(value is not None for value in explicit_bounds):
+		return ScanBounds(
+			x_min=float(request.x_min),
+			x_max=float(request.x_max),
+			y_min=float(request.y_min),
+			y_max=float(request.y_max),
+		)
+
+	x_values: list[float] = []
+	y_values: list[float] = []
+
+	for shelf in grid.get_side(side):
+		for cell in shelf.cells:
+			if cell.calibration_point is None:
+				continue
+			x_values.append(float(cell.calibration_point.x))
+			y_values.append(float(cell.calibration_point.y))
+
+	if len(x_values) == 0 or len(y_values) == 0:
+		raise HTTPException(
+			status_code=status.HTTP_400_BAD_REQUEST,
+			detail="Scan bounds are required when the side has no calibrated cells",
+		)
+
+	margin_mm = max(request.step_mm * 2.0, 20.0)
+	return ScanBounds(
+		x_min=float(min(x_values) - margin_mm),
+		x_max=float(max(x_values) + margin_mm),
+		y_min=float(min(y_values) - margin_mm),
+		y_max=float(max(y_values) + margin_mm),
+	)
+
+
+async def _did_scan_progress(
+	completed_points: int,
+	total_points: int,
+	current_x_mm: float,
+	current_y_mm: float,
+	current_depth_mm: Optional[float],
+) -> None:
+	global _scan_status
+
+	_scan_status.completed_points = completed_points
+	_scan_status.total_points = total_points
+	_scan_status.current_x_mm = current_x_mm
+	_scan_status.current_y_mm = current_y_mm
+	_scan_status.current_depth_mm = current_depth_mm
+
+
+async def _run_scan_task(worker, request: ScanRequest, bounds: ScanBounds) -> None:
+	global _scan_status, _scan_task
+
+	try:
+		result = await worker._robot.scan_storage(
+			side=request.side,
+			bounds=bounds,
+			step_mm=request.step_mm,
+			settle_ms=request.settle_ms,
+			samples_per_point=request.samples_per_point,
+			laser_offset_x_mm=request.laser_offset_x_mm,
+			laser_offset_y_mm=request.laser_offset_y_mm,
+			depth_threshold_mm=request.depth_threshold_mm,
+			min_component_points=request.min_component_points,
+			stage_extension_mm=request.stage_extension_mm,
+			apply=request.apply,
+			progress_callback=_did_scan_progress,
+		)
+		_scan_status.state = "completed"
+		_scan_status.run_id = result.run_id
+		_scan_status.result = result.model_dump(mode="json")
+	except asyncio.CancelledError:
+		_scan_status.state = "cancelled"
+		_scan_status.error = None
+		raise
+	except Exception as e:
+		_scan_status.state = "failed"
+		_scan_status.error = str(e)
+	finally:
+		_scan_task = None
+
+
+@router.post("/scan", response_model=ScanStatusResponse)
+async def start_scan(request: ScanRequest) -> ScanStatusResponse:
+	global _scan_status, _scan_task
+
+	try:
+		worker = await get_robot_worker()
+	except ValueError as e:
+		raise HTTPException(
+			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+			detail="Robot is not initialized",
+		) from e
+
+	_ensure_ready(worker)
+
+	if _scan_task is not None and _scan_task.done() is False:
+		raise HTTPException(
+			status_code=status.HTTP_409_CONFLICT,
+			detail="A calibration scan is already running",
+		)
+
+	if getattr(worker, "_current_command", None) is not None:
+		raise HTTPException(
+			status_code=status.HTTP_409_CONFLICT,
+			detail="Robot is busy processing another command",
+		)
+
+	bounds = _derive_scan_bounds(worker._robot._grid, _parse_side(request.side), request)
+	x_positions = int(round((bounds.x_max - bounds.x_min) / request.step_mm)) + 1
+	y_positions = int(round((bounds.y_max - bounds.y_min) / request.step_mm)) + 1
+	total_points = max(1, x_positions * y_positions)
+
+	_scan_status = ScanStatusResponse(
+		state="running",
+		run_id=None,
+		side=request.side,
+		bounds=bounds,
+		total_points=total_points,
+		completed_points=0,
+		error=None,
+		result=None,
+	)
+
+	_scan_task = asyncio.create_task(_run_scan_task(worker, request, bounds))
+	return _scan_status
+
+
+@router.get("/scan/status", response_model=ScanStatusResponse)
+async def get_scan_status() -> ScanStatusResponse:
+	return _scan_status
+
+
+@router.post("/scan/abort", response_model=ScanStatusResponse)
+async def abort_scan() -> ScanStatusResponse:
+	global _scan_task, _scan_status
+
+	if _scan_task is None or _scan_task.done() is True:
+		raise HTTPException(
+			status_code=status.HTTP_409_CONFLICT,
+			detail="No calibration scan is running",
+		)
+
+	_scan_task.cancel()
+	_scan_status.state = "cancelled"
+	_scan_status.error = None
+	return _scan_status
+
+
 @router.post("/move", response_model=PositionResponse)
 async def move_to_cell(request: MoveRequest) -> PositionResponse:
 	global _current_position, _current_side, _current_side_name
@@ -262,23 +473,8 @@ async def move_to_cell(request: MoveRequest) -> PositionResponse:
 	tool = worker._robot._tool
 
 	side_enum = _parse_side(request.side)
-	shelves = grid.get_side(side_enum)
-
-	if request.shelf_idx < 0 or request.shelf_idx >= len(shelves):
-		raise HTTPException(
-			status_code=status.HTTP_400_BAD_REQUEST,
-			detail=f"Invalid shelf_idx: {request.shelf_idx}",
-		)
-
-	shelf = shelves[request.shelf_idx]
-
-	if request.cell_idx < 0 or request.cell_idx >= len(shelf.cells):
-		raise HTTPException(
-			status_code=status.HTTP_400_BAD_REQUEST,
-			detail=f"Invalid cell_idx: {request.cell_idx}",
-		)
-
-	cell = shelf.cells[request.cell_idx]
+	shelf = _get_shelf(grid, side_enum, request.shelf_idx)
+	cell = _get_cell(shelf, request.cell_idx)
 
 	if cell.calibration_point is None:
 		raise HTTPException(
@@ -472,23 +668,8 @@ async def save_calibration(request: SaveRequest):
 	grid = worker._robot._grid
 
 	side_enum = _parse_side(request.side)
-	shelves = grid.get_side(side_enum)
-
-	if request.shelf_idx < 0 or request.shelf_idx >= len(shelves):
-		raise HTTPException(
-			status_code=status.HTTP_400_BAD_REQUEST,
-			detail=f"Invalid shelf_idx: {request.shelf_idx}",
-		)
-
-	shelf = shelves[request.shelf_idx]
-
-	if request.cell_idx < 0 or request.cell_idx >= len(shelf.cells):
-		raise HTTPException(
-			status_code=status.HTTP_400_BAD_REQUEST,
-			detail=f"Invalid cell_idx: {request.cell_idx}",
-		)
-
-	cell = shelf.cells[request.cell_idx]
+	shelf = _get_shelf(grid, side_enum, request.shelf_idx)
+	cell = _get_cell(shelf, request.cell_idx)
 
 	new_cal = CalibrationCoordinate(
 		x=request.x,
@@ -1065,23 +1246,8 @@ async def run_cycle_test(request: CycleTestRequest):
 	tool = robot._tool
 
 	side_enum = _parse_side(request.side)
-	shelves = grid.get_side(side_enum)
-
-	if request.shelf_idx < 0 or request.shelf_idx >= len(shelves):
-		raise HTTPException(
-			status_code=status.HTTP_400_BAD_REQUEST,
-			detail=f"Invalid shelf_idx: {request.shelf_idx}",
-		)
-
-	shelf = shelves[request.shelf_idx]
-
-	if request.cell_idx < 0 or request.cell_idx >= len(shelf.cells):
-		raise HTTPException(
-			status_code=status.HTTP_400_BAD_REQUEST,
-			detail=f"Invalid cell_idx: {request.cell_idx}",
-		)
-
-	cell = shelf.cells[request.cell_idx]
+	shelf = _get_shelf(grid, side_enum, request.shelf_idx)
+	cell = _get_cell(shelf, request.cell_idx)
 
 	if cell.calibration_point is None:
 		raise HTTPException(
