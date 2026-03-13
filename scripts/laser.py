@@ -130,6 +130,26 @@ def print_status(message: str) -> None:
 	print(message, flush=True)
 
 
+def build_standalone_config(config) -> dict:
+	config_data = config.model_dump(mode="json")
+	config_data["robot"]["io"]["curtain"]["enabled"] = False
+
+	tool_config = config_data["robot"]["tool"]
+	tool_config.setdefault("laser", {})
+	tool_config["laser"]["enabled"] = True
+
+	robot_bus = config_data["robot"].setdefault("bus", {})
+	laser_bus = robot_bus.get("laser")
+	scale_bus = robot_bus.get("scale")
+	scale_enabled = config_data["robot"]["io"].get("scale", {}).get("enabled", True)
+
+	if laser_bus is None and scale_enabled is False and scale_bus is not None:
+		robot_bus["laser"] = dict(scale_bus)
+		print_status("config=using scale bus for laser")
+
+	return config_data
+
+
 async def run_scan(args: argparse.Namespace) -> int:
 	print_status("phase=config")
 	config = load_config_file(args.config)
@@ -165,8 +185,7 @@ async def run_scan(args: argparse.Namespace) -> int:
 		delete=False,
 	) as temp_config_file:
 		temp_config_path = Path(temp_config_file.name)
-		temp_config_data = config.model_dump(mode="json")
-		temp_config_data["robot"]["io"]["curtain"]["enabled"] = False
+		temp_config_data = build_standalone_config(config)
 		json.dump(temp_config_data, temp_config_file, indent="\t")
 
 	original_common_config_path = common_module.CONFIG_PATH
