@@ -482,10 +482,26 @@ class IOBlock(BaseModel):
         return value
 
 
+class LaserScanConfig(BaseModel):
+    wall_depth_tolerance_mm: float = Field(2.0, gt=0)
+    expected_hole_width_mm: float = Field(26.0, gt=0)
+    expected_hole_height_mm: float = Field(30.0, gt=0)
+    hole_width_tolerance_mm: float = Field(10.0, gt=0)
+    hole_height_tolerance_mm: float = Field(10.0, gt=0)
+    min_vertical_wall_coverage_mm: float = Field(10.0, gt=0)
+    min_horizontal_wall_coverage_mm: float = Field(30.0, gt=0)
+    laser_offset_x_mm: float = 0.0
+    laser_offset_y_mm: float = 0.0
+    step_mm: float = Field(5.0, gt=0)
+    settle_ms: int = Field(50, ge=0)
+    samples_per_point: int = Field(3, ge=1)
+
+
 class GridConfig(BaseModel):
     path: str = Field(..., min_length=1)
     cell_spacing_per_shelf: Optional[Union[float, List[Union[int, float]]]] = None
     cells_per_shelf: Optional[Union[int, List[int], List[List[int]], Dict[str, List[int]]]] = None
+    scan: LaserScanConfig = Field(default_factory=LaserScanConfig)
 
     @model_validator(mode="before")
     @classmethod

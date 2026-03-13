@@ -350,18 +350,6 @@ export interface StartCalibrationScanParams {
 	xMax?: number;
 	yMin?: number;
 	yMax?: number;
-	stepMm: number;
-	settleMs: number;
-	samplesPerPoint: number;
-	laserOffsetXMm: number;
-	laserOffsetYMm: number;
-	wallDepthToleranceMm: number;
-	expectedHoleWidthMm: number;
-	expectedHoleHeightMm: number;
-	holeWidthToleranceMm: number;
-	holeHeightToleranceMm: number;
-	minVerticalWallCoverageMm: number;
-	minHorizontalWallCoverageMm: number;
 	stageExtensionMm?: number;
 	apply: boolean;
 }
@@ -371,18 +359,6 @@ export async function startCalibrationScan(
 ): Promise<CalibrationScanStatus> {
 	const payload: Record<string, unknown> = {
 		side: params.side,
-		step_mm: params.stepMm,
-		settle_ms: params.settleMs,
-		samples_per_point: params.samplesPerPoint,
-		laser_offset_x_mm: params.laserOffsetXMm,
-		laser_offset_y_mm: params.laserOffsetYMm,
-		wall_depth_tolerance_mm: params.wallDepthToleranceMm,
-		expected_hole_width_mm: params.expectedHoleWidthMm,
-		expected_hole_height_mm: params.expectedHoleHeightMm,
-		hole_width_tolerance_mm: params.holeWidthToleranceMm,
-		hole_height_tolerance_mm: params.holeHeightToleranceMm,
-		min_vertical_wall_coverage_mm: params.minVerticalWallCoverageMm,
-		min_horizontal_wall_coverage_mm: params.minHorizontalWallCoverageMm,
 		apply: params.apply
 	};
 
@@ -400,6 +376,10 @@ export async function startCalibrationScan(
 
 	if (params.yMax !== undefined) {
 		payload.y_max = params.yMax;
+	}
+
+	if (params.stageExtensionMm !== undefined) {
+		payload.stage_extension_mm = params.stageExtensionMm;
 	}
 
 	if (params.stageExtensionMm !== undefined) {

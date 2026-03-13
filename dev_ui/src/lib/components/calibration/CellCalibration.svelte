@@ -70,23 +70,6 @@
 	let isAbortingScan = $state<boolean>(false);
 	let scanError = $state<string>('');
 	let scanMessage = $state<string>('');
-	let scanStepMm = $state<number>(5);
-	let scanSettleMs = $state<number>(50);
-	let scanSamplesPerPoint = $state<number>(3);
-	let scanLaserOffsetX = $state<number>(0);
-	let scanLaserOffsetY = $state<number>(0);
-	let scanWallDepthTolerance = $state<number>(2);
-	let scanExpectedHoleWidth = $state<number>(26);
-	let scanExpectedHoleHeight = $state<number>(30);
-	let scanHoleWidthTolerance = $state<number>(10);
-	let scanHoleHeightTolerance = $state<number>(10);
-	let scanMinVerticalWallCoverage = $state<number>(10);
-	let scanMinHorizontalWallCoverage = $state<number>(30);
-	let scanShouldApply = $state<boolean>(true);
-	let scanXMin = $state<number>(0);
-	let scanXMax = $state<number>(0);
-	let scanYMin = $state<number>(0);
-	let scanYMax = $state<number>(0);
 	let scanPollTimer: ReturnType<typeof setTimeout> | null = null;
 
 	const JOG_STEPS = [
@@ -167,11 +150,10 @@
 		loading = true;
 		loadError = '';
 
-		try {
-			storageGrid = await getStorageGrid();
-			syncSelection(initialShelf ?? selectedShelf, initialCell ?? selectedCell);
-			syncScanBounds();
-		} catch (err) {
+			try {
+				storageGrid = await getStorageGrid();
+				syncSelection(initialShelf ?? selectedShelf, initialCell ?? selectedCell);
+			} catch (err) {
 			handleNeedsHomeError(err);
 			loadError = err instanceof Error ? err.message : 'failed to load storage grid';
 		} finally {
@@ -322,43 +304,15 @@
 		selectedCell = matchingCell.cell_idx;
 	}
 
-	function syncScanBounds(): void {
-		const shelves = getShelves();
-		const xValues: number[] = [];
-		const yValues: number[] = [];
+		function didChangeSide(event: Event): void {
+			const target = event.target as HTMLSelectElement;
 
-		for (const shelf of shelves) {
-			for (const cell of shelf.cells) {
-				if (cell.calibration_point === null) {
-					continue;
-				}
-
-				xValues.push(cell.calibration_point.x);
-				yValues.push(cell.calibration_point.y);
-			}
-		}
-
-		if (xValues.length === 0 || yValues.length === 0) {
-			return;
-		}
-
-		const margin = Math.max(scanStepMm * 2, 20);
-		scanXMin = Math.min(...xValues) - margin;
-		scanXMax = Math.max(...xValues) + margin;
-		scanYMin = Math.min(...yValues) - margin;
-		scanYMax = Math.max(...yValues) + margin;
-	}
-
-	function didChangeSide(event: Event): void {
-		const target = event.target as HTMLSelectElement;
-
-		selectedSide = target.value as 'left_module' | 'right_module';
-		syncSelection();
-		syncScanBounds();
-		currentPosition = null;
-		error = '';
-		message = '';
-		warning = '';
+			selectedSide = target.value as 'left_module' | 'right_module';
+			syncSelection();
+			currentPosition = null;
+			error = '';
+			message = '';
+			warning = '';
 	}
 
 	function didChangeShelf(event: Event): void {
@@ -467,26 +421,10 @@
 		scanError = '';
 		scanMessage = '';
 
-		try {
-			scanStatus = await startCalibrationScan({
-				side: selectedSide,
-				xMin: scanXMin,
-				xMax: scanXMax,
-				yMin: scanYMin,
-				yMax: scanYMax,
-					stepMm: scanStepMm,
-					settleMs: scanSettleMs,
-					samplesPerPoint: scanSamplesPerPoint,
-					laserOffsetXMm: scanLaserOffsetX,
-					laserOffsetYMm: scanLaserOffsetY,
-					wallDepthToleranceMm: scanWallDepthTolerance,
-					expectedHoleWidthMm: scanExpectedHoleWidth,
-					expectedHoleHeightMm: scanExpectedHoleHeight,
-					holeWidthToleranceMm: scanHoleWidthTolerance,
-					holeHeightToleranceMm: scanHoleHeightTolerance,
-					minVerticalWallCoverageMm: scanMinVerticalWallCoverage,
-					minHorizontalWallCoverageMm: scanMinHorizontalWallCoverage,
-					apply: scanShouldApply
+			try {
+				scanStatus = await startCalibrationScan({
+					side: selectedSide,
+					apply: true
 				});
 				scanMessage = 'scan started';
 		} catch (err) {
@@ -826,99 +764,18 @@
 		</tbody>
 	</table>
 
-	<table class="status-table">
-		<thead>
-			<tr>
-				<th colspan="4">laser scan</th>
-			</tr>
-		</thead>
-		<tbody>
-			<tr>
-				<td>
-					<span class="field-label">x min</span>
-					<input type="number" step="1" bind:value={scanXMin} disabled={scanStatus?.state === 'running'} />
-				</td>
-				<td>
-					<span class="field-label">x max</span>
-					<input type="number" step="1" bind:value={scanXMax} disabled={scanStatus?.state === 'running'} />
-				</td>
-				<td>
-					<span class="field-label">y min</span>
-					<input type="number" step="1" bind:value={scanYMin} disabled={scanStatus?.state === 'running'} />
-				</td>
-				<td>
-					<span class="field-label">y max</span>
-					<input type="number" step="1" bind:value={scanYMax} disabled={scanStatus?.state === 'running'} />
-				</td>
-			</tr>
-			<tr>
-				<td>
-					<span class="field-label">step</span>
-					<input type="number" step="0.5" min="0.5" bind:value={scanStepMm} disabled={scanStatus?.state === 'running'} />
-				</td>
-				<td>
-					<span class="field-label">samples</span>
-					<input type="number" min="1" bind:value={scanSamplesPerPoint} disabled={scanStatus?.state === 'running'} />
-				</td>
-				<td>
-					<span class="field-label">settle ms</span>
-					<input type="number" min="0" bind:value={scanSettleMs} disabled={scanStatus?.state === 'running'} />
-				</td>
-				<td>
-					<label class="checkbox-field">
-						<input type="checkbox" bind:checked={scanShouldApply} disabled={scanStatus?.state === 'running'} />
-						apply to grid
-					</label>
-				</td>
-			</tr>
+		<table class="status-table">
+			<thead>
 				<tr>
-					<td>
-						<span class="field-label">offset x</span>
-						<input type="number" step="0.5" bind:value={scanLaserOffsetX} disabled={scanStatus?.state === 'running'} />
-					</td>
-					<td>
-						<span class="field-label">offset y</span>
-						<input type="number" step="0.5" bind:value={scanLaserOffsetY} disabled={scanStatus?.state === 'running'} />
-					</td>
-					<td>
-						<span class="field-label">wall tolerance</span>
-						<input type="number" step="0.5" min="0.5" bind:value={scanWallDepthTolerance} disabled={scanStatus?.state === 'running'} />
-					</td>
-					<td>
-						<span class="field-label">hole width</span>
-						<input type="number" step="0.5" min="1" bind:value={scanExpectedHoleWidth} disabled={scanStatus?.state === 'running'} />
-					</td>
+					<th colspan="4">laser scan</th>
 				</tr>
+			</thead>
+			<tbody>
 				<tr>
-					<td>
-						<span class="field-label">hole height</span>
-						<input type="number" step="0.5" min="1" bind:value={scanExpectedHoleHeight} disabled={scanStatus?.state === 'running'} />
-					</td>
-					<td>
-						<span class="field-label">width tol</span>
-						<input type="number" step="0.5" min="0.5" bind:value={scanHoleWidthTolerance} disabled={scanStatus?.state === 'running'} />
-					</td>
-					<td>
-						<span class="field-label">height tol</span>
-						<input type="number" step="0.5" min="0.5" bind:value={scanHoleHeightTolerance} disabled={scanStatus?.state === 'running'} />
-					</td>
-					<td>
-						<span class="field-label">vertical wall</span>
-						<input type="number" step="0.5" min="0.5" bind:value={scanMinVerticalWallCoverage} disabled={scanStatus?.state === 'running'} />
-					</td>
-				</tr>
-				<tr>
-					<td>
-						<span class="field-label">horizontal wall</span>
-						<input type="number" step="0.5" min="0.5" bind:value={scanMinHorizontalWallCoverage} disabled={scanStatus?.state === 'running'} />
-					</td>
-					<td colspan="3"></td>
-				</tr>
-			<tr>
-				<td colspan="4">
-					<div class="calibrate-row">
-						<button
-							type="button"
+					<td colspan="4">
+						<div class="calibrate-row">
+							<button
+								type="button"
 							onclick={didClickStartScan}
 							disabled={isStartingScan === true ||
 								scanStatus?.state === 'running' ||
@@ -934,17 +791,17 @@
 						>
 							abort scan
 						</button>
-						{#if scanStatus !== null}
-							<span>
-								{scanStatus.state}
-								{#if scanStatus.total_points > 0}
-									({scanStatus.completed_points}/{scanStatus.total_points})
-								{/if}
-							</span>
-						{/if}
-					</div>
-				</td>
-			</tr>
+							{#if scanStatus !== null}
+								<span>
+									{scanStatus.state}
+									{#if scanStatus.total_points > 0}
+										({scanStatus.completed_points}/{scanStatus.total_points})
+									{/if}
+								</span>
+							{/if}
+						</div>
+					</td>
+				</tr>
 			{#if scanStatus !== null && scanStatus.result !== null}
 				<tr>
 					<td colspan="4">
