@@ -64,8 +64,12 @@ class ScanAnalysisResult(BaseModel):
 	step_mm: float
 	samples_per_point: int
 	settle_ms: int
-	surface_depth_mm: float
-	depth_threshold_mm: float
+	wall_depth_mm: float
+	wall_depth_tolerance_mm: float
+	expected_hole_width_mm: float
+	expected_hole_height_mm: float
+	min_vertical_wall_coverage_mm: float
+	min_horizontal_wall_coverage_mm: float
 	total_points: int
 	valid_points: int
 	raw_scan_path: str
@@ -83,8 +87,13 @@ class ScanCaptureResult(BaseModel):
 	samples_per_point: int
 	laser_offset_x_mm: float
 	laser_offset_y_mm: float
-	depth_threshold_mm: float
-	min_component_points: int
+	wall_depth_tolerance_mm: float
+	expected_hole_width_mm: float
+	expected_hole_height_mm: float
+	hole_width_tolerance_mm: float
+	hole_height_tolerance_mm: float
+	min_vertical_wall_coverage_mm: float
+	min_horizontal_wall_coverage_mm: float
 	x_positions: list[float]
 	y_positions: list[float]
 	depth_rows: list[list[Optional[float]]]
@@ -119,8 +128,13 @@ def create_scan_capture(
 	samples_per_point: int,
 	laser_offset_x_mm: float,
 	laser_offset_y_mm: float,
-	depth_threshold_mm: float,
-	min_component_points: int,
+	wall_depth_tolerance_mm: float = 2.0,
+	expected_hole_width_mm: float = 26.0,
+	expected_hole_height_mm: float = 30.0,
+	hole_width_tolerance_mm: float = 10.0,
+	hole_height_tolerance_mm: float = 10.0,
+	min_vertical_wall_coverage_mm: float = 10.0,
+	min_horizontal_wall_coverage_mm: float = 30.0,
 	depth_rows: list[list[Optional[float]]],
 ) -> ScanCaptureResult:
 	x_positions = build_axis_positions(bounds.x_min, bounds.x_max, step_mm)
@@ -137,17 +151,22 @@ def create_scan_capture(
 		run_id=uuid4().hex,
 		side=side,
 		bounds=bounds,
-		step_mm=step_mm,
-		settle_ms=settle_ms,
-		samples_per_point=samples_per_point,
-		laser_offset_x_mm=laser_offset_x_mm,
-		laser_offset_y_mm=laser_offset_y_mm,
-		depth_threshold_mm=depth_threshold_mm,
-		min_component_points=min_component_points,
-		x_positions=x_positions,
-		y_positions=y_positions,
-		depth_rows=depth_rows,
-	)
+			step_mm=step_mm,
+			settle_ms=settle_ms,
+			samples_per_point=samples_per_point,
+			laser_offset_x_mm=laser_offset_x_mm,
+			laser_offset_y_mm=laser_offset_y_mm,
+			wall_depth_tolerance_mm=wall_depth_tolerance_mm,
+			expected_hole_width_mm=expected_hole_width_mm,
+			expected_hole_height_mm=expected_hole_height_mm,
+			hole_width_tolerance_mm=hole_width_tolerance_mm,
+			hole_height_tolerance_mm=hole_height_tolerance_mm,
+			min_vertical_wall_coverage_mm=min_vertical_wall_coverage_mm,
+			min_horizontal_wall_coverage_mm=min_horizontal_wall_coverage_mm,
+			x_positions=x_positions,
+			y_positions=y_positions,
+			depth_rows=depth_rows,
+		)
 
 
 def persist_scan_capture(base_dir: str | Path, capture: ScanCaptureResult) -> tuple[Path, Path]:
@@ -175,17 +194,22 @@ def persist_scan_capture(base_dir: str | Path, capture: ScanCaptureResult) -> tu
 				"created_at": datetime.now(timezone.utc).isoformat(),
 				"side": capture.side.value,
 				"bounds": capture.bounds.model_dump(),
-				"step_mm": capture.step_mm,
-				"settle_ms": capture.settle_ms,
-				"samples_per_point": capture.samples_per_point,
-				"laser_offset_x_mm": capture.laser_offset_x_mm,
-				"laser_offset_y_mm": capture.laser_offset_y_mm,
-				"depth_threshold_mm": capture.depth_threshold_mm,
-				"min_component_points": capture.min_component_points,
-				"x_positions": capture.x_positions,
-				"y_positions": capture.y_positions,
-			},
-			indent=2,
+					"step_mm": capture.step_mm,
+					"settle_ms": capture.settle_ms,
+					"samples_per_point": capture.samples_per_point,
+					"laser_offset_x_mm": capture.laser_offset_x_mm,
+					"laser_offset_y_mm": capture.laser_offset_y_mm,
+					"wall_depth_tolerance_mm": capture.wall_depth_tolerance_mm,
+					"expected_hole_width_mm": capture.expected_hole_width_mm,
+					"expected_hole_height_mm": capture.expected_hole_height_mm,
+					"hole_width_tolerance_mm": capture.hole_width_tolerance_mm,
+					"hole_height_tolerance_mm": capture.hole_height_tolerance_mm,
+					"min_vertical_wall_coverage_mm": capture.min_vertical_wall_coverage_mm,
+					"min_horizontal_wall_coverage_mm": capture.min_horizontal_wall_coverage_mm,
+					"x_positions": capture.x_positions,
+					"y_positions": capture.y_positions,
+				},
+				indent=2,
 		),
 		encoding="utf-8",
 	)
@@ -237,6 +261,93 @@ def _find_components(mask: np.ndarray) -> list[list[tuple[int, int]]]:
 	return components
 
 
+def _estimate_wall_depth_mm(valid_values: np.ndarray) -> float:
+	if valid_values.size == 0:
+		raise ValueError("No valid laser readings captured")
+
+	bin_size_mm = 0.5
+	min_depth_mm = float(np.floor(np.min(valid_values) / bin_size_mm) * bin_size_mm)
+	max_depth_mm = float(np.ceil(np.max(valid_values) / bin_size_mm) * bin_size_mm) + bin_size_mm
+	bins = np.arange(min_depth_mm, max_depth_mm + bin_size_mm, bin_size_mm, dtype=np.float32)
+
+	if bins.size < 2:
+		return float(np.median(valid_values))
+
+	histogram, edges = np.histogram(valid_values, bins=bins)
+	dominant_idx = int(np.argmax(histogram))
+	lower_bound_mm = float(edges[dominant_idx])
+	upper_bound_mm = float(edges[dominant_idx + 1])
+	dominant_values = valid_values[
+		(valid_values >= lower_bound_mm) &
+		(valid_values < upper_bound_mm)
+	]
+
+	if dominant_values.size == 0:
+		return float(np.median(valid_values))
+
+	return float(np.median(dominant_values))
+
+
+def _component_dimensions_mm(
+	component: list[tuple[int, int]],
+	*,
+	x_positions: list[float],
+	y_positions: list[float],
+	step_mm: float,
+) -> tuple[int, int, int, int, float, float]:
+	row_indices = [row_idx for row_idx, _ in component]
+	col_indices = [col_idx for _, col_idx in component]
+	min_col = min(col_indices)
+	max_col = max(col_indices)
+	min_row = min(row_indices)
+	max_row = max(row_indices)
+	width_mm = float(x_positions[max_col] - x_positions[min_col] + step_mm)
+	height_mm = float(y_positions[max_row] - y_positions[min_row] + step_mm)
+
+	return min_row, max_row, min_col, max_col, width_mm, height_mm
+
+
+def _is_dimension_match(
+	actual_mm: float,
+	*,
+	expected_mm: float,
+	tolerance_mm: float,
+) -> bool:
+	min_mm = expected_mm - tolerance_mm
+	max_mm = expected_mm + tolerance_mm
+
+	return min_mm <= actual_mm <= max_mm
+
+
+def _count_contiguous_wall_in_row(
+	wall_mask: np.ndarray,
+	*,
+	row_idx: int,
+	center_col: int,
+) -> int:
+	width = wall_mask.shape[1]
+	count = 0
+	col_idx = center_col
+
+	while col_idx >= 0:
+		if bool(wall_mask[row_idx, col_idx]) is False:
+			break
+
+		count += 1
+		col_idx -= 1
+
+	col_idx = center_col + 1
+
+	while col_idx < width:
+		if bool(wall_mask[row_idx, col_idx]) is False:
+			break
+
+		count += 1
+		col_idx += 1
+
+	return count
+
+
 def analyze_scan_capture(
 	capture: ScanCaptureResult,
 	*,
@@ -258,26 +369,79 @@ def analyze_scan_capture(
 	if valid_values.size == 0:
 		raise ValueError("No valid laser readings captured")
 
-	surface_depth_mm = float(np.median(valid_values))
-	hole_mask = valid_mask & (depth_array >= (surface_depth_mm + capture.depth_threshold_mm))
-	components = _find_components(hole_mask)
+	wall_depth_mm = _estimate_wall_depth_mm(valid_values)
+	wall_mask = valid_mask & (
+		np.abs(depth_array - wall_depth_mm) <= capture.wall_depth_tolerance_mm
+	)
+	void_mask = np.logical_not(wall_mask)
+	components = _find_components(void_mask)
 
 	detected_cells: list[ScanDetectedCell] = []
+	min_vertical_rows = max(1, int(np.ceil(capture.min_vertical_wall_coverage_mm / capture.step_mm)))
+	min_horizontal_cols = max(1, int(np.ceil(capture.min_horizontal_wall_coverage_mm / capture.step_mm)))
+	grid_height, grid_width = depth_array.shape
 
 	for component in components:
-		if len(component) < capture.min_component_points:
+		min_row, max_row, min_col, max_col, width_mm, height_mm = _component_dimensions_mm(
+			component,
+			x_positions=capture.x_positions,
+			y_positions=capture.y_positions,
+			step_mm=capture.step_mm,
+		)
+
+		if min_row == 0 or min_col == 0:
+			continue
+		if max_row == grid_height - 1 or max_col == grid_width - 1:
+			continue
+		if _is_dimension_match(
+			width_mm,
+			expected_mm=capture.expected_hole_width_mm,
+			tolerance_mm=capture.hole_width_tolerance_mm,
+		) is False:
+			continue
+		if _is_dimension_match(
+			height_mm,
+			expected_mm=capture.expected_hole_height_mm,
+			tolerance_mm=capture.hole_height_tolerance_mm,
+		) is False:
 			continue
 
-		row_indices = [row_idx for row_idx, _ in component]
-		col_indices = [col_idx for _, col_idx in component]
-		center_x_mm = float(np.mean([capture.x_positions[col_idx] for col_idx in col_indices]))
-		center_y_mm = float(np.mean([capture.y_positions[row_idx] for row_idx in row_indices]))
-		min_col = min(col_indices)
-		max_col = max(col_indices)
-		min_row = min(row_indices)
-		max_row = max(row_indices)
-		width_mm = float(capture.x_positions[max_col] - capture.x_positions[min_col] + capture.step_mm)
-		height_mm = float(capture.y_positions[max_row] - capture.y_positions[min_row] + capture.step_mm)
+		left_wall_hits = 0
+		right_wall_hits = 0
+		for row_idx in range(min_row, max_row + 1):
+			if bool(wall_mask[row_idx, min_col - 1]) is True:
+				left_wall_hits += 1
+			if bool(wall_mask[row_idx, max_col + 1]) is True:
+				right_wall_hits += 1
+
+		if left_wall_hits < min_vertical_rows:
+			continue
+		if right_wall_hits < min_vertical_rows:
+			continue
+
+		center_col = int(round((min_col + max_col) / 2.0))
+		top_wall_hits = _count_contiguous_wall_in_row(
+			wall_mask,
+			row_idx=min_row - 1,
+			center_col=center_col,
+		)
+		bottom_wall_hits = _count_contiguous_wall_in_row(
+			wall_mask,
+			row_idx=max_row + 1,
+			center_col=center_col,
+		)
+
+		if top_wall_hits < min_horizontal_cols:
+			continue
+		if bottom_wall_hits < min_horizontal_cols:
+			continue
+
+		left_edge_mm = capture.x_positions[min_col] - (capture.step_mm / 2.0)
+		right_edge_mm = capture.x_positions[max_col] + (capture.step_mm / 2.0)
+		top_edge_mm = capture.y_positions[min_row] - (capture.step_mm / 2.0)
+		bottom_edge_mm = capture.y_positions[max_row] + (capture.step_mm / 2.0)
+		center_x_mm = float((left_edge_mm + right_edge_mm) / 2.0)
+		center_y_mm = float((top_edge_mm + bottom_edge_mm) / 2.0)
 
 		detected_cells.append(
 			ScanDetectedCell(
@@ -357,8 +521,12 @@ def analyze_scan_capture(
 		step_mm=capture.step_mm,
 		samples_per_point=capture.samples_per_point,
 		settle_ms=capture.settle_ms,
-		surface_depth_mm=surface_depth_mm,
-		depth_threshold_mm=capture.depth_threshold_mm,
+		wall_depth_mm=wall_depth_mm,
+		wall_depth_tolerance_mm=capture.wall_depth_tolerance_mm,
+		expected_hole_width_mm=capture.expected_hole_width_mm,
+		expected_hole_height_mm=capture.expected_hole_height_mm,
+		min_vertical_wall_coverage_mm=capture.min_vertical_wall_coverage_mm,
+		min_horizontal_wall_coverage_mm=capture.min_horizontal_wall_coverage_mm,
 		total_points=int(depth_array.size),
 		valid_points=int(valid_values.size),
 		raw_scan_path=str(raw_scan_path),

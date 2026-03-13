@@ -316,8 +316,12 @@ export interface CalibrationScanResult {
 	step_mm: number;
 	samples_per_point: number;
 	settle_ms: number;
-	surface_depth_mm: number;
-	depth_threshold_mm: number;
+	wall_depth_mm: number;
+	wall_depth_tolerance_mm: number;
+	expected_hole_width_mm: number;
+	expected_hole_height_mm: number;
+	min_vertical_wall_coverage_mm: number;
+	min_horizontal_wall_coverage_mm: number;
 	total_points: number;
 	valid_points: number;
 	raw_scan_path: string;
@@ -351,8 +355,13 @@ export interface StartCalibrationScanParams {
 	samplesPerPoint: number;
 	laserOffsetXMm: number;
 	laserOffsetYMm: number;
-	depthThresholdMm: number;
-	minComponentPoints: number;
+	wallDepthToleranceMm: number;
+	expectedHoleWidthMm: number;
+	expectedHoleHeightMm: number;
+	holeWidthToleranceMm: number;
+	holeHeightToleranceMm: number;
+	minVerticalWallCoverageMm: number;
+	minHorizontalWallCoverageMm: number;
 	stageExtensionMm?: number;
 	apply: boolean;
 }
@@ -367,8 +376,13 @@ export async function startCalibrationScan(
 		samples_per_point: params.samplesPerPoint,
 		laser_offset_x_mm: params.laserOffsetXMm,
 		laser_offset_y_mm: params.laserOffsetYMm,
-		depth_threshold_mm: params.depthThresholdMm,
-		min_component_points: params.minComponentPoints,
+		wall_depth_tolerance_mm: params.wallDepthToleranceMm,
+		expected_hole_width_mm: params.expectedHoleWidthMm,
+		expected_hole_height_mm: params.expectedHoleHeightMm,
+		hole_width_tolerance_mm: params.holeWidthToleranceMm,
+		hole_height_tolerance_mm: params.holeHeightToleranceMm,
+		min_vertical_wall_coverage_mm: params.minVerticalWallCoverageMm,
+		min_horizontal_wall_coverage_mm: params.minHorizontalWallCoverageMm,
 		apply: params.apply
 	};
 
