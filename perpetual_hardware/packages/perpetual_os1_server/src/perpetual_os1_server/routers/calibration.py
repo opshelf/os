@@ -15,7 +15,7 @@ from hardware.exceptions import MotorError as HardwareMotorError
 
 from perpetual_os1_server.core.robot import get_robot_worker
 from perpetual_os1_server.routers.auth_deps import get_current_user
-from perpetual_os1_server.settings import get_root_config, save_root_config
+from perpetual_os1_server.settings import clear_config_cache, get_root_config, save_root_config
 
 router = APIRouter(prefix="/api/calibration", tags=["calibration"], dependencies=[Depends(get_current_user)])
 
@@ -69,18 +69,6 @@ class ScanRequest(BaseModel):
 	x_max: Optional[float] = None
 	y_min: Optional[float] = None
 	y_max: Optional[float] = None
-	step_mm: float = Field(default=5.0, gt=0)
-	settle_ms: int = Field(default=50, ge=0)
-	samples_per_point: int = Field(default=3, ge=1)
-	laser_offset_x_mm: float = 0.0
-	laser_offset_y_mm: float = 0.0
-	wall_depth_tolerance_mm: float = Field(default=2.0, gt=0)
-	expected_hole_width_mm: float = Field(default=26.0, gt=0)
-	expected_hole_height_mm: float = Field(default=30.0, gt=0)
-	hole_width_tolerance_mm: float = Field(default=10.0, gt=0)
-	hole_height_tolerance_mm: float = Field(default=10.0, gt=0)
-	min_vertical_wall_coverage_mm: float = Field(default=10.0, gt=0)
-	min_horizontal_wall_coverage_mm: float = Field(default=30.0, gt=0)
 	stage_extension_mm: Optional[float] = None
 	apply: bool = True
 
@@ -224,6 +212,12 @@ def _parse_side(side: str) -> StorageModuleSide:
 	return StorageModuleSide.RIGHT
 
 
+def _get_scan_config():
+	clear_config_cache()
+	config = get_root_config()
+	return config.robot.grid.scan
+
+
 def _side_to_s(side: str) -> int:
 	if side == "left_module":
 		return 0
@@ -338,7 +332,8 @@ def _derive_scan_bounds(grid, side: StorageModuleSide, request: ScanRequest) -> 
 			detail="Scan bounds are required when the side has no calibrated cells",
 		)
 
-	margin_mm = max(request.step_mm * 2.0, 20.0)
+	scan_config = _get_scan_config()
+	margin_mm = max(scan_config.step_mm * 2.0, 20.0)
 	return ScanBounds(
 		x_min=float(min(x_values) - margin_mm),
 		x_max=float(max(x_values) + margin_mm),
@@ -367,21 +362,22 @@ async def _run_scan_task(worker, request: ScanRequest, bounds: ScanBounds) -> No
 	global _scan_status, _scan_task
 
 	try:
+		scan_config = _get_scan_config()
 		result = await worker._robot.scan_storage(
 			side=request.side,
 			bounds=bounds,
-			step_mm=request.step_mm,
-			settle_ms=request.settle_ms,
-			samples_per_point=request.samples_per_point,
-			laser_offset_x_mm=request.laser_offset_x_mm,
-			laser_offset_y_mm=request.laser_offset_y_mm,
-			wall_depth_tolerance_mm=request.wall_depth_tolerance_mm,
-			expected_hole_width_mm=request.expected_hole_width_mm,
-			expected_hole_height_mm=request.expected_hole_height_mm,
-			hole_width_tolerance_mm=request.hole_width_tolerance_mm,
-			hole_height_tolerance_mm=request.hole_height_tolerance_mm,
-			min_vertical_wall_coverage_mm=request.min_vertical_wall_coverage_mm,
-			min_horizontal_wall_coverage_mm=request.min_horizontal_wall_coverage_mm,
+			step_mm=scan_config.step_mm,
+			settle_ms=scan_config.settle_ms,
+			samples_per_point=scan_config.samples_per_point,
+			laser_offset_x_mm=scan_config.laser_offset_x_mm,
+			laser_offset_y_mm=scan_config.laser_offset_y_mm,
+			wall_depth_tolerance_mm=scan_config.wall_depth_tolerance_mm,
+			expected_hole_width_mm=scan_config.expected_hole_width_mm,
+			expected_hole_height_mm=scan_config.expected_hole_height_mm,
+			hole_width_tolerance_mm=scan_config.hole_width_tolerance_mm,
+			hole_height_tolerance_mm=scan_config.hole_height_tolerance_mm,
+			min_vertical_wall_coverage_mm=scan_config.min_vertical_wall_coverage_mm,
+			min_horizontal_wall_coverage_mm=scan_config.min_horizontal_wall_coverage_mm,
 			stage_extension_mm=request.stage_extension_mm,
 			apply=request.apply,
 			progress_callback=_did_scan_progress,
@@ -426,9 +422,10 @@ async def start_scan(request: ScanRequest) -> ScanStatusResponse:
 			detail="Robot is busy processing another command",
 		)
 
+	scan_config = _get_scan_config()
 	bounds = _derive_scan_bounds(worker._robot._grid, _parse_side(request.side), request)
-	x_positions = int(round((bounds.x_max - bounds.x_min) / request.step_mm)) + 1
-	y_positions = int(round((bounds.y_max - bounds.y_min) / request.step_mm)) + 1
+	x_positions = int(round((bounds.x_max - bounds.x_min) / scan_config.step_mm)) + 1
+	y_positions = int(round((bounds.y_max - bounds.y_min) / scan_config.step_mm)) + 1
 	total_points = max(1, x_positions * y_positions)
 
 	_scan_status = ScanStatusResponse(

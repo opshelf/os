@@ -163,8 +163,24 @@ def _build_minimal_config(data: dict) -> dict:
 					"distance_register_index": 1,
 					"distance_scale_mm": 0.01,
 				},
-			},
-			"grid": {"path": "storage.json"},
+				},
+				"grid": {
+					"path": "storage.json",
+					"scan": {
+						"wall_depth_tolerance_mm": 2.0,
+						"expected_hole_width_mm": 26.0,
+						"expected_hole_height_mm": 30.0,
+						"hole_width_tolerance_mm": 10.0,
+						"hole_height_tolerance_mm": 10.0,
+						"min_vertical_wall_coverage_mm": 10.0,
+						"min_horizontal_wall_coverage_mm": 30.0,
+						"laser_offset_x_mm": 0.0,
+						"laser_offset_y_mm": 0.0,
+						"step_mm": 5.0,
+						"settle_ms": 50,
+						"samples_per_point": 3,
+					},
+				},
 			"io": {
 				"motors": [],
 				"usb_camera": {
