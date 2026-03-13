@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import sys
+import tempfile
 import traceback
 from pathlib import Path
 
@@ -18,6 +20,8 @@ for import_path in reversed(PYTHON_PATHS):
 
 from perpetual_os1.common import CONFIG_PATH, load_config_file, resolve_grid_path
 from perpetual_os1.laser_scan import ScanBounds
+import perpetual_os1.common as common_module
+import perpetual_os1.robot as robot_module
 from perpetual_os1.robot import Robot
 from perpetual_os1.storage import StorageGrid, StorageModuleSide
 
@@ -153,58 +157,81 @@ async def run_scan(args: argparse.Namespace) -> int:
 	)
 
 	print_status("phase=robot-init")
-	robot = Robot()
-	print_status("phase=robot-configure")
-	await robot.configure()
+	with tempfile.NamedTemporaryFile(
+		mode="w",
+		suffix=".json",
+		prefix="laser-script-config-",
+		dir=str(Path(args.config).resolve().parent),
+		delete=False,
+	) as temp_config_file:
+		temp_config_path = Path(temp_config_file.name)
+		temp_config_data = config.model_dump(mode="json")
+		temp_config_data["robot"]["io"]["curtain"]["enabled"] = False
+		json.dump(temp_config_data, temp_config_file, indent="\t")
+
+	original_common_config_path = common_module.CONFIG_PATH
+	original_robot_config_path = robot_module.CONFIG_PATH
+
+	common_module.CONFIG_PATH = temp_config_path
+	robot_module.CONFIG_PATH = temp_config_path
 
 	try:
-		last_reported_points = 0
+		robot = Robot()
+		print_status("phase=robot-configure")
+		await robot.configure()
 
-		async def did_progress(
-			completed_points: int,
-			total_points: int,
-			current_x_mm: float,
-			current_y_mm: float,
-			current_depth_mm: float | None,
-		) -> None:
-			nonlocal last_reported_points
+		try:
+			last_reported_points = 0
 
-			if completed_points < total_points and completed_points - last_reported_points < 25:
-				return
+			async def did_progress(
+				completed_points: int,
+				total_points: int,
+				current_x_mm: float,
+				current_y_mm: float,
+				current_depth_mm: float | None,
+			) -> None:
+				nonlocal last_reported_points
 
-			last_reported_points = completed_points
-			depth_label = "none" if current_depth_mm is None else f"{current_depth_mm:.2f}"
-			print_status(
-				f"progress={completed_points}/{total_points} "
-				f"x={current_x_mm:.2f} "
-				f"y={current_y_mm:.2f} "
-				f"depth={depth_label}"
+				if completed_points < total_points and completed_points - last_reported_points < 25:
+					return
+
+				last_reported_points = completed_points
+				depth_label = "none" if current_depth_mm is None else f"{current_depth_mm:.2f}"
+				print_status(
+					f"progress={completed_points}/{total_points} "
+					f"x={current_x_mm:.2f} "
+					f"y={current_y_mm:.2f} "
+					f"depth={depth_label}"
+				)
+
+			print_status("phase=scan-start")
+			analysis = await robot.scan_storage(
+				side=side,
+				bounds=bounds,
+				step_mm=step_mm,
+				settle_ms=settle_ms,
+				samples_per_point=samples_per_point,
+				laser_offset_x_mm=scan_config.laser_offset_x_mm,
+				laser_offset_y_mm=scan_config.laser_offset_y_mm,
+				wall_depth_tolerance_mm=scan_config.wall_depth_tolerance_mm,
+				expected_hole_width_mm=scan_config.expected_hole_width_mm,
+				expected_hole_height_mm=scan_config.expected_hole_height_mm,
+				hole_width_tolerance_mm=scan_config.hole_width_tolerance_mm,
+				hole_height_tolerance_mm=scan_config.hole_height_tolerance_mm,
+				min_vertical_wall_coverage_mm=scan_config.min_vertical_wall_coverage_mm,
+				min_horizontal_wall_coverage_mm=scan_config.min_horizontal_wall_coverage_mm,
+				scans_dir=args.scans_dir,
+				apply=args.apply,
+				stage_extension_mm=args.stage_extension_mm,
+				progress_callback=did_progress,
 			)
-
-		print_status("phase=scan-start")
-		analysis = await robot.scan_storage(
-			side=side,
-			bounds=bounds,
-			step_mm=step_mm,
-			settle_ms=settle_ms,
-			samples_per_point=samples_per_point,
-			laser_offset_x_mm=scan_config.laser_offset_x_mm,
-			laser_offset_y_mm=scan_config.laser_offset_y_mm,
-			wall_depth_tolerance_mm=scan_config.wall_depth_tolerance_mm,
-			expected_hole_width_mm=scan_config.expected_hole_width_mm,
-			expected_hole_height_mm=scan_config.expected_hole_height_mm,
-			hole_width_tolerance_mm=scan_config.hole_width_tolerance_mm,
-			hole_height_tolerance_mm=scan_config.hole_height_tolerance_mm,
-			min_vertical_wall_coverage_mm=scan_config.min_vertical_wall_coverage_mm,
-			min_horizontal_wall_coverage_mm=scan_config.min_horizontal_wall_coverage_mm,
-			scans_dir=args.scans_dir,
-			apply=args.apply,
-			stage_extension_mm=args.stage_extension_mm,
-			progress_callback=did_progress,
-		)
+		finally:
+			print_status("phase=robot-shutdown")
+			await robot.shutdown()
 	finally:
-		print_status("phase=robot-shutdown")
-		await robot.shutdown()
+		common_module.CONFIG_PATH = original_common_config_path
+		robot_module.CONFIG_PATH = original_robot_config_path
+		temp_config_path.unlink(missing_ok=True)
 
 	print_status("phase=analysis")
 	print_analysis(analysis)
