@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+import traceback
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -118,10 +119,15 @@ def print_analysis(analysis) -> None:
 				f"center_y={cell.center_y_mm:.2f} "
 				f"width={cell.width_mm:.2f} "
 				f"height={cell.height_mm:.2f}"
-			)
+				)
+
+
+def print_status(message: str) -> None:
+	print(message, flush=True)
 
 
 async def run_scan(args: argparse.Namespace) -> int:
+	print_status("phase=config")
 	config = load_config_file(args.config)
 	scan_config = config.robot.grid.scan
 	side = normalize_side(args.side)
@@ -135,10 +141,47 @@ async def run_scan(args: argparse.Namespace) -> int:
 	grid_path = Path(resolve_grid_path(config))
 	grid = StorageGrid.load_from_file(str(grid_path)) if grid_path.exists() is True else StorageGrid()
 	bounds = derive_bounds(grid=grid, side=side, step_mm=step_mm, args=args)
+	total_x_points = int(round((bounds.x_max - bounds.x_min) / step_mm)) + 1
+	total_y_points = int(round((bounds.y_max - bounds.y_min) / step_mm)) + 1
+	total_points = total_x_points * total_y_points
+	print_status(
+		f"scan=side:{side.value} "
+		f"bounds:x=({bounds.x_min:.2f},{bounds.x_max:.2f}) "
+		f"y=({bounds.y_min:.2f},{bounds.y_max:.2f}) "
+		f"step_mm:{step_mm:.2f} "
+		f"points:{total_points}"
+	)
+
+	print_status("phase=robot-init")
 	robot = Robot()
+	print_status("phase=robot-configure")
 	await robot.configure()
 
 	try:
+		last_reported_points = 0
+
+		async def did_progress(
+			completed_points: int,
+			total_points: int,
+			current_x_mm: float,
+			current_y_mm: float,
+			current_depth_mm: float | None,
+		) -> None:
+			nonlocal last_reported_points
+
+			if completed_points < total_points and completed_points - last_reported_points < 25:
+				return
+
+			last_reported_points = completed_points
+			depth_label = "none" if current_depth_mm is None else f"{current_depth_mm:.2f}"
+			print_status(
+				f"progress={completed_points}/{total_points} "
+				f"x={current_x_mm:.2f} "
+				f"y={current_y_mm:.2f} "
+				f"depth={depth_label}"
+			)
+
+		print_status("phase=scan-start")
 		analysis = await robot.scan_storage(
 			side=side,
 			bounds=bounds,
@@ -157,10 +200,13 @@ async def run_scan(args: argparse.Namespace) -> int:
 			scans_dir=args.scans_dir,
 			apply=args.apply,
 			stage_extension_mm=args.stage_extension_mm,
+			progress_callback=did_progress,
 		)
 	finally:
+		print_status("phase=robot-shutdown")
 		await robot.shutdown()
 
+	print_status("phase=analysis")
 	print_analysis(analysis)
 	return 0
 
@@ -173,6 +219,7 @@ def main() -> int:
 	except KeyboardInterrupt:
 		return 130
 	except Exception as exc:
+		traceback.print_exc()
 		print(str(exc), file=sys.stderr)
 		return 1
 
