@@ -74,8 +74,13 @@ class ScanRequest(BaseModel):
 	samples_per_point: int = Field(default=3, ge=1)
 	laser_offset_x_mm: float = 0.0
 	laser_offset_y_mm: float = 0.0
-	depth_threshold_mm: float = Field(default=10.0, gt=0)
-	min_component_points: int = Field(default=4, ge=1)
+	wall_depth_tolerance_mm: float = Field(default=2.0, gt=0)
+	expected_hole_width_mm: float = Field(default=26.0, gt=0)
+	expected_hole_height_mm: float = Field(default=30.0, gt=0)
+	hole_width_tolerance_mm: float = Field(default=10.0, gt=0)
+	hole_height_tolerance_mm: float = Field(default=10.0, gt=0)
+	min_vertical_wall_coverage_mm: float = Field(default=10.0, gt=0)
+	min_horizontal_wall_coverage_mm: float = Field(default=30.0, gt=0)
 	stage_extension_mm: Optional[float] = None
 	apply: bool = True
 
@@ -370,8 +375,13 @@ async def _run_scan_task(worker, request: ScanRequest, bounds: ScanBounds) -> No
 			samples_per_point=request.samples_per_point,
 			laser_offset_x_mm=request.laser_offset_x_mm,
 			laser_offset_y_mm=request.laser_offset_y_mm,
-			depth_threshold_mm=request.depth_threshold_mm,
-			min_component_points=request.min_component_points,
+			wall_depth_tolerance_mm=request.wall_depth_tolerance_mm,
+			expected_hole_width_mm=request.expected_hole_width_mm,
+			expected_hole_height_mm=request.expected_hole_height_mm,
+			hole_width_tolerance_mm=request.hole_width_tolerance_mm,
+			hole_height_tolerance_mm=request.hole_height_tolerance_mm,
+			min_vertical_wall_coverage_mm=request.min_vertical_wall_coverage_mm,
+			min_horizontal_wall_coverage_mm=request.min_horizontal_wall_coverage_mm,
 			stage_extension_mm=request.stage_extension_mm,
 			apply=request.apply,
 			progress_callback=_did_scan_progress,

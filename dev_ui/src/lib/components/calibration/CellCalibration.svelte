@@ -75,8 +75,13 @@
 	let scanSamplesPerPoint = $state<number>(3);
 	let scanLaserOffsetX = $state<number>(0);
 	let scanLaserOffsetY = $state<number>(0);
-	let scanDepthThreshold = $state<number>(10);
-	let scanMinComponentPoints = $state<number>(4);
+	let scanWallDepthTolerance = $state<number>(2);
+	let scanExpectedHoleWidth = $state<number>(26);
+	let scanExpectedHoleHeight = $state<number>(30);
+	let scanHoleWidthTolerance = $state<number>(10);
+	let scanHoleHeightTolerance = $state<number>(10);
+	let scanMinVerticalWallCoverage = $state<number>(10);
+	let scanMinHorizontalWallCoverage = $state<number>(30);
 	let scanShouldApply = $state<boolean>(true);
 	let scanXMin = $state<number>(0);
 	let scanXMax = $state<number>(0);
@@ -469,16 +474,21 @@
 				xMax: scanXMax,
 				yMin: scanYMin,
 				yMax: scanYMax,
-				stepMm: scanStepMm,
-				settleMs: scanSettleMs,
-				samplesPerPoint: scanSamplesPerPoint,
-				laserOffsetXMm: scanLaserOffsetX,
-				laserOffsetYMm: scanLaserOffsetY,
-				depthThresholdMm: scanDepthThreshold,
-				minComponentPoints: scanMinComponentPoints,
-				apply: scanShouldApply
-			});
-			scanMessage = 'scan started';
+					stepMm: scanStepMm,
+					settleMs: scanSettleMs,
+					samplesPerPoint: scanSamplesPerPoint,
+					laserOffsetXMm: scanLaserOffsetX,
+					laserOffsetYMm: scanLaserOffsetY,
+					wallDepthToleranceMm: scanWallDepthTolerance,
+					expectedHoleWidthMm: scanExpectedHoleWidth,
+					expectedHoleHeightMm: scanExpectedHoleHeight,
+					holeWidthToleranceMm: scanHoleWidthTolerance,
+					holeHeightToleranceMm: scanHoleHeightTolerance,
+					minVerticalWallCoverageMm: scanMinVerticalWallCoverage,
+					minHorizontalWallCoverageMm: scanMinHorizontalWallCoverage,
+					apply: scanShouldApply
+				});
+				scanMessage = 'scan started';
 		} catch (err) {
 			handleNeedsHomeError(err);
 			scanError = err instanceof Error ? err.message : 'failed to start scan';
@@ -861,24 +871,49 @@
 					</label>
 				</td>
 			</tr>
-			<tr>
-				<td>
-					<span class="field-label">offset x</span>
-					<input type="number" step="0.5" bind:value={scanLaserOffsetX} disabled={scanStatus?.state === 'running'} />
-				</td>
-				<td>
-					<span class="field-label">offset y</span>
-					<input type="number" step="0.5" bind:value={scanLaserOffsetY} disabled={scanStatus?.state === 'running'} />
-				</td>
-				<td>
-					<span class="field-label">depth threshold</span>
-					<input type="number" step="0.5" min="0.5" bind:value={scanDepthThreshold} disabled={scanStatus?.state === 'running'} />
-				</td>
-				<td>
-					<span class="field-label">min points</span>
-					<input type="number" min="1" bind:value={scanMinComponentPoints} disabled={scanStatus?.state === 'running'} />
-				</td>
-			</tr>
+				<tr>
+					<td>
+						<span class="field-label">offset x</span>
+						<input type="number" step="0.5" bind:value={scanLaserOffsetX} disabled={scanStatus?.state === 'running'} />
+					</td>
+					<td>
+						<span class="field-label">offset y</span>
+						<input type="number" step="0.5" bind:value={scanLaserOffsetY} disabled={scanStatus?.state === 'running'} />
+					</td>
+					<td>
+						<span class="field-label">wall tolerance</span>
+						<input type="number" step="0.5" min="0.5" bind:value={scanWallDepthTolerance} disabled={scanStatus?.state === 'running'} />
+					</td>
+					<td>
+						<span class="field-label">hole width</span>
+						<input type="number" step="0.5" min="1" bind:value={scanExpectedHoleWidth} disabled={scanStatus?.state === 'running'} />
+					</td>
+				</tr>
+				<tr>
+					<td>
+						<span class="field-label">hole height</span>
+						<input type="number" step="0.5" min="1" bind:value={scanExpectedHoleHeight} disabled={scanStatus?.state === 'running'} />
+					</td>
+					<td>
+						<span class="field-label">width tol</span>
+						<input type="number" step="0.5" min="0.5" bind:value={scanHoleWidthTolerance} disabled={scanStatus?.state === 'running'} />
+					</td>
+					<td>
+						<span class="field-label">height tol</span>
+						<input type="number" step="0.5" min="0.5" bind:value={scanHoleHeightTolerance} disabled={scanStatus?.state === 'running'} />
+					</td>
+					<td>
+						<span class="field-label">vertical wall</span>
+						<input type="number" step="0.5" min="0.5" bind:value={scanMinVerticalWallCoverage} disabled={scanStatus?.state === 'running'} />
+					</td>
+				</tr>
+				<tr>
+					<td>
+						<span class="field-label">horizontal wall</span>
+						<input type="number" step="0.5" min="0.5" bind:value={scanMinHorizontalWallCoverage} disabled={scanStatus?.state === 'running'} />
+					</td>
+					<td colspan="3"></td>
+				</tr>
 			<tr>
 				<td colspan="4">
 					<div class="calibrate-row">

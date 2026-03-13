@@ -46,25 +46,35 @@ def test_storage_grid_infers_sparse_indices_from_legacy_payload(tmp_path):
 	assert grid.left_module[0].cells[1].cell_idx == 1
 
 
-def test_analyze_scan_capture_discovers_shelves_and_cells(tmp_path):
+def test_analyze_scan_capture_detects_enclosed_holes_and_rejects_boundary_gaps(tmp_path):
+	depth_rows = []
+
+	for row_idx in range(20):
+		row = [48.0] * 27
+
+		if 2 <= row_idx <= 7:
+			for col_idx in range(2, 7):
+				row[col_idx] = None
+			for col_idx in range(11, 16):
+				row[col_idx] = None
+			for col_idx in range(20, 25):
+				row[col_idx] = None
+
+		if 0 <= row_idx <= 7:
+			for col_idx in range(8, 10):
+				row[col_idx] = None
+
+		depth_rows.append(row)
+
 	capture = create_scan_capture(
 		side=StorageModuleSide.LEFT,
-		bounds=ScanBounds(x_min=0.0, x_max=30.0, y_min=0.0, y_max=50.0),
-		step_mm=10.0,
+		bounds=ScanBounds(x_min=0.0, x_max=130.0, y_min=0.0, y_max=95.0),
+		step_mm=5.0,
 		settle_ms=25,
 		samples_per_point=3,
 		laser_offset_x_mm=2.0,
 		laser_offset_y_mm=4.0,
-		depth_threshold_mm=5.0,
-		min_component_points=1,
-		depth_rows=[
-			[10.0, 10.0, 10.0, 10.0],
-			[30.0, 30.0, 10.0, 30.0],
-			[10.0, 10.0, 10.0, 10.0],
-			[10.0, 10.0, 10.0, 10.0],
-			[10.0, 10.0, 10.0, 10.0],
-			[10.0, 30.0, 30.0, 10.0],
-		],
+		depth_rows=depth_rows,
 	)
 
 	analysis = analyze_scan_capture(capture, base_dir=tmp_path)
@@ -73,11 +83,16 @@ def test_analyze_scan_capture_discovers_shelves_and_cells(tmp_path):
 		analysis=analysis,
 	)
 
-	assert len(analysis.shelves) == 2
-	assert len(analysis.shelves[0].cells) == 2
-	assert len(analysis.shelves[1].cells) == 1
+	assert analysis.wall_depth_mm == 48.0
+	assert len(analysis.shelves) == 1
+	assert len(analysis.shelves[0].cells) == 3
 	assert analysis.shelves[0].cells[0].cell_idx == 0
 	assert analysis.shelves[0].cells[1].cell_idx == 1
+	assert analysis.shelves[0].cells[2].cell_idx == 2
+	assert analysis.shelves[0].cells[0].center_x_mm == 110.0
+	assert analysis.shelves[0].cells[1].center_x_mm == 65.0
+	assert analysis.shelves[0].cells[2].center_x_mm == 20.0
 	assert shelves[0].cells[0].calibration_point is not None
 	assert shelves[0].cells[0].calibration_point.x == analysis.shelves[0].cells[0].tool_x_mm
-	assert shelves[1].cells[0].cell_idx == 0
+	assert shelves[0].cells[2].calibration_point is not None
+	assert shelves[0].cells[2].calibration_point.x == 18.0
