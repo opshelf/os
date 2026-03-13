@@ -1,15 +1,18 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import { browser } from '$app/environment';
 	import {
 		ApiError,
+		abortCalibrationScan,
 		getStorageGrid,
+		getCalibrationScanStatus,
 		getCalibrationStatus,
 		homeToolMotors,
 		moveToCell,
 		jogAxis,
 		testGripper,
 		saveCalibration,
+		startCalibrationScan,
 		getRotationAngles,
 		rotateToAngle,
 		moveStage,
@@ -17,6 +20,7 @@
 		getShelfStageExtension,
 		controlGripper,
 		type ApiErrorDetail,
+		type CalibrationScanStatus,
 		type CalibrationStatus,
 		type StorageGrid,
 		type Position
@@ -61,6 +65,24 @@
 	let editZ = $state<number>(0);
 	let isExtending = $state<boolean>(false);
 	let stageExtensionValue = $state<number>(0);
+	let scanStatus = $state<CalibrationScanStatus | null>(null);
+	let isStartingScan = $state<boolean>(false);
+	let isAbortingScan = $state<boolean>(false);
+	let scanError = $state<string>('');
+	let scanMessage = $state<string>('');
+	let scanStepMm = $state<number>(5);
+	let scanSettleMs = $state<number>(50);
+	let scanSamplesPerPoint = $state<number>(3);
+	let scanLaserOffsetX = $state<number>(0);
+	let scanLaserOffsetY = $state<number>(0);
+	let scanDepthThreshold = $state<number>(10);
+	let scanMinComponentPoints = $state<number>(4);
+	let scanShouldApply = $state<boolean>(true);
+	let scanXMin = $state<number>(0);
+	let scanXMax = $state<number>(0);
+	let scanYMin = $state<number>(0);
+	let scanYMax = $state<number>(0);
+	let scanPollTimer: ReturnType<typeof setTimeout> | null = null;
 
 	const JOG_STEPS = [
 		{ value: 0.1, label: '0.1mm' },
@@ -110,7 +132,31 @@
 		}
 		loadStorage();
 		loadCalibrationStatus();
+		loadScanStatus();
 	});
+
+	onDestroy(function () {
+		clearScanPollTimer();
+	});
+
+	function clearScanPollTimer(): void {
+		if (scanPollTimer === null) {
+			return;
+		}
+
+		clearTimeout(scanPollTimer);
+		scanPollTimer = null;
+	}
+
+	function scheduleScanPoll(): void {
+		clearScanPollTimer();
+
+		if (scanStatus?.state !== 'running') {
+			return;
+		}
+
+		scanPollTimer = setTimeout(didPollScanStatus, 1000);
+	}
 
 	async function loadStorage(): Promise<void> {
 		loading = true;
@@ -118,8 +164,8 @@
 
 		try {
 			storageGrid = await getStorageGrid();
-			selectedShelf = initialShelf ?? 0;
-			selectedCell = initialCell ?? 0;
+			syncSelection(initialShelf ?? selectedShelf, initialCell ?? selectedCell);
+			syncScanBounds();
 		} catch (err) {
 			handleNeedsHomeError(err);
 			loadError = err instanceof Error ? err.message : 'failed to load storage grid';
@@ -134,6 +180,44 @@
 			applyNeedsHomeStatus(status);
 		} catch {
 			// Ignore status polling failures; calibration actions will surface errors.
+		}
+	}
+
+	async function loadScanStatus(): Promise<void> {
+		try {
+			scanStatus = await getCalibrationScanStatus();
+			scheduleScanPoll();
+		} catch (err) {
+			scanError = err instanceof Error ? err.message : 'failed to load scan status';
+		}
+	}
+
+	async function didPollScanStatus(): Promise<void> {
+		try {
+			const nextStatus = await getCalibrationScanStatus();
+			const previousState = scanStatus?.state;
+
+			scanStatus = nextStatus;
+
+			if (previousState === 'running' && nextStatus.state === 'completed') {
+				scanMessage = 'scan completed';
+				scanError = '';
+				await loadStorage();
+			}
+
+			if (previousState === 'running' && nextStatus.state === 'failed') {
+				scanMessage = '';
+				scanError = nextStatus.error ?? 'scan failed';
+			}
+
+			if (previousState === 'running' && nextStatus.state === 'cancelled') {
+				scanMessage = 'scan cancelled';
+				scanError = '';
+			}
+		} catch (err) {
+			scanError = err instanceof Error ? err.message : 'failed to refresh scan status';
+		} finally {
+			scheduleScanPoll();
 		}
 	}
 
@@ -176,34 +260,96 @@
 		}
 	}
 
-	function getShelves() {
+	function getShelvesForSide(side: 'left_module' | 'right_module') {
 		if (storageGrid === null) {
 			return [];
 		}
 
-		if (selectedSide === 'left_module') {
+		if (side === 'left_module') {
 			return storageGrid.left_module;
 		}
 
 		return storageGrid.right_module;
 	}
 
-	function getCells() {
-		const shelves = getShelves();
+	function getShelves() {
+		return getShelvesForSide(selectedSide);
+	}
 
-		if (selectedShelf >= shelves.length) {
+	function getSelectedShelf() {
+		const shelves = getShelves();
+		return shelves.find((shelf) => shelf.shelf_idx === selectedShelf) ?? null;
+	}
+
+	function getCells() {
+		const shelf = getSelectedShelf();
+
+		if (shelf === null) {
 			return [];
 		}
 
-		return shelves[selectedShelf].cells;
+		return shelf.cells;
+	}
+
+	function syncSelection(preferredShelf?: number, preferredCell?: number): void {
+		const shelves = getShelvesForSide(selectedSide);
+
+		if (shelves.length === 0) {
+			selectedShelf = 0;
+			selectedCell = 0;
+			return;
+		}
+
+		const nextShelf = preferredShelf ?? selectedShelf;
+		const matchingShelf = shelves.find((shelf) => shelf.shelf_idx === nextShelf) ?? shelves[0];
+
+		selectedShelf = matchingShelf.shelf_idx;
+
+		if (matchingShelf.cells.length === 0) {
+			selectedCell = 0;
+			return;
+		}
+
+		const nextCell = preferredCell ?? selectedCell;
+		const matchingCell =
+			matchingShelf.cells.find((cell) => cell.cell_idx === nextCell) ?? matchingShelf.cells[0];
+
+		selectedCell = matchingCell.cell_idx;
+	}
+
+	function syncScanBounds(): void {
+		const shelves = getShelves();
+		const xValues: number[] = [];
+		const yValues: number[] = [];
+
+		for (const shelf of shelves) {
+			for (const cell of shelf.cells) {
+				if (cell.calibration_point === null) {
+					continue;
+				}
+
+				xValues.push(cell.calibration_point.x);
+				yValues.push(cell.calibration_point.y);
+			}
+		}
+
+		if (xValues.length === 0 || yValues.length === 0) {
+			return;
+		}
+
+		const margin = Math.max(scanStepMm * 2, 20);
+		scanXMin = Math.min(...xValues) - margin;
+		scanXMax = Math.max(...xValues) + margin;
+		scanYMin = Math.min(...yValues) - margin;
+		scanYMax = Math.max(...yValues) + margin;
 	}
 
 	function didChangeSide(event: Event): void {
 		const target = event.target as HTMLSelectElement;
 
 		selectedSide = target.value as 'left_module' | 'right_module';
-		selectedShelf = 0;
-		selectedCell = 0;
+		syncSelection();
+		syncScanBounds();
 		currentPosition = null;
 		error = '';
 		message = '';
@@ -214,7 +360,7 @@
 		const target = event.target as HTMLSelectElement;
 
 		selectedShelf = parseInt(target.value, 10);
-		selectedCell = 0;
+		syncSelection(selectedShelf);
 		currentPosition = null;
 		error = '';
 		message = '';
@@ -308,6 +454,53 @@
 			error = err instanceof Error ? err.message : 'failed to retract stage';
 		} finally {
 			isExtending = false;
+		}
+	}
+
+	async function didClickStartScan(): Promise<void> {
+		isStartingScan = true;
+		scanError = '';
+		scanMessage = '';
+
+		try {
+			scanStatus = await startCalibrationScan({
+				side: selectedSide,
+				xMin: scanXMin,
+				xMax: scanXMax,
+				yMin: scanYMin,
+				yMax: scanYMax,
+				stepMm: scanStepMm,
+				settleMs: scanSettleMs,
+				samplesPerPoint: scanSamplesPerPoint,
+				laserOffsetXMm: scanLaserOffsetX,
+				laserOffsetYMm: scanLaserOffsetY,
+				depthThresholdMm: scanDepthThreshold,
+				minComponentPoints: scanMinComponentPoints,
+				apply: scanShouldApply
+			});
+			scanMessage = 'scan started';
+		} catch (err) {
+			handleNeedsHomeError(err);
+			scanError = err instanceof Error ? err.message : 'failed to start scan';
+		} finally {
+			isStartingScan = false;
+			scheduleScanPoll();
+		}
+	}
+
+	async function didClickAbortScan(): Promise<void> {
+		isAbortingScan = true;
+		scanError = '';
+		scanMessage = '';
+
+		try {
+			scanStatus = await abortCalibrationScan();
+			scanMessage = 'scan cancelled';
+		} catch (err) {
+			scanError = err instanceof Error ? err.message : 'failed to abort scan';
+		} finally {
+			isAbortingScan = false;
+			scheduleScanPoll();
 		}
 	}
 
@@ -507,6 +700,17 @@
 	function formatNumber(value: number): string {
 		return value.toFixed(2);
 	}
+
+	function getScanResultCellCount(): number {
+		if (scanStatus === null || scanStatus.result === null) {
+			return 0;
+		}
+
+		return scanStatus.result.shelves.reduce(
+			(count, shelf) => count + shelf.cells.length,
+			0
+		);
+	}
 </script>
 
 {#if loading === true}
@@ -532,16 +736,16 @@
 				<td>
 					<span class="field-label">shelf</span>
 					<select value={selectedShelf} onchange={didChangeShelf}>
-						{#each getShelves() as _, index}
-							<option value={index}>{index}</option>
+						{#each getShelves() as shelf}
+							<option value={shelf.shelf_idx}>{shelf.shelf_idx}</option>
 						{/each}
 					</select>
 				</td>
 				<td>
 					<span class="field-label">cell</span>
 					<select value={selectedCell} onchange={didChangeCell}>
-						{#each getCells() as _, index}
-							<option value={index}>{index}</option>
+						{#each getCells() as cell}
+							<option value={cell.cell_idx}>{cell.cell_idx}</option>
 						{/each}
 					</select>
 				</td>
@@ -611,6 +815,122 @@
 			</tr>
 		</tbody>
 	</table>
+
+	<table class="status-table">
+		<thead>
+			<tr>
+				<th colspan="4">laser scan</th>
+			</tr>
+		</thead>
+		<tbody>
+			<tr>
+				<td>
+					<span class="field-label">x min</span>
+					<input type="number" step="1" bind:value={scanXMin} disabled={scanStatus?.state === 'running'} />
+				</td>
+				<td>
+					<span class="field-label">x max</span>
+					<input type="number" step="1" bind:value={scanXMax} disabled={scanStatus?.state === 'running'} />
+				</td>
+				<td>
+					<span class="field-label">y min</span>
+					<input type="number" step="1" bind:value={scanYMin} disabled={scanStatus?.state === 'running'} />
+				</td>
+				<td>
+					<span class="field-label">y max</span>
+					<input type="number" step="1" bind:value={scanYMax} disabled={scanStatus?.state === 'running'} />
+				</td>
+			</tr>
+			<tr>
+				<td>
+					<span class="field-label">step</span>
+					<input type="number" step="0.5" min="0.5" bind:value={scanStepMm} disabled={scanStatus?.state === 'running'} />
+				</td>
+				<td>
+					<span class="field-label">samples</span>
+					<input type="number" min="1" bind:value={scanSamplesPerPoint} disabled={scanStatus?.state === 'running'} />
+				</td>
+				<td>
+					<span class="field-label">settle ms</span>
+					<input type="number" min="0" bind:value={scanSettleMs} disabled={scanStatus?.state === 'running'} />
+				</td>
+				<td>
+					<label class="checkbox-field">
+						<input type="checkbox" bind:checked={scanShouldApply} disabled={scanStatus?.state === 'running'} />
+						apply to grid
+					</label>
+				</td>
+			</tr>
+			<tr>
+				<td>
+					<span class="field-label">offset x</span>
+					<input type="number" step="0.5" bind:value={scanLaserOffsetX} disabled={scanStatus?.state === 'running'} />
+				</td>
+				<td>
+					<span class="field-label">offset y</span>
+					<input type="number" step="0.5" bind:value={scanLaserOffsetY} disabled={scanStatus?.state === 'running'} />
+				</td>
+				<td>
+					<span class="field-label">depth threshold</span>
+					<input type="number" step="0.5" min="0.5" bind:value={scanDepthThreshold} disabled={scanStatus?.state === 'running'} />
+				</td>
+				<td>
+					<span class="field-label">min points</span>
+					<input type="number" min="1" bind:value={scanMinComponentPoints} disabled={scanStatus?.state === 'running'} />
+				</td>
+			</tr>
+			<tr>
+				<td colspan="4">
+					<div class="calibrate-row">
+						<button
+							type="button"
+							onclick={didClickStartScan}
+							disabled={isStartingScan === true ||
+								scanStatus?.state === 'running' ||
+								needsHome === true ||
+								isHoming === true}
+						>
+							start scan
+						</button>
+						<button
+							type="button"
+							onclick={didClickAbortScan}
+							disabled={isAbortingScan === true || scanStatus?.state !== 'running'}
+						>
+							abort scan
+						</button>
+						{#if scanStatus !== null}
+							<span>
+								{scanStatus.state}
+								{#if scanStatus.total_points > 0}
+									({scanStatus.completed_points}/{scanStatus.total_points})
+								{/if}
+							</span>
+						{/if}
+					</div>
+				</td>
+			</tr>
+			{#if scanStatus !== null && scanStatus.result !== null}
+				<tr>
+					<td colspan="4">
+						result:
+						{scanStatus.result.shelves.length}
+						shelves,
+						{getScanResultCellCount()}
+						cells
+					</td>
+				</tr>
+			{/if}
+		</tbody>
+	</table>
+
+	{#if scanMessage !== ''}
+		<StatusMessage message={scanMessage} />
+	{/if}
+
+	{#if scanError !== ''}
+		<ErrorMessage message={scanError} />
+	{/if}
 
 	{#if currentPosition !== null}
 		<table class="status-table">

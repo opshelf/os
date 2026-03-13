@@ -61,8 +61,22 @@ def overlay_db_occupancy(payload_json: str, occupied: set[tuple[str, int, int]])
     storage = payload.get("robot_status", {}).get("storage", {})
 
     for side in ("left_module", "right_module"):
-        for shelf_idx, shelf in enumerate(storage.get(side, [])):
-            for cell_idx, cell in enumerate(shelf.get("cells", [])):
+        for shelf_position, shelf in enumerate(storage.get(side, [])):
+            shelf_idx_raw = shelf.get("shelf_idx", shelf_position)
+
+            try:
+                shelf_idx = int(shelf_idx_raw)
+            except (TypeError, ValueError):
+                continue
+
+            for cell_position, cell in enumerate(shelf.get("cells", [])):
+                cell_idx_raw = cell.get("cell_idx", cell_position)
+
+                try:
+                    cell_idx = int(cell_idx_raw)
+                except (TypeError, ValueError):
+                    continue
+
                 key = (side, shelf_idx, cell_idx)
                 if key in occupied:
                     cell["status"] = "occupied"

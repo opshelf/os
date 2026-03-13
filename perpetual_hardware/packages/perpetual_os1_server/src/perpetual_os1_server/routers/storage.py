@@ -583,23 +583,23 @@ async def batch_update_storage_cell_status(
 
     for cell_id in payload.cells:
         side_enum = StorageModuleSide.LEFT if cell_id.side == "left_module" else StorageModuleSide.RIGHT
-        shelves = grid.get_side(side_enum)
-
-        if cell_id.shelf_idx < 0 or cell_id.shelf_idx >= len(shelves):
+        try:
+            shelf = grid.get_shelf(side_enum, cell_id.shelf_idx)
+        except IndexError as exc:
             raise HTTPException(
                 status_code=400,
                 detail=f"Invalid shelf_idx: {cell_id.shelf_idx}",
-            )
+            ) from exc
 
-        shelf = shelves[cell_id.shelf_idx]
-
-        if cell_id.cell_idx < 0 or cell_id.cell_idx >= len(shelf.cells):
+        try:
+            cell = shelf.get_cell(cell_id.cell_idx)
+        except IndexError as exc:
             raise HTTPException(
                 status_code=400,
                 detail=f"Invalid cell_idx: {cell_id.cell_idx}",
-            )
+            ) from exc
 
-        shelf.cells[cell_id.cell_idx].status = cell_status
+        cell.status = cell_status
 
     grid.save()
 

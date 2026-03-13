@@ -6,6 +6,14 @@ from perpetual_os1.common import AxisCoordinate, ToolCoordinate, load_config_fil
 from hardware.controller import SharedModbusController as Controller
 from perpetual_os1.iobox import IOBox
 from perpetual_os1.tool import Tool
+from perpetual_os1.laser_scan import (
+    ScanAnalysisResult,
+    ScanBounds,
+    analyze_scan_capture,
+    build_axis_positions,
+    build_shelves_from_scan,
+    create_scan_capture,
+)
 from perpetual_os1.storage import (
     StorageGrid, Shelf, Cell, CellStatus, CalibrationCoordinate,
     Dimensions, StorageModuleSide, CellItem, StorageModuleCellLocation,
@@ -680,6 +688,7 @@ class Robot:
                 for offset, coord in enumerate(relevant_cells, start=index_offset):
                     shelf_cell_models.append(
                         Cell(
+                            cell_idx=offset,
                             status=CellStatus.AVAILABLE,
                             item=None,
                             calibration_point=CalibrationCoordinate(x=coord.x, y=coord.y, z_offset=z_offset),
@@ -690,6 +699,7 @@ class Robot:
                 if shelf_cell_models:
                     target_shelves.append(
                         Shelf(
+                            shelf_idx=shelf_idx,
                             shelf_height=shelf_height,
                             shelf_width=sum(cell.dimensions.width for cell in shelf_cell_models),
                             cells=shelf_cell_models
@@ -870,6 +880,95 @@ class Robot:
 
     async def get_laser_distance(self) -> float:
         return await self._require_laser().read_distance_mm()
+
+    async def scan_storage(
+        self,
+        *,
+        side: Union[StorageModuleSide, str],
+        bounds: ScanBounds,
+        step_mm: float,
+        settle_ms: int,
+        samples_per_point: int,
+        laser_offset_x_mm: float,
+        laser_offset_y_mm: float,
+        depth_threshold_mm: float,
+        min_component_points: int,
+        scans_dir: str = "data/scans",
+        apply: bool = True,
+        stage_extension_mm: Optional[float] = None,
+        progress_callback: Optional[Any] = None,
+    ) -> ScanAnalysisResult:
+        if isinstance(side, str):
+            side = StorageModuleSide(side)
+
+        side_number = 0 if side == StorageModuleSide.LEFT else 1
+
+        if stage_extension_mm is None:
+            stage_param = "STAGE_EXTENSION_SHELF_FRONT" if side == StorageModuleSide.LEFT else "STAGE_EXTENSION_SHELF_BACK"
+            stage_value = await self._tool.get_param(stage_param)
+            if stage_value is not None:
+                stage_extension_mm = float(stage_value)
+
+        x_positions = build_axis_positions(bounds.x_min, bounds.x_max, step_mm)
+        y_positions = build_axis_positions(bounds.y_min, bounds.y_max, step_mm)
+
+        depth_rows = await self._tool.capture_laser_scan(
+            side=side_number,
+            x_positions=x_positions,
+            y_positions=y_positions,
+            settle_ms=settle_ms,
+            samples_per_point=samples_per_point,
+            stage_extension_mm=stage_extension_mm,
+            progress_callback=progress_callback,
+        )
+
+        capture = create_scan_capture(
+            side=side,
+            bounds=bounds,
+            step_mm=step_mm,
+            settle_ms=settle_ms,
+            samples_per_point=samples_per_point,
+            laser_offset_x_mm=laser_offset_x_mm,
+            laser_offset_y_mm=laser_offset_y_mm,
+            depth_threshold_mm=depth_threshold_mm,
+            min_component_points=min_component_points,
+            depth_rows=depth_rows,
+        )
+
+        analysis = analyze_scan_capture(capture, base_dir=scans_dir)
+
+        if apply is False:
+            return analysis
+
+        if len(analysis.shelves) == 0:
+            raise ValueError("No tray openings detected from scan")
+
+        existing_shelves = None if self._grid is None else self._grid.get_side(side)
+        scanned_shelves = build_shelves_from_scan(
+            side=side,
+            analysis=analysis,
+            existing_shelves=existing_shelves,
+        )
+
+        current_left = [] if self._grid is None else self._grid.left_module
+        current_right = [] if self._grid is None else self._grid.right_module
+
+        if side == StorageModuleSide.LEFT:
+            left_module = scanned_shelves
+            right_module = current_right
+        else:
+            left_module = current_left
+            right_module = scanned_shelves
+
+        storage_grid = StorageGrid(
+            left_module=left_module,
+            right_module=right_module,
+            filename=self._grid_path,
+        )
+        storage_grid.save()
+        self._grid = storage_grid
+
+        return analysis
 
     async def get_scale_calibration_status(self) -> Dict[str, Any]:
         return await self._require_scale().get_calibration_status()

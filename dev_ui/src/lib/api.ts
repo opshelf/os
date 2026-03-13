@@ -177,6 +177,7 @@ export interface StorageGrid {
 }
 
 export interface Shelf {
+	shelf_idx: number;
 	shelf_height: number;
 	shelf_width: number;
 	cells: Cell[];
@@ -184,6 +185,7 @@ export interface Shelf {
 }
 
 export interface Cell {
+	cell_idx: number;
 	status: string;
 	item: unknown | null;
 	calibration_point: CalibrationPoint | null;
@@ -273,6 +275,137 @@ export async function saveCalibration(
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(payload)
+	});
+}
+
+export interface CalibrationScanBounds {
+	x_min: number;
+	x_max: number;
+	y_min: number;
+	y_max: number;
+}
+
+export interface CalibrationScanDetectedCell {
+	shelf_idx: number;
+	cell_idx: number;
+	center_x_mm: number;
+	center_y_mm: number;
+	tool_x_mm: number;
+	tool_y_mm: number;
+	width_mm: number;
+	height_mm: number;
+	point_count: number;
+	bbox_x_min: number;
+	bbox_x_max: number;
+	bbox_y_min: number;
+	bbox_y_max: number;
+}
+
+export interface CalibrationScanDetectedShelf {
+	shelf_idx: number;
+	center_y_mm: number;
+	shelf_height_mm: number;
+	shelf_width_mm: number;
+	cells: CalibrationScanDetectedCell[];
+}
+
+export interface CalibrationScanResult {
+	run_id: string;
+	side: string;
+	bounds: CalibrationScanBounds;
+	step_mm: number;
+	samples_per_point: number;
+	settle_ms: number;
+	surface_depth_mm: number;
+	depth_threshold_mm: number;
+	total_points: number;
+	valid_points: number;
+	raw_scan_path: string;
+	metadata_path: string;
+	shelves: CalibrationScanDetectedShelf[];
+	created_at: string;
+}
+
+export interface CalibrationScanStatus {
+	state: 'idle' | 'running' | 'completed' | 'failed' | 'cancelled';
+	run_id: string | null;
+	side: 'left_module' | 'right_module' | null;
+	bounds: CalibrationScanBounds | null;
+	total_points: number;
+	completed_points: number;
+	current_x_mm: number | null;
+	current_y_mm: number | null;
+	current_depth_mm: number | null;
+	error: string | null;
+	result: CalibrationScanResult | null;
+}
+
+export interface StartCalibrationScanParams {
+	side: 'left_module' | 'right_module';
+	xMin?: number;
+	xMax?: number;
+	yMin?: number;
+	yMax?: number;
+	stepMm: number;
+	settleMs: number;
+	samplesPerPoint: number;
+	laserOffsetXMm: number;
+	laserOffsetYMm: number;
+	depthThresholdMm: number;
+	minComponentPoints: number;
+	stageExtensionMm?: number;
+	apply: boolean;
+}
+
+export async function startCalibrationScan(
+	params: StartCalibrationScanParams
+): Promise<CalibrationScanStatus> {
+	const payload: Record<string, unknown> = {
+		side: params.side,
+		step_mm: params.stepMm,
+		settle_ms: params.settleMs,
+		samples_per_point: params.samplesPerPoint,
+		laser_offset_x_mm: params.laserOffsetXMm,
+		laser_offset_y_mm: params.laserOffsetYMm,
+		depth_threshold_mm: params.depthThresholdMm,
+		min_component_points: params.minComponentPoints,
+		apply: params.apply
+	};
+
+	if (params.xMin !== undefined) {
+		payload.x_min = params.xMin;
+	}
+
+	if (params.xMax !== undefined) {
+		payload.x_max = params.xMax;
+	}
+
+	if (params.yMin !== undefined) {
+		payload.y_min = params.yMin;
+	}
+
+	if (params.yMax !== undefined) {
+		payload.y_max = params.yMax;
+	}
+
+	if (params.stageExtensionMm !== undefined) {
+		payload.stage_extension_mm = params.stageExtensionMm;
+	}
+
+	return apiFetch<CalibrationScanStatus>('/calibration/scan', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(payload)
+	});
+}
+
+export async function getCalibrationScanStatus(): Promise<CalibrationScanStatus> {
+	return apiFetch<CalibrationScanStatus>('/calibration/scan/status');
+}
+
+export async function abortCalibrationScan(): Promise<CalibrationScanStatus> {
+	return apiFetch<CalibrationScanStatus>('/calibration/scan/abort', {
+		method: 'POST'
 	});
 }
 

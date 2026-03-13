@@ -1,3 +1,4 @@
+import asyncio
 import perpetual_os1.common as c
 from perpetual_os1.common import Motor as MotorConfig
 
@@ -298,6 +299,86 @@ class Tool:
             raise ConfigError("Laser is not initialized")
 
         return await self._laser.read_distance_mm()
+
+    async def capture_laser_scan(
+        self,
+        *,
+        side: int,
+        x_positions: List[float],
+        y_positions: List[float],
+        settle_ms: int,
+        samples_per_point: int,
+        stage_extension_mm: Optional[float] = None,
+        progress_callback: Optional[Any] = None,
+    ) -> List[List[Optional[float]]]:
+        if self._laser_enabled is False or self._laser is None:
+            raise ConfigError("Laser is not enabled")
+
+        if samples_per_point <= 0:
+            raise ConfigError("samples_per_point must be greater than zero")
+
+        if stage_extension_mm is not None and stage_extension_mm > 0 and self._ms is None:
+            raise ConfigError("Stage motor required when stage_extension_mm is configured")
+
+        target_position: Literal["front", "back"] = "front" if side == 0 else "back"
+        total_points = len(x_positions) * len(y_positions)
+        completed_points = 0
+        rows: List[List[Optional[float]]] = []
+
+        await self.retract()
+        await self.rotate_to_position(target_position)
+
+        for row_idx, y_position in enumerate(y_positions):
+            row_values: List[Optional[float]] = [None] * len(x_positions)
+
+            if row_idx % 2 == 0:
+                column_indices = list(range(len(x_positions)))
+            else:
+                column_indices = list(range(len(x_positions) - 1, -1, -1))
+
+            for column_idx in column_indices:
+                x_position = x_positions[column_idx]
+                await self.move(c.AxisCoordinate(x=x_position, y=y_position, s=side))
+
+                if stage_extension_mm is not None and stage_extension_mm > 0:
+                    await self._ms.move_to_position(stage_extension_mm)
+
+                if settle_ms > 0:
+                    await asyncio.sleep(settle_ms / 1000.0)
+
+                sample_values: List[float] = []
+                for _ in range(samples_per_point):
+                    depth_mm = await self.get_laser_distance()
+                    if depth_mm is not None:
+                        sample_values.append(float(depth_mm))
+
+                if sample_values:
+                    sample_values.sort()
+                    middle_idx = len(sample_values) // 2
+                    row_values[column_idx] = sample_values[middle_idx]
+
+                if stage_extension_mm is not None and stage_extension_mm > 0:
+                    await self.retract_empty()
+
+                completed_points += 1
+
+                if progress_callback is not None:
+                    callback_result = progress_callback(
+                        completed_points,
+                        total_points,
+                        x_position,
+                        y_position,
+                        row_values[column_idx],
+                    )
+
+                    if hasattr(callback_result, "__await__"):
+                        await callback_result
+
+            rows.append(row_values)
+
+        await self.retract()
+
+        return rows
 
     async def _ensure_retracted(self) -> None:
         """
