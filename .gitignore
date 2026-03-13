@@ -25,6 +25,7 @@ wheels/
 # Application Files
 config.json
 settings.json
+!.pi/settings.json
 storage.json
 state.json
 size.json
