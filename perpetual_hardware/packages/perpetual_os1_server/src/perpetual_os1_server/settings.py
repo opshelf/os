@@ -161,7 +161,7 @@ def _build_minimal_config(data: dict) -> dict:
 					"register_address": 0,
 					"register_count": 2,
 					"distance_register_index": 1,
-					"distance_scale_mm": 0.01,
+					"distance_scale_mm": 0.001,
 				},
 				},
 				"grid": {
