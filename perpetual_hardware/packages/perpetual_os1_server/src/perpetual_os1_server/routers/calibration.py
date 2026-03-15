@@ -140,6 +140,16 @@ def _clamp_value(value: float, limit: float, label: str, warnings: list[str]) ->
 	return clamped
 
 
+async def _get_current_stage_extension(tool, fallback: float = 0.0) -> float:
+	if getattr(tool, "_ms", None) is None:
+		return fallback
+
+	try:
+		return await tool._ms.get_position()
+	except Exception:
+		return fallback
+
+
 def _infer_axes_from_error(worker, exc: Exception) -> Optional[list[str]]:
 	match = _MOTOR_ID_RE.search(str(exc))
 	if not match:
@@ -539,12 +549,7 @@ async def move_to_cell(request: MoveRequest) -> PositionResponse:
 	except (MotorError, HardwareMotorError) as e:
 		await _raise_motor_error(worker, f"Failed to move to cell: {str(e)}", e)
 
-	slide_param = "STAGE_EXTENSION_SHELF_FRONT" if request.side == "left_module" else "STAGE_EXTENSION_SHELF_BACK"
-	slide_ext = await tool.get_param(slide_param)
-
-	if slide_ext is None:
-		fallback_param = "SLIDE_EXTENSION_FRONT" if request.side == "left_module" else "SLIDE_EXTENSION_BACK"
-		slide_ext = await tool.get_param(fallback_param)
+	slide_extension = await _get_current_stage_extension(tool)
 
 	_current_side = coord.s
 	_current_side_name = request.side
@@ -552,7 +557,7 @@ async def move_to_cell(request: MoveRequest) -> PositionResponse:
 		x=coord.x,
 		y=coord.y,
 		z_offset=coord.z_offset,
-		slide_extension=slide_ext or 0,
+		slide_extension=slide_extension,
 	)
 
 	return _current_position
