@@ -37,6 +37,7 @@ def parse_args() -> argparse.Namespace:
 	parser.add_argument("--settle-ms", type=int)
 	parser.add_argument("--samples-per-point", type=int)
 	parser.add_argument("--stage-extension-mm", type=float)
+	parser.add_argument("--z-extension-mm", type=float)
 	parser.add_argument("--scans-dir", default="data/scans")
 	parser.add_argument("--config", default=str(CONFIG_PATH))
 	parser.add_argument("--apply", action="store_true")
@@ -242,6 +243,7 @@ async def run_scan(args: argparse.Namespace) -> int:
 				scans_dir=args.scans_dir,
 				apply=args.apply,
 				stage_extension_mm=args.stage_extension_mm,
+				z_extension_mm=args.z_extension_mm if args.z_extension_mm is not None else scan_config.z_extension_mm,
 				progress_callback=did_progress,
 			)
 		finally:

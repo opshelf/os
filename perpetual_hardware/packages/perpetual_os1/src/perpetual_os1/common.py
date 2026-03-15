@@ -307,7 +307,7 @@ class LaserConfig(BaseModel):
     register_address: int = Field(0, ge=0, le=65535)
     register_count: int = Field(2, ge=1, le=125)
     distance_register_index: int = Field(1, ge=0, le=124)
-    distance_scale_mm: float = Field(0.01, gt=0)
+    distance_scale_mm: float = Field(0.001, gt=0)
 
     @model_validator(mode="after")
     def _validate_register_index(self) -> "LaserConfig":
@@ -492,6 +492,7 @@ class LaserScanConfig(BaseModel):
     min_horizontal_wall_coverage_mm: float = Field(30.0, gt=0)
     laser_offset_x_mm: float = 0.0
     laser_offset_y_mm: float = 0.0
+    z_extension_mm: Optional[float] = None
     step_mm: float = Field(5.0, gt=0)
     settle_ms: int = Field(50, ge=0)
     samples_per_point: int = Field(3, ge=1)

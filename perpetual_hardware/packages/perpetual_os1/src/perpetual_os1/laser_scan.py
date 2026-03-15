@@ -103,15 +103,13 @@ def build_axis_positions(start_mm: float, end_mm: float, step_mm: float) -> list
 	if step_mm <= 0:
 		raise ValueError("step_mm must be positive")
 
-	if end_mm < start_mm:
-		raise ValueError("end_mm must be greater than or equal to start_mm")
-
 	positions: list[float] = []
+	direction = 1.0 if end_mm >= start_mm else -1.0
 	current = start_mm
 
-	while current <= end_mm + (step_mm / 2.0):
+	while (direction > 0 and current <= end_mm + (step_mm / 2.0)) or (direction < 0 and current >= end_mm - (step_mm / 2.0)):
 		positions.append(round(current, 4))
-		current += step_mm
+		current += step_mm * direction
 
 	if positions[-1] != round(end_mm, 4):
 		positions.append(round(end_mm, 4))
@@ -301,8 +299,8 @@ def _component_dimensions_mm(
 	max_col = max(col_indices)
 	min_row = min(row_indices)
 	max_row = max(row_indices)
-	width_mm = float(x_positions[max_col] - x_positions[min_col] + step_mm)
-	height_mm = float(y_positions[max_row] - y_positions[min_row] + step_mm)
+	width_mm = float(abs(x_positions[max_col] - x_positions[min_col]) + step_mm)
+	height_mm = float(abs(y_positions[max_row] - y_positions[min_row]) + step_mm)
 
 	return min_row, max_row, min_col, max_col, width_mm, height_mm
 
@@ -436,10 +434,14 @@ def analyze_scan_capture(
 		if bottom_wall_hits < min_horizontal_cols:
 			continue
 
-		left_edge_mm = capture.x_positions[min_col] - (capture.step_mm / 2.0)
-		right_edge_mm = capture.x_positions[max_col] + (capture.step_mm / 2.0)
-		top_edge_mm = capture.y_positions[min_row] - (capture.step_mm / 2.0)
-		bottom_edge_mm = capture.y_positions[max_row] + (capture.step_mm / 2.0)
+		min_x_mm = min(capture.x_positions[min_col], capture.x_positions[max_col])
+		max_x_mm = max(capture.x_positions[min_col], capture.x_positions[max_col])
+		min_y_mm = min(capture.y_positions[min_row], capture.y_positions[max_row])
+		max_y_mm = max(capture.y_positions[min_row], capture.y_positions[max_row])
+		left_edge_mm = min_x_mm - (capture.step_mm / 2.0)
+		right_edge_mm = max_x_mm + (capture.step_mm / 2.0)
+		top_edge_mm = min_y_mm - (capture.step_mm / 2.0)
+		bottom_edge_mm = max_y_mm + (capture.step_mm / 2.0)
 		center_x_mm = float((left_edge_mm + right_edge_mm) / 2.0)
 		center_y_mm = float((top_edge_mm + bottom_edge_mm) / 2.0)
 
@@ -454,10 +456,10 @@ def analyze_scan_capture(
 				width_mm=width_mm,
 				height_mm=height_mm,
 				point_count=len(component),
-				bbox_x_min=capture.x_positions[min_col],
-				bbox_x_max=capture.x_positions[max_col],
-				bbox_y_min=capture.y_positions[min_row],
-				bbox_y_max=capture.y_positions[max_row],
+				bbox_x_min=min_x_mm,
+				bbox_x_max=max_x_mm,
+				bbox_y_min=min_y_mm,
+				bbox_y_max=max_y_mm,
 			)
 		)
 

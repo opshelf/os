@@ -901,6 +901,7 @@ class Robot:
         scans_dir: str = "data/scans",
         apply: bool = True,
         stage_extension_mm: Optional[float] = None,
+        z_extension_mm: Optional[float] = None,
         progress_callback: Optional[Any] = None,
     ) -> ScanAnalysisResult:
         if isinstance(side, str):
@@ -924,6 +925,7 @@ class Robot:
             settle_ms=settle_ms,
             samples_per_point=samples_per_point,
             stage_extension_mm=stage_extension_mm,
+            z_extension_mm=z_extension_mm,
             progress_callback=progress_callback,
         )
 

@@ -309,6 +309,7 @@ class Tool:
         settle_ms: int,
         samples_per_point: int,
         stage_extension_mm: Optional[float] = None,
+        z_extension_mm: Optional[float] = None,
         progress_callback: Optional[Any] = None,
     ) -> List[List[Optional[float]]]:
         if self._laser_enabled is False or self._laser is None:
@@ -317,66 +318,103 @@ class Tool:
         if samples_per_point <= 0:
             raise ConfigError("samples_per_point must be greater than zero")
 
-        if stage_extension_mm is not None and stage_extension_mm > 0 and self._ms is None:
-            raise ConfigError("Stage motor required when stage_extension_mm is configured")
+        if self._mx is None or self._my is None:
+            raise MotorError("Gantry motors (x_axis, y_axis) required for laser scan")
+
+        if stage_extension_mm is not None and stage_extension_mm > 0:
+            if self._ms is None or self._mg is None:
+                raise ConfigError("Tool motors required when stage_extension_mm is configured")
 
         target_position: Literal["front", "back"] = "front" if side == 0 else "back"
         total_points = len(x_positions) * len(y_positions)
         completed_points = 0
         rows: List[List[Optional[float]]] = []
 
-        await self.retract()
-        await self.rotate_to_position(target_position)
+        try:
+            self._mstatus = ToolMotionStatus.MOVING
+            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
 
-        for row_idx, y_position in enumerate(y_positions):
-            row_values: List[Optional[float]] = [None] * len(x_positions)
+            await self.retract()
+            await self.rotate_to_position(target_position)
 
-            if row_idx % 2 == 0:
-                column_indices = list(range(len(x_positions)))
-            else:
-                column_indices = list(range(len(x_positions) - 1, -1, -1))
+            shouldExtendTool = stage_extension_mm is not None and stage_extension_mm > 0
 
-            for column_idx in column_indices:
-                x_position = x_positions[column_idx]
-                await self.move(c.AxisCoordinate(x=x_position, y=y_position, s=side))
+            if shouldExtendTool is True:
+                grip_rpm = await self.get_param("Z_MOVE_RPM")
+                grip_accel = await self.get_param("Z_MOVE_ACCEL")
+                if z_extension_mm is None:
+                    grip_value = await self.get_param("Z_EXTENSION_PICK")
+                    if grip_value is not None:
+                        z_extension_mm = float(grip_value)
 
-                if stage_extension_mm is not None and stage_extension_mm > 0:
+                if z_extension_mm is None or grip_rpm is None or grip_accel is None:
+                    raise ConfigError("Missing scan extension parameters")
+
+                self._warn_stage_target(stage_extension_mm, "LASER_SCAN_STAGE_EXTENSION")
+
+            for row_idx, y_position in enumerate(y_positions):
+                row_values: List[Optional[float]] = [None] * len(x_positions)
+
+                if row_idx % 2 == 0:
+                    column_indices = list(range(len(x_positions)))
+                else:
+                    column_indices = list(range(len(x_positions) - 1, -1, -1))
+
+                row_start_idx = column_indices[0]
+                row_start_x = x_positions[row_start_idx]
+                await self.move(c.AxisCoordinate(x=row_start_x, y=y_position, s=side))
+
+                if shouldExtendTool is True:
+                    await self._ms.ready()
                     await self._ms.move_to_position(stage_extension_mm)
+                    await self._mg.move_to_position(z_extension_mm, rpm=grip_rpm, accel=grip_accel)
 
-                if settle_ms > 0:
-                    await asyncio.sleep(settle_ms / 1000.0)
+                for position_idx, column_idx in enumerate(column_indices):
+                    x_position = x_positions[column_idx]
 
-                sample_values: List[float] = []
-                for _ in range(samples_per_point):
-                    depth_mm = await self.get_laser_distance()
-                    if depth_mm is not None:
-                        sample_values.append(float(depth_mm))
+                    if position_idx > 0:
+                        if shouldExtendTool is True:
+                            await self._mx.move_to_position_no_wait(x_position)
+                            await self.gantry_wait()
+                        else:
+                            await self.move(c.AxisCoordinate(x=x_position, y=y_position, s=side))
 
-                if sample_values:
-                    sample_values.sort()
-                    middle_idx = len(sample_values) // 2
-                    row_values[column_idx] = sample_values[middle_idx]
+                    if settle_ms > 0:
+                        await asyncio.sleep(settle_ms / 1000.0)
 
-                if stage_extension_mm is not None and stage_extension_mm > 0:
-                    await self.retract_empty()
+                    sample_values: List[float] = []
+                    for _ in range(samples_per_point):
+                        depth_mm = await self.get_laser_distance()
+                        if depth_mm is not None:
+                            sample_values.append(float(depth_mm))
 
-                completed_points += 1
+                    if sample_values:
+                        sample_values.sort()
+                        middle_idx = len(sample_values) // 2
+                        row_values[column_idx] = sample_values[middle_idx]
 
-                if progress_callback is not None:
-                    callback_result = progress_callback(
-                        completed_points,
-                        total_points,
-                        x_position,
-                        y_position,
-                        row_values[column_idx],
-                    )
+                    completed_points += 1
 
-                    if hasattr(callback_result, "__await__"):
-                        await callback_result
+                    if progress_callback is not None:
+                        callback_result = progress_callback(
+                            completed_points,
+                            total_points,
+                            x_position,
+                            y_position,
+                            row_values[column_idx],
+                        )
 
-            rows.append(row_values)
+                        if hasattr(callback_result, "__await__"):
+                            await callback_result
 
-        await self.retract()
+                if shouldExtendTool is True:
+                    await self.retract()
+
+                rows.append(row_values)
+        finally:
+            await self.retract()
+            self._mstatus = ToolMotionStatus.IDLE
+            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
 
         return rows
 

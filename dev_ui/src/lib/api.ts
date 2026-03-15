@@ -241,6 +241,14 @@ export async function jogAxis(axis: 'x' | 'y' | 'z' | 'stage', delta: number): P
 	});
 }
 
+export interface LaserReading {
+	distance_mm: number;
+}
+
+export async function getLaserReading(): Promise<LaserReading> {
+	return apiFetch<LaserReading>('/calibration/laser/read');
+}
+
 export async function testGripper(side: string, shelfIdx: number, cellIdx: number): Promise<void> {
 	await apiFetch('/calibration/test', {
 		method: 'POST',
