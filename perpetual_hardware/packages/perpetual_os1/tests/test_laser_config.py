@@ -76,7 +76,7 @@ def test_laser_defaults_to_disabled():
     assert config.robot.tool.laser.register_address == 0
     assert config.robot.tool.laser.register_count == 2
     assert config.robot.tool.laser.distance_register_index == 1
-    assert config.robot.tool.laser.distance_scale_mm == pytest.approx(0.01)
+    assert config.robot.tool.laser.distance_scale_mm == pytest.approx(0.001)
 
 
 def test_assert_config_requires_laser_bus_when_laser_enabled():
