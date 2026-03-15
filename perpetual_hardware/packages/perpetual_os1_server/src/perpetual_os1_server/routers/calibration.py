@@ -63,6 +63,10 @@ class CalibrationStatusResponse(BaseModel):
 	needs_home_axes: list[str] = Field(default_factory=list)
 
 
+class LaserReadingResponse(BaseModel):
+	distance_mm: float
+
+
 class ScanRequest(BaseModel):
 	side: Literal["left_module", "right_module"]
 	x_min: Optional[float] = None
@@ -70,6 +74,7 @@ class ScanRequest(BaseModel):
 	y_min: Optional[float] = None
 	y_max: Optional[float] = None
 	stage_extension_mm: Optional[float] = None
+	z_extension_mm: Optional[float] = None
 	apply: bool = True
 
 
@@ -300,6 +305,27 @@ async def get_storage():
 	return grid.model_dump()
 
 
+@router.get("/laser/read", response_model=LaserReadingResponse)
+async def read_laser() -> LaserReadingResponse:
+	try:
+		worker = await get_robot_worker()
+	except ValueError as e:
+		raise HTTPException(
+			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+			detail="Robot is not initialized",
+		) from e
+
+	try:
+		distance_mm = await worker._robot.get_laser_distance()
+	except Exception as e:
+		raise HTTPException(
+			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+			detail=f"Failed to read laser distance: {str(e)}",
+		) from e
+
+	return LaserReadingResponse(distance_mm=distance_mm)
+
+
 def _derive_scan_bounds(grid, side: StorageModuleSide, request: ScanRequest) -> ScanBounds:
 	explicit_bounds = [
 		request.x_min,
@@ -379,6 +405,7 @@ async def _run_scan_task(worker, request: ScanRequest, bounds: ScanBounds) -> No
 			min_vertical_wall_coverage_mm=scan_config.min_vertical_wall_coverage_mm,
 			min_horizontal_wall_coverage_mm=scan_config.min_horizontal_wall_coverage_mm,
 			stage_extension_mm=request.stage_extension_mm,
+			z_extension_mm=request.z_extension_mm if request.z_extension_mm is not None else scan_config.z_extension_mm,
 			apply=request.apply,
 			progress_callback=_did_scan_progress,
 		)
