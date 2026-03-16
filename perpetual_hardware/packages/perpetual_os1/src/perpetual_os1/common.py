@@ -304,7 +304,7 @@ class ScaleConfig(BaseModel):
 class LaserConfig(BaseModel):
     enabled: bool = False
     device_id: int = Field(1, ge=0, le=255)
-    read_function_code: int = Field(4, ge=3, le=4)
+    read_function_code: int = Field(3, ge=3, le=4)
     register_address: int = Field(0, ge=0, le=65535)
     register_count: int = Field(2, ge=1, le=125)
     distance_register_index: int = Field(1, ge=0, le=124)
