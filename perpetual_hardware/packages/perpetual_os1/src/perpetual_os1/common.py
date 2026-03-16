@@ -304,6 +304,7 @@ class ScaleConfig(BaseModel):
 class LaserConfig(BaseModel):
     enabled: bool = False
     device_id: int = Field(1, ge=0, le=255)
+    read_function_code: int = Field(4, ge=3, le=4)
     register_address: int = Field(0, ge=0, le=65535)
     register_count: int = Field(2, ge=1, le=125)
     distance_register_index: int = Field(1, ge=0, le=124)
@@ -311,6 +312,9 @@ class LaserConfig(BaseModel):
 
     @model_validator(mode="after")
     def _validate_register_index(self) -> "LaserConfig":
+        if self.read_function_code not in (3, 4):
+            raise ValueError("read_function_code must be 3 or 4")
+
         if self.distance_register_index >= self.register_count:
             raise ValueError("distance_register_index must be smaller than register_count")
 

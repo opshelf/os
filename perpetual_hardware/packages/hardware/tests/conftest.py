@@ -160,6 +160,7 @@ def mock_modbus_client(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
 
     client.connect = AsyncMock(side_effect=_connect)
     client.read_holding_registers = AsyncMock()
+    client.read_input_registers = AsyncMock()
     client.write_register = AsyncMock()
     client.write_registers = AsyncMock()
     monkeypatch.setattr(
