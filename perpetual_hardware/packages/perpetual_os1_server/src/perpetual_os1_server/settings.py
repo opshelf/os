@@ -158,6 +158,7 @@ def _build_minimal_config(data: dict) -> dict:
 				"laser": {
 					"enabled": False,
 					"device_id": 1,
+					"read_function_code": 4,
 					"register_address": 0,
 					"register_count": 2,
 					"distance_register_index": 1,

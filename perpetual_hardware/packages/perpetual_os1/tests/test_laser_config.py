@@ -73,6 +73,7 @@ def test_laser_defaults_to_disabled():
 
     assert config.robot.tool.laser.enabled is False
     assert config.robot.tool.laser.device_id == 1
+    assert config.robot.tool.laser.read_function_code == 4
     assert config.robot.tool.laser.register_address == 0
     assert config.robot.tool.laser.register_count == 2
     assert config.robot.tool.laser.distance_register_index == 1

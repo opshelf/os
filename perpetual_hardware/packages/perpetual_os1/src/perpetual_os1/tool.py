@@ -124,6 +124,7 @@ class Tool:
             self._laser = LaserSensor(
                 modbus_controller=self._lasercontroller,
                 device_id=laser_cfg.device_id,
+                read_function_code=laser_cfg.read_function_code,
                 register_address=laser_cfg.register_address,
                 register_count=laser_cfg.register_count,
                 distance_register_index=laser_cfg.distance_register_index,
