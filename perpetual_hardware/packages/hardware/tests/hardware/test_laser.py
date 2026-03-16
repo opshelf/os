@@ -21,7 +21,7 @@ async def test_laser_read_distance_mm(mock_laser_controller):
     laser = LaserSensor(
         modbus_controller=mock_laser_controller,
         device_id=1,
-        read_function_code=4,
+        read_function_code=3,
         register_address=0,
         register_count=2,
         distance_register_index=1,
@@ -31,7 +31,7 @@ async def test_laser_read_distance_mm(mock_laser_controller):
     distance_mm = await laser.read_distance_mm()
 
     assert distance_mm == pytest.approx(56.7)
-    mock_laser_controller.read_input_register_block.assert_called_once_with(
+    mock_laser_controller.read_holding_register_block.assert_called_once_with(
         unit_id=1,
         address=0,
         count=2,
@@ -43,7 +43,7 @@ async def test_laser_initialize_returns_probe_distance(mock_laser_controller):
     laser = LaserSensor(
         modbus_controller=mock_laser_controller,
         device_id=1,
-        read_function_code=4,
+        read_function_code=3,
         register_address=0,
         register_count=2,
         distance_register_index=1,
@@ -57,11 +57,11 @@ async def test_laser_initialize_returns_probe_distance(mock_laser_controller):
 
 @pytest.mark.asyncio
 async def test_laser_read_distance_mm_or_none_returns_none_on_failure(mock_laser_controller):
-    mock_laser_controller.read_input_register_block.side_effect = RuntimeError("read failed")
+    mock_laser_controller.read_holding_register_block.side_effect = RuntimeError("read failed")
     laser = LaserSensor(
         modbus_controller=mock_laser_controller,
         device_id=1,
-        read_function_code=4,
+        read_function_code=3,
         register_address=0,
         register_count=2,
         distance_register_index=1,
@@ -78,7 +78,7 @@ def test_laser_validates_distance_register_index(mock_laser_controller):
         LaserSensor(
             modbus_controller=mock_laser_controller,
             device_id=1,
-            read_function_code=4,
+            read_function_code=3,
             register_address=0,
             register_count=2,
             distance_register_index=2,
