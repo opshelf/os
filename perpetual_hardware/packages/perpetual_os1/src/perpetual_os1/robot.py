@@ -175,27 +175,9 @@ class Robot:
         self._bus_settings = self._prepare_bus_settings()
         self._logger = logging.getLogger(__name__).getChild("Robot")
 
-        motor_bus = self._bus_settings["motor"]
-        scale_bus = self._bus_settings["scale"]
-        laser_bus = self._bus_settings["laser"]
-        self._motorbus = Controller(
-            port=motor_bus["ports"][0],
-            baudrate=motor_bus["baudrate"],
-            parity=motor_bus["parity"],
-            timeout=motor_bus["timeout"],
-        )
-        self._scalebus = Controller(
-            port=scale_bus["ports"][0],
-            baudrate=scale_bus["baudrate"],
-            parity=scale_bus["parity"],
-            timeout=scale_bus["timeout"],
-        )
-        self._laserbus = Controller(
-            port=laser_bus["ports"][0],
-            baudrate=laser_bus["baudrate"],
-            parity=laser_bus["parity"],
-            timeout=laser_bus["timeout"],
-        )
+        self._motorbus = self._create_controller_for_bus("motor")
+        self._scalebus = self._create_controller_for_bus("scale")
+        self._laserbus = self._create_controller_for_bus("laser")
 
         tool_params = self._config.get("robot.tool", {})
         io_params = self._config.get("robot.io", {})
@@ -331,14 +313,22 @@ class Robot:
         laser_enabled = getattr(laser_config, "enabled", False) if laser_config is not None else False
 
         if scale_enabled is True:
-            await self._connect_controller("scale", self._scalebus, self._bus_settings["scale"])
+            if self._scalebus is self._motorbus:
+                self._logger.info("scale_bus_shared_with_motor")
+            else:
+                await self._connect_controller("scale", self._scalebus, self._bus_settings["scale"])
         else:
             self._logger.info("scale_bus_skipped: scale is disabled in config")
 
         if laser_enabled is True:
             if self._config.robot.bus is None or self._config.robot.bus.laser is None:
                 raise ConfigError("Laser bus configuration is required when laser is enabled")
-            await self._connect_controller("laser", self._laserbus, self._bus_settings["laser"])
+            if self._laserbus is self._motorbus:
+                self._logger.info("laser_bus_shared_with_motor")
+            elif self._laserbus is self._scalebus:
+                self._logger.info("laser_bus_shared_with_scale")
+            else:
+                await self._connect_controller("laser", self._laserbus, self._bus_settings["laser"])
         else:
             self._logger.info("laser_bus_skipped: laser is disabled in config")
 
@@ -547,6 +537,36 @@ class Robot:
             "scale": build("scale"),
             "laser": build("laser"),
         }
+
+    def _create_controller_for_bus(self, name: str) -> Controller:
+        if name == "scale" and self._bus_settings_match("scale", "motor") is True:
+            return self._motorbus
+
+        if name == "laser" and self._bus_settings_match("laser", "motor") is True:
+            return self._motorbus
+
+        if name == "laser" and self._bus_settings_match("laser", "scale") is True:
+            return self._scalebus
+
+        settings = self._bus_settings[name]
+
+        return Controller(
+            port=settings["ports"][0],
+            baudrate=settings["baudrate"],
+            parity=settings["parity"],
+            timeout=settings["timeout"],
+        )
+
+    def _bus_settings_match(self, left: str, right: str) -> bool:
+        left_settings = self._bus_settings[left]
+        right_settings = self._bus_settings[right]
+
+        return (
+            left_settings["ports"] == right_settings["ports"]
+            and left_settings["baudrate"] == right_settings["baudrate"]
+            and left_settings["parity"] == right_settings["parity"]
+            and left_settings["timeout"] == right_settings["timeout"]
+        )
 
     async def _connect_controller(self, label: str, controller: Controller, settings: Dict[str, Any]) -> None:
         errors: List[str] = []
