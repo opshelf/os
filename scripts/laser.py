@@ -11,7 +11,7 @@ import sys
 import tempfile
 import traceback
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from uuid import uuid4
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -49,6 +49,7 @@ GAP_DEPTH_THRESHOLD_MM = 0.01
 FINE_SCAN_MARGIN_X_MM = 10.0
 FINE_SCAN_MARGIN_Y_MM = 10.0
 COARSE_WALL_SEARCH_STEPS = 2
+CURRENT_SCAN_LOG_PATH: Optional[Path] = None
 
 
 @dataclass
@@ -72,6 +73,17 @@ class GapCandidateRegion:
 	y_min: float
 	y_max: float
 	row_count: int = 1
+
+
+@dataclass
+class StagedScanRecorder:
+	run_id: str
+	run_dir: Path
+	coarse_depth_path: Path
+	metadata_path: Path
+	run_parameters_path: Path
+	progress_path: Path
+	log_path: Path
 
 
 def parse_args() -> argparse.Namespace:
@@ -231,6 +243,11 @@ def print_analysis(analysis) -> None:
 
 
 def print_status(message: str) -> None:
+	if CURRENT_SCAN_LOG_PATH is not None:
+		timestamp = datetime.now(timezone.utc).isoformat()
+		with CURRENT_SCAN_LOG_PATH.open("a", encoding="utf-8") as log_file:
+			log_file.write(f"{timestamp}\t{message}\n")
+
 	print(message, flush=True)
 
 
@@ -299,15 +316,15 @@ def build_run_parameters(
 
 def persist_run_parameters(
 	*,
-	analysis: ScanAnalysisResult,
+	run_dir: Path,
+	run_id: str,
 	run_parameters: dict[str, Any],
 ) -> str:
-	run_dir = Path(analysis.raw_scan_path).resolve().parent
 	run_parameters_path = run_dir / "run_parameters.json"
 	run_parameters_path.write_text(
 		json.dumps(
 			{
-				"run_id": analysis.run_id,
+				"run_id": run_id,
 				"created_at": datetime.now(timezone.utc).isoformat(),
 				"run_parameters": run_parameters,
 			},
@@ -317,6 +334,119 @@ def persist_run_parameters(
 	)
 
 	return str(run_parameters_path)
+
+
+def save_depth_rows_to_npy(
+	*,
+	output_path: Path,
+	depth_rows: list[list[float | None]],
+) -> None:
+	depth_array = np.array(
+		[
+			[np.nan if depth_mm is None else float(depth_mm) for depth_mm in row]
+			for row in depth_rows
+		],
+		dtype=np.float32,
+	)
+	np.save(output_path, depth_array)
+
+
+def create_staged_scan_recorder(
+	*,
+	scans_dir: str,
+	run_parameters: dict[str, Any],
+) -> StagedScanRecorder:
+	run_id = uuid4().hex
+	run_dir = Path(scans_dir) / run_id
+	run_dir.mkdir(parents=True, exist_ok=True)
+
+	recorder = StagedScanRecorder(
+		run_id=run_id,
+		run_dir=run_dir,
+		coarse_depth_path=run_dir / "coarse_depth.npy",
+		metadata_path=run_dir / "metadata.json",
+		run_parameters_path=run_dir / "run_parameters.json",
+		progress_path=run_dir / "progress.json",
+		log_path=run_dir / "scan.log",
+	)
+
+	recorder.log_path.write_text("", encoding="utf-8")
+	persist_run_parameters(
+		run_dir=run_dir,
+		run_id=run_id,
+		run_parameters=run_parameters,
+	)
+	return recorder
+
+
+def persist_scan_progress(
+	*,
+	recorder: StagedScanRecorder,
+	phase: str,
+	progress: dict[str, Any],
+) -> None:
+	recorder.progress_path.write_text(
+		json.dumps(
+			{
+				"run_id": recorder.run_id,
+				"updated_at": datetime.now(timezone.utc).isoformat(),
+				"phase": phase,
+				"progress": progress,
+			},
+			indent="\t",
+		),
+		encoding="utf-8",
+	)
+
+
+def persist_staged_metadata(
+	*,
+	recorder: StagedScanRecorder,
+	side: StorageModuleSide,
+	bounds: ScanBounds,
+	fine_step_mm: float,
+	settle_ms: int,
+	samples_per_point: int,
+	wall_depth_mm: float,
+	coarse_scan: GridScanResult,
+	candidates: list[GapCandidateRegion],
+	fine_entries: list[dict[str, Any]],
+	status: str,
+) -> None:
+	recorder.metadata_path.write_text(
+		json.dumps(
+			{
+				"run_id": recorder.run_id,
+				"created_at": datetime.now(timezone.utc).isoformat(),
+				"status": status,
+				"side": side.value,
+				"bounds": bounds.model_dump(),
+				"fine_step_mm": fine_step_mm,
+				"coarse_step_mm": COARSE_SCAN_STEP_MM,
+				"settle_ms": settle_ms,
+				"samples_per_point": samples_per_point,
+				"wall_depth_mm": wall_depth_mm,
+				"coarse_scan": {
+					"raw_scan_path": str(recorder.coarse_depth_path),
+					"x_positions": coarse_scan.x_positions,
+					"y_positions": coarse_scan.y_positions,
+				},
+				"candidates": [
+					{
+						"x_min": candidate.x_min,
+						"x_max": candidate.x_max,
+						"y_min": candidate.y_min,
+						"y_max": candidate.y_max,
+						"row_count": candidate.row_count,
+					}
+					for candidate in candidates
+				],
+				"fine_scans": fine_entries,
+			},
+			indent="\t",
+		),
+		encoding="utf-8",
+	)
 
 
 def load_depth_rows_from_npy(
@@ -504,6 +634,7 @@ async def scan_grid(
 	settle_ms: int,
 	samples_per_point: int,
 	progress_prefix: str,
+	on_row_complete: Optional[Callable[[GridScanResult, int, float], None]] = None,
 ) -> GridScanResult:
 	x_positions = build_axis_positions(bounds.x_min, bounds.x_max, step_mm)
 	y_positions = build_axis_positions(bounds.y_min, bounds.y_max, step_mm)
@@ -521,6 +652,17 @@ async def scan_grid(
 		)
 		depth_rows.append(row_values)
 
+		if on_row_complete is not None:
+			on_row_complete(
+				GridScanResult(
+					x_positions=x_positions,
+					y_positions=y_positions[: row_idx + 1],
+					depth_rows=[list(row) for row in depth_rows],
+				),
+				row_idx,
+				y_position,
+			)
+
 	return GridScanResult(
 		x_positions=x_positions,
 		y_positions=y_positions,
@@ -534,6 +676,7 @@ async def capture_coarse_scan(
 	bounds: ScanBounds,
 	settle_ms: int,
 	samples_per_point: int,
+	on_row_complete: Optional[Callable[[GridScanResult, int, float], None]] = None,
 ) -> GridScanResult:
 	x_positions = build_axis_positions(bounds.x_min, bounds.x_max, COARSE_SCAN_STEP_MM)
 	y_positions: list[float] = []
@@ -560,6 +703,17 @@ async def capture_coarse_scan(
 
 		y_positions.append(y_position)
 		depth_rows.append(row_values)
+
+		if on_row_complete is not None:
+			on_row_complete(
+				GridScanResult(
+					x_positions=x_positions,
+					y_positions=list(y_positions),
+					depth_rows=[list(row) for row in depth_rows],
+				),
+				row_idx,
+				y_position,
+			)
 
 		row_has_positive_depth = any(is_positive_depth(depth_mm) is True for depth_mm in row_values)
 
@@ -1116,36 +1270,31 @@ def persist_staged_scan(
 	candidates: list[GapCandidateRegion],
 	fine_scan_results: list[tuple[ScanBounds, GridScanResult, list[ScanDetectedCell]]],
 	wall_depth_mm: float,
+	recorder: Optional[StagedScanRecorder] = None,
 ) -> tuple[str, str, str]:
-	run_id = uuid4().hex
-	run_dir = Path(scans_dir) / run_id
-	run_dir.mkdir(parents=True, exist_ok=True)
+	if recorder is None:
+		recorder = create_staged_scan_recorder(
+			scans_dir=scans_dir,
+			run_parameters={},
+		)
 
-	coarse_depth_array = np.array(
-		[
-			[np.nan if depth_mm is None else float(depth_mm) for depth_mm in row]
-			for row in coarse_scan.depth_rows
-		],
-		dtype=np.float32,
+	save_depth_rows_to_npy(
+		output_path=recorder.coarse_depth_path,
+		depth_rows=coarse_scan.depth_rows,
 	)
-	raw_scan_path = run_dir / "coarse_depth.npy"
-	metadata_path = run_dir / "metadata.json"
-	np.save(raw_scan_path, coarse_depth_array)
 
 	fine_entries: list[dict[str, Any]] = []
 
 	for fine_idx, (fine_bounds, fine_scan, detected_cells) in enumerate(fine_scan_results):
-		fine_depth_array = np.array(
-			[
-				[np.nan if depth_mm is None else float(depth_mm) for depth_mm in row]
-				for row in fine_scan.depth_rows
-			],
-			dtype=np.float32,
+		fine_path = recorder.run_dir / f"fine_{fine_idx:02d}.npy"
+		save_depth_rows_to_npy(
+			output_path=fine_path,
+			depth_rows=fine_scan.depth_rows,
 		)
-		fine_path = run_dir / f"fine_{fine_idx:02d}.npy"
-		np.save(fine_path, fine_depth_array)
 		fine_entries.append(
 			{
+				"candidate_index": fine_idx,
+				"status": "completed",
 				"bounds": fine_bounds.model_dump(),
 				"raw_scan_path": str(fine_path),
 				"x_positions": fine_scan.x_positions,
@@ -1154,40 +1303,21 @@ def persist_staged_scan(
 			}
 		)
 
-	metadata_path.write_text(
-		json.dumps(
-			{
-				"run_id": run_id,
-				"created_at": datetime.now(timezone.utc).isoformat(),
-				"side": side.value,
-				"bounds": bounds.model_dump(),
-				"fine_step_mm": fine_step_mm,
-				"coarse_step_mm": COARSE_SCAN_STEP_MM,
-				"settle_ms": settle_ms,
-				"samples_per_point": samples_per_point,
-				"wall_depth_mm": wall_depth_mm,
-				"coarse_scan": {
-					"x_positions": coarse_scan.x_positions,
-					"y_positions": coarse_scan.y_positions,
-				},
-				"candidates": [
-					{
-						"x_min": candidate.x_min,
-						"x_max": candidate.x_max,
-						"y_min": candidate.y_min,
-						"y_max": candidate.y_max,
-						"row_count": candidate.row_count,
-					}
-					for candidate in candidates
-				],
-				"fine_scans": fine_entries,
-			},
-			indent="\t",
-		),
-		encoding="utf-8",
+	persist_staged_metadata(
+		recorder=recorder,
+		side=side,
+		bounds=bounds,
+		fine_step_mm=fine_step_mm,
+		settle_ms=settle_ms,
+		samples_per_point=samples_per_point,
+		wall_depth_mm=wall_depth_mm,
+		coarse_scan=coarse_scan,
+		candidates=candidates,
+		fine_entries=fine_entries,
+		status="completed",
 	)
 
-	return run_id, str(raw_scan_path), str(metadata_path)
+	return recorder.run_id, str(recorder.coarse_depth_path), str(recorder.metadata_path)
 
 
 async def run_staged_scan(
@@ -1200,17 +1330,63 @@ async def run_staged_scan(
 	samples_per_point: int,
 	scan_config: Any,
 	scans_dir: str,
+	run_parameters: dict[str, Any],
 ) -> ScanAnalysisResult:
 	tool = robot._tool
-	await enter_scan_mode(tool, side)
+	recorder = create_staged_scan_recorder(
+		scans_dir=scans_dir,
+		run_parameters=run_parameters,
+	)
+	coarse_scan = GridScanResult(x_positions=[], y_positions=[], depth_rows=[])
+	candidates: list[GapCandidateRegion] = []
+	wall_depth_mm = 0.0
+	global CURRENT_SCAN_LOG_PATH
+	previous_scan_log_path = CURRENT_SCAN_LOG_PATH
+	CURRENT_SCAN_LOG_PATH = recorder.log_path
+	print_status(f"run_dir={recorder.run_dir}")
+	persist_staged_metadata(
+		recorder=recorder,
+		side=side,
+		bounds=bounds,
+		fine_step_mm=fine_step_mm,
+		settle_ms=settle_ms,
+		samples_per_point=samples_per_point,
+		wall_depth_mm=wall_depth_mm,
+		coarse_scan=coarse_scan,
+		candidates=candidates,
+		fine_entries=[],
+		status="starting",
+	)
 
 	try:
+		await enter_scan_mode(tool, side)
 		print_status("phase=coarse-scan")
+
+		def didCompleteCoarseRow(
+			partial_scan: GridScanResult,
+			row_idx: int,
+			y_position: float,
+		) -> None:
+			save_depth_rows_to_npy(
+				output_path=recorder.coarse_depth_path,
+				depth_rows=partial_scan.depth_rows,
+			)
+			persist_scan_progress(
+				recorder=recorder,
+				phase="coarse-scan",
+				progress={
+					"row_idx": row_idx,
+					"row_count": len(partial_scan.y_positions),
+					"y_position": y_position,
+				},
+			)
+
 		coarse_scan = await capture_coarse_scan(
 			tool,
 			bounds=bounds,
 			settle_ms=settle_ms,
 			samples_per_point=samples_per_point,
+			on_row_complete=didCompleteCoarseRow,
 		)
 
 		print_status("phase=coarse-detect")
@@ -1222,6 +1398,19 @@ async def run_staged_scan(
 			f"coarse_candidates={len(candidates)} "
 			f"coarse_rows={len(coarse_scan.y_positions)} "
 			f"wall_depth_mm={wall_depth_mm:.2f}"
+		)
+		persist_staged_metadata(
+			recorder=recorder,
+			side=side,
+			bounds=bounds,
+			fine_step_mm=fine_step_mm,
+			settle_ms=settle_ms,
+			samples_per_point=samples_per_point,
+			wall_depth_mm=wall_depth_mm,
+			coarse_scan=coarse_scan,
+			candidates=candidates,
+			fine_entries=[],
+			status="coarse-detect",
 		)
 
 		fine_scan_results: list[tuple[ScanBounds, GridScanResult, list[ScanDetectedCell]]] = []
@@ -1238,6 +1427,31 @@ async def run_staged_scan(
 				f"bounds:x=({fine_bounds.x_min:.2f},{fine_bounds.x_max:.2f}) "
 				f"y=({fine_bounds.y_min:.2f},{fine_bounds.y_max:.2f})"
 			)
+
+			fine_path = recorder.run_dir / f"fine_{candidate_idx - 1:02d}.npy"
+
+			def didCompleteFineRow(
+				partial_scan: GridScanResult,
+				row_idx: int,
+				y_position: float,
+			) -> None:
+				save_depth_rows_to_npy(
+					output_path=fine_path,
+					depth_rows=partial_scan.depth_rows,
+				)
+				persist_scan_progress(
+					recorder=recorder,
+					phase="fine-scan",
+					progress={
+						"candidate_idx": candidate_idx,
+						"candidate_count": len(candidates),
+						"row_idx": row_idx,
+						"row_count": len(partial_scan.y_positions),
+						"y_position": y_position,
+						"fine_path": str(fine_path),
+					},
+				)
+
 			fine_scan = await scan_grid(
 				tool,
 				bounds=fine_bounds,
@@ -1245,6 +1459,7 @@ async def run_staged_scan(
 				settle_ms=settle_ms,
 				samples_per_point=samples_per_point,
 				progress_prefix=f"fine_{candidate_idx}",
+				on_row_complete=didCompleteFineRow,
 			)
 			_, detected_cells, _ = detect_gap_cells(
 				side=side,
@@ -1263,6 +1478,7 @@ async def run_staged_scan(
 			all_detected_cells.extend(detected_cells)
 	finally:
 		await tool.retract()
+		CURRENT_SCAN_LOG_PATH = previous_scan_log_path
 
 	deduped_cells = dedupe_detected_cells(
 		all_detected_cells,
@@ -1283,6 +1499,7 @@ async def run_staged_scan(
 		candidates=candidates,
 		fine_scan_results=fine_scan_results,
 		wall_depth_mm=wall_depth_mm,
+		recorder=recorder,
 	)
 
 	return ScanAnalysisResult(
@@ -1478,6 +1695,7 @@ async def run_scan(args: argparse.Namespace) -> int:
 					samples_per_point=samples_per_point,
 					scan_config=scan_config,
 					scans_dir=args.scans_dir,
+					run_parameters=run_parameters,
 				)
 			finally:
 				print_status("phase=robot-shutdown")
@@ -1488,7 +1706,8 @@ async def run_scan(args: argparse.Namespace) -> int:
 			temp_config_path.unlink(missing_ok=True)
 
 	run_parameters_path = persist_run_parameters(
-		analysis=analysis,
+		run_dir=Path(analysis.raw_scan_path).resolve().parent,
+		run_id=analysis.run_id,
 		run_parameters=run_parameters,
 	)
 
