@@ -34,7 +34,7 @@ from perpetual_os1.robot import Robot
 from perpetual_os1.storage import StorageGrid, StorageModuleSide
 
 LASER_SCAN_STAGE_EXTENSION_MM = 13.0
-LASER_SCAN_Z_EXTENSION_MM = 10.0
+LASER_SCAN_Z_OFFSET_MM = 10.0
 LASER_SCAN_Y_OFFSET_MM = -10.0
 
 
@@ -189,6 +189,15 @@ async def get_scan_position(tool: Any) -> tuple[float, float]:
 	return float(scan_position[0]), float(scan_position[1])
 
 
+async def get_laser_scan_z_extension_mm(tool: Any) -> float:
+	z_extension_place = await tool.get_param("Z_EXTENSION_PLACE")
+
+	if z_extension_place is None:
+		raise ValueError("Z_EXTENSION_PLACE parameter is not configured")
+
+	return float(z_extension_place) + LASER_SCAN_Z_OFFSET_MM
+
+
 async def capture_laser_scan(
 	*,
 	robot: Robot,
@@ -225,7 +234,7 @@ async def capture_laser_scan(
 		target_position = "back"
 
 	stage_extension_mm = LASER_SCAN_STAGE_EXTENSION_MM
-	z_extension_mm = LASER_SCAN_Z_EXTENSION_MM
+	z_extension_mm = await get_laser_scan_z_extension_mm(tool)
 	z_move_rpm = await tool.get_param("Z_MOVE_RPM")
 	z_move_accel = await tool.get_param("Z_MOVE_ACCEL")
 
