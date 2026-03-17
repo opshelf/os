@@ -33,6 +33,9 @@ import perpetual_os1.robot as robot_module
 from perpetual_os1.robot import Robot
 from perpetual_os1.storage import StorageGrid, StorageModuleSide
 
+LASER_SCAN_STAGE_EXTENSION_MM = 13.0
+LASER_SCAN_Z_EXTENSION_MM = 10.0
+
 
 def parse_args() -> argparse.Namespace:
 	parser = argparse.ArgumentParser(description="Run a laser tray scan and print detected calibration points.")
@@ -185,38 +188,6 @@ async def get_scan_position(tool: Any) -> tuple[float, float]:
 	return float(scan_position[0]), float(scan_position[1])
 
 
-async def get_stage_extension_mm(tool: Any, side: StorageModuleSide) -> float:
-	param_name = "STAGE_EXTENSION_SHELF_FRONT"
-
-	if side == StorageModuleSide.RIGHT:
-		param_name = "STAGE_EXTENSION_SHELF_BACK"
-
-	stage_extension = await tool.get_param(param_name)
-
-	if stage_extension is None:
-		raise ValueError(f"{param_name} parameter is not configured")
-
-	stage_extension_mm = float(stage_extension)
-	tool._warn_stage_target(stage_extension_mm, param_name)
-	return stage_extension_mm
-
-
-async def get_z_extension_mm(tool: Any) -> float:
-	if tool._mg is None:
-		raise ValueError("z_axis motor is required for laser scan")
-
-	z_limit_mm = float(tool._mg._params.lim)
-	z_extension_mm = z_limit_mm - 20.0
-	lower_limit_mm = float(getattr(tool._mg._params, "lower_lim", 0.0))
-
-	if z_extension_mm <= lower_limit_mm:
-		raise ValueError(
-			f"z_axis maximum {z_limit_mm:.2f} mm is too small for 20 mm safety offset"
-		)
-
-	return z_extension_mm
-
-
 async def capture_laser_scan(
 	*,
 	robot: Robot,
@@ -252,8 +223,8 @@ async def capture_laser_scan(
 		side_number = 1
 		target_position = "back"
 
-	stage_extension_mm = await get_stage_extension_mm(tool, side)
-	z_extension_mm = await get_z_extension_mm(tool)
+	stage_extension_mm = LASER_SCAN_STAGE_EXTENSION_MM
+	z_extension_mm = LASER_SCAN_Z_EXTENSION_MM
 	z_move_rpm = await tool.get_param("Z_MOVE_RPM")
 	z_move_accel = await tool.get_param("Z_MOVE_ACCEL")
 
