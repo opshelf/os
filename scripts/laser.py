@@ -43,7 +43,7 @@ def parse_args() -> argparse.Namespace:
 	parser.add_argument("--settle-ms", type=int)
 	parser.add_argument("--samples-per-point", type=int)
 	parser.add_argument("--npy", type=Path)
-	parser.add_argument("--scans-dir", default="data/scans")
+	parser.add_argument("--scans-dir", default="/tmp")
 	parser.add_argument("--config", default=str(CONFIG_PATH))
 	parser.add_argument("--apply", action="store_true")
 	return parser.parse_args()
