@@ -60,11 +60,11 @@ def derive_bounds(args: argparse.Namespace) -> ScanBounds:
 	x_min, x_max = args.x
 	y_min, y_max = args.y
 
-	if x_max <= x_min:
-		raise ValueError("--x requires MIN < MAX")
+	if x_max < x_min:
+		raise ValueError("--x requires MIN <= MAX")
 
-	if y_max <= y_min:
-		raise ValueError("--y requires MIN < MAX")
+	if y_max < y_min:
+		raise ValueError("--y requires MIN <= MAX")
 
 	return ScanBounds(
 		x_min=float(x_min),
