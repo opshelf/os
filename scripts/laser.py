@@ -8,6 +8,7 @@ import sys
 import tempfile
 import traceback
 from pathlib import Path
+from typing import Any, Optional
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PYTHON_PATHS = [
@@ -18,8 +19,14 @@ PYTHON_PATHS = [
 for import_path in reversed(PYTHON_PATHS):
 	sys.path.insert(0, str(import_path))
 
-from perpetual_os1.common import CONFIG_PATH, load_config_file, resolve_grid_path
-from perpetual_os1.laser_scan import ScanBounds
+from perpetual_os1.common import AxisCoordinate, CONFIG_PATH, load_config_file, resolve_grid_path
+from perpetual_os1.laser_scan import (
+	ScanBounds,
+	analyze_scan_capture,
+	build_axis_positions,
+	build_shelves_from_scan,
+	create_scan_capture,
+)
 import perpetual_os1.common as common_module
 import perpetual_os1.robot as robot_module
 from perpetual_os1.robot import Robot
@@ -28,69 +35,40 @@ from perpetual_os1.storage import StorageGrid, StorageModuleSide
 
 def parse_args() -> argparse.Namespace:
 	parser = argparse.ArgumentParser(description="Run a laser tray scan and print detected calibration points.")
-	parser.add_argument("--side", choices=["left", "right", "left_module", "right_module"], default="left")
-	parser.add_argument("--x-min", type=float)
-	parser.add_argument("--x-max", type=float)
-	parser.add_argument("--y-min", type=float)
-	parser.add_argument("--y-max", type=float)
-	parser.add_argument("--step-mm", type=float)
+	parser.add_argument("--module", choices=["left", "right"], required=True)
+	parser.add_argument("--x", nargs=2, metavar=("MIN", "MAX"), type=float, required=True)
+	parser.add_argument("--y", nargs=2, metavar=("MIN", "MAX"), type=float, required=True)
+	parser.add_argument("--step", type=float, required=True)
 	parser.add_argument("--settle-ms", type=int)
 	parser.add_argument("--samples-per-point", type=int)
-	parser.add_argument("--stage-extension-mm", type=float)
-	parser.add_argument("--z-extension-mm", type=float)
 	parser.add_argument("--scans-dir", default="data/scans")
 	parser.add_argument("--config", default=str(CONFIG_PATH))
 	parser.add_argument("--apply", action="store_true")
 	return parser.parse_args()
 
 
-def normalize_side(raw_side: str) -> StorageModuleSide:
-	if raw_side in ("left", "left_module"):
+def normalize_module(raw_module: str) -> StorageModuleSide:
+	if raw_module == "left":
 		return StorageModuleSide.LEFT
 
 	return StorageModuleSide.RIGHT
 
 
-def derive_bounds(
-	*,
-	grid: StorageGrid,
-	side: StorageModuleSide,
-	step_mm: float,
-	args: argparse.Namespace,
-) -> ScanBounds:
-	explicit_bounds = [args.x_min, args.x_max, args.y_min, args.y_max]
+def derive_bounds(args: argparse.Namespace) -> ScanBounds:
+	x_min, x_max = args.x
+	y_min, y_max = args.y
 
-	if any(value is not None for value in explicit_bounds):
-		if not all(value is not None for value in explicit_bounds):
-			raise ValueError("x/y bounds must be provided together")
+	if x_max <= x_min:
+		raise ValueError("--x requires MIN < MAX")
 
-		return ScanBounds(
-			x_min=float(args.x_min),
-			x_max=float(args.x_max),
-			y_min=float(args.y_min),
-			y_max=float(args.y_max),
-		)
+	if y_max <= y_min:
+		raise ValueError("--y requires MIN < MAX")
 
-	x_values: list[float] = []
-	y_values: list[float] = []
-
-	for shelf in grid.get_side(side):
-		for cell in shelf.cells:
-			if cell.calibration_point is None:
-				continue
-
-			x_values.append(float(cell.calibration_point.x))
-			y_values.append(float(cell.calibration_point.y))
-
-	if len(x_values) == 0 or len(y_values) == 0:
-		raise ValueError("Scan bounds are required when the side has no calibrated cells")
-
-	margin_mm = max(step_mm * 2.0, 20.0)
 	return ScanBounds(
-		x_min=float(min(x_values) - margin_mm),
-		x_max=float(max(x_values) + margin_mm),
-		y_min=float(min(y_values) - margin_mm),
-		y_max=float(max(y_values) + margin_mm),
+		x_min=float(x_min),
+		x_max=float(x_max),
+		y_min=float(y_min),
+		y_max=float(y_max),
 	)
 
 
@@ -151,26 +129,234 @@ def build_standalone_config(config) -> dict:
 	return config_data
 
 
+def load_grid(grid_path: Path) -> StorageGrid:
+	if grid_path.exists() is False:
+		return StorageGrid(filename=str(grid_path))
+
+	return StorageGrid.load_from_file(str(grid_path))
+
+
+async def get_scan_position(tool: Any) -> tuple[float, float]:
+	scan_position = await tool.get_param("SCAN_POSITION")
+
+	if scan_position is None:
+		raise ValueError("SCAN_POSITION parameter is not configured")
+
+	return float(scan_position[0]), float(scan_position[1])
+
+
+async def get_stage_extension_mm(tool: Any, side: StorageModuleSide) -> float:
+	param_name = "STAGE_EXTENSION_SHELF_FRONT"
+
+	if side == StorageModuleSide.RIGHT:
+		param_name = "STAGE_EXTENSION_SHELF_BACK"
+
+	stage_extension = await tool.get_param(param_name)
+
+	if stage_extension is None:
+		raise ValueError(f"{param_name} parameter is not configured")
+
+	stage_extension_mm = float(stage_extension)
+	tool._warn_stage_target(stage_extension_mm, param_name)
+	return stage_extension_mm
+
+
+async def get_z_extension_mm(tool: Any) -> float:
+	if tool._mg is None:
+		raise ValueError("z_axis motor is required for laser scan")
+
+	z_limit_mm = float(tool._mg._params.lim)
+	z_extension_mm = z_limit_mm - 20.0
+	lower_limit_mm = float(getattr(tool._mg._params, "lower_lim", 0.0))
+
+	if z_extension_mm <= lower_limit_mm:
+		raise ValueError(
+			f"z_axis maximum {z_limit_mm:.2f} mm is too small for 20 mm safety offset"
+		)
+
+	return z_extension_mm
+
+
+async def capture_laser_scan(
+	*,
+	robot: Robot,
+	side: StorageModuleSide,
+	bounds: ScanBounds,
+	step_mm: float,
+	settle_ms: int,
+	samples_per_point: int,
+	progress_callback: Optional[Any] = None,
+) -> list[list[float | None]]:
+	tool = robot._tool
+
+	if tool._laser_enabled is False or tool._laser is None:
+		raise ValueError("Laser is not enabled")
+
+	if tool._mx is None or tool._my is None:
+		raise ValueError("Gantry motors (x_axis, y_axis) are required for laser scan")
+
+	if tool._ms is None or tool._mg is None:
+		raise ValueError("Tool motors (stage, z_axis) are required for laser scan")
+
+	if samples_per_point <= 0:
+		raise ValueError("samples_per_point must be greater than zero")
+
+	x_positions = build_axis_positions(bounds.x_min, bounds.x_max, step_mm)
+	y_positions = build_axis_positions(bounds.y_min, bounds.y_max, step_mm)
+	total_points = len(x_positions) * len(y_positions)
+	completed_points = 0
+	side_number = 0
+	target_position = "front"
+
+	if side == StorageModuleSide.RIGHT:
+		side_number = 1
+		target_position = "back"
+
+	stage_extension_mm = await get_stage_extension_mm(tool, side)
+	z_extension_mm = await get_z_extension_mm(tool)
+	z_move_rpm = await tool.get_param("Z_MOVE_RPM")
+	z_move_accel = await tool.get_param("Z_MOVE_ACCEL")
+
+	if z_move_rpm is None or z_move_accel is None:
+		raise ValueError("Z_MOVE_RPM and Z_MOVE_ACCEL parameters are required for laser scan")
+
+	scan_x_mm, scan_y_mm = await get_scan_position(tool)
+	rows: list[list[float | None]] = []
+
+	print_status(
+		f"scan_setup=module:{side.value} "
+		f"scan_position:({scan_x_mm:.2f},{scan_y_mm:.2f}) "
+		f"stage_extension_mm:{stage_extension_mm:.2f} "
+		f"z_extension_mm:{z_extension_mm:.2f}"
+	)
+
+	try:
+		await tool.retract()
+		await tool.move(AxisCoordinate(x=scan_x_mm, y=scan_y_mm, s=side_number))
+		await tool.rotate_to_position(target_position)
+		await tool._ms.ready()
+		await tool._ms.move_to_position(stage_extension_mm)
+		await tool._mg.move_to_position(z_extension_mm, rpm=z_move_rpm, accel=z_move_accel)
+
+		for row_idx, y_position in enumerate(y_positions):
+			row_values: list[float | None] = [None] * len(x_positions)
+			column_indices = list(range(len(x_positions)))
+
+			if row_idx % 2 == 1:
+				column_indices = list(range(len(x_positions) - 1, -1, -1))
+
+			row_start_idx = column_indices[0]
+			row_start_x = x_positions[row_start_idx]
+			await tool._my.move_to_position_no_wait(y_position)
+			await tool._mx.move_to_position_no_wait(row_start_x)
+			await tool.gantry_wait()
+
+			for position_idx, column_idx in enumerate(column_indices):
+				x_position = x_positions[column_idx]
+
+				if position_idx > 0:
+					await tool._mx.move_to_position_no_wait(x_position)
+					await tool.gantry_wait()
+
+				if settle_ms > 0:
+					await asyncio.sleep(settle_ms / 1000.0)
+
+				sample_values: list[float] = []
+
+				for _ in range(samples_per_point):
+					depth_mm = await tool.get_laser_distance()
+
+					if depth_mm is not None:
+						sample_values.append(float(depth_mm))
+
+				if len(sample_values) > 0:
+					sample_values.sort()
+					middle_idx = len(sample_values) // 2
+					row_values[column_idx] = sample_values[middle_idx]
+
+				completed_points += 1
+
+				if progress_callback is not None:
+					callback_result = progress_callback(
+						completed_points,
+						total_points,
+						x_position,
+						y_position,
+						row_values[column_idx],
+					)
+
+					if hasattr(callback_result, "__await__") is True:
+						await callback_result
+
+			rows.append(row_values)
+	finally:
+		await tool.retract()
+
+	return rows
+
+
+def apply_analysis(
+	*,
+	analysis: Any,
+	grid: StorageGrid,
+	grid_path: Path,
+	side: StorageModuleSide,
+) -> None:
+	if len(analysis.shelves) == 0:
+		raise ValueError("No tray openings detected from scan")
+
+	existing_shelves = grid.get_side(side)
+	scanned_shelves = build_shelves_from_scan(
+		side=side,
+		analysis=analysis,
+		existing_shelves=existing_shelves,
+	)
+	left_module = list(grid.left_module)
+	right_module = list(grid.right_module)
+
+	if side == StorageModuleSide.LEFT:
+		left_module = scanned_shelves
+	else:
+		right_module = scanned_shelves
+
+	storage_grid = StorageGrid(
+		left_module=left_module,
+		right_module=right_module,
+		filename=grid.filename if grid.filename != "" else str(grid_path),
+	)
+	storage_grid.save()
+
+
 async def run_scan(args: argparse.Namespace) -> int:
 	print_status("phase=config")
 	config = load_config_file(args.config)
 	scan_config = config.robot.grid.scan
-	side = normalize_side(args.side)
-	step_mm = args.step_mm if args.step_mm is not None else scan_config.step_mm
+	side = normalize_module(args.module)
+	step_mm = float(args.step)
 	settle_ms = args.settle_ms if args.settle_ms is not None else scan_config.settle_ms
 	samples_per_point = (
 		args.samples_per_point
 		if args.samples_per_point is not None
 		else scan_config.samples_per_point
 	)
+
+	if step_mm <= 0:
+		raise ValueError("--step must be greater than zero")
+
+	if settle_ms < 0:
+		raise ValueError("--settle-ms must be zero or greater")
+
+	if samples_per_point <= 0:
+		raise ValueError("--samples-per-point must be greater than zero")
+
 	grid_path = Path(resolve_grid_path(config))
-	grid = StorageGrid.load_from_file(str(grid_path)) if grid_path.exists() is True else StorageGrid()
-	bounds = derive_bounds(grid=grid, side=side, step_mm=step_mm, args=args)
-	total_x_points = int(round((bounds.x_max - bounds.x_min) / step_mm)) + 1
-	total_y_points = int(round((bounds.y_max - bounds.y_min) / step_mm)) + 1
-	total_points = total_x_points * total_y_points
+	grid = load_grid(grid_path)
+	bounds = derive_bounds(args)
+	x_positions = build_axis_positions(bounds.x_min, bounds.x_max, step_mm)
+	y_positions = build_axis_positions(bounds.y_min, bounds.y_max, step_mm)
+	total_points = len(x_positions) * len(y_positions)
 	print_status(
-		f"scan=side:{side.value} "
+		f"scan=module:{side.value} "
 		f"bounds:x=({bounds.x_min:.2f},{bounds.x_max:.2f}) "
 		f"y=({bounds.y_min:.2f},{bounds.y_max:.2f}) "
 		f"step_mm:{step_mm:.2f} "
@@ -225,7 +411,18 @@ async def run_scan(args: argparse.Namespace) -> int:
 				)
 
 			print_status("phase=scan-start")
-			analysis = await robot.scan_storage(
+			depth_rows = await capture_laser_scan(
+				robot=robot,
+				side=side,
+				bounds=bounds,
+				step_mm=step_mm,
+				settle_ms=settle_ms,
+				samples_per_point=samples_per_point,
+				progress_callback=did_progress,
+			)
+
+			print_status("phase=analysis")
+			capture = create_scan_capture(
 				side=side,
 				bounds=bounds,
 				step_mm=step_mm,
@@ -240,12 +437,18 @@ async def run_scan(args: argparse.Namespace) -> int:
 				hole_height_tolerance_mm=scan_config.hole_height_tolerance_mm,
 				min_vertical_wall_coverage_mm=scan_config.min_vertical_wall_coverage_mm,
 				min_horizontal_wall_coverage_mm=scan_config.min_horizontal_wall_coverage_mm,
-				scans_dir=args.scans_dir,
-				apply=args.apply,
-				stage_extension_mm=args.stage_extension_mm,
-				z_extension_mm=args.z_extension_mm if args.z_extension_mm is not None else scan_config.z_extension_mm,
-				progress_callback=did_progress,
+				depth_rows=depth_rows,
 			)
+			analysis = analyze_scan_capture(capture, base_dir=args.scans_dir)
+
+			if args.apply is True:
+				print_status("phase=apply")
+				apply_analysis(
+					analysis=analysis,
+					grid=grid,
+					grid_path=grid_path,
+					side=side,
+				)
 		finally:
 			print_status("phase=robot-shutdown")
 			await robot.shutdown()
@@ -254,7 +457,6 @@ async def run_scan(args: argparse.Namespace) -> int:
 		robot_module.CONFIG_PATH = original_robot_config_path
 		temp_config_path.unlink(missing_ok=True)
 
-	print_status("phase=analysis")
 	print_analysis(analysis)
 	return 0
 
