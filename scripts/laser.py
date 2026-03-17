@@ -35,6 +35,7 @@ from perpetual_os1.storage import StorageGrid, StorageModuleSide
 
 LASER_SCAN_STAGE_EXTENSION_MM = 13.0
 LASER_SCAN_Z_EXTENSION_MM = 10.0
+LASER_SCAN_Y_OFFSET_MM = -10.0
 
 
 def parse_args() -> argparse.Namespace:
@@ -72,8 +73,8 @@ def derive_bounds(args: argparse.Namespace) -> ScanBounds:
 	return ScanBounds(
 		x_min=float(x_min),
 		x_max=float(x_max),
-		y_min=float(y_min),
-		y_max=float(y_max),
+		y_min=float(y_min) + LASER_SCAN_Y_OFFSET_MM,
+		y_max=float(y_max) + LASER_SCAN_Y_OFFSET_MM,
 	)
 
 
