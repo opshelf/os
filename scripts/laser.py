@@ -46,8 +46,8 @@ COARSE_SCAN_STEP_MM = 8.0
 COARSE_EMPTY_ROW_SKIP_MM = 50.0
 COARSE_EMPTY_ROW_STREAK = 2
 GAP_DEPTH_THRESHOLD_MM = 0.01
-FINE_SCAN_MARGIN_X_MM = 20.0
-FINE_SCAN_MARGIN_Y_MM = 20.0
+FINE_SCAN_MARGIN_X_MM = 10.0
+FINE_SCAN_MARGIN_Y_MM = 10.0
 COARSE_WALL_SEARCH_STEPS = 2
 
 
@@ -708,12 +708,18 @@ def build_fine_scan_bounds(
 	region: GapCandidateRegion,
 	*,
 	overall_bounds: ScanBounds,
+	scan_config: Any,
 ) -> ScanBounds:
+	center_x_mm = (region.x_min + region.x_max) / 2.0
+	center_y_mm = (region.y_min + region.y_max) / 2.0
+	half_width_mm = (scan_config.expected_hole_width_mm / 2.0) + FINE_SCAN_MARGIN_X_MM
+	half_height_mm = (scan_config.expected_hole_height_mm / 2.0) + FINE_SCAN_MARGIN_Y_MM
+
 	return ScanBounds(
-		x_min=max(overall_bounds.x_min, region.x_min - FINE_SCAN_MARGIN_X_MM),
-		x_max=min(overall_bounds.x_max, region.x_max + FINE_SCAN_MARGIN_X_MM),
-		y_min=max(overall_bounds.y_min, region.y_min - FINE_SCAN_MARGIN_Y_MM),
-		y_max=min(overall_bounds.y_max, region.y_max + FINE_SCAN_MARGIN_Y_MM),
+		x_min=max(overall_bounds.x_min, center_x_mm - half_width_mm),
+		x_max=min(overall_bounds.x_max, center_x_mm + half_width_mm),
+		y_min=max(overall_bounds.y_min, center_y_mm - half_height_mm),
+		y_max=min(overall_bounds.y_max, center_y_mm + half_height_mm),
 	)
 
 
@@ -1167,6 +1173,7 @@ async def run_staged_scan(
 			fine_bounds = build_fine_scan_bounds(
 				candidate,
 				overall_bounds=bounds,
+				scan_config=scan_config,
 			)
 			print_status(
 				f"phase=fine-scan candidate={candidate_idx}/{len(candidates)} "
