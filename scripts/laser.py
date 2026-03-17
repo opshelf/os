@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import numpy as np
 import sys
 import tempfile
 import traceback
@@ -41,6 +42,7 @@ def parse_args() -> argparse.Namespace:
 	parser.add_argument("--step", type=float, required=True)
 	parser.add_argument("--settle-ms", type=int)
 	parser.add_argument("--samples-per-point", type=int)
+	parser.add_argument("--npy", type=Path)
 	parser.add_argument("--scans-dir", default="data/scans")
 	parser.add_argument("--config", default=str(CONFIG_PATH))
 	parser.add_argument("--apply", action="store_true")
@@ -134,6 +136,44 @@ def load_grid(grid_path: Path) -> StorageGrid:
 		return StorageGrid(filename=str(grid_path))
 
 	return StorageGrid.load_from_file(str(grid_path))
+
+
+def load_depth_rows_from_npy(
+	npy_path: Path,
+	*,
+	expected_row_count: int,
+	expected_column_count: int,
+) -> list[list[float | None]]:
+	depth_array = np.load(npy_path)
+
+	if depth_array.ndim != 2:
+		raise ValueError("--npy must point to a 2D array")
+
+	row_count, column_count = depth_array.shape
+
+	if row_count != expected_row_count or column_count != expected_column_count:
+		raise ValueError(
+			"--npy shape does not match scan bounds "
+			f"(expected {expected_row_count}x{expected_column_count}, got {row_count}x{column_count})"
+		)
+
+	depth_rows: list[list[float | None]] = []
+
+	for row in depth_array:
+		depth_row: list[float | None] = []
+
+		for value in row:
+			float_value = float(value)
+
+			if np.isfinite(float_value) is True:
+				depth_row.append(float_value)
+				continue
+
+			depth_row.append(None)
+
+		depth_rows.append(depth_row)
+
+	return depth_rows
 
 
 async def get_scan_position(tool: Any) -> tuple[float, float]:
@@ -327,6 +367,38 @@ def apply_analysis(
 	storage_grid.save()
 
 
+def analyze_depth_rows(
+	*,
+	side: StorageModuleSide,
+	bounds: ScanBounds,
+	step_mm: float,
+	settle_ms: int,
+	samples_per_point: int,
+	scan_config: Any,
+	scans_dir: str,
+	depth_rows: list[list[float | None]],
+) -> Any:
+	capture = create_scan_capture(
+		side=side,
+		bounds=bounds,
+		step_mm=step_mm,
+		settle_ms=settle_ms,
+		samples_per_point=samples_per_point,
+		laser_offset_x_mm=scan_config.laser_offset_x_mm,
+		laser_offset_y_mm=scan_config.laser_offset_y_mm,
+		wall_depth_tolerance_mm=scan_config.wall_depth_tolerance_mm,
+		expected_hole_width_mm=scan_config.expected_hole_width_mm,
+		expected_hole_height_mm=scan_config.expected_hole_height_mm,
+		hole_width_tolerance_mm=scan_config.hole_width_tolerance_mm,
+		hole_height_tolerance_mm=scan_config.hole_height_tolerance_mm,
+		min_vertical_wall_coverage_mm=scan_config.min_vertical_wall_coverage_mm,
+		min_horizontal_wall_coverage_mm=scan_config.min_horizontal_wall_coverage_mm,
+		depth_rows=depth_rows,
+	)
+
+	return analyze_scan_capture(capture, base_dir=scans_dir)
+
+
 async def run_scan(args: argparse.Namespace) -> int:
 	print_status("phase=config")
 	config = load_config_file(args.config)
@@ -363,99 +435,111 @@ async def run_scan(args: argparse.Namespace) -> int:
 		f"points:{total_points}"
 	)
 
-	print_status("phase=robot-init")
-	with tempfile.NamedTemporaryFile(
-		mode="w",
-		suffix=".json",
-		prefix="laser-script-config-",
-		dir=str(Path(args.config).resolve().parent),
-		delete=False,
-	) as temp_config_file:
-		temp_config_path = Path(temp_config_file.name)
-		temp_config_data = build_standalone_config(config)
-		json.dump(temp_config_data, temp_config_file, indent="\t")
+	if args.npy is not None:
+		print_status("phase=load-npy")
+		depth_rows = load_depth_rows_from_npy(
+			args.npy,
+			expected_row_count=len(y_positions),
+			expected_column_count=len(x_positions),
+		)
+		print_status(f"npy={args.npy}")
+		print_status("phase=analysis")
+		analysis = analyze_depth_rows(
+			side=side,
+			bounds=bounds,
+			step_mm=step_mm,
+			settle_ms=settle_ms,
+			samples_per_point=samples_per_point,
+			scan_config=scan_config,
+			scans_dir=args.scans_dir,
+			depth_rows=depth_rows,
+		)
+	else:
+		print_status("phase=robot-init")
+		with tempfile.NamedTemporaryFile(
+			mode="w",
+			suffix=".json",
+			prefix="laser-script-config-",
+			dir=str(Path(args.config).resolve().parent),
+			delete=False,
+		) as temp_config_file:
+			temp_config_path = Path(temp_config_file.name)
+			temp_config_data = build_standalone_config(config)
+			json.dump(temp_config_data, temp_config_file, indent="\t")
 
-	original_common_config_path = common_module.CONFIG_PATH
-	original_robot_config_path = robot_module.CONFIG_PATH
+		original_common_config_path = common_module.CONFIG_PATH
+		original_robot_config_path = robot_module.CONFIG_PATH
 
-	common_module.CONFIG_PATH = temp_config_path
-	robot_module.CONFIG_PATH = temp_config_path
-
-	try:
-		robot = Robot()
-		print_status("phase=robot-configure")
-		await robot.configure()
+		common_module.CONFIG_PATH = temp_config_path
+		robot_module.CONFIG_PATH = temp_config_path
 
 		try:
-			last_reported_points = 0
+			robot = Robot()
+			print_status("phase=robot-configure")
+			await robot.configure()
 
-			async def did_progress(
-				completed_points: int,
-				total_points: int,
-				current_x_mm: float,
-				current_y_mm: float,
-				current_depth_mm: float | None,
-			) -> None:
-				nonlocal last_reported_points
+			try:
+				last_reported_points = 0
 
-				if completed_points < total_points and completed_points - last_reported_points < 25:
-					return
+				async def did_progress(
+					completed_points: int,
+					total_points: int,
+					current_x_mm: float,
+					current_y_mm: float,
+					current_depth_mm: float | None,
+				) -> None:
+					nonlocal last_reported_points
 
-				last_reported_points = completed_points
-				depth_label = "none" if current_depth_mm is None else f"{current_depth_mm:.2f}"
-				print_status(
-					f"progress={completed_points}/{total_points} "
-					f"x={current_x_mm:.2f} "
-					f"y={current_y_mm:.2f} "
-					f"depth={depth_label}"
-				)
+					if completed_points < total_points and completed_points - last_reported_points < 25:
+						return
 
-			print_status("phase=scan-start")
-			depth_rows = await capture_laser_scan(
-				robot=robot,
-				side=side,
-				bounds=bounds,
-				step_mm=step_mm,
-				settle_ms=settle_ms,
-				samples_per_point=samples_per_point,
-				progress_callback=did_progress,
-			)
+					last_reported_points = completed_points
+					depth_label = "none" if current_depth_mm is None else f"{current_depth_mm:.2f}"
+					print_status(
+						f"progress={completed_points}/{total_points} "
+						f"x={current_x_mm:.2f} "
+						f"y={current_y_mm:.2f} "
+						f"depth={depth_label}"
+					)
 
-			print_status("phase=analysis")
-			capture = create_scan_capture(
-				side=side,
-				bounds=bounds,
-				step_mm=step_mm,
-				settle_ms=settle_ms,
-				samples_per_point=samples_per_point,
-				laser_offset_x_mm=scan_config.laser_offset_x_mm,
-				laser_offset_y_mm=scan_config.laser_offset_y_mm,
-				wall_depth_tolerance_mm=scan_config.wall_depth_tolerance_mm,
-				expected_hole_width_mm=scan_config.expected_hole_width_mm,
-				expected_hole_height_mm=scan_config.expected_hole_height_mm,
-				hole_width_tolerance_mm=scan_config.hole_width_tolerance_mm,
-				hole_height_tolerance_mm=scan_config.hole_height_tolerance_mm,
-				min_vertical_wall_coverage_mm=scan_config.min_vertical_wall_coverage_mm,
-				min_horizontal_wall_coverage_mm=scan_config.min_horizontal_wall_coverage_mm,
-				depth_rows=depth_rows,
-			)
-			analysis = analyze_scan_capture(capture, base_dir=args.scans_dir)
-
-			if args.apply is True:
-				print_status("phase=apply")
-				apply_analysis(
-					analysis=analysis,
-					grid=grid,
-					grid_path=grid_path,
+				print_status("phase=scan-start")
+				depth_rows = await capture_laser_scan(
+					robot=robot,
 					side=side,
+					bounds=bounds,
+					step_mm=step_mm,
+					settle_ms=settle_ms,
+					samples_per_point=samples_per_point,
+					progress_callback=did_progress,
 				)
+
+				print_status("phase=analysis")
+				analysis = analyze_depth_rows(
+					side=side,
+					bounds=bounds,
+					step_mm=step_mm,
+					settle_ms=settle_ms,
+					samples_per_point=samples_per_point,
+					scan_config=scan_config,
+					scans_dir=args.scans_dir,
+					depth_rows=depth_rows,
+				)
+			finally:
+				print_status("phase=robot-shutdown")
+				await robot.shutdown()
 		finally:
-			print_status("phase=robot-shutdown")
-			await robot.shutdown()
-	finally:
-		common_module.CONFIG_PATH = original_common_config_path
-		robot_module.CONFIG_PATH = original_robot_config_path
-		temp_config_path.unlink(missing_ok=True)
+			common_module.CONFIG_PATH = original_common_config_path
+			robot_module.CONFIG_PATH = original_robot_config_path
+			temp_config_path.unlink(missing_ok=True)
+
+	if args.apply is True:
+		print_status("phase=apply")
+		apply_analysis(
+			analysis=analysis,
+			grid=grid,
+			grid_path=grid_path,
+			side=side,
+		)
 
 	print_analysis(analysis)
 	return 0
