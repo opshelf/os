@@ -261,6 +261,64 @@ def load_grid(grid_path: Path) -> StorageGrid:
 	return StorageGrid.load_from_file(str(grid_path))
 
 
+def build_run_parameters(
+	*,
+	args: argparse.Namespace,
+	side: StorageModuleSide,
+	bounds: ScanBounds,
+	step_mm: float,
+	settle_ms: int,
+	samples_per_point: int,
+) -> dict[str, Any]:
+	return {
+		"module": side.value,
+		"cli": {
+			"module": args.module,
+			"x": [float(args.x[0]), float(args.x[1])],
+			"y": [float(args.y[0]), float(args.y[1])],
+			"step": step_mm,
+			"settle_ms": args.settle_ms,
+			"samples_per_point": args.samples_per_point,
+			"npy": str(args.npy) if args.npy is not None else None,
+			"scans_dir": args.scans_dir,
+			"config": args.config,
+			"apply": args.apply,
+		},
+		"resolved": {
+			"bounds": bounds.model_dump(),
+			"fine_step_mm": step_mm,
+			"coarse_step_mm": COARSE_SCAN_STEP_MM,
+			"settle_ms": settle_ms,
+			"samples_per_point": samples_per_point,
+			"laser_scan_stage_extension_mm": LASER_SCAN_STAGE_EXTENSION_MM,
+			"laser_scan_z_offset_mm": LASER_SCAN_Z_OFFSET_MM,
+			"laser_scan_y_offset_mm": LASER_SCAN_Y_OFFSET_MM,
+		},
+	}
+
+
+def persist_run_parameters(
+	*,
+	analysis: ScanAnalysisResult,
+	run_parameters: dict[str, Any],
+) -> str:
+	run_dir = Path(analysis.raw_scan_path).resolve().parent
+	run_parameters_path = run_dir / "run_parameters.json"
+	run_parameters_path.write_text(
+		json.dumps(
+			{
+				"run_id": analysis.run_id,
+				"created_at": datetime.now(timezone.utc).isoformat(),
+				"run_parameters": run_parameters,
+			},
+			indent="\t",
+		),
+		encoding="utf-8",
+	)
+
+	return str(run_parameters_path)
+
+
 def load_depth_rows_from_npy(
 	npy_path: Path,
 	*,
@@ -1344,6 +1402,16 @@ async def run_scan(args: argparse.Namespace) -> int:
 	grid_path = Path(resolve_grid_path(config))
 	grid = load_grid(grid_path)
 	bounds = derive_bounds(args)
+
+	run_parameters = build_run_parameters(
+		args=args,
+		side=side,
+		bounds=bounds,
+		step_mm=step_mm,
+		settle_ms=settle_ms,
+		samples_per_point=samples_per_point,
+	)
+
 	x_positions = build_axis_positions(bounds.x_min, bounds.x_max, step_mm)
 	y_positions = build_axis_positions(bounds.y_min, bounds.y_max, step_mm)
 	total_points = len(x_positions) * len(y_positions)
@@ -1419,6 +1487,11 @@ async def run_scan(args: argparse.Namespace) -> int:
 			robot_module.CONFIG_PATH = original_robot_config_path
 			temp_config_path.unlink(missing_ok=True)
 
+	run_parameters_path = persist_run_parameters(
+		analysis=analysis,
+		run_parameters=run_parameters,
+	)
+
 	if args.apply is True:
 		print_status("phase=apply")
 		apply_analysis(
@@ -1429,6 +1502,7 @@ async def run_scan(args: argparse.Namespace) -> int:
 		)
 
 	print_analysis(analysis)
+	print(f"run_parameters_path: {run_parameters_path}")
 	return 0
 
 
