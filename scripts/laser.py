@@ -397,12 +397,21 @@ def load_json_file(path: Path) -> dict[str, Any]:
 
 
 def find_latest_incomplete_run(scans_dir: str) -> StagedScanRecorder:
+	run_dirs: list[Path] = []
+
+	for path in Path(scans_dir).iterdir():
+		try:
+			if path.is_dir() is False:
+				continue
+			if (path / "run_parameters.json").exists() is False:
+				continue
+		except PermissionError:
+			continue
+
+		run_dirs.append(path)
+
 	run_dirs = sorted(
-		[
-			path
-			for path in Path(scans_dir).iterdir()
-			if path.is_dir() is True and (path / "run_parameters.json").exists() is True
-		],
+		run_dirs,
 		key=lambda path: path.stat().st_mtime,
 		reverse=True,
 	)
