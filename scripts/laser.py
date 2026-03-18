@@ -41,7 +41,7 @@ from perpetual_os1.storage import StorageGrid, StorageModuleSide
 
 LASER_SCAN_STAGE_EXTENSION_MM = 13.0
 LASER_SCAN_Z_OFFSET_MM = 10.0
-COARSE_SCAN_STEP_MM = 8.0
+COARSE_SCAN_STEP_MM = 4.0
 COARSE_EMPTY_ROW_SKIP_MM = 50.0
 COARSE_EMPTY_ROW_STREAK = 2
 GAP_DEPTH_THRESHOLD_MM = 0.01
@@ -958,7 +958,7 @@ def get_coarse_candidate_height_limits(
 ) -> tuple[float, float]:
 	min_candidate_height_mm = max(
 		COARSE_SCAN_STEP_MM * 2.0,
-		expected_hole_height_mm - max(hole_height_tolerance_mm / 2.0, COARSE_SCAN_STEP_MM / 2.0),
+		expected_hole_height_mm * 0.5,
 	)
 	max_candidate_height_mm = expected_hole_height_mm + hole_height_tolerance_mm + COARSE_SCAN_STEP_MM
 
