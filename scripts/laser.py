@@ -48,6 +48,7 @@ GAP_DEPTH_THRESHOLD_MM = 0.01
 FINE_SCAN_MARGIN_X_MM = 10.0
 FINE_SCAN_MARGIN_Y_MM = 10.0
 COARSE_WALL_SEARCH_STEPS = 2
+FINE_EARLY_ABORT_MIN_ROWS = 6
 CURRENT_SCAN_LOG_PATH: Optional[Path] = None
 
 
@@ -72,6 +73,13 @@ class GapCandidateRegion:
 	y_min: float
 	y_max: float
 	row_count: int = 1
+
+
+class FineScanAbort(Exception):
+	def __init__(self, partial_scan: "GridScanResult", reason: str):
+		super().__init__(reason)
+		self.partial_scan = partial_scan
+		self.reason = reason
 
 
 @dataclass
@@ -937,6 +945,21 @@ def has_wall_nearby(
 	return False
 
 
+def max_gap_run_points(row_values: list[float | None]) -> int:
+	max_run = 0
+	current_run = 0
+
+	for depth_mm in row_values:
+		if is_gap_depth(depth_mm) is True:
+			current_run += 1
+			max_run = max(max_run, current_run)
+			continue
+
+		current_run = 0
+
+	return max_run
+
+
 def find_row_gap_segments(
 	*,
 	row_values: list[float | None],
@@ -989,6 +1012,57 @@ def find_row_gap_segments(
 		start_idx = None
 
 	return segments
+
+
+def should_abort_fine_scan_early(
+	partial_scan: GridScanResult,
+	*,
+	scan_config: Any,
+	step_mm: float,
+) -> Optional[str]:
+	if len(partial_scan.depth_rows) < FINE_EARLY_ABORT_MIN_ROWS:
+		return None
+
+	min_gap_run_points = max(
+		4,
+		int(np.ceil((scan_config.expected_hole_width_mm * 0.35) / step_mm)),
+	)
+	rows_with_meaningful_gap = 0
+	max_gap_run = 0
+	gap_points = 0
+	valid_points = 0
+
+	for row_values in partial_scan.depth_rows:
+		max_gap_run = max(max_gap_run, max_gap_run_points(row_values))
+
+		if max_gap_run_points(row_values) >= min_gap_run_points:
+			rows_with_meaningful_gap += 1
+
+		for depth_mm in row_values:
+			if depth_mm is None:
+				continue
+
+			valid_points += 1
+
+			if is_gap_depth(depth_mm) is True:
+				gap_points += 1
+
+	if rows_with_meaningful_gap >= 2:
+		return None
+
+	if valid_points == 0:
+		return "no_valid_points"
+
+	gap_fraction = gap_points / valid_points
+
+	if max_gap_run < min_gap_run_points and gap_fraction < 0.08:
+		return (
+			f"insufficient_gap_signal rows={len(partial_scan.depth_rows)} "
+			f"max_gap_run={max_gap_run} "
+			f"gap_fraction={gap_fraction:.3f}"
+		)
+
+	return None
 
 
 def merge_candidate_segments(
@@ -1651,7 +1725,7 @@ async def run_staged_scan(
 			else:
 				existing_fine_entry = {}
 
-			if existing_fine_entry.get("status") == "completed":
+			if existing_fine_entry.get("status") in {"completed", "aborted"}:
 				continue
 
 			fine_bounds = build_fine_scan_bounds(
@@ -1694,6 +1768,7 @@ async def run_staged_scan(
 				"x_positions": existing_fine_entry.get("x_positions", []),
 				"y_positions": existing_fine_entry.get("y_positions", []),
 				"detected_cells": existing_fine_entry.get("detected_cells", []),
+				"abort_reason": existing_fine_entry.get("abort_reason"),
 			}
 
 			def didCompleteFineRow(
@@ -1720,25 +1795,50 @@ async def run_staged_scan(
 				fine_entries[candidate_idx - 1]["x_positions"] = partial_scan.x_positions
 				fine_entries[candidate_idx - 1]["y_positions"] = partial_scan.y_positions
 
-			fine_scan = await scan_grid(
-				tool,
-				bounds=fine_bounds,
-				step_mm=fine_step_mm,
-				settle_ms=settle_ms,
-				samples_per_point=samples_per_point,
-				progress_prefix=f"fine_{candidate_idx}",
-				existing_scan=existing_fine_scan,
-				on_row_complete=didCompleteFineRow,
-			)
-			_, detected_cells, _ = detect_gap_cells(
-				side=side,
-				bounds=fine_bounds,
-				step_mm=fine_step_mm,
-				settle_ms=settle_ms,
-				samples_per_point=samples_per_point,
-				scan_config=scan_config,
-				scan_result=fine_scan,
-			)
+				abort_reason = should_abort_fine_scan_early(
+					partial_scan,
+					scan_config=scan_config,
+					step_mm=fine_step_mm,
+				)
+
+				if abort_reason is None:
+					return
+
+				raise FineScanAbort(partial_scan, abort_reason)
+
+			fine_abort_reason: Optional[str] = None
+
+			try:
+				fine_scan = await scan_grid(
+					tool,
+					bounds=fine_bounds,
+					step_mm=fine_step_mm,
+					settle_ms=settle_ms,
+					samples_per_point=samples_per_point,
+					progress_prefix=f"fine_{candidate_idx}",
+					existing_scan=existing_fine_scan,
+					on_row_complete=didCompleteFineRow,
+				)
+			except FineScanAbort as exc:
+				fine_scan = exc.partial_scan
+				fine_abort_reason = exc.reason
+				print_status(
+					f"fine_aborted candidate={candidate_idx}/{len(candidates)} "
+					f"reason={fine_abort_reason}"
+				)
+
+			detected_cells: list[ScanDetectedCell] = []
+
+			if fine_abort_reason is None:
+				_, detected_cells, _ = detect_gap_cells(
+					side=side,
+					bounds=fine_bounds,
+					step_mm=fine_step_mm,
+					settle_ms=settle_ms,
+					samples_per_point=samples_per_point,
+					scan_config=scan_config,
+					scan_result=fine_scan,
+				)
 			print_status(
 				f"fine_detected_cells={len(detected_cells)} "
 				f"candidate={candidate_idx}/{len(candidates)}"
@@ -1747,12 +1847,13 @@ async def run_staged_scan(
 			all_detected_cells.extend(detected_cells)
 			fine_entries[candidate_idx - 1] = {
 				"candidate_index": candidate_idx - 1,
-				"status": "completed",
+				"status": "aborted" if fine_abort_reason is not None else "completed",
 				"bounds": fine_bounds.model_dump(),
 				"raw_scan_path": str(fine_path),
 				"x_positions": fine_scan.x_positions,
 				"y_positions": fine_scan.y_positions,
 				"detected_cells": [cell.model_dump() for cell in detected_cells],
+				"abort_reason": fine_abort_reason,
 			}
 			persist_staged_metadata(
 				recorder=recorder,
