@@ -1033,8 +1033,8 @@ def merge_candidate_segments(
 		matched_region.row_count += 1
 
 	filtered_regions: list[GapCandidateRegion] = []
-	max_width_mm = expected_hole_width_mm + hole_width_tolerance_mm + (COARSE_SCAN_STEP_MM * 2.0)
-	max_height_mm = expected_hole_height_mm + hole_height_tolerance_mm + (COARSE_SCAN_STEP_MM * 2.0)
+	max_width_mm = expected_hole_width_mm + hole_width_tolerance_mm + COARSE_SCAN_STEP_MM
+	max_height_mm = expected_hole_height_mm + hole_height_tolerance_mm + COARSE_SCAN_STEP_MM
 
 	for region in regions:
 		width_mm = abs(region.x_max - region.x_min) + COARSE_SCAN_STEP_MM
@@ -1093,16 +1093,11 @@ def build_fine_scan_bounds(
 	overall_bounds: ScanBounds,
 	scan_config: Any,
 ) -> ScanBounds:
-	center_x_mm = (region.x_min + region.x_max) / 2.0
-	center_y_mm = (region.y_min + region.y_max) / 2.0
-	half_width_mm = (scan_config.expected_hole_width_mm / 2.0) + FINE_SCAN_MARGIN_X_MM
-	half_height_mm = (scan_config.expected_hole_height_mm / 2.0) + FINE_SCAN_MARGIN_Y_MM
-
 	return ScanBounds(
-		x_min=max(overall_bounds.x_min, center_x_mm - half_width_mm),
-		x_max=min(overall_bounds.x_max, center_x_mm + half_width_mm),
-		y_min=max(overall_bounds.y_min, center_y_mm - half_height_mm),
-		y_max=min(overall_bounds.y_max, center_y_mm + half_height_mm),
+		x_min=max(overall_bounds.x_min, region.x_min - FINE_SCAN_MARGIN_X_MM),
+		x_max=min(overall_bounds.x_max, region.x_max + FINE_SCAN_MARGIN_X_MM),
+		y_min=max(overall_bounds.y_min, region.y_min - FINE_SCAN_MARGIN_Y_MM),
+		y_max=min(overall_bounds.y_max, region.y_max + FINE_SCAN_MARGIN_Y_MM),
 	)
 
 
