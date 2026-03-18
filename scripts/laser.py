@@ -49,6 +49,7 @@ FINE_SCAN_MARGIN_X_MM = 10.0
 FINE_SCAN_MARGIN_Y_MM = 10.0
 COARSE_WALL_SEARCH_STEPS = 2
 FINE_EARLY_ABORT_MIN_ROWS = 6
+FINE_EARLY_ABORT_POST_CANDIDATE_ROWS = 4
 CURRENT_SCAN_LOG_PATH: Optional[Path] = None
 
 
@@ -1054,10 +1055,20 @@ def find_row_gap_segments(
 def should_abort_fine_scan_early(
 	partial_scan: GridScanResult,
 	*,
+	candidate: GapCandidateRegion,
 	scan_config: Any,
 	step_mm: float,
 ) -> Optional[str]:
 	if len(partial_scan.depth_rows) < FINE_EARLY_ABORT_MIN_ROWS:
+		return None
+
+	rows_in_candidate_band = sum(
+		1
+		for y_position in partial_scan.y_positions
+		if y_position >= candidate.y_min
+	)
+
+	if rows_in_candidate_band < FINE_EARLY_ABORT_POST_CANDIDATE_ROWS:
 		return None
 
 	min_gap_run_points = max(
@@ -1846,6 +1857,7 @@ async def run_staged_scan(
 
 				abort_reason = should_abort_fine_scan_early(
 					partial_scan,
+					candidate=candidate,
 					scan_config=scan_config,
 					step_mm=fine_step_mm,
 				)
