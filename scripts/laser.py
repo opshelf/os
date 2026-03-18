@@ -88,16 +88,17 @@ class StagedScanRecorder:
 
 def parse_args() -> argparse.Namespace:
 	parser = argparse.ArgumentParser(description="Run a laser tray scan and print detected calibration points.")
-	parser.add_argument("--module", choices=["left", "right"], required=True)
-	parser.add_argument("--x", nargs=2, metavar=("MIN", "MAX"), type=float, required=True)
-	parser.add_argument("--y", nargs=2, metavar=("MIN", "MAX"), type=float, required=True)
-	parser.add_argument("--step", type=float, required=True)
+	parser.add_argument("--module", choices=["left", "right"])
+	parser.add_argument("--x", nargs=2, metavar=("MIN", "MAX"), type=float)
+	parser.add_argument("--y", nargs=2, metavar=("MIN", "MAX"), type=float)
+	parser.add_argument("--step", type=float)
 	parser.add_argument("--settle-ms", type=int)
 	parser.add_argument("--samples-per-point", type=int)
 	parser.add_argument("--npy", type=Path)
 	parser.add_argument("--scans-dir", default="/tmp")
 	parser.add_argument("--config", default=str(CONFIG_PATH))
 	parser.add_argument("--apply", action="store_true")
+	parser.add_argument("--continue", dest="continue_scan", action="store_true")
 	return parser.parse_args()
 
 
@@ -379,6 +380,126 @@ def create_staged_scan_recorder(
 	return recorder
 
 
+def load_staged_scan_recorder(run_dir: Path) -> StagedScanRecorder:
+	return StagedScanRecorder(
+		run_id=run_dir.name,
+		run_dir=run_dir,
+		coarse_depth_path=run_dir / "coarse_depth.npy",
+		metadata_path=run_dir / "metadata.json",
+		run_parameters_path=run_dir / "run_parameters.json",
+		progress_path=run_dir / "progress.json",
+		log_path=run_dir / "scan.log",
+	)
+
+
+def load_json_file(path: Path) -> dict[str, Any]:
+	return json.loads(path.read_text(encoding="utf-8"))
+
+
+def find_latest_incomplete_run(scans_dir: str) -> StagedScanRecorder:
+	run_dirs = sorted(
+		[
+			path
+			for path in Path(scans_dir).iterdir()
+			if path.is_dir() is True and (path / "run_parameters.json").exists() is True
+		],
+		key=lambda path: path.stat().st_mtime,
+		reverse=True,
+	)
+
+	for run_dir in run_dirs:
+		recorder = load_staged_scan_recorder(run_dir)
+
+		if recorder.metadata_path.exists() is False:
+			return recorder
+
+		metadata = load_json_file(recorder.metadata_path)
+
+		if metadata.get("status") != "completed":
+			return recorder
+
+	raise FileNotFoundError(f"No incomplete staged scan found in {scans_dir}")
+
+
+def load_continue_scan_context(
+	scans_dir: str,
+) -> tuple[StagedScanRecorder, StorageModuleSide, ScanBounds, float, int, int]:
+	recorder = find_latest_incomplete_run(scans_dir)
+	run_parameters_document = load_json_file(recorder.run_parameters_path)
+	run_parameters = run_parameters_document["run_parameters"]
+	resolved_parameters = run_parameters["resolved"]
+	side = StorageModuleSide(run_parameters["module"])
+	bounds = ScanBounds.model_validate(resolved_parameters["bounds"])
+	step_mm = float(resolved_parameters["fine_step_mm"])
+	settle_ms = int(resolved_parameters["settle_ms"])
+	samples_per_point = int(resolved_parameters["samples_per_point"])
+
+	return recorder, side, bounds, step_mm, settle_ms, samples_per_point
+
+
+def load_candidates_from_metadata(metadata: dict[str, Any]) -> list[GapCandidateRegion]:
+	return [
+		GapCandidateRegion(
+			x_min=float(entry["x_min"]),
+			x_max=float(entry["x_max"]),
+			y_min=float(entry["y_min"]),
+			y_max=float(entry["y_max"]),
+			row_count=int(entry.get("row_count", 1)),
+		)
+		for entry in metadata.get("candidates", [])
+	]
+
+
+def load_partial_grid_scan(
+	*,
+	npy_path: Path,
+	bounds: ScanBounds,
+	step_mm: float,
+) -> GridScanResult:
+	depth_array = np.load(npy_path)
+
+	if depth_array.ndim != 2:
+		raise ValueError(f"Expected 2D array at {npy_path}")
+
+	x_positions = build_axis_positions(bounds.x_min, bounds.x_max, step_mm)
+	y_positions = build_axis_positions(bounds.y_min, bounds.y_max, step_mm)
+	row_count, column_count = depth_array.shape
+
+	if column_count != len(x_positions):
+		raise ValueError(
+			f"Saved scan width does not match bounds for {npy_path} "
+			f"(expected {len(x_positions)}, got {column_count})"
+		)
+
+	if row_count > len(y_positions):
+		raise ValueError(
+			f"Saved scan height exceeds bounds for {npy_path} "
+			f"(expected at most {len(y_positions)}, got {row_count})"
+		)
+
+	depth_rows: list[list[float | None]] = []
+
+	for row in depth_array:
+		depth_row: list[float | None] = []
+
+		for value in row:
+			float_value = float(value)
+
+			if np.isfinite(float_value) is True:
+				depth_row.append(float_value)
+				continue
+
+			depth_row.append(None)
+
+		depth_rows.append(depth_row)
+
+	return GridScanResult(
+		x_positions=x_positions,
+		y_positions=y_positions[:row_count],
+		depth_rows=depth_rows,
+	)
+
+
 def persist_scan_progress(
 	*,
 	recorder: StagedScanRecorder,
@@ -634,13 +755,26 @@ async def scan_grid(
 	settle_ms: int,
 	samples_per_point: int,
 	progress_prefix: str,
+	existing_scan: Optional[GridScanResult] = None,
 	on_row_complete: Optional[Callable[[GridScanResult, int, float], None]] = None,
 ) -> GridScanResult:
 	x_positions = build_axis_positions(bounds.x_min, bounds.x_max, step_mm)
 	y_positions = build_axis_positions(bounds.y_min, bounds.y_max, step_mm)
 	depth_rows: list[list[float | None]] = []
+	start_row_idx = 0
 
-	for row_idx, y_position in enumerate(y_positions):
+	if existing_scan is not None:
+		if existing_scan.x_positions != x_positions:
+			raise ValueError("Saved fine scan x positions do not match current bounds")
+
+		if y_positions[:len(existing_scan.y_positions)] != existing_scan.y_positions:
+			raise ValueError("Saved fine scan y positions do not match current bounds")
+
+		depth_rows = [list(row) for row in existing_scan.depth_rows]
+		start_row_idx = len(existing_scan.y_positions)
+
+	for row_idx in range(start_row_idx, len(y_positions)):
+		y_position = y_positions[row_idx]
 		row_values = await scan_row(
 			tool,
 			x_positions=x_positions,
@@ -676,6 +810,7 @@ async def capture_coarse_scan(
 	bounds: ScanBounds,
 	settle_ms: int,
 	samples_per_point: int,
+	existing_scan: Optional[GridScanResult] = None,
 	on_row_complete: Optional[Callable[[GridScanResult, int, float], None]] = None,
 ) -> GridScanResult:
 	x_positions = build_axis_positions(bounds.x_min, bounds.x_max, COARSE_SCAN_STEP_MM)
@@ -684,6 +819,32 @@ async def capture_coarse_scan(
 	empty_row_streak = 0
 	current_y = bounds.y_min
 	row_idx = 0
+
+	if existing_scan is not None:
+		if existing_scan.x_positions != x_positions:
+			raise ValueError("Saved coarse scan x positions do not match current bounds")
+
+		y_positions = list(existing_scan.y_positions)
+		depth_rows = [list(row) for row in existing_scan.depth_rows]
+		row_idx = len(y_positions)
+
+		for row_values in depth_rows:
+			row_has_positive_depth = any(is_positive_depth(depth_mm) is True for depth_mm in row_values)
+
+			if row_has_positive_depth is True:
+				empty_row_streak = 0
+				continue
+
+			empty_row_streak += 1
+
+		if len(y_positions) > 0:
+			last_y_position = y_positions[-1]
+			next_step_y_mm = COARSE_SCAN_STEP_MM
+
+			if empty_row_streak >= COARSE_EMPTY_ROW_STREAK:
+				next_step_y_mm = COARSE_EMPTY_ROW_SKIP_MM
+
+			current_y = last_y_position + next_step_y_mm
 
 	while True:
 		y_position = round(min(current_y, bounds.y_max), 4)
@@ -1331,74 +1492,67 @@ async def run_staged_scan(
 	scan_config: Any,
 	scans_dir: str,
 	run_parameters: dict[str, Any],
+	recorder: Optional[StagedScanRecorder] = None,
 ) -> ScanAnalysisResult:
 	tool = robot._tool
-	recorder = create_staged_scan_recorder(
-		scans_dir=scans_dir,
-		run_parameters=run_parameters,
-	)
+	if recorder is None:
+		recorder = create_staged_scan_recorder(
+			scans_dir=scans_dir,
+			run_parameters=run_parameters,
+		)
+
 	coarse_scan = GridScanResult(x_positions=[], y_positions=[], depth_rows=[])
 	candidates: list[GapCandidateRegion] = []
 	wall_depth_mm = 0.0
+	metadata: dict[str, Any] = {}
+	progress_document: dict[str, Any] = {}
+	fine_entries: list[dict[str, Any]] = []
+	fine_scan_results: list[tuple[ScanBounds, GridScanResult, list[ScanDetectedCell]]] = []
+	all_detected_cells: list[ScanDetectedCell] = []
 	global CURRENT_SCAN_LOG_PATH
 	previous_scan_log_path = CURRENT_SCAN_LOG_PATH
 	CURRENT_SCAN_LOG_PATH = recorder.log_path
 	print_status(f"run_dir={recorder.run_dir}")
-	persist_staged_metadata(
-		recorder=recorder,
-		side=side,
-		bounds=bounds,
-		fine_step_mm=fine_step_mm,
-		settle_ms=settle_ms,
-		samples_per_point=samples_per_point,
-		wall_depth_mm=wall_depth_mm,
-		coarse_scan=coarse_scan,
-		candidates=candidates,
-		fine_entries=[],
-		status="starting",
-	)
 
-	try:
-		await enter_scan_mode(tool, side)
-		print_status("phase=coarse-scan")
+	if recorder.metadata_path.exists() is True:
+		metadata = load_json_file(recorder.metadata_path)
+		candidates = load_candidates_from_metadata(metadata)
+		wall_depth_mm = float(metadata.get("wall_depth_mm", 0.0))
+		fine_entries = list(metadata.get("fine_scans", []))
 
-		def didCompleteCoarseRow(
-			partial_scan: GridScanResult,
-			row_idx: int,
-			y_position: float,
-		) -> None:
-			save_depth_rows_to_npy(
-				output_path=recorder.coarse_depth_path,
-				depth_rows=partial_scan.depth_rows,
-			)
-			persist_scan_progress(
-				recorder=recorder,
-				phase="coarse-scan",
-				progress={
-					"row_idx": row_idx,
-					"row_count": len(partial_scan.y_positions),
-					"y_position": y_position,
-				},
-			)
+	if recorder.progress_path.exists() is True:
+		progress_document = load_json_file(recorder.progress_path)
 
-		coarse_scan = await capture_coarse_scan(
-			tool,
+	if recorder.coarse_depth_path.exists() is True:
+		coarse_scan = load_partial_grid_scan(
+			npy_path=recorder.coarse_depth_path,
 			bounds=bounds,
-			settle_ms=settle_ms,
-			samples_per_point=samples_per_point,
-			on_row_complete=didCompleteCoarseRow,
+			step_mm=COARSE_SCAN_STEP_MM,
 		)
 
-		print_status("phase=coarse-detect")
-		wall_depth_mm, candidates = detect_coarse_candidates(
-			coarse_scan,
-			scan_config=scan_config,
+	for fine_entry in fine_entries:
+		if fine_entry.get("status") != "completed":
+			continue
+
+		fine_path = Path(fine_entry["raw_scan_path"])
+
+		if fine_path.exists() is False:
+			continue
+
+		fine_bounds = ScanBounds.model_validate(fine_entry["bounds"])
+		fine_scan = load_partial_grid_scan(
+			npy_path=fine_path,
+			bounds=fine_bounds,
+			step_mm=fine_step_mm,
 		)
-		print_status(
-			f"coarse_candidates={len(candidates)} "
-			f"coarse_rows={len(coarse_scan.y_positions)} "
-			f"wall_depth_mm={wall_depth_mm:.2f}"
-		)
+		detected_cells = [
+			ScanDetectedCell.model_validate(cell)
+			for cell in fine_entry.get("detected_cells", [])
+		]
+		fine_scan_results.append((fine_bounds, fine_scan, detected_cells))
+		all_detected_cells.extend(detected_cells)
+
+	if recorder.metadata_path.exists() is False:
 		persist_staged_metadata(
 			recorder=recorder,
 			side=side,
@@ -1409,14 +1563,92 @@ async def run_staged_scan(
 			wall_depth_mm=wall_depth_mm,
 			coarse_scan=coarse_scan,
 			candidates=candidates,
-			fine_entries=[],
-			status="coarse-detect",
+			fine_entries=fine_entries,
+			status="starting",
 		)
 
-		fine_scan_results: list[tuple[ScanBounds, GridScanResult, list[ScanDetectedCell]]] = []
-		all_detected_cells: list[ScanDetectedCell] = []
+	try:
+		await enter_scan_mode(tool, side)
+
+		if len(candidates) == 0:
+			print_status("phase=coarse-scan")
+
+			if len(coarse_scan.y_positions) > 0:
+				print_status(
+					f"resume=coarse rows_completed={len(coarse_scan.y_positions)} "
+					f"last_y={coarse_scan.y_positions[-1]:.2f}"
+				)
+
+			def didCompleteCoarseRow(
+				partial_scan: GridScanResult,
+				row_idx: int,
+				y_position: float,
+			) -> None:
+				save_depth_rows_to_npy(
+					output_path=recorder.coarse_depth_path,
+					depth_rows=partial_scan.depth_rows,
+				)
+				persist_scan_progress(
+					recorder=recorder,
+					phase="coarse-scan",
+					progress={
+						"row_idx": row_idx,
+						"row_count": len(partial_scan.y_positions),
+						"y_position": y_position,
+					},
+				)
+
+			coarse_scan = await capture_coarse_scan(
+				tool,
+				bounds=bounds,
+				settle_ms=settle_ms,
+				samples_per_point=samples_per_point,
+				existing_scan=coarse_scan if len(coarse_scan.y_positions) > 0 else None,
+				on_row_complete=didCompleteCoarseRow,
+			)
+
+			print_status("phase=coarse-detect")
+			wall_depth_mm, candidates = detect_coarse_candidates(
+				coarse_scan,
+				scan_config=scan_config,
+			)
+			print_status(
+				f"coarse_candidates={len(candidates)} "
+				f"coarse_rows={len(coarse_scan.y_positions)} "
+				f"wall_depth_mm={wall_depth_mm:.2f}"
+			)
+			persist_staged_metadata(
+				recorder=recorder,
+				side=side,
+				bounds=bounds,
+				fine_step_mm=fine_step_mm,
+				settle_ms=settle_ms,
+				samples_per_point=samples_per_point,
+				wall_depth_mm=wall_depth_mm,
+				coarse_scan=coarse_scan,
+				candidates=candidates,
+				fine_entries=fine_entries,
+				status="coarse-detect",
+			)
+		else:
+			print_status(
+				f"resume=fine candidates={len(candidates)} "
+				f"completed_candidates={len(fine_scan_results)}"
+			)
+
+		progress_phase = progress_document.get("phase")
+		progress_payload = progress_document.get("progress", {})
+		resume_candidate_idx = int(progress_payload.get("candidate_idx", 0))
 
 		for candidate_idx, candidate in enumerate(candidates, start=1):
+			if candidate_idx <= len(fine_entries):
+				existing_fine_entry = fine_entries[candidate_idx - 1]
+			else:
+				existing_fine_entry = {}
+
+			if existing_fine_entry.get("status") == "completed":
+				continue
+
 			fine_bounds = build_fine_scan_bounds(
 				candidate,
 				overall_bounds=bounds,
@@ -1429,6 +1661,35 @@ async def run_staged_scan(
 			)
 
 			fine_path = recorder.run_dir / f"fine_{candidate_idx - 1:02d}.npy"
+			existing_fine_scan: Optional[GridScanResult] = None
+
+			if (
+				progress_phase == "fine-scan" and
+				resume_candidate_idx == candidate_idx and
+				fine_path.exists() is True
+			):
+				existing_fine_scan = load_partial_grid_scan(
+					npy_path=fine_path,
+					bounds=fine_bounds,
+					step_mm=fine_step_mm,
+				)
+				print_status(
+					f"resume=fine candidate={candidate_idx}/{len(candidates)} "
+					f"rows_completed={len(existing_fine_scan.y_positions)}"
+				)
+
+			while len(fine_entries) < candidate_idx:
+				fine_entries.append({})
+
+			fine_entries[candidate_idx - 1] = {
+				"candidate_index": candidate_idx - 1,
+				"status": "running",
+				"bounds": fine_bounds.model_dump(),
+				"raw_scan_path": str(fine_path),
+				"x_positions": existing_fine_entry.get("x_positions", []),
+				"y_positions": existing_fine_entry.get("y_positions", []),
+				"detected_cells": existing_fine_entry.get("detected_cells", []),
+			}
 
 			def didCompleteFineRow(
 				partial_scan: GridScanResult,
@@ -1451,6 +1712,8 @@ async def run_staged_scan(
 						"fine_path": str(fine_path),
 					},
 				)
+				fine_entries[candidate_idx - 1]["x_positions"] = partial_scan.x_positions
+				fine_entries[candidate_idx - 1]["y_positions"] = partial_scan.y_positions
 
 			fine_scan = await scan_grid(
 				tool,
@@ -1459,6 +1722,7 @@ async def run_staged_scan(
 				settle_ms=settle_ms,
 				samples_per_point=samples_per_point,
 				progress_prefix=f"fine_{candidate_idx}",
+				existing_scan=existing_fine_scan,
 				on_row_complete=didCompleteFineRow,
 			)
 			_, detected_cells, _ = detect_gap_cells(
@@ -1476,6 +1740,28 @@ async def run_staged_scan(
 			)
 			fine_scan_results.append((fine_bounds, fine_scan, detected_cells))
 			all_detected_cells.extend(detected_cells)
+			fine_entries[candidate_idx - 1] = {
+				"candidate_index": candidate_idx - 1,
+				"status": "completed",
+				"bounds": fine_bounds.model_dump(),
+				"raw_scan_path": str(fine_path),
+				"x_positions": fine_scan.x_positions,
+				"y_positions": fine_scan.y_positions,
+				"detected_cells": [cell.model_dump() for cell in detected_cells],
+			}
+			persist_staged_metadata(
+				recorder=recorder,
+				side=side,
+				bounds=bounds,
+				fine_step_mm=fine_step_mm,
+				settle_ms=settle_ms,
+				samples_per_point=samples_per_point,
+				wall_depth_mm=wall_depth_mm,
+				coarse_scan=coarse_scan,
+				candidates=candidates,
+				fine_entries=fine_entries,
+				status="fine-scan",
+			)
 	finally:
 		await tool.retract()
 		CURRENT_SCAN_LOG_PATH = previous_scan_log_path
@@ -1500,6 +1786,14 @@ async def run_staged_scan(
 		fine_scan_results=fine_scan_results,
 		wall_depth_mm=wall_depth_mm,
 		recorder=recorder,
+	)
+	persist_scan_progress(
+		recorder=recorder,
+		phase="completed",
+		progress={
+			"candidate_count": len(candidates),
+			"detected_cell_count": len(deduped_cells),
+		},
 	)
 
 	return ScanAnalysisResult(
@@ -1598,14 +1892,42 @@ async def run_scan(args: argparse.Namespace) -> int:
 	print_status("phase=config")
 	config = load_config_file(args.config)
 	scan_config = config.robot.grid.scan
-	side = normalize_module(args.module)
-	step_mm = float(args.step)
-	settle_ms = args.settle_ms if args.settle_ms is not None else scan_config.settle_ms
-	samples_per_point = (
-		args.samples_per_point
-		if args.samples_per_point is not None
-		else scan_config.samples_per_point
-	)
+	recorder: Optional[StagedScanRecorder] = None
+
+	if args.continue_scan is True:
+		recorder, side, bounds, step_mm, settle_ms, samples_per_point = load_continue_scan_context(
+			args.scans_dir,
+		)
+		run_parameters_document = load_json_file(recorder.run_parameters_path)
+		run_parameters = run_parameters_document["run_parameters"]
+		print_status(f"resume_run_id={recorder.run_id}")
+	else:
+		if args.module is None:
+			raise ValueError("--module is required unless --continue is used")
+		if args.x is None:
+			raise ValueError("--x is required unless --continue is used")
+		if args.y is None:
+			raise ValueError("--y is required unless --continue is used")
+		if args.step is None:
+			raise ValueError("--step is required unless --continue is used")
+
+		side = normalize_module(args.module)
+		step_mm = float(args.step)
+		settle_ms = args.settle_ms if args.settle_ms is not None else scan_config.settle_ms
+		samples_per_point = (
+			args.samples_per_point
+			if args.samples_per_point is not None
+			else scan_config.samples_per_point
+		)
+		bounds = derive_bounds(args)
+		run_parameters = build_run_parameters(
+			args=args,
+			side=side,
+			bounds=bounds,
+			step_mm=step_mm,
+			settle_ms=settle_ms,
+			samples_per_point=samples_per_point,
+		)
 
 	if step_mm <= 0:
 		raise ValueError("--step must be greater than zero")
@@ -1618,16 +1940,6 @@ async def run_scan(args: argparse.Namespace) -> int:
 
 	grid_path = Path(resolve_grid_path(config))
 	grid = load_grid(grid_path)
-	bounds = derive_bounds(args)
-
-	run_parameters = build_run_parameters(
-		args=args,
-		side=side,
-		bounds=bounds,
-		step_mm=step_mm,
-		settle_ms=settle_ms,
-		samples_per_point=samples_per_point,
-	)
 
 	x_positions = build_axis_positions(bounds.x_min, bounds.x_max, step_mm)
 	y_positions = build_axis_positions(bounds.y_min, bounds.y_max, step_mm)
@@ -1642,6 +1954,9 @@ async def run_scan(args: argparse.Namespace) -> int:
 	)
 
 	if args.npy is not None:
+		if args.continue_scan is True:
+			raise ValueError("--npy cannot be used with --continue")
+
 		print_status("phase=load-npy")
 		depth_rows = load_depth_rows_from_npy(
 			args.npy,
@@ -1696,6 +2011,7 @@ async def run_scan(args: argparse.Namespace) -> int:
 					scan_config=scan_config,
 					scans_dir=args.scans_dir,
 					run_parameters=run_parameters,
+					recorder=recorder,
 				)
 			finally:
 				print_status("phase=robot-shutdown")
