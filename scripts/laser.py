@@ -41,7 +41,6 @@ from perpetual_os1.storage import StorageGrid, StorageModuleSide
 
 LASER_SCAN_STAGE_EXTENSION_MM = 13.0
 LASER_SCAN_Z_OFFSET_MM = 10.0
-LASER_SCAN_Y_OFFSET_MM = -10.0
 COARSE_SCAN_STEP_MM = 8.0
 COARSE_EMPTY_ROW_SKIP_MM = 50.0
 COARSE_EMPTY_ROW_STREAK = 2
@@ -91,6 +90,7 @@ def parse_args() -> argparse.Namespace:
 	parser.add_argument("--module", choices=["left", "right"])
 	parser.add_argument("--x", nargs=2, metavar=("MIN", "MAX"), type=float)
 	parser.add_argument("--y", nargs=2, metavar=("MIN", "MAX"), type=float)
+	parser.add_argument("--y-offset", type=float, default=0.0)
 	parser.add_argument("--step", type=float)
 	parser.add_argument("--settle-ms", type=int)
 	parser.add_argument("--samples-per-point", type=int)
@@ -122,8 +122,8 @@ def derive_bounds(args: argparse.Namespace) -> ScanBounds:
 	return ScanBounds(
 		x_min=float(x_min),
 		x_max=float(x_max),
-		y_min=float(y_min) + LASER_SCAN_Y_OFFSET_MM,
-		y_max=float(y_max) + LASER_SCAN_Y_OFFSET_MM,
+		y_min=float(y_min) + float(args.y_offset),
+		y_max=float(y_max) + float(args.y_offset),
 	)
 
 
@@ -294,6 +294,7 @@ def build_run_parameters(
 			"module": args.module,
 			"x": [float(args.x[0]), float(args.x[1])],
 			"y": [float(args.y[0]), float(args.y[1])],
+			"y_offset": float(args.y_offset),
 			"step": step_mm,
 			"settle_ms": args.settle_ms,
 			"samples_per_point": args.samples_per_point,
@@ -310,7 +311,7 @@ def build_run_parameters(
 			"samples_per_point": samples_per_point,
 			"laser_scan_stage_extension_mm": LASER_SCAN_STAGE_EXTENSION_MM,
 			"laser_scan_z_offset_mm": LASER_SCAN_Z_OFFSET_MM,
-			"laser_scan_y_offset_mm": LASER_SCAN_Y_OFFSET_MM,
+			"laser_scan_y_offset_mm": float(args.y_offset),
 		},
 	}
 
