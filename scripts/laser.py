@@ -960,6 +960,34 @@ def max_gap_run_points(row_values: list[float | None]) -> int:
 	return max_run
 
 
+def get_coarse_candidate_width_limits(
+	*,
+	expected_hole_width_mm: float,
+	hole_width_tolerance_mm: float,
+) -> tuple[float, float]:
+	min_candidate_width_mm = max(
+		COARSE_SCAN_STEP_MM * 2.0,
+		expected_hole_width_mm - max(hole_width_tolerance_mm / 2.0, COARSE_SCAN_STEP_MM / 2.0),
+	)
+	max_candidate_width_mm = expected_hole_width_mm + hole_width_tolerance_mm + (COARSE_SCAN_STEP_MM * 2.0)
+
+	return min_candidate_width_mm, max_candidate_width_mm
+
+
+def get_coarse_candidate_height_limits(
+	*,
+	expected_hole_height_mm: float,
+	hole_height_tolerance_mm: float,
+) -> tuple[float, float]:
+	min_candidate_height_mm = max(
+		COARSE_SCAN_STEP_MM * 2.0,
+		expected_hole_height_mm - max(hole_height_tolerance_mm / 2.0, COARSE_SCAN_STEP_MM / 2.0),
+	)
+	max_candidate_height_mm = expected_hole_height_mm + hole_height_tolerance_mm + COARSE_SCAN_STEP_MM
+
+	return min_candidate_height_mm, max_candidate_height_mm
+
+
 def find_row_gap_segments(
 	*,
 	row_values: list[float | None],
@@ -972,7 +1000,11 @@ def find_row_gap_segments(
 ) -> list[RowGapSegment]:
 	segments: list[RowGapSegment] = []
 	start_idx: Optional[int] = None
-	max_candidate_width_mm = expected_hole_width_mm + hole_width_tolerance_mm + (COARSE_SCAN_STEP_MM * 2.0)
+
+	min_candidate_width_mm, max_candidate_width_mm = get_coarse_candidate_width_limits(
+		expected_hole_width_mm=expected_hole_width_mm,
+		hole_width_tolerance_mm=hole_width_tolerance_mm,
+	)
 
 	for column_idx, depth_mm in enumerate(row_values):
 		if is_gap_depth(depth_mm) is True:
@@ -1000,7 +1032,12 @@ def find_row_gap_segments(
 		)
 		width_mm = abs(x_positions[end_idx] - x_positions[start_idx]) + COARSE_SCAN_STEP_MM
 
-		if left_has_wall is True and right_has_wall is True and width_mm <= max_candidate_width_mm:
+		if (
+			left_has_wall is True and
+			right_has_wall is True and
+			width_mm >= min_candidate_width_mm and
+			width_mm <= max_candidate_width_mm
+		):
 			segments.append(
 				RowGapSegment(
 					x_min=min(x_positions[start_idx], x_positions[end_idx]),
@@ -1107,14 +1144,26 @@ def merge_candidate_segments(
 		matched_region.row_count += 1
 
 	filtered_regions: list[GapCandidateRegion] = []
-	max_width_mm = expected_hole_width_mm + hole_width_tolerance_mm + COARSE_SCAN_STEP_MM
-	max_height_mm = expected_hole_height_mm + hole_height_tolerance_mm + COARSE_SCAN_STEP_MM
+
+	min_width_mm, max_width_mm = get_coarse_candidate_width_limits(
+		expected_hole_width_mm=expected_hole_width_mm,
+		hole_width_tolerance_mm=hole_width_tolerance_mm,
+	)
+
+	min_height_mm, max_height_mm = get_coarse_candidate_height_limits(
+		expected_hole_height_mm=expected_hole_height_mm,
+		hole_height_tolerance_mm=hole_height_tolerance_mm,
+	)
 
 	for region in regions:
 		width_mm = abs(region.x_max - region.x_min) + COARSE_SCAN_STEP_MM
 		height_mm = abs(region.y_max - region.y_min) + COARSE_SCAN_STEP_MM
 
+		if width_mm < min_width_mm:
+			continue
 		if width_mm > max_width_mm:
+			continue
+		if height_mm < min_height_mm:
 			continue
 		if height_mm > max_height_mm:
 			continue
