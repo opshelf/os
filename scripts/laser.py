@@ -46,7 +46,7 @@ COARSE_EMPTY_ROW_SKIP_MM = 50.0
 COARSE_EMPTY_ROW_STREAK = 2
 GAP_DEPTH_THRESHOLD_MM = 0.01
 FINE_SCAN_MARGIN_X_MM = 10.0
-FINE_SCAN_MARGIN_Y_MM = 10.0
+FINE_SCAN_MARGIN_Y_MM = 6.0
 COARSE_WALL_SEARCH_STEPS = 2
 CURRENT_SCAN_LOG_PATH: Optional[Path] = None
 
@@ -287,6 +287,8 @@ def build_run_parameters(
 	step_mm: float,
 	settle_ms: int,
 	samples_per_point: int,
+	coarse_settle_ms: int,
+	coarse_samples_per_point: int,
 ) -> dict[str, Any]:
 	return {
 		"module": side.value,
@@ -309,6 +311,8 @@ def build_run_parameters(
 			"coarse_step_mm": COARSE_SCAN_STEP_MM,
 			"settle_ms": settle_ms,
 			"samples_per_point": samples_per_point,
+			"coarse_settle_ms": coarse_settle_ms,
+			"coarse_samples_per_point": coarse_samples_per_point,
 			"laser_scan_stage_extension_mm": LASER_SCAN_STAGE_EXTENSION_MM,
 			"laser_scan_z_offset_mm": LASER_SCAN_Z_OFFSET_MM,
 			"laser_scan_y_offset_mm": float(args.y_offset),
@@ -433,7 +437,7 @@ def find_latest_incomplete_run(scans_dir: str) -> StagedScanRecorder:
 
 def load_continue_scan_context(
 	scans_dir: str,
-) -> tuple[StagedScanRecorder, StorageModuleSide, ScanBounds, float, int, int]:
+) -> tuple[StagedScanRecorder, StorageModuleSide, ScanBounds, float, int, int, int, int]:
 	recorder = find_latest_incomplete_run(scans_dir)
 	run_parameters_document = load_json_file(recorder.run_parameters_path)
 	run_parameters = run_parameters_document["run_parameters"]
@@ -443,8 +447,26 @@ def load_continue_scan_context(
 	step_mm = float(resolved_parameters["fine_step_mm"])
 	settle_ms = int(resolved_parameters["settle_ms"])
 	samples_per_point = int(resolved_parameters["samples_per_point"])
+	coarse_settle_ms = int(
+		resolved_parameters.get("coarse_settle_ms", get_coarse_settle_ms(settle_ms))
+	)
+	coarse_samples_per_point = int(
+		resolved_parameters.get(
+			"coarse_samples_per_point",
+			get_coarse_samples_per_point(samples_per_point),
+		)
+	)
 
-	return recorder, side, bounds, step_mm, settle_ms, samples_per_point
+	return (
+		recorder,
+		side,
+		bounds,
+		step_mm,
+		settle_ms,
+		samples_per_point,
+		coarse_settle_ms,
+		coarse_samples_per_point,
+	)
 
 
 def load_candidates_from_metadata(metadata: dict[str, Any]) -> list[GapCandidateRegion]:
@@ -538,6 +560,8 @@ def persist_staged_metadata(
 	fine_step_mm: float,
 	settle_ms: int,
 	samples_per_point: int,
+	coarse_settle_ms: int,
+	coarse_samples_per_point: int,
 	wall_depth_mm: float,
 	coarse_scan: GridScanResult,
 	candidates: list[GapCandidateRegion],
@@ -556,6 +580,8 @@ def persist_staged_metadata(
 				"coarse_step_mm": COARSE_SCAN_STEP_MM,
 				"settle_ms": settle_ms,
 				"samples_per_point": samples_per_point,
+				"coarse_settle_ms": coarse_settle_ms,
+				"coarse_samples_per_point": coarse_samples_per_point,
 				"wall_depth_mm": wall_depth_mm,
 				"coarse_scan": {
 					"raw_scan_path": str(recorder.coarse_depth_path),
@@ -1150,6 +1176,14 @@ def build_fine_scan_bounds(
 	)
 
 
+def get_coarse_settle_ms(fine_settle_ms: int) -> int:
+	return max(0, fine_settle_ms // 2)
+
+
+def get_coarse_samples_per_point(fine_samples_per_point: int) -> int:
+	return 1
+
+
 def find_components(mask: np.ndarray) -> list[list[tuple[int, int]]]:
 	height, width = mask.shape
 	visited = np.zeros((height, width), dtype=bool)
@@ -1248,6 +1282,18 @@ def dimensions_match(
 	tolerance_mm: float,
 ) -> bool:
 	return (expected_mm - tolerance_mm) <= actual_mm <= (expected_mm + tolerance_mm)
+
+
+def get_shelf_grouping_threshold_mm(
+	*,
+	step_mm: float,
+	scan_config: Any,
+) -> float:
+	return max(
+		step_mm * 2.0,
+		scan_config.expected_hole_height_mm * 0.75,
+		20.0,
+	)
 
 
 def build_detected_shelves(
@@ -1434,7 +1480,10 @@ def detect_gap_cells(
 	detected_cells.sort(key=lambda cell: (cell.center_y_mm, -cell.center_x_mm))
 	shelves = build_detected_shelves(
 		detected_cells,
-		shelf_threshold_mm=max(step_mm * 2.0, 5.0),
+		shelf_threshold_mm=get_shelf_grouping_threshold_mm(
+			step_mm=step_mm,
+			scan_config=scan_config,
+		),
 	)
 
 	return wall_depth_mm, detected_cells, shelves
@@ -1481,6 +1530,8 @@ def persist_staged_scan(
 	fine_step_mm: float,
 	settle_ms: int,
 	samples_per_point: int,
+	coarse_settle_ms: int,
+	coarse_samples_per_point: int,
 	coarse_scan: GridScanResult,
 	candidates: list[GapCandidateRegion],
 	fine_scan_results: list[tuple[ScanBounds, GridScanResult, list[ScanDetectedCell]]],
@@ -1525,6 +1576,8 @@ def persist_staged_scan(
 		fine_step_mm=fine_step_mm,
 		settle_ms=settle_ms,
 		samples_per_point=samples_per_point,
+		coarse_settle_ms=coarse_settle_ms,
+		coarse_samples_per_point=coarse_samples_per_point,
 		wall_depth_mm=wall_depth_mm,
 		coarse_scan=coarse_scan,
 		candidates=candidates,
@@ -1543,6 +1596,8 @@ async def run_staged_scan(
 	fine_step_mm: float,
 	settle_ms: int,
 	samples_per_point: int,
+	coarse_settle_ms: int,
+	coarse_samples_per_point: int,
 	scan_config: Any,
 	scans_dir: str,
 	run_parameters: dict[str, Any],
@@ -1614,6 +1669,8 @@ async def run_staged_scan(
 			fine_step_mm=fine_step_mm,
 			settle_ms=settle_ms,
 			samples_per_point=samples_per_point,
+			coarse_settle_ms=coarse_settle_ms,
+			coarse_samples_per_point=coarse_samples_per_point,
 			wall_depth_mm=wall_depth_mm,
 			coarse_scan=coarse_scan,
 			candidates=candidates,
@@ -1655,8 +1712,8 @@ async def run_staged_scan(
 			coarse_scan = await capture_coarse_scan(
 				tool,
 				bounds=bounds,
-				settle_ms=settle_ms,
-				samples_per_point=samples_per_point,
+				settle_ms=coarse_settle_ms,
+				samples_per_point=coarse_samples_per_point,
 				existing_scan=coarse_scan if len(coarse_scan.y_positions) > 0 else None,
 				on_row_complete=didCompleteCoarseRow,
 			)
@@ -1678,6 +1735,8 @@ async def run_staged_scan(
 				fine_step_mm=fine_step_mm,
 				settle_ms=settle_ms,
 				samples_per_point=samples_per_point,
+				coarse_settle_ms=coarse_settle_ms,
+				coarse_samples_per_point=coarse_samples_per_point,
 				wall_depth_mm=wall_depth_mm,
 				coarse_scan=coarse_scan,
 				candidates=candidates,
@@ -1817,6 +1876,8 @@ async def run_staged_scan(
 				fine_step_mm=fine_step_mm,
 				settle_ms=settle_ms,
 				samples_per_point=samples_per_point,
+				coarse_settle_ms=coarse_settle_ms,
+				coarse_samples_per_point=coarse_samples_per_point,
 				wall_depth_mm=wall_depth_mm,
 				coarse_scan=coarse_scan,
 				candidates=candidates,
@@ -1833,7 +1894,10 @@ async def run_staged_scan(
 	)
 	shelves = build_detected_shelves(
 		deduped_cells,
-		shelf_threshold_mm=max(fine_step_mm * 2.0, 5.0),
+		shelf_threshold_mm=get_shelf_grouping_threshold_mm(
+			step_mm=fine_step_mm,
+			scan_config=scan_config,
+		),
 	)
 	run_id, raw_scan_path, metadata_path = persist_staged_scan(
 		scans_dir=scans_dir,
@@ -1842,6 +1906,8 @@ async def run_staged_scan(
 		fine_step_mm=fine_step_mm,
 		settle_ms=settle_ms,
 		samples_per_point=samples_per_point,
+		coarse_settle_ms=coarse_settle_ms,
+		coarse_samples_per_point=coarse_samples_per_point,
 		coarse_scan=coarse_scan,
 		candidates=candidates,
 		fine_scan_results=fine_scan_results,
@@ -1956,9 +2022,16 @@ async def run_scan(args: argparse.Namespace) -> int:
 	recorder: Optional[StagedScanRecorder] = None
 
 	if args.continue_scan is True:
-		recorder, side, bounds, step_mm, settle_ms, samples_per_point = load_continue_scan_context(
-			args.scans_dir,
-		)
+		(
+			recorder,
+			side,
+			bounds,
+			step_mm,
+			settle_ms,
+			samples_per_point,
+			coarse_settle_ms,
+			coarse_samples_per_point,
+		) = load_continue_scan_context(args.scans_dir)
 		run_parameters_document = load_json_file(recorder.run_parameters_path)
 		run_parameters = run_parameters_document["run_parameters"]
 		print_status(f"resume_run_id={recorder.run_id}")
@@ -1980,6 +2053,10 @@ async def run_scan(args: argparse.Namespace) -> int:
 			if args.samples_per_point is not None
 			else scan_config.samples_per_point
 		)
+
+		coarse_settle_ms = get_coarse_settle_ms(settle_ms)
+		coarse_samples_per_point = get_coarse_samples_per_point(samples_per_point)
+
 		bounds = derive_bounds(args)
 		run_parameters = build_run_parameters(
 			args=args,
@@ -1988,6 +2065,8 @@ async def run_scan(args: argparse.Namespace) -> int:
 			step_mm=step_mm,
 			settle_ms=settle_ms,
 			samples_per_point=samples_per_point,
+			coarse_settle_ms=coarse_settle_ms,
+			coarse_samples_per_point=coarse_samples_per_point,
 		)
 
 	if step_mm <= 0:
@@ -1998,6 +2077,12 @@ async def run_scan(args: argparse.Namespace) -> int:
 
 	if samples_per_point <= 0:
 		raise ValueError("--samples-per-point must be greater than zero")
+
+	if coarse_settle_ms < 0:
+		raise ValueError("coarse settle must be zero or greater")
+
+	if coarse_samples_per_point <= 0:
+		raise ValueError("coarse samples per point must be greater than zero")
 
 	grid_path = Path(resolve_grid_path(config))
 	grid = load_grid(grid_path)
@@ -2011,6 +2096,10 @@ async def run_scan(args: argparse.Namespace) -> int:
 		f"y=({bounds.y_min:.2f},{bounds.y_max:.2f}) "
 		f"fine_step_mm:{step_mm:.2f} "
 		f"coarse_step_mm:{COARSE_SCAN_STEP_MM:.2f} "
+		f"fine_settle_ms:{settle_ms} "
+		f"coarse_settle_ms:{coarse_settle_ms} "
+		f"fine_samples_per_point:{samples_per_point} "
+		f"coarse_samples_per_point:{coarse_samples_per_point} "
 		f"points:{total_points}"
 	)
 
@@ -2069,6 +2158,8 @@ async def run_scan(args: argparse.Namespace) -> int:
 					fine_step_mm=step_mm,
 					settle_ms=settle_ms,
 					samples_per_point=samples_per_point,
+					coarse_settle_ms=coarse_settle_ms,
+					coarse_samples_per_point=coarse_samples_per_point,
 					scan_config=scan_config,
 					scans_dir=args.scans_dir,
 					run_parameters=run_parameters,
