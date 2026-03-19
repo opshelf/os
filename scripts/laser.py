@@ -44,9 +44,7 @@ LASER_SCAN_Z_OFFSET_MM = 10.0
 COARSE_SCAN_STEP_MM = 4.0
 SHELF_SCOUT_STEP_MM = 0.5
 SHELF_SWEEP_X_STEP_MM = 1.0
-SHELF_SURFACE_DEPTH_MM = 10.0
-SHELF_SURFACE_DEPTH_TOLERANCE_MM = 1.0
-SHELF_SURFACE_CONFIRMATION_COUNT = 2
+SHELF_EDGE_CONFIRMATION_COUNT = 3
 SHELF_MIN_SPACING_MM = 40.0
 SHELF_HOLE_SWEEP_OFFSETS_MM = [24.0, 34.0]
 COARSE_EMPTY_ROW_SKIP_MM = 50.0
@@ -1341,13 +1339,6 @@ def build_coarse_row_skip_config(
 	)
 
 
-def is_shelf_surface_depth(depth_mm: float | None) -> bool:
-	if is_positive_depth(depth_mm) is False:
-		return False
-
-	return abs(float(depth_mm) - SHELF_SURFACE_DEPTH_MM) <= SHELF_SURFACE_DEPTH_TOLERANCE_MM
-
-
 def detect_shelf_surface_edges(
 	*,
 	x_mm: float,
@@ -1358,7 +1349,7 @@ def detect_shelf_surface_edges(
 	run_start_idx: Optional[int] = None
 
 	for position_idx, depth_mm in enumerate(depth_values):
-		if is_shelf_surface_depth(depth_mm) is True:
+		if is_positive_depth(depth_mm) is True:
 			if run_start_idx is None:
 				run_start_idx = position_idx
 			continue
@@ -1368,7 +1359,7 @@ def detect_shelf_surface_edges(
 
 		run_length = position_idx - run_start_idx
 
-		if run_length >= SHELF_SURFACE_CONFIRMATION_COUNT:
+		if run_length >= SHELF_EDGE_CONFIRMATION_COUNT:
 			edges.append(
 				ShelfSurfaceEdge(
 					x_mm=x_mm,
@@ -1381,7 +1372,7 @@ def detect_shelf_surface_edges(
 	if run_start_idx is not None:
 		run_length = len(depth_values) - run_start_idx
 
-		if run_length >= SHELF_SURFACE_CONFIRMATION_COUNT:
+		if run_length >= SHELF_EDGE_CONFIRMATION_COUNT:
 			edges.append(
 				ShelfSurfaceEdge(
 					x_mm=x_mm,
