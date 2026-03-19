@@ -1242,6 +1242,19 @@ def merge_vertical_line_scan(
 	return col_idx
 
 
+def set_scan_point(
+	base_scan: GridScanResult,
+	*,
+	x_mm: float,
+	y_mm: float,
+	depth_mm: float | None,
+) -> tuple[int, int]:
+	col_idx = find_nearest_position_index(base_scan.x_positions, x_mm)
+	row_idx = find_nearest_position_index(base_scan.y_positions, y_mm)
+	base_scan.depth_rows[row_idx][col_idx] = depth_mm
+	return row_idx, col_idx
+
+
 def build_horizontal_line_bounds(
 	*,
 	bounds: ScanBounds,
@@ -1281,6 +1294,135 @@ def estimate_wall_depth_from_line(
 		return None
 
 	return float(np.median(positive_values))
+
+
+async def sample_scan_point(
+	tool: Any,
+	*,
+	x_mm: float,
+	y_mm: float,
+	settle_ms: int,
+	samples_per_point: int,
+) -> float | None:
+	await tool._my.move_to_position_no_wait(y_mm)
+	await tool._mx.move_to_position_no_wait(x_mm)
+	await tool.gantry_wait()
+	return await sample_laser_depth(
+		tool,
+		settle_ms=settle_ms,
+		samples_per_point=samples_per_point,
+	)
+
+
+async def probe_line_from_center(
+	tool: Any,
+	*,
+	base_scan: GridScanResult,
+	axis: str,
+	positions: list[float],
+	fixed_mm: float,
+	center_idx: int,
+	step_mm: float,
+	progress_prefix: str,
+	settle_ms: int,
+	samples_per_point: int,
+	on_update: Optional[Callable[[GridScanResult, str, float], None]] = None,
+) -> Optional[LineGapSegment]:
+	left_gap_idx: Optional[int] = None
+	right_gap_idx: Optional[int] = None
+	left_wall_found = False
+	right_wall_found = False
+	sampled_count = 0
+	total_count = len(positions)
+
+	async def didSample(
+		position_idx: int,
+	) -> float | None:
+		nonlocal sampled_count
+
+		position_mm = positions[position_idx]
+
+		if axis == "x":
+			x_mm = position_mm
+			y_mm = fixed_mm
+		else:
+			x_mm = fixed_mm
+			y_mm = position_mm
+
+		depth_mm = await sample_scan_point(
+			tool,
+			x_mm=x_mm,
+			y_mm=y_mm,
+			settle_ms=settle_ms,
+			samples_per_point=samples_per_point,
+		)
+		set_scan_point(
+			base_scan,
+			x_mm=x_mm,
+			y_mm=y_mm,
+			depth_mm=depth_mm,
+		)
+		sampled_count += 1
+		print_status(
+			f"{progress_prefix}={sampled_count}/{total_count} "
+			f"x={x_mm:.2f} "
+			f"y={y_mm:.2f} "
+			f"depth={depth_to_label(depth_mm)}"
+		)
+
+		if on_update is not None:
+			on_update(base_scan, progress_prefix, position_mm)
+
+		return depth_mm
+
+	center_depth_mm = await didSample(center_idx)
+
+	if center_depth_mm is None or center_depth_mm > GAP_DEPTH_THRESHOLD_MM:
+		return None
+
+	left_gap_idx = center_idx
+	right_gap_idx = center_idx
+
+	for position_idx in range(center_idx - 1, -1, -1):
+		depth_mm = await didSample(position_idx)
+
+		if depth_mm is not None and depth_mm <= GAP_DEPTH_THRESHOLD_MM:
+			left_gap_idx = position_idx
+			continue
+
+		if left_gap_idx is not None:
+			left_wall_found = True
+			break
+
+	for position_idx in range(center_idx + 1, len(positions)):
+		depth_mm = await didSample(position_idx)
+
+		if depth_mm is not None and depth_mm <= GAP_DEPTH_THRESHOLD_MM:
+			right_gap_idx = position_idx
+			continue
+
+		if right_gap_idx is not None:
+			right_wall_found = True
+			break
+
+	if left_gap_idx is None or right_gap_idx is None:
+		return None
+
+	if left_wall_found is False or right_wall_found is False:
+		return None
+
+	start_mm = positions[left_gap_idx] - (step_mm / 2.0)
+	end_mm = positions[right_gap_idx] + (step_mm / 2.0)
+	width_mm = float(end_mm - start_mm)
+
+	return LineGapSegment(
+		start_idx=left_gap_idx,
+		end_idx=right_gap_idx,
+		start_mm=start_mm,
+		end_mm=end_mm,
+		width_mm=width_mm,
+		center_mm=float((start_mm + end_mm) / 2.0),
+	)
 
 
 def find_gap_segment_in_line(
@@ -1786,36 +1928,19 @@ async def capture_cross_scan(
 
 	for probe_idx, row_idx in enumerate(horizontal_probe_indices, start=1):
 		y_mm = y_positions[row_idx]
-		line_scan = await scan_grid(
+		center_x_idx = find_nearest_position_index(x_positions, candidate_center_x_mm)
+		horizontal_segment = await probe_line_from_center(
 			tool,
-			bounds=build_horizontal_line_bounds(
-				bounds=bounds,
-				y_mm=y_mm,
-			),
+			base_scan=fine_scan,
+			axis="x",
+			positions=x_positions,
+			fixed_mm=y_mm,
+			center_idx=center_x_idx,
 			step_mm=step_mm,
+			progress_prefix=f"{progress_prefix}_h{probe_idx}",
 			settle_ms=settle_ms,
 			samples_per_point=samples_per_point,
-			progress_prefix=f"{progress_prefix}_h{probe_idx}",
-		)
-		merge_horizontal_line_scan(fine_scan, line_scan)
-
-		if on_update is not None:
-			on_update(fine_scan, f"horizontal_{probe_idx}", y_mm)
-
-		wall_depth_mm = estimate_wall_depth_from_line(line_scan.depth_rows[0])
-
-		if wall_depth_mm is None:
-			continue
-
-		horizontal_segment = find_gap_segment_in_line(
-			values=line_scan.depth_rows[0],
-			positions=line_scan.x_positions,
-			step_mm=step_mm,
-			target_center_mm=candidate_center_x_mm,
-			expected_mm=scan_config.expected_hole_width_mm,
-			tolerance_mm=scan_config.hole_width_tolerance_mm,
-			wall_depth_mm=wall_depth_mm,
-			wall_tolerance_mm=scan_config.wall_depth_tolerance_mm,
+			on_update=on_update,
 		)
 
 		if horizontal_segment is None:
@@ -1827,38 +1952,19 @@ async def capture_cross_scan(
 
 	x_center_mm = horizontal_segment.center_mm
 	vertical_probe_x_mm = x_positions[find_nearest_position_index(x_positions, x_center_mm)]
-	vertical_line_scan = await scan_grid(
+	vertical_center_idx = find_nearest_position_index(y_positions, candidate_center_y_mm)
+	vertical_segment = await probe_line_from_center(
 		tool,
-		bounds=build_vertical_line_bounds(
-			bounds=bounds,
-			x_mm=vertical_probe_x_mm,
-		),
+		base_scan=fine_scan,
+		axis="y",
+		positions=y_positions,
+		fixed_mm=vertical_probe_x_mm,
+		center_idx=vertical_center_idx,
 		step_mm=step_mm,
+		progress_prefix=f"{progress_prefix}_v1",
 		settle_ms=settle_ms,
 		samples_per_point=samples_per_point,
-		progress_prefix=f"{progress_prefix}_v1",
-	)
-	merge_vertical_line_scan(fine_scan, vertical_line_scan)
-
-	if on_update is not None:
-		on_update(fine_scan, "vertical_1", vertical_probe_x_mm)
-
-	vertical_wall_depth_mm = estimate_wall_depth_from_line(
-		[row_values[0] for row_values in vertical_line_scan.depth_rows]
-	)
-
-	if vertical_wall_depth_mm is None:
-		return fine_scan, []
-
-	vertical_segment = find_gap_segment_in_line(
-		values=[row_values[0] for row_values in vertical_line_scan.depth_rows],
-		positions=vertical_line_scan.y_positions,
-		step_mm=step_mm,
-		target_center_mm=candidate_center_y_mm,
-		expected_mm=scan_config.expected_hole_height_mm,
-		tolerance_mm=scan_config.hole_height_tolerance_mm,
-		wall_depth_mm=vertical_wall_depth_mm,
-		wall_tolerance_mm=scan_config.wall_depth_tolerance_mm,
+		on_update=on_update,
 	)
 
 	if vertical_segment is None:
@@ -1866,75 +1972,22 @@ async def capture_cross_scan(
 
 	refined_center_y_mm = vertical_segment.center_mm
 	refined_horizontal_y_mm = y_positions[find_nearest_position_index(y_positions, refined_center_y_mm)]
-	refined_horizontal_scan = await scan_grid(
+	refined_horizontal_segment = await probe_line_from_center(
 		tool,
-		bounds=build_horizontal_line_bounds(
-			bounds=bounds,
-			y_mm=refined_horizontal_y_mm,
-		),
+		base_scan=fine_scan,
+		axis="x",
+		positions=x_positions,
+		fixed_mm=refined_horizontal_y_mm,
+		center_idx=find_nearest_position_index(x_positions, horizontal_segment.center_mm),
 		step_mm=step_mm,
-		settle_ms=settle_ms,
-		samples_per_point=samples_per_point,
 		progress_prefix=f"{progress_prefix}_h_final",
-	)
-	merge_horizontal_line_scan(fine_scan, refined_horizontal_scan)
-
-	if on_update is not None:
-		on_update(fine_scan, "horizontal_final", refined_horizontal_y_mm)
-
-	refined_horizontal_wall_depth_mm = estimate_wall_depth_from_line(refined_horizontal_scan.depth_rows[0])
-
-	if refined_horizontal_wall_depth_mm is not None:
-		refined_horizontal_segment = find_gap_segment_in_line(
-			values=refined_horizontal_scan.depth_rows[0],
-			positions=refined_horizontal_scan.x_positions,
-			step_mm=step_mm,
-			target_center_mm=horizontal_segment.center_mm,
-			expected_mm=scan_config.expected_hole_width_mm,
-			tolerance_mm=scan_config.hole_width_tolerance_mm,
-			wall_depth_mm=refined_horizontal_wall_depth_mm,
-			wall_tolerance_mm=scan_config.wall_depth_tolerance_mm,
-		)
-
-		if refined_horizontal_segment is not None:
-			horizontal_segment = refined_horizontal_segment
-
-	refined_center_x_mm = horizontal_segment.center_mm
-	refined_vertical_x_mm = x_positions[find_nearest_position_index(x_positions, refined_center_x_mm)]
-	refined_vertical_scan = await scan_grid(
-		tool,
-		bounds=build_vertical_line_bounds(
-			bounds=bounds,
-			x_mm=refined_vertical_x_mm,
-		),
-		step_mm=step_mm,
 		settle_ms=settle_ms,
 		samples_per_point=samples_per_point,
-		progress_prefix=f"{progress_prefix}_v_final",
-	)
-	merge_vertical_line_scan(fine_scan, refined_vertical_scan)
-
-	if on_update is not None:
-		on_update(fine_scan, "vertical_final", refined_vertical_x_mm)
-
-	refined_vertical_wall_depth_mm = estimate_wall_depth_from_line(
-		[row_values[0] for row_values in refined_vertical_scan.depth_rows]
+		on_update=on_update,
 	)
 
-	if refined_vertical_wall_depth_mm is not None:
-		refined_vertical_segment = find_gap_segment_in_line(
-			values=[row_values[0] for row_values in refined_vertical_scan.depth_rows],
-			positions=refined_vertical_scan.y_positions,
-			step_mm=step_mm,
-			target_center_mm=vertical_segment.center_mm,
-			expected_mm=scan_config.expected_hole_height_mm,
-			tolerance_mm=scan_config.hole_height_tolerance_mm,
-			wall_depth_mm=refined_vertical_wall_depth_mm,
-			wall_tolerance_mm=scan_config.wall_depth_tolerance_mm,
-		)
-
-		if refined_vertical_segment is not None:
-			vertical_segment = refined_vertical_segment
+	if refined_horizontal_segment is not None:
+		horizontal_segment = refined_horizontal_segment
 
 	detected_cell = build_detected_cell_from_segments(
 		x_segment=horizontal_segment,
