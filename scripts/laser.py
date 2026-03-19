@@ -846,6 +846,7 @@ async def capture_coarse_scan(
 	bounds: ScanBounds,
 	settle_ms: int,
 	samples_per_point: int,
+	empty_row_skip_mm: float,
 	existing_scan: Optional[GridScanResult] = None,
 	on_row_complete: Optional[Callable[[GridScanResult, int, float], None]] = None,
 ) -> GridScanResult:
@@ -878,7 +879,7 @@ async def capture_coarse_scan(
 			next_step_y_mm = COARSE_SCAN_STEP_MM
 
 			if empty_row_streak >= COARSE_EMPTY_ROW_STREAK:
-				next_step_y_mm = COARSE_EMPTY_ROW_SKIP_MM
+				next_step_y_mm = empty_row_skip_mm
 
 			current_y = last_y_position + next_step_y_mm
 
@@ -925,7 +926,7 @@ async def capture_coarse_scan(
 		step_y_mm = COARSE_SCAN_STEP_MM
 
 		if empty_row_streak >= COARSE_EMPTY_ROW_STREAK:
-			step_y_mm = COARSE_EMPTY_ROW_SKIP_MM
+			step_y_mm = empty_row_skip_mm
 
 		current_y = y_position + step_y_mm
 		row_idx += 1
@@ -1182,6 +1183,13 @@ def get_coarse_settle_ms(fine_settle_ms: int) -> int:
 
 def get_coarse_samples_per_point(fine_samples_per_point: int) -> int:
 	return 1
+
+
+def get_coarse_empty_row_skip_mm(scan_config: Any) -> float:
+	return min(
+		COARSE_EMPTY_ROW_SKIP_MM,
+		max(scan_config.expected_hole_height_mm - COARSE_SCAN_STEP_MM, COARSE_SCAN_STEP_MM),
+	)
 
 
 def get_fine_settle_ms(config_settle_ms: int) -> int:
@@ -1626,6 +1634,9 @@ async def run_staged_scan(
 	fine_entries: list[dict[str, Any]] = []
 	fine_scan_results: list[tuple[ScanBounds, GridScanResult, list[ScanDetectedCell]]] = []
 	all_detected_cells: list[ScanDetectedCell] = []
+
+	coarse_empty_row_skip_mm = get_coarse_empty_row_skip_mm(scan_config)
+
 	global CURRENT_SCAN_LOG_PATH
 	previous_scan_log_path = CURRENT_SCAN_LOG_PATH
 	CURRENT_SCAN_LOG_PATH = recorder.log_path
@@ -1722,6 +1733,7 @@ async def run_staged_scan(
 				bounds=bounds,
 				settle_ms=coarse_settle_ms,
 				samples_per_point=coarse_samples_per_point,
+				empty_row_skip_mm=coarse_empty_row_skip_mm,
 				existing_scan=coarse_scan if len(coarse_scan.y_positions) > 0 else None,
 				on_row_complete=didCompleteCoarseRow,
 			)
