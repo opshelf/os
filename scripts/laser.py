@@ -823,6 +823,7 @@ async def scan_row(
 		column_idx = column_indices[position_idx]
 		x_position = x_positions[column_idx]
 		next_position_idx = position_idx + 1
+		empty_skip_reason: Optional[str] = None
 
 		if position_idx > 0:
 			await tool._mx.move_to_position_no_wait(x_position)
@@ -855,8 +856,20 @@ async def scan_row(
 					coarse_skip_config.empty_skip_column_count > 0
 				):
 					is_in_empty_fast_mode = True
+					empty_skip_reason = f"count={leading_gap_count}"
+			else:
+				if (
+					is_gap_depth(depth_mm) is True and
+					gap_start_column_idx is not None and
+					coarse_skip_config.empty_skip_column_count > 0
+				):
+					gap_width_mm = abs(x_positions[column_idx] - x_positions[gap_start_column_idx]) + COARSE_SCAN_STEP_MM
 
-				if is_in_empty_fast_mode is True:
+					if gap_width_mm > coarse_skip_config.max_candidate_width_mm:
+						is_in_empty_fast_mode = True
+						empty_skip_reason = f"width={gap_width_mm:.2f}"
+
+				if is_in_empty_fast_mode is True and is_gap_depth(depth_mm) is True:
 					skip_start_idx = position_idx + 1
 					skip_end_idx = min(
 						len(column_indices) - 1,
@@ -869,7 +882,7 @@ async def scan_row(
 						print_status(
 							f"{progress_label}_empty_skip "
 							f"x=({min(skip_from_x, skip_to_x):.2f},{max(skip_from_x, skip_to_x):.2f}) "
-							f"count={leading_gap_count}"
+							f"{empty_skip_reason or ''}".strip()
 						)
 						next_position_idx = skip_end_idx + 1
 
@@ -902,6 +915,7 @@ async def scan_row(
 					gap_start_position_idx = None
 
 				had_left_wall = True
+				is_in_empty_fast_mode = False
 			elif is_gap_depth(depth_mm) is True:
 				if had_left_wall is True and gap_start_column_idx is None:
 					gap_start_column_idx = column_idx
@@ -910,6 +924,7 @@ async def scan_row(
 				gap_start_column_idx = None
 				gap_start_position_idx = None
 				had_left_wall = False
+				is_in_empty_fast_mode = False
 
 		if sampled_count % progress_every == 0 or position_idx + 1 == len(column_indices):
 			print_status(
