@@ -817,6 +817,7 @@ async def scan_row(
 	had_left_wall = False
 	has_seen_positive_depth = False
 	leading_gap_count = 0
+	is_in_empty_fast_mode = False
 
 	while position_idx < len(column_indices):
 		column_idx = column_indices[position_idx]
@@ -843,14 +844,19 @@ async def scan_row(
 				elif is_positive_depth(depth_mm) is True:
 					has_seen_positive_depth = True
 					leading_gap_count = 0
+					is_in_empty_fast_mode = False
 				else:
 					leading_gap_count = 0
+					is_in_empty_fast_mode = False
 
 				if (
 					has_seen_positive_depth is False and
 					leading_gap_count >= coarse_skip_config.empty_trigger_count and
 					coarse_skip_config.empty_skip_column_count > 0
 				):
+					is_in_empty_fast_mode = True
+
+				if is_in_empty_fast_mode is True:
 					skip_start_idx = position_idx + 1
 					skip_end_idx = min(
 						len(column_indices) - 1,
@@ -866,7 +872,6 @@ async def scan_row(
 							f"count={leading_gap_count}"
 						)
 						next_position_idx = skip_end_idx + 1
-						leading_gap_count = 0
 
 			if is_positive_depth(depth_mm) is True:
 				if gap_start_column_idx is not None and gap_start_position_idx is not None:
