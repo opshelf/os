@@ -75,6 +75,16 @@ class GapCandidateRegion:
 
 
 @dataclass
+class LineGapSegment:
+	start_idx: int
+	end_idx: int
+	start_mm: float
+	end_mm: float
+	width_mm: float
+	center_mm: float
+
+
+@dataclass
 class StagedScanRecorder:
 	run_id: str
 	run_dir: Path
@@ -1177,6 +1187,234 @@ def build_fine_scan_bounds(
 	)
 
 
+def create_empty_grid_scan(
+	*,
+	bounds: ScanBounds,
+	step_mm: float,
+) -> GridScanResult:
+	x_positions = build_axis_positions(bounds.x_min, bounds.x_max, step_mm)
+	y_positions = build_axis_positions(bounds.y_min, bounds.y_max, step_mm)
+
+	return GridScanResult(
+		x_positions=x_positions,
+		y_positions=y_positions,
+		depth_rows=[
+			[None for _ in x_positions]
+			for _ in y_positions
+		],
+	)
+
+
+def find_nearest_position_index(
+	positions: list[float],
+	target_mm: float,
+) -> int:
+	return min(
+		range(len(positions)),
+		key=lambda idx: abs(positions[idx] - target_mm),
+	)
+
+
+def merge_horizontal_line_scan(
+	base_scan: GridScanResult,
+	line_scan: GridScanResult,
+) -> int:
+	if len(line_scan.y_positions) != 1:
+		raise ValueError("Horizontal line scan must contain exactly one y position")
+
+	row_idx = find_nearest_position_index(base_scan.y_positions, line_scan.y_positions[0])
+	base_scan.depth_rows[row_idx] = list(line_scan.depth_rows[0])
+	return row_idx
+
+
+def merge_vertical_line_scan(
+	base_scan: GridScanResult,
+	line_scan: GridScanResult,
+) -> int:
+	if len(line_scan.x_positions) != 1:
+		raise ValueError("Vertical line scan must contain exactly one x position")
+
+	col_idx = find_nearest_position_index(base_scan.x_positions, line_scan.x_positions[0])
+
+	for row_idx, row_values in enumerate(line_scan.depth_rows):
+		base_scan.depth_rows[row_idx][col_idx] = row_values[0]
+
+	return col_idx
+
+
+def build_horizontal_line_bounds(
+	*,
+	bounds: ScanBounds,
+	y_mm: float,
+) -> ScanBounds:
+	return ScanBounds(
+		x_min=bounds.x_min,
+		x_max=bounds.x_max,
+		y_min=y_mm,
+		y_max=y_mm,
+	)
+
+
+def build_vertical_line_bounds(
+	*,
+	bounds: ScanBounds,
+	x_mm: float,
+) -> ScanBounds:
+	return ScanBounds(
+		x_min=x_mm,
+		x_max=x_mm,
+		y_min=bounds.y_min,
+		y_max=bounds.y_max,
+	)
+
+
+def estimate_wall_depth_from_line(
+	values: list[float | None],
+) -> Optional[float]:
+	positive_values = [
+		float(value)
+		for value in values
+		if is_positive_depth(value) is True
+	]
+
+	if len(positive_values) == 0:
+		return None
+
+	return float(np.median(positive_values))
+
+
+def find_gap_segment_in_line(
+	*,
+	values: list[float | None],
+	positions: list[float],
+	step_mm: float,
+	target_center_mm: float,
+	expected_mm: float,
+	tolerance_mm: float,
+	wall_depth_mm: float,
+	wall_tolerance_mm: float,
+) -> Optional[LineGapSegment]:
+	best_segment: Optional[LineGapSegment] = None
+	best_score: Optional[float] = None
+	start_idx: Optional[int] = None
+
+	for idx in range(len(values) + 1):
+		is_gap = False
+
+		if idx < len(values):
+			depth_mm = values[idx]
+			is_gap = depth_mm is not None and depth_mm <= GAP_DEPTH_THRESHOLD_MM
+
+		if is_gap is True and start_idx is None:
+			start_idx = idx
+			continue
+
+		if is_gap is True or start_idx is None:
+			continue
+
+		end_idx = idx - 1
+		left_idx = start_idx - 1
+		right_idx = end_idx + 1
+		start_mm = positions[start_idx] - (step_mm / 2.0)
+		end_mm = positions[end_idx] + (step_mm / 2.0)
+		width_mm = float(end_mm - start_mm)
+
+		if left_idx < 0 or right_idx >= len(values):
+			start_idx = None
+			continue
+
+		if dimensions_match(
+			width_mm,
+			expected_mm=expected_mm,
+			tolerance_mm=tolerance_mm + step_mm,
+		) is False:
+			start_idx = None
+			continue
+
+		if has_wall_nearby(
+			values,
+			wall_depth_mm=wall_depth_mm,
+			tolerance_mm=wall_tolerance_mm,
+			start_idx=left_idx,
+			direction=-1,
+		) is False:
+			start_idx = None
+			continue
+
+		if has_wall_nearby(
+			values,
+			wall_depth_mm=wall_depth_mm,
+			tolerance_mm=wall_tolerance_mm,
+			start_idx=right_idx,
+			direction=1,
+		) is False:
+			start_idx = None
+			continue
+
+		center_mm = float((start_mm + end_mm) / 2.0)
+		score = abs(center_mm - target_center_mm) + abs(width_mm - expected_mm)
+		segment = LineGapSegment(
+			start_idx=start_idx,
+			end_idx=end_idx,
+			start_mm=start_mm,
+			end_mm=end_mm,
+			width_mm=width_mm,
+			center_mm=center_mm,
+		)
+
+		if best_score is None or score < best_score:
+			best_score = score
+			best_segment = segment
+
+		start_idx = None
+
+	return best_segment
+
+
+def build_detected_cell_from_segments(
+	*,
+	x_segment: LineGapSegment,
+	y_segment: LineGapSegment,
+	step_mm: float,
+	scan_config: Any,
+) -> Optional[ScanDetectedCell]:
+	if dimensions_match(
+		x_segment.width_mm,
+		expected_mm=scan_config.expected_hole_width_mm,
+		tolerance_mm=scan_config.hole_width_tolerance_mm + step_mm,
+	) is False:
+		return None
+
+	if dimensions_match(
+		y_segment.width_mm,
+		expected_mm=scan_config.expected_hole_height_mm,
+		tolerance_mm=scan_config.hole_height_tolerance_mm + step_mm,
+	) is False:
+		return None
+
+	center_x_mm = float((x_segment.start_mm + x_segment.end_mm) / 2.0)
+	center_y_mm = float((y_segment.start_mm + y_segment.end_mm) / 2.0)
+
+	return ScanDetectedCell(
+		shelf_idx=0,
+		cell_idx=0,
+		center_x_mm=center_x_mm,
+		center_y_mm=center_y_mm,
+		tool_x_mm=center_x_mm - scan_config.laser_offset_x_mm,
+		tool_y_mm=center_y_mm - scan_config.laser_offset_y_mm,
+		width_mm=x_segment.width_mm,
+		height_mm=y_segment.width_mm,
+		point_count=max(
+			x_segment.end_idx - x_segment.start_idx + 1,
+			y_segment.end_idx - y_segment.start_idx + 1,
+		),
+		bbox_x_min=x_segment.start_mm + (step_mm / 2.0),
+		bbox_x_max=x_segment.end_mm - (step_mm / 2.0),
+		bbox_y_min=y_segment.start_mm + (step_mm / 2.0),
+		bbox_y_max=y_segment.end_mm - (step_mm / 2.0),
+	)
+
+
 def get_coarse_settle_ms(fine_settle_ms: int) -> int:
 	return max(0, fine_settle_ms // 2)
 
@@ -1505,6 +1743,212 @@ def detect_gap_cells(
 	return wall_depth_mm, detected_cells, shelves
 
 
+async def capture_cross_scan(
+	tool: Any,
+	*,
+	candidate: GapCandidateRegion,
+	bounds: ScanBounds,
+	step_mm: float,
+	settle_ms: int,
+	samples_per_point: int,
+	scan_config: Any,
+	progress_prefix: str,
+	on_update: Optional[Callable[[GridScanResult, str, float], None]] = None,
+) -> tuple[GridScanResult, list[ScanDetectedCell]]:
+	fine_scan = create_empty_grid_scan(
+		bounds=bounds,
+		step_mm=step_mm,
+	)
+	x_positions = fine_scan.x_positions
+	y_positions = fine_scan.y_positions
+	candidate_center_x_mm = float((candidate.x_min + candidate.x_max) / 2.0)
+	candidate_center_y_mm = float((candidate.y_min + candidate.y_max) / 2.0)
+	probe_offset_mm = min(
+		scan_config.expected_hole_height_mm / 4.0,
+		FINE_SCAN_MARGIN_Y_MM,
+	)
+	horizontal_probe_targets = [
+		candidate_center_y_mm,
+		candidate_center_y_mm - probe_offset_mm,
+		candidate_center_y_mm + probe_offset_mm,
+	]
+	horizontal_probe_indices: list[int] = []
+
+	for target_y_mm in horizontal_probe_targets:
+		row_idx = find_nearest_position_index(y_positions, target_y_mm)
+
+		if row_idx in horizontal_probe_indices:
+			continue
+
+		horizontal_probe_indices.append(row_idx)
+
+	horizontal_segment: Optional[LineGapSegment] = None
+
+	for probe_idx, row_idx in enumerate(horizontal_probe_indices, start=1):
+		y_mm = y_positions[row_idx]
+		line_scan = await scan_grid(
+			tool,
+			bounds=build_horizontal_line_bounds(
+				bounds=bounds,
+				y_mm=y_mm,
+			),
+			step_mm=step_mm,
+			settle_ms=settle_ms,
+			samples_per_point=samples_per_point,
+			progress_prefix=f"{progress_prefix}_h{probe_idx}",
+		)
+		merge_horizontal_line_scan(fine_scan, line_scan)
+
+		if on_update is not None:
+			on_update(fine_scan, f"horizontal_{probe_idx}", y_mm)
+
+		wall_depth_mm = estimate_wall_depth_from_line(line_scan.depth_rows[0])
+
+		if wall_depth_mm is None:
+			continue
+
+		horizontal_segment = find_gap_segment_in_line(
+			values=line_scan.depth_rows[0],
+			positions=line_scan.x_positions,
+			step_mm=step_mm,
+			target_center_mm=candidate_center_x_mm,
+			expected_mm=scan_config.expected_hole_width_mm,
+			tolerance_mm=scan_config.hole_width_tolerance_mm,
+			wall_depth_mm=wall_depth_mm,
+			wall_tolerance_mm=scan_config.wall_depth_tolerance_mm,
+		)
+
+		if horizontal_segment is None:
+			continue
+		break
+
+	if horizontal_segment is None:
+		return fine_scan, []
+
+	x_center_mm = horizontal_segment.center_mm
+	vertical_probe_x_mm = x_positions[find_nearest_position_index(x_positions, x_center_mm)]
+	vertical_line_scan = await scan_grid(
+		tool,
+		bounds=build_vertical_line_bounds(
+			bounds=bounds,
+			x_mm=vertical_probe_x_mm,
+		),
+		step_mm=step_mm,
+		settle_ms=settle_ms,
+		samples_per_point=samples_per_point,
+		progress_prefix=f"{progress_prefix}_v1",
+	)
+	merge_vertical_line_scan(fine_scan, vertical_line_scan)
+
+	if on_update is not None:
+		on_update(fine_scan, "vertical_1", vertical_probe_x_mm)
+
+	vertical_wall_depth_mm = estimate_wall_depth_from_line(
+		[row_values[0] for row_values in vertical_line_scan.depth_rows]
+	)
+
+	if vertical_wall_depth_mm is None:
+		return fine_scan, []
+
+	vertical_segment = find_gap_segment_in_line(
+		values=[row_values[0] for row_values in vertical_line_scan.depth_rows],
+		positions=vertical_line_scan.y_positions,
+		step_mm=step_mm,
+		target_center_mm=candidate_center_y_mm,
+		expected_mm=scan_config.expected_hole_height_mm,
+		tolerance_mm=scan_config.hole_height_tolerance_mm,
+		wall_depth_mm=vertical_wall_depth_mm,
+		wall_tolerance_mm=scan_config.wall_depth_tolerance_mm,
+	)
+
+	if vertical_segment is None:
+		return fine_scan, []
+
+	refined_center_y_mm = vertical_segment.center_mm
+	refined_horizontal_y_mm = y_positions[find_nearest_position_index(y_positions, refined_center_y_mm)]
+	refined_horizontal_scan = await scan_grid(
+		tool,
+		bounds=build_horizontal_line_bounds(
+			bounds=bounds,
+			y_mm=refined_horizontal_y_mm,
+		),
+		step_mm=step_mm,
+		settle_ms=settle_ms,
+		samples_per_point=samples_per_point,
+		progress_prefix=f"{progress_prefix}_h_final",
+	)
+	merge_horizontal_line_scan(fine_scan, refined_horizontal_scan)
+
+	if on_update is not None:
+		on_update(fine_scan, "horizontal_final", refined_horizontal_y_mm)
+
+	refined_horizontal_wall_depth_mm = estimate_wall_depth_from_line(refined_horizontal_scan.depth_rows[0])
+
+	if refined_horizontal_wall_depth_mm is not None:
+		refined_horizontal_segment = find_gap_segment_in_line(
+			values=refined_horizontal_scan.depth_rows[0],
+			positions=refined_horizontal_scan.x_positions,
+			step_mm=step_mm,
+			target_center_mm=horizontal_segment.center_mm,
+			expected_mm=scan_config.expected_hole_width_mm,
+			tolerance_mm=scan_config.hole_width_tolerance_mm,
+			wall_depth_mm=refined_horizontal_wall_depth_mm,
+			wall_tolerance_mm=scan_config.wall_depth_tolerance_mm,
+		)
+
+		if refined_horizontal_segment is not None:
+			horizontal_segment = refined_horizontal_segment
+
+	refined_center_x_mm = horizontal_segment.center_mm
+	refined_vertical_x_mm = x_positions[find_nearest_position_index(x_positions, refined_center_x_mm)]
+	refined_vertical_scan = await scan_grid(
+		tool,
+		bounds=build_vertical_line_bounds(
+			bounds=bounds,
+			x_mm=refined_vertical_x_mm,
+		),
+		step_mm=step_mm,
+		settle_ms=settle_ms,
+		samples_per_point=samples_per_point,
+		progress_prefix=f"{progress_prefix}_v_final",
+	)
+	merge_vertical_line_scan(fine_scan, refined_vertical_scan)
+
+	if on_update is not None:
+		on_update(fine_scan, "vertical_final", refined_vertical_x_mm)
+
+	refined_vertical_wall_depth_mm = estimate_wall_depth_from_line(
+		[row_values[0] for row_values in refined_vertical_scan.depth_rows]
+	)
+
+	if refined_vertical_wall_depth_mm is not None:
+		refined_vertical_segment = find_gap_segment_in_line(
+			values=[row_values[0] for row_values in refined_vertical_scan.depth_rows],
+			positions=refined_vertical_scan.y_positions,
+			step_mm=step_mm,
+			target_center_mm=vertical_segment.center_mm,
+			expected_mm=scan_config.expected_hole_height_mm,
+			tolerance_mm=scan_config.hole_height_tolerance_mm,
+			wall_depth_mm=refined_vertical_wall_depth_mm,
+			wall_tolerance_mm=scan_config.wall_depth_tolerance_mm,
+		)
+
+		if refined_vertical_segment is not None:
+			vertical_segment = refined_vertical_segment
+
+	detected_cell = build_detected_cell_from_segments(
+		x_segment=horizontal_segment,
+		y_segment=vertical_segment,
+		step_mm=step_mm,
+		scan_config=scan_config,
+	)
+
+	if detected_cell is None:
+		return fine_scan, []
+
+	return fine_scan, [detected_cell]
+
+
 def dedupe_detected_cells(
 	detected_cells: list[ScanDetectedCell],
 	*,
@@ -1794,22 +2238,6 @@ async def run_staged_scan(
 			)
 
 			fine_path = recorder.run_dir / f"fine_{candidate_idx - 1:02d}.npy"
-			existing_fine_scan: Optional[GridScanResult] = None
-
-			if (
-				progress_phase == "fine-scan" and
-				resume_candidate_idx == candidate_idx and
-				fine_path.exists() is True
-			):
-				existing_fine_scan = load_partial_grid_scan(
-					npy_path=fine_path,
-					bounds=fine_bounds,
-					step_mm=fine_step_mm,
-				)
-				print_status(
-					f"resume=fine candidate={candidate_idx}/{len(candidates)} "
-					f"rows_completed={len(existing_fine_scan.y_positions)}"
-				)
 
 			while len(fine_entries) < candidate_idx:
 				fine_entries.append({})
@@ -1825,10 +2253,10 @@ async def run_staged_scan(
 				"abort_reason": existing_fine_entry.get("abort_reason"),
 			}
 
-			def didCompleteFineRow(
+			def didUpdateFineScan(
 				partial_scan: GridScanResult,
-				row_idx: int,
-				y_position: float,
+				probe_label: str,
+				probe_position_mm: float,
 			) -> None:
 				save_depth_rows_to_npy(
 					output_path=fine_path,
@@ -1840,9 +2268,8 @@ async def run_staged_scan(
 					progress={
 						"candidate_idx": candidate_idx,
 						"candidate_count": len(candidates),
-						"row_idx": row_idx,
-						"row_count": len(partial_scan.y_positions),
-						"y_position": y_position,
+						"probe": probe_label,
+						"probe_position_mm": probe_position_mm,
 						"fine_path": str(fine_path),
 					},
 				)
@@ -1850,29 +2277,17 @@ async def run_staged_scan(
 				fine_entries[candidate_idx - 1]["y_positions"] = partial_scan.y_positions
 
 			fine_abort_reason: Optional[str] = None
-			fine_scan = await scan_grid(
+			fine_scan, detected_cells = await capture_cross_scan(
 				tool,
+				candidate=candidate,
 				bounds=fine_bounds,
 				step_mm=fine_step_mm,
 				settle_ms=settle_ms,
 				samples_per_point=samples_per_point,
+				scan_config=scan_config,
 				progress_prefix=f"fine_{candidate_idx}",
-				existing_scan=existing_fine_scan,
-				on_row_complete=didCompleteFineRow,
+				on_update=didUpdateFineScan,
 			)
-
-			detected_cells: list[ScanDetectedCell] = []
-
-			if fine_abort_reason is None:
-				_, detected_cells, _ = detect_gap_cells(
-					side=side,
-					bounds=fine_bounds,
-					step_mm=fine_step_mm,
-					settle_ms=settle_ms,
-					samples_per_point=samples_per_point,
-					scan_config=scan_config,
-					scan_result=fine_scan,
-				)
 			print_status(
 				f"fine_detected_cells={len(detected_cells)} "
 				f"candidate={candidate_idx}/{len(candidates)}"
