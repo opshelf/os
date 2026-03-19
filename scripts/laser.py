@@ -46,6 +46,7 @@ SHELF_SCOUT_STEP_MM = 0.5
 SHELF_SWEEP_X_STEP_MM = 1.0
 SHELF_EDGE_CONFIRMATION_COUNT = 3
 SHELF_MIN_SPACING_MM = 40.0
+SHELF_EDGE_TOP_MARGIN_MM = 5.0
 SHELF_HOLE_SWEEP_OFFSETS_MM = [24.0, 34.0]
 COARSE_EMPTY_ROW_SKIP_MM = 50.0
 COARSE_EMPTY_ROW_STREAK = 2
@@ -136,6 +137,7 @@ def parse_args() -> argparse.Namespace:
 	parser.add_argument("--config", default=str(CONFIG_PATH))
 	parser.add_argument("--apply", action="store_true")
 	parser.add_argument("--continue", dest="continue_scan", action="store_true")
+	parser.add_argument("--shelf-scout-only", action="store_true")
 	return parser.parse_args()
 
 
@@ -341,6 +343,7 @@ def build_run_parameters(
 			"scans_dir": args.scans_dir,
 			"config": args.config,
 			"apply": args.apply,
+			"shelf_scout_only": args.shelf_scout_only,
 		},
 		"resolved": {
 			"bounds": bounds.model_dump(),
@@ -356,6 +359,7 @@ def build_run_parameters(
 			"laser_scan_stage_extension_mm": LASER_SCAN_STAGE_EXTENSION_MM,
 			"laser_scan_z_offset_mm": LASER_SCAN_Z_OFFSET_MM,
 			"laser_scan_y_offset_mm": float(args.y_offset),
+			"shelf_edge_top_margin_mm": SHELF_EDGE_TOP_MARGIN_MM,
 		},
 	}
 
@@ -608,6 +612,7 @@ def persist_staged_metadata(
 	fine_entries: list[dict[str, Any]],
 	status: str,
 	scan_started_at: Optional[str] = None,
+	shelf_edges: Optional[list[ShelfSurfaceEdge]] = None,
 ) -> None:
 	metadata_document: dict[str, Any] = {
 		"run_id": recorder.run_id,
@@ -638,6 +643,13 @@ def persist_staged_metadata(
 			for candidate in candidates
 		],
 		"fine_scans": fine_entries,
+		"shelf_edges": [
+			{
+				"x_mm": edge.x_mm,
+				"y_mm": edge.y_mm,
+			}
+			for edge in (shelf_edges or [])
+		],
 	}
 
 	if scan_started_at is not None:
@@ -1125,7 +1137,8 @@ async def capture_shelf_candidates(
 	samples_per_point: int,
 	scan_config: Any,
 	recorder: StagedScanRecorder,
-) -> tuple[GridScanResult, float, list[GapCandidateRegion]]:
+	shelf_scout_only: bool,
+) -> tuple[GridScanResult, float, list[GapCandidateRegion], list[ShelfSurfaceEdge]]:
 	coarse_scan = create_sparse_shelf_scan(bounds=bounds)
 	scout_x_positions = build_shelf_scout_x_positions(bounds=bounds)
 	scout_y_positions = list(reversed(build_axis_positions(bounds.y_min, bounds.y_max, SHELF_SCOUT_STEP_MM)))
@@ -1182,6 +1195,9 @@ async def capture_shelf_candidates(
 	filtered_shelf_edges: list[ShelfSurfaceEdge] = []
 
 	for edge in sorted(shelf_edges, key=lambda current: -current.y_mm):
+		if edge.y_mm > bounds.y_max - SHELF_EDGE_TOP_MARGIN_MM:
+			continue
+
 		if len(filtered_shelf_edges) == 0:
 			filtered_shelf_edges.append(edge)
 			continue
@@ -1190,6 +1206,15 @@ async def capture_shelf_candidates(
 			continue
 
 		filtered_shelf_edges.append(edge)
+
+	print_status(
+		"shelf_edges="
+		f"{len(filtered_shelf_edges)} "
+		f"y={[round(edge.y_mm, 2) for edge in filtered_shelf_edges]}"
+	)
+
+	if shelf_scout_only is True:
+		return coarse_scan, 0.0, [], filtered_shelf_edges
 
 	for shelf_idx, shelf_edge in enumerate(filtered_shelf_edges, start=1):
 		for offset_idx, offset_mm in enumerate(SHELF_HOLE_SWEEP_OFFSETS_MM, start=1):
@@ -1255,10 +1280,10 @@ async def capture_shelf_candidates(
 				)
 
 	if len(horizontal_wall_depth_values) == 0:
-		return coarse_scan, 0.0, []
+		return coarse_scan, 0.0, [], filtered_shelf_edges
 
 	wall_depth_mm = estimate_wall_depth_mm(horizontal_wall_depth_values)
-	return coarse_scan, wall_depth_mm, dedupe_candidate_regions(candidates, scan_config=scan_config)
+	return coarse_scan, wall_depth_mm, dedupe_candidate_regions(candidates, scan_config=scan_config), filtered_shelf_edges
 
 
 def has_wall_nearby(
@@ -1393,6 +1418,27 @@ def detect_shelf_surface_edges(
 		filtered_edges.append(edge)
 
 	return filtered_edges
+
+
+def build_detected_shelves_from_edges(
+	*,
+	edges: list[ShelfSurfaceEdge],
+	bounds: ScanBounds,
+) -> list[ScanDetectedShelf]:
+	shelves: list[ScanDetectedShelf] = []
+
+	for shelf_idx, edge in enumerate(sorted(edges, key=lambda current: -current.y_mm)):
+		shelves.append(
+			ScanDetectedShelf(
+				shelf_idx=shelf_idx,
+				center_y_mm=edge.y_mm,
+				shelf_height_mm=0.0,
+				shelf_width_mm=float(bounds.x_max - bounds.x_min),
+				cells=[],
+			)
+		)
+
+	return shelves
 
 
 def find_gap_segments_in_line(
@@ -2674,6 +2720,7 @@ def persist_staged_scan(
 	coarse_samples_per_point: int,
 	coarse_scan: GridScanResult,
 	candidates: list[GapCandidateRegion],
+	shelf_edges: list[ShelfSurfaceEdge],
 	fine_scan_results: list[tuple[ScanBounds, GridScanResult, list[ScanDetectedCell]]],
 	wall_depth_mm: float,
 	scan_started_at: Optional[str],
@@ -2725,6 +2772,7 @@ def persist_staged_scan(
 		fine_entries=fine_entries,
 		status="completed",
 		scan_started_at=scan_started_at,
+		shelf_edges=shelf_edges,
 	)
 
 	return recorder.run_id, str(recorder.coarse_depth_path), str(recorder.metadata_path)
@@ -2743,6 +2791,7 @@ async def run_staged_scan(
 	scan_config: Any,
 	scans_dir: str,
 	run_parameters: dict[str, Any],
+	shelf_scout_only: bool,
 	recorder: Optional[StagedScanRecorder] = None,
 ) -> ScanAnalysisResult:
 	tool = robot._tool
@@ -2754,6 +2803,7 @@ async def run_staged_scan(
 
 	coarse_scan = GridScanResult(x_positions=[], y_positions=[], depth_rows=[])
 	candidates: list[GapCandidateRegion] = []
+	shelf_edges: list[ShelfSurfaceEdge] = []
 	wall_depth_mm = 0.0
 	metadata: dict[str, Any] = {}
 	progress_document: dict[str, Any] = {}
@@ -2770,6 +2820,13 @@ async def run_staged_scan(
 	if recorder.metadata_path.exists() is True:
 		metadata = load_json_file(recorder.metadata_path)
 		candidates = load_candidates_from_metadata(metadata)
+		shelf_edges = [
+			ShelfSurfaceEdge(
+				x_mm=float(edge["x_mm"]),
+				y_mm=float(edge["y_mm"]),
+			)
+			for edge in metadata.get("shelf_edges", [])
+		]
 		wall_depth_mm = float(metadata.get("wall_depth_mm", 0.0))
 		fine_entries = list(metadata.get("fine_scans", []))
 		scan_started_at = metadata.get("scan_started_at")
@@ -2822,6 +2879,7 @@ async def run_staged_scan(
 			fine_entries=fine_entries,
 			status="starting",
 			scan_started_at=scan_started_at,
+			shelf_edges=shelf_edges,
 		)
 
 	try:
@@ -2836,13 +2894,15 @@ async def run_staged_scan(
 
 		if len(candidates) == 0:
 			print_status("phase=coarse-scan")
-			coarse_scan, wall_depth_mm, candidates = await capture_shelf_candidates(
+
+			coarse_scan, wall_depth_mm, candidates, shelf_edges = await capture_shelf_candidates(
 				tool,
 				bounds=bounds,
 				settle_ms=coarse_settle_ms,
 				samples_per_point=coarse_samples_per_point,
 				scan_config=scan_config,
 				recorder=recorder,
+				shelf_scout_only=shelf_scout_only,
 			)
 
 			print_status("phase=coarse-detect")
@@ -2866,6 +2926,7 @@ async def run_staged_scan(
 				fine_entries=fine_entries,
 				status="coarse-detect",
 				scan_started_at=scan_started_at,
+				shelf_edges=shelf_edges,
 			)
 		else:
 			print_status(
@@ -2979,6 +3040,7 @@ async def run_staged_scan(
 				fine_entries=fine_entries,
 				status="fine-scan",
 				scan_started_at=scan_started_at,
+				shelf_edges=shelf_edges,
 			)
 	finally:
 		await tool.retract()
@@ -2988,13 +3050,20 @@ async def run_staged_scan(
 		all_detected_cells,
 		scan_config=scan_config,
 	)
-	shelves = build_detected_shelves(
-		deduped_cells,
-		shelf_threshold_mm=get_shelf_grouping_threshold_mm(
-			step_mm=fine_step_mm,
-			scan_config=scan_config,
-		),
-	)
+
+	if shelf_scout_only is True:
+		shelves = build_detected_shelves_from_edges(
+			edges=shelf_edges,
+			bounds=bounds,
+		)
+	else:
+		shelves = build_detected_shelves(
+			deduped_cells,
+			shelf_threshold_mm=get_shelf_grouping_threshold_mm(
+				step_mm=fine_step_mm,
+				scan_config=scan_config,
+			),
+		)
 	run_id, raw_scan_path, metadata_path = persist_staged_scan(
 		scans_dir=scans_dir,
 		side=side,
@@ -3006,6 +3075,7 @@ async def run_staged_scan(
 		coarse_samples_per_point=coarse_samples_per_point,
 		coarse_scan=coarse_scan,
 		candidates=candidates,
+		shelf_edges=shelf_edges,
 		fine_scan_results=fine_scan_results,
 		wall_depth_mm=wall_depth_mm,
 		scan_started_at=scan_started_at,
@@ -3131,6 +3201,7 @@ async def run_scan(args: argparse.Namespace) -> int:
 		) = load_continue_scan_context(args.scans_dir)
 		run_parameters_document = load_json_file(recorder.run_parameters_path)
 		run_parameters = run_parameters_document["run_parameters"]
+		shelf_scout_only = bool(run_parameters.get("cli", {}).get("shelf_scout_only", False))
 		print_status(f"resume_run_id={recorder.run_id}")
 	else:
 		if args.module is None:
@@ -3169,6 +3240,7 @@ async def run_scan(args: argparse.Namespace) -> int:
 			coarse_settle_ms=coarse_settle_ms,
 			coarse_samples_per_point=coarse_samples_per_point,
 		)
+		shelf_scout_only = bool(args.shelf_scout_only)
 
 	if step_mm <= 0:
 		raise ValueError("--step must be greater than zero")
@@ -3264,6 +3336,7 @@ async def run_scan(args: argparse.Namespace) -> int:
 					scan_config=scan_config,
 					scans_dir=args.scans_dir,
 					run_parameters=run_parameters,
+					shelf_scout_only=shelf_scout_only,
 					recorder=recorder,
 				)
 			finally:
