@@ -45,6 +45,8 @@ COARSE_SCAN_STEP_MM = 4.0
 COARSE_EMPTY_ROW_SKIP_MM = 50.0
 COARSE_EMPTY_ROW_STREAK = 2
 COARSE_CANDIDATE_SKIP_MM = 50.0
+COARSE_EMPTY_X_SKIP_MM = 16.0
+COARSE_EMPTY_X_TRIGGER_COUNT = 4
 GAP_DEPTH_THRESHOLD_MM = 0.01
 FINE_SCAN_MARGIN_X_MM = 10.0
 FINE_SCAN_MARGIN_Y_MM = 6.0
@@ -90,6 +92,8 @@ class CoarseRowSkipConfig:
 	skip_column_count: int
 	min_candidate_width_mm: float
 	max_candidate_width_mm: float
+	empty_skip_column_count: int
+	empty_trigger_count: int
 
 
 @dataclass
@@ -811,6 +815,8 @@ async def scan_row(
 	gap_start_column_idx: Optional[int] = None
 	gap_start_position_idx: Optional[int] = None
 	had_left_wall = False
+	has_seen_positive_depth = False
+	leading_gap_count = 0
 
 	while position_idx < len(column_indices):
 		column_idx = column_indices[position_idx]
@@ -831,6 +837,37 @@ async def scan_row(
 		depth_mm = row_values[column_idx]
 
 		if coarse_skip_config is not None:
+			if has_seen_positive_depth is False:
+				if is_gap_depth(depth_mm) is True:
+					leading_gap_count += 1
+				elif is_positive_depth(depth_mm) is True:
+					has_seen_positive_depth = True
+					leading_gap_count = 0
+				else:
+					leading_gap_count = 0
+
+				if (
+					has_seen_positive_depth is False and
+					leading_gap_count >= coarse_skip_config.empty_trigger_count and
+					coarse_skip_config.empty_skip_column_count > 0
+				):
+					skip_start_idx = position_idx + 1
+					skip_end_idx = min(
+						len(column_indices) - 1,
+						position_idx + coarse_skip_config.empty_skip_column_count,
+					)
+
+					if skip_end_idx >= skip_start_idx:
+						skip_from_x = x_positions[column_indices[skip_start_idx]]
+						skip_to_x = x_positions[column_indices[skip_end_idx]]
+						print_status(
+							f"{progress_label}_empty_skip "
+							f"x=({min(skip_from_x, skip_to_x):.2f},{max(skip_from_x, skip_to_x):.2f}) "
+							f"count={leading_gap_count}"
+						)
+						next_position_idx = skip_end_idx + 1
+						leading_gap_count = 0
+
 			if is_positive_depth(depth_mm) is True:
 				if gap_start_column_idx is not None and gap_start_position_idx is not None:
 					width_mm = abs(x_positions[column_idx] - x_positions[gap_start_column_idx]) + COARSE_SCAN_STEP_MM
@@ -1098,8 +1135,9 @@ def build_coarse_row_skip_config(
 	scan_config: Any,
 ) -> Optional[CoarseRowSkipConfig]:
 	skip_column_count = int(COARSE_CANDIDATE_SKIP_MM // COARSE_SCAN_STEP_MM)
+	empty_skip_column_count = int(COARSE_EMPTY_X_SKIP_MM // COARSE_SCAN_STEP_MM)
 
-	if skip_column_count <= 0:
+	if skip_column_count <= 0 and empty_skip_column_count <= 0:
 		return None
 
 	min_candidate_width_mm, max_candidate_width_mm = get_coarse_candidate_width_limits(
@@ -1111,6 +1149,8 @@ def build_coarse_row_skip_config(
 		skip_column_count=skip_column_count,
 		min_candidate_width_mm=min_candidate_width_mm,
 		max_candidate_width_mm=max_candidate_width_mm,
+		empty_skip_column_count=empty_skip_column_count,
+		empty_trigger_count=COARSE_EMPTY_X_TRIGGER_COUNT,
 	)
 
 
