@@ -95,6 +95,10 @@ class StagedScanRecorder:
 	log_path: Path
 
 
+def get_current_timestamp() -> str:
+	return datetime.now(timezone.utc).isoformat()
+
+
 def parse_args() -> argparse.Namespace:
 	parser = argparse.ArgumentParser(description="Run a laser tray scan and print detected calibration points.")
 	parser.add_argument("--module", choices=["left", "right"])
@@ -341,7 +345,7 @@ def persist_run_parameters(
 		json.dumps(
 			{
 				"run_id": run_id,
-				"created_at": datetime.now(timezone.utc).isoformat(),
+				"created_at": get_current_timestamp(),
 				"run_parameters": run_parameters,
 			},
 			indent="\t",
@@ -552,7 +556,7 @@ def persist_scan_progress(
 		json.dumps(
 			{
 				"run_id": recorder.run_id,
-				"updated_at": datetime.now(timezone.utc).isoformat(),
+				"updated_at": get_current_timestamp(),
 				"phase": phase,
 				"progress": progress,
 			},
@@ -577,41 +581,68 @@ def persist_staged_metadata(
 	candidates: list[GapCandidateRegion],
 	fine_entries: list[dict[str, Any]],
 	status: str,
+	scan_started_at: Optional[str] = None,
 ) -> None:
-	recorder.metadata_path.write_text(
-		json.dumps(
+	metadata_document: dict[str, Any] = {
+		"run_id": recorder.run_id,
+		"created_at": get_current_timestamp(),
+		"status": status,
+		"side": side.value,
+		"bounds": bounds.model_dump(),
+		"fine_step_mm": fine_step_mm,
+		"coarse_step_mm": COARSE_SCAN_STEP_MM,
+		"settle_ms": settle_ms,
+		"samples_per_point": samples_per_point,
+		"coarse_settle_ms": coarse_settle_ms,
+		"coarse_samples_per_point": coarse_samples_per_point,
+		"wall_depth_mm": wall_depth_mm,
+		"coarse_scan": {
+			"raw_scan_path": str(recorder.coarse_depth_path),
+			"x_positions": coarse_scan.x_positions,
+			"y_positions": coarse_scan.y_positions,
+		},
+		"candidates": [
 			{
-				"run_id": recorder.run_id,
-				"created_at": datetime.now(timezone.utc).isoformat(),
-				"status": status,
-				"side": side.value,
-				"bounds": bounds.model_dump(),
-				"fine_step_mm": fine_step_mm,
-				"coarse_step_mm": COARSE_SCAN_STEP_MM,
-				"settle_ms": settle_ms,
-				"samples_per_point": samples_per_point,
-				"coarse_settle_ms": coarse_settle_ms,
-				"coarse_samples_per_point": coarse_samples_per_point,
-				"wall_depth_mm": wall_depth_mm,
-				"coarse_scan": {
-					"raw_scan_path": str(recorder.coarse_depth_path),
-					"x_positions": coarse_scan.x_positions,
-					"y_positions": coarse_scan.y_positions,
-				},
-				"candidates": [
-					{
-						"x_min": candidate.x_min,
-						"x_max": candidate.x_max,
-						"y_min": candidate.y_min,
-						"y_max": candidate.y_max,
-						"row_count": candidate.row_count,
-					}
-					for candidate in candidates
-				],
-				"fine_scans": fine_entries,
-			},
-			indent="\t",
-		),
+				"x_min": candidate.x_min,
+				"x_max": candidate.x_max,
+				"y_min": candidate.y_min,
+				"y_max": candidate.y_max,
+				"row_count": candidate.row_count,
+			}
+			for candidate in candidates
+		],
+		"fine_scans": fine_entries,
+	}
+
+	if scan_started_at is not None:
+		metadata_document["scan_started_at"] = scan_started_at
+
+	recorder.metadata_path.write_text(
+		json.dumps(metadata_document, indent="\t"),
+		encoding="utf-8",
+	)
+
+
+def persist_scan_started_at(
+	*,
+	recorder: StagedScanRecorder,
+	scan_started_at: str,
+) -> None:
+	if recorder.run_parameters_path.exists() is True:
+		run_parameters_document = load_json_file(recorder.run_parameters_path)
+		run_parameters_document["scan_started_at"] = scan_started_at
+		recorder.run_parameters_path.write_text(
+			json.dumps(run_parameters_document, indent="\t"),
+			encoding="utf-8",
+		)
+
+	if recorder.metadata_path.exists() is False:
+		return
+
+	metadata_document = load_json_file(recorder.metadata_path)
+	metadata_document["scan_started_at"] = scan_started_at
+	recorder.metadata_path.write_text(
+		json.dumps(metadata_document, indent="\t"),
 		encoding="utf-8",
 	)
 
@@ -2049,6 +2080,7 @@ def persist_staged_scan(
 	candidates: list[GapCandidateRegion],
 	fine_scan_results: list[tuple[ScanBounds, GridScanResult, list[ScanDetectedCell]]],
 	wall_depth_mm: float,
+	scan_started_at: Optional[str],
 	recorder: Optional[StagedScanRecorder] = None,
 ) -> tuple[str, str, str]:
 	if recorder is None:
@@ -2096,6 +2128,7 @@ def persist_staged_scan(
 		candidates=candidates,
 		fine_entries=fine_entries,
 		status="completed",
+		scan_started_at=scan_started_at,
 	)
 
 	return recorder.run_id, str(recorder.coarse_depth_path), str(recorder.metadata_path)
@@ -2131,6 +2164,7 @@ async def run_staged_scan(
 	fine_entries: list[dict[str, Any]] = []
 	fine_scan_results: list[tuple[ScanBounds, GridScanResult, list[ScanDetectedCell]]] = []
 	all_detected_cells: list[ScanDetectedCell] = []
+	scan_started_at: Optional[str] = None
 
 	coarse_empty_row_skip_mm = get_coarse_empty_row_skip_mm(scan_config)
 
@@ -2144,6 +2178,7 @@ async def run_staged_scan(
 		candidates = load_candidates_from_metadata(metadata)
 		wall_depth_mm = float(metadata.get("wall_depth_mm", 0.0))
 		fine_entries = list(metadata.get("fine_scans", []))
+		scan_started_at = metadata.get("scan_started_at")
 
 	if recorder.progress_path.exists() is True:
 		progress_document = load_json_file(recorder.progress_path)
@@ -2192,9 +2227,17 @@ async def run_staged_scan(
 			candidates=candidates,
 			fine_entries=fine_entries,
 			status="starting",
+			scan_started_at=scan_started_at,
 		)
 
 	try:
+		if scan_started_at is None:
+			scan_started_at = get_current_timestamp()
+			persist_scan_started_at(
+				recorder=recorder,
+				scan_started_at=scan_started_at,
+			)
+
 		await enter_scan_mode(tool, side)
 
 		if len(candidates) == 0:
@@ -2259,6 +2302,7 @@ async def run_staged_scan(
 				candidates=candidates,
 				fine_entries=fine_entries,
 				status="coarse-detect",
+				scan_started_at=scan_started_at,
 			)
 		else:
 			print_status(
@@ -2371,6 +2415,7 @@ async def run_staged_scan(
 				candidates=candidates,
 				fine_entries=fine_entries,
 				status="fine-scan",
+				scan_started_at=scan_started_at,
 			)
 	finally:
 		await tool.retract()
@@ -2400,6 +2445,7 @@ async def run_staged_scan(
 		candidates=candidates,
 		fine_scan_results=fine_scan_results,
 		wall_depth_mm=wall_depth_mm,
+		scan_started_at=scan_started_at,
 		recorder=recorder,
 	)
 	persist_scan_progress(
