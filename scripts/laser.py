@@ -43,6 +43,7 @@ LASER_SCAN_STAGE_EXTENSION_MM = 13.0
 LASER_SCAN_Z_OFFSET_MM = 10.0
 COARSE_SCAN_STEP_MM = 4.0
 SHELF_SCOUT_STEP_MM = 0.5
+SHELF_SCOUT_X_OFFSETS_MM = [0.0, 10.0, 20.0]
 SHELF_SWEEP_X_STEP_MM = 1.0
 SHELF_EDGE_CONFIRMATION_COUNT = 3
 SHELF_MIN_SPACING_MM = 40.0
@@ -1126,7 +1127,17 @@ def build_shelf_scout_x_positions(
 	*,
 	bounds: ScanBounds,
 ) -> list[float]:
-	return [bounds.x_max]
+	positions: list[float] = []
+
+	for offset_mm in SHELF_SCOUT_X_OFFSETS_MM:
+		x_mm = max(bounds.x_min, bounds.x_max - offset_mm)
+
+		if x_mm in positions:
+			continue
+
+		positions.append(x_mm)
+
+	return positions
 
 
 async def capture_shelf_candidates(
