@@ -46,6 +46,8 @@ SHELF_SCOUT_STEP_MM = 0.5
 SHELF_SCOUT_X_OFFSETS_MM = [0.0, 10.0, 20.0]
 SHELF_SWEEP_X_STEP_MM = 1.0
 SHELF_EDGE_CONFIRMATION_COUNT = 3
+SHELF_BRIM_MIN_HEIGHT_MM = 8.0
+SHELF_BRIM_MAX_HEIGHT_MM = 14.0
 SHELF_MIN_SPACING_MM = 40.0
 SHELF_EDGE_TOP_MARGIN_MM = 5.0
 SHELF_HOLE_SWEEP_OFFSETS_MM = [24.0, 34.0]
@@ -1394,12 +1396,21 @@ def detect_shelf_surface_edges(
 			continue
 
 		run_length = position_idx - run_start_idx
+		run_end_idx = position_idx - 1
+		band_height_mm = abs(y_positions[run_end_idx] - y_positions[run_start_idx]) + SHELF_SCOUT_STEP_MM
+		is_bounded_band = run_start_idx > 0
 
-		if run_length >= SHELF_EDGE_CONFIRMATION_COUNT:
+		if (
+			run_length >= SHELF_EDGE_CONFIRMATION_COUNT and
+			is_bounded_band is True and
+			band_height_mm >= SHELF_BRIM_MIN_HEIGHT_MM and
+			band_height_mm <= SHELF_BRIM_MAX_HEIGHT_MM
+		):
+			center_y_mm = float((y_positions[run_start_idx] + y_positions[run_end_idx]) / 2.0)
 			edges.append(
 				ShelfSurfaceEdge(
 					x_mm=x_mm,
-					y_mm=y_positions[run_start_idx],
+					y_mm=center_y_mm,
 				)
 			)
 
@@ -1407,12 +1418,21 @@ def detect_shelf_surface_edges(
 
 	if run_start_idx is not None:
 		run_length = len(depth_values) - run_start_idx
+		run_end_idx = len(depth_values) - 1
+		band_height_mm = abs(y_positions[run_end_idx] - y_positions[run_start_idx]) + SHELF_SCOUT_STEP_MM
+		is_bounded_band = run_start_idx > 0 and run_end_idx < len(depth_values) - 1
 
-		if run_length >= SHELF_EDGE_CONFIRMATION_COUNT:
+		if (
+			run_length >= SHELF_EDGE_CONFIRMATION_COUNT and
+			is_bounded_band is True and
+			band_height_mm >= SHELF_BRIM_MIN_HEIGHT_MM and
+			band_height_mm <= SHELF_BRIM_MAX_HEIGHT_MM
+		):
+			center_y_mm = float((y_positions[run_start_idx] + y_positions[run_end_idx]) / 2.0)
 			edges.append(
 				ShelfSurfaceEdge(
 					x_mm=x_mm,
-					y_mm=y_positions[run_start_idx],
+					y_mm=center_y_mm,
 				)
 			)
 
