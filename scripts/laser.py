@@ -1184,6 +1184,14 @@ def get_coarse_samples_per_point(fine_samples_per_point: int) -> int:
 	return 1
 
 
+def get_fine_settle_ms(config_settle_ms: int) -> int:
+	return max(20, config_settle_ms // 2)
+
+
+def get_fine_samples_per_point(config_samples_per_point: int) -> int:
+	return 1
+
+
 def find_components(mask: np.ndarray) -> list[list[tuple[int, int]]]:
 	height, width = mask.shape
 	visited = np.zeros((height, width), dtype=bool)
@@ -2047,11 +2055,15 @@ async def run_scan(args: argparse.Namespace) -> int:
 
 		side = normalize_module(args.module)
 		step_mm = float(args.step)
-		settle_ms = args.settle_ms if args.settle_ms is not None else scan_config.settle_ms
+		settle_ms = (
+			args.settle_ms
+			if args.settle_ms is not None
+			else get_fine_settle_ms(scan_config.settle_ms)
+		)
 		samples_per_point = (
 			args.samples_per_point
 			if args.samples_per_point is not None
-			else scan_config.samples_per_point
+			else get_fine_samples_per_point(scan_config.samples_per_point)
 		)
 
 		coarse_settle_ms = get_coarse_settle_ms(settle_ms)
