@@ -52,6 +52,7 @@ SHELF_BRIM_MAX_HEIGHT_MM = 14.0
 SHELF_MIN_SPACING_MM = 40.0
 SHELF_EDGE_TOP_MARGIN_MM = 5.0
 SHELF_HOLE_SWEEP_OFFSETS_MM = [32.25]
+SHELF_SCOUT_POST_EDGE_SKIP_MM = 80.0
 COARSE_EMPTY_ROW_SKIP_MM = 50.0
 COARSE_EMPTY_ROW_STREAK = 2
 COARSE_CANDIDATE_SKIP_MM = 50.0
@@ -1218,11 +1219,10 @@ async def capture_shelf_candidates(
 	else:
 		for scout_idx, scout_x_mm in enumerate(scout_x_positions, start=1):
 			print_status(f"phase=shelf-scout scout={scout_idx}/{len(scout_x_positions)} x={scout_x_mm:.2f}")
-			scout_depth_values = await scan_line_positions(
+			scout_depth_values, scout_edges = await scan_shelf_scout_line(
 				tool,
-				axis="y",
-				positions=scout_y_positions,
-				fixed_mm=scout_x_mm,
+				x_mm=scout_x_mm,
+				y_positions=scout_y_positions,
 				settle_ms=settle_ms,
 				samples_per_point=samples_per_point,
 				progress_label=f"shelf_scout_{scout_idx}",
@@ -1242,13 +1242,7 @@ async def capture_shelf_candidates(
 					"x_position": scout_x_mm,
 				},
 			)
-			shelf_edges.extend(
-				detect_shelf_surface_edges(
-					x_mm=scout_x_mm,
-					y_positions=scout_y_positions,
-					depth_values=scout_depth_values,
-				)
-			)
+			shelf_edges.extend(scout_edges)
 
 	filtered_shelf_edges: list[ShelfSurfaceEdge] = []
 
@@ -2047,6 +2041,122 @@ async def scan_line_positions(
 		)
 
 	return depth_values
+
+
+async def scan_shelf_scout_line(
+	tool: Any,
+	*,
+	x_mm: float,
+	y_positions: list[float],
+	settle_ms: int,
+	samples_per_point: int,
+	progress_label: str,
+	progress_every: int = 25,
+	on_sample: Optional[Callable[[float, float | None], None]] = None,
+) -> tuple[list[float | None], list[ShelfSurfaceEdge]]:
+	if len(y_positions) == 0:
+		return [], []
+
+	await tool._mx.move_to_position_no_wait(x_mm)
+	await tool._my.move_to_position_no_wait(y_positions[0])
+	await tool.gantry_wait()
+
+	depth_values: list[float | None] = [None for _ in y_positions]
+	detected_edges: list[ShelfSurfaceEdge] = []
+	position_idx = 0
+	sampled_count = 0
+	run_start_idx: Optional[int] = None
+	run_end_idx: Optional[int] = None
+
+	while position_idx < len(y_positions):
+		y_mm = y_positions[position_idx]
+
+		if position_idx > 0:
+			await tool._my.move_to_position_no_wait(y_mm)
+			await tool.gantry_wait()
+
+		depth_mm = await sample_laser_depth(
+			tool,
+			settle_ms=settle_ms,
+			samples_per_point=samples_per_point,
+		)
+		depth_values[position_idx] = depth_mm
+		sampled_count += 1
+
+		if on_sample is not None:
+			on_sample(y_mm, depth_mm)
+
+		if sampled_count % progress_every == 0 or position_idx + 1 == len(y_positions):
+			print_status(
+				f"{progress_label}={sampled_count}/{len(y_positions)} "
+				f"x={x_mm:.2f} "
+				f"y={y_mm:.2f} "
+				f"depth={depth_to_label(depth_mm)}"
+			)
+
+		if is_positive_depth(depth_mm) is True:
+			if run_start_idx is None:
+				run_start_idx = position_idx
+
+			run_end_idx = position_idx
+			position_idx += 1
+			continue
+
+		if run_start_idx is None or run_end_idx is None:
+			position_idx += 1
+			continue
+
+		run_length = run_end_idx - run_start_idx + 1
+		band_height_mm = abs(y_positions[run_end_idx] - y_positions[run_start_idx]) + SHELF_SCOUT_STEP_MM
+		is_bounded_band = run_start_idx > 0
+
+		if (
+			run_length >= SHELF_EDGE_CONFIRMATION_COUNT and
+			is_bounded_band is True and
+			band_height_mm >= SHELF_BRIM_MIN_HEIGHT_MM and
+			band_height_mm <= SHELF_BRIM_MAX_HEIGHT_MM
+		):
+			center_y_mm = float((y_positions[run_start_idx] + y_positions[run_end_idx]) / 2.0)
+			detected_edges.append(
+				ShelfSurfaceEdge(
+					x_mm=x_mm,
+					y_mm=center_y_mm,
+				)
+			)
+
+			skip_target_y_mm = y_positions[run_end_idx] - SHELF_SCOUT_POST_EDGE_SKIP_MM
+
+			while position_idx < len(y_positions) and y_positions[position_idx] > skip_target_y_mm:
+				position_idx += 1
+
+			run_start_idx = None
+			run_end_idx = None
+			continue
+
+		run_start_idx = None
+		run_end_idx = None
+		position_idx += 1
+
+	if run_start_idx is not None and run_end_idx is not None:
+		run_length = run_end_idx - run_start_idx + 1
+		band_height_mm = abs(y_positions[run_end_idx] - y_positions[run_start_idx]) + SHELF_SCOUT_STEP_MM
+		is_bounded_band = run_start_idx > 0 and run_end_idx < len(y_positions) - 1
+
+		if (
+			run_length >= SHELF_EDGE_CONFIRMATION_COUNT and
+			is_bounded_band is True and
+			band_height_mm >= SHELF_BRIM_MIN_HEIGHT_MM and
+			band_height_mm <= SHELF_BRIM_MAX_HEIGHT_MM
+		):
+			center_y_mm = float((y_positions[run_start_idx] + y_positions[run_end_idx]) / 2.0)
+			detected_edges.append(
+				ShelfSurfaceEdge(
+					x_mm=x_mm,
+					y_mm=center_y_mm,
+				)
+			)
+
+	return depth_values, detected_edges
 
 
 def merge_line_scan_into_sparse_scan(
