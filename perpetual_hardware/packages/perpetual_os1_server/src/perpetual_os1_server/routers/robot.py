@@ -451,6 +451,8 @@ async def home_motor(
         )
 
     try:
+        if motor_name == "rotate":
+            await worker._robot._tool.ensure_safe_rotation_stage_extension()
         await motor.clear_alarm()
         await motor.home()
         worker.clear_needs_home_axes([motor_name])
@@ -521,6 +523,8 @@ async def move_motor(
         )
 
     try:
+        if motor_name == "rotate":
+            await worker._robot._tool.ensure_safe_rotation_stage_extension()
         await motor.move_to_position(request.position_mm)
         return {"success": True, "motor": motor_name, "position_mm": request.position_mm}
     except Exception as exc:

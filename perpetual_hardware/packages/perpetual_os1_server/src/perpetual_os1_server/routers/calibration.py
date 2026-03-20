@@ -296,8 +296,11 @@ async def move_to_cell(request: MoveRequest) -> PositionResponse:
 	)
 
 	try:
-		await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True)
+		await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
 		await tool.move(coord)
+
+		target_position: Literal["front", "back"] = "front" if coord.s == 0 else "back"
+		await tool.rotate_to_position(target_position)
 
 		if tool._mg is not None:
 			grip_ext = await tool.get_param("Z_EXTENSION_PLACE")
@@ -914,6 +917,7 @@ async def rotate_to_angle(angle: float):
 	clamped_angle = max(0, min(rotation_limit, angle))
 	try:
 		await _clear_motors_for_move(tool, rotation=True)
+		await tool.ensure_safe_rotation_stage_extension()
 		await tool._mr.move_to_position(clamped_angle)
 	except (MotorError, HardwareMotorError) as e:
 		await _raise_motor_error(worker, f"Rotation failed: {str(e)}", e, axes=["rotate"])
