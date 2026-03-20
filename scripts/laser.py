@@ -135,6 +135,7 @@ def parse_args() -> argparse.Namespace:
 	parser.add_argument("--step", type=float)
 	parser.add_argument("--settle-ms", type=int)
 	parser.add_argument("--samples-per-point", type=int)
+	parser.add_argument("--known-shelf-edge-y", nargs="+", type=float)
 	parser.add_argument("--npy", type=Path)
 	parser.add_argument("--scans-dir", default="/tmp")
 	parser.add_argument("--config", default=str(CONFIG_PATH))
@@ -342,6 +343,11 @@ def build_run_parameters(
 			"step": step_mm,
 			"settle_ms": args.settle_ms,
 			"samples_per_point": args.samples_per_point,
+			"known_shelf_edge_y": (
+				[float(value) for value in args.known_shelf_edge_y]
+				if args.known_shelf_edge_y is not None
+				else None
+			),
 			"npy": str(args.npy) if args.npy is not None else None,
 			"scans_dir": args.scans_dir,
 			"config": args.config,
@@ -1151,6 +1157,7 @@ async def capture_shelf_candidates(
 	scan_config: Any,
 	recorder: StagedScanRecorder,
 	shelf_scout_only: bool,
+	known_shelf_edge_y: Optional[list[float]],
 ) -> tuple[GridScanResult, float, list[GapCandidateRegion], list[ShelfSurfaceEdge]]:
 	coarse_scan = create_sparse_shelf_scan(bounds=bounds)
 	scout_x_positions = build_shelf_scout_x_positions(bounds=bounds)
@@ -1171,39 +1178,48 @@ async def capture_shelf_candidates(
 			progress=progress,
 		)
 
-	for scout_idx, scout_x_mm in enumerate(scout_x_positions, start=1):
-		print_status(f"phase=shelf-scout scout={scout_idx}/{len(scout_x_positions)} x={scout_x_mm:.2f}")
-		scout_depth_values = await scan_line_positions(
-			tool,
-			axis="y",
-			positions=scout_y_positions,
-			fixed_mm=scout_x_mm,
-			settle_ms=settle_ms,
-			samples_per_point=samples_per_point,
-			progress_label=f"shelf_scout_{scout_idx}",
-		)
-		merge_line_scan_into_sparse_scan(
-			coarse_scan,
-			axis="y",
-			positions=scout_y_positions,
-			fixed_mm=scout_x_mm,
-			depth_values=scout_depth_values,
-		)
-		didPersistScoutProgress(
-			"shelf-scout",
-			{
-				"scout_idx": scout_idx,
-				"scout_count": len(scout_x_positions),
-				"x_position": scout_x_mm,
-			},
-		)
-		shelf_edges.extend(
-			detect_shelf_surface_edges(
-				x_mm=scout_x_mm,
-				y_positions=scout_y_positions,
+	if known_shelf_edge_y is not None:
+		shelf_edges = [
+			ShelfSurfaceEdge(
+				x_mm=bounds.x_max,
+				y_mm=float(y_mm),
+			)
+			for y_mm in known_shelf_edge_y
+		]
+	else:
+		for scout_idx, scout_x_mm in enumerate(scout_x_positions, start=1):
+			print_status(f"phase=shelf-scout scout={scout_idx}/{len(scout_x_positions)} x={scout_x_mm:.2f}")
+			scout_depth_values = await scan_line_positions(
+				tool,
+				axis="y",
+				positions=scout_y_positions,
+				fixed_mm=scout_x_mm,
+				settle_ms=settle_ms,
+				samples_per_point=samples_per_point,
+				progress_label=f"shelf_scout_{scout_idx}",
+			)
+			merge_line_scan_into_sparse_scan(
+				coarse_scan,
+				axis="y",
+				positions=scout_y_positions,
+				fixed_mm=scout_x_mm,
 				depth_values=scout_depth_values,
 			)
-		)
+			didPersistScoutProgress(
+				"shelf-scout",
+				{
+					"scout_idx": scout_idx,
+					"scout_count": len(scout_x_positions),
+					"x_position": scout_x_mm,
+				},
+			)
+			shelf_edges.extend(
+				detect_shelf_surface_edges(
+					x_mm=scout_x_mm,
+					y_positions=scout_y_positions,
+					depth_values=scout_depth_values,
+				)
+			)
 
 	filtered_shelf_edges: list[ShelfSurfaceEdge] = []
 
@@ -2823,6 +2839,7 @@ async def run_staged_scan(
 	scans_dir: str,
 	run_parameters: dict[str, Any],
 	shelf_scout_only: bool,
+	known_shelf_edge_y: Optional[list[float]],
 	recorder: Optional[StagedScanRecorder] = None,
 ) -> ScanAnalysisResult:
 	tool = robot._tool
@@ -2934,6 +2951,7 @@ async def run_staged_scan(
 				scan_config=scan_config,
 				recorder=recorder,
 				shelf_scout_only=shelf_scout_only,
+				known_shelf_edge_y=known_shelf_edge_y,
 			)
 
 			print_status("phase=coarse-detect")
@@ -3233,6 +3251,7 @@ async def run_scan(args: argparse.Namespace) -> int:
 		run_parameters_document = load_json_file(recorder.run_parameters_path)
 		run_parameters = run_parameters_document["run_parameters"]
 		shelf_scout_only = bool(run_parameters.get("cli", {}).get("shelf_scout_only", False))
+		known_shelf_edge_y = run_parameters.get("cli", {}).get("known_shelf_edge_y")
 		print_status(f"resume_run_id={recorder.run_id}")
 	else:
 		if args.module is None:
@@ -3272,6 +3291,11 @@ async def run_scan(args: argparse.Namespace) -> int:
 			coarse_samples_per_point=coarse_samples_per_point,
 		)
 		shelf_scout_only = bool(args.shelf_scout_only)
+		known_shelf_edge_y = (
+			[float(value) for value in args.known_shelf_edge_y]
+			if args.known_shelf_edge_y is not None
+			else None
+		)
 
 	if step_mm <= 0:
 		raise ValueError("--step must be greater than zero")
@@ -3306,6 +3330,9 @@ async def run_scan(args: argparse.Namespace) -> int:
 		f"coarse_samples_per_point:{coarse_samples_per_point} "
 		f"points:{total_points}"
 	)
+
+	if known_shelf_edge_y is not None:
+		print_status(f"known_shelf_edges_y={[round(float(value), 2) for value in known_shelf_edge_y]}")
 
 	if args.npy is not None:
 		if args.continue_scan is True:
@@ -3368,6 +3395,7 @@ async def run_scan(args: argparse.Namespace) -> int:
 					scans_dir=args.scans_dir,
 					run_parameters=run_parameters,
 					shelf_scout_only=shelf_scout_only,
+					known_shelf_edge_y=known_shelf_edge_y,
 					recorder=recorder,
 				)
 			finally:
