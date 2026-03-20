@@ -57,6 +57,7 @@ COARSE_CANDIDATE_SKIP_MM = 50.0
 COARSE_EMPTY_X_SKIP_MM = 32.0
 COARSE_EMPTY_X_TRIGGER_COUNT = 4
 GAP_DEPTH_THRESHOLD_MM = 0.01
+FILLED_HOLE_MIN_DEPTH_DELTA_MM = 0.9
 FINE_SCAN_MARGIN_X_MM = 10.0
 FINE_SCAN_MARGIN_Y_MM = 6.0
 COARSE_WALL_SEARCH_STEPS = 2
@@ -189,6 +190,31 @@ def is_positive_depth(depth_mm: float | None) -> bool:
 		return False
 
 	return depth_mm > GAP_DEPTH_THRESHOLD_MM
+
+
+def is_filled_hole_depth(
+	depth_mm: float | None,
+	*,
+	wall_depth_mm: float,
+) -> bool:
+	if is_positive_depth(depth_mm) is False:
+		return False
+
+	return float(depth_mm) >= wall_depth_mm + FILLED_HOLE_MIN_DEPTH_DELTA_MM
+
+
+def is_hole_interior_depth(
+	depth_mm: float | None,
+	*,
+	wall_depth_mm: float,
+) -> bool:
+	if is_gap_depth(depth_mm) is True:
+		return True
+
+	return is_filled_hole_depth(
+		depth_mm,
+		wall_depth_mm=wall_depth_mm,
+	)
 
 
 def is_wall_like_depth(
@@ -1507,7 +1533,10 @@ def find_gap_segments_in_line(
 		is_gap = False
 
 		if idx < len(values):
-			is_gap = is_gap_depth(values[idx])
+			is_gap = is_hole_interior_depth(
+				values[idx],
+				wall_depth_mm=wall_depth_mm,
+			)
 
 		if is_gap is True and start_idx is None:
 			start_idx = idx
@@ -1631,7 +1660,10 @@ def find_row_gap_segments(
 	)
 
 	for column_idx, depth_mm in enumerate(row_values):
-		if is_gap_depth(depth_mm) is True:
+		if is_hole_interior_depth(
+			depth_mm,
+			wall_depth_mm=wall_depth_mm,
+		) is True:
 			if start_idx is None:
 				start_idx = column_idx
 			continue
@@ -2046,6 +2078,7 @@ async def probe_line_from_center(
 	progress_prefix: str,
 	settle_ms: int,
 	samples_per_point: int,
+	wall_depth_mm: float,
 	on_update: Optional[Callable[[GridScanResult, str, float], None]] = None,
 ) -> Optional[LineGapSegment]:
 	left_gap_idx: Optional[int] = None
@@ -2097,7 +2130,10 @@ async def probe_line_from_center(
 
 	center_depth_mm = await didSample(center_idx)
 
-	if center_depth_mm is None or center_depth_mm > GAP_DEPTH_THRESHOLD_MM:
+	if is_hole_interior_depth(
+		center_depth_mm,
+		wall_depth_mm=wall_depth_mm,
+	) is False:
 		return None
 
 	left_gap_idx = center_idx
@@ -2106,7 +2142,10 @@ async def probe_line_from_center(
 	for position_idx in range(center_idx - 1, -1, -1):
 		depth_mm = await didSample(position_idx)
 
-		if depth_mm is not None and depth_mm <= GAP_DEPTH_THRESHOLD_MM:
+		if is_hole_interior_depth(
+			depth_mm,
+			wall_depth_mm=wall_depth_mm,
+		) is True:
 			left_gap_idx = position_idx
 			continue
 
@@ -2117,7 +2156,10 @@ async def probe_line_from_center(
 	for position_idx in range(center_idx + 1, len(positions)):
 		depth_mm = await didSample(position_idx)
 
-		if depth_mm is not None and depth_mm <= GAP_DEPTH_THRESHOLD_MM:
+		if is_hole_interior_depth(
+			depth_mm,
+			wall_depth_mm=wall_depth_mm,
+		) is True:
 			right_gap_idx = position_idx
 			continue
 
@@ -2165,7 +2207,10 @@ def find_gap_segment_in_line(
 
 		if idx < len(values):
 			depth_mm = values[idx]
-			is_gap = depth_mm is not None and depth_mm <= GAP_DEPTH_THRESHOLD_MM
+			is_gap = is_hole_interior_depth(
+				depth_mm,
+				wall_depth_mm=wall_depth_mm,
+			)
 
 		if is_gap is True and start_idx is None:
 			start_idx = idx
@@ -2498,10 +2543,16 @@ def detect_gap_cells(
 		return 0.0, [], []
 
 	wall_depth_mm = estimate_wall_depth_mm(scan_result.depth_rows)
+	filled_hole_mask = positive_mask & (
+		depth_array >= wall_depth_mm + FILLED_HOLE_MIN_DEPTH_DELTA_MM
+	)
 	wall_mask = positive_mask & (
 		np.abs(depth_array - wall_depth_mm) <= scan_config.wall_depth_tolerance_mm
+	) & (~filled_hole_mask)
+	gap_mask = valid_mask & (
+		(depth_array <= GAP_DEPTH_THRESHOLD_MM) |
+		filled_hole_mask
 	)
-	gap_mask = valid_mask & (depth_array <= GAP_DEPTH_THRESHOLD_MM)
 	components = find_components(gap_mask)
 	min_vertical_rows = max(1, int(np.ceil(scan_config.min_vertical_wall_coverage_mm / step_mm)))
 	min_horizontal_cols = max(1, int(np.ceil(scan_config.min_horizontal_wall_coverage_mm / step_mm)))
@@ -2613,6 +2664,7 @@ async def capture_cross_scan(
 	step_mm: float,
 	settle_ms: int,
 	samples_per_point: int,
+	wall_depth_mm: float,
 	scan_config: Any,
 	progress_prefix: str,
 	on_update: Optional[Callable[[GridScanResult, str, float], None]] = None,
@@ -2660,6 +2712,7 @@ async def capture_cross_scan(
 			progress_prefix=f"{progress_prefix}_h{probe_idx}",
 			settle_ms=settle_ms,
 			samples_per_point=samples_per_point,
+			wall_depth_mm=wall_depth_mm,
 			on_update=on_update,
 		)
 
@@ -2684,6 +2737,7 @@ async def capture_cross_scan(
 		progress_prefix=f"{progress_prefix}_v1",
 		settle_ms=settle_ms,
 		samples_per_point=samples_per_point,
+		wall_depth_mm=wall_depth_mm,
 		on_update=on_update,
 	)
 
@@ -2703,6 +2757,7 @@ async def capture_cross_scan(
 		progress_prefix=f"{progress_prefix}_h_final",
 		settle_ms=settle_ms,
 		samples_per_point=samples_per_point,
+		wall_depth_mm=wall_depth_mm,
 		on_update=on_update,
 	)
 
@@ -3054,6 +3109,7 @@ async def run_staged_scan(
 				step_mm=fine_step_mm,
 				settle_ms=settle_ms,
 				samples_per_point=samples_per_point,
+				wall_depth_mm=wall_depth_mm,
 				scan_config=scan_config,
 				progress_prefix=f"fine_{candidate_idx}",
 				on_update=didUpdateFineScan,
