@@ -45,6 +45,7 @@ COARSE_SCAN_STEP_MM = 4.0
 SHELF_SCOUT_STEP_MM = 0.5
 SHELF_SCOUT_X_OFFSETS_MM = [0.0]
 SHELF_SWEEP_X_STEP_MM = 4.0
+SHELF_SWEEP_MIN_CANDIDATE_WIDTH_MM = 20.0
 SHELF_EDGE_CONFIRMATION_COUNT = 3
 SHELF_BRIM_MIN_HEIGHT_MM = 8.0
 SHELF_BRIM_MAX_HEIGHT_MM = 14.0
@@ -1558,6 +1559,10 @@ def find_gap_segments_in_line(
 		start_mm = positions[start_idx] - (step_mm / 2.0)
 		end_mm = positions[end_idx] + (step_mm / 2.0)
 		width_mm = float(end_mm - start_mm)
+
+		if width_mm < SHELF_SWEEP_MIN_CANDIDATE_WIDTH_MM:
+			start_idx = None
+			continue
 
 		if dimensions_match(
 			width_mm,
