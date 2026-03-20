@@ -13,6 +13,8 @@ def _mock_motor(position: float = 100.0):
 	motor = AsyncMock()
 	motor.get_position = AsyncMock(return_value=position)
 	motor.move_to_position = AsyncMock()
+	motor.clear_alarm = AsyncMock()
+	motor.home = AsyncMock()
 	return motor
 
 
@@ -22,6 +24,12 @@ def _mock_worker(motors: dict[str, AsyncMock] | None = None):
 		"io": ["door"],
 		"tool": ["x_axis", "y_axis", "z_axis", "stage", "rotate"],
 	})
+	worker.clear_needs_home_axes = MagicMock()
+	worker.needs_home = MagicMock(return_value=False)
+	worker.needs_home_axes = MagicMock(return_value=[])
+	worker.needs_home_reason = MagicMock(return_value=None)
+	worker.clear_needs_home = MagicMock()
+	worker.get_status_snapshot = AsyncMock(return_value={})
 
 	if motors is None:
 		motors = {
@@ -35,6 +43,8 @@ def _mock_worker(motors: dict[str, AsyncMock] | None = None):
 
 	robot = MagicMock()
 	robot._get_motor_by_name = MagicMock(side_effect=lambda name: motors.get(name))
+	robot._tool = MagicMock()
+	robot._tool.ensure_safe_rotation_stage_extension = AsyncMock()
 	worker._robot = robot
 
 	return worker
@@ -171,3 +181,51 @@ async def test_move_motor_robot_disabled(client: AsyncClient) -> None:
 		)
 
 	assert response.status_code == 503
+
+
+@pytest.mark.anyio
+async def test_move_rotate_motor_extends_stage_before_rotation(client: AsyncClient) -> None:
+	rotate_motor = _mock_motor(0.0)
+	motors = {
+		"door": _mock_motor(50.0),
+		"x_axis": _mock_motor(100.0),
+		"y_axis": _mock_motor(200.0),
+		"z_axis": _mock_motor(150.0),
+		"stage": _mock_motor(75.0),
+		"rotate": rotate_motor,
+	}
+	mock_worker = _mock_worker(motors)
+
+	with patch("perpetual_os1_server.routers.robot.get_settings", return_value=_mock_settings()):
+		with patch("perpetual_os1_server.routers.robot.get_robot_worker", return_value=mock_worker):
+			response = await client.post(
+				"/api/robot/debug/motors/rotate/move",
+				json={"position_mm": 42.0},
+			)
+
+	assert response.status_code == 200
+	mock_worker._robot._tool.ensure_safe_rotation_stage_extension.assert_awaited_once()
+	rotate_motor.move_to_position.assert_awaited_once_with(42.0)
+
+
+@pytest.mark.anyio
+async def test_home_rotate_motor_extends_stage_before_rotation(client: AsyncClient) -> None:
+	rotate_motor = _mock_motor(0.0)
+	motors = {
+		"door": _mock_motor(50.0),
+		"x_axis": _mock_motor(100.0),
+		"y_axis": _mock_motor(200.0),
+		"z_axis": _mock_motor(150.0),
+		"stage": _mock_motor(75.0),
+		"rotate": rotate_motor,
+	}
+	mock_worker = _mock_worker(motors)
+
+	with patch("perpetual_os1_server.routers.robot.get_settings", return_value=_mock_settings()):
+		with patch("perpetual_os1_server.routers.robot.get_robot_worker", return_value=mock_worker):
+			response = await client.post("/api/robot/debug/motors/rotate/home")
+
+	assert response.status_code == 200
+	mock_worker._robot._tool.ensure_safe_rotation_stage_extension.assert_awaited_once()
+	rotate_motor.clear_alarm.assert_awaited_once()
+	rotate_motor.home.assert_awaited_once()

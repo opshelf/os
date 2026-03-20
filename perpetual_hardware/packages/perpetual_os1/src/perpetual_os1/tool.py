@@ -76,6 +76,7 @@ SHELF_SCAN_TIMEOUT = 300.0
 GRID_UPDATE_TIMEOUT_PER_SHELF = 60.0
 GANTRY_OUTER_TIMEOUT = 120.0
 TOOL_OUTER_TIMEOUT = 60.0
+ROTATION_SAFE_STAGE_EXTENSION_MM = 8.5
 
 class Tool:
     def __init__(
@@ -226,6 +227,7 @@ class Tool:
             if self._mg is not None:
                 await self._mg.home()
             if self._mr is not None:
+                await self.ensure_safe_rotation_stage_extension()
                 await self._mr.home()
             if self._mx is not None:
                 await self._mx.home()
@@ -237,6 +239,27 @@ class Tool:
         except Exception as e:
             await self._handle_fault(e)
             raise MotorError(f"Failed to home tool: {str(e)}") from e
+
+    async def ensure_safe_rotation_stage_extension(self) -> None:
+        if self._ms is None:
+            return
+
+        is_enabled = getattr(self._ms._params, "rotation_safe_stage_extension_enabled", False)
+        if is_enabled is not True:
+            return
+
+        stage_limit = self._ms._params.lim
+        if ROTATION_SAFE_STAGE_EXTENSION_MM > stage_limit:
+            raise ConfigError(
+                "ROTATION_SAFE_STAGE_EXTENSION_MM exceeds stage limit "
+                f"({ROTATION_SAFE_STAGE_EXTENSION_MM} > {stage_limit})"
+            )
+
+        position = await self._ms.get_position()
+        if position >= ROTATION_SAFE_STAGE_EXTENSION_MM:
+            return
+
+        await self._ms.move_to_position(ROTATION_SAFE_STAGE_EXTENSION_MM)
 
     async def clear_alarms(self) -> None:
         """
@@ -448,6 +471,7 @@ class Tool:
             if _nested is False:
                 self._mstatus = ToolMotionStatus.MOVING
                 self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+            await self.ensure_safe_rotation_stage_extension()
             await self._mr.move_to_position(target_angle)
             if _nested is False:
                 self._mstatus = ToolMotionStatus.IDLE

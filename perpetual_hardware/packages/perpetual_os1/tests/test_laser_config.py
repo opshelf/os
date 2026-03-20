@@ -79,6 +79,26 @@ def test_laser_defaults_to_disabled():
     assert config.robot.tool.laser.distance_scale_mm == pytest.approx(0.01)
 
 
+def test_motor_rotation_safety_flag_defaults_to_disabled():
+    data = copy.deepcopy(MINIMAL_CONFIG_DICT)
+    data["robot"]["tool"]["motors"] = [{
+        "motor_name": "stage",
+        "motor_id": 1,
+        "Ip": 1,
+        "rpm": 1,
+        "dr": 0,
+        "mpr": 1,
+        "accel": 1,
+        "ret_rpm": 1,
+        "lim": 10,
+    }]
+    config = RootConfig.model_validate(data)
+
+    stage_motor = config.robot.tool.motors.by_name("stage")
+
+    assert stage_motor.rotation_safe_stage_extension_enabled is False
+
+
 def test_assert_config_requires_laser_bus_when_laser_enabled():
     data = copy.deepcopy(MINIMAL_CONFIG_DICT)
     data["robot"]["tool"]["laser"] = {"enabled": True}
