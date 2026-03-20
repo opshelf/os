@@ -227,8 +227,10 @@ class Tool:
             if self._mg is not None:
                 await self._mg.home()
             if self._mr is not None:
-                await self.ensure_safe_rotation_stage_extension()
+                did_extend_stage = await self.ensure_safe_rotation_stage_extension()
                 await self._mr.home()
+                if did_extend_stage is True and self._ms is not None:
+                    await self._ms.home()
             if self._mx is not None:
                 await self._mx.home()
             if self._my is not None:
@@ -240,13 +242,13 @@ class Tool:
             await self._handle_fault(e)
             raise MotorError(f"Failed to home tool: {str(e)}") from e
 
-    async def ensure_safe_rotation_stage_extension(self) -> None:
+    async def ensure_safe_rotation_stage_extension(self) -> bool:
         if self._ms is None:
-            return
+            return False
 
         is_enabled = getattr(self._ms._params, "rotation_safe_stage_extension_enabled", False)
         if is_enabled is not True:
-            return
+            return False
 
         stage_limit = self._ms._params.lim
         if ROTATION_SAFE_STAGE_EXTENSION_MM > stage_limit:
@@ -257,9 +259,10 @@ class Tool:
 
         position = await self._ms.get_position()
         if position >= ROTATION_SAFE_STAGE_EXTENSION_MM:
-            return
+            return False
 
         await self._ms.move_to_position(ROTATION_SAFE_STAGE_EXTENSION_MM)
+        return True
 
     async def clear_alarms(self) -> None:
         """
