@@ -60,6 +60,8 @@ GAP_DEPTH_THRESHOLD_MM = 0.01
 FILLED_HOLE_MIN_DEPTH_DELTA_MM = 0.9
 FINE_SCAN_MARGIN_X_MM = 10.0
 FINE_SCAN_MARGIN_Y_MM = 6.0
+FINE_OPPOSITE_EDGE_MARGIN_MM = 5.0
+FINE_OPPOSITE_EDGE_BACKTRACK_MM = 8.0
 COARSE_WALL_SEARCH_STEPS = 2
 CURRENT_SCAN_LOG_PATH: Optional[Path] = None
 
@@ -2079,6 +2081,7 @@ async def probe_line_from_center(
 	settle_ms: int,
 	samples_per_point: int,
 	wall_depth_mm: float,
+	expected_span_mm: float,
 	on_update: Optional[Callable[[GridScanResult, str, float], None]] = None,
 ) -> Optional[LineGapSegment]:
 	left_gap_idx: Optional[int] = None
@@ -2153,7 +2156,35 @@ async def probe_line_from_center(
 			left_wall_found = True
 			break
 
-	for position_idx in range(center_idx + 1, len(positions)):
+	right_search_start_idx = center_idx + 1
+
+	if left_wall_found is True:
+		expected_right_start_mm = positions[left_gap_idx] + max(
+			expected_span_mm - FINE_OPPOSITE_EDGE_MARGIN_MM,
+			step_mm,
+		)
+		estimated_right_idx = find_nearest_position_index(positions, expected_right_start_mm)
+		backtrack_steps = max(1, int(np.ceil(FINE_OPPOSITE_EDGE_BACKTRACK_MM / step_mm)))
+		search_floor_idx = max(center_idx + 1, estimated_right_idx - backtrack_steps)
+		found_estimated_interior_idx: Optional[int] = None
+
+		for position_idx in range(estimated_right_idx, search_floor_idx - 1, -1):
+			depth_mm = await didSample(position_idx)
+
+			if is_hole_interior_depth(
+				depth_mm,
+				wall_depth_mm=wall_depth_mm,
+			) is False:
+				continue
+
+			found_estimated_interior_idx = position_idx
+			right_gap_idx = position_idx
+			break
+
+		if found_estimated_interior_idx is not None:
+			right_search_start_idx = found_estimated_interior_idx + 1
+
+	for position_idx in range(right_search_start_idx, len(positions)):
 		depth_mm = await didSample(position_idx)
 
 		if is_hole_interior_depth(
@@ -2713,6 +2744,7 @@ async def capture_cross_scan(
 			settle_ms=settle_ms,
 			samples_per_point=samples_per_point,
 			wall_depth_mm=wall_depth_mm,
+			expected_span_mm=scan_config.expected_hole_width_mm,
 			on_update=on_update,
 		)
 
@@ -2738,6 +2770,7 @@ async def capture_cross_scan(
 		settle_ms=settle_ms,
 		samples_per_point=samples_per_point,
 		wall_depth_mm=wall_depth_mm,
+		expected_span_mm=scan_config.expected_hole_height_mm,
 		on_update=on_update,
 	)
 
@@ -2758,6 +2791,7 @@ async def capture_cross_scan(
 		settle_ms=settle_ms,
 		samples_per_point=samples_per_point,
 		wall_depth_mm=wall_depth_mm,
+		expected_span_mm=scan_config.expected_hole_width_mm,
 		on_update=on_update,
 	)
 
