@@ -50,7 +50,7 @@ SHELF_BRIM_MIN_HEIGHT_MM = 8.0
 SHELF_BRIM_MAX_HEIGHT_MM = 14.0
 SHELF_MIN_SPACING_MM = 40.0
 SHELF_EDGE_TOP_MARGIN_MM = 5.0
-SHELF_HOLE_SWEEP_OFFSETS_MM = [24.0, 34.0]
+SHELF_HOLE_SWEEP_OFFSETS_MM = [32.25]
 COARSE_EMPTY_ROW_SKIP_MM = 50.0
 COARSE_EMPTY_ROW_STREAK = 2
 COARSE_CANDIDATE_SKIP_MM = 50.0
@@ -1247,7 +1247,7 @@ async def capture_shelf_candidates(
 
 	for shelf_idx, shelf_edge in enumerate(filtered_shelf_edges, start=1):
 		for offset_idx, offset_mm in enumerate(SHELF_HOLE_SWEEP_OFFSETS_MM, start=1):
-			sweep_y_mm = shelf_edge.y_mm - offset_mm
+			sweep_y_mm = shelf_edge.y_mm + offset_mm
 
 			if sweep_y_mm < bounds.y_min or sweep_y_mm > bounds.y_max:
 				continue
