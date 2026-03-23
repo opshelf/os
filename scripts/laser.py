@@ -42,8 +42,9 @@ from perpetual_os1.storage import StorageGrid, StorageModuleSide
 LASER_SCAN_STAGE_EXTENSION_MM = 13.0
 LASER_SCAN_Z_OFFSET_MM = 10.0
 COARSE_SCAN_STEP_MM = 4.0
-SHELF_SCOUT_STEP_MM = 0.5
+SHELF_SCOUT_STEP_MM = 2.0
 SHELF_SCOUT_X_OFFSETS_MM = [0.0]
+RIGHT_MODULE_ROTATION_SAFE_X_MM = 475.0
 SHELF_SWEEP_X_STEP_MM = 4.0
 SHELF_SWEEP_MIN_CANDIDATE_WIDTH_MM = 20.0
 SHELF_EDGE_CONFIRMATION_COUNT = 3
@@ -59,7 +60,7 @@ COARSE_CANDIDATE_SKIP_MM = 50.0
 COARSE_EMPTY_X_SKIP_MM = 32.0
 COARSE_EMPTY_X_TRIGGER_COUNT = 4
 GAP_DEPTH_THRESHOLD_MM = 0.01
-FILLED_HOLE_MIN_DEPTH_DELTA_MM = 0.9
+FILLED_HOLE_MIN_DEPTH_DELTA_MM = 0.4
 FINE_SCAN_MARGIN_X_MM = 10.0
 FINE_SCAN_MARGIN_Y_MM = 6.0
 FINE_OPPOSITE_EDGE_MARGIN_MM = 5.0
@@ -805,6 +806,8 @@ async def enter_scan_mode(tool: Any, side: StorageModuleSide) -> None:
 	z_extension_mm = await get_laser_scan_z_extension_mm(tool)
 	z_move_rpm = await tool.get_param("Z_MOVE_RPM")
 	z_move_accel = await tool.get_param("Z_MOVE_ACCEL")
+	rotation_front = await tool.get_param("ROTATION_FRONT")
+	rotation_back = await tool.get_param("ROTATION_BACK")
 
 	if z_move_rpm is None or z_move_accel is None:
 		raise ValueError("Z_MOVE_RPM and Z_MOVE_ACCEL parameters are required for laser scan")
@@ -815,12 +818,32 @@ async def enter_scan_mode(tool: Any, side: StorageModuleSide) -> None:
 		f"scan_setup=module:{side.value} "
 		f"scan_position:({scan_x_mm:.2f},{scan_y_mm:.2f}) "
 		f"stage_extension_mm:{stage_extension_mm:.2f} "
-		f"z_extension_mm:{z_extension_mm:.2f}"
+		f"z_extension_mm:{z_extension_mm:.2f} "
+		f"rotation_front:{rotation_front} "
+		f"rotation_back:{rotation_back}"
 	)
 
 	await tool.retract()
-	await tool.move(AxisCoordinate(x=scan_x_mm, y=scan_y_mm, s=side_number))
-	await tool.rotate_to_position(target_position)
+
+	if side == StorageModuleSide.RIGHT:
+		await tool.move(
+			AxisCoordinate(x=RIGHT_MODULE_ROTATION_SAFE_X_MM, y=scan_y_mm, s=side_number)
+		)
+
+		rotation_before = await tool._mr.get_position()
+		print_status(f"rotation_before={rotation_before}")
+		await tool.rotate_to_position(target_position)
+		rotation_after = await tool._mr.get_position()
+		print_status(f"rotation_after={rotation_after}")
+		await tool.move(AxisCoordinate(x=scan_x_mm, y=scan_y_mm, s=side_number))
+	else:
+		await tool.move(AxisCoordinate(x=scan_x_mm, y=scan_y_mm, s=side_number))
+
+		rotation_before = await tool._mr.get_position()
+		print_status(f"rotation_before={rotation_before}")
+		await tool.rotate_to_position(target_position)
+		rotation_after = await tool._mr.get_position()
+		print_status(f"rotation_after={rotation_after}")
 	await tool._ms.ready()
 	await tool._ms.move_to_position(stage_extension_mm)
 	await tool._mg.move_to_position(z_extension_mm, rpm=z_move_rpm, accel=z_move_accel)
@@ -1219,6 +1242,7 @@ async def capture_shelf_candidates(
 	else:
 		for scout_idx, scout_x_mm in enumerate(scout_x_positions, start=1):
 			print_status(f"phase=shelf-scout scout={scout_idx}/{len(scout_x_positions)} x={scout_x_mm:.2f}")
+
 			scout_depth_values, scout_edges = await scan_shelf_scout_line(
 				tool,
 				x_mm=scout_x_mm,
