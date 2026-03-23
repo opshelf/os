@@ -519,12 +519,26 @@ def start() -> None:
 	import os
 
 	reload_enabled = os.environ.get("UVICORN_RELOAD", "false").lower() == "true"
+	reload_dirs = None
+	reload_includes = None
+	reload_excludes = None
+
+	if reload_enabled is True:
+		reload_dirs = [
+			"/app/perpetual_hardware/packages/hardware/src/hardware",
+			"/app/perpetual_hardware/packages/perpetual_os1/src/perpetual_os1",
+			"/app/perpetual_hardware/packages/perpetual_os1_server/src/perpetual_os1_server",
+		]
+		reload_includes = ["*.py"]
+		reload_excludes = ["*.json", "*.db", "*.db-shm", "*.db-wal"]
 
 	uvicorn.run(
 		"perpetual_os1_server.main:app",
 		host="0.0.0.0",
 		port=8000,
 		reload=reload_enabled,
-		reload_excludes=["*.json", "*.db", "*.db-shm", "*.db-wal"] if reload_enabled else None,
+		reload_dirs=reload_dirs,
+		reload_includes=reload_includes,
+		reload_excludes=reload_excludes,
 		log_config=log_config,
 	)
