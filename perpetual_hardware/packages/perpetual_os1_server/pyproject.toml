@@ -10,6 +10,7 @@ dependencies = [
     "fastapi>=0.115.6",
     "nats-py>=2.9.0",
     "pydantic>=2.10.0",
+    "jinja2>=3.1.0",
     "perpetual_os1",
     "uvicorn>=0.32.1",
     "pyserial-asyncio>=0.6",
