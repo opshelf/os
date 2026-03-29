@@ -31,6 +31,11 @@ class CameraConnectionError(CameraError):
     """Camera connection or initialization failed."""
     pass
 
+
+class CameraNotPresentError(CameraConnectionError):
+    """Optional camera hardware was not detected."""
+    pass
+
 class CameraConfigError(CameraError):
     """Camera configuration error."""
     pass

@@ -9,9 +9,12 @@ import structlog
 from structlog.typing import WrappedLogger
 from pythonjsonlogger.json import JsonFormatter
 
+from perpetual_os1.device import get_device_id
+
 correlation_id_var: ContextVar[str | None] = ContextVar("correlation_id", default=None)
 device_id_var: ContextVar[str | None] = ContextVar("device_id", default=None)
 user_id_var: ContextVar[int | None] = ContextVar("user_id", default=None)
+default_device_id = get_device_id()
 
 
 class CustomJsonFormatter(JsonFormatter):
@@ -26,7 +29,7 @@ class CustomJsonFormatter(JsonFormatter):
 		super().add_fields(log_record, record, message_dict)
 		log_record['service'] = 'api-server'
 		log_record['environment'] = os.getenv('DEPLOYMENT_ENVIRONMENT', 'development')
-		log_record['device_id'] = os.getenv('DEVICE_ID', 'unknown')
+		log_record['device_id'] = default_device_id
 
 		correlation_id = correlation_id_var.get()
 		if correlation_id is not None:
@@ -55,7 +58,7 @@ def add_context_to_event_dict(
 	if device_id is not None:
 		event_dict['device_id'] = device_id
 	else:
-		event_dict['device_id'] = os.getenv('DEVICE_ID', 'unknown')
+		event_dict['device_id'] = default_device_id
 
 	user_id = user_id_var.get()
 	if user_id is not None:

@@ -16,12 +16,15 @@ services:
     network_mode: "host"
     volumes:
       - /etc/cups:/etc/cups:ro
+      - /etc/opshelf:/etc/opshelf:ro
       - ./perpetual_hardware/data:/app/perpetual_hardware/data
     depends_on:
       - nats
     environment:
       - ENV=${ENV:-dev}
       - OPERATING_MODE=${OPERATING_MODE:-development}
+      - DEPLOYMENT_ENVIRONMENT=${DEPLOYMENT_ENVIRONMENT:-development}
+      - DEVICE_ID=${DEVICE_ID:-}
       - PERPETUAL_BARCODE_PORT=/dev/ttyACM0
       - PERPETUAL_BARCODE_BAUDRATE=115200
       - JWT_SECRET=${JWT_SECRET:-INSECURE_JWT_SECRET}

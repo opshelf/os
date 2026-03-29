@@ -19,11 +19,30 @@ else:
 
 from hardware import iocam_helpers as ih
 from hardware.exceptions import (
-    CameraError, CameraConnectionError, CameraConfigError,
+    CameraError, CameraConnectionError, CameraConfigError, CameraNotPresentError,
     ImageError, ImageProcessingError, TOFError, TOFConfigError, TOFDataError
 )
 
 # ============================ Linux /dev/ helper ============================
+
+
+def _resolve_innomaker_device(output: str) -> int:
+    lines = output.splitlines()
+
+    for i, line in enumerate(lines):
+        if "Innomaker-U20CAM-1080p-S1" not in line:
+            continue
+
+        if i + 1 >= len(lines):
+            break
+
+        match = re.search(r"/dev/video(\d+)", lines[i + 1])
+        if match is not None:
+            return int(match.group(1))
+
+        raise CameraConnectionError("Failed to parse Innomaker camera device path.")
+
+    raise CameraNotPresentError("Innomaker U20CAM not found in v4l2-ctl output.")
 
 
 def _find_innomaker_device() -> int:
@@ -35,17 +54,12 @@ def _find_innomaker_device() -> int:
             text=True,
             check=True,
         )
-        lines = result.stdout.splitlines()
-        for i, line in enumerate(lines):
-            if "Innomaker-U20CAM-1080p-S1" in line:
-                # The next line usually contains /dev/videoX
-                if i + 1 < len(lines):
-                    match = re.search(r"/dev/video(\d+)", lines[i + 1])
-                    if match:
-                        return int(match.group(1))
-        raise RuntimeError("Innomaker U20CAM not found in v4l2-ctl output.")
-    except Exception as e:
-        raise RuntimeError(f"Failed to detect Innomaker camera: {e}")
+    except FileNotFoundError as e:
+        raise CameraConnectionError("v4l2-ctl is not installed.") from e
+    except subprocess.CalledProcessError as e:
+        raise CameraConnectionError(f"Failed to run v4l2-ctl: {e}") from e
+
+    return _resolve_innomaker_device(result.stdout)
 
 # ============================ Async Sizer Class ============================
 
@@ -192,7 +206,7 @@ class AFSCam:
 
         except Exception as e:
             self._cleanup_usb()
-            if not isinstance(e, (CameraConnectionError, CameraConfigError)):
+            if not isinstance(e, (CameraConnectionError, CameraConfigError, CameraNotPresentError)):
                 raise CameraError(f"USB camera initialization failed: {e}") from e
             raise
                 

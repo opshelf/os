@@ -1,6 +1,7 @@
 import pytest
 import asyncio
 import numpy as np
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 from hardware.motor import Motor, MotorStatus, Servo
 
@@ -67,3 +68,51 @@ async def test_motor_status_reading(mock_controller):
     status = await motor._read_status()
     assert status == MotorStatus.IDLE
     mock_controller.read_holding_registers.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_motor_returns_last_good_position_when_garbage_persists(mock_controller):
+    params = SimpleNamespace(
+        motor_id=1,
+        position_reg_high=0x602C,
+        position_reg_low=0x602D,
+        ppr=1,
+        mpr=1,
+        lim=10,
+        physical_to_logical=lambda physical: physical,
+    )
+    motor = Motor(mock_controller, params)
+    motor._cur_pos = 7.5
+    motor._logger = Mock()
+
+    mock_controller.read_holding_registers.side_effect = [100, 0, 100, 0]
+
+    position = await motor.get_position()
+
+    assert position == 7.5
+    motor._logger.warning.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_motor_throttles_repeated_garbage_position_logs(mock_controller):
+    params = SimpleNamespace(
+        motor_id=1,
+        position_reg_high=0x602C,
+        position_reg_low=0x602D,
+        ppr=1,
+        mpr=1,
+        lim=10,
+        physical_to_logical=lambda physical: physical,
+    )
+    motor = Motor(mock_controller, params)
+    motor._cur_pos = 7.5
+    motor._logger = Mock()
+
+    mock_controller.read_holding_registers.side_effect = [100, 0, 100, 0, 100, 0, 100, 0]
+
+    first = await motor.get_position()
+    second = await motor.get_position()
+
+    assert first == 7.5
+    assert second == 7.5
+    motor._logger.warning.assert_called_once()
