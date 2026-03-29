@@ -1,8 +1,8 @@
 import pytest
 import numpy as np
 import cv2
-from hardware.exceptions import TOFError
-from hardware.iocam import AFSCam
+from hardware.exceptions import CameraConnectionError, CameraNotPresentError, TOFError
+from hardware.iocam import AFSCam, _resolve_innomaker_device
 from unittest.mock import Mock, patch, AsyncMock
 
 @pytest.mark.asyncio
@@ -87,3 +87,21 @@ async def test_afscam_error_handling(sample_tof_params, sample_usb_params):
         # Test start should raise exception
         with pytest.raises(TOFError):
             await cam.start()
+
+
+def test_resolve_innomaker_device_returns_index():
+    output = """Innomaker-U20CAM-1080p-S1\n\t/dev/video4\n"""
+
+    assert _resolve_innomaker_device(output) == 4
+
+
+def test_resolve_innomaker_device_raises_when_missing():
+    with pytest.raises(CameraNotPresentError):
+        _resolve_innomaker_device("USB Camera\n\t/dev/video0\n")
+
+
+def test_resolve_innomaker_device_raises_when_path_missing():
+    output = """Innomaker-U20CAM-1080p-S1\n\t/dev/media0\n"""
+
+    with pytest.raises(CameraConnectionError):
+        _resolve_innomaker_device(output)
