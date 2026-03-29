@@ -168,7 +168,6 @@ class USBPrinter:
     # ) -> str:
     #     """Generate a random UPC-A code and print it."""
     #     upca = generate_random_upca()
-    #     # print(upca)
     #     self.print_barcode(
     #         sym="UPC-A",
     #         payload=upca,

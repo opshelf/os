@@ -25,6 +25,3 @@ def pair_coordinates(raw_coordinates: Tuple[List[float], List[float]]) -> List[T
 
 sl_pairs: List[Tuple[float, float]] = list((pair_coordinates(sl)))
 sr_pairs: List[Tuple[float, float]] = list((pair_coordinates(sr)))
-
-print(sl_pairs)
-print(sr_pairs)

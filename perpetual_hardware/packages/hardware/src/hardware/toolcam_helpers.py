@@ -183,13 +183,11 @@ def get_undistortion(pattern_size: Tuple[int, int] = (14,7), square_size: float 
             try:
                 img = cv2.imread(str(fn), cv2.IMREAD_GRAYSCALE)
                 if img is None:
-                    print(f"Skip unreadable: {fn}")
                     continue
 
                 if image_size is None:
                     image_size = (int(img.shape[1]), int(img.shape[0]))
                 elif image_size != (img.shape[1], img.shape[0]):
-                    print(f"Skip {fn}: inconsistent image size {img.shape[::-1]}")
                     continue
 
                 ok, corners = cv2.findChessboardCorners(
@@ -203,12 +201,10 @@ def get_undistortion(pattern_size: Tuple[int, int] = (14,7), square_size: float 
                     corners = cv2.cornerSubPix(img, corners, (11,11), (-1,-1), criteria)
                     obj_points_3D.append(objp.copy())
                     img_points_2D.append(corners.astype(np.float32))
-                except Exception as e:
-                    print(f"Skip {fn}: corner refinement failed: {str(e)}")
+                except Exception:
                     continue
                     
-            except Exception as e:
-                print(f"Skip {fn}: processing failed: {str(e)}")
+            except Exception:
                 continue
 
         if not obj_points_3D or image_size is None:

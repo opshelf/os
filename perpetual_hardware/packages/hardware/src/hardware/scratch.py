@@ -87,7 +87,6 @@
 # 	# Print summary
 # 	total_left = sum(len(s) for s in left_module)
 # 	total_right = sum(len(s) for s in right_module)
-# 	print(f"Wrote {out_path}: left_cells={total_left}, right_cells={total_right}")
 
 
 # if __name__ == "__main__":
@@ -151,7 +150,6 @@
 # 			json.dump(storage, f, indent=2)
 
 # 		total_cells = sum(len(s["cells"]) for s in storage["left_module"])
-# 		print(f"Wrote storage.json with {len(storage['left_module'])} shelves and {total_cells} total cells to {out_file}")
 
 # 	convert_schema_to_storage()
 
@@ -186,12 +184,9 @@ def grab_snapshot(rtsp_url: str, out_path: str = "snapshot.jpg", warmup_frames: 
     if not cv2.imwrite(out_path, frame):
         raise RuntimeError(f"Failed to write image to {out_path}")
 
-    print(f"Saved snapshot to {out_path}")
-
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python grab_snapshot.py rtsp://user:pass@CAM_IP:554/stream1 [output.jpg]")
-        sys.exit(1)
+        raise SystemExit("Usage: python grab_snapshot.py rtsp://user:pass@CAM_IP:554/stream1 [output.jpg]")
     url = sys.argv[1]
     out = sys.argv[2] if len(sys.argv) > 2 else "snapshot.jpg"
     grab_snapshot(url, out)
