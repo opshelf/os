@@ -58,4 +58,49 @@ else
 	echo "Printer queue not configured or lpadmin missing; printing may fail"
 fi
 
-cd /app/perpetual_hardware && exec uv run start
+build_supplementary_groups() {
+	group_ids=""
+
+	for group_id in "${OPSHELF_DIALOUT_GID:-}" "${OPSHELF_VIDEO_GID:-}" "${OPSHELF_INPUT_GID:-}" "${OPSHELF_RENDER_GID:-}"; do
+		if [ -z "$group_id" ]; then
+			continue
+		fi
+
+		if [ -z "$group_ids" ]; then
+			group_ids="$group_id"
+		else
+			group_ids="$group_ids,$group_id"
+		fi
+	done
+
+	printf '%s\n' "$group_ids"
+}
+
+start_api() {
+	if [ "$(id -u)" != "0" ] || [ -z "${OPSHELF_UID:-}" ] || [ -z "${OPSHELF_GID:-}" ]; then
+		cd /app/perpetual_hardware && exec uv run start
+	fi
+
+	SUPPLEMENTARY_GROUPS="$(build_supplementary_groups)"
+	export HOME=/tmp
+	export USER=opshelf
+	export LOGNAME=opshelf
+
+	cd /app/perpetual_hardware
+
+	exec python3 - "$OPSHELF_UID" "$OPSHELF_GID" "$SUPPLEMENTARY_GROUPS" <<'PY'
+import os
+import sys
+
+uid = int(sys.argv[1])
+gid = int(sys.argv[2])
+groups = [int(value) for value in sys.argv[3].split(",") if value != ""]
+
+os.setgroups(groups)
+os.setgid(gid)
+os.setuid(uid)
+os.execvp("uv", ["uv", "run", "start"])
+PY
+}
+
+start_api

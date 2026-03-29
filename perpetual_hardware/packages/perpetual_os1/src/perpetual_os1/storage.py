@@ -469,8 +469,6 @@ class StorageGrid(BaseModel):
         Returns:
             AxisCoordinate if item is found, None otherwise
         """
-        print("finding")
-            
         # # If we have a specific cell location, use that directly
         if cell_location:
             cal_coord = self.get_cell_coordinate(cell_location)

@@ -33,6 +33,12 @@ services:
       - SENTRY_DSN_API=${SENTRY_DSN_API:-}
       - SENTRY_DSN_HARDWARE=${SENTRY_DSN_HARDWARE:-}
       - SENTRY_ENVIRONMENT=${SENTRY_ENVIRONMENT:-development}
+      - OPSHELF_UID=${OPSHELF_UID:-}
+      - OPSHELF_GID=${OPSHELF_GID:-}
+      - OPSHELF_DIALOUT_GID=${OPSHELF_DIALOUT_GID:-}
+      - OPSHELF_VIDEO_GID=${OPSHELF_VIDEO_GID:-}
+      - OPSHELF_INPUT_GID=${OPSHELF_INPUT_GID:-}
+      - OPSHELF_RENDER_GID=${OPSHELF_RENDER_GID:-}
     healthcheck:
       test: ["CMD", "curl", "-fsS", "--max-time", "5", "http://localhost:8000/api/health"]
       interval: 15s

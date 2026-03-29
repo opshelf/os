@@ -1,3 +1,4 @@
+import logging
 import numpy as np
 import cv2
 import time
@@ -5,6 +6,8 @@ from pathlib import Path
 
 MIN_AREA = 200          # reject tiny blobs (px^2)
 ASPECT_TOL = 0.75       # allow ±20% from perfect square (w≈h)
+
+logger = logging.getLogger(__name__)
 
 def try_find_board(gray, sizes):
     """
@@ -74,13 +77,11 @@ def get_undistortion(pattern_size=(14,7), square_size=10):
     for fn in get_image_files():
         img = cv2.imread(str(fn), cv2.IMREAD_GRAYSCALE)
         if img is None:
-            print(f"Skip unreadable: {fn}")
             continue
 
         if image_size is None:
             image_size = (img.shape[1], img.shape[0])    # (w,h)
         elif image_size != (img.shape[1], img.shape[0]):
-            print(f"Skip {fn}: inconsistent image size {img.shape[::-1]}")
             continue
 
         ok, corners = cv2.findChessboardCorners(
@@ -228,7 +229,9 @@ class Camera:
 
         ok, frame = self.cap.read()
         if not ok or frame is None:
-            print("camera fail")
+
+            logger.warning("Failed to read frame from camera")
+
             if self.cap is not None:
                 self.cap.release()
                 self.cap = None
@@ -292,8 +295,6 @@ class Camera:
 
         undist = cv2.remap(img, self.map1, self.map2, interpolation=cv2.INTER_LINEAR)
 
-        # print("undist")
-
         # Scale H if current size != reference size used to compute H
         w0, h0 = self.H_ref_size
         if self.H is None:
@@ -320,7 +321,6 @@ class Camera:
             plane_H_mm=self.board_H_mm,
             px_per_mm=10
         )
-        # print("saving")
         # cv2.imwrite("rectified.jpg", rectified)
 
         return rectified
