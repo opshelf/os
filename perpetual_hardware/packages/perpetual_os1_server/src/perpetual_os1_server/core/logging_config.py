@@ -70,6 +70,21 @@ def add_context_to_event_dict(
 	return event_dict
 
 
+def render_to_log_kwargs_preserve_event(
+	logger: WrappedLogger,
+	method_name: str,
+	event_dict: MutableMapping[str, Any]
+) -> Mapping[str, Any]:
+	event = event_dict.get("event")
+	log_kwargs = structlog.stdlib.render_to_log_kwargs(logger, method_name, event_dict)
+	extra = log_kwargs.get("extra")
+
+	if isinstance(extra, dict) is True and event is not None and "event" not in extra:
+		extra["event"] = event
+
+	return log_kwargs
+
+
 def configure_logging() -> None:
 	"""Configure structured logging for the application."""
 	log_level = os.getenv('LOG_LEVEL', 'DEBUG').upper()
@@ -102,7 +117,7 @@ def configure_logging() -> None:
 			structlog.processors.format_exc_info,
 			structlog.processors.UnicodeDecoder(),
 			add_context_to_event_dict,
-			structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+			render_to_log_kwargs_preserve_event,
 		],
 		logger_factory=structlog.stdlib.LoggerFactory(),
 		wrapper_class=structlog.stdlib.BoundLogger,
