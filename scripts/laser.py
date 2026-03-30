@@ -54,11 +54,6 @@ SHELF_MIN_SPACING_MM = 40.0
 SHELF_EDGE_TOP_MARGIN_MM = 5.0
 SHELF_HOLE_SWEEP_OFFSETS_MM = [32.25]
 SHELF_SCOUT_POST_EDGE_SKIP_MM = 80.0
-COARSE_EMPTY_ROW_SKIP_MM = 50.0
-COARSE_EMPTY_ROW_STREAK = 2
-COARSE_CANDIDATE_SKIP_MM = 50.0
-COARSE_EMPTY_X_SKIP_MM = 32.0
-COARSE_EMPTY_X_TRIGGER_COUNT = 4
 GAP_DEPTH_THRESHOLD_MM = 0.01
 FILLED_HOLE_MIN_DEPTH_DELTA_MM = 0.4
 FINE_SCAN_MARGIN_X_MM = 10.0
@@ -74,13 +69,6 @@ class GridScanResult:
 	x_positions: list[float]
 	y_positions: list[float]
 	depth_rows: list[list[float | None]]
-
-
-@dataclass
-class RowGapSegment:
-	x_min: float
-	x_max: float
-	y_mm: float
 
 
 @dataclass
@@ -106,15 +94,6 @@ class LineGapSegment:
 	end_mm: float
 	width_mm: float
 	center_mm: float
-
-
-@dataclass
-class CoarseRowSkipConfig:
-	skip_column_count: int
-	min_candidate_width_mm: float
-	max_candidate_width_mm: float
-	empty_skip_column_count: int
-	empty_trigger_count: int
 
 
 @dataclass
@@ -875,315 +854,6 @@ async def sample_laser_depth(
 	return sample_values[len(sample_values) // 2]
 
 
-async def scan_row(
-	tool: Any,
-	*,
-	x_positions: list[float],
-	y_position: float,
-	row_idx: int,
-	settle_ms: int,
-	samples_per_point: int,
-	progress_label: str,
-	progress_every: int = 25,
-	coarse_skip_config: Optional[CoarseRowSkipConfig] = None,
-) -> list[float | None]:
-	row_values: list[float | None] = [None] * len(x_positions)
-	column_indices = list(range(len(x_positions)))
-
-	if row_idx % 2 == 1:
-		column_indices = list(range(len(x_positions) - 1, -1, -1))
-
-	row_start_idx = column_indices[0]
-	row_start_x = x_positions[row_start_idx]
-	await tool._my.move_to_position_no_wait(y_position)
-	await tool._mx.move_to_position_no_wait(row_start_x)
-	await tool.gantry_wait()
-	position_idx = 0
-	sampled_count = 0
-	gap_start_column_idx: Optional[int] = None
-	gap_start_position_idx: Optional[int] = None
-	had_left_wall = False
-	has_seen_positive_depth = False
-	leading_gap_count = 0
-	is_in_empty_fast_mode = False
-
-	while position_idx < len(column_indices):
-		column_idx = column_indices[position_idx]
-		x_position = x_positions[column_idx]
-		next_position_idx = position_idx + 1
-		empty_skip_reason: Optional[str] = None
-
-		if position_idx > 0:
-			await tool._mx.move_to_position_no_wait(x_position)
-			await tool.gantry_wait()
-
-		row_values[column_idx] = await sample_laser_depth(
-			tool,
-			settle_ms=settle_ms,
-			samples_per_point=samples_per_point,
-		)
-		sampled_count += 1
-
-		depth_mm = row_values[column_idx]
-
-		if coarse_skip_config is not None:
-			if has_seen_positive_depth is False:
-				if is_gap_depth(depth_mm) is True:
-					leading_gap_count += 1
-				elif is_positive_depth(depth_mm) is True:
-					has_seen_positive_depth = True
-					leading_gap_count = 0
-					is_in_empty_fast_mode = False
-				else:
-					leading_gap_count = 0
-					is_in_empty_fast_mode = False
-
-				if (
-					has_seen_positive_depth is False and
-					leading_gap_count >= coarse_skip_config.empty_trigger_count and
-					coarse_skip_config.empty_skip_column_count > 0
-				):
-					is_in_empty_fast_mode = True
-					empty_skip_reason = f"count={leading_gap_count}"
-			else:
-				if (
-					is_gap_depth(depth_mm) is True and
-					gap_start_column_idx is not None and
-					coarse_skip_config.empty_skip_column_count > 0
-				):
-					gap_width_mm = abs(x_positions[column_idx] - x_positions[gap_start_column_idx]) + COARSE_SCAN_STEP_MM
-
-					if gap_width_mm > coarse_skip_config.max_candidate_width_mm:
-						is_in_empty_fast_mode = True
-						empty_skip_reason = f"width={gap_width_mm:.2f}"
-
-				if is_in_empty_fast_mode is True and is_gap_depth(depth_mm) is True:
-					skip_start_idx = position_idx + 1
-					skip_end_idx = min(
-						len(column_indices) - 1,
-						position_idx + coarse_skip_config.empty_skip_column_count,
-					)
-
-					if skip_end_idx >= skip_start_idx:
-						skip_from_x = x_positions[column_indices[skip_start_idx]]
-						skip_to_x = x_positions[column_indices[skip_end_idx]]
-						print_status(
-							f"{progress_label}_empty_skip "
-							f"x=({min(skip_from_x, skip_to_x):.2f},{max(skip_from_x, skip_to_x):.2f}) "
-							f"{empty_skip_reason or ''}".strip()
-						)
-						next_position_idx = skip_end_idx + 1
-
-			if is_positive_depth(depth_mm) is True:
-				if gap_start_column_idx is not None and gap_start_position_idx is not None:
-					width_mm = abs(x_positions[column_idx] - x_positions[gap_start_column_idx]) + COARSE_SCAN_STEP_MM
-
-					if (
-						had_left_wall is True and
-						width_mm >= coarse_skip_config.min_candidate_width_mm and
-						width_mm <= coarse_skip_config.max_candidate_width_mm
-					):
-						skip_start_idx = position_idx + 1
-						skip_end_idx = min(
-							len(column_indices) - 1,
-							position_idx + coarse_skip_config.skip_column_count,
-						)
-
-						if skip_end_idx >= skip_start_idx:
-							skip_from_x = x_positions[column_indices[skip_start_idx]]
-							skip_to_x = x_positions[column_indices[skip_end_idx]]
-							print_status(
-								f"{progress_label}_skip "
-								f"x=({min(skip_from_x, skip_to_x):.2f},{max(skip_from_x, skip_to_x):.2f}) "
-								f"width={width_mm:.2f}"
-							)
-							next_position_idx = skip_end_idx + 1
-
-					gap_start_column_idx = None
-					gap_start_position_idx = None
-
-				had_left_wall = True
-				is_in_empty_fast_mode = False
-			elif is_gap_depth(depth_mm) is True:
-				if had_left_wall is True and gap_start_column_idx is None:
-					gap_start_column_idx = column_idx
-					gap_start_position_idx = position_idx
-			else:
-				gap_start_column_idx = None
-				gap_start_position_idx = None
-				had_left_wall = False
-				is_in_empty_fast_mode = False
-
-		if sampled_count % progress_every == 0 or position_idx + 1 == len(column_indices):
-			print_status(
-				f"{progress_label}={sampled_count}/{len(column_indices)} "
-				f"x={x_position:.2f} "
-				f"y={y_position:.2f} "
-				f"depth={depth_to_label(row_values[column_idx])}"
-			)
-
-		position_idx = next_position_idx
-
-	return row_values
-
-
-async def scan_grid(
-	tool: Any,
-	*,
-	bounds: ScanBounds,
-	step_mm: float,
-	settle_ms: int,
-	samples_per_point: int,
-	progress_prefix: str,
-	existing_scan: Optional[GridScanResult] = None,
-	on_row_complete: Optional[Callable[[GridScanResult, int, float], None]] = None,
-) -> GridScanResult:
-	x_positions = build_axis_positions(bounds.x_min, bounds.x_max, step_mm)
-	y_positions = build_axis_positions(bounds.y_min, bounds.y_max, step_mm)
-	depth_rows: list[list[float | None]] = []
-	start_row_idx = 0
-
-	if existing_scan is not None:
-		if existing_scan.x_positions != x_positions:
-			raise ValueError("Saved fine scan x positions do not match current bounds")
-
-		if y_positions[:len(existing_scan.y_positions)] != existing_scan.y_positions:
-			raise ValueError("Saved fine scan y positions do not match current bounds")
-
-		depth_rows = [list(row) for row in existing_scan.depth_rows]
-		start_row_idx = len(existing_scan.y_positions)
-
-	for row_idx in range(start_row_idx, len(y_positions)):
-		y_position = y_positions[row_idx]
-		row_values = await scan_row(
-			tool,
-			x_positions=x_positions,
-			y_position=y_position,
-			row_idx=row_idx,
-			settle_ms=settle_ms,
-			samples_per_point=samples_per_point,
-			progress_label=f"{progress_prefix}_row_{row_idx + 1}",
-		)
-		depth_rows.append(row_values)
-
-		if on_row_complete is not None:
-			on_row_complete(
-				GridScanResult(
-					x_positions=x_positions,
-					y_positions=y_positions[: row_idx + 1],
-					depth_rows=[list(row) for row in depth_rows],
-				),
-				row_idx,
-				y_position,
-			)
-
-	return GridScanResult(
-		x_positions=x_positions,
-		y_positions=y_positions,
-		depth_rows=depth_rows,
-	)
-
-
-async def capture_coarse_scan(
-	tool: Any,
-	*,
-	bounds: ScanBounds,
-	settle_ms: int,
-	samples_per_point: int,
-	empty_row_skip_mm: float,
-	coarse_skip_config: Optional[CoarseRowSkipConfig],
-	existing_scan: Optional[GridScanResult] = None,
-	on_row_complete: Optional[Callable[[GridScanResult, int, float], None]] = None,
-) -> GridScanResult:
-	x_positions = build_axis_positions(bounds.x_min, bounds.x_max, COARSE_SCAN_STEP_MM)
-	y_positions: list[float] = []
-	depth_rows: list[list[float | None]] = []
-	empty_row_streak = 0
-	current_y = bounds.y_min
-	row_idx = 0
-
-	if existing_scan is not None:
-		if existing_scan.x_positions != x_positions:
-			raise ValueError("Saved coarse scan x positions do not match current bounds")
-
-		y_positions = list(existing_scan.y_positions)
-		depth_rows = [list(row) for row in existing_scan.depth_rows]
-		row_idx = len(y_positions)
-
-		for row_values in depth_rows:
-			row_has_positive_depth = any(is_positive_depth(depth_mm) is True for depth_mm in row_values)
-
-			if row_has_positive_depth is True:
-				empty_row_streak = 0
-				continue
-
-			empty_row_streak += 1
-
-		if len(y_positions) > 0:
-			last_y_position = y_positions[-1]
-			next_step_y_mm = COARSE_SCAN_STEP_MM
-
-			if empty_row_streak >= COARSE_EMPTY_ROW_STREAK:
-				next_step_y_mm = empty_row_skip_mm
-
-			current_y = last_y_position + next_step_y_mm
-
-	while True:
-		y_position = round(min(current_y, bounds.y_max), 4)
-
-		if len(y_positions) > 0 and y_position == y_positions[-1]:
-			break
-
-		row_values = await scan_row(
-			tool,
-			x_positions=x_positions,
-			y_position=y_position,
-			row_idx=row_idx,
-			settle_ms=settle_ms,
-			samples_per_point=samples_per_point,
-			progress_label=f"coarse_row_{row_idx + 1}",
-			coarse_skip_config=coarse_skip_config,
-		)
-
-		y_positions.append(y_position)
-		depth_rows.append(row_values)
-
-		if on_row_complete is not None:
-			on_row_complete(
-				GridScanResult(
-					x_positions=x_positions,
-					y_positions=list(y_positions),
-					depth_rows=[list(row) for row in depth_rows],
-				),
-				row_idx,
-				y_position,
-			)
-
-		row_has_positive_depth = any(is_positive_depth(depth_mm) is True for depth_mm in row_values)
-
-		if row_has_positive_depth is True:
-			empty_row_streak = 0
-		else:
-			empty_row_streak += 1
-
-		if y_position >= bounds.y_max:
-			break
-
-		step_y_mm = COARSE_SCAN_STEP_MM
-
-		if empty_row_streak >= COARSE_EMPTY_ROW_STREAK:
-			step_y_mm = empty_row_skip_mm
-
-		current_y = y_position + step_y_mm
-		row_idx += 1
-
-	return GridScanResult(
-		x_positions=x_positions,
-		y_positions=y_positions,
-		depth_rows=depth_rows,
-	)
-
-
 def build_shelf_scout_x_positions(
 	*,
 	bounds: ScanBounds,
@@ -1388,132 +1058,6 @@ def has_wall_nearby(
 	return False
 
 
-def get_coarse_candidate_width_limits(
-	*,
-	expected_hole_width_mm: float,
-	hole_width_tolerance_mm: float,
-) -> tuple[float, float]:
-	min_candidate_width_mm = max(
-		COARSE_SCAN_STEP_MM * 2.0,
-		expected_hole_width_mm - max(hole_width_tolerance_mm / 2.0, COARSE_SCAN_STEP_MM / 2.0),
-	)
-	max_candidate_width_mm = expected_hole_width_mm + hole_width_tolerance_mm + (COARSE_SCAN_STEP_MM * 2.0)
-
-	return min_candidate_width_mm, max_candidate_width_mm
-
-
-def get_coarse_candidate_height_limits(
-	*,
-	expected_hole_height_mm: float,
-	hole_height_tolerance_mm: float,
-) -> tuple[float, float]:
-	min_candidate_height_mm = max(
-		COARSE_SCAN_STEP_MM * 2.0,
-		expected_hole_height_mm * 0.5,
-	)
-	max_candidate_height_mm = expected_hole_height_mm + hole_height_tolerance_mm + COARSE_SCAN_STEP_MM
-
-	return min_candidate_height_mm, max_candidate_height_mm
-
-
-def build_coarse_row_skip_config(
-	*,
-	scan_config: Any,
-) -> Optional[CoarseRowSkipConfig]:
-	skip_column_count = int(COARSE_CANDIDATE_SKIP_MM // COARSE_SCAN_STEP_MM)
-	empty_skip_column_count = int(COARSE_EMPTY_X_SKIP_MM // COARSE_SCAN_STEP_MM)
-
-	if skip_column_count <= 0 and empty_skip_column_count <= 0:
-		return None
-
-	min_candidate_width_mm, max_candidate_width_mm = get_coarse_candidate_width_limits(
-		expected_hole_width_mm=scan_config.expected_hole_width_mm,
-		hole_width_tolerance_mm=scan_config.hole_width_tolerance_mm,
-	)
-
-	return CoarseRowSkipConfig(
-		skip_column_count=skip_column_count,
-		min_candidate_width_mm=min_candidate_width_mm,
-		max_candidate_width_mm=max_candidate_width_mm,
-		empty_skip_column_count=empty_skip_column_count,
-		empty_trigger_count=COARSE_EMPTY_X_TRIGGER_COUNT,
-	)
-
-
-def detect_shelf_surface_edges(
-	*,
-	x_mm: float,
-	y_positions: list[float],
-	depth_values: list[float | None],
-) -> list[ShelfSurfaceEdge]:
-	edges: list[ShelfSurfaceEdge] = []
-	run_start_idx: Optional[int] = None
-
-	for position_idx, depth_mm in enumerate(depth_values):
-		if is_positive_depth(depth_mm) is True:
-			if run_start_idx is None:
-				run_start_idx = position_idx
-			continue
-
-		if run_start_idx is None:
-			continue
-
-		run_length = position_idx - run_start_idx
-		run_end_idx = position_idx - 1
-		band_height_mm = abs(y_positions[run_end_idx] - y_positions[run_start_idx]) + SHELF_SCOUT_STEP_MM
-		is_bounded_band = run_start_idx > 0
-
-		if (
-			run_length >= SHELF_EDGE_CONFIRMATION_COUNT and
-			is_bounded_band is True and
-			band_height_mm >= SHELF_BRIM_MIN_HEIGHT_MM and
-			band_height_mm <= SHELF_BRIM_MAX_HEIGHT_MM
-		):
-			center_y_mm = float((y_positions[run_start_idx] + y_positions[run_end_idx]) / 2.0)
-			edges.append(
-				ShelfSurfaceEdge(
-					x_mm=x_mm,
-					y_mm=center_y_mm,
-				)
-			)
-
-		run_start_idx = None
-
-	if run_start_idx is not None:
-		run_length = len(depth_values) - run_start_idx
-		run_end_idx = len(depth_values) - 1
-		band_height_mm = abs(y_positions[run_end_idx] - y_positions[run_start_idx]) + SHELF_SCOUT_STEP_MM
-		is_bounded_band = run_start_idx > 0 and run_end_idx < len(depth_values) - 1
-
-		if (
-			run_length >= SHELF_EDGE_CONFIRMATION_COUNT and
-			is_bounded_band is True and
-			band_height_mm >= SHELF_BRIM_MIN_HEIGHT_MM and
-			band_height_mm <= SHELF_BRIM_MAX_HEIGHT_MM
-		):
-			center_y_mm = float((y_positions[run_start_idx] + y_positions[run_end_idx]) / 2.0)
-			edges.append(
-				ShelfSurfaceEdge(
-					x_mm=x_mm,
-					y_mm=center_y_mm,
-				)
-			)
-
-	filtered_edges: list[ShelfSurfaceEdge] = []
-
-	for edge in edges:
-		if len(filtered_edges) == 0:
-			filtered_edges.append(edge)
-			continue
-
-		if abs(filtered_edges[-1].y_mm - edge.y_mm) < SHELF_MIN_SPACING_MM:
-			continue
-
-		filtered_edges.append(edge)
-
-	return filtered_edges
-
-
 def build_detected_shelves_from_edges(
 	*,
 	edges: list[ShelfSurfaceEdge],
@@ -1666,180 +1210,6 @@ def dedupe_candidate_regions(
 	return deduped_candidates
 
 
-def find_row_gap_segments(
-	*,
-	row_values: list[float | None],
-	x_positions: list[float],
-	y_mm: float,
-	wall_depth_mm: float,
-	wall_tolerance_mm: float,
-	expected_hole_width_mm: float,
-	hole_width_tolerance_mm: float,
-) -> list[RowGapSegment]:
-	segments: list[RowGapSegment] = []
-	start_idx: Optional[int] = None
-
-	min_candidate_width_mm, max_candidate_width_mm = get_coarse_candidate_width_limits(
-		expected_hole_width_mm=expected_hole_width_mm,
-		hole_width_tolerance_mm=hole_width_tolerance_mm,
-	)
-
-	for column_idx, depth_mm in enumerate(row_values):
-		if is_hole_interior_depth(
-			depth_mm,
-			wall_depth_mm=wall_depth_mm,
-		) is True:
-			if start_idx is None:
-				start_idx = column_idx
-			continue
-
-		if start_idx is None:
-			continue
-
-		end_idx = column_idx - 1
-		left_has_wall = has_wall_nearby(
-			row_values,
-			wall_depth_mm=wall_depth_mm,
-			tolerance_mm=wall_tolerance_mm,
-			start_idx=start_idx - 1,
-			direction=-1,
-		)
-		right_has_wall = has_wall_nearby(
-			row_values,
-			wall_depth_mm=wall_depth_mm,
-			tolerance_mm=wall_tolerance_mm,
-			start_idx=end_idx + 1,
-			direction=1,
-		)
-		width_mm = abs(x_positions[end_idx] - x_positions[start_idx]) + COARSE_SCAN_STEP_MM
-
-		if (
-			left_has_wall is True and
-			right_has_wall is True and
-			width_mm >= min_candidate_width_mm and
-			width_mm <= max_candidate_width_mm
-		):
-			segments.append(
-				RowGapSegment(
-					x_min=min(x_positions[start_idx], x_positions[end_idx]),
-					x_max=max(x_positions[start_idx], x_positions[end_idx]),
-					y_mm=y_mm,
-				)
-			)
-
-		start_idx = None
-
-	return segments
-
-
-def merge_candidate_segments(
-	segments: list[RowGapSegment],
-	*,
-	expected_hole_width_mm: float,
-	expected_hole_height_mm: float,
-	hole_width_tolerance_mm: float,
-	hole_height_tolerance_mm: float,
-) -> list[GapCandidateRegion]:
-	regions: list[GapCandidateRegion] = []
-
-	for segment in sorted(segments, key=lambda current: (current.y_mm, current.x_min)):
-		matched_region: Optional[GapCandidateRegion] = None
-
-		for region in regions:
-			if segment.y_mm > region.y_max + (COARSE_SCAN_STEP_MM * 1.5):
-				continue
-			if segment.x_min > region.x_max + COARSE_SCAN_STEP_MM:
-				continue
-			if segment.x_max < region.x_min - COARSE_SCAN_STEP_MM:
-				continue
-
-			matched_region = region
-			break
-
-		if matched_region is None:
-			regions.append(
-				GapCandidateRegion(
-					x_min=segment.x_min,
-					x_max=segment.x_max,
-					y_min=segment.y_mm,
-					y_max=segment.y_mm,
-				)
-			)
-			continue
-
-		matched_region.x_min = min(matched_region.x_min, segment.x_min)
-		matched_region.x_max = max(matched_region.x_max, segment.x_max)
-		matched_region.y_min = min(matched_region.y_min, segment.y_mm)
-		matched_region.y_max = max(matched_region.y_max, segment.y_mm)
-		matched_region.row_count += 1
-
-	filtered_regions: list[GapCandidateRegion] = []
-
-	min_width_mm, max_width_mm = get_coarse_candidate_width_limits(
-		expected_hole_width_mm=expected_hole_width_mm,
-		hole_width_tolerance_mm=hole_width_tolerance_mm,
-	)
-
-	min_height_mm, max_height_mm = get_coarse_candidate_height_limits(
-		expected_hole_height_mm=expected_hole_height_mm,
-		hole_height_tolerance_mm=hole_height_tolerance_mm,
-	)
-
-	for region in regions:
-		width_mm = abs(region.x_max - region.x_min) + COARSE_SCAN_STEP_MM
-		height_mm = abs(region.y_max - region.y_min) + COARSE_SCAN_STEP_MM
-
-		if width_mm < min_width_mm:
-			continue
-		if width_mm > max_width_mm:
-			continue
-		if height_mm < min_height_mm:
-			continue
-		if height_mm > max_height_mm:
-			continue
-		if region.row_count < 2:
-			continue
-
-		filtered_regions.append(region)
-
-	return filtered_regions
-
-
-def detect_coarse_candidates(
-	scan_result: GridScanResult,
-	*,
-	scan_config: Any,
-) -> tuple[float, list[GapCandidateRegion]]:
-	try:
-		wall_depth_mm = estimate_wall_depth_mm(scan_result.depth_rows)
-	except ValueError:
-		return 0.0, []
-
-	segments: list[RowGapSegment] = []
-
-	for row_values, y_position in zip(scan_result.depth_rows, scan_result.y_positions, strict=True):
-		row_segments = find_row_gap_segments(
-			row_values=row_values,
-			x_positions=scan_result.x_positions,
-			y_mm=y_position,
-			wall_depth_mm=wall_depth_mm,
-			wall_tolerance_mm=scan_config.wall_depth_tolerance_mm,
-			expected_hole_width_mm=scan_config.expected_hole_width_mm,
-			hole_width_tolerance_mm=scan_config.hole_width_tolerance_mm,
-		)
-		segments.extend(row_segments)
-
-	candidates = merge_candidate_segments(
-		segments,
-		expected_hole_width_mm=scan_config.expected_hole_width_mm,
-		expected_hole_height_mm=scan_config.expected_hole_height_mm,
-		hole_width_tolerance_mm=scan_config.hole_width_tolerance_mm,
-		hole_height_tolerance_mm=scan_config.hole_height_tolerance_mm,
-	)
-
-	return wall_depth_mm, candidates
-
-
 def build_fine_scan_bounds(
 	region: GapCandidateRegion,
 	*,
@@ -1901,33 +1271,6 @@ def find_nearest_position_index(
 	)
 
 
-def merge_horizontal_line_scan(
-	base_scan: GridScanResult,
-	line_scan: GridScanResult,
-) -> int:
-	if len(line_scan.y_positions) != 1:
-		raise ValueError("Horizontal line scan must contain exactly one y position")
-
-	row_idx = find_nearest_position_index(base_scan.y_positions, line_scan.y_positions[0])
-	base_scan.depth_rows[row_idx] = list(line_scan.depth_rows[0])
-	return row_idx
-
-
-def merge_vertical_line_scan(
-	base_scan: GridScanResult,
-	line_scan: GridScanResult,
-) -> int:
-	if len(line_scan.x_positions) != 1:
-		raise ValueError("Vertical line scan must contain exactly one x position")
-
-	col_idx = find_nearest_position_index(base_scan.x_positions, line_scan.x_positions[0])
-
-	for row_idx, row_values in enumerate(line_scan.depth_rows):
-		base_scan.depth_rows[row_idx][col_idx] = row_values[0]
-
-	return col_idx
-
-
 def set_scan_point(
 	base_scan: GridScanResult,
 	*,
@@ -1939,32 +1282,6 @@ def set_scan_point(
 	row_idx = find_nearest_position_index(base_scan.y_positions, y_mm)
 	base_scan.depth_rows[row_idx][col_idx] = depth_mm
 	return row_idx, col_idx
-
-
-def build_horizontal_line_bounds(
-	*,
-	bounds: ScanBounds,
-	y_mm: float,
-) -> ScanBounds:
-	return ScanBounds(
-		x_min=bounds.x_min,
-		x_max=bounds.x_max,
-		y_min=y_mm,
-		y_max=y_mm,
-	)
-
-
-def build_vertical_line_bounds(
-	*,
-	bounds: ScanBounds,
-	x_mm: float,
-) -> ScanBounds:
-	return ScanBounds(
-		x_min=x_mm,
-		x_max=x_mm,
-		y_min=bounds.y_min,
-		y_max=bounds.y_max,
-	)
 
 
 def estimate_wall_depth_from_line(
@@ -2010,7 +1327,6 @@ async def scan_line_positions(
 	samples_per_point: int,
 	progress_label: str,
 	progress_every: int = 25,
-	on_sample: Optional[Callable[[float, float | None], None]] = None,
 ) -> list[float | None]:
 	if len(positions) == 0:
 		return []
@@ -2044,9 +1360,6 @@ async def scan_line_positions(
 		)
 		depth_values.append(depth_mm)
 
-		if on_sample is not None:
-			on_sample(position_mm, depth_mm)
-
 		if (position_idx + 1) % progress_every != 0 and position_idx + 1 != len(positions):
 			continue
 
@@ -2076,7 +1389,6 @@ async def scan_shelf_scout_line(
 	samples_per_point: int,
 	progress_label: str,
 	progress_every: int = 25,
-	on_sample: Optional[Callable[[float, float | None], None]] = None,
 ) -> tuple[list[float | None], list[ShelfSurfaceEdge]]:
 	if len(y_positions) == 0:
 		return [], []
@@ -2106,9 +1418,6 @@ async def scan_shelf_scout_line(
 		)
 		depth_values[position_idx] = depth_mm
 		sampled_count += 1
-
-		if on_sample is not None:
-			on_sample(y_mm, depth_mm)
 
 		if sampled_count % progress_every == 0 or position_idx + 1 == len(y_positions):
 			print_status(
@@ -2357,97 +1666,6 @@ async def probe_line_from_center(
 	)
 
 
-def find_gap_segment_in_line(
-	*,
-	values: list[float | None],
-	positions: list[float],
-	step_mm: float,
-	target_center_mm: float,
-	expected_mm: float,
-	tolerance_mm: float,
-	wall_depth_mm: float,
-	wall_tolerance_mm: float,
-) -> Optional[LineGapSegment]:
-	best_segment: Optional[LineGapSegment] = None
-	best_score: Optional[float] = None
-	start_idx: Optional[int] = None
-
-	for idx in range(len(values) + 1):
-		is_gap = False
-
-		if idx < len(values):
-			depth_mm = values[idx]
-			is_gap = is_hole_interior_depth(
-				depth_mm,
-				wall_depth_mm=wall_depth_mm,
-			)
-
-		if is_gap is True and start_idx is None:
-			start_idx = idx
-			continue
-
-		if is_gap is True or start_idx is None:
-			continue
-
-		end_idx = idx - 1
-		left_idx = start_idx - 1
-		right_idx = end_idx + 1
-		start_mm = positions[start_idx] - (step_mm / 2.0)
-		end_mm = positions[end_idx] + (step_mm / 2.0)
-		width_mm = float(end_mm - start_mm)
-
-		if left_idx < 0 or right_idx >= len(values):
-			start_idx = None
-			continue
-
-		if dimensions_match(
-			width_mm,
-			expected_mm=expected_mm,
-			tolerance_mm=tolerance_mm + step_mm,
-		) is False:
-			start_idx = None
-			continue
-
-		if has_wall_nearby(
-			values,
-			wall_depth_mm=wall_depth_mm,
-			tolerance_mm=wall_tolerance_mm,
-			start_idx=left_idx,
-			direction=-1,
-		) is False:
-			start_idx = None
-			continue
-
-		if has_wall_nearby(
-			values,
-			wall_depth_mm=wall_depth_mm,
-			tolerance_mm=wall_tolerance_mm,
-			start_idx=right_idx,
-			direction=1,
-		) is False:
-			start_idx = None
-			continue
-
-		center_mm = float((start_mm + end_mm) / 2.0)
-		score = abs(center_mm - target_center_mm) + abs(width_mm - expected_mm)
-		segment = LineGapSegment(
-			start_idx=start_idx,
-			end_idx=end_idx,
-			start_mm=start_mm,
-			end_mm=end_mm,
-			width_mm=width_mm,
-			center_mm=center_mm,
-		)
-
-		if best_score is None or score < best_score:
-			best_score = score
-			best_segment = segment
-
-		start_idx = None
-
-	return best_segment
-
-
 def build_detected_cell_from_segments(
 	*,
 	x_segment: LineGapSegment,
@@ -2498,13 +1716,6 @@ def get_coarse_settle_ms(fine_settle_ms: int) -> int:
 
 def get_coarse_samples_per_point(fine_samples_per_point: int) -> int:
 	return 1
-
-
-def get_coarse_empty_row_skip_mm(scan_config: Any) -> float:
-	return min(
-		COARSE_EMPTY_ROW_SKIP_MM,
-		max(scan_config.expected_hole_height_mm - COARSE_SCAN_STEP_MM, COARSE_SCAN_STEP_MM),
-	)
 
 
 def get_fine_settle_ms(config_settle_ms: int) -> int:
@@ -3082,7 +2293,6 @@ async def run_staged_scan(
 	shelf_edges: list[ShelfSurfaceEdge] = []
 	wall_depth_mm = 0.0
 	metadata: dict[str, Any] = {}
-	progress_document: dict[str, Any] = {}
 	fine_entries: list[dict[str, Any]] = []
 	fine_scan_results: list[tuple[ScanBounds, GridScanResult, list[ScanDetectedCell]]] = []
 	all_detected_cells: list[ScanDetectedCell] = []
@@ -3106,9 +2316,6 @@ async def run_staged_scan(
 		wall_depth_mm = float(metadata.get("wall_depth_mm", 0.0))
 		fine_entries = list(metadata.get("fine_scans", []))
 		scan_started_at = metadata.get("scan_started_at")
-
-	if recorder.progress_path.exists() is True:
-		progress_document = load_json_file(recorder.progress_path)
 
 	if recorder.coarse_depth_path.exists() is True:
 		coarse_scan = load_partial_grid_scan(
@@ -3211,10 +2418,6 @@ async def run_staged_scan(
 				f"completed_candidates={len(fine_scan_results)}"
 			)
 
-		progress_phase = progress_document.get("phase")
-		progress_payload = progress_document.get("progress", {})
-		resume_candidate_idx = int(progress_payload.get("candidate_idx", 0))
-
 		for candidate_idx, candidate in enumerate(candidates, start=1):
 			if candidate_idx <= len(fine_entries):
 				existing_fine_entry = fine_entries[candidate_idx - 1]
@@ -3248,7 +2451,6 @@ async def run_staged_scan(
 				"x_positions": existing_fine_entry.get("x_positions", []),
 				"y_positions": existing_fine_entry.get("y_positions", []),
 				"detected_cells": existing_fine_entry.get("detected_cells", []),
-				"abort_reason": existing_fine_entry.get("abort_reason"),
 			}
 
 			def didUpdateFineScan(
@@ -3274,7 +2476,6 @@ async def run_staged_scan(
 				fine_entries[candidate_idx - 1]["x_positions"] = partial_scan.x_positions
 				fine_entries[candidate_idx - 1]["y_positions"] = partial_scan.y_positions
 
-			fine_abort_reason: Optional[str] = None
 			fine_scan, detected_cells = await capture_cross_scan(
 				tool,
 				candidate=candidate,
@@ -3295,13 +2496,12 @@ async def run_staged_scan(
 			all_detected_cells.extend(detected_cells)
 			fine_entries[candidate_idx - 1] = {
 				"candidate_index": candidate_idx - 1,
-				"status": "aborted" if fine_abort_reason is not None else "completed",
+				"status": "completed",
 				"bounds": fine_bounds.model_dump(),
 				"raw_scan_path": str(fine_path),
 				"x_positions": fine_scan.x_positions,
 				"y_positions": fine_scan.y_positions,
 				"detected_cells": [cell.model_dump() for cell in detected_cells],
-				"abort_reason": fine_abort_reason,
 			}
 			persist_staged_metadata(
 				recorder=recorder,
