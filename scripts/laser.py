@@ -62,6 +62,9 @@ FINE_OPPOSITE_EDGE_MARGIN_MM = 5.0
 FINE_OPPOSITE_EDGE_BACKTRACK_MM = 8.0
 COARSE_WALL_SEARCH_STEPS = 2
 CURRENT_SCAN_LOG_PATH: Optional[Path] = None
+DEFAULT_Z_REFERENCE_BY_SIDE: dict[StorageModuleSide, tuple[int, int, float, float]] = {
+	StorageModuleSide.LEFT: (12, 0, 15.0, 8.504),
+}
 
 
 @dataclass
@@ -78,6 +81,8 @@ class GapCandidateRegion:
 	y_min: float
 	y_max: float
 	row_count: int = 1
+	wall_depth_mm: float | None = None
+	wall_sample_count: int = 0
 
 
 @dataclass
@@ -540,6 +545,12 @@ def load_candidates_from_metadata(metadata: dict[str, Any]) -> list[GapCandidate
 			y_min=float(entry["y_min"]),
 			y_max=float(entry["y_max"]),
 			row_count=int(entry.get("row_count", 1)),
+			wall_depth_mm=(
+				float(entry["wall_depth_mm"])
+				if entry.get("wall_depth_mm") is not None
+				else None
+			),
+			wall_sample_count=int(entry.get("wall_sample_count", 0)),
 		)
 		for entry in metadata.get("candidates", [])
 	]
@@ -658,6 +669,8 @@ def persist_staged_metadata(
 				"y_min": candidate.y_min,
 				"y_max": candidate.y_max,
 				"row_count": candidate.row_count,
+				"wall_depth_mm": candidate.wall_depth_mm,
+				"wall_sample_count": candidate.wall_sample_count,
 			}
 			for candidate in candidates
 		],
@@ -1016,12 +1029,21 @@ async def capture_shelf_candidates(
 				)
 
 			for segment in gap_segments:
+				local_wall_depth_mm, local_wall_sample_count = estimate_local_wall_depth_for_segment(
+					values=sweep_depth_values,
+					segment=segment,
+					wall_depth_mm=wall_depth_mm,
+					tolerance_mm=scan_config.wall_depth_tolerance_mm,
+				)
+
 				candidates.append(
 					GapCandidateRegion(
 						x_min=segment.start_mm + (SHELF_SWEEP_X_STEP_MM / 2.0),
 						x_max=segment.end_mm - (SHELF_SWEEP_X_STEP_MM / 2.0),
 						y_min=sweep_y_mm,
 						y_max=sweep_y_mm,
+						wall_depth_mm=local_wall_depth_mm,
+						wall_sample_count=local_wall_sample_count,
 					)
 				)
 
@@ -1077,6 +1099,47 @@ def build_detected_shelves_from_edges(
 		)
 
 	return shelves
+
+
+def estimate_local_wall_depth_for_segment(
+	*,
+	values: list[float | None],
+	segment: LineGapSegment,
+	wall_depth_mm: float,
+	tolerance_mm: float,
+) -> tuple[float | None, int]:
+	wall_values: list[float] = []
+	left_limit_idx = max(0, segment.start_idx - COARSE_WALL_SEARCH_STEPS)
+	right_limit_idx = min(len(values) - 1, segment.end_idx + COARSE_WALL_SEARCH_STEPS)
+
+	for idx in range(segment.start_idx - 1, left_limit_idx - 1, -1):
+		depth_mm = values[idx]
+
+		if is_wall_like_depth(
+			depth_mm,
+			wall_depth_mm=wall_depth_mm,
+			tolerance_mm=tolerance_mm,
+		) is False:
+			continue
+
+		wall_values.append(float(depth_mm))
+
+	for idx in range(segment.end_idx + 1, right_limit_idx + 1):
+		depth_mm = values[idx]
+
+		if is_wall_like_depth(
+			depth_mm,
+			wall_depth_mm=wall_depth_mm,
+			tolerance_mm=tolerance_mm,
+		) is False:
+			continue
+
+		wall_values.append(float(depth_mm))
+
+	if len(wall_values) == 0:
+		return None, 0
+
+	return float(np.median(np.array(wall_values, dtype=np.float32))), len(wall_values)
 
 
 def find_gap_segments_in_line(
@@ -1206,6 +1269,21 @@ def dedupe_candidate_regions(
 		matched_candidate.y_min = min(matched_candidate.y_min, candidate.y_min)
 		matched_candidate.y_max = max(matched_candidate.y_max, candidate.y_max)
 		matched_candidate.row_count += candidate.row_count
+
+		if candidate.wall_depth_mm is None or candidate.wall_sample_count <= 0:
+			continue
+
+		if matched_candidate.wall_depth_mm is None or matched_candidate.wall_sample_count <= 0:
+			matched_candidate.wall_depth_mm = candidate.wall_depth_mm
+			matched_candidate.wall_sample_count = candidate.wall_sample_count
+			continue
+
+		total_wall_sample_count = matched_candidate.wall_sample_count + candidate.wall_sample_count
+		matched_candidate.wall_depth_mm = (
+			(matched_candidate.wall_depth_mm * matched_candidate.wall_sample_count)
+			+ (candidate.wall_depth_mm * candidate.wall_sample_count)
+		) / total_wall_sample_count
+		matched_candidate.wall_sample_count = total_wall_sample_count
 
 	return deduped_candidates
 
@@ -2596,6 +2674,135 @@ async def run_staged_scan(
 	)
 
 
+def get_candidate_center(candidate: GapCandidateRegion) -> tuple[float, float]:
+	return (
+		float((candidate.x_min + candidate.x_max) / 2.0),
+		float((candidate.y_min + candidate.y_max) / 2.0),
+	)
+
+
+def find_candidate_for_detected_cell(
+	*,
+	detected_cell: ScanDetectedCell,
+	candidates: list[GapCandidateRegion],
+) -> GapCandidateRegion | None:
+	x_tolerance_mm = max(float(detected_cell.width_mm), 12.0)
+	y_tolerance_mm = max(float(detected_cell.height_mm), 12.0)
+	matched_candidate: GapCandidateRegion | None = None
+	matched_distance_mm: float | None = None
+
+	for candidate in candidates:
+		candidate_center_x_mm, candidate_center_y_mm = get_candidate_center(candidate)
+		x_delta_mm = abs(candidate_center_x_mm - float(detected_cell.center_x_mm))
+		y_delta_mm = abs(candidate_center_y_mm - float(detected_cell.center_y_mm))
+
+		if x_delta_mm > x_tolerance_mm:
+			continue
+
+		if y_delta_mm > y_tolerance_mm:
+			continue
+
+		distance_mm = float(np.hypot(x_delta_mm, y_delta_mm))
+
+		if matched_distance_mm is not None and distance_mm >= matched_distance_mm:
+			continue
+
+		matched_candidate = candidate
+		matched_distance_mm = distance_mm
+
+	return matched_candidate
+
+
+def build_candidate_lookup_by_cell(
+	*,
+	analysis: Any,
+	candidates: list[GapCandidateRegion],
+) -> dict[tuple[int, int], GapCandidateRegion]:
+	candidate_lookup: dict[tuple[int, int], GapCandidateRegion] = {}
+
+	for shelf in analysis.shelves:
+		for cell in shelf.cells:
+			matched_candidate = find_candidate_for_detected_cell(
+				detected_cell=cell,
+				candidates=candidates,
+			)
+
+			if matched_candidate is None:
+				continue
+
+			candidate_lookup[(cell.shelf_idx, cell.cell_idx)] = matched_candidate
+
+	return candidate_lookup
+
+
+def resolve_z_reference_cell(
+	*,
+	side: StorageModuleSide,
+	) -> tuple[int, int, float, float] | None:
+	default_reference = DEFAULT_Z_REFERENCE_BY_SIDE.get(side)
+
+	if default_reference is None:
+		return None
+
+	return default_reference
+
+
+def apply_wall_depth_z_offsets(
+	*,
+	analysis: Any,
+	scanned_shelves: list[Any],
+	metadata_path: str,
+	side: StorageModuleSide,
+) -> None:
+	metadata_file = Path(metadata_path)
+
+	if metadata_file.exists() is False:
+		print_status("z_offset_inference=skipped reason=missing_metadata")
+		return
+
+	metadata = load_json_file(metadata_file)
+	candidates = load_candidates_from_metadata(metadata)
+	candidate_lookup = build_candidate_lookup_by_cell(
+		analysis=analysis,
+		candidates=candidates,
+	)
+
+	if len(candidate_lookup) == 0:
+		print_status("z_offset_inference=skipped reason=no_candidate_wall_depth")
+		return
+
+	reference_key = resolve_z_reference_cell(
+		side=side,
+	)
+
+	if reference_key is None:
+		print_status("z_offset_inference=skipped reason=reference_unresolved")
+		return
+
+	z_delta_mm = float(reference_key[2]) - float(reference_key[3])
+	updated_cell_count = 0
+
+	for shelf in scanned_shelves:
+		for cell in shelf.cells:
+			if cell.calibration_point is None:
+				continue
+
+			candidate = candidate_lookup.get((shelf.shelf_idx, cell.cell_idx))
+
+			if candidate is None or candidate.wall_depth_mm is None:
+				continue
+
+			cell.calibration_point.z_offset = float(candidate.wall_depth_mm) + z_delta_mm
+			updated_cell_count += 1
+
+	print_status(
+		f"z_offset_inference=applied reference={reference_key[0]}:{reference_key[1]} "
+		f"reference_z_offset_mm={reference_key[2]:.3f} "
+		f"reference_wall_depth_mm={reference_key[3]:.3f} "
+		f"delta_mm={z_delta_mm:.3f} updated_cells={updated_cell_count}"
+	)
+
+
 def apply_analysis(
 	*,
 	analysis: Any,
@@ -2611,6 +2818,12 @@ def apply_analysis(
 		side=side,
 		analysis=analysis,
 		existing_shelves=existing_shelves,
+	)
+	apply_wall_depth_z_offsets(
+		analysis=analysis,
+		scanned_shelves=scanned_shelves,
+		metadata_path=str(analysis.metadata_path),
+		side=side,
 	)
 	left_module = list(grid.left_module)
 	right_module = list(grid.right_module)
