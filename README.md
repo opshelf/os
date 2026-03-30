@@ -72,3 +72,17 @@ frontend:
 cd dev_ui
 npm run check
 ```
+
+## device diagnostics
+
+runtime and hardware debugging helpers live under `scripts/debug/`:
+
+```bash
+uv run scripts/debug/cycle_test.py <device-id>
+./scripts/debug/remote_motor_probe.py <device-id>
+```
+
+notes:
+- `cycle_test.py` uses the sibling `../provision/remote` helper by default for ssh port forwarding; override with `--remote-script` or `OPSHELF_REMOTE_SCRIPT`.
+- `remote_motor_probe.py` uses the sibling `../provision/keys/team_access` key by default; override with `--team-key` or `OPSHELF_TEAM_KEY`.
+- the dev ui also exposes built-in diagnostics for cells, motors, and scanner flows.
