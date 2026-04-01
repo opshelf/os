@@ -1295,8 +1295,8 @@ def build_fine_scan_bounds(
 	scan_config: Any,
 ) -> ScanBounds:
 	y_margin_mm = max(
-		FINE_SCAN_MARGIN_Y_MM,
-		(scan_config.expected_hole_height_mm / 2.0) + 4.0,
+		FINE_SCAN_MARGIN_Y_MM + 10.0,
+		(scan_config.expected_hole_height_mm / 2.0) + 12.0,
 	)
 
 	return ScanBounds(
@@ -1393,6 +1393,92 @@ async def sample_scan_point(
 		settle_ms=settle_ms,
 		samples_per_point=samples_per_point,
 	)
+
+
+async def find_hole_interior_idx_from_seed(
+	tool: Any,
+	*,
+	base_scan: GridScanResult,
+	axis: str,
+	positions: list[float],
+	fixed_mm: float,
+	start_idx: int,
+	progress_prefix: str,
+	settle_ms: int,
+	samples_per_point: int,
+	wall_depth_mm: float,
+	on_update: Optional[Callable[[GridScanResult, str, float], None]] = None,
+) -> Optional[int]:
+	sampled_count = 0
+	sampled_depths: dict[int, float | None] = {}
+	total_count = len(positions)
+
+	async def didSample(
+		position_idx: int,
+	) -> float | None:
+		nonlocal sampled_count
+
+		if position_idx in sampled_depths:
+			return sampled_depths[position_idx]
+
+		position_mm = positions[position_idx]
+
+		if axis == "x":
+			x_mm = position_mm
+			y_mm = fixed_mm
+		else:
+			x_mm = fixed_mm
+			y_mm = position_mm
+
+		depth_mm = await sample_scan_point(
+			tool,
+			x_mm=x_mm,
+			y_mm=y_mm,
+			settle_ms=settle_ms,
+			samples_per_point=samples_per_point,
+		)
+
+		set_scan_point(
+			base_scan,
+			x_mm=x_mm,
+			y_mm=y_mm,
+			depth_mm=depth_mm,
+		)
+
+		sampled_depths[position_idx] = depth_mm
+		sampled_count += 1
+
+		print_status(
+			f"{progress_prefix}={sampled_count}/{total_count} "
+			f"x={x_mm:.2f} "
+			f"y={y_mm:.2f} "
+			f"depth={depth_to_label(depth_mm)}"
+		)
+
+		if on_update is not None:
+			on_update(base_scan, progress_prefix, position_mm)
+
+		return depth_mm
+
+	for position_idx in range(start_idx, -1, -1):
+		depth_mm = await didSample(position_idx)
+
+		if is_hole_interior_depth(
+			depth_mm,
+			wall_depth_mm=wall_depth_mm,
+		) is True:
+			return position_idx
+
+	for position_idx in range(start_idx + 1, len(positions)):
+		depth_mm = await didSample(position_idx)
+
+		if is_hole_interior_depth(
+			depth_mm,
+			wall_depth_mm=wall_depth_mm,
+		) is True:
+			return position_idx
+
+	return None
 
 
 async def scan_line_positions(
@@ -2186,13 +2272,30 @@ async def capture_cross_scan(
 	x_center_mm = horizontal_segment.center_mm
 	vertical_probe_x_mm = x_positions[find_nearest_position_index(x_positions, x_center_mm)]
 	vertical_center_idx = find_nearest_position_index(y_positions, candidate_center_y_mm)
+	vertical_seed_idx = await find_hole_interior_idx_from_seed(
+		tool,
+		base_scan=fine_scan,
+		axis="y",
+		positions=y_positions,
+		fixed_mm=vertical_probe_x_mm,
+		start_idx=vertical_center_idx,
+		progress_prefix=f"{progress_prefix}_v_seek",
+		settle_ms=settle_ms,
+		samples_per_point=samples_per_point,
+		wall_depth_mm=wall_depth_mm,
+		on_update=on_update,
+	)
+
+	if vertical_seed_idx is None:
+		return fine_scan, []
+
 	vertical_segment = await probe_line_from_center(
 		tool,
 		base_scan=fine_scan,
 		axis="y",
 		positions=y_positions,
 		fixed_mm=vertical_probe_x_mm,
-		center_idx=vertical_center_idx,
+		center_idx=vertical_seed_idx,
 		step_mm=step_mm,
 		progress_prefix=f"{progress_prefix}_v1",
 		settle_ms=settle_ms,
