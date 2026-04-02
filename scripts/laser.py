@@ -914,6 +914,23 @@ async def capture_shelf_candidates(
 			progress=progress,
 		)
 
+	async def set_y_brake_for_scouting(
+		*,
+		is_enabled: bool,
+	) -> None:
+		y_motor = getattr(tool, "_my", None)
+
+		if y_motor is None:
+			raise ValueError("Y-axis motor is required for shelf scouting")
+
+		if is_enabled is True:
+			await y_motor.restore_brake_output()
+			print_status("y_brake=enabled")
+			return
+
+		await y_motor.disable_brake_output()
+		print_status("y_brake=disabled")
+
 	if known_shelf_edge_y is not None:
 		shelf_edges = [
 			ShelfSurfaceEdge(
@@ -923,33 +940,42 @@ async def capture_shelf_candidates(
 			for y_mm in known_shelf_edge_y
 		]
 	else:
-		for scout_idx, scout_x_mm in enumerate(scout_x_positions, start=1):
-			print_status(f"phase=shelf-scout scout={scout_idx}/{len(scout_x_positions)} x={scout_x_mm:.2f}")
+		is_y_brake_disabled = False
 
-			scout_depth_values, scout_edges = await scan_shelf_scout_line(
-				tool,
-				x_mm=scout_x_mm,
-				y_positions=scout_y_positions,
-				settle_ms=settle_ms,
-				samples_per_point=samples_per_point,
-				progress_label=f"shelf_scout_{scout_idx}",
-			)
-			merge_line_scan_into_sparse_scan(
-				coarse_scan,
-				axis="y",
-				positions=scout_y_positions,
-				fixed_mm=scout_x_mm,
-				depth_values=scout_depth_values,
-			)
-			didPersistScoutProgress(
-				"shelf-scout",
-				{
-					"scout_idx": scout_idx,
-					"scout_count": len(scout_x_positions),
-					"x_position": scout_x_mm,
-				},
-			)
-			shelf_edges.extend(scout_edges)
+		try:
+			await set_y_brake_for_scouting(is_enabled=False)
+			is_y_brake_disabled = True
+
+			for scout_idx, scout_x_mm in enumerate(scout_x_positions, start=1):
+				print_status(f"phase=shelf-scout scout={scout_idx}/{len(scout_x_positions)} x={scout_x_mm:.2f}")
+
+				scout_depth_values, scout_edges = await scan_shelf_scout_line(
+					tool,
+					x_mm=scout_x_mm,
+					y_positions=scout_y_positions,
+					settle_ms=settle_ms,
+					samples_per_point=samples_per_point,
+					progress_label=f"shelf_scout_{scout_idx}",
+				)
+				merge_line_scan_into_sparse_scan(
+					coarse_scan,
+					axis="y",
+					positions=scout_y_positions,
+					fixed_mm=scout_x_mm,
+					depth_values=scout_depth_values,
+				)
+				didPersistScoutProgress(
+					"shelf-scout",
+					{
+						"scout_idx": scout_idx,
+						"scout_count": len(scout_x_positions),
+						"x_position": scout_x_mm,
+					},
+				)
+				shelf_edges.extend(scout_edges)
+		finally:
+			if is_y_brake_disabled is True:
+				await set_y_brake_for_scouting(is_enabled=True)
 
 	filtered_shelf_edges: list[ShelfSurfaceEdge] = []
 
