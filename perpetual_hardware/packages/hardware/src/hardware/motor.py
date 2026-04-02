@@ -18,6 +18,8 @@ MOTOR_HOME_TIMEOUT = 180.0
 MOTOR_JOG_TIMEOUT = 10.0
 MOTOR_WAIT_TIMEOUT = 60.0
 POSITION_TOLERANCE_MM = 1.0
+DEFAULT_BRAKE_OUTPUT_FUNCTION = 0x24
+RELEASED_BRAKE_OUTPUT_FUNCTION = 0x24
 
 logger = logging.getLogger(__name__)
 
@@ -217,6 +219,10 @@ class Motor():
         self._home_sensor: Optional[HomeSensor] = None
         self._is_homed = False
         self._hard_stopped = False
+        self._configured_brake_output_function = int(
+            getattr(self._params, "brake_output_function", DEFAULT_BRAKE_OUTPUT_FUNCTION)
+        )
+        self._active_brake_output_function = self._configured_brake_output_function
 
     def is_homed(self) -> bool:
         return self._is_homed
@@ -232,6 +238,21 @@ class Motor():
             self._home_sensor.cleanup()
         finally:
             self._home_sensor = None
+
+    async def set_brake_output_function(self, value: int) -> None:
+        brake_output_function = int(value)
+
+        if self._active_brake_output_function == brake_output_function:
+            return
+
+        await self.set_param("SO2 output function", brake_output_function)
+        self._active_brake_output_function = brake_output_function
+
+    async def disable_brake_output(self) -> None:
+        await self.set_brake_output_function(RELEASED_BRAKE_OUTPUT_FUNCTION)
+
+    async def restore_brake_output(self) -> None:
+        await self.set_brake_output_function(self._configured_brake_output_function)
 
     def _get_home_sensor_config(self) -> Any:
         sensor_cfg = getattr(self._params, "home_sensor", None)
@@ -379,7 +400,8 @@ class Motor():
             await self._controller.write_single_register(self._motor_id, 0x6000, 0x0000)
 
             # Configure motor parameters
-            await self.set_param("SO2 output function", 0xA1)  # brake output
+            await self.set_param("SO2 output function", self._configured_brake_output_function)
+            self._active_brake_output_function = self._configured_brake_output_function
             await self._controller.write_single_register(self._motor_id, 0x0167, 100)
             await self._controller.write_single_register(self._motor_id, 0x0169, 100)
             await self._controller.write_single_register(self._motor_id, 0x016B, 10)

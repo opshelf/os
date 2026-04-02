@@ -110,9 +110,21 @@ async def test_motor_configure(mock_controller):
     motor = Motor(mock_controller, params)
     await motor.configure()
 
+    mock_controller.write_single_register.assert_any_call(1, 0x0159, 0x24)
     mock_controller.write_single_register.assert_any_call(1, 0x0167, 100)
     mock_controller.write_single_register.assert_any_call(1, 0x0169, 100)
     mock_controller.write_single_register.assert_any_call(1, 0x016B, 10)
+
+
+@pytest.mark.asyncio
+async def test_motor_disable_and_restore_brake_output(mock_controller):
+    params = make_motor_params()
+    motor = Motor(mock_controller, params)
+
+    await motor.disable_brake_output()
+    await motor.restore_brake_output()
+
+    mock_controller.write_single_register.assert_not_called()
 
 
 @pytest.mark.asyncio
