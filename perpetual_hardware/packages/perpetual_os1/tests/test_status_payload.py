@@ -110,3 +110,27 @@ def test_transform_worker_payload_includes_needs_home() -> None:
     assert result["needs_home"] is True
     assert result["needs_home_reason"] == "Axis stall"
     assert result["needs_home_axes"] == ["z_axis", "stage"]
+
+
+def test_transform_worker_payload_preserves_axis_telemetry() -> None:
+    payload = {
+        "robot_status": {
+            "gantry": {
+                "x_axis": {"position": 12.5, "homed": 1, "hard_stopped": 0},
+                "y_axis": {"position": 7.0, "homed": 0, "hard_stopped": 1},
+            },
+            "tool": {
+                "z_axis": {"position": 3.25, "homed": 1, "hard_stopped": 0},
+            },
+            "storage": {"left_module": [], "right_module": []},
+            "state": {"current_cell": None},
+        },
+        "error_queue": [],
+    }
+
+    result = _transform_worker_status_payload(payload)
+
+    assert result["robot_status"]["gantry"]["x_axis"]["position"] == 12.5
+    assert result["robot_status"]["gantry"]["x_axis"]["homed"] == 1
+    assert result["robot_status"]["gantry"]["y_axis"]["hard_stopped"] == 1
+    assert result["robot_status"]["tool"]["z_axis"]["position"] == 3.25

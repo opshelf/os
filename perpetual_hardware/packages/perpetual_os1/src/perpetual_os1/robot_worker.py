@@ -63,6 +63,32 @@ def _default_axis_status() -> Dict[str, Any]:
     }
 
 
+def _normalize_axis_status(axis_payload: Any) -> Dict[str, Any]:
+    normalized = _default_axis_status()
+
+    if isinstance(axis_payload, dict) is False:
+        return normalized
+
+    status_flags = axis_payload.get("status_flags")
+    if isinstance(status_flags, dict):
+        normalized["status_flags"].update(status_flags)
+
+    error_flags = axis_payload.get("error_flags")
+    if isinstance(error_flags, dict):
+        normalized["error_flags"].update(error_flags)
+
+    if "position" in axis_payload:
+        normalized["position"] = axis_payload.get("position", 0)
+
+    if "homed" in axis_payload:
+        normalized["homed"] = axis_payload.get("homed", 0)
+
+    if "hard_stopped" in axis_payload:
+        normalized["hard_stopped"] = axis_payload.get("hard_stopped", 0)
+
+    return normalized
+
+
 def _normalize_location(payload: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     if not isinstance(payload, dict):
         return None
@@ -148,11 +174,11 @@ def _transform_worker_status_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     transformed["robot_status"] = {
         "gantry": {
-            "x_axis": _default_axis_status(),
-            "y_axis": _default_axis_status(),
+            "x_axis": _normalize_axis_status(((robot_status_payload.get("gantry") or {}).get("x_axis"))),
+            "y_axis": _normalize_axis_status(((robot_status_payload.get("gantry") or {}).get("y_axis"))),
         },
         "tool": {
-            "z_axis": _default_axis_status(),
+            "z_axis": _normalize_axis_status(((robot_status_payload.get("tool") or {}).get("z_axis"))),
         },
         "state": {
             "current_cell": state_payload.get("current_cell"),

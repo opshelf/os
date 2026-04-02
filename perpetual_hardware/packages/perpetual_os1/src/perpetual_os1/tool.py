@@ -232,7 +232,6 @@ class Tool:
             if self._mx is not None:
                 await self._mx.home()
             if self._my is not None:
-                await self._my.jog(5)
                 await self._my.home()
             self._mstatus = ToolMotionStatus.IDLE
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
