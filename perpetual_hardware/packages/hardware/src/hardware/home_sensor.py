@@ -10,7 +10,7 @@ except (ModuleNotFoundError, RuntimeError):
 
 
 class HomeSensor:
-    def __init__(self, *, pin: int, inverted: bool = False) -> None:
+    def __init__(self, *, pin: int, inverted: bool = True) -> None:
         if GPIO is None:
             raise RuntimeError('RPi.GPIO not available')
 

@@ -125,9 +125,12 @@ def _pair_len2(v: List[Union[int, float]], name: str) -> Tuple[Union[int, float]
 class HomeSensorConfig(BaseModel):
     enabled: bool = True
     pin: int = Field(..., ge=0)
-    inverted: bool = False
+    inverted: bool = True
     poll_interval_s: float = Field(0.01, gt=0)
+    disable_brake_during_home: bool = False
+    release_mode: Literal["jog", "absolute"] = "jog"
     release_backoff_mm: float = Field(5.0, gt=0)
+    release_target_mm: Optional[float] = Field(default=None, ge=0)
     precision_rpm: Optional[int] = Field(default=None, gt=0)
 
 class Motor(BaseModel):

@@ -147,4 +147,5 @@ def test_motor_home_sensor_config_is_optional_and_parses():
     motor = config.robot.tool.motors.by_name("x_axis")
     assert motor.home_sensor is not None
     assert motor.home_sensor.pin == 25
-    assert motor.home_sensor.inverted is False
+    assert motor.home_sensor.inverted is True
+    assert motor.home_sensor.release_mode == "jog"
