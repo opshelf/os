@@ -18,7 +18,7 @@ MOTOR_HOME_TIMEOUT = 180.0
 MOTOR_JOG_TIMEOUT = 10.0
 MOTOR_WAIT_TIMEOUT = 60.0
 POSITION_TOLERANCE_MM = 1.0
-DEFAULT_BRAKE_OUTPUT_FUNCTION = 0x24
+DEFAULT_BRAKE_OUTPUT_FUNCTION = 0xA1
 RELEASED_BRAKE_OUTPUT_FUNCTION = 0x24
 
 logger = logging.getLogger(__name__)
@@ -272,7 +272,7 @@ class Motor():
         if self._home_sensor is None:
             self._home_sensor = HomeSensor(
                 pin=sensor_cfg.pin,
-                inverted=getattr(sensor_cfg, "inverted", False),
+                inverted=getattr(sensor_cfg, "inverted", True),
             )
 
         return self._home_sensor
@@ -345,12 +345,26 @@ class Motor():
 
             await asyncio.sleep(poll_interval)
 
-    async def _release_home_sensor(self, sensor: HomeSensor, release_backoff_mm: float) -> None:
+    async def _release_home_sensor(self, sensor: HomeSensor, sensor_cfg: Any) -> None:
         if sensor.read() is False:
             return
 
+        release_mode = getattr(sensor_cfg, "release_mode", "jog")
+        release_backoff_mm = sensor_cfg.release_backoff_mm
+
         for _ in range(10):
-            await self.jog(release_backoff_mm)
+            if release_mode == "absolute":
+                release_target_mm = getattr(sensor_cfg, "release_target_mm", None)
+
+                if release_target_mm is None:
+                    raise MotorError(f"Motor {self._motor_id} missing release target for absolute mode")
+
+                target_position = min(release_target_mm, self._params.lim)
+
+                await self.move_to_position(target_position)
+            else:
+                await self.jog(release_backoff_mm)
+
             if sensor.read() is False:
                 return
 
@@ -364,21 +378,43 @@ class Motor():
         home_dir = self._get_home_direction()
         home_rpm = self._params.home_rpm or self._params.ret_rpm
         precision_rpm = sensor_cfg.precision_rpm or max(1, home_rpm // 4)
+        should_disable_brake_during_home = getattr(sensor_cfg, "disable_brake_during_home", False)
+        did_disable_brake = False
 
-        await self._release_home_sensor(sensor, sensor_cfg.release_backoff_mm)
-        await self._prepare_home_motion(home_rpm, home_dir)
-        await self._start_path_zero()
-        await self._wait_for_home_sensor(sensor, MOTOR_HOME_TIMEOUT, sensor_cfg.poll_interval_s)
+        try:
+            if should_disable_brake_during_home is True:
+                await self.disable_brake_output()
+                did_disable_brake = True
 
-        await self._release_home_sensor(sensor, sensor_cfg.release_backoff_mm)
-        await self._prepare_home_motion(precision_rpm, home_dir)
-        await self._start_path_zero()
-        await self._wait_for_home_sensor(sensor, MOTOR_HOME_TIMEOUT, sensor_cfg.poll_interval_s)
+            if sensor.read() is True:
+                await self._set_zero_position()
+                await self.move_config()
 
-        await self._set_zero_position()
-        await self.move_config()
-        self._is_homed = True
-        self._hard_stopped = False
+            await self._release_home_sensor(sensor, sensor_cfg)
+            await self._prepare_home_motion(home_rpm, home_dir)
+            await self._start_path_zero()
+            await self._wait_for_home_sensor(sensor, MOTOR_HOME_TIMEOUT, sensor_cfg.poll_interval_s)
+
+            await self._set_zero_position()
+            await self.move_config()
+            await self._release_home_sensor(sensor, sensor_cfg)
+            await self._prepare_home_motion(precision_rpm, home_dir)
+            await self._start_path_zero()
+            await self._wait_for_home_sensor(sensor, MOTOR_HOME_TIMEOUT, sensor_cfg.poll_interval_s)
+
+            await self._set_zero_position()
+            await self.move_config()
+            self._is_homed = True
+            self._hard_stopped = False
+        finally:
+            if did_disable_brake is True:
+                try:
+                    await self.restore_brake_output()
+                except Exception as exc:
+                    self._logger.warning(
+                        "Failed to restore brake output after homing",
+                        extra={"motor_id": self._motor_id, "error": str(exc)},
+                    )
 
     async def configure(self):
         """Configure the stepper motor with initial parameters.
