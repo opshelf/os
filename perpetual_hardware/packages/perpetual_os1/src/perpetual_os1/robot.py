@@ -424,6 +424,11 @@ class Robot:
 
     async def shutdown(self) -> None:
         await self.stop()
+
+        for motor in [self._tool._mx, self._tool._my, self._tool._mg, self._tool._ms, self._tool._mr, self._io._md]:
+            if motor is not None:
+                motor.cleanup()
+
         if self._motorbus:
             await self._motorbus.close()
         if self._scalebus:
@@ -1039,7 +1044,11 @@ class Robot:
             position = await motor.get_position()
         except Exception as exc:
             self._logger.debug("Failed to read motor position: %s", exc)
-        return AxisTelemetry(position=position)
+        return AxisTelemetry(
+            position=position,
+            homed=int(motor.is_homed()),
+            hard_stopped=int(motor.is_hard_stopped()),
+        )
 
     async def get_status(self) -> RobotStatus:
         gantry_status = GantryStatus(
