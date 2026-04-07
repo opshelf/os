@@ -18,7 +18,7 @@ MOTOR_HOME_TIMEOUT = 180.0
 MOTOR_JOG_TIMEOUT = 10.0
 MOTOR_WAIT_TIMEOUT = 60.0
 POSITION_TOLERANCE_MM = 1.0
-DEFAULT_BRAKE_OUTPUT_FUNCTION = 0x24
+DEFAULT_BRAKE_OUTPUT_FUNCTION = 0xA1
 RELEASED_BRAKE_OUTPUT_FUNCTION = 0x24
 
 logger = logging.getLogger(__name__)
@@ -364,24 +364,34 @@ class Motor():
         if sensor is None:
             raise MotorError(f"Motor {self._motor_id} home sensor is not available")
 
+        should_disable_brake_during_home = getattr(sensor_cfg, "disable_brake_during_home", False)
+        is_brake_output_disabled = False
         home_dir = self._get_home_direction()
         home_rpm = self._params.home_rpm or self._params.ret_rpm
         precision_rpm = sensor_cfg.precision_rpm or max(1, home_rpm // 4)
 
-        await self._release_home_sensor(sensor, sensor_cfg.release_backoff_mm)
-        await self._prepare_home_motion(home_rpm, home_dir)
-        await self._start_path_zero()
-        await self._wait_for_home_sensor(sensor, MOTOR_HOME_TIMEOUT, sensor_cfg.poll_interval_s)
+        try:
+            if should_disable_brake_during_home is True:
+                await self.disable_brake_output()
+                is_brake_output_disabled = True
 
-        await self._release_home_sensor(sensor, sensor_cfg.release_backoff_mm)
-        await self._prepare_home_motion(precision_rpm, home_dir)
-        await self._start_path_zero()
-        await self._wait_for_home_sensor(sensor, MOTOR_HOME_TIMEOUT, sensor_cfg.poll_interval_s)
+            await self._release_home_sensor(sensor, sensor_cfg.release_backoff_mm)
+            await self._prepare_home_motion(home_rpm, home_dir)
+            await self._start_path_zero()
+            await self._wait_for_home_sensor(sensor, MOTOR_HOME_TIMEOUT, sensor_cfg.poll_interval_s)
 
-        await self._set_zero_position()
-        await self.move_config()
-        self._is_homed = True
-        self._hard_stopped = False
+            await self._release_home_sensor(sensor, sensor_cfg.release_backoff_mm)
+            await self._prepare_home_motion(precision_rpm, home_dir)
+            await self._start_path_zero()
+            await self._wait_for_home_sensor(sensor, MOTOR_HOME_TIMEOUT, sensor_cfg.poll_interval_s)
+
+            await self._set_zero_position()
+            await self.move_config()
+            self._is_homed = True
+            self._hard_stopped = False
+        finally:
+            if is_brake_output_disabled is True:
+                await self.restore_brake_output()
 
     async def configure(self):
         """Configure the stepper motor with initial parameters.

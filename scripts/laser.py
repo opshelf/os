@@ -44,6 +44,7 @@ LASER_SCAN_Z_OFFSET_MM = 10.0
 COARSE_SCAN_STEP_MM = 4.0
 SHELF_SCOUT_STEP_MM = 2.0
 SHELF_SCOUT_X_OFFSETS_MM = [0.0]
+RIGHT_MODULE_SHELF_SCOUT_X_MM = 25.0
 RIGHT_MODULE_ROTATION_SAFE_X_MM = 475.0
 SHELF_SWEEP_X_STEP_MM = 4.0
 SHELF_SWEEP_MIN_CANDIDATE_WIDTH_MM = 20.0
@@ -895,6 +896,25 @@ async def ensure_scan_tool_ready(tool: Any) -> None:
 		raise ValueError("Tool motors (stage, z_axis) are required for laser scan")
 
 
+async def set_y_brake_for_shelf_scouting(
+	tool: Any,
+	*,
+	is_enabled: bool,
+) -> None:
+	y_motor = getattr(tool, "_my", None)
+
+	if y_motor is None:
+		raise ValueError("Y-axis motor is required for shelf scouting")
+
+	if is_enabled is True:
+		await y_motor.restore_brake_output()
+		print_status("y_brake=enabled")
+		return
+
+	await y_motor.disable_brake_output()
+	print_status("y_brake=disabled")
+
+
 async def enter_scan_mode(tool: Any, side: StorageModuleSide, scan_config: Any) -> None:
 	await ensure_scan_tool_ready(tool)
 
@@ -981,7 +1001,11 @@ async def sample_laser_depth(
 def build_shelf_scout_x_positions(
 	*,
 	bounds: ScanBounds,
+	side: StorageModuleSide,
 ) -> list[float]:
+	if side == StorageModuleSide.RIGHT:
+		return [RIGHT_MODULE_SHELF_SCOUT_X_MM]
+
 	positions: list[float] = []
 
 	for offset_mm in SHELF_SCOUT_X_OFFSETS_MM:
@@ -998,6 +1022,7 @@ def build_shelf_scout_x_positions(
 async def capture_shelf_candidates(
 	tool: Any,
 	*,
+	side: StorageModuleSide,
 	bounds: ScanBounds,
 	settle_ms: int,
 	samples_per_point: int,
@@ -1007,7 +1032,7 @@ async def capture_shelf_candidates(
 	known_shelf_edge_y: Optional[list[float]],
 ) -> tuple[GridScanResult, float, list[GapCandidateRegion], list[ShelfSurfaceEdge]]:
 	coarse_scan = create_sparse_shelf_scan(bounds=bounds)
-	scout_x_positions = build_shelf_scout_x_positions(bounds=bounds)
+	scout_x_positions = build_shelf_scout_x_positions(bounds=bounds, side=side)
 	scout_y_positions = list(reversed(build_axis_positions(bounds.y_min, bounds.y_max, SHELF_SCOUT_STEP_MM)))
 	hole_sweep_x_positions = build_axis_positions(bounds.x_min, bounds.x_max, SHELF_SWEEP_X_STEP_MM)
 	shelf_edges: list[ShelfSurfaceEdge] = []
@@ -1025,27 +1050,15 @@ async def capture_shelf_candidates(
 			progress=progress,
 		)
 
-	async def set_y_brake_for_scouting(
-		*,
-		is_enabled: bool,
-	) -> None:
-		y_motor = getattr(tool, "_my", None)
-
-		if y_motor is None:
-			raise ValueError("Y-axis motor is required for shelf scouting")
-
-		if is_enabled is True:
-			await y_motor.restore_brake_output()
-			print_status("y_brake=enabled")
-			return
-
-		await y_motor.disable_brake_output()
-		print_status("y_brake=disabled")
-
 	if known_shelf_edge_y is not None:
+		edge_x_mm = bounds.x_max
+
+		if side == StorageModuleSide.RIGHT:
+			edge_x_mm = bounds.x_min
+
 		shelf_edges = [
 			ShelfSurfaceEdge(
-				x_mm=bounds.x_max,
+				x_mm=edge_x_mm,
 				y_mm=float(y_mm),
 			)
 			for y_mm in known_shelf_edge_y
@@ -1054,7 +1067,7 @@ async def capture_shelf_candidates(
 		is_y_brake_disabled = False
 
 		try:
-			await set_y_brake_for_scouting(is_enabled=False)
+			await set_y_brake_for_shelf_scouting(tool, is_enabled=False)
 			is_y_brake_disabled = True
 
 			for scout_idx, scout_x_mm in enumerate(scout_x_positions, start=1):
@@ -1086,7 +1099,7 @@ async def capture_shelf_candidates(
 				shelf_edges.extend(scout_edges)
 		finally:
 			if is_y_brake_disabled is True:
-				await set_y_brake_for_scouting(is_enabled=True)
+				await set_y_brake_for_shelf_scouting(tool, is_enabled=True)
 
 	filtered_shelf_edges: list[ShelfSurfaceEdge] = []
 
@@ -2142,9 +2155,14 @@ def get_shelf_grouping_threshold_mm(
 def build_detected_shelves(
 	detected_cells: list[ScanDetectedCell],
 	*,
+	side: StorageModuleSide,
 	shelf_threshold_mm: float,
 ) -> list[ScanDetectedShelf]:
-	sorted_cells = sorted(detected_cells, key=lambda cell: (cell.center_y_mm, -cell.center_x_mm))
+	if side == StorageModuleSide.RIGHT:
+		sorted_cells = sorted(detected_cells, key=lambda cell: (cell.center_y_mm, cell.center_x_mm))
+	else:
+		sorted_cells = sorted(detected_cells, key=lambda cell: (cell.center_y_mm, -cell.center_x_mm))
+
 	shelves: list[ScanDetectedShelf] = []
 	current_shelf: Optional[ScanDetectedShelf] = None
 	current_cells: list[ScanDetectedCell] = []
@@ -2164,7 +2182,11 @@ def build_detected_shelves(
 			current_cells.append(cell)
 			continue
 
-		current_cells.sort(key=lambda current: -current.center_x_mm)
+		if side == StorageModuleSide.RIGHT:
+			current_cells.sort(key=lambda current: current.center_x_mm)
+		else:
+			current_cells.sort(key=lambda current: -current.center_x_mm)
+
 		for cell_idx, current_cell in enumerate(current_cells):
 			current_cell.shelf_idx = current_shelf.shelf_idx
 			current_cell.cell_idx = cell_idx
@@ -2186,7 +2208,11 @@ def build_detected_shelves(
 	if current_shelf is None:
 		return shelves
 
-	current_cells.sort(key=lambda current: -current.center_x_mm)
+	if side == StorageModuleSide.RIGHT:
+		current_cells.sort(key=lambda current: current.center_x_mm)
+	else:
+		current_cells.sort(key=lambda current: -current.center_x_mm)
+
 	for cell_idx, current_cell in enumerate(current_cells):
 		current_cell.shelf_idx = current_shelf.shelf_idx
 		current_cell.cell_idx = cell_idx
@@ -2326,9 +2352,14 @@ def detect_gap_cells(
 			)
 		)
 
-	detected_cells.sort(key=lambda cell: (cell.center_y_mm, -cell.center_x_mm))
+	if side == StorageModuleSide.RIGHT:
+		detected_cells.sort(key=lambda cell: (cell.center_y_mm, cell.center_x_mm))
+	else:
+		detected_cells.sort(key=lambda cell: (cell.center_y_mm, -cell.center_x_mm))
+
 	shelves = build_detected_shelves(
 		detected_cells,
+		side=side,
 		shelf_threshold_mm=get_shelf_grouping_threshold_mm(
 			step_mm=step_mm,
 			scan_config=scan_config,
@@ -2692,12 +2723,12 @@ async def run_staged_scan(
 			)
 
 		await enter_scan_mode(tool, side, scan_config)
-
 		if len(candidates) == 0:
 			print_status("phase=coarse-scan")
 
 			coarse_scan, wall_depth_mm, candidates, shelf_edges = await capture_shelf_candidates(
 				tool,
+				side=side,
 				bounds=bounds,
 				settle_ms=coarse_settle_ms,
 				samples_per_point=coarse_samples_per_point,
@@ -2855,6 +2886,7 @@ async def run_staged_scan(
 	else:
 		shelves = build_detected_shelves(
 			deduped_cells,
+			side=side,
 			shelf_threshold_mm=get_shelf_grouping_threshold_mm(
 				step_mm=fine_step_mm,
 				scan_config=scan_config,
@@ -2978,6 +3010,7 @@ def build_candidate_lookup_by_cell(
 def get_scanned_anchor_cell(
 	*,
 	scanned_shelves: list[Any],
+	side: StorageModuleSide,
 	anchor: str,
 ) -> Any | None:
 	if len(scanned_shelves) == 0:
@@ -2993,7 +3026,12 @@ def get_scanned_anchor_cell(
 	if len(target_shelf.cells) == 0:
 		return None
 
-	if anchor.endswith("right"):
+	is_right_anchor = anchor.endswith("right")
+
+	if side == StorageModuleSide.RIGHT:
+		is_right_anchor = is_right_anchor is False
+
+	if is_right_anchor is True:
 		return max(target_shelf.cells, key=lambda cell: float(cell.calibration_point.x))
 
 	return min(target_shelf.cells, key=lambda cell: float(cell.calibration_point.x))
@@ -3013,6 +3051,7 @@ def apply_xy_reference_offsets(
 
 	anchor_cell = get_scanned_anchor_cell(
 		scanned_shelves=scanned_shelves,
+		side=side,
 		anchor=str(xy_reference.anchor),
 	)
 
