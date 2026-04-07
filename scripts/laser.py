@@ -67,6 +67,47 @@ DEFAULT_Z_REFERENCE_BY_SIDE: dict[StorageModuleSide, tuple[int, int, float, floa
 }
 
 
+def get_scan_stage_extension_mm(scan_config: Any) -> float:
+	configured_value = getattr(scan_config, "scan_stage_extension_mm", None)
+
+	if configured_value is None:
+		return LASER_SCAN_STAGE_EXTENSION_MM
+
+	return float(configured_value)
+
+
+def get_scan_z_offset_mm(scan_config: Any) -> float:
+	configured_value = getattr(scan_config, "scan_z_offset_mm", None)
+
+	if configured_value is None:
+		return LASER_SCAN_Z_OFFSET_MM
+
+	return float(configured_value)
+
+
+def get_scan_z_reference(
+	*,
+	scan_config: Any,
+	side: StorageModuleSide,
+) -> tuple[int, int, float, float] | None:
+	configured_reference = None
+
+	if side == StorageModuleSide.LEFT:
+		configured_reference = getattr(scan_config, "left_z_reference", None)
+	else:
+		configured_reference = getattr(scan_config, "right_z_reference", None)
+
+	if configured_reference is not None:
+		return (
+			int(configured_reference.shelf_idx),
+			int(configured_reference.cell_idx),
+			float(configured_reference.z_offset_mm),
+			float(configured_reference.wall_depth_mm),
+		)
+
+	return DEFAULT_Z_REFERENCE_BY_SIDE.get(side)
+
+
 @dataclass
 class GridScanResult:
 	x_positions: list[float]
@@ -347,7 +388,12 @@ def build_run_parameters(
 	samples_per_point: int,
 	coarse_settle_ms: int,
 	coarse_samples_per_point: int,
+	scan_config: Any,
 ) -> dict[str, Any]:
+	z_reference = get_scan_z_reference(scan_config=scan_config, side=side)
+	scan_stage_extension_mm = get_scan_stage_extension_mm(scan_config)
+	scan_z_offset_mm = get_scan_z_offset_mm(scan_config)
+
 	return {
 		"module": side.value,
 		"cli": {
@@ -380,8 +426,18 @@ def build_run_parameters(
 			"samples_per_point": samples_per_point,
 			"coarse_settle_ms": coarse_settle_ms,
 			"coarse_samples_per_point": coarse_samples_per_point,
-			"laser_scan_stage_extension_mm": LASER_SCAN_STAGE_EXTENSION_MM,
-			"laser_scan_z_offset_mm": LASER_SCAN_Z_OFFSET_MM,
+			"laser_scan_stage_extension_mm": scan_stage_extension_mm,
+			"laser_scan_z_offset_mm": scan_z_offset_mm,
+			"z_reference": (
+				{
+					"shelf_idx": z_reference[0],
+					"cell_idx": z_reference[1],
+					"z_offset_mm": z_reference[2],
+					"wall_depth_mm": z_reference[3],
+				}
+				if z_reference is not None
+				else None
+			),
 			"laser_scan_y_offset_mm": float(args.y_offset),
 			"shelf_edge_top_margin_mm": SHELF_EDGE_TOP_MARGIN_MM,
 		},
@@ -764,13 +820,13 @@ async def get_scan_position(tool: Any) -> tuple[float, float]:
 	return float(scan_position[0]), float(scan_position[1])
 
 
-async def get_laser_scan_z_extension_mm(tool: Any) -> float:
+async def get_laser_scan_z_extension_mm(tool: Any, scan_config: Any) -> float:
 	z_extension_place = await tool.get_param("Z_EXTENSION_PLACE")
 
 	if z_extension_place is None:
 		raise ValueError("Z_EXTENSION_PLACE parameter is not configured")
 
-	return float(z_extension_place) + LASER_SCAN_Z_OFFSET_MM
+	return float(z_extension_place) + get_scan_z_offset_mm(scan_config)
 
 
 async def ensure_scan_tool_ready(tool: Any) -> None:
@@ -784,7 +840,7 @@ async def ensure_scan_tool_ready(tool: Any) -> None:
 		raise ValueError("Tool motors (stage, z_axis) are required for laser scan")
 
 
-async def enter_scan_mode(tool: Any, side: StorageModuleSide) -> None:
+async def enter_scan_mode(tool: Any, side: StorageModuleSide, scan_config: Any) -> None:
 	await ensure_scan_tool_ready(tool)
 
 	side_number = 0
@@ -794,8 +850,8 @@ async def enter_scan_mode(tool: Any, side: StorageModuleSide) -> None:
 		side_number = 1
 		target_position = "back"
 
-	stage_extension_mm = LASER_SCAN_STAGE_EXTENSION_MM
-	z_extension_mm = await get_laser_scan_z_extension_mm(tool)
+	stage_extension_mm = get_scan_stage_extension_mm(scan_config)
+	z_extension_mm = await get_laser_scan_z_extension_mm(tool, scan_config)
 	z_move_rpm = await tool.get_param("Z_MOVE_RPM")
 	z_move_accel = await tool.get_param("Z_MOVE_ACCEL")
 	rotation_front = await tool.get_param("ROTATION_FRONT")
@@ -2580,7 +2636,7 @@ async def run_staged_scan(
 				scan_started_at=scan_started_at,
 			)
 
-		await enter_scan_mode(tool, side)
+		await enter_scan_mode(tool, side, scan_config)
 
 		if len(candidates) == 0:
 			print_status("phase=coarse-scan")
@@ -2866,14 +2922,10 @@ def build_candidate_lookup_by_cell(
 
 def resolve_z_reference_cell(
 	*,
+	scan_config: Any,
 	side: StorageModuleSide,
 	) -> tuple[int, int, float, float] | None:
-	default_reference = DEFAULT_Z_REFERENCE_BY_SIDE.get(side)
-
-	if default_reference is None:
-		return None
-
-	return default_reference
+	return get_scan_z_reference(scan_config=scan_config, side=side)
 
 
 def apply_wall_depth_z_offsets(
@@ -2881,6 +2933,7 @@ def apply_wall_depth_z_offsets(
 	analysis: Any,
 	scanned_shelves: list[Any],
 	metadata_path: str,
+	scan_config: Any,
 	side: StorageModuleSide,
 ) -> None:
 	metadata_file = Path(metadata_path)
@@ -2901,6 +2954,7 @@ def apply_wall_depth_z_offsets(
 		return
 
 	reference_key = resolve_z_reference_cell(
+		scan_config=scan_config,
 		side=side,
 	)
 
@@ -2937,6 +2991,7 @@ def apply_analysis(
 	analysis: Any,
 	grid: StorageGrid,
 	grid_path: Path,
+	scan_config: Any,
 	side: StorageModuleSide,
 ) -> None:
 	if len(analysis.shelves) == 0:
@@ -2952,6 +3007,7 @@ def apply_analysis(
 		analysis=analysis,
 		scanned_shelves=scanned_shelves,
 		metadata_path=str(analysis.metadata_path),
+		scan_config=scan_config,
 		side=side,
 	)
 	left_module = list(grid.left_module)
@@ -3060,6 +3116,7 @@ async def run_scan(args: argparse.Namespace) -> int:
 			samples_per_point=samples_per_point,
 			coarse_settle_ms=coarse_settle_ms,
 			coarse_samples_per_point=coarse_samples_per_point,
+			scan_config=scan_config,
 		)
 		shelf_scout_only = bool(args.shelf_scout_only)
 		known_shelf_edge_y = (
@@ -3189,6 +3246,7 @@ async def run_scan(args: argparse.Namespace) -> int:
 			analysis=analysis,
 			grid=grid,
 			grid_path=grid_path,
+			scan_config=scan_config,
 			side=side,
 		)
 

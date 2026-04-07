@@ -498,6 +498,13 @@ class IOBlock(BaseModel):
         return value
 
 
+class LaserScanReferenceConfig(BaseModel):
+    shelf_idx: int = Field(ge=0)
+    cell_idx: int = Field(ge=0)
+    z_offset_mm: float
+    wall_depth_mm: float
+
+
 class LaserScanConfig(BaseModel):
     wall_depth_tolerance_mm: float = Field(2.0, gt=0)
     expected_hole_width_mm: float = Field(26.0, gt=0)
@@ -509,9 +516,13 @@ class LaserScanConfig(BaseModel):
     laser_offset_x_mm: float = 0.0
     laser_offset_y_mm: float = 0.0
     z_extension_mm: Optional[float] = None
+    scan_stage_extension_mm: Optional[float] = Field(default=None, ge=0)
+    scan_z_offset_mm: Optional[float] = None
     step_mm: float = Field(5.0, gt=0)
     settle_ms: int = Field(50, ge=0)
     samples_per_point: int = Field(3, ge=1)
+    left_z_reference: Optional[LaserScanReferenceConfig] = None
+    right_z_reference: Optional[LaserScanReferenceConfig] = None
 
 
 class GridConfig(BaseModel):
