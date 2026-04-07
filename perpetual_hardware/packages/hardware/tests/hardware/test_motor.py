@@ -1,8 +1,6 @@
-import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock
 
-import numpy as np
 import pytest
 
 from hardware.exceptions import MotorTimeoutError
@@ -162,7 +160,7 @@ async def test_motor_home_with_sensor_sets_zero_and_marks_homed(mock_controller,
     assert motor.is_homed() is True
     assert motor.is_hard_stopped() is False
     assert motor.jog.await_count == 1
-    assert motor.move_config.await_count == 2
+    assert motor.move_config.await_count == 1
     assert any(call.args == (1, 0x6002, 0x21) for call in mock_controller.write_single_register.await_args_list)
 
 
@@ -180,8 +178,8 @@ async def test_motor_home_with_sensor_releases_switch_before_first_seek(mock_con
 
     await motor.home()
 
-    assert motor.jog.await_count == 1
-    assert motor.move_config.await_count == 3
+    assert motor.jog.await_count == 2
+    assert motor.move_config.await_count == 1
 
 
 @pytest.mark.asyncio
@@ -219,13 +217,13 @@ async def test_motor_home_with_sensor_supports_absolute_release_mode(mock_contro
     monkeypatch.setattr('hardware.motor.HomeSensor', lambda **_kwargs: sensor)
     motor.stop = AsyncMock(return_value=MotorStatus.STOPPED)
     motor.move_config = AsyncMock()
-    motor.move_to_position = AsyncMock(return_value=None)
+    motor.jog = AsyncMock(return_value=MotorStatus.STOPPED)
     motor.get_param = AsyncMock(return_value=0)
 
     await motor.home()
 
-    motor.move_to_position.assert_awaited_once_with(10.0)
-    assert motor.move_config.await_count == 2
+    assert motor.jog.await_count == 1
+    assert motor.move_config.await_count == 1
 
 
 @pytest.mark.asyncio
@@ -239,14 +237,13 @@ async def test_motor_home_with_absolute_release_mode_rezeros_before_release(mock
     monkeypatch.setattr('hardware.motor.HomeSensor', lambda **_kwargs: sensor)
     motor.stop = AsyncMock(return_value=MotorStatus.STOPPED)
     motor.move_config = AsyncMock()
-    motor.move_to_position = AsyncMock(return_value=None)
+    motor.jog = AsyncMock(return_value=MotorStatus.STOPPED)
     motor.get_param = AsyncMock(return_value=0)
 
     await motor.home()
 
-    assert motor.move_to_position.await_args_list[0].args == (10.0,)
-    assert motor.move_to_position.await_args_list[1].args == (10.0,)
-    assert motor.move_config.await_count == 3
+    assert motor.jog.await_count == 3
+    assert motor.move_config.await_count == 1
 
 
 @pytest.mark.asyncio
@@ -267,10 +264,11 @@ async def test_motor_home_with_sensor_can_disable_brake_during_home(mock_control
 
     await motor.home()
 
-    assert motor.move_config.await_count == 2
+    assert motor.move_config.await_count == 1
     motor.disable_brake_output.assert_awaited_once()
     motor.restore_brake_output.assert_awaited_once()
 
+@pytest.mark.asyncio
 async def test_motor_returns_last_good_position_when_garbage_persists(mock_controller):
     params = SimpleNamespace(
         motor_id=1,
