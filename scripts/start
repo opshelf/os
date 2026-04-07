@@ -11,6 +11,68 @@ BUILD=false
 DETACHED=false
 MODE=""
 
+read_group_id() {
+	group_name="$1"
+	group_entry=""
+	group_id=""
+
+	group_entry="$(getent group "$group_name" 2>/dev/null || true)"
+
+	if [[ -z "$group_entry" ]]; then
+		return 0
+	fi
+
+	IFS=':' read -r _ _ group_id _ <<< "$group_entry"
+	printf "%s\n" "$group_id"
+}
+
+export_container_runtime_env() {
+	export OPSHELF_UID="$(id -u)"
+	export OPSHELF_GID="$(id -g)"
+
+	group_id="$(read_group_id dialout)"
+	if [[ -n "$group_id" ]]; then
+		export OPSHELF_DIALOUT_GID="$group_id"
+	fi
+
+	group_id="$(read_group_id video)"
+	if [[ -n "$group_id" ]]; then
+		export OPSHELF_VIDEO_GID="$group_id"
+	fi
+
+	group_id="$(read_group_id input)"
+	if [[ -n "$group_id" ]]; then
+		export OPSHELF_INPUT_GID="$group_id"
+	fi
+
+	group_id="$(read_group_id render)"
+	if [[ -n "$group_id" ]]; then
+		export OPSHELF_RENDER_GID="$group_id"
+	fi
+}
+
+write_mode_file() {
+	local path="$1"
+	local value="$2"
+	local parent_dir=""
+	local temp_file=""
+
+	parent_dir="$(dirname "$path")"
+	mkdir -p "$parent_dir" || return 1
+
+	temp_file="$(mktemp "$parent_dir/.tmp.XXXXXX")" || return 1
+
+	if ! printf "%s" "$value" > "$temp_file"; then
+		rm -f "$temp_file"
+		return 1
+	fi
+
+	if ! mv -f "$temp_file" "$path"; then
+		rm -f "$temp_file"
+		return 1
+	fi
+}
+
 while [[ $# -gt 0 ]]; do
 	case $1 in
 		-h|--hardware)
@@ -44,7 +106,7 @@ if [[ -z "$MODE" ]]; then
 fi
 
 if [[ -z "$MODE" ]]; then
-	MODE="development"
+	MODE="production"
 fi
 
 case "$MODE" in
@@ -55,8 +117,10 @@ case "$MODE" in
 		;;
 esac
 
-mkdir -p "$(dirname "$MODE_FILE")"
-echo -n "$MODE" > "$MODE_FILE"
+if ! write_mode_file "$MODE_FILE" "$MODE"; then
+	echo "Failed to write mode file: $MODE_FILE"
+	exit 1
+fi
 
 case "$MODE" in
 	demo)
@@ -93,6 +157,8 @@ fi
 
 echo "starting in $MODE mode"
 
+export_container_runtime_env
+
 COMPOSE_CMD="docker compose -f docker-compose.yml"
 
 if [[ "$MODE" == "development" ]]; then
@@ -113,5 +179,8 @@ if [[ "$DETACHED" == true ]]; then
 	COMPOSE_CMD="$COMPOSE_CMD -d"
 fi
 
-echo -n "$MODE" > "$LAST_MODE_FILE"
+if ! write_mode_file "$LAST_MODE_FILE" "$MODE"; then
+	echo "Failed to write mode tracking file: $LAST_MODE_FILE"
+	exit 1
+fi
 cd "$SCRIPT_DIR" && eval $COMPOSE_CMD

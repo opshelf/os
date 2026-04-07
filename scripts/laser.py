@@ -108,6 +108,48 @@ def get_scan_z_reference(
 	return DEFAULT_Z_REFERENCE_BY_SIDE.get(side)
 
 
+def get_scan_z_delta(
+	*,
+	scan_config: Any,
+	side: StorageModuleSide,
+) -> dict[str, Any] | None:
+	configured_delta = None
+
+	if side == StorageModuleSide.LEFT:
+		configured_delta = getattr(scan_config, "left_z_delta_mm", None)
+	else:
+		configured_delta = getattr(scan_config, "right_z_delta_mm", None)
+
+	if configured_delta is not None:
+		return {
+			"delta_mm": float(configured_delta),
+			"source": "configured_delta",
+			"reference": None,
+		}
+
+	reference = get_scan_z_reference(scan_config=scan_config, side=side)
+
+	if reference is None:
+		return None
+
+	return {
+		"delta_mm": float(reference[2]) - float(reference[3]),
+		"source": "reference",
+		"reference": reference,
+	}
+
+
+def get_scan_xy_reference(
+	*,
+	scan_config: Any,
+	side: StorageModuleSide,
+) -> Any | None:
+	if side == StorageModuleSide.LEFT:
+		return getattr(scan_config, "left_xy_reference", None)
+
+	return getattr(scan_config, "right_xy_reference", None)
+
+
 @dataclass
 class GridScanResult:
 	x_positions: list[float]
@@ -391,6 +433,8 @@ def build_run_parameters(
 	scan_config: Any,
 ) -> dict[str, Any]:
 	z_reference = get_scan_z_reference(scan_config=scan_config, side=side)
+	z_delta = get_scan_z_delta(scan_config=scan_config, side=side)
+	xy_reference = get_scan_xy_reference(scan_config=scan_config, side=side)
 	scan_stage_extension_mm = get_scan_stage_extension_mm(scan_config)
 	scan_z_offset_mm = get_scan_z_offset_mm(scan_config)
 
@@ -436,6 +480,17 @@ def build_run_parameters(
 					"wall_depth_mm": z_reference[3],
 				}
 				if z_reference is not None
+				else None
+			),
+			"z_delta_mm": None if z_delta is None else float(z_delta["delta_mm"]),
+			"z_delta_source": None if z_delta is None else str(z_delta["source"]),
+			"xy_reference": (
+				{
+					"anchor": str(xy_reference.anchor),
+					"x_mm": float(xy_reference.x_mm),
+					"y_mm": float(xy_reference.y_mm),
+				}
+				if xy_reference is not None
 				else None
 			),
 			"laser_scan_y_offset_mm": float(args.y_offset),
@@ -2920,6 +2975,72 @@ def build_candidate_lookup_by_cell(
 	return candidate_lookup
 
 
+def get_scanned_anchor_cell(
+	*,
+	scanned_shelves: list[Any],
+	anchor: str,
+) -> Any | None:
+	if len(scanned_shelves) == 0:
+		return None
+
+	ordered_shelves = sorted(scanned_shelves, key=lambda shelf: float(shelf.shelf_idx))
+
+	if anchor.startswith("top_"):
+		target_shelf = ordered_shelves[-1]
+	else:
+		target_shelf = ordered_shelves[0]
+
+	if len(target_shelf.cells) == 0:
+		return None
+
+	if anchor.endswith("right"):
+		return max(target_shelf.cells, key=lambda cell: float(cell.calibration_point.x))
+
+	return min(target_shelf.cells, key=lambda cell: float(cell.calibration_point.x))
+
+
+def apply_xy_reference_offsets(
+	*,
+	scanned_shelves: list[Any],
+	scan_config: Any,
+	side: StorageModuleSide,
+) -> None:
+	xy_reference = get_scan_xy_reference(scan_config=scan_config, side=side)
+
+	if xy_reference is None:
+		print_status("xy_offset_inference=skipped reason=reference_unconfigured")
+		return
+
+	anchor_cell = get_scanned_anchor_cell(
+		scanned_shelves=scanned_shelves,
+		anchor=str(xy_reference.anchor),
+	)
+
+	if anchor_cell is None or anchor_cell.calibration_point is None:
+		print_status("xy_offset_inference=skipped reason=anchor_unresolved")
+		return
+
+	delta_x_mm = float(xy_reference.x_mm) - float(anchor_cell.calibration_point.x)
+	delta_y_mm = float(xy_reference.y_mm) - float(anchor_cell.calibration_point.y)
+	updated_cell_count = 0
+
+	for shelf in scanned_shelves:
+		for cell in shelf.cells:
+			if cell.calibration_point is None:
+				continue
+
+			cell.calibration_point.x = float(cell.calibration_point.x) + delta_x_mm
+			cell.calibration_point.y = float(cell.calibration_point.y) + delta_y_mm
+			updated_cell_count += 1
+
+	print_status(
+		f"xy_offset_inference=applied anchor={xy_reference.anchor} "
+		f"reference_x_mm={float(xy_reference.x_mm):.3f} "
+		f"reference_y_mm={float(xy_reference.y_mm):.3f} "
+		f"delta_x_mm={delta_x_mm:.3f} delta_y_mm={delta_y_mm:.3f} updated_cells={updated_cell_count}"
+	)
+
+
 def resolve_z_reference_cell(
 	*,
 	scan_config: Any,
@@ -2957,12 +3078,16 @@ def apply_wall_depth_z_offsets(
 		scan_config=scan_config,
 		side=side,
 	)
+	z_delta = get_scan_z_delta(
+		scan_config=scan_config,
+		side=side,
+	)
 
-	if reference_key is None:
-		print_status("z_offset_inference=skipped reason=reference_unresolved")
+	if z_delta is None:
+		print_status("z_offset_inference=skipped reason=z_delta_unresolved")
 		return
 
-	z_delta_mm = float(reference_key[2]) - float(reference_key[3])
+	z_delta_mm = float(z_delta["delta_mm"])
 	updated_cell_count = 0
 
 	for shelf in scanned_shelves:
@@ -2977,6 +3102,13 @@ def apply_wall_depth_z_offsets(
 
 			cell.calibration_point.z_offset = float(candidate.wall_depth_mm) + z_delta_mm
 			updated_cell_count += 1
+
+	if z_delta["source"] == "configured_delta":
+		print_status(
+			f"z_offset_inference=applied source=configured_delta "
+			f"delta_mm={z_delta_mm:.3f} updated_cells={updated_cell_count}"
+		)
+		return
 
 	print_status(
 		f"z_offset_inference=applied reference={reference_key[0]}:{reference_key[1]} "
@@ -3002,6 +3134,11 @@ def apply_analysis(
 		side=side,
 		analysis=analysis,
 		existing_shelves=existing_shelves,
+	)
+	apply_xy_reference_offsets(
+		scanned_shelves=scanned_shelves,
+		scan_config=scan_config,
+		side=side,
 	)
 	apply_wall_depth_z_offsets(
 		analysis=analysis,

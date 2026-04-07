@@ -1,6 +1,8 @@
+import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock, patch
 
+import numpy as np
 import pytest
 
 from hardware.exceptions import MotorTimeoutError
@@ -268,3 +270,49 @@ async def test_motor_home_with_sensor_can_disable_brake_during_home(mock_control
     assert motor.move_config.await_count == 2
     motor.disable_brake_output.assert_awaited_once()
     motor.restore_brake_output.assert_awaited_once()
+
+async def test_motor_returns_last_good_position_when_garbage_persists(mock_controller):
+    params = SimpleNamespace(
+        motor_id=1,
+        position_reg_high=0x602C,
+        position_reg_low=0x602D,
+        ppr=1,
+        mpr=1,
+        lim=10,
+        physical_to_logical=lambda physical: physical,
+    )
+    motor = Motor(mock_controller, params)
+    motor._cur_pos = 7.5
+    motor._logger = Mock()
+
+    mock_controller.read_holding_registers.side_effect = [100, 0, 100, 0]
+
+    position = await motor.get_position()
+
+    assert position == 7.5
+    motor._logger.warning.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_motor_throttles_repeated_garbage_position_logs(mock_controller):
+    params = SimpleNamespace(
+        motor_id=1,
+        position_reg_high=0x602C,
+        position_reg_low=0x602D,
+        ppr=1,
+        mpr=1,
+        lim=10,
+        physical_to_logical=lambda physical: physical,
+    )
+    motor = Motor(mock_controller, params)
+    motor._cur_pos = 7.5
+    motor._logger = Mock()
+
+    mock_controller.read_holding_registers.side_effect = [100, 0, 100, 0, 100, 0, 100, 0]
+
+    first = await motor.get_position()
+    second = await motor.get_position()
+
+    assert first == 7.5
+    assert second == 7.5
+    motor._logger.warning.assert_called_once()

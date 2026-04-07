@@ -18,6 +18,7 @@ from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.logging import LoggingIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 
+from perpetual_os1.device import get_device_id
 from perpetual_os1_server.core.logging_config import configure_logging, get_logger
 from perpetual_os1_server.core.robot import init_robot_worker, stop_robot_worker
 from perpetual_os1_server.core.storage import StorageService
@@ -33,48 +34,79 @@ from perpetual_os1_server.settings import get_settings, get_operating_mode
 configure_logging()
 logger = get_logger(__name__)
 
+SENSITIVE_HEADER_NAMES = {"authorization", "cookie"}
+
+
+def _redact_sensitive_mapping(value: Any) -> Any:
+	if isinstance(value, dict) is True:
+		redacted: dict[str, Any] = {}
+
+		for key, item in value.items():
+			if isinstance(key, str) is True and key.lower() in SENSITIVE_HEADER_NAMES:
+				redacted[key] = "[Filtered]"
+				continue
+
+			redacted[key] = _redact_sensitive_mapping(item)
+
+		return redacted
+
+	if isinstance(value, list) is True:
+		return [_redact_sensitive_mapping(item) for item in value]
+
+	return value
+
+
+def _before_send_sentry_event(event: dict[str, Any], _hint: dict[str, Any]) -> dict[str, Any] | None:
+	request = event.get("request")
+	if isinstance(request, dict) is True:
+		headers = request.get("headers")
+		if isinstance(headers, dict) is True:
+			request["headers"] = _redact_sensitive_mapping(headers)
+
+	return event
+
+
+def _before_send_sentry_log(log: dict[str, Any], _hint: dict[str, Any]) -> dict[str, Any] | None:
+	attributes = log.get("attributes")
+	if isinstance(attributes, dict) is True:
+		log["attributes"] = _redact_sensitive_mapping(attributes)
+
+	return log
+
 sentry_dsn = os.getenv("SENTRY_DSN_API", "")
+sentry_environment = os.getenv("SENTRY_ENVIRONMENT", os.getenv("DEPLOYMENT_ENVIRONMENT", "development"))
+device_id = get_device_id()
+
 if sentry_dsn:
 	from sentry_sdk.transport import HttpTransport
-	from sentry_sdk.types import Event
-
-	def before_send_with_flush(event: Event, hint: dict[str, Any]) -> Event | None:
-		if "request" in event:
-			request = event.get("request")
-			if request is not None and isinstance(request, dict) and "headers" in request:
-				headers = request.get("headers")
-				if isinstance(headers, dict):
-					headers.pop("Authorization", None)
-					headers.pop("Cookie", None)
-		return event
 
 	sentry_sdk.init(
 		dsn=sentry_dsn,
+		enable_logs=True,
 		integrations=[
 			StarletteIntegration(transaction_style="endpoint"),
 			FastApiIntegration(transaction_style="endpoint"),
-			LoggingIntegration(level=logging.INFO, event_level=logging.ERROR),
+			LoggingIntegration(
+				sentry_logs_level=logging.INFO,
+				level=logging.INFO,
+				event_level=logging.ERROR,
+			),
 		],
 		traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.1")),
-		environment=os.getenv("DEPLOYMENT_ENVIRONMENT", "development"),
+		environment=sentry_environment,
 		release=os.getenv("APP_VERSION", "0.1.0"),
-		before_send=before_send_with_flush,
+		server_name=device_id,
+		before_send=_before_send_sentry_event,
+		before_send_log=_before_send_sentry_log,
 		transport=HttpTransport,
 		shutdown_timeout=2,
 		debug=os.getenv("SENTRY_DEBUG", "false").lower() in ("true", "1", "yes"),
 	)
-	logger.info("sentry_initialized", dsn_configured=True)
+	sentry_sdk.set_tag("device_id", device_id)
+	sentry_sdk.set_context("opshelf_device", {"id": device_id})
+	logger.info("sentry_initialized", dsn_configured=True, device_id=device_id)
 else:
 	logger.warning("sentry_not_configured", message="SENTRY_DSN_API not set")
-
-
-def _filter_pii(event: dict[str, Any], hint: dict[str, Any]) -> dict[str, Any]:
-	"""Filter sensitive information from Sentry events."""
-	if "request" in event:
-		if "headers" in event["request"]:
-			event["request"]["headers"].pop("Authorization", None)
-			event["request"]["headers"].pop("Cookie", None)
-	return event
 
 
 def _run_migrations() -> None:
@@ -387,6 +419,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 		if io_camera_config is not None:
 			try:
 				from hardware.iocam import AFSCam
+				from hardware.exceptions import CameraNotPresentError
 				from perpetual_os1.common import UsbCamera, TofCamera
 
 				usb_config, tof_config = io_camera_config
@@ -397,6 +430,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 				await io_camera.start(enable_tof=settings.camera.depth_enabled)
 				await init_camera_manager(io_camera, depth_enabled=settings.camera.depth_enabled)
 				logger.info("io_camera_initialized", depth_enabled=settings.camera.depth_enabled)
+			except CameraNotPresentError as e:
+				logger.warning(
+					"io_camera_unavailable",
+					reason="not_detected",
+					error=str(e),
+				)
 			except Exception as e:
 				logger.error("io_camera_initialization_failed", error=str(e), exc_info=True)
 		else:

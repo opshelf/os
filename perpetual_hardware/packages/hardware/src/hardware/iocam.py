@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import time
 import re
 import subprocess
@@ -19,11 +20,32 @@ else:
 
 from hardware import iocam_helpers as ih
 from hardware.exceptions import (
-    CameraError, CameraConnectionError, CameraConfigError,
+    CameraError, CameraConnectionError, CameraConfigError, CameraNotPresentError,
     ImageError, ImageProcessingError, TOFError, TOFConfigError, TOFDataError
 )
 
 # ============================ Linux /dev/ helper ============================
+
+logger = logging.getLogger(__name__)
+
+
+def _resolve_innomaker_device(output: str) -> int:
+    lines = output.splitlines()
+
+    for i, line in enumerate(lines):
+        if "Innomaker-U20CAM-1080p-S1" not in line:
+            continue
+
+        if i + 1 >= len(lines):
+            break
+
+        match = re.search(r"/dev/video(\d+)", lines[i + 1])
+        if match is not None:
+            return int(match.group(1))
+
+        raise CameraConnectionError("Failed to parse Innomaker camera device path.")
+
+    raise CameraNotPresentError("Innomaker U20CAM not found in v4l2-ctl output.")
 
 
 def _find_innomaker_device() -> int:
@@ -35,17 +57,12 @@ def _find_innomaker_device() -> int:
             text=True,
             check=True,
         )
-        lines = result.stdout.splitlines()
-        for i, line in enumerate(lines):
-            if "Innomaker-U20CAM-1080p-S1" in line:
-                # The next line usually contains /dev/videoX
-                if i + 1 < len(lines):
-                    match = re.search(r"/dev/video(\d+)", lines[i + 1])
-                    if match:
-                        return int(match.group(1))
-        raise RuntimeError("Innomaker U20CAM not found in v4l2-ctl output.")
-    except Exception as e:
-        raise RuntimeError(f"Failed to detect Innomaker camera: {e}")
+    except FileNotFoundError as e:
+        raise CameraConnectionError("v4l2-ctl is not installed.") from e
+    except subprocess.CalledProcessError as e:
+        raise CameraConnectionError(f"Failed to run v4l2-ctl: {e}") from e
+
+    return _resolve_innomaker_device(result.stdout)
 
 # ============================ Async Sizer Class ============================
 
@@ -119,22 +136,19 @@ class AFSCam:
                 "enable TOF camera support."
             )
         try:
-            # print("initializing")
             self._tof = ac.ArducamCamera()
             port_used = self._open_tof(self._tof, self.preferred_tof_port)
             if port_used < 0:
-                # print("bad port")
                 raise TOFError(f"Failed to open TOF on port {self.preferred_tof_port}")
                 
             if self._tof.start(ac.FrameType.DEPTH) != 0:
                 self._tof.close()
-                print("bad stream")
+                logger.error("Failed to start TOF stream")
                 raise TOFError("Failed to start TOF stream")
                 
             try:
                 self._tof.setControl(ac.Control.RANGE, self.max_distance_mm)
             except Exception as e:
-                # print("bad range")
                 raise TOFConfigError(
                     f"Failed to set TOF range to {self.max_distance_mm}mm: {str(e)}"
                 ) from e
@@ -165,7 +179,7 @@ class AFSCam:
             # Auto-detect Innomaker camera
             usb_index = _find_innomaker_device()
             self._usb_index = usb_index
-            print(f"[USB] Found Innomaker U20CAM at /dev/video{usb_index}")
+            logger.info("Found Innomaker U20CAM at /dev/video%s", usb_index)
 
             # Open using V4L2 backend
             self._usb = cv2.VideoCapture(usb_index, cv2.CAP_V4L2)
@@ -192,7 +206,7 @@ class AFSCam:
 
         except Exception as e:
             self._cleanup_usb()
-            if not isinstance(e, (CameraConnectionError, CameraConfigError)):
+            if not isinstance(e, (CameraConnectionError, CameraConfigError, CameraNotPresentError)):
                 raise CameraError(f"USB camera initialization failed: {e}") from e
             raise
                 
@@ -407,11 +421,9 @@ class AFSCam:
                     try:
                         # Depth sampling (keep your original averaging + bias)
                         values = [self._sample_depth_at_usb_point_shift_depth_dependent((cx, cy), gray.shape) for _ in range(10)]
-                        # print(values)
                         z_mm = (sum(values) / len(values) if values else None)
                         if z_mm is not None:
                             z_mm = z_mm-55  # keep your bias if desired
-                            # print(z_mm)
 
                         # ---- Draw depth sampling location (projected to USB frame) ----
                         H_u, W_u = gray.shape[:2]
@@ -734,11 +746,9 @@ class AFSCam:
                     # --------- Depth sampling + overlay + footprint ----------
                     try:
                         values = [self._sample_depth_at_usb_point_shift_depth_dependent((cx, cy), gray.shape) for _ in range(10)]
-                        # print(values)
                         z_mm = (sum(values) / len(values) if values else None)
                         if z_mm is not None:
                             z_mm = z_mm-55  # keep your bias if desired
-                            # print(z_mm)
 
                         # ---- Draw depth sampling location (projected to USB frame) ----
                         H_u, W_u = gray.shape[:2]
@@ -914,10 +924,11 @@ class AFSCam:
         for p in ports_to_try:
             ret = cam.open(ac.Connection.CSI, p)
             if ret == 0:
-                # print(p)
                 return p
             last_err = ret
-        print(f"[TOF] Failed to open on any CSI port. Last error: {last_err}")
+
+        logger.warning("Failed to open TOF on any CSI port. Last error: %s", last_err)
+
         return -1
 
     def _update_depth_buffers(self, depth: np.ndarray, conf: np.ndarray) -> None:
