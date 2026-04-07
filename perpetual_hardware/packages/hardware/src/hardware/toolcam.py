@@ -1,3 +1,4 @@
+import logging
 import numpy as np
 import cv2
 import time
@@ -13,6 +14,8 @@ from hardware.exceptions import (
 
 MIN_AREA = 200          # reject tiny blobs (px^2)
 ASPECT_TOL = 0.75       # allow ±20% from perfect square (w≈h)
+
+logger = logging.getLogger(__name__)
 
 class ToolCamera:
     url: str
@@ -74,7 +77,9 @@ class ToolCamera:
         try:
             cap = cv2.VideoCapture(self.url)
             if not cap.isOpened():
-                print("no cam")
+
+                logger.warning("Failed to open camera at URL: %s", self.url)
+
                 raise CameraConnectionError(
                     f"Failed to open camera at URL: {self.url}"
                 )
@@ -84,7 +89,9 @@ class ToolCamera:
                 t0 = time.time()
                 while time.time() - t0 < 4.25:  # idr interval
                     if not cap.grab():
-                        print("bad grab")
+
+                        logger.warning("Failed to grab frame during buffer clear for %s", self.url)
+
                         raise ImageError("Failed to grab frame during buffer clear")
                     time.sleep(0.001)
 

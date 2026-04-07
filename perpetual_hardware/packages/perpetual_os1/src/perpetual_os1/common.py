@@ -137,6 +137,7 @@ class Motor(BaseModel):
     motor_name: str = Field(..., min_length=1)
     motor_id: int = Field(..., ge=0)  # tighten if desired
     enabled: bool = Field(default=True)
+    rotation_safe_stage_extension_enabled: bool = Field(default=False)
     Ip: int = Field(..., ge=0)        # keeping exact key casing
     rpm: int = Field(..., gt=0)
     dr: Literal[0, 1]
@@ -505,6 +506,12 @@ class LaserScanReferenceConfig(BaseModel):
     wall_depth_mm: float
 
 
+class LaserScanXYReferenceConfig(BaseModel):
+    anchor: Literal["top_right", "top_left", "bottom_right", "bottom_left"] = "top_right"
+    x_mm: float
+    y_mm: float
+
+
 class LaserScanConfig(BaseModel):
     wall_depth_tolerance_mm: float = Field(2.0, gt=0)
     expected_hole_width_mm: float = Field(26.0, gt=0)
@@ -521,8 +528,12 @@ class LaserScanConfig(BaseModel):
     step_mm: float = Field(5.0, gt=0)
     settle_ms: int = Field(50, ge=0)
     samples_per_point: int = Field(3, ge=1)
+    left_z_delta_mm: Optional[float] = None
+    right_z_delta_mm: Optional[float] = None
     left_z_reference: Optional[LaserScanReferenceConfig] = None
     right_z_reference: Optional[LaserScanReferenceConfig] = None
+    left_xy_reference: Optional[LaserScanXYReferenceConfig] = None
+    right_xy_reference: Optional[LaserScanXYReferenceConfig] = None
 
 
 class GridConfig(BaseModel):

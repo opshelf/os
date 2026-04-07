@@ -202,6 +202,7 @@ class Motor():
     _cur_pos: Optional[int]
     _stall_timeout: float
     _status: MotorStatus
+    _last_bad_position_log_at: Optional[float]
 
     def __init__(self, controller: SharedModbusController, params: Any, safety: Optional[CurtainSafety] = None) -> None:
         self._motor_id = params.motor_id
@@ -212,6 +213,7 @@ class Motor():
         self._status = MotorStatus.IDLE
         self._pending_motion: Optional[Callable[[], Awaitable[None]]] = None
         self._target_pos: Optional[float] = None
+        self._last_bad_position_log_at = None
         self._logger = logger.getChild(f"motor.{self._motor_id}")
         self._safety = safety
         self._simulated_fault = False
@@ -664,7 +666,7 @@ class Motor():
 
             max_valid = self._params.lim * 2
             if abs(logical_pos) > max_valid:
-                self._logger.warning(
+                self._logger.debug(
                     "Garbage position detected, retrying",
                     extra={
                         "motor_id": self._motor_id,
@@ -682,11 +684,27 @@ class Motor():
                 physical_pos = (pos / ppr) * self._params.mpr
                 logical_pos = self._params.physical_to_logical(physical_pos)
                 if abs(logical_pos) > max_valid:
-                    self._logger.error(
-                        "Garbage position persists after retry",
-                        extra={"motor_id": self._motor_id, "logical_pos": logical_pos},
+                    fallback_pos = self._cur_pos if self._cur_pos is not None else 0.0
+
+                    now = time.monotonic()
+                    should_log = (
+                        self._last_bad_position_log_at is None
+                        or now - self._last_bad_position_log_at >= 60.0
                     )
-                    return 0.0
+
+                    if should_log:
+                        self._last_bad_position_log_at = now
+                        self._logger.warning(
+                            "Garbage position persists after retry, using last known position",
+                            extra={
+                                "motor_id": self._motor_id,
+                                "logical_pos": logical_pos,
+                                "fallback_pos": fallback_pos,
+                                "has_cached_position": self._cur_pos is not None,
+                            },
+                        )
+
+                    return fallback_pos
 
             self._cur_pos = logical_pos
             return logical_pos

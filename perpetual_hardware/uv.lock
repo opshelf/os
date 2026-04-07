@@ -784,6 +784,7 @@ dependencies = [
     { name = "opencv-python" },
     { name = "pydantic" },
     { name = "pymodbus" },
+    { name = "sentry-sdk" },
 ]
 
 [package.dev-dependencies]
@@ -799,6 +800,7 @@ requires-dist = [
     { name = "opencv-python" },
     { name = "pydantic" },
     { name = "pymodbus", specifier = ">=3.11.2" },
+    { name = "sentry-sdk", specifier = ">=2.35.0" },
 ]
 
 [package.metadata.requires-dev]
@@ -880,7 +882,7 @@ requires-dist = [
     { name = "python-barcode", specifier = ">=0.15.1" },
     { name = "python-json-logger", specifier = ">=2.0.7" },
     { name = "python-multipart", specifier = ">=0.0.6" },
-    { name = "sentry-sdk", extras = ["fastapi"], specifier = ">=2.0.0" },
+    { name = "sentry-sdk", extras = ["fastapi"], specifier = ">=2.35.0" },
     { name = "setuptools", specifier = ">=75.8.0" },
     { name = "sqlalchemy", specifier = ">=2.0.0" },
     { name = "sse-starlette", specifier = ">=2.1.3" },

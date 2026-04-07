@@ -53,6 +53,7 @@ perpetual_hardware/packages/perpetual_os1_server/data/auth.db-wal
 # Claude Code and MCP
 .claude/
 .mcp.json
+opencode.json
 
 # Camera files
 frame.png

@@ -6,6 +6,7 @@ for audit log entries, with a pragmatic env-based key.
 import hashlib
 import hmac
 import json
+import logging
 import os
 import secrets
 from typing import Any, Dict, Optional
@@ -13,6 +14,7 @@ from typing import Any, Dict, Optional
 
 _HMAC_KEY_CACHE: Optional[bytes] = None
 _HMAC_KEY_ID: str = os.getenv("AUDIT_HMAC_KEY_ID", "v1")
+logger = logging.getLogger(__name__)
 
 
 def _load_hmac_key() -> bytes:
@@ -28,7 +30,9 @@ def _load_hmac_key() -> bytes:
             _HMAC_KEY_CACHE = key.encode("utf-8")
     else:
         _HMAC_KEY_CACHE = secrets.token_bytes(32)
-        print("[audit] Warning: AUDIT_HMAC_KEY is not set; using ephemeral key (dev only).")
+
+        logger.warning("AUDIT_HMAC_KEY is not set; using ephemeral key (dev only)")
+
     return _HMAC_KEY_CACHE
 
 
@@ -55,4 +59,3 @@ def hmac_sha256_hex(message: bytes) -> str:
 
 def build_binding_message(seq_no: int, prev_hash: str, entry_hash: str) -> bytes:
     return f"{seq_no}|{prev_hash}|{entry_hash}".encode("utf-8")
-

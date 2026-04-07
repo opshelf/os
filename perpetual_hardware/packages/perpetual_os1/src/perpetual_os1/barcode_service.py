@@ -37,7 +37,7 @@ class BarcodeService:
         svc = BarcodeService(port="COM3")  # or /dev/ttyUSB0, or leave None to auto-pick
         await svc.start()
         async for code in svc:
-            print(code)
+            logging.info(code)
         await svc.stop()
     """
     def __init__(self, port: str | None = None, baudrate: int = 115200,
