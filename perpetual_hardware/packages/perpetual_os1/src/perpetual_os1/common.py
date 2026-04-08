@@ -525,6 +525,8 @@ class LaserScanConfig(BaseModel):
     z_extension_mm: Optional[float] = None
     scan_stage_extension_mm: Optional[float] = Field(default=None, ge=0)
     scan_z_offset_mm: Optional[float] = None
+    shelf_hole_sweep_offsets_mm: Optional[List[float]] = None
+    fine_scan_margin_y_mm: Optional[float] = Field(default=None, gt=0)
     step_mm: float = Field(5.0, gt=0)
     settle_ms: int = Field(50, ge=0)
     samples_per_point: int = Field(3, ge=1)
