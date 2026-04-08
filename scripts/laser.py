@@ -53,12 +53,12 @@ SHELF_BRIM_MIN_HEIGHT_MM = 8.0
 SHELF_BRIM_MAX_HEIGHT_MM = 14.0
 SHELF_MIN_SPACING_MM = 40.0
 SHELF_EDGE_TOP_MARGIN_MM = 5.0
-SHELF_HOLE_SWEEP_OFFSETS_MM = [24.25]
+SHELF_HOLE_SWEEP_OFFSET_MM = 32.25
 SHELF_SCOUT_POST_EDGE_SKIP_MM = 80.0
 GAP_DEPTH_THRESHOLD_MM = 0.01
 FILLED_HOLE_MIN_DEPTH_DELTA_MM = 0.4
 FINE_SCAN_MARGIN_X_MM = 10.0
-FINE_SCAN_MARGIN_Y_MM = 24.0
+FINE_SCAN_MARGIN_Y_MM = 6.0
 FINE_OPPOSITE_EDGE_MARGIN_MM = 5.0
 FINE_OPPOSITE_EDGE_BACKTRACK_MM = 8.0
 COARSE_WALL_SEARCH_STEPS = 2
@@ -149,6 +149,30 @@ def get_scan_xy_reference(
 		return getattr(scan_config, "left_xy_reference", None)
 
 	return getattr(scan_config, "right_xy_reference", None)
+
+
+def get_shelf_hole_sweep_offsets_mm(scan_config: Any) -> list[float]:
+	configured_offsets = getattr(scan_config, "shelf_hole_sweep_offsets_mm", None)
+
+	if configured_offsets is None:
+		return [SHELF_HOLE_SWEEP_OFFSET_MM]
+
+	if len(configured_offsets) == 0:
+		return [SHELF_HOLE_SWEEP_OFFSET_MM]
+
+	return [
+		float(offset_mm)
+		for offset_mm in configured_offsets
+	]
+
+
+def get_fine_scan_margin_y_mm(scan_config: Any) -> float:
+	configured_margin_mm = getattr(scan_config, "fine_scan_margin_y_mm", None)
+
+	if configured_margin_mm is None:
+		return FINE_SCAN_MARGIN_Y_MM
+
+	return float(configured_margin_mm)
 
 
 @dataclass
@@ -436,6 +460,7 @@ def build_run_parameters(
 	z_reference = get_scan_z_reference(scan_config=scan_config, side=side)
 	z_delta = get_scan_z_delta(scan_config=scan_config, side=side)
 	xy_reference = get_scan_xy_reference(scan_config=scan_config, side=side)
+	hole_sweep_offsets_mm = get_shelf_hole_sweep_offsets_mm(scan_config)
 	scan_stage_extension_mm = get_scan_stage_extension_mm(scan_config)
 	scan_z_offset_mm = get_scan_z_offset_mm(scan_config)
 
@@ -466,7 +491,7 @@ def build_run_parameters(
 			"coarse_step_mm": COARSE_SCAN_STEP_MM,
 			"shelf_scout_step_mm": SHELF_SCOUT_STEP_MM,
 			"shelf_sweep_x_step_mm": SHELF_SWEEP_X_STEP_MM,
-			"shelf_hole_sweep_offsets_mm": list(SHELF_HOLE_SWEEP_OFFSETS_MM),
+			"shelf_hole_sweep_offsets_mm": list(hole_sweep_offsets_mm),
 			"settle_ms": settle_ms,
 			"samples_per_point": samples_per_point,
 			"coarse_settle_ms": coarse_settle_ms,
@@ -1035,6 +1060,7 @@ async def capture_shelf_candidates(
 	scout_x_positions = build_shelf_scout_x_positions(bounds=bounds, side=side)
 	scout_y_positions = list(reversed(build_axis_positions(bounds.y_min, bounds.y_max, SHELF_SCOUT_STEP_MM)))
 	hole_sweep_x_positions = build_axis_positions(bounds.x_min, bounds.x_max, SHELF_SWEEP_X_STEP_MM)
+	hole_sweep_offsets_mm = get_shelf_hole_sweep_offsets_mm(scan_config)
 	shelf_edges: list[ShelfSurfaceEdge] = []
 	horizontal_wall_depth_values: list[list[float | None]] = []
 	candidates: list[GapCandidateRegion] = []
@@ -1126,7 +1152,7 @@ async def capture_shelf_candidates(
 		return coarse_scan, 0.0, [], filtered_shelf_edges
 
 	for shelf_idx, shelf_edge in enumerate(filtered_shelf_edges, start=1):
-		for offset_idx, offset_mm in enumerate(SHELF_HOLE_SWEEP_OFFSETS_MM, start=1):
+		for offset_idx, offset_mm in enumerate(hole_sweep_offsets_mm, start=1):
 			sweep_y_mm = shelf_edge.y_mm + offset_mm
 
 			if sweep_y_mm < bounds.y_min or sweep_y_mm > bounds.y_max:
@@ -1134,7 +1160,7 @@ async def capture_shelf_candidates(
 
 			print_status(
 				f"phase=shelf-hole-scan shelf={shelf_idx}/{len(filtered_shelf_edges)} "
-				f"offset={offset_idx}/{len(SHELF_HOLE_SWEEP_OFFSETS_MM)} y={sweep_y_mm:.2f}"
+				f"offset={offset_idx}/{len(hole_sweep_offsets_mm)} y={sweep_y_mm:.2f}"
 			)
 			sweep_depth_values = await scan_line_positions(
 				tool,
@@ -1158,7 +1184,7 @@ async def capture_shelf_candidates(
 					"shelf_idx": shelf_idx,
 					"shelf_count": len(filtered_shelf_edges),
 					"offset_idx": offset_idx,
-					"offset_count": len(SHELF_HOLE_SWEEP_OFFSETS_MM),
+					"offset_count": len(hole_sweep_offsets_mm),
 					"y_position": sweep_y_mm,
 				},
 			)
@@ -1444,8 +1470,9 @@ def build_fine_scan_bounds(
 	overall_bounds: ScanBounds,
 	scan_config: Any,
 ) -> ScanBounds:
+	fine_scan_margin_y_mm = get_fine_scan_margin_y_mm(scan_config)
 	y_margin_mm = max(
-		FINE_SCAN_MARGIN_Y_MM + 10.0,
+		fine_scan_margin_y_mm + 10.0,
 		(scan_config.expected_hole_height_mm / 2.0) + 12.0,
 	)
 
