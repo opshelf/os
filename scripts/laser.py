@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E402
 from __future__ import annotations
 
 import argparse
@@ -7,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 import numpy as np
+import shutil
 import sys
 import tempfile
 import traceback
@@ -23,7 +25,14 @@ PYTHON_PATHS = [
 for import_path in reversed(PYTHON_PATHS):
 	sys.path.insert(0, str(import_path))
 
-from perpetual_os1.common import AxisCoordinate, CONFIG_PATH, load_config_file, resolve_grid_path
+from laser_angle_calibration import (
+	capture_samples_with_robot as capture_angle_calibration_samples,
+	parse_range_argument as parse_angle_calibration_range_argument,
+	print_fit_result as print_angle_calibration_fit_result,
+	search_best_alpha as search_angle_calibration_alpha,
+	write_output_document as write_angle_calibration_output_document,
+)
+from perpetual_os1.common import AxisCoordinate, CONFIG_PATH, Parameters, load_config_file, resolve_grid_path
 from perpetual_os1.laser_scan import (
 	ScanBounds,
 	ScanAnalysisResult,
@@ -250,6 +259,24 @@ def parse_args() -> argparse.Namespace:
 	parser.add_argument("--rescan-cell", type=str)
 	parser.add_argument("--validate-cell", type=str)
 	parser.add_argument("--validate-cycles", type=int, default=1)
+	parser.add_argument("--calibrate-angle", action="store_true")
+	parser.add_argument("--x-range", nargs=3, metavar=("MIN", "MAX", "STEP"), type=float)
+	parser.add_argument("--y-mm", type=float)
+	parser.add_argument("--z-offset-range", nargs=3, metavar=("MIN", "MAX", "STEP"), type=float)
+	parser.add_argument("--rotation-range", nargs=3, metavar=("MIN", "MAX", "STEP"), type=float)
+	parser.add_argument("--rotation-center-deg", type=float)
+	parser.add_argument("--stage-extension-mm", type=float)
+	parser.add_argument("--base-z-mm", type=float)
+	parser.add_argument("--shutdown-action", choices=["stop", "shutdown"], default="shutdown")
+	parser.add_argument("--laser-offset-x-mm", type=float)
+	parser.add_argument("--laser-offset-z-mm", type=float)
+	parser.add_argument("--beam-zero-deg", type=float, default=0.0)
+	parser.add_argument("--alpha-min-deg", type=float, default=-10.0)
+	parser.add_argument("--alpha-max-deg", type=float, default=10.0)
+	parser.add_argument("--coarse-step-deg", type=float, default=0.1)
+	parser.add_argument("--fine-window-deg", type=float, default=0.3)
+	parser.add_argument("--fine-step-deg", type=float, default=0.005)
+	parser.add_argument("--output", type=Path)
 	return parser.parse_args()
 
 
@@ -450,6 +477,22 @@ def print_status(message: str) -> None:
 			log_file.write(f"{timestamp}\t{message}\n")
 
 	print(message, flush=True)
+
+
+def persist_config(config: Any, config_path: str) -> Path | None:
+	config_file = Path(config_path).resolve()
+	backup_path: Path | None = None
+
+	if config_file.exists() is True:
+		backup_path = config_file.parent / f"{config_file.name}.{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.bak"
+		shutil.copy2(config_file, backup_path)
+
+	config_file.parent.mkdir(parents=True, exist_ok=True)
+	config_file.write_text(
+		json.dumps(config.model_dump(mode="json"), indent="\t"),
+		encoding="utf-8",
+	)
+	return backup_path
 
 
 def build_standalone_config(config) -> dict:
@@ -1008,7 +1051,7 @@ async def ensure_scan_tool_ready(tool: Any) -> None:
 		raise ValueError("Tool motors (stage, z_axis) are required for laser scan")
 
 
-async def set_y_brake_for_shelf_scouting(
+async def set_y_brake_for_scanning(
 	tool: Any,
 	*,
 	is_enabled: bool,
@@ -1016,7 +1059,7 @@ async def set_y_brake_for_shelf_scouting(
 	y_motor = getattr(tool, "_my", None)
 
 	if y_motor is None:
-		raise ValueError("Y-axis motor is required for shelf scouting")
+		raise ValueError("Y-axis motor is required for laser scanning")
 
 	if is_enabled is True:
 		await y_motor.restore_brake_output()
@@ -1180,7 +1223,7 @@ async def capture_shelf_candidates(
 		is_y_brake_disabled = False
 
 		try:
-			await set_y_brake_for_shelf_scouting(tool, is_enabled=False)
+			await set_y_brake_for_scanning(tool, is_enabled=False)
 			is_y_brake_disabled = True
 
 			for scout_idx, scout_x_mm in enumerate(scout_x_positions, start=1):
@@ -1212,7 +1255,7 @@ async def capture_shelf_candidates(
 				shelf_edges.extend(scout_edges)
 		finally:
 			if is_y_brake_disabled is True:
-				await set_y_brake_for_shelf_scouting(tool, is_enabled=True)
+				await set_y_brake_for_scanning(tool, is_enabled=True)
 
 	filtered_shelf_edges: list[ShelfSurfaceEdge] = []
 
@@ -2670,6 +2713,7 @@ async def run_staged_scan(
 	fine_scan_results: list[tuple[ScanBounds, GridScanResult, list[ScanDetectedCell]]] = []
 	all_detected_cells: list[ScanDetectedCell] = []
 	scan_started_at: Optional[str] = None
+	is_y_brake_disabled = False
 
 	global CURRENT_SCAN_LOG_PATH
 	previous_scan_log_path = CURRENT_SCAN_LOG_PATH
@@ -2835,6 +2879,10 @@ async def run_staged_scan(
 				f"completed_candidates={len(fine_scan_results)}"
 			)
 
+		if shelf_scout_only is False and len(candidates) > 0 and is_y_brake_disabled is False:
+			await set_y_brake_for_scanning(tool, is_enabled=False)
+			is_y_brake_disabled = True
+
 		for candidate_idx, candidate in enumerate(candidates, start=1):
 			if candidate_idx <= len(fine_entries):
 				existing_fine_entry = fine_entries[candidate_idx - 1]
@@ -2968,8 +3016,12 @@ async def run_staged_scan(
 				shelf_edges=shelf_edges,
 			)
 	finally:
-		await tool.retract()
-		CURRENT_SCAN_LOG_PATH = previous_scan_log_path
+		try:
+			if is_y_brake_disabled is True:
+				await set_y_brake_for_scanning(tool, is_enabled=True)
+		finally:
+			await tool.retract()
+			CURRENT_SCAN_LOG_PATH = previous_scan_log_path
 
 	deduped_cells = dedupe_detected_cells(
 		all_detected_cells,
@@ -3493,6 +3545,163 @@ def analyze_depth_rows(
 	return analyze_scan_capture(capture, base_dir=scans_dir)
 
 
+def validate_angle_calibration_args(args: argparse.Namespace) -> None:
+	if args.module is None:
+		raise ValueError("--module is required with --calibrate-angle")
+
+	if args.x_range is None:
+		raise ValueError("--x-range is required with --calibrate-angle")
+
+	if args.y_mm is None:
+		raise ValueError("--y-mm is required with --calibrate-angle")
+
+	if args.z_offset_range is None:
+		raise ValueError("--z-offset-range is required with --calibrate-angle")
+
+	if args.rotation_range is None:
+		raise ValueError("--rotation-range is required with --calibrate-angle")
+
+	if args.continue_scan is True:
+		raise ValueError("--continue cannot be used with --calibrate-angle")
+
+	if args.npy is not None:
+		raise ValueError("--npy cannot be used with --calibrate-angle")
+
+	if args.rescan_cell is not None:
+		raise ValueError("--rescan-cell cannot be used with --calibrate-angle")
+
+	if args.validate_cell is not None:
+		raise ValueError("--validate-cell cannot be used with --calibrate-angle")
+
+	if args.shelf_scout_only is True:
+		raise ValueError("--shelf-scout-only cannot be used with --calibrate-angle")
+
+	if args.known_shelf_edge_y is not None:
+		raise ValueError("--known-shelf-edge-y cannot be used with --calibrate-angle")
+
+	if args.x is not None or args.y is not None:
+		raise ValueError("--x/--y cannot be used with --calibrate-angle; use --x-range and --y-mm")
+
+	if args.step is not None:
+		raise ValueError("--step cannot be used with --calibrate-angle; use --x-range/--rotation-range")
+
+	if args.y_offset != 0.0:
+		raise ValueError("--y-offset cannot be used with --calibrate-angle")
+
+	if args.alpha_max_deg < args.alpha_min_deg:
+		raise ValueError("--alpha-min-deg must be <= --alpha-max-deg")
+
+	if args.coarse_step_deg <= 0.0:
+		raise ValueError("--coarse-step-deg must be positive")
+
+	if args.fine_window_deg <= 0.0:
+		raise ValueError("--fine-window-deg must be positive")
+
+	if args.fine_step_deg <= 0.0:
+		raise ValueError("--fine-step-deg must be positive")
+
+	args.x_range = parse_angle_calibration_range_argument(args.x_range)
+	args.z_offset_range = parse_angle_calibration_range_argument(args.z_offset_range)
+	args.rotation_range = parse_angle_calibration_range_argument(args.rotation_range)
+
+
+def apply_angle_calibration_result(
+	*,
+	config: Any,
+	config_path: str,
+	side: StorageModuleSide,
+	alpha_deg: float,
+) -> None:
+	rotation_param = "ROTATION_FRONT"
+
+	if side == StorageModuleSide.RIGHT:
+		rotation_param = "ROTATION_BACK"
+
+	current_rotation_deg = float(getattr(config.robot.tool.parameters, rotation_param))
+	updated_rotation_deg = current_rotation_deg + alpha_deg
+	params_data = config.robot.tool.parameters.model_dump()
+	params_data[rotation_param] = updated_rotation_deg
+	config.robot.tool.parameters = Parameters.model_validate(params_data)
+	backup_path = persist_config(config, config_path)
+
+	if backup_path is not None:
+		print_status(f"config_backup_path={backup_path}")
+
+	print_status(
+		f"angle_calibration_apply=updated param={rotation_param} "
+		f"previous_deg={current_rotation_deg:.4f} alpha_deg={alpha_deg:.4f} "
+		f"updated_deg={updated_rotation_deg:.4f}"
+	)
+
+
+async def run_angle_calibration(
+	*,
+	args: argparse.Namespace,
+	config: Any,
+) -> int:
+	validate_angle_calibration_args(args)
+	scan_config = config.robot.grid.scan
+	side = normalize_module(args.module)
+	laser_offset_x_mm = (
+		float(args.laser_offset_x_mm)
+		if args.laser_offset_x_mm is not None
+		else float(scan_config.laser_offset_x_mm)
+	)
+	laser_offset_z_mm = (
+		float(args.laser_offset_z_mm)
+		if args.laser_offset_z_mm is not None
+		else 0.0
+	)
+	beam_zero_deg = float(args.beam_zero_deg)
+	print_status("phase=angle-calibration")
+	print_status(
+		f"angle_calibration_setup module={side.value} "
+		f"x_range={args.x_range} y_mm={float(args.y_mm):.3f} "
+		f"z_offset_range={args.z_offset_range} rotation_range={args.rotation_range} "
+		f"laser_offset_x_mm={laser_offset_x_mm:.3f} laser_offset_z_mm={laser_offset_z_mm:.3f} "
+		f"beam_zero_deg={beam_zero_deg:.3f}"
+	)
+
+	samples, capture_metadata = await capture_angle_calibration_samples(args)
+	fit_result = search_angle_calibration_alpha(
+		samples,
+		alpha_min_deg=float(args.alpha_min_deg),
+		alpha_max_deg=float(args.alpha_max_deg),
+		coarse_step_deg=float(args.coarse_step_deg),
+		fine_window_deg=float(args.fine_window_deg),
+		fine_step_deg=float(args.fine_step_deg),
+		laser_offset_x_mm=laser_offset_x_mm,
+		laser_offset_z_mm=laser_offset_z_mm,
+		beam_zero_deg=beam_zero_deg,
+	)
+	print_angle_calibration_fit_result(fit_result)
+
+	if args.output is not None:
+		write_angle_calibration_output_document(
+			output_path=args.output,
+			mode="capture",
+			samples=samples,
+			fit_result=fit_result,
+			metadata={
+				**capture_metadata,
+				"laser_offset_x_mm": laser_offset_x_mm,
+				"laser_offset_z_mm": laser_offset_z_mm,
+				"beam_zero_deg": beam_zero_deg,
+			},
+		)
+		print_status(f"angle_calibration_output={args.output}")
+
+	if args.apply is True:
+		apply_angle_calibration_result(
+			config=config,
+			config_path=args.config,
+			side=side,
+			alpha_deg=float(fit_result.alpha_deg),
+		)
+
+	return 0
+
+
 async def run_scan(args: argparse.Namespace) -> int:
 	print_status("phase=config")
 	config = load_config_file(args.config)
@@ -3503,6 +3712,9 @@ async def run_scan(args: argparse.Namespace) -> int:
 	rescan_candidate: GapCandidateRegion | None = None
 	grid_path = Path(resolve_grid_path(config))
 	grid = load_grid(grid_path)
+
+	if args.calibrate_angle is True:
+		return await run_angle_calibration(args=args, config=config)
 
 	if rescan_target is not None and validation_target is not None:
 		raise ValueError("--rescan-cell cannot be used with --validate-cell")
