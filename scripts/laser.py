@@ -1051,7 +1051,7 @@ async def ensure_scan_tool_ready(tool: Any) -> None:
 		raise ValueError("Tool motors (stage, z_axis) are required for laser scan")
 
 
-async def set_y_brake_for_scanning(
+async def set_y_brake_for_shelf_scouting(
 	tool: Any,
 	*,
 	is_enabled: bool,
@@ -1059,7 +1059,7 @@ async def set_y_brake_for_scanning(
 	y_motor = getattr(tool, "_my", None)
 
 	if y_motor is None:
-		raise ValueError("Y-axis motor is required for laser scanning")
+		raise ValueError("Y-axis motor is required for shelf scouting")
 
 	if is_enabled is True:
 		await y_motor.restore_brake_output()
@@ -1223,7 +1223,7 @@ async def capture_shelf_candidates(
 		is_y_brake_disabled = False
 
 		try:
-			await set_y_brake_for_scanning(tool, is_enabled=False)
+			await set_y_brake_for_shelf_scouting(tool, is_enabled=False)
 			is_y_brake_disabled = True
 
 			for scout_idx, scout_x_mm in enumerate(scout_x_positions, start=1):
@@ -1255,7 +1255,7 @@ async def capture_shelf_candidates(
 				shelf_edges.extend(scout_edges)
 		finally:
 			if is_y_brake_disabled is True:
-				await set_y_brake_for_scanning(tool, is_enabled=True)
+				await set_y_brake_for_shelf_scouting(tool, is_enabled=True)
 
 	filtered_shelf_edges: list[ShelfSurfaceEdge] = []
 
@@ -2713,7 +2713,6 @@ async def run_staged_scan(
 	fine_scan_results: list[tuple[ScanBounds, GridScanResult, list[ScanDetectedCell]]] = []
 	all_detected_cells: list[ScanDetectedCell] = []
 	scan_started_at: Optional[str] = None
-	is_y_brake_disabled = False
 
 	global CURRENT_SCAN_LOG_PATH
 	previous_scan_log_path = CURRENT_SCAN_LOG_PATH
@@ -2879,10 +2878,6 @@ async def run_staged_scan(
 				f"completed_candidates={len(fine_scan_results)}"
 			)
 
-		if shelf_scout_only is False and len(candidates) > 0 and is_y_brake_disabled is False:
-			await set_y_brake_for_scanning(tool, is_enabled=False)
-			is_y_brake_disabled = True
-
 		for candidate_idx, candidate in enumerate(candidates, start=1):
 			if candidate_idx <= len(fine_entries):
 				existing_fine_entry = fine_entries[candidate_idx - 1]
@@ -3016,12 +3011,8 @@ async def run_staged_scan(
 				shelf_edges=shelf_edges,
 			)
 	finally:
-		try:
-			if is_y_brake_disabled is True:
-				await set_y_brake_for_scanning(tool, is_enabled=True)
-		finally:
-			await tool.retract()
-			CURRENT_SCAN_LOG_PATH = previous_scan_log_path
+		await tool.retract()
+		CURRENT_SCAN_LOG_PATH = previous_scan_log_path
 
 	deduped_cells = dedupe_detected_cells(
 		all_detected_cells,
