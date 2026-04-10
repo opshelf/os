@@ -647,6 +647,34 @@ def build_shelf_scout_x_positions(
 	return positions
 
 
+def append_assumed_floor_shelf_edge(
+	*,
+	edges: list[ShelfSurfaceEdge],
+	y_min_mm: float,
+	side_name: str,
+	scout_x_positions: list[float],
+) -> list[ShelfSurfaceEdge]:
+	if y_min_mm > 0.0:
+		return list(edges)
+
+	for edge in edges:
+		if abs(float(edge.y_mm) - 0.0) < SHELF_MIN_SPACING_MM:
+			return list(edges)
+
+	assumed_edge_x_mm = scout_x_positions[0]
+
+	if side_name == 'right':
+		assumed_edge_x_mm = RIGHT_MODULE_SHELF_SCOUT_X_MM
+
+	return [
+		*edges,
+		ShelfSurfaceEdge(
+			x_mm=float(assumed_edge_x_mm),
+			y_mm=0.0,
+		),
+	]
+
+
 async def enter_capture_mode(
 	tool: Any,
 	*,
@@ -885,7 +913,10 @@ async def probe_stage_until_stall(
 def filter_shelf_edges(
 	*,
 	edges: list[ShelfSurfaceEdge],
+	y_min_mm: float,
 	y_max_mm: float,
+	side_name: str,
+	scout_x_positions: list[float],
 ) -> list[ShelfSurfaceEdge]:
 	filtered_edges: list[ShelfSurfaceEdge] = []
 
@@ -902,7 +933,12 @@ def filter_shelf_edges(
 
 		filtered_edges.append(edge)
 
-	return filtered_edges
+	return append_assumed_floor_shelf_edge(
+		edges=filtered_edges,
+		y_min_mm=y_min_mm,
+		side_name=side_name,
+		scout_x_positions=scout_x_positions,
+	)
 
 
 async def prepare_capture_pose(
@@ -1037,7 +1073,13 @@ async def resolve_capture_y_mm(
 		if is_y_brake_disabled is True:
 			await set_y_brake_for_shelf_scouting(tool, is_enabled=True)
 
-	filtered_edges = filter_shelf_edges(edges=edges, y_max_mm=y_max_mm)
+	filtered_edges = filter_shelf_edges(
+		edges=edges,
+		y_min_mm=y_min_mm,
+		y_max_mm=y_max_mm,
+		side_name=side_name,
+		scout_x_positions=scout_x_positions,
+	)
 	print_status(
 		'shelf_edges='
 		f'{len(filtered_edges)} '
