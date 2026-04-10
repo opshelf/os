@@ -1051,7 +1051,7 @@ async def ensure_scan_tool_ready(tool: Any) -> None:
 		raise ValueError("Tool motors (stage, z_axis) are required for laser scan")
 
 
-async def set_y_brake_for_shelf_scouting(
+async def set_y_brake_for_scan_motion(
 	tool: Any,
 	*,
 	is_enabled: bool,
@@ -1059,7 +1059,7 @@ async def set_y_brake_for_shelf_scouting(
 	y_motor = getattr(tool, "_my", None)
 
 	if y_motor is None:
-		raise ValueError("Y-axis motor is required for shelf scouting")
+		raise ValueError("Y-axis motor is required for scan motion")
 
 	if is_enabled is True:
 		await y_motor.restore_brake_output()
@@ -1223,7 +1223,7 @@ async def capture_shelf_candidates(
 		is_y_brake_disabled = False
 
 		try:
-			await set_y_brake_for_shelf_scouting(tool, is_enabled=False)
+			await set_y_brake_for_scan_motion(tool, is_enabled=False)
 			is_y_brake_disabled = True
 
 			for scout_idx, scout_x_mm in enumerate(scout_x_positions, start=1):
@@ -1255,7 +1255,7 @@ async def capture_shelf_candidates(
 				shelf_edges.extend(scout_edges)
 		finally:
 			if is_y_brake_disabled is True:
-				await set_y_brake_for_shelf_scouting(tool, is_enabled=True)
+				await set_y_brake_for_scan_motion(tool, is_enabled=True)
 
 	filtered_shelf_edges: list[ShelfSurfaceEdge] = []
 
@@ -2878,138 +2878,148 @@ async def run_staged_scan(
 				f"completed_candidates={len(fine_scan_results)}"
 			)
 
-		for candidate_idx, candidate in enumerate(candidates, start=1):
-			if candidate_idx <= len(fine_entries):
-				existing_fine_entry = fine_entries[candidate_idx - 1]
-			else:
-				existing_fine_entry = {}
+		is_y_brake_disabled = False
 
-			if existing_fine_entry.get("status") in {"completed", "aborted"}:
-				continue
+		try:
+			if len(candidates) > 0:
+				await set_y_brake_for_scan_motion(tool, is_enabled=False)
+				is_y_brake_disabled = True
 
-			fine_bounds = build_fine_scan_bounds(
-				candidate,
-				overall_bounds=bounds,
-				scan_config=scan_config,
-			)
-			selected_fine_bounds = fine_bounds
-			print_status(
-				f"phase=fine-scan candidate={candidate_idx}/{len(candidates)} "
-				f"bounds:x=({fine_bounds.x_min:.2f},{fine_bounds.x_max:.2f}) "
-				f"y=({fine_bounds.y_min:.2f},{fine_bounds.y_max:.2f})"
-			)
+			for candidate_idx, candidate in enumerate(candidates, start=1):
+				if candidate_idx <= len(fine_entries):
+					existing_fine_entry = fine_entries[candidate_idx - 1]
+				else:
+					existing_fine_entry = {}
 
-			fine_path = recorder.run_dir / f"fine_{candidate_idx - 1:02d}.npy"
+				if existing_fine_entry.get("status") in {"completed", "aborted"}:
+					continue
 
-			while len(fine_entries) < candidate_idx:
-				fine_entries.append({})
-
-			fine_entries[candidate_idx - 1] = {
-				"candidate_index": candidate_idx - 1,
-				"status": "running",
-				"bounds": fine_bounds.model_dump(),
-				"raw_scan_path": str(fine_path),
-				"x_positions": existing_fine_entry.get("x_positions", []),
-				"y_positions": existing_fine_entry.get("y_positions", []),
-				"detected_cells": existing_fine_entry.get("detected_cells", []),
-			}
-
-			def didUpdateFineScan(
-				partial_scan: GridScanResult,
-				probe_label: str,
-				probe_position_mm: float,
-			) -> None:
-				save_depth_rows_to_npy(
-					output_path=fine_path,
-					depth_rows=partial_scan.depth_rows,
-				)
-				persist_scan_progress(
-					recorder=recorder,
-					phase="fine-scan",
-					progress={
-						"candidate_idx": candidate_idx,
-						"candidate_count": len(candidates),
-						"probe": probe_label,
-						"probe_position_mm": probe_position_mm,
-						"fine_path": str(fine_path),
-					},
-				)
-				fine_entries[candidate_idx - 1]["x_positions"] = partial_scan.x_positions
-				fine_entries[candidate_idx - 1]["y_positions"] = partial_scan.y_positions
-
-			fine_scan, detected_cells = await capture_cross_scan(
-				tool,
-				candidate=candidate,
-				bounds=selected_fine_bounds,
-				step_mm=fine_step_mm,
-				settle_ms=settle_ms,
-				samples_per_point=samples_per_point,
-				wall_depth_mm=wall_depth_mm,
-				scan_config=scan_config,
-				progress_prefix=f"fine_{candidate_idx}",
-				on_update=didUpdateFineScan,
-			)
-
-			if len(detected_cells) == 0:
-				retry_fine_bounds = build_fine_scan_retry_bounds(
+				fine_bounds = build_fine_scan_bounds(
 					candidate,
-					current_bounds=selected_fine_bounds,
 					overall_bounds=bounds,
 					scan_config=scan_config,
 				)
+				selected_fine_bounds = fine_bounds
+				print_status(
+					f"phase=fine-scan candidate={candidate_idx}/{len(candidates)} "
+					f"bounds:x=({fine_bounds.x_min:.2f},{fine_bounds.x_max:.2f}) "
+					f"y=({fine_bounds.y_min:.2f},{fine_bounds.y_max:.2f})"
+				)
 
-				if scan_bounds_match(retry_fine_bounds, selected_fine_bounds) is False:
-					print_status(
-						f"phase=fine-scan-retry candidate={candidate_idx}/{len(candidates)} "
-						f"bounds:x=({retry_fine_bounds.x_min:.2f},{retry_fine_bounds.x_max:.2f}) "
-						f"y=({retry_fine_bounds.y_min:.2f},{retry_fine_bounds.y_max:.2f})"
+				fine_path = recorder.run_dir / f"fine_{candidate_idx - 1:02d}.npy"
+
+				while len(fine_entries) < candidate_idx:
+					fine_entries.append({})
+
+				fine_entries[candidate_idx - 1] = {
+					"candidate_index": candidate_idx - 1,
+					"status": "running",
+					"bounds": fine_bounds.model_dump(),
+					"raw_scan_path": str(fine_path),
+					"x_positions": existing_fine_entry.get("x_positions", []),
+					"y_positions": existing_fine_entry.get("y_positions", []),
+					"detected_cells": existing_fine_entry.get("detected_cells", []),
+				}
+
+				def didUpdateFineScan(
+					partial_scan: GridScanResult,
+					probe_label: str,
+					probe_position_mm: float,
+				) -> None:
+					save_depth_rows_to_npy(
+						output_path=fine_path,
+						depth_rows=partial_scan.depth_rows,
 					)
-					fine_scan, detected_cells = await capture_cross_scan(
-						tool,
-						candidate=candidate,
-						bounds=retry_fine_bounds,
-						step_mm=fine_step_mm,
-						settle_ms=settle_ms,
-						samples_per_point=samples_per_point,
-						wall_depth_mm=wall_depth_mm,
+					persist_scan_progress(
+						recorder=recorder,
+						phase="fine-scan",
+						progress={
+							"candidate_idx": candidate_idx,
+							"candidate_count": len(candidates),
+							"probe": probe_label,
+							"probe_position_mm": probe_position_mm,
+							"fine_path": str(fine_path),
+						},
+					)
+					fine_entries[candidate_idx - 1]["x_positions"] = partial_scan.x_positions
+					fine_entries[candidate_idx - 1]["y_positions"] = partial_scan.y_positions
+
+				fine_scan, detected_cells = await capture_cross_scan(
+					tool,
+					candidate=candidate,
+					bounds=selected_fine_bounds,
+					step_mm=fine_step_mm,
+					settle_ms=settle_ms,
+					samples_per_point=samples_per_point,
+					wall_depth_mm=wall_depth_mm,
+					scan_config=scan_config,
+					progress_prefix=f"fine_{candidate_idx}",
+					on_update=didUpdateFineScan,
+				)
+
+				if len(detected_cells) == 0:
+					retry_fine_bounds = build_fine_scan_retry_bounds(
+						candidate,
+						current_bounds=selected_fine_bounds,
+						overall_bounds=bounds,
 						scan_config=scan_config,
-						progress_prefix=f"fine_{candidate_idx}_retry",
-						on_update=didUpdateFineScan,
 					)
-					selected_fine_bounds = retry_fine_bounds
 
-			print_status(
-				f"fine_detected_cells={len(detected_cells)} "
-				f"candidate={candidate_idx}/{len(candidates)}"
-			)
-			fine_scan_results.append((selected_fine_bounds, fine_scan, detected_cells))
-			all_detected_cells.extend(detected_cells)
-			fine_entries[candidate_idx - 1] = {
-				"candidate_index": candidate_idx - 1,
-				"status": "completed",
-				"bounds": selected_fine_bounds.model_dump(),
-				"raw_scan_path": str(fine_path),
-				"x_positions": fine_scan.x_positions,
-				"y_positions": fine_scan.y_positions,
-				"detected_cells": [cell.model_dump() for cell in detected_cells],
-			}
-			persist_staged_metadata(
-				recorder=recorder,
-				side=side,
-				bounds=bounds,
-				fine_step_mm=fine_step_mm,
-				settle_ms=settle_ms,
-				samples_per_point=samples_per_point,
-				coarse_settle_ms=coarse_settle_ms,
-				coarse_samples_per_point=coarse_samples_per_point,
-				wall_depth_mm=wall_depth_mm,
-				coarse_scan=coarse_scan,
-				candidates=candidates,
-				fine_entries=fine_entries,
-				status="fine-scan",
-				scan_started_at=scan_started_at,
-				shelf_edges=shelf_edges,
-			)
+					if scan_bounds_match(retry_fine_bounds, selected_fine_bounds) is False:
+						print_status(
+							f"phase=fine-scan-retry candidate={candidate_idx}/{len(candidates)} "
+							f"bounds:x=({retry_fine_bounds.x_min:.2f},{retry_fine_bounds.x_max:.2f}) "
+							f"y=({retry_fine_bounds.y_min:.2f},{retry_fine_bounds.y_max:.2f})"
+						)
+						fine_scan, detected_cells = await capture_cross_scan(
+							tool,
+							candidate=candidate,
+							bounds=retry_fine_bounds,
+							step_mm=fine_step_mm,
+							settle_ms=settle_ms,
+							samples_per_point=samples_per_point,
+							wall_depth_mm=wall_depth_mm,
+							scan_config=scan_config,
+							progress_prefix=f"fine_{candidate_idx}_retry",
+							on_update=didUpdateFineScan,
+						)
+						selected_fine_bounds = retry_fine_bounds
+
+				print_status(
+					f"fine_detected_cells={len(detected_cells)} "
+					f"candidate={candidate_idx}/{len(candidates)}"
+				)
+				fine_scan_results.append((selected_fine_bounds, fine_scan, detected_cells))
+				all_detected_cells.extend(detected_cells)
+				fine_entries[candidate_idx - 1] = {
+					"candidate_index": candidate_idx - 1,
+					"status": "completed",
+					"bounds": selected_fine_bounds.model_dump(),
+					"raw_scan_path": str(fine_path),
+					"x_positions": fine_scan.x_positions,
+					"y_positions": fine_scan.y_positions,
+					"detected_cells": [cell.model_dump() for cell in detected_cells],
+				}
+				persist_staged_metadata(
+					recorder=recorder,
+					side=side,
+					bounds=bounds,
+					fine_step_mm=fine_step_mm,
+					settle_ms=settle_ms,
+					samples_per_point=samples_per_point,
+					coarse_settle_ms=coarse_settle_ms,
+					coarse_samples_per_point=coarse_samples_per_point,
+					wall_depth_mm=wall_depth_mm,
+					coarse_scan=coarse_scan,
+					candidates=candidates,
+					fine_entries=fine_entries,
+					status="fine-scan",
+					scan_started_at=scan_started_at,
+					shelf_edges=shelf_edges,
+				)
+		finally:
+			if is_y_brake_disabled is True:
+				await set_y_brake_for_scan_motion(tool, is_enabled=True)
 	finally:
 		await tool.retract()
 		CURRENT_SCAN_LOG_PATH = previous_scan_log_path
