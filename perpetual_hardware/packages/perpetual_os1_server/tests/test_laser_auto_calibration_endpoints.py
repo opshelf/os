@@ -10,6 +10,7 @@ from perpetual_os1 import laser_angle_calibration as angle_module
 from perpetual_os1.laser_scan import ScanBounds
 from perpetual_os1_server.core.laser_auto_calibration import (
     _build_angle_x_positions,
+    _build_angle_z_offset_positions,
     LaserAutoCalibrationManager,
     _build_estimated_rotation_deg,
     _build_valid_rotation_positions,
@@ -92,6 +93,19 @@ def test_build_angle_x_positions_runs_from_high_x_to_low_x() -> None:
     assert x_positions[0] == 940.0
     assert x_positions[-1] == 540.0
     assert len(x_positions) == 5
+
+
+def test_build_angle_z_offset_positions_prefers_center_slice() -> None:
+    scan_config = SimpleNamespace(
+        angle_calibration_z_offset_min_mm=-8.0,
+        angle_calibration_z_offset_max_mm=8.0,
+        angle_calibration_z_offset_step_mm=4.0,
+        angle_calibration_z_offset_count=1,
+    )
+
+    z_offset_positions = _build_angle_z_offset_positions(scan_config)
+
+    assert z_offset_positions == [0.0]
 
 
 def test_build_estimated_rotation_deg_uses_negative_alpha() -> None:

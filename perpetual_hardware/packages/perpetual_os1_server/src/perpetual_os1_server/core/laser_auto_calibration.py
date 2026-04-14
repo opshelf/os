@@ -196,6 +196,30 @@ def _build_angle_x_positions(scan_config: Any) -> list[float]:
     return x_positions[:x_count]
 
 
+def _build_angle_z_offset_positions(scan_config: Any) -> list[float]:
+    z_offset_positions = angle_module.build_axis_positions(
+        float(scan_config.angle_calibration_z_offset_min_mm),
+        float(scan_config.angle_calibration_z_offset_max_mm),
+        float(scan_config.angle_calibration_z_offset_step_mm),
+    )
+    z_offset_count = int(getattr(scan_config, "angle_calibration_z_offset_count", 1))
+
+    if z_offset_count >= len(z_offset_positions):
+        return z_offset_positions
+
+    prioritized_positions = sorted(
+        z_offset_positions,
+        key=lambda offset_mm: (abs(float(offset_mm)), float(offset_mm)),
+    )
+    selected_positions = set(prioritized_positions[:z_offset_count])
+
+    return [
+        float(offset_mm)
+        for offset_mm in z_offset_positions
+        if float(offset_mm) in selected_positions
+    ]
+
+
 def _build_estimated_rotation_deg(fit_result: Any) -> float:
     return -float(fit_result.alpha_deg)
 
@@ -508,11 +532,7 @@ class LaserAutoCalibrationManager:
         side_name = _side_to_short_name(side)
         side_number = 0 if side == StorageModuleSide.LEFT else 1
         x_positions = _build_angle_x_positions(scan_config)
-        z_offset_positions = angle_module.build_axis_positions(
-            float(scan_config.angle_calibration_z_offset_min_mm),
-            float(scan_config.angle_calibration_z_offset_max_mm),
-            float(scan_config.angle_calibration_z_offset_step_mm),
-        )
+        z_offset_positions = _build_angle_z_offset_positions(scan_config)
         settle_ms = int(scan_config.settle_ms)
         samples_per_point = int(scan_config.samples_per_point)
         stage_extension_mm = float(

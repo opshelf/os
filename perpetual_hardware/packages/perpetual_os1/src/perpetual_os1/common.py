@@ -551,6 +551,7 @@ class LaserScanConfig(BaseModel):
     angle_calibration_z_offset_min_mm: float = -8.0
     angle_calibration_z_offset_max_mm: float = 8.0
     angle_calibration_z_offset_step_mm: float = Field(4.0, gt=0)
+    angle_calibration_z_offset_count: int = Field(1, gt=0)
     angle_calibration_rotation_min_deg: float = -8.0
     angle_calibration_rotation_max_deg: float = 8.0
     angle_calibration_rotation_step_deg: float = Field(1.0, gt=0)
