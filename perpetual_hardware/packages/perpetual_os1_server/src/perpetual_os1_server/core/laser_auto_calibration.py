@@ -239,8 +239,8 @@ def _build_angle_z_offset_positions(scan_config: Any) -> list[float]:
     ]
 
 
-def _build_estimated_rotation_deg(fit_result: Any) -> float:
-    return float(fit_result.alpha_deg)
+def _build_estimated_rotation_deg(previous_rotation_deg: float, fit_result: Any) -> float:
+    return float(previous_rotation_deg) + float(fit_result.alpha_deg)
 
 
 def _build_candidate_rows(
@@ -366,7 +366,7 @@ class LaserAutoCalibrationManager:
         await self._publish(snapshot)
 
         if worker is not None:
-            await worker._robot._tool.stop()
+            await worker._robot.stop()
 
         if task is not None:
             try:
@@ -683,7 +683,7 @@ class LaserAutoCalibrationManager:
             )
             angle_module.print_fit_result(fit_result)
 
-        updated_rotation_deg = _build_estimated_rotation_deg(fit_result)
+        updated_rotation_deg = _build_estimated_rotation_deg(previous_rotation_deg, fit_result)
 
         if updated_rotation_deg < 0.0 or updated_rotation_deg > 180.0:
             raise ValueError(
