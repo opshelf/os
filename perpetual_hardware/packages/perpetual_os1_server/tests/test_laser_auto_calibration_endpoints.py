@@ -7,6 +7,7 @@ import pytest
 from fastapi import HTTPException
 
 from perpetual_os1.laser_scan import ScanBounds
+from perpetual_os1_server.core.laser_auto_calibration import _build_valid_rotation_positions
 from perpetual_os1_server.routers import robot as robot_router
 from perpetual_os1_server.core.laser_auto_calibration import LaserAutoCalibrationSnapshot
 from perpetual_os1_server.routers import calibration as calibration_router
@@ -56,6 +57,20 @@ def _build_snapshot(state: str = "running") -> LaserAutoCalibrationSnapshot:
         detected_cell_count=0,
         stage_detail={"side": "left_module", "phase": "shelf-scout"},
     )
+
+
+def test_build_valid_rotation_positions_clips_out_of_range_targets() -> None:
+    scan_config = SimpleNamespace(
+        angle_calibration_rotation_min_deg=-8.0,
+        angle_calibration_rotation_max_deg=8.0,
+        angle_calibration_rotation_step_deg=1.0,
+    )
+
+    rotation_positions = _build_valid_rotation_positions(scan_config, 4.2)
+
+    assert rotation_positions[0] == -4.0
+    assert rotation_positions[-1] == 8.0
+    assert -5.0 not in rotation_positions
 
 
 @pytest.mark.asyncio
