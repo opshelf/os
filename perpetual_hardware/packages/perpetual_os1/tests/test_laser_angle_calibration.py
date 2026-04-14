@@ -45,3 +45,36 @@ async def test_prepare_capture_pose_skips_rotation_move_for_right_when_rotation_
 	tool._mr.move_to_position.assert_not_awaited()
 	tool._mx.move_to_position_no_wait.assert_awaited_once_with(845.0)
 	tool._my.move_to_position_no_wait.assert_awaited_once_with(1096.0)
+
+
+@pytest.mark.asyncio
+async def test_prepare_capture_pose_rotates_in_place_for_right_when_rotation_changes() -> None:
+	tool = SimpleNamespace(
+		_mx=SimpleNamespace(move_to_position_no_wait=AsyncMock()),
+		_my=SimpleNamespace(move_to_position_no_wait=AsyncMock()),
+		_mr=SimpleNamespace(move_to_position=AsyncMock()),
+		_ms=SimpleNamespace(ready=AsyncMock(), move_to_position=AsyncMock()),
+		_mg=SimpleNamespace(move_to_position=AsyncMock()),
+		gantry_wait=AsyncMock(),
+		ensure_safe_rotation_stage_extension=AsyncMock(),
+	)
+
+	await prepare_capture_pose(
+		tool,
+		side_name='right',
+		side_number=1,
+		x_mm=945.0,
+		y_mm=1096.0,
+		absolute_rotation_deg=172.0,
+		stage_extension_mm=13.0,
+		z_mm=140.5,
+		z_move_rpm=100.0,
+		z_move_accel=100.0,
+		should_rotate=True,
+		should_move_z=False,
+	)
+
+	tool.ensure_safe_rotation_stage_extension.assert_awaited_once()
+	tool._mr.move_to_position.assert_awaited_once_with(172.0)
+	tool._mx.move_to_position_no_wait.assert_awaited_once_with(945.0)
+	tool._my.move_to_position_no_wait.assert_awaited_once_with(1096.0)

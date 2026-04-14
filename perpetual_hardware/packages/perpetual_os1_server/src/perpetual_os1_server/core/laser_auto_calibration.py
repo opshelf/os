@@ -401,13 +401,8 @@ class LaserAutoCalibrationManager:
             await self._set_terminal_state("completed", None)
         except asyncio.CancelledError:
             self._restore_in_memory_rotations(worker, original_rotations)
-
-            try:
-                await self._home_after_abort(worker)
-            except Exception as exc:
-                logger.error("laser_auto_calibration_abort_home_failed", exc_info=True)
-                await self._set_terminal_state("failed", f"Abort homing failed: {exc}")
-                return
+            worker.set_needs_home("Laser auto calibration aborted")
+            await worker.get_status_snapshot(force_refresh=True)
 
             await self._set_terminal_state("cancelled", None)
             raise
