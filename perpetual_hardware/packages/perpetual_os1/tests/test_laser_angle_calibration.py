@@ -118,3 +118,4 @@ async def test_prepare_capture_pose_uses_safe_right_rotation_path_when_requested
 	tool._mr.move_to_position.assert_awaited_once_with(180.0)
 	assert tool._mx.move_to_position_no_wait.await_args_list[0].args == (RIGHT_MODULE_ROTATION_SAFE_X_MM,)
 	assert tool._mx.move_to_position_no_wait.await_args_list[1].args == (945.0,)
+	assert tool._mr.move_to_position.await_args_list[0].args == (180.0,)
