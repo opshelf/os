@@ -20,7 +20,6 @@ SHELF_SCOUT_X_OFFSETS_MM = [0.0]
 LEFT_MODULE_ROTATION_CENTER_DEG = 0.0
 RIGHT_MODULE_ROTATION_CENTER_DEG = 180.0
 RIGHT_MODULE_SHELF_SCOUT_X_MM = 25.0
-RIGHT_MODULE_ROTATION_SAFE_X_MM = 475.0
 SHELF_EDGE_CONFIRMATION_COUNT = 3
 SHELF_BRIM_MIN_HEIGHT_MM = 8.0
 SHELF_BRIM_MAX_HEIGHT_MM = 14.0
@@ -962,29 +961,15 @@ async def prepare_capture_pose(
 	should_rotate: bool,
 	should_move_z: bool,
 ) -> None:
-	if side_name == 'right' and should_rotate is True:
-		await move_gantry_direct(
-			tool,
-			x_mm=RIGHT_MODULE_ROTATION_SAFE_X_MM,
-			y_mm=y_mm,
-		)
+	await move_gantry_direct(
+		tool,
+		x_mm=x_mm,
+		y_mm=y_mm,
+	)
+
+	if should_rotate is True:
 		await tool.ensure_safe_rotation_stage_extension()
 		await tool._mr.move_to_position(absolute_rotation_deg)
-		await move_gantry_direct(
-			tool,
-			x_mm=x_mm,
-			y_mm=y_mm,
-		)
-	else:
-		await move_gantry_direct(
-			tool,
-			x_mm=x_mm,
-			y_mm=y_mm,
-		)
-
-		if should_rotate is True:
-			await tool.ensure_safe_rotation_stage_extension()
-			await tool._mr.move_to_position(absolute_rotation_deg)
 
 	await tool._ms.ready()
 	await tool._ms.move_to_position(stage_extension_mm)

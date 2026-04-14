@@ -175,6 +175,29 @@ async def test_abort_stops_tool_while_session_cancels() -> None:
 
 
 @pytest.mark.asyncio
+async def test_run_session_cancel_marks_needs_home_without_abort_homing() -> None:
+    manager = LaserAutoCalibrationManager()
+    worker = SimpleNamespace(
+        set_needs_home=MagicMock(),
+        get_status_snapshot=AsyncMock(),
+    )
+
+    with patch.object(manager, '_get_current_rotations', AsyncMock(return_value={})):
+        with patch.object(manager, '_run_all_sides', AsyncMock(side_effect=asyncio.CancelledError)):
+            with patch.object(manager, '_restore_in_memory_rotations') as restore_mock:
+                with patch.object(manager, '_set_terminal_state', AsyncMock()) as terminal_mock:
+                    with patch.object(manager, '_home_after_abort', AsyncMock()) as home_mock:
+                        with pytest.raises(asyncio.CancelledError):
+                            await manager._run_session(worker, 'laser-session')
+
+    restore_mock.assert_called_once_with(worker, {})
+    worker.set_needs_home.assert_called_once_with('Laser auto calibration aborted')
+    worker.get_status_snapshot.assert_awaited_once_with(force_refresh=True)
+    terminal_mock.assert_awaited_once_with('cancelled', None)
+    home_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_run_all_sides_processes_right_before_left() -> None:
     manager = LaserAutoCalibrationManager()
     worker = SimpleNamespace()
