@@ -1265,57 +1265,6 @@ async def move_stage(request: StageMoveRequest):
 	return {"position": target, "warnings": warnings if warnings else None}
 
 
-class CycleTestRequest(BaseModel):
-	side: Literal["left_module", "right_module"]
-	shelf_idx: int
-	cell_idx: int
-
-
-@router.post("/cycle_test")
-async def run_cycle_test(request: CycleTestRequest):
-	"""Run a retrieve-store cycle test on a specific cell to verify calibration accuracy."""
-	try:
-		worker = await get_robot_worker()
-	except ValueError as e:
-		raise HTTPException(
-			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail="Robot is not initialized",
-		) from e
-
-	_ensure_ready(worker)
-
-	grid = worker._robot._grid
-	robot = worker._robot
-	tool = robot._tool
-
-	side_enum = _parse_side(request.side)
-	shelf = _get_shelf(grid, side_enum, request.shelf_idx)
-	cell = _get_cell(shelf, request.cell_idx)
-
-	if cell.calibration_point is None:
-		raise HTTPException(
-			status_code=status.HTTP_400_BAD_REQUEST,
-			detail="Cell has no calibration point",
-		)
-
-	cal_point = cell.calibration_point
-	coord = AxisCoordinate(
-		x=cal_point.x,
-		y=cal_point.y,
-		s=_side_to_s(request.side),
-		z_offset=cal_point.z_offset,
-	)
-
-	try:
-		await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
-		await robot.io_place(coord)
-		await robot.io_pick(coord)
-	except (MotorError, HardwareMotorError) as e:
-		await _raise_motor_error(worker, f"Cycle test motor fault: {str(e)}", e)
-
-	return {"success": True}
-
-
 @router.post("/abort")
 async def abort_calibration():
 	"""Abort current calibration operation and home the tool."""
