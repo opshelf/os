@@ -240,7 +240,7 @@ def _build_angle_z_offset_positions(scan_config: Any) -> list[float]:
 
 
 def _build_estimated_rotation_deg(previous_rotation_deg: float, fit_result: Any) -> float:
-    return float(previous_rotation_deg) + float(fit_result.alpha_deg)
+    return float(previous_rotation_deg) - float(fit_result.alpha_deg)
 
 
 def _build_candidate_rows(
