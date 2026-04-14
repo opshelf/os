@@ -636,6 +636,7 @@ class LaserAutoCalibrationManager:
                                 z_move_rpm=float(z_move_rpm),
                                 z_move_accel=float(z_move_accel),
                                 should_rotate=current_absolute_rotation_deg != absolute_rotation_deg,
+                                should_use_safe_right_rotation_path=False,
                                 should_move_z=current_z_mm != target_z_mm,
                             )
                             current_z_mm = target_z_mm
