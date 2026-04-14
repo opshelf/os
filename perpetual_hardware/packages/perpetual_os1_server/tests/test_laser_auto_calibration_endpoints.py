@@ -8,7 +8,9 @@ from fastapi import HTTPException
 
 from perpetual_os1 import laser_angle_calibration as angle_module
 from perpetual_os1.laser_scan import ScanBounds
+from perpetual_os1.storage import StorageModuleSide
 from perpetual_os1_server.core.laser_auto_calibration import (
+    _build_angle_rotation_center_deg,
     _build_angle_x_positions,
     _build_angle_z_offset_positions,
     _SideState,
@@ -109,6 +111,14 @@ def test_build_angle_z_offset_positions_prefers_center_slice() -> None:
     assert z_offset_positions == [0.0]
 
 
+def test_build_angle_rotation_center_deg_uses_front_for_left() -> None:
+    assert _build_angle_rotation_center_deg(StorageModuleSide.LEFT) == 0.0
+
+
+def test_build_angle_rotation_center_deg_uses_back_for_right() -> None:
+    assert _build_angle_rotation_center_deg(StorageModuleSide.RIGHT) == 180.0
+
+
 def test_build_estimated_rotation_deg_uses_positive_alpha() -> None:
     fit_result = SimpleNamespace(alpha_deg=4.2)
 
@@ -134,6 +144,29 @@ async def test_home_after_abort_homes_tool_and_door() -> None:
     io.home_door.assert_awaited_once()
     worker.clear_needs_home.assert_called_once()
     worker.get_status_snapshot.assert_awaited_once_with(force_refresh=True)
+
+
+@pytest.mark.asyncio
+async def test_run_all_sides_processes_right_before_left() -> None:
+    manager = LaserAutoCalibrationManager()
+    worker = SimpleNamespace()
+    processed_sides: list[StorageModuleSide] = []
+
+    async def did_run_side(current_worker, side: StorageModuleSide):
+        assert current_worker is worker
+        processed_sides.append(side)
+        return SimpleNamespace(side=side)
+
+    with patch.object(manager, '_run_side', side_effect=did_run_side):
+        with patch.object(manager, '_persist_completed_results', AsyncMock()) as persist_mock:
+            await manager._run_all_sides(worker)
+
+    assert processed_sides == [StorageModuleSide.RIGHT, StorageModuleSide.LEFT]
+    persist_mock.assert_awaited_once()
+
+    persisted_results = persist_mock.await_args.args[1]
+
+    assert [result.side for result in persisted_results] == [StorageModuleSide.RIGHT, StorageModuleSide.LEFT]
 
 
 @pytest.mark.asyncio

@@ -159,6 +159,10 @@ def _side_to_short_name(side: StorageModuleSide) -> Literal["left", "right"]:
     return "right"
 
 
+def _build_angle_rotation_center_deg(side: StorageModuleSide) -> float:
+    return float(angle_module.get_default_rotation_center_deg(_side_to_short_name(side)))
+
+
 def _build_bounds_for_side(scan_config: Any, side: StorageModuleSide) -> ScanBounds:
     prefix = "left" if side == StorageModuleSide.LEFT else "right"
 
@@ -415,7 +419,7 @@ class LaserAutoCalibrationManager:
     async def _run_all_sides(self, worker: RobotWorker) -> None:
         completed_results: list[_CompletedSideResult] = []
 
-        for side in [StorageModuleSide.LEFT, StorageModuleSide.RIGHT]:
+        for side in [StorageModuleSide.RIGHT, StorageModuleSide.LEFT]:
             completed_results.append(await self._run_side(worker, side))
 
         await self._persist_completed_results(worker, completed_results)
@@ -567,7 +571,7 @@ class LaserAutoCalibrationManager:
         rotation_param = "ROTATION_FRONT" if side == StorageModuleSide.LEFT else "ROTATION_BACK"
 
         previous_rotation_deg = float(await tool.get_param(rotation_param))
-        rotation_center_deg = 0.0
+        rotation_center_deg = _build_angle_rotation_center_deg(side)
         rotation_positions = _build_valid_rotation_positions(scan_config, rotation_center_deg)
 
         z_extension_place = await tool.get_param("Z_EXTENSION_PLACE")
