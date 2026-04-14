@@ -1,13 +1,18 @@
 import asyncio
 import json
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
 
+from perpetual_os1 import laser_angle_calibration as angle_module
 from perpetual_os1.laser_scan import ScanBounds
-from perpetual_os1_server.core.laser_auto_calibration import _build_valid_rotation_positions
+from perpetual_os1_server.core.laser_auto_calibration import (
+    LaserAutoCalibrationManager,
+    _build_estimated_rotation_deg,
+    _build_valid_rotation_positions,
+)
 from perpetual_os1_server.routers import robot as robot_router
 from perpetual_os1_server.core.laser_auto_calibration import LaserAutoCalibrationSnapshot
 from perpetual_os1_server.routers import calibration as calibration_router
@@ -71,6 +76,72 @@ def test_build_valid_rotation_positions_clips_out_of_range_targets() -> None:
     assert rotation_positions[0] == -4.0
     assert rotation_positions[-1] == 8.0
     assert -5.0 not in rotation_positions
+
+
+def test_build_estimated_rotation_deg_uses_negative_alpha() -> None:
+    fit_result = SimpleNamespace(alpha_deg=-4.2)
+
+    estimated_rotation_deg = _build_estimated_rotation_deg(fit_result)
+
+    assert estimated_rotation_deg == 4.2
+
+
+@pytest.mark.asyncio
+async def test_home_after_abort_homes_tool_and_door() -> None:
+    manager = LaserAutoCalibrationManager()
+    tool = SimpleNamespace(home=AsyncMock())
+    io = SimpleNamespace(home_door=AsyncMock())
+    worker = SimpleNamespace(
+        _robot=SimpleNamespace(_tool=tool, _io=io),
+        clear_needs_home=MagicMock(),
+        get_status_snapshot=AsyncMock(),
+    )
+
+    await manager._home_after_abort(worker)
+
+    tool.home.assert_awaited_once()
+    io.home_door.assert_awaited_once()
+    worker.clear_needs_home.assert_called_once()
+    worker.get_status_snapshot.assert_awaited_once_with(force_refresh=True)
+
+
+@pytest.mark.asyncio
+async def test_resolve_capture_y_mm_stops_after_first_detected_edge() -> None:
+    tool = SimpleNamespace(retract=AsyncMock())
+    args = SimpleNamespace(y_mm=None, y_range=(0.0, 100.0), scout_x_mm=None)
+    scan_config = SimpleNamespace()
+    first_edges = [angle_module.ShelfSurfaceEdge(x_mm=10.0, y_mm=72.0)]
+
+    with patch.object(angle_module, 'build_shelf_scout_x_positions', return_value=[10.0, 20.0]):
+        with patch.object(angle_module, 'build_axis_positions', return_value=[100.0, 98.0, 96.0]):
+            with patch.object(angle_module, 'set_y_brake_for_shelf_scouting', AsyncMock()):
+                with patch.object(angle_module, 'enter_capture_mode', AsyncMock()):
+                    with patch.object(angle_module, 'prepare_capture_pose', AsyncMock()):
+                        with patch.object(angle_module, 'filter_shelf_edges', return_value=first_edges):
+                            with patch.object(
+                                angle_module,
+                                'scan_shelf_scout_line',
+                                AsyncMock(return_value=([], first_edges)),
+                            ) as scan_mock:
+                                target_y_mm = await angle_module.resolve_capture_y_mm(
+                                    tool,
+                                    args=args,
+                                    scan_config=scan_config,
+                                    side_name='left',
+                                    side_number=0,
+                                    x_positions=[10.0, 20.0],
+                                    rotation_center_deg=0.0,
+                                    stage_extension_mm=13.0,
+                                    base_z_mm=10.0,
+                                    z_move_rpm=100.0,
+                                    z_move_accel=100.0,
+                                    settle_ms=0,
+                                    samples_per_point=1,
+                                )
+
+    assert target_y_mm == 72.0
+    assert scan_mock.await_count == 1
+    assert scan_mock.await_args.kwargs['stop_after_first_edge'] is True
 
 
 @pytest.mark.asyncio

@@ -309,10 +309,8 @@
 		</tbody>
 	</table>
 
-	<h3>angle results</h3>
-	{#if getAngleResults().length === 0}
-		<p>no angle calibration results yet</p>
-	{:else}
+	{#if getAngleResults().length > 0}
+		<h3>angle results</h3>
 		<table>
 			<thead>
 				<tr>
@@ -337,10 +335,8 @@
 		</table>
 	{/if}
 
-	<h3>shelf edges</h3>
-	{#if getShelfEdges().length === 0}
-		<p>no shelf edges yet</p>
-	{:else}
+	{#if getShelfEdges().length > 0}
+		<h3>shelf edges</h3>
 		<table>
 			<thead>
 				<tr>
@@ -361,10 +357,8 @@
 		</table>
 	{/if}
 
-	<h3>candidates</h3>
-	{#if getCandidates().length === 0}
-		<p>no candidates yet</p>
-	{:else}
+	{#if getCandidates().length > 0}
+		<h3>candidates</h3>
 		<table>
 			<thead>
 				<tr>
@@ -391,10 +385,8 @@
 		</table>
 	{/if}
 
-	<h3>detected cells</h3>
-	{#if getDetectedCells().length === 0}
-		<p>no detected cells yet</p>
-	{:else}
+	{#if getDetectedCells().length > 0}
+		<h3>detected cells</h3>
 		<table>
 			<thead>
 				<tr>

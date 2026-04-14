@@ -35,6 +35,23 @@ async def test_configure_sentry_skips_development(tmp_path) -> None:
 
 
 @pytest.mark.anyio
+async def test_configure_sentry_skips_when_dsn_missing(tmp_path) -> None:
+	for mode in ("demo", "production"):
+		mode_file = _set_mode_file(tmp_path, mode)
+
+		with (
+			patch("perpetual_os1_server.settings.MODE_FILE", mode_file),
+			patch.dict(os.environ, {}, clear=False),
+			patch.object(sentry_sdk, "init") as init_mock,
+		):
+			os.environ.pop("SENTRY_DSN_API", None)
+			clear_config_cache()
+			assert main._configure_sentry() is False
+			init_mock.assert_not_called()
+
+
+
+@pytest.mark.anyio
 async def test_configure_sentry_enables_demo_and_production(tmp_path) -> None:
 	for mode in ("demo", "production"):
 		mode_file = _set_mode_file(tmp_path, mode)
