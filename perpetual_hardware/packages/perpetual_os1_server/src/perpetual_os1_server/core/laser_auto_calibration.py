@@ -350,18 +350,23 @@ class LaserAutoCalibrationManager:
 
     async def abort(self) -> LaserAutoCalibrationSnapshot:
         task: asyncio.Task[None] | None = None
+        worker: RobotWorker | None = None
 
         async with self._lock:
             if self._task is None or self._task.done() is True:
                 raise RuntimeError("No laser auto calibration session is running")
 
             task = self._task
+            worker = self._active_worker
             self._task.cancel()
             self._snapshot.current_stage = "cancelling"
             self._snapshot.updated_at = _get_timestamp()
             snapshot = self._snapshot.model_copy(deep=True)
 
         await self._publish(snapshot)
+
+        if worker is not None:
+            await worker._robot._tool.stop()
 
         if task is not None:
             try:
@@ -610,14 +615,16 @@ class LaserAutoCalibrationManager:
                 samples_per_point=samples_per_point,
             )
             current_z_mm: float | None = None
+            current_absolute_rotation_deg: float | None = rotation_center_deg
 
             try:
                 for z_offset_mm in z_offset_positions:
                     target_z_mm = base_z_mm + float(z_offset_mm)
 
-                    for x_idx, x_mm in enumerate(x_positions, start=1):
-                        for rotation_idx, rotation_deg in enumerate(rotation_positions, start=1):
-                            absolute_rotation_deg = rotation_center_deg + float(rotation_deg)
+                    for rotation_idx, rotation_deg in enumerate(rotation_positions, start=1):
+                        absolute_rotation_deg = rotation_center_deg + float(rotation_deg)
+
+                        for x_idx, x_mm in enumerate(x_positions, start=1):
                             angle_module.print_status(
                                 f"phase=capture x={x_idx}/{len(x_positions)} z={z_offset_mm:.2f} "
                                 f"rotation={rotation_idx}/{len(rotation_positions)} "
@@ -634,9 +641,11 @@ class LaserAutoCalibrationManager:
                                 z_mm=target_z_mm,
                                 z_move_rpm=float(z_move_rpm),
                                 z_move_accel=float(z_move_accel),
+                                should_rotate=current_absolute_rotation_deg != absolute_rotation_deg,
                                 should_move_z=current_z_mm != target_z_mm,
                             )
                             current_z_mm = target_z_mm
+                            current_absolute_rotation_deg = absolute_rotation_deg
                             depth_mm = await angle_module.sample_laser_depth(
                                 tool,
                                 settle_ms=settle_ms,
