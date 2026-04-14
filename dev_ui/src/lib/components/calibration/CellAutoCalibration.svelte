@@ -47,25 +47,7 @@
 		return shouldAutoConnect(snapshot) === true && isStreamOpen === false && isConnecting === false;
 	});
 
-	const startButtonLabel = $derived.by(() => {
-		if (isConnecting === true) {
-			return 'connecting...';
-		}
-
-		if (isStreamReconnecting === true) {
-			return 'reconnecting...';
-		}
-
-		if (isStreamOpen === true) {
-			return 'stream connected';
-		}
-
-		if (snapshot !== null && shouldAutoConnect(snapshot) === true) {
-			return 'reconnect stream';
-		}
-
-		return 'start auto calibration';
-	});
+	const startButtonLabel = 'calibrate';
 
 	onMount(function () {
 		if (browser === false) {
@@ -121,7 +103,7 @@
 		isConnecting = false;
 		isStreamOpen = true;
 		error = '';
-		message = 'laser auto calibration stream connected';
+		message = 'auto calibration started';
 	}
 
 	function didReceiveSnapshot(event: Event): void {

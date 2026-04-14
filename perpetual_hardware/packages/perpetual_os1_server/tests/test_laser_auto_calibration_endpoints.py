@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from perpetual_os1 import laser_angle_calibration as angle_module
 from perpetual_os1.laser_scan import ScanBounds
 from perpetual_os1_server.core.laser_auto_calibration import (
+    _build_angle_x_positions,
     LaserAutoCalibrationManager,
     _build_estimated_rotation_deg,
     _build_valid_rotation_positions,
@@ -76,6 +77,19 @@ def test_build_valid_rotation_positions_clips_out_of_range_targets() -> None:
     assert rotation_positions[0] == -4.0
     assert rotation_positions[-1] == 8.0
     assert -5.0 not in rotation_positions
+
+
+def test_build_angle_x_positions_runs_from_high_x_to_low_x() -> None:
+    scan_config = SimpleNamespace(
+        angle_calibration_x_min_mm=50.0,
+        angle_calibration_x_max_mm=940.0,
+        angle_calibration_x_step_mm=100.0,
+    )
+
+    x_positions = _build_angle_x_positions(scan_config)
+
+    assert x_positions[0] == 940.0
+    assert x_positions[-1] == 50.0
 
 
 def test_build_estimated_rotation_deg_uses_negative_alpha() -> None:
