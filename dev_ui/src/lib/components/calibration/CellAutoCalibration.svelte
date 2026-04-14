@@ -300,10 +300,12 @@
 	</table>
 
 	{#if getAngleResults().length > 0}
-		<h3>angle results</h3>
 		<table>
 			<thead>
 				<tr>
+					<th colspan="6">angle results</th>
+				</tr>
+				<tr class="angle-results-columns">
 					<th>side</th>
 					<th>parameter</th>
 					<th>value</th>
@@ -407,8 +409,20 @@
 		</table>
 	{/if}
 
-	<h3>stage detail</h3>
-	<pre>{getStageDetail()}</pre>
+	<table>
+		<thead>
+			<tr>
+				<th>stage detail</th>
+			</tr>
+		</thead>
+		<tbody>
+			<tr>
+				<td>
+					<pre>{getStageDetail()}</pre>
+				</td>
+			</tr>
+		</tbody>
+	</table>
 
 	{#if message !== ''}
 		<StatusMessage {message} />
@@ -427,10 +441,16 @@
 	}
 
 	pre {
-		padding: 1rem;
-		border: 1px solid #ccc;
-		background: #f7f7f7;
+		margin: 0;
 		overflow: auto;
+	}
+
+	table {
+		margin-top: 1em;
+	}
+
+	.angle-results-columns th {
+		border-top-width: 1px;
 	}
 
 	h3 {
