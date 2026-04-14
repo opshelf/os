@@ -108,8 +108,8 @@ def test_build_angle_z_offset_positions_prefers_center_slice() -> None:
     assert z_offset_positions == [0.0]
 
 
-def test_build_estimated_rotation_deg_uses_negative_alpha() -> None:
-    fit_result = SimpleNamespace(alpha_deg=-4.2)
+def test_build_estimated_rotation_deg_uses_positive_alpha() -> None:
+    fit_result = SimpleNamespace(alpha_deg=4.2)
 
     estimated_rotation_deg = _build_estimated_rotation_deg(fit_result)
 
