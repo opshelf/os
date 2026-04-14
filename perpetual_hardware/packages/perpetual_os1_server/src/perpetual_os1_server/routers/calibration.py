@@ -4,18 +4,22 @@ import asyncio
 import logging
 import re
 from typing import Literal, Optional
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
+from sse_starlette.sse import EventSourceResponse
 
 from perpetual_os1.common import AxisCoordinate
-from perpetual_os1.laser_scan import ScanBounds
 from perpetual_os1.storage import StorageModuleSide, CalibrationCoordinate, CellStatus
 from perpetual_os1.exceptions import IOBoxError, MotorError
 from hardware.exceptions import MotorError as HardwareMotorError
 
 from perpetual_os1_server.core.robot import get_robot_worker
+from perpetual_os1_server.core.laser_auto_calibration import (
+	LaserAutoCalibrationSnapshot,
+	get_laser_auto_calibration_manager,
+)
 from perpetual_os1_server.routers.auth_deps import get_current_user
-from perpetual_os1_server.settings import clear_config_cache, get_root_config, save_root_config
+from perpetual_os1_server.settings import get_root_config, save_root_config
 
 router = APIRouter(prefix="/api/calibration", tags=["calibration"], dependencies=[Depends(get_current_user)])
 
@@ -67,36 +71,21 @@ class LaserReadingResponse(BaseModel):
 	distance_mm: float
 
 
-class ScanRequest(BaseModel):
-	side: Literal["left_module", "right_module"]
-	x_min: Optional[float] = None
-	x_max: Optional[float] = None
-	y_min: Optional[float] = None
-	y_max: Optional[float] = None
-	stage_extension_mm: Optional[float] = None
-	z_extension_mm: Optional[float] = None
-	apply: bool = True
-
-
-class ScanStatusResponse(BaseModel):
-	state: Literal["idle", "running", "completed", "failed", "cancelled"] = "idle"
-	run_id: Optional[str] = None
-	side: Optional[Literal["left_module", "right_module"]] = None
-	bounds: Optional[ScanBounds] = None
-	total_points: int = 0
-	completed_points: int = 0
-	current_x_mm: Optional[float] = None
-	current_y_mm: Optional[float] = None
-	current_depth_mm: Optional[float] = None
-	error: Optional[str] = None
-	result: Optional[dict] = None
-
-
 _current_position: Optional[PositionResponse] = None
 _current_side: int = 0
 _current_side_name: str = "left_module"
-_scan_task: Optional[asyncio.Task] = None
-_scan_status = ScanStatusResponse()
+
+
+async def _ensure_laser_auto_calibration_not_running() -> None:
+	manager = get_laser_auto_calibration_manager()
+
+	if await manager.is_active() is False:
+		return
+
+	raise HTTPException(
+		status_code=status.HTTP_409_CONFLICT,
+		detail="laser auto calibration is running",
+	)
 
 
 def _build_error_detail(
@@ -227,12 +216,6 @@ def _parse_side(side: str) -> StorageModuleSide:
 	return StorageModuleSide.RIGHT
 
 
-def _get_scan_config():
-	clear_config_cache()
-	config = get_root_config()
-	return config.robot.grid.scan
-
-
 def _side_to_s(side: str) -> int:
 	if side == "left_module":
 		return 0
@@ -336,174 +319,93 @@ async def read_laser() -> LaserReadingResponse:
 	return LaserReadingResponse(distance_mm=distance_mm)
 
 
-def _derive_scan_bounds(grid, side: StorageModuleSide, request: ScanRequest) -> ScanBounds:
-	explicit_bounds = [
-		request.x_min,
-		request.x_max,
-		request.y_min,
-		request.y_max,
-	]
-
-	if all(value is not None for value in explicit_bounds):
-		return ScanBounds(
-			x_min=float(request.x_min),
-			x_max=float(request.x_max),
-			y_min=float(request.y_min),
-			y_max=float(request.y_max),
-		)
-
-	x_values: list[float] = []
-	y_values: list[float] = []
-
-	for shelf in grid.get_side(side):
-		for cell in shelf.cells:
-			if cell.calibration_point is None:
-				continue
-			x_values.append(float(cell.calibration_point.x))
-			y_values.append(float(cell.calibration_point.y))
-
-	if len(x_values) == 0 or len(y_values) == 0:
-		raise HTTPException(
-			status_code=status.HTTP_400_BAD_REQUEST,
-			detail="Scan bounds are required when the side has no calibrated cells",
-		)
-
-	scan_config = _get_scan_config()
-	margin_mm = max(scan_config.step_mm * 2.0, 20.0)
-	return ScanBounds(
-		x_min=float(min(x_values) - margin_mm),
-		x_max=float(max(x_values) + margin_mm),
-		y_min=float(min(y_values) - margin_mm),
-		y_max=float(max(y_values) + margin_mm),
-	)
+@router.get("/laser/status", response_model=LaserAutoCalibrationSnapshot)
+async def get_laser_auto_calibration_status() -> LaserAutoCalibrationSnapshot:
+	manager = get_laser_auto_calibration_manager()
+	return await manager.get_snapshot()
 
 
-async def _did_scan_progress(
-	completed_points: int,
-	total_points: int,
-	current_x_mm: float,
-	current_y_mm: float,
-	current_depth_mm: Optional[float],
-) -> None:
-	global _scan_status
-
-	_scan_status.completed_points = completed_points
-	_scan_status.total_points = total_points
-	_scan_status.current_x_mm = current_x_mm
-	_scan_status.current_y_mm = current_y_mm
-	_scan_status.current_depth_mm = current_depth_mm
-
-
-async def _run_scan_task(worker, request: ScanRequest, bounds: ScanBounds) -> None:
-	global _scan_status, _scan_task
+@router.post("/laser/abort", response_model=LaserAutoCalibrationSnapshot)
+async def abort_laser_auto_calibration() -> LaserAutoCalibrationSnapshot:
+	manager = get_laser_auto_calibration_manager()
 
 	try:
-		scan_config = _get_scan_config()
-		result = await worker._robot.scan_storage(
-			side=request.side,
-			bounds=bounds,
-			step_mm=scan_config.step_mm,
-			settle_ms=scan_config.settle_ms,
-			samples_per_point=scan_config.samples_per_point,
-			laser_offset_x_mm=scan_config.laser_offset_x_mm,
-			laser_offset_y_mm=scan_config.laser_offset_y_mm,
-			wall_depth_tolerance_mm=scan_config.wall_depth_tolerance_mm,
-			expected_hole_width_mm=scan_config.expected_hole_width_mm,
-			expected_hole_height_mm=scan_config.expected_hole_height_mm,
-			hole_width_tolerance_mm=scan_config.hole_width_tolerance_mm,
-			hole_height_tolerance_mm=scan_config.hole_height_tolerance_mm,
-			min_vertical_wall_coverage_mm=scan_config.min_vertical_wall_coverage_mm,
-			min_horizontal_wall_coverage_mm=scan_config.min_horizontal_wall_coverage_mm,
-			stage_extension_mm=request.stage_extension_mm,
-			z_extension_mm=request.z_extension_mm if request.z_extension_mm is not None else scan_config.z_extension_mm,
-			apply=request.apply,
-			progress_callback=_did_scan_progress,
-		)
-		_scan_status.state = "completed"
-		_scan_status.run_id = result.run_id
-		_scan_status.result = result.model_dump(mode="json")
-	except asyncio.CancelledError:
-		_scan_status.state = "cancelled"
-		_scan_status.error = None
-		raise
-	except Exception as e:
-		_scan_status.state = "failed"
-		_scan_status.error = str(e)
-	finally:
-		_scan_task = None
-
-
-@router.post("/scan", response_model=ScanStatusResponse)
-async def start_scan(request: ScanRequest) -> ScanStatusResponse:
-	global _scan_status, _scan_task
-
-	try:
-		worker = await get_robot_worker()
-	except ValueError as e:
-		raise HTTPException(
-			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail="Robot is not initialized",
-		) from e
-
-	_ensure_ready(worker)
-
-	if _scan_task is not None and _scan_task.done() is False:
+		return await manager.abort()
+	except RuntimeError as exc:
 		raise HTTPException(
 			status_code=status.HTTP_409_CONFLICT,
-			detail="A calibration scan is already running",
-		)
+			detail=str(exc),
+		) from exc
 
-	if getattr(worker, "_current_command", None) is not None:
-		raise HTTPException(
-			status_code=status.HTTP_409_CONFLICT,
-			detail="Robot is busy processing another command",
-		)
 
-	scan_config = _get_scan_config()
-	bounds = _derive_scan_bounds(worker._robot._grid, _parse_side(request.side), request)
-	x_positions = int(round((bounds.x_max - bounds.x_min) / scan_config.step_mm)) + 1
-	y_positions = int(round((bounds.y_max - bounds.y_min) / scan_config.step_mm)) + 1
-	total_points = max(1, x_positions * y_positions)
+@router.get("/laser/stream")
+async def stream_laser_auto_calibration(request: Request) -> EventSourceResponse:
+	manager = get_laser_auto_calibration_manager()
+	is_active = await manager.is_active()
 
-	_scan_status = ScanStatusResponse(
-		state="running",
-		run_id=None,
-		side=request.side,
-		bounds=bounds,
-		total_points=total_points,
-		completed_points=0,
-		error=None,
-		result=None,
+	if is_active is False:
+		try:
+			worker = await get_robot_worker()
+		except ValueError as exc:
+			raise HTTPException(
+				status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+				detail="Robot is not initialized",
+			) from exc
+
+		_ensure_ready(worker)
+
+		if getattr(worker, "_current_command", None) is not None:
+			raise HTTPException(
+				status_code=status.HTTP_409_CONFLICT,
+				detail="Robot is busy processing another command",
+			)
+
+		if getattr(worker, "_demo_cycling", False) is True:
+			raise HTTPException(
+				status_code=status.HTTP_409_CONFLICT,
+				detail="Demo cycle is already running",
+			)
+
+		await manager.ensure_session_started(worker)
+
+	queue, initial_snapshot = await manager.subscribe()
+
+	async def event_generator():
+		try:
+			yield {
+				"event": "snapshot",
+				"data": initial_snapshot.model_dump_json(),
+			}
+
+			while True:
+				if await request.is_disconnected() is True:
+					break
+
+				try:
+					snapshot = await asyncio.wait_for(queue.get(), timeout=1.0)
+				except asyncio.TimeoutError:
+					continue
+
+				yield {
+					"event": "snapshot",
+					"data": snapshot.model_dump_json(),
+				}
+		finally:
+			await manager.unsubscribe(queue)
+
+	return EventSourceResponse(
+		event_generator(),
+		ping=15,
+		send_timeout=30,
+		headers={"Cache-Control": "no-cache"},
 	)
-
-	_scan_task = asyncio.create_task(_run_scan_task(worker, request, bounds))
-	return _scan_status
-
-
-@router.get("/scan/status", response_model=ScanStatusResponse)
-async def get_scan_status() -> ScanStatusResponse:
-	return _scan_status
-
-
-@router.post("/scan/abort", response_model=ScanStatusResponse)
-async def abort_scan() -> ScanStatusResponse:
-	global _scan_task, _scan_status
-
-	if _scan_task is None or _scan_task.done() is True:
-		raise HTTPException(
-			status_code=status.HTTP_409_CONFLICT,
-			detail="No calibration scan is running",
-		)
-
-	_scan_task.cancel()
-	_scan_status.state = "cancelled"
-	_scan_status.error = None
-	return _scan_status
 
 
 @router.post("/move", response_model=PositionResponse)
 async def move_to_cell(request: MoveRequest) -> PositionResponse:
 	global _current_position, _current_side, _current_side_name
+
+	await _ensure_laser_auto_calibration_not_running()
 
 	try:
 		worker = await get_robot_worker()
@@ -569,6 +471,8 @@ async def move_to_cell(request: MoveRequest) -> PositionResponse:
 @router.post("/jog", response_model=PositionResponse)
 async def jog_axis(request: JogRequest) -> PositionResponse:
 	global _current_position
+
+	await _ensure_laser_auto_calibration_not_running()
 
 	if _current_position is None:
 		raise HTTPException(
@@ -657,6 +561,8 @@ async def jog_axis(request: JogRequest) -> PositionResponse:
 async def test_gripper(request: TestRequest):
 	global _current_position, _current_side
 
+	await _ensure_laser_auto_calibration_not_running()
+
 	if _current_position is None:
 		raise HTTPException(
 			status_code=status.HTTP_400_BAD_REQUEST,
@@ -699,6 +605,8 @@ async def test_gripper(request: TestRequest):
 
 @router.post("/save")
 async def save_calibration(request: SaveRequest):
+	await _ensure_laser_auto_calibration_not_running()
+
 	try:
 		worker = await get_robot_worker()
 	except ValueError as e:
@@ -739,6 +647,8 @@ async def save_calibration(request: SaveRequest):
 
 @router.post("/home_tool_motors", response_model=CalibrationStatusResponse)
 async def home_tool_motors() -> CalibrationStatusResponse:
+	await _ensure_laser_auto_calibration_not_running()
+
 	try:
 		worker = await get_robot_worker()
 	except ValueError as e:
@@ -823,6 +733,8 @@ async def get_iobox_calibration() -> IOBoxPositionResponse:
 async def move_to_iobox_position(position: Literal["low", "high"]) -> IOBoxPositionResponse:
 	global _iobox_position, _iobox_current
 
+	await _ensure_laser_auto_calibration_not_running()
+
 	try:
 		worker = await get_robot_worker()
 	except ValueError as e:
@@ -876,6 +788,8 @@ async def move_to_iobox_position(position: Literal["low", "high"]) -> IOBoxPosit
 @router.post("/iobox/jog", response_model=IOBoxPositionResponse)
 async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 	global _iobox_current, _iobox_position
+
+	await _ensure_laser_auto_calibration_not_running()
 
 	if _iobox_current is None:
 		await get_iobox_calibration()
@@ -962,6 +876,8 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 async def test_iobox_sequence(with_gripper: bool = False):
 	global _iobox_current
 
+	await _ensure_laser_auto_calibration_not_running()
+
 	if _iobox_current is None:
 		await get_iobox_calibration()
 	if _iobox_current is None:
@@ -1037,6 +953,8 @@ async def test_iobox_sequence(with_gripper: bool = False):
 @router.post("/iobox/save")
 async def save_iobox_calibration(request: IOBoxSaveRequest):
 	global _iobox_current
+
+	await _ensure_laser_auto_calibration_not_running()
 
 	try:
 		worker = await get_robot_worker()
@@ -1119,6 +1037,8 @@ async def get_rotation_angles() -> RotationAnglesResponse:
 
 @router.post("/rotation/rotate")
 async def rotate_to_angle(angle: float):
+	await _ensure_laser_auto_calibration_not_running()
+
 	try:
 		worker = await get_robot_worker()
 	except ValueError as e:
@@ -1147,6 +1067,8 @@ async def rotate_to_angle(angle: float):
 
 @router.post("/rotation/save")
 async def save_rotation_angles(request: RotateSaveRequest):
+	await _ensure_laser_auto_calibration_not_running()
+
 	config = get_root_config()
 
 	params_dict = config.robot.tool.parameters.model_dump()
@@ -1190,6 +1112,8 @@ async def get_shelf_stage_extension() -> ShelfStageExtensionResponse:
 
 @router.post("/shelf/save")
 async def save_shelf_stage_extension(request: ShelfStageExtensionSaveRequest):
+	await _ensure_laser_auto_calibration_not_running()
+
 	config = get_root_config()
 
 	stage_limit: float | None = None
@@ -1232,6 +1156,8 @@ class StageMoveRequest(BaseModel):
 
 @router.post("/stage/move")
 async def move_stage(request: StageMoveRequest):
+	await _ensure_laser_auto_calibration_not_running()
+
 	try:
 		worker = await get_robot_worker()
 	except ValueError as e:
@@ -1268,6 +1194,8 @@ async def move_stage(request: StageMoveRequest):
 @router.post("/abort")
 async def abort_calibration():
 	"""Abort current calibration operation and home the tool."""
+	await _ensure_laser_auto_calibration_not_running()
+
 	try:
 		worker = await get_robot_worker()
 	except ValueError as e:

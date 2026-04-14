@@ -25,13 +25,22 @@ PYTHON_PATHS = [
 for import_path in reversed(PYTHON_PATHS):
 	sys.path.insert(0, str(import_path))
 
-from laser_angle_calibration import (
-	capture_samples_with_robot as capture_angle_calibration_samples,
-	parse_range_argument as parse_angle_calibration_range_argument,
-	print_fit_result as print_angle_calibration_fit_result,
-	search_best_alpha as search_angle_calibration_alpha,
-	write_output_document as write_angle_calibration_output_document,
-)
+try:
+	from laser_angle_calibration import (
+		capture_samples_with_robot as capture_angle_calibration_samples,
+		parse_range_argument as parse_angle_calibration_range_argument,
+		print_fit_result as print_angle_calibration_fit_result,
+		search_best_alpha as search_angle_calibration_alpha,
+		write_output_document as write_angle_calibration_output_document,
+	)
+except ImportError:
+	from scripts.laser_angle_calibration import (
+		capture_samples_with_robot as capture_angle_calibration_samples,
+		parse_range_argument as parse_angle_calibration_range_argument,
+		print_fit_result as print_angle_calibration_fit_result,
+		search_best_alpha as search_angle_calibration_alpha,
+		write_output_document as write_angle_calibration_output_document,
+	)
 from perpetual_os1.common import AxisCoordinate, CONFIG_PATH, Parameters, load_config_file, resolve_grid_path
 from perpetual_os1.laser_scan import (
 	ScanBounds,

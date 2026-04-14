@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from perpetual_os1_server.core.robot import get_robot_client, get_robot_worker
+from perpetual_os1_server.core.laser_auto_calibration import is_laser_auto_calibration_running
 from perpetual_os1_server.core.storage import StorageService
 from perpetual_os1_server.routers.common import SuccessResponse
 from perpetual_os1_server.settings import get_settings, get_operating_mode
@@ -34,6 +35,16 @@ from .auth_deps import (
 router = APIRouter(tags=["robot"])
 
 _MOTOR_ID_RE = re.compile(r"motor\s+(\d+)", re.IGNORECASE)
+
+
+async def _ensure_laser_auto_calibration_not_running() -> None:
+    if await is_laser_auto_calibration_running() is False:
+        return
+
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="laser auto calibration is running",
+    )
 
 
 def _reason_matches_motor(reason: Optional[str], motor_name: str, motor) -> bool:
@@ -151,6 +162,8 @@ async def robot_commands(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ) -> SuccessResponse:
+    await _ensure_laser_auto_calibration_not_running()
+
     if isinstance(command, StoreItemCommand):
         logging.info("Processing StoreItemCommand: item=%s", command.item)
         item_data = command.item or {}
@@ -227,18 +240,21 @@ async def robot_commands(
 
 @router.post("/start", dependencies=[Depends(get_current_user), Depends(require_permissions("robot:control")), Depends(check_robot_enabled)])
 async def start_robot(worker: RobotWorker = Depends(get_robot_worker_or_error)) -> SuccessResponse:
+    await _ensure_laser_auto_calibration_not_running()
     await worker.start()
     return SuccessResponse()
 
 
 @router.post("/stop", dependencies=[Depends(get_current_user), Depends(require_permissions("robot:control")), Depends(check_robot_enabled)])
 async def stop_robot(worker: RobotWorker = Depends(get_robot_worker_or_error)) -> SuccessResponse:
+    await _ensure_laser_auto_calibration_not_running()
     await worker.shutdown()
     return SuccessResponse()
 
 
 @router.post("/clear_commands", dependencies=[Depends(get_current_user), Depends(require_permissions("robot:control")), Depends(check_robot_enabled)])
 async def clear_robot_commands(worker: RobotWorker = Depends(get_robot_worker_or_error)) -> SuccessResponse:
+    await _ensure_laser_auto_calibration_not_running()
     await worker.clear_commands()
     return SuccessResponse()
 
@@ -254,6 +270,8 @@ async def control_gripper(
     state: Literal["grip", "release"],
     worker: RobotWorker = Depends(get_robot_worker_or_error),
 ) -> SuccessResponse:
+    await _ensure_laser_auto_calibration_not_running()
+
     if state == "release":
         await worker.release_gripper()
     else:
