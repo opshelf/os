@@ -2,6 +2,7 @@
 	import { page } from '$app/state';
 	import CellCalibration from '$lib/components/calibration/CellCalibration.svelte';
 	import CellAutoCalibration from '$lib/components/calibration/CellAutoCalibration.svelte';
+	import CellCalibrationTest from '$lib/components/calibration/CellCalibrationTest.svelte';
 	import IOBoxCalibration from '$lib/components/calibration/IOBoxCalibration.svelte';
 	import RotationCalibration from '$lib/components/calibration/RotationCalibration.svelte';
 
@@ -18,7 +19,7 @@
 		? parseInt(page.url.searchParams.get('cell')!, 10)
 		: undefined;
 
-	let selectedView: 'cell_manual' | 'cell_auto' | 'io' | 'rotation' = 'cell_manual';
+	let selectedView: 'cell_manual' | 'cell_auto' | 'test' | 'io' | 'rotation' = 'cell_manual';
 
 	function didSelectCellManual(): void {
 		selectedView = 'cell_manual';
@@ -26,6 +27,10 @@
 
 	function didSelectCellAuto(): void {
 		selectedView = 'cell_auto';
+	}
+
+	function didSelectTest(): void {
+		selectedView = 'test';
 	}
 
 	function didSelectIO(): void {
@@ -44,6 +49,9 @@
 	<button type="button" class:selected={selectedView === 'cell_auto'} on:click={didSelectCellAuto}>
 		cell auto
 	</button>
+	<button type="button" class:selected={selectedView === 'test'} on:click={didSelectTest}>
+		test
+	</button>
 	<button type="button" class:selected={selectedView === 'io'} on:click={didSelectIO}>
 		io box
 	</button>
@@ -56,6 +64,8 @@
 	<CellCalibration {initialSide} {initialShelf} {initialCell} />
 {:else if selectedView === 'cell_auto'}
 	<CellAutoCalibration />
+{:else if selectedView === 'test'}
+	<CellCalibrationTest {initialSide} {initialShelf} {initialCell} />
 {:else if selectedView === 'io'}
 	<IOBoxCalibration />
 {:else if selectedView === 'rotation'}

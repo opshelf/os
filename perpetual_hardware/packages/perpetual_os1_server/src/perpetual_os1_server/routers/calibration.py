@@ -9,7 +9,14 @@ from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from perpetual_os1.common import AxisCoordinate
-from perpetual_os1.storage import StorageModuleSide, CalibrationCoordinate, CellStatus
+from perpetual_os1.storage import (
+	CalibrationCoordinate,
+	CellItem,
+	CellStatus,
+	Dimensions,
+	StorageModuleCellLocation,
+	StorageModuleSide,
+)
 from perpetual_os1.exceptions import IOBoxError, MotorError
 from hardware.exceptions import MotorError as HardwareMotorError
 
@@ -49,6 +56,52 @@ class TestRequest(BaseModel):
 	side: Literal["left_module", "right_module"]
 	shelf_idx: int
 	cell_idx: int
+
+
+def _ensure_robot_not_busy(worker) -> None:
+	if getattr(worker, "_current_command", None) is not None:
+		raise HTTPException(
+			status_code=status.HTTP_409_CONFLICT,
+			detail="Robot is busy processing another command",
+		)
+
+	if getattr(worker, "_demo_cycling", False) is True:
+		raise HTTPException(
+			status_code=status.HTTP_409_CONFLICT,
+			detail="Demo cycle is already running",
+		)
+
+
+def _build_test_location(request: TestRequest) -> StorageModuleCellLocation:
+	return StorageModuleCellLocation(
+		side=_parse_side(request.side),
+		shelf_idx=request.shelf_idx,
+		cell_idx=request.cell_idx,
+	)
+
+
+def _build_coordinate_for_location(grid, location: StorageModuleCellLocation) -> AxisCoordinate:
+	calibration_point = grid.get_cell_coordinate(location)
+
+	return AxisCoordinate(
+		x=calibration_point.x,
+		y=calibration_point.y,
+		s=0 if location.side == StorageModuleSide.LEFT else 1,
+		z_offset=calibration_point.z_offset,
+	)
+
+
+def _build_cycle_test_item(cell, location: StorageModuleCellLocation) -> CellItem:
+	return CellItem(
+		dimensions=Dimensions(
+			width=max(float(cell.dimensions.width) * 0.8, 1.0),
+			height=max(float(cell.dimensions.height) * 0.8, 1.0),
+			length=max(float(cell.dimensions.length) * 0.8, 1.0),
+		),
+		data={
+			"name": f"calibration test {location.side.value}:{location.shelf_idx}:{location.cell_idx}",
+		},
+	)
 
 
 class SaveRequest(BaseModel):
@@ -538,11 +591,57 @@ async def test_gripper(request: TestRequest):
 
 	await _ensure_laser_auto_calibration_not_running()
 
-	if _current_position is None:
+	try:
+		worker = await get_robot_worker()
+	except ValueError as e:
+		raise HTTPException(
+			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+			detail="Robot is not initialized",
+		) from e
+
+	_ensure_ready(worker)
+	_ensure_robot_not_busy(worker)
+
+	location = _build_test_location(request)
+	grid = worker._robot._grid
+
+	try:
+		coordinate = _build_coordinate_for_location(grid, location)
+	except (IndexError, ValueError, Exception) as exc:
 		raise HTTPException(
 			status_code=status.HTTP_400_BAD_REQUEST,
-			detail="No active calibration session. Move to a cell first.",
-		)
+			detail=str(exc),
+		) from exc
+
+	tool = worker._robot._tool
+
+	try:
+		await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
+		await tool.retract()
+	except (MotorError, HardwareMotorError) as e:
+		await _raise_motor_error(worker, f"Failed to retract: {str(e)}", e)
+
+	coord = coordinate
+	_current_position = PositionResponse(
+		x=coord.x,
+		y=coord.y,
+		z_offset=coord.z_offset,
+		slide_extension=await _get_current_stage_extension(tool),
+	)
+	_current_side = coord.s
+
+	try:
+		await tool.pick(coord)
+		await tool.place(coord)
+	except (MotorError, HardwareMotorError) as e:
+		await _raise_motor_error(worker, f"Test failed: {str(e)}", e)
+
+	return {"success": True}
+
+
+@router.post("/test/cycle")
+async def test_cycle(request: TestRequest):
+	await _ensure_laser_auto_calibration_not_running()
 
 	try:
 		worker = await get_robot_worker()
@@ -553,27 +652,53 @@ async def test_gripper(request: TestRequest):
 		) from e
 
 	_ensure_ready(worker)
+	_ensure_robot_not_busy(worker)
 
-	tool = worker._robot._tool
+	robot = worker._robot
+	tool = robot._tool
+	grid = robot._grid
+	location = _build_test_location(request)
+
+	try:
+		cell = grid.get_cell(location)
+		coordinate = _build_coordinate_for_location(grid, location)
+	except (IndexError, ValueError, Exception) as exc:
+		raise HTTPException(
+			status_code=status.HTTP_400_BAD_REQUEST,
+			detail=str(exc),
+		) from exc
+
+	initial_item = cell.item.model_copy(deep=True) if cell.item is not None else None
+	is_initially_occupied = cell.status == CellStatus.OCCUPIED
+	cycle_item = initial_item
+
+	if is_initially_occupied is False:
+		cycle_item = _build_cycle_test_item(cell, location)
 
 	try:
 		await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
-		await tool.retract()
-	except (MotorError, HardwareMotorError) as e:
-		await _raise_motor_error(worker, f"Failed to retract: {str(e)}", e)
 
-	coord = AxisCoordinate(
-		x=_current_position.x,
-		y=_current_position.y,
-		s=_current_side,
-		z_offset=_current_position.z_offset,
-	)
+		if is_initially_occupied is True:
+			await robot.io_place(coordinate)
+			grid.clear_item(location)
 
-	try:
-		await tool.pick(coord)
-		await tool.place(coord)
+			await robot.io_pick(coordinate)
+			grid.store_item(location, cycle_item)
+		else:
+			await robot.io_pick(coordinate)
+			grid.store_item(location, cycle_item)
+
+			await robot.io_place(coordinate)
+			grid.clear_item(location)
+
+		grid.save()
 	except (MotorError, HardwareMotorError) as e:
-		await _raise_motor_error(worker, f"Test failed: {str(e)}", e)
+		await _raise_motor_error(worker, f"Cycle test failed: {str(e)}", e)
+	except Exception as exc:
+		raise HTTPException(
+			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+			detail=f"Cycle test failed: {exc}",
+		) from exc
 
 	return {"success": True}
 

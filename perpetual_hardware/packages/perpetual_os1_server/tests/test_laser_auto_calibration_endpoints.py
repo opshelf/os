@@ -11,6 +11,7 @@ from perpetual_os1.laser_scan import ScanBounds
 from perpetual_os1_server.core.laser_auto_calibration import (
     _build_angle_x_positions,
     _build_angle_z_offset_positions,
+    _SideState,
     LaserAutoCalibrationManager,
     _build_estimated_rotation_deg,
     _build_valid_rotation_positions,
@@ -133,6 +134,33 @@ async def test_home_after_abort_homes_tool_and_door() -> None:
     io.home_door.assert_awaited_once()
     worker.clear_needs_home.assert_called_once()
     worker.get_status_snapshot.assert_awaited_once_with(force_refresh=True)
+
+
+@pytest.mark.asyncio
+async def test_sync_snapshot_uses_live_counts_when_metadata_lags() -> None:
+    manager = LaserAutoCalibrationManager()
+    manager._side_states['left_module'] = _SideState(
+        live_shelf_count=7,
+        live_candidate_count=11,
+        live_detected_cell_count=3,
+    )
+    manager._side_states['right_module'] = _SideState(
+        live_shelf_count=2,
+        live_candidate_count=5,
+        live_detected_cell_count=1,
+    )
+
+    snapshot = await manager._sync_snapshot()
+
+    assert snapshot.left_scouted_shelf_count == 7
+    assert snapshot.right_scouted_shelf_count == 2
+    assert snapshot.left_candidate_count == 11
+    assert snapshot.right_candidate_count == 5
+    assert snapshot.left_detected_cell_count == 3
+    assert snapshot.right_detected_cell_count == 1
+    assert snapshot.scouted_shelf_count == 9
+    assert snapshot.candidate_count == 16
+    assert snapshot.detected_cell_count == 4
 
 
 @pytest.mark.asyncio

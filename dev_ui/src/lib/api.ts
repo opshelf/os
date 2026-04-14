@@ -249,6 +249,30 @@ export async function testGripper(side: string, shelfIdx: number, cellIdx: numbe
 	});
 }
 
+export async function runCalibrationQuickTest(
+	side: string,
+	shelfIdx: number,
+	cellIdx: number
+): Promise<void> {
+	await apiFetch('/calibration/test', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ side, shelf_idx: shelfIdx, cell_idx: cellIdx })
+	});
+}
+
+export async function runCalibrationCycleTest(
+	side: string,
+	shelfIdx: number,
+	cellIdx: number
+): Promise<void> {
+	await apiFetch('/calibration/test/cycle', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ side, shelf_idx: shelfIdx, cell_idx: cellIdx })
+	});
+}
+
 export async function saveCalibration(
 	side: string,
 	shelfIdx: number,
@@ -338,8 +362,14 @@ export interface LaserAutoCalibrationSnapshot {
 	started_at: string | null;
 	updated_at: string | null;
 	scouted_shelf_count: number;
+	left_scouted_shelf_count: number;
+	right_scouted_shelf_count: number;
 	candidate_count: number;
+	left_candidate_count: number;
+	right_candidate_count: number;
 	detected_cell_count: number;
+	left_detected_cell_count: number;
+	right_detected_cell_count: number;
 	shelf_edges: LaserAutoCalibrationShelfEdge[];
 	shelf_candidates: LaserAutoCalibrationCandidate[];
 	detected_cells: LaserAutoCalibrationCell[];
