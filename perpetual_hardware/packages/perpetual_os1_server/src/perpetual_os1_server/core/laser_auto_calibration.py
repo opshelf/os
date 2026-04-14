@@ -40,8 +40,14 @@ SCAN_SHELF_SCOUT_RE = re.compile(r"phase=shelf-scout scout=(?P<idx>\d+)/(?P<coun
 SCAN_SHELF_HOLE_RE = re.compile(
     r"phase=shelf-hole-scan shelf=(?P<shelf_idx>\d+)/(?P<shelf_count>\d+) offset=(?P<offset_idx>\d+)/(?P<offset_count>\d+) y=(?P<y>-?\d+(?:\.\d+)?)"
 )
+SCAN_PROGRESS_SAMPLE_RE = re.compile(
+    r"(?P<label>[a-zA-Z0-9_]+)=(?P<sample_idx>\d+)/(?P<sample_count>\d+) x=(?P<x>-?\d+(?:\.\d+)?) y=(?P<y>-?\d+(?:\.\d+)?) depth=(?P<depth>none|-?\d+(?:\.\d+)?)"
+)
+SHELF_EDGES_RE = re.compile(r"shelf_edges=(?P<count>\d+)")
+COARSE_CANDIDATES_RE = re.compile(r"coarse_candidates=(?P<count>\d+)")
 SCAN_FINE_RE = re.compile(r"phase=fine-scan candidate=(?P<idx>\d+)/(?P<count>\d+)")
 SCAN_FINE_RETRY_RE = re.compile(r"phase=fine-scan-retry candidate=(?P<idx>\d+)/(?P<count>\d+)")
+FINE_DETECTED_CELLS_RE = re.compile(r"fine_detected_cells=(?P<count>\d+)")
 ANGLE_RESULT_RE = re.compile(r"alpha_deg=(?P<alpha>-?\d+(?:\.\d+)?)")
 
 
@@ -98,8 +104,14 @@ class LaserAutoCalibrationSnapshot(BaseModel):
     started_at: str | None = None
     updated_at: str | None = None
     scouted_shelf_count: int = 0
+    left_scouted_shelf_count: int = 0
+    right_scouted_shelf_count: int = 0
     candidate_count: int = 0
+    left_candidate_count: int = 0
+    right_candidate_count: int = 0
     detected_cell_count: int = 0
+    left_detected_cell_count: int = 0
+    right_detected_cell_count: int = 0
     shelf_edges: list[LaserAutoCalibrationShelfEdge] = Field(default_factory=list)
     shelf_candidates: list[LaserAutoCalibrationCandidate] = Field(default_factory=list)
     detected_cells: list[LaserAutoCalibrationCell] = Field(default_factory=list)
@@ -116,6 +128,9 @@ class _SideState:
     candidates: list[LaserAutoCalibrationCandidate] = field(default_factory=list)
     cells: list[LaserAutoCalibrationCell] = field(default_factory=list)
     angle_result: LaserAutoCalibrationAngleResult | None = None
+    live_shelf_count: int = 0
+    live_candidate_count: int = 0
+    live_detected_cell_count: int = 0
 
 
 @dataclass
@@ -843,6 +858,9 @@ class LaserAutoCalibrationManager:
                 side_state.shelf_edges,
             )
             side_state.cells = _build_cell_rows(side_name, list(metadata.get("fine_scans", [])))
+            side_state.live_shelf_count = max(side_state.live_shelf_count, len(side_state.shelf_edges))
+            side_state.live_candidate_count = max(side_state.live_candidate_count, len(side_state.candidates))
+            side_state.live_detected_cell_count = max(side_state.live_detected_cell_count, len(side_state.cells))
 
         progress_payload: dict[str, Any] = {}
 
@@ -870,11 +888,16 @@ class LaserAutoCalibrationManager:
             stage_detail = dict(self._snapshot.stage_detail)
             stage_detail["side"] = side_name
             stage_detail["log"] = message
+            side_state = self._side_states.setdefault(side_name, _SideState())
 
             shelf_match = SCAN_SHELF_SCOUT_RE.search(message)
             shelf_hole_match = SCAN_SHELF_HOLE_RE.search(message)
+            progress_sample_match = SCAN_PROGRESS_SAMPLE_RE.search(message)
+            shelf_edges_match = SHELF_EDGES_RE.search(message)
+            coarse_candidates_match = COARSE_CANDIDATES_RE.search(message)
             fine_match = SCAN_FINE_RE.search(message)
             fine_retry_match = SCAN_FINE_RETRY_RE.search(message)
+            fine_detected_cells_match = FINE_DETECTED_CELLS_RE.search(message)
 
             if message.startswith("phase=coarse-scan") is True or shelf_match is not None:
                 current_stage = "shelf-scout"
@@ -889,10 +912,31 @@ class LaserAutoCalibrationManager:
                     }
                 )
 
+            if progress_sample_match is not None:
+                laser_distance_mm: float | None = None
+
+                if progress_sample_match.group("depth") != "none":
+                    laser_distance_mm = float(progress_sample_match.group("depth"))
+
+                stage_detail.update(
+                    {
+                        "laser_sample_label": progress_sample_match.group("label"),
+                        "laser_sample_idx": int(progress_sample_match.group("sample_idx")),
+                        "laser_sample_count": int(progress_sample_match.group("sample_count")),
+                        "laser_sample_x_mm": float(progress_sample_match.group("x")),
+                        "laser_sample_y_mm": float(progress_sample_match.group("y")),
+                        "laser_distance_mm": laser_distance_mm,
+                    }
+                )
+
             if message.startswith("phase=coarse-detect") is True or shelf_hole_match is not None:
                 current_stage = "coarse-detect"
 
             if shelf_hole_match is not None:
+                side_state.live_shelf_count = max(
+                    side_state.live_shelf_count,
+                    int(shelf_hole_match.group("shelf_count")),
+                )
                 stage_detail.update(
                     {
                         "phase": "coarse-detect",
@@ -904,9 +948,31 @@ class LaserAutoCalibrationManager:
                     }
                 )
 
+            if shelf_edges_match is not None:
+                side_state.live_shelf_count = max(
+                    side_state.live_shelf_count,
+                    int(shelf_edges_match.group("count")),
+                )
+
+            if coarse_candidates_match is not None:
+                side_state.live_candidate_count = max(
+                    side_state.live_candidate_count,
+                    int(coarse_candidates_match.group("count")),
+                )
+
+            if fine_detected_cells_match is not None:
+                side_state.live_detected_cell_count = max(
+                    side_state.live_detected_cell_count,
+                    int(fine_detected_cells_match.group("count")),
+                )
+
             if fine_match is not None or fine_retry_match is not None:
                 current_stage = "fine-scan"
                 active_match = fine_match or fine_retry_match
+                side_state.live_candidate_count = max(
+                    side_state.live_candidate_count,
+                    int(active_match.group("count")),
+                )
                 stage_detail.update(
                     {
                         "phase": "fine-scan",
@@ -916,7 +982,7 @@ class LaserAutoCalibrationManager:
                     }
                 )
 
-            if message.startswith("fine_detected_cells=") is True:
+            if fine_detected_cells_match is not None:
                 current_stage = "fine-scan"
 
             if message.startswith("run_dir=") is True:
@@ -1108,9 +1174,44 @@ class LaserAutoCalibrationManager:
                 key=lambda cell: (cell.side, cell.shelf_idx, cell.cell_idx),
             )
             self._snapshot.angle_results = sorted(angle_results, key=lambda result: result.side)
-            self._snapshot.scouted_shelf_count = len(self._snapshot.shelf_edges)
-            self._snapshot.candidate_count = len(self._snapshot.shelf_candidates)
-            self._snapshot.detected_cell_count = len(self._snapshot.detected_cells)
+            left_side_state = self._side_states.get("left_module", _SideState())
+            right_side_state = self._side_states.get("right_module", _SideState())
+            self._snapshot.left_scouted_shelf_count = max(
+                len([edge for edge in self._snapshot.shelf_edges if edge.side == "left_module"]),
+                left_side_state.live_shelf_count,
+            )
+            self._snapshot.right_scouted_shelf_count = max(
+                len([edge for edge in self._snapshot.shelf_edges if edge.side == "right_module"]),
+                right_side_state.live_shelf_count,
+            )
+            self._snapshot.left_candidate_count = max(
+                len([candidate for candidate in self._snapshot.shelf_candidates if candidate.side == "left_module"]),
+                left_side_state.live_candidate_count,
+            )
+            self._snapshot.right_candidate_count = max(
+                len([candidate for candidate in self._snapshot.shelf_candidates if candidate.side == "right_module"]),
+                right_side_state.live_candidate_count,
+            )
+            self._snapshot.left_detected_cell_count = max(
+                len([cell for cell in self._snapshot.detected_cells if cell.side == "left_module"]),
+                left_side_state.live_detected_cell_count,
+            )
+            self._snapshot.right_detected_cell_count = max(
+                len([cell for cell in self._snapshot.detected_cells if cell.side == "right_module"]),
+                right_side_state.live_detected_cell_count,
+            )
+            self._snapshot.scouted_shelf_count = max(
+                len(self._snapshot.shelf_edges),
+                self._snapshot.left_scouted_shelf_count + self._snapshot.right_scouted_shelf_count,
+            )
+            self._snapshot.candidate_count = max(
+                len(self._snapshot.shelf_candidates),
+                self._snapshot.left_candidate_count + self._snapshot.right_candidate_count,
+            )
+            self._snapshot.detected_cell_count = max(
+                len(self._snapshot.detected_cells),
+                self._snapshot.left_detected_cell_count + self._snapshot.right_detected_cell_count,
+            )
             snapshot = self._snapshot.model_copy(deep=True)
 
         return snapshot

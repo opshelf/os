@@ -6,9 +6,6 @@
 		buildLaserAutoCalibrationStreamUrl,
 		getLaserAutoCalibrationStatus,
 		type LaserAutoCalibrationAngleResult,
-		type LaserAutoCalibrationCandidate,
-		type LaserAutoCalibrationCell,
-		type LaserAutoCalibrationShelfEdge,
 		type LaserAutoCalibrationSnapshot
 	} from '$lib/api';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
@@ -196,36 +193,20 @@
 		return value.toFixed(digits);
 	}
 
-	function formatBounds(): string {
-		if (snapshot?.bounds === null || snapshot?.bounds === undefined) {
-			return '-';
-		}
-
-		return `x=${formatNumber(snapshot.bounds.x_min)}..${formatNumber(snapshot.bounds.x_max)} y=${formatNumber(snapshot.bounds.y_min)}..${formatNumber(snapshot.bounds.y_max)}`;
-	}
-
-	function getShelfEdges(): LaserAutoCalibrationShelfEdge[] {
-		return snapshot?.shelf_edges ?? [];
-	}
-
-	function getCandidates(): LaserAutoCalibrationCandidate[] {
-		return snapshot?.shelf_candidates ?? [];
-	}
-
-	function getDetectedCells(): LaserAutoCalibrationCell[] {
-		return snapshot?.detected_cells ?? [];
-	}
-
 	function getAngleResults(): LaserAutoCalibrationAngleResult[] {
 		return snapshot?.angle_results ?? [];
 	}
 
-	function getRotationParameterName(side: 'left_module' | 'right_module'): string {
-		if (side === 'left_module') {
-			return 'ROTATION_FRONT';
+	function getRotationValue(side: 'left_module' | 'right_module'): string {
+		const angleResult = getAngleResults().find(function (result) {
+			return result.side === side;
+		});
+
+		if (angleResult === undefined) {
+			return '-';
 		}
 
-		return 'ROTATION_BACK';
+		return formatNumber(angleResult.updated_rotation_deg, 4);
 	}
 
 	function getStageDetail(): string {
@@ -273,141 +254,39 @@
 				<td>{snapshot?.current_stage ?? '-'}</td>
 			</tr>
 			<tr>
-				<td>session</td>
-				<td>{snapshot?.session_id ?? '-'}</td>
+				<td>scouted shelves left</td>
+				<td>{snapshot?.left_scouted_shelf_count ?? 0}</td>
 			</tr>
 			<tr>
-				<td>run</td>
-				<td>{snapshot?.run_id ?? '-'}</td>
+				<td>scouted shelves right</td>
+				<td>{snapshot?.right_scouted_shelf_count ?? 0}</td>
 			</tr>
 			<tr>
-				<td>bounds</td>
-				<td>{formatBounds()}</td>
+				<td>candidates left</td>
+				<td>{snapshot?.left_candidate_count ?? 0}</td>
 			</tr>
 			<tr>
-				<td>scouted shelves</td>
-				<td>{snapshot?.scouted_shelf_count ?? 0}</td>
+				<td>candidates right</td>
+				<td>{snapshot?.right_candidate_count ?? 0}</td>
 			</tr>
 			<tr>
-				<td>candidates</td>
-				<td>{snapshot?.candidate_count ?? 0}</td>
+				<td>detected cells left</td>
+				<td>{snapshot?.left_detected_cell_count ?? 0}</td>
 			</tr>
 			<tr>
-				<td>detected cells</td>
-				<td>{snapshot?.detected_cell_count ?? 0}</td>
+				<td>detected cells right</td>
+				<td>{snapshot?.right_detected_cell_count ?? 0}</td>
+			</tr>
+			<tr>
+				<td>rotation angle left</td>
+				<td>{getRotationValue('left_module')}</td>
+			</tr>
+			<tr>
+				<td>rotation angle right</td>
+				<td>{getRotationValue('right_module')}</td>
 			</tr>
 		</tbody>
 	</table>
-
-	{#if getAngleResults().length > 0}
-		<table>
-			<thead>
-				<tr>
-					<th colspan="6">angle results</th>
-				</tr>
-				<tr class="angle-results-columns">
-					<th>side</th>
-					<th>parameter</th>
-					<th>value</th>
-					<th>alpha</th>
-					<th>capture y</th>
-					<th>samples</th>
-				</tr>
-			</thead>
-			<tbody>
-				{#each getAngleResults() as result}
-					<tr>
-						<td>{result.side}</td>
-						<td>{getRotationParameterName(result.side)}</td>
-						<td>{formatNumber(result.updated_rotation_deg, 4)}</td>
-						<td>{formatNumber(result.alpha_deg, 4)}</td>
-						<td>{formatNumber(result.capture_y_mm)}</td>
-						<td>{result.sample_count}</td>
-					</tr>
-				{/each}
-			</tbody>
-		</table>
-	{/if}
-
-	{#if getShelfEdges().length > 0}
-		<h3>shelf edges</h3>
-		<table>
-			<thead>
-				<tr>
-					<th>side</th>
-					<th>x</th>
-					<th>y</th>
-				</tr>
-			</thead>
-			<tbody>
-				{#each getShelfEdges() as edge}
-					<tr>
-						<td>{edge.side}</td>
-						<td>{formatNumber(edge.x_mm)}</td>
-						<td>{formatNumber(edge.y_mm)}</td>
-					</tr>
-				{/each}
-			</tbody>
-		</table>
-	{/if}
-
-	{#if getCandidates().length > 0}
-		<h3>candidates</h3>
-		<table>
-			<thead>
-				<tr>
-					<th>side</th>
-					<th>shelf</th>
-					<th>x min</th>
-					<th>x max</th>
-					<th>y min</th>
-					<th>y max</th>
-				</tr>
-			</thead>
-			<tbody>
-				{#each getCandidates() as candidate}
-					<tr>
-						<td>{candidate.side}</td>
-						<td>{candidate.shelf_idx ?? '-'}</td>
-						<td>{formatNumber(candidate.x_min)}</td>
-						<td>{formatNumber(candidate.x_max)}</td>
-						<td>{formatNumber(candidate.y_min)}</td>
-						<td>{formatNumber(candidate.y_max)}</td>
-					</tr>
-				{/each}
-			</tbody>
-		</table>
-	{/if}
-
-	{#if getDetectedCells().length > 0}
-		<h3>detected cells</h3>
-		<table>
-			<thead>
-				<tr>
-					<th>side</th>
-					<th>shelf</th>
-					<th>cell</th>
-					<th>tool x</th>
-					<th>tool y</th>
-					<th>center x</th>
-					<th>center y</th>
-				</tr>
-			</thead>
-			<tbody>
-				{#each getDetectedCells() as cell}
-					<tr>
-						<td>{cell.side}</td>
-						<td>{cell.shelf_idx}</td>
-						<td>{cell.cell_idx}</td>
-						<td>{formatNumber(cell.tool_x_mm)}</td>
-						<td>{formatNumber(cell.tool_y_mm)}</td>
-						<td>{formatNumber(cell.center_x_mm)}</td>
-						<td>{formatNumber(cell.center_y_mm)}</td>
-					</tr>
-				{/each}
-			</tbody>
-		</table>
-	{/if}
 
 	<table>
 		<thead>
@@ -449,11 +328,4 @@
 		margin-top: 1em;
 	}
 
-	.angle-results-columns th {
-		border-top-width: 1px;
-	}
-
-	h3 {
-		margin-top: 1.5rem;
-	}
 </style>
