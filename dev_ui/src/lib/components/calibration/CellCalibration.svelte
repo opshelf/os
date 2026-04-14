@@ -1,18 +1,15 @@
 <script lang="ts">
-	import { onDestroy, onMount } from 'svelte';
+	import { onMount } from 'svelte';
 	import { browser } from '$app/environment';
 	import {
 		ApiError,
-		abortCalibrationScan,
 		getStorageGrid,
-		getCalibrationScanStatus,
 		getCalibrationStatus,
 		homeToolMotors,
 		moveToCell,
 		jogAxis,
 		testGripper,
 		saveCalibration,
-		startCalibrationScan,
 		getRotationAngles,
 		rotateToAngle,
 		moveStage,
@@ -20,7 +17,6 @@
 		getShelfStageExtension,
 		controlGripper,
 		type ApiErrorDetail,
-		type CalibrationScanStatus,
 		type CalibrationStatus,
 		type StorageGrid,
 		type Position
@@ -65,12 +61,6 @@
 	let editZ = $state<number>(0);
 	let isExtending = $state<boolean>(false);
 	let stageExtensionValue = $state<number>(0);
-	let scanStatus = $state<CalibrationScanStatus | null>(null);
-	let isStartingScan = $state<boolean>(false);
-	let isAbortingScan = $state<boolean>(false);
-	let scanError = $state<string>('');
-	let scanMessage = $state<string>('');
-	let scanPollTimer: ReturnType<typeof setTimeout> | null = null;
 
 	const JOG_STEPS = [
 		{ value: 0.1, label: '0.1mm' },
@@ -120,31 +110,7 @@
 		}
 		loadStorage();
 		loadCalibrationStatus();
-		loadScanStatus();
 	});
-
-	onDestroy(function () {
-		clearScanPollTimer();
-	});
-
-	function clearScanPollTimer(): void {
-		if (scanPollTimer === null) {
-			return;
-		}
-
-		clearTimeout(scanPollTimer);
-		scanPollTimer = null;
-	}
-
-	function scheduleScanPoll(): void {
-		clearScanPollTimer();
-
-		if (scanStatus?.state !== 'running') {
-			return;
-		}
-
-		scanPollTimer = setTimeout(didPollScanStatus, 1000);
-	}
 
 	async function loadStorage(): Promise<void> {
 		loading = true;
@@ -167,44 +133,6 @@
 			applyNeedsHomeStatus(status);
 		} catch {
 			// Ignore status polling failures; calibration actions will surface errors.
-		}
-	}
-
-	async function loadScanStatus(): Promise<void> {
-		try {
-			scanStatus = await getCalibrationScanStatus();
-			scheduleScanPoll();
-		} catch (err) {
-			scanError = err instanceof Error ? err.message : 'failed to load scan status';
-		}
-	}
-
-	async function didPollScanStatus(): Promise<void> {
-		try {
-			const nextStatus = await getCalibrationScanStatus();
-			const previousState = scanStatus?.state;
-
-			scanStatus = nextStatus;
-
-			if (previousState === 'running' && nextStatus.state === 'completed') {
-				scanMessage = 'scan completed';
-				scanError = '';
-				await loadStorage();
-			}
-
-			if (previousState === 'running' && nextStatus.state === 'failed') {
-				scanMessage = '';
-				scanError = nextStatus.error ?? 'scan failed';
-			}
-
-			if (previousState === 'running' && nextStatus.state === 'cancelled') {
-				scanMessage = 'scan cancelled';
-				scanError = '';
-			}
-		} catch (err) {
-			scanError = err instanceof Error ? err.message : 'failed to refresh scan status';
-		} finally {
-			scheduleScanPoll();
 		}
 	}
 
@@ -416,42 +344,6 @@
 		}
 	}
 
-	async function didClickStartScan(): Promise<void> {
-		isStartingScan = true;
-		scanError = '';
-		scanMessage = '';
-
-			try {
-				scanStatus = await startCalibrationScan({
-					side: selectedSide,
-					apply: true
-				});
-				scanMessage = 'scan started';
-		} catch (err) {
-			handleNeedsHomeError(err);
-			scanError = err instanceof Error ? err.message : 'failed to start scan';
-		} finally {
-			isStartingScan = false;
-			scheduleScanPoll();
-		}
-	}
-
-	async function didClickAbortScan(): Promise<void> {
-		isAbortingScan = true;
-		scanError = '';
-		scanMessage = '';
-
-		try {
-			scanStatus = await abortCalibrationScan();
-			scanMessage = 'scan cancelled';
-		} catch (err) {
-			scanError = err instanceof Error ? err.message : 'failed to abort scan';
-		} finally {
-			isAbortingScan = false;
-			scheduleScanPoll();
-		}
-	}
-
 	function syncEditValues(): void {
 		if (currentPosition === null) {
 			return;
@@ -648,17 +540,6 @@
 	function formatNumber(value: number): string {
 		return value.toFixed(2);
 	}
-
-	function getScanResultCellCount(): number {
-		if (scanStatus === null || scanStatus.result === null) {
-			return 0;
-		}
-
-		return scanStatus.result.shelves.reduce(
-			(count, shelf) => count + shelf.cells.length,
-			0
-		);
-	}
 </script>
 
 {#if loading === true}
@@ -763,66 +644,6 @@
 			</tr>
 		</tbody>
 	</table>
-
-		<table class="status-table">
-			<thead>
-				<tr>
-					<th colspan="4">laser scan</th>
-				</tr>
-			</thead>
-			<tbody>
-				<tr>
-					<td colspan="4">
-						<div class="calibrate-row">
-							<button
-								type="button"
-							onclick={didClickStartScan}
-							disabled={isStartingScan === true ||
-								scanStatus?.state === 'running' ||
-								needsHome === true ||
-								isHoming === true}
-						>
-							start scan
-						</button>
-						<button
-							type="button"
-							onclick={didClickAbortScan}
-							disabled={isAbortingScan === true || scanStatus?.state !== 'running'}
-						>
-							abort scan
-						</button>
-							{#if scanStatus !== null}
-								<span>
-									{scanStatus.state}
-									{#if scanStatus.total_points > 0}
-										({scanStatus.completed_points}/{scanStatus.total_points})
-									{/if}
-								</span>
-							{/if}
-						</div>
-					</td>
-				</tr>
-			{#if scanStatus !== null && scanStatus.result !== null}
-				<tr>
-					<td colspan="4">
-						result:
-						{scanStatus.result.shelves.length}
-						shelves,
-						{getScanResultCellCount()}
-						cells
-					</td>
-				</tr>
-			{/if}
-		</tbody>
-	</table>
-
-	{#if scanMessage !== ''}
-		<StatusMessage message={scanMessage} />
-	{/if}
-
-	{#if scanError !== ''}
-		<ErrorMessage message={scanError} />
-	{/if}
 
 	{#if currentPosition !== null}
 		<table class="status-table">
