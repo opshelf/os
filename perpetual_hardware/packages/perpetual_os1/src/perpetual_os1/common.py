@@ -536,6 +536,29 @@ class LaserScanConfig(BaseModel):
     right_z_reference: Optional[LaserScanReferenceConfig] = None
     left_xy_reference: Optional[LaserScanXYReferenceConfig] = None
     right_xy_reference: Optional[LaserScanXYReferenceConfig] = None
+    left_bounds_x_min_mm: float = 0.0
+    left_bounds_x_max_mm: float = 945.0
+    left_bounds_y_min_mm: float = 0.0
+    left_bounds_y_max_mm: float = 1200.0
+    right_bounds_x_min_mm: float = 0.0
+    right_bounds_x_max_mm: float = 945.0
+    right_bounds_y_min_mm: float = 0.0
+    right_bounds_y_max_mm: float = 1200.0
+    angle_calibration_x_min_mm: float = 0.0
+    angle_calibration_x_max_mm: float = 945.0
+    angle_calibration_x_step_mm: float = Field(100.0, gt=0)
+    angle_calibration_z_offset_min_mm: float = -8.0
+    angle_calibration_z_offset_max_mm: float = 8.0
+    angle_calibration_z_offset_step_mm: float = Field(4.0, gt=0)
+    angle_calibration_rotation_min_deg: float = -8.0
+    angle_calibration_rotation_max_deg: float = 8.0
+    angle_calibration_rotation_step_deg: float = Field(1.0, gt=0)
+    angle_calibration_beam_zero_deg: float = 0.0
+    angle_calibration_alpha_min_deg: float = -10.0
+    angle_calibration_alpha_max_deg: float = 10.0
+    angle_calibration_coarse_step_deg: float = Field(0.1, gt=0)
+    angle_calibration_fine_window_deg: float = Field(0.3, gt=0)
+    angle_calibration_fine_step_deg: float = Field(0.005, gt=0)
 
 
 class GridConfig(BaseModel):

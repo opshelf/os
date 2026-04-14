@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import CellCalibration from '$lib/components/calibration/CellCalibration.svelte';
+	import CellAutoCalibration from '$lib/components/calibration/CellAutoCalibration.svelte';
 	import IOBoxCalibration from '$lib/components/calibration/IOBoxCalibration.svelte';
 	import RotationCalibration from '$lib/components/calibration/RotationCalibration.svelte';
 
@@ -17,10 +18,14 @@
 		? parseInt(page.url.searchParams.get('cell')!, 10)
 		: undefined;
 
-	let selectedView: 'cell' | 'io' | 'rotation' = 'cell';
+	let selectedView: 'cell_manual' | 'cell_auto' | 'io' | 'rotation' = 'cell_manual';
 
-	function didSelectCell(): void {
-		selectedView = 'cell';
+	function didSelectCellManual(): void {
+		selectedView = 'cell_manual';
+	}
+
+	function didSelectCellAuto(): void {
+		selectedView = 'cell_auto';
 	}
 
 	function didSelectIO(): void {
@@ -33,8 +38,11 @@
 </script>
 
 <div class="toggle-group">
-	<button type="button" class:selected={selectedView === 'cell'} on:click={didSelectCell}>
-		cell
+	<button type="button" class:selected={selectedView === 'cell_manual'} on:click={didSelectCellManual}>
+		cell manual
+	</button>
+	<button type="button" class:selected={selectedView === 'cell_auto'} on:click={didSelectCellAuto}>
+		cell auto
 	</button>
 	<button type="button" class:selected={selectedView === 'io'} on:click={didSelectIO}>
 		io box
@@ -44,8 +52,10 @@
 	</button>
 </div>
 
-{#if selectedView === 'cell'}
+{#if selectedView === 'cell_manual'}
 	<CellCalibration {initialSide} {initialShelf} {initialCell} />
+{:else if selectedView === 'cell_auto'}
+	<CellAutoCalibration />
 {:else if selectedView === 'io'}
 	<IOBoxCalibration />
 {:else if selectedView === 'rotation'}

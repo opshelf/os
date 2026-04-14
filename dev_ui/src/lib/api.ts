@@ -293,120 +293,79 @@ export interface CalibrationScanBounds {
 	y_max: number;
 }
 
-export interface CalibrationScanDetectedCell {
+export interface LaserAutoCalibrationShelfEdge {
+	side: 'left_module' | 'right_module';
+	x_mm: number;
+	y_mm: number;
+}
+
+export interface LaserAutoCalibrationCandidate {
+	side: 'left_module' | 'right_module';
+	shelf_idx: number | null;
+	x_min: number;
+	x_max: number;
+	y_min: number;
+	y_max: number;
+	row_count: number;
+	wall_depth_mm: number | null;
+	wall_sample_count: number;
+}
+
+export interface LaserAutoCalibrationCell {
+	side: 'left_module' | 'right_module';
 	shelf_idx: number;
 	cell_idx: number;
-	center_x_mm: number;
-	center_y_mm: number;
 	tool_x_mm: number;
 	tool_y_mm: number;
+	center_x_mm: number;
+	center_y_mm: number;
 	width_mm: number;
 	height_mm: number;
-	point_count: number;
-	bbox_x_min: number;
-	bbox_x_max: number;
-	bbox_y_min: number;
-	bbox_y_max: number;
+	wall_depth_mm: number | null;
 }
 
-export interface CalibrationScanDetectedShelf {
-	shelf_idx: number;
-	center_y_mm: number;
-	shelf_height_mm: number;
-	shelf_width_mm: number;
-	cells: CalibrationScanDetectedCell[];
-}
-
-export interface CalibrationScanResult {
-	run_id: string;
-	side: string;
-	bounds: CalibrationScanBounds;
-	step_mm: number;
-	samples_per_point: number;
-	settle_ms: number;
-	wall_depth_mm: number;
-	wall_depth_tolerance_mm: number;
-	expected_hole_width_mm: number;
-	expected_hole_height_mm: number;
-	min_vertical_wall_coverage_mm: number;
-	min_horizontal_wall_coverage_mm: number;
-	total_points: number;
-	valid_points: number;
-	raw_scan_path: string;
-	metadata_path: string;
-	shelves: CalibrationScanDetectedShelf[];
-	created_at: string;
-}
-
-export interface CalibrationScanStatus {
-	state: 'idle' | 'running' | 'completed' | 'failed' | 'cancelled';
-	run_id: string | null;
-	side: 'left_module' | 'right_module' | null;
-	bounds: CalibrationScanBounds | null;
-	total_points: number;
-	completed_points: number;
-	current_x_mm: number | null;
-	current_y_mm: number | null;
-	current_depth_mm: number | null;
-	error: string | null;
-	result: CalibrationScanResult | null;
-}
-
-export interface StartCalibrationScanParams {
+export interface LaserAutoCalibrationAngleResult {
 	side: 'left_module' | 'right_module';
-	xMin?: number;
-	xMax?: number;
-	yMin?: number;
-	yMax?: number;
-	stageExtensionMm?: number;
-	apply: boolean;
+	alpha_deg: number;
+	sample_count: number;
+	capture_y_mm: number;
+	rms_residual_mm: number;
+	max_abs_residual_mm: number;
+	line_angle_deg: number;
+	previous_rotation_deg: number;
+	updated_rotation_deg: number;
 }
 
-export async function startCalibrationScan(
-	params: StartCalibrationScanParams
-): Promise<CalibrationScanStatus> {
-	const payload: Record<string, unknown> = {
-		side: params.side,
-		apply: params.apply
-	};
-
-	if (params.xMin !== undefined) {
-		payload.x_min = params.xMin;
-	}
-
-	if (params.xMax !== undefined) {
-		payload.x_max = params.xMax;
-	}
-
-	if (params.yMin !== undefined) {
-		payload.y_min = params.yMin;
-	}
-
-	if (params.yMax !== undefined) {
-		payload.y_max = params.yMax;
-	}
-
-	if (params.stageExtensionMm !== undefined) {
-		payload.stage_extension_mm = params.stageExtensionMm;
-	}
-
-	if (params.stageExtensionMm !== undefined) {
-		payload.stage_extension_mm = params.stageExtensionMm;
-	}
-
-	return apiFetch<CalibrationScanStatus>('/calibration/scan', {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(payload)
-	});
+export interface LaserAutoCalibrationSnapshot {
+	state: 'idle' | 'starting' | 'running' | 'applying' | 'completed' | 'failed' | 'cancelled';
+	session_id: string | null;
+	run_id: string | null;
+	current_side: 'left_module' | 'right_module' | null;
+	current_stage: string | null;
+	bounds: CalibrationScanBounds | null;
+	started_at: string | null;
+	updated_at: string | null;
+	scouted_shelf_count: number;
+	candidate_count: number;
+	detected_cell_count: number;
+	shelf_edges: LaserAutoCalibrationShelfEdge[];
+	shelf_candidates: LaserAutoCalibrationCandidate[];
+	detected_cells: LaserAutoCalibrationCell[];
+	angle_results: LaserAutoCalibrationAngleResult[];
+	stage_detail: Record<string, unknown>;
+	error: string | null;
 }
 
-export async function getCalibrationScanStatus(): Promise<CalibrationScanStatus> {
-	return apiFetch<CalibrationScanStatus>('/calibration/scan/status');
+export function buildLaserAutoCalibrationStreamUrl(): string {
+	return buildAuthenticatedUrl('/calibration/laser/stream');
 }
 
-export async function abortCalibrationScan(): Promise<CalibrationScanStatus> {
-	return apiFetch<CalibrationScanStatus>('/calibration/scan/abort', {
+export async function getLaserAutoCalibrationStatus(): Promise<LaserAutoCalibrationSnapshot> {
+	return apiFetch<LaserAutoCalibrationSnapshot>('/calibration/laser/status');
+}
+
+export async function abortLaserAutoCalibration(): Promise<LaserAutoCalibrationSnapshot> {
+	return apiFetch<LaserAutoCalibrationSnapshot>('/calibration/laser/abort', {
 		method: 'POST'
 	});
 }

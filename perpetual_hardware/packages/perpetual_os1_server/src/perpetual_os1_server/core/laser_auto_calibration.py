@@ -1,0 +1,1064 @@
+from __future__ import annotations
+
+import asyncio
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+import importlib.util
+import logging
+from pathlib import Path
+import re
+import sys
+from types import ModuleType, SimpleNamespace
+from typing import Any, Literal
+from uuid import uuid4
+
+from pydantic import BaseModel, Field
+
+from perpetual_os1.common import Parameters, resolve_grid_path
+from perpetual_os1.laser_scan import ScanBounds
+from perpetual_os1.storage import StorageModuleSide
+from perpetual_os1.robot_worker import RobotWorker
+
+from perpetual_os1_server.settings import clear_config_cache, get_config_path, get_root_config, save_root_config
+
+logger = logging.getLogger(__name__)
+
+ACTIVE_SESSION_STATES = {"starting", "running", "applying"}
+DEFAULT_SCANS_DIR = "/tmp"
+
+ANGLE_CAPTURE_RE = re.compile(
+    r"phase=capture x=(?P<x_idx>\d+)/(?P<x_count>\d+) z=(?P<z_offset>-?\d+(?:\.\d+)?) rotation=(?P<rotation_idx>\d+)/(?P<rotation_count>\d+)"
+)
+ANGLE_SAMPLE_RE = re.compile(
+    r"sample=(?P<status>ok|invalid) x=(?P<x>-?\d+(?:\.\d+)?) z=(?P<z>-?\d+(?:\.\d+)?) rotation_deg=(?P<rotation>-?\d+(?:\.\d+)?)"
+)
+SCAN_SHELF_SCOUT_RE = re.compile(r"phase=shelf-scout scout=(?P<idx>\d+)/(?P<count>\d+) x=(?P<x>-?\d+(?:\.\d+)?)")
+SCAN_SHELF_HOLE_RE = re.compile(
+    r"phase=shelf-hole-scan shelf=(?P<shelf_idx>\d+)/(?P<shelf_count>\d+) offset=(?P<offset_idx>\d+)/(?P<offset_count>\d+) y=(?P<y>-?\d+(?:\.\d+)?)"
+)
+SCAN_FINE_RE = re.compile(r"phase=fine-scan candidate=(?P<idx>\d+)/(?P<count>\d+)")
+SCAN_FINE_RETRY_RE = re.compile(r"phase=fine-scan-retry candidate=(?P<idx>\d+)/(?P<count>\d+)")
+ANGLE_RESULT_RE = re.compile(r"alpha_deg=(?P<alpha>-?\d+(?:\.\d+)?)")
+
+
+class LaserAutoCalibrationShelfEdge(BaseModel):
+    side: Literal["left_module", "right_module"]
+    x_mm: float
+    y_mm: float
+
+
+class LaserAutoCalibrationCandidate(BaseModel):
+    side: Literal["left_module", "right_module"]
+    shelf_idx: int | None = None
+    x_min: float
+    x_max: float
+    y_min: float
+    y_max: float
+    row_count: int = 1
+    wall_depth_mm: float | None = None
+    wall_sample_count: int = 0
+
+
+class LaserAutoCalibrationCell(BaseModel):
+    side: Literal["left_module", "right_module"]
+    shelf_idx: int
+    cell_idx: int
+    tool_x_mm: float
+    tool_y_mm: float
+    center_x_mm: float
+    center_y_mm: float
+    width_mm: float
+    height_mm: float
+    wall_depth_mm: float | None = None
+
+
+class LaserAutoCalibrationAngleResult(BaseModel):
+    side: Literal["left_module", "right_module"]
+    alpha_deg: float
+    sample_count: int
+    capture_y_mm: float
+    rms_residual_mm: float
+    max_abs_residual_mm: float
+    line_angle_deg: float
+    previous_rotation_deg: float
+    updated_rotation_deg: float
+
+
+class LaserAutoCalibrationSnapshot(BaseModel):
+    state: Literal["idle", "starting", "running", "applying", "completed", "failed", "cancelled"] = "idle"
+    session_id: str | None = None
+    run_id: str | None = None
+    current_side: Literal["left_module", "right_module"] | None = None
+    current_stage: str | None = None
+    bounds: ScanBounds | None = None
+    started_at: str | None = None
+    updated_at: str | None = None
+    scouted_shelf_count: int = 0
+    candidate_count: int = 0
+    detected_cell_count: int = 0
+    shelf_edges: list[LaserAutoCalibrationShelfEdge] = Field(default_factory=list)
+    shelf_candidates: list[LaserAutoCalibrationCandidate] = Field(default_factory=list)
+    detected_cells: list[LaserAutoCalibrationCell] = Field(default_factory=list)
+    angle_results: list[LaserAutoCalibrationAngleResult] = Field(default_factory=list)
+    stage_detail: dict[str, Any] = Field(default_factory=dict)
+    error: str | None = None
+
+
+@dataclass
+class _SideState:
+    bounds: ScanBounds | None = None
+    run_id: str | None = None
+    shelf_edges: list[LaserAutoCalibrationShelfEdge] = field(default_factory=list)
+    candidates: list[LaserAutoCalibrationCandidate] = field(default_factory=list)
+    cells: list[LaserAutoCalibrationCell] = field(default_factory=list)
+    angle_result: LaserAutoCalibrationAngleResult | None = None
+
+
+@dataclass
+class _CompletedSideResult:
+    side: StorageModuleSide
+    bounds: ScanBounds
+    analysis: Any
+    angle_result: LaserAutoCalibrationAngleResult
+
+
+def _get_timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _load_module(module_name: str, file_path: Path) -> ModuleType:
+    cached_module = sys.modules.get(module_name)
+
+    if cached_module is not None:
+        return cached_module
+
+    spec = importlib.util.spec_from_file_location(module_name, file_path)
+
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Failed to load module from {file_path}")
+
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_laser_modules() -> tuple[ModuleType, ModuleType]:
+    laser_module = sys.modules.get("_opshelf_laser_script")
+    angle_module = sys.modules.get("_opshelf_laser_angle_calibration")
+
+    if laser_module is not None and angle_module is not None:
+        return laser_module, angle_module
+
+    repo_root = Path(__file__).resolve().parents[6]
+    angle_path = repo_root / "scripts" / "laser_angle_calibration.py"
+    laser_path = repo_root / "scripts" / "laser.py"
+
+    angle_module = _load_module("_opshelf_laser_angle_calibration", angle_path)
+    sys.modules.setdefault("laser_angle_calibration", angle_module)
+    laser_module = _load_module("_opshelf_laser_script", laser_path)
+    return laser_module, angle_module
+
+
+def _side_to_module_name(side: StorageModuleSide) -> Literal["left_module", "right_module"]:
+    if side == StorageModuleSide.LEFT:
+        return "left_module"
+
+    return "right_module"
+
+
+def _side_to_short_name(side: StorageModuleSide) -> Literal["left", "right"]:
+    if side == StorageModuleSide.LEFT:
+        return "left"
+
+    return "right"
+
+
+def _build_bounds_for_side(scan_config: Any, side: StorageModuleSide) -> ScanBounds:
+    prefix = "left" if side == StorageModuleSide.LEFT else "right"
+
+    return ScanBounds(
+        x_min=float(getattr(scan_config, f"{prefix}_bounds_x_min_mm")),
+        x_max=float(getattr(scan_config, f"{prefix}_bounds_x_max_mm")),
+        y_min=float(getattr(scan_config, f"{prefix}_bounds_y_min_mm")),
+        y_max=float(getattr(scan_config, f"{prefix}_bounds_y_max_mm")),
+    )
+
+
+def _build_candidate_rows(
+    side_name: Literal["left_module", "right_module"],
+    candidate_rows: list[dict[str, Any]],
+    shelf_edges: list[LaserAutoCalibrationShelfEdge],
+) -> list[LaserAutoCalibrationCandidate]:
+    ordered_edges = sorted(shelf_edges, key=lambda edge: -edge.y_mm)
+    candidates: list[LaserAutoCalibrationCandidate] = []
+
+    for row in candidate_rows:
+        shelf_idx: int | None = None
+        candidate_center_y_mm = (float(row["y_min"]) + float(row["y_max"])) / 2.0
+
+        if len(ordered_edges) > 0:
+            shelf_idx = min(
+                range(len(ordered_edges)),
+                key=lambda idx: abs(ordered_edges[idx].y_mm - candidate_center_y_mm),
+            )
+
+        candidates.append(
+            LaserAutoCalibrationCandidate(
+                side=side_name,
+                shelf_idx=shelf_idx,
+                x_min=float(row["x_min"]),
+                x_max=float(row["x_max"]),
+                y_min=float(row["y_min"]),
+                y_max=float(row["y_max"]),
+                row_count=int(row.get("row_count", 1)),
+                wall_depth_mm=(
+                    None
+                    if row.get("wall_depth_mm") is None
+                    else float(row["wall_depth_mm"])
+                ),
+                wall_sample_count=int(row.get("wall_sample_count", 0)),
+            )
+        )
+
+    return candidates
+
+
+def _build_cell_rows(
+    side_name: Literal["left_module", "right_module"],
+    fine_scan_rows: list[dict[str, Any]],
+) -> list[LaserAutoCalibrationCell]:
+    cells: list[LaserAutoCalibrationCell] = []
+
+    for fine_row in fine_scan_rows:
+        for cell_row in fine_row.get("detected_cells", []):
+            cells.append(
+                LaserAutoCalibrationCell(
+                    side=side_name,
+                    shelf_idx=int(cell_row["shelf_idx"]),
+                    cell_idx=int(cell_row["cell_idx"]),
+                    tool_x_mm=float(cell_row["tool_x_mm"]),
+                    tool_y_mm=float(cell_row["tool_y_mm"]),
+                    center_x_mm=float(cell_row["center_x_mm"]),
+                    center_y_mm=float(cell_row["center_y_mm"]),
+                    width_mm=float(cell_row["width_mm"]),
+                    height_mm=float(cell_row["height_mm"]),
+                    wall_depth_mm=(
+                        None
+                        if cell_row.get("wall_depth_mm") is None
+                        else float(cell_row["wall_depth_mm"])
+                    ),
+                )
+            )
+
+    cells.sort(key=lambda cell: (cell.side, cell.shelf_idx, cell.cell_idx))
+    return cells
+
+
+class LaserAutoCalibrationManager:
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+        self._subscribers: set[asyncio.Queue[LaserAutoCalibrationSnapshot]] = set()
+        self._task: asyncio.Task[None] | None = None
+        self._snapshot = LaserAutoCalibrationSnapshot(updated_at=_get_timestamp())
+        self._side_states: dict[str, _SideState] = {}
+        self._active_worker: RobotWorker | None = None
+        self._scans_dir = DEFAULT_SCANS_DIR
+
+    async def get_snapshot(self) -> LaserAutoCalibrationSnapshot:
+        async with self._lock:
+            return self._snapshot.model_copy(deep=True)
+
+    async def ensure_session_started(self, worker: RobotWorker) -> LaserAutoCalibrationSnapshot:
+        async with self._lock:
+            if self._task is not None and self._task.done() is False:
+                return self._snapshot.model_copy(deep=True)
+
+            started_at = _get_timestamp()
+            self._side_states = {}
+            self._active_worker = worker
+            self._snapshot = LaserAutoCalibrationSnapshot(
+                state="starting",
+                session_id=uuid4().hex,
+                current_stage="session-start",
+                started_at=started_at,
+                updated_at=started_at,
+            )
+            self._task = asyncio.create_task(self._run_session(worker, self._snapshot.session_id))
+            snapshot = self._snapshot.model_copy(deep=True)
+
+        await self._publish(snapshot)
+        return snapshot
+
+    async def abort(self) -> LaserAutoCalibrationSnapshot:
+        async with self._lock:
+            if self._task is None or self._task.done() is True:
+                raise RuntimeError("No laser auto calibration session is running")
+
+            self._task.cancel()
+            self._snapshot.state = "cancelled"
+            self._snapshot.current_stage = "cancelled"
+            self._snapshot.updated_at = _get_timestamp()
+            snapshot = self._snapshot.model_copy(deep=True)
+
+        await self._publish(snapshot)
+        return snapshot
+
+    async def subscribe(self) -> tuple[asyncio.Queue[LaserAutoCalibrationSnapshot], LaserAutoCalibrationSnapshot]:
+        queue: asyncio.Queue[LaserAutoCalibrationSnapshot] = asyncio.Queue(maxsize=20)
+
+        async with self._lock:
+            self._subscribers.add(queue)
+            snapshot = self._snapshot.model_copy(deep=True)
+
+        return queue, snapshot
+
+    async def unsubscribe(self, queue: asyncio.Queue[LaserAutoCalibrationSnapshot]) -> None:
+        async with self._lock:
+            self._subscribers.discard(queue)
+
+    async def is_active(self) -> bool:
+        async with self._lock:
+            return self._task is not None and self._task.done() is False
+
+    async def _run_session(self, worker: RobotWorker, session_id: str | None) -> None:
+        original_rotations = await self._get_current_rotations(worker)
+
+        try:
+            await self._run_all_sides(worker)
+            await self._set_terminal_state("completed", None)
+        except asyncio.CancelledError:
+            self._restore_in_memory_rotations(worker, original_rotations)
+            await self._set_terminal_state("cancelled", None)
+            raise
+        except Exception as exc:
+            self._restore_in_memory_rotations(worker, original_rotations)
+            logger.error("laser_auto_calibration_failed", exc_info=True)
+            await self._set_terminal_state("failed", str(exc))
+        finally:
+            async with self._lock:
+                if self._snapshot.session_id == session_id:
+                    self._task = None
+                    self._active_worker = None
+
+    async def _run_all_sides(self, worker: RobotWorker) -> None:
+        completed_results: list[_CompletedSideResult] = []
+
+        for side in [StorageModuleSide.LEFT, StorageModuleSide.RIGHT]:
+            completed_results.append(await self._run_side(worker, side))
+
+        await self._persist_completed_results(worker, completed_results)
+
+    async def _run_side(self, worker: RobotWorker, side: StorageModuleSide) -> _CompletedSideResult:
+        side_name = _side_to_module_name(side)
+        config = get_root_config()
+        scan_config = config.robot.grid.scan
+        bounds = _build_bounds_for_side(scan_config, side)
+        self._side_states.setdefault(side_name, _SideState(bounds=bounds))
+
+        await self._update_snapshot(
+            current_side=side_name,
+            current_stage="angle-calibration",
+            state="running",
+            bounds=bounds,
+            stage_detail={"side": side_name, "phase": "angle-calibration"},
+        )
+
+        angle_result = await self._run_angle_calibration_for_side(worker, side, bounds)
+        await self._apply_angle_calibration_in_memory(worker, side, angle_result)
+
+        config = get_root_config()
+        scan_config = config.robot.grid.scan
+        laser_module, _ = _load_laser_modules()
+        settle_ms = int(scan_config.settle_ms)
+        samples_per_point = int(scan_config.samples_per_point)
+        coarse_settle_ms = int(laser_module.get_coarse_settle_ms(settle_ms))
+        coarse_samples_per_point = int(laser_module.get_coarse_samples_per_point(samples_per_point))
+        args = SimpleNamespace(
+            module=_side_to_short_name(side),
+            x=(bounds.x_min, bounds.x_max),
+            y=(bounds.y_min, bounds.y_max),
+            y_offset=0.0,
+            settle_ms=None,
+            samples_per_point=None,
+            known_shelf_edge_y=None,
+            npy=None,
+            scans_dir=self._scans_dir,
+            config=str(get_config_path() or Path("data/config.json")),
+            apply=True,
+            shelf_scout_only=False,
+            rescan_cell=None,
+        )
+        run_parameters = laser_module.build_run_parameters(
+            args=args,
+            side=side,
+            bounds=bounds,
+            step_mm=float(scan_config.step_mm),
+            settle_ms=settle_ms,
+            samples_per_point=samples_per_point,
+            coarse_settle_ms=coarse_settle_ms,
+            coarse_samples_per_point=coarse_samples_per_point,
+            scan_config=scan_config,
+        )
+        recorder = laser_module.create_staged_scan_recorder(
+            scans_dir=self._scans_dir,
+            run_parameters=run_parameters,
+        )
+
+        await self._refresh_scan_side_state(side_name, recorder, bounds)
+        logger.info("laser_auto_calibration_scan_start", side=side_name, run_dir=str(recorder.run_dir))
+
+        async with self._patch_status_callbacks(
+            scan_callback=self._build_scan_status_callback(side_name, recorder, bounds),
+            angle_callback=None,
+        ):
+            analysis = await laser_module.run_staged_scan(
+                robot=worker._robot,
+                side=side,
+                bounds=bounds,
+                fine_step_mm=float(scan_config.step_mm),
+                settle_ms=settle_ms,
+                samples_per_point=samples_per_point,
+                coarse_settle_ms=coarse_settle_ms,
+                coarse_samples_per_point=coarse_samples_per_point,
+                scan_config=scan_config,
+                scans_dir=self._scans_dir,
+                run_parameters=run_parameters,
+                shelf_scout_only=False,
+                known_shelf_edge_y=None,
+                recorder=recorder,
+            )
+
+        await self._refresh_scan_side_state(side_name, recorder, bounds)
+        await self._refresh_scan_side_state(side_name, recorder, bounds)
+        await self._update_snapshot(
+            current_side=side_name,
+            current_stage="side-complete",
+            state="running",
+            run_id=analysis.run_id,
+            bounds=bounds,
+            stage_detail={"side": side_name, "phase": "completed", "run_id": analysis.run_id},
+        )
+
+        return _CompletedSideResult(
+            side=side,
+            bounds=bounds,
+            analysis=analysis,
+            angle_result=angle_result,
+        )
+
+    async def _run_angle_calibration_for_side(
+        self,
+        worker: RobotWorker,
+        side: StorageModuleSide,
+        bounds: ScanBounds,
+    ) -> LaserAutoCalibrationAngleResult:
+        _, angle_module = _load_laser_modules()
+        config = get_root_config()
+        scan_config = config.robot.grid.scan
+        tool = worker._robot._tool
+
+        if tool._laser_enabled is False or tool._laser is None:
+            raise ValueError("Laser is not enabled")
+
+        if tool._mx is None or tool._my is None or tool._mg is None or tool._ms is None or tool._mr is None:
+            raise ValueError("x, y, z, stage, and rotation motors are required")
+
+        side_name = _side_to_short_name(side)
+        side_number = 0 if side == StorageModuleSide.LEFT else 1
+        x_positions = angle_module.build_axis_positions(
+            float(scan_config.angle_calibration_x_min_mm),
+            float(scan_config.angle_calibration_x_max_mm),
+            float(scan_config.angle_calibration_x_step_mm),
+        )
+        z_offset_positions = angle_module.build_axis_positions(
+            float(scan_config.angle_calibration_z_offset_min_mm),
+            float(scan_config.angle_calibration_z_offset_max_mm),
+            float(scan_config.angle_calibration_z_offset_step_mm),
+        )
+        rotation_positions = angle_module.build_axis_positions(
+            float(scan_config.angle_calibration_rotation_min_deg),
+            float(scan_config.angle_calibration_rotation_max_deg),
+            float(scan_config.angle_calibration_rotation_step_deg),
+        )
+        settle_ms = int(scan_config.settle_ms)
+        samples_per_point = int(scan_config.samples_per_point)
+        stage_extension_mm = float(
+            scan_config.scan_stage_extension_mm
+            if scan_config.scan_stage_extension_mm is not None
+            else angle_module.LASER_SCAN_STAGE_EXTENSION_MM
+        )
+        scan_z_offset_mm = float(
+            scan_config.scan_z_offset_mm
+            if scan_config.scan_z_offset_mm is not None
+            else angle_module.LASER_SCAN_Z_OFFSET_MM
+        )
+        rotation_param = "ROTATION_FRONT" if side == StorageModuleSide.LEFT else "ROTATION_BACK"
+        rotation_center_deg = float(await tool.get_param(rotation_param))
+
+        for rotation_deg in rotation_positions:
+            absolute_rotation_deg = rotation_center_deg + float(rotation_deg)
+
+            if absolute_rotation_deg < 0.0 or absolute_rotation_deg > 180.0:
+                raise ValueError(
+                    "rotation sweep exceeds motor range "
+                    f"(absolute target {absolute_rotation_deg:.3f} deg is outside 0..180)"
+                )
+
+        z_extension_place = await tool.get_param("Z_EXTENSION_PLACE")
+        z_move_rpm = await tool.get_param("Z_MOVE_RPM")
+        z_move_accel = await tool.get_param("Z_MOVE_ACCEL")
+
+        if z_extension_place is None or z_move_rpm is None or z_move_accel is None:
+            raise ValueError("Z_EXTENSION_PLACE, Z_MOVE_RPM, and Z_MOVE_ACCEL are required")
+
+        base_z_mm = float(z_extension_place) + scan_z_offset_mm
+        angle_args = SimpleNamespace(
+            y_mm=None,
+            y_range=(bounds.y_min, bounds.y_max),
+            scout_x_mm=None,
+        )
+        samples: list[Any] = []
+
+        async with self._patch_status_callbacks(
+            scan_callback=None,
+            angle_callback=self._build_angle_status_callback(_side_to_module_name(side)),
+        ):
+            await tool.retract()
+            capture_y_mm = await angle_module.resolve_capture_y_mm(
+                tool,
+                args=angle_args,
+                scan_config=scan_config,
+                side_name=side_name,
+                side_number=side_number,
+                x_positions=x_positions,
+                rotation_center_deg=rotation_center_deg,
+                stage_extension_mm=stage_extension_mm,
+                base_z_mm=base_z_mm,
+                z_move_rpm=float(z_move_rpm),
+                z_move_accel=float(z_move_accel),
+                settle_ms=settle_ms,
+                samples_per_point=samples_per_point,
+            )
+            current_z_mm: float | None = base_z_mm
+
+            try:
+                for z_offset_mm in z_offset_positions:
+                    target_z_mm = base_z_mm + float(z_offset_mm)
+
+                    for x_idx, x_mm in enumerate(x_positions, start=1):
+                        for rotation_idx, rotation_deg in enumerate(rotation_positions, start=1):
+                            absolute_rotation_deg = rotation_center_deg + float(rotation_deg)
+                            angle_module.print_status(
+                                f"phase=capture x={x_idx}/{len(x_positions)} z={z_offset_mm:.2f} "
+                                f"rotation={rotation_idx}/{len(rotation_positions)} "
+                                f"absolute_rotation_deg={absolute_rotation_deg:.3f}"
+                            )
+                            await angle_module.prepare_capture_pose(
+                                tool,
+                                side_name=side_name,
+                                side_number=side_number,
+                                x_mm=float(x_mm),
+                                y_mm=capture_y_mm,
+                                absolute_rotation_deg=absolute_rotation_deg,
+                                stage_extension_mm=stage_extension_mm,
+                                z_mm=target_z_mm,
+                                z_move_rpm=float(z_move_rpm),
+                                z_move_accel=float(z_move_accel),
+                                should_move_z=current_z_mm != target_z_mm,
+                            )
+                            current_z_mm = target_z_mm
+                            depth_mm = await angle_module.sample_laser_depth(
+                                tool,
+                                settle_ms=settle_ms,
+                                samples_per_point=samples_per_point,
+                            )
+
+                            if depth_mm is None:
+                                angle_module.print_status(
+                                    f"sample=invalid x={x_mm:.3f} z={target_z_mm:.3f} rotation_deg={rotation_deg:.3f}"
+                                )
+                                continue
+
+                            samples.append(
+                                angle_module.LaserAngleCalibrationSample(
+                                    axis_x_mm=float(x_mm),
+                                    axis_z_mm=target_z_mm,
+                                    rotation_deg=float(rotation_deg),
+                                    absolute_rotation_deg=float(absolute_rotation_deg),
+                                    stage_extension_mm=stage_extension_mm,
+                                    z_extension_mm=target_z_mm,
+                                    distance_mm=float(depth_mm),
+                                )
+                            )
+                            angle_module.print_status(
+                                f"sample=ok x={x_mm:.3f} z={target_z_mm:.3f} rotation_deg={rotation_deg:.3f} distance_mm={depth_mm:.3f}"
+                            )
+            finally:
+                await tool.retract()
+
+            fit_result = angle_module.search_best_alpha(
+                samples,
+                alpha_min_deg=float(scan_config.angle_calibration_alpha_min_deg),
+                alpha_max_deg=float(scan_config.angle_calibration_alpha_max_deg),
+                coarse_step_deg=float(scan_config.angle_calibration_coarse_step_deg),
+                fine_window_deg=float(scan_config.angle_calibration_fine_window_deg),
+                fine_step_deg=float(scan_config.angle_calibration_fine_step_deg),
+                laser_offset_x_mm=float(scan_config.laser_offset_x_mm),
+                laser_offset_z_mm=0.0,
+                beam_zero_deg=float(scan_config.angle_calibration_beam_zero_deg),
+            )
+            angle_module.print_fit_result(fit_result)
+
+        return LaserAutoCalibrationAngleResult(
+            side=_side_to_module_name(side),
+            alpha_deg=float(fit_result.alpha_deg),
+            sample_count=int(fit_result.sample_count),
+            capture_y_mm=float(capture_y_mm),
+            rms_residual_mm=float(fit_result.line.rms_residual_mm),
+            max_abs_residual_mm=float(fit_result.line.max_abs_residual_mm),
+            line_angle_deg=float(fit_result.line.line_angle_deg),
+            previous_rotation_deg=rotation_center_deg,
+            updated_rotation_deg=rotation_center_deg + float(fit_result.alpha_deg),
+        )
+
+    async def _apply_angle_calibration_in_memory(
+        self,
+        worker: RobotWorker,
+        side: StorageModuleSide,
+        result: LaserAutoCalibrationAngleResult,
+    ) -> None:
+        rotation_param = "ROTATION_FRONT" if side == StorageModuleSide.LEFT else "ROTATION_BACK"
+        params_dict = worker._robot._tool._params.parameters.model_dump()
+        params_dict[rotation_param] = result.updated_rotation_deg
+        worker._robot._tool._params.parameters = Parameters.model_validate(params_dict)
+        side_name = _side_to_module_name(side)
+        self._side_states.setdefault(side_name, _SideState()).angle_result = result
+
+        await self._update_snapshot(
+            current_side=side_name,
+            current_stage="angle-calibration",
+            state="running",
+            stage_detail={
+                "side": side_name,
+                "phase": "angle-applied",
+                "alpha_deg": result.alpha_deg,
+                "updated_rotation_deg": result.updated_rotation_deg,
+            },
+        )
+
+
+    async def _persist_completed_results(
+        self,
+        worker: RobotWorker,
+        completed_results: list[_CompletedSideResult],
+    ) -> None:
+        await self._update_snapshot(
+            state="applying",
+            current_stage="apply",
+            stage_detail={
+                "phase": "apply",
+                "side_count": len(completed_results),
+            },
+        )
+
+        config = get_root_config()
+        next_config = config.model_copy(deep=True)
+        params_dict = next_config.robot.tool.parameters.model_dump()
+
+        for completed_result in completed_results:
+            rotation_param = "ROTATION_FRONT"
+
+            if completed_result.side == StorageModuleSide.RIGHT:
+                rotation_param = "ROTATION_BACK"
+
+            params_dict[rotation_param] = completed_result.angle_result.updated_rotation_deg
+
+        next_config.robot.tool.parameters = Parameters.model_validate(params_dict)
+
+        laser_module, _ = _load_laser_modules()
+        scan_config = next_config.robot.grid.scan
+        grid_path = Path(resolve_grid_path(next_config))
+        source_grid = laser_module.load_grid(grid_path)
+        left_module = list(source_grid.left_module)
+        right_module = list(source_grid.right_module)
+
+        for completed_result in completed_results:
+            if len(completed_result.analysis.shelves) == 0:
+                raise ValueError("No tray openings detected from scan")
+
+            existing_shelves = left_module
+
+            if completed_result.side == StorageModuleSide.RIGHT:
+                existing_shelves = right_module
+
+            scanned_shelves = laser_module.build_shelves_from_scan(
+                side=completed_result.side,
+                analysis=completed_result.analysis,
+                existing_shelves=existing_shelves,
+            )
+            laser_module.apply_xy_reference_offsets(
+                scanned_shelves=scanned_shelves,
+                scan_config=scan_config,
+                side=completed_result.side,
+            )
+            laser_module.apply_wall_depth_z_offsets(
+                analysis=completed_result.analysis,
+                scanned_shelves=scanned_shelves,
+                metadata_path=str(completed_result.analysis.metadata_path),
+                scan_config=scan_config,
+                side=completed_result.side,
+            )
+
+            if completed_result.side == StorageModuleSide.LEFT:
+                left_module = scanned_shelves
+            else:
+                right_module = scanned_shelves
+
+        storage_grid = laser_module.StorageGrid(
+            left_module=left_module,
+            right_module=right_module,
+            filename=source_grid.filename if source_grid.filename != "" else str(grid_path),
+        )
+
+        try:
+            storage_grid.save()
+            save_root_config(next_config)
+            clear_config_cache()
+            worker._robot.reload_parameters()
+        except Exception:
+            try:
+                source_grid.save()
+            except Exception:
+                logger.error("laser_auto_calibration_grid_rollback_failed", exc_info=True)
+
+            try:
+                save_root_config(config)
+                clear_config_cache()
+                worker._robot.reload_parameters()
+            except Exception:
+                logger.error("laser_auto_calibration_config_rollback_failed", exc_info=True)
+
+            raise
+
+        worker._robot._grid = laser_module.load_grid(grid_path)
+
+    async def _get_current_rotations(self, worker: RobotWorker) -> dict[str, float]:
+        front = await worker._robot._tool.get_param("ROTATION_FRONT")
+        back = await worker._robot._tool.get_param("ROTATION_BACK")
+
+        return {
+            "ROTATION_FRONT": float(front),
+            "ROTATION_BACK": float(back),
+        }
+
+
+    def _restore_in_memory_rotations(self, worker: RobotWorker, rotations: dict[str, float]) -> None:
+        params_dict = worker._robot._tool._params.parameters.model_dump()
+        params_dict["ROTATION_FRONT"] = float(rotations["ROTATION_FRONT"])
+        params_dict["ROTATION_BACK"] = float(rotations["ROTATION_BACK"])
+        worker._robot._tool._params.parameters = Parameters.model_validate(params_dict)
+
+    async def _refresh_scan_side_state(
+        self,
+        side_name: Literal["left_module", "right_module"],
+        recorder: Any,
+        bounds: ScanBounds,
+    ) -> None:
+        side_state = self._side_states.setdefault(side_name, _SideState())
+        side_state.bounds = bounds
+        side_state.run_id = recorder.run_id
+
+        if recorder.metadata_path.exists() is True:
+            metadata = self._read_json(recorder.metadata_path)
+            side_state.run_id = str(metadata.get("run_id", recorder.run_id))
+            side_state.shelf_edges = [
+                LaserAutoCalibrationShelfEdge(
+                    side=side_name,
+                    x_mm=float(row["x_mm"]),
+                    y_mm=float(row["y_mm"]),
+                )
+                for row in metadata.get("shelf_edges", [])
+            ]
+            side_state.candidates = _build_candidate_rows(
+                side_name,
+                list(metadata.get("candidates", [])),
+                side_state.shelf_edges,
+            )
+            side_state.cells = _build_cell_rows(side_name, list(metadata.get("fine_scans", [])))
+
+        progress_payload: dict[str, Any] = {}
+
+        if recorder.progress_path.exists() is True:
+            progress_payload = self._read_json(recorder.progress_path)
+
+        await self._sync_snapshot(
+            run_id=side_state.run_id,
+            current_side=side_name,
+            bounds=bounds,
+            stage_detail={
+                **self._snapshot.stage_detail,
+                "side": side_name,
+                "scan_progress": progress_payload.get("progress", {}),
+                "scan_phase": progress_payload.get("phase"),
+            },
+        )
+
+    def _read_json(self, path: Path) -> dict[str, Any]:
+        return __import__("json").loads(path.read_text(encoding="utf-8"))
+
+    def _build_scan_status_callback(self, side_name: str, recorder: Any, bounds: ScanBounds):
+        async def did_receive_status(message: str) -> None:
+            current_stage = self._snapshot.current_stage
+            stage_detail = dict(self._snapshot.stage_detail)
+            stage_detail["side"] = side_name
+            stage_detail["log"] = message
+
+            shelf_match = SCAN_SHELF_SCOUT_RE.search(message)
+            shelf_hole_match = SCAN_SHELF_HOLE_RE.search(message)
+            fine_match = SCAN_FINE_RE.search(message)
+            fine_retry_match = SCAN_FINE_RETRY_RE.search(message)
+
+            if message.startswith("phase=coarse-scan") is True or shelf_match is not None:
+                current_stage = "shelf-scout"
+
+            if shelf_match is not None:
+                stage_detail.update(
+                    {
+                        "phase": "shelf-scout",
+                        "scout_idx": int(shelf_match.group("idx")),
+                        "scout_count": int(shelf_match.group("count")),
+                        "x_position": float(shelf_match.group("x")),
+                    }
+                )
+
+            if message.startswith("phase=coarse-detect") is True or shelf_hole_match is not None:
+                current_stage = "coarse-detect"
+
+            if shelf_hole_match is not None:
+                stage_detail.update(
+                    {
+                        "phase": "coarse-detect",
+                        "shelf_idx": int(shelf_hole_match.group("shelf_idx")),
+                        "shelf_count": int(shelf_hole_match.group("shelf_count")),
+                        "offset_idx": int(shelf_hole_match.group("offset_idx")),
+                        "offset_count": int(shelf_hole_match.group("offset_count")),
+                        "y_position": float(shelf_hole_match.group("y")),
+                    }
+                )
+
+            if fine_match is not None or fine_retry_match is not None:
+                current_stage = "fine-scan"
+                active_match = fine_match or fine_retry_match
+                stage_detail.update(
+                    {
+                        "phase": "fine-scan",
+                        "candidate_idx": int(active_match.group("idx")),
+                        "candidate_count": int(active_match.group("count")),
+                        "is_retry": fine_retry_match is not None,
+                    }
+                )
+
+            if message.startswith("fine_detected_cells=") is True:
+                current_stage = "fine-scan"
+
+            if message.startswith("run_dir=") is True:
+                stage_detail["run_dir"] = message.split("=", 1)[1]
+
+            await self._refresh_scan_side_state(side_name, recorder, bounds)
+            await self._update_snapshot(
+                current_side=side_name,
+                current_stage=current_stage,
+                state="running",
+                bounds=bounds,
+                stage_detail=stage_detail,
+            )
+
+        return did_receive_status
+
+    def _build_angle_status_callback(self, side_name: str):
+        async def did_receive_status(message: str) -> None:
+            stage_detail = dict(self._snapshot.stage_detail)
+            stage_detail["side"] = side_name
+            stage_detail["log"] = message
+            stage_detail["phase"] = "angle-calibration"
+
+            capture_match = ANGLE_CAPTURE_RE.search(message)
+            sample_match = ANGLE_SAMPLE_RE.search(message)
+            alpha_match = ANGLE_RESULT_RE.search(message)
+
+            if message.startswith("phase=shelf-scout") is True:
+                stage_detail["subphase"] = "shelf-scout"
+
+            if message.startswith("shelf_edges=") is True:
+                stage_detail["subphase"] = "shelf-scout"
+
+            if message.startswith("angle_capture_y_mm=") is True:
+                stage_detail["capture_y_mm"] = float(message.split("=", 1)[1])
+
+            if capture_match is not None:
+                stage_detail.update(
+                    {
+                        "subphase": "capture",
+                        "x_idx": int(capture_match.group("x_idx")),
+                        "x_count": int(capture_match.group("x_count")),
+                        "z_offset_mm": float(capture_match.group("z_offset")),
+                        "rotation_idx": int(capture_match.group("rotation_idx")),
+                        "rotation_count": int(capture_match.group("rotation_count")),
+                    }
+                )
+
+            if sample_match is not None:
+                stage_detail.update(
+                    {
+                        "subphase": "capture",
+                        "sample_status": sample_match.group("status"),
+                        "sample_x_mm": float(sample_match.group("x")),
+                        "sample_z_mm": float(sample_match.group("z")),
+                        "sample_rotation_deg": float(sample_match.group("rotation")),
+                    }
+                )
+
+            if alpha_match is not None:
+                stage_detail.update(
+                    {
+                        "subphase": "fit",
+                        "alpha_deg": float(alpha_match.group("alpha")),
+                    }
+                )
+
+            await self._update_snapshot(
+                current_side=side_name,
+                current_stage="angle-calibration",
+                state="running",
+                stage_detail=stage_detail,
+            )
+
+        return did_receive_status
+
+    @asynccontextmanager
+    async def _patch_status_callbacks(self, scan_callback=None, angle_callback=None):
+        laser_module, angle_module = _load_laser_modules()
+        original_scan_print = laser_module.print_status
+        original_angle_print = angle_module.print_status
+        pending_task: asyncio.Task[None] | None = None
+
+        def didSchedule(callback_result: Any) -> None:
+            nonlocal pending_task
+
+            if hasattr(callback_result, "__await__") is False:
+                return
+
+            previous_task = pending_task
+
+            async def didRunCallback() -> None:
+                if previous_task is not None:
+                    await previous_task
+
+                await callback_result
+
+            pending_task = asyncio.create_task(didRunCallback())
+
+        def did_print_scan(message: str) -> None:
+            original_scan_print(message)
+
+            if scan_callback is not None:
+                didSchedule(scan_callback(message))
+
+        def did_print_angle(message: str) -> None:
+            original_angle_print(message)
+
+            if angle_callback is not None:
+                didSchedule(angle_callback(message))
+
+        laser_module.print_status = did_print_scan
+        angle_module.print_status = did_print_angle
+
+        try:
+            yield
+        finally:
+            laser_module.print_status = original_scan_print
+            angle_module.print_status = original_angle_print
+
+            if pending_task is not None:
+                await pending_task
+
+    async def _set_terminal_state(self, state: Literal["completed", "failed", "cancelled"], error: str | None) -> None:
+        await self._update_snapshot(
+            state=state,
+            current_stage=state,
+            error=error,
+            stage_detail={**self._snapshot.stage_detail, "phase": state},
+        )
+
+    async def _update_snapshot(self, **updates: Any) -> None:
+        snapshot = await self._sync_snapshot(**updates)
+        await self._publish(snapshot)
+
+    async def _sync_snapshot(self, **updates: Any) -> LaserAutoCalibrationSnapshot:
+        async with self._lock:
+            for key, value in updates.items():
+                setattr(self._snapshot, key, value)
+
+            self._snapshot.updated_at = _get_timestamp()
+
+            shelf_edges: list[LaserAutoCalibrationShelfEdge] = []
+            candidates: list[LaserAutoCalibrationCandidate] = []
+            cells: list[LaserAutoCalibrationCell] = []
+            angle_results: list[LaserAutoCalibrationAngleResult] = []
+
+            for side_state in self._side_states.values():
+                shelf_edges.extend(side_state.shelf_edges)
+                candidates.extend(side_state.candidates)
+                cells.extend(side_state.cells)
+
+                if side_state.angle_result is not None:
+                    angle_results.append(side_state.angle_result)
+
+            self._snapshot.shelf_edges = sorted(
+                shelf_edges,
+                key=lambda edge: (edge.side, -edge.y_mm, edge.x_mm),
+            )
+            self._snapshot.shelf_candidates = sorted(
+                candidates,
+                key=lambda candidate: (candidate.side, candidate.shelf_idx if candidate.shelf_idx is not None else 999, candidate.y_min, candidate.x_min),
+            )
+            self._snapshot.detected_cells = sorted(
+                cells,
+                key=lambda cell: (cell.side, cell.shelf_idx, cell.cell_idx),
+            )
+            self._snapshot.angle_results = sorted(angle_results, key=lambda result: result.side)
+            self._snapshot.scouted_shelf_count = len(self._snapshot.shelf_edges)
+            self._snapshot.candidate_count = len(self._snapshot.shelf_candidates)
+            self._snapshot.detected_cell_count = len(self._snapshot.detected_cells)
+            snapshot = self._snapshot.model_copy(deep=True)
+
+        return snapshot
+
+    async def _publish(self, snapshot: LaserAutoCalibrationSnapshot) -> None:
+        async with self._lock:
+            subscribers = list(self._subscribers)
+
+        for queue in subscribers:
+            if queue.full() is True:
+                try:
+                    queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    pass
+
+            try:
+                queue.put_nowait(snapshot.model_copy(deep=True))
+            except asyncio.QueueFull:
+                continue
+
+
+_manager = LaserAutoCalibrationManager()
+
+
+def get_laser_auto_calibration_manager() -> LaserAutoCalibrationManager:
+    return _manager
+
+
+async def is_laser_auto_calibration_running() -> bool:
+    return await _manager.is_active()
