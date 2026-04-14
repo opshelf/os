@@ -220,6 +220,14 @@
 		return snapshot?.angle_results ?? [];
 	}
 
+	function getRotationParameterName(side: 'left_module' | 'right_module'): string {
+		if (side === 'left_module') {
+			return 'ROTATION_FRONT';
+		}
+
+		return 'ROTATION_BACK';
+	}
+
 	function getStageDetail(): string {
 		if (snapshot === null) {
 			return '{}';
@@ -297,9 +305,10 @@
 			<thead>
 				<tr>
 					<th>side</th>
+					<th>parameter</th>
+					<th>value</th>
 					<th>alpha</th>
 					<th>capture y</th>
-					<th>updated rotation</th>
 					<th>samples</th>
 				</tr>
 			</thead>
@@ -307,9 +316,10 @@
 				{#each getAngleResults() as result}
 					<tr>
 						<td>{result.side}</td>
+						<td>{getRotationParameterName(result.side)}</td>
+						<td>{formatNumber(result.updated_rotation_deg, 4)}</td>
 						<td>{formatNumber(result.alpha_deg, 4)}</td>
 						<td>{formatNumber(result.capture_y_mm)}</td>
-						<td>{formatNumber(result.updated_rotation_deg, 4)}</td>
 						<td>{result.sample_count}</td>
 					</tr>
 				{/each}
