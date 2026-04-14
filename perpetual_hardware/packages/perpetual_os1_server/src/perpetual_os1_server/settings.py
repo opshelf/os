@@ -195,6 +195,7 @@ def _build_minimal_config(data: dict) -> dict:
 						"angle_calibration_z_offset_min_mm": -8.0,
 						"angle_calibration_z_offset_max_mm": 8.0,
 						"angle_calibration_z_offset_step_mm": 4.0,
+						"angle_calibration_z_offset_count": 1,
 						"angle_calibration_rotation_min_deg": -8.0,
 						"angle_calibration_rotation_max_deg": 8.0,
 						"angle_calibration_rotation_step_deg": 1.0,
