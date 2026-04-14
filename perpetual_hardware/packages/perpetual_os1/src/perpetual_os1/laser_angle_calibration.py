@@ -17,6 +17,8 @@ LASER_SCAN_STAGE_EXTENSION_MM = 13.0
 LASER_SCAN_Z_OFFSET_MM = 10.0
 SHELF_SCOUT_STEP_MM = 2.0
 SHELF_SCOUT_X_OFFSETS_MM = [0.0]
+LEFT_MODULE_ROTATION_CENTER_DEG = 0.0
+RIGHT_MODULE_ROTATION_CENTER_DEG = 180.0
 RIGHT_MODULE_SHELF_SCOUT_X_MM = 25.0
 RIGHT_MODULE_ROTATION_SAFE_X_MM = 475.0
 SHELF_EDGE_CONFIRMATION_COUNT = 3
@@ -664,6 +666,13 @@ def append_assumed_floor_shelf_edge(
 	]
 
 
+def get_default_rotation_center_deg(side_name: str) -> float:
+	if side_name == 'right':
+		return RIGHT_MODULE_ROTATION_CENTER_DEG
+
+	return LEFT_MODULE_ROTATION_CENTER_DEG
+
+
 async def enter_capture_mode(
 	tool: Any,
 	*,
@@ -1141,11 +1150,10 @@ async def capture_samples_with_robot(args: argparse.Namespace) -> tuple[list[Las
 
 		side_name = args.module
 		side_number = 0 if side_name == 'left' else 1
-		rotation_param = 'ROTATION_FRONT' if side_name == 'left' else 'ROTATION_BACK'
 		rotation_center_deg = float(
 			args.rotation_center_deg
 			if args.rotation_center_deg is not None
-			else await tool.get_param(rotation_param)
+			else get_default_rotation_center_deg(side_name)
 		)
 
 		for rotation_deg in rotation_positions:
@@ -1432,11 +1440,10 @@ async def run_stage_stall_capture(args: argparse.Namespace) -> tuple[list[StageS
 
 		side_name = args.module
 		side_number = 0 if side_name == 'left' else 1
-		rotation_param = 'ROTATION_FRONT' if side_name == 'left' else 'ROTATION_BACK'
 		rotation_center_deg = float(
 			args.rotation_center_deg
 			if args.rotation_center_deg is not None
-			else await tool.get_param(rotation_param)
+			else get_default_rotation_center_deg(side_name)
 		)
 
 		for rotation_deg in rotation_positions:
