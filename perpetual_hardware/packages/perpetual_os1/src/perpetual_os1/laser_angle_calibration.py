@@ -970,16 +970,23 @@ async def prepare_capture_pose(
 			x_mm=RIGHT_MODULE_ROTATION_SAFE_X_MM,
 			y_mm=y_mm,
 		)
-
-	await move_gantry_direct(
-		tool,
-		x_mm=x_mm,
-		y_mm=y_mm,
-	)
-
-	if should_rotate is True:
 		await tool.ensure_safe_rotation_stage_extension()
 		await tool._mr.move_to_position(absolute_rotation_deg)
+		await move_gantry_direct(
+			tool,
+			x_mm=x_mm,
+			y_mm=y_mm,
+		)
+	else:
+		await move_gantry_direct(
+			tool,
+			x_mm=x_mm,
+			y_mm=y_mm,
+		)
+
+		if should_rotate is True:
+			await tool.ensure_safe_rotation_stage_extension()
+			await tool._mr.move_to_position(absolute_rotation_deg)
 
 	await tool._ms.ready()
 	await tool._ms.move_to_position(stage_extension_mm)
