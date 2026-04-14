@@ -181,6 +181,10 @@ def _build_valid_rotation_positions(scan_config: Any, rotation_center_deg: float
     return valid_positions
 
 
+def _build_estimated_rotation_deg(fit_result: Any) -> float:
+    return -float(fit_result.alpha_deg)
+
+
 def _build_candidate_rows(
     side_name: Literal["left_module", "right_module"],
     candidate_rows: list[dict[str, Any]],
@@ -287,18 +291,27 @@ class LaserAutoCalibrationManager:
         return snapshot
 
     async def abort(self) -> LaserAutoCalibrationSnapshot:
+        task: asyncio.Task[None] | None = None
+
         async with self._lock:
             if self._task is None or self._task.done() is True:
                 raise RuntimeError("No laser auto calibration session is running")
 
+            task = self._task
             self._task.cancel()
-            self._snapshot.state = "cancelled"
-            self._snapshot.current_stage = "cancelled"
+            self._snapshot.current_stage = "cancelling"
             self._snapshot.updated_at = _get_timestamp()
             snapshot = self._snapshot.model_copy(deep=True)
 
         await self._publish(snapshot)
-        return snapshot
+
+        if task is not None:
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+        return await self.get_snapshot()
 
     async def subscribe(self) -> tuple[asyncio.Queue[LaserAutoCalibrationSnapshot], LaserAutoCalibrationSnapshot]:
         queue: asyncio.Queue[LaserAutoCalibrationSnapshot] = asyncio.Queue(maxsize=20)
@@ -325,6 +338,14 @@ class LaserAutoCalibrationManager:
             await self._set_terminal_state("completed", None)
         except asyncio.CancelledError:
             self._restore_in_memory_rotations(worker, original_rotations)
+
+            try:
+                await self._home_after_abort(worker)
+            except Exception as exc:
+                logger.error("laser_auto_calibration_abort_home_failed", exc_info=True)
+                await self._set_terminal_state("failed", f"Abort homing failed: {exc}")
+                return
+
             await self._set_terminal_state("cancelled", None)
             raise
         except Exception as exc:
@@ -344,6 +365,17 @@ class LaserAutoCalibrationManager:
             completed_results.append(await self._run_side(worker, side))
 
         await self._persist_completed_results(worker, completed_results)
+
+    async def _home_after_abort(self, worker: RobotWorker) -> None:
+        await worker._robot._tool.home()
+
+        try:
+            await worker._robot._io.home_door()
+        except Exception:
+            logger.warning("laser_auto_calibration_abort_door_home_failed", exc_info=True)
+
+        worker.clear_needs_home()
+        await worker.get_status_snapshot(force_refresh=True)
 
     async def _run_side(self, worker: RobotWorker, side: StorageModuleSide) -> _CompletedSideResult:
         side_name = _side_to_module_name(side)
@@ -483,7 +515,9 @@ class LaserAutoCalibrationManager:
             else angle_module.LASER_SCAN_Z_OFFSET_MM
         )
         rotation_param = "ROTATION_FRONT" if side == StorageModuleSide.LEFT else "ROTATION_BACK"
-        rotation_center_deg = float(await tool.get_param(rotation_param))
+
+        previous_rotation_deg = float(await tool.get_param(rotation_param))
+        rotation_center_deg = 0.0
         rotation_positions = _build_valid_rotation_positions(scan_config, rotation_center_deg)
 
         z_extension_place = await tool.get_param("Z_EXTENSION_PLACE")
@@ -591,6 +625,14 @@ class LaserAutoCalibrationManager:
             )
             angle_module.print_fit_result(fit_result)
 
+        updated_rotation_deg = _build_estimated_rotation_deg(fit_result)
+
+        if updated_rotation_deg < 0.0 or updated_rotation_deg > 180.0:
+            raise ValueError(
+                "estimated rotation is outside motor range "
+                f"({updated_rotation_deg:.3f} deg is outside 0..180)"
+            )
+
         return LaserAutoCalibrationAngleResult(
             side=_side_to_module_name(side),
             alpha_deg=float(fit_result.alpha_deg),
@@ -599,8 +641,8 @@ class LaserAutoCalibrationManager:
             rms_residual_mm=float(fit_result.line.rms_residual_mm),
             max_abs_residual_mm=float(fit_result.line.max_abs_residual_mm),
             line_angle_deg=float(fit_result.line.line_angle_deg),
-            previous_rotation_deg=rotation_center_deg,
-            updated_rotation_deg=rotation_center_deg + float(fit_result.alpha_deg),
+            previous_rotation_deg=previous_rotation_deg,
+            updated_rotation_deg=updated_rotation_deg,
         )
 
     async def _apply_angle_calibration_in_memory(

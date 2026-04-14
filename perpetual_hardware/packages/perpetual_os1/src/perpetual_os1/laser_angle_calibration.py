@@ -702,6 +702,7 @@ async def scan_shelf_scout_line(
 	settle_ms: int,
 	samples_per_point: int,
 	progress_label: str,
+	stop_after_first_edge: bool = False,
 	progress_every: int = 25,
 ) -> tuple[list[float | None], list[ShelfSurfaceEdge]]:
 	if len(y_positions) == 0:
@@ -771,6 +772,9 @@ async def scan_shelf_scout_line(
 				)
 			)
 
+			if stop_after_first_edge is True:
+				return depth_values, detected_edges
+
 			skip_target_y_mm = y_positions[run_end_idx] - SHELF_SCOUT_POST_EDGE_SKIP_MM
 
 			while position_idx < len(y_positions) and y_positions[position_idx] > skip_target_y_mm:
@@ -802,6 +806,9 @@ async def scan_shelf_scout_line(
 					y_mm=center_y_mm,
 				)
 			)
+
+			if stop_after_first_edge is True:
+				return depth_values, detected_edges
 
 	return depth_values, detected_edges
 
@@ -1056,8 +1063,12 @@ async def resolve_capture_y_mm(
 				settle_ms=settle_ms,
 				samples_per_point=samples_per_point,
 				progress_label=f'shelf_scout_{scout_idx}',
+				stop_after_first_edge=True,
 			)
 			edges.extend(scout_edges)
+
+			if len(scout_edges) > 0:
+				break
 	finally:
 		if is_y_brake_disabled is True:
 			await set_y_brake_for_shelf_scouting(tool, is_enabled=True)

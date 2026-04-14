@@ -88,7 +88,7 @@ def _configure_sentry() -> bool:
 		return False
 
 	if sentry_dsn == "":
-		logger.warning("sentry_not_configured", message="SENTRY_DSN_API not set", mode=mode.value)
+		logger.warning("sentry_not_configured", reason="SENTRY_DSN_API not set", mode=mode.value)
 		return False
 
 	from sentry_sdk.transport import HttpTransport
