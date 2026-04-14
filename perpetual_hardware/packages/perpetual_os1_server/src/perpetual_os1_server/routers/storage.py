@@ -92,17 +92,6 @@ class StorageCellUpdate(BaseModel):
     status: Optional[str] = None
 
 
-class CellIdentifier(BaseModel):
-    side: str
-    shelf_idx: int
-    cell_idx: int
-
-
-class BatchStatusUpdate(BaseModel):
-    cells: List[CellIdentifier]
-    status: str
-
-
 class ItemWithLocations(BaseModel):
     """Response payload describing an item with its locations."""
 
@@ -557,50 +546,3 @@ async def get_storage_grid() -> Dict[str, Any]:
 
     return grid.model_dump()
 
-
-@router.put("/locations/batch-status", dependencies=[Depends(require_permissions("storage:write"))])
-async def batch_update_storage_cell_status(
-    payload: BatchStatusUpdate,
-) -> Dict[str, Any]:
-    from perpetual_os1.storage import CellStatus, StorageModuleSide
-
-    try:
-        cell_status = CellStatus(payload.status.lower())
-    except ValueError:
-        valid = [s.value for s in CellStatus]
-        raise HTTPException(
-            status_code=422,
-            detail=f"Status must be one of: {', '.join(valid)}",
-        )
-
-    try:
-        grid = _get_robot_grid()
-    except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to load storage grid: {exc}",
-        ) from exc
-
-    for cell_id in payload.cells:
-        side_enum = StorageModuleSide.LEFT if cell_id.side == "left_module" else StorageModuleSide.RIGHT
-        try:
-            shelf = grid.get_shelf(side_enum, cell_id.shelf_idx)
-        except IndexError as exc:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid shelf_idx: {cell_id.shelf_idx}",
-            ) from exc
-
-        try:
-            cell = shelf.get_cell(cell_id.cell_idx)
-        except IndexError as exc:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid cell_idx: {cell_id.cell_idx}",
-            ) from exc
-
-        cell.status = cell_status
-
-    grid.save()
-
-    return {"updated": len(payload.cells)}

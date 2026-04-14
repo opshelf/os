@@ -692,34 +692,3 @@ export async function moveStage(
 		body: JSON.stringify({ position })
 	});
 }
-
-export async function runCycleTest(
-	side: string,
-	shelfIdx: number,
-	cellIdx: number
-): Promise<{ success: boolean }> {
-	return apiFetch<{ success: boolean }>('/calibration/cycle_test', {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ side, shelf_idx: shelfIdx, cell_idx: cellIdx })
-	});
-}
-
-export type CellIdentifier = {
-	side: string;
-	shelf_idx: number;
-	cell_idx: number;
-};
-
-export const CELL_STATUSES = ['available', 'occupied', 'maintenance', 'disabled'] as const;
-
-export async function updateCellsBatchStatus(
-	cells: CellIdentifier[],
-	status: string
-): Promise<unknown[]> {
-	return apiFetch<unknown[]>('/storage/locations/batch-status', {
-		method: 'PUT',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ cells, status })
-	});
-}
