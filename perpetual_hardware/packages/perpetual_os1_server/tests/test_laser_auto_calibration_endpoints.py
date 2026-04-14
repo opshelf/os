@@ -119,12 +119,12 @@ def test_build_angle_rotation_center_deg_uses_back_for_right() -> None:
     assert _build_angle_rotation_center_deg(StorageModuleSide.RIGHT) == 180.0
 
 
-def test_build_estimated_rotation_deg_uses_positive_alpha() -> None:
+def test_build_estimated_rotation_deg_offsets_previous_rotation() -> None:
     fit_result = SimpleNamespace(alpha_deg=4.2)
 
-    estimated_rotation_deg = _build_estimated_rotation_deg(fit_result)
+    estimated_rotation_deg = _build_estimated_rotation_deg(172.8, fit_result)
 
-    assert estimated_rotation_deg == 4.2
+    assert estimated_rotation_deg == 177.0
 
 
 @pytest.mark.asyncio
@@ -149,8 +149,8 @@ async def test_home_after_abort_homes_tool_and_door() -> None:
 @pytest.mark.asyncio
 async def test_abort_stops_tool_while_session_cancels() -> None:
     manager = LaserAutoCalibrationManager()
-    tool = SimpleNamespace(stop=AsyncMock())
-    worker = SimpleNamespace(_robot=SimpleNamespace(_tool=tool))
+    robot = SimpleNamespace(stop=AsyncMock())
+    worker = SimpleNamespace(_robot=robot)
 
     async def did_run() -> None:
         await asyncio.sleep(10)
@@ -169,7 +169,7 @@ async def test_abort_stops_tool_while_session_cancels() -> None:
 
     snapshot = await manager.abort()
 
-    tool.stop.assert_awaited_once()
+    robot.stop.assert_awaited_once()
     assert snapshot.state == 'running'
     assert snapshot.current_stage == 'cancelling'
 
