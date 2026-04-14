@@ -472,7 +472,11 @@ class LaserAutoCalibrationManager:
         )
 
         await self._refresh_scan_side_state(side_name, recorder, bounds)
-        logger.info("laser_auto_calibration_scan_start", side=side_name, run_dir=str(recorder.run_dir))
+        logger.info(
+            "laser_auto_calibration_scan_start side=%s run_dir=%s",
+            side_name,
+            str(recorder.run_dir),
+        )
 
         async with self._patch_status_callbacks(
             scan_callback=self._build_scan_status_callback(side_name, recorder, bounds),
