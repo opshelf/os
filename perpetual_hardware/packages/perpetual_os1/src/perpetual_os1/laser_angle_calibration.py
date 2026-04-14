@@ -1205,10 +1205,9 @@ async def capture_samples_with_robot(args: argparse.Namespace) -> tuple[list[Las
 		for z_offset_mm in z_offset_positions:
 			target_z_mm = base_z_mm + float(z_offset_mm)
 
-			for rotation_idx, rotation_deg in enumerate(rotation_positions, start=1):
-				absolute_rotation_deg = rotation_center_deg + float(rotation_deg)
-
-				for x_idx, x_mm in enumerate(x_positions, start=1):
+			for x_idx, x_mm in enumerate(x_positions, start=1):
+				for rotation_idx, rotation_deg in enumerate(rotation_positions, start=1):
+					absolute_rotation_deg = rotation_center_deg + float(rotation_deg)
 					print_status(
 						f'phase=capture x={x_idx}/{len(x_positions)} '
 						f'z={z_offset_mm:.2f} '
