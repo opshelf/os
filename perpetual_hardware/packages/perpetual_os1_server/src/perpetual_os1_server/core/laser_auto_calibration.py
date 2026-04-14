@@ -181,6 +181,14 @@ def _build_valid_rotation_positions(scan_config: Any, rotation_center_deg: float
     return valid_positions
 
 
+def _build_angle_x_positions(scan_config: Any) -> list[float]:
+    return angle_module.build_axis_positions(
+        float(scan_config.angle_calibration_x_max_mm),
+        float(scan_config.angle_calibration_x_min_mm),
+        float(scan_config.angle_calibration_x_step_mm),
+    )
+
+
 def _build_estimated_rotation_deg(fit_result: Any) -> float:
     return -float(fit_result.alpha_deg)
 
@@ -492,11 +500,7 @@ class LaserAutoCalibrationManager:
 
         side_name = _side_to_short_name(side)
         side_number = 0 if side == StorageModuleSide.LEFT else 1
-        x_positions = angle_module.build_axis_positions(
-            float(scan_config.angle_calibration_x_min_mm),
-            float(scan_config.angle_calibration_x_max_mm),
-            float(scan_config.angle_calibration_x_step_mm),
-        )
+        x_positions = _build_angle_x_positions(scan_config)
         z_offset_positions = angle_module.build_axis_positions(
             float(scan_config.angle_calibration_z_offset_min_mm),
             float(scan_config.angle_calibration_z_offset_max_mm),
