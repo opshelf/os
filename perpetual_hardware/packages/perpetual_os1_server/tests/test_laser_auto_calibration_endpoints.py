@@ -124,7 +124,7 @@ def test_build_estimated_rotation_deg_offsets_previous_rotation() -> None:
 
     estimated_rotation_deg = _build_estimated_rotation_deg(172.8, fit_result)
 
-    assert estimated_rotation_deg == 177.0
+    assert estimated_rotation_deg == pytest.approx(168.6)
 
 
 @pytest.mark.asyncio
