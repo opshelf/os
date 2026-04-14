@@ -31,7 +31,10 @@ ANGLE_CAPTURE_RE = re.compile(
     r"phase=capture x=(?P<x_idx>\d+)/(?P<x_count>\d+) z=(?P<z_offset>-?\d+(?:\.\d+)?) rotation=(?P<rotation_idx>\d+)/(?P<rotation_count>\d+)"
 )
 ANGLE_SAMPLE_RE = re.compile(
-    r"sample=(?P<status>ok|invalid) x=(?P<x>-?\d+(?:\.\d+)?) z=(?P<z>-?\d+(?:\.\d+)?) rotation_deg=(?P<rotation>-?\d+(?:\.\d+)?)"
+    r"sample=(?P<status>ok|invalid) x=(?P<x>-?\d+(?:\.\d+)?) z=(?P<z>-?\d+(?:\.\d+)?) rotation_deg=(?P<rotation>-?\d+(?:\.\d+)?)(?: distance_mm=(?P<distance>-?\d+(?:\.\d+)?))?"
+)
+ANGLE_SCOUT_SAMPLE_RE = re.compile(
+    r"(?P<label>shelf_scout_\d+)=(?P<sample_idx>\d+)/(?P<sample_count>\d+) x=(?P<x>-?\d+(?:\.\d+)?) y=(?P<y>-?\d+(?:\.\d+)?) depth=(?P<depth>none|-?\d+(?:\.\d+)?)"
 )
 SCAN_SHELF_SCOUT_RE = re.compile(r"phase=shelf-scout scout=(?P<idx>\d+)/(?P<count>\d+) x=(?P<x>-?\d+(?:\.\d+)?)")
 SCAN_SHELF_HOLE_RE = re.compile(
@@ -182,11 +185,15 @@ def _build_valid_rotation_positions(scan_config: Any, rotation_center_deg: float
 
 
 def _build_angle_x_positions(scan_config: Any) -> list[float]:
-    return angle_module.build_axis_positions(
+    x_positions = angle_module.build_axis_positions(
         float(scan_config.angle_calibration_x_max_mm),
         float(scan_config.angle_calibration_x_min_mm),
         float(scan_config.angle_calibration_x_step_mm),
     )
+
+    x_count = int(getattr(scan_config, "angle_calibration_x_count", 5))
+
+    return x_positions[:x_count]
 
 
 def _build_estimated_rotation_deg(fit_result: Any) -> float:
@@ -559,7 +566,7 @@ class LaserAutoCalibrationManager:
                 settle_ms=settle_ms,
                 samples_per_point=samples_per_point,
             )
-            current_z_mm: float | None = base_z_mm
+            current_z_mm: float | None = None
 
             try:
                 for z_offset_mm in z_offset_positions:
@@ -911,6 +918,7 @@ class LaserAutoCalibrationManager:
 
             capture_match = ANGLE_CAPTURE_RE.search(message)
             sample_match = ANGLE_SAMPLE_RE.search(message)
+            scout_sample_match = ANGLE_SCOUT_SAMPLE_RE.search(message)
             alpha_match = ANGLE_RESULT_RE.search(message)
 
             if message.startswith("phase=shelf-scout") is True:
@@ -921,6 +929,24 @@ class LaserAutoCalibrationManager:
 
             if message.startswith("angle_capture_y_mm=") is True:
                 stage_detail["capture_y_mm"] = float(message.split("=", 1)[1])
+
+            if scout_sample_match is not None:
+                laser_distance_mm: float | None = None
+
+                if scout_sample_match.group("depth") != "none":
+                    laser_distance_mm = float(scout_sample_match.group("depth"))
+
+                stage_detail.update(
+                    {
+                        "subphase": "shelf-scout",
+                        "laser_sample_label": scout_sample_match.group("label"),
+                        "laser_sample_idx": int(scout_sample_match.group("sample_idx")),
+                        "laser_sample_count": int(scout_sample_match.group("sample_count")),
+                        "laser_sample_x_mm": float(scout_sample_match.group("x")),
+                        "laser_sample_y_mm": float(scout_sample_match.group("y")),
+                        "laser_distance_mm": laser_distance_mm,
+                    }
+                )
 
             if capture_match is not None:
                 stage_detail.update(
@@ -942,6 +968,11 @@ class LaserAutoCalibrationManager:
                         "sample_x_mm": float(sample_match.group("x")),
                         "sample_z_mm": float(sample_match.group("z")),
                         "sample_rotation_deg": float(sample_match.group("rotation")),
+                        "laser_distance_mm": (
+                            None
+                            if sample_match.group("distance") is None
+                            else float(sample_match.group("distance"))
+                        ),
                     }
                 )
 

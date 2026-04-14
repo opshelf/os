@@ -84,12 +84,14 @@ def test_build_angle_x_positions_runs_from_high_x_to_low_x() -> None:
         angle_calibration_x_min_mm=50.0,
         angle_calibration_x_max_mm=940.0,
         angle_calibration_x_step_mm=100.0,
+        angle_calibration_x_count=5,
     )
 
     x_positions = _build_angle_x_positions(scan_config)
 
     assert x_positions[0] == 940.0
-    assert x_positions[-1] == 50.0
+    assert x_positions[-1] == 540.0
+    assert len(x_positions) == 5
 
 
 def test_build_estimated_rotation_deg_uses_negative_alpha() -> None:
