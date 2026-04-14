@@ -4,17 +4,17 @@ import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-import importlib.util
 import logging
 from pathlib import Path
 import re
-import sys
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 from typing import Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
+from perpetual_os1 import laser_angle_calibration as angle_module
+from perpetual_os1 import laser_calibration as laser_module
 from perpetual_os1.common import Parameters, resolve_grid_path
 from perpetual_os1.laser_scan import ScanBounds
 from perpetual_os1.storage import StorageModuleSide
@@ -125,40 +125,6 @@ class _CompletedSideResult:
 
 def _get_timestamp() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-def _load_module(module_name: str, file_path: Path) -> ModuleType:
-    cached_module = sys.modules.get(module_name)
-
-    if cached_module is not None:
-        return cached_module
-
-    spec = importlib.util.spec_from_file_location(module_name, file_path)
-
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"Failed to load module from {file_path}")
-
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-def _load_laser_modules() -> tuple[ModuleType, ModuleType]:
-    laser_module = sys.modules.get("_opshelf_laser_script")
-    angle_module = sys.modules.get("_opshelf_laser_angle_calibration")
-
-    if laser_module is not None and angle_module is not None:
-        return laser_module, angle_module
-
-    repo_root = Path(__file__).resolve().parents[6]
-    angle_path = repo_root / "scripts" / "laser_angle_calibration.py"
-    laser_path = repo_root / "scripts" / "laser.py"
-
-    angle_module = _load_module("_opshelf_laser_angle_calibration", angle_path)
-    sys.modules.setdefault("laser_angle_calibration", angle_module)
-    laser_module = _load_module("_opshelf_laser_script", laser_path)
-    return laser_module, angle_module
 
 
 def _side_to_module_name(side: StorageModuleSide) -> Literal["left_module", "right_module"]:
@@ -370,7 +336,6 @@ class LaserAutoCalibrationManager:
 
         config = get_root_config()
         scan_config = config.robot.grid.scan
-        laser_module, _ = _load_laser_modules()
         settle_ms = int(scan_config.settle_ms)
         samples_per_point = int(scan_config.samples_per_point)
         coarse_settle_ms = int(laser_module.get_coarse_settle_ms(settle_ms))
@@ -454,7 +419,6 @@ class LaserAutoCalibrationManager:
         side: StorageModuleSide,
         bounds: ScanBounds,
     ) -> LaserAutoCalibrationAngleResult:
-        _, angle_module = _load_laser_modules()
         config = get_root_config()
         scan_config = config.robot.grid.scan
         tool = worker._robot._tool
@@ -677,7 +641,6 @@ class LaserAutoCalibrationManager:
 
         next_config.robot.tool.parameters = Parameters.model_validate(params_dict)
 
-        laser_module, _ = _load_laser_modules()
         scan_config = next_config.robot.grid.scan
         grid_path = Path(resolve_grid_path(next_config))
         source_grid = laser_module.load_grid(grid_path)
@@ -939,7 +902,6 @@ class LaserAutoCalibrationManager:
 
     @asynccontextmanager
     async def _patch_status_callbacks(self, scan_callback=None, angle_callback=None):
-        laser_module, angle_module = _load_laser_modules()
         original_scan_print = laser_module.print_status
         original_angle_print = angle_module.print_status
         pending_task: asyncio.Task[None] | None = None
