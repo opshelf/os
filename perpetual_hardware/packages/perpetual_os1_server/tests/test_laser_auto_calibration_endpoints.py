@@ -147,6 +147,34 @@ async def test_home_after_abort_homes_tool_and_door() -> None:
 
 
 @pytest.mark.asyncio
+async def test_abort_stops_tool_while_session_cancels() -> None:
+    manager = LaserAutoCalibrationManager()
+    tool = SimpleNamespace(stop=AsyncMock())
+    worker = SimpleNamespace(_robot=SimpleNamespace(_tool=tool))
+
+    async def did_run() -> None:
+        await asyncio.sleep(10)
+
+    task = asyncio.create_task(did_run())
+
+    async with manager._lock:
+        manager._active_worker = worker
+        manager._task = task
+        manager._snapshot = LaserAutoCalibrationSnapshot(
+            state='running',
+            session_id='laser-session',
+            current_stage='angle-calibration',
+            updated_at='2026-01-01T00:00:00+00:00',
+        )
+
+    snapshot = await manager.abort()
+
+    tool.stop.assert_awaited_once()
+    assert snapshot.state == 'running'
+    assert snapshot.current_stage == 'cancelling'
+
+
+@pytest.mark.asyncio
 async def test_run_all_sides_processes_right_before_left() -> None:
     manager = LaserAutoCalibrationManager()
     worker = SimpleNamespace()
@@ -233,6 +261,42 @@ async def test_resolve_capture_y_mm_stops_after_first_detected_edge() -> None:
     assert target_y_mm == 72.0
     assert scan_mock.await_count == 1
     assert scan_mock.await_args.kwargs['stop_after_first_edge'] is True
+
+
+@pytest.mark.asyncio
+async def test_resolve_capture_y_mm_enters_right_shelf_scout_at_180_deg() -> None:
+    tool = SimpleNamespace(retract=AsyncMock())
+    args = SimpleNamespace(y_mm=None, y_range=(0.0, 100.0), scout_x_mm=None)
+    scan_config = SimpleNamespace()
+    first_edges = [angle_module.ShelfSurfaceEdge(x_mm=25.0, y_mm=72.0)]
+
+    with patch.object(angle_module, 'build_shelf_scout_x_positions', return_value=[25.0]):
+        with patch.object(angle_module, 'build_axis_positions', return_value=[100.0, 98.0, 96.0]):
+            with patch.object(angle_module, 'set_y_brake_for_shelf_scouting', AsyncMock()):
+                with patch.object(angle_module, 'enter_capture_mode', AsyncMock()) as enter_mock:
+                    with patch.object(angle_module, 'filter_shelf_edges', return_value=first_edges):
+                        with patch.object(
+                            angle_module,
+                            'scan_shelf_scout_line',
+                            AsyncMock(return_value=([], first_edges)),
+                        ):
+                            await angle_module.resolve_capture_y_mm(
+                                tool,
+                                args=args,
+                                scan_config=scan_config,
+                                side_name='right',
+                                side_number=1,
+                                x_positions=[945.0, 845.0],
+                                rotation_center_deg=180.0,
+                                stage_extension_mm=13.0,
+                                base_z_mm=140.5,
+                                z_move_rpm=100.0,
+                                z_move_accel=100.0,
+                                settle_ms=0,
+                                samples_per_point=1,
+                            )
+
+    assert enter_mock.await_args.kwargs['absolute_rotation_deg'] == 180.0
 
 
 @pytest.mark.asyncio

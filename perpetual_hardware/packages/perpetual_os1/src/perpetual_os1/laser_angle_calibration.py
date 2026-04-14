@@ -699,6 +699,7 @@ async def enter_capture_mode(
 		z_mm=z_mm,
 		z_move_rpm=z_move_rpm,
 		z_move_accel=z_move_accel,
+		should_rotate=True,
 		should_move_z=True,
 	)
 
@@ -958,9 +959,10 @@ async def prepare_capture_pose(
 	z_mm: float,
 	z_move_rpm: float,
 	z_move_accel: float,
+	should_rotate: bool,
 	should_move_z: bool,
 ) -> None:
-	if side_name == 'right':
+	if side_name == 'right' and should_rotate is True:
 		await move_gantry_direct(
 			tool,
 			x_mm=RIGHT_MODULE_ROTATION_SAFE_X_MM,
@@ -979,8 +981,10 @@ async def prepare_capture_pose(
 			x_mm=x_mm,
 			y_mm=y_mm,
 		)
-		await tool.ensure_safe_rotation_stage_extension()
-		await tool._mr.move_to_position(absolute_rotation_deg)
+
+		if should_rotate is True:
+			await tool.ensure_safe_rotation_stage_extension()
+			await tool._mr.move_to_position(absolute_rotation_deg)
 
 	await tool._ms.ready()
 	await tool._ms.move_to_position(stage_extension_mm)
@@ -1060,6 +1064,7 @@ async def resolve_capture_y_mm(
 					z_mm=base_z_mm,
 					z_move_rpm=z_move_rpm,
 					z_move_accel=z_move_accel,
+					should_rotate=False,
 					should_move_z=False,
 				)
 			print_status(
@@ -1195,13 +1200,15 @@ async def capture_samples_with_robot(args: argparse.Namespace) -> tuple[list[Las
 			samples_per_point=samples_per_point,
 		)
 		current_z_mm = base_z_mm
+		current_absolute_rotation_deg: float | None = rotation_center_deg
 
 		for z_offset_mm in z_offset_positions:
 			target_z_mm = base_z_mm + float(z_offset_mm)
 
-			for x_idx, x_mm in enumerate(x_positions, start=1):
-				for rotation_idx, rotation_deg in enumerate(rotation_positions, start=1):
-					absolute_rotation_deg = rotation_center_deg + float(rotation_deg)
+			for rotation_idx, rotation_deg in enumerate(rotation_positions, start=1):
+				absolute_rotation_deg = rotation_center_deg + float(rotation_deg)
+
+				for x_idx, x_mm in enumerate(x_positions, start=1):
 					print_status(
 						f'phase=capture x={x_idx}/{len(x_positions)} '
 						f'z={z_offset_mm:.2f} '
@@ -1219,9 +1226,11 @@ async def capture_samples_with_robot(args: argparse.Namespace) -> tuple[list[Las
 						z_mm=target_z_mm,
 						z_move_rpm=float(z_move_rpm),
 						z_move_accel=float(z_move_accel),
+						should_rotate=current_absolute_rotation_deg != absolute_rotation_deg,
 						should_move_z=current_z_mm != target_z_mm,
 					)
 					current_z_mm = target_z_mm
+					current_absolute_rotation_deg = absolute_rotation_deg
 					depth_mm = await sample_laser_depth(
 						tool,
 						settle_ms=settle_ms,
@@ -1524,6 +1533,7 @@ async def run_stage_stall_capture(args: argparse.Namespace) -> tuple[list[StageS
 				z_mm=base_z_mm,
 				z_move_rpm=float(z_move_rpm),
 				z_move_accel=float(z_move_accel),
+				should_rotate=True,
 				should_move_z=False,
 			)
 			did_stall, stage_position_mm, status, alarm_code = await probe_stage_until_stall(
