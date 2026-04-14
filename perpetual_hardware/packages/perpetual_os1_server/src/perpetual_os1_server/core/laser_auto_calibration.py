@@ -152,6 +152,35 @@ def _build_bounds_for_side(scan_config: Any, side: StorageModuleSide) -> ScanBou
     )
 
 
+def _build_valid_rotation_positions(scan_config: Any, rotation_center_deg: float) -> list[float]:
+    requested_positions = angle_module.build_axis_positions(
+        float(scan_config.angle_calibration_rotation_min_deg),
+        float(scan_config.angle_calibration_rotation_max_deg),
+        float(scan_config.angle_calibration_rotation_step_deg),
+    )
+    valid_positions = [
+        float(rotation_deg)
+        for rotation_deg in requested_positions
+        if 0.0 <= rotation_center_deg + float(rotation_deg) <= 180.0
+    ]
+
+    if len(valid_positions) == 0:
+        raise ValueError(
+            "rotation sweep has no valid positions "
+            f"for center {rotation_center_deg:.3f} deg within 0..180"
+        )
+
+    if len(valid_positions) != len(requested_positions):
+        angle_module.print_status(
+            "rotation_sweep_clipped "
+            f"requested={len(requested_positions)} "
+            f"valid={len(valid_positions)} "
+            f"center_deg={rotation_center_deg:.3f}"
+        )
+
+    return valid_positions
+
+
 def _build_candidate_rows(
     side_name: Literal["left_module", "right_module"],
     candidate_rows: list[dict[str, Any]],
@@ -441,11 +470,6 @@ class LaserAutoCalibrationManager:
             float(scan_config.angle_calibration_z_offset_max_mm),
             float(scan_config.angle_calibration_z_offset_step_mm),
         )
-        rotation_positions = angle_module.build_axis_positions(
-            float(scan_config.angle_calibration_rotation_min_deg),
-            float(scan_config.angle_calibration_rotation_max_deg),
-            float(scan_config.angle_calibration_rotation_step_deg),
-        )
         settle_ms = int(scan_config.settle_ms)
         samples_per_point = int(scan_config.samples_per_point)
         stage_extension_mm = float(
@@ -460,15 +484,7 @@ class LaserAutoCalibrationManager:
         )
         rotation_param = "ROTATION_FRONT" if side == StorageModuleSide.LEFT else "ROTATION_BACK"
         rotation_center_deg = float(await tool.get_param(rotation_param))
-
-        for rotation_deg in rotation_positions:
-            absolute_rotation_deg = rotation_center_deg + float(rotation_deg)
-
-            if absolute_rotation_deg < 0.0 or absolute_rotation_deg > 180.0:
-                raise ValueError(
-                    "rotation sweep exceeds motor range "
-                    f"(absolute target {absolute_rotation_deg:.3f} deg is outside 0..180)"
-                )
+        rotation_positions = _build_valid_rotation_positions(scan_config, rotation_center_deg)
 
         z_extension_place = await tool.get_param("Z_EXTENSION_PLACE")
         z_move_rpm = await tool.get_param("Z_MOVE_RPM")
