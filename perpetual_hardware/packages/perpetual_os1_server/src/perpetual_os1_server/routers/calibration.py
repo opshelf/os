@@ -67,10 +67,6 @@ class CalibrationStatusResponse(BaseModel):
 	needs_home_axes: list[str] = Field(default_factory=list)
 
 
-class LaserReadingResponse(BaseModel):
-	distance_mm: float
-
-
 _current_position: Optional[PositionResponse] = None
 _current_side: int = 0
 _current_side_name: str = "left_module"
@@ -296,27 +292,6 @@ async def get_storage():
 
 	grid = worker._robot._grid
 	return grid.model_dump()
-
-
-@router.get("/laser/read", response_model=LaserReadingResponse)
-async def read_laser() -> LaserReadingResponse:
-	try:
-		worker = await get_robot_worker()
-	except ValueError as e:
-		raise HTTPException(
-			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail="Robot is not initialized",
-		) from e
-
-	try:
-		distance_mm = await worker._robot.get_laser_distance()
-	except Exception as e:
-		raise HTTPException(
-			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail=f"Failed to read laser distance: {str(e)}",
-		) from e
-
-	return LaserReadingResponse(distance_mm=distance_mm)
 
 
 @router.get("/laser/status", response_model=LaserAutoCalibrationSnapshot)
