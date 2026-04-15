@@ -52,6 +52,12 @@ SCAN_FINE_RE = re.compile(r"phase=fine-scan candidate=(?P<idx>\d+)/(?P<count>\d+
 SCAN_FINE_RETRY_RE = re.compile(r"phase=fine-scan-retry candidate=(?P<idx>\d+)/(?P<count>\d+)")
 FINE_DETECTED_CELLS_RE = re.compile(r"fine_detected_cells=(?P<count>\d+)")
 ANGLE_RESULT_RE = re.compile(r"alpha_deg=(?P<alpha>-?\d+(?:\.\d+)?)")
+STAGE_EXTENSION_PROBE_START_MM = 3.0
+STAGE_EXTENSION_PROBE_BACKOFF_MM = 3.0
+STAGE_EXTENSION_FAST_APPROACH_MM = 40.0
+STAGE_EXTENSION_PROBE_STEP_MM = 0.5
+STAGE_EXTENSION_PROBE_TIMEOUT_S = 15.0
+STAGE_EXTENSION_NO_PROGRESS_TIMEOUT_S = 0.2
 
 
 class LaserAutoCalibrationShelfEdge(BaseModel):
@@ -131,6 +137,7 @@ class _SideState:
     candidates: list[LaserAutoCalibrationCandidate] = field(default_factory=list)
     cells: list[LaserAutoCalibrationCell] = field(default_factory=list)
     angle_result: LaserAutoCalibrationAngleResult | None = None
+    stage_extension_mm: float | None = None
     live_shelf_count: int = 0
     live_candidate_count: int = 0
     live_detected_cell_count: int = 0
@@ -164,6 +171,20 @@ def _side_to_short_name(side: StorageModuleSide) -> Literal["left", "right"]:
 
 def _build_angle_rotation_center_deg(side: StorageModuleSide) -> float:
     return float(angle_module.get_default_rotation_center_deg(_side_to_short_name(side)))
+
+
+def _side_to_rotation_param_name(side: StorageModuleSide) -> str:
+    if side == StorageModuleSide.LEFT:
+        return "ROTATION_FRONT"
+
+    return "ROTATION_BACK"
+
+
+def _side_to_stage_extension_param_name(side: StorageModuleSide) -> str:
+    if side == StorageModuleSide.LEFT:
+        return "STAGE_EXTENSION_SHELF_FRONT"
+
+    return "STAGE_EXTENSION_SHELF_BACK"
 
 
 def _build_bounds_for_side(scan_config: Any, side: StorageModuleSide) -> ScanBounds:
@@ -428,7 +449,7 @@ class LaserAutoCalibrationManager:
             return self._task is not None and self._task.done() is False
 
     async def _run_session(self, worker: RobotWorker, session_id: str | None) -> None:
-        original_rotations = await self._get_current_rotations(worker)
+        original_params = await self._get_current_calibration_params(worker)
 
         try:
             await self._run_all_sides(worker)
@@ -440,7 +461,7 @@ class LaserAutoCalibrationManager:
                 while current_task.cancelling() > 0:
                     current_task.uncancel()
 
-            self._restore_in_memory_rotations(worker, original_rotations)
+            self._restore_in_memory_calibration_params(worker, original_params)
 
             try:
                 await self._home_after_abort(worker)
@@ -454,7 +475,7 @@ class LaserAutoCalibrationManager:
             await self._set_terminal_state("cancelled", None)
             return
         except Exception as exc:
-            self._restore_in_memory_rotations(worker, original_rotations)
+            self._restore_in_memory_calibration_params(worker, original_params)
             logger.error("laser_auto_calibration_failed", exc_info=True)
             await self._set_terminal_state("failed", str(exc))
         finally:
@@ -488,6 +509,30 @@ class LaserAutoCalibrationManager:
             },
         )
         await self._apply_angle_calibration_in_memory(worker, StorageModuleSide.RIGHT, right_angle_result)
+
+        right_stage_extension_mm = await self._run_stage_extension_calibration_for_side(
+            worker,
+            StorageModuleSide.RIGHT,
+            right_bounds,
+            probe_y_mm=float(left_angle_result.capture_y_mm),
+        )
+        await self._apply_stage_extension_calibration_in_memory(
+            worker,
+            StorageModuleSide.RIGHT,
+            right_stage_extension_mm,
+        )
+
+        left_stage_extension_mm = await self._run_stage_extension_calibration_for_side(
+            worker,
+            StorageModuleSide.LEFT,
+            left_bounds,
+            probe_y_mm=float(left_angle_result.capture_y_mm),
+        )
+        await self._apply_stage_extension_calibration_in_memory(
+            worker,
+            StorageModuleSide.LEFT,
+            left_stage_extension_mm,
+        )
 
         completed_results.append(await self._run_side(worker, StorageModuleSide.RIGHT, right_angle_result))
         completed_results.append(await self._run_side(worker, StorageModuleSide.LEFT, left_angle_result))
@@ -637,7 +682,7 @@ class LaserAutoCalibrationManager:
             if scan_config.scan_z_offset_mm is not None
             else angle_module.LASER_SCAN_Z_OFFSET_MM
         )
-        rotation_param = "ROTATION_FRONT" if side == StorageModuleSide.LEFT else "ROTATION_BACK"
+        rotation_param = _side_to_rotation_param_name(side)
 
         previous_rotation_deg = float(await tool.get_param(rotation_param))
         rotation_center_deg = _build_angle_rotation_center_deg(side)
@@ -776,7 +821,7 @@ class LaserAutoCalibrationManager:
         side: StorageModuleSide,
         result: LaserAutoCalibrationAngleResult,
     ) -> None:
-        rotation_param = "ROTATION_FRONT" if side == StorageModuleSide.LEFT else "ROTATION_BACK"
+        rotation_param = _side_to_rotation_param_name(side)
         params_dict = worker._robot._tool._params.parameters.model_dump()
         params_dict[rotation_param] = result.updated_rotation_deg
         worker._robot._tool._params.parameters = Parameters.model_validate(params_dict)
@@ -792,6 +837,169 @@ class LaserAutoCalibrationManager:
                 "phase": "angle-applied",
                 "alpha_deg": result.alpha_deg,
                 "updated_rotation_deg": result.updated_rotation_deg,
+            },
+        )
+
+    async def _run_stage_extension_calibration_for_side(
+        self,
+        worker: RobotWorker,
+        side: StorageModuleSide,
+        bounds: ScanBounds,
+        *,
+        probe_y_mm: float,
+    ) -> float:
+        config = get_root_config()
+        scan_config = config.robot.grid.scan
+        tool = worker._robot._tool
+
+        if tool._mx is None or tool._my is None or tool._mg is None or tool._ms is None or tool._mr is None:
+            raise ValueError("x, y, z, stage, and rotation motors are required")
+
+        if probe_y_mm < bounds.y_min or probe_y_mm > bounds.y_max:
+            raise ValueError(
+                f"stage extension probe y {probe_y_mm:.3f} is outside bounds {bounds.y_min:.3f}..{bounds.y_max:.3f}"
+            )
+
+        side_name = _side_to_short_name(side)
+        side_number = 0 if side == StorageModuleSide.LEFT else 1
+        side_module_name = _side_to_module_name(side)
+        rotation_param = _side_to_rotation_param_name(side)
+        absolute_rotation_deg = float(await tool.get_param(rotation_param))
+        z_extension_place = await tool.get_param("Z_EXTENSION_PLACE")
+        z_move_rpm = await tool.get_param("Z_MOVE_RPM")
+        z_move_accel = await tool.get_param("Z_MOVE_ACCEL")
+
+        if z_extension_place is None or z_move_rpm is None or z_move_accel is None:
+            raise ValueError("Z_EXTENSION_PLACE, Z_MOVE_RPM, and Z_MOVE_ACCEL are required")
+
+        probe_x_mm = float((bounds.x_min + bounds.x_max) / 2.0)
+        scan_z_offset_mm = float(
+            scan_config.scan_z_offset_mm
+            if scan_config.scan_z_offset_mm is not None
+            else angle_module.LASER_SCAN_Z_OFFSET_MM
+        )
+        base_z_mm = float(z_extension_place) + scan_z_offset_mm
+        stage_limit_mm = float(tool._ms._params.lim)
+        probe_rpm = min(int(tool._ms._params.rpm), 100)
+
+        await self._update_snapshot(
+            current_side=side_module_name,
+            current_stage="stage-extension-calibration",
+            state="running",
+            bounds=bounds,
+            stage_detail={
+                "side": side_module_name,
+                "phase": "stage-extension-calibration",
+                "subphase": "move",
+                "probe_x_mm": probe_x_mm,
+                "probe_y_mm": float(probe_y_mm),
+                "absolute_rotation_deg": absolute_rotation_deg,
+                "probe_rpm": probe_rpm,
+                "stage_target_mm": stage_limit_mm,
+            },
+        )
+
+        try:
+            await tool.retract()
+            await angle_module.prepare_capture_pose(
+                tool,
+                side_name=side_name,
+                side_number=side_number,
+                x_mm=probe_x_mm,
+                y_mm=float(probe_y_mm),
+                absolute_rotation_deg=absolute_rotation_deg,
+                stage_extension_mm=STAGE_EXTENSION_PROBE_START_MM,
+                z_mm=base_z_mm,
+                z_move_rpm=float(z_move_rpm),
+                z_move_accel=float(z_move_accel),
+                should_rotate=True,
+                should_use_safe_right_rotation_path=side == StorageModuleSide.RIGHT,
+                should_move_z=True,
+            )
+            await self._update_snapshot(
+                current_side=side_module_name,
+                current_stage="stage-extension-calibration",
+                state="running",
+                bounds=bounds,
+                stage_detail={
+                    "side": side_module_name,
+                    "phase": "stage-extension-calibration",
+                    "subphase": "probe",
+                    "probe_x_mm": probe_x_mm,
+                    "probe_y_mm": float(probe_y_mm),
+                    "absolute_rotation_deg": absolute_rotation_deg,
+                    "probe_rpm": probe_rpm,
+                    "stage_target_mm": stage_limit_mm,
+                },
+            )
+            did_stall, stage_position_mm, status, alarm_code = await angle_module.probe_stage_until_stall(
+                tool,
+                target_stage_mm=stage_limit_mm,
+                retract_stage_mm=STAGE_EXTENSION_PROBE_START_MM,
+                settle_ms=int(scan_config.settle_ms),
+                timeout_s=STAGE_EXTENSION_PROBE_TIMEOUT_S,
+                probe_rpm=probe_rpm,
+                no_progress_s=STAGE_EXTENSION_NO_PROGRESS_TIMEOUT_S,
+                probe_step_mm=STAGE_EXTENSION_PROBE_STEP_MM,
+                fast_approach_mm=STAGE_EXTENSION_FAST_APPROACH_MM,
+                fast_approach_rpm=int(tool._ms._params.rpm),
+                auto_retract=False,
+            )
+
+            if did_stall is False:
+                raise ValueError(
+                    f"stage extension probe reached limit without stall at {stage_position_mm:.3f} mm"
+                )
+
+            if status == "timeout":
+                raise ValueError("stage extension probe timed out before a confirmed stall")
+
+            calibrated_stage_extension_mm = max(0.0, stage_position_mm - STAGE_EXTENSION_PROBE_BACKOFF_MM)
+            await tool._ms.move_to_position(calibrated_stage_extension_mm, rpm=probe_rpm)
+            await self._update_snapshot(
+                current_side=side_module_name,
+                current_stage="stage-extension-calibration",
+                state="running",
+                bounds=bounds,
+                stage_detail={
+                    "side": side_module_name,
+                    "phase": "stage-extension-calibration",
+                    "subphase": "backoff",
+                    "probe_x_mm": probe_x_mm,
+                    "probe_y_mm": float(probe_y_mm),
+                    "absolute_rotation_deg": absolute_rotation_deg,
+                    "stall_status": status,
+                    "alarm_code": alarm_code,
+                    "stall_stage_mm": float(stage_position_mm),
+                    "calibrated_stage_extension_mm": calibrated_stage_extension_mm,
+                },
+            )
+            return calibrated_stage_extension_mm
+        finally:
+            await tool.retract()
+
+    async def _apply_stage_extension_calibration_in_memory(
+        self,
+        worker: RobotWorker,
+        side: StorageModuleSide,
+        stage_extension_mm: float,
+    ) -> None:
+        stage_extension_param = _side_to_stage_extension_param_name(side)
+        params_dict = worker._robot._tool._params.parameters.model_dump()
+        params_dict[stage_extension_param] = stage_extension_mm
+        worker._robot._tool._params.parameters = Parameters.model_validate(params_dict)
+        side_name = _side_to_module_name(side)
+        self._side_states.setdefault(side_name, _SideState()).stage_extension_mm = stage_extension_mm
+
+        await self._update_snapshot(
+            current_side=side_name,
+            current_stage="stage-extension-calibration",
+            state="running",
+            stage_detail={
+                "side": side_name,
+                "phase": "stage-extension-applied",
+                "stage_extension_param": stage_extension_param,
+                "calibrated_stage_extension_mm": float(stage_extension_mm),
             },
         )
 
@@ -815,12 +1023,15 @@ class LaserAutoCalibrationManager:
         params_dict = next_config.robot.tool.parameters.model_dump()
 
         for completed_result in completed_results:
-            rotation_param = "ROTATION_FRONT"
+            rotation_param = _side_to_rotation_param_name(completed_result.side)
+            stage_extension_param = _side_to_stage_extension_param_name(completed_result.side)
+            side_state = self._side_states.get(_side_to_module_name(completed_result.side))
 
-            if completed_result.side == StorageModuleSide.RIGHT:
-                rotation_param = "ROTATION_BACK"
+            if side_state is None or side_state.stage_extension_mm is None:
+                raise ValueError(f"Missing stage extension calibration result for {_side_to_module_name(completed_result.side)}")
 
             params_dict[rotation_param] = completed_result.angle_result.updated_rotation_deg
+            params_dict[stage_extension_param] = float(side_state.stage_extension_mm)
 
         next_config.robot.tool.parameters = Parameters.model_validate(params_dict)
 
@@ -890,20 +1101,26 @@ class LaserAutoCalibrationManager:
 
         worker._robot._grid = laser_module.load_grid(grid_path)
 
-    async def _get_current_rotations(self, worker: RobotWorker) -> dict[str, float]:
+    async def _get_current_calibration_params(self, worker: RobotWorker) -> dict[str, float]:
         front = await worker._robot._tool.get_param("ROTATION_FRONT")
         back = await worker._robot._tool.get_param("ROTATION_BACK")
+        front_stage_extension = await worker._robot._tool.get_param("STAGE_EXTENSION_SHELF_FRONT")
+        back_stage_extension = await worker._robot._tool.get_param("STAGE_EXTENSION_SHELF_BACK")
 
         return {
             "ROTATION_FRONT": float(front),
             "ROTATION_BACK": float(back),
+            "STAGE_EXTENSION_SHELF_FRONT": float(front_stage_extension),
+            "STAGE_EXTENSION_SHELF_BACK": float(back_stage_extension),
         }
 
 
-    def _restore_in_memory_rotations(self, worker: RobotWorker, rotations: dict[str, float]) -> None:
+    def _restore_in_memory_calibration_params(self, worker: RobotWorker, params: dict[str, float]) -> None:
         params_dict = worker._robot._tool._params.parameters.model_dump()
-        params_dict["ROTATION_FRONT"] = float(rotations["ROTATION_FRONT"])
-        params_dict["ROTATION_BACK"] = float(rotations["ROTATION_BACK"])
+        params_dict["ROTATION_FRONT"] = float(params["ROTATION_FRONT"])
+        params_dict["ROTATION_BACK"] = float(params["ROTATION_BACK"])
+        params_dict["STAGE_EXTENSION_SHELF_FRONT"] = float(params["STAGE_EXTENSION_SHELF_FRONT"])
+        params_dict["STAGE_EXTENSION_SHELF_BACK"] = float(params["STAGE_EXTENSION_SHELF_BACK"])
         worker._robot._tool._params.parameters = Parameters.model_validate(params_dict)
 
     async def _refresh_scan_side_state(
