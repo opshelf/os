@@ -1188,15 +1188,6 @@ def append_assumed_floor_shelf_edge(
 			y_mm=0.0,
 		),
 	]
-
-
-def is_assumed_floor_shelf_edge(*, bounds: ScanBounds, edge: ShelfSurfaceEdge) -> bool:
-	if bounds.y_min > 0.0:
-		return False
-
-	return abs(float(edge.y_mm) - float(bounds.y_min)) < 1e-6
-
-
 async def capture_shelf_candidates(
 	tool: Any,
 	*,
@@ -1311,9 +1302,6 @@ async def capture_shelf_candidates(
 		return coarse_scan, 0.0, [], filtered_shelf_edges
 
 	for shelf_idx, shelf_edge in enumerate(filtered_shelf_edges, start=1):
-		if is_assumed_floor_shelf_edge(bounds=bounds, edge=shelf_edge) is True:
-			continue
-
 		for offset_idx, offset_mm in enumerate(hole_sweep_offsets_mm, start=1):
 			sweep_y_mm = shelf_edge.y_mm + offset_mm
 
