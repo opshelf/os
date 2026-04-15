@@ -189,7 +189,7 @@ def _side_to_stage_extension_param_name(side: StorageModuleSide) -> str:
 
 
 def _build_stage_extension_probe_y_mm(top_shelf_y_mm: float, bounds: ScanBounds) -> float:
-    return float(max(bounds.y_min, min(bounds.y_max, top_shelf_y_mm - STAGE_EXTENSION_PROBE_Y_OFFSET_MM)))
+	return float(max(bounds.y_min, min(bounds.y_max, top_shelf_y_mm + STAGE_EXTENSION_PROBE_Y_OFFSET_MM)))
 
 
 def _build_bounds_for_side(scan_config: Any, side: StorageModuleSide) -> ScanBounds:
