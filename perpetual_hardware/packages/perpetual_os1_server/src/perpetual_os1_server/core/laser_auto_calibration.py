@@ -56,7 +56,7 @@ STAGE_EXTENSION_PROBE_START_MM = 3.0
 STAGE_EXTENSION_PROBE_BACKOFF_MM = 3.0
 STAGE_EXTENSION_FAST_APPROACH_MM = 40.0
 STAGE_EXTENSION_PROBE_STEP_MM = 0.5
-STAGE_EXTENSION_PROBE_TIMEOUT_S = 15.0
+STAGE_EXTENSION_PROBE_TIMEOUT_S = 45.0
 STAGE_EXTENSION_NO_PROGRESS_TIMEOUT_S = 0.2
 
 
@@ -946,13 +946,34 @@ class LaserAutoCalibrationManager:
                 auto_retract=False,
             )
 
+            await self._update_snapshot(
+                current_side=side_module_name,
+                current_stage="stage-extension-calibration",
+                state="running",
+                bounds=bounds,
+                stage_detail={
+                    "side": side_module_name,
+                    "phase": "stage-extension-calibration",
+                    "subphase": "probe-result",
+                    "probe_x_mm": probe_x_mm,
+                    "probe_y_mm": float(probe_y_mm),
+                    "absolute_rotation_deg": absolute_rotation_deg,
+                    "stall_status": status,
+                    "alarm_code": alarm_code,
+                    "stall_stage_mm": float(stage_position_mm),
+                    "stage_target_mm": stage_limit_mm,
+                },
+            )
+
             if did_stall is False:
                 raise ValueError(
                     f"stage extension probe reached limit without stall at {stage_position_mm:.3f} mm"
                 )
 
             if status == "timeout":
-                raise ValueError("stage extension probe timed out before a confirmed stall")
+                raise ValueError(
+                    f"stage extension probe timed out at {stage_position_mm:.3f} mm before a confirmed stall"
+                )
 
             calibrated_stage_extension_mm = max(0.0, stage_position_mm - STAGE_EXTENSION_PROBE_BACKOFF_MM)
             await tool._ms.move_to_position(calibrated_stage_extension_mm, rpm=probe_rpm)

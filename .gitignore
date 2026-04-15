@@ -23,6 +23,7 @@ wheels/
 .DS_Store
 
 # Application Files
+.env
 config.json
 settings.json
 !.pi/settings.json
