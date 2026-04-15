@@ -173,12 +173,19 @@
 	async function didClickAbort(): Promise<void> {
 		isAborting = true;
 		error = '';
-		message = '';
+		message = 'abort requested';
+
+		if (snapshot !== null) {
+			snapshot = {
+				...snapshot,
+				current_stage: 'cancelling'
+			};
+		}
 
 		try {
 			snapshot = await abortLaserAutoCalibration();
-			message = 'abort requested';
 		} catch (err) {
+			message = '';
 			error = err instanceof Error ? err.message : 'failed to abort auto calibration';
 		} finally {
 			isAborting = false;

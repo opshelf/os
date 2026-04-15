@@ -701,7 +701,7 @@ class LaserAutoCalibrationManager:
         rotation_param = _side_to_rotation_param_name(side)
 
         previous_rotation_deg = float(await tool.get_param(rotation_param))
-        rotation_center_deg = _build_angle_rotation_center_deg(side)
+        rotation_center_deg = previous_rotation_deg
         rotation_positions = _build_valid_rotation_positions(scan_config, rotation_center_deg)
         z_extension_place = await tool.get_param("Z_EXTENSION_PLACE")
         z_move_rpm = await tool.get_param("Z_MOVE_RPM")

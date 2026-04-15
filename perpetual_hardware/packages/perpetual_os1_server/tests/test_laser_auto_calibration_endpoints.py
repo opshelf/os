@@ -341,6 +341,70 @@ async def test_run_all_sides_processes_right_before_left() -> None:
 
 
 @pytest.mark.asyncio
+async def test_run_angle_calibration_uses_current_rotation_as_capture_center() -> None:
+    manager = LaserAutoCalibrationManager()
+    tool = SimpleNamespace(
+        _laser_enabled=True,
+        _laser=object(),
+        _mx=object(),
+        _my=object(),
+        _mg=object(),
+        _ms=object(),
+        _mr=object(),
+        retract=AsyncMock(),
+        get_param=AsyncMock(side_effect=[3.815, 100.0, 200.0, 200.0]),
+    )
+    worker = SimpleNamespace(_robot=SimpleNamespace(_tool=tool))
+    scan_config = SimpleNamespace(
+        settle_ms=0,
+        samples_per_point=1,
+        scan_stage_extension_mm=None,
+        scan_z_offset_mm=None,
+        angle_calibration_x_min_mm=50.0,
+        angle_calibration_x_max_mm=940.0,
+        angle_calibration_x_step_mm=100.0,
+        angle_calibration_x_count=1,
+        angle_calibration_z_offset_min_mm=0.0,
+        angle_calibration_z_offset_max_mm=0.0,
+        angle_calibration_z_offset_step_mm=1.0,
+        angle_calibration_z_offset_count=1,
+        angle_calibration_rotation_min_deg=0.0,
+        angle_calibration_rotation_max_deg=0.0,
+        angle_calibration_rotation_step_deg=1.0,
+        angle_calibration_alpha_min_deg=-10.0,
+        angle_calibration_alpha_max_deg=10.0,
+        angle_calibration_coarse_step_deg=0.1,
+        angle_calibration_fine_window_deg=0.3,
+        angle_calibration_fine_step_deg=0.005,
+        laser_offset_x_mm=0.0,
+        angle_calibration_beam_zero_deg=0.0,
+    )
+    config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=scan_config)))
+    fit_result = SimpleNamespace(
+        alpha_deg=0.0,
+        sample_count=1,
+        line=SimpleNamespace(rms_residual_mm=0.1, max_abs_residual_mm=0.2, line_angle_deg=90.0),
+    )
+
+    with patch('perpetual_os1_server.core.laser_auto_calibration.get_root_config', return_value=config):
+        with patch.object(angle_module, 'resolve_capture_y_mm', AsyncMock(return_value=1095.0)) as resolve_mock:
+            with patch.object(angle_module, 'prepare_capture_pose', AsyncMock()):
+                with patch.object(angle_module, 'sample_laser_depth', AsyncMock(return_value=5.0)):
+                    with patch.object(angle_module, 'search_best_alpha', return_value=fit_result):
+                        with patch.object(angle_module, 'print_fit_result'):
+                            result = await manager._run_angle_calibration_for_side(
+                                worker,
+                                StorageModuleSide.LEFT,
+                                ScanBounds(x_min=5.0, x_max=945.0, y_min=0.0, y_max=1200.0),
+                            )
+
+    assert resolve_mock.await_args.kwargs['rotation_center_deg'] == pytest.approx(3.815)
+    assert result.previous_rotation_deg == pytest.approx(3.815)
+    assert result.alpha_deg == pytest.approx(0.0)
+    assert result.updated_rotation_deg == pytest.approx(3.815)
+
+
+@pytest.mark.asyncio
 async def test_persist_completed_results_saves_stage_extensions() -> None:
     manager = LaserAutoCalibrationManager()
     manager._side_states['left_module'] = _SideState(stage_extension_mm=41.0)
