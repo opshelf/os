@@ -248,12 +248,12 @@ def _build_derived_right_angle_result(
     previous_rotation_deg: float,
     left_angle_result: LaserAutoCalibrationAngleResult,
 ) -> LaserAutoCalibrationAngleResult:
-    updated_rotation_deg = 180.0 - float(left_angle_result.updated_rotation_deg)
+    updated_rotation_deg = 180.0 + float(left_angle_result.updated_rotation_deg)
 
-    if updated_rotation_deg < 0.0 or updated_rotation_deg > 180.0:
+    if updated_rotation_deg < 0.0 or updated_rotation_deg > 270.0:
         raise ValueError(
             "derived right rotation is outside motor range "
-            f"({updated_rotation_deg:.3f} deg is outside 0..180)"
+            f"({updated_rotation_deg:.3f} deg is outside 0..270)"
         )
 
     return LaserAutoCalibrationAngleResult(
