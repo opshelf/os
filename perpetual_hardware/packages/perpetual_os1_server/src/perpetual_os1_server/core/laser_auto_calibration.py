@@ -4,6 +4,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import json
 import logging
 from pathlib import Path
 import re
@@ -26,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 ACTIVE_SESSION_STATES = {"starting", "running", "applying"}
 DEFAULT_SCANS_DIR = "/tmp"
+ANGLE_DEBUG_DIR_NAME = "laser_auto_calibration_debug"
 
 ANGLE_CAPTURE_RE = re.compile(
     r"phase=capture x=(?P<x_idx>\d+)/(?P<x_count>\d+) z=(?P<z_offset>-?\d+(?:\.\d+)?) rotation=(?P<rotation_idx>\d+)/(?P<rotation_count>\d+)"
@@ -920,6 +922,71 @@ class LaserAutoCalibrationManager:
 
     def _read_json(self, path: Path) -> dict[str, Any]:
         return __import__("json").loads(path.read_text(encoding="utf-8"))
+
+    def _build_angle_debug_output_path(self, side_name: str) -> Path:
+        session_id = self._snapshot.session_id or "unknown-session"
+        return Path(DEFAULT_SCANS_DIR) / ANGLE_DEBUG_DIR_NAME / f"{session_id}_{side_name}_angle.json"
+
+    def _write_angle_debug_output(
+        self,
+        *,
+        side_name: str,
+        samples: list[Any],
+        metadata: dict[str, Any],
+        fit_result: Any | None,
+        error: str | None,
+    ) -> Path:
+        output_path = self._build_angle_debug_output_path(side_name)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        fit_payload: dict[str, Any] | None = None
+
+        if fit_result is not None:
+            fit_payload = {
+                "alpha_deg": float(fit_result.alpha_deg),
+                "sample_count": int(fit_result.sample_count),
+                "line": {
+                    "point_x_mm": float(fit_result.line.point_x_mm),
+                    "point_z_mm": float(fit_result.line.point_z_mm),
+                    "direction_x": float(fit_result.line.direction_x),
+                    "direction_z": float(fit_result.line.direction_z),
+                    "normal_x": float(fit_result.line.normal_x),
+                    "normal_z": float(fit_result.line.normal_z),
+                    "line_angle_deg": float(fit_result.line.line_angle_deg),
+                    "rms_residual_mm": float(fit_result.line.rms_residual_mm),
+                    "max_abs_residual_mm": float(fit_result.line.max_abs_residual_mm),
+                },
+            }
+
+        payload = {
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "side": side_name,
+            "metadata": metadata,
+            "samples": [
+                {
+                    "axis_x_mm": float(sample.axis_x_mm),
+                    "axis_z_mm": float(sample.axis_z_mm),
+                    "rotation_deg": float(sample.rotation_deg),
+                    "absolute_rotation_deg": float(sample.absolute_rotation_deg),
+                    "stage_extension_mm": float(sample.stage_extension_mm),
+                    "z_extension_mm": float(sample.z_extension_mm),
+                    "distance_mm": float(sample.distance_mm),
+                }
+                for sample in samples
+            ],
+            "fit_result": fit_payload,
+            "error": error,
+        }
+        output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        logger.info(
+            "laser_auto_calibration_angle_debug_written",
+            path=str(output_path),
+            side=side_name,
+            sample_count=len(samples),
+            has_fit_result=fit_result is not None,
+            error=error,
+        )
+        return output_path
 
     def _build_scan_status_callback(self, side_name: str, recorder: Any, bounds: ScanBounds):
         async def did_receive_status(message: str) -> None:
