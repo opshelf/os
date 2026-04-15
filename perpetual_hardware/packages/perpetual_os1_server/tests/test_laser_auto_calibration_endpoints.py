@@ -217,6 +217,24 @@ async def test_abort_stops_tool_while_session_cancels() -> None:
 
 
 @pytest.mark.asyncio
+async def test_abort_returns_existing_cancelling_snapshot() -> None:
+    manager = LaserAutoCalibrationManager()
+
+    async with manager._lock:
+        manager._task = asyncio.create_task(asyncio.sleep(10))
+        manager._snapshot = LaserAutoCalibrationSnapshot(
+            state='running',
+            session_id='laser-session',
+            current_stage='cancelling',
+            updated_at='2026-01-01T00:00:00+00:00',
+        )
+
+    snapshot = await manager.abort()
+
+    assert snapshot.current_stage == 'cancelling'
+
+
+@pytest.mark.asyncio
 async def test_run_session_cancel_marks_needs_home_without_abort_homing() -> None:
     manager = LaserAutoCalibrationManager()
     worker = SimpleNamespace(
@@ -229,8 +247,7 @@ async def test_run_session_cancel_marks_needs_home_without_abort_homing() -> Non
             with patch.object(manager, '_restore_in_memory_rotations') as restore_mock:
                 with patch.object(manager, '_set_terminal_state', AsyncMock()) as terminal_mock:
                     with patch.object(manager, '_home_after_abort', AsyncMock()) as home_mock:
-                        with pytest.raises(asyncio.CancelledError):
-                            await manager._run_session(worker, 'laser-session')
+                        await manager._run_session(worker, 'laser-session')
 
     restore_mock.assert_called_once_with(worker, {})
     worker.set_needs_home.assert_not_called()
