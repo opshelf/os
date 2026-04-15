@@ -1297,8 +1297,14 @@ class LaserAutoCalibrationManager:
     def _read_json(self, path: Path) -> dict[str, Any]:
         return __import__("json").loads(path.read_text(encoding="utf-8"))
 
+    def _should_preserve_cancelling_snapshot(self) -> bool:
+        return self._abort_requested is True or self._snapshot.current_stage == "cancelling"
+
     def _build_scan_status_callback(self, side_name: str, recorder: Any, bounds: ScanBounds):
         async def did_receive_status(message: str) -> None:
+            if self._should_preserve_cancelling_snapshot() is True:
+                return
+
             current_stage = self._snapshot.current_stage
             stage_detail = dict(self._snapshot.stage_detail)
             stage_detail["side"] = side_name
@@ -1416,6 +1422,9 @@ class LaserAutoCalibrationManager:
 
     def _build_angle_status_callback(self, side_name: str):
         async def did_receive_status(message: str) -> None:
+            if self._should_preserve_cancelling_snapshot() is True:
+                return
+
             stage_detail = dict(self._snapshot.stage_detail)
             stage_detail["side"] = side_name
             stage_detail["log"] = message
