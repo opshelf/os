@@ -54,9 +54,10 @@ FINE_DETECTED_CELLS_RE = re.compile(r"fine_detected_cells=(?P<count>\d+)")
 ANGLE_RESULT_RE = re.compile(r"alpha_deg=(?P<alpha>-?\d+(?:\.\d+)?)")
 STAGE_EXTENSION_PROBE_START_MM = 3.0
 STAGE_EXTENSION_PROBE_BACKOFF_MM = 3.0
+STAGE_EXTENSION_PROBE_Y_OFFSET_MM = 25.0
 STAGE_EXTENSION_FAST_APPROACH_MM = 40.0
 STAGE_EXTENSION_PROBE_STEP_MM = 0.5
-STAGE_EXTENSION_PROBE_TIMEOUT_S = 45.0
+STAGE_EXTENSION_PROBE_TIMEOUT_S = 1.0
 STAGE_EXTENSION_NO_PROGRESS_TIMEOUT_S = 0.2
 
 
@@ -185,6 +186,10 @@ def _side_to_stage_extension_param_name(side: StorageModuleSide) -> str:
         return "STAGE_EXTENSION_SHELF_FRONT"
 
     return "STAGE_EXTENSION_SHELF_BACK"
+
+
+def _build_stage_extension_probe_y_mm(top_shelf_y_mm: float, bounds: ScanBounds) -> float:
+    return float(max(bounds.y_min, min(bounds.y_max, top_shelf_y_mm - STAGE_EXTENSION_PROBE_Y_OFFSET_MM)))
 
 
 def _build_bounds_for_side(scan_config: Any, side: StorageModuleSide) -> ScanBounds:
@@ -510,11 +515,16 @@ class LaserAutoCalibrationManager:
         )
         await self._apply_angle_calibration_in_memory(worker, StorageModuleSide.RIGHT, right_angle_result)
 
+        right_probe_y_mm = await self._resolve_stage_extension_probe_y_mm(
+            worker,
+            StorageModuleSide.RIGHT,
+            right_bounds,
+        )
         right_stage_extension_mm = await self._run_stage_extension_calibration_for_side(
             worker,
             StorageModuleSide.RIGHT,
             right_bounds,
-            probe_y_mm=float(left_angle_result.capture_y_mm),
+            probe_y_mm=right_probe_y_mm,
         )
         await self._apply_stage_extension_calibration_in_memory(
             worker,
@@ -522,11 +532,17 @@ class LaserAutoCalibrationManager:
             right_stage_extension_mm,
         )
 
+        left_probe_y_mm = await self._resolve_stage_extension_probe_y_mm(
+            worker,
+            StorageModuleSide.LEFT,
+            left_bounds,
+            top_shelf_y_mm=float(left_angle_result.capture_y_mm),
+        )
         left_stage_extension_mm = await self._run_stage_extension_calibration_for_side(
             worker,
             StorageModuleSide.LEFT,
             left_bounds,
-            probe_y_mm=float(left_angle_result.capture_y_mm),
+            probe_y_mm=left_probe_y_mm,
         )
         await self._apply_stage_extension_calibration_in_memory(
             worker,
@@ -993,6 +1009,97 @@ class LaserAutoCalibrationManager:
             return calibrated_stage_extension_mm
         finally:
             await tool.retract()
+
+    async def _resolve_stage_extension_probe_y_mm(
+        self,
+        worker: RobotWorker,
+        side: StorageModuleSide,
+        bounds: ScanBounds,
+        *,
+        top_shelf_y_mm: float | None = None,
+    ) -> float:
+        side_name = _side_to_short_name(side)
+        side_number = 0 if side == StorageModuleSide.LEFT else 1
+        side_module_name = _side_to_module_name(side)
+
+        if top_shelf_y_mm is None:
+            config = get_root_config()
+            scan_config = config.robot.grid.scan
+            tool = worker._robot._tool
+
+            if tool._mx is None or tool._my is None or tool._mg is None or tool._ms is None or tool._mr is None:
+                raise ValueError("x, y, z, stage, and rotation motors are required")
+
+            z_extension_place = await tool.get_param("Z_EXTENSION_PLACE")
+            z_move_rpm = await tool.get_param("Z_MOVE_RPM")
+            z_move_accel = await tool.get_param("Z_MOVE_ACCEL")
+
+            if z_extension_place is None or z_move_rpm is None or z_move_accel is None:
+                raise ValueError("Z_EXTENSION_PLACE, Z_MOVE_RPM, and Z_MOVE_ACCEL are required")
+
+            x_positions = _build_angle_x_positions(scan_config)
+            scan_stage_extension_mm = float(
+                scan_config.scan_stage_extension_mm
+                if scan_config.scan_stage_extension_mm is not None
+                else angle_module.LASER_SCAN_STAGE_EXTENSION_MM
+            )
+            scan_z_offset_mm = float(
+                scan_config.scan_z_offset_mm
+                if scan_config.scan_z_offset_mm is not None
+                else angle_module.LASER_SCAN_Z_OFFSET_MM
+            )
+            absolute_rotation_deg = float(await tool.get_param(_side_to_rotation_param_name(side)))
+            base_z_mm = float(z_extension_place) + scan_z_offset_mm
+            angle_args = SimpleNamespace(
+                y_mm=None,
+                y_range=(bounds.y_min, bounds.y_max),
+                scout_x_mm=None,
+            )
+
+            await self._update_snapshot(
+                current_side=side_module_name,
+                current_stage="stage-extension-calibration",
+                state="running",
+                bounds=bounds,
+                stage_detail={
+                    "side": side_module_name,
+                    "phase": "stage-extension-calibration",
+                    "subphase": "shelf-scout",
+                },
+            )
+
+            await tool.retract()
+            top_shelf_y_mm = await angle_module.resolve_capture_y_mm(
+                tool,
+                args=angle_args,
+                scan_config=scan_config,
+                side_name=side_name,
+                side_number=side_number,
+                x_positions=x_positions,
+                rotation_center_deg=absolute_rotation_deg,
+                stage_extension_mm=scan_stage_extension_mm,
+                base_z_mm=base_z_mm,
+                z_move_rpm=float(z_move_rpm),
+                z_move_accel=float(z_move_accel),
+                settle_ms=int(scan_config.settle_ms),
+                samples_per_point=int(scan_config.samples_per_point),
+            )
+
+        probe_y_mm = _build_stage_extension_probe_y_mm(float(top_shelf_y_mm), bounds)
+        await self._update_snapshot(
+            current_side=side_module_name,
+            current_stage="stage-extension-calibration",
+            state="running",
+            bounds=bounds,
+            stage_detail={
+                "side": side_module_name,
+                "phase": "stage-extension-calibration",
+                "subphase": "probe-y",
+                "top_shelf_y_mm": float(top_shelf_y_mm),
+                "probe_y_mm": probe_y_mm,
+            },
+        )
+        return probe_y_mm
 
     async def _apply_stage_extension_calibration_in_memory(
         self,

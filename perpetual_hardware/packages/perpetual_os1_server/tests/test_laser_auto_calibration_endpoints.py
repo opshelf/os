@@ -18,6 +18,7 @@ from perpetual_os1_server.core.laser_auto_calibration import (
     _build_angle_z_offset_positions,
     _build_bounds_for_side,
     _build_derived_right_angle_result,
+    _build_stage_extension_probe_y_mm,
     _SideState,
     LaserAutoCalibrationAngleResult,
     LaserAutoCalibrationManager,
@@ -286,22 +287,27 @@ async def test_run_all_sides_processes_right_before_left() -> None:
     with patch('perpetual_os1_server.core.laser_auto_calibration._build_bounds_for_side', return_value=ScanBounds(x_min=0.0, x_max=1.0, y_min=0.0, y_max=1.0)):
         with patch.object(manager, '_run_angle_calibration_for_side', AsyncMock(return_value=left_angle_result)):
             with patch.object(manager, '_apply_angle_calibration_in_memory', AsyncMock()) as apply_mock:
-                with patch.object(manager, '_run_stage_extension_calibration_for_side', AsyncMock(side_effect=[44.0, 41.0])) as stage_mock:
-                    with patch.object(manager, '_apply_stage_extension_calibration_in_memory', AsyncMock()) as apply_stage_mock:
-                        with patch.object(manager, '_run_side', side_effect=did_run_side):
-                            with patch.object(manager, '_persist_completed_results', AsyncMock()) as persist_mock:
-                                await manager._run_all_sides(worker)
+                with patch.object(manager, '_resolve_stage_extension_probe_y_mm', AsyncMock(side_effect=[1070.0, 1098.0])) as probe_y_mock:
+                    with patch.object(manager, '_run_stage_extension_calibration_for_side', AsyncMock(side_effect=[44.0, 41.0])) as stage_mock:
+                        with patch.object(manager, '_apply_stage_extension_calibration_in_memory', AsyncMock()) as apply_stage_mock:
+                            with patch.object(manager, '_run_side', side_effect=did_run_side):
+                                with patch.object(manager, '_persist_completed_results', AsyncMock()) as persist_mock:
+                                    await manager._run_all_sides(worker)
 
     assert processed_sides == [StorageModuleSide.RIGHT, StorageModuleSide.LEFT]
     assert apply_mock.await_count == 2
     assert stage_mock.await_count == 2
     assert apply_stage_mock.await_count == 2
     persist_mock.assert_awaited_once()
+    assert probe_y_mock.await_count == 2
 
     assert stage_mock.await_args_list[0].args[1] == StorageModuleSide.RIGHT
     assert stage_mock.await_args_list[1].args[1] == StorageModuleSide.LEFT
-    assert stage_mock.await_args_list[0].kwargs['probe_y_mm'] == pytest.approx(left_angle_result.capture_y_mm)
-    assert stage_mock.await_args_list[1].kwargs['probe_y_mm'] == pytest.approx(left_angle_result.capture_y_mm)
+    assert stage_mock.await_args_list[0].kwargs['probe_y_mm'] == pytest.approx(1070.0)
+    assert stage_mock.await_args_list[1].kwargs['probe_y_mm'] == pytest.approx(1098.0)
+    assert probe_y_mock.await_args_list[0].args[1] == StorageModuleSide.RIGHT
+    assert probe_y_mock.await_args_list[1].args[1] == StorageModuleSide.LEFT
+    assert probe_y_mock.await_args_list[1].kwargs['top_shelf_y_mm'] == pytest.approx(left_angle_result.capture_y_mm)
 
     persisted_results = persist_mock.await_args.args[1]
 
@@ -464,6 +470,50 @@ async def test_run_stage_extension_calibration_accepts_timeout_terminal_state() 
     stage_motor.move_to_position.assert_awaited_once_with(pytest.approx(42.28), rpm=100)
     assert manager._update_snapshot.await_args_list[-1].kwargs['stage_detail']['stall_status'] == 'timeout'
     assert manager._update_snapshot.await_args_list[-1].kwargs['stage_detail']['calibrated_stage_extension_mm'] == pytest.approx(42.28)
+
+
+@pytest.mark.asyncio
+async def test_resolve_stage_extension_probe_y_uses_right_scout_and_offset() -> None:
+    manager = LaserAutoCalibrationManager()
+    manager._update_snapshot = AsyncMock()
+    tool = SimpleNamespace(
+        _mx=object(),
+        _my=object(),
+        _mg=object(),
+        _mr=object(),
+        _ms=object(),
+        retract=AsyncMock(),
+        get_param=AsyncMock(side_effect=[100.0, 200.0, 200.0, 187.655]),
+    )
+    worker = SimpleNamespace(_robot=SimpleNamespace(_tool=tool))
+    scan_config = SimpleNamespace(
+        settle_ms=0,
+        samples_per_point=1,
+        scan_stage_extension_mm=None,
+        scan_z_offset_mm=None,
+        angle_calibration_x_min_mm=50.0,
+        angle_calibration_x_max_mm=940.0,
+        angle_calibration_x_step_mm=100.0,
+        angle_calibration_x_count=5,
+    )
+    config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=scan_config)))
+
+    with patch('perpetual_os1_server.core.laser_auto_calibration.get_root_config', return_value=config):
+        with patch.object(angle_module, 'resolve_capture_y_mm', AsyncMock(return_value=1123.0)) as resolve_mock:
+            probe_y_mm = await manager._resolve_stage_extension_probe_y_mm(
+                worker,
+                StorageModuleSide.RIGHT,
+                ScanBounds(x_min=5.0, x_max=945.0, y_min=0.0, y_max=1200.0),
+            )
+
+    assert probe_y_mm == pytest.approx(1098.0)
+    assert resolve_mock.await_args.kwargs['rotation_center_deg'] == pytest.approx(187.655)
+
+
+def test_build_stage_extension_probe_y_offsets_top_shelf() -> None:
+    bounds = ScanBounds(x_min=5.0, x_max=945.0, y_min=0.0, y_max=1200.0)
+
+    assert _build_stage_extension_probe_y_mm(1123.0, bounds) == pytest.approx(1098.0)
 
 
 @pytest.mark.asyncio
