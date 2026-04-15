@@ -261,6 +261,31 @@ async def test_run_session_cancel_marks_needs_home_without_abort_homing() -> Non
 
 
 @pytest.mark.asyncio
+async def test_scan_status_callback_preserves_cancelling_snapshot() -> None:
+    manager = LaserAutoCalibrationManager()
+    manager._abort_requested = True
+    manager._snapshot = LaserAutoCalibrationSnapshot(
+        state='running',
+        session_id='laser-session',
+        current_side='left_module',
+        current_stage='cancelling',
+        updated_at='2026-01-01T00:00:00+00:00',
+    )
+    manager._refresh_scan_side_state = AsyncMock()
+    manager._update_snapshot = AsyncMock()
+    callback = manager._build_scan_status_callback(
+        'left_module',
+        SimpleNamespace(run_id='run-id'),
+        ScanBounds(x_min=0.0, x_max=1.0, y_min=0.0, y_max=1.0),
+    )
+
+    await callback('phase=shelf-scout scout=1/1 x=945.00')
+
+    manager._refresh_scan_side_state.assert_not_awaited()
+    manager._update_snapshot.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_run_all_sides_processes_right_before_left() -> None:
     manager = LaserAutoCalibrationManager()
     tool = SimpleNamespace(get_param=AsyncMock(return_value=180.0))
