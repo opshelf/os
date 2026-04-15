@@ -418,6 +418,55 @@ async def test_persist_completed_results_saves_stage_extensions() -> None:
 
 
 @pytest.mark.asyncio
+async def test_run_stage_extension_calibration_accepts_timeout_terminal_state() -> None:
+    manager = LaserAutoCalibrationManager()
+    manager._update_snapshot = AsyncMock()
+    stage_motor = SimpleNamespace(
+        _params=SimpleNamespace(lim=75.0, rpm=300),
+        move_to_position=AsyncMock(),
+    )
+    tool = SimpleNamespace(
+        _mx=object(),
+        _my=object(),
+        _mg=object(),
+        _mr=object(),
+        _ms=stage_motor,
+        retract=AsyncMock(),
+        get_param=AsyncMock(side_effect=[187.655, 100.0, 200.0, 200.0]),
+    )
+    worker = SimpleNamespace(_robot=SimpleNamespace(_tool=tool))
+    config = SimpleNamespace(
+        robot=SimpleNamespace(
+            grid=SimpleNamespace(
+                scan=SimpleNamespace(
+                    settle_ms=0,
+                    scan_z_offset_mm=None,
+                )
+            )
+        )
+    )
+
+    with patch('perpetual_os1_server.core.laser_auto_calibration.get_root_config', return_value=config):
+        with patch.object(angle_module, 'prepare_capture_pose', AsyncMock()):
+            with patch.object(
+                angle_module,
+                'probe_stage_until_stall',
+                AsyncMock(return_value=(True, 45.28, 'timeout', None)),
+            ):
+                calibrated_stage_extension_mm = await manager._run_stage_extension_calibration_for_side(
+                    worker,
+                    StorageModuleSide.RIGHT,
+                    ScanBounds(x_min=5.0, x_max=945.0, y_min=0.0, y_max=1200.0),
+                    probe_y_mm=1123.0,
+                )
+
+    assert calibrated_stage_extension_mm == pytest.approx(42.28)
+    stage_motor.move_to_position.assert_awaited_once_with(pytest.approx(42.28), rpm=100)
+    assert manager._update_snapshot.await_args_list[-1].kwargs['stage_detail']['stall_status'] == 'timeout'
+    assert manager._update_snapshot.await_args_list[-1].kwargs['stage_detail']['calibrated_stage_extension_mm'] == pytest.approx(42.28)
+
+
+@pytest.mark.asyncio
 async def test_sync_snapshot_uses_live_counts_when_metadata_lags() -> None:
     manager = LaserAutoCalibrationManager()
     manager._side_states['left_module'] = _SideState(

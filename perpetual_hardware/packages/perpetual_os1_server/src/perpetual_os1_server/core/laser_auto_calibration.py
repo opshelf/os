@@ -970,11 +970,6 @@ class LaserAutoCalibrationManager:
                     f"stage extension probe reached limit without stall at {stage_position_mm:.3f} mm"
                 )
 
-            if status == "timeout":
-                raise ValueError(
-                    f"stage extension probe timed out at {stage_position_mm:.3f} mm before a confirmed stall"
-                )
-
             calibrated_stage_extension_mm = max(0.0, stage_position_mm - STAGE_EXTENSION_PROBE_BACKOFF_MM)
             await tool._ms.move_to_position(calibrated_stage_extension_mm, rpm=probe_rpm)
             await self._update_snapshot(
