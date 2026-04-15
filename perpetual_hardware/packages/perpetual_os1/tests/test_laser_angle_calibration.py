@@ -7,6 +7,7 @@ from perpetual_os1.laser_angle_calibration import (
 	RIGHT_MODULE_ROTATION_SAFE_X_MM,
 	get_default_rotation_center_deg,
 	prepare_capture_pose,
+	probe_stage_until_stall,
 )
 
 
@@ -119,3 +120,38 @@ async def test_prepare_capture_pose_uses_safe_right_rotation_path_when_requested
 	assert tool._mx.move_to_position_no_wait.await_args_list[0].args == (RIGHT_MODULE_ROTATION_SAFE_X_MM,)
 	assert tool._mx.move_to_position_no_wait.await_args_list[1].args == (945.0,)
 	assert tool._mr.move_to_position.await_args_list[0].args == (180.0,)
+
+
+@pytest.mark.asyncio
+async def test_probe_stage_until_stall_can_skip_auto_retract() -> None:
+	stage_motor = SimpleNamespace(
+		move_to_position=AsyncMock(),
+		move_to_position_no_wait=AsyncMock(),
+		clear_alarm=AsyncMock(),
+		stop=AsyncMock(),
+		get_position=AsyncMock(side_effect=[40.0, 40.5, 40.5, 40.5]),
+		get_param=AsyncMock(return_value=0),
+	)
+	tool = SimpleNamespace(_ms=stage_motor)
+
+	did_stall, stage_position_mm, status, alarm_code = await probe_stage_until_stall(
+		tool,
+		target_stage_mm=50.0,
+		retract_stage_mm=3.0,
+		settle_ms=0,
+		timeout_s=1.0,
+		probe_rpm=50,
+		no_progress_s=0.0,
+		probe_step_mm=1.0,
+		fast_approach_mm=40.0,
+		fast_approach_rpm=200,
+		auto_retract=False,
+	)
+
+	assert did_stall is True
+	assert stage_position_mm == pytest.approx(40.5)
+	assert status == 'no_progress'
+	assert alarm_code == 0
+	assert stage_motor.move_to_position.await_count == 2
+	assert stage_motor.move_to_position.await_args_list[0].args == (3.0,)
+	assert stage_motor.move_to_position.await_args_list[1].args == (40.0,)

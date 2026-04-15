@@ -1,5 +1,7 @@
 import asyncio
+import copy
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -7,6 +9,7 @@ import pytest
 from fastapi import HTTPException
 
 from perpetual_os1 import laser_angle_calibration as angle_module
+from perpetual_os1.common import Parameters
 from perpetual_os1.laser_scan import ScanBounds
 from perpetual_os1.storage import StorageModuleSide
 from perpetual_os1_server.core.laser_auto_calibration import (
@@ -242,9 +245,9 @@ async def test_run_session_cancel_marks_needs_home_without_abort_homing() -> Non
         get_status_snapshot=AsyncMock(),
     )
 
-    with patch.object(manager, '_get_current_rotations', AsyncMock(return_value={})):
+    with patch.object(manager, '_get_current_calibration_params', AsyncMock(return_value={})):
         with patch.object(manager, '_run_all_sides', AsyncMock(side_effect=asyncio.CancelledError)):
-            with patch.object(manager, '_restore_in_memory_rotations') as restore_mock:
+            with patch.object(manager, '_restore_in_memory_calibration_params') as restore_mock:
                 with patch.object(manager, '_set_terminal_state', AsyncMock()) as terminal_mock:
                     with patch.object(manager, '_home_after_abort', AsyncMock()) as home_mock:
                         await manager._run_session(worker, 'laser-session')
@@ -283,18 +286,135 @@ async def test_run_all_sides_processes_right_before_left() -> None:
     with patch('perpetual_os1_server.core.laser_auto_calibration._build_bounds_for_side', return_value=ScanBounds(x_min=0.0, x_max=1.0, y_min=0.0, y_max=1.0)):
         with patch.object(manager, '_run_angle_calibration_for_side', AsyncMock(return_value=left_angle_result)):
             with patch.object(manager, '_apply_angle_calibration_in_memory', AsyncMock()) as apply_mock:
-                with patch.object(manager, '_run_side', side_effect=did_run_side):
-                    with patch.object(manager, '_persist_completed_results', AsyncMock()) as persist_mock:
-                        await manager._run_all_sides(worker)
+                with patch.object(manager, '_run_stage_extension_calibration_for_side', AsyncMock(side_effect=[44.0, 41.0])) as stage_mock:
+                    with patch.object(manager, '_apply_stage_extension_calibration_in_memory', AsyncMock()) as apply_stage_mock:
+                        with patch.object(manager, '_run_side', side_effect=did_run_side):
+                            with patch.object(manager, '_persist_completed_results', AsyncMock()) as persist_mock:
+                                await manager._run_all_sides(worker)
 
     assert processed_sides == [StorageModuleSide.RIGHT, StorageModuleSide.LEFT]
     assert apply_mock.await_count == 2
+    assert stage_mock.await_count == 2
+    assert apply_stage_mock.await_count == 2
     persist_mock.assert_awaited_once()
+
+    assert stage_mock.await_args_list[0].args[1] == StorageModuleSide.RIGHT
+    assert stage_mock.await_args_list[1].args[1] == StorageModuleSide.LEFT
+    assert stage_mock.await_args_list[0].kwargs['probe_y_mm'] == pytest.approx(left_angle_result.capture_y_mm)
+    assert stage_mock.await_args_list[1].kwargs['probe_y_mm'] == pytest.approx(left_angle_result.capture_y_mm)
 
     persisted_results = persist_mock.await_args.args[1]
 
     assert [result.side for result in persisted_results] == [StorageModuleSide.RIGHT, StorageModuleSide.LEFT]
     assert persisted_results[0].angle_result.updated_rotation_deg == pytest.approx(183.815)
+
+
+@pytest.mark.asyncio
+async def test_persist_completed_results_saves_stage_extensions() -> None:
+    manager = LaserAutoCalibrationManager()
+    manager._side_states['left_module'] = _SideState(stage_extension_mm=41.0)
+    manager._side_states['right_module'] = _SideState(stage_extension_mm=44.0)
+
+    params = Parameters.model_validate(
+        {
+            'IDLE_POSITION': [0, 0],
+            'PICKUP_POSITION_L': [0, 0],
+            'PICKUP_POSITION_H': [0, 0],
+            'SCAN_POSITION': [0, 0],
+            'STAGE_EXTENSION_IO_BOX': 0,
+            'STAGE_NUDGE': 0,
+            'STAGE_EXTENSION_SHELF_FRONT': 0,
+            'STAGE_EXTENSION_SHELF_BACK': 0,
+            'Z_EXTENSION_PICK': 0,
+            'Z_EXTENSION_PLACE': 0,
+            'Z_EXTENSION_IO': 0,
+            'Z_MOVE_RPM': 1,
+            'Z_MOVE_ACCEL': 1,
+            'ROTATION_FRONT': 0,
+            'ROTATION_BACK': 180,
+            'JOG_X': 0,
+            'JOG_Y': 0,
+            'PXMM': 1,
+            'PYMM': 1,
+        }
+    )
+    scan_config = SimpleNamespace()
+    config = SimpleNamespace(
+        robot=SimpleNamespace(
+            tool=SimpleNamespace(parameters=params),
+            grid=SimpleNamespace(path='storage.json', scan=scan_config),
+        )
+    )
+    config.model_copy = lambda deep=True: copy.deepcopy(config)
+
+    source_grid = SimpleNamespace(left_module=[], right_module=[], filename='storage.json', save=MagicMock())
+    reloaded_grid = SimpleNamespace()
+    saved_configs: list[object] = []
+    saved_storage_grids: list[object] = []
+
+    class FakeStorageGrid:
+        def __init__(self, *, left_module, right_module, filename) -> None:
+            self.left_module = left_module
+            self.right_module = right_module
+            self.filename = filename
+
+        def save(self) -> None:
+            saved_storage_grids.append(self)
+
+    worker = SimpleNamespace(_robot=SimpleNamespace(reload_parameters=MagicMock(), _grid=None))
+    analysis = SimpleNamespace(shelves=[object()], metadata_path=Path('/tmp/fake-metadata.json'))
+    completed_results = [
+        SimpleNamespace(
+            side=StorageModuleSide.LEFT,
+            angle_result=LaserAutoCalibrationAngleResult(
+                side='left_module',
+                alpha_deg=1.0,
+                sample_count=1,
+                capture_y_mm=100.0,
+                rms_residual_mm=0.1,
+                max_abs_residual_mm=0.2,
+                line_angle_deg=90.0,
+                previous_rotation_deg=0.0,
+                updated_rotation_deg=4.0,
+            ),
+            analysis=analysis,
+        ),
+        SimpleNamespace(
+            side=StorageModuleSide.RIGHT,
+            angle_result=LaserAutoCalibrationAngleResult(
+                side='right_module',
+                alpha_deg=1.0,
+                sample_count=1,
+                capture_y_mm=100.0,
+                rms_residual_mm=0.1,
+                max_abs_residual_mm=0.2,
+                line_angle_deg=90.0,
+                previous_rotation_deg=180.0,
+                updated_rotation_deg=184.0,
+            ),
+            analysis=analysis,
+        ),
+    ]
+
+    with patch('perpetual_os1_server.core.laser_auto_calibration.get_root_config', return_value=config):
+        with patch('perpetual_os1_server.core.laser_auto_calibration.resolve_grid_path', return_value='storage.json'):
+            with patch('perpetual_os1_server.core.laser_auto_calibration.laser_module.load_grid', side_effect=[source_grid, reloaded_grid]):
+                with patch('perpetual_os1_server.core.laser_auto_calibration.laser_module.build_shelves_from_scan', side_effect=[[object()], [object()]]):
+                    with patch('perpetual_os1_server.core.laser_auto_calibration.laser_module.apply_xy_reference_offsets'):
+                        with patch('perpetual_os1_server.core.laser_auto_calibration.laser_module.apply_wall_depth_z_offsets'):
+                            with patch('perpetual_os1_server.core.laser_auto_calibration.laser_module.StorageGrid', FakeStorageGrid):
+                                with patch('perpetual_os1_server.core.laser_auto_calibration.save_root_config', side_effect=lambda next_config: saved_configs.append(next_config)):
+                                    with patch('perpetual_os1_server.core.laser_auto_calibration.clear_config_cache'):
+                                        await manager._persist_completed_results(worker, completed_results)
+
+    assert len(saved_storage_grids) == 1
+    assert len(saved_configs) == 1
+    assert saved_configs[0].robot.tool.parameters.ROTATION_FRONT == pytest.approx(4.0)
+    assert saved_configs[0].robot.tool.parameters.ROTATION_BACK == pytest.approx(184.0)
+    assert saved_configs[0].robot.tool.parameters.STAGE_EXTENSION_SHELF_FRONT == pytest.approx(41.0)
+    assert saved_configs[0].robot.tool.parameters.STAGE_EXTENSION_SHELF_BACK == pytest.approx(44.0)
+    worker._robot.reload_parameters.assert_called_once_with()
+    assert worker._robot._grid is reloaded_grid
 
 
 @pytest.mark.asyncio

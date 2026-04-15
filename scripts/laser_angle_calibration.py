@@ -840,6 +840,7 @@ async def probe_stage_until_stall(
 	probe_step_mm: float,
 	fast_approach_mm: float,
 	fast_approach_rpm: int | None,
+	auto_retract: bool = True,
 ) -> tuple[bool, float, str, int | None]:
 	await tool._ms.move_to_position(retract_stage_mm)
 	await tool._ms.clear_alarm()
@@ -882,7 +883,10 @@ async def probe_stage_until_stall(
 				await asyncio.sleep(0.03)
 				stage_position_mm = await tool._ms.get_position()
 				await tool._ms.clear_alarm()
-				await tool._ms.move_to_position(retract_stage_mm, rpm=probe_rpm)
+
+				if auto_retract is True:
+					await tool._ms.move_to_position(retract_stage_mm, rpm=probe_rpm)
+
 				return True, float(stage_position_mm), 'alarm', int(alarm_code)
 
 			if stage_position_mm >= next_target_mm - target_tolerance_mm:
@@ -894,7 +898,10 @@ async def probe_stage_until_stall(
 				await asyncio.sleep(0.03)
 				stage_position_mm = await tool._ms.get_position()
 				await tool._ms.clear_alarm()
-				await tool._ms.move_to_position(retract_stage_mm, rpm=probe_rpm)
+
+				if auto_retract is True:
+					await tool._ms.move_to_position(retract_stage_mm, rpm=probe_rpm)
+
 				return True, float(stage_position_mm), 'no_progress', alarm_code
 
 			if now - start_time > timeout_s:
@@ -902,11 +909,17 @@ async def probe_stage_until_stall(
 				await asyncio.sleep(0.03)
 				stage_position_mm = await tool._ms.get_position()
 				await tool._ms.clear_alarm()
-				await tool._ms.move_to_position(retract_stage_mm, rpm=probe_rpm)
+
+				if auto_retract is True:
+					await tool._ms.move_to_position(retract_stage_mm, rpm=probe_rpm)
+
 				return True, float(stage_position_mm), 'timeout', alarm_code
 
 	stage_position_mm = await tool._ms.get_position()
-	await tool._ms.move_to_position(retract_stage_mm, rpm=probe_rpm)
+
+	if auto_retract is True:
+		await tool._ms.move_to_position(retract_stage_mm, rpm=probe_rpm)
+
 	return False, float(stage_position_mm), 'limit', None
 
 
