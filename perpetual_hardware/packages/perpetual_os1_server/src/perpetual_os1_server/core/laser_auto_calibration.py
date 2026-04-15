@@ -357,6 +357,7 @@ class LaserAutoCalibrationManager:
         self._snapshot = LaserAutoCalibrationSnapshot(updated_at=_get_timestamp())
         self._side_states: dict[str, _SideState] = {}
         self._active_worker: RobotWorker | None = None
+        self._abort_requested = False
         self._scans_dir = DEFAULT_SCANS_DIR
 
     async def get_snapshot(self) -> LaserAutoCalibrationSnapshot:
@@ -371,6 +372,7 @@ class LaserAutoCalibrationManager:
             started_at = _get_timestamp()
             self._side_states = {}
             self._active_worker = worker
+            self._abort_requested = False
             self._snapshot = LaserAutoCalibrationSnapshot(
                 state="starting",
                 session_id=uuid4().hex,
@@ -385,15 +387,17 @@ class LaserAutoCalibrationManager:
         return snapshot
 
     async def abort(self) -> LaserAutoCalibrationSnapshot:
-        task: asyncio.Task[None] | None = None
         worker: RobotWorker | None = None
 
         async with self._lock:
             if self._task is None or self._task.done() is True:
                 raise RuntimeError("No laser auto calibration session is running")
 
-            task = self._task
+            if self._snapshot.current_stage == "cancelling":
+                return self._snapshot.model_copy(deep=True)
+
             worker = self._active_worker
+            self._abort_requested = True
             self._task.cancel()
             self._snapshot.current_stage = "cancelling"
             self._snapshot.updated_at = _get_timestamp()
@@ -404,13 +408,7 @@ class LaserAutoCalibrationManager:
         if worker is not None:
             await worker._robot.stop()
 
-        if task is not None:
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-
-        return await self.get_snapshot()
+        return snapshot
 
     async def subscribe(self) -> tuple[asyncio.Queue[LaserAutoCalibrationSnapshot], LaserAutoCalibrationSnapshot]:
         queue: asyncio.Queue[LaserAutoCalibrationSnapshot] = asyncio.Queue(maxsize=20)
@@ -436,6 +434,12 @@ class LaserAutoCalibrationManager:
             await self._run_all_sides(worker)
             await self._set_terminal_state("completed", None)
         except asyncio.CancelledError:
+            current_task = asyncio.current_task()
+
+            if current_task is not None:
+                while current_task.cancelling() > 0:
+                    current_task.uncancel()
+
             self._restore_in_memory_rotations(worker, original_rotations)
 
             try:
@@ -448,7 +452,7 @@ class LaserAutoCalibrationManager:
                 return
 
             await self._set_terminal_state("cancelled", None)
-            raise
+            return
         except Exception as exc:
             self._restore_in_memory_rotations(worker, original_rotations)
             logger.error("laser_auto_calibration_failed", exc_info=True)
@@ -458,6 +462,7 @@ class LaserAutoCalibrationManager:
                 if self._snapshot.session_id == session_id:
                     self._task = None
                     self._active_worker = None
+                    self._abort_requested = False
 
     async def _run_all_sides(self, worker: RobotWorker) -> None:
         completed_results: list[_CompletedSideResult] = []
