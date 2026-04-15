@@ -979,12 +979,12 @@ class LaserAutoCalibrationManager:
         }
         output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         logger.info(
-            "laser_auto_calibration_angle_debug_written",
-            path=str(output_path),
-            side=side_name,
-            sample_count=len(samples),
-            has_fit_result=fit_result is not None,
-            error=error,
+            "laser_auto_calibration_angle_debug_written path=%s side=%s sample_count=%d has_fit_result=%s error=%s",
+            str(output_path),
+            side_name,
+            len(samples),
+            fit_result is not None,
+            error,
         )
         return output_path
 
