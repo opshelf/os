@@ -13,7 +13,9 @@ from perpetual_os1_server.core.laser_auto_calibration import (
     _build_angle_rotation_center_deg,
     _build_angle_x_positions,
     _build_angle_z_offset_positions,
+    _build_derived_right_angle_result,
     _SideState,
+    LaserAutoCalibrationAngleResult,
     LaserAutoCalibrationManager,
     _build_estimated_rotation_deg,
     _build_valid_rotation_positions,
@@ -124,7 +126,26 @@ def test_build_estimated_rotation_deg_offsets_previous_rotation() -> None:
 
     estimated_rotation_deg = _build_estimated_rotation_deg(172.8, fit_result)
 
-    assert estimated_rotation_deg == pytest.approx(168.6)
+    assert estimated_rotation_deg == pytest.approx(177.0)
+
+
+def test_build_derived_right_angle_result_uses_left_rotation_complement() -> None:
+    left_angle_result = LaserAutoCalibrationAngleResult(
+        side='left_module',
+        alpha_deg=3.815,
+        sample_count=45,
+        capture_y_mm=1095.0,
+        rms_residual_mm=0.1,
+        max_abs_residual_mm=0.2,
+        line_angle_deg=90.0,
+        previous_rotation_deg=0.0,
+        updated_rotation_deg=3.815,
+    )
+
+    right_angle_result = _build_derived_right_angle_result(180.0, left_angle_result)
+
+    assert right_angle_result.updated_rotation_deg == pytest.approx(176.185)
+    assert right_angle_result.previous_rotation_deg == pytest.approx(180.0)
 
 
 @pytest.mark.asyncio
@@ -200,24 +221,42 @@ async def test_run_session_cancel_marks_needs_home_without_abort_homing() -> Non
 @pytest.mark.asyncio
 async def test_run_all_sides_processes_right_before_left() -> None:
     manager = LaserAutoCalibrationManager()
-    worker = SimpleNamespace()
+    tool = SimpleNamespace(get_param=AsyncMock(return_value=180.0))
+    worker = SimpleNamespace(_robot=SimpleNamespace(_tool=tool))
     processed_sides: list[StorageModuleSide] = []
+    left_angle_result = LaserAutoCalibrationAngleResult(
+        side='left_module',
+        alpha_deg=3.815,
+        sample_count=45,
+        capture_y_mm=1095.0,
+        rms_residual_mm=0.1,
+        max_abs_residual_mm=0.2,
+        line_angle_deg=90.0,
+        previous_rotation_deg=0.0,
+        updated_rotation_deg=3.815,
+    )
 
-    async def did_run_side(current_worker, side: StorageModuleSide):
+    async def did_run_side(current_worker, side: StorageModuleSide, angle_result: LaserAutoCalibrationAngleResult):
         assert current_worker is worker
         processed_sides.append(side)
-        return SimpleNamespace(side=side)
 
-    with patch.object(manager, '_run_side', side_effect=did_run_side):
-        with patch.object(manager, '_persist_completed_results', AsyncMock()) as persist_mock:
-            await manager._run_all_sides(worker)
+        return SimpleNamespace(side=side, angle_result=angle_result)
+
+    with patch('perpetual_os1_server.core.laser_auto_calibration._build_bounds_for_side', return_value=ScanBounds(x_min=0.0, x_max=1.0, y_min=0.0, y_max=1.0)):
+        with patch.object(manager, '_run_angle_calibration_for_side', AsyncMock(return_value=left_angle_result)):
+            with patch.object(manager, '_apply_angle_calibration_in_memory', AsyncMock()) as apply_mock:
+                with patch.object(manager, '_run_side', side_effect=did_run_side):
+                    with patch.object(manager, '_persist_completed_results', AsyncMock()) as persist_mock:
+                        await manager._run_all_sides(worker)
 
     assert processed_sides == [StorageModuleSide.RIGHT, StorageModuleSide.LEFT]
+    assert apply_mock.await_count == 2
     persist_mock.assert_awaited_once()
 
     persisted_results = persist_mock.await_args.args[1]
 
     assert [result.side for result in persisted_results] == [StorageModuleSide.RIGHT, StorageModuleSide.LEFT]
+    assert persisted_results[0].angle_result.updated_rotation_deg == pytest.approx(176.185)
 
 
 @pytest.mark.asyncio

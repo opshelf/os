@@ -4,7 +4,6 @@ import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-import json
 import logging
 from pathlib import Path
 import re
@@ -242,7 +241,32 @@ def _build_angle_z_offset_positions(scan_config: Any) -> list[float]:
 
 
 def _build_estimated_rotation_deg(previous_rotation_deg: float, fit_result: Any) -> float:
-    return float(previous_rotation_deg) - float(fit_result.alpha_deg)
+    return float(previous_rotation_deg) + float(fit_result.alpha_deg)
+
+
+def _build_derived_right_angle_result(
+    previous_rotation_deg: float,
+    left_angle_result: LaserAutoCalibrationAngleResult,
+) -> LaserAutoCalibrationAngleResult:
+    updated_rotation_deg = 180.0 - float(left_angle_result.updated_rotation_deg)
+
+    if updated_rotation_deg < 0.0 or updated_rotation_deg > 180.0:
+        raise ValueError(
+            "derived right rotation is outside motor range "
+            f"({updated_rotation_deg:.3f} deg is outside 0..180)"
+        )
+
+    return LaserAutoCalibrationAngleResult(
+        side="right_module",
+        alpha_deg=float(left_angle_result.updated_rotation_deg),
+        sample_count=int(left_angle_result.sample_count),
+        capture_y_mm=float(left_angle_result.capture_y_mm),
+        rms_residual_mm=float(left_angle_result.rms_residual_mm),
+        max_abs_residual_mm=float(left_angle_result.max_abs_residual_mm),
+        line_angle_deg=float(left_angle_result.line_angle_deg),
+        previous_rotation_deg=float(previous_rotation_deg),
+        updated_rotation_deg=updated_rotation_deg,
+    )
 
 
 def _build_candidate_rows(
@@ -420,9 +444,31 @@ class LaserAutoCalibrationManager:
 
     async def _run_all_sides(self, worker: RobotWorker) -> None:
         completed_results: list[_CompletedSideResult] = []
+        scan_config = get_root_config().robot.grid.scan
+        left_bounds = _build_bounds_for_side(scan_config, StorageModuleSide.LEFT)
+        right_bounds = _build_bounds_for_side(scan_config, StorageModuleSide.RIGHT)
 
-        for side in [StorageModuleSide.RIGHT, StorageModuleSide.LEFT]:
-            completed_results.append(await self._run_side(worker, side))
+        left_angle_result = await self._run_angle_calibration_for_side(worker, StorageModuleSide.LEFT, left_bounds)
+        await self._apply_angle_calibration_in_memory(worker, StorageModuleSide.LEFT, left_angle_result)
+
+        previous_right_rotation_deg = float(await worker._robot._tool.get_param("ROTATION_BACK"))
+        right_angle_result = _build_derived_right_angle_result(previous_right_rotation_deg, left_angle_result)
+        await self._update_snapshot(
+            current_side="right_module",
+            current_stage="angle-calibration",
+            state="running",
+            bounds=right_bounds,
+            stage_detail={
+                "side": "right_module",
+                "phase": "angle-derived",
+                "source_side": "left_module",
+                "updated_rotation_deg": right_angle_result.updated_rotation_deg,
+            },
+        )
+        await self._apply_angle_calibration_in_memory(worker, StorageModuleSide.RIGHT, right_angle_result)
+
+        completed_results.append(await self._run_side(worker, StorageModuleSide.RIGHT, right_angle_result))
+        completed_results.append(await self._run_side(worker, StorageModuleSide.LEFT, left_angle_result))
 
         await self._persist_completed_results(worker, completed_results)
 
@@ -437,22 +483,18 @@ class LaserAutoCalibrationManager:
         worker.clear_needs_home()
         await worker.get_status_snapshot(force_refresh=True)
 
-    async def _run_side(self, worker: RobotWorker, side: StorageModuleSide) -> _CompletedSideResult:
+    async def _run_side(
+        self,
+        worker: RobotWorker,
+        side: StorageModuleSide,
+        angle_result: LaserAutoCalibrationAngleResult,
+    ) -> _CompletedSideResult:
         side_name = _side_to_module_name(side)
         config = get_root_config()
         scan_config = config.robot.grid.scan
         bounds = _build_bounds_for_side(scan_config, side)
         self._side_states.setdefault(side_name, _SideState(bounds=bounds))
 
-        await self._update_snapshot(
-            current_side=side_name,
-            current_stage="angle-calibration",
-            state="running",
-            bounds=bounds,
-            stage_detail={"side": side_name, "phase": "angle-calibration"},
-        )
-
-        angle_result = await self._run_angle_calibration_for_side(worker, side, bounds)
         await self._apply_angle_calibration_in_memory(worker, side, angle_result)
 
         config = get_root_config()
@@ -575,8 +617,6 @@ class LaserAutoCalibrationManager:
         previous_rotation_deg = float(await tool.get_param(rotation_param))
         rotation_center_deg = _build_angle_rotation_center_deg(side)
         rotation_positions = _build_valid_rotation_positions(scan_config, rotation_center_deg)
-        side_module_name = _side_to_module_name(side)
-
         z_extension_place = await tool.get_param("Z_EXTENSION_PLACE")
         z_move_rpm = await tool.get_param("Z_MOVE_RPM")
         z_move_accel = await tool.get_param("Z_MOVE_ACCEL")
@@ -594,12 +634,8 @@ class LaserAutoCalibrationManager:
 
         async with self._patch_status_callbacks(
             scan_callback=None,
-            angle_callback=self._build_angle_status_callback(side_module_name),
+            angle_callback=self._build_angle_status_callback(_side_to_module_name(side)),
         ):
-            fit_result: Any | None = None
-            capture_y_mm: float | None = None
-            angle_debug_error: str | None = None
-
             try:
                 await tool.retract()
                 capture_y_mm = await angle_module.resolve_capture_y_mm(
@@ -686,35 +722,8 @@ class LaserAutoCalibrationManager:
                     beam_zero_deg=float(scan_config.angle_calibration_beam_zero_deg),
                 )
                 angle_module.print_fit_result(fit_result)
-            except Exception as exc:
-                angle_debug_error = str(exc)
-                raise
             finally:
                 await tool.retract()
-
-                angle_debug_output_path = self._write_angle_debug_output(
-                    side_name=side_module_name,
-                    samples=samples,
-                    metadata={
-                        "session_id": self._snapshot.session_id,
-                        "config_path": str(get_config_path() or Path("data/config.json")),
-                        "previous_rotation_deg": previous_rotation_deg,
-                        "rotation_center_deg": rotation_center_deg,
-                        "capture_y_mm": capture_y_mm,
-                        "x_positions": [float(x_mm) for x_mm in x_positions],
-                        "rotation_positions": [float(rotation_deg) for rotation_deg in rotation_positions],
-                        "z_offset_positions": [float(z_offset_mm) for z_offset_mm in z_offset_positions],
-                        "stage_extension_mm": stage_extension_mm,
-                        "base_z_mm": base_z_mm,
-                        "laser_offset_x_mm": float(scan_config.laser_offset_x_mm),
-                        "laser_offset_z_mm": 0.0,
-                        "beam_zero_deg": float(scan_config.angle_calibration_beam_zero_deg),
-                        "bounds": bounds.model_dump(),
-                    },
-                    fit_result=fit_result,
-                    error=angle_debug_error,
-                )
-                angle_module.print_status(f"angle_debug_output={angle_debug_output_path}")
 
         updated_rotation_deg = _build_estimated_rotation_deg(previous_rotation_deg, fit_result)
 
@@ -922,71 +931,6 @@ class LaserAutoCalibrationManager:
 
     def _read_json(self, path: Path) -> dict[str, Any]:
         return __import__("json").loads(path.read_text(encoding="utf-8"))
-
-    def _build_angle_debug_output_path(self, side_name: str) -> Path:
-        session_id = self._snapshot.session_id or "unknown-session"
-        return Path(DEFAULT_SCANS_DIR) / ANGLE_DEBUG_DIR_NAME / f"{session_id}_{side_name}_angle.json"
-
-    def _write_angle_debug_output(
-        self,
-        *,
-        side_name: str,
-        samples: list[Any],
-        metadata: dict[str, Any],
-        fit_result: Any | None,
-        error: str | None,
-    ) -> Path:
-        output_path = self._build_angle_debug_output_path(side_name)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-
-        fit_payload: dict[str, Any] | None = None
-
-        if fit_result is not None:
-            fit_payload = {
-                "alpha_deg": float(fit_result.alpha_deg),
-                "sample_count": int(fit_result.sample_count),
-                "line": {
-                    "point_x_mm": float(fit_result.line.point_x_mm),
-                    "point_z_mm": float(fit_result.line.point_z_mm),
-                    "direction_x": float(fit_result.line.direction_x),
-                    "direction_z": float(fit_result.line.direction_z),
-                    "normal_x": float(fit_result.line.normal_x),
-                    "normal_z": float(fit_result.line.normal_z),
-                    "line_angle_deg": float(fit_result.line.line_angle_deg),
-                    "rms_residual_mm": float(fit_result.line.rms_residual_mm),
-                    "max_abs_residual_mm": float(fit_result.line.max_abs_residual_mm),
-                },
-            }
-
-        payload = {
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "side": side_name,
-            "metadata": metadata,
-            "samples": [
-                {
-                    "axis_x_mm": float(sample.axis_x_mm),
-                    "axis_z_mm": float(sample.axis_z_mm),
-                    "rotation_deg": float(sample.rotation_deg),
-                    "absolute_rotation_deg": float(sample.absolute_rotation_deg),
-                    "stage_extension_mm": float(sample.stage_extension_mm),
-                    "z_extension_mm": float(sample.z_extension_mm),
-                    "distance_mm": float(sample.distance_mm),
-                }
-                for sample in samples
-            ],
-            "fit_result": fit_payload,
-            "error": error,
-        }
-        output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        logger.info(
-            "laser_auto_calibration_angle_debug_written path=%s side=%s sample_count=%d has_fit_result=%s error=%s",
-            str(output_path),
-            side_name,
-            len(samples),
-            fit_result is not None,
-            error,
-        )
-        return output_path
 
     def _build_scan_status_callback(self, side_name: str, recorder: Any, bounds: ScanBounds):
         async def did_receive_status(message: str) -> None:
