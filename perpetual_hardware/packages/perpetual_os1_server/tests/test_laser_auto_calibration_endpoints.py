@@ -341,7 +341,7 @@ async def test_run_all_sides_processes_right_before_left() -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_angle_calibration_uses_current_rotation_as_capture_center() -> None:
+async def test_run_angle_calibration_uses_geometric_center_not_previous_rotation() -> None:
     manager = LaserAutoCalibrationManager()
     tool = SimpleNamespace(
         _laser_enabled=True,
@@ -381,7 +381,7 @@ async def test_run_angle_calibration_uses_current_rotation_as_capture_center() -
     )
     config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=scan_config)))
     fit_result = SimpleNamespace(
-        alpha_deg=0.0,
+        alpha_deg=3.815,
         sample_count=1,
         line=SimpleNamespace(rms_residual_mm=0.1, max_abs_residual_mm=0.2, line_angle_deg=90.0),
     )
@@ -398,9 +398,9 @@ async def test_run_angle_calibration_uses_current_rotation_as_capture_center() -
                                 ScanBounds(x_min=5.0, x_max=945.0, y_min=0.0, y_max=1200.0),
                             )
 
-    assert resolve_mock.await_args.kwargs['rotation_center_deg'] == pytest.approx(3.815)
+    assert resolve_mock.await_args.kwargs['rotation_center_deg'] == pytest.approx(0.0)
     assert result.previous_rotation_deg == pytest.approx(3.815)
-    assert result.alpha_deg == pytest.approx(0.0)
+    assert result.alpha_deg == pytest.approx(3.815)
     assert result.updated_rotation_deg == pytest.approx(3.815)
 
 
