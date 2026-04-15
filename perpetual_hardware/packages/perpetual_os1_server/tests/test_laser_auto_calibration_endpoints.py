@@ -312,7 +312,7 @@ async def test_run_all_sides_processes_right_before_left() -> None:
     with patch('perpetual_os1_server.core.laser_auto_calibration._build_bounds_for_side', return_value=ScanBounds(x_min=0.0, x_max=1.0, y_min=0.0, y_max=1.0)):
         with patch.object(manager, '_run_angle_calibration_for_side', AsyncMock(return_value=left_angle_result)):
             with patch.object(manager, '_apply_angle_calibration_in_memory', AsyncMock()) as apply_mock:
-                with patch.object(manager, '_resolve_stage_extension_probe_y_mm', AsyncMock(side_effect=[1070.0, 1098.0])) as probe_y_mock:
+                with patch.object(manager, '_resolve_stage_extension_probe_y_mm', AsyncMock(side_effect=[1148.0, 1120.0])) as probe_y_mock:
                     with patch.object(manager, '_run_stage_extension_calibration_for_side', AsyncMock(side_effect=[44.0, 41.0])) as stage_mock:
                         with patch.object(manager, '_apply_stage_extension_calibration_in_memory', AsyncMock()) as apply_stage_mock:
                             with patch.object(manager, '_run_side', side_effect=did_run_side):
@@ -328,8 +328,8 @@ async def test_run_all_sides_processes_right_before_left() -> None:
 
     assert stage_mock.await_args_list[0].args[1] == StorageModuleSide.RIGHT
     assert stage_mock.await_args_list[1].args[1] == StorageModuleSide.LEFT
-    assert stage_mock.await_args_list[0].kwargs['probe_y_mm'] == pytest.approx(1070.0)
-    assert stage_mock.await_args_list[1].kwargs['probe_y_mm'] == pytest.approx(1098.0)
+    assert stage_mock.await_args_list[0].kwargs['probe_y_mm'] == pytest.approx(1148.0)
+    assert stage_mock.await_args_list[1].kwargs['probe_y_mm'] == pytest.approx(1120.0)
     assert probe_y_mock.await_args_list[0].args[1] == StorageModuleSide.RIGHT
     assert probe_y_mock.await_args_list[1].args[1] == StorageModuleSide.LEFT
     assert probe_y_mock.await_args_list[1].kwargs['top_shelf_y_mm'] == pytest.approx(left_angle_result.capture_y_mm)
@@ -531,14 +531,14 @@ async def test_resolve_stage_extension_probe_y_uses_right_scout_and_offset() -> 
                 ScanBounds(x_min=5.0, x_max=945.0, y_min=0.0, y_max=1200.0),
             )
 
-    assert probe_y_mm == pytest.approx(1098.0)
+    assert probe_y_mm == pytest.approx(1148.0)
     assert resolve_mock.await_args.kwargs['rotation_center_deg'] == pytest.approx(187.655)
 
 
 def test_build_stage_extension_probe_y_offsets_top_shelf() -> None:
     bounds = ScanBounds(x_min=5.0, x_max=945.0, y_min=0.0, y_max=1200.0)
 
-    assert _build_stage_extension_probe_y_mm(1123.0, bounds) == pytest.approx(1098.0)
+    assert _build_stage_extension_probe_y_mm(1123.0, bounds) == pytest.approx(1148.0)
 
 
 @pytest.mark.asyncio
