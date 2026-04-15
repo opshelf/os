@@ -573,6 +573,7 @@ class LaserAutoCalibrationManager:
         previous_rotation_deg = float(await tool.get_param(rotation_param))
         rotation_center_deg = _build_angle_rotation_center_deg(side)
         rotation_positions = _build_valid_rotation_positions(scan_config, rotation_center_deg)
+        side_module_name = _side_to_module_name(side)
 
         z_extension_place = await tool.get_param("Z_EXTENSION_PLACE")
         z_move_rpm = await tool.get_param("Z_MOVE_RPM")
@@ -591,28 +592,32 @@ class LaserAutoCalibrationManager:
 
         async with self._patch_status_callbacks(
             scan_callback=None,
-            angle_callback=self._build_angle_status_callback(_side_to_module_name(side)),
+            angle_callback=self._build_angle_status_callback(side_module_name),
         ):
-            await tool.retract()
-            capture_y_mm = await angle_module.resolve_capture_y_mm(
-                tool,
-                args=angle_args,
-                scan_config=scan_config,
-                side_name=side_name,
-                side_number=side_number,
-                x_positions=x_positions,
-                rotation_center_deg=rotation_center_deg,
-                stage_extension_mm=stage_extension_mm,
-                base_z_mm=base_z_mm,
-                z_move_rpm=float(z_move_rpm),
-                z_move_accel=float(z_move_accel),
-                settle_ms=settle_ms,
-                samples_per_point=samples_per_point,
-            )
-            current_z_mm: float | None = None
-            current_absolute_rotation_deg: float | None = rotation_center_deg
+            fit_result: Any | None = None
+            capture_y_mm: float | None = None
+            angle_debug_error: str | None = None
 
             try:
+                await tool.retract()
+                capture_y_mm = await angle_module.resolve_capture_y_mm(
+                    tool,
+                    args=angle_args,
+                    scan_config=scan_config,
+                    side_name=side_name,
+                    side_number=side_number,
+                    x_positions=x_positions,
+                    rotation_center_deg=rotation_center_deg,
+                    stage_extension_mm=stage_extension_mm,
+                    base_z_mm=base_z_mm,
+                    z_move_rpm=float(z_move_rpm),
+                    z_move_accel=float(z_move_accel),
+                    settle_ms=settle_ms,
+                    samples_per_point=samples_per_point,
+                )
+                current_z_mm = None
+                current_absolute_rotation_deg: float | None = rotation_center_deg
+
                 for z_offset_mm in z_offset_positions:
                     target_z_mm = base_z_mm + float(z_offset_mm)
 
@@ -667,21 +672,47 @@ class LaserAutoCalibrationManager:
                             angle_module.print_status(
                                 f"sample=ok x={x_mm:.3f} z={target_z_mm:.3f} rotation_deg={rotation_deg:.3f} distance_mm={depth_mm:.3f}"
                             )
+                fit_result = angle_module.search_best_alpha(
+                    samples,
+                    alpha_min_deg=float(scan_config.angle_calibration_alpha_min_deg),
+                    alpha_max_deg=float(scan_config.angle_calibration_alpha_max_deg),
+                    coarse_step_deg=float(scan_config.angle_calibration_coarse_step_deg),
+                    fine_window_deg=float(scan_config.angle_calibration_fine_window_deg),
+                    fine_step_deg=float(scan_config.angle_calibration_fine_step_deg),
+                    laser_offset_x_mm=float(scan_config.laser_offset_x_mm),
+                    laser_offset_z_mm=0.0,
+                    beam_zero_deg=float(scan_config.angle_calibration_beam_zero_deg),
+                )
+                angle_module.print_fit_result(fit_result)
+            except Exception as exc:
+                angle_debug_error = str(exc)
+                raise
             finally:
                 await tool.retract()
 
-            fit_result = angle_module.search_best_alpha(
-                samples,
-                alpha_min_deg=float(scan_config.angle_calibration_alpha_min_deg),
-                alpha_max_deg=float(scan_config.angle_calibration_alpha_max_deg),
-                coarse_step_deg=float(scan_config.angle_calibration_coarse_step_deg),
-                fine_window_deg=float(scan_config.angle_calibration_fine_window_deg),
-                fine_step_deg=float(scan_config.angle_calibration_fine_step_deg),
-                laser_offset_x_mm=float(scan_config.laser_offset_x_mm),
-                laser_offset_z_mm=0.0,
-                beam_zero_deg=float(scan_config.angle_calibration_beam_zero_deg),
-            )
-            angle_module.print_fit_result(fit_result)
+                angle_debug_output_path = self._write_angle_debug_output(
+                    side_name=side_module_name,
+                    samples=samples,
+                    metadata={
+                        "session_id": self._snapshot.session_id,
+                        "config_path": str(get_config_path() or Path("data/config.json")),
+                        "previous_rotation_deg": previous_rotation_deg,
+                        "rotation_center_deg": rotation_center_deg,
+                        "capture_y_mm": capture_y_mm,
+                        "x_positions": [float(x_mm) for x_mm in x_positions],
+                        "rotation_positions": [float(rotation_deg) for rotation_deg in rotation_positions],
+                        "z_offset_positions": [float(z_offset_mm) for z_offset_mm in z_offset_positions],
+                        "stage_extension_mm": stage_extension_mm,
+                        "base_z_mm": base_z_mm,
+                        "laser_offset_x_mm": float(scan_config.laser_offset_x_mm),
+                        "laser_offset_z_mm": 0.0,
+                        "beam_zero_deg": float(scan_config.angle_calibration_beam_zero_deg),
+                        "bounds": bounds.model_dump(),
+                    },
+                    fit_result=fit_result,
+                    error=angle_debug_error,
+                )
+                angle_module.print_status(f"angle_debug_output={angle_debug_output_path}")
 
         updated_rotation_deg = _build_estimated_rotation_deg(previous_rotation_deg, fit_result)
 
