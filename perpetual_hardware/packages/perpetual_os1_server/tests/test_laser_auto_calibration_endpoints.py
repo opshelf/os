@@ -151,7 +151,7 @@ def test_build_derived_right_angle_result_uses_left_rotation_complement() -> Non
 @pytest.mark.asyncio
 async def test_home_after_abort_homes_tool_and_door() -> None:
     manager = LaserAutoCalibrationManager()
-    tool = SimpleNamespace(home=AsyncMock())
+    tool = SimpleNamespace(home=AsyncMock(), _mx=SimpleNamespace(move_to_position=AsyncMock()))
     io = SimpleNamespace(home_door=AsyncMock())
     worker = SimpleNamespace(
         _robot=SimpleNamespace(_tool=tool, _io=io),
@@ -161,6 +161,7 @@ async def test_home_after_abort_homes_tool_and_door() -> None:
 
     await manager._home_after_abort(worker)
 
+    tool._mx.move_to_position.assert_awaited_once_with(angle_module.RIGHT_MODULE_ROTATION_SAFE_X_MM)
     tool.home.assert_awaited_once()
     io.home_door.assert_awaited_once()
     worker.clear_needs_home.assert_called_once()
@@ -212,10 +213,10 @@ async def test_run_session_cancel_marks_needs_home_without_abort_homing() -> Non
                             await manager._run_session(worker, 'laser-session')
 
     restore_mock.assert_called_once_with(worker, {})
-    worker.set_needs_home.assert_called_once_with('Laser auto calibration aborted')
-    worker.get_status_snapshot.assert_awaited_once_with(force_refresh=True)
+    worker.set_needs_home.assert_not_called()
+    worker.get_status_snapshot.assert_not_awaited()
     terminal_mock.assert_awaited_once_with('cancelled', None)
-    home_mock.assert_not_awaited()
+    home_mock.assert_awaited_once_with(worker)
 
 
 @pytest.mark.asyncio
