@@ -144,7 +144,7 @@ def test_build_derived_right_angle_result_uses_left_rotation_complement() -> Non
 
     right_angle_result = _build_derived_right_angle_result(180.0, left_angle_result)
 
-    assert right_angle_result.updated_rotation_deg == pytest.approx(176.185)
+    assert right_angle_result.updated_rotation_deg == pytest.approx(183.815)
     assert right_angle_result.previous_rotation_deg == pytest.approx(180.0)
 
 
@@ -256,7 +256,7 @@ async def test_run_all_sides_processes_right_before_left() -> None:
     persisted_results = persist_mock.await_args.args[1]
 
     assert [result.side for result in persisted_results] == [StorageModuleSide.RIGHT, StorageModuleSide.LEFT]
-    assert persisted_results[0].angle_result.updated_rotation_deg == pytest.approx(176.185)
+    assert persisted_results[0].angle_result.updated_rotation_deg == pytest.approx(183.815)
 
 
 @pytest.mark.asyncio
