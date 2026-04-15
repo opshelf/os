@@ -427,8 +427,15 @@ class LaserAutoCalibrationManager:
             await self._set_terminal_state("completed", None)
         except asyncio.CancelledError:
             self._restore_in_memory_rotations(worker, original_rotations)
-            worker.set_needs_home("Laser auto calibration aborted")
-            await worker.get_status_snapshot(force_refresh=True)
+
+            try:
+                await self._home_after_abort(worker)
+            except Exception as exc:
+                logger.error("laser_auto_calibration_abort_home_failed", exc_info=True)
+                worker.set_needs_home("Laser auto calibration abort homing failed")
+                await worker.get_status_snapshot(force_refresh=True)
+                await self._set_terminal_state("failed", f"Abort homing failed: {exc}")
+                return
 
             await self._set_terminal_state("cancelled", None)
             raise
@@ -473,6 +480,9 @@ class LaserAutoCalibrationManager:
         await self._persist_completed_results(worker, completed_results)
 
     async def _home_after_abort(self, worker: RobotWorker) -> None:
+        if worker._robot._tool._mx is not None:
+            await worker._robot._tool._mx.move_to_position(angle_module.RIGHT_MODULE_ROTATION_SAFE_X_MM)
+
         await worker._robot._tool.home()
 
         try:
