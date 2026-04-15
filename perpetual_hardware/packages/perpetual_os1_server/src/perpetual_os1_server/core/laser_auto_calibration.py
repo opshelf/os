@@ -276,8 +276,8 @@ def _build_angle_z_offset_positions(scan_config: Any) -> list[float]:
     ]
 
 
-def _build_estimated_rotation_deg(previous_rotation_deg: float, fit_result: Any) -> float:
-    return float(previous_rotation_deg) + float(fit_result.alpha_deg)
+def _build_estimated_rotation_deg(rotation_center_deg: float, fit_result: Any) -> float:
+    return float(rotation_center_deg) + float(fit_result.alpha_deg)
 
 
 def _build_derived_right_angle_result(
@@ -701,7 +701,7 @@ class LaserAutoCalibrationManager:
         rotation_param = _side_to_rotation_param_name(side)
 
         previous_rotation_deg = float(await tool.get_param(rotation_param))
-        rotation_center_deg = previous_rotation_deg
+        rotation_center_deg = _build_angle_rotation_center_deg(side)
         rotation_positions = _build_valid_rotation_positions(scan_config, rotation_center_deg)
         z_extension_place = await tool.get_param("Z_EXTENSION_PLACE")
         z_move_rpm = await tool.get_param("Z_MOVE_RPM")
@@ -811,7 +811,7 @@ class LaserAutoCalibrationManager:
             finally:
                 await tool.retract()
 
-        updated_rotation_deg = _build_estimated_rotation_deg(previous_rotation_deg, fit_result)
+        updated_rotation_deg = _build_estimated_rotation_deg(rotation_center_deg, fit_result)
 
         if updated_rotation_deg < 0.0 or updated_rotation_deg > 180.0:
             raise ValueError(
