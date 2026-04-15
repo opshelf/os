@@ -13,6 +13,7 @@ from perpetual_os1_server.core.laser_auto_calibration import (
     _build_angle_rotation_center_deg,
     _build_angle_x_positions,
     _build_angle_z_offset_positions,
+    _build_bounds_for_side,
     _build_derived_right_angle_result,
     _SideState,
     LaserAutoCalibrationAngleResult,
@@ -119,6 +120,25 @@ def test_build_angle_rotation_center_deg_uses_front_for_left() -> None:
 
 def test_build_angle_rotation_center_deg_uses_back_for_right() -> None:
     assert _build_angle_rotation_center_deg(StorageModuleSide.RIGHT) == 180.0
+
+
+def test_build_bounds_for_side_clamps_x_min_away_from_zero() -> None:
+    scan_config = SimpleNamespace(
+        left_bounds_x_min_mm=0.0,
+        left_bounds_x_max_mm=945.0,
+        left_bounds_y_min_mm=0.0,
+        left_bounds_y_max_mm=1200.0,
+        right_bounds_x_min_mm=0.0,
+        right_bounds_x_max_mm=945.0,
+        right_bounds_y_min_mm=0.0,
+        right_bounds_y_max_mm=1200.0,
+    )
+
+    left_bounds = _build_bounds_for_side(scan_config, StorageModuleSide.LEFT)
+    right_bounds = _build_bounds_for_side(scan_config, StorageModuleSide.RIGHT)
+
+    assert left_bounds.x_min == pytest.approx(5.0)
+    assert right_bounds.x_min == pytest.approx(5.0)
 
 
 def test_build_estimated_rotation_deg_offsets_previous_rotation() -> None:

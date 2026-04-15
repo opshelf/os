@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 ACTIVE_SESSION_STATES = {"starting", "running", "applying"}
 DEFAULT_SCANS_DIR = "/tmp"
+AUTO_SCAN_X_MIN_MM = 5.0
 RIGHT_AUTO_SCAN_X_MAX_MM = 945.0
 ANGLE_DEBUG_DIR_NAME = "laser_auto_calibration_debug"
 
@@ -168,13 +169,16 @@ def _build_angle_rotation_center_deg(side: StorageModuleSide) -> float:
 def _build_bounds_for_side(scan_config: Any, side: StorageModuleSide) -> ScanBounds:
     prefix = "left" if side == StorageModuleSide.LEFT else "right"
 
+    x_min_mm = float(getattr(scan_config, f"{prefix}_bounds_x_min_mm"))
     x_max_mm = float(getattr(scan_config, f"{prefix}_bounds_x_max_mm"))
+
+    x_min_mm = max(x_min_mm, AUTO_SCAN_X_MIN_MM)
 
     if side == StorageModuleSide.RIGHT:
         x_max_mm = min(x_max_mm, RIGHT_AUTO_SCAN_X_MAX_MM)
 
     return ScanBounds(
-        x_min=float(getattr(scan_config, f"{prefix}_bounds_x_min_mm")),
+        x_min=x_min_mm,
         x_max=x_max_mm,
         y_min=float(getattr(scan_config, f"{prefix}_bounds_y_min_mm")),
         y_max=float(getattr(scan_config, f"{prefix}_bounds_y_max_mm")),
