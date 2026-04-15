@@ -4,7 +4,12 @@ from unittest.mock import AsyncMock
 import pytest
 
 from perpetual_os1.exceptions import ConfigError
-from perpetual_os1.tool import ROTATION_SAFE_STAGE_EXTENSION_MM, Tool, ToolItemStatus
+from perpetual_os1.tool import (
+    ROTATION_HOME_SAFE_X_MM,
+    ROTATION_SAFE_STAGE_EXTENSION_MM,
+    Tool,
+    ToolItemStatus,
+)
 
 
 def _mock_stage_motor(limit: float = 50.0, position: float = 0.0) -> AsyncMock:
@@ -59,6 +64,7 @@ async def test_home_retracts_stage_after_safe_rotation_extension() -> None:
     stage_motor.move_to_position = AsyncMock(side_effect=lambda position: events.append(f'stage_move:{position}'))
 
     rotate_motor = AsyncMock()
+    rotate_motor.get_position = AsyncMock(return_value=0.0)
     rotate_motor.home = AsyncMock(side_effect=lambda: events.append('rotate_home'))
 
     tool = Tool.__new__(Tool)
@@ -68,6 +74,7 @@ async def test_home_retracts_stage_after_safe_rotation_extension() -> None:
     tool._mx = None
     tool._my = None
     tool._istatus = ToolItemStatus.EMPTY
+    tool.get_param = AsyncMock(return_value=0.0)
     tool._handle_fault = AsyncMock()
 
     await tool.home()
@@ -79,3 +86,93 @@ async def test_home_retracts_stage_after_safe_rotation_extension() -> None:
         'stage_home',
     ]
     assert stage_motor.home.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_home_moves_x_before_rotate_home_when_rotation_is_past_front() -> None:
+    events: list[str] = []
+
+    stage_motor = _mock_stage_motor(position=0.0)
+    stage_motor.home = AsyncMock(side_effect=lambda: events.append('stage_home'))
+
+    z_motor = AsyncMock()
+    z_motor.home = AsyncMock(side_effect=lambda: events.append('z_home'))
+
+    rotate_motor = AsyncMock()
+    rotate_motor.get_position = AsyncMock(return_value=15.0)
+    rotate_motor.home = AsyncMock(side_effect=lambda: events.append('rotate_home'))
+
+    x_motor = AsyncMock()
+    x_motor.move_to_position = AsyncMock(side_effect=lambda position: events.append(f'x_move:{position}'))
+    x_motor.home = AsyncMock(side_effect=lambda: events.append('x_home'))
+
+    y_motor = AsyncMock()
+    y_motor.home = AsyncMock(side_effect=lambda: events.append('y_home'))
+
+    tool = Tool.__new__(Tool)
+    tool._ms = stage_motor
+    tool._mg = z_motor
+    tool._mr = rotate_motor
+    tool._mx = x_motor
+    tool._my = y_motor
+    tool._istatus = ToolItemStatus.EMPTY
+    tool.get_param = AsyncMock(return_value=0.0)
+    tool._handle_fault = AsyncMock()
+    tool.ensure_safe_rotation_stage_extension = AsyncMock(return_value=False)
+
+    await tool.home()
+
+    assert events == [
+        'stage_home',
+        'z_home',
+        f'x_move:{ROTATION_HOME_SAFE_X_MM}',
+        'rotate_home',
+        'x_home',
+        'y_home',
+    ]
+    tool.get_param.assert_awaited_once_with('ROTATION_FRONT')
+    rotate_motor.get_position.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_home_does_not_move_x_before_rotate_home_when_rotation_is_at_front() -> None:
+    events: list[str] = []
+
+    stage_motor = _mock_stage_motor(position=0.0)
+    stage_motor.home = AsyncMock(side_effect=lambda: events.append('stage_home'))
+
+    z_motor = AsyncMock()
+    z_motor.home = AsyncMock(side_effect=lambda: events.append('z_home'))
+
+    rotate_motor = AsyncMock()
+    rotate_motor.get_position = AsyncMock(return_value=0.0)
+    rotate_motor.home = AsyncMock(side_effect=lambda: events.append('rotate_home'))
+
+    x_motor = AsyncMock()
+    x_motor.move_to_position = AsyncMock(side_effect=lambda position: events.append(f'x_move:{position}'))
+    x_motor.home = AsyncMock(side_effect=lambda: events.append('x_home'))
+
+    y_motor = AsyncMock()
+    y_motor.home = AsyncMock(side_effect=lambda: events.append('y_home'))
+
+    tool = Tool.__new__(Tool)
+    tool._ms = stage_motor
+    tool._mg = z_motor
+    tool._mr = rotate_motor
+    tool._mx = x_motor
+    tool._my = y_motor
+    tool._istatus = ToolItemStatus.EMPTY
+    tool.get_param = AsyncMock(return_value=0.0)
+    tool._handle_fault = AsyncMock()
+    tool.ensure_safe_rotation_stage_extension = AsyncMock(return_value=False)
+
+    await tool.home()
+
+    assert events == [
+        'stage_home',
+        'z_home',
+        'rotate_home',
+        'x_home',
+        'y_home',
+    ]
+    x_motor.move_to_position.assert_not_awaited()

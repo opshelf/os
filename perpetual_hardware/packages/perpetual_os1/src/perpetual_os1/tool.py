@@ -78,6 +78,7 @@ GRID_UPDATE_TIMEOUT_PER_SHELF = 60.0
 GANTRY_OUTER_TIMEOUT = 120.0
 TOOL_OUTER_TIMEOUT = 60.0
 ROTATION_SAFE_STAGE_EXTENSION_MM = 8.5
+ROTATION_HOME_SAFE_X_MM = 475.0
 
 class Tool:
     def __init__(
@@ -229,6 +230,14 @@ class Tool:
             if self._mg is not None:
                 await self._mg.home()
             if self._mr is not None:
+
+                if self._mx is not None:
+                    rotation_front = await self.get_param("ROTATION_FRONT")
+                    current_rotation = await self._mr.get_position()
+
+                    if current_rotation > rotation_front:
+                        await self._mx.move_to_position(ROTATION_HOME_SAFE_X_MM)
+
                 did_extend_stage = await self.ensure_safe_rotation_stage_extension()
                 await self._mr.home()
                 if did_extend_stage is True and self._ms is not None:
