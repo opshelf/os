@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 ACTIVE_SESSION_STATES = {"starting", "running", "applying"}
 DEFAULT_SCANS_DIR = "/tmp"
-RIGHT_AUTO_SCAN_X_MAX_MM = 900.0
+RIGHT_AUTO_SCAN_X_MAX_MM = 945.0
 ANGLE_DEBUG_DIR_NAME = "laser_auto_calibration_debug"
 
 ANGLE_CAPTURE_RE = re.compile(
