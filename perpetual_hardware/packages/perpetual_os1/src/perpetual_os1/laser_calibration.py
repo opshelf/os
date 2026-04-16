@@ -67,6 +67,30 @@ DEFAULT_Z_REFERENCE_BY_SIDE: dict[StorageModuleSide, tuple[int, int, float, floa
 }
 
 
+def should_skip_motion_cleanup_on_cancel() -> bool:
+	_, active_exception, _ = sys.exc_info()
+
+	if isinstance(active_exception, asyncio.CancelledError) is True:
+		return True
+
+	current_task = asyncio.current_task()
+
+	if current_task is None:
+		return False
+
+	return current_task.cancelling() > 0
+
+
+def raise_if_cancelled(should_abort: Callable[[], bool] | None = None) -> None:
+	if should_abort is not None and should_abort() is True:
+		raise asyncio.CancelledError()
+
+	current_task = asyncio.current_task()
+
+	if current_task is not None and current_task.cancelling() > 0:
+		raise asyncio.CancelledError()
+
+
 def get_scan_stage_extension_mm(scan_config: Any) -> float:
 	configured_value = getattr(scan_config, "scan_stage_extension_mm", None)
 
@@ -543,12 +567,13 @@ async def run_with_temp_robot_config(
 		try:
 			return await didRun(robot)
 		finally:
-			if shutdown_action == "stop":
-				print_status("phase=robot-stop")
-				await robot.stop()
-			else:
-				print_status("phase=robot-shutdown")
-				await robot.shutdown()
+			if should_skip_motion_cleanup_on_cancel() is False:
+				if shutdown_action == "stop":
+					print_status("phase=robot-stop")
+					await robot.stop()
+				else:
+					print_status("phase=robot-shutdown")
+					await robot.shutdown()
 	finally:
 		common_module.CONFIG_PATH = original_common_config_path
 		robot_module.CONFIG_PATH = original_robot_config_path
@@ -1199,6 +1224,7 @@ async def capture_shelf_candidates(
 	recorder: StagedScanRecorder,
 	shelf_scout_only: bool,
 	known_shelf_edge_y: Optional[list[float]],
+	should_abort: Callable[[], bool] | None = None,
 ) -> tuple[GridScanResult, float, list[GapCandidateRegion], list[ShelfSurfaceEdge]]:
 	coarse_scan = create_sparse_shelf_scan(bounds=bounds)
 	scout_x_positions = build_shelf_scout_x_positions(bounds=bounds, side=side)
@@ -1237,10 +1263,12 @@ async def capture_shelf_candidates(
 		is_y_brake_disabled = False
 
 		try:
+			raise_if_cancelled(should_abort)
 			await set_y_brake_for_scan_motion(tool, is_enabled=False)
 			is_y_brake_disabled = True
 
 			for scout_idx, scout_x_mm in enumerate(scout_x_positions, start=1):
+				raise_if_cancelled(should_abort)
 				print_status(f"phase=shelf-scout scout={scout_idx}/{len(scout_x_positions)} x={scout_x_mm:.2f}")
 
 				scout_depth_values, scout_edges = await scan_shelf_scout_line(
@@ -1250,7 +1278,9 @@ async def capture_shelf_candidates(
 					settle_ms=settle_ms,
 					samples_per_point=samples_per_point,
 					progress_label=f"shelf_scout_{scout_idx}",
+					should_abort=should_abort,
 				)
+				raise_if_cancelled(should_abort)
 				merge_line_scan_into_sparse_scan(
 					coarse_scan,
 					axis="y",
@@ -1302,7 +1332,9 @@ async def capture_shelf_candidates(
 		return coarse_scan, 0.0, [], filtered_shelf_edges
 
 	for shelf_idx, shelf_edge in enumerate(filtered_shelf_edges, start=1):
+		raise_if_cancelled(should_abort)
 		for offset_idx, offset_mm in enumerate(hole_sweep_offsets_mm, start=1):
+			raise_if_cancelled(should_abort)
 			sweep_y_mm = shelf_edge.y_mm + offset_mm
 
 			if sweep_y_mm < bounds.y_min or sweep_y_mm > bounds.y_max:
@@ -1320,7 +1352,9 @@ async def capture_shelf_candidates(
 				settle_ms=settle_ms,
 				samples_per_point=samples_per_point,
 				progress_label=f"shelf_{shelf_idx}_offset_{offset_idx}",
+				should_abort=should_abort,
 			)
+			raise_if_cancelled(should_abort)
 			merge_line_scan_into_sparse_scan(
 				coarse_scan,
 				axis="x",
@@ -1854,10 +1888,13 @@ async def sample_scan_point(
 	y_mm: float,
 	settle_ms: int,
 	samples_per_point: int,
+	should_abort: Callable[[], bool] | None = None,
 ) -> float | None:
+	raise_if_cancelled(should_abort)
 	await tool._my.move_to_position_no_wait(y_mm)
 	await tool._mx.move_to_position_no_wait(x_mm)
-	await tool.gantry_wait()
+	await tool.gantry_wait(should_abort=should_abort)
+	raise_if_cancelled(should_abort)
 	return await sample_laser_depth(
 		tool,
 		settle_ms=settle_ms,
@@ -1878,6 +1915,7 @@ async def find_hole_interior_idx_from_seed(
 	samples_per_point: int,
 	wall_depth_mm: float,
 	on_update: Optional[Callable[[GridScanResult, str, float], None]] = None,
+	should_abort: Callable[[], bool] | None = None,
 ) -> Optional[int]:
 	sampled_count = 0
 	sampled_depths: dict[int, float | None] = {}
@@ -1906,6 +1944,7 @@ async def find_hole_interior_idx_from_seed(
 			y_mm=y_mm,
 			settle_ms=settle_ms,
 			samples_per_point=samples_per_point,
+			should_abort=should_abort,
 		)
 
 		set_scan_point(
@@ -1931,6 +1970,7 @@ async def find_hole_interior_idx_from_seed(
 		return depth_mm
 
 	for position_idx in range(start_idx, -1, -1):
+		raise_if_cancelled(should_abort)
 		depth_mm = await didSample(position_idx)
 
 		if is_hole_interior_depth(
@@ -1940,6 +1980,7 @@ async def find_hole_interior_idx_from_seed(
 			return position_idx
 
 	for position_idx in range(start_idx + 1, len(positions)):
+		raise_if_cancelled(should_abort)
 		depth_mm = await didSample(position_idx)
 
 		if is_hole_interior_depth(
@@ -1961,11 +2002,13 @@ async def scan_line_positions(
 	samples_per_point: int,
 	progress_label: str,
 	progress_every: int = 25,
+	should_abort: Callable[[], bool] | None = None,
 ) -> list[float | None]:
 	if len(positions) == 0:
 		return []
 
 	first_position_mm = positions[0]
+	raise_if_cancelled(should_abort)
 
 	if axis == "x":
 		await tool._my.move_to_position_no_wait(fixed_mm)
@@ -1974,19 +2017,20 @@ async def scan_line_positions(
 		await tool._mx.move_to_position_no_wait(fixed_mm)
 		await tool._my.move_to_position_no_wait(first_position_mm)
 
-	await tool.gantry_wait()
+	await tool.gantry_wait(should_abort=should_abort)
 
 	depth_values: list[float | None] = []
 
 	for position_idx, position_mm in enumerate(positions):
+		raise_if_cancelled(should_abort)
 		if position_idx > 0:
 			if axis == "x":
 				await tool._mx.move_to_position_no_wait(position_mm)
 			else:
 				await tool._my.move_to_position_no_wait(position_mm)
 
-			await tool.gantry_wait()
-
+			await tool.gantry_wait(should_abort=should_abort)
+		raise_if_cancelled(should_abort)
 		depth_mm = await sample_laser_depth(
 			tool,
 			settle_ms=settle_ms,
@@ -2023,13 +2067,15 @@ async def scan_shelf_scout_line(
 	samples_per_point: int,
 	progress_label: str,
 	progress_every: int = 25,
+	should_abort: Callable[[], bool] | None = None,
 ) -> tuple[list[float | None], list[ShelfSurfaceEdge]]:
 	if len(y_positions) == 0:
 		return [], []
 
+	raise_if_cancelled(should_abort)
 	await tool._mx.move_to_position_no_wait(x_mm)
 	await tool._my.move_to_position_no_wait(y_positions[0])
-	await tool.gantry_wait()
+	await tool.gantry_wait(should_abort=should_abort)
 
 	depth_values: list[float | None] = [None for _ in y_positions]
 	detected_edges: list[ShelfSurfaceEdge] = []
@@ -2039,12 +2085,14 @@ async def scan_shelf_scout_line(
 	run_end_idx: Optional[int] = None
 
 	while position_idx < len(y_positions):
+		raise_if_cancelled(should_abort)
 		y_mm = y_positions[position_idx]
 
 		if position_idx > 0:
 			await tool._my.move_to_position_no_wait(y_mm)
-			await tool.gantry_wait()
+			await tool.gantry_wait(should_abort=should_abort)
 
+		raise_if_cancelled(should_abort)
 		depth_mm = await sample_laser_depth(
 			tool,
 			settle_ms=settle_ms,
@@ -2165,6 +2213,7 @@ async def probe_line_from_center(
 	wall_depth_mm: float,
 	expected_span_mm: float,
 	on_update: Optional[Callable[[GridScanResult, str, float], None]] = None,
+	should_abort: Callable[[], bool] | None = None,
 ) -> Optional[LineGapSegment]:
 	left_gap_idx: Optional[int] = None
 	right_gap_idx: Optional[int] = None
@@ -2193,6 +2242,7 @@ async def probe_line_from_center(
 			y_mm=y_mm,
 			settle_ms=settle_ms,
 			samples_per_point=samples_per_point,
+			should_abort=should_abort,
 		)
 		set_scan_point(
 			base_scan,
@@ -2213,6 +2263,7 @@ async def probe_line_from_center(
 
 		return depth_mm
 
+	raise_if_cancelled(should_abort)
 	center_depth_mm = await didSample(center_idx)
 
 	if is_hole_interior_depth(
@@ -2225,6 +2276,7 @@ async def probe_line_from_center(
 	right_gap_idx = center_idx
 
 	for position_idx in range(center_idx - 1, -1, -1):
+		raise_if_cancelled(should_abort)
 		depth_mm = await didSample(position_idx)
 
 		if is_hole_interior_depth(
@@ -2251,6 +2303,7 @@ async def probe_line_from_center(
 		found_estimated_interior_idx: Optional[int] = None
 
 		for position_idx in range(estimated_right_idx, search_floor_idx - 1, -1):
+			raise_if_cancelled(should_abort)
 			depth_mm = await didSample(position_idx)
 
 			if is_hole_interior_depth(
@@ -2267,6 +2320,7 @@ async def probe_line_from_center(
 			right_search_start_idx = found_estimated_interior_idx + 1
 
 	for position_idx in range(right_search_start_idx, len(positions)):
+		raise_if_cancelled(should_abort)
 		depth_mm = await didSample(position_idx)
 
 		if is_hole_interior_depth(
@@ -2466,6 +2520,7 @@ async def capture_cross_scan(
 	scan_config: Any,
 	progress_prefix: str,
 	on_update: Optional[Callable[[GridScanResult, str, float], None]] = None,
+	should_abort: Callable[[], bool] | None = None,
 ) -> tuple[GridScanResult, list[ScanDetectedCell]]:
 	fine_scan = create_empty_grid_scan(
 		bounds=bounds,
@@ -2487,6 +2542,7 @@ async def capture_cross_scan(
 	horizontal_probe_indices: list[int] = []
 
 	for target_y_mm in horizontal_probe_targets:
+		raise_if_cancelled(should_abort)
 		row_idx = find_nearest_position_index(y_positions, target_y_mm)
 
 		if row_idx in horizontal_probe_indices:
@@ -2497,6 +2553,7 @@ async def capture_cross_scan(
 	horizontal_segment: Optional[LineGapSegment] = None
 
 	for probe_idx, row_idx in enumerate(horizontal_probe_indices, start=1):
+		raise_if_cancelled(should_abort)
 		y_mm = y_positions[row_idx]
 		center_x_idx = find_nearest_position_index(x_positions, candidate_center_x_mm)
 		horizontal_segment = await probe_line_from_center(
@@ -2513,6 +2570,7 @@ async def capture_cross_scan(
 			wall_depth_mm=wall_depth_mm,
 			expected_span_mm=scan_config.expected_hole_width_mm,
 			on_update=on_update,
+			should_abort=should_abort,
 		)
 
 		if horizontal_segment is None:
@@ -2537,6 +2595,7 @@ async def capture_cross_scan(
 		samples_per_point=samples_per_point,
 		wall_depth_mm=wall_depth_mm,
 		on_update=on_update,
+		should_abort=should_abort,
 	)
 
 	if vertical_seed_idx is None:
@@ -2556,6 +2615,7 @@ async def capture_cross_scan(
 		wall_depth_mm=wall_depth_mm,
 		expected_span_mm=scan_config.expected_hole_height_mm,
 		on_update=on_update,
+		should_abort=should_abort,
 	)
 
 	if vertical_segment is None:
@@ -2577,6 +2637,7 @@ async def capture_cross_scan(
 		wall_depth_mm=wall_depth_mm,
 		expected_span_mm=scan_config.expected_hole_width_mm,
 		on_update=on_update,
+		should_abort=should_abort,
 	)
 
 	if refined_horizontal_segment is not None:
@@ -2716,6 +2777,7 @@ async def run_staged_scan(
 	seeded_candidates: Optional[list[GapCandidateRegion]] = None,
 	seeded_wall_depth_mm: float | None = None,
 	recorder: Optional[StagedScanRecorder] = None,
+	should_abort: Callable[[], bool] | None = None,
 ) -> ScanAnalysisResult:
 	tool = robot._tool
 	if recorder is None:
@@ -2802,6 +2864,7 @@ async def run_staged_scan(
 		)
 
 	try:
+		raise_if_cancelled(should_abort)
 		if scan_started_at is None:
 			scan_started_at = get_current_timestamp()
 			persist_scan_started_at(
@@ -2810,6 +2873,7 @@ async def run_staged_scan(
 			)
 
 		await enter_scan_mode(tool, side, scan_config)
+		raise_if_cancelled(should_abort)
 		if len(candidates) == 0:
 			if seeded_candidates is not None and len(seeded_candidates) > 0:
 				candidates = list(seeded_candidates)
@@ -2867,7 +2931,9 @@ async def run_staged_scan(
 					recorder=recorder,
 					shelf_scout_only=shelf_scout_only,
 					known_shelf_edge_y=known_shelf_edge_y,
+					should_abort=should_abort,
 				)
+				raise_if_cancelled(should_abort)
 
 				print_status("phase=coarse-detect")
 				print_status(
@@ -2902,10 +2968,12 @@ async def run_staged_scan(
 
 		try:
 			if len(candidates) > 0:
+				raise_if_cancelled(should_abort)
 				await set_y_brake_for_scan_motion(tool, is_enabled=False)
 				is_y_brake_disabled = True
 
 			for candidate_idx, candidate in enumerate(candidates, start=1):
+				raise_if_cancelled(should_abort)
 				if candidate_idx <= len(fine_entries):
 					existing_fine_entry = fine_entries[candidate_idx - 1]
 				else:
@@ -2975,7 +3043,9 @@ async def run_staged_scan(
 					scan_config=scan_config,
 					progress_prefix=f"fine_{candidate_idx}",
 					on_update=didUpdateFineScan,
+					should_abort=should_abort,
 				)
+				raise_if_cancelled(should_abort)
 
 				if len(detected_cells) == 0:
 					retry_fine_bounds = build_fine_scan_retry_bounds(
@@ -3002,7 +3072,9 @@ async def run_staged_scan(
 							scan_config=scan_config,
 							progress_prefix=f"fine_{candidate_idx}_retry",
 							on_update=didUpdateFineScan,
+							should_abort=should_abort,
 						)
+						raise_if_cancelled(should_abort)
 						selected_fine_bounds = retry_fine_bounds
 
 				print_status(
@@ -3041,8 +3113,10 @@ async def run_staged_scan(
 			if is_y_brake_disabled is True:
 				await set_y_brake_for_scan_motion(tool, is_enabled=True)
 	finally:
-		await tool.retract()
 		CURRENT_SCAN_LOG_PATH = previous_scan_log_path
+
+		if should_skip_motion_cleanup_on_cancel() is False:
+			await tool.retract()
 
 	deduped_cells = dedupe_detected_cells(
 		all_detected_cells,

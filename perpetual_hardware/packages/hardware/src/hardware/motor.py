@@ -787,7 +787,12 @@ class Motor():
                 raise MotorError(f"Failed to get parameter {register}: {str(e)}") from e
             raise
     
-    async def wait_for_move(self, timeout: float = MOTOR_WAIT_TIMEOUT, homing: bool = False) -> MotorStatus:
+    async def wait_for_move(
+        self,
+        timeout: float = MOTOR_WAIT_TIMEOUT,
+        homing: bool = False,
+        should_abort: Callable[[], bool] | None = None,
+    ) -> MotorStatus:
         """Wait for motor movement to complete.
         
         Args:
@@ -811,6 +816,20 @@ class Motor():
             extra={"motor_id": self._motor_id, "timeout": timeout, "homing": homing},
         )
         while True:
+            current_task = asyncio.current_task()
+
+            if should_abort is not None and should_abort() is True:
+                await self.stop()
+                self._pending_motion = None
+                self._target_pos = None
+                raise asyncio.CancelledError()
+
+            if current_task is not None and current_task.cancelling() > 0:
+                await self.stop()
+                self._pending_motion = None
+                self._target_pos = None
+                raise asyncio.CancelledError()
+
             status_reg = getattr(self._params, "status_reg", 0x1003)
             status = await self._controller.read_holding_registers(self._motor_id, status_reg)
             if status is None:

@@ -92,6 +92,20 @@ def get_current_timestamp() -> str:
 	return datetime.now(timezone.utc).isoformat()
 
 
+def should_skip_motion_cleanup_on_cancel() -> bool:
+	_, active_exception, _ = sys.exc_info()
+
+	if isinstance(active_exception, asyncio.CancelledError) is True:
+		return True
+
+	current_task = asyncio.current_task()
+
+	if current_task is None:
+		return False
+
+	return current_task.cancelling() > 0
+
+
 def print_status(message: str) -> None:
 	print(message, flush=True)
 
@@ -555,12 +569,13 @@ async def run_with_temp_robot_config(
 		try:
 			return await did_run(robot)
 		finally:
-			if shutdown_action == 'stop':
-				print_status('phase=robot-stop')
-				await robot.stop()
-			else:
-				print_status('phase=robot-shutdown')
-				await robot.shutdown()
+			if should_skip_motion_cleanup_on_cancel() is False:
+				if shutdown_action == 'stop':
+					print_status('phase=robot-stop')
+					await robot.stop()
+				else:
+					print_status('phase=robot-shutdown')
+					await robot.shutdown()
 	finally:
 		common_module.CONFIG_PATH = original_common_config_path
 		robot_module.CONFIG_PATH = original_robot_config_path
