@@ -445,13 +445,18 @@ def analyze_scan_capture(
 		center_x_mm = float((left_edge_mm + right_edge_mm) / 2.0)
 		center_y_mm = float((top_edge_mm + bottom_edge_mm) / 2.0)
 
+		effective_offset_x_mm = (
+			-capture.laser_offset_x_mm
+			if capture.side == StorageModuleSide.RIGHT
+			else capture.laser_offset_x_mm
+		)
 		detected_cells.append(
 			ScanDetectedCell(
 				shelf_idx=0,
 				cell_idx=0,
 				center_x_mm=center_x_mm,
 				center_y_mm=center_y_mm,
-				tool_x_mm=center_x_mm - capture.laser_offset_x_mm,
+				tool_x_mm=center_x_mm - effective_offset_x_mm,
 				tool_y_mm=center_y_mm - capture.laser_offset_y_mm,
 				width_mm=width_mm,
 				height_mm=height_mm,
