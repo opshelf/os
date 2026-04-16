@@ -170,19 +170,19 @@ def test_build_estimated_rotation_deg_offsets_previous_rotation() -> None:
     assert estimated_rotation_deg == pytest.approx(177.0)
 
 
-def test_build_angle_fit_inputs_mirrors_right_side_local_x_offset() -> None:
-    line_point = np.array([660.0, 150.0], dtype=np.float64)
-    line_direction = angle_module.build_line_direction(86.5)
+def test_build_angle_fit_inputs_flips_right_side_rotation_sign() -> None:
+    line_point = np.array([740.0, -1.0], dtype=np.float64)
+    line_direction = angle_module.build_line_direction(180.0)
     raw_samples: list[angle_module.LaserAngleCalibrationSample] = []
 
-    for axis_x_mm in [940.0, 840.0, 740.0, 640.0, 540.0]:
-        for rotation_deg in [-8.0, -4.0, 0.0, 4.0, 8.0]:
+    for axis_x_mm in [945.0, 845.0, 745.0, 645.0, 545.0]:
+        for rotation_deg in [-8.0, -7.0, -6.0, -5.0, -4.0, -3.0, -2.0, -1.0, 0.0]:
             absolute_rotation_deg = 180.0 + rotation_deg
-            effective_angle_rad = math.radians(absolute_rotation_deg + 3.8)
+            effective_angle_rad = math.radians(180.0 - rotation_deg + 5.0)
             rotation_matrix = angle_module.build_rotation_matrix(effective_angle_rad)
             axis_point = np.array([axis_x_mm, 140.5], dtype=np.float64)
-            mirrored_local_offset = np.array([-13.0, 0.0], dtype=np.float64)
-            ray_origin = axis_point + (rotation_matrix @ mirrored_local_offset)
+            local_offset = np.array([13.0, 140.5], dtype=np.float64)
+            ray_origin = axis_point + (rotation_matrix @ local_offset)
             ray_direction = np.array(
                 [
                     math.cos(effective_angle_rad),
@@ -207,17 +207,17 @@ def test_build_angle_fit_inputs_mirrors_right_side_local_x_offset() -> None:
                     rotation_deg=rotation_deg,
                     absolute_rotation_deg=absolute_rotation_deg,
                     stage_extension_mm=13.0,
-                    z_extension_mm=0.0,
+                    z_extension_mm=140.5,
                     distance_mm=distance_mm,
                 )
             )
 
-    assert len(raw_samples) == 15
+    assert len(raw_samples) == 45
 
     raw_fit = angle_module.search_best_alpha(
         raw_samples,
-        alpha_min_deg=-10.0,
-        alpha_max_deg=10.0,
+        alpha_min_deg=-20.0,
+        alpha_max_deg=20.0,
         coarse_step_deg=0.1,
         fine_window_deg=0.3,
         fine_step_deg=0.005,
@@ -225,15 +225,15 @@ def test_build_angle_fit_inputs_mirrors_right_side_local_x_offset() -> None:
         laser_offset_z_mm=0.0,
         beam_zero_deg=0.0,
     )
-    fit_samples, laser_offset_x_mm = _build_angle_fit_inputs(
+    adjusted_samples, laser_offset_x_mm = _build_angle_fit_inputs(
         StorageModuleSide.RIGHT,
         SimpleNamespace(laser_offset_x_mm=0.0),
         raw_samples,
     )
-    mirrored_fit = angle_module.search_best_alpha(
-        fit_samples,
-        alpha_min_deg=-10.0,
-        alpha_max_deg=10.0,
+    adjusted_fit = angle_module.search_best_alpha(
+        adjusted_samples,
+        alpha_min_deg=-20.0,
+        alpha_max_deg=20.0,
         coarse_step_deg=0.1,
         fine_window_deg=0.3,
         fine_step_deg=0.005,
@@ -242,11 +242,11 @@ def test_build_angle_fit_inputs_mirrors_right_side_local_x_offset() -> None:
         beam_zero_deg=0.0,
     )
 
-    assert raw_fit.alpha_deg == pytest.approx(7.675)
-    assert mirrored_fit.alpha_deg == pytest.approx(3.8)
+    assert raw_fit.alpha_deg == pytest.approx(10.53)
+    assert adjusted_fit.alpha_deg == pytest.approx(5.0)
 
 
-def test_build_angle_calibration_sample_keeps_axis_z_out_of_local_offset() -> None:
+def test_build_angle_calibration_sample_keeps_target_z_in_local_offset() -> None:
     sample = _build_angle_calibration_sample(
         x_mm=640.0,
         target_z_mm=140.5,
@@ -257,7 +257,7 @@ def test_build_angle_calibration_sample_keeps_axis_z_out_of_local_offset() -> No
     )
 
     assert sample.axis_z_mm == pytest.approx(140.5)
-    assert sample.z_extension_mm == pytest.approx(0.0)
+    assert sample.z_extension_mm == pytest.approx(140.5)
 
 
 @pytest.mark.asyncio
