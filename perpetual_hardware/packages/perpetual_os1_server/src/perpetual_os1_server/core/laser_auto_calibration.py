@@ -54,7 +54,7 @@ SCAN_FINE_RETRY_RE = re.compile(r"phase=fine-scan-retry candidate=(?P<idx>\d+)/(
 FINE_DETECTED_CELLS_RE = re.compile(r"fine_detected_cells=(?P<count>\d+)")
 ANGLE_RESULT_RE = re.compile(r"alpha_deg=(?P<alpha>-?\d+(?:\.\d+)?)")
 STAGE_EXTENSION_PROBE_START_MM = 3.0
-STAGE_EXTENSION_PROBE_BACKOFF_MM = 3.0
+STAGE_EXTENSION_PROBE_BACKOFF_MM = 8.0
 STAGE_EXTENSION_PROBE_Y_OFFSET_MM = 25.0
 STAGE_EXTENSION_FAST_APPROACH_MM = 40.0
 STAGE_EXTENSION_PROBE_STEP_MM = 0.5
