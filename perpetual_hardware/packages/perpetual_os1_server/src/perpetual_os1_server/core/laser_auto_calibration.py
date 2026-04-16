@@ -480,6 +480,8 @@ class LaserAutoCalibrationManager:
             await self._set_terminal_state("cancelled", None)
             return
         except Exception as exc:
+            if self._abort_requested:
+                raise asyncio.CancelledError() from exc
             self._restore_in_memory_calibration_params(worker, original_params)
             logger.error("laser_auto_calibration_failed", exc_info=True)
             await self._set_terminal_state("failed", str(exc))
