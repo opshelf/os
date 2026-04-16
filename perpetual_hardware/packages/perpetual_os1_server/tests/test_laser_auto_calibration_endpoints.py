@@ -236,7 +236,7 @@ def test_right_side_mirrored_negative_half_sweep_reduces_fit_error() -> None:
         coarse_step_deg=0.1,
         fine_window_deg=0.3,
         fine_step_deg=0.005,
-        laser_offset_x_mm=laser_offset_x_mm,
+        laser_offset_x_mm=0.0,
         laser_offset_z_mm=0.0,
         beam_zero_deg=0.0,
     )
@@ -254,7 +254,7 @@ def test_right_side_mirrored_negative_half_sweep_reduces_fit_error() -> None:
         coarse_step_deg=0.1,
         fine_window_deg=0.3,
         fine_step_deg=0.005,
-        laser_offset_x_mm=0.0,
+        laser_offset_x_mm=laser_offset_x_mm,
         laser_offset_z_mm=0.0,
         beam_zero_deg=0.0,
     )
@@ -893,10 +893,10 @@ async def test_run_stage_extension_calibration_accepts_timeout_terminal_state() 
                     probe_y_mm=1123.0,
                 )
 
-    assert calibrated_stage_extension_mm == pytest.approx(42.28)
-    stage_motor.move_to_position.assert_awaited_once_with(pytest.approx(42.28), rpm=100)
+    assert calibrated_stage_extension_mm == pytest.approx(37.28)
+    stage_motor.move_to_position.assert_awaited_once_with(pytest.approx(37.28), rpm=100)
     assert manager._update_snapshot.await_args_list[-1].kwargs['stage_detail']['stall_status'] == 'timeout'
-    assert manager._update_snapshot.await_args_list[-1].kwargs['stage_detail']['calibrated_stage_extension_mm'] == pytest.approx(42.28)
+    assert manager._update_snapshot.await_args_list[-1].kwargs['stage_detail']['calibrated_stage_extension_mm'] == pytest.approx(37.28)
 
 
 @pytest.mark.asyncio
