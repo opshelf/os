@@ -290,26 +290,24 @@ def _build_angle_fit_inputs(
     scan_config: Any,
     samples: list[angle_module.LaserAngleCalibrationSample],
 ) -> tuple[list[angle_module.LaserAngleCalibrationSample], float]:
-    laser_offset_x_mm = float(scan_config.laser_offset_x_mm)
+    return samples, float(scan_config.laser_offset_x_mm)
 
+
+def _build_angle_rotation_positions_for_side(
+    side: StorageModuleSide,
+    positions: list[float],
+) -> list[float]:
     if side != StorageModuleSide.RIGHT:
-        return samples, laser_offset_x_mm
+        return positions
 
-    rotation_center_deg = _build_angle_rotation_center_deg(side)
-    adjusted_samples = [
-        angle_module.LaserAngleCalibrationSample(
-            axis_x_mm=float(sample.axis_x_mm),
-            axis_z_mm=float(sample.axis_z_mm),
-            rotation_deg=-float(sample.rotation_deg),
-            absolute_rotation_deg=(2.0 * rotation_center_deg) - float(sample.absolute_rotation_deg),
-            stage_extension_mm=float(sample.stage_extension_mm),
-            z_extension_mm=float(sample.z_extension_mm),
-            distance_mm=float(sample.distance_mm),
-        )
-        for sample in samples
-    ]
+    filtered_positions = [position for position in positions if position >= 0.0]
 
-    return adjusted_samples, laser_offset_x_mm
+    if len(filtered_positions) == 0:
+        raise ValueError("right-side rotation sweep has no valid positions at or above center")
+
+    return filtered_positions
+
+
 
 
 def _build_angle_calibration_sample(
@@ -724,6 +722,7 @@ class LaserAutoCalibrationManager:
             rotation_center_deg,
             rotation_limit_deg,
         )
+        rotation_positions = _build_angle_rotation_positions_for_side(side, rotation_positions)
         z_extension_place = await tool.get_param("Z_EXTENSION_PLACE")
         z_move_rpm = await tool.get_param("Z_MOVE_RPM")
         z_move_accel = await tool.get_param("Z_MOVE_ACCEL")
