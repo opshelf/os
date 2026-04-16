@@ -1,11 +1,13 @@
 import asyncio
 import copy
 import json
+import math
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import numpy as np
 from fastapi import HTTPException
 
 from perpetual_os1 import laser_angle_calibration as angle_module
@@ -14,6 +16,7 @@ from perpetual_os1.laser_scan import ScanBounds
 from perpetual_os1.storage import StorageModuleSide
 from perpetual_os1_server.core.laser_auto_calibration import (
     _build_angle_rotation_center_deg,
+    _build_angle_fit_inputs,
     _build_angle_x_positions,
     _build_angle_z_offset_positions,
     _build_bounds_for_side,
@@ -166,6 +169,82 @@ def test_build_estimated_rotation_deg_offsets_previous_rotation() -> None:
     assert estimated_rotation_deg == pytest.approx(177.0)
 
 
+def test_build_angle_fit_inputs_mirrors_right_side_local_x_offset() -> None:
+    line_point = np.array([660.0, 150.0], dtype=np.float64)
+    line_direction = angle_module.build_line_direction(86.5)
+    raw_samples: list[angle_module.LaserAngleCalibrationSample] = []
+
+    for axis_x_mm in [940.0, 840.0, 740.0, 640.0, 540.0]:
+        for rotation_deg in [-8.0, -4.0, 0.0, 4.0, 8.0]:
+            absolute_rotation_deg = 180.0 + rotation_deg
+            effective_angle_rad = math.radians(absolute_rotation_deg + 3.8)
+            rotation_matrix = angle_module.build_rotation_matrix(effective_angle_rad)
+            axis_point = np.array([axis_x_mm, 140.5], dtype=np.float64)
+            mirrored_local_offset = np.array([-13.0, 0.0], dtype=np.float64)
+            ray_origin = axis_point + (rotation_matrix @ mirrored_local_offset)
+            ray_direction = np.array(
+                [
+                    math.cos(effective_angle_rad),
+                    math.sin(effective_angle_rad),
+                ],
+                dtype=np.float64,
+            )
+            distance_mm = angle_module.intersect_ray_with_line(
+                ray_origin=ray_origin,
+                ray_direction=ray_direction,
+                line_point=line_point,
+                line_direction=line_direction,
+            )
+
+            if distance_mm is None:
+                continue
+
+            raw_samples.append(
+                angle_module.LaserAngleCalibrationSample(
+                    axis_x_mm=axis_x_mm,
+                    axis_z_mm=140.5,
+                    rotation_deg=rotation_deg,
+                    absolute_rotation_deg=absolute_rotation_deg,
+                    stage_extension_mm=13.0,
+                    z_extension_mm=0.0,
+                    distance_mm=distance_mm,
+                )
+            )
+
+    assert len(raw_samples) == 15
+
+    raw_fit = angle_module.search_best_alpha(
+        raw_samples,
+        alpha_min_deg=-10.0,
+        alpha_max_deg=10.0,
+        coarse_step_deg=0.1,
+        fine_window_deg=0.3,
+        fine_step_deg=0.005,
+        laser_offset_x_mm=0.0,
+        laser_offset_z_mm=0.0,
+        beam_zero_deg=0.0,
+    )
+    fit_samples, laser_offset_x_mm = _build_angle_fit_inputs(
+        StorageModuleSide.RIGHT,
+        SimpleNamespace(laser_offset_x_mm=0.0),
+        raw_samples,
+    )
+    mirrored_fit = angle_module.search_best_alpha(
+        fit_samples,
+        alpha_min_deg=-10.0,
+        alpha_max_deg=10.0,
+        coarse_step_deg=0.1,
+        fine_window_deg=0.3,
+        fine_step_deg=0.005,
+        laser_offset_x_mm=laser_offset_x_mm,
+        laser_offset_z_mm=0.0,
+        beam_zero_deg=0.0,
+    )
+
+    assert raw_fit.alpha_deg == pytest.approx(7.675)
+    assert mirrored_fit.alpha_deg == pytest.approx(3.8)
+
+
 @pytest.mark.asyncio
 async def test_home_after_abort_homes_tool_and_door() -> None:
     manager = LaserAutoCalibrationManager()
@@ -315,7 +394,7 @@ async def test_run_all_sides_processes_right_before_left() -> None:
         return SimpleNamespace(side=side, angle_result=angle_result)
 
     with patch('perpetual_os1_server.core.laser_auto_calibration._build_bounds_for_side', return_value=ScanBounds(x_min=0.0, x_max=1.0, y_min=0.0, y_max=1.0)):
-        with patch.object(manager, '_run_angle_calibration_for_side', AsyncMock(side_effect=[left_angle_result, right_angle_result])) as run_angle_mock:
+        with patch.object(manager, '_run_angle_calibration_for_side', AsyncMock(side_effect=[right_angle_result, left_angle_result])) as run_angle_mock:
             with patch.object(manager, '_apply_angle_calibration_in_memory', AsyncMock()) as apply_mock:
                 with patch.object(manager, '_resolve_stage_extension_probe_y_mm', AsyncMock(side_effect=[1148.0, 1120.0])) as probe_y_mock:
                     with patch.object(manager, '_run_stage_extension_calibration_for_side', AsyncMock(side_effect=[44.0, 41.0])) as stage_mock:
@@ -332,8 +411,8 @@ async def test_run_all_sides_processes_right_before_left() -> None:
     persist_mock.assert_awaited_once()
     assert probe_y_mock.await_count == 2
 
-    assert run_angle_mock.await_args_list[0].args[1] == StorageModuleSide.LEFT
-    assert run_angle_mock.await_args_list[1].args[1] == StorageModuleSide.RIGHT
+    assert run_angle_mock.await_args_list[0].args[1] == StorageModuleSide.RIGHT
+    assert run_angle_mock.await_args_list[1].args[1] == StorageModuleSide.LEFT
     assert stage_mock.await_args_list[0].args[1] == StorageModuleSide.RIGHT
     assert stage_mock.await_args_list[1].args[1] == StorageModuleSide.LEFT
     assert stage_mock.await_args_list[0].kwargs['probe_y_mm'] == pytest.approx(1148.0)
