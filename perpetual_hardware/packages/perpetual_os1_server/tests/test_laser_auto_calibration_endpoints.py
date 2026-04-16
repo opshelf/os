@@ -18,6 +18,7 @@ from perpetual_os1_server.core.laser_auto_calibration import (
     _build_angle_rotation_center_deg,
     _build_angle_calibration_sample,
     _build_angle_fit_inputs,
+    _build_angle_rotation_positions_for_side,
     _build_angle_x_positions,
     _build_angle_z_offset_positions,
     _build_bounds_for_side,
@@ -170,51 +171,66 @@ def test_build_estimated_rotation_deg_offsets_previous_rotation() -> None:
     assert estimated_rotation_deg == pytest.approx(177.0)
 
 
-def test_build_angle_fit_inputs_flips_right_side_rotation_sign() -> None:
-    line_point = np.array([740.0, -1.0], dtype=np.float64)
-    line_direction = angle_module.build_line_direction(180.0)
+def test_build_angle_fit_inputs_keeps_right_side_geometry_unchanged() -> None:
     raw_samples: list[angle_module.LaserAngleCalibrationSample] = []
 
-    for axis_x_mm in [945.0, 845.0, 745.0, 645.0, 545.0]:
-        for rotation_deg in [-8.0, -7.0, -6.0, -5.0, -4.0, -3.0, -2.0, -1.0, 0.0]:
-            absolute_rotation_deg = 180.0 + rotation_deg
-            effective_angle_rad = math.radians(180.0 - rotation_deg + 5.0)
-            rotation_matrix = angle_module.build_rotation_matrix(effective_angle_rad)
-            axis_point = np.array([axis_x_mm, 140.5], dtype=np.float64)
-            local_offset = np.array([13.0, 140.5], dtype=np.float64)
-            ray_origin = axis_point + (rotation_matrix @ local_offset)
-            ray_direction = np.array(
-                [
-                    math.cos(effective_angle_rad),
-                    math.sin(effective_angle_rad),
-                ],
-                dtype=np.float64,
+    for rotation_deg in [-8.0, 0.0, 8.0]:
+        raw_samples.append(
+            angle_module.LaserAngleCalibrationSample(
+                axis_x_mm=945.0,
+                axis_z_mm=140.5,
+                rotation_deg=rotation_deg,
+                absolute_rotation_deg=180.0 + rotation_deg,
+                stage_extension_mm=13.0,
+                z_extension_mm=140.5,
+                distance_mm=8.0,
             )
-            distance_mm = angle_module.intersect_ray_with_line(
-                ray_origin=ray_origin,
-                ray_direction=ray_direction,
-                line_point=line_point,
-                line_direction=line_direction,
-            )
+        )
 
-            if distance_mm is None:
-                continue
+    fit_samples, laser_offset_x_mm = _build_angle_fit_inputs(
+        StorageModuleSide.RIGHT,
+        SimpleNamespace(laser_offset_x_mm=0.0),
+        raw_samples,
+    )
 
+    assert fit_samples == raw_samples
+    assert laser_offset_x_mm == pytest.approx(0.0)
+
+
+def test_build_angle_rotation_positions_for_right_keeps_non_negative_half() -> None:
+    positions = [-8.0, -7.0, -6.0, -5.0, -4.0, -3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
+
+    filtered_positions = _build_angle_rotation_positions_for_side(StorageModuleSide.RIGHT, positions)
+
+    assert filtered_positions == [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
+
+
+def test_right_side_one_sided_rotation_sweep_reduces_fit_error() -> None:
+    raw_samples: list[angle_module.LaserAngleCalibrationSample] = []
+    measured_distances_by_x = {
+        945.0: [8.495, 8.361, 8.155, 8.060, 7.908, 7.765, 7.662, 7.547, 7.398, 7.313, 7.187, 7.108, 6.972, 6.905, 6.822, 6.740, 6.679],
+        845.0: [8.508, 8.357, 8.207, 8.059, 7.943, 7.808, 7.685, 7.568, 7.432, 7.332, 7.215, 7.107, 7.005, 6.928, 6.852, 6.778, 6.716],
+        745.0: [8.513, 8.381, 8.203, 8.047, 7.927, 7.834, 7.681, 7.557, 7.452, 7.348, 7.256, 7.163, 7.062, 6.956, 6.884, 6.795, 6.711],
+        645.0: [8.531, 8.443, 8.209, 8.058, 7.964, 7.834, 7.683, 7.565, 7.410, 7.332, 7.253, 7.148, 7.046, 6.973, 6.881, 6.813, 6.764],
+        545.0: [8.545, 8.406, 8.250, 8.106, 7.941, 7.807, 7.695, 7.579, 7.484, 7.366, 7.260, 7.142, 7.050, 6.991, 6.891, 6.822, 6.754],
+    }
+    rotation_positions = [-8.0, -7.0, -6.0, -5.0, -4.0, -3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
+
+    for axis_x_mm, distances in measured_distances_by_x.items():
+        for rotation_deg, distance_mm in zip(rotation_positions, distances):
             raw_samples.append(
                 angle_module.LaserAngleCalibrationSample(
                     axis_x_mm=axis_x_mm,
                     axis_z_mm=140.5,
                     rotation_deg=rotation_deg,
-                    absolute_rotation_deg=absolute_rotation_deg,
+                    absolute_rotation_deg=180.0 + rotation_deg,
                     stage_extension_mm=13.0,
                     z_extension_mm=140.5,
                     distance_mm=distance_mm,
                 )
             )
 
-    assert len(raw_samples) == 45
-
-    raw_fit = angle_module.search_best_alpha(
+    full_fit = angle_module.search_best_alpha(
         raw_samples,
         alpha_min_deg=-20.0,
         alpha_max_deg=20.0,
@@ -225,25 +241,23 @@ def test_build_angle_fit_inputs_flips_right_side_rotation_sign() -> None:
         laser_offset_z_mm=0.0,
         beam_zero_deg=0.0,
     )
-    adjusted_samples, laser_offset_x_mm = _build_angle_fit_inputs(
-        StorageModuleSide.RIGHT,
-        SimpleNamespace(laser_offset_x_mm=0.0),
-        raw_samples,
-    )
-    adjusted_fit = angle_module.search_best_alpha(
-        adjusted_samples,
+    filtered_positions = set(_build_angle_rotation_positions_for_side(StorageModuleSide.RIGHT, rotation_positions))
+    one_sided_samples = [sample for sample in raw_samples if sample.rotation_deg in filtered_positions]
+    one_sided_fit = angle_module.search_best_alpha(
+        one_sided_samples,
         alpha_min_deg=-20.0,
         alpha_max_deg=20.0,
         coarse_step_deg=0.1,
         fine_window_deg=0.3,
         fine_step_deg=0.005,
-        laser_offset_x_mm=laser_offset_x_mm,
+        laser_offset_x_mm=0.0,
         laser_offset_z_mm=0.0,
         beam_zero_deg=0.0,
     )
 
-    assert raw_fit.alpha_deg == pytest.approx(10.53)
-    assert adjusted_fit.alpha_deg == pytest.approx(5.0)
+    assert full_fit.alpha_deg == pytest.approx(7.98)
+    assert one_sided_fit.alpha_deg == pytest.approx(3.85)
+    assert one_sided_fit.line.rms_residual_mm < full_fit.line.rms_residual_mm
 
 
 def test_build_angle_calibration_sample_keeps_target_z_in_local_offset() -> None:
