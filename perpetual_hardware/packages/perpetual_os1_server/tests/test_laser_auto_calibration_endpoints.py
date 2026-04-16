@@ -16,6 +16,7 @@ from perpetual_os1.laser_scan import ScanBounds
 from perpetual_os1.storage import StorageModuleSide
 from perpetual_os1_server.core.laser_auto_calibration import (
     _build_angle_rotation_center_deg,
+    _build_angle_calibration_sample,
     _build_angle_fit_inputs,
     _build_angle_x_positions,
     _build_angle_z_offset_positions,
@@ -243,6 +244,20 @@ def test_build_angle_fit_inputs_mirrors_right_side_local_x_offset() -> None:
 
     assert raw_fit.alpha_deg == pytest.approx(7.675)
     assert mirrored_fit.alpha_deg == pytest.approx(3.8)
+
+
+def test_build_angle_calibration_sample_keeps_axis_z_out_of_local_offset() -> None:
+    sample = _build_angle_calibration_sample(
+        x_mm=640.0,
+        target_z_mm=140.5,
+        rotation_deg=4.0,
+        absolute_rotation_deg=184.0,
+        stage_extension_mm=13.0,
+        depth_mm=55.0,
+    )
+
+    assert sample.axis_z_mm == pytest.approx(140.5)
+    assert sample.z_extension_mm == pytest.approx(0.0)
 
 
 @pytest.mark.asyncio

@@ -311,6 +311,26 @@ def _build_angle_fit_inputs(
     return mirrored_samples, -laser_offset_x_mm
 
 
+def _build_angle_calibration_sample(
+    *,
+    x_mm: float,
+    target_z_mm: float,
+    rotation_deg: float,
+    absolute_rotation_deg: float,
+    stage_extension_mm: float,
+    depth_mm: float,
+) -> angle_module.LaserAngleCalibrationSample:
+    return angle_module.LaserAngleCalibrationSample(
+        axis_x_mm=float(x_mm),
+        axis_z_mm=float(target_z_mm),
+        rotation_deg=float(rotation_deg),
+        absolute_rotation_deg=float(absolute_rotation_deg),
+        stage_extension_mm=float(stage_extension_mm),
+        z_extension_mm=0.0,
+        distance_mm=float(depth_mm),
+    )
+
+
 def _build_candidate_rows(
     side_name: Literal["left_module", "right_module"],
     candidate_rows: list[dict[str, Any]],
@@ -783,14 +803,13 @@ class LaserAutoCalibrationManager:
                                 continue
 
                             samples.append(
-                                angle_module.LaserAngleCalibrationSample(
-                                    axis_x_mm=float(x_mm),
-                                    axis_z_mm=target_z_mm,
+                                _build_angle_calibration_sample(
+                                    x_mm=float(x_mm),
+                                    target_z_mm=target_z_mm,
                                     rotation_deg=float(rotation_deg),
                                     absolute_rotation_deg=float(absolute_rotation_deg),
                                     stage_extension_mm=stage_extension_mm,
-                                    z_extension_mm=target_z_mm,
-                                    distance_mm=float(depth_mm),
+                                    depth_mm=float(depth_mm),
                                 )
                             )
                             angle_module.print_status(
