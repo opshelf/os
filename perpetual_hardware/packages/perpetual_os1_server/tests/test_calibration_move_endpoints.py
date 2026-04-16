@@ -7,6 +7,7 @@ import pytest
 def _mock_worker(stage_position: float):
 	tool = SimpleNamespace(
 		move=AsyncMock(),
+		rotate_to_position=AsyncMock(),
 		get_param=AsyncMock(
 			side_effect=lambda name: {
 				"Z_EXTENSION_PLACE": 160.5,
@@ -35,7 +36,7 @@ def _mock_worker(stage_position: float):
 	)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_move_to_cell_reports_actual_stage_position(client) -> None:
 	worker = _mock_worker(stage_position=3.0)
 

@@ -128,7 +128,7 @@ def test_analyze_scan_capture_accepts_synthetic_npy_fixture(tmp_path):
 		for value in row:
 			float_value = float(value)
 
-			if np.isfinite(float_value) is True:
+			if bool(np.isfinite(float_value)) is True:
 				depth_row.append(float_value)
 				continue
 

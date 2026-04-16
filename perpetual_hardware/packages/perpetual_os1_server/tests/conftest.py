@@ -36,7 +36,7 @@ def anyio_backend() -> str:
     return "asyncio"
 
 
-@pytest.fixture(scope="session")
+@pytest_asyncio.fixture(scope="session")
 async def seeded_db() -> AsyncGenerator[None, None]:
     # Ensure tables exist, then seed roles and an admin user
     from perpetual_os1_server.database.base import engine, Base
@@ -145,7 +145,7 @@ def auth_headers(seeded_db: AsyncGenerator[None, None]) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def client(seeded_db: AsyncGenerator[None, None], auth_headers: dict[str, str]) -> AsyncGenerator[httpx.AsyncClient, None]:
     from httpx import AsyncClient, ASGITransport
     transport = ASGITransport(app=app)
@@ -153,7 +153,7 @@ async def client(seeded_db: AsyncGenerator[None, None], auth_headers: dict[str, 
         yield ac
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def unauthenticated_client(seeded_db: AsyncGenerator[None, None]) -> AsyncGenerator[httpx.AsyncClient, None]:
     """Client without authentication headers for testing unauthenticated requests."""
     from httpx import AsyncClient, ASGITransport
