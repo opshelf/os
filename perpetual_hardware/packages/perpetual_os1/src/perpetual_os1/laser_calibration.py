@@ -1737,7 +1737,12 @@ def build_single_cell_rescan_candidate(
 		target=target,
 	)
 
-	candidate_center_x_mm = float(target_cell.calibration_point.x) + float(scan_config.laser_offset_x_mm)
+	effective_offset_x_mm = (
+		-scan_config.laser_offset_x_mm
+		if side == StorageModuleSide.RIGHT
+		else scan_config.laser_offset_x_mm
+	)
+	candidate_center_x_mm = float(target_cell.calibration_point.x) + effective_offset_x_mm
 	candidate_center_y_mm = float(target_cell.calibration_point.y) + float(scan_config.laser_offset_y_mm)
 	half_width_mm = float(scan_config.expected_hole_width_mm) / 2.0
 	half_height_mm = float(scan_config.expected_hole_height_mm) / 2.0
@@ -2360,6 +2365,7 @@ def build_detected_cell_from_segments(
 	y_segment: LineGapSegment,
 	step_mm: float,
 	scan_config: Any,
+	side: StorageModuleSide,
 ) -> Optional[ScanDetectedCell]:
 	if dimensions_match(
 		x_segment.width_mm,
@@ -2378,12 +2384,18 @@ def build_detected_cell_from_segments(
 	center_x_mm = float((x_segment.start_mm + x_segment.end_mm) / 2.0)
 	center_y_mm = float((y_segment.start_mm + y_segment.end_mm) / 2.0)
 
+	effective_offset_x_mm = (
+		-scan_config.laser_offset_x_mm
+		if side == StorageModuleSide.RIGHT
+		else scan_config.laser_offset_x_mm
+	)
+
 	return ScanDetectedCell(
 		shelf_idx=0,
 		cell_idx=0,
 		center_x_mm=center_x_mm,
 		center_y_mm=center_y_mm,
-		tool_x_mm=center_x_mm - scan_config.laser_offset_x_mm,
+		tool_x_mm=center_x_mm - effective_offset_x_mm,
 		tool_y_mm=center_y_mm - scan_config.laser_offset_y_mm,
 		width_mm=x_segment.width_mm,
 		height_mm=y_segment.width_mm,
@@ -2518,6 +2530,7 @@ async def capture_cross_scan(
 	samples_per_point: int,
 	wall_depth_mm: float,
 	scan_config: Any,
+	side: StorageModuleSide,
 	progress_prefix: str,
 	on_update: Optional[Callable[[GridScanResult, str, float], None]] = None,
 	should_abort: Callable[[], bool] | None = None,
@@ -2648,6 +2661,7 @@ async def capture_cross_scan(
 		y_segment=vertical_segment,
 		step_mm=step_mm,
 		scan_config=scan_config,
+		side=side,
 	)
 
 	if detected_cell is None:
@@ -3041,6 +3055,7 @@ async def run_staged_scan(
 					samples_per_point=samples_per_point,
 					wall_depth_mm=wall_depth_mm,
 					scan_config=scan_config,
+					side=side,
 					progress_prefix=f"fine_{candidate_idx}",
 					on_update=didUpdateFineScan,
 					should_abort=should_abort,
@@ -3070,6 +3085,7 @@ async def run_staged_scan(
 							samples_per_point=samples_per_point,
 							wall_depth_mm=wall_depth_mm,
 							scan_config=scan_config,
+							side=side,
 							progress_prefix=f"fine_{candidate_idx}_retry",
 							on_update=didUpdateFineScan,
 							should_abort=should_abort,
