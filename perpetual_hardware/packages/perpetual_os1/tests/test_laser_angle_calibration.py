@@ -1,5 +1,6 @@
+import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -8,6 +9,7 @@ from perpetual_os1.laser_angle_calibration import (
 	get_default_rotation_center_deg,
 	prepare_capture_pose,
 	probe_stage_until_stall,
+	run_with_temp_robot_config,
 )
 
 
@@ -155,3 +157,38 @@ async def test_probe_stage_until_stall_can_skip_auto_retract() -> None:
 	assert stage_motor.move_to_position.await_count == 2
 	assert stage_motor.move_to_position.await_args_list[0].args == (3.0,)
 	assert stage_motor.move_to_position.await_args_list[1].args == (40.0,)
+
+
+@pytest.mark.asyncio
+async def test_run_with_temp_robot_config_skips_stop_when_cancelled(tmp_path) -> None:
+	robot = SimpleNamespace(
+		configure=AsyncMock(),
+		stop=AsyncMock(),
+		shutdown=AsyncMock(),
+	)
+	started = asyncio.Event()
+
+	async def did_run(current_robot) -> None:
+		assert current_robot is robot
+		started.set()
+		await asyncio.sleep(10)
+
+	with patch('perpetual_os1.laser_angle_calibration.build_standalone_config', return_value={}):
+		with patch('perpetual_os1.robot.Robot', return_value=robot):
+			task = asyncio.create_task(
+				run_with_temp_robot_config(
+					config=SimpleNamespace(),
+					config_path=str(tmp_path / 'config.json'),
+					did_run=did_run,
+					shutdown_action='stop',
+				)
+			)
+
+			await started.wait()
+			task.cancel()
+
+			with pytest.raises(asyncio.CancelledError):
+				await task
+
+	robot.stop.assert_not_awaited()
+	robot.shutdown.assert_not_awaited()

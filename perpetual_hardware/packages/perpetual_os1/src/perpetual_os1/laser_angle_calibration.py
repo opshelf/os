@@ -6,10 +6,11 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import json
 import math
+import sys
 import time
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 
@@ -81,6 +82,30 @@ class StageStallProbeSample:
 
 def get_current_timestamp() -> str:
 	return datetime.now(timezone.utc).isoformat()
+
+
+def should_skip_motion_cleanup_on_cancel() -> bool:
+	_, active_exception, _ = sys.exc_info()
+
+	if isinstance(active_exception, asyncio.CancelledError) is True:
+		return True
+
+	current_task = asyncio.current_task()
+
+	if current_task is None:
+		return False
+
+	return current_task.cancelling() > 0
+
+
+def raise_if_cancelled(should_abort: Callable[[], bool] | None = None) -> None:
+	if should_abort is not None and should_abort() is True:
+		raise asyncio.CancelledError()
+
+	current_task = asyncio.current_task()
+
+	if current_task is not None and current_task.cancelling() > 0:
+		raise asyncio.CancelledError()
 
 
 def print_status(message: str) -> None:
@@ -546,12 +571,13 @@ async def run_with_temp_robot_config(
 		try:
 			return await did_run(robot)
 		finally:
-			if shutdown_action == 'stop':
-				print_status('phase=robot-stop')
-				await robot.stop()
-			else:
-				print_status('phase=robot-shutdown')
-				await robot.shutdown()
+			if should_skip_motion_cleanup_on_cancel() is False:
+				if shutdown_action == 'stop':
+					print_status('phase=robot-stop')
+					await robot.stop()
+				else:
+					print_status('phase=robot-shutdown')
+					await robot.shutdown()
 	finally:
 		common_module.CONFIG_PATH = original_common_config_path
 		robot_module.CONFIG_PATH = original_robot_config_path
@@ -685,6 +711,7 @@ async def enter_capture_mode(
 	z_mm: float,
 	z_move_rpm: float,
 	z_move_accel: float,
+	should_abort: Callable[[], bool] | None = None,
 ) -> None:
 	await tool.retract()
 
@@ -702,6 +729,7 @@ async def enter_capture_mode(
 		should_rotate=True,
 		should_use_safe_right_rotation_path=True,
 		should_move_z=True,
+		should_abort=should_abort,
 	)
 
 
@@ -715,13 +743,15 @@ async def scan_shelf_scout_line(
 	progress_label: str,
 	stop_after_first_edge: bool = False,
 	progress_every: int = 25,
+	should_abort: Callable[[], bool] | None = None,
 ) -> tuple[list[float | None], list[ShelfSurfaceEdge]]:
 	if len(y_positions) == 0:
 		return [], []
 
+	raise_if_cancelled(should_abort)
 	await tool._mx.move_to_position_no_wait(x_mm)
 	await tool._my.move_to_position_no_wait(y_positions[0])
-	await tool.gantry_wait()
+	await tool.gantry_wait(should_abort=should_abort)
 
 	depth_values: list[float | None] = [None for _ in y_positions]
 	detected_edges: list[ShelfSurfaceEdge] = []
@@ -731,12 +761,14 @@ async def scan_shelf_scout_line(
 	run_end_idx: int | None = None
 
 	while position_idx < len(y_positions):
+		raise_if_cancelled(should_abort)
 		y_mm = y_positions[position_idx]
 
 		if position_idx > 0:
 			await tool._my.move_to_position_no_wait(y_mm)
-			await tool.gantry_wait()
+			await tool.gantry_wait(should_abort=should_abort)
 
+		raise_if_cancelled(should_abort)
 		depth_mm = await sample_laser_depth(
 			tool,
 			settle_ms=settle_ms,
@@ -829,10 +861,11 @@ async def move_gantry_direct(
 	*,
 	x_mm: float,
 	y_mm: float,
+	should_abort: Callable[[], bool] | None = None,
 ) -> None:
 	await tool._my.move_to_position_no_wait(y_mm)
 	await tool._mx.move_to_position_no_wait(x_mm)
-	await tool.gantry_wait()
+	await tool.gantry_wait(should_abort=should_abort)
 
 
 async def probe_stage_until_stall(
@@ -848,7 +881,9 @@ async def probe_stage_until_stall(
 	fast_approach_mm: float,
 	fast_approach_rpm: int | None,
 	auto_retract: bool = True,
+	should_abort: Callable[[], bool] | None = None,
 ) -> tuple[bool, float, str, int | None]:
+	raise_if_cancelled(should_abort)
 	await tool._ms.move_to_position(retract_stage_mm)
 	await tool._ms.clear_alarm()
 
@@ -860,6 +895,7 @@ async def probe_stage_until_stall(
 	fast_target_mm = min(max(fast_approach_mm, retract_stage_mm), target_stage_mm)
 
 	if fast_target_mm > retract_stage_mm:
+		raise_if_cancelled(should_abort)
 		await tool._ms.move_to_position(fast_target_mm, rpm=fast_approach_rpm)
 		current_target_mm = fast_target_mm
 
@@ -867,6 +903,7 @@ async def probe_stage_until_stall(
 	target_tolerance_mm = 0.2
 
 	while current_target_mm < target_stage_mm:
+		raise_if_cancelled(should_abort)
 		next_target_mm = min(current_target_mm + probe_step_mm, target_stage_mm)
 		await tool._ms.move_to_position_no_wait(next_target_mm, rpm=probe_rpm)
 		last_movement_time = time.monotonic()
@@ -874,6 +911,7 @@ async def probe_stage_until_stall(
 		has_moved = False
 
 		while True:
+			raise_if_cancelled(should_abort)
 			await asyncio.sleep(0.03)
 			now = time.monotonic()
 			stage_position_mm = await tool._ms.get_position()
@@ -976,12 +1014,14 @@ async def prepare_capture_pose(
 	should_rotate: bool,
 	should_use_safe_right_rotation_path: bool,
 	should_move_z: bool,
+	should_abort: Callable[[], bool] | None = None,
 ) -> None:
 	if side_name == 'right' and should_rotate is True and should_use_safe_right_rotation_path is True:
 		await move_gantry_direct(
 			tool,
 			x_mm=RIGHT_MODULE_ROTATION_SAFE_X_MM,
 			y_mm=y_mm,
+			should_abort=should_abort,
 		)
 		await tool.ensure_safe_rotation_stage_extension()
 		await tool._mr.move_to_position(absolute_rotation_deg)
@@ -989,12 +1029,14 @@ async def prepare_capture_pose(
 			tool,
 			x_mm=x_mm,
 			y_mm=y_mm,
+			should_abort=should_abort,
 		)
 	else:
 		await move_gantry_direct(
 			tool,
 			x_mm=x_mm,
 			y_mm=y_mm,
+			should_abort=should_abort,
 		)
 
 		if should_rotate is True:
@@ -1023,7 +1065,9 @@ async def resolve_capture_y_mm(
 	z_move_accel: float,
 	settle_ms: int,
 	samples_per_point: int,
+	should_abort: Callable[[], bool] | None = None,
 ) -> float:
+	raise_if_cancelled(should_abort)
 	raw_y_mm = getattr(args, 'y_mm', None)
 	raw_y_range = getattr(args, 'y_range', None)
 	raw_scout_x_mm = getattr(args, 'scout_x_mm', None)
@@ -1051,6 +1095,7 @@ async def resolve_capture_y_mm(
 		raise ValueError('scout y range produced no positions')
 
 	try:
+		raise_if_cancelled(should_abort)
 		await set_y_brake_for_shelf_scouting(tool, is_enabled=False)
 		is_y_brake_disabled = True
 		await enter_capture_mode(
@@ -1064,9 +1109,12 @@ async def resolve_capture_y_mm(
 			z_mm=base_z_mm,
 			z_move_rpm=z_move_rpm,
 			z_move_accel=z_move_accel,
+			should_abort=should_abort,
 		)
+		raise_if_cancelled(should_abort)
 
 		for scout_idx, scout_x_mm in enumerate(scout_x_positions, start=1):
+			raise_if_cancelled(should_abort)
 			if scout_idx > 1:
 				await prepare_capture_pose(
 					tool,
@@ -1082,7 +1130,9 @@ async def resolve_capture_y_mm(
 					should_rotate=False,
 					should_use_safe_right_rotation_path=False,
 					should_move_z=False,
+					should_abort=should_abort,
 				)
+				raise_if_cancelled(should_abort)
 			print_status(
 				f'phase=shelf-scout scout={scout_idx}/{len(scout_x_positions)} x={float(scout_x_mm):.2f}'
 			)
@@ -1094,8 +1144,10 @@ async def resolve_capture_y_mm(
 				samples_per_point=samples_per_point,
 				progress_label=f'shelf_scout_{scout_idx}',
 				stop_after_first_edge=True,
+				should_abort=should_abort,
 			)
 			edges.extend(scout_edges)
+			raise_if_cancelled(should_abort)
 
 			if len(scout_edges) > 0:
 				break

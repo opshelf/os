@@ -19,7 +19,7 @@ import sentry_sdk
 
 from enum import Enum
 from dataclasses import dataclass, field
-from typing import Optional, Literal, List, Any
+from typing import Optional, Literal, List, Any, Callable
 
 
 def _create_motor_if_enabled(
@@ -816,7 +816,11 @@ class Tool:
                 raise
             raise GripperError(f"Place operation failed: {str(e)}") from e
 
-    async def gantry_wait(self, timeout_seconds: float = GANTRY_OUTER_TIMEOUT) -> None:
+    async def gantry_wait(
+        self,
+        timeout_seconds: float = GANTRY_OUTER_TIMEOUT,
+        should_abort: Callable[[], bool] | None = None,
+    ) -> None:
         """
         Wait for gantry motors to complete movement.
 
@@ -836,8 +840,8 @@ class Tool:
                 if time.monotonic() - start_time > timeout_seconds:
                     raise MotorWaitTimeoutError(f"Gantry wait exceeded {timeout_seconds}s timeout")
 
-                mx_f = await self._mx.wait_for_move(timeout=GANTRY_WAIT_TIMEOUT)
-                my_f = await self._my.wait_for_move(timeout=GANTRY_WAIT_TIMEOUT)
+                mx_f = await self._mx.wait_for_move(timeout=GANTRY_WAIT_TIMEOUT, should_abort=should_abort)
+                my_f = await self._my.wait_for_move(timeout=GANTRY_WAIT_TIMEOUT, should_abort=should_abort)
 
                 if mx_f == MotorStatus.STOPPED and my_f == MotorStatus.STOPPED:
                     return
@@ -854,7 +858,12 @@ class Tool:
             await self._handle_fault(e)
             raise MovementError(f"Gantry wait failed: {str(e)}") from e
 
-    async def tool_wait(self, homing: bool, timeout_seconds: float = TOOL_OUTER_TIMEOUT) -> None:
+    async def tool_wait(
+        self,
+        homing: bool,
+        timeout_seconds: float = TOOL_OUTER_TIMEOUT,
+        should_abort: Callable[[], bool] | None = None,
+    ) -> None:
         """
         Wait for tool motors to complete movement.
 
@@ -874,8 +883,16 @@ class Tool:
                 if time.monotonic() - start_time > timeout_seconds:
                     raise MotorWaitTimeoutError(f"Tool wait exceeded {timeout_seconds}s timeout")
 
-                mg_f = await self._mg.wait_for_move(timeout=TOOL_WAIT_TIMEOUT, homing=homing)
-                ms_f = await self._ms.wait_for_move(timeout=TOOL_WAIT_TIMEOUT, homing=homing)
+                mg_f = await self._mg.wait_for_move(
+                    timeout=TOOL_WAIT_TIMEOUT,
+                    homing=homing,
+                    should_abort=should_abort,
+                )
+                ms_f = await self._ms.wait_for_move(
+                    timeout=TOOL_WAIT_TIMEOUT,
+                    homing=homing,
+                    should_abort=should_abort,
+                )
 
                 if mg_f == MotorStatus.STOPPED and ms_f == MotorStatus.STOPPED:
                     return

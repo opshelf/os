@@ -1,13 +1,11 @@
 import asyncio
 import copy
 import json
-import math
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import numpy as np
 from fastapi import HTTPException
 
 from perpetual_os1 import laser_angle_calibration as angle_module
@@ -360,6 +358,114 @@ async def test_run_session_cancel_marks_needs_home_without_abort_homing() -> Non
     worker.get_status_snapshot.assert_not_awaited()
     terminal_mock.assert_awaited_once_with('cancelled', None)
     home_mock.assert_awaited_once_with(worker)
+
+
+@pytest.mark.asyncio
+async def test_run_angle_calibration_skips_final_retract_when_cancelled() -> None:
+    manager = LaserAutoCalibrationManager()
+    started = asyncio.Event()
+    tool = SimpleNamespace(
+        _laser_enabled=True,
+        _laser=object(),
+        _mx=object(),
+        _my=object(),
+        _mg=object(),
+        _ms=object(),
+        _mr=SimpleNamespace(_params=SimpleNamespace(lim=360.0)),
+        retract=AsyncMock(),
+        get_param=AsyncMock(side_effect=[3.815, 100.0, 200.0, 200.0]),
+    )
+    worker = SimpleNamespace(_robot=SimpleNamespace(_tool=tool))
+    scan_config = SimpleNamespace(
+        settle_ms=0,
+        samples_per_point=1,
+        scan_stage_extension_mm=None,
+        scan_z_offset_mm=None,
+        angle_calibration_x_min_mm=50.0,
+        angle_calibration_x_max_mm=940.0,
+        angle_calibration_x_step_mm=100.0,
+        angle_calibration_x_count=1,
+        angle_calibration_z_offset_min_mm=0.0,
+        angle_calibration_z_offset_max_mm=0.0,
+        angle_calibration_z_offset_step_mm=1.0,
+        angle_calibration_z_offset_count=1,
+        angle_calibration_rotation_min_deg=0.0,
+        angle_calibration_rotation_max_deg=0.0,
+        angle_calibration_rotation_step_deg=1.0,
+    )
+    config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=scan_config)))
+
+    async def did_resolve_capture_y_mm(*args, **kwargs) -> float:
+        started.set()
+        await asyncio.sleep(10)
+        return 1095.0
+
+    with patch('perpetual_os1_server.core.laser_auto_calibration.get_root_config', return_value=config):
+        with patch.object(angle_module, 'resolve_capture_y_mm', side_effect=did_resolve_capture_y_mm):
+            task = asyncio.create_task(
+                manager._run_angle_calibration_for_side(
+                    worker,
+                    StorageModuleSide.LEFT,
+                    ScanBounds(x_min=5.0, x_max=945.0, y_min=0.0, y_max=1200.0),
+                )
+            )
+
+            await started.wait()
+            task.cancel()
+
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+    assert tool.retract.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_run_angle_calibration_raises_when_abort_requested_during_capture() -> None:
+    manager = LaserAutoCalibrationManager()
+    tool = SimpleNamespace(
+        _laser_enabled=True,
+        _laser=object(),
+        _mx=object(),
+        _my=object(),
+        _mg=object(),
+        _ms=object(),
+        _mr=SimpleNamespace(_params=SimpleNamespace(lim=360.0)),
+        retract=AsyncMock(),
+        get_param=AsyncMock(side_effect=[3.815, 100.0, 200.0, 200.0]),
+    )
+    worker = SimpleNamespace(_robot=SimpleNamespace(_tool=tool))
+    scan_config = SimpleNamespace(
+        settle_ms=0,
+        samples_per_point=1,
+        scan_stage_extension_mm=None,
+        scan_z_offset_mm=None,
+        angle_calibration_x_min_mm=50.0,
+        angle_calibration_x_max_mm=940.0,
+        angle_calibration_x_step_mm=100.0,
+        angle_calibration_x_count=1,
+        angle_calibration_z_offset_min_mm=0.0,
+        angle_calibration_z_offset_max_mm=0.0,
+        angle_calibration_z_offset_step_mm=1.0,
+        angle_calibration_z_offset_count=1,
+        angle_calibration_rotation_min_deg=0.0,
+        angle_calibration_rotation_max_deg=0.0,
+        angle_calibration_rotation_step_deg=1.0,
+    )
+    config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=scan_config)))
+
+    async def did_prepare_capture_pose(*args, **kwargs) -> None:
+        manager._abort_requested = True
+
+    with patch('perpetual_os1_server.core.laser_auto_calibration.get_root_config', return_value=config):
+        with patch.object(angle_module, 'resolve_capture_y_mm', AsyncMock(return_value=1095.0)):
+            with patch.object(angle_module, 'prepare_capture_pose', side_effect=did_prepare_capture_pose):
+                with patch.object(angle_module, 'sample_laser_depth', AsyncMock(return_value=12.0)):
+                    with pytest.raises(asyncio.CancelledError):
+                        await manager._run_angle_calibration_for_side(
+                            worker,
+                            StorageModuleSide.LEFT,
+                            ScanBounds(x_min=5.0, x_max=945.0, y_min=0.0, y_max=1200.0),
+                        )
 
 
 @pytest.mark.asyncio
@@ -742,6 +848,107 @@ async def test_run_stage_extension_calibration_accepts_timeout_terminal_state() 
 
 
 @pytest.mark.asyncio
+async def test_run_stage_extension_calibration_skips_final_retract_when_cancelled() -> None:
+    manager = LaserAutoCalibrationManager()
+    manager._update_snapshot = AsyncMock()
+    started = asyncio.Event()
+    stage_motor = SimpleNamespace(
+        _params=SimpleNamespace(lim=75.0, rpm=300),
+        move_to_position=AsyncMock(),
+    )
+    tool = SimpleNamespace(
+        _mx=object(),
+        _my=object(),
+        _mg=object(),
+        _mr=object(),
+        _ms=stage_motor,
+        retract=AsyncMock(),
+        get_param=AsyncMock(side_effect=[187.655, 100.0, 200.0, 200.0]),
+    )
+    worker = SimpleNamespace(_robot=SimpleNamespace(_tool=tool))
+    config = SimpleNamespace(
+        robot=SimpleNamespace(
+            grid=SimpleNamespace(
+                scan=SimpleNamespace(
+                    settle_ms=0,
+                    scan_z_offset_mm=None,
+                )
+            )
+        )
+    )
+
+    async def did_probe_stage_until_stall(*args, **kwargs):
+        started.set()
+        await asyncio.sleep(10)
+        return True, 45.28, 'timeout', None
+
+    with patch('perpetual_os1_server.core.laser_auto_calibration.get_root_config', return_value=config):
+        with patch.object(angle_module, 'prepare_capture_pose', AsyncMock()):
+            with patch.object(angle_module, 'probe_stage_until_stall', side_effect=did_probe_stage_until_stall):
+                task = asyncio.create_task(
+                    manager._run_stage_extension_calibration_for_side(
+                        worker,
+                        StorageModuleSide.RIGHT,
+                        ScanBounds(x_min=5.0, x_max=945.0, y_min=0.0, y_max=1200.0),
+                        probe_y_mm=1123.0,
+                    )
+                )
+
+                await started.wait()
+                task.cancel()
+
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+
+    assert tool.retract.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_run_stage_extension_calibration_raises_when_abort_requested_during_probe() -> None:
+    manager = LaserAutoCalibrationManager()
+    manager._update_snapshot = AsyncMock()
+    stage_motor = SimpleNamespace(
+        _params=SimpleNamespace(lim=75.0, rpm=300),
+        move_to_position=AsyncMock(),
+    )
+    tool = SimpleNamespace(
+        _mx=object(),
+        _my=object(),
+        _mg=object(),
+        _mr=object(),
+        _ms=stage_motor,
+        retract=AsyncMock(),
+        get_param=AsyncMock(side_effect=[187.655, 100.0, 200.0, 200.0]),
+    )
+    worker = SimpleNamespace(_robot=SimpleNamespace(_tool=tool))
+    config = SimpleNamespace(
+        robot=SimpleNamespace(
+            grid=SimpleNamespace(
+                scan=SimpleNamespace(
+                    settle_ms=0,
+                    scan_z_offset_mm=None,
+                )
+            )
+        )
+    )
+
+    async def did_probe_stage_until_stall(*args, **kwargs):
+        manager._abort_requested = True
+        return True, 45.28, 'timeout', None
+
+    with patch('perpetual_os1_server.core.laser_auto_calibration.get_root_config', return_value=config):
+        with patch.object(angle_module, 'prepare_capture_pose', AsyncMock()):
+            with patch.object(angle_module, 'probe_stage_until_stall', side_effect=did_probe_stage_until_stall):
+                with pytest.raises(asyncio.CancelledError):
+                    await manager._run_stage_extension_calibration_for_side(
+                        worker,
+                        StorageModuleSide.RIGHT,
+                        ScanBounds(x_min=5.0, x_max=945.0, y_min=0.0, y_max=1200.0),
+                        probe_y_mm=1123.0,
+                    )
+
+
+@pytest.mark.asyncio
 async def test_resolve_stage_extension_probe_y_uses_right_scout_and_offset() -> None:
     manager = LaserAutoCalibrationManager()
     manager._update_snapshot = AsyncMock()
@@ -849,6 +1056,50 @@ async def test_resolve_capture_y_mm_stops_after_first_detected_edge() -> None:
     assert target_y_mm == 72.0
     assert scan_mock.await_count == 1
     assert scan_mock.await_args.kwargs['stop_after_first_edge'] is True
+
+
+@pytest.mark.asyncio
+async def test_resolve_capture_y_mm_raises_cancelled_when_abort_requested_between_scouts() -> None:
+    tool = SimpleNamespace(retract=AsyncMock())
+    args = SimpleNamespace(y_mm=None, y_range=(0.0, 100.0), scout_x_mm=None)
+    scan_config = SimpleNamespace()
+    should_abort = False
+
+    async def did_scan_shelf_scout_line(*args, **kwargs):
+        nonlocal should_abort
+        should_abort = True
+        return [], []
+
+    with patch.object(angle_module, 'build_shelf_scout_x_positions', return_value=[10.0, 20.0]):
+        with patch.object(angle_module, 'build_axis_positions', return_value=[100.0, 98.0, 96.0]):
+            with patch.object(angle_module, 'set_y_brake_for_shelf_scouting', AsyncMock()):
+                with patch.object(angle_module, 'enter_capture_mode', AsyncMock()):
+                    with patch.object(angle_module, 'prepare_capture_pose', AsyncMock()) as prepare_mock:
+                        with patch.object(
+                            angle_module,
+                            'scan_shelf_scout_line',
+                            side_effect=did_scan_shelf_scout_line,
+                        ) as scan_mock:
+                            with pytest.raises(asyncio.CancelledError):
+                                await angle_module.resolve_capture_y_mm(
+                                    tool,
+                                    args=args,
+                                    scan_config=scan_config,
+                                    side_name='left',
+                                    side_number=0,
+                                    x_positions=[10.0, 20.0],
+                                    rotation_center_deg=0.0,
+                                    stage_extension_mm=13.0,
+                                    base_z_mm=10.0,
+                                    z_move_rpm=100.0,
+                                    z_move_accel=100.0,
+                                    settle_ms=0,
+                                    samples_per_point=1,
+                                    should_abort=lambda: should_abort,
+                                )
+
+    assert scan_mock.await_count == 1
+    prepare_mock.assert_not_awaited()
 
 
 @pytest.mark.asyncio

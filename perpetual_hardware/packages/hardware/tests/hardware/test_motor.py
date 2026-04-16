@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -141,6 +142,19 @@ async def test_motor_status_reading(mock_controller):
     status = await motor._read_status()
     assert status == MotorStatus.IDLE
     mock_controller.read_holding_registers.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_wait_for_move_stops_and_cancels_when_abort_requested(mock_controller):
+    params = make_motor_params()
+    motor = Motor(mock_controller, params)
+    motor.stop = AsyncMock(return_value=MotorStatus.STOPPED)
+
+    with pytest.raises(asyncio.CancelledError):
+        await motor.wait_for_move(should_abort=lambda: True)
+
+    motor.stop.assert_awaited_once()
+    mock_controller.read_holding_registers.assert_not_called()
 
 
 @pytest.mark.asyncio

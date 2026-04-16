@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import logging
 from pathlib import Path
 import re
+import sys
 from types import SimpleNamespace
 from typing import Any, Literal
 from uuid import uuid4
@@ -59,6 +60,20 @@ STAGE_EXTENSION_FAST_APPROACH_MM = 40.0
 STAGE_EXTENSION_PROBE_STEP_MM = 0.5
 STAGE_EXTENSION_PROBE_TIMEOUT_S = 1.0
 STAGE_EXTENSION_NO_PROGRESS_TIMEOUT_S = 0.2
+
+
+def _should_skip_motion_cleanup_on_cancel() -> bool:
+    _, active_exception, _ = sys.exc_info()
+
+    if isinstance(active_exception, asyncio.CancelledError) is True:
+        return True
+
+    current_task = asyncio.current_task()
+
+    if current_task is None:
+        return False
+
+    return current_task.cancelling() > 0
 
 
 class LaserAutoCalibrationShelfEdge(BaseModel):
@@ -306,8 +321,6 @@ def _build_angle_rotation_positions_for_side(
         raise ValueError("right-side rotation sweep has no valid positions at or above center")
 
     return filtered_positions
-
-
 
 
 def _build_angle_calibration_sample(
@@ -660,6 +673,7 @@ class LaserAutoCalibrationManager:
                 shelf_scout_only=False,
                 known_shelf_edge_y=None,
                 recorder=recorder,
+                should_abort=self._should_abort_work,
             )
 
         await self._refresh_scan_side_state(side_name, recorder, bounds)
@@ -743,6 +757,7 @@ class LaserAutoCalibrationManager:
             angle_callback=self._build_angle_status_callback(_side_to_module_name(side)),
         ):
             try:
+                self._raise_if_abort_requested()
                 await tool.retract()
                 capture_y_mm = await angle_module.resolve_capture_y_mm(
                     tool,
@@ -758,15 +773,20 @@ class LaserAutoCalibrationManager:
                     z_move_accel=float(z_move_accel),
                     settle_ms=settle_ms,
                     samples_per_point=samples_per_point,
+                    should_abort=self._should_abort_work,
                 )
+                self._raise_if_abort_requested()
                 current_z_mm = None
                 current_absolute_rotation_deg: float | None = rotation_center_deg
 
                 for z_offset_mm in z_offset_positions:
+                    self._raise_if_abort_requested()
                     target_z_mm = base_z_mm + float(z_offset_mm)
 
                     for x_idx, x_mm in enumerate(x_positions, start=1):
+                        self._raise_if_abort_requested()
                         for rotation_idx, rotation_deg in enumerate(rotation_positions, start=1):
+                            self._raise_if_abort_requested()
                             absolute_rotation_deg = rotation_center_deg + float(rotation_deg)
                             angle_module.print_status(
                                 f"phase=capture x={x_idx}/{len(x_positions)} z={z_offset_mm:.2f} "
@@ -788,6 +808,7 @@ class LaserAutoCalibrationManager:
                                 should_use_safe_right_rotation_path=False,
                                 should_move_z=current_z_mm != target_z_mm,
                             )
+                            self._raise_if_abort_requested()
                             current_z_mm = target_z_mm
                             current_absolute_rotation_deg = absolute_rotation_deg
                             depth_mm = await angle_module.sample_laser_depth(
@@ -795,6 +816,7 @@ class LaserAutoCalibrationManager:
                                 settle_ms=settle_ms,
                                 samples_per_point=samples_per_point,
                             )
+                            self._raise_if_abort_requested()
 
                             if depth_mm is None:
                                 angle_module.print_status(
@@ -815,6 +837,7 @@ class LaserAutoCalibrationManager:
                             angle_module.print_status(
                                 f"sample=ok x={x_mm:.3f} z={target_z_mm:.3f} rotation_deg={rotation_deg:.3f} distance_mm={depth_mm:.3f}"
                             )
+                self._raise_if_abort_requested()
                 fit_samples, laser_offset_x_mm = _build_angle_fit_inputs(side, scan_config, samples)
                 fit_result = angle_module.search_best_alpha(
                     fit_samples,
@@ -829,7 +852,8 @@ class LaserAutoCalibrationManager:
                 )
                 angle_module.print_fit_result(fit_result)
             finally:
-                await tool.retract()
+                if _should_skip_motion_cleanup_on_cancel() is False:
+                    await tool.retract()
 
         updated_rotation_deg = _build_estimated_rotation_deg(rotation_center_deg, fit_result)
 
@@ -936,6 +960,7 @@ class LaserAutoCalibrationManager:
         )
 
         try:
+            self._raise_if_abort_requested()
             await tool.retract()
             await angle_module.prepare_capture_pose(
                 tool,
@@ -952,6 +977,7 @@ class LaserAutoCalibrationManager:
                 should_use_safe_right_rotation_path=side == StorageModuleSide.RIGHT,
                 should_move_z=True,
             )
+            self._raise_if_abort_requested()
             await self._update_snapshot(
                 current_side=side_module_name,
                 current_stage="stage-extension-calibration",
@@ -980,7 +1006,9 @@ class LaserAutoCalibrationManager:
                 fast_approach_mm=STAGE_EXTENSION_FAST_APPROACH_MM,
                 fast_approach_rpm=int(tool._ms._params.rpm),
                 auto_retract=False,
+                should_abort=self._should_abort_work,
             )
+            self._raise_if_abort_requested()
 
             await self._update_snapshot(
                 current_side=side_module_name,
@@ -1007,6 +1035,7 @@ class LaserAutoCalibrationManager:
                 )
 
             calibrated_stage_extension_mm = max(0.0, stage_position_mm - STAGE_EXTENSION_PROBE_BACKOFF_MM)
+            self._raise_if_abort_requested()
             await tool._ms.move_to_position(calibrated_stage_extension_mm, rpm=probe_rpm)
             await self._update_snapshot(
                 current_side=side_module_name,
@@ -1028,7 +1057,8 @@ class LaserAutoCalibrationManager:
             )
             return calibrated_stage_extension_mm
         finally:
-            await tool.retract()
+            if _should_skip_motion_cleanup_on_cancel() is False:
+                await tool.retract()
 
     async def _resolve_stage_extension_probe_y_mm(
         self,
@@ -1103,6 +1133,7 @@ class LaserAutoCalibrationManager:
                 z_move_accel=float(z_move_accel),
                 settle_ms=int(scan_config.settle_ms),
                 samples_per_point=int(scan_config.samples_per_point),
+                should_abort=self._should_abort_work,
             )
 
         probe_y_mm = _build_stage_extension_probe_y_mm(float(top_shelf_y_mm), bounds)
@@ -1320,6 +1351,13 @@ class LaserAutoCalibrationManager:
     def _should_preserve_cancelling_snapshot(self) -> bool:
         return self._abort_requested is True or self._snapshot.current_stage == "cancelling"
 
+    def _should_abort_work(self) -> bool:
+        return self._abort_requested is True or self._snapshot.current_stage == "cancelling"
+
+    def _raise_if_abort_requested(self) -> None:
+        if self._should_abort_work() is True:
+            raise asyncio.CancelledError()
+
     def _build_scan_status_callback(self, side_name: str, recorder: Any, bounds: ScanBounds):
         async def did_receive_status(message: str) -> None:
             if self._should_preserve_cancelling_snapshot() is True:
@@ -1533,11 +1571,8 @@ class LaserAutoCalibrationManager:
         original_angle_print = angle_module.print_status
         pending_task: asyncio.Task[None] | None = None
 
-        def didSchedule(callback_result: Any) -> None:
+        def didSchedule(callback: Any, message: str) -> None:
             nonlocal pending_task
-
-            if hasattr(callback_result, "__await__") is False:
-                return
 
             previous_task = pending_task
 
@@ -1545,7 +1580,7 @@ class LaserAutoCalibrationManager:
                 if previous_task is not None:
                     await previous_task
 
-                await callback_result
+                await callback(message)
 
             pending_task = asyncio.create_task(didRunCallback())
 
@@ -1553,13 +1588,13 @@ class LaserAutoCalibrationManager:
             original_scan_print(message)
 
             if scan_callback is not None:
-                didSchedule(scan_callback(message))
+                didSchedule(scan_callback, message)
 
         def did_print_angle(message: str) -> None:
             original_angle_print(message)
 
             if angle_callback is not None:
-                didSchedule(angle_callback(message))
+                didSchedule(angle_callback, message)
 
         laser_module.print_status = did_print_scan
         angle_module.print_status = did_print_angle
@@ -1571,7 +1606,15 @@ class LaserAutoCalibrationManager:
             angle_module.print_status = original_angle_print
 
             if pending_task is not None:
-                await pending_task
+                current_task = asyncio.current_task()
+
+                if self._should_abort_work() is True or (current_task is not None and current_task.cancelling() > 0):
+                    pending_task.cancel()
+
+                    with suppress(asyncio.CancelledError):
+                        await pending_task
+                else:
+                    await pending_task
 
     async def _set_terminal_state(self, state: Literal["completed", "failed", "cancelled"], error: str | None) -> None:
         await self._update_snapshot(
