@@ -211,7 +211,11 @@ def _build_bounds_for_side(scan_config: Any, side: StorageModuleSide) -> ScanBou
     )
 
 
-def _build_valid_rotation_positions(scan_config: Any, rotation_center_deg: float) -> list[float]:
+def _build_valid_rotation_positions(
+    scan_config: Any,
+    rotation_center_deg: float,
+    rotation_limit_deg: float,
+) -> list[float]:
     requested_positions = angle_module.build_axis_positions(
         float(scan_config.angle_calibration_rotation_min_deg),
         float(scan_config.angle_calibration_rotation_max_deg),
@@ -220,13 +224,13 @@ def _build_valid_rotation_positions(scan_config: Any, rotation_center_deg: float
     valid_positions = [
         float(rotation_deg)
         for rotation_deg in requested_positions
-        if 0.0 <= rotation_center_deg + float(rotation_deg) <= 180.0
+        if 0.0 <= rotation_center_deg + float(rotation_deg) <= rotation_limit_deg
     ]
 
     if len(valid_positions) == 0:
         raise ValueError(
             "rotation sweep has no valid positions "
-            f"for center {rotation_center_deg:.3f} deg within 0..180"
+            f"for center {rotation_center_deg:.3f} deg within 0..{rotation_limit_deg:.3f}"
         )
 
     if len(valid_positions) != len(requested_positions):
@@ -234,7 +238,8 @@ def _build_valid_rotation_positions(scan_config: Any, rotation_center_deg: float
             "rotation_sweep_clipped "
             f"requested={len(requested_positions)} "
             f"valid={len(valid_positions)} "
-            f"center_deg={rotation_center_deg:.3f}"
+            f"center_deg={rotation_center_deg:.3f} "
+            f"rotation_limit_deg={rotation_limit_deg:.3f}"
         )
 
     return valid_positions
@@ -278,31 +283,6 @@ def _build_angle_z_offset_positions(scan_config: Any) -> list[float]:
 
 def _build_estimated_rotation_deg(rotation_center_deg: float, fit_result: Any) -> float:
     return float(rotation_center_deg) + float(fit_result.alpha_deg)
-
-
-def _build_derived_right_angle_result(
-    previous_rotation_deg: float,
-    left_angle_result: LaserAutoCalibrationAngleResult,
-) -> LaserAutoCalibrationAngleResult:
-    updated_rotation_deg = 180.0 + float(left_angle_result.updated_rotation_deg)
-
-    if updated_rotation_deg < 0.0 or updated_rotation_deg > 270.0:
-        raise ValueError(
-            "derived right rotation is outside motor range "
-            f"({updated_rotation_deg:.3f} deg is outside 0..270)"
-        )
-
-    return LaserAutoCalibrationAngleResult(
-        side="right_module",
-        alpha_deg=float(left_angle_result.updated_rotation_deg),
-        sample_count=int(left_angle_result.sample_count),
-        capture_y_mm=float(left_angle_result.capture_y_mm),
-        rms_residual_mm=float(left_angle_result.rms_residual_mm),
-        max_abs_residual_mm=float(left_angle_result.max_abs_residual_mm),
-        line_angle_deg=float(left_angle_result.line_angle_deg),
-        previous_rotation_deg=float(previous_rotation_deg),
-        updated_rotation_deg=updated_rotation_deg,
-    )
 
 
 def _build_candidate_rows(
@@ -501,20 +481,7 @@ class LaserAutoCalibrationManager:
         left_angle_result = await self._run_angle_calibration_for_side(worker, StorageModuleSide.LEFT, left_bounds)
         await self._apply_angle_calibration_in_memory(worker, StorageModuleSide.LEFT, left_angle_result)
 
-        previous_right_rotation_deg = float(await worker._robot._tool.get_param("ROTATION_BACK"))
-        right_angle_result = _build_derived_right_angle_result(previous_right_rotation_deg, left_angle_result)
-        await self._update_snapshot(
-            current_side="right_module",
-            current_stage="angle-calibration",
-            state="running",
-            bounds=right_bounds,
-            stage_detail={
-                "side": "right_module",
-                "phase": "angle-derived",
-                "source_side": "left_module",
-                "updated_rotation_deg": right_angle_result.updated_rotation_deg,
-            },
-        )
+        right_angle_result = await self._run_angle_calibration_for_side(worker, StorageModuleSide.RIGHT, right_bounds)
         await self._apply_angle_calibration_in_memory(worker, StorageModuleSide.RIGHT, right_angle_result)
 
         right_probe_y_mm = await self._resolve_stage_extension_probe_y_mm(
@@ -704,7 +671,12 @@ class LaserAutoCalibrationManager:
 
         previous_rotation_deg = float(await tool.get_param(rotation_param))
         rotation_center_deg = _build_angle_rotation_center_deg(side)
-        rotation_positions = _build_valid_rotation_positions(scan_config, rotation_center_deg)
+        rotation_limit_deg = float(tool._mr._params.lim)
+        rotation_positions = _build_valid_rotation_positions(
+            scan_config,
+            rotation_center_deg,
+            rotation_limit_deg,
+        )
         z_extension_place = await tool.get_param("Z_EXTENSION_PLACE")
         z_move_rpm = await tool.get_param("Z_MOVE_RPM")
         z_move_accel = await tool.get_param("Z_MOVE_ACCEL")
@@ -815,10 +787,10 @@ class LaserAutoCalibrationManager:
 
         updated_rotation_deg = _build_estimated_rotation_deg(rotation_center_deg, fit_result)
 
-        if updated_rotation_deg < 0.0 or updated_rotation_deg > 180.0:
+        if updated_rotation_deg < 0.0 or updated_rotation_deg > rotation_limit_deg:
             raise ValueError(
                 "estimated rotation is outside motor range "
-                f"({updated_rotation_deg:.3f} deg is outside 0..180)"
+                f"({updated_rotation_deg:.3f} deg is outside 0..{rotation_limit_deg:.3f})"
             )
 
         return LaserAutoCalibrationAngleResult(
