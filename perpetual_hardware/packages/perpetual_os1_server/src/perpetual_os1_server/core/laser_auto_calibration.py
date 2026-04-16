@@ -305,7 +305,7 @@ def _build_angle_fit_inputs(
     scan_config: Any,
     samples: list[angle_module.LaserAngleCalibrationSample],
 ) -> tuple[list[angle_module.LaserAngleCalibrationSample], float]:
-    laser_offset_x_mm = float(scan_config.laser_offset_x_mm)
+    laser_offset_x_mm = 0.0
 
     if side != StorageModuleSide.RIGHT:
         return samples, laser_offset_x_mm
