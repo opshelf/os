@@ -285,6 +285,32 @@ def _build_estimated_rotation_deg(rotation_center_deg: float, fit_result: Any) -
     return float(rotation_center_deg) + float(fit_result.alpha_deg)
 
 
+def _build_angle_fit_inputs(
+    side: StorageModuleSide,
+    scan_config: Any,
+    samples: list[angle_module.LaserAngleCalibrationSample],
+) -> tuple[list[angle_module.LaserAngleCalibrationSample], float]:
+    laser_offset_x_mm = float(scan_config.laser_offset_x_mm)
+
+    if side != StorageModuleSide.RIGHT:
+        return samples, laser_offset_x_mm
+
+    mirrored_samples = [
+        angle_module.LaserAngleCalibrationSample(
+            axis_x_mm=float(sample.axis_x_mm),
+            axis_z_mm=float(sample.axis_z_mm),
+            rotation_deg=float(sample.rotation_deg),
+            absolute_rotation_deg=float(sample.absolute_rotation_deg),
+            stage_extension_mm=-float(sample.stage_extension_mm),
+            z_extension_mm=float(sample.z_extension_mm),
+            distance_mm=float(sample.distance_mm),
+        )
+        for sample in samples
+    ]
+
+    return mirrored_samples, -laser_offset_x_mm
+
+
 def _build_candidate_rows(
     side_name: Literal["left_module", "right_module"],
     candidate_rows: list[dict[str, Any]],
@@ -478,11 +504,11 @@ class LaserAutoCalibrationManager:
         left_bounds = _build_bounds_for_side(scan_config, StorageModuleSide.LEFT)
         right_bounds = _build_bounds_for_side(scan_config, StorageModuleSide.RIGHT)
 
-        left_angle_result = await self._run_angle_calibration_for_side(worker, StorageModuleSide.LEFT, left_bounds)
-        await self._apply_angle_calibration_in_memory(worker, StorageModuleSide.LEFT, left_angle_result)
-
         right_angle_result = await self._run_angle_calibration_for_side(worker, StorageModuleSide.RIGHT, right_bounds)
         await self._apply_angle_calibration_in_memory(worker, StorageModuleSide.RIGHT, right_angle_result)
+
+        left_angle_result = await self._run_angle_calibration_for_side(worker, StorageModuleSide.LEFT, left_bounds)
+        await self._apply_angle_calibration_in_memory(worker, StorageModuleSide.LEFT, left_angle_result)
 
         right_probe_y_mm = await self._resolve_stage_extension_probe_y_mm(
             worker,
@@ -770,14 +796,15 @@ class LaserAutoCalibrationManager:
                             angle_module.print_status(
                                 f"sample=ok x={x_mm:.3f} z={target_z_mm:.3f} rotation_deg={rotation_deg:.3f} distance_mm={depth_mm:.3f}"
                             )
+                fit_samples, laser_offset_x_mm = _build_angle_fit_inputs(side, scan_config, samples)
                 fit_result = angle_module.search_best_alpha(
-                    samples,
+                    fit_samples,
                     alpha_min_deg=float(scan_config.angle_calibration_alpha_min_deg),
                     alpha_max_deg=float(scan_config.angle_calibration_alpha_max_deg),
                     coarse_step_deg=float(scan_config.angle_calibration_coarse_step_deg),
                     fine_window_deg=float(scan_config.angle_calibration_fine_window_deg),
                     fine_step_deg=float(scan_config.angle_calibration_fine_step_deg),
-                    laser_offset_x_mm=float(scan_config.laser_offset_x_mm),
+                    laser_offset_x_mm=laser_offset_x_mm,
                     laser_offset_z_mm=0.0,
                     beam_zero_deg=float(scan_config.angle_calibration_beam_zero_deg),
                 )
