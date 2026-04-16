@@ -169,7 +169,7 @@ def test_build_estimated_rotation_deg_offsets_previous_rotation() -> None:
     assert estimated_rotation_deg == pytest.approx(177.0)
 
 
-def test_build_angle_fit_inputs_keeps_right_side_geometry_unchanged() -> None:
+def test_build_angle_fit_inputs_flips_right_side_rotation_sign() -> None:
     raw_samples: list[angle_module.LaserAngleCalibrationSample] = []
 
     for rotation_deg in [-8.0, 0.0, 8.0]:
@@ -191,19 +191,20 @@ def test_build_angle_fit_inputs_keeps_right_side_geometry_unchanged() -> None:
         raw_samples,
     )
 
-    assert fit_samples == raw_samples
+    assert [sample.rotation_deg for sample in fit_samples] == [8.0, -0.0, -8.0]
+    assert [sample.absolute_rotation_deg for sample in fit_samples] == [188.0, 180.0, 172.0]
     assert laser_offset_x_mm == pytest.approx(0.0)
 
 
-def test_build_angle_rotation_positions_for_right_keeps_non_negative_half() -> None:
+def test_build_angle_rotation_positions_for_right_keeps_non_positive_half() -> None:
     positions = [-8.0, -7.0, -6.0, -5.0, -4.0, -3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
 
     filtered_positions = _build_angle_rotation_positions_for_side(StorageModuleSide.RIGHT, positions)
 
-    assert filtered_positions == [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
+    assert filtered_positions == [-8.0, -7.0, -6.0, -5.0, -4.0, -3.0, -2.0, -1.0, 0.0]
 
 
-def test_right_side_one_sided_rotation_sweep_reduces_fit_error() -> None:
+def test_right_side_mirrored_negative_half_sweep_reduces_fit_error() -> None:
     raw_samples: list[angle_module.LaserAngleCalibrationSample] = []
     measured_distances_by_x = {
         945.0: [8.495, 8.361, 8.155, 8.060, 7.908, 7.765, 7.662, 7.547, 7.398, 7.313, 7.187, 7.108, 6.972, 6.905, 6.822, 6.740, 6.679],
@@ -241,8 +242,13 @@ def test_right_side_one_sided_rotation_sweep_reduces_fit_error() -> None:
     )
     filtered_positions = set(_build_angle_rotation_positions_for_side(StorageModuleSide.RIGHT, rotation_positions))
     one_sided_samples = [sample for sample in raw_samples if sample.rotation_deg in filtered_positions]
-    one_sided_fit = angle_module.search_best_alpha(
+    fit_samples, laser_offset_x_mm = _build_angle_fit_inputs(
+        StorageModuleSide.RIGHT,
+        SimpleNamespace(laser_offset_x_mm=0.0),
         one_sided_samples,
+    )
+    one_sided_fit = angle_module.search_best_alpha(
+        fit_samples,
         alpha_min_deg=-20.0,
         alpha_max_deg=20.0,
         coarse_step_deg=0.1,
@@ -254,7 +260,7 @@ def test_right_side_one_sided_rotation_sweep_reduces_fit_error() -> None:
     )
 
     assert full_fit.alpha_deg == pytest.approx(7.98)
-    assert one_sided_fit.alpha_deg == pytest.approx(3.85)
+    assert one_sided_fit.alpha_deg == pytest.approx(4.98)
     assert one_sided_fit.line.rms_residual_mm < full_fit.line.rms_residual_mm
 
 
