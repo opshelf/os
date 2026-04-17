@@ -20,9 +20,10 @@ from ..utils.audit_integrity import (
     build_binding_message,
     get_hmac_key_id,
 )
+from ..utils.audit_constants import LEGACY_COMMAND_RECORDS_FIELD
 from ..routers.auth_deps import get_current_user_optional
 
-nats_commands_context: ContextVar[List[Dict[str, Any]]] = ContextVar('nats_commands', default=[])
+command_records_context: ContextVar[List[Dict[str, Any]]] = ContextVar("command_records", default=[])
 
 EXCLUDED_ENDPOINTS = frozenset([
 	"/api/health",
@@ -36,7 +37,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
 		if request.url.path in EXCLUDED_ENDPOINTS:
 			return await call_next(request)
 
-		nats_commands_context.set([])
+		command_records_context.set([])
 		
 		start_time = time.time()
 		
@@ -109,7 +110,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
 				user_id = user.id if user else None
 				method = request.method
 				endpoint = str(request.url.path)
-				nats_commands = nats_commands_context.get()
+				command_records = command_records_context.get()
 				ip_address = request.client.host if request.client else None
 				user_agent = request.headers.get("user-agent")
 
@@ -143,7 +144,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
 					"request_body": request_body,
 					"response_status": response_status,
 					"response_body": response_body,
-					"nats_commands": nats_commands,
+					LEGACY_COMMAND_RECORDS_FIELD: command_records,
 					"error_message": error_message,
 					"ip_address": ip_address,
 					"user_agent": user_agent,
@@ -166,7 +167,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
 					request_body=request_body,
 					response_status=response_status,
 					response_body=response_body,
-					nats_commands=nats_commands,
+					command_records=command_records,
 					error_message=error_message or "",
 					ip_address=ip_address or "",
 					user_agent=user_agent or "",
@@ -183,14 +184,14 @@ class AuditMiddleware(BaseHTTPMiddleware):
 			except Exception:
 				traceback.print_exc()
 
-def capture_nats_command(command: Dict[str, Any]) -> None:
-	"""Capture NATS command for audit logging."""
+def capture_command(command: Dict[str, Any]) -> None:
+	"""Capture a command for audit logging."""
 	try:
-		commands = nats_commands_context.get()
+		commands = command_records_context.get()
 		commands.append({
 			"timestamp": datetime.now(timezone.utc).isoformat(),
 			"command": command
 		})
-		nats_commands_context.set(commands)
+		command_records_context.set(commands)
 	except Exception:
 		pass

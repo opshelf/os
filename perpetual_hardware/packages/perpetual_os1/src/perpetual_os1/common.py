@@ -21,29 +21,9 @@ CONFIG_PATH = Path("data/config.json")
 
 
 class OperatingMode(str, Enum):
-	demo = "demo"
-	development = "development"
-	production = "production"
-
-# ---------------------- NATS Config ----------------------
-
-class RobotNatsConfiguration(BaseModel):
-    stream_name: str = "robot"
-    command_queue: str = "commands"
-    event_queue: str = "events"
-    status_queue: str = "robot.status"
-    get_storage_subject: str = "robot.get_storage"
-    set_storage_subject: str = "robot.set_storage"
-    get_config_subject: str = "robot.get_configuration"
-    set_config_subject: str = "robot.set_configuration"
-    get_status_subject: str = "robot.get_status"
-
-    domain: str = "localhost"
-    port: int = 4222
-
-    def connection_string(self) -> str:
-        return f"nats://{self.domain}:{self.port}"
-
+    demo = "demo"
+    development = "development"
+    production = "production"
 
 # ---------------------- Coordinates ----------------------
 
@@ -351,14 +331,6 @@ class OverheadCameraSettings(BaseModel):
     rtsp_url: str = ""
 
 
-class NatsSettings(BaseModel):
-    domain: str = "nats"
-    port: int = Field(4222, ge=1, le=65535)
-
-    def connection_string(self) -> str:
-        return f"nats://{self.domain}:{self.port}"
-
-
 class AuthSettings(BaseModel):
     enabled: bool = True
     require_auth: bool = True
@@ -600,7 +572,6 @@ class RootConfig(BaseModel):
     tool_camera: ToolCameraSettings = Field(default_factory=ToolCameraSettings)
     overhead_camera: OverheadCameraSettings = Field(default_factory=OverheadCameraSettings)
     scale: ScaleAppSettings = Field(default_factory=ScaleAppSettings)
-    nats: NatsSettings = Field(default_factory=NatsSettings)  # type: ignore[arg-type]
     auth: AuthSettings = Field(default_factory=AuthSettings)  # type: ignore[arg-type]
     robot_app: RobotAppSettings = Field(default_factory=RobotAppSettings)
     demo: DemoSettings = Field(default_factory=DemoSettings)

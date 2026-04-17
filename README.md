@@ -3,11 +3,12 @@
 ## overview
 
 this repo contains the local runtime for perpetual devices.
-the development stack is container-first and runs three services:
+the development stack is container-first and runs two services:
 
 - `dev_ui`: sveltekit ui on `http://localhost:8080`
 - `api`: fastapi backend on `http://localhost:8000`
-- `nats`: message bus used by backend and hardware flows
+
+the backend uses in-process queues for robot commands and live event/status fanout.
 
 the backend persists runtime data in `perpetual_hardware/data` (including local sqlite state).
 
@@ -17,7 +18,7 @@ the backend persists runtime data in `perpetual_hardware/data` (including local 
 - `perpetual_hardware/packages/hardware/`: low-level hardware integrations
 - `perpetual_hardware/packages/perpetual_os1/`: domain and orchestration logic
 - `perpetual_hardware/packages/perpetual_os1_server/`: fastapi app, routers, auth, storage, and database migrations
-- `docker-compose.yml`: base stack (`nats`, `api`, `dev_ui`)
+- `docker-compose.yml`: base stack (`api`, `dev_ui`)
 - `docker-compose.dev.yml`: development overrides (hot reload for api/ui)
 - `docker-compose.hardware.yml`: usb/device passthrough for hardware-connected machines
 - `scripts/start`, `scripts/stop`: preferred lifecycle commands for local development
