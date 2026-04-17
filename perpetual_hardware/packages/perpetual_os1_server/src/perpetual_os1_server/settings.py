@@ -220,13 +220,6 @@ def _build_minimal_config(data: dict) -> dict:
 					"confidence_min": 0,
 					"headless_fallback_path": "./fallback.jpg",
 				},
-				"tof_camera": {
-					"csi_port": 0,
-					"resolution": [240, 180],
-					"fps": 30,
-					"max_distance_mm": 2000,
-					"confidence_min": 0.9,
-				},
 			},
 			"bus": {
 				"motor": {
