@@ -17,6 +17,9 @@ ASPECT_TOL = 0.75       # allow ±20% from perfect square (w≈h)
 
 logger = logging.getLogger(__name__)
 
+_FRAME_DEBUG_PATH = Path("/tmp") / "frame.png"
+
+
 class ToolCamera:
     url: str
     mtx: npt.NDArray  # camera matrix
@@ -106,7 +109,7 @@ class ToolCamera:
                     raise ImageError(
                         "Failed to read frame or received empty frame"
                     )
-                cv2.imwrite("frame.png", frame)
+                cv2.imwrite(str(_FRAME_DEBUG_PATH), frame)
                 return frame
                 
             finally:
