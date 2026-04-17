@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from ..database.session import get_db
 from ..database.models import AuditLog, User
 from .auth_deps import get_current_user, require_permissions
+from ..utils.audit_constants import LEGACY_COMMAND_RECORDS_FIELD
 from ..utils.audit_integrity import canonicalize_payload, sha256_hex, hmac_sha256_hex, build_binding_message
 
 router = APIRouter(
@@ -30,7 +31,7 @@ class AuditLogResponse(BaseModel):
 	request_body: Optional[dict]
 	response_status: int
 	response_body: Optional[dict]
-	nats_commands: Optional[List[dict]]
+	command_records: Optional[List[dict]]
 	error_message: Optional[str]
 	ip_address: Optional[str]
 	user_agent: Optional[str]
@@ -116,7 +117,7 @@ async def list_audit_logs(
 				request_body=cast(dict[str, Any], log.request_body),
 				response_status=int(log.response_status),
 				response_body=cast(dict[str, Any], log.response_body),
-				nats_commands=cast(list[dict[str, Any]], log.nats_commands),
+				command_records=cast(list[dict[str, Any]], log.command_records),
 				error_message=str(log.error_message) if log.error_message is not None else None,
 				ip_address=str(log.ip_address) if log.ip_address is not None else None,
 				user_agent=str(log.user_agent) if log.user_agent is not None else None,
@@ -159,7 +160,7 @@ async def get_audit_log(
 		request_body=cast(dict[str, Any], log.request_body),
 		response_status=int(log.response_status),
 		response_body=cast(dict[str, Any], log.response_body),
-		nats_commands=cast(list[dict[str, Any]], log.nats_commands),
+		command_records=cast(list[dict[str, Any]], log.command_records),
 		error_message=str(log.error_message) if log.error_message is not None else None,
 		ip_address=str(log.ip_address) if log.ip_address is not None else None,
 		user_agent=str(log.user_agent) if log.user_agent is not None else None,
@@ -213,7 +214,7 @@ async def verify_audit_chain(
 			"request_body": log.request_body,
 			"response_status": log.response_status,
 			"response_body": log.response_body,
-			"nats_commands": log.nats_commands,
+			LEGACY_COMMAND_RECORDS_FIELD: log.command_records,
 			"error_message": log.error_message,
 			"ip_address": log.ip_address,
 			"user_agent": log.user_agent,

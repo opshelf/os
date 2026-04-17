@@ -57,6 +57,24 @@ async def test_controller_read_holding_register_block(mock_modbus_client):
 
 
 @pytest.mark.asyncio
+async def test_controller_read_input_register_block(mock_modbus_client):
+    controller = SharedModbusController("/dev/ttyUSB0", 115200)
+    controller.client = mock_modbus_client
+
+    result = Mock()
+    result.isError.return_value = False
+    result.registers = [65535, 56701]
+    mock_modbus_client.read_input_registers.return_value = result
+
+    values = await controller.read_input_register_block(1, 0x0000, 2)
+
+    assert values == (65535, 56701)
+    mock_modbus_client.read_input_registers.assert_called_once_with(
+        address=0x0000, count=2, device_id=1
+    )
+
+
+@pytest.mark.asyncio
 async def test_controller_read_holding_register_block_validates_count(mock_modbus_client):
     controller = SharedModbusController("/dev/ttyUSB0", 115200)
     controller.client = mock_modbus_client

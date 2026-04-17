@@ -5,6 +5,7 @@ from sqlalchemy.orm import relationship, Mapped, mapped_column
 from datetime import datetime, timezone
 from .base import Base
 from pydantic import ConfigDict
+from ..utils.audit_constants import LEGACY_COMMAND_RECORDS_FIELD
 
 class Role(Base):
 	"""Role model for RBAC."""
@@ -64,7 +65,7 @@ class AuditLog(Base):
 	request_body: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
 	response_status: Mapped[int] = mapped_column(Integer, nullable=False)
 	response_body: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
-	nats_commands: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JSON, nullable=True)
+	command_records: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(LEGACY_COMMAND_RECORDS_FIELD, JSON, nullable=True)
 	error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 	ip_address: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
 	user_agent: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)

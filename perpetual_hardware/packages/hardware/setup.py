@@ -10,7 +10,6 @@ setup(
         "numpy>=1.19.0",
         "opencv-python>=4.5.0",
         "pymodbus>=3.0.0",
-        "ArducamDepthCamera",  # Add specific version if available
         "pytest>=7.0.0",
         "pytest-asyncio>=0.20.0",
     ],

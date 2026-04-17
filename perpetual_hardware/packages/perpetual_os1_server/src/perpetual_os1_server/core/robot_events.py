@@ -1,13 +1,11 @@
+import asyncio
 import json
 import logging
 from typing import Any, Optional
 
-from nats.aio.client import Client as NATS
-from nats.aio.msg import Msg
-from nats.aio.subscription import Subscription
 from sqlalchemy import select
 
-from perpetual_os1.common import RobotNatsConfiguration
+from perpetual_os1.robot_worker import RobotWorker
 from perpetual_os1_server.core.storage import StorageService
 from perpetual_os1_server.database.models import Telemetry
 from perpetual_os1_server.database.session import AsyncSessionLocal
@@ -197,53 +195,54 @@ async def process_robot_event(payload: dict[str, Any]) -> None:
 
 
 class RobotEventListener:
-    """Subscribe to robot events and update storage state."""
+    """Subscribe to worker events and update storage state."""
 
-    def __init__(self, nats_config: RobotNatsConfiguration):
-        self._config = nats_config
-        self._nc: Optional[NATS] = None
-        self._subscription: Optional[Subscription] = None
+    def __init__(self, worker: RobotWorker):
+        self._worker = worker
+        self._queue: Optional[asyncio.Queue[str]] = None
+        self._task: Optional[asyncio.Task[None]] = None
 
     async def start(self) -> None:
-        if self._nc is not None:
+        if self._task is not None:
             logger.info("Robot event listener already started")
             return
 
-        logger.info("Starting robot event listener, connecting to %s", self._config.connection_string())
-        self._nc = NATS()
-        await self._nc.connect(self._config.connection_string())
-        logger.info("Connected to NATS for event listener")
-        self._subscription = await self._nc.subscribe(
-            self._config.event_queue, cb=self._handle_message
-        )
-        logger.info("Robot event listener subscribed to %s", self._config.event_queue)
+        logger.info("Starting robot event listener")
+        self._queue = await self._worker.subscribe_events()
+        self._task = asyncio.create_task(self._consume_events(), name="robot-event-listener")
 
     async def stop(self) -> None:
-        if self._subscription is not None:
+        if self._queue is not None:
             try:
-                await self._subscription.unsubscribe()
+                await self._worker.unsubscribe_events(self._queue)
             except Exception as err:
                 logger.warning("Failed to unsubscribe from robot events: %s", err)
-            self._subscription = None
+            self._queue = None
 
-        if self._nc is not None:
+        if self._task is not None:
+            self._task.cancel()
+
             try:
-                await self._nc.drain()
+                await self._task
+            except asyncio.CancelledError:
+                pass
             except Exception as err:
-                logger.warning("Failed to drain NATS connection: %s", err)
-            finally:
-                try:
-                    await self._nc.close()
-                except Exception:
-                    pass
-            self._nc = None
+                logger.warning("Failed to stop robot event listener task: %s", err)
 
-    async def _handle_message(self, msg: Msg) -> None:
-        logger.info("Received robot event message: %s", msg.data[:200] if msg.data else None)
-        try:
-            payload = json.loads(msg.data.decode())
-        except Exception:
-            logger.warning("Received malformed robot event: %s", msg.data)
+            self._task = None
+
+    async def _consume_events(self) -> None:
+        if self._queue is None:
             return
 
-        await process_robot_event(payload)
+        while True:
+            payload_json = await self._queue.get()
+            logger.info("Received robot event message: %s", payload_json[:200] if payload_json else None)
+
+            try:
+                payload = json.loads(payload_json)
+            except Exception:
+                logger.warning("Received malformed robot event: %s", payload_json)
+                continue
+
+            await process_robot_event(payload)

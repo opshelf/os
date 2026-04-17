@@ -10,7 +10,6 @@
 	const links = [
 		{ href: '/', label: 'status' },
 		{ href: '/calibration', label: 'calibration' },
-		{ href: '/cells', label: 'cells' },
 		{ href: '/camera', label: 'cameras' },
 		{ href: '/scale', label: 'scale' },
 		{ href: '/scanner', label: 'scanner' },

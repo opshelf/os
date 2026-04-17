@@ -10,10 +10,12 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from perpetual_os1.device import get_device_id
+from perpetual_os1.operating_mode import should_enable_sentry
 from perpetual_os1_server.core.camera import camera_registry
 from perpetual_os1_server.core.logging_config import get_logger
 from perpetual_os1_server.core.robot import get_robot_worker
 from perpetual_os1_server.database.models import User
+from perpetual_os1_server.settings import get_operating_mode
 from perpetual_os1_server.routers.auth_deps import get_current_user
 
 logger = get_logger(__name__)
@@ -66,10 +68,12 @@ async def _build_robot_context() -> dict[str, Any]:
 
 
 def _build_system_context() -> dict[str, Any]:
+	mode = get_operating_mode()
+
 	return {
 		"device_id": get_device_id(),
 		"hostname": socket.gethostname(),
-		"environment": os.getenv("SENTRY_ENVIRONMENT", os.getenv("DEPLOYMENT_ENVIRONMENT", "development")),
+		"environment": mode.value,
 		"version": os.getenv("APP_VERSION", "0.1.0"),
 	}
 
@@ -99,6 +103,8 @@ async def submit_error_report(
 	device_id = str(system_context["device_id"])
 	hostname = socket.gethostname()
 	user_name = f"{current_user.first_name} {current_user.last_name}"
+	mode = get_operating_mode()
+	sentry_enabled = should_enable_sentry(mode)
 
 	logger.info(
 		"user_error_report_submitted",
@@ -109,21 +115,22 @@ async def submit_error_report(
 		camera_count=len(camera_images),
 	)
 
-	with sentry_sdk.push_scope() as scope:
-		scope.set_context("user_report", {"message": request.message})
-		scope.set_context("user", user_context)
-		scope.set_context("robot_state", robot_context)
-		scope.set_context("system", system_context)
-		scope.set_tag("report_type", "user_submitted")
-		scope.set_tag("device_id", device_id)
-		scope.set_tag("hostname", hostname)
+	if sentry_enabled is True and sentry_sdk.is_initialized() is True:
+		with sentry_sdk.push_scope() as scope:
+			scope.set_context("user_report", {"message": request.message})
+			scope.set_context("user", user_context)
+			scope.set_context("robot_state", robot_context)
+			scope.set_context("system", system_context)
+			scope.set_tag("report_type", "user_submitted")
+			scope.set_tag("device_id", device_id)
+			scope.set_tag("hostname", hostname)
 
-		for name, image_bytes in camera_images.items():
-			scope.add_attachment(bytes=image_bytes, filename=f"{name}.jpg")
+			for name, image_bytes in camera_images.items():
+				scope.add_attachment(bytes=image_bytes, filename=f"{name}.jpg")
 
-		sentry_sdk.capture_message(
-			f"User Report: {request.message[:100]}",
-			level="error",
-		)
+			sentry_sdk.capture_message(
+				f"User Report: {request.message[:100]}",
+				level="error",
+			)
 
 	return ReportErrorResponse(status="ok")

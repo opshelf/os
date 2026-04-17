@@ -13,6 +13,7 @@ class LaserSensor:
         self,
         modbus_controller: SharedModbusController,
         device_id: int,
+        read_function_code: int,
         register_address: int,
         register_count: int,
         distance_register_index: int,
@@ -27,8 +28,12 @@ class LaserSensor:
         if distance_scale_mm <= 0:
             raise ValueError("distance_scale_mm must be greater than zero")
 
+        if read_function_code not in (3, 4):
+            raise ValueError("read_function_code must be 3 or 4")
+
         self.modbus_controller = modbus_controller
         self.device_id = device_id
+        self.read_function_code = read_function_code
         self.register_address = register_address
         self.register_count = register_count
         self.distance_register_index = distance_register_index
@@ -51,16 +56,24 @@ class LaserSensor:
         await self.modbus_controller.close()
 
     async def read_registers(self) -> tuple[int, ...]:
-        registers = await self.modbus_controller.read_holding_register_block(
-            unit_id=self.device_id,
-            address=self.register_address,
-            count=self.register_count,
-        )
+        if self.read_function_code == 4:
+            registers = await self.modbus_controller.read_input_register_block(
+                unit_id=self.device_id,
+                address=self.register_address,
+                count=self.register_count,
+            )
+        else:
+            registers = await self.modbus_controller.read_holding_register_block(
+                unit_id=self.device_id,
+                address=self.register_address,
+                count=self.register_count,
+            )
 
         logger.debug(
             "Laser registers read",
             extra={
                 "unit_id": self.device_id,
+                "function_code": self.read_function_code,
                 "register_address": self.register_address,
                 "register_count": self.register_count,
                 "registers": list(registers),

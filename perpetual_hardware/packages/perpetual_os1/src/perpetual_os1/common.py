@@ -21,29 +21,9 @@ CONFIG_PATH = Path("data/config.json")
 
 
 class OperatingMode(str, Enum):
-	demo = "demo"
-	development = "development"
-	production = "production"
-
-# ---------------------- NATS Config ----------------------
-
-class RobotNatsConfiguration(BaseModel):
-    stream_name: str = "robot"
-    command_queue: str = "commands"
-    event_queue: str = "events"
-    status_queue: str = "robot.status"
-    get_storage_subject: str = "robot.get_storage"
-    set_storage_subject: str = "robot.set_storage"
-    get_config_subject: str = "robot.get_configuration"
-    set_config_subject: str = "robot.set_configuration"
-    get_status_subject: str = "robot.get_status"
-
-    domain: str = "localhost"
-    port: int = 4222
-
-    def connection_string(self) -> str:
-        return f"nats://{self.domain}:{self.port}"
-
+    demo = "demo"
+    development = "development"
+    production = "production"
 
 # ---------------------- Coordinates ----------------------
 
@@ -122,6 +102,17 @@ def _pair_len2(v: List[Union[int, float]], name: str) -> Tuple[Union[int, float]
 
 # --------------------------- Motor -----------------------------
 
+class HomeSensorConfig(BaseModel):
+    enabled: bool = True
+    pin: int = Field(..., ge=0)
+    inverted: bool = True
+    poll_interval_s: float = Field(0.01, gt=0)
+    disable_brake_during_home: bool = False
+    release_mode: Literal["jog", "absolute"] = "jog"
+    release_backoff_mm: float = Field(5.0, gt=0)
+    release_target_mm: Optional[float] = Field(default=None, ge=0)
+    precision_rpm: Optional[int] = Field(default=None, gt=0)
+
 class Motor(BaseModel):
     motor_name: str = Field(..., min_length=1)
     motor_id: int = Field(..., ge=0)  # tighten if desired
@@ -145,6 +136,7 @@ class Motor(BaseModel):
     status_complete_bit: int = Field(default=5)
     ppr: int = Field(default=10000, ge=200, le=100000)
     max_following_error: int = Field(default=4000, ge=100, le=65535)
+    home_sensor: Optional[HomeSensorConfig] = None
 
     @field_validator("motor_name")
     @classmethod
@@ -274,22 +266,6 @@ class UsbCamera(BaseModel):
     headless_fallback_path: str = Field(..., min_length=1)
 
 
-class TofCamera(BaseModel):
-    csi_port: int = Field(..., ge=0)
-    resolution: TwoInt
-    fps: int = Field(..., gt=0)
-    max_distance_mm: int = Field(..., gt=0)
-    confidence_min: float = Field(..., ge=0)
-    depth_unit: Literal["mm"] = "mm"
-    calibration_status: Literal["uncalibrated", "calibrated"] = "uncalibrated"
-
-    @field_validator("resolution", mode="before")
-    @classmethod
-    def _res_as_tuple(cls, v):
-        a, b = _pair_len2(v, "resolution")
-        return int(a), int(b)
-
-
 class CurtainConfig(BaseModel):
     enabled: bool = True
     pin: int = Field(2, ge=0)
@@ -305,13 +281,17 @@ class ScaleConfig(BaseModel):
 class LaserConfig(BaseModel):
     enabled: bool = False
     device_id: int = Field(1, ge=0, le=255)
+    read_function_code: int = Field(3, ge=3, le=4)
     register_address: int = Field(0, ge=0, le=65535)
     register_count: int = Field(2, ge=1, le=125)
     distance_register_index: int = Field(1, ge=0, le=124)
-    distance_scale_mm: float = Field(0.01, gt=0)
+    distance_scale_mm: float = Field(0.001, gt=0)
 
     @model_validator(mode="after")
     def _validate_register_index(self) -> "LaserConfig":
+        if self.read_function_code not in (3, 4):
+            raise ValueError("read_function_code must be 3 or 4")
+
         if self.distance_register_index >= self.register_count:
             raise ValueError("distance_register_index must be smaller than register_count")
 
@@ -339,7 +319,6 @@ class ScannerSettings(BaseModel):
 
 class CameraAppSettings(BaseModel):
     enabled: bool = False
-    depth_enabled: bool = False
 
 
 class ToolCameraSettings(BaseModel):
@@ -350,14 +329,6 @@ class ToolCameraSettings(BaseModel):
 class OverheadCameraSettings(BaseModel):
     enabled: bool = False
     rtsp_url: str = ""
-
-
-class NatsSettings(BaseModel):
-    domain: str = "nats"
-    port: int = Field(4222, ge=1, le=65535)
-
-    def connection_string(self) -> str:
-        return f"nats://{self.domain}:{self.port}"
 
 
 class AuthSettings(BaseModel):
@@ -469,7 +440,6 @@ class Tool(BaseModel):
 class IOBlock(BaseModel):
     motors: Motors
     usb_camera: UsbCamera
-    tof_camera: TofCamera
     curtain: CurtainConfig = Field(default_factory=CurtainConfig)  # type: ignore[arg-type]
     scale: ScaleConfig = Field(default_factory=ScaleConfig)  # type: ignore[arg-type]
 
@@ -483,10 +453,75 @@ class IOBlock(BaseModel):
         return value
 
 
+class LaserScanReferenceConfig(BaseModel):
+    shelf_idx: int = Field(ge=0)
+    cell_idx: int = Field(ge=0)
+    z_offset_mm: float
+    wall_depth_mm: float
+
+
+class LaserScanXYReferenceConfig(BaseModel):
+    anchor: Literal["top_right", "top_left", "bottom_right", "bottom_left"] = "top_right"
+    x_mm: float
+    y_mm: float
+
+
+class LaserScanConfig(BaseModel):
+    wall_depth_tolerance_mm: float = Field(2.0, gt=0)
+    expected_hole_width_mm: float = Field(26.0, gt=0)
+    expected_hole_height_mm: float = Field(30.0, gt=0)
+    hole_width_tolerance_mm: float = Field(10.0, gt=0)
+    hole_height_tolerance_mm: float = Field(10.0, gt=0)
+    min_vertical_wall_coverage_mm: float = Field(10.0, gt=0)
+    min_horizontal_wall_coverage_mm: float = Field(30.0, gt=0)
+    laser_offset_x_mm: float = 0.0
+    laser_offset_y_mm: float = 0.0
+    z_extension_mm: Optional[float] = None
+    scan_stage_extension_mm: Optional[float] = Field(default=None, ge=0)
+    scan_z_offset_mm: Optional[float] = None
+    shelf_hole_sweep_offsets_mm: Optional[List[float]] = None
+    fine_scan_margin_y_mm: Optional[float] = Field(default=None, gt=0)
+    step_mm: float = Field(5.0, gt=0)
+    settle_ms: int = Field(50, ge=0)
+    samples_per_point: int = Field(3, ge=1)
+    left_z_delta_mm: Optional[float] = None
+    right_z_delta_mm: Optional[float] = None
+    left_z_reference: Optional[LaserScanReferenceConfig] = None
+    right_z_reference: Optional[LaserScanReferenceConfig] = None
+    left_xy_reference: Optional[LaserScanXYReferenceConfig] = None
+    right_xy_reference: Optional[LaserScanXYReferenceConfig] = None
+    left_bounds_x_min_mm: float = 0.0
+    left_bounds_x_max_mm: float = 945.0
+    left_bounds_y_min_mm: float = 0.0
+    left_bounds_y_max_mm: float = 1200.0
+    right_bounds_x_min_mm: float = 0.0
+    right_bounds_x_max_mm: float = 945.0
+    right_bounds_y_min_mm: float = 0.0
+    right_bounds_y_max_mm: float = 1200.0
+    angle_calibration_x_min_mm: float = 0.0
+    angle_calibration_x_max_mm: float = 945.0
+    angle_calibration_x_step_mm: float = Field(100.0, gt=0)
+    angle_calibration_x_count: int = Field(5, gt=0)
+    angle_calibration_z_offset_min_mm: float = -8.0
+    angle_calibration_z_offset_max_mm: float = 8.0
+    angle_calibration_z_offset_step_mm: float = Field(4.0, gt=0)
+    angle_calibration_z_offset_count: int = Field(1, gt=0)
+    angle_calibration_rotation_min_deg: float = -8.0
+    angle_calibration_rotation_max_deg: float = 8.0
+    angle_calibration_rotation_step_deg: float = Field(1.0, gt=0)
+    angle_calibration_beam_zero_deg: float = 0.0
+    angle_calibration_alpha_min_deg: float = -10.0
+    angle_calibration_alpha_max_deg: float = 10.0
+    angle_calibration_coarse_step_deg: float = Field(0.1, gt=0)
+    angle_calibration_fine_window_deg: float = Field(0.3, gt=0)
+    angle_calibration_fine_step_deg: float = Field(0.005, gt=0)
+
+
 class GridConfig(BaseModel):
     path: str = Field(..., min_length=1)
     cell_spacing_per_shelf: Optional[Union[float, List[Union[int, float]]]] = None
     cells_per_shelf: Optional[Union[int, List[int], List[List[int]], Dict[str, List[int]]]] = None
+    scan: LaserScanConfig = Field(default_factory=LaserScanConfig)
 
     @model_validator(mode="before")
     @classmethod
@@ -537,7 +572,6 @@ class RootConfig(BaseModel):
     tool_camera: ToolCameraSettings = Field(default_factory=ToolCameraSettings)
     overhead_camera: OverheadCameraSettings = Field(default_factory=OverheadCameraSettings)
     scale: ScaleAppSettings = Field(default_factory=ScaleAppSettings)
-    nats: NatsSettings = Field(default_factory=NatsSettings)  # type: ignore[arg-type]
     auth: AuthSettings = Field(default_factory=AuthSettings)  # type: ignore[arg-type]
     robot_app: RobotAppSettings = Field(default_factory=RobotAppSettings)
     demo: DemoSettings = Field(default_factory=DemoSettings)
@@ -592,9 +626,6 @@ class RootConfig(BaseModel):
 
     def get_usb_camera(self) -> UsbCamera:
         return self.robot.io.usb_camera
-
-    def get_tof_camera(self) -> TofCamera:
-        return self.robot.io.tof_camera
 
     def get_tool_laser(self) -> LaserConfig:
         return self.robot.tool.laser

@@ -5,6 +5,7 @@ from typing import Any, List
 import sentry_sdk
 
 from perpetual_os1.device import get_device_id
+from perpetual_os1.operating_mode import get_operating_mode, should_enable_sentry
 
 try:
 	from sentry_sdk.integrations.logging import LoggingIntegration
@@ -12,8 +13,43 @@ except Exception:  # pragma: no cover - optional dependency guard for tests
 	LoggingIntegration = None  # type: ignore[misc, assignment]
 
 sentry_dsn = os.getenv("SENTRY_DSN_HARDWARE", "")
-sentry_environment = os.getenv("SENTRY_ENVIRONMENT", os.getenv("DEPLOYMENT_ENVIRONMENT", "development"))
 device_id = get_device_id()
+
+
+def _configure_sentry() -> bool:
+	mode = get_operating_mode()
+	if should_enable_sentry(mode) is False:
+		logging.debug("Sentry disabled for perpetual_os1: mode=%s", mode.value)
+		return False
+
+	if sentry_dsn == "":
+		logging.warning("Sentry enabled for perpetual_os1 but SENTRY_DSN_HARDWARE is not set")
+		return False
+
+	integrations: List[Any] = []
+	if LoggingIntegration is not None:
+		integrations.append(
+			LoggingIntegration(
+				sentry_logs_level=logging.INFO,
+				level=logging.INFO,
+				event_level=logging.ERROR,
+			)
+		)
+
+	sentry_sdk.init(
+		dsn=sentry_dsn,
+		enable_logs=True,
+		traces_sample_rate=0.1,
+		environment=mode.value,
+		server_name=device_id,
+		integrations=integrations if integrations else None,  # type: ignore[arg-type]
+		before_send=_before_send_sentry_event,
+		before_send_log=_before_send_sentry_log,
+	)
+	sentry_sdk.set_tag("device_id", device_id)
+	sentry_sdk.set_context("opshelf_device", {"id": device_id})
+	logging.info("Sentry initialized for perpetual_os1", mode=mode.value)
+	return True
 
 SENSITIVE_HEADER_NAMES = {"authorization", "cookie"}
 
@@ -55,32 +91,7 @@ def _before_send_sentry_log(log: dict[str, Any], _hint: dict[str, Any]) -> dict[
 	return log
 
 
-if sentry_dsn:
-	integrations: List[Any] = []
-	if LoggingIntegration is not None:
-		integrations.append(
-			LoggingIntegration(
-				sentry_logs_level=logging.INFO,
-				level=logging.INFO,
-				event_level=logging.ERROR,
-			)
-		)
-
-	sentry_sdk.init(
-		dsn=sentry_dsn,
-		enable_logs=True,
-		traces_sample_rate=0.1,
-		environment=sentry_environment,
-		server_name=device_id,
-		integrations=integrations if integrations else None,  # type: ignore[arg-type]
-		before_send=_before_send_sentry_event,
-		before_send_log=_before_send_sentry_log,
-	)
-	sentry_sdk.set_tag("device_id", device_id)
-	sentry_sdk.set_context("opshelf_device", {"id": device_id})
-	logging.info("Sentry initialized for perpetual_os1")
-else:
-	logging.debug("Sentry not configured for perpetual_os1: SENTRY_DSN_HARDWARE not set")
+sentry_enabled = _configure_sentry()
 
 
 def hello() -> str:

@@ -1,14 +1,6 @@
 name: perpetual_os
 
 services:
-  nats:
-    image: nats:latest
-    network_mode: "host"
-    volumes:
-      - ./perpetual_hardware/packages/perpetual_os1_server/infra/nats/:/etc/nats/
-    command: ["-js", "-config", "/etc/nats/nats.conf"]
-    restart: unless-stopped
-
   api:
     build:
       context: .
@@ -18,8 +10,6 @@ services:
       - /etc/cups:/etc/cups:ro
       - /etc/opshelf:/etc/opshelf:ro
       - ./perpetual_hardware/data:/app/perpetual_hardware/data
-    depends_on:
-      - nats
     environment:
       - ENV=${ENV:-dev}
       - OPERATING_MODE=${OPERATING_MODE:-development}
@@ -29,7 +19,6 @@ services:
       - PERPETUAL_BARCODE_BAUDRATE=115200
       - JWT_SECRET=${JWT_SECRET:-INSECURE_JWT_SECRET}
       - AUDIT_HMAC_KEY=${AUDIT_HMAC_KEY:-INSECURE_AUDIT_HMAC_KEY}
-      - NATS_DOMAIN=localhost
       - SENTRY_DSN_API=${SENTRY_DSN_API:-}
       - SENTRY_DSN_HARDWARE=${SENTRY_DSN_HARDWARE:-}
       - SENTRY_ENVIRONMENT=${SENTRY_ENVIRONMENT:-development}

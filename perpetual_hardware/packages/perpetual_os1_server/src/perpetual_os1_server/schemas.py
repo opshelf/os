@@ -92,7 +92,7 @@ class AuditLogResponse(BaseModel):
 	request_body: Optional[dict]
 	response_status: int
 	response_body: Optional[dict]
-	nats_commands: Optional[List[dict]]
+	command_records: Optional[List[dict]]
 	error_message: Optional[str]
 	ip_address: Optional[str]
 	user_agent: Optional[str]

@@ -177,6 +177,7 @@ export interface StorageGrid {
 }
 
 export interface Shelf {
+	shelf_idx: number;
 	shelf_height: number;
 	shelf_width: number;
 	cells: Cell[];
@@ -184,6 +185,7 @@ export interface Shelf {
 }
 
 export interface Cell {
+	cell_idx: number;
 	status: string;
 	item: unknown | null;
 	calibration_point: CalibrationPoint | null;
@@ -247,6 +249,30 @@ export async function testGripper(side: string, shelfIdx: number, cellIdx: numbe
 	});
 }
 
+export async function runCalibrationQuickTest(
+	side: string,
+	shelfIdx: number,
+	cellIdx: number
+): Promise<void> {
+	await apiFetch('/calibration/test', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ side, shelf_idx: shelfIdx, cell_idx: cellIdx })
+	});
+}
+
+export async function runCalibrationCycleTest(
+	side: string,
+	shelfIdx: number,
+	cellIdx: number
+): Promise<void> {
+	await apiFetch('/calibration/test/cycle', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ side, shelf_idx: shelfIdx, cell_idx: cellIdx })
+	});
+}
+
 export async function saveCalibration(
 	side: string,
 	shelfIdx: number,
@@ -273,6 +299,96 @@ export async function saveCalibration(
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(payload)
+	});
+}
+
+export interface CalibrationScanBounds {
+	x_min: number;
+	x_max: number;
+	y_min: number;
+	y_max: number;
+}
+
+export interface LaserAutoCalibrationShelfEdge {
+	side: 'left_module' | 'right_module';
+	x_mm: number;
+	y_mm: number;
+}
+
+export interface LaserAutoCalibrationCandidate {
+	side: 'left_module' | 'right_module';
+	shelf_idx: number | null;
+	x_min: number;
+	x_max: number;
+	y_min: number;
+	y_max: number;
+	row_count: number;
+	wall_depth_mm: number | null;
+	wall_sample_count: number;
+}
+
+export interface LaserAutoCalibrationCell {
+	side: 'left_module' | 'right_module';
+	shelf_idx: number;
+	cell_idx: number;
+	tool_x_mm: number;
+	tool_y_mm: number;
+	center_x_mm: number;
+	center_y_mm: number;
+	width_mm: number;
+	height_mm: number;
+	wall_depth_mm: number | null;
+}
+
+export interface LaserAutoCalibrationAngleResult {
+	side: 'left_module' | 'right_module';
+	alpha_deg: number;
+	sample_count: number;
+	capture_y_mm: number;
+	rms_residual_mm: number;
+	max_abs_residual_mm: number;
+	line_angle_deg: number;
+	previous_rotation_deg: number;
+	updated_rotation_deg: number;
+}
+
+export interface LaserAutoCalibrationSnapshot {
+	state: 'idle' | 'starting' | 'running' | 'applying' | 'completed' | 'failed' | 'cancelled';
+	session_id: string | null;
+	run_id: string | null;
+	current_side: 'left_module' | 'right_module' | null;
+	current_stage: string | null;
+	bounds: CalibrationScanBounds | null;
+	started_at: string | null;
+	updated_at: string | null;
+	scouted_shelf_count: number;
+	left_scouted_shelf_count: number;
+	right_scouted_shelf_count: number;
+	candidate_count: number;
+	left_candidate_count: number;
+	right_candidate_count: number;
+	detected_cell_count: number;
+	left_detected_cell_count: number;
+	right_detected_cell_count: number;
+	shelf_edges: LaserAutoCalibrationShelfEdge[];
+	shelf_candidates: LaserAutoCalibrationCandidate[];
+	detected_cells: LaserAutoCalibrationCell[];
+	angle_results: LaserAutoCalibrationAngleResult[];
+	stage_detail: Record<string, unknown>;
+	error: string | null;
+}
+
+export function buildLaserAutoCalibrationStreamUrl(): string {
+	return buildAuthenticatedUrl('/calibration/laser/stream');
+}
+
+export async function getLaserAutoCalibrationStatus(): Promise<LaserAutoCalibrationSnapshot> {
+	return apiFetch<LaserAutoCalibrationSnapshot>('/calibration/laser/status');
+}
+
+export async function abortLaserAutoCalibration(): Promise<LaserAutoCalibrationSnapshot> {
+	return apiFetch<LaserAutoCalibrationSnapshot>('/calibration/laser/abort', {
+		method: 'POST'
 	});
 }
 
@@ -555,36 +671,5 @@ export async function moveStage(
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ position })
-	});
-}
-
-export async function runCycleTest(
-	side: string,
-	shelfIdx: number,
-	cellIdx: number
-): Promise<{ success: boolean }> {
-	return apiFetch<{ success: boolean }>('/calibration/cycle_test', {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ side, shelf_idx: shelfIdx, cell_idx: cellIdx })
-	});
-}
-
-export type CellIdentifier = {
-	side: string;
-	shelf_idx: number;
-	cell_idx: number;
-};
-
-export const CELL_STATUSES = ['available', 'occupied', 'maintenance', 'disabled'] as const;
-
-export async function updateCellsBatchStatus(
-	cells: CellIdentifier[],
-	status: string
-): Promise<unknown[]> {
-	return apiFetch<unknown[]>('/storage/locations/batch-status', {
-		method: 'PUT',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ cells, status })
 	});
 }

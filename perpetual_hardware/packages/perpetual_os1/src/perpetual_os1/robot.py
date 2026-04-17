@@ -6,6 +6,14 @@ from perpetual_os1.common import AxisCoordinate, ToolCoordinate, load_config_fil
 from hardware.controller import SharedModbusController as Controller
 from perpetual_os1.iobox import IOBox
 from perpetual_os1.tool import Tool
+from perpetual_os1.laser_scan import (
+    ScanAnalysisResult,
+    ScanBounds,
+    analyze_scan_capture,
+    build_axis_positions,
+    build_shelves_from_scan,
+    create_scan_capture,
+)
 from perpetual_os1.storage import (
     StorageGrid, Shelf, Cell, CellStatus, CalibrationCoordinate,
     Dimensions, StorageModuleSide, CellItem, StorageModuleCellLocation,
@@ -167,27 +175,9 @@ class Robot:
         self._bus_settings = self._prepare_bus_settings()
         self._logger = logging.getLogger(__name__).getChild("Robot")
 
-        motor_bus = self._bus_settings["motor"]
-        scale_bus = self._bus_settings["scale"]
-        laser_bus = self._bus_settings["laser"]
-        self._motorbus = Controller(
-            port=motor_bus["ports"][0],
-            baudrate=motor_bus["baudrate"],
-            parity=motor_bus["parity"],
-            timeout=motor_bus["timeout"],
-        )
-        self._scalebus = Controller(
-            port=scale_bus["ports"][0],
-            baudrate=scale_bus["baudrate"],
-            parity=scale_bus["parity"],
-            timeout=scale_bus["timeout"],
-        )
-        self._laserbus = Controller(
-            port=laser_bus["ports"][0],
-            baudrate=laser_bus["baudrate"],
-            parity=laser_bus["parity"],
-            timeout=laser_bus["timeout"],
-        )
+        self._motorbus = self._create_controller_for_bus("motor")
+        self._scalebus = self._create_controller_for_bus("scale")
+        self._laserbus = self._create_controller_for_bus("laser")
 
         tool_params = self._config.get("robot.tool", {})
         io_params = self._config.get("robot.io", {})
@@ -323,14 +313,22 @@ class Robot:
         laser_enabled = getattr(laser_config, "enabled", False) if laser_config is not None else False
 
         if scale_enabled is True:
-            await self._connect_controller("scale", self._scalebus, self._bus_settings["scale"])
+            if self._scalebus is self._motorbus:
+                self._logger.info("scale_bus_shared_with_motor")
+            else:
+                await self._connect_controller("scale", self._scalebus, self._bus_settings["scale"])
         else:
             self._logger.info("scale_bus_skipped: scale is disabled in config")
 
         if laser_enabled is True:
             if self._config.robot.bus is None or self._config.robot.bus.laser is None:
                 raise ConfigError("Laser bus configuration is required when laser is enabled")
-            await self._connect_controller("laser", self._laserbus, self._bus_settings["laser"])
+            if self._laserbus is self._motorbus:
+                self._logger.info("laser_bus_shared_with_motor")
+            elif self._laserbus is self._scalebus:
+                self._logger.info("laser_bus_shared_with_scale")
+            else:
+                await self._connect_controller("laser", self._laserbus, self._bus_settings["laser"])
         else:
             self._logger.info("laser_bus_skipped: laser is disabled in config")
 
@@ -426,6 +424,11 @@ class Robot:
 
     async def shutdown(self) -> None:
         await self.stop()
+
+        for motor in [self._tool._mx, self._tool._my, self._tool._mg, self._tool._ms, self._tool._mr, self._io._md]:
+            if motor is not None:
+                motor.cleanup()
+
         if self._motorbus:
             await self._motorbus.close()
         if self._scalebus:
@@ -539,6 +542,36 @@ class Robot:
             "scale": build("scale"),
             "laser": build("laser"),
         }
+
+    def _create_controller_for_bus(self, name: str) -> Controller:
+        if name == "scale" and self._bus_settings_match("scale", "motor") is True:
+            return self._motorbus
+
+        if name == "laser" and self._bus_settings_match("laser", "motor") is True:
+            return self._motorbus
+
+        if name == "laser" and self._bus_settings_match("laser", "scale") is True:
+            return self._scalebus
+
+        settings = self._bus_settings[name]
+
+        return Controller(
+            port=settings["ports"][0],
+            baudrate=settings["baudrate"],
+            parity=settings["parity"],
+            timeout=settings["timeout"],
+        )
+
+    def _bus_settings_match(self, left: str, right: str) -> bool:
+        left_settings = self._bus_settings[left]
+        right_settings = self._bus_settings[right]
+
+        return (
+            left_settings["ports"] == right_settings["ports"]
+            and left_settings["baudrate"] == right_settings["baudrate"]
+            and left_settings["parity"] == right_settings["parity"]
+            and left_settings["timeout"] == right_settings["timeout"]
+        )
 
     async def _connect_controller(self, label: str, controller: Controller, settings: Dict[str, Any]) -> None:
         errors: List[str] = []
@@ -680,6 +713,7 @@ class Robot:
                 for offset, coord in enumerate(relevant_cells, start=index_offset):
                     shelf_cell_models.append(
                         Cell(
+                            cell_idx=offset,
                             status=CellStatus.AVAILABLE,
                             item=None,
                             calibration_point=CalibrationCoordinate(x=coord.x, y=coord.y, z_offset=z_offset),
@@ -690,6 +724,7 @@ class Robot:
                 if shelf_cell_models:
                     target_shelves.append(
                         Shelf(
+                            shelf_idx=shelf_idx,
                             shelf_height=shelf_height,
                             shelf_width=sum(cell.dimensions.width for cell in shelf_cell_models),
                             cells=shelf_cell_models
@@ -871,6 +906,107 @@ class Robot:
     async def get_laser_distance(self) -> float:
         return await self._require_laser().read_distance_mm()
 
+    async def scan_storage(
+        self,
+        *,
+        side: Union[StorageModuleSide, str],
+        bounds: ScanBounds,
+        step_mm: float,
+        settle_ms: int,
+        samples_per_point: int,
+        laser_offset_x_mm: float,
+        laser_offset_y_mm: float,
+        wall_depth_tolerance_mm: float = 2.0,
+        expected_hole_width_mm: float = 26.0,
+        expected_hole_height_mm: float = 30.0,
+        hole_width_tolerance_mm: float = 10.0,
+        hole_height_tolerance_mm: float = 10.0,
+        min_vertical_wall_coverage_mm: float = 10.0,
+        min_horizontal_wall_coverage_mm: float = 30.0,
+        scans_dir: str = "data/scans",
+        apply: bool = True,
+        stage_extension_mm: Optional[float] = None,
+        z_extension_mm: Optional[float] = None,
+        progress_callback: Optional[Any] = None,
+    ) -> ScanAnalysisResult:
+        if isinstance(side, str):
+            side = StorageModuleSide(side)
+
+        side_number = 0 if side == StorageModuleSide.LEFT else 1
+
+        if stage_extension_mm is None:
+            stage_param = "STAGE_EXTENSION_SHELF_FRONT" if side == StorageModuleSide.LEFT else "STAGE_EXTENSION_SHELF_BACK"
+            stage_value = await self._tool.get_param(stage_param)
+            if stage_value is not None:
+                stage_extension_mm = float(stage_value)
+
+        x_positions = build_axis_positions(bounds.x_min, bounds.x_max, step_mm)
+        y_positions = build_axis_positions(bounds.y_min, bounds.y_max, step_mm)
+
+        depth_rows = await self._tool.capture_laser_scan(
+            side=side_number,
+            x_positions=x_positions,
+            y_positions=y_positions,
+            settle_ms=settle_ms,
+            samples_per_point=samples_per_point,
+            stage_extension_mm=stage_extension_mm,
+            z_extension_mm=z_extension_mm,
+            progress_callback=progress_callback,
+        )
+
+        capture = create_scan_capture(
+            side=side,
+            bounds=bounds,
+            step_mm=step_mm,
+            settle_ms=settle_ms,
+            samples_per_point=samples_per_point,
+            laser_offset_x_mm=laser_offset_x_mm,
+            laser_offset_y_mm=laser_offset_y_mm,
+            wall_depth_tolerance_mm=wall_depth_tolerance_mm,
+            expected_hole_width_mm=expected_hole_width_mm,
+            expected_hole_height_mm=expected_hole_height_mm,
+            hole_width_tolerance_mm=hole_width_tolerance_mm,
+            hole_height_tolerance_mm=hole_height_tolerance_mm,
+            min_vertical_wall_coverage_mm=min_vertical_wall_coverage_mm,
+            min_horizontal_wall_coverage_mm=min_horizontal_wall_coverage_mm,
+            depth_rows=depth_rows,
+        )
+
+        analysis = analyze_scan_capture(capture, base_dir=scans_dir)
+
+        if apply is False:
+            return analysis
+
+        if len(analysis.shelves) == 0:
+            raise ValueError("No tray openings detected from scan")
+
+        existing_shelves = None if self._grid is None else self._grid.get_side(side)
+        scanned_shelves = build_shelves_from_scan(
+            side=side,
+            analysis=analysis,
+            existing_shelves=existing_shelves,
+        )
+
+        current_left = [] if self._grid is None else self._grid.left_module
+        current_right = [] if self._grid is None else self._grid.right_module
+
+        if side == StorageModuleSide.LEFT:
+            left_module = scanned_shelves
+            right_module = current_right
+        else:
+            left_module = current_left
+            right_module = scanned_shelves
+
+        storage_grid = StorageGrid(
+            left_module=left_module,
+            right_module=right_module,
+            filename=self._grid_path,
+        )
+        storage_grid.save()
+        self._grid = storage_grid
+
+        return analysis
+
     async def get_scale_calibration_status(self) -> Dict[str, Any]:
         return await self._require_scale().get_calibration_status()
 
@@ -908,7 +1044,11 @@ class Robot:
             position = await motor.get_position()
         except Exception as exc:
             self._logger.debug("Failed to read motor position: %s", exc)
-        return AxisTelemetry(position=position)
+        return AxisTelemetry(
+            position=position,
+            homed=int(motor.is_homed()),
+            hard_stopped=int(motor.is_hard_stopped()),
+        )
 
     async def get_status(self) -> RobotStatus:
         gantry_status = GantryStatus(
