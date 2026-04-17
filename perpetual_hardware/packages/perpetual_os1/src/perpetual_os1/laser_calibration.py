@@ -18,8 +18,10 @@ from perpetual_os1.laser_scan import (
 	ScanAnalysisResult,
 	ScanDetectedCell,
 	ScanDetectedShelf,
+	analyze_scan_capture,
 	build_axis_positions,
 	build_shelves_from_scan,  # noqa: F401 - re-exported for server consumption
+	create_scan_capture,
 )
 import perpetual_os1.common as common_module
 import perpetual_os1.robot as robot_module
@@ -230,6 +232,12 @@ class StagedScanRecorder:
 	run_parameters_path: Path
 	progress_path: Path
 	log_path: Path
+
+
+@dataclass
+class SingleCellRescanTarget:
+	shelf_idx: int
+	cell_idx: int
 
 
 
@@ -580,6 +588,87 @@ def create_staged_scan_recorder(
 	return recorder
 
 
+def load_staged_scan_recorder(run_dir: Path) -> StagedScanRecorder:
+	return StagedScanRecorder(
+		run_id=run_dir.name,
+		run_dir=run_dir,
+		coarse_depth_path=run_dir / "coarse_depth.npy",
+		metadata_path=run_dir / "metadata.json",
+		run_parameters_path=run_dir / "run_parameters.json",
+		progress_path=run_dir / "progress.json",
+		log_path=run_dir / "scan.log",
+	)
+
+
+def find_latest_incomplete_run(scans_dir: str) -> StagedScanRecorder:
+	run_dirs: list[Path] = []
+
+	for path in Path(scans_dir).iterdir():
+		try:
+			if path.is_dir() is False:
+				continue
+
+			if (path / "run_parameters.json").exists() is False:
+				continue
+		except PermissionError:
+			continue
+
+		run_dirs.append(path)
+
+	run_dirs = sorted(
+		run_dirs,
+		key=lambda current_path: current_path.stat().st_mtime,
+		reverse=True,
+	)
+
+	for run_dir in run_dirs:
+		recorder = load_staged_scan_recorder(run_dir)
+
+		if recorder.metadata_path.exists() is False:
+			return recorder
+
+		metadata = load_json_file(recorder.metadata_path)
+
+		if metadata.get("status") != "completed":
+			return recorder
+
+	raise FileNotFoundError(f"No incomplete staged scan found in {scans_dir}")
+
+
+def load_continue_scan_context(
+	scans_dir: str,
+) -> tuple[StagedScanRecorder, StorageModuleSide, ScanBounds, float, int, int, int, int]:
+	recorder = find_latest_incomplete_run(scans_dir)
+	run_parameters_document = load_json_file(recorder.run_parameters_path)
+	run_parameters = run_parameters_document["run_parameters"]
+	resolved_parameters = run_parameters["resolved"]
+	side = StorageModuleSide(run_parameters["module"])
+	bounds = ScanBounds.model_validate(resolved_parameters["bounds"])
+	step_mm = float(resolved_parameters["fine_step_mm"])
+	settle_ms = int(resolved_parameters["settle_ms"])
+	samples_per_point = int(resolved_parameters["samples_per_point"])
+	coarse_settle_ms = int(
+		resolved_parameters.get("coarse_settle_ms", get_coarse_settle_ms(settle_ms))
+	)
+	coarse_samples_per_point = int(
+		resolved_parameters.get(
+			"coarse_samples_per_point",
+			get_coarse_samples_per_point(samples_per_point),
+		)
+	)
+
+	return (
+		recorder,
+		side,
+		bounds,
+		step_mm,
+		settle_ms,
+		samples_per_point,
+		coarse_settle_ms,
+		coarse_samples_per_point,
+	)
+
+
 def load_json_file(path: Path) -> dict[str, Any]:
 	return json.loads(path.read_text(encoding="utf-8"))
 
@@ -762,6 +851,44 @@ def persist_scan_started_at(
 		json.dumps(metadata_document, indent="\t"),
 		encoding="utf-8",
 	)
+
+
+def load_depth_rows_from_npy(
+	npy_path: Path,
+	*,
+	expected_row_count: int,
+	expected_column_count: int,
+) -> list[list[float | None]]:
+	depth_array = np.load(npy_path)
+
+	if depth_array.ndim != 2:
+		raise ValueError("--npy must point to a 2D array")
+
+	row_count, column_count = depth_array.shape
+
+	if row_count != expected_row_count or column_count != expected_column_count:
+		raise ValueError(
+			"--npy shape does not match scan bounds "
+			f"(expected {expected_row_count}x{expected_column_count}, got {row_count}x{column_count})"
+		)
+
+	depth_rows: list[list[float | None]] = []
+
+	for row in depth_array:
+		depth_row: list[float | None] = []
+
+		for value in row:
+			float_value = float(value)
+
+			if np.isfinite(float_value) is True:
+				depth_row.append(float_value)
+				continue
+
+			depth_row.append(None)
+
+		depth_rows.append(depth_row)
+
+	return depth_rows
 
 
 async def get_scan_position(tool: Any) -> tuple[float, float]:
@@ -1447,6 +1574,91 @@ def scan_bounds_match(
 		return False
 
 	if abs(left.y_max - right.y_max) > tolerance_mm:
+		return False
+
+	return True
+
+
+def build_single_cell_rescan_candidate(
+	*,
+	grid: StorageGrid,
+	side: StorageModuleSide,
+	target: SingleCellRescanTarget,
+	scan_config: Any,
+) -> GapCandidateRegion:
+	target_cell = resolve_target_cell(
+		grid=grid,
+		side=side,
+		target=target,
+	)
+
+	candidate_center_x_mm = float(target_cell.calibration_point.x) + float(scan_config.laser_offset_x_mm)
+	candidate_center_y_mm = float(target_cell.calibration_point.y) + float(scan_config.laser_offset_y_mm)
+	half_width_mm = float(scan_config.expected_hole_width_mm) / 2.0
+	half_height_mm = float(scan_config.expected_hole_height_mm) / 2.0
+	wall_depth_mm: float | None = None
+	z_delta = get_scan_z_delta(
+		scan_config=scan_config,
+		side=side,
+	)
+
+	if z_delta is not None:
+		wall_depth_mm = float(target_cell.calibration_point.z_offset) - float(z_delta["delta_mm"])
+
+	if wall_depth_mm is None or wall_depth_mm <= 0:
+		z_reference = get_scan_z_reference(
+			scan_config=scan_config,
+			side=side,
+		)
+
+		if z_reference is not None:
+			wall_depth_mm = float(z_reference[3])
+
+	if wall_depth_mm is None or wall_depth_mm <= 0:
+		raise ValueError("Cannot resolve wall depth for --rescan-cell target")
+
+	return GapCandidateRegion(
+		x_min=candidate_center_x_mm - half_width_mm,
+		x_max=candidate_center_x_mm + half_width_mm,
+		y_min=candidate_center_y_mm - half_height_mm,
+		y_max=candidate_center_y_mm + half_height_mm,
+		wall_depth_mm=wall_depth_mm,
+		wall_sample_count=1,
+	)
+
+
+def build_single_cell_rescan_bounds(
+	*,
+	candidate: GapCandidateRegion,
+	scan_config: Any,
+) -> ScanBounds:
+	x_margin_mm = max(
+		float(scan_config.expected_hole_width_mm) + (FINE_SCAN_MARGIN_X_MM * 2.0),
+		40.0,
+	)
+	y_margin_mm = max(
+		float(scan_config.expected_hole_height_mm) + (FINE_SCAN_RETRY_MIN_Y_MARGIN_MM * 2.0),
+		80.0,
+	)
+
+	return ScanBounds(
+		x_min=candidate.x_min - x_margin_mm,
+		x_max=candidate.x_max + x_margin_mm,
+		y_min=candidate.y_min - y_margin_mm,
+		y_max=candidate.y_max + y_margin_mm,
+	)
+
+
+def is_point_in_bounds(
+	*,
+	bounds: ScanBounds,
+	x_mm: float,
+	y_mm: float,
+) -> bool:
+	if x_mm < bounds.x_min or x_mm > bounds.x_max:
+		return False
+
+	if y_mm < bounds.y_min or y_mm > bounds.y_max:
 		return False
 
 	return True
@@ -2913,9 +3125,6 @@ def get_scanned_anchor_cell(
 
 	is_right_anchor = anchor.endswith("right")
 
-	if side == StorageModuleSide.RIGHT:
-		is_right_anchor = is_right_anchor is False
-
 	if is_right_anchor is True:
 		return max(target_shelf.cells, key=lambda cell: float(cell.calibration_point.x))
 
@@ -3040,3 +3249,242 @@ def apply_wall_depth_z_offsets(
 		f"reference_wall_depth_mm={reference_key[3]:.3f} "
 		f"delta_mm={z_delta_mm:.3f} updated_cells={updated_cell_count}"
 	)
+
+
+def collect_detected_cells(analysis: Any) -> list[ScanDetectedCell]:
+	collected_cells: list[ScanDetectedCell] = []
+
+	for shelf in analysis.shelves:
+		collected_cells.extend(shelf.cells)
+
+	return collected_cells
+
+
+def find_detected_cell_for_candidate(
+	*,
+	analysis: Any,
+	candidate: GapCandidateRegion,
+) -> ScanDetectedCell | None:
+	detected_cells = collect_detected_cells(analysis)
+
+	if len(detected_cells) == 0:
+		return None
+
+	candidate_center_x_mm, candidate_center_y_mm = get_candidate_center(candidate)
+	matched_cell: ScanDetectedCell | None = None
+	matched_distance_mm: float | None = None
+
+	for detected_cell in detected_cells:
+
+		distance_mm = float(
+			np.hypot(
+				float(detected_cell.center_x_mm) - candidate_center_x_mm,
+				float(detected_cell.center_y_mm) - candidate_center_y_mm,
+			)
+		)
+
+		if matched_distance_mm is not None and distance_mm >= matched_distance_mm:
+			continue
+
+		matched_cell = detected_cell
+		matched_distance_mm = distance_mm
+
+	return matched_cell
+
+
+def resolve_target_cell(
+	*,
+	grid: StorageGrid,
+	side: StorageModuleSide,
+	target: SingleCellRescanTarget,
+) -> Any:
+	try:
+		target_shelf = grid.get_shelf(side, target.shelf_idx)
+	except IndexError as exc:
+		raise ValueError(f"Shelf {target.shelf_idx} does not exist on {side.value}") from exc
+
+	try:
+		target_cell = target_shelf.get_cell(target.cell_idx)
+	except IndexError as exc:
+		raise ValueError(
+			f"Cell {target.cell_idx} does not exist on {side.value} shelf {target.shelf_idx}"
+		) from exc
+
+	if target_cell.calibration_point is None:
+		raise ValueError(
+			f"Cell {target.shelf_idx}:{target.cell_idx} has no calibration point"
+		)
+
+	return target_cell
+
+
+def apply_single_cell_rescan(
+	*,
+	grid: StorageGrid,
+	target: SingleCellRescanTarget,
+	side: StorageModuleSide,
+	detected_cell: ScanDetectedCell,
+	wall_depth_mm: float,
+	scan_config: Any,
+) -> None:
+	target_cell = resolve_target_cell(
+		grid=grid,
+		side=side,
+		target=target,
+	)
+	calibration_point = target_cell.calibration_point
+
+	calibration_point.x = float(detected_cell.tool_x_mm)
+	calibration_point.y = float(detected_cell.tool_y_mm)
+	z_delta = get_scan_z_delta(
+		scan_config=scan_config,
+		side=side,
+	)
+
+	if z_delta is not None:
+		calibration_point.z_offset = float(wall_depth_mm) + float(z_delta["delta_mm"])
+
+	grid.save()
+	print_status(
+		f"single_cell_apply=updated side={side.value} "
+		f"cell={target.shelf_idx}:{target.cell_idx} "
+		f"tool_x={float(detected_cell.tool_x_mm):.3f} "
+		f"tool_y={float(detected_cell.tool_y_mm):.3f} "
+		f"z_offset={float(calibration_point.z_offset):.3f}"
+	)
+
+
+def resolve_validation_coordinate(
+	*,
+	grid: StorageGrid,
+	side: StorageModuleSide,
+	target: SingleCellRescanTarget,
+) -> AxisCoordinate:
+	target_cell = resolve_target_cell(
+		grid=grid,
+		side=side,
+		target=target,
+	)
+
+	return AxisCoordinate(
+		x=float(target_cell.calibration_point.x),
+		y=float(target_cell.calibration_point.y),
+		s=0 if side == StorageModuleSide.LEFT else 1,
+		z_offset=float(target_cell.calibration_point.z_offset),
+	)
+
+
+async def run_fixed_xy_validation(
+	*,
+	robot: Robot,
+	grid: StorageGrid,
+	side: StorageModuleSide,
+	target: SingleCellRescanTarget,
+	cycles: int,
+) -> None:
+	if cycles <= 0:
+		raise ValueError("--validate-cycles must be greater than zero")
+
+	coordinate = resolve_validation_coordinate(
+		grid=grid,
+		side=side,
+		target=target,
+	)
+	tool = robot._tool
+	print_status(
+		f"validation_target side={side.value} cell={target.shelf_idx}:{target.cell_idx} "
+		f"x={coordinate.x:.3f} y={coordinate.y:.3f} z_offset={float(coordinate.z_offset):.3f} "
+		f"cycles={cycles}"
+	)
+
+	for cycle_idx in range(cycles):
+
+		current_cycle_idx = cycle_idx + 1
+
+		print_status(
+			f"validation_cycle={current_cycle_idx}/{cycles} phase=pick"
+		)
+		await tool.pick(coordinate)
+		print_status(
+			f"validation_cycle={current_cycle_idx}/{cycles} phase=place"
+		)
+		await tool.place(coordinate)
+
+	print_status("validation_status=completed")
+
+
+def apply_analysis(
+	*,
+	analysis: Any,
+	grid: StorageGrid,
+	grid_path: Path,
+	scan_config: Any,
+	side: StorageModuleSide,
+) -> None:
+	if len(analysis.shelves) == 0:
+		raise ValueError("No tray openings detected from scan")
+
+	existing_shelves = grid.get_side(side)
+	scanned_shelves = build_shelves_from_scan(
+		side=side,
+		analysis=analysis,
+		existing_shelves=existing_shelves,
+	)
+	apply_xy_reference_offsets(
+		scanned_shelves=scanned_shelves,
+		scan_config=scan_config,
+		side=side,
+	)
+	apply_wall_depth_z_offsets(
+		analysis=analysis,
+		scanned_shelves=scanned_shelves,
+		metadata_path=str(analysis.metadata_path),
+		scan_config=scan_config,
+		side=side,
+	)
+	left_module = list(grid.left_module)
+	right_module = list(grid.right_module)
+
+	if side == StorageModuleSide.LEFT:
+		left_module = scanned_shelves
+	else:
+		right_module = scanned_shelves
+
+	storage_grid = StorageGrid(
+		left_module=left_module,
+		right_module=right_module,
+		filename=grid.filename if grid.filename != "" else str(grid_path),
+	)
+	storage_grid.save()
+
+
+def analyze_depth_rows(
+	*,
+	side: StorageModuleSide,
+	bounds: ScanBounds,
+	step_mm: float,
+	settle_ms: int,
+	samples_per_point: int,
+	scan_config: Any,
+	scans_dir: str,
+	depth_rows: list[list[float | None]],
+) -> Any:
+	capture = create_scan_capture(
+		side=side,
+		bounds=bounds,
+		step_mm=step_mm,
+		settle_ms=settle_ms,
+		samples_per_point=samples_per_point,
+		laser_offset_x_mm=scan_config.laser_offset_x_mm,
+		laser_offset_y_mm=scan_config.laser_offset_y_mm,
+		wall_depth_tolerance_mm=scan_config.wall_depth_tolerance_mm,
+		expected_hole_width_mm=scan_config.expected_hole_width_mm,
+		expected_hole_height_mm=scan_config.expected_hole_height_mm,
+		hole_width_tolerance_mm=scan_config.hole_width_tolerance_mm,
+		hole_height_tolerance_mm=scan_config.hole_height_tolerance_mm,
+		min_vertical_wall_coverage_mm=scan_config.min_vertical_wall_coverage_mm,
+		min_horizontal_wall_coverage_mm=scan_config.min_horizontal_wall_coverage_mm,
+		depth_rows=depth_rows,
+	)
+
+	return analyze_scan_capture(capture, base_dir=scans_dir)
