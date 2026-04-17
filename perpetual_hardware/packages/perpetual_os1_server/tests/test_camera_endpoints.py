@@ -1,6 +1,9 @@
+import asyncio
+
+import numpy as np
 import pytest
 from httpx import AsyncClient
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import patch, MagicMock
 
 from perpetual_os1_server.core.camera import (
 	camera_registry,
@@ -139,3 +142,15 @@ async def test_camera_types_identified_correctly(client: AsyncClient) -> None:
 
 	assert tool_camera is not None
 	assert tool_camera["type"] == "ToolCamera"
+
+
+@pytest.mark.anyio
+async def test_io_stream_manager_always_calls_capture_raw() -> None:
+	mock_cam = MagicMock()
+	mock_cam.capture_raw.return_value = np.zeros((480, 640, 3), dtype=np.uint8)
+	manager = CameraStreamManager(camera=mock_cam, depth_enabled=True)
+	await manager.start()
+	await asyncio.sleep(0.2)
+	await manager.stop()
+	mock_cam.capture_raw.assert_called()
+	mock_cam.measure_sync.assert_not_called()

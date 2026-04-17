@@ -154,8 +154,6 @@ def lid_mask_tuned(bgr,
     mask = cv2.erode(mask,  np.ones((3,3),np.uint8), 1)
     mask = pinch_spurs(mask, k_frac=0.075, w=w, h=h)  # ~1.2% of min dim
 
-    cv2.imwrite("mask.png",mask)
-
     # 5) Contours + scoring (favor near-circular, filled blobs)
     cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     roi_area = w * h

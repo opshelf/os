@@ -355,7 +355,13 @@ class ScannerSettings(BaseModel):
 
 class CameraAppSettings(BaseModel):
     enabled: bool = False
-    depth_enabled: bool = False
+    depth_enabled: bool = Field(
+        default=False,
+        description=(
+            "Initializes the IO box TOF depth sensor alongside the USB color camera when true. "
+            "The live MJPEG stream is always raw frames from the USB camera."
+        ),
+    )
 
 
 class ToolCameraSettings(BaseModel):

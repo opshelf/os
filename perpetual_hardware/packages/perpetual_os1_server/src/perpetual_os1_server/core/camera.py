@@ -17,6 +17,7 @@ camera_registry: dict[str, CameraManager] = {}
 class CameraStreamManager:
 	def __init__(self, camera: AFSCam, depth_enabled: bool = False):
 		self.camera: Optional[AFSCam] = camera
+		# When true, TOF hardware was started at boot; the stream is still raw USB only.
 		self.depth_enabled = depth_enabled
 		self.is_running = False
 		self.consumer_count = 0
@@ -73,16 +74,7 @@ class CameraStreamManager:
 
 				camera = self.camera
 				loop = asyncio.get_event_loop()
-
-				if self.depth_enabled is True:
-					def sync_capture_and_process() -> np.ndarray | None:
-						frame_agg = camera.measure_sync(n_frames=10)
-						draw: np.ndarray | None = frame_agg.get("annotated_frame")
-						return draw
-
-					frame = await loop.run_in_executor(None, sync_capture_and_process)
-				else:
-					frame = await loop.run_in_executor(None, camera.capture_raw)
+				frame = await loop.run_in_executor(None, camera.capture_raw)
 
 				if frame is None:
 					await asyncio.sleep(1.0)

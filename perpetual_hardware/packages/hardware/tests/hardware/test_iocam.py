@@ -3,7 +3,7 @@ import numpy as np
 import cv2
 from hardware.exceptions import CameraConnectionError, CameraNotPresentError, TOFError
 from hardware.iocam import AFSCam, _resolve_innomaker_device
-from unittest.mock import Mock, patch, AsyncMock
+from unittest.mock import Mock, patch
 
 @pytest.mark.asyncio
 async def test_afscam_initialization(sample_tof_params, sample_usb_params):
@@ -47,30 +47,26 @@ async def test_afscam_start_stop(sample_tof_params, sample_usb_params):
         mock_tof_instance.close.assert_called_once()
 
 @pytest.mark.asyncio
-async def test_afscam_measure(sample_tof_params, sample_usb_params):
+async def test_afscam_capture_raw(sample_tof_params, sample_usb_params):
     with patch('ArducamDepthCamera.ArducamCamera') as mock_tof, \
          patch('cv2.VideoCapture') as mock_usb:
-        
-        # Setup mock cameras
         mock_tof_instance = Mock()
         mock_tof_instance.start.return_value = 0
         mock_tof.return_value = mock_tof_instance
-        
+
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
         mock_usb_instance = Mock()
         mock_usb_instance.isOpened.return_value = True
-        mock_usb_instance.read.return_value = (True, np.zeros((480, 640, 3), dtype=np.uint8))
+        mock_usb_instance.read.return_value = (True, frame)
         mock_usb.return_value = mock_usb_instance
-        
-        # Create and start camera
+
         cam = AFSCam(sample_usb_params, sample_tof_params)
         await cam.start()
-        
-        # Test measurement
-        result = await cam.measure(n_frames=2, display=False)
-        assert isinstance(result, dict)
-        assert 'ok' in result
-        
-        # Cleanup
+
+        out = cam.capture_raw()
+        assert out is not None
+        assert out.shape == frame.shape
+
         await cam.stop()
 
 @pytest.mark.asyncio
