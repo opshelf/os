@@ -61,35 +61,6 @@ try:
 except Exception:
     sys.modules.setdefault("cv2", types.SimpleNamespace())
 
-try:
-    import nats as _nats_available  # noqa: F401
-except Exception:
-    nats_module = types.ModuleType("nats")
-    nats_aio = types.ModuleType("nats.aio")
-    nats_aio_client = types.SimpleNamespace(Client=object)
-    nats_aio_msg = types.SimpleNamespace(Msg=object)
-    nats_errors = types.SimpleNamespace(TimeoutError=Exception)
-    nats_js = types.ModuleType("nats.js")
-    nats_js_errors = types.SimpleNamespace(NotFoundError=Exception)
-    nats_js_client = types.SimpleNamespace(JetStreamContext=object)
-
-    nats_module.aio = nats_aio
-    nats_module.errors = nats_errors
-    nats_module.js = nats_js
-    nats_aio.client = nats_aio_client
-    nats_aio.msg = nats_aio_msg
-    nats_js.errors = nats_js_errors
-    nats_js.client = nats_js_client
-
-    sys.modules.setdefault("nats", nats_module)
-    sys.modules.setdefault("nats.aio", nats_aio)
-    sys.modules.setdefault("nats.aio.client", nats_aio_client)
-    sys.modules.setdefault("nats.aio.msg", nats_aio_msg)
-    sys.modules.setdefault("nats.errors", nats_errors)
-    sys.modules.setdefault("nats.js", nats_js)
-    sys.modules.setdefault("nats.js.errors", nats_js_errors)
-    sys.modules.setdefault("nats.js.client", nats_js_client)
-
 from perpetual_os1.robot_worker import _transform_worker_status_payload
 
 

@@ -1,0 +1,1 @@
+LEGACY_COMMAND_RECORDS_FIELD = "nats_commands"

@@ -230,57 +230,6 @@ sys.modules.setdefault("hardware.scale", hardware_scale)
 sys.modules.setdefault("hardware.toolcam", hardware_toolcam)
 sys.modules.setdefault("hardware.iocam", hardware_iocam)
 
-# Stub nats modules used by robot_worker so we can import without the dependency.
-try:
-    import nats as _nats_available  # noqa: F401
-except Exception:
-    class _DummyNATS:
-        def __init__(self, *_, **__):
-            pass
-
-        async def connect(self, *_, **__):
-            return None
-
-        def jetstream(self):
-            return None
-
-        async def publish(self, *_, **__):
-            return None
-
-        async def drain(self):
-            return None
-
-
-    class _DummyMsg:
-        pass
-
-
-    nats_module = types.ModuleType("nats")
-    nats_aio = types.ModuleType("nats.aio")
-    nats_aio_client = types.SimpleNamespace(Client=_DummyNATS)
-    nats_aio_msg = types.SimpleNamespace(Msg=_DummyMsg)
-    nats_errors = types.SimpleNamespace(TimeoutError=Exception)
-    nats_js = types.ModuleType("nats.js")
-    nats_js_errors = types.SimpleNamespace(NotFoundError=Exception)
-    nats_js_client = types.SimpleNamespace(JetStreamContext=object)
-
-    nats_module.aio = nats_aio
-    nats_module.errors = nats_errors
-    nats_module.js = nats_js
-    nats_aio.client = nats_aio_client
-    nats_aio.msg = nats_aio_msg
-    nats_js.errors = nats_js_errors
-    nats_js.client = nats_js_client
-
-    sys.modules.setdefault("nats", nats_module)
-    sys.modules.setdefault("nats.aio", nats_aio)
-    sys.modules.setdefault("nats.aio.client", nats_aio_client)
-    sys.modules.setdefault("nats.aio.msg", nats_aio_msg)
-    sys.modules.setdefault("nats.errors", nats_errors)
-    sys.modules.setdefault("nats.js", nats_js)
-    sys.modules.setdefault("nats.js.errors", nats_js_errors)
-    sys.modules.setdefault("nats.js.client", nats_js_client)
-
 # Stub serial_asyncio used by barcode protocol.
 try:
     import serial_asyncio as _serial_asyncio_available  # noqa: F401
@@ -299,7 +248,6 @@ except Exception:
     sys.modules.setdefault("serial.tools.list_ports", serial_tools.list_ports)
 
 from perpetual_os1.robot_worker import RobotWorker
-from perpetual_os1.common import RobotNatsConfiguration
 from perpetual_os1.robot import Robot
 
 
@@ -325,7 +273,7 @@ class FakeRobot:
 class CurtainGuardTests(unittest.TestCase):
     def setUp(self) -> None:
         self.robot = FakeRobot()
-        self.worker = RobotWorker(self.robot, RobotNatsConfiguration())
+        self.worker = RobotWorker(self.robot)
 
     def test_guard_blocks_when_curtain_and_door_open(self):
         self.worker._curtain_blocked = True

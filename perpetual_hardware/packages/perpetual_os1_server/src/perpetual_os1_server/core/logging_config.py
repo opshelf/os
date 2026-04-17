@@ -130,7 +130,6 @@ def configure_logging() -> None:
 	third_party_warning = (
 		"aiosqlite",
 		"asyncio",
-		"nats",
 		"pymodbus",
 		"serial",
 		"serial_asyncio",

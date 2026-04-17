@@ -1308,7 +1308,6 @@ async def test_robot_commands_are_blocked_while_laser_auto_calibration_is_runnin
         with pytest.raises(HTTPException) as exc_info:
             await robot_router.robot_commands(
                 command=object(),
-                client=SimpleNamespace(),
                 worker=SimpleNamespace(),
                 current_user=SimpleNamespace(),
                 db=SimpleNamespace(),
