@@ -140,70 +140,6 @@ sys.modules.setdefault("hardware.toolcam", hardware_toolcam)
 sys.modules.setdefault("hardware.iocam", hardware_iocam)
 
 
-class _DummyNATS:
-    def __init__(self, *_, **__):
-        pass
-
-    async def connect(self, *_, **__):
-        return None
-
-    def jetstream(self):
-        return _DummyJetStream()
-
-    async def publish(self, *_, **__):
-        return None
-
-
-class _DummyJetStream:
-    async def add_stream(self, *_, **__):
-        return None
-
-    async def pull_subscribe(self, *_, **__):
-        return _DummySubscription()
-
-    async def purge_stream(self, *_, **__):
-        return None
-
-
-class _DummySubscription:
-    async def fetch(self, *_, **__):
-        return []
-
-
-class _DummyMsg:
-    def __init__(self):
-        self.acked = False
-
-    async def ack(self):
-        self.acked = True
-
-
-nats_module = types.ModuleType("nats")
-nats_aio = types.ModuleType("nats.aio")
-nats_aio_client = types.SimpleNamespace(Client=_DummyNATS)
-nats_aio_msg = types.SimpleNamespace(Msg=_DummyMsg)
-nats_errors = types.SimpleNamespace(TimeoutError=asyncio.TimeoutError)
-nats_js = types.ModuleType("nats.js")
-nats_js_errors = types.SimpleNamespace(NotFoundError=Exception)
-nats_js_client = types.SimpleNamespace(JetStreamContext=object)
-
-nats_module.aio = nats_aio
-nats_module.errors = nats_errors
-nats_module.js = nats_js
-nats_aio.client = nats_aio_client
-nats_aio.msg = nats_aio_msg
-nats_js.errors = nats_js_errors
-nats_js.client = nats_js_client
-
-sys.modules.setdefault("nats", nats_module)
-sys.modules.setdefault("nats.aio", nats_aio)
-sys.modules.setdefault("nats.aio.client", nats_aio_client)
-sys.modules.setdefault("nats.aio.msg", nats_aio_msg)
-sys.modules.setdefault("nats.errors", nats_errors)
-sys.modules.setdefault("nats.js", nats_js)
-sys.modules.setdefault("nats.js.errors", nats_js_errors)
-sys.modules.setdefault("nats.js.client", nats_js_client)
-
 try:
     import serial_asyncio as _serial_asyncio_available  # noqa: F401
 except Exception:
@@ -236,13 +172,6 @@ class MockRobot:
 
     def register_curtain_listener(self, cb):
         pass
-
-
-class MockRobotClient:
-    async def connect(self):
-        pass
-
-
 class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
     async def test_emergency_stop_sets_crash_state_and_pauses_curtain(self):
         from perpetual_os1.robot_worker import RobotWorker
@@ -250,9 +179,6 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
         robot = MockRobot()
         RobotWorker._instance = None
         worker = RobotWorker(robot)
-        worker._client = MockRobotClient()
-        worker._nc = _DummyNATS()
-        worker._js = _DummyJetStream()
 
         self.assertFalse(worker._is_crashed)
         self.assertFalse(robot.curtain_paused)
@@ -271,9 +197,6 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
         robot = MockRobot()
         RobotWorker._instance = None
         worker = RobotWorker(robot)
-        worker._client = MockRobotClient()
-        worker._nc = _DummyNATS()
-        worker._js = _DummyJetStream()
 
         start = asyncio.get_event_loop().time()
         await worker.emergency_stop("test")
@@ -291,9 +214,6 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
         robot = MockRobot()
         RobotWorker._instance = None
         worker = RobotWorker(robot)
-        worker._client = MockRobotClient()
-        worker._nc = _DummyNATS()
-        worker._js = _DummyJetStream()
 
         await worker.emergency_stop("test")
         self.assertTrue(robot.curtain_paused)
@@ -310,9 +230,6 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
         robot = MockRobot()
         RobotWorker._instance = None
         worker = RobotWorker(robot)
-        worker._client = MockRobotClient()
-        worker._nc = _DummyNATS()
-        worker._js = _DummyJetStream()
 
         task_cancelled = asyncio.Event()
 
@@ -324,15 +241,12 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
                 raise
 
         worker._current_task = asyncio.create_task(slow_command())
-        msg = _DummyMsg()
-        worker._msg = msg
 
         await worker.emergency_stop("test")
 
         await asyncio.sleep(0.1)
         self.assertTrue(task_cancelled.is_set())
-        self.assertTrue(msg.acked)
-        self.assertIsNone(worker._msg)
+        self.assertIsNone(worker._current_task)
 
         RobotWorker._instance = None
 
@@ -343,12 +257,11 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
         robot = MockRobot()
         RobotWorker._instance = None
         worker = RobotWorker(robot)
-        worker._client = MockRobotClient()
-        worker._nc = _DummyNATS()
-        worker._js = _DummyJetStream()
 
         mock_command = HomeCommand(command="home")
         worker._current_command = mock_command
+        worker._current_operation = worker._snapshot_command(mock_command)
+        worker._queued_commands.append(worker._current_operation)
         worker._command_started_at = 12345.0
 
         await worker.emergency_stop("test")
@@ -359,8 +272,9 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(worker._current_task)
         self.assertIsNone(worker._current_command)
+        self.assertIsNone(worker._current_operation)
         self.assertIsNone(worker._command_started_at)
-        self.assertIsNone(worker._msg)
+        self.assertEqual(worker._queued_commands, [])
 
         RobotWorker._instance = None
 

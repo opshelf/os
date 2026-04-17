@@ -116,11 +116,10 @@
 		loading = true;
 		loadError = '';
 
-		try {
-			storageGrid = await getStorageGrid();
-			selectedShelf = initialShelf ?? 0;
-			selectedCell = initialCell ?? 0;
-		} catch (err) {
+			try {
+				storageGrid = await getStorageGrid();
+				syncSelection(initialShelf ?? selectedShelf, initialCell ?? selectedCell);
+			} catch (err) {
 			handleNeedsHomeError(err);
 			loadError = err instanceof Error ? err.message : 'failed to load storage grid';
 		} finally {
@@ -176,45 +175,79 @@
 		}
 	}
 
-	function getShelves() {
+	function getShelvesForSide(side: 'left_module' | 'right_module') {
 		if (storageGrid === null) {
 			return [];
 		}
 
-		if (selectedSide === 'left_module') {
+		if (side === 'left_module') {
 			return storageGrid.left_module;
 		}
 
 		return storageGrid.right_module;
 	}
 
-	function getCells() {
-		const shelves = getShelves();
+	function getShelves() {
+		return getShelvesForSide(selectedSide);
+	}
 
-		if (selectedShelf >= shelves.length) {
+	function getSelectedShelf() {
+		const shelves = getShelves();
+		return shelves.find((shelf) => shelf.shelf_idx === selectedShelf) ?? null;
+	}
+
+	function getCells() {
+		const shelf = getSelectedShelf();
+
+		if (shelf === null) {
 			return [];
 		}
 
-		return shelves[selectedShelf].cells;
+		return shelf.cells;
 	}
 
-	function didChangeSide(event: Event): void {
-		const target = event.target as HTMLSelectElement;
+	function syncSelection(preferredShelf?: number, preferredCell?: number): void {
+		const shelves = getShelvesForSide(selectedSide);
 
-		selectedSide = target.value as 'left_module' | 'right_module';
-		selectedShelf = 0;
-		selectedCell = 0;
-		currentPosition = null;
-		error = '';
-		message = '';
-		warning = '';
+		if (shelves.length === 0) {
+			selectedShelf = 0;
+			selectedCell = 0;
+			return;
+		}
+
+		const nextShelf = preferredShelf ?? selectedShelf;
+		const matchingShelf = shelves.find((shelf) => shelf.shelf_idx === nextShelf) ?? shelves[0];
+
+		selectedShelf = matchingShelf.shelf_idx;
+
+		if (matchingShelf.cells.length === 0) {
+			selectedCell = 0;
+			return;
+		}
+
+		const nextCell = preferredCell ?? selectedCell;
+		const matchingCell =
+			matchingShelf.cells.find((cell) => cell.cell_idx === nextCell) ?? matchingShelf.cells[0];
+
+		selectedCell = matchingCell.cell_idx;
+	}
+
+		function didChangeSide(event: Event): void {
+			const target = event.target as HTMLSelectElement;
+
+			selectedSide = target.value as 'left_module' | 'right_module';
+			syncSelection();
+			currentPosition = null;
+			error = '';
+			message = '';
+			warning = '';
 	}
 
 	function didChangeShelf(event: Event): void {
 		const target = event.target as HTMLSelectElement;
 
 		selectedShelf = parseInt(target.value, 10);
-		selectedCell = 0;
+		syncSelection(selectedShelf);
 		currentPosition = null;
 		error = '';
 		message = '';
@@ -532,16 +565,16 @@
 				<td>
 					<span class="field-label">shelf</span>
 					<select value={selectedShelf} onchange={didChangeShelf}>
-						{#each getShelves() as _, index}
-							<option value={index}>{index}</option>
+						{#each getShelves() as shelf}
+							<option value={shelf.shelf_idx}>{shelf.shelf_idx}</option>
 						{/each}
 					</select>
 				</td>
 				<td>
 					<span class="field-label">cell</span>
 					<select value={selectedCell} onchange={didChangeCell}>
-						{#each getCells() as _, index}
-							<option value={index}>{index}</option>
+						{#each getCells() as cell}
+							<option value={cell.cell_idx}>{cell.cell_idx}</option>
 						{/each}
 					</select>
 				</td>

@@ -7,7 +7,8 @@ from hardware.laser import LaserSensor
 @pytest.fixture
 def mock_laser_controller() -> AsyncMock:
     controller = AsyncMock()
-    controller.read_holding_register_block = AsyncMock(return_value=(0, 5670))
+    controller.read_holding_register_block = AsyncMock(return_value=(0, 56700))
+    controller.read_input_register_block = AsyncMock(return_value=(0, 56700))
     controller.connect = AsyncMock()
     controller.close = AsyncMock()
     controller.client = Mock()
@@ -20,10 +21,11 @@ async def test_laser_read_distance_mm(mock_laser_controller):
     laser = LaserSensor(
         modbus_controller=mock_laser_controller,
         device_id=1,
+        read_function_code=3,
         register_address=0,
         register_count=2,
         distance_register_index=1,
-        distance_scale_mm=0.01,
+        distance_scale_mm=0.001,
     )
 
     distance_mm = await laser.read_distance_mm()
@@ -41,10 +43,11 @@ async def test_laser_initialize_returns_probe_distance(mock_laser_controller):
     laser = LaserSensor(
         modbus_controller=mock_laser_controller,
         device_id=1,
+        read_function_code=3,
         register_address=0,
         register_count=2,
         distance_register_index=1,
-        distance_scale_mm=0.01,
+        distance_scale_mm=0.001,
     )
 
     distance_mm = await laser.initialize()
@@ -58,10 +61,11 @@ async def test_laser_read_distance_mm_or_none_returns_none_on_failure(mock_laser
     laser = LaserSensor(
         modbus_controller=mock_laser_controller,
         device_id=1,
+        read_function_code=3,
         register_address=0,
         register_count=2,
         distance_register_index=1,
-        distance_scale_mm=0.01,
+        distance_scale_mm=0.001,
     )
 
     distance_mm = await laser.read_distance_mm_or_none()
@@ -74,8 +78,9 @@ def test_laser_validates_distance_register_index(mock_laser_controller):
         LaserSensor(
             modbus_controller=mock_laser_controller,
             device_id=1,
+            read_function_code=3,
             register_address=0,
             register_count=2,
             distance_register_index=2,
-            distance_scale_mm=0.01,
+            distance_scale_mm=0.001,
         )

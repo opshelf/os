@@ -1,17 +1,30 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from typing import Literal, Optional
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
+from sse_starlette.sse import EventSourceResponse
 
 from perpetual_os1.common import AxisCoordinate
-from perpetual_os1.storage import StorageModuleSide, CalibrationCoordinate, CellStatus
+from perpetual_os1.storage import (
+	CalibrationCoordinate,
+	CellItem,
+	CellStatus,
+	Dimensions,
+	StorageModuleCellLocation,
+	StorageModuleSide,
+)
 from perpetual_os1.exceptions import IOBoxError, MotorError
 from hardware.exceptions import MotorError as HardwareMotorError
 
 from perpetual_os1_server.core.robot import get_robot_worker
+from perpetual_os1_server.core.laser_auto_calibration import (
+	LaserAutoCalibrationSnapshot,
+	get_laser_auto_calibration_manager,
+)
 from perpetual_os1_server.routers.auth_deps import get_current_user
 from perpetual_os1_server.settings import get_root_config, save_root_config
 
@@ -45,6 +58,52 @@ class TestRequest(BaseModel):
 	cell_idx: int
 
 
+def _ensure_robot_not_busy(worker) -> None:
+	if getattr(worker, "_current_command", None) is not None:
+		raise HTTPException(
+			status_code=status.HTTP_409_CONFLICT,
+			detail="Robot is busy processing another command",
+		)
+
+	if getattr(worker, "_demo_cycling", False) is True:
+		raise HTTPException(
+			status_code=status.HTTP_409_CONFLICT,
+			detail="Demo cycle is already running",
+		)
+
+
+def _build_test_location(request: TestRequest) -> StorageModuleCellLocation:
+	return StorageModuleCellLocation(
+		side=_parse_side(request.side),
+		shelf_idx=request.shelf_idx,
+		cell_idx=request.cell_idx,
+	)
+
+
+def _build_coordinate_for_location(grid, location: StorageModuleCellLocation) -> AxisCoordinate:
+	calibration_point = grid.get_cell_coordinate(location)
+
+	return AxisCoordinate(
+		x=calibration_point.x,
+		y=calibration_point.y,
+		s=0 if location.side == StorageModuleSide.LEFT else 1,
+		z_offset=calibration_point.z_offset,
+	)
+
+
+def _build_cycle_test_item(cell, location: StorageModuleCellLocation) -> CellItem:
+	return CellItem(
+		dimensions=Dimensions(
+			width=max(float(cell.dimensions.width) * 0.8, 1.0),
+			height=max(float(cell.dimensions.height) * 0.8, 1.0),
+			length=max(float(cell.dimensions.length) * 0.8, 1.0),
+		),
+		data={
+			"name": f"calibration test {location.side.value}:{location.shelf_idx}:{location.cell_idx}",
+		},
+	)
+
+
 class SaveRequest(BaseModel):
 	side: Literal["left_module", "right_module"]
 	shelf_idx: int
@@ -64,6 +123,18 @@ class CalibrationStatusResponse(BaseModel):
 _current_position: Optional[PositionResponse] = None
 _current_side: int = 0
 _current_side_name: str = "left_module"
+
+
+async def _ensure_laser_auto_calibration_not_running() -> None:
+	manager = get_laser_auto_calibration_manager()
+
+	if await manager.is_active() is False:
+		return
+
+	raise HTTPException(
+		status_code=status.HTTP_409_CONFLICT,
+		detail="laser auto calibration is running",
+	)
 
 
 def _build_error_detail(
@@ -105,6 +176,16 @@ def _clamp_value(value: float, limit: float, label: str, warnings: list[str]) ->
 			f"{label} limit reached; requested {value:.2f}mm, clamped to {clamped:.2f}mm (limit {limit:.2f}mm)"
 		)
 	return clamped
+
+
+async def _get_current_stage_extension(tool, fallback: float = 0.0) -> float:
+	if getattr(tool, "_ms", None) is None:
+		return fallback
+
+	try:
+		return await tool._ms.get_position()
+	except Exception:
+		return fallback
 
 
 def _infer_axes_from_error(worker, exc: Exception) -> Optional[list[str]]:
@@ -190,6 +271,26 @@ def _side_to_s(side: str) -> int:
 	return 1
 
 
+def _get_shelf(grid, side: StorageModuleSide, shelf_idx: int):
+	try:
+		return grid.get_shelf(side, shelf_idx)
+	except IndexError as e:
+		raise HTTPException(
+			status_code=status.HTTP_400_BAD_REQUEST,
+			detail=f"Invalid shelf_idx: {shelf_idx}",
+		) from e
+
+
+def _get_cell(shelf, cell_idx: int):
+	try:
+		return shelf.get_cell(cell_idx)
+	except IndexError as e:
+		raise HTTPException(
+			status_code=status.HTTP_400_BAD_REQUEST,
+			detail=f"Invalid cell_idx: {cell_idx}",
+		) from e
+
+
 def _get_stage_limit(tool) -> float:
 	if tool._ms is None:
 		raise HTTPException(
@@ -246,9 +347,93 @@ async def get_storage():
 	return grid.model_dump()
 
 
+@router.get("/laser/status", response_model=LaserAutoCalibrationSnapshot)
+async def get_laser_auto_calibration_status() -> LaserAutoCalibrationSnapshot:
+	manager = get_laser_auto_calibration_manager()
+	return await manager.get_snapshot()
+
+
+@router.post("/laser/abort", response_model=LaserAutoCalibrationSnapshot)
+async def abort_laser_auto_calibration() -> LaserAutoCalibrationSnapshot:
+	manager = get_laser_auto_calibration_manager()
+
+	try:
+		return await manager.abort()
+	except RuntimeError as exc:
+		raise HTTPException(
+			status_code=status.HTTP_409_CONFLICT,
+			detail=str(exc),
+		) from exc
+
+
+@router.get("/laser/stream")
+async def stream_laser_auto_calibration(request: Request) -> EventSourceResponse:
+	manager = get_laser_auto_calibration_manager()
+	is_active = await manager.is_active()
+
+	if is_active is False:
+		try:
+			worker = await get_robot_worker()
+		except ValueError as exc:
+			raise HTTPException(
+				status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+				detail="Robot is not initialized",
+			) from exc
+
+		_ensure_ready(worker)
+
+		if getattr(worker, "_current_command", None) is not None:
+			raise HTTPException(
+				status_code=status.HTTP_409_CONFLICT,
+				detail="Robot is busy processing another command",
+			)
+
+		if getattr(worker, "_demo_cycling", False) is True:
+			raise HTTPException(
+				status_code=status.HTTP_409_CONFLICT,
+				detail="Demo cycle is already running",
+			)
+
+		await manager.ensure_session_started(worker)
+
+	queue, initial_snapshot = await manager.subscribe()
+
+	async def event_generator():
+		try:
+			yield {
+				"event": "snapshot",
+				"data": initial_snapshot.model_dump_json(),
+			}
+
+			while True:
+				if await request.is_disconnected() is True:
+					break
+
+				try:
+					snapshot = await asyncio.wait_for(queue.get(), timeout=1.0)
+				except asyncio.TimeoutError:
+					continue
+
+				yield {
+					"event": "snapshot",
+					"data": snapshot.model_dump_json(),
+				}
+		finally:
+			await manager.unsubscribe(queue)
+
+	return EventSourceResponse(
+		event_generator(),
+		ping=15,
+		send_timeout=30,
+		headers={"Cache-Control": "no-cache"},
+	)
+
+
 @router.post("/move", response_model=PositionResponse)
 async def move_to_cell(request: MoveRequest) -> PositionResponse:
 	global _current_position, _current_side, _current_side_name
+
+	await _ensure_laser_auto_calibration_not_running()
 
 	try:
 		worker = await get_robot_worker()
@@ -262,23 +447,8 @@ async def move_to_cell(request: MoveRequest) -> PositionResponse:
 	tool = worker._robot._tool
 
 	side_enum = _parse_side(request.side)
-	shelves = grid.get_side(side_enum)
-
-	if request.shelf_idx < 0 or request.shelf_idx >= len(shelves):
-		raise HTTPException(
-			status_code=status.HTTP_400_BAD_REQUEST,
-			detail=f"Invalid shelf_idx: {request.shelf_idx}",
-		)
-
-	shelf = shelves[request.shelf_idx]
-
-	if request.cell_idx < 0 or request.cell_idx >= len(shelf.cells):
-		raise HTTPException(
-			status_code=status.HTTP_400_BAD_REQUEST,
-			detail=f"Invalid cell_idx: {request.cell_idx}",
-		)
-
-	cell = shelf.cells[request.cell_idx]
+	shelf = _get_shelf(grid, side_enum, request.shelf_idx)
+	cell = _get_cell(shelf, request.cell_idx)
 
 	if cell.calibration_point is None:
 		raise HTTPException(
@@ -312,12 +482,7 @@ async def move_to_cell(request: MoveRequest) -> PositionResponse:
 	except (MotorError, HardwareMotorError) as e:
 		await _raise_motor_error(worker, f"Failed to move to cell: {str(e)}", e)
 
-	slide_param = "STAGE_EXTENSION_SHELF_FRONT" if request.side == "left_module" else "STAGE_EXTENSION_SHELF_BACK"
-	slide_ext = await tool.get_param(slide_param)
-
-	if slide_ext is None:
-		fallback_param = "SLIDE_EXTENSION_FRONT" if request.side == "left_module" else "SLIDE_EXTENSION_BACK"
-		slide_ext = await tool.get_param(fallback_param)
+	slide_extension = await _get_current_stage_extension(tool)
 
 	_current_side = coord.s
 	_current_side_name = request.side
@@ -325,7 +490,7 @@ async def move_to_cell(request: MoveRequest) -> PositionResponse:
 		x=coord.x,
 		y=coord.y,
 		z_offset=coord.z_offset,
-		slide_extension=slide_ext or 0,
+		slide_extension=slide_extension,
 	)
 
 	return _current_position
@@ -334,6 +499,8 @@ async def move_to_cell(request: MoveRequest) -> PositionResponse:
 @router.post("/jog", response_model=PositionResponse)
 async def jog_axis(request: JogRequest) -> PositionResponse:
 	global _current_position
+
+	await _ensure_laser_auto_calibration_not_running()
 
 	if _current_position is None:
 		raise HTTPException(
@@ -422,11 +589,7 @@ async def jog_axis(request: JogRequest) -> PositionResponse:
 async def test_gripper(request: TestRequest):
 	global _current_position, _current_side
 
-	if _current_position is None:
-		raise HTTPException(
-			status_code=status.HTTP_400_BAD_REQUEST,
-			detail="No active calibration session. Move to a cell first.",
-		)
+	await _ensure_laser_auto_calibration_not_running()
 
 	try:
 		worker = await get_robot_worker()
@@ -437,6 +600,18 @@ async def test_gripper(request: TestRequest):
 		) from e
 
 	_ensure_ready(worker)
+	_ensure_robot_not_busy(worker)
+
+	location = _build_test_location(request)
+	grid = worker._robot._grid
+
+	try:
+		coordinate = _build_coordinate_for_location(grid, location)
+	except (IndexError, ValueError, Exception) as exc:
+		raise HTTPException(
+			status_code=status.HTTP_400_BAD_REQUEST,
+			detail=str(exc),
+		) from exc
 
 	tool = worker._robot._tool
 
@@ -446,12 +621,14 @@ async def test_gripper(request: TestRequest):
 	except (MotorError, HardwareMotorError) as e:
 		await _raise_motor_error(worker, f"Failed to retract: {str(e)}", e)
 
-	coord = AxisCoordinate(
-		x=_current_position.x,
-		y=_current_position.y,
-		s=_current_side,
-		z_offset=_current_position.z_offset,
+	coord = coordinate
+	_current_position = PositionResponse(
+		x=coord.x,
+		y=coord.y,
+		z_offset=coord.z_offset,
+		slide_extension=await _get_current_stage_extension(tool),
 	)
+	_current_side = coord.s
 
 	try:
 		await tool.pick(coord)
@@ -462,8 +639,74 @@ async def test_gripper(request: TestRequest):
 	return {"success": True}
 
 
+@router.post("/test/cycle")
+async def test_cycle(request: TestRequest):
+	await _ensure_laser_auto_calibration_not_running()
+
+	try:
+		worker = await get_robot_worker()
+	except ValueError as e:
+		raise HTTPException(
+			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+			detail="Robot is not initialized",
+		) from e
+
+	_ensure_ready(worker)
+	_ensure_robot_not_busy(worker)
+
+	robot = worker._robot
+	tool = robot._tool
+	grid = robot._grid
+	location = _build_test_location(request)
+
+	try:
+		cell = grid.get_cell(location)
+		coordinate = _build_coordinate_for_location(grid, location)
+	except (IndexError, ValueError, Exception) as exc:
+		raise HTTPException(
+			status_code=status.HTTP_400_BAD_REQUEST,
+			detail=str(exc),
+		) from exc
+
+	initial_item = cell.item.model_copy(deep=True) if cell.item is not None else None
+	is_initially_occupied = cell.status == CellStatus.OCCUPIED
+	cycle_item = initial_item
+
+	if is_initially_occupied is False:
+		cycle_item = _build_cycle_test_item(cell, location)
+
+	try:
+		await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
+
+		if is_initially_occupied is True:
+			await robot.io_place(coordinate)
+			grid.clear_item(location)
+
+			await robot.io_pick(coordinate)
+			grid.store_item(location, cycle_item)
+		else:
+			await robot.io_pick(coordinate)
+			grid.store_item(location, cycle_item)
+
+			await robot.io_place(coordinate)
+			grid.clear_item(location)
+
+		grid.save()
+	except (MotorError, HardwareMotorError) as e:
+		await _raise_motor_error(worker, f"Cycle test failed: {str(e)}", e)
+	except Exception as exc:
+		raise HTTPException(
+			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+			detail=f"Cycle test failed: {exc}",
+		) from exc
+
+	return {"success": True}
+
+
 @router.post("/save")
 async def save_calibration(request: SaveRequest):
+	await _ensure_laser_auto_calibration_not_running()
+
 	try:
 		worker = await get_robot_worker()
 	except ValueError as e:
@@ -475,23 +718,8 @@ async def save_calibration(request: SaveRequest):
 	grid = worker._robot._grid
 
 	side_enum = _parse_side(request.side)
-	shelves = grid.get_side(side_enum)
-
-	if request.shelf_idx < 0 or request.shelf_idx >= len(shelves):
-		raise HTTPException(
-			status_code=status.HTTP_400_BAD_REQUEST,
-			detail=f"Invalid shelf_idx: {request.shelf_idx}",
-		)
-
-	shelf = shelves[request.shelf_idx]
-
-	if request.cell_idx < 0 or request.cell_idx >= len(shelf.cells):
-		raise HTTPException(
-			status_code=status.HTTP_400_BAD_REQUEST,
-			detail=f"Invalid cell_idx: {request.cell_idx}",
-		)
-
-	cell = shelf.cells[request.cell_idx]
+	shelf = _get_shelf(grid, side_enum, request.shelf_idx)
+	cell = _get_cell(shelf, request.cell_idx)
 
 	new_cal = CalibrationCoordinate(
 		x=request.x,
@@ -519,6 +747,8 @@ async def save_calibration(request: SaveRequest):
 
 @router.post("/home_tool_motors", response_model=CalibrationStatusResponse)
 async def home_tool_motors() -> CalibrationStatusResponse:
+	await _ensure_laser_auto_calibration_not_running()
+
 	try:
 		worker = await get_robot_worker()
 	except ValueError as e:
@@ -603,6 +833,8 @@ async def get_iobox_calibration() -> IOBoxPositionResponse:
 async def move_to_iobox_position(position: Literal["low", "high"]) -> IOBoxPositionResponse:
 	global _iobox_position, _iobox_current
 
+	await _ensure_laser_auto_calibration_not_running()
+
 	try:
 		worker = await get_robot_worker()
 	except ValueError as e:
@@ -656,6 +888,8 @@ async def move_to_iobox_position(position: Literal["low", "high"]) -> IOBoxPosit
 @router.post("/iobox/jog", response_model=IOBoxPositionResponse)
 async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 	global _iobox_current, _iobox_position
+
+	await _ensure_laser_auto_calibration_not_running()
 
 	if _iobox_current is None:
 		await get_iobox_calibration()
@@ -742,6 +976,8 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 async def test_iobox_sequence(with_gripper: bool = False):
 	global _iobox_current
 
+	await _ensure_laser_auto_calibration_not_running()
+
 	if _iobox_current is None:
 		await get_iobox_calibration()
 	if _iobox_current is None:
@@ -817,6 +1053,8 @@ async def test_iobox_sequence(with_gripper: bool = False):
 @router.post("/iobox/save")
 async def save_iobox_calibration(request: IOBoxSaveRequest):
 	global _iobox_current
+
+	await _ensure_laser_auto_calibration_not_running()
 
 	try:
 		worker = await get_robot_worker()
@@ -899,6 +1137,8 @@ async def get_rotation_angles() -> RotationAnglesResponse:
 
 @router.post("/rotation/rotate")
 async def rotate_to_angle(angle: float):
+	await _ensure_laser_auto_calibration_not_running()
+
 	try:
 		worker = await get_robot_worker()
 	except ValueError as e:
@@ -927,6 +1167,8 @@ async def rotate_to_angle(angle: float):
 
 @router.post("/rotation/save")
 async def save_rotation_angles(request: RotateSaveRequest):
+	await _ensure_laser_auto_calibration_not_running()
+
 	config = get_root_config()
 
 	params_dict = config.robot.tool.parameters.model_dump()
@@ -970,6 +1212,8 @@ async def get_shelf_stage_extension() -> ShelfStageExtensionResponse:
 
 @router.post("/shelf/save")
 async def save_shelf_stage_extension(request: ShelfStageExtensionSaveRequest):
+	await _ensure_laser_auto_calibration_not_running()
+
 	config = get_root_config()
 
 	stage_limit: float | None = None
@@ -1012,6 +1256,8 @@ class StageMoveRequest(BaseModel):
 
 @router.post("/stage/move")
 async def move_stage(request: StageMoveRequest):
+	await _ensure_laser_auto_calibration_not_running()
+
 	try:
 		worker = await get_robot_worker()
 	except ValueError as e:
@@ -1045,75 +1291,11 @@ async def move_stage(request: StageMoveRequest):
 	return {"position": target, "warnings": warnings if warnings else None}
 
 
-class CycleTestRequest(BaseModel):
-	side: Literal["left_module", "right_module"]
-	shelf_idx: int
-	cell_idx: int
-
-
-@router.post("/cycle_test")
-async def run_cycle_test(request: CycleTestRequest):
-	"""Run a retrieve-store cycle test on a specific cell to verify calibration accuracy."""
-	try:
-		worker = await get_robot_worker()
-	except ValueError as e:
-		raise HTTPException(
-			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail="Robot is not initialized",
-		) from e
-
-	_ensure_ready(worker)
-
-	grid = worker._robot._grid
-	robot = worker._robot
-	tool = robot._tool
-
-	side_enum = _parse_side(request.side)
-	shelves = grid.get_side(side_enum)
-
-	if request.shelf_idx < 0 or request.shelf_idx >= len(shelves):
-		raise HTTPException(
-			status_code=status.HTTP_400_BAD_REQUEST,
-			detail=f"Invalid shelf_idx: {request.shelf_idx}",
-		)
-
-	shelf = shelves[request.shelf_idx]
-
-	if request.cell_idx < 0 or request.cell_idx >= len(shelf.cells):
-		raise HTTPException(
-			status_code=status.HTTP_400_BAD_REQUEST,
-			detail=f"Invalid cell_idx: {request.cell_idx}",
-		)
-
-	cell = shelf.cells[request.cell_idx]
-
-	if cell.calibration_point is None:
-		raise HTTPException(
-			status_code=status.HTTP_400_BAD_REQUEST,
-			detail="Cell has no calibration point",
-		)
-
-	cal_point = cell.calibration_point
-	coord = AxisCoordinate(
-		x=cal_point.x,
-		y=cal_point.y,
-		s=_side_to_s(request.side),
-		z_offset=cal_point.z_offset,
-	)
-
-	try:
-		await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
-		await robot.io_place(coord)
-		await robot.io_pick(coord)
-	except (MotorError, HardwareMotorError) as e:
-		await _raise_motor_error(worker, f"Cycle test motor fault: {str(e)}", e)
-
-	return {"success": True}
-
-
 @router.post("/abort")
 async def abort_calibration():
 	"""Abort current calibration operation and home the tool."""
+	await _ensure_laser_auto_calibration_not_running()
+
 	try:
 		worker = await get_robot_worker()
 	except ValueError as e:

@@ -13,6 +13,7 @@ from perpetual_os1.storage import StorageModuleCellLocation, StorageModuleSide
 from hardware.exceptions import MotorError as HardwareMotorError
 
 from perpetual_os1_server.core.robot import get_robot_worker
+from perpetual_os1_server.core.laser_auto_calibration import is_laser_auto_calibration_running
 from perpetual_os1_server.routers.common import SuccessResponse
 from perpetual_os1_server.routers.auth_deps import get_current_user
 from perpetual_os1_server.routers.calibration import _ensure_ready, _clear_motors_for_move
@@ -26,6 +27,16 @@ _stop_event: asyncio.Event = asyncio.Event()
 _is_running: bool = False
 _current_cell_index: Optional[int] = None
 _total_cells: Optional[int] = None
+
+
+async def _ensure_laser_auto_calibration_not_running() -> None:
+	if await is_laser_auto_calibration_running() is False:
+		return
+
+	raise HTTPException(
+		status_code=status.HTTP_409_CONFLICT,
+		detail="laser auto calibration is running",
+	)
 
 
 class DemoCycleStatusResponse(BaseModel):
@@ -99,6 +110,8 @@ async def _run_demo_cycle(worker, cells: list[tuple[StorageModuleCellLocation, A
 @router.post("/cycle/start", response_model=SuccessResponse)
 async def start_demo_cycle() -> SuccessResponse:
 	global _demo_task, _stop_event, _is_running, _current_cell_index, _total_cells
+
+	await _ensure_laser_auto_calibration_not_running()
 
 	if _is_running is True:
 		raise HTTPException(

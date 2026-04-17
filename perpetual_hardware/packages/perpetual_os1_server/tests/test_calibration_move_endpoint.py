@@ -5,7 +5,7 @@ import pytest
 from httpx import AsyncClient
 
 
-def _mock_worker_for_move():
+def _mock_worker_for_move(stage_position: float = 0.0):
 	order: list[str] = []
 
 	async def did_move(*args, **kwargs):
@@ -36,6 +36,8 @@ def _mock_worker_for_move():
 	tool.get_param = AsyncMock(side_effect=did_get_param)
 	tool._mg = MagicMock()
 	tool._mg.move_to_position = AsyncMock(side_effect=did_move_z)
+	tool._ms = MagicMock()
+	tool._ms.get_position = AsyncMock(return_value=stage_position)
 
 	calibration_point = SimpleNamespace(x=120.0, y=340.0, z_offset=2.0)
 	cell = SimpleNamespace(calibration_point=calibration_point)
@@ -64,7 +66,7 @@ async def test_move_to_cell_rotates_before_z_extension(
 	expected_rotation: str,
 	expected_slide: float,
 ) -> None:
-	worker, tool, order = _mock_worker_for_move()
+	worker, tool, order = _mock_worker_for_move(stage_position=expected_slide)
 	clear_motors = AsyncMock()
 
 	with patch("perpetual_os1_server.routers.calibration.get_robot_worker", return_value=worker):

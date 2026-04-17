@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from typing import List, Optional, Sequence
 
 import pymodbus
@@ -8,6 +9,8 @@ from pymodbus.exceptions import ModbusException, ModbusIOException
 from .exceptions import (
     ModbusError, ModbusTimeoutError, ModbusConnectionError
 )
+
+logger = logging.getLogger(__name__).getChild("controller")
 
 class SharedModbusController:
     port: str
@@ -72,11 +75,12 @@ class SharedModbusController:
         if self.client is not None:
             self.client.close()
 
-    async def read_holding_register_block(
+    async def read_register_block(
         self,
         unit_id: int,
         address: int,
         count: int = 1,
+        function_code: int = 3,
     ) -> tuple[int, ...]:
         """
         Read one or more holding registers.
@@ -100,35 +104,57 @@ class SharedModbusController:
         if count <= 0:
             raise ValueError("count must be greater than zero")
 
+        if function_code not in (3, 4):
+            raise ValueError("function_code must be 3 or 4")
+
         async with self.lock:
             for attempt in range(2):
                 try:
-                    result = await self.client.read_holding_registers(
-                        address=address,
-                        count=count,
-                        device_id=unit_id
-                    )
+                    if function_code == 4:
+                        result = await self.client.read_input_registers(
+                            address=address,
+                            count=count,
+                            device_id=unit_id
+                        )
+                    else:
+                        result = await self.client.read_holding_registers(
+                            address=address,
+                            count=count,
+                            device_id=unit_id
+                        )
                     if result is None:
                         raise ModbusError(
-                            f"No response from unit {unit_id} while reading "
+                            f"No response from unit {unit_id} while reading function "
+                            f"{function_code} "
                             f"{count} register(s) starting at {address}"
                         )
                     if result.isError():
                         raise ModbusError(
-                            f"Read error from unit {unit_id}, register {address}: {result}"
+                            f"Read error from unit {unit_id}, function {function_code}, register {address}: {result}"
                         )
                     registers = getattr(result, "registers", None)
 
                     if isinstance(registers, Sequence) is False:
                         raise ModbusError(
-                            f"Missing register payload from unit {unit_id}, register {address}"
+                            f"Missing register payload from unit {unit_id}, function {function_code}, register {address}"
                         )
 
                     if len(registers) != count:
                         raise ModbusError(
-                            f"Expected {count} register(s) from unit {unit_id}, register "
+                            f"Expected {count} register(s) from unit {unit_id}, function {function_code}, register "
                             f"{address}, got {len(registers)}"
                         )
+
+                    logger.debug(
+                        "Modbus register block read",
+                        extra={
+                            "unit_id": unit_id,
+                            "function_code": function_code,
+                            "address": address,
+                            "count": count,
+                            "registers": [int(value) for value in registers],
+                        }
+                    )
 
                     return tuple(int(value) for value in registers)
                 except (ModbusIOException, ModbusConnectionError, ModbusTimeoutError, ModbusException, asyncio.TimeoutError) as e:
@@ -141,6 +167,32 @@ class SharedModbusController:
                 except Exception as e:
                     raise ModbusError(f"Unexpected error reading from unit {unit_id}: {str(e)}") from e
         raise ModbusError(f"Failed to read from unit {unit_id} after retries")
+
+    async def read_holding_register_block(
+        self,
+        unit_id: int,
+        address: int,
+        count: int = 1,
+    ) -> tuple[int, ...]:
+        return await self.read_register_block(
+            unit_id=unit_id,
+            address=address,
+            count=count,
+            function_code=3,
+        )
+
+    async def read_input_register_block(
+        self,
+        unit_id: int,
+        address: int,
+        count: int = 1,
+    ) -> tuple[int, ...]:
+        return await self.read_register_block(
+            unit_id=unit_id,
+            address=address,
+            count=count,
+            function_code=4,
+        )
 
     async def read_holding_registers(
         self,

@@ -9,12 +9,6 @@ from datetime import datetime, timezone
 from typing import Optional, List, Any, Dict
 
 import sentry_sdk
-from nats.aio.client import Client as NATS
-from nats.aio.msg import Msg
-from nats import errors as nats_errors
-from nats.js.errors import NotFoundError
-from pydantic import TypeAdapter
-
 from perpetual_os1.robot import (
     Robot,
     RobotCommands,
@@ -24,9 +18,7 @@ from perpetual_os1.robot import (
     HomeCommand,
     InitializeCommand,
 )
-from perpetual_os1.common import RobotNatsConfiguration
 from perpetual_os1.robot_defs import WorkerError, QueuedOperation, WorkerStatus, WorkerStatusWithQueue
-from perpetual_os1.robot_client import RobotClient
 from perpetual_os1.barcode_protocol import BarcodeService
 from perpetual_os1.exceptions import MotorError, MovementError, ToolError
 
@@ -35,9 +27,6 @@ logger = logging.getLogger(__name__)
 COMMAND_TIMEOUT_SECONDS = 300
 
 _MOTOR_ID_RE = re.compile(r"motor\s+(\d+)", re.IGNORECASE)
-
-RobotCommandAdapter = TypeAdapter[RobotCommands](RobotCommands)
-
 
 def _default_axis_status() -> Dict[str, Any]:
     return {
@@ -61,6 +50,32 @@ def _default_axis_status() -> Dict[str, Any]:
         "homed": 0,
         "hard_stopped": 0,
     }
+
+
+def _normalize_axis_status(axis_payload: Any) -> Dict[str, Any]:
+    normalized = _default_axis_status()
+
+    if isinstance(axis_payload, dict) is False:
+        return normalized
+
+    status_flags = axis_payload.get("status_flags")
+    if isinstance(status_flags, dict):
+        normalized["status_flags"].update(status_flags)
+
+    error_flags = axis_payload.get("error_flags")
+    if isinstance(error_flags, dict):
+        normalized["error_flags"].update(error_flags)
+
+    if "position" in axis_payload:
+        normalized["position"] = axis_payload.get("position", 0)
+
+    if "homed" in axis_payload:
+        normalized["homed"] = axis_payload.get("homed", 0)
+
+    if "hard_stopped" in axis_payload:
+        normalized["hard_stopped"] = axis_payload.get("hard_stopped", 0)
+
+    return normalized
 
 
 def _normalize_location(payload: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -148,11 +163,11 @@ def _transform_worker_status_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     transformed["robot_status"] = {
         "gantry": {
-            "x_axis": _default_axis_status(),
-            "y_axis": _default_axis_status(),
+            "x_axis": _normalize_axis_status(((robot_status_payload.get("gantry") or {}).get("x_axis"))),
+            "y_axis": _normalize_axis_status(((robot_status_payload.get("gantry") or {}).get("y_axis"))),
         },
         "tool": {
-            "z_axis": _default_axis_status(),
+            "z_axis": _normalize_axis_status(((robot_status_payload.get("tool") or {}).get("z_axis"))),
         },
         "state": {
             "current_cell": state_payload.get("current_cell"),
@@ -207,24 +222,22 @@ def _normalize_storage_payload(storage: Dict[str, Any]) -> Dict[str, Any]:
 class RobotWorker:
     _instance: Optional["RobotWorker"] = None
 
-    def __init__(
-        self, robot: Robot, nats_config: RobotNatsConfiguration = RobotNatsConfiguration()
-    ):
+    def __init__(self, robot: Robot):
         if RobotWorker._instance is not None:
             raise RuntimeError("RobotWorker is a singleton. Use `get_instance()` to access it.")
+
         self._robot = robot
         self._worker_task: Optional[asyncio.Task] = None
         self._current_task: Optional[asyncio.Task] = None
         self._current_command: Optional[RobotCommands] = None
+        self._current_operation: Optional[QueuedOperation] = None
         self._command_started_at: Optional[float] = None
-        self._msg: Optional[Msg] = None
         self._running = False
-        self._nats_config = nats_config
-        self._client = RobotClient(nats_config)
-        self._nc = NATS()
-        self._js: Any = None  # Will be set in connect()
+        self._command_queue: asyncio.Queue[QueuedOperation] = asyncio.Queue()
         self._error_queue: List[WorkerError] = []
         self._queued_commands: List[QueuedOperation] = []
+        self._status_subscribers: List[asyncio.Queue[str]] = []
+        self._event_subscribers: List[asyncio.Queue[str]] = []
         self._use_enhanced_status = True
         self._barcode: Optional[BarcodeService] = None
         self._barcode_task: Optional[asyncio.Task] = None
@@ -242,9 +255,6 @@ class RobotWorker:
         self._needs_home_axes: set[str] = set()
         self._needs_home_unknown: bool = False
         self._needs_home_reason: Optional[str] = None
-
-    def get_client(self) -> RobotClient:
-        return self._client
 
     def drain_motor_time(self) -> float:
         return self._robot.drain_motor_time()
@@ -361,36 +371,6 @@ class RobotWorker:
         self._add_error(error)
 
     async def connect(self) -> None:
-        await self._nc.connect(servers=[self._nats_config.connection_string()])
-        self._js = self._nc.jetstream()
-        await self._js.add_stream(
-            name=self._nats_config.stream_name,
-            subjects=[
-                self._nats_config.command_queue,
-                self._nats_config.event_queue,
-                self._nats_config.get_storage_subject,
-                self._nats_config.set_storage_subject,
-                self._nats_config.get_config_subject,
-                self._nats_config.set_config_subject,
-                self._nats_config.get_status_subject,
-            ],
-        )
-        await self._client.connect()
-        try:
-            consumer_info = await self._js.consumer_info(
-                self._nats_config.stream_name, self._nats_config.command_queue
-            )
-            if consumer_info.config.filter_subject != self._nats_config.command_queue:
-                await self._js.delete_consumer(
-                    self._nats_config.stream_name, self._nats_config.command_queue
-                )
-                logger.info("Deleted stale durable consumer with wrong filter_subject")
-        except NotFoundError:
-            pass
-        self.work_consumer = await self._js.pull_subscribe(
-            self._nats_config.command_queue, durable=self._nats_config.command_queue
-        )
-
         if self._should_enable_barcode() and self._barcode is None:
             # port = os.getenv("PERPETUAL_BARCODE_PORT", "/dev/ttyACM1")
             port = os.getenv("PERPETUAL_BARCODE_PORT", "/dev/serial/by-id/usb-Linux_4.9.84_Barcode_Scanner-if00")
@@ -413,9 +393,47 @@ class RobotWorker:
         # Curtain change publishing is driven by Robot.get_status() reads when status is requested.
 
     async def clear_commands(self) -> None:
-        if self._js:
-            await self._js.purge_stream(self._nats_config.stream_name)
-        self._queued_commands = []
+        while self._command_queue.empty() is False:
+            try:
+                self._command_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+
+        if self._current_operation is None:
+            self._queued_commands = []
+        else:
+            self._queued_commands = [self._current_operation]
+
+        await self._publish_status()
+
+    async def enqueue_command(self, command: RobotCommands) -> None:
+        queued_operation = self._snapshot_command(command)
+
+        self._queued_commands.append(queued_operation)
+        await self._command_queue.put(queued_operation)
+        await self._publish_status()
+
+    async def subscribe_status(self) -> tuple[asyncio.Queue[str], Optional[str]]:
+        queue: asyncio.Queue[str] = asyncio.Queue()
+        self._status_subscribers.append(queue)
+        return queue, self._latest_status_payload
+
+    async def unsubscribe_status(self, queue: asyncio.Queue[str]) -> None:
+        self._remove_subscriber(self._status_subscribers, queue)
+
+    async def subscribe_events(self) -> asyncio.Queue[str]:
+        queue: asyncio.Queue[str] = asyncio.Queue()
+        self._event_subscribers.append(queue)
+        return queue
+
+    async def unsubscribe_events(self, queue: asyncio.Queue[str]) -> None:
+        self._remove_subscriber(self._event_subscribers, queue)
+
+    def _remove_subscriber(self, subscribers: List[asyncio.Queue[str]], queue: asyncio.Queue[str]) -> None:
+        try:
+            subscribers.remove(queue)
+        except ValueError:
+            return
 
     def clear_errors(self) -> None:
         self._error_queue = []
@@ -490,22 +508,11 @@ class RobotWorker:
                 except asyncio.CancelledError:
                     pass
 
-            if self._msg is not None:
-                try:
-                    await self._msg.ack()
-                except Exception:
-                    pass
-
-            if self._current_command is not None:
-                self._queued_commands = [
-                    op for op in self._queued_commands
-                    if op.command != self._current_command
-                ]
-
+            self._remove_current_operation()
             self._current_task = None
             self._current_command = None
+            self._current_operation = None
             self._command_started_at = None
-            self._msg = None
 
             await self.clear_commands()
             await self._publish_status()
@@ -522,15 +529,12 @@ class RobotWorker:
             async for code in self._barcode:
                 logging.info("Received barcode: %s", code)
                 try:
-                    await self._nc.publish(
-                        self._nats_config.event_queue,
-                        json.dumps({"kind": "label_scanned", "payload": code}).encode(),
-                    )
+                    await self.publish_event({"kind": "label_scanned", "payload": code})
                 except Exception as publish_error:  # pragma: no cover - hardware dependent
                     logging.warning("Barcode event publish error: %s", publish_error)
                     self._report_error(
                         WorkerError(
-                            error_type="BarcodePublishError",
+                            error_type="EventPublishError",
                             message=str(publish_error),
                             context={"barcode": code},
                         ),
@@ -567,19 +571,25 @@ class RobotWorker:
         )
 
     async def _get_pending_messages_info(self) -> tuple[int, List[QueuedOperation]]:
-        if self._js is None:
-            return 0, []
-        try:
-            consumer_info = await self._js.consumer_info(
-                self._nats_config.stream_name,
-                self._nats_config.command_queue,
-            )
-            return consumer_info.num_pending, list(self._queued_commands)
-        except NotFoundError:
-            return 0, []
-        except Exception as err:  # pragma: no cover - observability
-            logging.warning("Failed to fetch consumer info: %s", err)
-            return 0, []
+        return self._command_queue.qsize(), list(self._queued_commands)
+
+    def _remove_current_operation(self) -> None:
+        if self._current_operation is None:
+            return
+
+        self._queued_commands = [
+            op for op in self._queued_commands
+            if op is not self._current_operation
+        ]
+
+    async def publish_event(self, payload: str | Dict[str, Any]) -> None:
+        if isinstance(payload, str) is True:
+            payload_json = payload
+        else:
+            payload_json = json.dumps(payload)
+
+        for queue in list(self._event_subscribers):
+            await queue.put(payload_json)
 
     async def _publish_status(self) -> None:
         try:
@@ -649,10 +659,9 @@ class RobotWorker:
         payload_json = json.dumps(status_payload)
         self._latest_status_payload = payload_json
 
-        await self._nc.publish(
-            self._nats_config.status_queue,
-            payload_json.encode(),
-        )
+        for queue in list(self._status_subscribers):
+            await queue.put(payload_json)
+
         await self._maybe_publish_curtain_event(
             status_payload.get("robot_status", {}).get("curtain_blocked"),
             status_payload.get("robot_status", {}).get("door_open"),
@@ -661,59 +670,49 @@ class RobotWorker:
     async def process_commands(self) -> None:
         logger.info("process_commands loop started, running=%s", self._running)
         loop_count = 0
+
         while self._running:
             try:
                 if self._current_task is None:
                     loop_count += 1
+
                     if loop_count % 30 == 1:
                         logger.debug("process_commands polling, loop=%d", loop_count)
-                    msgs = await self.work_consumer.fetch(timeout=1)
-                    if msgs:
-                        logger.info("Received %d message(s) from queue", len(msgs))
-                        msg = msgs[0]
-                        if msg.subject != self._nats_config.command_queue:
-                            await msg.ack()
-                            logger.debug("Skipped non-command message on subject=%s", msg.subject)
-                            continue
-                        try:
-                            command = RobotCommandAdapter.validate_json(msg.data.decode())
-                        except Exception as err:
-                            await msg.ack()
-                            self._report_error(
-                                WorkerError(
-                                    error_type="UnexpectedError",
-                                    message=str(err),
-                                    context={"command": None},
-                                    stack_trace=traceback.format_exc(),
-                                ),
-                                exc=err,
-                            )
-                            continue
-                        self._current_command = command
-                        self._msg = msg
-                        self._queued_commands.append(self._snapshot_command(command))
-                        await self._publish_status()
 
-                        if isinstance(command, HomeCommand) and self._is_crashed:
-                            self._robot.resume_after_curtain()
-                            logging.info("Resumed curtain safety for homing in crash state")
+                    try:
+                        queued_operation = await asyncio.wait_for(self._command_queue.get(), timeout=1)
+                    except asyncio.TimeoutError:
+                        await asyncio.sleep(0.1)
+                        continue
 
-                        logging.info("Starting command execution: %s", command.command)
-                        self._command_started_at = time.monotonic()
-                        self._current_task = asyncio.create_task(self._robot.handle_command(command))
+                    command = queued_operation.command
+                    self._current_command = command
+                    self._current_operation = queued_operation
+                    await self._publish_status()
+
+                    if isinstance(command, HomeCommand) and self._is_crashed:
+                        self._robot.resume_after_curtain()
+                        logging.info("Resumed curtain safety for homing in crash state")
+
+                    logging.info("Starting command execution: %s", command.command)
+                    self._command_started_at = time.monotonic()
+                    self._current_task = asyncio.create_task(self._robot.handle_command(command))
                 else:
                     elapsed = time.monotonic() - (self._command_started_at or time.monotonic())
-                    if elapsed > COMMAND_TIMEOUT_SECONDS and not self._current_task.done():
+
+                    if elapsed > COMMAND_TIMEOUT_SECONDS and self._current_task.done() is False:
                         logging.error(
                             "Command timeout after %.1f seconds: %s",
                             elapsed,
                             self._current_command.command if self._current_command else "unknown",
                         )
                         self._current_task.cancel()
+
                         try:
                             await self._current_task
                         except asyncio.CancelledError:
                             pass
+
                         self._report_error(
                             WorkerError(
                                 error_type="CommandTimeout",
@@ -722,22 +721,18 @@ class RobotWorker:
                                 stack_trace="",
                             ),
                         )
-                        if self._msg:
-                            await self._msg.ack()
-                        if self._current_command:
-                            self._queued_commands = [
-                                op for op in self._queued_commands
-                                if op.command != self._current_command
-                            ]
+
+                        self._remove_current_operation()
                         self._current_task = None
                         self._current_command = None
+                        self._current_operation = None
                         self._command_started_at = None
-                        self._msg = None
                         await self._publish_status()
                         continue
 
                     if self._current_task.done():
                         logging.info("Command task completed, processing result")
+
                         try:
                             result: RobotResponse = self._current_task.result()
                             logging.info("Command result: %s", type(result).__name__)
@@ -749,19 +744,18 @@ class RobotWorker:
                                 if self._is_crashed:
                                     self.clear_crash_state()
                                     logging.info("Crash state cleared after successful %s", self._current_command.command)
+
                                 if self.needs_home() and isinstance(self._current_command, HomeCommand):
                                     self.clear_needs_home()
                                     logging.info("Needs-home flag cleared after successful homing")
 
-                            await self._nc.publish(
-                                self._nats_config.event_queue,
-                                result.model_dump_json().encode(),
-                            )
+                            await self.publish_event(result.model_dump_json())
                             logging.info("Published command result to event queue")
                         except Exception as err:
                             logging.error("Command execution error: %s", err)
 
                             is_hardware_fault = isinstance(err, (MotorError, MovementError, ToolError))
+
                             if is_hardware_fault:
                                 self.set_crash_state(str(err))
                                 self.set_needs_home(str(err))
@@ -777,47 +771,13 @@ class RobotWorker:
                                 exc=err,
                             )
 
-                        if self._msg:
-                            await self._msg.ack()
-
-                        if self._current_command:
-                            self._queued_commands = [
-                                op for op in self._queued_commands
-                                if op.command != self._current_command
-                            ]
-
+                        self._remove_current_operation()
                         self._current_task = None
                         self._current_command = None
+                        self._current_operation = None
                         self._command_started_at = None
-                        self._msg = None
                         await self._publish_status()
 
-                await asyncio.sleep(0.1)
-            except (nats_errors.TimeoutError, asyncio.TimeoutError) as timeout_err:
-                if self._current_task is not None and not self._current_task.done():
-                    logging.warning("Cancelling orphaned command task due to NATS timeout")
-                    self._current_task.cancel()
-                    try:
-                        await self._current_task
-                    except asyncio.CancelledError:
-                        pass
-                    self._report_error(
-                        WorkerError(
-                            error_type="NATSTimeout",
-                            message=f"NATS timeout interrupted command: {timeout_err}",
-                            context={"command": self._current_command.model_dump() if self._current_command else None},
-                            stack_trace="",
-                        ),
-                    )
-                if self._msg:
-                    try:
-                        await self._msg.ack()
-                    except Exception:
-                        pass
-                self._current_task = None
-                self._current_command = None
-                self._command_started_at = None
-                self._msg = None
                 await asyncio.sleep(0.1)
             except asyncio.CancelledError:
                 raise
@@ -832,28 +792,26 @@ class RobotWorker:
                     ),
                     exc=err,
                 )
-                if self._current_task is not None and not self._current_task.done():
+
+                if self._current_task is not None and self._current_task.done() is False:
                     logging.warning("Cancelling command task due to unexpected error")
                     self._current_task.cancel()
+
                     try:
                         await self._current_task
                     except asyncio.CancelledError:
                         pass
+
                 try:
                     await self._publish_status()
                 except Exception as publish_err:
                     logging.warning("Failed to publish error status: %s", publish_err)
 
-                if self._msg:
-                    try:
-                        await self._msg.ack()
-                    except Exception as ack_err:
-                        logging.warning("Failed to ack NATS message: %s", ack_err)
-
+                self._remove_current_operation()
                 self._current_task = None
                 self._current_command = None
+                self._current_operation = None
                 self._command_started_at = None
-                self._msg = None
                 await asyncio.sleep(1)
 
     async def start(self) -> None:
@@ -867,7 +825,6 @@ class RobotWorker:
         logger.info("Creating process_commands task")
         self._worker_task = asyncio.create_task(self.process_commands())
         logger.info("Task created: %s", self._worker_task)
-        self._queued_commands = []
         await self._publish_status()
         logger.info("RobotWorker.start() complete")
 
@@ -938,7 +895,7 @@ class RobotWorker:
         self._last_published_curtain = (blocked, door_open)
         guard_active = bool(blocked) and bool(door_open)
         try:
-            payload = json.dumps(
+            await self.publish_event(
                 {
                     "kind": "curtain_state",
                     "payload": {
@@ -948,8 +905,7 @@ class RobotWorker:
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                     },
                 }
-            ).encode()
-            await self._nc.publish(self._nats_config.event_queue, payload)
+            )
             self._logger.debug(
                 "Curtain event published",
                 extra={

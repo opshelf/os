@@ -6,20 +6,16 @@ import re
 from typing import AsyncGenerator, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from nats.aio.client import Client as NATS
-from nats.aio.msg import Msg
-from nats.aio.subscription import Subscription
 from pydantic import BaseModel, Field
 from perpetual_os1.robot import RobotCommands, RetrieveItemCommand, StoreItemCommand
 import logging
-from perpetual_os1.common import RobotNatsConfiguration
-from perpetual_os1.robot_client import RobotClient
 from perpetual_os1.robot_worker import RobotWorker
 from sse_starlette.sse import EventSourceResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from perpetual_os1_server.core.robot import get_robot_client, get_robot_worker
+from perpetual_os1_server.core.robot import get_robot_worker
+from perpetual_os1_server.core.laser_auto_calibration import is_laser_auto_calibration_running
 from perpetual_os1_server.core.storage import StorageService
 from perpetual_os1_server.routers.common import SuccessResponse
 from perpetual_os1_server.settings import get_settings, get_operating_mode
@@ -34,6 +30,16 @@ from .auth_deps import (
 router = APIRouter(tags=["robot"])
 
 _MOTOR_ID_RE = re.compile(r"motor\s+(\d+)", re.IGNORECASE)
+
+
+async def _ensure_laser_auto_calibration_not_running() -> None:
+    if await is_laser_auto_calibration_running() is False:
+        return
+
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="laser auto calibration is running",
+    )
 
 
 def _reason_matches_motor(reason: Optional[str], motor_name: str, motor) -> bool:
@@ -61,8 +67,22 @@ def overlay_db_occupancy(payload_json: str, occupied: set[tuple[str, int, int]])
     storage = payload.get("robot_status", {}).get("storage", {})
 
     for side in ("left_module", "right_module"):
-        for shelf_idx, shelf in enumerate(storage.get(side, [])):
-            for cell_idx, cell in enumerate(shelf.get("cells", [])):
+        for shelf_position, shelf in enumerate(storage.get(side, [])):
+            shelf_idx_raw = shelf.get("shelf_idx", shelf_position)
+
+            try:
+                shelf_idx = int(shelf_idx_raw)
+            except (TypeError, ValueError):
+                continue
+
+            for cell_position, cell in enumerate(shelf.get("cells", [])):
+                cell_idx_raw = cell.get("cell_idx", cell_position)
+
+                try:
+                    cell_idx = int(cell_idx_raw)
+                except (TypeError, ValueError):
+                    continue
+
                 key = (side, shelf_idx, cell_idx)
                 if key in occupied:
                     cell["status"] = "occupied"
@@ -109,16 +129,6 @@ async def check_robot_enabled() -> None:
         )
 
 
-async def get_robot_client_or_error() -> RobotClient:
-    try:
-        return await get_robot_client()
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Robot is not initialized or failed to start",
-        ) from e
-
-
 async def get_robot_worker_or_error() -> RobotWorker:
     try:
         return await get_robot_worker()
@@ -132,11 +142,12 @@ async def get_robot_worker_or_error() -> RobotWorker:
 @router.post("/commands", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
 async def robot_commands(
     command: RobotCommands,
-    client: RobotClient = Depends(get_robot_client_or_error),
     worker: RobotWorker = Depends(get_robot_worker_or_error),
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ) -> SuccessResponse:
+    await _ensure_laser_auto_calibration_not_running()
+
     if isinstance(command, StoreItemCommand):
         logging.info("Processing StoreItemCommand: item=%s", command.item)
         item_data = command.item or {}
@@ -207,24 +218,27 @@ async def robot_commands(
                 detail="You do not have permission to retrieve this item"
             )
 
-    await client.send_command(command)
+    await worker.enqueue_command(command)
     return SuccessResponse()
 
 
 @router.post("/start", dependencies=[Depends(get_current_user), Depends(require_permissions("robot:control")), Depends(check_robot_enabled)])
 async def start_robot(worker: RobotWorker = Depends(get_robot_worker_or_error)) -> SuccessResponse:
+    await _ensure_laser_auto_calibration_not_running()
     await worker.start()
     return SuccessResponse()
 
 
 @router.post("/stop", dependencies=[Depends(get_current_user), Depends(require_permissions("robot:control")), Depends(check_robot_enabled)])
 async def stop_robot(worker: RobotWorker = Depends(get_robot_worker_or_error)) -> SuccessResponse:
+    await _ensure_laser_auto_calibration_not_running()
     await worker.shutdown()
     return SuccessResponse()
 
 
 @router.post("/clear_commands", dependencies=[Depends(get_current_user), Depends(require_permissions("robot:control")), Depends(check_robot_enabled)])
 async def clear_robot_commands(worker: RobotWorker = Depends(get_robot_worker_or_error)) -> SuccessResponse:
+    await _ensure_laser_auto_calibration_not_running()
     await worker.clear_commands()
     return SuccessResponse()
 
@@ -240,6 +254,8 @@ async def control_gripper(
     state: Literal["grip", "release"],
     worker: RobotWorker = Depends(get_robot_worker_or_error),
 ) -> SuccessResponse:
+    await _ensure_laser_auto_calibration_not_running()
+
     if state == "release":
         await worker.release_gripper()
     else:
@@ -262,21 +278,6 @@ async def acknowledge_curtain_guard(
     return SuccessResponse()
 
 
-async def _publish_label_scanned(code: str, settings) -> None:
-    nats_config = RobotNatsConfiguration(domain=settings.nats.domain, port=settings.nats.port)
-    nats_client = NATS()
-    try:
-        await nats_client.connect(servers=[nats_config.connection_string()])
-        payload = json.dumps({"kind": "label_scanned", "payload": code}).encode()
-        await nats_client.publish(nats_config.event_queue, payload)
-    finally:
-        if nats_client.is_connected:
-            try:
-                await nats_client.drain()
-            except Exception:
-                await nats_client.close()
-
-
 @router.get("/debug/scanner/status", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
 async def get_scanner_status(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
@@ -288,10 +289,12 @@ async def get_scanner_status(
     "/debug/scanner/scan",
     dependencies=[Depends(require_permissions("robot:control")), Depends(check_robot_enabled)],
 )
-async def emit_scanner_scan_event(request: LabelScanRequest) -> SuccessResponse:
-    settings = get_settings()
+async def emit_scanner_scan_event(
+    request: LabelScanRequest,
+    worker: RobotWorker = Depends(get_robot_worker_or_error),
+) -> SuccessResponse:
     try:
-        await _publish_label_scanned(request.code, settings)
+        await worker.publish_event({"kind": "label_scanned", "payload": request.code})
     except Exception as exc:
         logging.error("Failed to publish label_scanned event: %s", exc)
         raise HTTPException(
@@ -564,68 +567,24 @@ async def get_occupied_cells_from_db() -> set[tuple[str, int, int]]:
         return {(row[0], row[1], row[2]) for row in rows}
 
 
-async def nats_consumer(stop_event: asyncio.Event) -> AsyncGenerator[str, None]:
-    nats_client = NATS()
-    message_queue: asyncio.Queue[str] = asyncio.Queue()
-
-    async def message_handler(msg: Msg) -> None:
-        await message_queue.put(msg.data.decode())
-
-    sub: Optional[Subscription] = None
-    try:
-        await nats_client.connect(get_settings().nats.connection_string())
-        sub = await nats_client.subscribe("robot.status", cb=message_handler)
-
-        while not stop_event.is_set():
-            try:
-                message = await asyncio.wait_for(message_queue.get(), timeout=1.0)
-                occupied_cells = await get_occupied_cells_from_db()
-                yield inject_mode_field(overlay_db_occupancy(message, occupied_cells))
-            except asyncio.TimeoutError:
-                continue
-    finally:
-        if sub is not None:
-            await sub.unsubscribe()
-        await nats_client.close()
-
-
-async def event_consumer(stop_event: asyncio.Event) -> AsyncGenerator[str, None]:
-    nats_client = NATS()
-    message_queue: asyncio.Queue[str] = asyncio.Queue()
-
-    async def message_handler(msg: Msg) -> None:
-        await message_queue.put(msg.data.decode())
-
-    sub: Optional[Subscription] = None
-    subject = RobotNatsConfiguration().event_queue
-    try:
-        await nats_client.connect(get_settings().nats.connection_string())
-        sub = await nats_client.subscribe(subject, cb=message_handler)
-
-        while not stop_event.is_set():
-            try:
-                message = await asyncio.wait_for(message_queue.get(), timeout=1.0)
-                yield message
-            except asyncio.TimeoutError:
-                continue
-    finally:
-        if sub is not None:
-            await sub.unsubscribe()
-        await nats_client.close()
-
-
 @router.get("/status", dependencies=[Depends(get_current_user)])
 async def stream_sse() -> EventSourceResponse:
-    stop_event = asyncio.Event()
-
     initial_payload: Optional[str] = None
+    status_queue: Optional[asyncio.Queue[str]] = None
+    worker: Optional[RobotWorker]
+
     try:
         worker = await get_robot_worker()
     except ValueError:
         worker = None
 
     if worker is not None:
-        raw_payload = await worker.get_status_snapshot(force_refresh=True)
+        status_queue, current_payload = await worker.subscribe_status()
+        raw_payload = current_payload
+
+        if raw_payload is None:
+            raw_payload = await worker.get_status_snapshot(force_refresh=True)
+
         if raw_payload is not None:
             occupied_cells = await get_occupied_cells_from_db()
             initial_payload = inject_mode_field(overlay_db_occupancy(raw_payload, occupied_cells))
@@ -635,23 +594,43 @@ async def stream_sse() -> EventSourceResponse:
             if initial_payload is not None:
                 yield {"data": initial_payload}
 
-            async for message in nats_consumer(stop_event):
-                yield {"data": message}
+            if status_queue is None:
+                return
+
+            while True:
+                message = await status_queue.get()
+                occupied_cells = await get_occupied_cells_from_db()
+                yield {"data": inject_mode_field(overlay_db_occupancy(message, occupied_cells))}
         finally:
-            stop_event.set()
+            if worker is not None and status_queue is not None:
+                await worker.unsubscribe_status(status_queue)
 
     return EventSourceResponse(event_generator())
 
 
 @router.get("/events", dependencies=[Depends(get_current_user)])
 async def stream_events() -> EventSourceResponse:
-    stop_event = asyncio.Event()
+    event_queue: Optional[asyncio.Queue[str]] = None
+    worker: Optional[RobotWorker]
+
+    try:
+        worker = await get_robot_worker()
+    except ValueError:
+        worker = None
+
+    if worker is not None:
+        event_queue = await worker.subscribe_events()
 
     async def event_generator() -> AsyncGenerator[dict[str, str], None]:
         try:
-            async for message in event_consumer(stop_event):
+            if event_queue is None:
+                return
+
+            while True:
+                message = await event_queue.get()
                 yield {"data": message}
         finally:
-            stop_event.set()
+            if worker is not None and event_queue is not None:
+                await worker.unsubscribe_events(event_queue)
 
     return EventSourceResponse(event_generator())

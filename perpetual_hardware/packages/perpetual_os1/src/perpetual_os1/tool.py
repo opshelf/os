@@ -1,3 +1,4 @@
+import asyncio
 import perpetual_os1.common as c
 from perpetual_os1.common import Motor as MotorConfig
 
@@ -18,7 +19,7 @@ import sentry_sdk
 
 from enum import Enum
 from dataclasses import dataclass, field
-from typing import Optional, Literal, List, Any
+from typing import Optional, Literal, List, Any, Callable
 
 
 def _create_motor_if_enabled(
@@ -77,6 +78,7 @@ GRID_UPDATE_TIMEOUT_PER_SHELF = 60.0
 GANTRY_OUTER_TIMEOUT = 120.0
 TOOL_OUTER_TIMEOUT = 60.0
 ROTATION_SAFE_STAGE_EXTENSION_MM = 8.5
+ROTATION_HOME_SAFE_X_MM = 475.0
 
 class Tool:
     def __init__(
@@ -124,6 +126,7 @@ class Tool:
             self._laser = LaserSensor(
                 modbus_controller=self._lasercontroller,
                 device_id=laser_cfg.device_id,
+                read_function_code=laser_cfg.read_function_code,
                 register_address=laser_cfg.register_address,
                 register_count=laser_cfg.register_count,
                 distance_register_index=laser_cfg.distance_register_index,
@@ -227,6 +230,14 @@ class Tool:
             if self._mg is not None:
                 await self._mg.home()
             if self._mr is not None:
+
+                if self._mx is not None:
+                    rotation_front = await self.get_param("ROTATION_FRONT")
+                    current_rotation = await self._mr.get_position()
+
+                    if current_rotation > rotation_front:
+                        await self._mx.move_to_position(ROTATION_HOME_SAFE_X_MM)
+
                 did_extend_stage = await self.ensure_safe_rotation_stage_extension()
                 await self._mr.home()
                 if did_extend_stage is True and self._ms is not None:
@@ -234,7 +245,6 @@ class Tool:
             if self._mx is not None:
                 await self._mx.home()
             if self._my is not None:
-                await self._my.jog(5)
                 await self._my.home()
             self._mstatus = ToolMotionStatus.IDLE
             self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
@@ -324,6 +334,124 @@ class Tool:
             raise ConfigError("Laser is not initialized")
 
         return await self._laser.read_distance_mm()
+
+    async def capture_laser_scan(
+        self,
+        *,
+        side: int,
+        x_positions: List[float],
+        y_positions: List[float],
+        settle_ms: int,
+        samples_per_point: int,
+        stage_extension_mm: Optional[float] = None,
+        z_extension_mm: Optional[float] = None,
+        progress_callback: Optional[Any] = None,
+    ) -> List[List[Optional[float]]]:
+        if self._laser_enabled is False or self._laser is None:
+            raise ConfigError("Laser is not enabled")
+
+        if samples_per_point <= 0:
+            raise ConfigError("samples_per_point must be greater than zero")
+
+        if self._mx is None or self._my is None:
+            raise MotorError("Gantry motors (x_axis, y_axis) required for laser scan")
+
+        if stage_extension_mm is not None and stage_extension_mm > 0:
+            if self._ms is None or self._mg is None:
+                raise ConfigError("Tool motors required when stage_extension_mm is configured")
+
+        target_position: Literal["front", "back"] = "front" if side == 0 else "back"
+        total_points = len(x_positions) * len(y_positions)
+        completed_points = 0
+        rows: List[List[Optional[float]]] = []
+
+        try:
+            self._mstatus = ToolMotionStatus.MOVING
+            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+
+            await self.retract()
+            await self.rotate_to_position(target_position)
+
+            shouldExtendTool = stage_extension_mm is not None and stage_extension_mm > 0
+
+            if shouldExtendTool is True:
+                grip_rpm = await self.get_param("Z_MOVE_RPM")
+                grip_accel = await self.get_param("Z_MOVE_ACCEL")
+                if z_extension_mm is None:
+                    grip_value = await self.get_param("Z_EXTENSION_PICK")
+                    if grip_value is not None:
+                        z_extension_mm = float(grip_value)
+
+                if z_extension_mm is None or grip_rpm is None or grip_accel is None:
+                    raise ConfigError("Missing scan extension parameters")
+
+                self._warn_stage_target(stage_extension_mm, "LASER_SCAN_STAGE_EXTENSION")
+
+            for row_idx, y_position in enumerate(y_positions):
+                row_values: List[Optional[float]] = [None] * len(x_positions)
+
+                if row_idx % 2 == 0:
+                    column_indices = list(range(len(x_positions)))
+                else:
+                    column_indices = list(range(len(x_positions) - 1, -1, -1))
+
+                row_start_idx = column_indices[0]
+                row_start_x = x_positions[row_start_idx]
+                await self.move(c.AxisCoordinate(x=row_start_x, y=y_position, s=side))
+
+                if shouldExtendTool is True:
+                    await self._ms.ready()
+                    await self._ms.move_to_position(stage_extension_mm)
+                    await self._mg.move_to_position(z_extension_mm, rpm=grip_rpm, accel=grip_accel)
+
+                for position_idx, column_idx in enumerate(column_indices):
+                    x_position = x_positions[column_idx]
+
+                    if position_idx > 0:
+                        if shouldExtendTool is True:
+                            await self._mx.move_to_position_no_wait(x_position)
+                            await self.gantry_wait()
+                        else:
+                            await self.move(c.AxisCoordinate(x=x_position, y=y_position, s=side))
+
+                    if settle_ms > 0:
+                        await asyncio.sleep(settle_ms / 1000.0)
+
+                    sample_values: List[float] = []
+                    for _ in range(samples_per_point):
+                        depth_mm = await self.get_laser_distance()
+                        if depth_mm is not None:
+                            sample_values.append(float(depth_mm))
+
+                    if sample_values:
+                        sample_values.sort()
+                        middle_idx = len(sample_values) // 2
+                        row_values[column_idx] = sample_values[middle_idx]
+
+                    completed_points += 1
+
+                    if progress_callback is not None:
+                        callback_result = progress_callback(
+                            completed_points,
+                            total_points,
+                            x_position,
+                            y_position,
+                            row_values[column_idx],
+                        )
+
+                        if hasattr(callback_result, "__await__"):
+                            await callback_result
+
+                if shouldExtendTool is True:
+                    await self.retract()
+
+                rows.append(row_values)
+        finally:
+            await self.retract()
+            self._mstatus = ToolMotionStatus.IDLE
+            self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+
+        return rows
 
     async def _ensure_retracted(self) -> None:
         """
@@ -688,7 +816,11 @@ class Tool:
                 raise
             raise GripperError(f"Place operation failed: {str(e)}") from e
 
-    async def gantry_wait(self, timeout_seconds: float = GANTRY_OUTER_TIMEOUT) -> None:
+    async def gantry_wait(
+        self,
+        timeout_seconds: float = GANTRY_OUTER_TIMEOUT,
+        should_abort: Callable[[], bool] | None = None,
+    ) -> None:
         """
         Wait for gantry motors to complete movement.
 
@@ -708,8 +840,8 @@ class Tool:
                 if time.monotonic() - start_time > timeout_seconds:
                     raise MotorWaitTimeoutError(f"Gantry wait exceeded {timeout_seconds}s timeout")
 
-                mx_f = await self._mx.wait_for_move(timeout=GANTRY_WAIT_TIMEOUT)
-                my_f = await self._my.wait_for_move(timeout=GANTRY_WAIT_TIMEOUT)
+                mx_f = await self._mx.wait_for_move(timeout=GANTRY_WAIT_TIMEOUT, should_abort=should_abort)
+                my_f = await self._my.wait_for_move(timeout=GANTRY_WAIT_TIMEOUT, should_abort=should_abort)
 
                 if mx_f == MotorStatus.STOPPED and my_f == MotorStatus.STOPPED:
                     return
@@ -726,7 +858,12 @@ class Tool:
             await self._handle_fault(e)
             raise MovementError(f"Gantry wait failed: {str(e)}") from e
 
-    async def tool_wait(self, homing: bool, timeout_seconds: float = TOOL_OUTER_TIMEOUT) -> None:
+    async def tool_wait(
+        self,
+        homing: bool,
+        timeout_seconds: float = TOOL_OUTER_TIMEOUT,
+        should_abort: Callable[[], bool] | None = None,
+    ) -> None:
         """
         Wait for tool motors to complete movement.
 
@@ -746,8 +883,16 @@ class Tool:
                 if time.monotonic() - start_time > timeout_seconds:
                     raise MotorWaitTimeoutError(f"Tool wait exceeded {timeout_seconds}s timeout")
 
-                mg_f = await self._mg.wait_for_move(timeout=TOOL_WAIT_TIMEOUT, homing=homing)
-                ms_f = await self._ms.wait_for_move(timeout=TOOL_WAIT_TIMEOUT, homing=homing)
+                mg_f = await self._mg.wait_for_move(
+                    timeout=TOOL_WAIT_TIMEOUT,
+                    homing=homing,
+                    should_abort=should_abort,
+                )
+                ms_f = await self._ms.wait_for_move(
+                    timeout=TOOL_WAIT_TIMEOUT,
+                    homing=homing,
+                    should_abort=should_abort,
+                )
 
                 if mg_f == MotorStatus.STOPPED and ms_f == MotorStatus.STOPPED:
                     return

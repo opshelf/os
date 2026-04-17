@@ -1443,7 +1443,7 @@
     "/api/robot/status": {
       "get": {
         "summary": "Stream Sse",
-        "description": "SSE endpoint that streams NATS messages to the client.",
+        "description": "SSE endpoint that streams live messages to the client.",
         "operationId": "stream_sse_api_robot_status_get",
         "responses": {
           "200": {
@@ -1465,7 +1465,7 @@
     "/api/scale/readings": {
       "get": {
         "summary": "Stream Sse",
-        "description": "SSE endpoint that streams NATS messages to the client.",
+        "description": "SSE endpoint that streams live messages to the client.",
         "operationId": "stream_sse_api_scale_readings_get",
         "responses": {
           "200": {
@@ -1487,7 +1487,7 @@
     "/api/scanner/scans": {
       "get": {
         "summary": "Stream Sse",
-        "description": "SSE endpoint that streams NATS messages to the client.",
+        "description": "SSE endpoint that streams live messages to the client.",
         "operationId": "stream_sse_api_scanner_scans_get",
         "responses": {
           "200": {
@@ -2491,7 +2491,7 @@
             ],
             "title": "Response Body"
           },
-          "nats_commands": {
+          "command_records": {
             "anyOf": [
               {
                 "items": {
@@ -2562,7 +2562,7 @@
           "request_body",
           "response_status",
           "response_body",
-          "nats_commands",
+          "command_records",
           "error_message",
           "ip_address",
           "user_agent",

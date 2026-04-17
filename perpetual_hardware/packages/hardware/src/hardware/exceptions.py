@@ -52,18 +52,6 @@ class CalibrationError(CameraError):
     """Camera calibration error."""
     pass
 
-class TOFError(CameraError):
-    """Time-of-flight sensor specific errors."""
-    pass
-
-class TOFConfigError(TOFError):
-    """TOF sensor configuration error."""
-    pass
-
-class TOFDataError(TOFError):
-    """TOF sensor data read/processing error."""
-    pass
-
 class MotorError(HardwareError):
     """Base class for motor-related errors."""
     pass

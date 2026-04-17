@@ -1,5 +1,6 @@
 from hardware import motor_helpers
 from hardware.controller import SharedModbusController
+from hardware.home_sensor import HomeSensor
 import time
 import asyncio
 import functools
@@ -17,6 +18,8 @@ MOTOR_HOME_TIMEOUT = 180.0
 MOTOR_JOG_TIMEOUT = 10.0
 MOTOR_WAIT_TIMEOUT = 60.0
 POSITION_TOLERANCE_MM = 1.0
+DEFAULT_BRAKE_OUTPUT_FUNCTION = 0xA1
+RELEASED_BRAKE_OUTPUT_FUNCTION = 0x24
 
 logger = logging.getLogger(__name__)
 
@@ -215,6 +218,180 @@ class Motor():
         self._safety = safety
         self._simulated_fault = False
         self._on_move_complete: Optional[Callable[[float], None]] = None
+        self._home_sensor: Optional[HomeSensor] = None
+        self._is_homed = False
+        self._hard_stopped = False
+        self._configured_brake_output_function = int(
+            getattr(self._params, "brake_output_function", DEFAULT_BRAKE_OUTPUT_FUNCTION)
+        )
+        self._active_brake_output_function = self._configured_brake_output_function
+
+    def is_homed(self) -> bool:
+        return self._is_homed
+
+    def is_hard_stopped(self) -> bool:
+        return self._hard_stopped
+
+    def cleanup(self) -> None:
+        if self._home_sensor is None:
+            return
+
+        try:
+            self._home_sensor.cleanup()
+        finally:
+            self._home_sensor = None
+
+    async def set_brake_output_function(self, value: int) -> None:
+        brake_output_function = int(value)
+
+        if self._active_brake_output_function == brake_output_function:
+            return
+
+        await self.set_param("SO2 output function", brake_output_function)
+        self._active_brake_output_function = brake_output_function
+
+    async def disable_brake_output(self) -> None:
+        await self.set_brake_output_function(RELEASED_BRAKE_OUTPUT_FUNCTION)
+
+    async def restore_brake_output(self) -> None:
+        await self.set_brake_output_function(self._configured_brake_output_function)
+
+    def _get_home_sensor_config(self) -> Any:
+        sensor_cfg = getattr(self._params, "home_sensor", None)
+        if sensor_cfg is None:
+            return None
+
+        if getattr(sensor_cfg, "enabled", True) is False:
+            return None
+
+        return sensor_cfg
+
+    def _get_home_sensor(self) -> Optional[HomeSensor]:
+        sensor_cfg = self._get_home_sensor_config()
+        if sensor_cfg is None:
+            return None
+
+        if self._home_sensor is None:
+            self._home_sensor = HomeSensor(
+                pin=sensor_cfg.pin,
+                inverted=getattr(sensor_cfg, "inverted", False),
+            )
+
+        return self._home_sensor
+
+    def _get_home_direction(self) -> int:
+        p0 = self._params.phys_at_zero if self._params.phys_at_zero is not None else 0
+        pm = self._params.phys_at_max if self._params.phys_at_max is not None else self._params.lim
+        is_inverted = p0 > pm
+        return int(self._params.dr) ^ 1 ^ (1 if is_inverted else 0)
+
+    async def _prepare_home_motion(self, rpm: int, direction: int) -> None:
+        await self.set_param("Control word", 0x1111)
+        await self.set_param("Control word", 0x1122)
+        await self._controller.write_single_register(self._motor_id, 0x6000, 0x0000)
+        self._status = MotorStatus.STOPPED
+        await self.set_param("Motion of Path 0", 0x2)
+        await self.set_param("Motor direction", direction)
+        await self.set_param("Velocity", rpm)
+
+    async def _start_path_zero(self) -> None:
+        await self._controller.write_single_register(
+            self._motor_id,
+            motor_helpers.TRIGGER,
+            0x10,
+        )
+        self._status = MotorStatus.MOVING
+
+    async def _set_zero_position(self) -> None:
+        await self._controller.write_single_register(
+            self._motor_id,
+            motor_helpers.TRIGGER,
+            0x21,
+        )
+
+    async def _wait_for_home_sensor(self, sensor: HomeSensor, timeout: float, poll_interval: float) -> None:
+        start_time = time.monotonic()
+
+        while True:
+            if sensor.read() is True:
+                await self.stop()
+                return
+
+            status_reg = getattr(self._params, "status_reg", 0x1003)
+            status = await self._controller.read_holding_registers(self._motor_id, status_reg)
+            if status is None:
+                await self.stop()
+                raise MotorError(f"Failed to read motion status from motor {self._motor_id}")
+
+            fault_bit_num = getattr(self._params, "status_fault_bit", 0)
+            fault_bit = (status & (1 << fault_bit_num)) if fault_bit_num is not None else 0
+
+            try:
+                alarm_code = await self.get_param("Current alarm")
+            except Exception as exc:
+                await self.stop()
+                raise MotorError(f"Failed to read motor {self._motor_id} alarm during homing: {exc}") from exc
+
+            if fault_bit or alarm_code not in (None, 0):
+                await self.stop()
+                self._is_homed = False
+                self._hard_stopped = True
+                raise MotorError(
+                    f"Motor {self._motor_id} faulted before home sensor triggered"
+                    f" (alarm={alarm_code})"
+                )
+
+            if time.monotonic() - start_time > timeout:
+                await self.stop()
+                raise MotorTimeoutError(f"Motor {self._motor_id} homing timed out waiting for sensor")
+
+            await asyncio.sleep(poll_interval)
+
+    async def _release_home_sensor(self, sensor: HomeSensor, release_backoff_mm: float) -> None:
+        if sensor.read() is False:
+            return
+
+        for _ in range(10):
+            await self.jog(release_backoff_mm)
+
+            if sensor.read() is False:
+                return
+
+        raise MotorError(f"Motor {self._motor_id} could not clear home sensor")
+
+    async def _home_with_sensor(self, sensor_cfg: Any) -> None:
+        sensor = self._get_home_sensor()
+        if sensor is None:
+            raise MotorError(f"Motor {self._motor_id} home sensor is not available")
+
+        should_disable_brake_during_home = getattr(sensor_cfg, "disable_brake_during_home", False)
+        is_brake_output_disabled = False
+        home_dir = self._get_home_direction()
+        home_rpm = self._params.home_rpm or self._params.ret_rpm
+        precision_rpm = sensor_cfg.precision_rpm or max(1, home_rpm // 4)
+
+        try:
+            if should_disable_brake_during_home is True:
+                await self.disable_brake_output()
+                is_brake_output_disabled = True
+
+            await self._release_home_sensor(sensor, sensor_cfg.release_backoff_mm)
+            await self._prepare_home_motion(home_rpm, home_dir)
+            await self._start_path_zero()
+            await self._wait_for_home_sensor(sensor, MOTOR_HOME_TIMEOUT, sensor_cfg.poll_interval_s)
+
+            await self._release_home_sensor(sensor, sensor_cfg.release_backoff_mm)
+            await self._prepare_home_motion(precision_rpm, home_dir)
+            await self._start_path_zero()
+            await self._wait_for_home_sensor(sensor, MOTOR_HOME_TIMEOUT, sensor_cfg.poll_interval_s)
+
+            await self._set_zero_position()
+            await self.move_config()
+            self._is_homed = True
+            self._hard_stopped = False
+        finally:
+            if is_brake_output_disabled is True:
+                await self.restore_brake_output()
 
     async def configure(self):
         """Configure the stepper motor with initial parameters.
@@ -236,7 +413,8 @@ class Motor():
             await self._controller.write_single_register(self._motor_id, 0x6000, 0x0000)
 
             # Configure motor parameters
-            await self.set_param("SO2 output function", 0xA1)  # brake output
+            await self.set_param("SO2 output function", self._configured_brake_output_function)
+            self._active_brake_output_function = self._configured_brake_output_function
             await self._controller.write_single_register(self._motor_id, 0x0167, 100)
             await self._controller.write_single_register(self._motor_id, 0x0169, 100)
             await self._controller.write_single_register(self._motor_id, 0x016B, 10)
@@ -308,6 +486,8 @@ class Motor():
                 raise MotorError(
                     f"Movement failed for motor {self._motor_id} (status={status.name})"
                 )
+
+            self._hard_stopped = False
 
         except Exception as e:
             if not isinstance(e, MotorError):
@@ -607,7 +787,12 @@ class Motor():
                 raise MotorError(f"Failed to get parameter {register}: {str(e)}") from e
             raise
     
-    async def wait_for_move(self, timeout: float = MOTOR_WAIT_TIMEOUT, homing: bool = False) -> MotorStatus:
+    async def wait_for_move(
+        self,
+        timeout: float = MOTOR_WAIT_TIMEOUT,
+        homing: bool = False,
+        should_abort: Callable[[], bool] | None = None,
+    ) -> MotorStatus:
         """Wait for motor movement to complete.
         
         Args:
@@ -631,6 +816,20 @@ class Motor():
             extra={"motor_id": self._motor_id, "timeout": timeout, "homing": homing},
         )
         while True:
+            current_task = asyncio.current_task()
+
+            if should_abort is not None and should_abort() is True:
+                await self.stop()
+                self._pending_motion = None
+                self._target_pos = None
+                raise asyncio.CancelledError()
+
+            if current_task is not None and current_task.cancelling() > 0:
+                await self.stop()
+                self._pending_motion = None
+                self._target_pos = None
+                raise asyncio.CancelledError()
+
             status_reg = getattr(self._params, "status_reg", 0x1003)
             status = await self._controller.read_holding_registers(self._motor_id, status_reg)
             if status is None:
@@ -705,6 +904,8 @@ class Motor():
                                 },
                             )
                             self._target_pos = None
+                            self._hard_stopped = True
+                            self._is_homed = False
                             return MotorStatus.FAULT
                     except Exception as position_exc:
                         self._logger.warning(
@@ -712,6 +913,7 @@ class Motor():
                             extra={"motor_id": self._motor_id, "error": str(position_exc)},
                         )
                 self._target_pos = None
+                self._hard_stopped = False
                 self._logger.debug(
                     "Motion complete",
                     extra={
@@ -816,6 +1018,8 @@ class Motor():
                 )
 
                 self._pending_motion = None
+                self._hard_stopped = True
+                self._is_homed = False
                 return MotorStatus.FAULT
 
 
@@ -853,35 +1057,21 @@ class Motor():
         self._simulated_fault = False
 
         try:
-            p0 = self._params.phys_at_zero if self._params.phys_at_zero is not None else 0
-            pm = self._params.phys_at_max if self._params.phys_at_max is not None else self._params.lim
-            is_inverted = p0 > pm
-            home_dir = int(self._params.dr) ^ 1 ^ (1 if is_inverted else 0)
+            sensor_cfg = self._get_home_sensor_config()
+            if sensor_cfg is not None:
+                await self._home_with_sensor(sensor_cfg)
+                return
+
+            home_dir = self._get_home_direction()
 
             try:
-                # Clear any existing fault/alarm before homing
-                await self.set_param("Control word", 0x1111)
-                await self.set_param("Control word", 0x1122)
-                await self._controller.write_single_register(self._motor_id, 0x6000, 0x0000)
-                self._status = MotorStatus.STOPPED
-
-                # Configure homing parameters
-                await self.set_param("Motion of Path 0", 0x2)  # velocity mode
-                await self.set_param("Motor direction", home_dir)
                 home_rpm = self._params.home_rpm or self._params.ret_rpm
-                await self.set_param("Velocity", home_rpm)
+                await self._prepare_home_motion(home_rpm, home_dir)
             except Exception as e:
                 raise MotorConfigError(f"Failed to configure homing parameters: {str(e)}") from e
             
             try:
-                # Start homing movement
-                await self._controller.write_single_register(
-                    self._motor_id,
-                    motor_helpers.TRIGGER,
-                    0x10  # start path 0
-                )
-
-                self._status = MotorStatus.MOVING
+                await self._start_path_zero()
             except Exception as e:
                 raise MotorError(f"Failed to start homing movement: {str(e)}") from e
 
@@ -894,23 +1084,24 @@ class Motor():
             
             if stop == MotorStatus.STOPPED:
                 try:
-                    # Set current position as zero
-                    await self._controller.write_single_register(
-                        self._motor_id,
-                        motor_helpers.TRIGGER,
-                        0x21  # set zero position
-                    )
+                    await self._set_zero_position()
                 except Exception as e:
                     raise MotorError(f"Failed to set home position as zero: {str(e)}") from e
                 
-                # Reconfigure for normal movement
                 await self.move_config()
+                self._is_homed = True
+                self._hard_stopped = False
             elif stop == MotorStatus.FAULT:
+                self._is_homed = False
+                self._hard_stopped = True
                 raise MotorError(f"Motor {self._motor_id} faulted during homing")
             else:
+                self._is_homed = False
                 raise MotorTimeoutError(f"Motor {self._motor_id} homing timed out")
                 
         except Exception as e:
+            if isinstance(e, MotorTimeoutError):
+                self._is_homed = False
             if not isinstance(e, (MotorError, MotorConfigError, MotorTimeoutError)):
                 raise MotorError(f"Unexpected error during homing: {str(e)}") from e
             raise
@@ -1006,6 +1197,8 @@ class Motor():
     def set_fault(self) -> None:
         self._simulated_fault = True
         self._status = MotorStatus.FAULT
+        self._hard_stopped = True
+        self._is_homed = False
         self._logger.warning(
             "Simulated fault triggered",
             extra={"motor_id": self._motor_id},

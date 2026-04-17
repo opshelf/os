@@ -19,6 +19,7 @@ from sentry_sdk.integrations.logging import LoggingIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 
 from perpetual_os1.device import get_device_id
+from perpetual_os1.operating_mode import should_enable_sentry
 from perpetual_os1_server.core.logging_config import configure_logging, get_logger
 from perpetual_os1_server.core.robot import init_robot_worker, stop_robot_worker
 from perpetual_os1_server.core.storage import StorageService
@@ -73,11 +74,23 @@ def _before_send_sentry_log(log: dict[str, Any], _hint: dict[str, Any]) -> dict[
 
 	return log
 
-sentry_dsn = os.getenv("SENTRY_DSN_API", "")
-sentry_environment = os.getenv("SENTRY_ENVIRONMENT", os.getenv("DEPLOYMENT_ENVIRONMENT", "development"))
 device_id = get_device_id()
 
-if sentry_dsn:
+sentry_enabled = False
+
+
+def _configure_sentry() -> bool:
+	sentry_dsn = os.getenv("SENTRY_DSN_API", "")
+	mode = get_operating_mode()
+
+	if should_enable_sentry(mode) is False:
+		logger.info("sentry_disabled_for_mode", mode=mode.value)
+		return False
+
+	if sentry_dsn == "":
+		logger.warning("sentry_not_configured", reason="SENTRY_DSN_API not set", mode=mode.value)
+		return False
+
 	from sentry_sdk.transport import HttpTransport
 
 	sentry_sdk.init(
@@ -93,7 +106,7 @@ if sentry_dsn:
 			),
 		],
 		traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.1")),
-		environment=sentry_environment,
+		environment=mode.value,
 		release=os.getenv("APP_VERSION", "0.1.0"),
 		server_name=device_id,
 		before_send=_before_send_sentry_event,
@@ -104,9 +117,11 @@ if sentry_dsn:
 	)
 	sentry_sdk.set_tag("device_id", device_id)
 	sentry_sdk.set_context("opshelf_device", {"id": device_id})
-	logger.info("sentry_initialized", dsn_configured=True, device_id=device_id)
-else:
-	logger.warning("sentry_not_configured", message="SENTRY_DSN_API not set")
+	logger.info("sentry_initialized", dsn_configured=True, device_id=device_id, mode=mode.value)
+	return True
+
+
+sentry_enabled = _configure_sentry()
 
 
 def _run_migrations() -> None:
@@ -178,7 +193,7 @@ def _get_overhead_camera_url(settings: Settings) -> str | None:
 	return None
 
 
-def _get_io_camera_config() -> tuple[dict, dict | None] | None:
+def _get_io_camera_config() -> dict | None:
 	from perpetual_os1.common import CONFIG_PATH
 
 	if CONFIG_PATH.exists() is False:
@@ -190,11 +205,10 @@ def _get_io_camera_config() -> tuple[dict, dict | None] | None:
 
 		io_config = config.get("robot", {}).get("io", {})
 		usb_camera = io_config.get("usb_camera")
-		tof_camera = io_config.get("tof_camera")
 
 		if usb_camera is not None:
 			logger.info("io_camera_config_found", config_path=str(CONFIG_PATH))
-			return (usb_camera, tof_camera)
+			return usb_camera
 	except Exception as e:
 		logger.warning("failed_to_read_io_camera_config", config_path=str(CONFIG_PATH), error=str(e))
 
@@ -306,7 +320,7 @@ def _reset_storage_grid() -> None:
 
 
 def _run_demo_seed() -> bool:
-	script_path = Path(__file__).parent.parent.parent / "scripts" / "demo_seed.py"
+	script_path = Path(__file__).parent.parent.parent / "scripts" / "seed_demo.py"
 	if script_path.exists() is False:
 		logger.warning("demo_seed_script_not_found", script_path=str(script_path))
 		return False
@@ -389,13 +403,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 					traceback=traceback.format_exc(),
 					exc_info=True
 				)
-				if sentry_dsn is not None:
+				if sentry_enabled is True and sentry_sdk.is_initialized() is True:
 					sentry_sdk.capture_exception(e)
 		else:
 			logger.info("robot_disabled", reason="settings_configuration")
 	except Exception as e:
 		logger.error("robot_setup_error", error=str(e), exc_info=True)
-		if sentry_dsn is not None:
+		if sentry_enabled is True and sentry_sdk.is_initialized() is True:
 			sentry_sdk.capture_exception(e)
 
 	tool_camera_url = _get_tool_camera_url(settings)
@@ -415,21 +429,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 			logger.error("overhead_camera_initialization_failed", error=str(e), exc_info=True)
 
 	if settings.camera.enabled is True:
-		io_camera_config = _get_io_camera_config()
-		if io_camera_config is not None:
+		usb_config = _get_io_camera_config()
+		if usb_config is not None:
 			try:
 				from hardware.iocam import AFSCam
 				from hardware.exceptions import CameraNotPresentError
-				from perpetual_os1.common import UsbCamera, TofCamera
+				from perpetual_os1.common import UsbCamera
 
-				usb_config, tof_config = io_camera_config
 				usb_params = UsbCamera(**usb_config)
-				tof_params = TofCamera(**tof_config) if tof_config is not None and settings.camera.depth_enabled is True else None
-
-				io_camera = AFSCam(usb_params, tof_params)
-				await io_camera.start(enable_tof=settings.camera.depth_enabled)
-				await init_camera_manager(io_camera, depth_enabled=settings.camera.depth_enabled)
-				logger.info("io_camera_initialized", depth_enabled=settings.camera.depth_enabled)
+				io_camera = AFSCam(usb_params)
+				await io_camera.start()
+				await init_camera_manager(io_camera)
+				logger.info("io_camera_initialized")
 			except CameraNotPresentError as e:
 				logger.warning(
 					"io_camera_unavailable",
@@ -484,7 +495,7 @@ app.add_middleware(AuditMiddleware)
 async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
 	correlation_id = getattr(request.state, "correlation_id", None)
 
-	if sentry_dsn:
+	if sentry_enabled is True and sentry_sdk.is_initialized() is True:
 		with sentry_sdk.push_scope() as scope:
 			if correlation_id:
 				scope.set_tag("correlation_id", correlation_id)
