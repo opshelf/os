@@ -51,8 +51,8 @@ perpetual_hardware/packages/perpetual_os1_server/data/auth.db
 perpetual_hardware/packages/perpetual_os1_server/data/auth.db-shm
 perpetual_hardware/packages/perpetual_os1_server/data/auth.db-wal
 
-# Claude Code and MCP
-.claude/
+# Agents
+.cursor/
 .mcp.json
 opencode.json
 
