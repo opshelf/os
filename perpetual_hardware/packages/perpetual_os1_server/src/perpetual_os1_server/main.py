@@ -321,7 +321,7 @@ def _reset_storage_grid() -> None:
 
 
 def _run_demo_seed() -> bool:
-	script_path = Path(__file__).parent.parent.parent / "scripts" / "demo_seed.py"
+	script_path = Path(__file__).parent.parent.parent / "scripts" / "seed_demo.py"
 	if script_path.exists() is False:
 		logger.warning("demo_seed_script_not_found", script_path=str(script_path))
 		return False
