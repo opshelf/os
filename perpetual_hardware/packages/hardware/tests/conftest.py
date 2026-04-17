@@ -1,6 +1,4 @@
-import asyncio
-import sys
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 from typing import Any
 
 import cv2
@@ -8,7 +6,7 @@ import numpy as np
 import pytest
 from unittest.mock import AsyncMock, Mock
 
-from hardware.exceptions import CameraConnectionError, TOFError
+from hardware.exceptions import CameraConnectionError
 
 
 class AttrDict(SimpleNamespace):
@@ -52,93 +50,23 @@ class _FakeVideoCapture:
         self._opened = False
 
 
-def _install_fake_arducam() -> ModuleType:
-    if "ArducamDepthCamera" in sys.modules:
-        return sys.modules["ArducamDepthCamera"]
-
-    module = ModuleType("ArducamDepthCamera")
-
-    class FrameType:
-        DEPTH = 0
-
-    class Connection:
-        CSI = 0
-
-    class Control:
-        RANGE = 0
-
-    class DepthData:
-        def __init__(self) -> None:
-            self.depth_data = np.ones((2, 2), dtype=np.uint16)
-            self.confidence_data = np.ones((2, 2), dtype=np.uint8)
-
-    class ArducamCamera:
-        def __init__(self) -> None:
-            self.started = False
-
-        def open(self, *_args: Any, **_kwargs: Any) -> int:
-            return 0
-
-        def start(self, *_args: Any, **_kwargs: Any) -> int:
-            self.started = True
-            return 0
-
-        def setControl(self, *_args: Any, **_kwargs: Any) -> int:
-            return 0
-
-        def requestFrame(self, *_args: Any, **_kwargs: Any) -> DepthData:
-            return DepthData()
-
-        def releaseFrame(self, *_args: Any, **_kwargs: Any) -> None:
-            return None
-
-        def stop(self) -> None:
-            return None
-
-        def close(self) -> None:
-            return None
-
-    module.FrameType = FrameType
-    module.Connection = Connection
-    module.Control = Control
-    module.DepthData = DepthData
-    module.ArducamCamera = ArducamCamera
-    sys.modules["ArducamDepthCamera"] = module
-    return module
-
-
 @pytest.fixture(autouse=True)
 def patch_iocam(monkeypatch: pytest.MonkeyPatch) -> None:
-    fake_ac = _install_fake_arducam()
-    monkeypatch.setattr("hardware.iocam.ac", fake_ac, raising=False)
     monkeypatch.setattr("hardware.iocam._find_innomaker_device", lambda: 0, raising=False)
     monkeypatch.setattr("cv2.VideoCapture", _FakeVideoCapture)
 
-    async def _fake_tof_loop(self) -> None:
-        while not self._stop_evt.is_set():
-            await asyncio.sleep(0.001)
-
-    def _fake_init_tof(self) -> None:
-        cam = fake_ac.ArducamCamera()
-        self._tof = cam
-        start_ret = cam.start(fake_ac.FrameType.DEPTH) if hasattr(cam, "start") else 0
-        if start_ret != 0:
-            raise TOFError("Failed to start mock TOF camera")
-        depth = fake_ac.DepthData()
-        self._update_depth_buffers(depth.depth_data, depth.confidence_data)
-
-    def _fake_init_usb(self, use_auto_exposure: bool = False, *_, **__kwargs: Any) -> None:
+    def _fake_init_usb(self, *args: Any, use_auto_exposure: bool = True, **kwargs: Any) -> None:
         self._usb = cv2.VideoCapture(self._usb_index)
         if not self._usb.isOpened():
             raise CameraConnectionError("Failed to open mock USB camera")
         if self._usb_fourcc:
             fourcc = cv2.VideoWriter_fourcc(*self._usb_fourcc)
             self._usb.set(cv2.CAP_PROP_FOURCC, fourcc)
-        if self._usb_exposure is not None:
+        if use_auto_exposure is True:
+            self._usb.set(cv2.CAP_PROP_AUTO_EXPOSURE, 3)
+        elif self._usb_exposure is not None:
             self._usb.set(cv2.CAP_PROP_EXPOSURE, float(self._usb_exposure))
 
-    monkeypatch.setattr("hardware.iocam.AFSCam._tof_loop", _fake_tof_loop)
-    monkeypatch.setattr("hardware.iocam.AFSCam._init_tof", _fake_init_tof)
     monkeypatch.setattr("hardware.iocam.AFSCam._init_usb", _fake_init_usb)
 
 
@@ -179,11 +107,6 @@ def mock_controller() -> AsyncMock:
     controller.client = Mock()
     controller.client.connected = True
     return controller
-
-
-@pytest.fixture
-def sample_tof_params() -> AttrDict:
-    return AttrDict(csi_port=0, max_distance_mm=2000, confidence_min=0.5)
 
 
 @pytest.fixture

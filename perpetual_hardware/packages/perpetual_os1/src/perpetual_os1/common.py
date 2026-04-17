@@ -286,22 +286,6 @@ class UsbCamera(BaseModel):
     headless_fallback_path: str = Field(..., min_length=1)
 
 
-class TofCamera(BaseModel):
-    csi_port: int = Field(..., ge=0)
-    resolution: TwoInt
-    fps: int = Field(..., gt=0)
-    max_distance_mm: int = Field(..., gt=0)
-    confidence_min: float = Field(..., ge=0)
-    depth_unit: Literal["mm"] = "mm"
-    calibration_status: Literal["uncalibrated", "calibrated"] = "uncalibrated"
-
-    @field_validator("resolution", mode="before")
-    @classmethod
-    def _res_as_tuple(cls, v):
-        a, b = _pair_len2(v, "resolution")
-        return int(a), int(b)
-
-
 class CurtainConfig(BaseModel):
     enabled: bool = True
     pin: int = Field(2, ge=0)
@@ -355,13 +339,6 @@ class ScannerSettings(BaseModel):
 
 class CameraAppSettings(BaseModel):
     enabled: bool = False
-    depth_enabled: bool = Field(
-        default=False,
-        description=(
-            "Initializes the IO box TOF depth sensor alongside the USB color camera when true. "
-            "The live MJPEG stream is always raw frames from the USB camera."
-        ),
-    )
 
 
 class ToolCameraSettings(BaseModel):
@@ -491,7 +468,6 @@ class Tool(BaseModel):
 class IOBlock(BaseModel):
     motors: Motors
     usb_camera: UsbCamera
-    tof_camera: TofCamera
     curtain: CurtainConfig = Field(default_factory=CurtainConfig)  # type: ignore[arg-type]
     scale: ScaleConfig = Field(default_factory=ScaleConfig)  # type: ignore[arg-type]
 
@@ -679,9 +655,6 @@ class RootConfig(BaseModel):
 
     def get_usb_camera(self) -> UsbCamera:
         return self.robot.io.usb_camera
-
-    def get_tof_camera(self) -> TofCamera:
-        return self.robot.io.tof_camera
 
     def get_tool_laser(self) -> LaserConfig:
         return self.robot.tool.laser

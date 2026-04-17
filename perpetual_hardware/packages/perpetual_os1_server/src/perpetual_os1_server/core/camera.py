@@ -15,10 +15,8 @@ CameraManager = Union["CameraStreamManager", "ToolCameraStreamManager"]
 camera_registry: dict[str, CameraManager] = {}
 
 class CameraStreamManager:
-	def __init__(self, camera: AFSCam, depth_enabled: bool = False):
+	def __init__(self, camera: AFSCam):
 		self.camera: Optional[AFSCam] = camera
-		# When true, TOF hardware was started at boot; the stream is still raw USB only.
-		self.depth_enabled = depth_enabled
 		self.is_running = False
 		self.consumer_count = 0
 		self.latest_frame: Optional[bytes] = None
@@ -230,12 +228,12 @@ camera_manager: Optional[CameraStreamManager] = None
 tool_camera_manager: Optional[ToolCameraStreamManager] = None
 overhead_camera_manager: Optional[ToolCameraStreamManager] = None
 
-async def init_camera_manager(camera: AFSCam, depth_enabled: bool = False) -> None:
+async def init_camera_manager(camera: AFSCam) -> None:
 	global camera_manager, camera_registry
 
-	camera_manager = CameraStreamManager(camera=camera, depth_enabled=depth_enabled)
+	camera_manager = CameraStreamManager(camera=camera)
 	camera_registry["io"] = camera_manager
-	logger.info("io_camera_registered", depth_enabled=depth_enabled)
+	logger.info("io_camera_registered")
 
 
 async def init_tool_camera_manager(rtsp_url: str) -> None:
@@ -323,7 +321,7 @@ def get_all_cameras_status() -> list[dict]:
 
 	for camera_id, manager in camera_registry.items():
 		if isinstance(manager, CameraStreamManager):
-			camera_type = "IOCamera (depth)" if manager.depth_enabled is True else "IOCamera"
+			camera_type = "IOCamera"
 		elif camera_id == "overhead":
 			camera_type = "OverheadCamera"
 		else:

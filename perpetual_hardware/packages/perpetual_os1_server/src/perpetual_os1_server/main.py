@@ -193,7 +193,7 @@ def _get_overhead_camera_url(settings: Settings) -> str | None:
 	return None
 
 
-def _get_io_camera_config() -> tuple[dict, dict | None] | None:
+def _get_io_camera_config() -> dict | None:
 	from perpetual_os1.common import CONFIG_PATH
 
 	if CONFIG_PATH.exists() is False:
@@ -205,11 +205,10 @@ def _get_io_camera_config() -> tuple[dict, dict | None] | None:
 
 		io_config = config.get("robot", {}).get("io", {})
 		usb_camera = io_config.get("usb_camera")
-		tof_camera = io_config.get("tof_camera")
 
 		if usb_camera is not None:
 			logger.info("io_camera_config_found", config_path=str(CONFIG_PATH))
-			return (usb_camera, tof_camera)
+			return usb_camera
 	except Exception as e:
 		logger.warning("failed_to_read_io_camera_config", config_path=str(CONFIG_PATH), error=str(e))
 
@@ -430,21 +429,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 			logger.error("overhead_camera_initialization_failed", error=str(e), exc_info=True)
 
 	if settings.camera.enabled is True:
-		io_camera_config = _get_io_camera_config()
-		if io_camera_config is not None:
+		usb_config = _get_io_camera_config()
+		if usb_config is not None:
 			try:
 				from hardware.iocam import AFSCam
 				from hardware.exceptions import CameraNotPresentError
-				from perpetual_os1.common import UsbCamera, TofCamera
+				from perpetual_os1.common import UsbCamera
 
-				usb_config, tof_config = io_camera_config
 				usb_params = UsbCamera(**usb_config)
-				tof_params = TofCamera(**tof_config) if tof_config is not None and settings.camera.depth_enabled is True else None
-
-				io_camera = AFSCam(usb_params, tof_params)
-				await io_camera.start(enable_tof=settings.camera.depth_enabled)
-				await init_camera_manager(io_camera, depth_enabled=settings.camera.depth_enabled)
-				logger.info("io_camera_initialized", depth_enabled=settings.camera.depth_enabled)
+				io_camera = AFSCam(usb_params)
+				await io_camera.start()
+				await init_camera_manager(io_camera)
+				logger.info("io_camera_initialized")
 			except CameraNotPresentError as e:
 				logger.warning(
 					"io_camera_unavailable",
