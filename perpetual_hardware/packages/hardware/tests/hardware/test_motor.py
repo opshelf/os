@@ -158,6 +158,33 @@ async def test_wait_for_move_stops_and_cancels_when_abort_requested(mock_control
 
 
 @pytest.mark.asyncio
+async def test_wait_for_move_does_not_retry_pending_motion_after_alarm_32(mock_controller):
+    params = make_motor_params()
+    motor = Motor(mock_controller, params)
+    motor.stop = AsyncMock(return_value=MotorStatus.STOPPED)
+    pending_motion = AsyncMock()
+    motor._pending_motion = pending_motion
+    motor._target_pos = 50.0
+
+    positions = iter([0.0, 1.0])
+
+    async def didGetPosition():
+        motor._cur_pos = next(positions)
+        return motor._cur_pos
+
+    motor.get_position = AsyncMock(side_effect=didGetPosition)
+    motor.get_param = AsyncMock(return_value=32)
+    mock_controller.read_holding_registers.side_effect = [0, 0]
+
+    status = await motor.wait_for_move(timeout=0.5)
+
+    assert status == MotorStatus.FAULT
+    motor.stop.assert_awaited_once()
+    pending_motion.assert_not_awaited()
+    assert motor._pending_motion is None
+
+
+@pytest.mark.asyncio
 async def test_motor_home_with_sensor_sets_zero_and_marks_homed(mock_controller, monkeypatch):
     sensor = DummyHomeSensor([False, False, True, True, False, False, True])
     params = make_motor_params(home_sensor=make_home_sensor_config())
