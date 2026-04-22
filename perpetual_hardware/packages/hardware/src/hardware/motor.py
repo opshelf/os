@@ -695,6 +695,7 @@ class Motor():
             # Combine high and low position values
             pos = (pos_h << 16) | pos_l
             if not pos:
+                self._cur_pos = 0.0
                 return 0.0
                 
             ppr = getattr(self._params, "ppr", 10000)

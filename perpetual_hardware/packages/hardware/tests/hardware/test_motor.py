@@ -443,6 +443,28 @@ async def test_motor_returns_last_good_position_when_garbage_persists(mock_contr
 
 
 @pytest.mark.asyncio
+async def test_motor_get_position_caches_zero_position(mock_controller):
+    params = SimpleNamespace(
+        motor_id=1,
+        position_reg_high=0x602C,
+        position_reg_low=0x602D,
+        ppr=1,
+        mpr=1,
+        lim=10,
+        physical_to_logical=lambda physical: physical,
+    )
+    motor = Motor(mock_controller, params)
+    motor._cur_pos = 7.5
+
+    mock_controller.read_holding_registers.side_effect = [0, 0]
+
+    position = await motor.get_position()
+
+    assert position == 0.0
+    assert motor._cur_pos == 0.0
+
+
+@pytest.mark.asyncio
 async def test_motor_throttles_repeated_garbage_position_logs(mock_controller):
     params = SimpleNamespace(
         motor_id=1,
