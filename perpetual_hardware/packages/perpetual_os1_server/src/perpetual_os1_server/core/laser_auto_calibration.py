@@ -53,10 +53,9 @@ SCAN_FINE_RE = re.compile(r"phase=fine-scan candidate=(?P<idx>\d+)/(?P<count>\d+
 SCAN_FINE_RETRY_RE = re.compile(r"phase=fine-scan-retry candidate=(?P<idx>\d+)/(?P<count>\d+)")
 FINE_DETECTED_CELLS_RE = re.compile(r"fine_detected_cells=(?P<count>\d+)")
 ANGLE_RESULT_RE = re.compile(r"alpha_deg=(?P<alpha>-?\d+(?:\.\d+)?)")
-STAGE_EXTENSION_PROBE_START_MM = 3.0
+STAGE_EXTENSION_PROBE_START_MM = 0.0
 STAGE_EXTENSION_PROBE_BACKOFF_MM = 8.0
 STAGE_EXTENSION_PROBE_Y_OFFSET_MM = 25.0
-STAGE_EXTENSION_FAST_APPROACH_MM = 40.0
 STAGE_EXTENSION_PROBE_STEP_MM = 0.5
 STAGE_EXTENSION_PROBE_TIMEOUT_S = 1.0
 STAGE_EXTENSION_NO_PROGRESS_TIMEOUT_S = 0.2
@@ -1022,7 +1021,7 @@ class LaserAutoCalibrationManager:
                 probe_rpm=probe_rpm,
                 no_progress_s=STAGE_EXTENSION_NO_PROGRESS_TIMEOUT_S,
                 probe_step_mm=STAGE_EXTENSION_PROBE_STEP_MM,
-                fast_approach_mm=STAGE_EXTENSION_FAST_APPROACH_MM,
+                fast_approach_mm=STAGE_EXTENSION_PROBE_START_MM,
                 fast_approach_rpm=int(tool._ms._params.rpm),
                 auto_retract=False,
                 should_abort=self._should_abort_work,
