@@ -885,7 +885,7 @@ async def test_run_stage_extension_calibration_accepts_timeout_terminal_state() 
                 angle_module,
                 'probe_stage_until_stall',
                 AsyncMock(return_value=(True, 45.28, 'timeout', None)),
-            ):
+            ) as probe_mock:
                 calibrated_stage_extension_mm = await manager._run_stage_extension_calibration_for_side(
                     worker,
                     StorageModuleSide.RIGHT,
@@ -894,6 +894,8 @@ async def test_run_stage_extension_calibration_accepts_timeout_terminal_state() 
                 )
 
     assert calibrated_stage_extension_mm == pytest.approx(37.28)
+    assert probe_mock.await_args.kwargs['retract_stage_mm'] == pytest.approx(0.0)
+    assert probe_mock.await_args.kwargs['fast_approach_mm'] == pytest.approx(0.0)
     stage_motor.move_to_position.assert_awaited_once_with(pytest.approx(37.28), rpm=100)
     assert manager._update_snapshot.await_args_list[-1].kwargs['stage_detail']['stall_status'] == 'timeout'
     assert manager._update_snapshot.await_args_list[-1].kwargs['stage_detail']['calibrated_stage_extension_mm'] == pytest.approx(37.28)
