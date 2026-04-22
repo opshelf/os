@@ -18,6 +18,8 @@ MOTOR_HOME_TIMEOUT = 180.0
 MOTOR_JOG_TIMEOUT = 10.0
 MOTOR_WAIT_TIMEOUT = 60.0
 POSITION_TOLERANCE_MM = 1.0
+HOME_APPROACH_TOLERANCE_MM = 1.0
+DEFAULT_HOME_APPROACH_BACKOFF_MM = 5.0
 DEFAULT_BRAKE_OUTPUT_FUNCTION = 0xA1
 RELEASED_BRAKE_OUTPUT_FUNCTION = 0x24
 
@@ -359,6 +361,31 @@ class Motor():
 
         raise MotorError(f"Motor {self._motor_id} could not clear home sensor")
 
+    def _get_home_approach_target_mm(self) -> float:
+        sensor_cfg = self._get_home_sensor_config()
+
+        if sensor_cfg is not None:
+            release_target_mm = getattr(sensor_cfg, "release_target_mm", None)
+
+            if getattr(sensor_cfg, "release_mode", "jog") == "absolute" and release_target_mm is not None:
+                return float(release_target_mm)
+
+            backoff_mm = float(getattr(sensor_cfg, "release_backoff_mm", DEFAULT_HOME_APPROACH_BACKOFF_MM))
+        else:
+            backoff_mm = DEFAULT_HOME_APPROACH_BACKOFF_MM
+
+        lower_lim = float(getattr(self._params, "lower_lim", 0.0))
+        return min(float(self._params.lim), max(lower_lim, lower_lim + backoff_mm))
+
+    async def _move_near_home(self, rpm: int) -> None:
+        target_mm = self._get_home_approach_target_mm()
+        current_position_mm = await self.get_position()
+
+        if float(current_position_mm) <= target_mm + HOME_APPROACH_TOLERANCE_MM:
+            return
+
+        await self.jog(target_mm - float(current_position_mm), rpm=rpm, homing=False)
+
     async def _home_with_sensor(self, sensor_cfg: Any) -> None:
         sensor = self._get_home_sensor()
         if sensor is None:
@@ -375,6 +402,7 @@ class Motor():
                 await self.disable_brake_output()
                 is_brake_output_disabled = True
 
+            await self._move_near_home(self._params.ret_rpm)
             await self._release_home_sensor(sensor, sensor_cfg.release_backoff_mm)
             await self._prepare_home_motion(home_rpm, home_dir)
             await self._start_path_zero()
@@ -943,6 +971,28 @@ class Motor():
                 )
                 raise
 
+            is_at_home_approach_target = False
+
+            if homing and self._cur_pos is not None:
+                is_at_home_approach_target = (
+                    float(self._cur_pos) <= self._get_home_approach_target_mm() + HOME_APPROACH_TOLERANCE_MM
+                )
+
+            if homing and alarm_code == 32 and (has_moved is True or is_at_home_approach_target is True):
+                await self.stop()
+                self._target_pos = None
+                self._pending_motion = None
+                self._logger.warning(
+                    "Limit stop detected during homing",
+                    extra={
+                        "motor_id": self._motor_id,
+                        "elapsed": time.monotonic() - start_time,
+                        "status_word": status,
+                        "alarm_code": alarm_code,
+                    },
+                )
+                return MotorStatus.STOPPED
+
             no_progress = (
                 not has_moved and (now - start_time > max(2.0, self._stall_timeout * 6))
             )
@@ -959,8 +1009,9 @@ class Motor():
                 if homing:
                     self._target_pos = None
                     self._pending_motion = None
+
                     self._logger.warning(
-                        "Fault/stall detected during homing (treated as stop)",
+                        "Fault/stall detected during homing",
                         extra={
                             "motor_id": self._motor_id,
                             "elapsed": time.monotonic() - start_time,
@@ -970,7 +1021,9 @@ class Motor():
                             "no_progress": no_progress,
                         },
                     )
-                    return MotorStatus.STOPPED
+                    self._hard_stopped = True
+                    self._is_homed = False
+                    return MotorStatus.FAULT
 
                 fault_type = "Simulated fault" if self._simulated_fault else "Fault"
                 self._target_pos = None
@@ -1038,6 +1091,7 @@ class Motor():
 
             try:
                 home_rpm = self._params.home_rpm or self._params.ret_rpm
+                await self._move_near_home(self._params.ret_rpm)
                 await self._prepare_home_motion(home_rpm, home_dir)
             except Exception as e:
                 raise MotorConfigError(f"Failed to configure homing parameters: {str(e)}") from e
@@ -1078,7 +1132,7 @@ class Motor():
                 raise MotorError(f"Unexpected error during homing: {str(e)}") from e
             raise
     
-    async def jog(self, dist: float) -> MotorStatus:
+    async def jog(self, dist: float, rpm: Optional[int] = None, homing: bool = False) -> MotorStatus:
         """Move the motor by a relative distance.
 
         Args:
@@ -1102,7 +1156,7 @@ class Motor():
             await self.set_param("Control word", 0x1122)  # clear alarm if any
             await self.set_param("Motion of Path 0", 0x41)  # relative position mode
             await self.set_param("Motor direction", self._params.dr)
-            await self.set_param("Velocity", self._params.rpm)
+            await self.set_param("Velocity", rpm or self._params.rpm)
             await self.set_param("Acceleration", self._params.accel)
             await self.set_param("Deceleration", self._params.accel)
             await self.set_param("Position High", pulse[0])
@@ -1116,7 +1170,7 @@ class Motor():
             )
 
             t0 = time.monotonic()
-            result = await self.wait_for_move(timeout=MOTOR_JOG_TIMEOUT, homing=True)
+            result = await self.wait_for_move(timeout=MOTOR_JOG_TIMEOUT, homing=homing)
             elapsed = time.monotonic() - t0
 
             if self._on_move_complete is not None:
