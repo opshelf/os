@@ -185,12 +185,117 @@ async def test_wait_for_move_does_not_retry_pending_motion_after_alarm_32(mock_c
 
 
 @pytest.mark.asyncio
+async def test_wait_for_move_allows_alarm_32_as_homing_limit_stop(mock_controller):
+    params = make_motor_params()
+    motor = Motor(mock_controller, params)
+    motor.stop = AsyncMock(return_value=MotorStatus.STOPPED)
+    positions = iter([0.0, 1.0])
+
+    async def didGetPosition():
+        motor._cur_pos = next(positions)
+        return motor._cur_pos
+
+    motor.get_position = AsyncMock(side_effect=didGetPosition)
+    motor.get_param = AsyncMock(return_value=32)
+    mock_controller.read_holding_registers.side_effect = [0, 0]
+
+    status = await motor.wait_for_move(timeout=0.5, homing=True)
+
+    assert status == MotorStatus.STOPPED
+    motor.stop.assert_awaited_once()
+    assert motor.is_hard_stopped() is False
+
+
+@pytest.mark.asyncio
+async def test_wait_for_move_allows_alarm_32_when_already_at_home_stop(mock_controller):
+    params = make_motor_params()
+    motor = Motor(mock_controller, params)
+    motor.stop = AsyncMock(return_value=MotorStatus.STOPPED)
+
+    async def didGetPosition():
+        motor._cur_pos = 0.0
+        return motor._cur_pos
+
+    motor.get_position = AsyncMock(side_effect=didGetPosition)
+    motor.get_param = AsyncMock(return_value=32)
+    mock_controller.read_holding_registers.side_effect = [0]
+
+    status = await motor.wait_for_move(timeout=0.5, homing=True)
+
+    assert status == MotorStatus.STOPPED
+    motor.stop.assert_awaited_once()
+    assert motor.is_hard_stopped() is False
+
+
+@pytest.mark.asyncio
+async def test_wait_for_move_rejects_non_limit_fault_during_homing(mock_controller):
+    params = make_motor_params()
+    motor = Motor(mock_controller, params)
+    motor.stop = AsyncMock(return_value=MotorStatus.STOPPED)
+    motor.get_position = AsyncMock(side_effect=[0.0])
+    motor.get_param = AsyncMock(return_value=5)
+    mock_controller.read_holding_registers.side_effect = [0]
+
+    status = await motor.wait_for_move(timeout=0.5, homing=True)
+
+    assert status == MotorStatus.FAULT
+    motor.stop.assert_awaited_once()
+    assert motor.is_hard_stopped() is True
+
+
+@pytest.mark.asyncio
+async def test_motor_home_moves_near_home_before_sensorless_seek(mock_controller):
+    params = make_motor_params()
+    motor = Motor(mock_controller, params)
+    motor._move_near_home = AsyncMock()
+    motor.wait_for_move = AsyncMock(return_value=MotorStatus.STOPPED)
+    motor.move_config = AsyncMock()
+
+    await motor.home()
+
+    motor._move_near_home.assert_awaited_once_with(params.ret_rpm)
+
+
+@pytest.mark.asyncio
+async def test_motor_home_with_sensor_moves_near_home_before_sensor_seek(mock_controller, monkeypatch):
+    sensor = DummyHomeSensor([False, True, False, True])
+    params = make_motor_params(home_sensor=make_home_sensor_config())
+    motor = Motor(mock_controller, params)
+
+    monkeypatch.setattr('hardware.motor.HomeSensor', lambda **_kwargs: sensor)
+    motor._move_near_home = AsyncMock()
+    motor.stop = AsyncMock(return_value=MotorStatus.STOPPED)
+    motor.move_config = AsyncMock()
+    motor.jog = AsyncMock(return_value=MotorStatus.STOPPED)
+    motor.get_param = AsyncMock(return_value=0)
+
+    await motor.home()
+
+    motor._move_near_home.assert_awaited_once_with(params.ret_rpm)
+
+
+@pytest.mark.asyncio
+async def test_move_near_home_uses_release_target_when_absolute_release_is_configured(mock_controller):
+    params = make_motor_params(
+        home_sensor=make_home_sensor_config(release_mode='absolute', release_target_mm=12.0)
+    )
+    motor = Motor(mock_controller, params)
+    motor.get_position = AsyncMock(return_value=40.0)
+    motor.jog = AsyncMock()
+
+    await motor._move_near_home(params.ret_rpm)
+
+    motor.jog.assert_awaited_once_with(-28.0, rpm=params.ret_rpm, homing=False)
+
+
+@pytest.mark.asyncio
 async def test_motor_home_with_sensor_sets_zero_and_marks_homed(mock_controller, monkeypatch):
     sensor = DummyHomeSensor([False, False, True, True, False, False, True])
     params = make_motor_params(home_sensor=make_home_sensor_config())
     motor = Motor(mock_controller, params)
 
     monkeypatch.setattr('hardware.motor.HomeSensor', lambda **_kwargs: sensor)
+    motor._move_near_home = AsyncMock()
     motor.stop = AsyncMock(return_value=MotorStatus.STOPPED)
     motor.move_config = AsyncMock()
     motor.jog = AsyncMock(return_value=MotorStatus.STOPPED)
@@ -212,6 +317,7 @@ async def test_motor_home_with_sensor_releases_switch_before_first_seek(mock_con
     motor = Motor(mock_controller, params)
 
     monkeypatch.setattr('hardware.motor.HomeSensor', lambda **_kwargs: sensor)
+    motor._move_near_home = AsyncMock()
     motor.stop = AsyncMock(return_value=MotorStatus.STOPPED)
     motor.move_config = AsyncMock()
     motor.jog = AsyncMock(return_value=MotorStatus.STOPPED)
@@ -239,6 +345,7 @@ async def test_motor_home_with_sensor_times_out_when_sensor_never_triggers(mock_
 
     monkeypatch.setattr('hardware.motor.HomeSensor', lambda **_kwargs: sensor)
     monkeypatch.setattr('hardware.motor.time.monotonic', FakeMonotonic())
+    motor._move_near_home = AsyncMock()
     motor.stop = AsyncMock(return_value=MotorStatus.STOPPED)
     motor.jog = AsyncMock(return_value=MotorStatus.STOPPED)
     motor.get_param = AsyncMock(return_value=0)
@@ -256,6 +363,7 @@ async def test_motor_home_with_sensor_supports_absolute_release_mode(mock_contro
     motor = Motor(mock_controller, params)
 
     monkeypatch.setattr('hardware.motor.HomeSensor', lambda **_kwargs: sensor)
+    motor._move_near_home = AsyncMock()
     motor.stop = AsyncMock(return_value=MotorStatus.STOPPED)
     motor.move_config = AsyncMock()
     motor.jog = AsyncMock(return_value=MotorStatus.STOPPED)
@@ -276,6 +384,7 @@ async def test_motor_home_with_absolute_release_mode_rezeros_before_release(mock
     motor = Motor(mock_controller, params)
 
     monkeypatch.setattr('hardware.motor.HomeSensor', lambda **_kwargs: sensor)
+    motor._move_near_home = AsyncMock()
     motor.stop = AsyncMock(return_value=MotorStatus.STOPPED)
     motor.move_config = AsyncMock()
     motor.jog = AsyncMock(return_value=MotorStatus.STOPPED)
@@ -296,6 +405,7 @@ async def test_motor_home_with_sensor_can_disable_brake_during_home(mock_control
     motor = Motor(mock_controller, params)
 
     monkeypatch.setattr('hardware.motor.HomeSensor', lambda **_kwargs: sensor)
+    motor._move_near_home = AsyncMock()
     motor.stop = AsyncMock(return_value=MotorStatus.STOPPED)
     motor.move_config = AsyncMock()
     motor.jog = AsyncMock(return_value=MotorStatus.STOPPED)
