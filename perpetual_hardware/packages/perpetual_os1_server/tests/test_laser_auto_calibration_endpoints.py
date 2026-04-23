@@ -69,7 +69,7 @@ def _build_snapshot(state: str = "running") -> LaserAutoCalibrationSnapshot:
         run_id="left-run",
         current_side="left_module",
         current_stage="shelf-scout",
-        bounds=ScanBounds(x_min=0.0, x_max=945.0, y_min=0.0, y_max=1200.0),
+        bounds=ScanBounds(x_min=0.0, x_max=950.0, y_min=0.0, y_max=1250.0),
         started_at="2026-01-01T00:00:00+00:00",
         updated_at="2026-01-01T00:00:01+00:00",
         scouted_shelf_count=2,
@@ -155,13 +155,13 @@ def test_build_angle_rotation_center_deg_uses_back_for_right() -> None:
 def test_build_bounds_for_side_clamps_x_min_away_from_zero() -> None:
     scan_config = SimpleNamespace(
         left_bounds_x_min_mm=0.0,
-        left_bounds_x_max_mm=945.0,
+        left_bounds_x_max_mm=950.0,
         left_bounds_y_min_mm=0.0,
-        left_bounds_y_max_mm=1200.0,
+        left_bounds_y_max_mm=1250.0,
         right_bounds_x_min_mm=0.0,
-        right_bounds_x_max_mm=945.0,
+        right_bounds_x_max_mm=950.0,
         right_bounds_y_min_mm=0.0,
-        right_bounds_y_max_mm=1200.0,
+        right_bounds_y_max_mm=1250.0,
     )
 
     left_bounds = _build_bounds_for_side(scan_config, StorageModuleSide.LEFT)
@@ -468,7 +468,7 @@ async def test_run_angle_calibration_skips_final_retract_when_cancelled() -> Non
                 manager._run_angle_calibration_for_side(
                     worker,
                     StorageModuleSide.LEFT,
-                    ScanBounds(x_min=5.0, x_max=945.0, y_min=0.0, y_max=1200.0),
+                    ScanBounds(x_min=5.0, x_max=950.0, y_min=0.0, y_max=1250.0),
                 )
             )
 
@@ -526,7 +526,7 @@ async def test_run_angle_calibration_raises_when_abort_requested_during_capture(
                         await manager._run_angle_calibration_for_side(
                             worker,
                             StorageModuleSide.LEFT,
-                            ScanBounds(x_min=5.0, x_max=945.0, y_min=0.0, y_max=1200.0),
+                            ScanBounds(x_min=5.0, x_max=950.0, y_min=0.0, y_max=1250.0),
                         )
 
 
@@ -549,7 +549,7 @@ async def test_scan_status_callback_preserves_cancelling_snapshot() -> None:
         ScanBounds(x_min=0.0, x_max=1.0, y_min=0.0, y_max=1.0),
     )
 
-    await callback('phase=shelf-scout scout=1/1 x=945.00')
+    await callback('phase=shelf-scout scout=1/1 x=950.00')
 
     manager._refresh_scan_side_state.assert_not_awaited()
     manager._update_snapshot.assert_not_awaited()
@@ -679,7 +679,7 @@ async def test_run_angle_calibration_uses_geometric_center_not_previous_rotation
                             result = await manager._run_angle_calibration_for_side(
                                 worker,
                                 StorageModuleSide.LEFT,
-                                ScanBounds(x_min=5.0, x_max=945.0, y_min=0.0, y_max=1200.0),
+                                ScanBounds(x_min=5.0, x_max=950.0, y_min=0.0, y_max=1250.0),
                             )
 
     assert resolve_mock.await_args.kwargs['rotation_center_deg'] == pytest.approx(0.0)
@@ -743,7 +743,7 @@ async def test_run_angle_calibration_allows_measured_right_rotation_above_180() 
                             result = await manager._run_angle_calibration_for_side(
                                 worker,
                                 StorageModuleSide.RIGHT,
-                                ScanBounds(x_min=5.0, x_max=945.0, y_min=0.0, y_max=1200.0),
+                                ScanBounds(x_min=5.0, x_max=950.0, y_min=0.0, y_max=1250.0),
                             )
 
     assert resolve_mock.await_args.kwargs['rotation_center_deg'] == pytest.approx(180.0)
@@ -899,7 +899,7 @@ async def test_run_stage_extension_calibration_accepts_timeout_terminal_state() 
                 calibrated_stage_extension_mm = await manager._run_stage_extension_calibration_for_side(
                     worker,
                     StorageModuleSide.RIGHT,
-                    ScanBounds(x_min=5.0, x_max=945.0, y_min=0.0, y_max=1200.0),
+                    ScanBounds(x_min=5.0, x_max=950.0, y_min=0.0, y_max=1250.0),
                     probe_y_mm=1123.0,
                 )
 
@@ -953,7 +953,7 @@ async def test_run_stage_extension_calibration_skips_final_retract_when_cancelle
                     manager._run_stage_extension_calibration_for_side(
                         worker,
                         StorageModuleSide.RIGHT,
-                        ScanBounds(x_min=5.0, x_max=945.0, y_min=0.0, y_max=1200.0),
+                        ScanBounds(x_min=5.0, x_max=950.0, y_min=0.0, y_max=1250.0),
                         probe_y_mm=1123.0,
                     )
                 )
@@ -1007,7 +1007,7 @@ async def test_run_stage_extension_calibration_raises_when_abort_requested_durin
                     await manager._run_stage_extension_calibration_for_side(
                         worker,
                         StorageModuleSide.RIGHT,
-                        ScanBounds(x_min=5.0, x_max=945.0, y_min=0.0, y_max=1200.0),
+                        ScanBounds(x_min=5.0, x_max=950.0, y_min=0.0, y_max=1250.0),
                         probe_y_mm=1123.0,
                     )
 
@@ -1043,7 +1043,7 @@ async def test_resolve_stage_extension_probe_y_uses_right_scout_and_offset() -> 
             probe_y_mm = await manager._resolve_stage_extension_probe_y_mm(
                 worker,
                 StorageModuleSide.RIGHT,
-                ScanBounds(x_min=5.0, x_max=945.0, y_min=0.0, y_max=1200.0),
+                ScanBounds(x_min=5.0, x_max=950.0, y_min=0.0, y_max=1250.0),
             )
 
     assert probe_y_mm == pytest.approx(1148.0)
@@ -1051,7 +1051,7 @@ async def test_resolve_stage_extension_probe_y_uses_right_scout_and_offset() -> 
 
 
 def test_build_stage_extension_probe_y_offsets_top_shelf() -> None:
-    bounds = ScanBounds(x_min=5.0, x_max=945.0, y_min=0.0, y_max=1200.0)
+    bounds = ScanBounds(x_min=5.0, x_max=950.0, y_min=0.0, y_max=1250.0)
 
     assert _build_stage_extension_probe_y_mm(1123.0, bounds) == pytest.approx(1148.0)
 
