@@ -18,9 +18,6 @@ iocam
 toolcam
     Tool-mounted camera interface for position detection and calibration
 
-iocam_helpers
-    Helper functions for TOF camera processing and visualization
-
 toolcam_helpers
     Helper functions for tool camera processing and calibration
 
