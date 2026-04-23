@@ -532,10 +532,20 @@ async def jog_axis(request: JogRequest) -> PositionResponse:
 
 	try:
 		if request.axis == "x":
+			if tool._mx is None:
+				raise HTTPException(
+					status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+					detail="X motor not configured",
+				)
 			await _clear_motors_for_move(tool, gantry=True)
 			new_x = _clamp_value(new_x + request.delta, x_limit, "X axis", warnings)
 			await tool._mx.move_to_position(new_x)
 		elif request.axis == "y":
+			if tool._my is None:
+				raise HTTPException(
+					status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+					detail="Y motor not configured",
+				)
 			await _clear_motors_for_move(tool, gantry=True)
 			new_y = _clamp_value(new_y + request.delta, y_limit, "Y axis", warnings)
 			await tool._my.move_to_position(new_y)
@@ -919,6 +929,11 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 
 	try:
 		if request.axis == "x":
+			if tool._mx is None:
+				raise HTTPException(
+					status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+					detail="X motor not configured",
+				)
 			await _clear_motors_for_move(tool, gantry=True)
 			if request.position == "low":
 				new_x = _clamp_value(_iobox_current.pickup_low_x + request.delta, x_limit, "X axis", warnings)
@@ -929,6 +944,11 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 				await tool._mx.move_to_position(new_x)
 				_iobox_current.pickup_high_x = new_x
 		elif request.axis == "y":
+			if tool._my is None:
+				raise HTTPException(
+					status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+					detail="Y motor not configured",
+				)
 			await _clear_motors_for_move(tool, gantry=True)
 			if request.position == "low":
 				new_y = _clamp_value(_iobox_current.pickup_low_y + request.delta, y_limit, "Y axis", warnings)

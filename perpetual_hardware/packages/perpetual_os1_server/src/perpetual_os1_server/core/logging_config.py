@@ -3,7 +3,7 @@ import logging
 import os
 import sys
 from contextvars import ContextVar
-from typing import Any, MutableMapping, Mapping
+from typing import Any, MutableMapping, Mapping, cast
 
 import structlog
 from structlog.typing import WrappedLogger
@@ -79,8 +79,13 @@ def render_to_log_kwargs_preserve_event(
 	log_kwargs = structlog.stdlib.render_to_log_kwargs(logger, method_name, event_dict)
 	extra = log_kwargs.get("extra")
 
-	if isinstance(extra, dict) is True and event is not None and "event" not in extra:
-		extra["event"] = event
+	if isinstance(extra, dict) is False or event is None:
+		return log_kwargs
+
+	extra_dict = cast(dict[str, Any], extra)
+
+	if "event" not in extra_dict:
+		extra_dict["event"] = event
 
 	return log_kwargs
 
