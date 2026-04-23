@@ -1042,32 +1042,6 @@ def build_shelf_scout_x_positions(
 
 	return positions
 
-
-def append_assumed_floor_shelf_edge(
-	*,
-	edges: list[ShelfSurfaceEdge],
-	bounds: ScanBounds,
-	side: StorageModuleSide,
-) -> list[ShelfSurfaceEdge]:
-	if bounds.y_min > 0.0:
-		return list(edges)
-
-	for edge in edges:
-		if abs(float(edge.y_mm) - 0.0) < SHELF_MIN_SPACING_MM:
-			return list(edges)
-
-	assumed_edge_x_mm = bounds.x_max
-
-	if side == StorageModuleSide.RIGHT:
-		assumed_edge_x_mm = bounds.x_min
-
-	return [
-		*edges,
-		ShelfSurfaceEdge(
-			x_mm=float(assumed_edge_x_mm),
-			y_mm=0.0,
-		),
-	]
 async def capture_shelf_candidates(
 	tool: Any,
 	*,
@@ -1170,12 +1144,6 @@ async def capture_shelf_candidates(
 			continue
 
 		filtered_shelf_edges.append(edge)
-
-	filtered_shelf_edges = append_assumed_floor_shelf_edge(
-		edges=filtered_shelf_edges,
-		bounds=bounds,
-		side=side,
-	)
 
 	print_status(
 		"shelf_edges="

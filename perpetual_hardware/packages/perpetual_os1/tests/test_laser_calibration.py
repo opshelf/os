@@ -10,6 +10,7 @@ from perpetual_os1.laser_calibration import (
 	apply_xy_reference_offsets,
 	apply_single_cell_rescan,
 	build_single_cell_rescan_candidate,
+	capture_shelf_candidates,
 	get_scanned_anchor_cell,
 	load_continue_scan_context,
 	run_staged_scan,
@@ -141,6 +142,28 @@ async def test_scan_shelf_scout_line_passes_abort_to_gantry_wait() -> None:
 		)
 
 	assert gantry_wait.await_args.kwargs['should_abort'] is not None
+
+
+@pytest.mark.asyncio
+async def test_capture_shelf_candidates_does_not_append_floor_edge_for_empty_detected_edges(
+	tmp_path: Path,
+) -> None:
+	coarse_scan, wall_depth_mm, candidates, shelf_edges = await capture_shelf_candidates(
+		SimpleNamespace(),
+		side=StorageModuleSide.LEFT,
+		bounds=ScanBounds(x_min=0.0, x_max=10.0, y_min=0.0, y_max=100.0),
+		settle_ms=0,
+		samples_per_point=1,
+		scan_config=SimpleNamespace(),
+		recorder=SimpleNamespace(coarse_depth_path=tmp_path / 'coarse_depth.npy'),
+		shelf_scout_only=True,
+		known_shelf_edge_y=[],
+	)
+
+	assert len(coarse_scan.depth_rows) > 0
+	assert wall_depth_mm == pytest.approx(0.0)
+	assert candidates == []
+	assert shelf_edges == []
 
 
 def test_get_scanned_anchor_cell_uses_physical_top_left_for_right_side() -> None:
