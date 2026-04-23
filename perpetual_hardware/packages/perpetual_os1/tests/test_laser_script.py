@@ -71,11 +71,27 @@ def test_main_prints_help_when_no_args(capsys) -> None:
 	assert 'Run tray scan, single-cell rescan, validation, or angle calibration.' in capsys.readouterr().out
 
 
-def test_main_dispatches_full_scan_to_package_methods(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_derive_scans_dir_uses_config_directory(tmp_path: Path) -> None:
+	module = load_laser_script_module()
+	config_path = tmp_path / 'data' / 'config.json'
+
+	assert module.derive_scans_dir(str(config_path)) == str((config_path.parent / 'calibration').resolve())
+
+
+def test_main_rejects_scans_dir_option() -> None:
+	module = load_laser_script_module()
+
+	with pytest.raises(SystemExit):
+		module.main(['--scans-dir', '/tmp'])
+
+
+def test_main_dispatches_full_scan_to_package_methods(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 	module = load_laser_script_module()
 	config = build_config()
 	analysis = build_analysis()
 	run_staged_scan = AsyncMock(return_value=analysis)
+	config_path = tmp_path / 'data' / 'config.json'
+	expected_scans_dir = str((config_path.parent / 'calibration').resolve())
 
 	async def didRunWithTempRobotConfig(*, config, config_path, didRun, shutdown_action):
 		return await didRun(SimpleNamespace(_tool=SimpleNamespace()))
@@ -93,10 +109,24 @@ def test_main_dispatches_full_scan_to_package_methods(monkeypatch: pytest.Monkey
 	monkeypatch.setattr(module.laser_module, 'persist_run_parameters', lambda **kwargs: '/tmp/run/run_parameters.json')
 	monkeypatch.setattr(module, 'print_analysis', lambda analysis: None)
 
-	result = module.main(['--module', 'left', '--x', '0', '10', '--y', '0', '10', '--step', '1'])
+	result = module.main([
+		'--module',
+		'left',
+		'--x',
+		'0',
+		'10',
+		'--y',
+		'0',
+		'10',
+		'--step',
+		'1',
+		'--config',
+		str(config_path),
+	])
 
 	assert result == 0
 	run_staged_scan.assert_awaited_once()
+	assert run_staged_scan.await_args.kwargs['scans_dir'] == expected_scans_dir
 
 
 def test_main_dispatches_rescan_apply_to_package_methods(monkeypatch: pytest.MonkeyPatch) -> None:

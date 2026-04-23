@@ -27,6 +27,8 @@ from perpetual_os1.common import CONFIG_PATH, Parameters, load_config_file, reso
 from perpetual_os1.laser_scan import ScanBounds, build_axis_positions
 from perpetual_os1.storage import StorageModuleSide
 
+DEFAULT_SCANS_DIR_NAME = 'calibration'
+
 
 def build_parser() -> argparse.ArgumentParser:
 	parser = argparse.ArgumentParser(
@@ -41,7 +43,6 @@ def build_parser() -> argparse.ArgumentParser:
 	parser.add_argument('--samples-per-point', type=int)
 	parser.add_argument('--known-shelf-edge-y', nargs='+', type=float)
 	parser.add_argument('--npy', type=Path)
-	parser.add_argument('--scans-dir', default='/tmp')
 	parser.add_argument('--config', default=str(CONFIG_PATH))
 	parser.add_argument('--apply', action='store_true')
 	parser.add_argument('--continue', dest='continue_scan', action='store_true')
@@ -171,6 +172,11 @@ def persist_config(config: Any, config_path: str) -> Path | None:
 		encoding='utf-8',
 	)
 	return backup_path
+
+
+def derive_scans_dir(config_path: str) -> str:
+	config_file = Path(config_path).resolve()
+	return str((config_file.parent / DEFAULT_SCANS_DIR_NAME).resolve())
 
 
 def validate_angle_calibration_args(args: argparse.Namespace) -> None:
@@ -343,6 +349,7 @@ async def run_angle_calibration(
 async def run_scan(args: argparse.Namespace) -> int:
 	laser_module.print_status('phase=config')
 	config = load_config_file(args.config)
+	scans_dir = derive_scans_dir(args.config)
 	scan_config = config.robot.grid.scan
 	recorder: laser_module.StagedScanRecorder | None = None
 	rescan_target = parse_single_cell_rescan_target(args.rescan_cell)
@@ -419,7 +426,7 @@ async def run_scan(args: argparse.Namespace) -> int:
 			samples_per_point,
 			coarse_settle_ms,
 			coarse_samples_per_point,
-		) = laser_module.load_continue_scan_context(args.scans_dir)
+		) = laser_module.load_continue_scan_context(scans_dir)
 		run_parameters_document = laser_module.load_json_file(recorder.run_parameters_path)
 		run_parameters = run_parameters_document['run_parameters']
 		shelf_scout_only = bool(run_parameters.get('cli', {}).get('shelf_scout_only', False))
@@ -588,7 +595,7 @@ async def run_scan(args: argparse.Namespace) -> int:
 			settle_ms=settle_ms,
 			samples_per_point=samples_per_point,
 			scan_config=scan_config,
-			scans_dir=args.scans_dir,
+			scans_dir=scans_dir,
 			depth_rows=depth_rows,
 		)
 	else:
@@ -606,7 +613,7 @@ async def run_scan(args: argparse.Namespace) -> int:
 				coarse_settle_ms=coarse_settle_ms,
 				coarse_samples_per_point=coarse_samples_per_point,
 				scan_config=scan_config,
-				scans_dir=args.scans_dir,
+				scans_dir=scans_dir,
 				run_parameters=run_parameters,
 				shelf_scout_only=shelf_scout_only,
 				known_shelf_edge_y=known_shelf_edge_y,
