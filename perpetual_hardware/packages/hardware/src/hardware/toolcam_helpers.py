@@ -5,6 +5,7 @@ from pathlib import Path
 
 from typing import Any, Dict, List, Tuple, Optional, Union
 import numpy.typing as npt
+from perpetual_os1.common import write_json_file_with_backup
 
 CONFIG_PATH = Path(__file__).resolve().parents[3] / "perpetual_os1" / "src" / "perpetual_os1" / "config.json"
 
@@ -477,5 +478,9 @@ def persist_poe_camera_calibration(
 
     poe_camera["calibration_status"] = "calibrated"
 
-    with path.open("w", encoding="utf-8") as handle:
-        json.dump(data, handle, indent=2)
+    write_json_file_with_backup(
+        path,
+        data,
+        indent=2,
+        backup_group_name="config",
+    )

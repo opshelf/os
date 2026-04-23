@@ -4,8 +4,6 @@ import json
 import logging
 import os
 import secrets
-import shutil
-from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -24,6 +22,7 @@ from perpetual_os1.common import (
     RobotAppSettings,
     ConfigValidationError,
     OperatingMode,
+    write_json_file_with_backup,
 )
 
 logger = logging.getLogger(__name__)
@@ -283,8 +282,12 @@ def _migrate_legacy_settings(settings_path: Path, config_path: Path) -> None:
     legacy_data = _load_legacy_settings(settings_path)
     merged_data = _build_minimal_config(legacy_data)
 
-    with open(config_path, "w") as f:
-        json.dump(merged_data, f, indent="\t")
+    write_json_file_with_backup(
+        config_path,
+        merged_data,
+        indent="\t",
+        backup_group_name="config",
+    )
 
     logger.info("Migration complete: %s created from %s", config_path, settings_path)
     logger.warning(
@@ -364,20 +367,6 @@ def get_config_path() -> Optional[Path]:
     return _cached_config_path
 
 
-def _create_config_backup(config_path: Path) -> Optional[Path]:
-    if config_path.exists() is False:
-        return None
-
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    backup_name = f"{config_path.stem}_{timestamp}{config_path.suffix}"
-    backup_path = config_path.parent / backup_name
-
-    shutil.copy2(config_path, backup_path)
-    logger.info("Config backup created: %s", backup_path)
-
-    return backup_path
-
-
 def save_root_config(config: RootConfig) -> None:
     global _cached_config, _cached_settings, _cached_config_path
 
@@ -386,12 +375,13 @@ def save_root_config(config: RootConfig) -> None:
 
     _cached_config_path.parent.mkdir(parents=True, exist_ok=True)
 
-    _create_config_backup(_cached_config_path)
-
     data = config.model_dump(mode="json")
-
-    with open(_cached_config_path, "w") as f:
-        json.dump(data, f, indent="\t")
+    write_json_file_with_backup(
+        _cached_config_path,
+        data,
+        indent="\t",
+        backup_group_name="config",
+    )
 
     _cached_config = config
     _cached_settings = None

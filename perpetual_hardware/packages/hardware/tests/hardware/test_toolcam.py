@@ -1,9 +1,10 @@
+import json
 import pytest
-import cv2
 import numpy as np
 from unittest.mock import Mock, patch
 from hardware.exceptions import CameraError
 from hardware.toolcam import ToolCamera
+from hardware.toolcam_helpers import persist_poe_camera_calibration
 
 def test_toolcam_initialization(sample_camera_params):
     camera = ToolCamera(sample_camera_params)
@@ -56,3 +57,39 @@ async def test_toolcam_capture_failure():
 
         with pytest.raises(CameraError):
             await camera.capture()
+
+
+def test_persist_poe_camera_calibration_creates_config_backup(tmp_path):
+    config_path = tmp_path / "data" / "config.json"
+    config_path.parent.mkdir(parents=True)
+    previous_payload = {
+        "robot": {
+            "tool": {
+                "poe_camera": {
+                    "ip": "127.0.0.1",
+                    "port": 80,
+                    "url": "http://old",
+                    "calibration_status": "uncalibrated",
+                }
+            }
+        }
+    }
+    config_path.write_text(json.dumps(previous_payload), encoding="utf-8")
+
+    persist_poe_camera_calibration(
+        {
+            "url": "http://new",
+            "mtx": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            "map1": [[1.0]],
+        },
+        config_path=config_path,
+    )
+
+    backups = list((tmp_path / "data" / "config").glob("*.json"))
+    updated_payload = json.loads(config_path.read_text(encoding="utf-8"))
+
+    assert len(backups) == 1
+    assert json.loads(backups[0].read_text(encoding="utf-8")) == previous_payload
+    assert updated_payload["robot"]["tool"]["poe_camera"]["url"] == "http://new"
+    assert updated_payload["robot"]["tool"]["poe_camera"]["calibration_status"] == "calibrated"
+    assert "map1" not in updated_payload["robot"]["tool"]["poe_camera"]

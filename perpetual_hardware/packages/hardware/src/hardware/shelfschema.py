@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any, Dict, List, Sequence, Tuple
+from perpetual_os1.common import write_json_file_with_backup
 
 Coordinate = Tuple[float, float, float]
 Coordinate2D = Tuple[float, float]
@@ -134,7 +134,12 @@ def write_storage_schema(path: str | Path) -> None:
     """Persist the generated storage schema as JSON."""
 
     target = Path(path)
-    target.write_text(json.dumps(storage_schema, indent=2))
+    write_json_file_with_backup(
+        target,
+        storage_schema,
+        indent=2,
+        backup_group_name="storage",
+    )
 
 
 write_storage_schema("lb2.json")

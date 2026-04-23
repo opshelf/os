@@ -15,6 +15,7 @@ from perpetual_os1.storage import StorageModuleSide
 from perpetual_os1_server.core.laser_auto_calibration import (
     _build_angle_rotation_center_deg,
     _build_angle_calibration_sample,
+    _build_default_scans_dir,
     _build_angle_fit_inputs,
     _build_angle_rotation_positions_for_side,
     _build_angle_x_positions,
@@ -90,6 +91,15 @@ def test_build_valid_rotation_positions_clips_out_of_range_targets() -> None:
     assert rotation_positions[0] == -4.0
     assert rotation_positions[-1] == 8.0
     assert -5.0 not in rotation_positions
+
+
+def test_build_default_scans_dir_uses_config_data_directory(tmp_path: Path) -> None:
+    config_path = tmp_path / "data" / "config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text("{}", encoding="utf-8")
+
+    with patch("perpetual_os1_server.core.laser_auto_calibration.get_config_path", return_value=config_path):
+        assert _build_default_scans_dir() == str((config_path.parent / "calibration").resolve())
 
 
 def test_build_valid_rotation_positions_respects_rotation_motor_limit() -> None:

@@ -26,7 +26,7 @@ from perpetual_os1_server.settings import clear_config_cache, get_config_path, g
 logger = logging.getLogger(__name__)
 
 ACTIVE_SESSION_STATES = {"starting", "running", "applying"}
-DEFAULT_SCANS_DIR = "/tmp"
+DEFAULT_SCANS_DIR_NAME = "calibration"
 AUTO_SCAN_X_MIN_MM = 5.0
 RIGHT_AUTO_SCAN_X_MAX_MM = 945.0
 ANGLE_DEBUG_DIR_NAME = "laser_auto_calibration_debug"
@@ -168,6 +168,15 @@ class _CompletedSideResult:
 
 def _get_timestamp() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _build_default_scans_dir() -> str:
+    config_path = get_config_path()
+
+    if config_path is not None:
+        return str((Path(config_path).resolve().parent / DEFAULT_SCANS_DIR_NAME).resolve())
+
+    return str((Path("data") / DEFAULT_SCANS_DIR_NAME).resolve())
 
 
 def _side_to_module_name(side: StorageModuleSide) -> Literal["left_module", "right_module"]:
@@ -440,7 +449,7 @@ class LaserAutoCalibrationManager:
         self._side_states: dict[str, _SideState] = {}
         self._active_worker: RobotWorker | None = None
         self._abort_requested = False
-        self._scans_dir = DEFAULT_SCANS_DIR
+        self._scans_dir = _build_default_scans_dir()
 
     async def get_snapshot(self) -> LaserAutoCalibrationSnapshot:
         async with self._lock:

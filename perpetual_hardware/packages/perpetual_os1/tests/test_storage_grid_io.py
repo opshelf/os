@@ -249,9 +249,25 @@ class TestSaveToFile:
 		grid = StorageGrid.model_validate(GRID_WITH_SHELVES)
 		grid.save_to_file(str(out))
 
-		backups = [p for p in tmp_path.iterdir() if p.name.startswith("grid_") and p.name.endswith(".json")]
+		backup_dir = tmp_path / "storage"
+		backups = list(backup_dir.glob("*.json"))
 
 		assert len(backups) == 1
+		assert json.loads(backups[0].read_text()) == EMPTY_GRID
+
+	def test_creates_backup_in_data_storage_directory(self, tmp_path):
+		out = tmp_path / "data" / "storage.json"
+		out.parent.mkdir(parents=True)
+		out.write_text(json.dumps(EMPTY_GRID))
+
+		grid = StorageGrid.model_validate(GRID_WITH_SHELVES)
+		grid.save_to_file(str(out))
+
+		backup_dir = tmp_path / "data" / "storage"
+		backups = list(backup_dir.glob("*.json"))
+
+		assert len(backups) == 1
+		assert json.loads(backups[0].read_text()) == EMPTY_GRID
 
 	def test_no_backup_for_new_file(self, tmp_path):
 		out = tmp_path / "brand_new.json"
