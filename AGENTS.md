@@ -8,6 +8,7 @@
 ## Preferred commands
 - Full stack: `./scripts/start` and `./scripts/stop` from repo root.
 - `./scripts/start` defaults to `production` mode unless `perpetual_hardware/data/.mode` already exists. Use `./scripts/start --mode development` for hot reload, `./scripts/start --hardware` for USB/device passthrough, and `./scripts/start --build` when switching between development and non-development stacks.
+- Do not restart repo-managed containers with raw `docker compose up/down/restart` when mode matters. Use `./scripts/start` and `./scripts/stop` so `OPERATING_MODE`, build-boundary handling, and `data/.mode` stay in sync.
 - Frontend checks: `cd dev_ui && npm run check` and `cd dev_ui && npm run build`. There is no repo-local frontend lint or test script.
 - Backend setup/checks: `cd perpetual_hardware && uv sync`, `cd perpetual_hardware && uv run pytest`, `cd perpetual_hardware && uv run ruff check packages`, `cd perpetual_hardware && uv run mypy packages/perpetual_os1_server/src`.
 - Focused backend tests work directly with package paths, for example `cd perpetual_hardware && uv run pytest packages/perpetual_os1_server/tests/test_storage_endpoints.py`.
