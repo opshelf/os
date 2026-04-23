@@ -3,12 +3,12 @@ import numpy as np
 import cv2
 import time
 from pathlib import Path
-from typing import Optional, Tuple, Any, List
+from typing import Optional, Tuple
 import numpy.typing as npt
 
 from hardware import toolcam_helpers
 from hardware.exceptions import (
-    CameraError, CameraConnectionError, CameraConfigError,
+    CameraError, CameraConnectionError,
     ImageError, ImageProcessingError, CalibrationError
 )
 
@@ -62,7 +62,6 @@ class ToolCamera:
         self.pattern_size = params.pattern_size
         self.square_size_mm = params.square_size_mm
 
-        # self.get_correct() #
 
 
     async def capture(self) -> npt.NDArray:
@@ -119,190 +118,6 @@ class ToolCamera:
             raise CameraError(f"OpenCV error: {str(e)}") from e
         except Exception as e:
             raise CameraError(f"Unexpected camera error: {str(e)}") from e
-    
-    def _build_remap(self, size_wh: Tuple[int, int]) -> None:
-        """
-        (Re)compute remap for given (w,h) using current intrinsics.
-        
-        Args:
-            size_wh: Tuple of (width, height) for the target image size
-            
-        Raises:
-            CalibrationError: If camera matrix computation fails
-            CameraConfigError: If remapping parameters cannot be computed
-        """
-        try:
-            w, h = size_wh
-            if w <= 0 or h <= 0:
-                raise ValueError(f"Invalid image dimensions: {w}x{h}")
-            
-            try:
-                self.newcameramtx, roi = cv2.getOptimalNewCameraMatrix(
-                    self.mtx, self.dist, (w, h), alpha=1, newImgSize=(w, h)
-                )
-                self.roi = (roi[0], roi[1], roi[2], roi[3])
-            except cv2.error as e:
-                raise CalibrationError(
-                    f"Failed to compute optimal camera matrix: {str(e)}"
-                ) from e
-                
-            # Identity rectification (no stereo R), just undistort into newcameramtx
-            R = np.eye(3, dtype=np.float32)
-            try:
-                self.map1, self.map2 = cv2.initUndistortRectifyMap(
-                    self.mtx, self.dist, R, self.newcameramtx, (w, h), cv2.CV_32FC1
-                )
-            except cv2.error as e:
-                raise CameraConfigError(
-                    f"Failed to initialize undistortion map: {str(e)}"
-                ) from e
-                
-            self.map_size = (w, h)
-            
-        except Exception as e:
-            if not isinstance(e, (CalibrationError, CameraConfigError)):
-                raise CameraConfigError(f"Remap computation failed: {str(e)}") from e
-            raise
-
-    def get_correct(self):
-        """
-        Calibrate camera intrinsics using chessboard pattern.
-        
-        Raises:
-            CalibrationError: If calibration pattern detection or parameter computation fails
-            ImageProcessingError: If image processing during calibration fails
-        """
-        try:
-            # Get calibration data
-            try:
-                obj3d, img2d, img_sz = toolcam_helpers.get_undistortion(
-                    self.pattern_size,
-                    self.square_size_mm
-                )
-            except Exception as e:
-                raise CalibrationError(
-                    f"Failed to get calibration pattern data: {str(e)}"
-                ) from e
-            
-            # Calibrate camera
-            try:
-                ret, self.mtx, self.dist, self.rvecs, self.tvecs = cv2.calibrateCamera(
-                    obj3d, img2d, img_sz, None, None
-                )
-                if not ret:
-                    raise CalibrationError("Camera calibration failed - invalid result")
-            except cv2.error as e:
-                raise CalibrationError(f"Camera calibration failed: {str(e)}") from e
-
-            # Load and process reference image for homography
-            try:
-                base = Path(__file__).resolve().parent if '__file__' in globals() else Path.cwd()
-                img_path = base / "img" / "1.jpg"     # image used to compute H
-                img = cv2.imread(str(img_path))
-                if img is None:
-                    raise ImageError(f"Failed to load calibration image: {img_path}")
-                
-                h0, w0 = img.shape[:2]
-                if h0 <= 0 or w0 <= 0:
-                    raise ImageError(f"Invalid image dimensions: {w0}x{h0}")
-                
-                # Build remap and undistort
-                self._build_remap((w0, h0))
-                
-                try:
-                    undist0 = cv2.remap(img, self.map1, self.map2, 
-                                      interpolation=cv2.INTER_LINEAR)
-                except cv2.error as e:
-                    raise ImageProcessingError(
-                        f"Failed to undistort calibration image: {str(e)}"
-                    ) from e
-
-                # Compute homography from chessboard
-                try:
-                    rectified0, self.H, _, detected_ps = toolcam_helpers.rectify_from_chessboard(
-                        undist0, pattern_size=None, 
-                        square_size_mm=self.square_size_mm, px_per_mm=10
-                    )
-                    if self.H is None:
-                        raise CalibrationError("Failed to compute homography matrix")
-                        
-                    self.pattern_size = detected_ps  # remember what we actually have
-                    if not detected_ps or len(detected_ps) != 2:
-                        raise CalibrationError(
-                            f"Invalid pattern size detected: {detected_ps}"
-                        )
-
-                    # Calculate board dimensions
-                    cols, rows = self.pattern_size
-                    if cols < 2 or rows < 2:
-                        raise CalibrationError(
-                            f"Invalid pattern dimensions: {cols}x{rows}"
-                        )
-                    self.board_W_mm = (cols - 1) * self.square_size_mm
-                    self.board_H_mm = (rows - 1) * self.square_size_mm
-
-                    try:
-                        def _matrix_to_floats(mat: Any) -> Optional[List[List[float]]]:
-                            if mat is None:
-                                return None
-                            arr = np.asarray(mat, dtype=float)
-                            return [[float(v) for v in row] for row in arr]
-
-                        def _vector_to_floats(vec: Any) -> Optional[List[float]]:
-                            if vec is None:
-                                return None
-                            arr = np.asarray(vec, dtype=float).reshape(-1)
-                            return [float(v) for v in arr]
-
-                        def _maybe_ints(values: Any) -> Optional[List[int]]:
-                            if values is None:
-                                return None
-                            return [int(v) for v in values]
-
-                        calibration_payload = {
-                            "mtx": _matrix_to_floats(self.mtx),
-                            "dist": _vector_to_floats(self.dist),
-                            "rvecs": [
-                                _vector_to_floats(rvec) for rvec in self.rvecs
-                            ] if self.rvecs is not None else None,
-                            "tvecs": [
-                                _vector_to_floats(tvec) for tvec in self.tvecs
-                            ] if self.tvecs is not None else None,
-                            "newcameramtx": _matrix_to_floats(self.newcameramtx),
-                            "roi": _maybe_ints(self.roi),
-                            "H": _matrix_to_floats(self.H),
-                            "map_size": _maybe_ints(self.map_size),
-                            "H_ref_size": _maybe_ints(self.H_ref_size),
-                            "board_W_mm": float(self.board_W_mm) if self.board_W_mm is not None else None,
-                            "board_H_mm": float(self.board_H_mm) if self.board_H_mm is not None else None,
-                            "pattern_size": _maybe_ints(self.pattern_size),
-                            "square_size_mm": float(self.square_size_mm),
-                        }
-                        toolcam_helpers.persist_poe_camera_calibration(calibration_payload)
-                    except Exception as e:
-                        raise CalibrationError(
-                            f"Failed to persist calibration data: {str(e)}"
-                        ) from e
-                    
-                except Exception as e:
-                    if not isinstance(e, CalibrationError):
-                        raise CalibrationError(
-                            f"Failed to compute homography: {str(e)}"
-                        ) from e
-                    raise
-                    
-            except Exception as e:
-                if not isinstance(e, (ImageError, CalibrationError, ImageProcessingError)):
-                    raise CalibrationError(
-                        f"Unexpected error during calibration: {str(e)}"
-                    ) from e
-                raise
-
-        except Exception as e:
-            if not isinstance(e, (CalibrationError, ImageError, ImageProcessingError)):
-                raise CalibrationError(f"Calibration failed: {str(e)}") from e
-            raise
-
 
     def correct(self, img: npt.NDArray) -> npt.NDArray:
         """
