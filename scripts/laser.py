@@ -350,6 +350,7 @@ async def run_scan(args: argparse.Namespace) -> int:
 	laser_module.print_status('phase=config')
 	config = load_config_file(args.config)
 	scans_dir = derive_scans_dir(args.config)
+	args.scans_dir = scans_dir
 	scan_config = config.robot.grid.scan
 	recorder: laser_module.StagedScanRecorder | None = None
 	rescan_target = parse_single_cell_rescan_target(args.rescan_cell)
