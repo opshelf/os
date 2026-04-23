@@ -16,10 +16,7 @@ iocam
     Time-of-Flight (TOF) camera interface for item sizing and detection
 
 toolcam
-    Tool-mounted camera interface for position detection and calibration
-
-toolcam_helpers
-    Helper functions for tool camera processing and calibration
+    Tool-mounted camera interface for frame capture
 
 motor_helpers
     Motor register definitions and constants
