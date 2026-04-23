@@ -3266,10 +3266,11 @@ def resolve_target_cell(
 	side: StorageModuleSide,
 	target: SingleCellRescanTarget,
 ) -> Any:
-	try:
-		target_shelf = grid.get_shelf(side, target.shelf_idx)
-	except IndexError as exc:
-		raise ValueError(f"Shelf {target.shelf_idx} does not exist on {side.value}") from exc
+	target_shelf = resolve_target_shelf(
+		grid=grid,
+		side=side,
+		shelf_idx=target.shelf_idx,
+	)
 
 	try:
 		target_cell = target_shelf.get_cell(target.cell_idx)
@@ -3284,6 +3285,70 @@ def resolve_target_cell(
 		)
 
 	return target_cell
+
+
+def resolve_target_shelf(
+	*,
+	grid: StorageGrid,
+	side: StorageModuleSide,
+	shelf_idx: int,
+) -> Any:
+	try:
+		target_shelf = grid.get_shelf(side, shelf_idx)
+	except IndexError as exc:
+		raise ValueError(f"Shelf {shelf_idx} does not exist on {side.value}") from exc
+
+	return target_shelf
+
+
+def build_single_shelf_known_edge_y(
+	*,
+	grid: StorageGrid,
+	side: StorageModuleSide,
+	shelf_idx: int,
+	scan_config: Any,
+) -> list[float]:
+	target_shelf = resolve_target_shelf(
+		grid=grid,
+		side=side,
+		shelf_idx=shelf_idx,
+	)
+	candidate_center_y_values: list[float] = []
+
+	for cell in target_shelf.cells:
+		if cell.calibration_point is None:
+			continue
+
+		candidate_center_y_values.append(
+			float(cell.calibration_point.y) + float(scan_config.laser_offset_y_mm)
+		)
+
+	if len(candidate_center_y_values) == 0:
+		raise ValueError(f"Shelf {shelf_idx} has no calibration points on {side.value}")
+
+	hole_sweep_offsets_mm = get_shelf_hole_sweep_offsets_mm(scan_config)
+	reference_offset_mm = float(hole_sweep_offsets_mm[0])
+	target_center_y_mm = float(np.median(np.array(candidate_center_y_values, dtype=np.float32)))
+
+	return [target_center_y_mm - reference_offset_mm]
+
+
+def merge_scanned_shelf(
+	*,
+	existing_shelves: list[Any],
+	scanned_shelf: Any,
+	target_shelf_idx: int,
+) -> list[Any]:
+	updated_shelves = list(existing_shelves)
+
+	for shelf_position, shelf in enumerate(updated_shelves):
+		if int(shelf.shelf_idx) != target_shelf_idx:
+			continue
+
+		updated_shelves[shelf_position] = scanned_shelf
+		return updated_shelves
+
+	raise ValueError(f"Shelf {target_shelf_idx} does not exist")
 
 
 def apply_single_cell_rescan(
@@ -3320,6 +3385,70 @@ def apply_single_cell_rescan(
 		f"tool_y={float(detected_cell.tool_y_mm):.3f} "
 		f"z_offset={float(calibration_point.z_offset):.3f}"
 	)
+
+
+def apply_single_shelf_analysis(
+	*,
+	analysis: Any,
+	grid: StorageGrid,
+	grid_path: Path,
+	scan_config: Any,
+	side: StorageModuleSide,
+	target_shelf_idx: int,
+) -> None:
+	if len(analysis.shelves) == 0:
+		raise ValueError("No tray openings detected from scan")
+
+	if len(analysis.shelves) != 1:
+		raise ValueError("Expected exactly one shelf from single-shelf calibration")
+
+	target_shelf = resolve_target_shelf(
+		grid=grid,
+		side=side,
+		shelf_idx=target_shelf_idx,
+	)
+	remapped_existing_shelf = target_shelf.model_copy(
+		deep=True,
+		update={"shelf_idx": 0},
+	)
+	scanned_shelves = build_shelves_from_scan(
+		side=side,
+		analysis=analysis,
+		existing_shelves=[remapped_existing_shelf],
+	)
+
+	if len(scanned_shelves) != 1:
+		raise ValueError("Expected exactly one scanned shelf for single-shelf calibration")
+
+	scanned_shelf = scanned_shelves[0]
+	scanned_shelf.shelf_idx = target_shelf_idx
+	scanned_shelf.divider_width = float(target_shelf.divider_width)
+	apply_wall_depth_z_offsets(
+		analysis=analysis,
+		scanned_shelves=[scanned_shelf],
+		metadata_path=str(analysis.metadata_path),
+		scan_config=scan_config,
+		side=side,
+	)
+	left_module = list(grid.left_module)
+	right_module = list(grid.right_module)
+	merged_shelves = merge_scanned_shelf(
+		existing_shelves=grid.get_side(side),
+		scanned_shelf=scanned_shelf,
+		target_shelf_idx=target_shelf_idx,
+	)
+
+	if side == StorageModuleSide.LEFT:
+		left_module = merged_shelves
+	else:
+		right_module = merged_shelves
+
+	storage_grid = StorageGrid(
+		left_module=left_module,
+		right_module=right_module,
+		filename=grid.filename if grid.filename != "" else str(grid_path),
+	)
+	storage_grid.save()
 
 
 def resolve_validation_coordinate(

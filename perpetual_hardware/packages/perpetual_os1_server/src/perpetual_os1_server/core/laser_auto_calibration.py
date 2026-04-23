@@ -118,10 +118,18 @@ class LaserAutoCalibrationAngleResult(BaseModel):
     updated_rotation_deg: float
 
 
+class LaserAutoCalibrationScope(BaseModel):
+    mode: Literal["all", "side", "shelf", "cell"] = "all"
+    side: Literal["left_module", "right_module"] | None = None
+    shelf_idx: int | None = None
+    cell_idx: int | None = None
+
+
 class LaserAutoCalibrationSnapshot(BaseModel):
     state: Literal["idle", "starting", "running", "applying", "completed", "failed", "cancelled"] = "idle"
     session_id: str | None = None
     run_id: str | None = None
+    requested_scope: LaserAutoCalibrationScope = Field(default_factory=LaserAutoCalibrationScope)
     current_side: Literal["left_module", "right_module"] | None = None
     current_stage: str | None = None
     bounds: ScanBounds | None = None
@@ -191,6 +199,13 @@ def _side_to_short_name(side: StorageModuleSide) -> Literal["left", "right"]:
         return "left"
 
     return "right"
+
+
+def _module_name_to_side(side_name: Literal["left_module", "right_module"]) -> StorageModuleSide:
+    if side_name == "left_module":
+        return StorageModuleSide.LEFT
+
+    return StorageModuleSide.RIGHT
 
 
 def _build_angle_rotation_center_deg(side: StorageModuleSide) -> float:
@@ -455,9 +470,19 @@ class LaserAutoCalibrationManager:
         async with self._lock:
             return self._snapshot.model_copy(deep=True)
 
-    async def ensure_session_started(self, worker: RobotWorker) -> LaserAutoCalibrationSnapshot:
+    async def ensure_session_started(
+        self,
+        worker: RobotWorker,
+        requested_scope: LaserAutoCalibrationScope | None = None,
+    ) -> LaserAutoCalibrationSnapshot:
+        if requested_scope is None:
+            requested_scope = LaserAutoCalibrationScope()
+
         async with self._lock:
             if self._task is not None and self._task.done() is False:
+                if self._snapshot.requested_scope.model_dump() != requested_scope.model_dump():
+                    raise RuntimeError("Laser auto calibration is already running with a different scope")
+
                 return self._snapshot.model_copy(deep=True)
 
             started_at = _get_timestamp()
@@ -467,11 +492,18 @@ class LaserAutoCalibrationManager:
             self._snapshot = LaserAutoCalibrationSnapshot(
                 state="starting",
                 session_id=uuid4().hex,
+                requested_scope=requested_scope.model_copy(deep=True),
                 current_stage="session-start",
                 started_at=started_at,
                 updated_at=started_at,
             )
-            self._task = asyncio.create_task(self._run_session(worker, self._snapshot.session_id))
+            self._task = asyncio.create_task(
+                self._run_session(
+                    worker,
+                    self._snapshot.session_id,
+                    requested_scope.model_copy(deep=True),
+                )
+            )
             snapshot = self._snapshot.model_copy(deep=True)
 
         await self._publish(snapshot)
@@ -518,11 +550,19 @@ class LaserAutoCalibrationManager:
         async with self._lock:
             return self._task is not None and self._task.done() is False
 
-    async def _run_session(self, worker: RobotWorker, session_id: str | None) -> None:
+    async def _run_session(
+        self,
+        worker: RobotWorker,
+        session_id: str | None,
+        requested_scope: LaserAutoCalibrationScope | None = None,
+    ) -> None:
+        if requested_scope is None:
+            requested_scope = LaserAutoCalibrationScope()
+
         original_params = await self._get_current_calibration_params(worker)
 
         try:
-            await self._run_all_sides(worker)
+            await self._run_requested_scope(worker, requested_scope)
             await self._set_terminal_state("completed", None)
         except asyncio.CancelledError:
             current_task = asyncio.current_task()
@@ -556,6 +596,47 @@ class LaserAutoCalibrationManager:
                     self._task = None
                     self._active_worker = None
                     self._abort_requested = False
+
+    async def _run_requested_scope(
+        self,
+        worker: RobotWorker,
+        requested_scope: LaserAutoCalibrationScope,
+    ) -> None:
+        if requested_scope.mode == "all":
+            await self._run_all_sides(worker)
+            return
+
+        if requested_scope.side is None:
+            raise ValueError("A scoped auto calibration request requires a side")
+
+        side = _module_name_to_side(requested_scope.side)
+
+        if requested_scope.mode == "side":
+            await self._run_single_side(worker, side)
+            return
+
+        if requested_scope.mode == "shelf":
+            if requested_scope.shelf_idx is None:
+                raise ValueError("Single-shelf auto calibration requires a shelf index")
+
+            await self._run_single_shelf(worker, side, int(requested_scope.shelf_idx))
+            return
+
+        if requested_scope.mode == "cell":
+            if requested_scope.shelf_idx is None or requested_scope.cell_idx is None:
+                raise ValueError("Single-cell auto calibration requires shelf and cell indices")
+
+            await self._run_single_cell(
+                worker,
+                side,
+                laser_module.SingleCellRescanTarget(
+                    shelf_idx=int(requested_scope.shelf_idx),
+                    cell_idx=int(requested_scope.cell_idx),
+                ),
+            )
+            return
+
+        raise ValueError(f"Unsupported auto calibration scope: {requested_scope.mode}")
 
     async def _run_all_sides(self, worker: RobotWorker) -> None:
         completed_results: list[_CompletedSideResult] = []
@@ -609,6 +690,99 @@ class LaserAutoCalibrationManager:
 
         await self._persist_completed_results(worker, completed_results)
 
+    async def _run_single_side(self, worker: RobotWorker, side: StorageModuleSide) -> None:
+        completed_results: list[_CompletedSideResult] = []
+        scan_config = get_root_config().robot.grid.scan
+        bounds = _build_bounds_for_side(scan_config, side)
+        angle_result = await self._run_angle_calibration_for_side(worker, side, bounds)
+        await self._apply_angle_calibration_in_memory(worker, side, angle_result)
+        top_shelf_y_mm: float | None = None
+
+        if side == StorageModuleSide.LEFT:
+            top_shelf_y_mm = float(angle_result.capture_y_mm)
+
+        probe_y_mm = await self._resolve_stage_extension_probe_y_mm(
+            worker,
+            side,
+            bounds,
+            top_shelf_y_mm=top_shelf_y_mm,
+        )
+        stage_extension_mm = await self._run_stage_extension_calibration_for_side(
+            worker,
+            side,
+            bounds,
+            probe_y_mm=probe_y_mm,
+        )
+        await self._apply_stage_extension_calibration_in_memory(worker, side, stage_extension_mm)
+        completed_results.append(await self._run_side(worker, side, angle_result))
+        await self._persist_completed_results(worker, completed_results)
+
+    async def _run_single_shelf(
+        self,
+        worker: RobotWorker,
+        side: StorageModuleSide,
+        shelf_idx: int,
+    ) -> None:
+        config = get_root_config()
+        scan_config = config.robot.grid.scan
+        grid_path = Path(resolve_grid_path(config))
+        grid = laser_module.load_grid(grid_path)
+        bounds = _build_bounds_for_side(scan_config, side)
+        known_shelf_edge_y = laser_module.build_single_shelf_known_edge_y(
+            grid=grid,
+            side=side,
+            shelf_idx=shelf_idx,
+            scan_config=scan_config,
+        )
+        analysis = await self._run_scan_analysis(
+            worker,
+            side,
+            bounds,
+            known_shelf_edge_y=known_shelf_edge_y,
+        )
+        await self._persist_single_shelf_result(
+            worker,
+            side,
+            analysis,
+            shelf_idx,
+        )
+
+    async def _run_single_cell(
+        self,
+        worker: RobotWorker,
+        side: StorageModuleSide,
+        target: laser_module.SingleCellRescanTarget,
+    ) -> None:
+        config = get_root_config()
+        scan_config = config.robot.grid.scan
+        grid_path = Path(resolve_grid_path(config))
+        grid = laser_module.load_grid(grid_path)
+        candidate = laser_module.build_single_cell_rescan_candidate(
+            grid=grid,
+            side=side,
+            target=target,
+            scan_config=scan_config,
+        )
+        bounds = laser_module.build_single_cell_rescan_bounds(
+            candidate=candidate,
+            scan_config=scan_config,
+        )
+        analysis = await self._run_scan_analysis(
+            worker,
+            side,
+            bounds,
+            seeded_candidates=[candidate],
+            seeded_wall_depth_mm=float(candidate.wall_depth_mm),
+            rescan_target=target,
+        )
+        await self._persist_single_cell_result(
+            worker,
+            side,
+            analysis,
+            target,
+            candidate,
+        )
+
     async def _home_after_abort(self, worker: RobotWorker) -> None:
         if worker._robot._tool._mx is not None:
             await worker._robot._tool._mx.move_to_position(angle_module.RIGHT_MODULE_ROTATION_SAFE_X_MM)
@@ -629,34 +803,61 @@ class LaserAutoCalibrationManager:
         side: StorageModuleSide,
         angle_result: LaserAutoCalibrationAngleResult,
     ) -> _CompletedSideResult:
-        side_name = _side_to_module_name(side)
         config = get_root_config()
         scan_config = config.robot.grid.scan
         bounds = _build_bounds_for_side(scan_config, side)
-        self._side_states.setdefault(side_name, _SideState(bounds=bounds))
 
         await self._apply_angle_calibration_in_memory(worker, side, angle_result)
+        analysis = await self._run_scan_analysis(worker, side, bounds)
 
+        return _CompletedSideResult(
+            side=side,
+            bounds=bounds,
+            analysis=analysis,
+            angle_result=angle_result,
+        )
+
+    async def _run_scan_analysis(
+        self,
+        worker: RobotWorker,
+        side: StorageModuleSide,
+        bounds: ScanBounds,
+        *,
+        known_shelf_edge_y: list[float] | None = None,
+        seeded_candidates: list[laser_module.GapCandidateRegion] | None = None,
+        seeded_wall_depth_mm: float | None = None,
+        rescan_target: laser_module.SingleCellRescanTarget | None = None,
+    ) -> Any:
+        side_name = _side_to_module_name(side)
         config = get_root_config()
         scan_config = config.robot.grid.scan
         settle_ms = int(scan_config.settle_ms)
         samples_per_point = int(scan_config.samples_per_point)
         coarse_settle_ms = int(laser_module.get_coarse_settle_ms(settle_ms))
         coarse_samples_per_point = int(laser_module.get_coarse_samples_per_point(samples_per_point))
+        raw_rescan_target: str | None = None
+        raw_x_bounds: tuple[float, float] | None = (bounds.x_min, bounds.x_max)
+        raw_y_bounds: tuple[float, float] | None = (bounds.y_min, bounds.y_max)
+
+        if rescan_target is not None:
+            raw_rescan_target = f"{rescan_target.shelf_idx}:{rescan_target.cell_idx}"
+            raw_x_bounds = None
+            raw_y_bounds = None
+
         args = argparse.Namespace(
             module=_side_to_short_name(side),
-            x=(bounds.x_min, bounds.x_max),
-            y=(bounds.y_min, bounds.y_max),
+            x=raw_x_bounds,
+            y=raw_y_bounds,
             y_offset=0.0,
             settle_ms=None,
             samples_per_point=None,
-            known_shelf_edge_y=None,
+            known_shelf_edge_y=known_shelf_edge_y,
             npy=None,
             scans_dir=self._scans_dir,
             config=str(get_config_path() or Path("data/config.json")),
             apply=True,
             shelf_scout_only=False,
-            rescan_cell=None,
+            rescan_cell=raw_rescan_target,
         )
         run_parameters = laser_module.build_run_parameters(
             args=args,
@@ -669,11 +870,26 @@ class LaserAutoCalibrationManager:
             coarse_samples_per_point=coarse_samples_per_point,
             scan_config=scan_config,
         )
+
+        if rescan_target is not None and seeded_candidates is not None and len(seeded_candidates) == 1:
+            candidate = seeded_candidates[0]
+            run_parameters["single_cell_rescan"] = {
+                "shelf_idx": int(rescan_target.shelf_idx),
+                "cell_idx": int(rescan_target.cell_idx),
+                "candidate": {
+                    "x_min": float(candidate.x_min),
+                    "x_max": float(candidate.x_max),
+                    "y_min": float(candidate.y_min),
+                    "y_max": float(candidate.y_max),
+                    "wall_depth_mm": float(candidate.wall_depth_mm),
+                },
+            }
+
         recorder = laser_module.create_staged_scan_recorder(
             scans_dir=self._scans_dir,
             run_parameters=run_parameters,
         )
-
+        self._side_states.setdefault(side_name, _SideState(bounds=bounds))
         await self._refresh_scan_side_state(side_name, recorder, bounds)
         logger.info(
             "laser_auto_calibration_scan_start side=%s run_dir=%s",
@@ -698,7 +914,9 @@ class LaserAutoCalibrationManager:
                 scans_dir=self._scans_dir,
                 run_parameters=run_parameters,
                 shelf_scout_only=False,
-                known_shelf_edge_y=None,
+                known_shelf_edge_y=known_shelf_edge_y,
+                seeded_candidates=seeded_candidates,
+                seeded_wall_depth_mm=seeded_wall_depth_mm,
                 recorder=recorder,
                 should_abort=self._should_abort_work,
             )
@@ -713,13 +931,7 @@ class LaserAutoCalibrationManager:
             bounds=bounds,
             stage_detail={"side": side_name, "phase": "completed", "run_id": analysis.run_id},
         )
-
-        return _CompletedSideResult(
-            side=side,
-            bounds=bounds,
-            analysis=analysis,
-            angle_result=angle_result,
-        )
+        return analysis
 
     async def _run_angle_calibration_for_side(
         self,
@@ -1312,6 +1524,80 @@ class LaserAutoCalibrationManager:
 
             raise
 
+        worker._robot._grid = laser_module.load_grid(grid_path)
+
+    async def _persist_single_shelf_result(
+        self,
+        worker: RobotWorker,
+        side: StorageModuleSide,
+        analysis: Any,
+        shelf_idx: int,
+    ) -> None:
+        await self._update_snapshot(
+            state="applying",
+            current_stage="apply",
+            stage_detail={
+                "phase": "apply",
+                "scope": "shelf",
+                "side": _side_to_module_name(side),
+                "shelf_idx": shelf_idx,
+            },
+        )
+
+        config = get_root_config()
+        scan_config = config.robot.grid.scan
+        grid_path = Path(resolve_grid_path(config))
+        grid = laser_module.load_grid(grid_path)
+        laser_module.apply_single_shelf_analysis(
+            analysis=analysis,
+            grid=grid,
+            grid_path=grid_path,
+            scan_config=scan_config,
+            side=side,
+            target_shelf_idx=shelf_idx,
+        )
+        worker._robot._grid = laser_module.load_grid(grid_path)
+
+    async def _persist_single_cell_result(
+        self,
+        worker: RobotWorker,
+        side: StorageModuleSide,
+        analysis: Any,
+        target: laser_module.SingleCellRescanTarget,
+        candidate: laser_module.GapCandidateRegion,
+    ) -> None:
+        await self._update_snapshot(
+            state="applying",
+            current_stage="apply",
+            stage_detail={
+                "phase": "apply",
+                "scope": "cell",
+                "side": _side_to_module_name(side),
+                "shelf_idx": int(target.shelf_idx),
+                "cell_idx": int(target.cell_idx),
+            },
+        )
+
+        config = get_root_config()
+        scan_config = config.robot.grid.scan
+        grid_path = Path(resolve_grid_path(config))
+        grid = laser_module.load_grid(grid_path)
+        detected_cell = laser_module.find_detected_cell_for_candidate(
+            analysis=analysis,
+            candidate=candidate,
+        )
+
+        if detected_cell is None:
+            raise ValueError("No detected cell matched the single-cell calibration target")
+
+        laser_module.apply_single_cell_rescan(
+            grid=grid,
+            target=target,
+            side=side,
+            detected_cell=detected_cell,
+            wall_depth_mm=float(analysis.wall_depth_mm),
+            scan_config=scan_config,
+        )
         worker._robot._grid = laser_module.load_grid(grid_path)
 
     async def _get_current_calibration_params(self, worker: RobotWorker) -> dict[str, float]:

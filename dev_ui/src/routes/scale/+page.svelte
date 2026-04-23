@@ -418,7 +418,7 @@
 	.action-buttons {
 		display: flex;
 		gap: 1em;
-		margin-top: 1em;
+		margin-top: 1.5em;
 	}
 
 	.calibration-buttons {

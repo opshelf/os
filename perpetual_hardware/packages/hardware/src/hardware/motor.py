@@ -384,7 +384,7 @@ class Motor():
         if float(current_position_mm) <= target_mm + HOME_APPROACH_TOLERANCE_MM:
             return
 
-        await self.jog(target_mm - float(current_position_mm), rpm=rpm, homing=False)
+        await self.move_to_position(target_mm, rpm=rpm)
 
     async def _home_with_sensor(self, sensor_cfg: Any) -> None:
         sensor = self._get_home_sensor()
@@ -692,8 +692,11 @@ class Motor():
             if pos_l is None or pos_h is None:
                 raise MotorError(f"Failed to read position registers for motor {self._motor_id}")
             
-            # Combine high and low position values
-            pos = (pos_h << 16) | pos_l
+            # Position registers are a signed 32-bit value split across two 16-bit registers.
+            pos = ((pos_h & 0xFFFF) << 16) | (pos_l & 0xFFFF)
+            if pos & 0x8000_0000:
+                pos -= 0x1_0000_0000
+
             if not pos:
                 self._cur_pos = 0.0
                 return 0.0
@@ -719,7 +722,10 @@ class Motor():
                 pos_h = await self._controller.read_holding_registers(self._motor_id, reg_high)
                 if pos_l is None or pos_h is None:
                     raise MotorError(f"Failed to re-read position for motor {self._motor_id}")
-                pos = (pos_h << 16) | pos_l
+                pos = ((pos_h & 0xFFFF) << 16) | (pos_l & 0xFFFF)
+                if pos & 0x8000_0000:
+                    pos -= 0x1_0000_0000
+
                 physical_pos = (pos / ppr) * self._params.mpr
                 logical_pos = self._params.physical_to_logical(physical_pos)
                 if abs(logical_pos) > max_valid:

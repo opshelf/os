@@ -116,10 +116,10 @@
 		loading = true;
 		loadError = '';
 
-			try {
-				storageGrid = await getStorageGrid();
-				syncSelection(initialShelf ?? selectedShelf, initialCell ?? selectedCell);
-			} catch (err) {
+		try {
+			storageGrid = await getStorageGrid();
+			syncSelection(initialShelf ?? selectedShelf, initialCell ?? selectedCell);
+		} catch (err) {
 			handleNeedsHomeError(err);
 			loadError = err instanceof Error ? err.message : 'failed to load storage grid';
 		} finally {
@@ -232,15 +232,15 @@
 		selectedCell = matchingCell.cell_idx;
 	}
 
-		function didChangeSide(event: Event): void {
-			const target = event.target as HTMLSelectElement;
+	function didChangeSide(event: Event): void {
+		const target = event.target as HTMLSelectElement;
 
-			selectedSide = target.value as 'left_module' | 'right_module';
-			syncSelection();
-			currentPosition = null;
-			error = '';
-			message = '';
-			warning = '';
+		selectedSide = target.value as 'left_module' | 'right_module';
+		syncSelection();
+		currentPosition = null;
+		error = '';
+		message = '';
+		warning = '';
 	}
 
 	function didChangeShelf(event: Event): void {
@@ -865,7 +865,7 @@
 	}
 
 	.status-table {
-		margin-top: 1em;
+		margin-top: 1.5em;
 	}
 
 	.jog-controls {

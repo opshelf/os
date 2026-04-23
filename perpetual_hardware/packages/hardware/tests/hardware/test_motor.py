@@ -281,11 +281,11 @@ async def test_move_near_home_uses_release_target_when_absolute_release_is_confi
     )
     motor = Motor(mock_controller, params)
     motor.get_position = AsyncMock(return_value=40.0)
-    motor.jog = AsyncMock()
+    motor.move_to_position = AsyncMock()
 
     await motor._move_near_home(params.ret_rpm)
 
-    motor.jog.assert_awaited_once_with(-28.0, rpm=params.ret_rpm, homing=False)
+    motor.move_to_position.assert_awaited_once_with(12.0, rpm=params.ret_rpm)
 
 
 @pytest.mark.asyncio
@@ -462,6 +462,27 @@ async def test_motor_get_position_caches_zero_position(mock_controller):
 
     assert position == 0.0
     assert motor._cur_pos == 0.0
+
+
+@pytest.mark.asyncio
+async def test_motor_get_position_decodes_signed_32_bit_values(mock_controller):
+    params = SimpleNamespace(
+        motor_id=1,
+        position_reg_high=0x602C,
+        position_reg_low=0x602D,
+        ppr=10000,
+        mpr=50,
+        lim=75,
+        physical_to_logical=lambda physical: physical,
+    )
+    motor = Motor(mock_controller, params)
+
+    mock_controller.read_holding_registers.side_effect = [0xFFDC, 0xFFFF]
+
+    position = await motor.get_position()
+
+    assert position == pytest.approx(-0.18)
+    assert motor._cur_pos == pytest.approx(-0.18)
 
 
 @pytest.mark.asyncio
