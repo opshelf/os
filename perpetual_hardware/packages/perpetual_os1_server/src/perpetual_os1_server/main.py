@@ -8,7 +8,7 @@ import traceback
 from contextlib import asynccontextmanager
 import logging
 from pathlib import Path
-from typing import Any, AsyncGenerator
+from typing import Any, AsyncGenerator, cast
 
 import sentry_sdk
 from fastapi import FastAPI, Request
@@ -58,19 +58,26 @@ def _redact_sensitive_mapping(value: Any) -> Any:
 
 
 def _before_send_sentry_event(event: dict[str, Any], _hint: dict[str, Any]) -> dict[str, Any] | None:
-	request = event.get("request")
-	if isinstance(request, dict) is True:
-		headers = request.get("headers")
-		if isinstance(headers, dict) is True:
-			request["headers"] = _redact_sensitive_mapping(headers)
+	request_value = event.get("request")
+	if isinstance(request_value, dict) is False:
+		return event
+
+	request = cast(dict[str, Any], request_value)
+	headers_value = request.get("headers")
+	if isinstance(headers_value, dict) is False:
+		return event
+
+	request["headers"] = _redact_sensitive_mapping(headers_value)
 
 	return event
 
 
 def _before_send_sentry_log(log: dict[str, Any], _hint: dict[str, Any]) -> dict[str, Any] | None:
-	attributes = log.get("attributes")
-	if isinstance(attributes, dict) is True:
-		log["attributes"] = _redact_sensitive_mapping(attributes)
+	attributes_value = log.get("attributes")
+	if isinstance(attributes_value, dict) is False:
+		return log
+
+	log["attributes"] = _redact_sensitive_mapping(attributes_value)
 
 	return log
 
@@ -109,8 +116,8 @@ def _configure_sentry() -> bool:
 		environment=mode.value,
 		release=os.getenv("APP_VERSION", "0.1.0"),
 		server_name=device_id,
-		before_send=_before_send_sentry_event,
-		before_send_log=_before_send_sentry_log,
+		before_send=cast(Any, _before_send_sentry_event),
+		before_send_log=cast(Any, _before_send_sentry_log),
 		transport=HttpTransport,
 		shutdown_timeout=2,
 		debug=os.getenv("SENTRY_DEBUG", "false").lower() in ("true", "1", "yes"),

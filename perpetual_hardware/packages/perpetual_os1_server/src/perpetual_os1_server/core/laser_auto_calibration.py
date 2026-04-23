@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import argparse
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -8,7 +9,6 @@ import logging
 from pathlib import Path
 import re
 import sys
-from types import SimpleNamespace
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -643,7 +643,7 @@ class LaserAutoCalibrationManager:
         samples_per_point = int(scan_config.samples_per_point)
         coarse_settle_ms = int(laser_module.get_coarse_settle_ms(settle_ms))
         coarse_samples_per_point = int(laser_module.get_coarse_samples_per_point(samples_per_point))
-        args = SimpleNamespace(
+        args = argparse.Namespace(
             module=_side_to_short_name(side),
             x=(bounds.x_min, bounds.x_max),
             y=(bounds.y_min, bounds.y_max),
@@ -755,7 +755,11 @@ class LaserAutoCalibrationManager:
         )
         rotation_param = _side_to_rotation_param_name(side)
 
-        previous_rotation_deg = float(await tool.get_param(rotation_param))
+        previous_rotation_value = await tool.get_param(rotation_param)
+        if previous_rotation_value is None:
+            raise ValueError(f"{rotation_param} is required")
+
+        previous_rotation_deg = float(previous_rotation_value)
         rotation_center_deg = _build_angle_rotation_center_deg(side)
         rotation_limit_deg = float(tool._mr._params.lim)
         rotation_positions = _build_valid_rotation_positions(
@@ -772,7 +776,7 @@ class LaserAutoCalibrationManager:
             raise ValueError("Z_EXTENSION_PLACE, Z_MOVE_RPM, and Z_MOVE_ACCEL are required")
 
         base_z_mm = float(z_extension_place) + scan_z_offset_mm
-        angle_args = SimpleNamespace(
+        angle_args = argparse.Namespace(
             y_mm=None,
             y_range=(bounds.y_min, bounds.y_max),
             scout_x_mm=None,
@@ -951,7 +955,11 @@ class LaserAutoCalibrationManager:
         side_number = 0 if side == StorageModuleSide.LEFT else 1
         side_module_name = _side_to_module_name(side)
         rotation_param = _side_to_rotation_param_name(side)
-        absolute_rotation_deg = float(await tool.get_param(rotation_param))
+        absolute_rotation_value = await tool.get_param(rotation_param)
+        if absolute_rotation_value is None:
+            raise ValueError(f"{rotation_param} is required")
+
+        absolute_rotation_deg = float(absolute_rotation_value)
         z_extension_place = await tool.get_param("Z_EXTENSION_PLACE")
         z_move_rpm = await tool.get_param("Z_MOVE_RPM")
         z_move_accel = await tool.get_param("Z_MOVE_ACCEL")
@@ -1125,9 +1133,13 @@ class LaserAutoCalibrationManager:
                 if scan_config.scan_z_offset_mm is not None
                 else angle_module.LASER_SCAN_Z_OFFSET_MM
             )
-            absolute_rotation_deg = float(await tool.get_param(_side_to_rotation_param_name(side)))
+            absolute_rotation_value = await tool.get_param(_side_to_rotation_param_name(side))
+            if absolute_rotation_value is None:
+                raise ValueError(f"{_side_to_rotation_param_name(side)} is required")
+
+            absolute_rotation_deg = float(absolute_rotation_value)
             base_z_mm = float(z_extension_place) + scan_z_offset_mm
-            angle_args = SimpleNamespace(
+            angle_args = argparse.Namespace(
                 y_mm=None,
                 y_range=(bounds.y_min, bounds.y_max),
                 scout_x_mm=None,
@@ -1308,6 +1320,9 @@ class LaserAutoCalibrationManager:
         front_stage_extension = await worker._robot._tool.get_param("STAGE_EXTENSION_SHELF_FRONT")
         back_stage_extension = await worker._robot._tool.get_param("STAGE_EXTENSION_SHELF_BACK")
 
+        if front is None or back is None or front_stage_extension is None or back_stage_extension is None:
+            raise ValueError("Current calibration parameters are not fully configured")
+
         return {
             "ROTATION_FRONT": float(front),
             "ROTATION_BACK": float(back),
@@ -1385,7 +1400,7 @@ class LaserAutoCalibrationManager:
         if self._should_abort_work() is True:
             raise asyncio.CancelledError()
 
-    def _build_scan_status_callback(self, side_name: str, recorder: Any, bounds: ScanBounds):
+    def _build_scan_status_callback(self, side_name: Literal["left_module", "right_module"], recorder: Any, bounds: ScanBounds):
         async def did_receive_status(message: str) -> None:
             if self._should_preserve_cancelling_snapshot() is True:
                 return
@@ -1474,19 +1489,21 @@ class LaserAutoCalibrationManager:
 
             if fine_match is not None or fine_retry_match is not None:
                 current_stage = "fine-scan"
-                active_match = fine_match or fine_retry_match
-                side_state.live_candidate_count = max(
-                    side_state.live_candidate_count,
-                    int(active_match.group("count")),
-                )
-                stage_detail.update(
-                    {
-                        "phase": "fine-scan",
-                        "candidate_idx": int(active_match.group("idx")),
-                        "candidate_count": int(active_match.group("count")),
-                        "is_retry": fine_retry_match is not None,
-                    }
-                )
+                active_match = fine_match if fine_match is not None else fine_retry_match
+
+                if active_match is not None:
+                    side_state.live_candidate_count = max(
+                        side_state.live_candidate_count,
+                        int(active_match.group("count")),
+                    )
+                    stage_detail.update(
+                        {
+                            "phase": "fine-scan",
+                            "candidate_idx": int(active_match.group("idx")),
+                            "candidate_count": int(active_match.group("count")),
+                            "is_retry": fine_retry_match is not None,
+                        }
+                    )
 
             if fine_detected_cells_match is not None:
                 current_stage = "fine-scan"
