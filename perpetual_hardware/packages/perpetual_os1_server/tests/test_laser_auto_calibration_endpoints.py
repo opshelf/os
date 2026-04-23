@@ -24,6 +24,7 @@ from perpetual_os1_server.core.laser_auto_calibration import (
     _build_stage_extension_probe_y_mm,
     _SideState,
     LaserAutoCalibrationAngleResult,
+    LaserAutoCalibrationScope,
     LaserAutoCalibrationManager,
     _build_estimated_rotation_deg,
     _build_valid_rotation_positions,
@@ -38,15 +39,21 @@ class FakeLaserManager:
         self.snapshot = snapshot
         self.is_active_value = is_active
         self.ensure_calls = 0
+        self.last_requested_scope: LaserAutoCalibrationScope | None = None
         self.unsubscribe_calls = 0
         self.queue: asyncio.Queue[LaserAutoCalibrationSnapshot] = asyncio.Queue()
 
     async def is_active(self) -> bool:
         return self.is_active_value
 
-    async def ensure_session_started(self, worker) -> LaserAutoCalibrationSnapshot:
+    async def ensure_session_started(self, worker, requested_scope=None) -> LaserAutoCalibrationSnapshot:
         self.ensure_calls += 1
         self.is_active_value = True
+
+        if requested_scope is not None:
+            self.last_requested_scope = requested_scope
+            self.snapshot.requested_scope = requested_scope
+
         return self.snapshot
 
     async def subscribe(self) -> tuple[asyncio.Queue[LaserAutoCalibrationSnapshot], LaserAutoCalibrationSnapshot]:
@@ -67,6 +74,7 @@ def _build_snapshot(state: str = "running") -> LaserAutoCalibrationSnapshot:
         state=state,
         session_id="laser-session",
         run_id="left-run",
+        requested_scope=LaserAutoCalibrationScope(),
         current_side="left_module",
         current_stage="shelf-scout",
         bounds=ScanBounds(x_min=0.0, x_max=950.0, y_min=0.0, y_max=1250.0),
@@ -1246,6 +1254,8 @@ async def test_stream_laser_auto_calibration_starts_session_when_idle() -> None:
     assert payload["current_stage"] == "shelf-scout"
 
     assert manager.ensure_calls == 1
+    assert manager.last_requested_scope is not None
+    assert manager.last_requested_scope.mode == "all"
 
 
 @pytest.mark.asyncio
@@ -1266,6 +1276,78 @@ async def test_stream_laser_auto_calibration_reuses_running_session() -> None:
     assert payload["session_id"] == "laser-session"
 
     assert manager.ensure_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_stream_laser_auto_calibration_starts_single_shelf_scope() -> None:
+    snapshot = _build_snapshot()
+    manager = FakeLaserManager(snapshot=snapshot, is_active=False)
+    worker = SimpleNamespace(
+        _current_command=None,
+        _demo_cycling=False,
+        needs_home=lambda: False,
+        needs_home_reason=lambda: None,
+        needs_home_axes=lambda: [],
+    )
+
+    with patch(
+        "perpetual_os1_server.routers.calibration.get_laser_auto_calibration_manager",
+        return_value=manager,
+    ):
+        with patch(
+            "perpetual_os1_server.routers.calibration.get_robot_worker",
+            AsyncMock(return_value=worker),
+        ):
+            request = SimpleNamespace(is_disconnected=AsyncMock(return_value=False))
+            response = await calibration_router.stream_laser_auto_calibration(
+                request,
+                side="right_module",
+                shelf_idx=2,
+                cell_idx=None,
+            )
+            chunk = await anext(response.body_iterator)
+            await response.body_iterator.aclose()
+
+    payload = json.loads(chunk["data"])
+    assert payload["requested_scope"]["mode"] == "shelf"
+    assert payload["requested_scope"]["side"] == "right_module"
+    assert payload["requested_scope"]["shelf_idx"] == 2
+    assert manager.last_requested_scope is not None
+    assert manager.last_requested_scope.mode == "shelf"
+    assert manager.last_requested_scope.side == "right_module"
+    assert manager.last_requested_scope.shelf_idx == 2
+
+
+@pytest.mark.asyncio
+async def test_stream_laser_auto_calibration_rejects_mismatched_scope_while_running() -> None:
+    snapshot = _build_snapshot()
+    snapshot.requested_scope = LaserAutoCalibrationScope(mode="side", side="left_module")
+    manager = FakeLaserManager(snapshot=snapshot, is_active=True)
+
+    with patch(
+        "perpetual_os1_server.routers.calibration.get_laser_auto_calibration_manager",
+        return_value=manager,
+    ):
+        request = SimpleNamespace(is_disconnected=AsyncMock(return_value=False))
+
+        with pytest.raises(HTTPException) as exc_info:
+            await calibration_router.stream_laser_auto_calibration(
+                request,
+                side="right_module",
+                shelf_idx=None,
+                cell_idx=None,
+            )
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail == "Laser auto calibration is already running with a different scope"
+
+
+@pytest.mark.asyncio
+async def test_stream_laser_auto_calibration_rejects_cell_without_shelf(client) -> None:
+    response = await client.get("/api/calibration/laser/stream?side=left_module&cell_idx=1")
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "shelf_idx is required when cell_idx is provided"
 
 
 @pytest.mark.asyncio

@@ -22,6 +22,7 @@ from hardware.exceptions import MotorError as HardwareMotorError
 
 from perpetual_os1_server.core.robot import get_robot_worker
 from perpetual_os1_server.core.laser_auto_calibration import (
+	LaserAutoCalibrationScope,
 	LaserAutoCalibrationSnapshot,
 	get_laser_auto_calibration_manager,
 )
@@ -78,6 +79,47 @@ def _build_test_location(request: TestRequest) -> StorageModuleCellLocation:
 		shelf_idx=request.shelf_idx,
 		cell_idx=request.cell_idx,
 	)
+
+
+def _build_laser_auto_calibration_scope(
+	side: Literal["left_module", "right_module"] | None,
+	shelf_idx: int | None,
+	cell_idx: int | None,
+) -> LaserAutoCalibrationScope:
+	if shelf_idx is not None and shelf_idx < 0:
+		raise HTTPException(
+			status_code=status.HTTP_400_BAD_REQUEST,
+			detail="shelf_idx must be non-negative",
+		)
+
+	if cell_idx is not None and cell_idx < 0:
+		raise HTTPException(
+			status_code=status.HTTP_400_BAD_REQUEST,
+			detail="cell_idx must be non-negative",
+		)
+
+	if side is None:
+		if shelf_idx is not None or cell_idx is not None:
+			raise HTTPException(
+				status_code=status.HTTP_400_BAD_REQUEST,
+				detail="side is required when shelf_idx or cell_idx is provided",
+			)
+
+		return LaserAutoCalibrationScope()
+
+	if cell_idx is not None and shelf_idx is None:
+		raise HTTPException(
+			status_code=status.HTTP_400_BAD_REQUEST,
+			detail="shelf_idx is required when cell_idx is provided",
+		)
+
+	if shelf_idx is None:
+		return LaserAutoCalibrationScope(mode="side", side=side)
+
+	if cell_idx is None:
+		return LaserAutoCalibrationScope(mode="shelf", side=side, shelf_idx=shelf_idx)
+
+	return LaserAutoCalibrationScope(mode="cell", side=side, shelf_idx=shelf_idx, cell_idx=cell_idx)
 
 
 def _build_coordinate_for_location(grid, location: StorageModuleCellLocation) -> AxisCoordinate:
@@ -367,7 +409,13 @@ async def abort_laser_auto_calibration() -> LaserAutoCalibrationSnapshot:
 
 
 @router.get("/laser/stream")
-async def stream_laser_auto_calibration(request: Request) -> EventSourceResponse:
+async def stream_laser_auto_calibration(
+	request: Request,
+	side: Literal["left_module", "right_module"] | None = None,
+	shelf_idx: int | None = None,
+	cell_idx: int | None = None,
+) -> EventSourceResponse:
+	requested_scope = _build_laser_auto_calibration_scope(side, shelf_idx, cell_idx)
 	manager = get_laser_auto_calibration_manager()
 	is_active = await manager.is_active()
 
@@ -394,7 +442,21 @@ async def stream_laser_auto_calibration(request: Request) -> EventSourceResponse
 				detail="Demo cycle is already running",
 			)
 
-		await manager.ensure_session_started(worker)
+		try:
+			await manager.ensure_session_started(worker, requested_scope)
+		except RuntimeError as exc:
+			raise HTTPException(
+				status_code=status.HTTP_409_CONFLICT,
+				detail=str(exc),
+			) from exc
+	else:
+		snapshot = await manager.get_snapshot()
+
+		if snapshot.requested_scope.model_dump() != requested_scope.model_dump():
+			raise HTTPException(
+				status_code=status.HTTP_409_CONFLICT,
+				detail="Laser auto calibration is already running with a different scope",
+			)
 
 	queue, initial_snapshot = await manager.subscribe()
 

@@ -352,10 +352,18 @@ export interface LaserAutoCalibrationAngleResult {
 	updated_rotation_deg: number;
 }
 
+export interface LaserAutoCalibrationRequest {
+	mode: 'all' | 'side' | 'shelf' | 'cell';
+	side?: 'left_module' | 'right_module';
+	shelf_idx?: number;
+	cell_idx?: number;
+}
+
 export interface LaserAutoCalibrationSnapshot {
 	state: 'idle' | 'starting' | 'running' | 'applying' | 'completed' | 'failed' | 'cancelled';
 	session_id: string | null;
 	run_id: string | null;
+	requested_scope?: LaserAutoCalibrationRequest;
 	current_side: 'left_module' | 'right_module' | null;
 	current_stage: string | null;
 	bounds: CalibrationScanBounds | null;
@@ -378,8 +386,28 @@ export interface LaserAutoCalibrationSnapshot {
 	error: string | null;
 }
 
-export function buildLaserAutoCalibrationStreamUrl(): string {
-	return buildAuthenticatedUrl('/calibration/laser/stream');
+export function buildLaserAutoCalibrationStreamUrl(
+	request: LaserAutoCalibrationRequest = { mode: 'all' }
+): string {
+	const url = new URL(buildAuthenticatedUrl('/calibration/laser/stream'));
+
+	if (request.mode === 'all') {
+		return url.toString();
+	}
+
+	if (request.side !== undefined) {
+		url.searchParams.set('side', request.side);
+	}
+
+	if (request.shelf_idx !== undefined) {
+		url.searchParams.set('shelf_idx', String(request.shelf_idx));
+	}
+
+	if (request.cell_idx !== undefined) {
+		url.searchParams.set('cell_idx', String(request.cell_idx));
+	}
+
+	return url.toString();
 }
 
 export async function getLaserAutoCalibrationStatus(): Promise<LaserAutoCalibrationSnapshot> {

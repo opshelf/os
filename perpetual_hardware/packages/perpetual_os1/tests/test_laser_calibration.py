@@ -8,7 +8,9 @@ import pytest
 
 from perpetual_os1.laser_calibration import (
 	apply_xy_reference_offsets,
+	apply_single_shelf_analysis,
 	apply_single_cell_rescan,
+	build_single_shelf_known_edge_y,
 	build_single_cell_rescan_candidate,
 	capture_shelf_candidates,
 	get_scanned_anchor_cell,
@@ -19,7 +21,7 @@ from perpetual_os1.laser_calibration import (
 	SingleCellRescanTarget,
 )
 from perpetual_os1.laser_scan import ScanBounds
-from perpetual_os1.storage import StorageModuleSide
+from perpetual_os1.storage import CalibrationCoordinate, Cell, CellStatus, Dimensions, Shelf, StorageGrid, StorageModuleSide
 
 
 @pytest.mark.asyncio
@@ -310,6 +312,29 @@ def test_build_single_cell_rescan_candidate_uses_target_point_and_z_delta() -> N
 	assert candidate.wall_depth_mm == pytest.approx(2.5)
 
 
+def test_build_single_shelf_known_edge_y_uses_calibrated_cells() -> None:
+	target_shelf = SimpleNamespace(
+		cells=[
+			SimpleNamespace(calibration_point=SimpleNamespace(y=200.0)),
+			SimpleNamespace(calibration_point=SimpleNamespace(y=206.0)),
+		],
+	)
+	grid = SimpleNamespace(get_shelf=lambda side, shelf_idx: target_shelf)
+	scan_config = SimpleNamespace(
+		laser_offset_y_mm=4.0,
+		shelf_hole_sweep_offsets_mm=[32.25],
+	)
+
+	known_shelf_edge_y = build_single_shelf_known_edge_y(
+		grid=grid,
+		side=StorageModuleSide.LEFT,
+		shelf_idx=2,
+		scan_config=scan_config,
+	)
+
+	assert known_shelf_edge_y == [pytest.approx(174.75)]
+
+
 def test_apply_single_cell_rescan_updates_target_cell_and_saves_grid() -> None:
 	calibration_point = SimpleNamespace(x=1.0, y=2.0, z_offset=3.0)
 	target_cell = SimpleNamespace(calibration_point=calibration_point)
@@ -339,6 +364,71 @@ def test_apply_single_cell_rescan_updates_target_cell_and_saves_grid() -> None:
 	assert calibration_point.y == pytest.approx(456.0)
 	assert calibration_point.z_offset == pytest.approx(11.5)
 	grid.save.assert_called_once_with()
+
+
+def test_apply_single_shelf_analysis_replaces_only_target_shelf(tmp_path: Path) -> None:
+	target_shelf = Shelf(
+		shelf_idx=1,
+		shelf_height=100.0,
+		shelf_width=200.0,
+		divider_width=13.0,
+		cells=[
+			Cell(
+				cell_idx=0,
+				status=CellStatus.AVAILABLE,
+				item=None,
+				calibration_point=CalibrationCoordinate(x=10.0, y=20.0, z_offset=30.0, s=0),
+				dimensions=Dimensions(width=40.0, height=50.0, length=60.0),
+			)
+		],
+	)
+	grid_path = tmp_path / 'grid.json'
+	grid = StorageGrid(
+		left_module=[
+			Shelf(
+				shelf_idx=0,
+				shelf_height=10.0,
+				shelf_width=20.0,
+				cells=[],
+			),
+			target_shelf,
+			Shelf(
+				shelf_idx=2,
+				shelf_height=30.0,
+				shelf_width=40.0,
+				cells=[],
+			),
+		],
+		right_module=[],
+		filename=str(grid_path),
+	)
+	grid.save()
+
+	scanned_shelf = target_shelf.model_copy(deep=True, update={'shelf_idx': 0, 'shelf_height': 333.0})
+	scanned_shelf.divider_width = 99.0
+	analysis = SimpleNamespace(
+		shelves=[SimpleNamespace()],
+		metadata_path=str(tmp_path / 'metadata.json'),
+	)
+
+	with patch('perpetual_os1.laser_calibration.build_shelves_from_scan', return_value=[scanned_shelf]):
+		with patch('perpetual_os1.laser_calibration.apply_wall_depth_z_offsets'):
+			apply_single_shelf_analysis(
+				analysis=analysis,
+				grid=grid,
+				grid_path=grid_path,
+				scan_config=SimpleNamespace(),
+				side=StorageModuleSide.LEFT,
+				target_shelf_idx=1,
+			)
+
+	updated_grid = StorageGrid.load_from_file(str(grid_path))
+
+	assert updated_grid.left_module[0].shelf_idx == 0
+	assert updated_grid.left_module[1].shelf_idx == 1
+	assert updated_grid.left_module[1].shelf_height == pytest.approx(333.0)
+	assert updated_grid.left_module[1].divider_width == pytest.approx(13.0)
+	assert updated_grid.left_module[2].shelf_idx == 2
 
 
 @pytest.mark.asyncio
