@@ -6,6 +6,8 @@ import pytest
 
 from perpetual_os1.laser_angle_calibration import (
 	RIGHT_MODULE_ROTATION_SAFE_X_MM,
+	ShelfSurfaceEdge,
+	filter_shelf_edges,
 	get_default_rotation_center_deg,
 	prepare_capture_pose,
 	probe_stage_until_stall,
@@ -19,6 +21,37 @@ def test_get_default_rotation_center_deg_uses_front_for_left() -> None:
 
 def test_get_default_rotation_center_deg_uses_back_for_right() -> None:
 	assert get_default_rotation_center_deg('right') == 180.0
+
+
+def test_filter_shelf_edges_keeps_only_detected_edges() -> None:
+	filtered_edges = filter_shelf_edges(
+		edges=[],
+		y_min_mm=0.0,
+		y_max_mm=100.0,
+		side_name='left',
+		scout_x_positions=[25.0],
+	)
+
+	assert filtered_edges == []
+
+
+def test_filter_shelf_edges_discards_close_duplicates_without_appending_floor() -> None:
+	filtered_edges = filter_shelf_edges(
+		edges=[
+			ShelfSurfaceEdge(x_mm=25.0, y_mm=80.0),
+			ShelfSurfaceEdge(x_mm=25.0, y_mm=48.0),
+			ShelfSurfaceEdge(x_mm=25.0, y_mm=35.0),
+		],
+		y_min_mm=0.0,
+		y_max_mm=100.0,
+		side_name='left',
+		scout_x_positions=[25.0],
+	)
+
+	assert filtered_edges == [
+		ShelfSurfaceEdge(x_mm=25.0, y_mm=80.0),
+		ShelfSurfaceEdge(x_mm=25.0, y_mm=35.0),
+	]
 
 
 @pytest.mark.asyncio

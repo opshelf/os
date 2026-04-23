@@ -663,35 +663,6 @@ def build_shelf_scout_x_positions(
 
 	return positions
 
-
-def append_assumed_floor_shelf_edge(
-	*,
-	edges: list[ShelfSurfaceEdge],
-	y_min_mm: float,
-	side_name: str,
-	scout_x_positions: list[float],
-) -> list[ShelfSurfaceEdge]:
-	if y_min_mm > 0.0:
-		return list(edges)
-
-	for edge in edges:
-		if abs(float(edge.y_mm) - 0.0) < SHELF_MIN_SPACING_MM:
-			return list(edges)
-
-	assumed_edge_x_mm = scout_x_positions[0]
-
-	if side_name == 'right':
-		assumed_edge_x_mm = RIGHT_MODULE_SHELF_SCOUT_X_MM
-
-	return [
-		*edges,
-		ShelfSurfaceEdge(
-			x_mm=float(assumed_edge_x_mm),
-			y_mm=0.0,
-		),
-	]
-
-
 def get_default_rotation_center_deg(side_name: str) -> float:
 	if side_name == 'right':
 		return RIGHT_MODULE_ROTATION_CENTER_DEG
@@ -991,12 +962,7 @@ def filter_shelf_edges(
 
 		filtered_edges.append(edge)
 
-	return append_assumed_floor_shelf_edge(
-		edges=filtered_edges,
-		y_min_mm=y_min_mm,
-		side_name=side_name,
-		scout_x_positions=scout_x_positions,
-	)
+	return filtered_edges
 
 
 async def prepare_capture_pose(
