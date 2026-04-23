@@ -1,0 +1,25 @@
+# AGENTS.md
+
+## Repo shape
+- This is not a root workspace. The two real work areas are `dev_ui/` (SvelteKit/Vite UI) and `perpetual_hardware/` (Python `uv` workspace with `hardware`, `perpetual_os1`, and `perpetual_os1_server`). Run frontend commands from `dev_ui/` and backend commands from `perpetual_hardware/`.
+- The backend entrypoint is `perpetual_hardware/packages/perpetual_os1_server/src/perpetual_os1_server/main.py`. `uv run start` serves FastAPI on port `8000`, auto-runs Alembic migrations on startup, and reads runtime state from `perpetual_hardware/data/`.
+- The frontend default API base is `http://<current-hostname>:8000/api` (`dev_ui/src/lib/api.ts`), so UI work usually assumes the API is running on the same host.
+
+## Preferred commands
+- Full stack: `./scripts/start` and `./scripts/stop` from repo root.
+- `./scripts/start` defaults to `production` mode unless `perpetual_hardware/data/.mode` already exists. Use `./scripts/start --mode development` for hot reload, `./scripts/start --hardware` for USB/device passthrough, and `./scripts/start --build` when switching between development and non-development stacks.
+- Frontend checks: `cd dev_ui && npm run check` and `cd dev_ui && npm run build`. There is no repo-local frontend lint or test script.
+- Backend setup/checks: `cd perpetual_hardware && uv sync`, `cd perpetual_hardware && uv run pytest`, `cd perpetual_hardware && uv run ruff check packages`, `cd perpetual_hardware && uv run mypy packages/perpetual_os1_server/src`.
+- Focused backend tests work directly with package paths, for example `cd perpetual_hardware && uv run pytest packages/perpetual_os1_server/tests/test_storage_endpoints.py`.
+
+## Runtime gotchas
+- `perpetual_hardware/data/` is the live source of truth for local state: SQLite lives at `data/base.db`, config is read from `data/config.json` / `data/settings.json`, `scripts/start` tracks the requested mode in `data/.mode` and `data/.last_start_mode`, and the API records runtime mode transitions in `data/.last_mode`.
+- In development mode, `docker-compose.dev.yml` only bind-mounts Python source directories plus `dev_ui/src`. Dependency changes still need a rebuild.
+- The app seeds a developer login on startup: `developer@opshelf.com` with PIN `1111`. The UI auto-attempts this login in `dev_ui/src/routes/+layout.svelte`.
+- `README.md` still references `scripts/debug/*`, but that directory is not in this repo anymore.
+
+## Remote device inspection
+- If a user asks to inspect or debug something "on device", use the sibling `../provision/remote` helper instead of guessing SSH details or inspecting only local files.
+- `../provision/remote <device-id|alias>` resolves known aliases, derives the relay SSH port from the device id, and uses `../provision/keys/team_access` automatically.
+- Use it in three modes: plain shell access (`../provision/remote <id-or-alias>`), one-off remote commands (`../provision/remote <id-or-alias> -t "<command>"`), and local port forwards (`../provision/remote <id-or-alias> -f 8000 -f 8080`). Start with `../provision/remote list` if the device id or alias is unknown.
+- The helper also supports predefined maintenance commands with `-c`, including `sync`, `api:restart`, `api:backup`, `api:restore`, `api:enable <component>`, and `api:disable <component>`.

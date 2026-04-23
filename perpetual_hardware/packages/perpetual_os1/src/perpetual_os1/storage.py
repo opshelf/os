@@ -1,14 +1,12 @@
 from dataclasses import replace as dataclass_replace
-from datetime import datetime
 import json
 import os
-import shutil
 from enum import Enum
 from typing import Dict, Iterable, List, Mapping, Optional, Self, Tuple, Union
 
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
-from perpetual_os1.common import AxisCoordinate
+from perpetual_os1.common import AxisCoordinate, write_json_file_with_backup
 
 type Json = Dict[str, Union[str, int, float, Mapping, Iterable]]
 
@@ -240,28 +238,14 @@ class StorageGrid(BaseModel):
 		grid.filename = target_path
 		return grid
 
-	def _create_backup(self, filename: str) -> str | None:
-		if os.path.exists(filename) is False:
-			return None
-
-		directory = os.path.dirname(filename)
-		base_name = os.path.basename(filename)
-		name_part, ext = os.path.splitext(base_name)
-		timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-		backup_name = f"{name_part}_{timestamp}{ext}"
-		backup_path = os.path.join(directory, backup_name)
-
-		shutil.copy2(filename, backup_path)
-
-		return backup_path
-
 	def save_to_file(self, filename: str) -> None:
 		target_path = os.path.abspath(filename)
-		self._create_backup(target_path)
 		self.filename = target_path
-
-		with open(target_path, "w+") as f:
-			f.write(self.model_dump_json())
+		write_json_file_with_backup(
+			target_path,
+			self.model_dump(mode="json"),
+			backup_group_name="storage",
+		)
 
 	def save(self) -> None:
 		self.save_to_file(self.filename)

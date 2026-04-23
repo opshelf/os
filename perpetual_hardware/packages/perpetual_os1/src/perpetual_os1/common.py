@@ -1,6 +1,8 @@
 from __future__ import annotations
 import json
+import shutil
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Tuple, Union, TypeVar
@@ -98,6 +100,56 @@ def _pair_len2(v: List[Union[int, float]], name: str) -> Tuple[Union[int, float]
     if len(v) != 2:
         raise ValueError(f"{name} must be a 2-element list/tuple")
     return v[0], v[1]
+
+
+def _get_json_backup_root(target_path: Path) -> Path:
+    resolved_path = target_path.resolve()
+
+    for parent in (resolved_path.parent, *resolved_path.parents):
+        if parent.name == "data":
+            return parent
+
+    return resolved_path.parent
+
+
+def create_timestamped_json_backup(
+    target_path: str | Path,
+    *,
+    backup_group_name: str | None = None,
+) -> Path | None:
+    resolved_path = Path(target_path).resolve()
+
+    if resolved_path.exists() is False:
+        return None
+
+    backup_root = _get_json_backup_root(resolved_path)
+    backup_dir = backup_root / (backup_group_name or resolved_path.stem)
+    backup_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
+    backup_path = backup_dir / f"{timestamp}{resolved_path.suffix}"
+    shutil.copy2(resolved_path, backup_path)
+    return backup_path
+
+
+def write_json_file_with_backup(
+    target_path: str | Path,
+    data: Any,
+    *,
+    indent: int | str | None = None,
+    backup_group_name: str | None = None,
+) -> Path:
+    resolved_path = Path(target_path).resolve()
+    resolved_path.parent.mkdir(parents=True, exist_ok=True)
+    create_timestamped_json_backup(
+        resolved_path,
+        backup_group_name=backup_group_name,
+    )
+
+    with resolved_path.open("w", encoding="utf-8") as handle:
+        json.dump(data, handle, indent=indent)
+
+    return resolved_path
 
 
 # --------------------------- Motor -----------------------------
