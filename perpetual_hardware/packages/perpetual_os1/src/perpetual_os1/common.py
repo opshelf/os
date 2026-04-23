@@ -543,15 +543,15 @@ class LaserScanConfig(BaseModel):
     left_xy_reference: Optional[LaserScanXYReferenceConfig] = None
     right_xy_reference: Optional[LaserScanXYReferenceConfig] = None
     left_bounds_x_min_mm: float = 0.0
-    left_bounds_x_max_mm: float = 945.0
+    left_bounds_x_max_mm: float = 950.0
     left_bounds_y_min_mm: float = 0.0
-    left_bounds_y_max_mm: float = 1200.0
+    left_bounds_y_max_mm: float = 1250.0
     right_bounds_x_min_mm: float = 0.0
-    right_bounds_x_max_mm: float = 945.0
+    right_bounds_x_max_mm: float = 950.0
     right_bounds_y_min_mm: float = 0.0
-    right_bounds_y_max_mm: float = 1200.0
+    right_bounds_y_max_mm: float = 1250.0
     angle_calibration_x_min_mm: float = 0.0
-    angle_calibration_x_max_mm: float = 945.0
+    angle_calibration_x_max_mm: float = 950.0
     angle_calibration_x_step_mm: float = Field(100.0, gt=0)
     angle_calibration_x_count: int = Field(5, gt=0)
     angle_calibration_z_offset_min_mm: float = -8.0
