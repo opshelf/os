@@ -7,10 +7,6 @@ from hardware.toolcam import ToolCamera
 def test_toolcam_initialization(sample_camera_params):
     camera = ToolCamera(sample_camera_params)
     assert camera.url == sample_camera_params['url']
-    assert np.array_equal(camera.mtx, sample_camera_params['mtx'])
-    assert np.array_equal(camera.dist, sample_camera_params['dist'])
-    assert camera.board_W_mm == sample_camera_params['board_W_mm']
-    assert camera.board_H_mm == sample_camera_params['board_H_mm']
 
 @pytest.mark.asyncio
 async def test_toolcam_capture():

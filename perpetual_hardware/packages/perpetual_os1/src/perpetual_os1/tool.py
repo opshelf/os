@@ -7,18 +7,16 @@ from hardware.laser import LaserSensor
 from hardware.motor import Motor, Servo, MotorStatus, MOTOR_WAIT_TIMEOUT
 from hardware.toolcam import ToolCamera
 from perpetual_os1.exceptions import (
-    MotorError, ConfigError, CameraError,
+    MotorError, ConfigError,
     GripperError, MovementError,
-    ScanTimeoutError, MotorWaitTimeoutError
+    MotorWaitTimeoutError
 )
 
 import logging
 import time
-import cv2
-import sentry_sdk
 
 from enum import Enum
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional, Literal, List, Any, Callable
 
 
@@ -41,20 +39,6 @@ def _create_motor_if_enabled(
 
     return Motor(controller, cfg, safety)
 
-@dataclass
-class FiducialRegistry:
-    # store world positions (motor coordinates) to avoid double counting
-    items: List[float] = field(default_factory=list)
-
-    def seen(self, yw: float, tol: float) -> bool:
-        for yy in self.items:
-            if abs(yy - yw) <= tol:
-                return True
-        return False
-
-    def add(self, yw: float):
-        self.items.append(yw)
- 
 class ToolMotionStatus(Enum):
     IDLE = 0
     MOVING = 1
@@ -73,8 +57,6 @@ class ToolStatus:
 
 GANTRY_WAIT_TIMEOUT = MOTOR_WAIT_TIMEOUT * 2
 TOOL_WAIT_TIMEOUT = MOTOR_WAIT_TIMEOUT * 2
-SHELF_SCAN_TIMEOUT = 300.0
-GRID_UPDATE_TIMEOUT_PER_SHELF = 60.0
 GANTRY_OUTER_TIMEOUT = 120.0
 TOOL_OUTER_TIMEOUT = 60.0
 ROTATION_SAFE_STAGE_EXTENSION_MM = 8.5
@@ -916,204 +898,3 @@ class Tool:
         s = await self._ms.get_position() if self._ms is not None else 0.0
         r = await self._mr.get_position() if self._mr is not None else 0.0
         return (c.AxisCoordinate(x, y), c.ToolCoordinate(g, s, r))
-    
-    ### CAMERA
-
-    async def get_shelves(self, timeout_seconds: float = SHELF_SCAN_TIMEOUT) -> List[float]:
-        if self._mx is None or self._my is None:
-            raise MotorError("Gantry motors (x_axis, y_axis) required for shelf scanning")
-
-        start_time = time.monotonic()
-        shelves: List[float] = []
-
-        try:
-            await self.home()
-            await self._mx.move_to_position(100)
-            await self.rotate_to_position("back")
-            reg = FiducialRegistry()
-            s = await self.get_param("SCAN_POSITION")
-            if s is None:
-                raise ConfigError("SCAN_POSITION parameter is not configured")
-            await self.move(c.AxisCoordinate(s[0]-25, s[1]))
-
-            while True:
-                if time.monotonic() - start_time > timeout_seconds:
-                    raise ScanTimeoutError(
-                        f"Shelf scan exceeded {timeout_seconds}s timeout, found {len(shelves)} shelves"
-                    )
-
-                try:
-                    frame = await self._cam.capture()
-                except Exception as e:
-                    raise CameraError(f"Camera capture failed during shelf scan: {e}") from e
-
-                if frame is None:
-                    raise CameraError("Camera returned empty frame during shelf scan")
-
-                try:
-                    frame = self._cam.correct(frame)
-                except Exception as e:
-                    raise CameraError(f"Frame correction failed: {e}") from e
-
-                cv2.imwrite("frame_correct.png", frame)
-                rect = self._cam.detect_white_squares(frame)
-
-                if rect is not None:
-                    _, dy = self._cam.get_center(frame, rect)
-                    if dy > 0:
-                        pymm = await self.get_param("PYMM")
-                        if pymm is None:
-                            raise ConfigError("PYMM parameter is not configured")
-                        await self._my.jog(dy/pymm)
-
-                        frame = await self._cam.capture()
-                        if frame is None:
-                            raise CameraError("Camera returned empty frame during correction")
-
-                        frame = self._cam.correct(frame)
-                        rect = self._cam.detect_white_squares(frame)
-                        if rect is not None:
-                            _, dy = self._cam.get_center(frame, rect)
-                            if dy is not None:
-                                await self._my.jog(dy/pymm)
-                                posy = await self._my.get_position()
-                                yw = round(posy+26, 4)
-                                if not reg.seen(yw, 20):
-                                    reg.add(yw)
-                                    shelves.append(yw)
-                                    self._logger.info("Shelf detected at y=%s", yw)
-
-                end_y = await self._my.get_position()
-                motor_cfg = self._params.motors.by_name("y_axis")
-                lim = motor_cfg.lim if motor_cfg is not None else 0.0
-                jog_y = await self.get_param("JOG_Y")
-                if jog_y is None:
-                    raise ConfigError("JOG_Y parameter is not configured")
-                if end_y + jog_y > lim:
-                    break
-                await self._my.jog(jog_y)
-
-            return shelves
-
-        except ScanTimeoutError as e:
-            self._logger.warning(
-                "get_shelves timed out after finding %d shelves: %s",
-                len(shelves), e
-            )
-            with sentry_sdk.push_scope() as scope:
-                scope.set_tag("operation", "get_shelves")
-                scope.set_extra("shelves_found", len(shelves))
-                sentry_sdk.capture_message(str(e), level="warning")
-            raise
-        except CameraError as e:
-            self._logger.warning(
-                "get_shelves camera error after finding %d shelves: %s",
-                len(shelves), e
-            )
-            sentry_sdk.capture_exception(e)
-            raise
-        except Exception as e:
-            self._logger.exception("get_shelves failed after finding %d shelves", len(shelves))
-            sentry_sdk.capture_exception(e)
-            raise CameraError(f"Shelf detection failed: {e}") from e
-
-    async def update_grid(
-        self, shelves: List[float], timeout_per_shelf: float = GRID_UPDATE_TIMEOUT_PER_SHELF
-    ) -> List[float]:
-        if self._mx is None or self._my is None:
-            raise MotorError("Gantry motors (x_axis, y_axis) required for grid update")
-
-        anchors: List[float] = []
-
-        try:
-            await self.home()
-            await self._mx.move_to_position(100)
-            await self.rotate_to_position("back")
-            scan_pos = await self.get_param("SCAN_POSITION")
-            if scan_pos is None:
-                raise ConfigError("SCAN_POSITION parameter is not configured")
-            await self.move(c.AxisCoordinate(scan_pos[0]-25, scan_pos[1]))
-
-            for shelf_idx, shelf_y in enumerate(shelves):
-                start_time = time.monotonic()
-
-                await self._my.move_to_position(shelf_y-26)
-
-                try:
-                    frame = await self._cam.capture()
-                except Exception as e:
-                    raise CameraError(f"Camera capture failed for shelf {shelf_idx}: {e}") from e
-
-                if frame is None:
-                    raise CameraError(f"Camera returned empty frame for shelf {shelf_idx}")
-
-                try:
-                    frame = self._cam.correct(frame)
-                except Exception as e:
-                    raise CameraError(f"Frame correction failed for shelf {shelf_idx}: {e}") from e
-
-                cv2.imwrite("frame_correct.png", frame)
-                rect = self._cam.detect_white_squares(frame)
-
-                if rect is not None:
-                    dx, _ = self._cam.get_center(frame, rect)
-                    if dx is not None:
-                        pxmm = await self.get_param("PXMM")
-                        if pxmm is None:
-                            raise ConfigError("PXMM parameter is not configured")
-                        await self._mx.jog(-dx / pxmm)
-
-                        frame = await self._cam.capture()
-                        if frame is None:
-                            raise CameraError(f"Camera returned empty frame during correction for shelf {shelf_idx}")
-
-                        frame = self._cam.correct(frame)
-                        _, width = frame.shape[:2]
-                        third = width // 3
-                        frame = frame[:, third:2 * third]
-                        rect = self._cam.detect_white_squares(frame)
-                        if rect is not None:
-                            dx, _ = self._cam.get_center(frame, rect)
-                            if dx is not None:
-                                await self._mx.jog(-dx / pxmm)
-                                posx = await self._mx.get_position()
-                                xw = round(posx, 4)
-                                anchors.append(xw)
-                                self._logger.info("Anchor point for shelf %d at x=%s", shelf_idx, xw)
-
-                elapsed = time.monotonic() - start_time
-                if elapsed > timeout_per_shelf:
-                    raise ScanTimeoutError(
-                        f"Grid update for shelf {shelf_idx} exceeded {timeout_per_shelf}s timeout"
-                    )
-
-            return anchors
-
-        except ScanTimeoutError as e:
-            self._logger.warning(
-                "update_grid timed out after processing %d/%d shelves: %s",
-                len(anchors), len(shelves), e
-            )
-            with sentry_sdk.push_scope() as scope:
-                scope.set_tag("operation", "update_grid")
-                scope.set_extra("anchors_found", len(anchors))
-                scope.set_extra("total_shelves", len(shelves))
-                sentry_sdk.capture_message(str(e), level="warning")
-            raise
-        except CameraError as e:
-            self._logger.warning(
-                "update_grid camera error after processing %d/%d shelves: %s",
-                len(anchors), len(shelves), e
-            )
-            sentry_sdk.capture_exception(e)
-            raise
-        except Exception as e:
-            self._logger.exception("update_grid failed after processing %d/%d shelves", len(anchors), len(shelves))
-            sentry_sdk.capture_exception(e)
-            raise CameraError(f"Grid update failed: {e}") from e
-    
-    async def auto_cal(self):
-        """Get shelf positions and anchor points for calibration."""
-        shelves =  [59.992, 411.124, 709.3, 1007.82, 1207.96]
-        anchors = await self.update_grid(shelves)
-        return shelves, anchors
