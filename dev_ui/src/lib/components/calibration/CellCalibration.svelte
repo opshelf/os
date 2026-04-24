@@ -7,6 +7,7 @@
 		getCalibrationStatus,
 		homeToolMotors,
 		moveToCell,
+		moveToPosition,
 		jogAxis,
 		testGripper,
 		saveCalibration,
@@ -51,8 +52,15 @@
 	let needsHomeReason = $state<string>('');
 	let needsHomeAxes = $state<string[]>([]);
 	let isHoming = $state<boolean>(false);
+	let isAddingShelf = $state<boolean>(false);
+	let isAddingCell = $state<boolean>(false);
 
 	const TOOL_AXES = new Set(['z_axis', 'stage']);
+	const ADD_SHELF_VALUE = '__add_shelf__';
+	const ADD_CELL_VALUE = '__add_cell__';
+	const NEW_CELL_START_X = 475;
+	const NEW_CELL_START_Y = 630;
+	const NEW_CELL_START_Z = 0;
 
 	let jogStep = $state<number>(1);
 
@@ -191,9 +199,29 @@
 		return getShelvesForSide(selectedSide);
 	}
 
+	function getNextShelfIndex(side: 'left_module' | 'right_module'): number {
+		const shelves = getShelvesForSide(side);
+
+		if (shelves.length === 0) {
+			return 0;
+		}
+
+		return Math.max(...shelves.map((shelf) => shelf.shelf_idx)) + 1;
+	}
+
 	function getSelectedShelf() {
 		const shelves = getShelves();
 		return shelves.find((shelf) => shelf.shelf_idx === selectedShelf) ?? null;
+	}
+
+	function getNextCellIndex(shelfIdx: number): number {
+		const shelf = getShelves().find((candidateShelf) => candidateShelf.shelf_idx === shelfIdx) ?? null;
+
+		if (shelf === null || shelf.cells.length === 0) {
+			return 0;
+		}
+
+		return Math.max(...shelf.cells.map((cell) => cell.cell_idx)) + 1;
 	}
 
 	function getCells() {
@@ -206,12 +234,62 @@
 		return shelf.cells;
 	}
 
+	function getShelfSelectionValue(): string {
+		return String(selectedShelf);
+	}
+
+	function getCellSelectionValue(): string {
+		return String(selectedCell);
+	}
+
+	function shouldShowPendingShelfOption(): boolean {
+		if (isAddingShelf === false) {
+			return false;
+		}
+
+		return getSelectedShelf() === null;
+	}
+
+	function shouldShowPendingCellOption(): boolean {
+		if (isAddingCell === false) {
+			return false;
+		}
+
+		return getCells().some((cell) => cell.cell_idx === selectedCell) === false;
+	}
+
+	function isCreatingCell(): boolean {
+		return isAddingShelf === true || isAddingCell === true;
+	}
+
+	function clearPendingCreation(): void {
+		isAddingShelf = false;
+		isAddingCell = false;
+	}
+
+	function syncPendingCreationTargets(): void {
+		if (isAddingShelf === true) {
+			selectedShelf = getNextShelfIndex(selectedSide);
+			selectedCell = 0;
+			isAddingCell = true;
+			return;
+		}
+
+		if (isAddingCell === true) {
+			selectedCell = getNextCellIndex(selectedShelf);
+		}
+	}
+
 	function syncSelection(preferredShelf?: number, preferredCell?: number): void {
+		clearPendingCreation();
+
 		const shelves = getShelvesForSide(selectedSide);
 
 		if (shelves.length === 0) {
-			selectedShelf = 0;
+			selectedShelf = getNextShelfIndex(selectedSide);
 			selectedCell = 0;
+			isAddingShelf = true;
+			isAddingCell = true;
 			return;
 		}
 
@@ -222,6 +300,7 @@
 
 		if (matchingShelf.cells.length === 0) {
 			selectedCell = 0;
+			isAddingCell = true;
 			return;
 		}
 
@@ -246,7 +325,20 @@
 	function didChangeShelf(event: Event): void {
 		const target = event.target as HTMLSelectElement;
 
+		if (target.value === ADD_SHELF_VALUE) {
+			selectedShelf = getNextShelfIndex(selectedSide);
+			selectedCell = 0;
+			isAddingShelf = true;
+			isAddingCell = true;
+			currentPosition = null;
+			error = '';
+			message = '';
+			warning = '';
+			return;
+		}
+
 		selectedShelf = parseInt(target.value, 10);
+		isAddingShelf = false;
 		syncSelection(selectedShelf);
 		currentPosition = null;
 		error = '';
@@ -257,7 +349,18 @@
 	function didChangeCell(event: Event): void {
 		const target = event.target as HTMLSelectElement;
 
+		if (target.value === ADD_CELL_VALUE) {
+			selectedCell = getNextCellIndex(selectedShelf);
+			isAddingCell = true;
+			currentPosition = null;
+			error = '';
+			message = '';
+			warning = '';
+			return;
+		}
+
 		selectedCell = parseInt(target.value, 10);
+		isAddingCell = false;
 		currentPosition = null;
 		error = '';
 		message = '';
@@ -273,7 +376,18 @@
 		try {
 			await controlGripper('release');
 			storageGrid = await getStorageGrid();
-			currentPosition = await moveToCell(selectedSide, selectedShelf, selectedCell);
+			syncPendingCreationTargets();
+
+			if (isCreatingCell() === true) {
+				currentPosition = await moveToPosition(
+					selectedSide,
+					NEW_CELL_START_X,
+					NEW_CELL_START_Y,
+					NEW_CELL_START_Z
+				);
+			} else {
+				currentPosition = await moveToCell(selectedSide, selectedShelf, selectedCell);
+			}
 
 			const rotationAngles = await getRotationAngles();
 			const targetAngle =
@@ -283,10 +397,10 @@
 			await loadStageExtensionForSide();
 
 			syncEditValues();
-			message = 'moved to cell';
+			message = isCreatingCell() === true ? 'moved to new cell start' : 'moved to cell';
 		} catch (err) {
 			handleNeedsHomeError(err);
-			error = err instanceof Error ? err.message : 'failed to move to cell';
+			error = err instanceof Error ? err.message : 'failed to start calibration';
 		} finally {
 			isMoving = false;
 		}
@@ -436,6 +550,8 @@
 			);
 
 			storageGrid = await getStorageGrid();
+			clearPendingCreation();
+			syncSelection(selectedShelf, selectedCell);
 
 			await testGripper(selectedSide, selectedShelf, selectedCell);
 			currentPosition = await moveToCell(selectedSide, selectedShelf, selectedCell);
@@ -505,6 +621,8 @@
 			);
 
 			storageGrid = await getStorageGrid();
+			clearPendingCreation();
+			syncSelection(selectedShelf, selectedCell);
 
 			message = 'calibration saved';
 		} catch (err) {
@@ -522,7 +640,17 @@
 		warning = '';
 
 		try {
-			currentPosition = await moveToCell(selectedSide, selectedShelf, selectedCell);
+			if (isCreatingCell() === true) {
+				currentPosition = await moveToPosition(
+					selectedSide,
+					NEW_CELL_START_X,
+					NEW_CELL_START_Y,
+					NEW_CELL_START_Z
+				);
+			} else {
+				currentPosition = await moveToCell(selectedSide, selectedShelf, selectedCell);
+			}
+
 			syncEditValues();
 			message = 'position reset';
 		} catch (err) {
@@ -564,18 +692,26 @@
 				</td>
 				<td>
 					<span class="field-label">shelf</span>
-					<select value={selectedShelf} onchange={didChangeShelf}>
+					<select value={getShelfSelectionValue()} onchange={didChangeShelf}>
+						{#if shouldShowPendingShelfOption() === true}
+							<option value={selectedShelf}>{selectedShelf}</option>
+						{/if}
 						{#each getShelves() as shelf}
 							<option value={shelf.shelf_idx}>{shelf.shelf_idx}</option>
 						{/each}
+						<option value={ADD_SHELF_VALUE}>add</option>
 					</select>
 				</td>
 				<td>
 					<span class="field-label">cell</span>
-					<select value={selectedCell} onchange={didChangeCell}>
+					<select value={getCellSelectionValue()} onchange={didChangeCell}>
+						{#if shouldShowPendingCellOption() === true}
+							<option value={selectedCell}>{selectedCell}</option>
+						{/if}
 						{#each getCells() as cell}
 							<option value={cell.cell_idx}>{cell.cell_idx}</option>
 						{/each}
+						<option value={ADD_CELL_VALUE}>add</option>
 					</select>
 				</td>
 			</tr>
