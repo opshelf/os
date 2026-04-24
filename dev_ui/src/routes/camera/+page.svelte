@@ -106,7 +106,11 @@
 		</tbody>
 	</table>
 
+	<div style="height: 1.5em"></div>
+
 	<button type="button" on:click={loadCameras}>refresh</button>
+
+	<div style="height: 1.5em"></div>
 
 	{#if streamUrl !== '' && streamError === false}
 		<div class="stream-container">
@@ -129,12 +133,11 @@
 <style>
 	.stream-container {
 		display: block;
-		margin-top: 1rem;
 		position: relative;
 	}
 
 	.stream-container img {
-		max-width: 100%;
+		width: 100%;
 		display: block;
 	}
 
