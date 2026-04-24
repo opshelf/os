@@ -125,8 +125,10 @@ class ToolCameraStreamManager:
 		self.latest_frame: Optional[bytes] = None
 		self.frame_lock = asyncio.Lock()
 		self.capture_task: Optional[asyncio.Task] = None
-		self.target_fps = 10
+		self.target_fps = 5
 		self.frame_interval = 1.0 / self.target_fps
+		self.max_frame_width = 640
+		self.jpeg_quality = 65
 		self.calibration_complete = asyncio.Event()
 
 	async def start(self) -> None:
@@ -165,12 +167,34 @@ class ToolCameraStreamManager:
 	def _create_capture(self) -> cv2.VideoCapture:
 		cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
 		cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+		cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.max_frame_width)
+		cap.set(cv2.CAP_PROP_FPS, self.target_fps)
 		return cap
+
+	def _get_frames_to_skip(self, cap: cv2.VideoCapture) -> int:
+		source_fps = cap.get(cv2.CAP_PROP_FPS)
+
+		if source_fps <= self.target_fps:
+			return 1
+
+		return min(30, max(1, int(source_fps / self.target_fps) - 1))
+
+	def _prepare_frame(self, frame: np.ndarray) -> np.ndarray:
+		height, width = frame.shape[:2]
+
+		if width <= self.max_frame_width:
+			return frame
+
+		target_height = max(1, int(height * (self.max_frame_width / width)))
+
+		return cv2.resize(frame, (self.max_frame_width, target_height), interpolation=cv2.INTER_AREA)
 
 	async def _capture_loop(self) -> None:
 		cap: Optional[cv2.VideoCapture] = None
 
 		try:
+			frames_to_skip = 1
+
 			while self.is_running is True:
 				loop_start = asyncio.get_event_loop().time()
 
@@ -181,13 +205,14 @@ class ToolCameraStreamManager:
 							logger.warning("tool_camera_connection_failed", rtsp_url=self.rtsp_url)
 							await asyncio.sleep(2.0)
 							continue
+						frames_to_skip = self._get_frames_to_skip(cap)
 
 					loop = asyncio.get_event_loop()
 
 					def sync_capture() -> Optional[np.ndarray]:
 						if cap is None:
 							return None
-						for _ in range(3):
+						for _ in range(frames_to_skip):
 							cap.grab()
 						ret, frame = cap.read()
 						if ret is True and frame is not None:
@@ -200,7 +225,8 @@ class ToolCameraStreamManager:
 						await asyncio.sleep(0.5)
 						continue
 
-					success, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+					frame = self._prepare_frame(frame)
+					success, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality])
 
 					if success is True:
 						async with self.frame_lock:

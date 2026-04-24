@@ -2808,6 +2808,11 @@ async def run_staged_scan(
 					scan_config=scan_config,
 				)
 				selected_fine_bounds = fine_bounds
+				candidate_wall_depth_mm = wall_depth_mm
+
+				if candidate.wall_depth_mm is not None:
+					candidate_wall_depth_mm = float(candidate.wall_depth_mm)
+
 				print_status(
 					f"phase=fine-scan candidate={candidate_idx}/{len(candidates)} "
 					f"bounds:x=({fine_bounds.x_min:.2f},{fine_bounds.x_max:.2f}) "
@@ -2859,7 +2864,7 @@ async def run_staged_scan(
 					step_mm=fine_step_mm,
 					settle_ms=settle_ms,
 					samples_per_point=samples_per_point,
-					wall_depth_mm=wall_depth_mm,
+					wall_depth_mm=candidate_wall_depth_mm,
 					scan_config=scan_config,
 					progress_prefix=f"fine_{candidate_idx}",
 					on_update=didUpdateFineScan,
@@ -2888,7 +2893,7 @@ async def run_staged_scan(
 							step_mm=fine_step_mm,
 							settle_ms=settle_ms,
 							samples_per_point=samples_per_point,
-							wall_depth_mm=wall_depth_mm,
+							wall_depth_mm=candidate_wall_depth_mm,
 							scan_config=scan_config,
 							progress_prefix=f"fine_{candidate_idx}_retry",
 							on_update=didUpdateFineScan,

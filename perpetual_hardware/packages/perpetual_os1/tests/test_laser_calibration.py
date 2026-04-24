@@ -13,7 +13,9 @@ from perpetual_os1.laser_calibration import (
 	build_single_shelf_known_edge_y,
 	build_single_cell_rescan_candidate,
 	capture_shelf_candidates,
+	GapCandidateRegion,
 	get_scanned_anchor_cell,
+	GridScanResult,
 	load_continue_scan_context,
 	run_staged_scan,
 	run_with_temp_robot_config,
@@ -119,6 +121,58 @@ async def test_run_staged_scan_raises_when_abort_requested_after_coarse_scan(tmp
 						)
 
 	tool.retract.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_run_staged_scan_uses_candidate_wall_depth_for_fine_scan(tmp_path: Path) -> None:
+	should_abort = False
+	tool = SimpleNamespace(retract=AsyncMock())
+	robot = SimpleNamespace(_tool=tool)
+	candidate = GapCandidateRegion(
+		x_min=10.0,
+		x_max=30.0,
+		y_min=40.0,
+		y_max=40.0,
+		wall_depth_mm=4.61,
+	)
+	scan_config = SimpleNamespace(
+		expected_hole_height_mm=30.0,
+		fine_scan_margin_y_mm=None,
+	)
+
+	async def didCaptureCrossScan(*args, **kwargs):
+		nonlocal should_abort
+		should_abort = True
+
+		return GridScanResult(x_positions=[], y_positions=[], depth_rows=[]), []
+
+	with patch('perpetual_os1.laser_calibration.enter_scan_mode', AsyncMock()):
+		with patch('perpetual_os1.laser_calibration.set_y_brake_for_scan_motion', AsyncMock()):
+			with patch(
+				'perpetual_os1.laser_calibration.capture_shelf_candidates',
+				AsyncMock(return_value=(GridScanResult(x_positions=[], y_positions=[], depth_rows=[]), 4.16, [candidate], [])),
+			):
+				with patch('perpetual_os1.laser_calibration.capture_cross_scan', side_effect=didCaptureCrossScan) as capture_cross_scan:
+					with pytest.raises(asyncio.CancelledError):
+						await run_staged_scan(
+							robot=robot,
+							side=StorageModuleSide.LEFT,
+							bounds=ScanBounds(x_min=0.0, x_max=100.0, y_min=0.0, y_max=100.0),
+							fine_step_mm=1.0,
+							settle_ms=0,
+							samples_per_point=1,
+							coarse_settle_ms=0,
+							coarse_samples_per_point=1,
+							scan_config=scan_config,
+							scans_dir=str(tmp_path),
+							run_parameters={},
+							shelf_scout_only=False,
+							known_shelf_edge_y=None,
+							should_abort=lambda: should_abort,
+						)
+
+	capture_cross_scan.assert_awaited_once()
+	assert capture_cross_scan.await_args.kwargs['wall_depth_mm'] == pytest.approx(4.61)
 
 
 @pytest.mark.asyncio
