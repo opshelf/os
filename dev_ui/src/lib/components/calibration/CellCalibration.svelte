@@ -215,7 +215,8 @@
 	}
 
 	function getNextCellIndex(shelfIdx: number): number {
-		const shelf = getShelves().find((candidateShelf) => candidateShelf.shelf_idx === shelfIdx) ?? null;
+		const shelf =
+			getShelves().find((candidateShelf) => candidateShelf.shelf_idx === shelfIdx) ?? null;
 
 		if (shelf === null || shelf.cells.length === 0) {
 			return 0;
@@ -513,6 +514,15 @@
 		await didClickJog('z', delta);
 	}
 
+	async function didClickCrosshair(): Promise<void> {
+		if (currentPosition === null) {
+			return;
+		}
+
+		await didClickJog('z', -130 - currentPosition.z_offset);
+		await didClickRetract();
+	}
+
 	async function didClickJog(axis: 'x' | 'y' | 'z' | 'stage', delta: number): Promise<void> {
 		isMoving = true;
 		error = '';
@@ -771,6 +781,13 @@
 									isHoming === true}
 							>
 								&#x2194;&#xFE0E;
+							</button>
+							<button
+								type="button"
+								onclick={didClickCrosshair}
+								disabled={isMoving === true || needsHome === true || isHoming === true}
+							>
+								✛
 							</button>
 						{/if}
 					</div>
@@ -1042,6 +1059,7 @@
 
 	button {
 		margin-top: 0;
+		min-width: 36px;
 	}
 
 	input[type='number'] {
