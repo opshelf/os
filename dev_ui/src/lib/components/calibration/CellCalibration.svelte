@@ -694,7 +694,7 @@
 					<span class="field-label">shelf</span>
 					<select value={getShelfSelectionValue()} onchange={didChangeShelf}>
 						{#if shouldShowPendingShelfOption() === true}
-							<option value={selectedShelf}>{selectedShelf}</option>
+							<option value={selectedShelf} selected={true}>{selectedShelf}</option>
 						{/if}
 						{#each getShelves() as shelf}
 							<option value={shelf.shelf_idx}>{shelf.shelf_idx}</option>
@@ -706,7 +706,7 @@
 					<span class="field-label">cell</span>
 					<select value={getCellSelectionValue()} onchange={didChangeCell}>
 						{#if shouldShowPendingCellOption() === true}
-							<option value={selectedCell}>{selectedCell}</option>
+							<option value={selectedCell} selected={true}>{selectedCell}</option>
 						{/if}
 						{#each getCells() as cell}
 							<option value={cell.cell_idx}>{cell.cell_idx}</option>
