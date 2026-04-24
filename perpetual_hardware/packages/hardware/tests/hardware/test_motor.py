@@ -247,12 +247,14 @@ async def test_wait_for_move_rejects_non_limit_fault_during_homing(mock_controll
 async def test_motor_home_moves_near_home_before_sensorless_seek(mock_controller):
     params = make_motor_params()
     motor = Motor(mock_controller, params)
+    motor.clear_alarm = AsyncMock()
     motor._move_near_home = AsyncMock()
     motor.wait_for_move = AsyncMock(return_value=MotorStatus.STOPPED)
     motor.move_config = AsyncMock()
 
     await motor.home()
 
+    motor.clear_alarm.assert_awaited_once()
     motor._move_near_home.assert_awaited_once_with(params.ret_rpm)
 
 
@@ -261,6 +263,7 @@ async def test_motor_home_with_sensor_moves_near_home_before_sensor_seek(mock_co
     sensor = DummyHomeSensor([False, True, False, True])
     params = make_motor_params(home_sensor=make_home_sensor_config())
     motor = Motor(mock_controller, params)
+    motor.clear_alarm = AsyncMock()
 
     monkeypatch.setattr('hardware.motor.HomeSensor', lambda **_kwargs: sensor)
     motor._move_near_home = AsyncMock()
@@ -293,6 +296,7 @@ async def test_motor_home_with_sensor_sets_zero_and_marks_homed(mock_controller,
     sensor = DummyHomeSensor([False, False, True, True, False, False, True])
     params = make_motor_params(home_sensor=make_home_sensor_config())
     motor = Motor(mock_controller, params)
+    motor.clear_alarm = AsyncMock()
 
     monkeypatch.setattr('hardware.motor.HomeSensor', lambda **_kwargs: sensor)
     motor._move_near_home = AsyncMock()
@@ -315,6 +319,7 @@ async def test_motor_home_with_sensor_releases_switch_before_first_seek(mock_con
     sensor = DummyHomeSensor([True, False, False, True, True, False, False, True])
     params = make_motor_params(home_sensor=make_home_sensor_config())
     motor = Motor(mock_controller, params)
+    motor.clear_alarm = AsyncMock()
 
     monkeypatch.setattr('hardware.motor.HomeSensor', lambda **_kwargs: sensor)
     motor._move_near_home = AsyncMock()
@@ -334,6 +339,7 @@ async def test_motor_home_with_sensor_times_out_when_sensor_never_triggers(mock_
     sensor = DummyHomeSensor([False, False, False, False])
     params = make_motor_params(home_sensor=make_home_sensor_config())
     motor = Motor(mock_controller, params)
+    motor.clear_alarm = AsyncMock()
 
     class FakeMonotonic:
         def __init__(self) -> None:
@@ -361,6 +367,7 @@ async def test_motor_home_with_sensor_supports_absolute_release_mode(mock_contro
         home_sensor=make_home_sensor_config(release_mode='absolute', release_target_mm=10.0)
     )
     motor = Motor(mock_controller, params)
+    motor.clear_alarm = AsyncMock()
 
     monkeypatch.setattr('hardware.motor.HomeSensor', lambda **_kwargs: sensor)
     motor._move_near_home = AsyncMock()
@@ -382,6 +389,7 @@ async def test_motor_home_with_absolute_release_mode_rezeros_before_release(mock
         home_sensor=make_home_sensor_config(release_mode='absolute', release_target_mm=10.0)
     )
     motor = Motor(mock_controller, params)
+    motor.clear_alarm = AsyncMock()
 
     monkeypatch.setattr('hardware.motor.HomeSensor', lambda **_kwargs: sensor)
     motor._move_near_home = AsyncMock()
@@ -403,6 +411,7 @@ async def test_motor_home_with_sensor_can_disable_brake_during_home(mock_control
         home_sensor=make_home_sensor_config(disable_brake_during_home=True)
     )
     motor = Motor(mock_controller, params)
+    motor.clear_alarm = AsyncMock()
 
     monkeypatch.setattr('hardware.motor.HomeSensor', lambda **_kwargs: sensor)
     motor._move_near_home = AsyncMock()

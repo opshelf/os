@@ -110,6 +110,13 @@
 
 	{#if streamUrl !== '' && streamError === false}
 		<div class="stream-container">
+			{#if selectedCameraId === 'tool'}
+				<div class="aim aim-left"></div>
+				<div class="aim aim-right"></div>
+				<div class="aim aim-top"></div>
+				<div class="aim aim-bottom"></div>
+			{/if}
+
 			<img src={streamUrl} alt="camera feed" on:error={didStreamError} on:load={didStreamLoad} />
 		</div>
 	{/if}
@@ -123,10 +130,44 @@
 	.stream-container {
 		display: block;
 		margin-top: 1rem;
+		position: relative;
 	}
 
 	.stream-container img {
 		max-width: 100%;
 		display: block;
+	}
+
+	.aim {
+		position: absolute;
+		background: red;
+	}
+
+	.aim-left {
+		bottom: 3%;
+		left: 49.75%;
+		width: 2px;
+		height: 18%;
+	}
+
+	.aim-right {
+		bottom: 3%;
+		left: 58.25%;
+		width: 2px;
+		height: 18%;
+	}
+
+	.aim-top {
+		bottom: 18.5%;
+		left: 46.5%;
+		width: 15%;
+		height: 2px;
+	}
+
+	.aim-bottom {
+		bottom: 5.5%;
+		left: 46.5%;
+		width: 15%;
+		height: 2px;
 	}
 </style>

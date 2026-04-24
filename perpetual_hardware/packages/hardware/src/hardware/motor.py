@@ -1089,6 +1089,8 @@ class Motor():
         self._simulated_fault = False
 
         try:
+            await self.clear_alarm()
+
             sensor_cfg = self._get_home_sensor_config()
             if sensor_cfg is not None:
                 await self._home_with_sensor(sensor_cfg)

@@ -26,6 +26,7 @@
 	let selectedSide = $state<'left_module' | 'right_module'>('left_module');
 	let selectedShelf = $state<string>('');
 	let selectedCell = $state<string>('');
+	let activeRequestedScope = $state<LaserAutoCalibrationRequest | null>(null);
 	let stream = $state<EventSource | null>(null);
 
 	const isSessionActive = $derived.by(() => {
@@ -85,6 +86,11 @@
 			]);
 
 			snapshot = nextSnapshot;
+
+			if (nextSnapshot.requested_scope !== undefined) {
+				activeRequestedScope = nextSnapshot.requested_scope;
+			}
+
 			storageGrid = nextStorageGrid;
 			syncScopeSelection(getSnapshotRequestedScope(nextSnapshot));
 
@@ -109,11 +115,19 @@
 	function getSnapshotRequestedScope(
 		currentSnapshot: LaserAutoCalibrationSnapshot | null
 	): LaserAutoCalibrationRequest {
+		if (currentSnapshot?.requested_scope !== undefined) {
+			return currentSnapshot.requested_scope;
+		}
+
+		if (activeRequestedScope !== null) {
+			return activeRequestedScope;
+		}
+
 		if (currentSnapshot?.requested_scope === undefined) {
 			return defaultRequestedScope;
 		}
 
-		return currentSnapshot.requested_scope;
+		return defaultRequestedScope;
 	}
 
 	function getShelvesForSide(side: 'left_module' | 'right_module') {
@@ -267,6 +281,10 @@
 			snapshot = JSON.parse(event.data) as LaserAutoCalibrationSnapshot;
 
 			if (snapshot !== null) {
+				if (snapshot.requested_scope !== undefined) {
+					activeRequestedScope = snapshot.requested_scope;
+				}
+
 				syncScopeSelection(getSnapshotRequestedScope(snapshot));
 			}
 
@@ -357,6 +375,8 @@
 			return;
 		}
 
+		activeRequestedScope = getRequestedScope();
+
 		didCloseStream();
 		isConnecting = true;
 		error = '';
@@ -385,6 +405,10 @@
 			snapshot = await abortLaserAutoCalibration();
 
 			if (snapshot !== null) {
+				if (snapshot.requested_scope !== undefined) {
+					activeRequestedScope = snapshot.requested_scope;
+				}
+
 				syncScopeSelection(getSnapshotRequestedScope(snapshot));
 			}
 		} catch (err) {
