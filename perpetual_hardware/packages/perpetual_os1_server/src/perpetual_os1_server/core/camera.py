@@ -275,7 +275,10 @@ async def stop_camera_stream() -> None:
 	if camera_manager is None:
 		return
 
-	camera_manager.decrement_consumers()
+	consumer_count = camera_manager.decrement_consumers()
+
+	if consumer_count == 0 and camera_manager.is_running is True:
+		await camera_manager.stop()
 
 
 async def start_camera_stream_by_id(camera_id: str) -> None:
@@ -296,7 +299,10 @@ async def stop_camera_stream_by_id(camera_id: str) -> None:
 	if manager is None:
 		return
 
-	manager.decrement_consumers()
+	consumer_count = manager.decrement_consumers()
+
+	if consumer_count == 0 and manager.is_running is True:
+		await manager.stop()
 
 
 async def get_camera_manager() -> CameraStreamManager:
