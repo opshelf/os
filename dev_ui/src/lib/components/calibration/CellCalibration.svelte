@@ -242,20 +242,24 @@
 		return String(selectedCell);
 	}
 
-	function shouldShowPendingShelfOption(): boolean {
-		if (isAddingShelf === false) {
-			return false;
+	function getShelfOptionIndices(): number[] {
+		const shelfIndices = getShelves().map((shelf) => shelf.shelf_idx);
+
+		if (shelfIndices.includes(selectedShelf) === true) {
+			return shelfIndices;
 		}
 
-		return getSelectedShelf() === null;
+		return [selectedShelf, ...shelfIndices];
 	}
 
-	function shouldShowPendingCellOption(): boolean {
-		if (isAddingCell === false) {
-			return false;
+	function getCellOptionIndices(): number[] {
+		const cellIndices = getCells().map((cell) => cell.cell_idx);
+
+		if (cellIndices.includes(selectedCell) === true) {
+			return cellIndices;
 		}
 
-		return getCells().some((cell) => cell.cell_idx === selectedCell) === false;
+		return [selectedCell, ...cellIndices];
 	}
 
 	function isCreatingCell(): boolean {
@@ -693,11 +697,8 @@
 				<td>
 					<span class="field-label">shelf</span>
 					<select value={getShelfSelectionValue()} onchange={didChangeShelf}>
-						{#if shouldShowPendingShelfOption() === true}
-							<option value={selectedShelf} selected={true}>{selectedShelf}</option>
-						{/if}
-						{#each getShelves() as shelf}
-							<option value={shelf.shelf_idx}>{shelf.shelf_idx}</option>
+						{#each getShelfOptionIndices() as shelfIdx}
+							<option value={String(shelfIdx)}>{shelfIdx}</option>
 						{/each}
 						<option value={ADD_SHELF_VALUE}>add</option>
 					</select>
@@ -705,11 +706,8 @@
 				<td>
 					<span class="field-label">cell</span>
 					<select value={getCellSelectionValue()} onchange={didChangeCell}>
-						{#if shouldShowPendingCellOption() === true}
-							<option value={selectedCell} selected={true}>{selectedCell}</option>
-						{/if}
-						{#each getCells() as cell}
-							<option value={cell.cell_idx}>{cell.cell_idx}</option>
+						{#each getCellOptionIndices() as cellIdx}
+							<option value={String(cellIdx)}>{cellIdx}</option>
 						{/each}
 						<option value={ADD_CELL_VALUE}>add</option>
 					</select>
