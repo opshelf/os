@@ -869,7 +869,7 @@ async def test_persist_completed_results_saves_stage_extensions() -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_stage_extension_calibration_accepts_timeout_terminal_state() -> None:
+async def test_run_stage_extension_calibration_accepts_no_progress_terminal_state() -> None:
     manager = LaserAutoCalibrationManager()
     manager._update_snapshot = AsyncMock()
     stage_motor = SimpleNamespace(
@@ -902,7 +902,7 @@ async def test_run_stage_extension_calibration_accepts_timeout_terminal_state() 
             with patch.object(
                 angle_module,
                 'probe_stage_until_stall',
-                AsyncMock(return_value=(True, 45.28, 'timeout', None)),
+                AsyncMock(return_value=(True, 45.28, 'no_progress', None)),
             ) as probe_mock:
                 calibrated_stage_extension_mm = await manager._run_stage_extension_calibration_for_side(
                     worker,
@@ -911,12 +911,59 @@ async def test_run_stage_extension_calibration_accepts_timeout_terminal_state() 
                     probe_y_mm=1123.0,
                 )
 
-    assert calibrated_stage_extension_mm == pytest.approx(37.28)
+    assert calibrated_stage_extension_mm == pytest.approx(45.0)
     assert probe_mock.await_args.kwargs['retract_stage_mm'] == pytest.approx(0.0)
     assert probe_mock.await_args.kwargs['fast_approach_mm'] == pytest.approx(0.0)
-    stage_motor.move_to_position.assert_awaited_once_with(pytest.approx(37.28), rpm=100)
-    assert manager._update_snapshot.await_args_list[-1].kwargs['stage_detail']['stall_status'] == 'timeout'
-    assert manager._update_snapshot.await_args_list[-1].kwargs['stage_detail']['calibrated_stage_extension_mm'] == pytest.approx(37.28)
+    stage_motor.move_to_position.assert_awaited_once_with(pytest.approx(45.0), rpm=100)
+    assert manager._update_snapshot.await_args_list[-1].kwargs['stage_detail']['stall_status'] == 'no_progress'
+    assert manager._update_snapshot.await_args_list[-1].kwargs['stage_detail']['calibrated_stage_extension_mm'] == pytest.approx(45.0)
+
+
+@pytest.mark.asyncio
+async def test_run_stage_extension_calibration_rejects_timeout_terminal_state() -> None:
+    manager = LaserAutoCalibrationManager()
+    manager._update_snapshot = AsyncMock()
+    stage_motor = SimpleNamespace(
+        _params=SimpleNamespace(lim=75.0, rpm=300),
+        move_to_position=AsyncMock(),
+    )
+    tool = SimpleNamespace(
+        _mx=object(),
+        _my=object(),
+        _mg=object(),
+        _mr=object(),
+        _ms=stage_motor,
+        retract=AsyncMock(),
+        get_param=AsyncMock(side_effect=[187.655, 100.0, 200.0, 200.0]),
+    )
+    worker = SimpleNamespace(_robot=SimpleNamespace(_tool=tool))
+    config = SimpleNamespace(
+        robot=SimpleNamespace(
+            grid=SimpleNamespace(
+                scan=SimpleNamespace(
+                    settle_ms=0,
+                    scan_z_offset_mm=None,
+                )
+            )
+        )
+    )
+
+    with patch('perpetual_os1_server.core.laser_auto_calibration.get_root_config', return_value=config):
+        with patch.object(angle_module, 'prepare_capture_pose', AsyncMock()):
+            with patch.object(
+                angle_module,
+                'probe_stage_until_stall',
+                AsyncMock(return_value=(True, 43.775, 'timeout', None)),
+            ):
+                with pytest.raises(ValueError, match='timed out before stall'):
+                    await manager._run_stage_extension_calibration_for_side(
+                        worker,
+                        StorageModuleSide.RIGHT,
+                        ScanBounds(x_min=5.0, x_max=950.0, y_min=0.0, y_max=1250.0),
+                        probe_y_mm=1123.0,
+                    )
+
+    assert stage_motor.move_to_position.await_count == 0
 
 
 @pytest.mark.asyncio
