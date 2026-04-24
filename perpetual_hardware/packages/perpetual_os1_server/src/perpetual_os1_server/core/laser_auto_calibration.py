@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import logging
+import math
 from pathlib import Path
 import re
 import sys
@@ -54,10 +55,9 @@ SCAN_FINE_RETRY_RE = re.compile(r"phase=fine-scan-retry candidate=(?P<idx>\d+)/(
 FINE_DETECTED_CELLS_RE = re.compile(r"fine_detected_cells=(?P<count>\d+)")
 ANGLE_RESULT_RE = re.compile(r"alpha_deg=(?P<alpha>-?\d+(?:\.\d+)?)")
 STAGE_EXTENSION_PROBE_START_MM = 0.0
-STAGE_EXTENSION_PROBE_BACKOFF_MM = 8.0
 STAGE_EXTENSION_PROBE_Y_OFFSET_MM = 25.0
 STAGE_EXTENSION_PROBE_STEP_MM = 0.5
-STAGE_EXTENSION_PROBE_TIMEOUT_S = 1.0
+STAGE_EXTENSION_PROBE_TIMEOUT_S = 10.0
 STAGE_EXTENSION_NO_PROGRESS_TIMEOUT_S = 0.2
 
 
@@ -1276,12 +1276,17 @@ class LaserAutoCalibrationManager:
                 },
             )
 
+            if status == "timeout":
+                raise ValueError(
+                    f"stage extension probe timed out before stall at {stage_position_mm:.3f} mm"
+                )
+
             if did_stall is False:
                 raise ValueError(
                     f"stage extension probe reached limit without stall at {stage_position_mm:.3f} mm"
                 )
 
-            calibrated_stage_extension_mm = max(0.0, stage_position_mm - STAGE_EXTENSION_PROBE_BACKOFF_MM)
+            calibrated_stage_extension_mm = max(0.0, float(math.floor(stage_position_mm)))
             self._raise_if_abort_requested()
             await tool._ms.move_to_position(calibrated_stage_extension_mm, rpm=probe_rpm)
             await self._update_snapshot(
