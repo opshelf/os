@@ -153,6 +153,34 @@ async def test_io_stream_manager_always_calls_capture_raw() -> None:
 	mock_cam.capture_raw.assert_called()
 
 
+def test_tool_stream_manager_resizes_wide_frames() -> None:
+	manager = ToolCameraStreamManager(rtsp_url="rtsp://camera")
+	frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+
+	resized = manager._prepare_frame(frame)
+
+	assert resized.shape == (360, 640, 3)
+
+
+def test_tool_stream_manager_keeps_small_frames_unchanged() -> None:
+	manager = ToolCameraStreamManager(rtsp_url="rtsp://camera")
+	frame = np.zeros((480, 640, 3), dtype=np.uint8)
+
+	resized = manager._prepare_frame(frame)
+
+	assert resized is frame
+
+
+def test_tool_stream_manager_skips_source_frames_for_target_fps() -> None:
+	manager = ToolCameraStreamManager(rtsp_url="rtsp://camera")
+	cap = MagicMock()
+	cap.get.return_value = 30
+
+	frames_to_skip = manager._get_frames_to_skip(cap)
+
+	assert frames_to_skip == 5
+
+
 @pytest.mark.anyio
 async def test_stop_camera_stream_by_id_stops_manager_when_last_consumer_disconnects() -> None:
 	manager = MagicMock(spec=ToolCameraStreamManager)
