@@ -17,7 +17,12 @@ def _mock_worker(stage_position: float):
 				"STAGE_EXTENSION_SHELF_BACK": 40.0,
 			}.get(name)
 		),
-		_mg=SimpleNamespace(move_to_position=AsyncMock()),
+		_mx=SimpleNamespace(_params=SimpleNamespace(lim=1000.0, lower_lim=0.0)),
+		_my=SimpleNamespace(_params=SimpleNamespace(lim=1500.0, lower_lim=0.0)),
+		_mg=SimpleNamespace(
+			move_to_position=AsyncMock(),
+			_params=SimpleNamespace(lim=170.0, lower_lim=0.0),
+		),
 		_ms=SimpleNamespace(get_position=AsyncMock(return_value=stage_position)),
 	)
 
@@ -51,3 +56,51 @@ async def test_move_to_cell_reports_actual_stage_position(client) -> None:
 
 	assert response.status_code == 200
 	assert response.json()["slide_extension"] == pytest.approx(3.0)
+
+
+@pytest.mark.anyio
+async def test_move_to_position_starts_manual_calibration_session(client) -> None:
+	worker = _mock_worker(stage_position=6.5)
+
+	with patch("perpetual_os1_server.routers.calibration.get_robot_worker", AsyncMock(return_value=worker)):
+		with patch("perpetual_os1_server.routers.calibration._clear_motors_for_move", AsyncMock()):
+			response = await client.post(
+				"/api/calibration/move/position",
+				json={"side": "right_module", "x": 475.0, "y": 630.0, "z_offset": 0.0},
+			)
+
+	assert response.status_code == 200
+	assert response.json()["x"] == pytest.approx(475.0)
+	assert response.json()["y"] == pytest.approx(630.0)
+	assert response.json()["slide_extension"] == pytest.approx(6.5)
+
+	move_coordinate = worker._robot._tool.move.await_args.args[0]
+
+	assert move_coordinate.x == pytest.approx(475.0)
+	assert move_coordinate.y == pytest.approx(630.0)
+	assert move_coordinate.s == 1
+	worker._robot._tool.rotate_to_position.assert_awaited_once_with("back")
+
+
+@pytest.mark.anyio
+async def test_move_to_position_clamps_out_of_range_targets(client) -> None:
+	worker = _mock_worker(stage_position=6.5)
+
+	with patch("perpetual_os1_server.routers.calibration.get_robot_worker", AsyncMock(return_value=worker)):
+		with patch("perpetual_os1_server.routers.calibration._clear_motors_for_move", AsyncMock()):
+			response = await client.post(
+				"/api/calibration/move/position",
+				json={"side": "left_module", "x": 1200.0, "y": 1600.0, "z_offset": 20.0},
+			)
+
+	assert response.status_code == 200
+	assert response.json()["x"] == pytest.approx(1000.0)
+	assert response.json()["y"] == pytest.approx(1500.0)
+	assert response.json()["z_offset"] == pytest.approx(9.5)
+	assert len(response.json()["warnings"]) == 3
+
+	move_coordinate = worker._robot._tool.move.await_args.args[0]
+
+	assert move_coordinate.x == pytest.approx(1000.0)
+	assert move_coordinate.y == pytest.approx(1500.0)
+	assert move_coordinate.z_offset == pytest.approx(9.5)

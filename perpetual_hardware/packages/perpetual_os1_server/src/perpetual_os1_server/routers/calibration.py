@@ -11,9 +11,11 @@ from sse_starlette.sse import EventSourceResponse
 from perpetual_os1.common import AxisCoordinate
 from perpetual_os1.storage import (
 	CalibrationCoordinate,
+	Cell,
 	CellItem,
 	CellStatus,
 	Dimensions,
+	Shelf,
 	StorageModuleCellLocation,
 	StorageModuleSide,
 )
@@ -32,6 +34,10 @@ from perpetual_os1_server.settings import get_root_config, save_root_config
 router = APIRouter(prefix="/api/calibration", tags=["calibration"], dependencies=[Depends(get_current_user)])
 
 _MOTOR_ID_RE = re.compile(r"motor\s+(\d+)", re.IGNORECASE)
+_DEFAULT_SHELF_HEIGHT = 200.0
+_DEFAULT_SHELF_WIDTH = 480.0
+_DEFAULT_DIVIDER_WIDTH = 12.0
+_DEFAULT_CELL_LENGTH = 400.0
 
 
 class PositionResponse(BaseModel):
@@ -46,6 +52,13 @@ class MoveRequest(BaseModel):
 	side: Literal["left_module", "right_module"]
 	shelf_idx: int
 	cell_idx: int
+
+
+class MovePositionRequest(BaseModel):
+	side: Literal["left_module", "right_module"]
+	x: float
+	y: float
+	z_offset: float = 0.0
 
 
 class JogRequest(BaseModel):
@@ -220,6 +233,19 @@ def _clamp_value(value: float, limit: float, label: str, warnings: list[str]) ->
 	return clamped
 
 
+def _clamp_motor_value(value: float, motor, label: str, warnings: list[str]) -> float:
+	lower_limit = float(getattr(motor._params, "lower_lim", 0.0))
+	upper_limit = float(motor._params.lim)
+	clamped = max(lower_limit, min(upper_limit, value))
+
+	if clamped != value:
+		warnings.append(
+			f"{label} limit reached; requested {value:.2f}mm, clamped to {clamped:.2f}mm (range {lower_limit:.2f}-{upper_limit:.2f}mm)"
+		)
+
+	return clamped
+
+
 async def _get_current_stage_extension(tool, fallback: float = 0.0) -> float:
 	if getattr(tool, "_ms", None) is None:
 		return fallback
@@ -331,6 +357,200 @@ def _get_cell(shelf, cell_idx: int):
 			status_code=status.HTTP_400_BAD_REQUEST,
 			detail=f"Invalid cell_idx: {cell_idx}",
 		) from e
+
+
+def _validate_non_negative_index(index: int, label: str) -> None:
+	if index < 0:
+		raise HTTPException(
+			status_code=status.HTTP_400_BAD_REQUEST,
+			detail=f"Invalid {label}: {index}",
+		)
+
+
+def _find_shelf(grid, side: StorageModuleSide, shelf_idx: int):
+	for shelf in grid.get_side(side):
+		if shelf.shelf_idx == shelf_idx:
+			return shelf
+
+	return None
+
+
+def _find_cell(shelf, cell_idx: int):
+	for cell in shelf.cells:
+		if cell.cell_idx == cell_idx:
+			return cell
+
+	return None
+
+
+def _build_default_shelf_template() -> Shelf:
+	return Shelf(
+		shelf_idx=0,
+		shelf_height=_DEFAULT_SHELF_HEIGHT,
+		shelf_width=_DEFAULT_SHELF_WIDTH,
+		cells=[],
+		divider_width=_DEFAULT_DIVIDER_WIDTH,
+	)
+
+
+def _build_default_cell_template(shelf) -> Cell:
+	return Cell(
+		cell_idx=0,
+		status=CellStatus.AVAILABLE,
+		item=None,
+		calibration_point=None,
+		dimensions=Dimensions(
+			width=max(float(shelf.shelf_width), 1.0),
+			height=max(float(shelf.shelf_height), 1.0),
+			length=_DEFAULT_CELL_LENGTH,
+		),
+		empty=False,
+	)
+
+
+def _get_shelf_template(grid, side: StorageModuleSide) -> Shelf:
+	shelves = grid.get_side(side)
+
+	if len(shelves) > 0:
+		return shelves[-1]
+
+	other_side = StorageModuleSide.RIGHT if side == StorageModuleSide.LEFT else StorageModuleSide.LEFT
+	other_shelves = grid.get_side(other_side)
+
+	if len(other_shelves) > 0:
+		return other_shelves[-1]
+
+	return _build_default_shelf_template()
+
+
+def _get_cell_template(grid, side: StorageModuleSide, shelf) -> Cell:
+	if len(shelf.cells) > 0:
+		return shelf.cells[-1]
+
+	for candidate_shelf in reversed(grid.get_side(side)):
+		if len(candidate_shelf.cells) > 0:
+			return candidate_shelf.cells[-1]
+
+	other_side = StorageModuleSide.RIGHT if side == StorageModuleSide.LEFT else StorageModuleSide.LEFT
+
+	for candidate_shelf in reversed(grid.get_side(other_side)):
+		if len(candidate_shelf.cells) > 0:
+			return candidate_shelf.cells[-1]
+
+	return _build_default_cell_template(shelf)
+
+
+def _ensure_shelf(grid, side: StorageModuleSide, shelf_idx: int):
+	shelf = _find_shelf(grid, side, shelf_idx)
+
+	if shelf is not None:
+		return shelf
+
+	template = _get_shelf_template(grid, side)
+	new_shelf = Shelf(
+		shelf_idx=shelf_idx,
+		shelf_height=template.shelf_height,
+		shelf_width=template.shelf_width,
+		cells=[],
+		divider_width=template.divider_width,
+	)
+	grid.get_side(side).append(new_shelf)
+
+	return new_shelf
+
+
+def _ensure_cell(grid, side: StorageModuleSide, shelf, cell_idx: int):
+	cell = _find_cell(shelf, cell_idx)
+
+	if cell is not None:
+		return cell
+
+	template = _get_cell_template(grid, side, shelf)
+	new_cell = Cell(
+		cell_idx=cell_idx,
+		status=CellStatus.AVAILABLE,
+		item=None,
+		calibration_point=None,
+		dimensions=template.dimensions.model_copy(deep=True),
+		empty=template.empty,
+	)
+	shelf.cells.append(new_cell)
+
+	return new_cell
+
+
+async def _move_tool_to_coordinate(
+	worker,
+	coord: AxisCoordinate,
+	*,
+	side_name: Literal["left_module", "right_module"],
+	warnings: Optional[list[str]] = None,
+) -> PositionResponse:
+	global _current_position, _current_side, _current_side_name
+
+	tool = worker._robot._tool
+
+	try:
+		await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
+		await tool.move(coord)
+
+		target_position: Literal["front", "back"] = "front" if coord.s == 0 else "back"
+		await tool.rotate_to_position(target_position)
+
+		if tool._mg is not None:
+			grip_ext = await tool.get_param("Z_EXTENSION_PLACE")
+			if grip_ext is not None:
+				grip_rpm = await tool.get_param("Z_MOVE_RPM")
+				grip_accel = await tool.get_param("Z_MOVE_ACCEL")
+				target_z = grip_ext + coord.z_offset
+				await tool._mg.move_to_position(target_z, rpm=grip_rpm, accel=grip_accel)
+	except (MotorError, HardwareMotorError) as e:
+		await _raise_motor_error(worker, f"Failed to move to cell: {str(e)}", e)
+
+	slide_extension = await _get_current_stage_extension(tool)
+
+	_current_side = coord.s
+	_current_side_name = side_name
+	warnings_payload = warnings if warnings else None
+	_current_position = PositionResponse(
+		x=coord.x,
+		y=coord.y,
+		z_offset=coord.z_offset,
+		slide_extension=slide_extension,
+		warnings=warnings_payload,
+	)
+
+	return _current_position
+
+
+async def _build_clamped_manual_coordinate(tool, request: MovePositionRequest) -> tuple[AxisCoordinate, list[str]]:
+	warnings: list[str] = []
+	x = request.x
+	y = request.y
+	z_offset = request.z_offset
+
+	if tool._mx is not None:
+		x = _clamp_motor_value(x, tool._mx, "X axis", warnings)
+
+	if tool._my is not None:
+		y = _clamp_motor_value(y, tool._my, "Y axis", warnings)
+
+	if tool._mg is not None:
+		grip_ext = await tool.get_param("Z_EXTENSION_PLACE")
+
+		if grip_ext is not None:
+			target_z = _clamp_motor_value(grip_ext + z_offset, tool._mg, "Z axis", warnings)
+			z_offset = target_z - grip_ext
+
+	return (
+		AxisCoordinate(
+			x=x,
+			y=y,
+			s=_side_to_s(request.side),
+			z_offset=z_offset,
+		),
+		warnings,
+	)
 
 
 def _get_stage_limit(tool) -> float:
@@ -493,8 +713,6 @@ async def stream_laser_auto_calibration(
 
 @router.post("/move", response_model=PositionResponse)
 async def move_to_cell(request: MoveRequest) -> PositionResponse:
-	global _current_position, _current_side, _current_side_name
-
 	await _ensure_laser_auto_calibration_not_running()
 
 	try:
@@ -506,7 +724,6 @@ async def move_to_cell(request: MoveRequest) -> PositionResponse:
 		) from e
 
 	grid = worker._robot._grid
-	tool = worker._robot._tool
 
 	side_enum = _parse_side(request.side)
 	shelf = _get_shelf(grid, side_enum, request.shelf_idx)
@@ -527,35 +744,27 @@ async def move_to_cell(request: MoveRequest) -> PositionResponse:
 		z_offset=cal_point.z_offset,
 	)
 
+	return await _move_tool_to_coordinate(worker, coord, side_name=request.side)
+
+
+@router.post("/move/position", response_model=PositionResponse)
+async def move_to_position(request: MovePositionRequest) -> PositionResponse:
+	await _ensure_laser_auto_calibration_not_running()
+
 	try:
-		await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
-		await tool.move(coord)
+		worker = await get_robot_worker()
+	except ValueError as e:
+		raise HTTPException(
+			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+			detail="Robot is not initialized",
+		) from e
 
-		target_position: Literal["front", "back"] = "front" if coord.s == 0 else "back"
-		await tool.rotate_to_position(target_position)
+	_ensure_ready(worker)
+	tool = worker._robot._tool
 
-		if tool._mg is not None:
-			grip_ext = await tool.get_param("Z_EXTENSION_PLACE")
-			if grip_ext is not None:
-				grip_rpm = await tool.get_param("Z_MOVE_RPM")
-				grip_accel = await tool.get_param("Z_MOVE_ACCEL")
-				target_z = grip_ext + coord.z_offset
-				await tool._mg.move_to_position(target_z, rpm=grip_rpm, accel=grip_accel)
-	except (MotorError, HardwareMotorError) as e:
-		await _raise_motor_error(worker, f"Failed to move to cell: {str(e)}", e)
+	coord, warnings = await _build_clamped_manual_coordinate(tool, request)
 
-	slide_extension = await _get_current_stage_extension(tool)
-
-	_current_side = coord.s
-	_current_side_name = request.side
-	_current_position = PositionResponse(
-		x=coord.x,
-		y=coord.y,
-		z_offset=coord.z_offset,
-		slide_extension=slide_extension,
-	)
-
-	return _current_position
+	return await _move_tool_to_coordinate(worker, coord, side_name=request.side, warnings=warnings)
 
 
 @router.post("/jog", response_model=PositionResponse)
@@ -788,10 +997,12 @@ async def save_calibration(request: SaveRequest):
 		) from e
 
 	grid = worker._robot._grid
+	_validate_non_negative_index(request.shelf_idx, "shelf_idx")
+	_validate_non_negative_index(request.cell_idx, "cell_idx")
 
 	side_enum = _parse_side(request.side)
-	shelf = _get_shelf(grid, side_enum, request.shelf_idx)
-	cell = _get_cell(shelf, request.cell_idx)
+	shelf = _ensure_shelf(grid, side_enum, request.shelf_idx)
+	cell = _ensure_cell(grid, side_enum, shelf, request.cell_idx)
 
 	new_cal = CalibrationCoordinate(
 		x=request.x,

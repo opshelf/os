@@ -233,6 +233,19 @@ export async function moveToCell(
 	});
 }
 
+export async function moveToPosition(
+	side: string,
+	x: number,
+	y: number,
+	zOffset: number
+): Promise<Position> {
+	return apiFetch<Position>('/calibration/move/position', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ side, x, y, z_offset: zOffset })
+	});
+}
+
 export async function jogAxis(axis: 'x' | 'y' | 'z' | 'stage', delta: number): Promise<Position> {
 	return apiFetch<Position>('/calibration/jog', {
 		method: 'POST',
