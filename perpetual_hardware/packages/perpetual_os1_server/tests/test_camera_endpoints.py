@@ -3,12 +3,13 @@ import asyncio
 import numpy as np
 import pytest
 from httpx import AsyncClient
-from unittest.mock import patch, MagicMock
+from unittest.mock import AsyncMock, patch, MagicMock
 
 from perpetual_os1_server.core.camera import (
 	camera_registry,
 	CameraStreamManager,
 	ToolCameraStreamManager,
+	stop_camera_stream_by_id,
 )
 
 
@@ -150,3 +151,29 @@ async def test_io_stream_manager_always_calls_capture_raw() -> None:
 	await asyncio.sleep(0.2)
 	await manager.stop()
 	mock_cam.capture_raw.assert_called()
+
+
+@pytest.mark.anyio
+async def test_stop_camera_stream_by_id_stops_manager_when_last_consumer_disconnects() -> None:
+	manager = MagicMock(spec=ToolCameraStreamManager)
+	manager.is_running = True
+	manager.decrement_consumers = MagicMock(return_value=0)
+	manager.stop = AsyncMock()
+
+	with patch.dict(camera_registry, {"tool": manager}, clear=True):
+		await stop_camera_stream_by_id("tool")
+
+	manager.stop.assert_awaited_once()
+
+
+@pytest.mark.anyio
+async def test_stop_camera_stream_by_id_keeps_manager_running_with_remaining_consumers() -> None:
+	manager = MagicMock(spec=ToolCameraStreamManager)
+	manager.is_running = True
+	manager.decrement_consumers = MagicMock(return_value=1)
+	manager.stop = AsyncMock()
+
+	with patch.dict(camera_registry, {"tool": manager}, clear=True):
+		await stop_camera_stream_by_id("tool")
+
+	manager.stop.assert_not_awaited()
