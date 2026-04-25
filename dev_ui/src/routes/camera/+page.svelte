@@ -134,10 +134,14 @@
 	.stream-container {
 		display: block;
 		position: relative;
+		width: 100%;
+		height: auto;
+		aspect-ratio: 16 / 9;
 	}
 
 	.stream-container img {
 		width: 100%;
+		height: 100%;
 		display: block;
 	}
 
