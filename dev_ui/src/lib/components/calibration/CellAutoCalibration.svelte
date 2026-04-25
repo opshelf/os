@@ -497,7 +497,7 @@
 						>
 							<option value="">-</option>
 							{#each getShelves() as shelf}
-								<option value={shelf.shelf_idx}>{shelf.shelf_idx}</option>
+								<option value={String(shelf.shelf_idx)}>{shelf.shelf_idx}</option>
 							{/each}
 						</select>
 					</div>
@@ -515,7 +515,7 @@
 						>
 							<option value="">-</option>
 							{#each getCells() as cell}
-								<option value={cell.cell_idx}>{cell.cell_idx}</option>
+								<option value={String(cell.cell_idx)}>{cell.cell_idx}</option>
 							{/each}
 						</select>
 					</div>
