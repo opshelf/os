@@ -52,9 +52,9 @@ perpetual_hardware/packages/perpetual_os1_server/data/auth.db-shm
 perpetual_hardware/packages/perpetual_os1_server/data/auth.db-wal
 
 # Agents
-.cursor/
 .mcp.json
 opencode.json
+.pi
 
 # Camera files
 frame.png
