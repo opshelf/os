@@ -129,7 +129,7 @@ async def submit_error_report(
 				scope.add_attachment(bytes=image_bytes, filename=f"{name}.jpg")
 
 			sentry_sdk.capture_message(
-				f"User Report: {request.message[:100]}",
+				f"User Report: {request.message}",
 				level="error",
 			)
 
