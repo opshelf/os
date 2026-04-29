@@ -53,6 +53,13 @@ FINE_OPPOSITE_EDGE_MARGIN_MM = 5.0
 FINE_OPPOSITE_EDGE_BACKTRACK_MM = 8.0
 COARSE_WALL_SEARCH_STEPS = 2
 CURRENT_SCAN_LOG_PATH: Optional[Path] = None
+IO_BOX_DEFAULT_START_X_MM = 0.0
+IO_BOX_DEFAULT_START_Y_MM = 1250.0
+IO_BOX_DEFAULT_X_MAX_MM = 250.0
+IO_BOX_COARSE_STEP_MM = 5.0
+IO_BOX_FINE_STEP_MM = 1.0
+IO_BOX_FINE_MARGIN_MM = 20.0
+IO_BOX_MIN_POSITIVE_RUN_COUNT = 2
 DEFAULT_Z_REFERENCE_BY_SIDE: dict[StorageModuleSide, tuple[int, int, float, float]] = {
 	StorageModuleSide.LEFT: (12, 0, 15.0, 8.504),
 }
@@ -238,6 +245,23 @@ class StagedScanRecorder:
 class SingleCellRescanTarget:
 	shelf_idx: int
 	cell_idx: int
+
+
+@dataclass
+class IOBoxScoutResult:
+	rough_y_min_mm: float
+	rough_y_max_mm: float
+	fine_y_min_mm: float
+	fine_y_max_mm: float
+	measured_x_min_mm: float | None
+	measured_x_max_mm: float
+	derived_x_min_mm: float
+	center_x_mm: float
+	center_y_mm: float
+	tool_x_mm: float
+	tool_y_mm: float
+	io_box_interior_width_mm: float
+	final_y_refined: bool
 
 
 
@@ -1701,6 +1725,123 @@ def estimate_wall_depth_from_line(
 	return float(np.median(positive_values))
 
 
+def build_line_run_segment(
+	*,
+	positions: list[float],
+	start_idx: int,
+	end_idx: int,
+	step_mm: float,
+) -> LineGapSegment:
+	start_position_mm = float(positions[start_idx])
+	end_position_mm = float(positions[end_idx])
+	start_mm = min(start_position_mm, end_position_mm) - (step_mm / 2.0)
+	end_mm = max(start_position_mm, end_position_mm) + (step_mm / 2.0)
+
+	return LineGapSegment(
+		start_idx=start_idx,
+		end_idx=end_idx,
+		start_mm=start_mm,
+		end_mm=end_mm,
+		width_mm=float(end_mm - start_mm),
+		center_mm=float((start_mm + end_mm) / 2.0),
+	)
+
+
+def find_first_positive_run_segment(
+	*,
+	values: list[float | None],
+	positions: list[float],
+	step_mm: float,
+	min_run_count: int = IO_BOX_MIN_POSITIVE_RUN_COUNT,
+	require_bounded: bool = True,
+) -> LineGapSegment | None:
+	if len(values) != len(positions):
+		raise ValueError("values and positions must have the same length")
+
+	start_idx: int | None = None
+
+	for idx in range(len(values) + 1):
+		is_positive = False
+
+		if idx < len(values):
+			is_positive = is_positive_depth(values[idx])
+
+		if is_positive is True and start_idx is None:
+			start_idx = idx
+			continue
+
+		if is_positive is True or start_idx is None:
+			continue
+
+		end_idx = idx - 1
+		run_count = end_idx - start_idx + 1
+
+		if run_count < min_run_count:
+			start_idx = None
+			continue
+
+		if require_bounded is True:
+			if start_idx == 0 or end_idx >= len(values) - 1:
+				start_idx = None
+				continue
+
+		return build_line_run_segment(
+			positions=positions,
+			start_idx=start_idx,
+			end_idx=end_idx,
+			step_mm=step_mm,
+		)
+
+	return None
+
+
+def find_gap_run_containing_position(
+	*,
+	values: list[float | None],
+	positions: list[float],
+	step_mm: float,
+	seed_mm: float,
+	min_run_count: int = 1,
+) -> LineGapSegment | None:
+	if len(values) != len(positions):
+		raise ValueError("values and positions must have the same length")
+
+	if len(values) == 0:
+		return None
+
+	seed_idx = find_nearest_position_index(positions, seed_mm)
+
+	if is_gap_depth(values[seed_idx]) is False:
+		return None
+
+	start_idx = seed_idx
+	end_idx = seed_idx
+
+	while start_idx > 0 and is_gap_depth(values[start_idx - 1]) is True:
+		start_idx -= 1
+
+	while end_idx < len(values) - 1 and is_gap_depth(values[end_idx + 1]) is True:
+		end_idx += 1
+
+	if end_idx - start_idx + 1 < min_run_count:
+		return None
+
+	return build_line_run_segment(
+		positions=positions,
+		start_idx=start_idx,
+		end_idx=end_idx,
+		step_mm=step_mm,
+	)
+
+
+def is_line_segment_bounded(
+	segment: LineGapSegment,
+	*,
+	positions: list[float],
+) -> bool:
+	return segment.start_idx > 0 and segment.end_idx < len(positions) - 1
+
+
 async def sample_scan_point(
 	tool: Any,
 	*,
@@ -2016,6 +2157,244 @@ def merge_line_scan_into_sparse_scan(
 			y_mm=y_mm,
 			depth_mm=depth_mm,
 		)
+
+
+async def run_io_box_scout(
+	*,
+	robot: Robot,
+	scan_config: Any,
+	io_box_interior_width_mm: float,
+	start_x_mm: float = IO_BOX_DEFAULT_START_X_MM,
+	start_y_mm: float = IO_BOX_DEFAULT_START_Y_MM,
+	y_min_mm: float = 0.0,
+	x_max_mm: float = IO_BOX_DEFAULT_X_MAX_MM,
+	coarse_step_mm: float = IO_BOX_COARSE_STEP_MM,
+	fine_step_mm: float = IO_BOX_FINE_STEP_MM,
+	fine_margin_mm: float = IO_BOX_FINE_MARGIN_MM,
+	settle_ms: int = 20,
+	samples_per_point: int = 1,
+	should_abort: Callable[[], bool] | None = None,
+) -> IOBoxScoutResult:
+	if io_box_interior_width_mm <= 0.0:
+		raise ValueError("io_box_interior_width_mm must be greater than zero")
+
+	if coarse_step_mm <= 0.0:
+		raise ValueError("coarse_step_mm must be greater than zero")
+
+	if fine_step_mm <= 0.0:
+		raise ValueError("fine_step_mm must be greater than zero")
+
+	if fine_margin_mm < 0.0:
+		raise ValueError("fine_margin_mm must be zero or greater")
+
+	if start_y_mm <= y_min_mm:
+		raise ValueError("start_y_mm must be greater than y_min_mm")
+
+	if x_max_mm <= start_x_mm:
+		raise ValueError("x_max_mm must be greater than start_x_mm")
+
+	if settle_ms < 0:
+		raise ValueError("settle_ms must be zero or greater")
+
+	if samples_per_point <= 0:
+		raise ValueError("samples_per_point must be greater than zero")
+
+	tool = robot._tool
+	io_box = getattr(robot, "_io", None)
+
+	if io_box is None:
+		raise ValueError("IO box is not configured")
+
+	did_attempt_door_motion = False
+
+	try:
+		raise_if_cancelled(should_abort)
+		print_status("phase=io-box-calibration")
+		await enter_scan_mode(tool, StorageModuleSide.LEFT, scan_config)
+		raise_if_cancelled(should_abort)
+
+		coarse_y_positions = build_axis_positions(start_y_mm, y_min_mm, coarse_step_mm)
+		print_status(
+			f"phase=io-box-coarse-y x={start_x_mm:.2f} "
+			f"y=({start_y_mm:.2f},{y_min_mm:.2f}) step={coarse_step_mm:.2f}"
+		)
+		coarse_y_values = await scan_line_positions(
+			tool,
+			axis="y",
+			positions=coarse_y_positions,
+			fixed_mm=start_x_mm,
+			settle_ms=settle_ms,
+			samples_per_point=samples_per_point,
+			progress_label="io_box_coarse_y",
+			should_abort=should_abort,
+		)
+		rough_y_segment = find_first_positive_run_segment(
+			values=coarse_y_values,
+			positions=coarse_y_positions,
+			step_mm=coarse_step_mm,
+		)
+
+		if rough_y_segment is None:
+			raise ValueError("No bounded rough IO box Y band found")
+
+		rough_y_center_mm = float(rough_y_segment.center_mm)
+		print_status(
+			f"io_box_rough_y_bounds=({rough_y_segment.start_mm:.2f},{rough_y_segment.end_mm:.2f}) "
+			f"center_y={rough_y_center_mm:.2f}"
+		)
+
+		raise_if_cancelled(should_abort)
+		print_status("phase=io-box-door-open")
+		did_attempt_door_motion = True
+		await io_box.open_door()
+		raise_if_cancelled(should_abort)
+
+		fine_y_min_mm = max(y_min_mm, rough_y_segment.start_mm - fine_margin_mm)
+		fine_y_max_mm = min(start_y_mm, rough_y_segment.end_mm + fine_margin_mm)
+		fine_y_positions = build_axis_positions(fine_y_max_mm, fine_y_min_mm, fine_step_mm)
+		print_status(
+			f"phase=io-box-fine-y x={start_x_mm:.2f} "
+			f"y=({fine_y_max_mm:.2f},{fine_y_min_mm:.2f}) step={fine_step_mm:.2f}"
+		)
+		fine_y_values = await scan_line_positions(
+			tool,
+			axis="y",
+			positions=fine_y_positions,
+			fixed_mm=start_x_mm,
+			settle_ms=settle_ms,
+			samples_per_point=samples_per_point,
+			progress_label="io_box_fine_y",
+			should_abort=should_abort,
+		)
+		fine_y_segment = find_gap_run_containing_position(
+			values=fine_y_values,
+			positions=fine_y_positions,
+			step_mm=fine_step_mm,
+			seed_mm=rough_y_center_mm,
+		)
+
+		if fine_y_segment is None:
+			raise ValueError("No open-door IO box Y gap found at the rough center")
+
+		if is_line_segment_bounded(fine_y_segment, positions=fine_y_positions) is False:
+			raise ValueError("Open-door IO box Y gap is not bounded; increase --io-box-fine-margin-mm")
+
+		center_y_mm = float(fine_y_segment.center_mm)
+		print_status(
+			f"io_box_fine_y_bounds=({fine_y_segment.start_mm:.2f},{fine_y_segment.end_mm:.2f}) "
+			f"center_y={center_y_mm:.2f}"
+		)
+
+		x_positions = build_axis_positions(start_x_mm, x_max_mm, fine_step_mm)
+		print_status(
+			f"phase=io-box-fine-x y={center_y_mm:.2f} "
+			f"x=({start_x_mm:.2f},{x_max_mm:.2f}) step={fine_step_mm:.2f}"
+		)
+		x_values = await scan_line_positions(
+			tool,
+			axis="x",
+			positions=x_positions,
+			fixed_mm=center_y_mm,
+			settle_ms=settle_ms,
+			samples_per_point=samples_per_point,
+			progress_label="io_box_fine_x",
+			should_abort=should_abort,
+		)
+		x_segment = find_gap_run_containing_position(
+			values=x_values,
+			positions=x_positions,
+			step_mm=fine_step_mm,
+			seed_mm=start_x_mm,
+		)
+
+		if x_segment is None:
+			raise ValueError("No open-door IO box X gap found at the scout X position")
+
+		if x_segment.end_idx >= len(x_positions) - 1:
+			raise ValueError("Open-door IO box right X boundary was not found; increase --io-box-x-max-mm")
+
+		measured_x_min_mm = None
+
+		if x_segment.start_idx > 0:
+			measured_x_min_mm = float(x_segment.start_mm)
+
+		measured_x_max_mm = float(x_segment.end_mm)
+		derived_x_min_mm = measured_x_max_mm - float(io_box_interior_width_mm)
+		center_x_mm = float((derived_x_min_mm + measured_x_max_mm) / 2.0)
+		final_y_segment = fine_y_segment
+		final_y_refined = False
+
+		measured_x_min_label = "none"
+
+		if measured_x_min_mm is not None:
+			measured_x_min_label = f"{measured_x_min_mm:.2f}"
+
+		print_status(
+			f"io_box_fine_x_bounds=({x_segment.start_mm:.2f},{x_segment.end_mm:.2f}) "
+			f"measured_x_min={measured_x_min_label} "
+			f"measured_x_max={measured_x_max_mm:.2f} "
+			f"derived_x_min={derived_x_min_mm:.2f} center_x={center_x_mm:.2f}"
+		)
+
+		if center_x_mm >= start_x_mm and center_x_mm <= x_max_mm:
+			print_status(
+				f"phase=io-box-final-y x={center_x_mm:.2f} "
+				f"y=({fine_y_max_mm:.2f},{fine_y_min_mm:.2f}) step={fine_step_mm:.2f}"
+			)
+			final_y_values = await scan_line_positions(
+				tool,
+				axis="y",
+				positions=fine_y_positions,
+				fixed_mm=center_x_mm,
+				settle_ms=settle_ms,
+				samples_per_point=samples_per_point,
+				progress_label="io_box_final_y",
+				should_abort=should_abort,
+			)
+			refined_y_segment = find_gap_run_containing_position(
+				values=final_y_values,
+				positions=fine_y_positions,
+				step_mm=fine_step_mm,
+				seed_mm=center_y_mm,
+			)
+
+			if refined_y_segment is not None and is_line_segment_bounded(refined_y_segment, positions=fine_y_positions) is True:
+				final_y_segment = refined_y_segment
+				center_y_mm = float(final_y_segment.center_mm)
+				final_y_refined = True
+				print_status(
+					f"io_box_final_y_bounds=({final_y_segment.start_mm:.2f},{final_y_segment.end_mm:.2f}) "
+					f"center_y={center_y_mm:.2f}"
+				)
+			else:
+				print_status("io_box_final_y_refine=skipped reason=boundary_not_found")
+		else:
+			print_status("io_box_final_y_refine=skipped reason=center_x_out_of_scan_range")
+
+		tool_x_mm = center_x_mm - float(getattr(scan_config, "laser_offset_x_mm", 0.0))
+		tool_y_mm = center_y_mm - float(getattr(scan_config, "laser_offset_y_mm", 0.0))
+
+		return IOBoxScoutResult(
+			rough_y_min_mm=float(rough_y_segment.start_mm),
+			rough_y_max_mm=float(rough_y_segment.end_mm),
+			fine_y_min_mm=float(final_y_segment.start_mm),
+			fine_y_max_mm=float(final_y_segment.end_mm),
+			measured_x_min_mm=measured_x_min_mm,
+			measured_x_max_mm=measured_x_max_mm,
+			derived_x_min_mm=derived_x_min_mm,
+			center_x_mm=center_x_mm,
+			center_y_mm=center_y_mm,
+			tool_x_mm=tool_x_mm,
+			tool_y_mm=tool_y_mm,
+			io_box_interior_width_mm=float(io_box_interior_width_mm),
+			final_y_refined=final_y_refined,
+		)
+	finally:
+		if should_skip_motion_cleanup_on_cancel() is False:
+			await tool.retract()
+
+			if did_attempt_door_motion is True:
+				await io_box.home_door()
 
 
 async def probe_line_from_center(
