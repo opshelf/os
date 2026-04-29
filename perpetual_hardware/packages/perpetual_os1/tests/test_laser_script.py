@@ -225,6 +225,47 @@ def test_print_io_box_scout_result_includes_calibration_points(capsys: pytest.Ca
 	assert 'io_box_calibration_high_y_mm: 715.00' in output
 
 
+def test_main_dispatches_io_box_stage_probe_only(monkeypatch: pytest.MonkeyPatch) -> None:
+	module = load_laser_script_module()
+	config = build_config()
+	probe_io_box_stage_extension = AsyncMock(return_value=(True, 58.7, 'no_progress', None, 75.0))
+	io_box = SimpleNamespace(open_door=AsyncMock(), home_door=AsyncMock())
+	tool = SimpleNamespace(retract=AsyncMock())
+
+	async def didRunWithTempRobotConfig(*, config, config_path, didRun, shutdown_action):
+		return await didRun(SimpleNamespace(_tool=tool, _io=io_box))
+
+	monkeypatch.setattr(module, 'load_config_file', lambda path: config)
+	monkeypatch.setattr(module, 'resolve_grid_path', lambda config: 'storage.json')
+	monkeypatch.setattr(module.laser_module, 'load_grid', lambda path: SimpleNamespace())
+	monkeypatch.setattr(module.laser_module, 'probe_io_box_stage_extension', probe_io_box_stage_extension)
+	monkeypatch.setattr(
+		module.laser_module,
+		'run_with_temp_robot_config',
+		AsyncMock(side_effect=didRunWithTempRobotConfig),
+	)
+	monkeypatch.setattr(module, 'print_io_box_stage_probe_result', lambda **kwargs: None)
+
+	result = module.main(
+		[
+			'--calibrate-io-box',
+			'--io-box-stage-probe-only',
+			'--io-box-low-x-mm',
+			'37.5',
+			'--io-box-low-y-mm',
+			'477',
+		]
+	)
+
+	assert result == 0
+	probe_io_box_stage_extension.assert_awaited_once()
+	assert probe_io_box_stage_extension.await_args.kwargs['x_mm'] == pytest.approx(37.5)
+	assert probe_io_box_stage_extension.await_args.kwargs['y_mm'] == pytest.approx(477.0)
+	io_box.open_door.assert_awaited_once()
+	io_box.home_door.assert_awaited_once()
+	tool.retract.assert_awaited_once()
+
+
 def test_main_dispatches_io_box_calibration_to_package_method(monkeypatch: pytest.MonkeyPatch) -> None:
 	module = load_laser_script_module()
 	config = build_config()
