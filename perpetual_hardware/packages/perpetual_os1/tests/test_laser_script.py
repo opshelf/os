@@ -207,12 +207,8 @@ def test_print_io_box_scout_result_includes_calibration_points(capsys: pytest.Ca
 		calibration_high_x_mm=45.0,
 		calibration_high_y_mm=715.0,
 		io_box_interior_width_mm=160.0,
-		stage_probe_target_mm=120.0,
-		stage_probe_stalled=True,
-		stage_probe_position_mm=87.2,
-		stage_probe_status='no_progress',
-		stage_probe_alarm_code=None,
-		stage_extension_mm=87.0,
+		stage_extension_mm=45.0,
+		z_extension_mm=163.5,
 		final_y_refined=False,
 	)
 
@@ -223,47 +219,8 @@ def test_print_io_box_scout_result_includes_calibration_points(capsys: pytest.Ca
 	assert 'io_box_calibration_low_y_mm: 476.00' in output
 	assert 'io_box_calibration_high_x_mm: 45.00' in output
 	assert 'io_box_calibration_high_y_mm: 715.00' in output
-
-
-def test_main_dispatches_io_box_stage_probe_only(monkeypatch: pytest.MonkeyPatch) -> None:
-	module = load_laser_script_module()
-	config = build_config()
-	probe_io_box_stage_extension = AsyncMock(return_value=(True, 58.7, 'no_progress', None, 75.0))
-	io_box = SimpleNamespace(open_door=AsyncMock(), home_door=AsyncMock())
-	tool = SimpleNamespace(retract=AsyncMock())
-
-	async def didRunWithTempRobotConfig(*, config, config_path, didRun, shutdown_action):
-		return await didRun(SimpleNamespace(_tool=tool, _io=io_box))
-
-	monkeypatch.setattr(module, 'load_config_file', lambda path: config)
-	monkeypatch.setattr(module, 'resolve_grid_path', lambda config: 'storage.json')
-	monkeypatch.setattr(module.laser_module, 'load_grid', lambda path: SimpleNamespace())
-	monkeypatch.setattr(module.laser_module, 'probe_io_box_stage_extension', probe_io_box_stage_extension)
-	monkeypatch.setattr(
-		module.laser_module,
-		'run_with_temp_robot_config',
-		AsyncMock(side_effect=didRunWithTempRobotConfig),
-	)
-	monkeypatch.setattr(module, 'print_io_box_stage_probe_result', lambda **kwargs: None)
-
-	result = module.main(
-		[
-			'--calibrate-io-box',
-			'--io-box-stage-probe-only',
-			'--io-box-low-x-mm',
-			'37.5',
-			'--io-box-low-y-mm',
-			'477',
-		]
-	)
-
-	assert result == 0
-	probe_io_box_stage_extension.assert_awaited_once()
-	assert probe_io_box_stage_extension.await_args.kwargs['x_mm'] == pytest.approx(37.5)
-	assert probe_io_box_stage_extension.await_args.kwargs['y_mm'] == pytest.approx(477.0)
-	io_box.open_door.assert_awaited_once()
-	io_box.home_door.assert_awaited_once()
-	tool.retract.assert_awaited_once()
+	assert 'io_box_stage_extension_mm: 45.00' in output
+	assert 'io_box_z_extension_mm: 163.50' in output
 
 
 def test_main_dispatches_io_box_calibration_to_package_method(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -288,12 +245,8 @@ def test_main_dispatches_io_box_calibration_to_package_method(monkeypatch: pytes
 		calibration_high_x_mm=71.0,
 		calibration_high_y_mm=1070.0,
 		io_box_interior_width_mm=120.0,
-		stage_probe_target_mm=None,
-		stage_probe_stalled=None,
-		stage_probe_position_mm=None,
-		stage_probe_status=None,
-		stage_probe_alarm_code=None,
-		stage_extension_mm=None,
+		stage_extension_mm=45.0,
+		z_extension_mm=163.5,
 		final_y_refined=False,
 	)
 	run_io_box_scout = AsyncMock(return_value=scout_result)

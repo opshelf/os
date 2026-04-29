@@ -6,7 +6,6 @@ import argparse
 import asyncio
 from datetime import datetime, timezone
 import json
-import math
 import shutil
 import sys
 import traceback
@@ -61,16 +60,6 @@ def build_parser() -> argparse.ArgumentParser:
 	parser.add_argument('--io-box-coarse-step-mm', type=float, default=laser_module.IO_BOX_COARSE_STEP_MM)
 	parser.add_argument('--io-box-fine-step-mm', type=float, default=laser_module.IO_BOX_FINE_STEP_MM)
 	parser.add_argument('--io-box-fine-margin-mm', type=float, default=laser_module.IO_BOX_FINE_MARGIN_MM)
-	parser.add_argument('--io-box-skip-stage-probe', action='store_true')
-	parser.add_argument('--io-box-stage-probe-only', action='store_true')
-	parser.add_argument('--io-box-low-x-mm', type=float)
-	parser.add_argument('--io-box-low-y-mm', type=float)
-	parser.add_argument('--io-box-stage-start-mm', type=float, default=laser_module.IO_BOX_STAGE_PROBE_START_MM)
-	parser.add_argument('--io-box-stage-target-mm', type=float)
-	parser.add_argument('--io-box-stage-probe-step-mm', type=float, default=laser_module.IO_BOX_STAGE_PROBE_STEP_MM)
-	parser.add_argument('--io-box-stage-timeout-s', type=float, default=laser_module.IO_BOX_STAGE_PROBE_TIMEOUT_S)
-	parser.add_argument('--io-box-stage-no-progress-timeout-s', type=float, default=laser_module.IO_BOX_STAGE_NO_PROGRESS_TIMEOUT_S)
-	parser.add_argument('--io-box-stage-probe-rpm', type=int)
 	parser.add_argument('--x-range', nargs=3, metavar=('MIN', 'MAX', 'STEP'), type=float)
 	parser.add_argument('--y-mm', type=float)
 	parser.add_argument('--z-offset-range', nargs=3, metavar=('MIN', 'MAX', 'STEP'), type=float)
@@ -329,102 +318,6 @@ def validate_io_box_calibration_args(args: argparse.Namespace) -> None:
 	if args.io_box_y_min_mm is not None and args.io_box_start_y_mm <= args.io_box_y_min_mm:
 		raise ValueError('--io-box-start-y-mm must be greater than --io-box-y-min-mm')
 
-	if args.io_box_stage_probe_only is True and args.io_box_skip_stage_probe is True:
-		raise ValueError('--io-box-stage-probe-only cannot be used with --io-box-skip-stage-probe')
-
-	if args.io_box_stage_probe_only is True and (args.io_box_low_x_mm is None or args.io_box_low_y_mm is None):
-		raise ValueError('--io-box-low-x-mm and --io-box-low-y-mm are required with --io-box-stage-probe-only')
-
-	if args.io_box_stage_start_mm < 0.0:
-		raise ValueError('--io-box-stage-start-mm must be zero or greater')
-
-	if args.io_box_stage_probe_step_mm <= 0.0:
-		raise ValueError('--io-box-stage-probe-step-mm must be positive')
-
-	if args.io_box_stage_timeout_s <= 0.0:
-		raise ValueError('--io-box-stage-timeout-s must be positive')
-
-	if args.io_box_stage_no_progress_timeout_s <= 0.0:
-		raise ValueError('--io-box-stage-no-progress-timeout-s must be positive')
-
-	if args.io_box_stage_target_mm is not None and args.io_box_stage_target_mm <= args.io_box_stage_start_mm:
-		raise ValueError('--io-box-stage-target-mm must be greater than --io-box-stage-start-mm')
-
-
-async def run_io_box_stage_probe_only(
-	*,
-	args: argparse.Namespace,
-	config: Any,
-	settle_ms: int,
-) -> int:
-	laser_module.print_status('phase=io-box-stage-probe-only')
-	laser_module.print_status(
-		f'io_box_stage_probe_setup low_x={float(args.io_box_low_x_mm):.2f} '
-		f'low_y={float(args.io_box_low_y_mm):.2f} '
-		f'stage_start={float(args.io_box_stage_start_mm):.2f} '
-		f'stage_target={format_optional_float(args.io_box_stage_target_mm)} '
-		f'stage_step={float(args.io_box_stage_probe_step_mm):.2f} '
-		f'timeout_s={float(args.io_box_stage_timeout_s):.2f}'
-	)
-
-	async def didRunIoBoxStageProbe(robot: Any) -> tuple[bool, float, str, int | None, float]:
-		tool = robot._tool
-		io_box = getattr(robot, '_io', None)
-
-		if io_box is None:
-			raise ValueError('IO box is not configured')
-
-		did_open_door = False
-
-		try:
-			await io_box.open_door()
-			did_open_door = True
-			return await laser_module.probe_io_box_stage_extension(
-				tool,
-				x_mm=float(args.io_box_low_x_mm),
-				y_mm=float(args.io_box_low_y_mm),
-				stage_probe_start_mm=float(args.io_box_stage_start_mm),
-				stage_probe_target_mm=args.io_box_stage_target_mm,
-				settle_ms=int(settle_ms),
-				stage_probe_timeout_s=float(args.io_box_stage_timeout_s),
-				stage_probe_rpm=args.io_box_stage_probe_rpm,
-				stage_probe_no_progress_s=float(args.io_box_stage_no_progress_timeout_s),
-				stage_probe_step_mm=float(args.io_box_stage_probe_step_mm),
-			)
-		finally:
-			await tool.retract()
-
-			if did_open_door is True:
-				await io_box.home_door()
-
-	did_stall, stage_position_mm, probe_status, alarm_code, stage_target_mm = await laser_module.run_with_temp_robot_config(
-		config=config,
-		config_path=args.config,
-		didRun=didRunIoBoxStageProbe,
-		shutdown_action=args.shutdown_action,
-	)
-	stage_extension_mm = None
-
-	if did_stall is True and probe_status != 'timeout':
-		stage_extension_mm = max(0.0, float(math.floor(stage_position_mm)))
-
-	print_io_box_stage_probe_result(
-		stage_target_mm=stage_target_mm,
-		did_stall=did_stall,
-		stage_position_mm=stage_position_mm,
-		probe_status=probe_status,
-		alarm_code=alarm_code,
-		stage_extension_mm=stage_extension_mm,
-	)
-
-	if probe_status == 'timeout':
-		raise ValueError(f'IO box stage probe timed out before stall at {stage_position_mm:.3f} mm')
-
-	if did_stall is False:
-		raise ValueError(f'IO box stage probe reached limit without stall at {stage_position_mm:.3f} mm')
-
-	return 0
-
 
 async def run_io_box_calibration(
 	*,
@@ -438,10 +331,6 @@ async def run_io_box_calibration(
 		if args.settle_ms is not None
 		else laser_module.get_fine_settle_ms(scan_config.settle_ms)
 	)
-
-	if args.io_box_stage_probe_only is True:
-		return await run_io_box_stage_probe_only(args=args, config=config, settle_ms=int(settle_ms))
-
 	samples_per_point = (
 		args.samples_per_point
 		if args.samples_per_point is not None
@@ -468,7 +357,6 @@ async def run_io_box_calibration(
 		f'coarse_step={float(args.io_box_coarse_step_mm):.2f} '
 		f'fine_step={float(args.io_box_fine_step_mm):.2f} '
 		f'laser_offset_x_mm={laser_offset_x_mm:.2f} '
-		f'stage_probe={args.io_box_skip_stage_probe is False} '
 		f'settle_ms={settle_ms} samples_per_point={samples_per_point}'
 	)
 
@@ -488,13 +376,6 @@ async def run_io_box_calibration(
 			samples_per_point=int(samples_per_point),
 			laser_offset_x_mm=laser_offset_x_mm,
 			laser_offset_y_mm=laser_offset_y_mm,
-			should_probe_stage_extension=args.io_box_skip_stage_probe is False,
-			stage_probe_start_mm=float(args.io_box_stage_start_mm),
-			stage_probe_target_mm=args.io_box_stage_target_mm,
-			stage_probe_step_mm=float(args.io_box_stage_probe_step_mm),
-			stage_probe_timeout_s=float(args.io_box_stage_timeout_s),
-			stage_probe_no_progress_s=float(args.io_box_stage_no_progress_timeout_s),
-			stage_probe_rpm=args.io_box_stage_probe_rpm,
 		)
 
 	result = await laser_module.run_with_temp_robot_config(
@@ -505,30 +386,6 @@ async def run_io_box_calibration(
 	)
 	print_io_box_scout_result(result)
 	return 0
-
-
-def format_optional_float(value: float | None) -> str:
-	if value is None:
-		return 'none'
-
-	return f'{value:.2f}'
-
-
-def print_io_box_stage_probe_result(
-	*,
-	stage_target_mm: float,
-	did_stall: bool,
-	stage_position_mm: float,
-	probe_status: str,
-	alarm_code: int | None,
-	stage_extension_mm: float | None,
-) -> None:
-	print(f'io_box_stage_probe_target_mm: {stage_target_mm:.2f}')
-	print(f'io_box_stage_probe_stalled: {did_stall}')
-	print(f'io_box_stage_probe_position_mm: {stage_position_mm:.2f}')
-	print(f'io_box_stage_probe_status: {probe_status}')
-	print(f'io_box_stage_probe_alarm_code: {alarm_code}')
-	print(f'io_box_stage_extension_mm: {format_optional_float(stage_extension_mm)}')
 
 
 def print_io_box_scout_result(result: laser_module.IOBoxScoutResult) -> None:
@@ -557,12 +414,9 @@ def print_io_box_scout_result(result: laser_module.IOBoxScoutResult) -> None:
 	print(f'io_box_calibration_low_y_mm: {result.calibration_low_y_mm:.2f}')
 	print(f'io_box_calibration_high_x_mm: {result.calibration_high_x_mm:.2f}')
 	print(f'io_box_calibration_high_y_mm: {result.calibration_high_y_mm:.2f}')
-	print(f'io_box_stage_probe_target_mm: {format_optional_float(result.stage_probe_target_mm)}')
-	print(f'io_box_stage_probe_stalled: {result.stage_probe_stalled}')
-	print(f'io_box_stage_probe_position_mm: {format_optional_float(result.stage_probe_position_mm)}')
-	print(f'io_box_stage_probe_status: {result.stage_probe_status}')
-	print(f'io_box_stage_probe_alarm_code: {result.stage_probe_alarm_code}')
-	print(f'io_box_stage_extension_mm: {format_optional_float(result.stage_extension_mm)}')
+	print(f'io_box_stage_extension_front_offset_mm: {laser_module.IO_BOX_STAGE_EXTENSION_FRONT_OFFSET_MM:.2f}')
+	print(f'io_box_stage_extension_mm: {result.stage_extension_mm:.2f}')
+	print(f'io_box_z_extension_mm: {result.z_extension_mm:.2f}')
 	print(f'io_box_final_y_refined: {result.final_y_refined}')
 
 
