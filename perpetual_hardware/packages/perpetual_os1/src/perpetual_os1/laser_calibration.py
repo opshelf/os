@@ -5,7 +5,6 @@ import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
-import math
 import numpy as np
 import sys
 import tempfile
@@ -25,7 +24,6 @@ from perpetual_os1.laser_scan import (
 	create_scan_capture,
 )
 import perpetual_os1.common as common_module
-import perpetual_os1.laser_angle_calibration as angle_module
 import perpetual_os1.robot as robot_module
 from perpetual_os1.robot import Robot
 from perpetual_os1.storage import StorageGrid, StorageModuleSide
@@ -64,10 +62,8 @@ IO_BOX_FINE_STEP_MM = 1.0
 IO_BOX_FINE_MARGIN_MM = 20.0
 IO_BOX_LOW_Y_OFFSET_MM = 35.0
 IO_BOX_HIGH_Y_OFFSET_MM = 80.0
-IO_BOX_STAGE_PROBE_START_MM = 0.0
-IO_BOX_STAGE_PROBE_STEP_MM = 0.5
-IO_BOX_STAGE_PROBE_TIMEOUT_S = 10.0
-IO_BOX_STAGE_NO_PROGRESS_TIMEOUT_S = 0.2
+IO_BOX_STAGE_EXTENSION_FRONT_OFFSET_MM = 5.0
+IO_BOX_Z_EXTENSION_MM = 163.5
 IO_BOX_MIN_POSITIVE_RUN_COUNT = 2
 DEFAULT_Z_REFERENCE_BY_SIDE: dict[StorageModuleSide, tuple[int, int, float, float]] = {
 	StorageModuleSide.LEFT: (12, 0, 15.0, 8.504),
@@ -276,12 +272,8 @@ class IOBoxScoutResult:
 	calibration_high_x_mm: float
 	calibration_high_y_mm: float
 	io_box_interior_width_mm: float
-	stage_probe_target_mm: float | None
-	stage_probe_stalled: bool | None
-	stage_probe_position_mm: float | None
-	stage_probe_status: str | None
-	stage_probe_alarm_code: int | None
-	stage_extension_mm: float | None
+	stage_extension_mm: float
+	z_extension_mm: float
 	final_y_refined: bool
 
 
@@ -2180,66 +2172,6 @@ def merge_line_scan_into_sparse_scan(
 		)
 
 
-async def probe_io_box_stage_extension(
-	tool: Any,
-	*,
-	x_mm: float,
-	y_mm: float,
-	stage_probe_start_mm: float,
-	stage_probe_target_mm: float | None,
-	settle_ms: int,
-	stage_probe_timeout_s: float,
-	stage_probe_rpm: int | None,
-	stage_probe_no_progress_s: float,
-	stage_probe_step_mm: float,
-	should_abort: Callable[[], bool] | None = None,
-) -> tuple[bool, float, str, int | None, float]:
-	if tool._ms is None or tool._mg is None:
-		raise ValueError("Tool motors (stage, z_axis) are required for IO box stage probe")
-
-	z_extension_io = await tool.get_param("Z_EXTENSION_IO")
-	z_move_rpm = await tool.get_param("Z_MOVE_RPM")
-	z_move_accel = await tool.get_param("Z_MOVE_ACCEL")
-
-	if z_extension_io is None or z_move_rpm is None or z_move_accel is None:
-		raise ValueError("Z_EXTENSION_IO, Z_MOVE_RPM, and Z_MOVE_ACCEL are required")
-
-	stage_target_mm = float(stage_probe_target_mm) if stage_probe_target_mm is not None else float(tool._ms._params.lim)
-	probe_rpm = stage_probe_rpm if stage_probe_rpm is not None else min(int(tool._ms._params.rpm), 100)
-
-	if stage_target_mm <= stage_probe_start_mm:
-		raise ValueError("stage_probe_target_mm must be greater than stage_probe_start_mm")
-
-	raise_if_cancelled(should_abort)
-	print_status(
-		f"phase=io-box-stage-probe-move x={x_mm:.2f} y={y_mm:.2f} "
-		f"stage_start={stage_probe_start_mm:.2f} stage_target={stage_target_mm:.2f} "
-		f"probe_rpm={probe_rpm}"
-	)
-	await tool.retract()
-	await tool.rotate_to_position("front")
-	await tool.move(AxisCoordinate(x_mm, y_mm))
-	await tool._mg.move_to_position(float(z_extension_io), rpm=float(z_move_rpm), accel=float(z_move_accel))
-	raise_if_cancelled(should_abort)
-	print_status("phase=io-box-stage-probe")
-	did_stall, stage_position_mm, status, alarm_code = await angle_module.probe_stage_until_stall(
-		tool,
-		target_stage_mm=stage_target_mm,
-		retract_stage_mm=stage_probe_start_mm,
-		settle_ms=settle_ms,
-		timeout_s=stage_probe_timeout_s,
-		probe_rpm=probe_rpm,
-		no_progress_s=stage_probe_no_progress_s,
-		probe_step_mm=stage_probe_step_mm,
-		fast_approach_mm=stage_probe_start_mm,
-		fast_approach_rpm=int(tool._ms._params.rpm),
-		auto_retract=False,
-		should_abort=should_abort,
-	)
-
-	return did_stall, stage_position_mm, status, alarm_code, stage_target_mm
-
-
 async def run_io_box_scout(
 	*,
 	robot: Robot,
@@ -2256,13 +2188,6 @@ async def run_io_box_scout(
 	samples_per_point: int = 1,
 	laser_offset_x_mm: float = 0.0,
 	laser_offset_y_mm: float = 0.0,
-	should_probe_stage_extension: bool = True,
-	stage_probe_start_mm: float = IO_BOX_STAGE_PROBE_START_MM,
-	stage_probe_target_mm: float | None = None,
-	stage_probe_step_mm: float = IO_BOX_STAGE_PROBE_STEP_MM,
-	stage_probe_timeout_s: float = IO_BOX_STAGE_PROBE_TIMEOUT_S,
-	stage_probe_no_progress_s: float = IO_BOX_STAGE_NO_PROGRESS_TIMEOUT_S,
-	stage_probe_rpm: int | None = None,
 	should_abort: Callable[[], bool] | None = None,
 ) -> IOBoxScoutResult:
 	if io_box_interior_width_mm <= 0.0:
@@ -2288,18 +2213,6 @@ async def run_io_box_scout(
 
 	if samples_per_point <= 0:
 		raise ValueError("samples_per_point must be greater than zero")
-
-	if stage_probe_start_mm < 0.0:
-		raise ValueError("stage_probe_start_mm must be zero or greater")
-
-	if stage_probe_step_mm <= 0.0:
-		raise ValueError("stage_probe_step_mm must be greater than zero")
-
-	if stage_probe_timeout_s <= 0.0:
-		raise ValueError("stage_probe_timeout_s must be greater than zero")
-
-	if stage_probe_no_progress_s <= 0.0:
-		raise ValueError("stage_probe_no_progress_s must be greater than zero")
 
 	tool = robot._tool
 	io_box = getattr(robot, "_io", None)
@@ -2498,49 +2411,19 @@ async def run_io_box_scout(
 		calibration_high_x_mm = axis_center_x_mm
 		calibration_low_y_mm = float(final_y_segment.start_mm) + float(laser_offset_y_mm) + IO_BOX_LOW_Y_OFFSET_MM
 		calibration_high_y_mm = float(final_y_segment.end_mm) + float(laser_offset_y_mm) - IO_BOX_HIGH_Y_OFFSET_MM
-		stage_target_result_mm: float | None = None
-		stage_probe_stalled: bool | None = None
-		stage_probe_position_mm: float | None = None
-		stage_probe_status: str | None = None
-		stage_probe_alarm_code: int | None = None
-		stage_extension_mm: float | None = None
+		front_stage_extension_mm = await tool.get_param("STAGE_EXTENSION_SHELF_FRONT")
+
+		if front_stage_extension_mm is None:
+			raise ValueError("STAGE_EXTENSION_SHELF_FRONT parameter is not configured")
+
+		stage_extension_mm = float(front_stage_extension_mm) + IO_BOX_STAGE_EXTENSION_FRONT_OFFSET_MM
+		z_extension_mm = IO_BOX_Z_EXTENSION_MM
 
 		print_status(
 			f"io_box_calibration_points low=({calibration_low_x_mm:.2f},{calibration_low_y_mm:.2f}) "
-			f"high=({calibration_high_x_mm:.2f},{calibration_high_y_mm:.2f})"
+			f"high=({calibration_high_x_mm:.2f},{calibration_high_y_mm:.2f}) "
+			f"stage_extension_mm={stage_extension_mm:.2f} z_extension_mm={z_extension_mm:.2f}"
 		)
-
-		if should_probe_stage_extension is True:
-			stage_probe_stalled, stage_probe_position_mm, stage_probe_status, stage_probe_alarm_code, stage_target_result_mm = await probe_io_box_stage_extension(
-				tool,
-				x_mm=calibration_low_x_mm,
-				y_mm=calibration_low_y_mm,
-				stage_probe_start_mm=stage_probe_start_mm,
-				stage_probe_target_mm=stage_probe_target_mm,
-				settle_ms=settle_ms,
-				stage_probe_timeout_s=stage_probe_timeout_s,
-				stage_probe_rpm=stage_probe_rpm,
-				stage_probe_no_progress_s=stage_probe_no_progress_s,
-				stage_probe_step_mm=stage_probe_step_mm,
-				should_abort=should_abort,
-			)
-
-			if stage_probe_position_mm is None:
-				raise ValueError("IO box stage probe did not return a stage position")
-
-			if stage_probe_status == "timeout":
-				raise ValueError(f"IO box stage probe timed out before stall at {stage_probe_position_mm:.3f} mm")
-
-			if stage_probe_stalled is False:
-				raise ValueError(f"IO box stage probe reached limit without stall at {stage_probe_position_mm:.3f} mm")
-
-			stage_extension_mm = max(0.0, float(math.floor(stage_probe_position_mm)))
-			print_status(
-				f"io_box_stage_probe=stall status={stage_probe_status} "
-				f"stage_position_mm={stage_probe_position_mm:.3f} "
-				f"stage_extension_mm={stage_extension_mm:.3f}"
-			)
-			await tool._ms.move_to_position(stage_extension_mm, rpm=stage_probe_rpm)
 
 		return IOBoxScoutResult(
 			rough_y_min_mm=float(rough_y_segment.start_mm),
@@ -2561,12 +2444,8 @@ async def run_io_box_scout(
 			calibration_high_x_mm=calibration_high_x_mm,
 			calibration_high_y_mm=calibration_high_y_mm,
 			io_box_interior_width_mm=float(io_box_interior_width_mm),
-			stage_probe_target_mm=stage_target_result_mm,
-			stage_probe_stalled=stage_probe_stalled,
-			stage_probe_position_mm=stage_probe_position_mm,
-			stage_probe_status=stage_probe_status,
-			stage_probe_alarm_code=stage_probe_alarm_code,
 			stage_extension_mm=stage_extension_mm,
+			z_extension_mm=z_extension_mm,
 			final_y_refined=final_y_refined,
 		)
 	finally:
