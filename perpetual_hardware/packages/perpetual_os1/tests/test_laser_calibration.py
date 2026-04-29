@@ -13,10 +13,13 @@ from perpetual_os1.laser_calibration import (
 	build_single_shelf_known_edge_y,
 	build_single_cell_rescan_candidate,
 	capture_shelf_candidates,
+	find_first_positive_run_segment,
+	find_gap_run_containing_position,
 	GapCandidateRegion,
 	get_scanned_anchor_cell,
 	GridScanResult,
 	load_continue_scan_context,
+	run_io_box_scout,
 	run_staged_scan,
 	run_with_temp_robot_config,
 	scan_shelf_scout_line,
@@ -220,6 +223,85 @@ async def test_capture_shelf_candidates_does_not_append_floor_edge_for_empty_det
 	assert wall_depth_mm == pytest.approx(0.0)
 	assert candidates == []
 	assert shelf_edges == []
+
+
+def test_find_first_positive_run_segment_handles_descending_positions() -> None:
+	segment = find_first_positive_run_segment(
+		values=[0.0, 0.0, 4.0, 4.1, 4.0, 0.0],
+		positions=[1250.0, 1245.0, 1240.0, 1235.0, 1230.0, 1225.0],
+		step_mm=5.0,
+	)
+
+	assert segment is not None
+	assert segment.start_idx == 2
+	assert segment.end_idx == 4
+	assert segment.start_mm == pytest.approx(1227.5)
+	assert segment.end_mm == pytest.approx(1242.5)
+	assert segment.center_mm == pytest.approx(1235.0)
+
+
+def test_find_gap_run_containing_position_returns_gap_bounds() -> None:
+	segment = find_gap_run_containing_position(
+		values=[5.0, 0.0, 0.0, 0.0, 5.0],
+		positions=[10.0, 11.0, 12.0, 13.0, 14.0],
+		step_mm=1.0,
+		seed_mm=12.0,
+	)
+
+	assert segment is not None
+	assert segment.start_idx == 1
+	assert segment.end_idx == 3
+	assert segment.start_mm == pytest.approx(10.5)
+	assert segment.end_mm == pytest.approx(13.5)
+	assert segment.center_mm == pytest.approx(12.0)
+
+
+@pytest.mark.asyncio
+async def test_run_io_box_scout_derives_center_from_measured_right_edge() -> None:
+	tool = SimpleNamespace(retract=AsyncMock())
+	io_box = SimpleNamespace(open_door=AsyncMock(), home_door=AsyncMock())
+	robot = SimpleNamespace(_tool=tool, _io=io_box)
+
+	async def didScanLine(tool, *, axis, positions, fixed_mm, **kwargs):
+		if kwargs['progress_label'] == 'io_box_coarse_y':
+			return [5.0 if 70.0 <= position <= 80.0 else 0.0 for position in positions]
+
+		if kwargs['progress_label'] in {'io_box_fine_y', 'io_box_final_y'}:
+			return [0.0 if 65.0 <= position <= 85.0 else 5.0 for position in positions]
+
+		if kwargs['progress_label'] == 'io_box_fine_x':
+			return [0.0 if position <= 70.0 else 5.0 for position in positions]
+
+		raise AssertionError(kwargs['progress_label'])
+
+	with patch('perpetual_os1.laser_calibration.enter_scan_mode', AsyncMock()):
+		with patch('perpetual_os1.laser_calibration.scan_line_positions', side_effect=didScanLine):
+			result = await run_io_box_scout(
+				robot=robot,
+				scan_config=SimpleNamespace(laser_offset_x_mm=10.0, laser_offset_y_mm=2.0),
+				io_box_interior_width_mm=120.0,
+				start_x_mm=0.0,
+				start_y_mm=100.0,
+				y_min_mm=0.0,
+				x_max_mm=100.0,
+				coarse_step_mm=10.0,
+				fine_step_mm=1.0,
+				fine_margin_mm=10.0,
+				settle_ms=0,
+				samples_per_point=1,
+			)
+
+	assert result.measured_x_min_mm is None
+	assert result.measured_x_max_mm == pytest.approx(70.5)
+	assert result.derived_x_min_mm == pytest.approx(-49.5)
+	assert result.center_x_mm == pytest.approx(10.5)
+	assert result.center_y_mm == pytest.approx(75.0)
+	assert result.tool_x_mm == pytest.approx(0.5)
+	assert result.tool_y_mm == pytest.approx(73.0)
+	assert result.final_y_refined is True
+	io_box.open_door.assert_awaited_once()
+	io_box.home_door.assert_awaited_once()
+	tool.retract.assert_awaited_once()
 
 
 def test_get_scanned_anchor_cell_uses_physical_top_left_for_right_side() -> None:

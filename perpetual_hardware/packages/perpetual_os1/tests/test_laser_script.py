@@ -68,7 +68,10 @@ def test_main_prints_help_when_no_args(capsys) -> None:
 	result = module.main([])
 
 	assert result == 0
-	assert 'Run tray scan, single-cell rescan, validation, or angle calibration.' in capsys.readouterr().out
+	help_output = capsys.readouterr().out
+	assert 'Run tray scan' in help_output
+	assert 'IO box' in help_output
+	assert 'scouting' in help_output
 
 
 def test_derive_scans_dir_uses_config_directory(tmp_path: Path) -> None:
@@ -181,6 +184,57 @@ def test_main_dispatches_rescan_apply_to_package_methods(monkeypatch: pytest.Mon
 	run_staged_scan.assert_awaited_once()
 	apply_single_cell_rescan.assert_called_once()
 	apply_analysis.assert_not_called()
+
+
+def test_main_dispatches_io_box_calibration_to_package_method(monkeypatch: pytest.MonkeyPatch) -> None:
+	module = load_laser_script_module()
+	config = build_config()
+	scout_result = SimpleNamespace(
+		rough_y_min_mm=1100.0,
+		rough_y_max_mm=1200.0,
+		fine_y_min_mm=1110.0,
+		fine_y_max_mm=1190.0,
+		measured_x_min_mm=None,
+		measured_x_max_mm=80.0,
+		derived_x_min_mm=-40.0,
+		center_x_mm=20.0,
+		center_y_mm=1150.0,
+		tool_x_mm=-31.0,
+		tool_y_mm=1150.0,
+		io_box_interior_width_mm=120.0,
+		final_y_refined=False,
+	)
+	run_io_box_scout = AsyncMock(return_value=scout_result)
+
+	async def didRunWithTempRobotConfig(*, config, config_path, didRun, shutdown_action):
+		return await didRun(SimpleNamespace(_tool=SimpleNamespace(), _io=SimpleNamespace()))
+
+	monkeypatch.setattr(module, 'load_config_file', lambda path: config)
+	monkeypatch.setattr(module, 'resolve_grid_path', lambda config: 'storage.json')
+	monkeypatch.setattr(module.laser_module, 'load_grid', lambda path: SimpleNamespace())
+	monkeypatch.setattr(module.laser_module, 'run_io_box_scout', run_io_box_scout)
+	monkeypatch.setattr(
+		module.laser_module,
+		'run_with_temp_robot_config',
+		AsyncMock(side_effect=didRunWithTempRobotConfig),
+	)
+	monkeypatch.setattr(module, 'print_io_box_scout_result', lambda result: None)
+
+	result = module.main(
+		[
+			'--calibrate-io-box',
+			'--io-box-interior-width-mm',
+			'120',
+			'--io-box-x-max-mm',
+			'140',
+		]
+	)
+
+	assert result == 0
+	run_io_box_scout.assert_awaited_once()
+	assert run_io_box_scout.await_args.kwargs['io_box_interior_width_mm'] == pytest.approx(120.0)
+	assert run_io_box_scout.await_args.kwargs['start_x_mm'] == pytest.approx(0.0)
+	assert run_io_box_scout.await_args.kwargs['x_max_mm'] == pytest.approx(140.0)
 
 
 def test_main_dispatches_angle_calibration_to_package_module(monkeypatch: pytest.MonkeyPatch) -> None:
