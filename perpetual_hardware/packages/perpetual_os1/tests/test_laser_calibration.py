@@ -293,21 +293,107 @@ async def test_run_io_box_scout_derives_center_from_measured_right_edge() -> Non
 				fine_margin_mm=10.0,
 				settle_ms=0,
 				samples_per_point=1,
+				laser_offset_x_mm=10.0,
+				laser_offset_y_mm=2.0,
+				should_probe_stage_extension=False,
 			)
 
 	assert result.measured_x_min_mm is None
 	assert result.measured_x_max_mm == pytest.approx(70.5)
 	assert result.derived_x_min_mm == pytest.approx(-49.5)
-	assert result.center_x_mm == pytest.approx(10.5)
-	assert result.center_y_mm == pytest.approx(75.0)
-	assert result.tool_x_mm == pytest.approx(0.5)
-	assert result.tool_y_mm == pytest.approx(73.0)
+	assert result.laser_center_x_mm == pytest.approx(10.5)
+	assert result.laser_center_y_mm == pytest.approx(75.0)
+	assert result.axis_center_x_mm == pytest.approx(20.5)
+	assert result.axis_center_y_mm == pytest.approx(77.0)
+	assert result.laser_offset_x_mm == pytest.approx(10.0)
+	assert result.laser_offset_y_mm == pytest.approx(2.0)
+	assert result.calibration_low_x_mm == pytest.approx(20.5)
+	assert result.calibration_low_y_mm == pytest.approx(101.5)
+	assert result.calibration_high_x_mm == pytest.approx(20.5)
+	assert result.calibration_high_y_mm == pytest.approx(7.5)
+	assert result.stage_extension_mm is None
 	assert result.final_y_refined is True
 	io_box.open_door.assert_awaited_once()
 	io_box.home_door.assert_awaited_once()
 	tool.retract.assert_awaited_once()
 	assert y_motor.disable_brake_output.await_count == 3
 	assert y_motor.restore_brake_output.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_run_io_box_scout_probes_stage_extension_at_low_calibration_point() -> None:
+	y_motor = SimpleNamespace(
+		disable_brake_output=AsyncMock(),
+		restore_brake_output=AsyncMock(),
+	)
+	stage_motor = SimpleNamespace(
+		_params=SimpleNamespace(lim=120.0, rpm=300),
+		move_to_position=AsyncMock(),
+	)
+	z_motor = SimpleNamespace(move_to_position=AsyncMock())
+	tool = SimpleNamespace(
+		retract=AsyncMock(),
+		rotate_to_position=AsyncMock(),
+		move=AsyncMock(),
+		get_param=AsyncMock(side_effect=lambda name: {
+			'Z_EXTENSION_IO': 25.0,
+			'Z_MOVE_RPM': 1000,
+			'Z_MOVE_ACCEL': 500,
+		}.get(name)),
+		_my=y_motor,
+		_ms=stage_motor,
+		_mg=z_motor,
+	)
+	io_box = SimpleNamespace(open_door=AsyncMock(), home_door=AsyncMock())
+	robot = SimpleNamespace(_tool=tool, _io=io_box)
+
+	async def didScanLine(tool, *, axis, positions, fixed_mm, **kwargs):
+		if kwargs['progress_label'] == 'io_box_coarse_y':
+			return [5.0 if 70.0 <= position <= 80.0 else 0.0 for position in positions]
+
+		if kwargs['progress_label'] in {'io_box_fine_y', 'io_box_final_y'}:
+			return [0.0 if 65.0 <= position <= 85.0 else 5.0 for position in positions]
+
+		if kwargs['progress_label'] == 'io_box_fine_x':
+			return [0.0 if position <= 70.0 else 5.0 for position in positions]
+
+		raise AssertionError(kwargs['progress_label'])
+
+	with patch('perpetual_os1.laser_calibration.enter_scan_mode', AsyncMock()):
+		with patch('perpetual_os1.laser_calibration.scan_line_positions', side_effect=didScanLine):
+			with patch(
+				'perpetual_os1.laser_calibration.angle_module.probe_stage_until_stall',
+				AsyncMock(return_value=(True, 88.7, 'no_progress', None)),
+			):
+				result = await run_io_box_scout(
+					robot=robot,
+					scan_config=SimpleNamespace(laser_offset_x_mm=0.0, laser_offset_y_mm=0.0),
+					io_box_interior_width_mm=120.0,
+					start_x_mm=0.0,
+					start_y_mm=100.0,
+					y_min_mm=0.0,
+					x_max_mm=100.0,
+					coarse_step_mm=10.0,
+					fine_step_mm=1.0,
+					fine_margin_mm=10.0,
+					settle_ms=0,
+					samples_per_point=1,
+				)
+
+	assert result.calibration_low_x_mm == pytest.approx(10.5)
+	assert result.calibration_low_y_mm == pytest.approx(99.5)
+	assert result.stage_probe_target_mm == pytest.approx(120.0)
+	assert result.stage_probe_stalled is True
+	assert result.stage_probe_position_mm == pytest.approx(88.7)
+	assert result.stage_probe_status == 'no_progress'
+	assert result.stage_extension_mm == pytest.approx(88.0)
+	tool.rotate_to_position.assert_awaited_once_with('front')
+	tool.move.assert_awaited_once()
+	coordinate = tool.move.await_args.args[0]
+	assert coordinate.x == pytest.approx(10.5)
+	assert coordinate.y == pytest.approx(99.5)
+	z_motor.move_to_position.assert_awaited_once_with(25.0, rpm=1000.0, accel=500.0)
+	stage_motor.move_to_position.assert_awaited_once_with(88.0, rpm=None)
 
 
 @pytest.mark.asyncio
@@ -349,6 +435,7 @@ async def test_run_io_box_scout_stops_x_scan_at_width_limit() -> None:
 					fine_margin_mm=10.0,
 					settle_ms=0,
 					samples_per_point=1,
+					should_probe_stage_extension=False,
 				)
 
 	io_box.open_door.assert_awaited_once()

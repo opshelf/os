@@ -52,7 +52,7 @@ def build_parser() -> argparse.ArgumentParser:
 	parser.add_argument('--validate-cycles', type=int, default=1)
 	parser.add_argument('--calibrate-angle', action='store_true')
 	parser.add_argument('--calibrate-io-box', action='store_true')
-	parser.add_argument('--io-box-interior-width-mm', type=float)
+	parser.add_argument('--io-box-interior-width-mm', type=float, default=laser_module.IO_BOX_INTERIOR_WIDTH_MM)
 	parser.add_argument('--io-box-x-mm', type=float, default=laser_module.IO_BOX_DEFAULT_START_X_MM)
 	parser.add_argument('--io-box-start-y-mm', type=float, default=laser_module.IO_BOX_DEFAULT_START_Y_MM)
 	parser.add_argument('--io-box-y-min-mm', type=float)
@@ -60,6 +60,13 @@ def build_parser() -> argparse.ArgumentParser:
 	parser.add_argument('--io-box-coarse-step-mm', type=float, default=laser_module.IO_BOX_COARSE_STEP_MM)
 	parser.add_argument('--io-box-fine-step-mm', type=float, default=laser_module.IO_BOX_FINE_STEP_MM)
 	parser.add_argument('--io-box-fine-margin-mm', type=float, default=laser_module.IO_BOX_FINE_MARGIN_MM)
+	parser.add_argument('--io-box-skip-stage-probe', action='store_true')
+	parser.add_argument('--io-box-stage-start-mm', type=float, default=laser_module.IO_BOX_STAGE_PROBE_START_MM)
+	parser.add_argument('--io-box-stage-target-mm', type=float)
+	parser.add_argument('--io-box-stage-probe-step-mm', type=float, default=laser_module.IO_BOX_STAGE_PROBE_STEP_MM)
+	parser.add_argument('--io-box-stage-timeout-s', type=float, default=laser_module.IO_BOX_STAGE_PROBE_TIMEOUT_S)
+	parser.add_argument('--io-box-stage-no-progress-timeout-s', type=float, default=laser_module.IO_BOX_STAGE_NO_PROGRESS_TIMEOUT_S)
+	parser.add_argument('--io-box-stage-probe-rpm', type=int)
 	parser.add_argument('--x-range', nargs=3, metavar=('MIN', 'MAX', 'STEP'), type=float)
 	parser.add_argument('--y-mm', type=float)
 	parser.add_argument('--z-offset-range', nargs=3, metavar=('MIN', 'MAX', 'STEP'), type=float)
@@ -258,9 +265,6 @@ def validate_io_box_calibration_args(args: argparse.Namespace) -> None:
 	if args.module is not None and args.module != 'left':
 		raise ValueError('--calibrate-io-box only supports the left module side')
 
-	if args.io_box_interior_width_mm is None:
-		raise ValueError('--io-box-interior-width-mm is required with --calibrate-io-box')
-
 	if args.io_box_interior_width_mm <= 0.0:
 		raise ValueError('--io-box-interior-width-mm must be positive')
 
@@ -321,6 +325,21 @@ def validate_io_box_calibration_args(args: argparse.Namespace) -> None:
 	if args.io_box_y_min_mm is not None and args.io_box_start_y_mm <= args.io_box_y_min_mm:
 		raise ValueError('--io-box-start-y-mm must be greater than --io-box-y-min-mm')
 
+	if args.io_box_stage_start_mm < 0.0:
+		raise ValueError('--io-box-stage-start-mm must be zero or greater')
+
+	if args.io_box_stage_probe_step_mm <= 0.0:
+		raise ValueError('--io-box-stage-probe-step-mm must be positive')
+
+	if args.io_box_stage_timeout_s <= 0.0:
+		raise ValueError('--io-box-stage-timeout-s must be positive')
+
+	if args.io_box_stage_no_progress_timeout_s <= 0.0:
+		raise ValueError('--io-box-stage-no-progress-timeout-s must be positive')
+
+	if args.io_box_stage_target_mm is not None and args.io_box_stage_target_mm <= args.io_box_stage_start_mm:
+		raise ValueError('--io-box-stage-target-mm must be greater than --io-box-stage-start-mm')
+
 
 async def run_io_box_calibration(
 	*,
@@ -344,6 +363,12 @@ async def run_io_box_calibration(
 		if args.io_box_y_min_mm is not None
 		else float(getattr(scan_config, 'left_bounds_y_min_mm', 0.0))
 	)
+	laser_offset_x_mm = (
+		float(args.laser_offset_x_mm)
+		if args.laser_offset_x_mm is not None
+		else float(getattr(scan_config, 'laser_offset_x_mm', 0.0))
+	)
+	laser_offset_y_mm = float(getattr(scan_config, 'laser_offset_y_mm', 0.0))
 
 	laser_module.print_status('phase=io-box-init')
 	laser_module.print_status(
@@ -353,6 +378,8 @@ async def run_io_box_calibration(
 		f'width={float(args.io_box_interior_width_mm):.2f} '
 		f'coarse_step={float(args.io_box_coarse_step_mm):.2f} '
 		f'fine_step={float(args.io_box_fine_step_mm):.2f} '
+		f'laser_offset_x_mm={laser_offset_x_mm:.2f} '
+		f'stage_probe={args.io_box_skip_stage_probe is False} '
 		f'settle_ms={settle_ms} samples_per_point={samples_per_point}'
 	)
 
@@ -370,6 +397,15 @@ async def run_io_box_calibration(
 			fine_margin_mm=float(args.io_box_fine_margin_mm),
 			settle_ms=int(settle_ms),
 			samples_per_point=int(samples_per_point),
+			laser_offset_x_mm=laser_offset_x_mm,
+			laser_offset_y_mm=laser_offset_y_mm,
+			should_probe_stage_extension=args.io_box_skip_stage_probe is False,
+			stage_probe_start_mm=float(args.io_box_stage_start_mm),
+			stage_probe_target_mm=args.io_box_stage_target_mm,
+			stage_probe_step_mm=float(args.io_box_stage_probe_step_mm),
+			stage_probe_timeout_s=float(args.io_box_stage_timeout_s),
+			stage_probe_no_progress_s=float(args.io_box_stage_no_progress_timeout_s),
+			stage_probe_rpm=args.io_box_stage_probe_rpm,
 		)
 
 	result = await laser_module.run_with_temp_robot_config(
@@ -380,6 +416,13 @@ async def run_io_box_calibration(
 	)
 	print_io_box_scout_result(result)
 	return 0
+
+
+def format_optional_float(value: float | None) -> str:
+	if value is None:
+		return 'none'
+
+	return f'{value:.2f}'
 
 
 def print_io_box_scout_result(result: laser_module.IOBoxScoutResult) -> None:
@@ -396,10 +439,24 @@ def print_io_box_scout_result(result: laser_module.IOBoxScoutResult) -> None:
 	print(f'io_box_measured_x_max_mm: {result.measured_x_max_mm:.2f}')
 	print(f'io_box_derived_x_min_mm: {result.derived_x_min_mm:.2f}')
 	print(f'io_box_interior_width_mm: {result.io_box_interior_width_mm:.2f}')
-	print(f'io_box_center_x_mm: {result.center_x_mm:.2f}')
-	print(f'io_box_center_y_mm: {result.center_y_mm:.2f}')
-	print(f'io_box_tool_x_mm: {result.tool_x_mm:.2f}')
-	print(f'io_box_tool_y_mm: {result.tool_y_mm:.2f}')
+	print(f'io_box_laser_center_x_mm: {result.laser_center_x_mm:.2f}')
+	print(f'io_box_laser_center_y_mm: {result.laser_center_y_mm:.2f}')
+	print(f'io_box_laser_offset_x_mm: {result.laser_offset_x_mm:.2f}')
+	print(f'io_box_laser_offset_y_mm: {result.laser_offset_y_mm:.2f}')
+	print(f'io_box_axis_center_x_mm: {result.axis_center_x_mm:.2f}')
+	print(f'io_box_axis_center_y_mm: {result.axis_center_y_mm:.2f}')
+	print(f'io_box_low_y_offset_mm: {laser_module.IO_BOX_LOW_Y_OFFSET_MM:.2f}')
+	print(f'io_box_high_y_offset_mm: -{laser_module.IO_BOX_HIGH_Y_OFFSET_MM:.2f}')
+	print(f'io_box_calibration_low_x_mm: {result.calibration_low_x_mm:.2f}')
+	print(f'io_box_calibration_low_y_mm: {result.calibration_low_y_mm:.2f}')
+	print(f'io_box_calibration_high_x_mm: {result.calibration_high_x_mm:.2f}')
+	print(f'io_box_calibration_high_y_mm: {result.calibration_high_y_mm:.2f}')
+	print(f'io_box_stage_probe_target_mm: {format_optional_float(result.stage_probe_target_mm)}')
+	print(f'io_box_stage_probe_stalled: {result.stage_probe_stalled}')
+	print(f'io_box_stage_probe_position_mm: {format_optional_float(result.stage_probe_position_mm)}')
+	print(f'io_box_stage_probe_status: {result.stage_probe_status}')
+	print(f'io_box_stage_probe_alarm_code: {result.stage_probe_alarm_code}')
+	print(f'io_box_stage_extension_mm: {format_optional_float(result.stage_extension_mm)}')
 	print(f'io_box_final_y_refined: {result.final_y_refined}')
 
 
