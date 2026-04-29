@@ -1258,6 +1258,30 @@ async def test_resolve_capture_y_mm_enters_right_shelf_scout_at_180_deg() -> Non
 
 
 @pytest.mark.asyncio
+async def test_read_laser_returns_distance(client) -> None:
+    manager = FakeLaserManager(snapshot=_build_snapshot("idle"), is_active=False)
+    worker = SimpleNamespace(
+        _robot=SimpleNamespace(
+            get_laser_distance=AsyncMock(return_value=12.34),
+        ),
+    )
+
+    with patch(
+        "perpetual_os1_server.routers.calibration.get_laser_auto_calibration_manager",
+        return_value=manager,
+    ):
+        with patch(
+            "perpetual_os1_server.routers.calibration.get_robot_worker",
+            AsyncMock(return_value=worker),
+        ):
+            response = await client.get("/api/calibration/laser/read")
+
+    assert response.status_code == 200
+    assert response.json()["distance_mm"] == pytest.approx(12.34)
+    worker._robot.get_laser_distance.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_get_laser_auto_calibration_status(client) -> None:
     manager = FakeLaserManager(snapshot=_build_snapshot("idle"), is_active=False)
 
