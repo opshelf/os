@@ -2206,6 +2206,36 @@ async def run_io_box_scout(
 		raise ValueError("IO box is not configured")
 
 	did_attempt_door_motion = False
+	x_limit_mm = float(start_x_mm) + float(io_box_interior_width_mm)
+	x_scan_max_mm = min(float(x_max_mm), x_limit_mm)
+
+	if x_scan_max_mm <= start_x_mm:
+		raise ValueError("IO box X scan limit must be greater than start_x_mm")
+
+	async def scan_y_line_with_brake_released(
+		*,
+		positions: list[float],
+		fixed_mm: float,
+		progress_label: str,
+	) -> list[float | None]:
+		is_y_brake_disabled = False
+
+		try:
+			await set_y_brake_for_scan_motion(tool, is_enabled=False)
+			is_y_brake_disabled = True
+			return await scan_line_positions(
+				tool,
+				axis="y",
+				positions=positions,
+				fixed_mm=fixed_mm,
+				settle_ms=settle_ms,
+				samples_per_point=samples_per_point,
+				progress_label=progress_label,
+				should_abort=should_abort,
+			)
+		finally:
+			if is_y_brake_disabled is True:
+				await set_y_brake_for_scan_motion(tool, is_enabled=True)
 
 	try:
 		raise_if_cancelled(should_abort)
@@ -2218,15 +2248,10 @@ async def run_io_box_scout(
 			f"phase=io-box-coarse-y x={start_x_mm:.2f} "
 			f"y=({start_y_mm:.2f},{y_min_mm:.2f}) step={coarse_step_mm:.2f}"
 		)
-		coarse_y_values = await scan_line_positions(
-			tool,
-			axis="y",
+		coarse_y_values = await scan_y_line_with_brake_released(
 			positions=coarse_y_positions,
 			fixed_mm=start_x_mm,
-			settle_ms=settle_ms,
-			samples_per_point=samples_per_point,
 			progress_label="io_box_coarse_y",
-			should_abort=should_abort,
 		)
 		rough_y_segment = find_first_positive_run_segment(
 			values=coarse_y_values,
@@ -2256,15 +2281,10 @@ async def run_io_box_scout(
 			f"phase=io-box-fine-y x={start_x_mm:.2f} "
 			f"y=({fine_y_max_mm:.2f},{fine_y_min_mm:.2f}) step={fine_step_mm:.2f}"
 		)
-		fine_y_values = await scan_line_positions(
-			tool,
-			axis="y",
+		fine_y_values = await scan_y_line_with_brake_released(
 			positions=fine_y_positions,
 			fixed_mm=start_x_mm,
-			settle_ms=settle_ms,
-			samples_per_point=samples_per_point,
 			progress_label="io_box_fine_y",
-			should_abort=should_abort,
 		)
 		fine_y_segment = find_gap_run_containing_position(
 			values=fine_y_values,
@@ -2285,10 +2305,11 @@ async def run_io_box_scout(
 			f"center_y={center_y_mm:.2f}"
 		)
 
-		x_positions = build_axis_positions(start_x_mm, x_max_mm, fine_step_mm)
+		x_positions = build_axis_positions(start_x_mm, x_scan_max_mm, fine_step_mm)
 		print_status(
 			f"phase=io-box-fine-x y={center_y_mm:.2f} "
-			f"x=({start_x_mm:.2f},{x_max_mm:.2f}) step={fine_step_mm:.2f}"
+			f"x=({start_x_mm:.2f},{x_scan_max_mm:.2f}) step={fine_step_mm:.2f} "
+			f"limit=io_box_width"
 		)
 		x_values = await scan_line_positions(
 			tool,
@@ -2311,7 +2332,9 @@ async def run_io_box_scout(
 			raise ValueError("No open-door IO box X gap found at the scout X position")
 
 		if x_segment.end_idx >= len(x_positions) - 1:
-			raise ValueError("Open-door IO box right X boundary was not found; increase --io-box-x-max-mm")
+			raise ValueError(
+				"Open-door IO box right X boundary was not found before the interior width limit"
+			)
 
 		measured_x_min_mm = None
 
@@ -2341,15 +2364,10 @@ async def run_io_box_scout(
 				f"phase=io-box-final-y x={center_x_mm:.2f} "
 				f"y=({fine_y_max_mm:.2f},{fine_y_min_mm:.2f}) step={fine_step_mm:.2f}"
 			)
-			final_y_values = await scan_line_positions(
-				tool,
-				axis="y",
+			final_y_values = await scan_y_line_with_brake_released(
 				positions=fine_y_positions,
 				fixed_mm=center_x_mm,
-				settle_ms=settle_ms,
-				samples_per_point=samples_per_point,
 				progress_label="io_box_final_y",
-				should_abort=should_abort,
 			)
 			refined_y_segment = find_gap_run_containing_position(
 				values=final_y_values,

@@ -258,7 +258,11 @@ def test_find_gap_run_containing_position_returns_gap_bounds() -> None:
 
 @pytest.mark.asyncio
 async def test_run_io_box_scout_derives_center_from_measured_right_edge() -> None:
-	tool = SimpleNamespace(retract=AsyncMock())
+	y_motor = SimpleNamespace(
+		disable_brake_output=AsyncMock(),
+		restore_brake_output=AsyncMock(),
+	)
+	tool = SimpleNamespace(retract=AsyncMock(), _my=y_motor)
 	io_box = SimpleNamespace(open_door=AsyncMock(), home_door=AsyncMock())
 	robot = SimpleNamespace(_tool=tool, _io=io_box)
 
@@ -299,6 +303,54 @@ async def test_run_io_box_scout_derives_center_from_measured_right_edge() -> Non
 	assert result.tool_x_mm == pytest.approx(0.5)
 	assert result.tool_y_mm == pytest.approx(73.0)
 	assert result.final_y_refined is True
+	io_box.open_door.assert_awaited_once()
+	io_box.home_door.assert_awaited_once()
+	tool.retract.assert_awaited_once()
+	assert y_motor.disable_brake_output.await_count == 3
+	assert y_motor.restore_brake_output.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_run_io_box_scout_stops_x_scan_at_width_limit() -> None:
+	y_motor = SimpleNamespace(
+		disable_brake_output=AsyncMock(),
+		restore_brake_output=AsyncMock(),
+	)
+	tool = SimpleNamespace(retract=AsyncMock(), _my=y_motor)
+	io_box = SimpleNamespace(open_door=AsyncMock(), home_door=AsyncMock())
+	robot = SimpleNamespace(_tool=tool, _io=io_box)
+
+	async def didScanLine(tool, *, axis, positions, fixed_mm, **kwargs):
+		if kwargs['progress_label'] == 'io_box_coarse_y':
+			return [5.0 if 70.0 <= position <= 80.0 else 0.0 for position in positions]
+
+		if kwargs['progress_label'] == 'io_box_fine_y':
+			return [0.0 if 65.0 <= position <= 85.0 else 5.0 for position in positions]
+
+		if kwargs['progress_label'] == 'io_box_fine_x':
+			assert max(positions) == pytest.approx(65.0)
+			return [0.0 for _ in positions]
+
+		raise AssertionError(kwargs['progress_label'])
+
+	with patch('perpetual_os1.laser_calibration.enter_scan_mode', AsyncMock()):
+		with patch('perpetual_os1.laser_calibration.scan_line_positions', side_effect=didScanLine):
+			with pytest.raises(ValueError, match='interior width limit'):
+				await run_io_box_scout(
+					robot=robot,
+					scan_config=SimpleNamespace(laser_offset_x_mm=0.0, laser_offset_y_mm=0.0),
+					io_box_interior_width_mm=65.0,
+					start_x_mm=0.0,
+					start_y_mm=100.0,
+					y_min_mm=0.0,
+					x_max_mm=100.0,
+					coarse_step_mm=10.0,
+					fine_step_mm=1.0,
+					fine_margin_mm=10.0,
+					settle_ms=0,
+					samples_per_point=1,
+				)
+
 	io_box.open_door.assert_awaited_once()
 	io_box.home_door.assert_awaited_once()
 	tool.retract.assert_awaited_once()
