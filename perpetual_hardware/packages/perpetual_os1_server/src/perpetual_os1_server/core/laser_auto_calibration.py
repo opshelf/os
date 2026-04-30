@@ -1091,7 +1091,7 @@ class LaserAutoCalibrationManager:
                                 z_move_rpm=float(z_move_rpm),
                                 z_move_accel=float(z_move_accel),
                                 should_rotate=current_absolute_rotation_deg != absolute_rotation_deg,
-                                should_use_safe_right_rotation_path=False,
+                                should_use_safe_right_rotation_path=True,
                                 should_move_z=current_z_mm != target_z_mm,
                             )
                             self._raise_if_abort_requested()
@@ -1264,7 +1264,7 @@ class LaserAutoCalibrationManager:
                 z_move_rpm=float(z_move_rpm),
                 z_move_accel=float(z_move_accel),
                 should_rotate=True,
-                should_use_safe_right_rotation_path=side == StorageModuleSide.RIGHT,
+                should_use_safe_right_rotation_path=True,
                 should_move_z=True,
             )
             self._raise_if_abort_requested()

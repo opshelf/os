@@ -158,6 +158,40 @@ async def test_prepare_capture_pose_uses_safe_right_rotation_path_when_requested
 
 
 @pytest.mark.asyncio
+async def test_prepare_capture_pose_uses_safe_rotation_path_for_left_when_requested() -> None:
+	tool = SimpleNamespace(
+		_mx=SimpleNamespace(move_to_position_no_wait=AsyncMock()),
+		_my=SimpleNamespace(move_to_position_no_wait=AsyncMock()),
+		_mr=SimpleNamespace(move_to_position=AsyncMock()),
+		_ms=SimpleNamespace(ready=AsyncMock(), move_to_position=AsyncMock()),
+		_mg=SimpleNamespace(move_to_position=AsyncMock()),
+		gantry_wait=AsyncMock(),
+		ensure_safe_rotation_stage_extension=AsyncMock(),
+	)
+
+	await prepare_capture_pose(
+		tool,
+		side_name='left',
+		side_number=0,
+		x_mm=950.0,
+		y_mm=1250.0,
+		absolute_rotation_deg=0.0,
+		stage_extension_mm=13.0,
+		z_mm=140.5,
+		z_move_rpm=100.0,
+		z_move_accel=100.0,
+		should_rotate=True,
+		should_use_safe_right_rotation_path=True,
+		should_move_z=False,
+	)
+
+	tool.ensure_safe_rotation_stage_extension.assert_awaited_once()
+	tool._mr.move_to_position.assert_awaited_once_with(0.0)
+	assert tool._mx.move_to_position_no_wait.await_args_list[0].args == (RIGHT_MODULE_ROTATION_SAFE_X_MM,)
+	assert tool._mx.move_to_position_no_wait.await_args_list[1].args == (950.0,)
+
+
+@pytest.mark.asyncio
 async def test_probe_stage_until_stall_can_skip_auto_retract() -> None:
 	stage_motor = SimpleNamespace(
 		move_to_position=AsyncMock(),
