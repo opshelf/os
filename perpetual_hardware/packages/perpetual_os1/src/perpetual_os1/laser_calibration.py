@@ -65,9 +65,6 @@ IO_BOX_HIGH_Y_OFFSET_MM = 80.0
 IO_BOX_STAGE_EXTENSION_FRONT_OFFSET_MM = 5.0
 IO_BOX_Z_EXTENSION_MM = 163.5
 IO_BOX_MIN_POSITIVE_RUN_COUNT = 2
-DEFAULT_Z_REFERENCE_BY_SIDE: dict[StorageModuleSide, tuple[int, int, float, float]] = {
-	StorageModuleSide.LEFT: (12, 0, 15.0, 8.504),
-}
 
 
 def should_skip_motion_cleanup_on_cancel() -> bool:
@@ -116,48 +113,29 @@ def get_scan_z_reference(
 	*,
 	scan_config: Any,
 	side: StorageModuleSide,
-) -> tuple[int, int, float, float] | None:
-	configured_reference = None
-
+) -> tuple[int, int, float, float]:
 	if side == StorageModuleSide.LEFT:
 		configured_reference = getattr(scan_config, "left_z_reference", None)
 	else:
 		configured_reference = getattr(scan_config, "right_z_reference", None)
 
-	if configured_reference is not None:
-		return (
-			int(configured_reference.shelf_idx),
-			int(configured_reference.cell_idx),
-			float(configured_reference.z_offset_mm),
-			float(configured_reference.wall_depth_mm),
-		)
+	if configured_reference is None:
+		raise ValueError(f"{side.value} laser calibration requires an explicit z_reference")
 
-	return DEFAULT_Z_REFERENCE_BY_SIDE.get(side)
+	return (
+		int(configured_reference.shelf_idx),
+		int(configured_reference.cell_idx),
+		float(configured_reference.z_offset_mm),
+		float(configured_reference.wall_depth_mm),
+	)
 
 
 def get_scan_z_delta(
 	*,
 	scan_config: Any,
 	side: StorageModuleSide,
-) -> dict[str, Any] | None:
-	configured_delta = None
-
-	if side == StorageModuleSide.LEFT:
-		configured_delta = getattr(scan_config, "left_z_delta_mm", None)
-	else:
-		configured_delta = getattr(scan_config, "right_z_delta_mm", None)
-
-	if configured_delta is not None:
-		return {
-			"delta_mm": float(configured_delta),
-			"source": "configured_delta",
-			"reference": None,
-		}
-
+) -> dict[str, Any]:
 	reference = get_scan_z_reference(scan_config=scan_config, side=side)
-
-	if reference is None:
-		return None
 
 	return {
 		"delta_mm": float(reference[2]) - float(reference[3]),
@@ -170,11 +148,16 @@ def get_scan_xy_reference(
 	*,
 	scan_config: Any,
 	side: StorageModuleSide,
-) -> Any | None:
+) -> Any:
 	if side == StorageModuleSide.LEFT:
-		return getattr(scan_config, "left_xy_reference", None)
+		configured_reference = getattr(scan_config, "left_xy_reference", None)
+	else:
+		configured_reference = getattr(scan_config, "right_xy_reference", None)
 
-	return getattr(scan_config, "right_xy_reference", None)
+	if configured_reference is None:
+		raise ValueError(f"{side.value} laser calibration requires an explicit xy_reference")
+
+	return configured_reference
 
 
 def get_shelf_hole_sweep_offsets_mm(scan_config: Any) -> list[float]:
@@ -533,27 +516,19 @@ def build_run_parameters(
 			"coarse_samples_per_point": coarse_samples_per_point,
 			"laser_scan_stage_extension_mm": scan_stage_extension_mm,
 			"laser_scan_z_offset_mm": scan_z_offset_mm,
-			"z_reference": (
-				{
-					"shelf_idx": z_reference[0],
-					"cell_idx": z_reference[1],
-					"z_offset_mm": z_reference[2],
-					"wall_depth_mm": z_reference[3],
-				}
-				if z_reference is not None
-				else None
-			),
-			"z_delta_mm": None if z_delta is None else float(z_delta["delta_mm"]),
-			"z_delta_source": None if z_delta is None else str(z_delta["source"]),
-			"xy_reference": (
-				{
-					"anchor": str(xy_reference.anchor),
-					"x_mm": float(xy_reference.x_mm),
-					"y_mm": float(xy_reference.y_mm),
-				}
-				if xy_reference is not None
-				else None
-			),
+			"z_reference": {
+				"shelf_idx": z_reference[0],
+				"cell_idx": z_reference[1],
+				"z_offset_mm": z_reference[2],
+				"wall_depth_mm": z_reference[3],
+			},
+			"z_delta_mm": float(z_delta["delta_mm"]),
+			"z_delta_source": str(z_delta["source"]),
+			"xy_reference": {
+				"anchor": str(xy_reference.anchor),
+				"x_mm": float(xy_reference.x_mm),
+				"y_mm": float(xy_reference.y_mm),
+			},
 			"laser_scan_y_offset_mm": float(args.y_offset),
 			"shelf_edge_top_margin_mm": SHELF_EDGE_TOP_MARGIN_MM,
 		},
@@ -1601,25 +1576,20 @@ def build_single_cell_rescan_candidate(
 	candidate_center_y_mm = float(target_cell.calibration_point.y) + float(scan_config.laser_offset_y_mm)
 	half_width_mm = float(scan_config.expected_hole_width_mm) / 2.0
 	half_height_mm = float(scan_config.expected_hole_height_mm) / 2.0
-	wall_depth_mm: float | None = None
 	z_delta = get_scan_z_delta(
 		scan_config=scan_config,
 		side=side,
 	)
+	wall_depth_mm = float(target_cell.calibration_point.z_offset) - float(z_delta["delta_mm"])
 
-	if z_delta is not None:
-		wall_depth_mm = float(target_cell.calibration_point.z_offset) - float(z_delta["delta_mm"])
-
-	if wall_depth_mm is None or wall_depth_mm <= 0:
+	if wall_depth_mm <= 0:
 		z_reference = get_scan_z_reference(
 			scan_config=scan_config,
 			side=side,
 		)
+		wall_depth_mm = float(z_reference[3])
 
-		if z_reference is not None:
-			wall_depth_mm = float(z_reference[3])
-
-	if wall_depth_mm is None or wall_depth_mm <= 0:
+	if wall_depth_mm <= 0:
 		raise ValueError("Cannot resolve wall depth for --rescan-cell target")
 
 	return GapCandidateRegion(
@@ -3550,10 +3520,6 @@ def apply_xy_reference_offsets(
 ) -> None:
 	xy_reference = get_scan_xy_reference(scan_config=scan_config, side=side)
 
-	if xy_reference is None:
-		print_status("xy_offset_inference=skipped reason=reference_unconfigured")
-		return
-
 	anchor_cell = get_scanned_anchor_cell(
 		scanned_shelves=scanned_shelves,
 		side=side,
@@ -3627,10 +3593,6 @@ def apply_wall_depth_z_offsets(
 		side=side,
 	)
 
-	if z_delta is None:
-		print_status("z_offset_inference=skipped reason=z_delta_unresolved")
-		return
-
 	z_delta_mm = float(z_delta["delta_mm"])
 	updated_cell_count = 0
 
@@ -3646,13 +3608,6 @@ def apply_wall_depth_z_offsets(
 
 			cell.calibration_point.z_offset = float(candidate.wall_depth_mm) + z_delta_mm
 			updated_cell_count += 1
-
-	if z_delta["source"] == "configured_delta":
-		print_status(
-			f"z_offset_inference=applied source=configured_delta "
-			f"delta_mm={z_delta_mm:.3f} updated_cells={updated_cell_count}"
-		)
-		return
 
 	print_status(
 		f"z_offset_inference=applied reference={reference_key[0]}:{reference_key[1]} "
@@ -3816,9 +3771,7 @@ def apply_single_cell_rescan(
 		scan_config=scan_config,
 		side=side,
 	)
-
-	if z_delta is not None:
-		calibration_point.z_offset = float(wall_depth_mm) + float(z_delta["delta_mm"])
+	calibration_point.z_offset = float(wall_depth_mm) + float(z_delta["delta_mm"])
 
 	grid.save()
 	print_status(

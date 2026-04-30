@@ -506,6 +506,8 @@ class IOBlock(BaseModel):
 
 
 class LaserScanReferenceConfig(BaseModel):
+    """Manual Z calibration for one known cell and the laser wall depth measured for that same cell."""
+
     shelf_idx: int = Field(ge=0)
     cell_idx: int = Field(ge=0)
     z_offset_mm: float
@@ -513,6 +515,8 @@ class LaserScanReferenceConfig(BaseModel):
 
 
 class LaserScanXYReferenceConfig(BaseModel):
+    """Manual XY calibration for one known anchor cell used to shift laser-measured cell positions."""
+
     anchor: Literal["top_right", "top_left", "bottom_right", "bottom_left"] = "top_right"
     x_mm: float
     y_mm: float
@@ -536,8 +540,6 @@ class LaserScanConfig(BaseModel):
     step_mm: float = Field(5.0, gt=0)
     settle_ms: int = Field(50, ge=0)
     samples_per_point: int = Field(3, ge=1)
-    left_z_delta_mm: Optional[float] = None
-    right_z_delta_mm: Optional[float] = None
     left_z_reference: Optional[LaserScanReferenceConfig] = None
     right_z_reference: Optional[LaserScanReferenceConfig] = None
     left_xy_reference: Optional[LaserScanXYReferenceConfig] = None
