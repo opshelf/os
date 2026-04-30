@@ -1597,7 +1597,7 @@ def build_single_cell_rescan_candidate(
 		target=target,
 	)
 
-	candidate_center_x_mm = float(target_cell.calibration_point.x) + float(scan_config.laser_offset_x_mm)
+	candidate_center_x_mm = float(target_cell.calibration_point.x) - float(scan_config.laser_offset_x_mm)
 	candidate_center_y_mm = float(target_cell.calibration_point.y) + float(scan_config.laser_offset_y_mm)
 	half_width_mm = float(scan_config.expected_hole_width_mm) / 2.0
 	half_height_mm = float(scan_config.expected_hole_height_mm) / 2.0
@@ -2641,7 +2641,7 @@ def build_detected_cell_from_segments(
 		cell_idx=0,
 		center_x_mm=center_x_mm,
 		center_y_mm=center_y_mm,
-		tool_x_mm=center_x_mm - scan_config.laser_offset_x_mm,
+		tool_x_mm=center_x_mm + scan_config.laser_offset_x_mm,
 		tool_y_mm=center_y_mm - scan_config.laser_offset_y_mm,
 		width_mm=x_segment.width_mm,
 		height_mm=y_segment.width_mm,

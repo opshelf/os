@@ -66,7 +66,7 @@ def assert_synthetic_analysis(analysis, shelves) -> None:
 	assert shelves[0].cells[0].calibration_point is not None
 	assert shelves[0].cells[0].calibration_point.x == analysis.shelves[0].cells[0].tool_x_mm
 	assert shelves[0].cells[2].calibration_point is not None
-	assert shelves[0].cells[2].calibration_point.x == 18.0
+	assert shelves[0].cells[2].calibration_point.x == 22.0
 
 
 def test_storage_grid_infers_sparse_indices_from_legacy_payload(tmp_path):

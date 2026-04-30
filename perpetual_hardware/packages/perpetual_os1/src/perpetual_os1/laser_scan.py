@@ -451,7 +451,7 @@ def analyze_scan_capture(
 					cell_idx=0,
 					center_x_mm=center_x_mm,
 					center_y_mm=center_y_mm,
-					tool_x_mm=center_x_mm - capture.laser_offset_x_mm,
+					tool_x_mm=center_x_mm + capture.laser_offset_x_mm,
 					tool_y_mm=center_y_mm - capture.laser_offset_y_mm,
 				width_mm=width_mm,
 				height_mm=height_mm,
