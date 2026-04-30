@@ -21,7 +21,8 @@ SHELF_SCOUT_X_OFFSETS_MM = [0.0]
 LEFT_MODULE_ROTATION_CENTER_DEG = 0.0
 RIGHT_MODULE_ROTATION_CENTER_DEG = 180.0
 RIGHT_MODULE_SHELF_SCOUT_X_MM = 25.0
-RIGHT_MODULE_ROTATION_SAFE_X_MM = 475.0
+ROTATION_SAFE_X_MM = 475.0
+RIGHT_MODULE_ROTATION_SAFE_X_MM = ROTATION_SAFE_X_MM
 SHELF_EDGE_CONFIRMATION_COUNT = 3
 SHELF_BRIM_MIN_HEIGHT_MM = 8.0
 SHELF_BRIM_MAX_HEIGHT_MM = 14.0
@@ -982,10 +983,10 @@ async def prepare_capture_pose(
 	should_move_z: bool,
 	should_abort: Callable[[], bool] | None = None,
 ) -> None:
-	if side_name == 'right' and should_rotate is True and should_use_safe_right_rotation_path is True:
+	if should_rotate is True and should_use_safe_right_rotation_path is True:
 		await move_gantry_direct(
 			tool,
-			x_mm=RIGHT_MODULE_ROTATION_SAFE_X_MM,
+			x_mm=ROTATION_SAFE_X_MM,
 			y_mm=y_mm,
 			should_abort=should_abort,
 		)
@@ -1260,7 +1261,7 @@ async def capture_samples_with_robot(args: argparse.Namespace) -> tuple[list[Las
 						z_move_rpm=float(z_move_rpm),
 						z_move_accel=float(z_move_accel),
 						should_rotate=current_absolute_rotation_deg != absolute_rotation_deg,
-						should_use_safe_right_rotation_path=False,
+						should_use_safe_right_rotation_path=True,
 						should_move_z=current_z_mm != target_z_mm,
 					)
 					current_z_mm = target_z_mm
@@ -1568,7 +1569,7 @@ async def run_stage_stall_capture(args: argparse.Namespace) -> tuple[list[StageS
 				z_move_rpm=float(z_move_rpm),
 				z_move_accel=float(z_move_accel),
 				should_rotate=True,
-				should_use_safe_right_rotation_path=False,
+				should_use_safe_right_rotation_path=True,
 				should_move_z=False,
 			)
 			did_stall, stage_position_mm, status, alarm_code = await probe_stage_until_stall(

@@ -682,7 +682,7 @@ async def test_run_angle_calibration_uses_geometric_center_not_previous_rotation
 
     with patch('perpetual_os1_server.core.laser_auto_calibration.get_root_config', return_value=config):
         with patch.object(angle_module, 'resolve_capture_y_mm', AsyncMock(return_value=1095.0)) as resolve_mock:
-            with patch.object(angle_module, 'prepare_capture_pose', AsyncMock()):
+            with patch.object(angle_module, 'prepare_capture_pose', AsyncMock()) as prepare_mock:
                 with patch.object(angle_module, 'sample_laser_depth', AsyncMock(return_value=5.0)):
                     with patch.object(angle_module, 'search_best_alpha', return_value=fit_result):
                         with patch.object(angle_module, 'print_fit_result'):
@@ -693,6 +693,7 @@ async def test_run_angle_calibration_uses_geometric_center_not_previous_rotation
                             )
 
     assert resolve_mock.await_args.kwargs['rotation_center_deg'] == pytest.approx(0.0)
+    assert prepare_mock.await_args.kwargs['should_use_safe_right_rotation_path'] is True
     assert result.previous_rotation_deg == pytest.approx(3.815)
     assert result.alpha_deg == pytest.approx(3.815)
     assert result.updated_rotation_deg == pytest.approx(3.815)
