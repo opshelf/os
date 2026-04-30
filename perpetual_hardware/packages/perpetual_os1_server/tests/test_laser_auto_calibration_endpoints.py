@@ -9,6 +9,7 @@ import pytest
 from fastapi import HTTPException
 
 from perpetual_os1 import laser_angle_calibration as angle_module
+from perpetual_os1 import laser_calibration as laser_module
 from perpetual_os1.common import Parameters
 from perpetual_os1.laser_scan import ScanBounds
 from perpetual_os1.storage import StorageModuleSide
@@ -22,6 +23,7 @@ from perpetual_os1_server.core.laser_auto_calibration import (
     _build_angle_z_offset_positions,
     _build_bounds_for_side,
     _build_stage_extension_probe_y_mm,
+    _resolve_io_box_laser_offset_x_mm,
     _SideState,
     LaserAutoCalibrationAngleResult,
     LaserAutoCalibrationScope,
@@ -74,7 +76,7 @@ def _build_snapshot(state: str = "running") -> LaserAutoCalibrationSnapshot:
         state=state,
         session_id="laser-session",
         run_id="left-run",
-        requested_scope=LaserAutoCalibrationScope(),
+        requested_scope=LaserAutoCalibrationScope(include_io_box=True),
         current_side="left_module",
         current_stage="shelf-scout",
         bounds=ScanBounds(x_min=0.0, x_max=950.0, y_min=0.0, y_max=1250.0),
@@ -866,6 +868,79 @@ async def test_persist_completed_results_saves_stage_extensions() -> None:
     assert saved_configs[0].robot.tool.parameters.STAGE_EXTENSION_SHELF_BACK == pytest.approx(44.0)
     worker._robot.reload_parameters.assert_called_once_with()
     assert worker._robot._grid is reloaded_grid
+
+
+@pytest.mark.asyncio
+async def test_run_io_box_calibration_passes_configured_laser_offset_and_persists_axis_values() -> None:
+    manager = LaserAutoCalibrationManager()
+    manager._update_snapshot = AsyncMock()
+    params = Parameters.model_validate(
+        {
+            'IDLE_POSITION': [0, 0],
+            'PICKUP_POSITION_L': [0, 0],
+            'PICKUP_POSITION_H': [0, 0],
+            'SCAN_POSITION': [0, 0],
+            'STAGE_EXTENSION_IO_BOX': 0,
+            'STAGE_NUDGE': 0,
+            'STAGE_EXTENSION_SHELF_FRONT': 43,
+            'STAGE_EXTENSION_SHELF_BACK': 0,
+            'Z_EXTENSION_PICK': 0,
+            'Z_EXTENSION_PLACE': 0,
+            'Z_EXTENSION_IO': 0,
+            'Z_MOVE_RPM': 1,
+            'Z_MOVE_ACCEL': 1,
+            'ROTATION_FRONT': 0,
+            'ROTATION_BACK': 180,
+            'JOG_X': 0,
+            'JOG_Y': 0,
+            'PXMM': 1,
+            'PYMM': 1,
+        }
+    )
+    scan_config = SimpleNamespace(
+        settle_ms=50,
+        samples_per_point=3,
+        laser_offset_x_mm=51.0,
+        laser_offset_y_mm=0.0,
+    )
+    config = SimpleNamespace(
+        robot=SimpleNamespace(
+            tool=SimpleNamespace(parameters=params),
+            grid=SimpleNamespace(scan=scan_config),
+        )
+    )
+    config.model_copy = lambda deep=True: copy.deepcopy(config)
+    scout_result = SimpleNamespace(
+        calibration_low_x_mm=37.5,
+        calibration_low_y_mm=476.0,
+        calibration_high_x_mm=37.5,
+        calibration_high_y_mm=715.0,
+        z_extension_mm=163.5,
+        stage_extension_mm=48.0,
+    )
+    saved_configs: list[object] = []
+    worker = SimpleNamespace(_robot=SimpleNamespace(reload_parameters=MagicMock()))
+
+    with patch('perpetual_os1_server.core.laser_auto_calibration.get_root_config', return_value=config):
+        with patch.object(laser_module, 'run_io_box_scout', AsyncMock(return_value=scout_result)) as scout_mock:
+            with patch('perpetual_os1_server.core.laser_auto_calibration.save_root_config', side_effect=lambda next_config: saved_configs.append(next_config)):
+                with patch('perpetual_os1_server.core.laser_auto_calibration.clear_config_cache'):
+                    await manager._run_io_box_calibration(worker)
+
+    assert scout_mock.await_args.kwargs['laser_offset_x_mm'] == pytest.approx(51.0)
+    assert scout_mock.await_args.kwargs['laser_offset_y_mm'] == pytest.approx(0.0)
+    assert saved_configs[0].robot.tool.parameters.PICKUP_POSITION_L == (37, 476)
+    assert saved_configs[0].robot.tool.parameters.PICKUP_POSITION_H == (37, 715)
+    assert saved_configs[0].robot.tool.parameters.Z_EXTENSION_IO == pytest.approx(163.5)
+    assert saved_configs[0].robot.tool.parameters.STAGE_EXTENSION_IO_BOX == pytest.approx(48.0)
+    worker._robot.reload_parameters.assert_called_once_with()
+
+
+def test_resolve_io_box_laser_offset_rejects_default_zero() -> None:
+    with pytest.raises(ValueError, match='laser_offset_x_mm must be configured'):
+        _resolve_io_box_laser_offset_x_mm(SimpleNamespace(laser_offset_x_mm=0.0))
+
+    assert _resolve_io_box_laser_offset_x_mm(SimpleNamespace(laser_offset_x_mm=51.0)) == pytest.approx(51.0)
 
 
 @pytest.mark.asyncio
