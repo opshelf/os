@@ -1069,11 +1069,12 @@ class LaserAutoCalibrationManager:
                     self._raise_if_abort_requested()
                     target_z_mm = base_z_mm + float(z_offset_mm)
 
-                    for x_idx, x_mm in enumerate(x_positions, start=1):
+                    for rotation_idx, rotation_deg in enumerate(rotation_positions, start=1):
                         self._raise_if_abort_requested()
-                        for rotation_idx, rotation_deg in enumerate(rotation_positions, start=1):
+                        absolute_rotation_deg = rotation_center_deg + float(rotation_deg)
+
+                        for x_idx, x_mm in enumerate(x_positions, start=1):
                             self._raise_if_abort_requested()
-                            absolute_rotation_deg = rotation_center_deg + float(rotation_deg)
                             angle_module.print_status(
                                 f"phase=capture x={x_idx}/{len(x_positions)} z={z_offset_mm:.2f} "
                                 f"rotation={rotation_idx}/{len(rotation_positions)} "
