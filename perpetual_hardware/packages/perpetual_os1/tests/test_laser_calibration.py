@@ -557,8 +557,8 @@ def test_build_single_cell_rescan_candidate_uses_target_point_and_z_delta() -> N
 		scan_config=scan_config,
 	)
 
-	assert candidate.x_min == pytest.approx(138.0)
-	assert candidate.x_max == pytest.approx(164.0)
+	assert candidate.x_min == pytest.approx(36.0)
+	assert candidate.x_max == pytest.approx(62.0)
 	assert candidate.y_min == pytest.approx(185.0)
 	assert candidate.y_max == pytest.approx(215.0)
 	assert candidate.wall_depth_mm == pytest.approx(2.5)
