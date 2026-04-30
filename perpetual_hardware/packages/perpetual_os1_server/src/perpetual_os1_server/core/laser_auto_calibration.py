@@ -59,6 +59,16 @@ STAGE_EXTENSION_PROBE_Y_OFFSET_MM = 25.0
 STAGE_EXTENSION_PROBE_STEP_MM = 0.5
 STAGE_EXTENSION_PROBE_TIMEOUT_S = 10.0
 STAGE_EXTENSION_NO_PROGRESS_TIMEOUT_S = 0.2
+IO_BOX_MIN_CONFIGURED_LASER_OFFSET_X_MM = 1.0
+
+
+def _resolve_io_box_laser_offset_x_mm(scan_config: Any) -> float:
+    laser_offset_x_mm = float(getattr(scan_config, "laser_offset_x_mm", 0.0))
+
+    if abs(laser_offset_x_mm) < IO_BOX_MIN_CONFIGURED_LASER_OFFSET_X_MM:
+        raise ValueError("robot.grid.scan.laser_offset_x_mm must be configured before IO box calibration")
+
+    return laser_offset_x_mm
 
 
 def _should_skip_motion_cleanup_on_cancel() -> bool:
@@ -1444,6 +1454,8 @@ class LaserAutoCalibrationManager:
     async def _run_io_box_calibration(self, worker: RobotWorker) -> None:
         config = get_root_config()
         scan_config = config.robot.grid.scan
+        laser_offset_x_mm = _resolve_io_box_laser_offset_x_mm(scan_config)
+        laser_offset_y_mm = float(getattr(scan_config, "laser_offset_y_mm", 0.0))
 
         await self._update_snapshot(
             current_side=None,
@@ -1452,6 +1464,8 @@ class LaserAutoCalibrationManager:
             stage_detail={
                 "phase": "io-box-calibration",
                 "subphase": "scan",
+                "laser_offset_x_mm": laser_offset_x_mm,
+                "laser_offset_y_mm": laser_offset_y_mm,
             },
         )
 
@@ -1461,8 +1475,8 @@ class LaserAutoCalibrationManager:
             io_box_interior_width_mm=laser_module.IO_BOX_INTERIOR_WIDTH_MM,
             settle_ms=laser_module.get_fine_settle_ms(scan_config.settle_ms),
             samples_per_point=laser_module.get_fine_samples_per_point(scan_config.samples_per_point),
-            laser_offset_x_mm=float(getattr(scan_config, "laser_offset_x_mm", 0.0)),
-            laser_offset_y_mm=float(getattr(scan_config, "laser_offset_y_mm", 0.0)),
+            laser_offset_x_mm=laser_offset_x_mm,
+            laser_offset_y_mm=laser_offset_y_mm,
             should_abort=self._should_abort_work,
         )
 
