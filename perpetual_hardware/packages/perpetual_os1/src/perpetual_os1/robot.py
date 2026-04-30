@@ -1063,6 +1063,14 @@ class Robot:
             "tool": ["x_axis", "y_axis", "z_axis", "stage", "rotate"],
         }
 
+    def get_motor_info(self) -> Dict[str, List[Dict[str, object]]]:
+        def _motor_dict(cfg):
+            return {"name": cfg.motor_name, "motor_id": cfg.motor_id}
+        return {
+            "io": [_motor_dict(m) for m in self._config.robot.io.motors.root if m.enabled],
+            "tool": [_motor_dict(m) for m in self._config.robot.tool.motors.root if m.enabled],
+        }
+
     def _get_motor_by_name(self, name: str) -> Optional["Motor"]:
         tool_motors = {
             "x_axis": self._tool._mx,

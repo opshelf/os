@@ -300,6 +300,9 @@ class RobotWorker:
     def get_motor_names(self) -> Dict[str, List[str]]:
         return self._robot.get_motor_names()
 
+    def get_motor_info(self) -> Dict[str, List[Dict[str, object]]]:
+        return self._robot.get_motor_info()
+
     async def simulate_motor_crash(self, motor_name: str) -> bool:
         success = self._robot.simulate_motor_crash(motor_name)
 

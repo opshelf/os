@@ -559,9 +559,14 @@ export async function sendScannerScan(code: string): Promise<{ message: string }
 	});
 }
 
+export interface MotorInfo {
+	name: string;
+	motor_id: number;
+}
+
 export interface MotorList {
-	io: string[];
-	tool: string[];
+	io: MotorInfo[];
+	tool: MotorInfo[];
 }
 
 export async function getMotors(): Promise<MotorList> {
