@@ -233,6 +233,39 @@ async def test_probe_stage_until_stall_accepts_small_target_lag() -> None:
 
 
 @pytest.mark.asyncio
+async def test_probe_stage_until_stall_detects_static_no_progress_after_command() -> None:
+	stage_motor = SimpleNamespace(
+		move_to_position=AsyncMock(),
+		move_to_position_no_wait=AsyncMock(),
+		clear_alarm=AsyncMock(),
+		stop=AsyncMock(),
+		get_position=AsyncMock(side_effect=[39.27, 39.27, 39.27]),
+		get_param=AsyncMock(return_value=0),
+	)
+	tool = SimpleNamespace(_ms=stage_motor)
+
+	did_stall, stage_position_mm, status, alarm_code = await probe_stage_until_stall(
+		tool,
+		target_stage_mm=40.0,
+		retract_stage_mm=39.5,
+		settle_ms=0,
+		timeout_s=1.0,
+		probe_rpm=50,
+		no_progress_s=0.0,
+		probe_step_mm=0.5,
+		fast_approach_mm=39.5,
+		fast_approach_rpm=200,
+		auto_retract=False,
+	)
+
+	assert did_stall is True
+	assert stage_position_mm == pytest.approx(39.27)
+	assert status == 'no_progress'
+	assert alarm_code == 0
+	assert stage_motor.stop.await_count == 1
+
+
+@pytest.mark.asyncio
 async def test_probe_stage_until_stall_can_skip_auto_retract() -> None:
 	stage_motor = SimpleNamespace(
 		move_to_position=AsyncMock(),
