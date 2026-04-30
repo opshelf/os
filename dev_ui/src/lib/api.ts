@@ -365,11 +365,21 @@ export interface LaserAutoCalibrationAngleResult {
 	updated_rotation_deg: number;
 }
 
+export interface LaserAutoCalibrationIOBoxResult {
+	pickup_low_x: number;
+	pickup_low_y: number;
+	pickup_high_x: number;
+	pickup_high_y: number;
+	z_extension: number;
+	stage_extension: number;
+}
+
 export interface LaserAutoCalibrationRequest {
-	mode: 'all' | 'side' | 'shelf' | 'cell';
+	mode: 'all' | 'side' | 'shelf' | 'cell' | 'io_box';
 	side?: 'left_module' | 'right_module';
 	shelf_idx?: number;
 	cell_idx?: number;
+	include_io_box?: boolean;
 }
 
 export interface LaserAutoCalibrationSnapshot {
@@ -391,18 +401,30 @@ export interface LaserAutoCalibrationSnapshot {
 	detected_cell_count: number;
 	left_detected_cell_count: number;
 	right_detected_cell_count: number;
+	left_stage_extension_mm: number | null;
+	right_stage_extension_mm: number | null;
 	shelf_edges: LaserAutoCalibrationShelfEdge[];
 	shelf_candidates: LaserAutoCalibrationCandidate[];
 	detected_cells: LaserAutoCalibrationCell[];
 	angle_results: LaserAutoCalibrationAngleResult[];
+	io_box_result: LaserAutoCalibrationIOBoxResult | null;
 	stage_detail: Record<string, unknown>;
 	error: string | null;
 }
 
 export function buildLaserAutoCalibrationStreamUrl(
-	request: LaserAutoCalibrationRequest = { mode: 'all' }
+	request: LaserAutoCalibrationRequest = { mode: 'all', include_io_box: true }
 ): string {
 	const url = new URL(buildAuthenticatedUrl('/calibration/laser/stream'));
+
+	if (request.mode === 'io_box') {
+		url.searchParams.set('mode', 'io_box');
+		return url.toString();
+	}
+
+	if (request.include_io_box !== undefined) {
+		url.searchParams.set('include_io_box', String(request.include_io_box));
+	}
 
 	if (request.mode === 'all') {
 		return url.toString();

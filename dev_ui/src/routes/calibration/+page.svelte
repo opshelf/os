@@ -19,7 +19,7 @@
 		? parseInt(page.url.searchParams.get('cell')!, 10)
 		: undefined;
 
-	let selectedView: 'cell_manual' | 'cell_auto' | 'test' | 'io' | 'rotation' = 'cell_manual';
+	let selectedView: 'cell_auto' | 'cell_manual' | 'io' | 'rotation' | 'test' = 'cell_auto';
 
 	function didSelectCellManual(): void {
 		selectedView = 'cell_manual';
@@ -43,20 +43,24 @@
 </script>
 
 <div class="toggle-group">
-	<button type="button" class:selected={selectedView === 'cell_manual'} on:click={didSelectCellManual}>
-		cell manual
-	</button>
 	<button type="button" class:selected={selectedView === 'cell_auto'} on:click={didSelectCellAuto}>
-		cell auto
+		auto
 	</button>
-	<button type="button" class:selected={selectedView === 'test'} on:click={didSelectTest}>
-		test
+	<button
+		type="button"
+		class:selected={selectedView === 'cell_manual'}
+		on:click={didSelectCellManual}
+	>
+		cells
 	</button>
 	<button type="button" class:selected={selectedView === 'io'} on:click={didSelectIO}>
 		io box
 	</button>
 	<button type="button" class:selected={selectedView === 'rotation'} on:click={didSelectRotation}>
-		rotation
+		tool rotation
+	</button>
+	<button type="button" class:selected={selectedView === 'test'} on:click={didSelectTest}>
+		test
 	</button>
 </div>
 

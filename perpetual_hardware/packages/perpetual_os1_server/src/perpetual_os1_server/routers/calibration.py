@@ -98,6 +98,8 @@ def _build_laser_auto_calibration_scope(
 	side: Literal["left_module", "right_module"] | None,
 	shelf_idx: int | None,
 	cell_idx: int | None,
+	mode: Literal["all", "io_box"] | None,
+	include_io_box: bool | None,
 ) -> LaserAutoCalibrationScope:
 	if shelf_idx is not None and shelf_idx < 0:
 		raise HTTPException(
@@ -111,6 +113,15 @@ def _build_laser_auto_calibration_scope(
 			detail="cell_idx must be non-negative",
 		)
 
+	if mode == "io_box":
+		if side is not None or shelf_idx is not None or cell_idx is not None:
+			raise HTTPException(
+				status_code=status.HTTP_400_BAD_REQUEST,
+				detail="side, shelf_idx, and cell_idx cannot be used with io_box mode",
+			)
+
+		return LaserAutoCalibrationScope(mode="io_box", include_io_box=True)
+
 	if side is None:
 		if shelf_idx is not None or cell_idx is not None:
 			raise HTTPException(
@@ -118,7 +129,7 @@ def _build_laser_auto_calibration_scope(
 				detail="side is required when shelf_idx or cell_idx is provided",
 			)
 
-		return LaserAutoCalibrationScope()
+		return LaserAutoCalibrationScope(mode="all", include_io_box=include_io_box is not False)
 
 	if cell_idx is not None and shelf_idx is None:
 		raise HTTPException(
@@ -127,12 +138,12 @@ def _build_laser_auto_calibration_scope(
 		)
 
 	if shelf_idx is None:
-		return LaserAutoCalibrationScope(mode="side", side=side)
+		return LaserAutoCalibrationScope(mode="side", side=side, include_io_box=include_io_box is True)
 
 	if cell_idx is None:
-		return LaserAutoCalibrationScope(mode="shelf", side=side, shelf_idx=shelf_idx)
+		return LaserAutoCalibrationScope(mode="shelf", side=side, shelf_idx=shelf_idx, include_io_box=include_io_box is True)
 
-	return LaserAutoCalibrationScope(mode="cell", side=side, shelf_idx=shelf_idx, cell_idx=cell_idx)
+	return LaserAutoCalibrationScope(mode="cell", side=side, shelf_idx=shelf_idx, cell_idx=cell_idx, include_io_box=include_io_box is True)
 
 
 def _build_coordinate_for_location(grid, location: StorageModuleCellLocation) -> AxisCoordinate:
@@ -661,8 +672,10 @@ async def stream_laser_auto_calibration(
 	side: Literal["left_module", "right_module"] | None = None,
 	shelf_idx: int | None = None,
 	cell_idx: int | None = None,
+	mode: Literal["all", "io_box"] | None = None,
+	include_io_box: bool | None = None,
 ) -> EventSourceResponse:
-	requested_scope = _build_laser_auto_calibration_scope(side, shelf_idx, cell_idx)
+	requested_scope = _build_laser_auto_calibration_scope(side, shelf_idx, cell_idx, mode, include_io_box)
 	manager = get_laser_auto_calibration_manager()
 	is_active = await manager.is_active()
 

@@ -200,7 +200,7 @@
 {#if isLoading === true}
 	<p>loading scale data...</p>
 {:else}
-	<table>
+	<table style="margin-bottom: 1.5em">
 		<thead>
 			<tr>
 				<th colspan="2">scale reading</th>
@@ -251,7 +251,7 @@
 			{/if}
 			{#if readingError !== ''}
 				<tr>
-					<td colspan="2"><ErrorMessage message={readingError} /></td>
+					<td colspan="2">{readingError.toUpperCase()}</td>
 				</tr>
 			{/if}
 		</tbody>
@@ -279,9 +279,14 @@
 					<td>status</td>
 					<td>{formatHex(reading.raw_registers.status)}</td>
 				</tr>
-			{:else}
+			{:else if readingError === ''}
 				<tr>
 					<td colspan="2">-</td>
+				</tr>
+			{/if}
+			{#if readingError !== ''}
+				<tr>
+					<td colspan="2">{readingError.toUpperCase()}</td>
 				</tr>
 			{/if}
 		</tbody>
@@ -315,9 +320,14 @@
 					<td>raw status</td>
 					<td>{formatHex(calibrationStatus.raw)}</td>
 				</tr>
-			{:else}
+			{:else if readingError === ''}
 				<tr>
 					<td colspan="2">loading...</td>
+				</tr>
+			{/if}
+			{#if readingError !== ''}
+				<tr>
+					<td colspan="2">{readingError.toUpperCase()}</td>
 				</tr>
 			{/if}
 		</tbody>
@@ -418,13 +428,13 @@
 	.action-buttons {
 		display: flex;
 		gap: 1em;
-		margin-top: 1.5em;
+		margin-bottom: 1.5em;
 	}
 
 	.calibration-buttons {
 		display: flex;
 		flex-direction: column;
 		align-items: flex-start;
-		margin-bottom: 1em;
+		gap: 1.5em;
 	}
 </style>
