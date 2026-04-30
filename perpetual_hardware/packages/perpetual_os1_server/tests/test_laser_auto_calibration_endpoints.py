@@ -1031,7 +1031,7 @@ async def test_run_stage_extension_calibration_accepts_no_progress_terminal_stat
     )
 
     with patch('perpetual_os1_server.core.laser_auto_calibration.get_root_config', return_value=config):
-        with patch.object(angle_module, 'prepare_capture_pose', AsyncMock()):
+        with patch.object(angle_module, 'prepare_capture_pose', AsyncMock()) as prepare_mock:
             with patch.object(
                 angle_module,
                 'probe_stage_until_stall',
@@ -1045,6 +1045,7 @@ async def test_run_stage_extension_calibration_accepts_no_progress_terminal_stat
                 )
 
     assert calibrated_stage_extension_mm == pytest.approx(45.0)
+    assert prepare_mock.await_args.kwargs['should_move_z'] is False
     assert probe_mock.await_args.kwargs['retract_stage_mm'] == pytest.approx(0.0)
     assert probe_mock.await_args.kwargs['fast_approach_mm'] == pytest.approx(0.0)
     assert probe_mock.await_args.kwargs['timeout_s'] == pytest.approx(30.0)
