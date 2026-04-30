@@ -880,6 +880,7 @@ async def probe_stage_until_stall(
 		await tool._ms.move_to_position_no_wait(next_target_mm, rpm=probe_rpm)
 		last_movement_time = time.monotonic()
 		last_position_mm = await tool._ms.get_position()
+		segment_start_position_mm = last_position_mm
 		has_moved = False
 
 		while True:
@@ -910,7 +911,8 @@ async def probe_stage_until_stall(
 				current_target_mm = next_target_mm
 				break
 
-			if has_moved is True and now - last_movement_time > no_progress_s:
+			is_static_after_command = abs(stage_position_mm - segment_start_position_mm) <= position_epsilon_mm
+			if now - last_movement_time > no_progress_s and (has_moved is True or is_static_after_command is True):
 				await tool._ms.stop()
 				await asyncio.sleep(0.03)
 				stage_position_mm = await tool._ms.get_position()
