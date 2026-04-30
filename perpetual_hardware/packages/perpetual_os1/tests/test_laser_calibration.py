@@ -472,6 +472,38 @@ def test_apply_xy_reference_offsets_uses_physical_top_left_for_right_side() -> N
 	assert scanned_shelves[0].cells[1].calibration_point.y == pytest.approx(1148.0)
 
 
+def test_apply_xy_reference_offsets_requires_reference() -> None:
+	with pytest.raises(ValueError, match='left_module laser calibration requires an explicit xy_reference'):
+		apply_xy_reference_offsets(
+			scanned_shelves=[],
+			scan_config=SimpleNamespace(left_xy_reference=None),
+			side=StorageModuleSide.LEFT,
+		)
+
+
+def test_build_single_cell_rescan_candidate_requires_z_reference() -> None:
+	target_cell = SimpleNamespace(
+		calibration_point=SimpleNamespace(x=100.0, y=200.0, z_offset=8.5),
+	)
+	target_shelf = SimpleNamespace(get_cell=lambda cell_idx: target_cell)
+	grid = SimpleNamespace(get_shelf=lambda side, shelf_idx: target_shelf)
+	scan_config = SimpleNamespace(
+		laser_offset_x_mm=51.0,
+		laser_offset_y_mm=0.0,
+		expected_hole_width_mm=26.0,
+		expected_hole_height_mm=30.0,
+		left_z_reference=None,
+	)
+
+	with pytest.raises(ValueError, match='left_module laser calibration requires an explicit z_reference'):
+		build_single_cell_rescan_candidate(
+			grid=grid,
+			side=StorageModuleSide.LEFT,
+			target=SingleCellRescanTarget(shelf_idx=1, cell_idx=2),
+			scan_config=scan_config,
+		)
+
+
 def test_load_continue_scan_context_reads_latest_incomplete_run(tmp_path: Path) -> None:
 	completed_run_dir = tmp_path / 'completed-run'
 	completed_run_dir.mkdir()
@@ -544,9 +576,7 @@ def test_build_single_cell_rescan_candidate_uses_target_point_and_z_delta() -> N
 		laser_offset_y_mm=0.0,
 		expected_hole_width_mm=26.0,
 		expected_hole_height_mm=30.0,
-		left_z_delta_mm=6.0,
-		right_z_delta_mm=None,
-		left_z_reference=None,
+		left_z_reference=SimpleNamespace(shelf_idx=12, cell_idx=0, z_offset_mm=15.0, wall_depth_mm=9.0),
 		right_z_reference=None,
 	)
 
@@ -596,9 +626,7 @@ def test_apply_single_cell_rescan_updates_target_cell_and_saves_grid() -> None:
 		save=Mock(),
 	)
 	scan_config = SimpleNamespace(
-		left_z_delta_mm=4.0,
-		right_z_delta_mm=None,
-		left_z_reference=None,
+		left_z_reference=SimpleNamespace(shelf_idx=12, cell_idx=0, z_offset_mm=15.0, wall_depth_mm=11.0),
 		right_z_reference=None,
 	)
 	detected_cell = SimpleNamespace(tool_x_mm=123.0, tool_y_mm=456.0)
