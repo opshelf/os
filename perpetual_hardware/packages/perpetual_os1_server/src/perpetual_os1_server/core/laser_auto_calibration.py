@@ -1266,7 +1266,7 @@ class LaserAutoCalibrationManager:
                 z_move_accel=float(z_move_accel),
                 should_rotate=True,
                 should_use_safe_right_rotation_path=True,
-                should_move_z=True,
+                should_move_z=False,
             )
             self._raise_if_abort_requested()
             await self._update_snapshot(
