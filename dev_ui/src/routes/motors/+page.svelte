@@ -10,6 +10,7 @@
 		moveMotor,
 		apiFetch,
 		type MotorList,
+		type MotorInfo,
 		type GripperState,
 		type DoorAction
 	} from '$lib/api';
@@ -30,6 +31,8 @@
 	let isHomingAll = false;
 	let moveTargets: Record<string, string> = {};
 	let movingMotor: string | null = null;
+
+	let activeAction: 'crash' | 'home' | null = null;
 
 	function unitForMotor(motorName: string): string {
 		if (motorName === 'rotate') {
@@ -171,7 +174,7 @@
 		const allMotors = [...motors.io, ...motors.tool];
 
 		for (const motor of allMotors) {
-			await testSingleMotor(motor);
+			await testSingleMotor(motor.name);
 		}
 
 		await testGripper();
@@ -277,9 +280,10 @@
 	<table>
 		<thead>
 			<tr>
-				<th colspan="4">io motors</th>
+				<th colspan="5">io motors</th>
 			</tr>
 			<tr>
+				<th>id</th>
 				<th>motor</th>
 				<th>status</th>
 				<th>move to</th>
@@ -287,15 +291,16 @@
 			</tr>
 		</thead>
 		<tbody>
-			{#each motors.io.filter((m) => m !== 'door') as motor}
+			{#each motors.io.filter((m) => m.name !== 'door') as motor (motor.name)}
 				<tr>
-					<td>{motor}</td>
+					<td class="motor-id">{motor.motor_id}</td>
+					<td>{motor.name}</td>
 					<td>
-						{#if testingMotor === motor}
+						{#if testingMotor === motor.name}
 							<span class="status-testing">TEST</span>
-						{:else if testResults[motor] === 'ok'}
+						{:else if testResults[motor.name] === 'ok'}
 							<span class="status-ok">OK</span>
-						{:else if testResults[motor] === 'err'}
+						{:else if testResults[motor.name] === 'err'}
 							<span class="status-error">ERR</span>
 						{:else}
 							<span class="status-unknown">-</span>
@@ -305,23 +310,23 @@
 						<input
 							type="number"
 							step="0.1"
-							placeholder={unitForMotor(motor)}
-							value={moveTargets[motor] ?? ''}
-							on:input={(e) => didInputTarget(motor, e)}
+							placeholder={unitForMotor(motor.name)}
+							value={moveTargets[motor.name] ?? ''}
+							on:input={(e) => didInputTarget(motor.name, e)}
 							disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
 						/>
 						<button
 							type="button"
-							on:click={() => didClickMove(motor)}
+							on:click={() => didClickMove(motor.name)}
 							disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
 						>
-							{movingMotor === motor ? '...' : 'go'}
+							{movingMotor === motor.name ? '...' : 'go'}
 						</button>
 					</td>
 					<td>
 						<button
 							type="button"
-							on:click={() => didClickHome(motor)}
+							on:click={() => didClickHome(motor.name)}
 							disabled={activeMotor !== null ||
 								doorAction !== null ||
 								movingMotor !== null ||
@@ -331,7 +336,7 @@
 						</button>
 						<button
 							type="button"
-							on:click={() => didClickCrash(motor)}
+							on:click={() => didClickCrash(motor.name)}
 							disabled={activeMotor !== null ||
 								doorAction !== null ||
 								movingMotor !== null ||
@@ -342,86 +347,90 @@
 					</td>
 				</tr>
 			{/each}
-			<tr>
-				<td>door</td>
-				<td>
-					{#if testingMotor === 'door'}
-						<span class="status-testing">TEST</span>
-					{:else if testResults['door'] === 'ok'}
-						<span class="status-ok">OK</span>
-					{:else if testResults['door'] === 'err'}
-						<span class="status-error">ERR</span>
-					{:else}
-						<span class="status-unknown">-</span>
-					{/if}
-				</td>
-				<td>
-					<input
-						type="number"
-						step="0.1"
-						placeholder="mm"
-						value={moveTargets['door'] ?? ''}
-						on:input={(e) => didInputTarget('door', e)}
-						disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
-					/>
-					<button
-						type="button"
-						on:click={() => didClickMove('door')}
-						disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
-					>
-						{movingMotor === 'door' ? '...' : 'go'}
-					</button>
-				</td>
-				<td>
-					<button
-						type="button"
-						on:click={() => didClickHome('door')}
-						disabled={activeMotor !== null ||
-							doorAction !== null ||
-							movingMotor !== null ||
-							isTesting === true}
-					>
-						home
-					</button>
-					<button
-						type="button"
-						on:click={() => didClickCrash('door')}
-						disabled={activeMotor !== null ||
-							doorAction !== null ||
-							movingMotor !== null ||
-							isTesting === true}
-					>
-						crash
-					</button>
-					<button
-						type="button"
-						on:click={() => didClickDoor('open')}
-						disabled={doorAction !== null ||
-							activeMotor !== null ||
-							movingMotor !== null ||
-							isTesting === true}
-					>
-						open
-					</button>
-					<button
-						type="button"
-						on:click={() => didClickDoor('close')}
-						disabled={doorAction !== null ||
-							activeMotor !== null ||
-							movingMotor !== null ||
-							isTesting === true}
-					>
-						close
-					</button>
-				</td>
-			</tr>
+			{#each motors.io.filter((m) => m.name === 'door') as motor (motor.name)}
+				<tr>
+					<td class="motor-id">{motor.motor_id}</td>
+					<td>{motor.name}</td>
+					<td>
+						{#if testingMotor === 'door'}
+							<span class="status-testing">TEST</span>
+						{:else if testResults['door'] === 'ok'}
+							<span class="status-ok">OK</span>
+						{:else if testResults['door'] === 'err'}
+							<span class="status-error">ERR</span>
+						{:else}
+							<span class="status-unknown">-</span>
+						{/if}
+					</td>
+					<td>
+						<input
+							type="number"
+							step="0.1"
+							placeholder="mm"
+							value={moveTargets['door'] ?? ''}
+							on:input={(e) => didInputTarget('door', e)}
+							disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
+						/>
+						<button
+							type="button"
+							on:click={() => didClickMove('door')}
+							disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
+						>
+							{movingMotor === 'door' ? '...' : 'go'}
+						</button>
+					</td>
+					<td>
+						<button
+							type="button"
+							on:click={() => didClickHome('door')}
+							disabled={activeMotor !== null ||
+								doorAction !== null ||
+								movingMotor !== null ||
+								isTesting === true}
+						>
+							home
+						</button>
+						<button
+							type="button"
+							on:click={() => didClickCrash('door')}
+							disabled={activeMotor !== null ||
+								doorAction !== null ||
+								movingMotor !== null ||
+								isTesting === true}
+						>
+							crash
+						</button>
+						<button
+							type="button"
+							on:click={() => didClickDoor('open')}
+							disabled={doorAction !== null ||
+								activeMotor !== null ||
+								movingMotor !== null ||
+								isTesting === true}
+						>
+							open
+						</button>
+						<button
+							type="button"
+							on:click={() => didClickDoor('close')}
+							disabled={doorAction !== null ||
+								activeMotor !== null ||
+								movingMotor !== null ||
+								isTesting === true}
+						>
+							close
+						</button>
+					</td>
+				</tr>
+			{/each}
 		</tbody>
 
 		<thead>
 			<tr>
-				<th colspan="4">tool motors</th>
+				<th colspan="5">tool motors</th>
 			</tr>
 			<tr>
+				<th>id</th>
 				<th>motor</th>
 				<th>status</th>
 				<th>move to</th>
@@ -429,15 +438,16 @@
 			</tr>
 		</thead>
 		<tbody>
-			{#each motors.tool as motor}
+			{#each motors.tool as motor (motor.name)}
 				<tr>
-					<td>{motor}</td>
+					<td class="motor-id">{motor.motor_id}</td>
+					<td>{motor.name}</td>
 					<td>
-						{#if testingMotor === motor}
+						{#if testingMotor === motor.name}
 							<span class="status-testing">TEST</span>
-						{:else if testResults[motor] === 'ok'}
+						{:else if testResults[motor.name] === 'ok'}
 							<span class="status-ok">OK</span>
-						{:else if testResults[motor] === 'err'}
+						{:else if testResults[motor.name] === 'err'}
 							<span class="status-error">ERR</span>
 						{:else}
 							<span class="status-unknown">-</span>
@@ -447,23 +457,23 @@
 						<input
 							type="number"
 							step="0.1"
-							placeholder={unitForMotor(motor)}
-							value={moveTargets[motor] ?? ''}
-							on:input={(e) => didInputTarget(motor, e)}
+							placeholder={unitForMotor(motor.name)}
+							value={moveTargets[motor.name] ?? ''}
+							on:input={(e) => didInputTarget(motor.name, e)}
 							disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
 						/>
 						<button
 							type="button"
-							on:click={() => didClickMove(motor)}
+							on:click={() => didClickMove(motor.name)}
 							disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
 						>
-							{movingMotor === motor ? '...' : 'go'}
+							{movingMotor === motor.name ? '...' : 'go'}
 						</button>
 					</td>
 					<td>
 						<button
 							type="button"
-							on:click={() => didClickHome(motor)}
+							on:click={() => didClickHome(motor.name)}
 							disabled={activeMotor !== null ||
 								gripperAction !== null ||
 								movingMotor !== null ||
@@ -473,7 +483,7 @@
 						</button>
 						<button
 							type="button"
-							on:click={() => didClickCrash(motor)}
+							on:click={() => didClickCrash(motor.name)}
 							disabled={activeMotor !== null ||
 								gripperAction !== null ||
 								movingMotor !== null ||
@@ -485,6 +495,7 @@
 				</tr>
 			{/each}
 			<tr>
+				<td class="motor-id">9</td>
 				<td>gripper</td>
 				<td>
 					{#if testingMotor === 'gripper'}
@@ -549,6 +560,12 @@
 	input[type='number'] {
 		width: 80px;
 		margin-right: 4px;
+	}
+
+	.motor-id {
+		text-align: center;
+		color: #666;
+		font-variant-numeric: tabular-nums;
 	}
 
 	.status-ok {

@@ -421,7 +421,7 @@ async def scale_tare(
 async def get_motors(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
 ) -> dict:
-    return worker.get_motor_names()
+    return worker.get_motor_info()
 
 
 @router.post("/debug/motors/{motor_name}/crash", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
