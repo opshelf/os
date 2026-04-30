@@ -23,7 +23,8 @@
 	let isStreamOpen = $state<boolean>(false);
 	let isAborting = $state<boolean>(false);
 	let isAllSelected = $state<boolean>(true);
-	let selectedSide = $state<'left_module' | 'right_module'>('left_module');
+	let isIoBoxSelected = $state<boolean>(true);
+	let selectedSide = $state<'' | 'left_module' | 'right_module'>('');
 	let selectedShelf = $state<string>('');
 	let selectedCell = $state<string>('');
 	let activeRequestedScope = $state<LaserAutoCalibrationRequest | null>(null);
@@ -60,8 +61,20 @@
 		);
 	});
 
+	const isStartDisabled = $derived.by(() => {
+		if (isConnecting === true || isStreamOpen === true || isStreamReconnecting === true) {
+			return true;
+		}
+
+		if (isAllSelected === true) {
+			return false;
+		}
+
+		return selectedSide === '' && isIoBoxSelected === false;
+	});
+
 	const startButtonLabel = 'calibrate';
-	const defaultRequestedScope: LaserAutoCalibrationRequest = { mode: 'all' };
+	const defaultRequestedScope: LaserAutoCalibrationRequest = { mode: 'all', include_io_box: true };
 
 	onMount(function () {
 		if (browser === false) {
@@ -130,8 +143,8 @@
 		return defaultRequestedScope;
 	}
 
-	function getShelvesForSide(side: 'left_module' | 'right_module') {
-		if (storageGrid === null) {
+	function getShelvesForSide(side: '' | 'left_module' | 'right_module') {
+		if (storageGrid === null || side === '') {
 			return [];
 		}
 
@@ -205,14 +218,25 @@
 	}
 
 	function syncScopeSelection(requestedScope: LaserAutoCalibrationRequest): void {
+		isIoBoxSelected = requestedScope.include_io_box === true || requestedScope.mode === 'io_box';
+
 		if (requestedScope.mode === 'all') {
 			isAllSelected = true;
+			isIoBoxSelected = true;
+			selectedSide = '';
 			selectedShelf = '';
 			selectedCell = '';
 			return;
 		}
 
 		isAllSelected = false;
+
+		if (requestedScope.mode === 'io_box') {
+			selectedSide = '';
+			selectedShelf = '';
+			selectedCell = '';
+			return;
+		}
 
 		if (requestedScope.side !== undefined) {
 			selectedSide = requestedScope.side;
@@ -227,13 +251,18 @@
 
 	function getRequestedScope(): LaserAutoCalibrationRequest {
 		if (isAllSelected === true) {
-			return { mode: 'all' };
+			return { mode: 'all', include_io_box: true };
+		}
+
+		if (selectedSide === '') {
+			return { mode: 'io_box', include_io_box: true };
 		}
 
 		if (selectedShelf === '') {
 			return {
 				mode: 'side',
-				side: selectedSide
+				side: selectedSide,
+				include_io_box: isIoBoxSelected
 			};
 		}
 
@@ -241,7 +270,8 @@
 			return {
 				mode: 'shelf',
 				side: selectedSide,
-				shelf_idx: Number(selectedShelf)
+				shelf_idx: Number(selectedShelf),
+				include_io_box: isIoBoxSelected
 			};
 		}
 
@@ -249,7 +279,8 @@
 			mode: 'cell',
 			side: selectedSide,
 			shelf_idx: Number(selectedShelf),
-			cell_idx: Number(selectedCell)
+			cell_idx: Number(selectedCell),
+			include_io_box: isIoBoxSelected
 		};
 	}
 
@@ -335,8 +366,10 @@
 		const target = event.target as HTMLInputElement;
 
 		isAllSelected = target.checked;
+		isIoBoxSelected = isAllSelected;
 
 		if (isAllSelected === true) {
+			selectedSide = '';
 			selectedShelf = '';
 			selectedCell = '';
 		}
@@ -348,7 +381,7 @@
 	function didChangeSide(event: Event): void {
 		const target = event.target as HTMLSelectElement;
 
-		selectedSide = target.value as 'left_module' | 'right_module';
+		selectedSide = target.value as '' | 'left_module' | 'right_module';
 		syncSelection();
 		error = '';
 		message = '';
@@ -366,6 +399,14 @@
 		const target = event.target as HTMLSelectElement;
 
 		selectedCell = target.value;
+		error = '';
+		message = '';
+	}
+
+	function didChangeIOBox(event: Event): void {
+		const target = event.target as HTMLInputElement;
+
+		isIoBoxSelected = target.checked;
 		error = '';
 		message = '';
 	}
@@ -443,12 +484,39 @@
 		return formatNumber(angleResult.updated_rotation_deg, 4);
 	}
 
-	function getStageDetail(): string {
-		if (snapshot === null) {
-			return '{}';
+	function getStageExtensionValue(side: 'left_module' | 'right_module'): string {
+		if (side === 'left_module') {
+			return formatNumber(snapshot?.left_stage_extension_mm);
 		}
 
-		return JSON.stringify(snapshot.stage_detail, null, 2);
+		return formatNumber(snapshot?.right_stage_extension_mm);
+	}
+
+	function formatStageDetailValue(value: unknown): string {
+		if (value === null || value === undefined) {
+			return '-';
+		}
+
+		if (typeof value === 'number') {
+			return formatNumber(value);
+		}
+
+		if (typeof value === 'string' || typeof value === 'boolean') {
+			return String(value);
+		}
+
+		return JSON.stringify(value);
+	}
+
+	function getStageDetailRows(): { key: string; value: string }[] {
+		if (snapshot === null) {
+			return [];
+		}
+
+		return Object.entries(snapshot.stage_detail).map(([key, value]) => ({
+			key,
+			value: formatStageDetailValue(value)
+		}));
 	}
 </script>
 
@@ -458,12 +526,12 @@
 	<table>
 		<thead>
 			<tr>
-				<th colspan="4">scan selection</th>
+				<th colspan="3">scan selection</th>
 			</tr>
 		</thead>
 		<tbody>
 			<tr>
-				<td class="all-column">
+				<td colspan="3">
 					<label class="all-toggle">
 						<input
 							type="checkbox"
@@ -471,9 +539,11 @@
 							onchange={didChangeAll}
 							disabled={isSelectionDisabled}
 						/>
-						<span>all</span>
+						<span>calibrate all</span>
 					</label>
 				</td>
+			</tr>
+			<tr>
 				<td>
 					<div class="selection-field">
 						<span class="field-label">side</span>
@@ -482,6 +552,7 @@
 							onchange={didChangeSide}
 							disabled={isAllSelected === true || isSelectionDisabled || storageGrid === null}
 						>
+							<option value="">-</option>
 							<option value="left_module">left module</option>
 							<option value="right_module">right module</option>
 						</select>
@@ -493,7 +564,10 @@
 						<select
 							value={selectedShelf}
 							onchange={didChangeShelf}
-							disabled={isAllSelected === true || isSelectionDisabled || storageGrid === null}
+							disabled={isAllSelected === true ||
+								isSelectionDisabled ||
+								storageGrid === null ||
+								selectedSide === ''}
 						>
 							<option value="">-</option>
 							{#each getShelves() as shelf}
@@ -522,15 +596,22 @@
 				</td>
 			</tr>
 			<tr>
-				<td colspan="4">
+				<td colspan="3">
+					<label class="all-toggle">
+						<input
+							type="checkbox"
+							checked={isIoBoxSelected}
+							onchange={didChangeIOBox}
+							disabled={isAllSelected === true || isSelectionDisabled}
+						/>
+						<span>io box</span>
+					</label>
+				</td>
+			</tr>
+			<tr>
+				<td colspan="3">
 					<div class="actions">
-						<button
-							type="button"
-							onclick={didClickStart}
-							disabled={isConnecting === true ||
-								isStreamOpen === true ||
-								isStreamReconnecting === true}
-						>
+						<button type="button" onclick={didClickStart} disabled={isStartDisabled}>
 							{startButtonLabel}
 						</button>
 						<button
@@ -546,78 +627,93 @@
 		</tbody>
 	</table>
 
-	<table style="margin-top: 1.5em">
-		<thead>
-			<tr>
-				<th colspan="2">cell auto</th>
-			</tr>
-		</thead>
-		<tbody>
-			<tr>
-				<td>state</td>
-				<td>{snapshot?.state ?? 'idle'}</td>
-			</tr>
-			<tr>
-				<td>requested scope</td>
-				<td>{getSnapshotRequestedScope(snapshot).mode}</td>
-			</tr>
-			<tr>
-				<td>current side</td>
-				<td>{snapshot?.current_side ?? '-'}</td>
-			</tr>
-			<tr>
-				<td>current stage</td>
-				<td>{snapshot?.current_stage ?? '-'}</td>
-			</tr>
-			<tr>
-				<td>scouted shelves left</td>
-				<td>{snapshot?.left_scouted_shelf_count ?? 0}</td>
-			</tr>
-			<tr>
-				<td>scouted shelves right</td>
-				<td>{snapshot?.right_scouted_shelf_count ?? 0}</td>
-			</tr>
-			<tr>
-				<td>candidates left</td>
-				<td>{snapshot?.left_candidate_count ?? 0}</td>
-			</tr>
-			<tr>
-				<td>candidates right</td>
-				<td>{snapshot?.right_candidate_count ?? 0}</td>
-			</tr>
-			<tr>
-				<td>detected cells left</td>
-				<td>{snapshot?.left_detected_cell_count ?? 0}</td>
-			</tr>
-			<tr>
-				<td>detected cells right</td>
-				<td>{snapshot?.right_detected_cell_count ?? 0}</td>
-			</tr>
-			<tr>
-				<td>rotation angle left</td>
-				<td>{getRotationValue('left_module')}</td>
-			</tr>
-			<tr>
-				<td>rotation angle right</td>
-				<td>{getRotationValue('right_module')}</td>
-			</tr>
-		</tbody>
-	</table>
+	{#if snapshot && snapshot.session_id !== null}
+		<table style="margin-top: 1.5em">
+			<thead>
+				<tr>
+					<th>auto results</th>
+					<th>left / x</th>
+					<th>right / y</th>
+				</tr>
+			</thead>
+			<tbody>
+				<tr>
+					<td>state</td>
+					<td colspan="2">{snapshot?.state ?? 'idle'}</td>
+				</tr>
+				<tr>
+					<td>requested scope</td>
+					<td colspan="2">{getSnapshotRequestedScope(snapshot).mode}</td>
+				</tr>
+				<tr>
+					<td>current stage</td>
+					<td colspan="2">{snapshot?.current_stage ?? '-'}</td>
+				</tr>
+				<tr>
+					<td>scouted shelves</td>
+					<td>{snapshot?.left_scouted_shelf_count ?? 0}</td>
+					<td>{snapshot?.right_scouted_shelf_count ?? 0}</td>
+				</tr>
+				<tr>
+					<td>candidate cells</td>
+					<td>{snapshot?.left_candidate_count ?? 0}</td>
+					<td>{snapshot?.right_candidate_count ?? 0}</td>
+				</tr>
+				<tr>
+					<td>confirmed cells</td>
+					<td>{snapshot?.left_detected_cell_count ?? 0}</td>
+					<td>{snapshot?.right_detected_cell_count ?? 0}</td>
+				</tr>
+				<tr>
+					<td>rotation angle</td>
+					<td>{getRotationValue('left_module')}</td>
+					<td>{getRotationValue('right_module')}</td>
+				</tr>
+				<tr>
+					<td>stage extension</td>
+					<td>{getStageExtensionValue('left_module')}</td>
+					<td>{getStageExtensionValue('right_module')}</td>
+				</tr>
+				<tr>
+					<td>io box low</td>
+					<td>{formatNumber(snapshot?.io_box_result?.pickup_low_x)}</td>
+					<td>{formatNumber(snapshot?.io_box_result?.pickup_low_y)}</td>
+				</tr>
+				<tr>
+					<td>io box high</td>
+					<td>{formatNumber(snapshot?.io_box_result?.pickup_high_x)}</td>
+					<td>{formatNumber(snapshot?.io_box_result?.pickup_high_y)}</td>
+				</tr>
+				<tr>
+					<td>io box z / stage</td>
+					<td>{formatNumber(snapshot?.io_box_result?.z_extension)}</td>
+					<td>{formatNumber(snapshot?.io_box_result?.stage_extension)}</td>
+				</tr>
+			</tbody>
+		</table>
+	{/if}
 
-	<table style="margin-top: 1.5em">
-		<thead>
-			<tr>
-				<th>stage detail</th>
-			</tr>
-		</thead>
-		<tbody>
-			<tr>
-				<td>
-					<pre>{getStageDetail()}</pre>
-				</td>
-			</tr>
-		</tbody>
-	</table>
+	{#if snapshot && snapshot.session_id !== null}
+		<table style="margin-top: 1.5em">
+			<thead>
+				<tr>
+					<th colspan="2">stage detail</th>
+				</tr>
+			</thead>
+			<tbody>
+				{#each getStageDetailRows() as row}
+					<tr>
+						<td>{row.key}</td>
+						<td>{row.value}</td>
+					</tr>
+				{:else}
+					<tr>
+						<td colspan="2">-</td>
+					</tr>
+				{/each}
+			</tbody>
+		</table>
+	{/if}
 
 	{#if message !== ''}
 		<StatusMessage {message} />
@@ -634,10 +730,6 @@
 		gap: 1rem;
 	}
 
-	.all-column {
-		width: 6rem;
-	}
-
 	.all-toggle {
 		display: flex;
 		align-items: center;
@@ -652,10 +744,5 @@
 		display: flex;
 		align-items: center;
 		gap: 0.75rem;
-	}
-
-	pre {
-		margin: 0;
-		overflow: auto;
 	}
 </style>

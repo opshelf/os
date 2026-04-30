@@ -19,7 +19,6 @@
 	let motors: MotorList | null = null;
 	let isLoading = true;
 	let activeMotor: string | null = null;
-	let activeAction: string | null = null;
 	let gripperAction: GripperState | null = null;
 	let doorAction: DoorAction | null = null;
 	let error = '';
@@ -538,7 +537,9 @@
 
 <style>
 	.actions {
-		margin-bottom: 1rem;
+		margin-bottom: 1.5rem;
+		gap: 1em;
+		display: flex;
 	}
 
 	button {

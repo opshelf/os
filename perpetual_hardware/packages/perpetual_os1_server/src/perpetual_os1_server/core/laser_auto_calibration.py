@@ -118,11 +118,21 @@ class LaserAutoCalibrationAngleResult(BaseModel):
     updated_rotation_deg: float
 
 
+class LaserAutoCalibrationIOBoxResult(BaseModel):
+    pickup_low_x: float
+    pickup_low_y: float
+    pickup_high_x: float
+    pickup_high_y: float
+    z_extension: float
+    stage_extension: float
+
+
 class LaserAutoCalibrationScope(BaseModel):
-    mode: Literal["all", "side", "shelf", "cell"] = "all"
+    mode: Literal["all", "side", "shelf", "cell", "io_box"] = "all"
     side: Literal["left_module", "right_module"] | None = None
     shelf_idx: int | None = None
     cell_idx: int | None = None
+    include_io_box: bool = False
 
 
 class LaserAutoCalibrationSnapshot(BaseModel):
@@ -144,10 +154,13 @@ class LaserAutoCalibrationSnapshot(BaseModel):
     detected_cell_count: int = 0
     left_detected_cell_count: int = 0
     right_detected_cell_count: int = 0
+    left_stage_extension_mm: float | None = None
+    right_stage_extension_mm: float | None = None
     shelf_edges: list[LaserAutoCalibrationShelfEdge] = Field(default_factory=list)
     shelf_candidates: list[LaserAutoCalibrationCandidate] = Field(default_factory=list)
     detected_cells: list[LaserAutoCalibrationCell] = Field(default_factory=list)
     angle_results: list[LaserAutoCalibrationAngleResult] = Field(default_factory=list)
+    io_box_result: LaserAutoCalibrationIOBoxResult | None = None
     stage_detail: dict[str, Any] = Field(default_factory=dict)
     error: str | None = None
 
@@ -604,6 +617,14 @@ class LaserAutoCalibrationManager:
     ) -> None:
         if requested_scope.mode == "all":
             await self._run_all_sides(worker)
+
+            if requested_scope.include_io_box is True:
+                await self._run_io_box_calibration(worker)
+
+            return
+
+        if requested_scope.mode == "io_box":
+            await self._run_io_box_calibration(worker)
             return
 
         if requested_scope.side is None:
@@ -613,6 +634,10 @@ class LaserAutoCalibrationManager:
 
         if requested_scope.mode == "side":
             await self._run_single_side(worker, side)
+
+            if requested_scope.include_io_box is True:
+                await self._run_io_box_calibration(worker)
+
             return
 
         if requested_scope.mode == "shelf":
@@ -620,6 +645,10 @@ class LaserAutoCalibrationManager:
                 raise ValueError("Single-shelf auto calibration requires a shelf index")
 
             await self._run_single_shelf(worker, side, int(requested_scope.shelf_idx))
+
+            if requested_scope.include_io_box is True:
+                await self._run_io_box_calibration(worker)
+
             return
 
         if requested_scope.mode == "cell":
@@ -634,6 +663,10 @@ class LaserAutoCalibrationManager:
                     cell_idx=int(requested_scope.cell_idx),
                 ),
             )
+
+            if requested_scope.include_io_box is True:
+                await self._run_io_box_calibration(worker)
+
             return
 
         raise ValueError(f"Unsupported auto calibration scope: {requested_scope.mode}")
@@ -1408,6 +1441,69 @@ class LaserAutoCalibrationManager:
         )
         return probe_y_mm
 
+    async def _run_io_box_calibration(self, worker: RobotWorker) -> None:
+        config = get_root_config()
+        scan_config = config.robot.grid.scan
+
+        await self._update_snapshot(
+            current_side=None,
+            current_stage="io-box-calibration",
+            state="running",
+            stage_detail={
+                "phase": "io-box-calibration",
+                "subphase": "scan",
+            },
+        )
+
+        result = await laser_module.run_io_box_scout(
+            robot=worker._robot,
+            scan_config=scan_config,
+            io_box_interior_width_mm=laser_module.IO_BOX_INTERIOR_WIDTH_MM,
+            settle_ms=laser_module.get_fine_settle_ms(scan_config.settle_ms),
+            samples_per_point=laser_module.get_fine_samples_per_point(scan_config.samples_per_point),
+            laser_offset_x_mm=float(getattr(scan_config, "laser_offset_x_mm", 0.0)),
+            laser_offset_y_mm=float(getattr(scan_config, "laser_offset_y_mm", 0.0)),
+            should_abort=self._should_abort_work,
+        )
+
+        io_box_result = LaserAutoCalibrationIOBoxResult(
+            pickup_low_x=float(result.calibration_low_x_mm),
+            pickup_low_y=float(result.calibration_low_y_mm),
+            pickup_high_x=float(result.calibration_high_x_mm),
+            pickup_high_y=float(result.calibration_high_y_mm),
+            z_extension=float(result.z_extension_mm),
+            stage_extension=float(result.stage_extension_mm),
+        )
+
+        await self._update_snapshot(
+            current_side=None,
+            current_stage="io-box-calibration",
+            state="running",
+            io_box_result=io_box_result,
+            stage_detail={
+                "phase": "io-box-calibration",
+                "subphase": "apply",
+                "pickup_low_x": io_box_result.pickup_low_x,
+                "pickup_low_y": io_box_result.pickup_low_y,
+                "pickup_high_x": io_box_result.pickup_high_x,
+                "pickup_high_y": io_box_result.pickup_high_y,
+                "z_extension": io_box_result.z_extension,
+                "stage_extension": io_box_result.stage_extension,
+            },
+        )
+
+        next_config = config.model_copy(deep=True)
+        params_dict = next_config.robot.tool.parameters.model_dump()
+        params_dict["PICKUP_POSITION_L"] = (int(io_box_result.pickup_low_x), int(io_box_result.pickup_low_y))
+        params_dict["PICKUP_POSITION_H"] = (int(io_box_result.pickup_high_x), int(io_box_result.pickup_high_y))
+        params_dict["Z_EXTENSION_IO"] = io_box_result.z_extension
+        params_dict["STAGE_EXTENSION_IO_BOX"] = io_box_result.stage_extension
+        next_config.robot.tool.parameters = Parameters.model_validate(params_dict)
+
+        save_root_config(next_config)
+        clear_config_cache()
+        worker._robot.reload_parameters()
+
     async def _apply_stage_extension_calibration_in_memory(
         self,
         worker: RobotWorker,
@@ -2022,6 +2118,8 @@ class LaserAutoCalibrationManager:
                 len([cell for cell in self._snapshot.detected_cells if cell.side == "right_module"]),
                 right_side_state.live_detected_cell_count,
             )
+            self._snapshot.left_stage_extension_mm = left_side_state.stage_extension_mm
+            self._snapshot.right_stage_extension_mm = right_side_state.stage_extension_mm
             self._snapshot.scouted_shelf_count = max(
                 len(self._snapshot.shelf_edges),
                 self._snapshot.left_scouted_shelf_count + self._snapshot.right_scouted_shelf_count,

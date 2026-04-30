@@ -253,7 +253,7 @@
 
 	.action-buttons {
 		display: flex;
-		gap: 1em;
+		gap: 1.5em;
 		margin-top: 1.5em;
 	}
 </style>
