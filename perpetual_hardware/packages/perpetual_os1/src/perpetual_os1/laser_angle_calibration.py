@@ -872,7 +872,7 @@ async def probe_stage_until_stall(
 		current_target_mm = fast_target_mm
 
 	position_epsilon_mm = 0.02
-	target_tolerance_mm = 0.2
+	target_tolerance_mm = max(0.35, float(probe_step_mm) * 0.75)
 
 	while current_target_mm < target_stage_mm:
 		raise_if_cancelled(should_abort)

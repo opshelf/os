@@ -192,13 +192,54 @@ async def test_prepare_capture_pose_uses_safe_rotation_path_for_left_when_reques
 
 
 @pytest.mark.asyncio
+async def test_probe_stage_until_stall_accepts_small_target_lag() -> None:
+	stage_position = 0.0
+	target_position = 0.0
+
+	async def did_move_no_wait(target_mm, **kwargs):
+		nonlocal target_position, stage_position
+		target_position = float(target_mm)
+		stage_position = max(0.0, target_position - 0.25)
+
+	stage_motor = SimpleNamespace(
+		move_to_position=AsyncMock(),
+		move_to_position_no_wait=AsyncMock(side_effect=did_move_no_wait),
+		clear_alarm=AsyncMock(),
+		stop=AsyncMock(),
+		get_position=AsyncMock(side_effect=lambda: stage_position),
+		get_param=AsyncMock(return_value=0),
+	)
+	tool = SimpleNamespace(_ms=stage_motor)
+
+	did_stall, stage_position_mm, status, alarm_code = await probe_stage_until_stall(
+		tool,
+		target_stage_mm=1.0,
+		retract_stage_mm=0.0,
+		settle_ms=0,
+		timeout_s=1.0,
+		probe_rpm=50,
+		no_progress_s=0.2,
+		probe_step_mm=0.5,
+		fast_approach_mm=0.0,
+		fast_approach_rpm=100,
+		auto_retract=False,
+	)
+
+	assert did_stall is False
+	assert status == 'limit'
+	assert alarm_code is None
+	assert stage_position_mm == pytest.approx(0.75)
+	assert stage_motor.stop.await_count == 0
+
+
+@pytest.mark.asyncio
 async def test_probe_stage_until_stall_can_skip_auto_retract() -> None:
 	stage_motor = SimpleNamespace(
 		move_to_position=AsyncMock(),
 		move_to_position_no_wait=AsyncMock(),
 		clear_alarm=AsyncMock(),
 		stop=AsyncMock(),
-		get_position=AsyncMock(side_effect=[40.0, 40.5, 40.5, 40.5]),
+		get_position=AsyncMock(side_effect=[40.0, 40.1, 40.1, 40.1]),
 		get_param=AsyncMock(return_value=0),
 	)
 	tool = SimpleNamespace(_ms=stage_motor)
@@ -218,7 +259,7 @@ async def test_probe_stage_until_stall_can_skip_auto_retract() -> None:
 	)
 
 	assert did_stall is True
-	assert stage_position_mm == pytest.approx(40.5)
+	assert stage_position_mm == pytest.approx(40.1)
 	assert status == 'no_progress'
 	assert alarm_code == 0
 	assert stage_motor.move_to_position.await_count == 2
