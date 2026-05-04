@@ -449,10 +449,10 @@ async def test_run_angle_calibration_skips_final_retract_when_cancelled() -> Non
     )
     worker = SimpleNamespace(_robot=SimpleNamespace(_tool=tool))
     scan_config = SimpleNamespace(
-        settle_ms=0,
-        samples_per_point=1,
-        scan_stage_extension_mm=None,
-        scan_z_offset_mm=None,
+        laser_sample_settle_ms=0,
+        laser_samples_per_point=1,
+        laser_scan_stage_extension_mm=None,
+        laser_scan_z_offset_from_place_mm=None,
         angle_calibration_x_min_mm=50.0,
         angle_calibration_x_max_mm=940.0,
         angle_calibration_x_step_mm=100.0,
@@ -507,10 +507,10 @@ async def test_run_angle_calibration_raises_when_abort_requested_during_capture(
     )
     worker = SimpleNamespace(_robot=SimpleNamespace(_tool=tool))
     scan_config = SimpleNamespace(
-        settle_ms=0,
-        samples_per_point=1,
-        scan_stage_extension_mm=None,
-        scan_z_offset_mm=None,
+        laser_sample_settle_ms=0,
+        laser_samples_per_point=1,
+        laser_scan_stage_extension_mm=None,
+        laser_scan_z_offset_from_place_mm=None,
         angle_calibration_x_min_mm=50.0,
         angle_calibration_x_max_mm=940.0,
         angle_calibration_x_step_mm=100.0,
@@ -650,10 +650,10 @@ async def test_run_angle_calibration_uses_geometric_center_not_previous_rotation
     )
     worker = SimpleNamespace(_robot=SimpleNamespace(_tool=tool))
     scan_config = SimpleNamespace(
-        settle_ms=0,
-        samples_per_point=1,
-        scan_stage_extension_mm=None,
-        scan_z_offset_mm=None,
+        laser_sample_settle_ms=0,
+        laser_samples_per_point=1,
+        laser_scan_stage_extension_mm=None,
+        laser_scan_z_offset_from_place_mm=None,
         angle_calibration_x_min_mm=50.0,
         angle_calibration_x_max_mm=940.0,
         angle_calibration_x_step_mm=100.0,
@@ -715,10 +715,10 @@ async def test_run_angle_calibration_samples_all_x_positions_before_next_rotatio
     )
     worker = SimpleNamespace(_robot=SimpleNamespace(_tool=tool))
     scan_config = SimpleNamespace(
-        settle_ms=0,
-        samples_per_point=1,
-        scan_stage_extension_mm=None,
-        scan_z_offset_mm=None,
+        laser_sample_settle_ms=0,
+        laser_samples_per_point=1,
+        laser_scan_stage_extension_mm=None,
+        laser_scan_z_offset_from_place_mm=None,
         angle_calibration_alpha_min_deg=-10.0,
         angle_calibration_alpha_max_deg=10.0,
         angle_calibration_coarse_step_deg=0.1,
@@ -772,10 +772,10 @@ async def test_run_angle_calibration_allows_measured_right_rotation_above_180() 
     )
     worker = SimpleNamespace(_robot=SimpleNamespace(_tool=tool))
     scan_config = SimpleNamespace(
-        settle_ms=0,
-        samples_per_point=1,
-        scan_stage_extension_mm=None,
-        scan_z_offset_mm=None,
+        laser_sample_settle_ms=0,
+        laser_samples_per_point=1,
+        laser_scan_stage_extension_mm=None,
+        laser_scan_z_offset_from_place_mm=None,
         angle_calibration_x_min_mm=50.0,
         angle_calibration_x_max_mm=940.0,
         angle_calibration_x_step_mm=100.0,
@@ -956,8 +956,8 @@ async def test_run_io_box_calibration_passes_configured_laser_offset_and_persist
         }
     )
     scan_config = SimpleNamespace(
-        settle_ms=50,
-        samples_per_point=3,
+        laser_sample_settle_ms=50,
+        laser_samples_per_point=3,
         laser_offset_x_mm=51.0,
         laser_offset_y_mm=0.0,
     )
@@ -1023,8 +1023,8 @@ async def test_run_stage_extension_calibration_accepts_no_progress_terminal_stat
         robot=SimpleNamespace(
             grid=SimpleNamespace(
                 scan=SimpleNamespace(
-                    settle_ms=0,
-                    scan_z_offset_mm=None,
+                    laser_sample_settle_ms=0,
+                    laser_scan_z_offset_from_place_mm=None,
                 )
             )
         )
@@ -1076,8 +1076,8 @@ async def test_run_stage_extension_calibration_rejects_timeout_terminal_state() 
         robot=SimpleNamespace(
             grid=SimpleNamespace(
                 scan=SimpleNamespace(
-                    settle_ms=0,
-                    scan_z_offset_mm=None,
+                    laser_sample_settle_ms=0,
+                    laser_scan_z_offset_from_place_mm=None,
                 )
             )
         )
@@ -1124,8 +1124,8 @@ async def test_run_stage_extension_calibration_skips_final_retract_when_cancelle
         robot=SimpleNamespace(
             grid=SimpleNamespace(
                 scan=SimpleNamespace(
-                    settle_ms=0,
-                    scan_z_offset_mm=None,
+                    laser_sample_settle_ms=0,
+                    laser_scan_z_offset_from_place_mm=None,
                 )
             )
         )
@@ -1179,8 +1179,8 @@ async def test_run_stage_extension_calibration_raises_when_abort_requested_durin
         robot=SimpleNamespace(
             grid=SimpleNamespace(
                 scan=SimpleNamespace(
-                    settle_ms=0,
-                    scan_z_offset_mm=None,
+                    laser_sample_settle_ms=0,
+                    laser_scan_z_offset_from_place_mm=None,
                 )
             )
         )
@@ -1217,10 +1217,10 @@ async def test_resolve_stage_extension_probe_y_uses_right_scout_and_offset() -> 
     )
     worker = SimpleNamespace(_robot=SimpleNamespace(_tool=tool))
     scan_config = SimpleNamespace(
-        settle_ms=0,
-        samples_per_point=1,
-        scan_stage_extension_mm=None,
-        scan_z_offset_mm=None,
+        laser_sample_settle_ms=0,
+        laser_samples_per_point=1,
+        laser_scan_stage_extension_mm=None,
+        laser_scan_z_offset_from_place_mm=None,
         angle_calibration_x_min_mm=50.0,
         angle_calibration_x_max_mm=940.0,
         angle_calibration_x_step_mm=100.0,

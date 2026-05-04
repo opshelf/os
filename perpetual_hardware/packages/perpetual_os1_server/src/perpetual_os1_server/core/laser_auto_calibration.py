@@ -877,8 +877,8 @@ class LaserAutoCalibrationManager:
         side_name = _side_to_module_name(side)
         config = get_root_config()
         scan_config = config.robot.grid.scan
-        settle_ms = int(scan_config.settle_ms)
-        samples_per_point = int(scan_config.samples_per_point)
+        settle_ms = int(laser_module.get_laser_sample_settle_ms(scan_config))
+        samples_per_point = int(laser_module.get_laser_samples_per_point(scan_config))
         coarse_settle_ms = int(laser_module.get_coarse_settle_ms(settle_ms))
         coarse_samples_per_point = int(laser_module.get_coarse_samples_per_point(samples_per_point))
         raw_rescan_target: str | None = None
@@ -909,7 +909,7 @@ class LaserAutoCalibrationManager:
             args=args,
             side=side,
             bounds=bounds,
-            step_mm=float(scan_config.step_mm),
+            step_mm=float(scan_config.fine_scan_step_mm),
             settle_ms=settle_ms,
             samples_per_point=samples_per_point,
             coarse_settle_ms=coarse_settle_ms,
@@ -954,7 +954,7 @@ class LaserAutoCalibrationManager:
                 robot=worker._robot,
                 side=side,
                 bounds=bounds,
-                fine_step_mm=float(scan_config.step_mm),
+                fine_step_mm=float(scan_config.fine_scan_step_mm),
                 settle_ms=settle_ms,
                 samples_per_point=samples_per_point,
                 coarse_settle_ms=coarse_settle_ms,
@@ -1002,18 +1002,10 @@ class LaserAutoCalibrationManager:
         side_number = 0 if side == StorageModuleSide.LEFT else 1
         x_positions = _build_angle_x_positions(scan_config)
         z_offset_positions = _build_angle_z_offset_positions(scan_config)
-        settle_ms = int(scan_config.settle_ms)
-        samples_per_point = int(scan_config.samples_per_point)
-        stage_extension_mm = float(
-            scan_config.scan_stage_extension_mm
-            if scan_config.scan_stage_extension_mm is not None
-            else angle_module.LASER_SCAN_STAGE_EXTENSION_MM
-        )
-        scan_z_offset_mm = float(
-            scan_config.scan_z_offset_mm
-            if scan_config.scan_z_offset_mm is not None
-            else angle_module.LASER_SCAN_Z_OFFSET_MM
-        )
+        settle_ms = int(laser_module.get_laser_sample_settle_ms(scan_config))
+        samples_per_point = int(laser_module.get_laser_samples_per_point(scan_config))
+        stage_extension_mm = laser_module.get_laser_scan_stage_extension_mm(scan_config)
+        laser_scan_z_offset_from_place_mm = laser_module.get_laser_scan_z_offset_from_place_mm(scan_config)
         rotation_param = _side_to_rotation_param_name(side)
 
         previous_rotation_value = await tool.get_param(rotation_param)
@@ -1036,7 +1028,7 @@ class LaserAutoCalibrationManager:
         if z_extension_place is None or z_move_rpm is None or z_move_accel is None:
             raise ValueError("Z_EXTENSION_PLACE, Z_MOVE_RPM, and Z_MOVE_ACCEL are required")
 
-        base_z_mm = float(z_extension_place) + scan_z_offset_mm
+        base_z_mm = float(z_extension_place) + laser_scan_z_offset_from_place_mm
         angle_args = argparse.Namespace(
             y_mm=None,
             y_range=(bounds.y_min, bounds.y_max),
@@ -1230,12 +1222,8 @@ class LaserAutoCalibrationManager:
             raise ValueError("Z_EXTENSION_PLACE, Z_MOVE_RPM, and Z_MOVE_ACCEL are required")
 
         probe_x_mm = float((bounds.x_min + bounds.x_max) / 2.0)
-        scan_z_offset_mm = float(
-            scan_config.scan_z_offset_mm
-            if scan_config.scan_z_offset_mm is not None
-            else angle_module.LASER_SCAN_Z_OFFSET_MM
-        )
-        base_z_mm = float(z_extension_place) + scan_z_offset_mm
+        laser_scan_z_offset_from_place_mm = laser_module.get_laser_scan_z_offset_from_place_mm(scan_config)
+        base_z_mm = float(z_extension_place) + laser_scan_z_offset_from_place_mm
         stage_limit_mm = float(tool._ms._params.lim)
         probe_rpm = min(int(tool._ms._params.rpm), 100)
 
@@ -1295,7 +1283,7 @@ class LaserAutoCalibrationManager:
                 tool,
                 target_stage_mm=stage_limit_mm,
                 retract_stage_mm=STAGE_EXTENSION_PROBE_START_MM,
-                settle_ms=int(scan_config.settle_ms),
+                settle_ms=int(laser_module.get_laser_sample_settle_ms(scan_config)),
                 timeout_s=STAGE_EXTENSION_PROBE_TIMEOUT_S,
                 probe_rpm=probe_rpm,
                 no_progress_s=STAGE_EXTENSION_NO_PROGRESS_TIMEOUT_S,
@@ -1390,22 +1378,14 @@ class LaserAutoCalibrationManager:
                 raise ValueError("Z_EXTENSION_PLACE, Z_MOVE_RPM, and Z_MOVE_ACCEL are required")
 
             x_positions = _build_angle_x_positions(scan_config)
-            scan_stage_extension_mm = float(
-                scan_config.scan_stage_extension_mm
-                if scan_config.scan_stage_extension_mm is not None
-                else angle_module.LASER_SCAN_STAGE_EXTENSION_MM
-            )
-            scan_z_offset_mm = float(
-                scan_config.scan_z_offset_mm
-                if scan_config.scan_z_offset_mm is not None
-                else angle_module.LASER_SCAN_Z_OFFSET_MM
-            )
+            laser_scan_stage_extension_mm = laser_module.get_laser_scan_stage_extension_mm(scan_config)
+            laser_scan_z_offset_from_place_mm = laser_module.get_laser_scan_z_offset_from_place_mm(scan_config)
             absolute_rotation_value = await tool.get_param(_side_to_rotation_param_name(side))
             if absolute_rotation_value is None:
                 raise ValueError(f"{_side_to_rotation_param_name(side)} is required")
 
             absolute_rotation_deg = float(absolute_rotation_value)
-            base_z_mm = float(z_extension_place) + scan_z_offset_mm
+            base_z_mm = float(z_extension_place) + laser_scan_z_offset_from_place_mm
             angle_args = argparse.Namespace(
                 y_mm=None,
                 y_range=(bounds.y_min, bounds.y_max),
@@ -1433,12 +1413,12 @@ class LaserAutoCalibrationManager:
                 side_number=side_number,
                 x_positions=x_positions,
                 rotation_center_deg=absolute_rotation_deg,
-                stage_extension_mm=scan_stage_extension_mm,
+                stage_extension_mm=laser_scan_stage_extension_mm,
                 base_z_mm=base_z_mm,
                 z_move_rpm=float(z_move_rpm),
                 z_move_accel=float(z_move_accel),
-                settle_ms=int(scan_config.settle_ms),
-                samples_per_point=int(scan_config.samples_per_point),
+                settle_ms=int(laser_module.get_laser_sample_settle_ms(scan_config)),
+                samples_per_point=int(laser_module.get_laser_samples_per_point(scan_config)),
                 should_abort=self._should_abort_work,
             )
 
@@ -1480,8 +1460,12 @@ class LaserAutoCalibrationManager:
             robot=worker._robot,
             scan_config=scan_config,
             io_box_interior_width_mm=laser_module.IO_BOX_INTERIOR_WIDTH_MM,
-            settle_ms=laser_module.get_fine_settle_ms(scan_config.settle_ms),
-            samples_per_point=laser_module.get_fine_samples_per_point(scan_config.samples_per_point),
+            settle_ms=laser_module.get_fine_settle_ms(
+                laser_module.get_laser_sample_settle_ms(scan_config)
+            ),
+            samples_per_point=laser_module.get_fine_samples_per_point(
+                laser_module.get_laser_samples_per_point(scan_config)
+            ),
             laser_offset_x_mm=laser_offset_x_mm,
             laser_offset_y_mm=laser_offset_y_mm,
             should_abort=self._should_abort_work,

@@ -329,12 +329,16 @@ async def run_io_box_calibration(
 	settle_ms = (
 		args.settle_ms
 		if args.settle_ms is not None
-		else laser_module.get_fine_settle_ms(scan_config.settle_ms)
+		else laser_module.get_fine_settle_ms(
+			laser_module.get_laser_sample_settle_ms(scan_config)
+		)
 	)
 	samples_per_point = (
 		args.samples_per_point
 		if args.samples_per_point is not None
-		else laser_module.get_fine_samples_per_point(scan_config.samples_per_point)
+		else laser_module.get_fine_samples_per_point(
+			laser_module.get_laser_samples_per_point(scan_config)
+		)
 	)
 	y_min_mm = (
 		float(args.io_box_y_min_mm)
@@ -641,12 +645,16 @@ async def run_scan(args: argparse.Namespace) -> int:
 		settle_ms = (
 			args.settle_ms
 			if args.settle_ms is not None
-			else laser_module.get_fine_settle_ms(scan_config.settle_ms)
+			else laser_module.get_fine_settle_ms(
+				laser_module.get_laser_sample_settle_ms(scan_config)
+			)
 		)
 		samples_per_point = (
 			args.samples_per_point
 			if args.samples_per_point is not None
-			else laser_module.get_fine_samples_per_point(scan_config.samples_per_point)
+			else laser_module.get_fine_samples_per_point(
+				laser_module.get_laser_samples_per_point(scan_config)
+			)
 		)
 
 		coarse_settle_ms = laser_module.get_coarse_settle_ms(settle_ms)

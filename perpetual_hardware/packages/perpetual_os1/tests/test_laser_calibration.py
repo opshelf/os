@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+from perpetual_os1.common import LaserScanConfig
 from perpetual_os1.laser_calibration import (
 	apply_xy_reference_offsets,
 	apply_single_shelf_analysis,
@@ -29,6 +30,43 @@ from perpetual_os1.laser_calibration import (
 from perpetual_os1.laser_scan import ScanBounds
 from perpetual_os1.storage import CalibrationCoordinate, Cell, CellStatus, Dimensions, Shelf, StorageGrid, StorageModuleSide
 
+
+def test_laser_scan_config_uses_clear_field_names() -> None:
+	scan_config = LaserScanConfig.model_validate(
+		{
+			"fine_scan_step_mm": 0.5,
+			"laser_sample_settle_ms": 40,
+			"laser_samples_per_point": 2,
+			"laser_scan_stage_extension_mm": 13.0,
+			"laser_scan_z_offset_from_place_mm": 10.0,
+			"shelf_hole_probe_y_offsets_mm": [32.25],
+			"fine_cell_scan_y_margin_mm": 12.0,
+		}
+	)
+
+	assert scan_config.fine_scan_step_mm == pytest.approx(0.5)
+	assert scan_config.laser_sample_settle_ms == 40
+	assert scan_config.laser_samples_per_point == 2
+	assert scan_config.laser_scan_stage_extension_mm == pytest.approx(13.0)
+	assert scan_config.laser_scan_z_offset_from_place_mm == pytest.approx(10.0)
+	assert scan_config.shelf_hole_probe_y_offsets_mm == [pytest.approx(32.25)]
+	assert scan_config.fine_cell_scan_y_margin_mm == pytest.approx(12.0)
+
+
+def test_laser_scan_config_rejects_legacy_field_names() -> None:
+	with pytest.raises(ValueError, match="Legacy laser scan config keys are not supported"):
+		LaserScanConfig.model_validate(
+			{
+				"step_mm": 0.5,
+				"settle_ms": 40,
+				"left_z_reference": {
+					"shelf_idx": 12,
+					"cell_idx": 0,
+					"z_offset_mm": 15.0,
+					"wall_depth_mm": 6.5,
+				},
+			}
+		)
 
 @pytest.mark.asyncio
 async def test_run_staged_scan_skips_retract_when_cancelled(tmp_path: Path) -> None:
@@ -149,7 +187,7 @@ async def test_run_staged_scan_uses_candidate_wall_depth_for_fine_scan(tmp_path:
 	)
 	scan_config = SimpleNamespace(
 		expected_hole_height_mm=30.0,
-		fine_scan_margin_y_mm=None,
+		fine_cell_scan_y_margin_mm=None,
 		laser_offset_x_mm=1.0,
 		laser_offset_y_mm=0.0,
 		left_reference=SimpleNamespace(shelf_idx=0, cell_idx=0, anchor='top_left', x_mm=50.0, y_mm=50.0, z_offset_mm=2.0, wall_depth_mm=1.0),
@@ -758,7 +796,7 @@ def test_build_single_shelf_known_edge_y_uses_calibrated_cells() -> None:
 	grid = SimpleNamespace(get_shelf=lambda side, shelf_idx: target_shelf)
 	scan_config = SimpleNamespace(
 		laser_offset_y_mm=4.0,
-		shelf_hole_sweep_offsets_mm=[32.25],
+		shelf_hole_probe_y_offsets_mm=[32.25],
 	)
 
 	known_shelf_edge_y = build_single_shelf_known_edge_y(

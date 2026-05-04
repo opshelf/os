@@ -32,6 +32,36 @@ SHELF_SCOUT_POST_EDGE_SKIP_MM = 80.0
 GAP_DEPTH_THRESHOLD_MM = 0.01
 
 
+def get_laser_sample_settle_ms(scan_config: Any) -> int:
+	return int(scan_config.laser_sample_settle_ms)
+
+
+def get_laser_samples_per_point(scan_config: Any) -> int:
+	return int(scan_config.laser_samples_per_point)
+
+
+def get_laser_scan_stage_extension_mm(scan_config: Any) -> float:
+	configured_value = getattr(scan_config, 'laser_scan_stage_extension_mm', None)
+
+	if configured_value is None:
+		return LASER_SCAN_STAGE_EXTENSION_MM
+
+	return float(configured_value)
+
+
+def get_laser_scan_z_offset_from_place_mm(scan_config: Any) -> float:
+	configured_value = getattr(
+		scan_config,
+		'laser_scan_z_offset_from_place_mm',
+		None,
+	)
+
+	if configured_value is None:
+		return LASER_SCAN_Z_OFFSET_MM
+
+	return float(configured_value)
+
+
 @dataclass
 class LaserAngleCalibrationSample:
 	axis_x_mm: float
@@ -1150,9 +1180,15 @@ async def capture_samples_with_robot(args: argparse.Namespace) -> tuple[list[Las
 
 	config = load_config_file(args.config)
 	scan_config = config.robot.grid.scan
-	settle_ms = int(args.settle_ms if args.settle_ms is not None else scan_config.settle_ms)
+	settle_ms = int(
+		args.settle_ms
+		if args.settle_ms is not None
+		else get_laser_sample_settle_ms(scan_config)
+	)
 	samples_per_point = int(
-		args.samples_per_point if args.samples_per_point is not None else scan_config.samples_per_point
+		args.samples_per_point
+		if args.samples_per_point is not None
+		else get_laser_samples_per_point(scan_config)
 	)
 	x_positions = build_axis_positions(args.x_range[0], args.x_range[1], args.x_range[2])
 	z_offset_positions = build_axis_positions(
@@ -1168,16 +1204,10 @@ async def capture_samples_with_robot(args: argparse.Namespace) -> tuple[list[Las
 	stage_extension_mm = float(
 		args.stage_extension_mm
 		if args.stage_extension_mm is not None
-		else (
-			scan_config.scan_stage_extension_mm
-			if scan_config.scan_stage_extension_mm is not None
-			else LASER_SCAN_STAGE_EXTENSION_MM
-		)
+		else get_laser_scan_stage_extension_mm(scan_config)
 	)
-	scan_z_offset_mm = float(
-		scan_config.scan_z_offset_mm
-		if scan_config.scan_z_offset_mm is not None
-		else LASER_SCAN_Z_OFFSET_MM
+	laser_scan_z_offset_from_place_mm = get_laser_scan_z_offset_from_place_mm(
+		scan_config
 	)
 	samples: list[LaserAngleCalibrationSample] = []
 
@@ -1217,7 +1247,7 @@ async def capture_samples_with_robot(args: argparse.Namespace) -> tuple[list[Las
 		base_z_mm = float(
 			args.base_z_mm
 			if args.base_z_mm is not None
-			else float(z_extension_place) + scan_z_offset_mm
+			else float(z_extension_place) + laser_scan_z_offset_from_place_mm
 		)
 		current_z_mm: float | None = None
 		await tool.retract()
@@ -1446,14 +1476,22 @@ def write_stage_stall_output_document(
 	)
 
 
-async def run_stage_stall_capture(args: argparse.Namespace) -> tuple[list[StageStallProbeSample], dict[str, Any], list[dict[str, Any]], dict[str, Any] | None]:
+async def run_stage_stall_capture(
+	args: argparse.Namespace,
+) -> tuple[list[StageStallProbeSample], dict[str, Any], list[dict[str, Any]], dict[str, Any] | None]:
 	from perpetual_os1.common import load_config_file
 
 	config = load_config_file(args.config)
 	scan_config = config.robot.grid.scan
-	settle_ms = int(args.settle_ms if args.settle_ms is not None else scan_config.settle_ms)
+	settle_ms = int(
+		args.settle_ms
+		if args.settle_ms is not None
+		else get_laser_sample_settle_ms(scan_config)
+	)
 	samples_per_point = int(
-		args.samples_per_point if args.samples_per_point is not None else scan_config.samples_per_point
+		args.samples_per_point
+		if args.samples_per_point is not None
+		else get_laser_samples_per_point(scan_config)
 	)
 	rotation_positions = build_axis_positions(
 		args.rotation_range[0],
@@ -1463,20 +1501,16 @@ async def run_stage_stall_capture(args: argparse.Namespace) -> tuple[list[StageS
 	stage_extension_mm = float(
 		args.stage_extension_mm
 		if args.stage_extension_mm is not None
-		else (
-			scan_config.scan_stage_extension_mm
-			if scan_config.scan_stage_extension_mm is not None
-			else LASER_SCAN_STAGE_EXTENSION_MM
-		)
+		else get_laser_scan_stage_extension_mm(scan_config)
 	)
-	scan_z_offset_mm = float(
-		scan_config.scan_z_offset_mm
-		if scan_config.scan_z_offset_mm is not None
-		else LASER_SCAN_Z_OFFSET_MM
+	laser_scan_z_offset_from_place_mm = get_laser_scan_z_offset_from_place_mm(
+		scan_config
 	)
 	samples: list[StageStallProbeSample] = []
 
-	async def did_run(robot: Any) -> tuple[list[StageStallProbeSample], dict[str, Any], list[dict[str, Any]], dict[str, Any] | None]:
+	async def did_run(
+		robot: Any,
+	) -> tuple[list[StageStallProbeSample], dict[str, Any], list[dict[str, Any]], dict[str, Any] | None]:
 		tool = robot._tool
 
 		if tool._laser_enabled is False or tool._laser is None:
@@ -1512,7 +1546,7 @@ async def run_stage_stall_capture(args: argparse.Namespace) -> tuple[list[StageS
 		base_z_mm = float(
 			args.base_z_mm
 			if args.base_z_mm is not None
-			else float(z_extension_place) + scan_z_offset_mm
+			else float(z_extension_place) + laser_scan_z_offset_from_place_mm
 		)
 		probe_x_mm = resolve_probe_x_mm(args=args, scan_config=scan_config, side_name=side_name)
 		capture_y_mm = await resolve_capture_y_mm(

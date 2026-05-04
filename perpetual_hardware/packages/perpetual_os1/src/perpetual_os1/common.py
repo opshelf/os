@@ -528,13 +528,13 @@ class LaserScanConfig(BaseModel):
     laser_offset_x_mm: Optional[float] = None
     laser_offset_y_mm: Optional[float] = None
     z_extension_mm: Optional[float] = None
-    scan_stage_extension_mm: Optional[float] = Field(default=None, ge=0)
-    scan_z_offset_mm: Optional[float] = None
-    shelf_hole_sweep_offsets_mm: Optional[List[float]] = None
-    fine_scan_margin_y_mm: Optional[float] = Field(default=None, gt=0)
-    step_mm: float = Field(5.0, gt=0)
-    settle_ms: int = Field(50, ge=0)
-    samples_per_point: int = Field(3, ge=1)
+    laser_scan_stage_extension_mm: Optional[float] = Field(default=None, ge=0)
+    laser_scan_z_offset_from_place_mm: Optional[float] = None
+    shelf_hole_probe_y_offsets_mm: Optional[List[float]] = None
+    fine_cell_scan_y_margin_mm: Optional[float] = Field(default=None, gt=0)
+    fine_scan_step_mm: float = Field(5.0, gt=0)
+    laser_sample_settle_ms: int = Field(50, ge=0)
+    laser_samples_per_point: int = Field(3, ge=1)
     left_reference: Optional[LaserScanReferenceConfig] = None
     right_reference: Optional[LaserScanReferenceConfig] = None
     left_bounds_x_min_mm: float = 0.0
@@ -565,37 +565,39 @@ class LaserScanConfig(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _coerce_legacy_references(cls, value):
+    def _reject_legacy_scan_keys(cls, value):
         if isinstance(value, dict) is False:
             return value
 
-        coerced = value.copy()
+        legacy_field_names = {
+            "step_mm": "fine_scan_step_mm",
+            "settle_ms": "laser_sample_settle_ms",
+            "samples_per_point": "laser_samples_per_point",
+            "scan_stage_extension_mm": "laser_scan_stage_extension_mm",
+            "scan_z_offset_mm": "laser_scan_z_offset_from_place_mm",
+            "shelf_hole_sweep_offsets_mm": "shelf_hole_probe_y_offsets_mm",
+            "fine_scan_margin_y_mm": "fine_cell_scan_y_margin_mm",
+            "left_xy_reference": "left_reference",
+            "left_z_reference": "left_reference",
+            "right_xy_reference": "right_reference",
+            "right_z_reference": "right_reference",
+        }
+        configured_legacy_names = [
+            legacy_name
+            for legacy_name in legacy_field_names
+            if legacy_name in value
+        ]
 
-        for prefix in ["left", "right"]:
-            reference_key = f"{prefix}_reference"
-            z_reference_key = f"{prefix}_z_reference"
-            xy_reference_key = f"{prefix}_xy_reference"
+        if len(configured_legacy_names) == 0:
+            return value
 
-            if coerced.get(reference_key) is not None:
-                continue
+        replacement_names = [
+            f"{legacy_name}->{legacy_field_names[legacy_name]}"
+            for legacy_name in configured_legacy_names
+        ]
+        replacement_label = ", ".join(replacement_names)
+        raise ValueError(f"Legacy laser scan config keys are not supported: {replacement_label}")
 
-            z_reference = coerced.get(z_reference_key)
-            xy_reference = coerced.get(xy_reference_key)
-
-            if isinstance(z_reference, dict) is False or isinstance(xy_reference, dict) is False:
-                continue
-
-            coerced[reference_key] = {
-                "shelf_idx": z_reference.get("shelf_idx"),
-                "cell_idx": z_reference.get("cell_idx"),
-                "anchor": xy_reference.get("anchor", "top_right"),
-                "x_mm": xy_reference.get("x_mm"),
-                "y_mm": xy_reference.get("y_mm"),
-                "z_offset_mm": z_reference.get("z_offset_mm"),
-                "wall_depth_mm": z_reference.get("wall_depth_mm"),
-            }
-
-        return coerced
 
 
 class GridConfig(BaseModel):
