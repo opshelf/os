@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from perpetual_os1 import laser_shelf_scout as shared_shelf_scout
+
+ShelfSurfaceEdge = shared_shelf_scout.ShelfSurfaceEdge
+
 
 @dataclass
 class LaserAngleCalibrationSample:
@@ -32,12 +36,6 @@ class AlphaFitResult:
 	alpha_deg: float
 	sample_count: int
 	line: FittedLine
-
-
-@dataclass
-class ShelfSurfaceEdge:
-	x_mm: float
-	y_mm: float
 
 
 @dataclass
