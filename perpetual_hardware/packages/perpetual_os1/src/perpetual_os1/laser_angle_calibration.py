@@ -647,10 +647,10 @@ def build_shelf_scout_x_positions(
 	if side_name == 'right':
 		return [RIGHT_MODULE_SHELF_SCOUT_X_MM]
 
-	left_xy_reference = getattr(scan_config, 'left_xy_reference', None)
+	left_reference = getattr(scan_config, 'left_reference', None)
 
-	if left_xy_reference is not None:
-		return [max(float(left_xy_reference.x_mm), x_max_mm)]
+	if left_reference is not None:
+		return [max(float(left_reference.x_mm), x_max_mm)]
 
 	positions: list[float] = []
 

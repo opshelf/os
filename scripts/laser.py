@@ -344,9 +344,9 @@ async def run_io_box_calibration(
 	laser_offset_x_mm = (
 		float(args.laser_offset_x_mm)
 		if args.laser_offset_x_mm is not None
-		else float(getattr(scan_config, 'laser_offset_x_mm', 0.0))
+		else laser_module.require_scan_config_parameter(scan_config, 'laser_offset_x_mm')
 	)
-	laser_offset_y_mm = float(getattr(scan_config, 'laser_offset_y_mm', 0.0))
+	laser_offset_y_mm = laser_module.require_scan_config_parameter(scan_config, 'laser_offset_y_mm')
 
 	laser_module.print_status('phase=io-box-init')
 	laser_module.print_status(
@@ -461,7 +461,7 @@ async def run_angle_calibration(
 	laser_offset_x_mm = (
 		float(args.laser_offset_x_mm)
 		if args.laser_offset_x_mm is not None
-		else float(scan_config.laser_offset_x_mm)
+		else laser_module.require_scan_config_parameter(scan_config, 'laser_offset_x_mm')
 	)
 	laser_offset_z_mm = (
 		float(args.laser_offset_z_mm)

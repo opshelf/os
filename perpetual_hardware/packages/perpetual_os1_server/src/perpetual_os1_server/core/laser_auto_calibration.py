@@ -63,7 +63,7 @@ IO_BOX_MIN_CONFIGURED_LASER_OFFSET_X_MM = 1.0
 
 
 def _resolve_io_box_laser_offset_x_mm(scan_config: Any) -> float:
-    laser_offset_x_mm = float(getattr(scan_config, "laser_offset_x_mm", 0.0))
+    laser_offset_x_mm = laser_module.require_scan_config_parameter(scan_config, "laser_offset_x_mm")
 
     if abs(laser_offset_x_mm) < IO_BOX_MIN_CONFIGURED_LASER_OFFSET_X_MM:
         raise ValueError("robot.grid.scan.laser_offset_x_mm must be configured before IO box calibration")
@@ -806,6 +806,9 @@ class LaserAutoCalibrationManager:
             target=target,
             scan_config=scan_config,
         )
+        if candidate.wall_depth_mm is None:
+            raise ValueError("Single-cell rescan candidate is missing wall depth")
+        candidate_wall_depth_mm = float(candidate.wall_depth_mm)
         bounds = laser_module.build_single_cell_rescan_bounds(
             candidate=candidate,
             scan_config=scan_config,
@@ -815,7 +818,7 @@ class LaserAutoCalibrationManager:
             side,
             bounds,
             seeded_candidates=[candidate],
-            seeded_wall_depth_mm=float(candidate.wall_depth_mm),
+            seeded_wall_depth_mm=candidate_wall_depth_mm,
             rescan_target=target,
         )
         await self._persist_single_cell_result(
@@ -916,6 +919,9 @@ class LaserAutoCalibrationManager:
 
         if rescan_target is not None and seeded_candidates is not None and len(seeded_candidates) == 1:
             candidate = seeded_candidates[0]
+            if candidate.wall_depth_mm is None:
+                raise ValueError("Single-cell rescan candidate is missing wall depth")
+            candidate_wall_depth_mm = float(candidate.wall_depth_mm)
             run_parameters["single_cell_rescan"] = {
                 "shelf_idx": int(rescan_target.shelf_idx),
                 "cell_idx": int(rescan_target.cell_idx),
@@ -924,7 +930,7 @@ class LaserAutoCalibrationManager:
                     "x_max": float(candidate.x_max),
                     "y_min": float(candidate.y_min),
                     "y_max": float(candidate.y_max),
-                    "wall_depth_mm": float(candidate.wall_depth_mm),
+                    "wall_depth_mm": candidate_wall_depth_mm,
                 },
             }
 
@@ -1456,7 +1462,7 @@ class LaserAutoCalibrationManager:
         config = get_root_config()
         scan_config = config.robot.grid.scan
         laser_offset_x_mm = _resolve_io_box_laser_offset_x_mm(scan_config)
-        laser_offset_y_mm = float(getattr(scan_config, "laser_offset_y_mm", 0.0))
+        laser_offset_y_mm = laser_module.require_scan_config_parameter(scan_config, "laser_offset_y_mm")
 
         await self._update_snapshot(
             current_side=None,

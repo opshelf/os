@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
@@ -65,6 +66,9 @@ IO_BOX_HIGH_Y_OFFSET_MM = 80.0
 IO_BOX_STAGE_EXTENSION_FRONT_OFFSET_MM = 5.0
 IO_BOX_Z_EXTENSION_MM = 163.5
 IO_BOX_MIN_POSITIVE_RUN_COUNT = 2
+MAX_LASER_OFFSET_ABS_MM = 1000.0
+MAX_SCAN_POINT_COUNT = 250_000
+SCAN_REFERENCE_BOUNDS_MARGIN_MM = 1.0
 
 
 def should_skip_motion_cleanup_on_cancel() -> bool:
@@ -91,13 +95,101 @@ def raise_if_cancelled(should_abort: Callable[[], bool] | None = None) -> None:
 		raise asyncio.CancelledError()
 
 
+def validate_finite_value(value: Any, name: str) -> float:
+	try:
+		float_value = float(value)
+	except (TypeError, ValueError) as exc:
+		raise ValueError(f"{name} must be a finite number") from exc
+
+	if math.isfinite(float_value) is False:
+		raise ValueError(f"{name} must be a finite number")
+
+	return float_value
+
+
+
+def require_scan_config_parameter(scan_config: Any, parameter_name: str) -> float:
+	configured_value = getattr(scan_config, parameter_name, None)
+
+	if configured_value is None:
+		raise ValueError(f"robot.grid.scan.{parameter_name} must be configured for laser calibration")
+
+	return validate_finite_value(configured_value, f"robot.grid.scan.{parameter_name}")
+
+
+
+def validate_laser_offset(parameter_name: str, value: float) -> None:
+	if abs(value) > MAX_LASER_OFFSET_ABS_MM:
+		raise ValueError(
+			f"robot.grid.scan.{parameter_name} must be within "
+			f"+/-{MAX_LASER_OFFSET_ABS_MM:.0f} mm"
+		)
+
+
+
+def require_laser_offsets(scan_config: Any) -> tuple[float, float]:
+	laser_offset_x_mm = require_scan_config_parameter(scan_config, "laser_offset_x_mm")
+	laser_offset_y_mm = require_scan_config_parameter(scan_config, "laser_offset_y_mm")
+	validate_laser_offset("laser_offset_x_mm", laser_offset_x_mm)
+	validate_laser_offset("laser_offset_y_mm", laser_offset_y_mm)
+
+	return laser_offset_x_mm, laser_offset_y_mm
+
+
+
+def validate_scan_bounds(bounds: ScanBounds, label: str = "scan bounds") -> None:
+	x_min = validate_finite_value(bounds.x_min, f"{label}.x_min")
+	x_max = validate_finite_value(bounds.x_max, f"{label}.x_max")
+	y_min = validate_finite_value(bounds.y_min, f"{label}.y_min")
+	y_max = validate_finite_value(bounds.y_max, f"{label}.y_max")
+
+	if x_max <= x_min:
+		raise ValueError(f"{label}.x_max must be greater than {label}.x_min")
+
+	if y_max <= y_min:
+		raise ValueError(f"{label}.y_max must be greater than {label}.y_min")
+
+
+
+def validate_scan_plan(
+	*,
+	bounds: ScanBounds,
+	step_mm: float,
+	settle_ms: int,
+	samples_per_point: int,
+	label: str = "laser scan",
+) -> None:
+	validate_scan_bounds(bounds)
+	validated_step_mm = validate_finite_value(step_mm, f"{label} step_mm")
+
+	if validated_step_mm <= 0.0:
+		raise ValueError(f"{label} step_mm must be greater than zero")
+
+	if settle_ms < 0:
+		raise ValueError(f"{label} settle_ms must be zero or greater")
+
+	if samples_per_point <= 0:
+		raise ValueError(f"{label} samples_per_point must be greater than zero")
+
+	x_count = int(math.floor(abs(bounds.x_max - bounds.x_min) / validated_step_mm)) + 2
+	y_count = int(math.floor(abs(bounds.y_max - bounds.y_min) / validated_step_mm)) + 2
+	total_points = x_count * y_count
+
+	if total_points > MAX_SCAN_POINT_COUNT:
+		raise ValueError(
+			f"{label} would scan {total_points} points; reduce bounds or increase step_mm "
+			f"(maximum {MAX_SCAN_POINT_COUNT})"
+		)
+
+
+
 def get_scan_stage_extension_mm(scan_config: Any) -> float:
 	configured_value = getattr(scan_config, "scan_stage_extension_mm", None)
 
 	if configured_value is None:
 		return LASER_SCAN_STAGE_EXTENSION_MM
 
-	return float(configured_value)
+	return validate_finite_value(configured_value, "robot.grid.scan.scan_stage_extension_mm")
 
 
 def get_scan_z_offset_mm(scan_config: Any) -> float:
@@ -106,7 +198,54 @@ def get_scan_z_offset_mm(scan_config: Any) -> float:
 	if configured_value is None:
 		return LASER_SCAN_Z_OFFSET_MM
 
-	return float(configured_value)
+	return validate_finite_value(configured_value, "robot.grid.scan.scan_z_offset_mm")
+
+
+def get_scan_reference(
+	*,
+	scan_config: Any,
+	side: StorageModuleSide,
+) -> Any:
+	prefix = "left" if side == StorageModuleSide.LEFT else "right"
+
+	if side == StorageModuleSide.LEFT:
+		configured_reference = getattr(scan_config, "left_reference", None)
+	else:
+		configured_reference = getattr(scan_config, "right_reference", None)
+
+	if configured_reference is None:
+		raise ValueError(f"robot.grid.scan.{prefix}_reference must be configured for laser calibration")
+
+	try:
+		shelf_idx = int(configured_reference.shelf_idx)
+		cell_idx = int(configured_reference.cell_idx)
+	except (TypeError, ValueError) as exc:
+		raise ValueError(f"robot.grid.scan.{prefix}_reference shelf_idx and cell_idx must be integers") from exc
+
+	if shelf_idx < 0 or cell_idx < 0:
+		raise ValueError(f"robot.grid.scan.{prefix}_reference shelf_idx and cell_idx must be zero or greater")
+
+	anchor = str(configured_reference.anchor)
+
+	if anchor not in {"top_right", "top_left", "bottom_right", "bottom_left"}:
+		raise ValueError(f"robot.grid.scan.{prefix}_reference.anchor is invalid")
+
+	validate_finite_value(configured_reference.x_mm, f"robot.grid.scan.{prefix}_reference.x_mm")
+	validate_finite_value(configured_reference.y_mm, f"robot.grid.scan.{prefix}_reference.y_mm")
+	validate_finite_value(
+		configured_reference.z_offset_mm,
+		f"robot.grid.scan.{prefix}_reference.z_offset_mm",
+	)
+	wall_depth_mm = validate_finite_value(
+		configured_reference.wall_depth_mm,
+		f"robot.grid.scan.{prefix}_reference.wall_depth_mm",
+	)
+
+	if wall_depth_mm <= 0.0:
+		raise ValueError(f"robot.grid.scan.{prefix}_reference.wall_depth_mm must be greater than zero")
+
+	return configured_reference
+
 
 
 def get_scan_z_reference(
@@ -114,13 +253,7 @@ def get_scan_z_reference(
 	scan_config: Any,
 	side: StorageModuleSide,
 ) -> tuple[int, int, float, float]:
-	if side == StorageModuleSide.LEFT:
-		configured_reference = getattr(scan_config, "left_z_reference", None)
-	else:
-		configured_reference = getattr(scan_config, "right_z_reference", None)
-
-	if configured_reference is None:
-		raise ValueError(f"{side.value} laser calibration requires an explicit z_reference")
+	configured_reference = get_scan_reference(scan_config=scan_config, side=side)
 
 	return (
 		int(configured_reference.shelf_idx),
@@ -128,6 +261,7 @@ def get_scan_z_reference(
 		float(configured_reference.z_offset_mm),
 		float(configured_reference.wall_depth_mm),
 	)
+
 
 
 def get_scan_z_delta(
@@ -144,20 +278,48 @@ def get_scan_z_delta(
 	}
 
 
+
 def get_scan_xy_reference(
 	*,
 	scan_config: Any,
 	side: StorageModuleSide,
 ) -> Any:
-	if side == StorageModuleSide.LEFT:
-		configured_reference = getattr(scan_config, "left_xy_reference", None)
-	else:
-		configured_reference = getattr(scan_config, "right_xy_reference", None)
+	return get_scan_reference(scan_config=scan_config, side=side)
 
-	if configured_reference is None:
-		raise ValueError(f"{side.value} laser calibration requires an explicit xy_reference")
 
-	return configured_reference
+
+def validate_laser_structure_parameters(
+	*,
+	scan_config: Any,
+	side: StorageModuleSide,
+	bounds: ScanBounds | None = None,
+	should_validate_reference_bounds: bool = True,
+) -> None:
+	laser_offset_x_mm, laser_offset_y_mm = require_laser_offsets(scan_config)
+	z_reference = get_scan_z_reference(scan_config=scan_config, side=side)
+	xy_reference = get_scan_xy_reference(scan_config=scan_config, side=side)
+
+	if abs(float(z_reference[2]) - float(z_reference[3])) > MAX_LASER_OFFSET_ABS_MM:
+		raise ValueError("laser z_reference delta is outside the plausible +/-1000 mm range")
+
+	if bounds is None or should_validate_reference_bounds is False:
+		return
+
+	validate_scan_bounds(bounds)
+	reference_laser_x_mm = float(xy_reference.x_mm) - laser_offset_x_mm
+	reference_laser_y_mm = float(xy_reference.y_mm) + laser_offset_y_mm
+
+	if reference_laser_x_mm < bounds.x_min - SCAN_REFERENCE_BOUNDS_MARGIN_MM:
+		raise ValueError("xy_reference x_mm resolves outside scan X bounds")
+
+	if reference_laser_x_mm > bounds.x_max + SCAN_REFERENCE_BOUNDS_MARGIN_MM:
+		raise ValueError("xy_reference x_mm resolves outside scan X bounds")
+
+	if reference_laser_y_mm < bounds.y_min - SCAN_REFERENCE_BOUNDS_MARGIN_MM:
+		raise ValueError("xy_reference y_mm resolves outside scan Y bounds")
+
+	if reference_laser_y_mm > bounds.y_max + SCAN_REFERENCE_BOUNDS_MARGIN_MM:
+		raise ValueError("xy_reference y_mm resolves outside scan Y bounds")
 
 
 def get_shelf_hole_sweep_offsets_mm(scan_config: Any) -> list[float]:
@@ -466,12 +628,25 @@ def build_run_parameters(
 	coarse_samples_per_point: int,
 	scan_config: Any,
 ) -> dict[str, Any]:
+	validate_scan_plan(
+		bounds=bounds,
+		step_mm=step_mm,
+		settle_ms=settle_ms,
+		samples_per_point=samples_per_point,
+	)
+	validate_laser_structure_parameters(
+		scan_config=scan_config,
+		side=side,
+		bounds=bounds,
+		should_validate_reference_bounds=getattr(args, "rescan_cell", None) is None,
+	)
 	z_reference = get_scan_z_reference(scan_config=scan_config, side=side)
 	z_delta = get_scan_z_delta(scan_config=scan_config, side=side)
 	xy_reference = get_scan_xy_reference(scan_config=scan_config, side=side)
 	hole_sweep_offsets_mm = get_shelf_hole_sweep_offsets_mm(scan_config)
 	scan_stage_extension_mm = get_scan_stage_extension_mm(scan_config)
 	scan_z_offset_mm = get_scan_z_offset_mm(scan_config)
+	laser_offset_x_mm, laser_offset_y_mm = require_laser_offsets(scan_config)
 
 	return {
 		"module": side.value,
@@ -516,6 +691,8 @@ def build_run_parameters(
 			"coarse_samples_per_point": coarse_samples_per_point,
 			"laser_scan_stage_extension_mm": scan_stage_extension_mm,
 			"laser_scan_z_offset_mm": scan_z_offset_mm,
+			"laser_offset_x_mm": laser_offset_x_mm,
+			"laser_offset_y_mm": laser_offset_y_mm,
 			"z_reference": {
 				"shelf_idx": z_reference[0],
 				"cell_idx": z_reference[1],
@@ -1572,8 +1749,9 @@ def build_single_cell_rescan_candidate(
 		target=target,
 	)
 
-	candidate_center_x_mm = float(target_cell.calibration_point.x) - float(scan_config.laser_offset_x_mm)
-	candidate_center_y_mm = float(target_cell.calibration_point.y) + float(scan_config.laser_offset_y_mm)
+	laser_offset_x_mm, laser_offset_y_mm = require_laser_offsets(scan_config)
+	candidate_center_x_mm = float(target_cell.calibration_point.x) - laser_offset_x_mm
+	candidate_center_y_mm = float(target_cell.calibration_point.y) + laser_offset_y_mm
 	half_width_mm = float(scan_config.expected_hole_width_mm) / 2.0
 	half_height_mm = float(scan_config.expected_hole_height_mm) / 2.0
 	z_delta = get_scan_z_delta(
@@ -2156,8 +2334,8 @@ async def run_io_box_scout(
 	fine_margin_mm: float = IO_BOX_FINE_MARGIN_MM,
 	settle_ms: int = 20,
 	samples_per_point: int = 1,
-	laser_offset_x_mm: float = 0.0,
-	laser_offset_y_mm: float = 0.0,
+	laser_offset_x_mm: float | None = None,
+	laser_offset_y_mm: float | None = None,
 	should_abort: Callable[[], bool] | None = None,
 ) -> IOBoxScoutResult:
 	if io_box_interior_width_mm <= 0.0:
@@ -2183,6 +2361,16 @@ async def run_io_box_scout(
 
 	if samples_per_point <= 0:
 		raise ValueError("samples_per_point must be greater than zero")
+
+	if laser_offset_x_mm is None:
+		laser_offset_x_mm = require_scan_config_parameter(scan_config, "laser_offset_x_mm")
+	else:
+		laser_offset_x_mm = float(laser_offset_x_mm)
+
+	if laser_offset_y_mm is None:
+		laser_offset_y_mm = require_scan_config_parameter(scan_config, "laser_offset_y_mm")
+	else:
+		laser_offset_y_mm = float(laser_offset_y_mm)
 
 	tool = robot._tool
 	io_box = getattr(robot, "_io", None)
@@ -2605,14 +2793,15 @@ def build_detected_cell_from_segments(
 
 	center_x_mm = float((x_segment.start_mm + x_segment.end_mm) / 2.0)
 	center_y_mm = float((y_segment.start_mm + y_segment.end_mm) / 2.0)
+	laser_offset_x_mm, laser_offset_y_mm = require_laser_offsets(scan_config)
 
 	return ScanDetectedCell(
 		shelf_idx=0,
 		cell_idx=0,
 		center_x_mm=center_x_mm,
 		center_y_mm=center_y_mm,
-		tool_x_mm=center_x_mm + scan_config.laser_offset_x_mm,
-		tool_y_mm=center_y_mm - scan_config.laser_offset_y_mm,
+		tool_x_mm=center_x_mm + laser_offset_x_mm,
+		tool_y_mm=center_y_mm - laser_offset_y_mm,
 		width_mm=x_segment.width_mm,
 		height_mm=y_segment.width_mm,
 		point_count=max(
@@ -3008,6 +3197,18 @@ async def run_staged_scan(
 	should_abort: Callable[[], bool] | None = None,
 ) -> ScanAnalysisResult:
 	tool = robot._tool
+	validate_scan_plan(
+		bounds=bounds,
+		step_mm=fine_step_mm,
+		settle_ms=settle_ms,
+		samples_per_point=samples_per_point,
+	)
+	validate_laser_structure_parameters(
+		scan_config=scan_config,
+		side=side,
+		bounds=bounds,
+		should_validate_reference_bounds=seeded_candidates is None,
+	)
 	if recorder is None:
 		recorder = create_staged_scan_recorder(
 			scans_dir=scans_dir,
@@ -3711,6 +3912,7 @@ def build_single_shelf_known_edge_y(
 		side=side,
 		shelf_idx=shelf_idx,
 	)
+	laser_offset_y_mm = require_scan_config_parameter(scan_config, "laser_offset_y_mm")
 	candidate_center_y_values: list[float] = []
 
 	for cell in target_shelf.cells:
@@ -3718,7 +3920,7 @@ def build_single_shelf_known_edge_y(
 			continue
 
 		candidate_center_y_values.append(
-			float(cell.calibration_point.y) + float(scan_config.laser_offset_y_mm)
+			float(cell.calibration_point.y) + laser_offset_y_mm
 		)
 
 	if len(candidate_center_y_values) == 0:
@@ -3962,14 +4164,15 @@ def analyze_depth_rows(
 	scans_dir: str,
 	depth_rows: list[list[float | None]],
 ) -> Any:
+	laser_offset_x_mm, laser_offset_y_mm = require_laser_offsets(scan_config)
 	capture = create_scan_capture(
 		side=side,
 		bounds=bounds,
 		step_mm=step_mm,
 		settle_ms=settle_ms,
 		samples_per_point=samples_per_point,
-		laser_offset_x_mm=scan_config.laser_offset_x_mm,
-		laser_offset_y_mm=scan_config.laser_offset_y_mm,
+		laser_offset_x_mm=laser_offset_x_mm,
+		laser_offset_y_mm=laser_offset_y_mm,
 		wall_depth_tolerance_mm=scan_config.wall_depth_tolerance_mm,
 		expected_hole_width_mm=scan_config.expected_hole_width_mm,
 		expected_hole_height_mm=scan_config.expected_hole_height_mm,
