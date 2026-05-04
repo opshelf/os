@@ -8,6 +8,7 @@
 		controlGripper,
 		controlDoor,
 		moveMotor,
+		probeMotors,
 		apiFetch,
 		type MotorList,
 		type MotorInfo,
@@ -31,6 +32,7 @@
 	let isHomingAll = false;
 	let moveTargets: Record<string, string> = {};
 	let movingMotor: string | null = null;
+	let isProbing = false;
 
 	let activeAction: 'crash' | 'home' | null = null;
 
@@ -48,6 +50,23 @@
 			error = '';
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'failed to load motors';
+		}
+	}
+
+	async function fetchPositions(): Promise<void> {
+		isProbing = true;
+		error = '';
+		try {
+			const result = await probeMotors();
+			for (const r of result.results) {
+				if (r.responsive === true && r.position_mm !== null) {
+					moveTargets[r.motor_name] = r.position_mm.toString();
+				}
+			}
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'failed to probe motors';
+		} finally {
+			isProbing = false;
 		}
 	}
 
@@ -130,6 +149,7 @@
 
 		try {
 			await fetchMotors();
+			await fetchPositions();
 		} finally {
 			isLoading = false;
 		}
@@ -261,9 +281,10 @@
 			disabled={isTesting === true ||
 				activeMotor !== null ||
 				movingMotor !== null ||
-				isHomingAll === true}
+				isHomingAll === true ||
+				isProbing === true}
 		>
-			{isTesting === true ? 'testing...' : 'test all motors'}
+			{isTesting === true ? 'testing...' : 'TEST ALL'}
 		</button>
 		<button
 			type="button"
@@ -271,16 +292,28 @@
 			disabled={isHomingAll === true ||
 				activeMotor !== null ||
 				movingMotor !== null ||
-				isTesting === true}
+				isTesting === true ||
+				isProbing === true}
 		>
-			{isHomingAll === true ? 'homing...' : 'home all motors'}
+			{isHomingAll === true ? 'homing...' : 'HOME ALL'}
+		</button>
+		<button
+			type="button"
+			on:click={fetchPositions}
+			disabled={isProbing === true ||
+				activeMotor !== null ||
+				movingMotor !== null ||
+				isTesting === true ||
+				isHomingAll === true}
+		>
+			{isProbing === true ? 'probing...' : 'PROBE ALL'}
 		</button>
 	</div>
 
 	<table>
 		<thead>
 			<tr>
-				<th colspan="5">io motors</th>
+				<th colspan="5">gantry motors</th>
 			</tr>
 			<tr>
 				<th>id</th>
@@ -291,7 +324,7 @@
 			</tr>
 		</thead>
 		<tbody>
-			{#each motors.io.filter((m) => m.name !== 'door') as motor (motor.name)}
+			{#each motors.tool.filter((m) => m.name === 'x_axis' || m.name === 'y_axis') as motor (motor.name)}
 				<tr>
 					<td class="motor-id">{motor.motor_id}</td>
 					<td>{motor.name}</td>
@@ -313,12 +346,14 @@
 							placeholder={unitForMotor(motor.name)}
 							value={moveTargets[motor.name] ?? ''}
 							on:input={(e) => didInputTarget(motor.name, e)}
-							disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
+							disabled={movingMotor !== null || activeMotor !== null || isTesting === true ||
+								isProbing === true}
 						/>
 						<button
 							type="button"
 							on:click={() => didClickMove(motor.name)}
-							disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
+							disabled={movingMotor !== null || activeMotor !== null || isTesting === true ||
+								isProbing === true}
 						>
 							{movingMotor === motor.name ? '...' : 'go'}
 						</button>
@@ -328,9 +363,11 @@
 							type="button"
 							on:click={() => didClickHome(motor.name)}
 							disabled={activeMotor !== null ||
+								gripperAction !== null ||
 								doorAction !== null ||
 								movingMotor !== null ||
-								isTesting === true}
+								isTesting === true ||
+								isProbing === true}
 						>
 							home
 						</button>
@@ -338,87 +375,13 @@
 							type="button"
 							on:click={() => didClickCrash(motor.name)}
 							disabled={activeMotor !== null ||
+								gripperAction !== null ||
 								doorAction !== null ||
 								movingMotor !== null ||
-								isTesting === true}
+								isTesting === true ||
+								isProbing === true}
 						>
 							crash
-						</button>
-					</td>
-				</tr>
-			{/each}
-			{#each motors.io.filter((m) => m.name === 'door') as motor (motor.name)}
-				<tr>
-					<td class="motor-id">{motor.motor_id}</td>
-					<td>{motor.name}</td>
-					<td>
-						{#if testingMotor === 'door'}
-							<span class="status-testing">TEST</span>
-						{:else if testResults['door'] === 'ok'}
-							<span class="status-ok">OK</span>
-						{:else if testResults['door'] === 'err'}
-							<span class="status-error">ERR</span>
-						{:else}
-							<span class="status-unknown">-</span>
-						{/if}
-					</td>
-					<td>
-						<input
-							type="number"
-							step="0.1"
-							placeholder="mm"
-							value={moveTargets['door'] ?? ''}
-							on:input={(e) => didInputTarget('door', e)}
-							disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
-						/>
-						<button
-							type="button"
-							on:click={() => didClickMove('door')}
-							disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
-						>
-							{movingMotor === 'door' ? '...' : 'go'}
-						</button>
-					</td>
-					<td>
-						<button
-							type="button"
-							on:click={() => didClickHome('door')}
-							disabled={activeMotor !== null ||
-								doorAction !== null ||
-								movingMotor !== null ||
-								isTesting === true}
-						>
-							home
-						</button>
-						<button
-							type="button"
-							on:click={() => didClickCrash('door')}
-							disabled={activeMotor !== null ||
-								doorAction !== null ||
-								movingMotor !== null ||
-								isTesting === true}
-						>
-							crash
-						</button>
-						<button
-							type="button"
-							on:click={() => didClickDoor('open')}
-							disabled={doorAction !== null ||
-								activeMotor !== null ||
-								movingMotor !== null ||
-								isTesting === true}
-						>
-							open
-						</button>
-						<button
-							type="button"
-							on:click={() => didClickDoor('close')}
-							disabled={doorAction !== null ||
-								activeMotor !== null ||
-								movingMotor !== null ||
-								isTesting === true}
-						>
-							close
 						</button>
 					</td>
 				</tr>
@@ -438,7 +401,7 @@
 			</tr>
 		</thead>
 		<tbody>
-			{#each motors.tool as motor (motor.name)}
+			{#each motors.tool.filter((m) => m.name !== 'x_axis' && m.name !== 'y_axis') as motor (motor.name)}
 				<tr>
 					<td class="motor-id">{motor.motor_id}</td>
 					<td>{motor.name}</td>
@@ -460,12 +423,14 @@
 							placeholder={unitForMotor(motor.name)}
 							value={moveTargets[motor.name] ?? ''}
 							on:input={(e) => didInputTarget(motor.name, e)}
-							disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
+							disabled={movingMotor !== null || activeMotor !== null || isTesting === true ||
+								isProbing === true}
 						/>
 						<button
 							type="button"
 							on:click={() => didClickMove(motor.name)}
-							disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
+							disabled={movingMotor !== null || activeMotor !== null || isTesting === true ||
+								isProbing === true}
 						>
 							{movingMotor === motor.name ? '...' : 'go'}
 						</button>
@@ -477,7 +442,8 @@
 							disabled={activeMotor !== null ||
 								gripperAction !== null ||
 								movingMotor !== null ||
-								isTesting === true}
+								isTesting === true ||
+								isProbing === true}
 						>
 							home
 						</button>
@@ -487,7 +453,8 @@
 							disabled={activeMotor !== null ||
 								gripperAction !== null ||
 								movingMotor !== null ||
-								isTesting === true}
+								isTesting === true ||
+								isProbing === true}
 						>
 							crash
 						</button>
@@ -516,7 +483,8 @@
 						disabled={gripperAction !== null ||
 							activeMotor !== null ||
 							movingMotor !== null ||
-							isTesting === true}
+							isTesting === true ||
+							isProbing === true}
 					>
 						grip
 					</button>
@@ -526,12 +494,135 @@
 						disabled={gripperAction !== null ||
 							activeMotor !== null ||
 							movingMotor !== null ||
-							isTesting === true}
+							isTesting === true ||
+							isProbing === true}
 					>
 						release
 					</button>
 				</td>
 			</tr>
+		</tbody>
+
+		<thead>
+			<tr>
+				<th colspan="5">io motors</th>
+			</tr>
+			<tr>
+				<th>id</th>
+				<th>motor</th>
+				<th>status</th>
+				<th>move to</th>
+				<th>actions</th>
+			</tr>
+		</thead>
+		<tbody>
+			{#each motors.io as motor (motor.name)}
+				<tr>
+					<td class="motor-id">{motor.motor_id}</td>
+					<td>{motor.name}</td>
+					<td>
+						{#if testingMotor === motor.name}
+							<span class="status-testing">TEST</span>
+						{:else if testResults[motor.name] === 'ok'}
+							<span class="status-ok">OK</span>
+						{:else if testResults[motor.name] === 'err'}
+							<span class="status-error">ERR</span>
+						{:else}
+							<span class="status-unknown">-</span>
+						{/if}
+					</td>
+					<td>
+						<input
+							type="number"
+							step="0.1"
+							placeholder="mm"
+							value={moveTargets[motor.name] ?? ''}
+							on:input={(e) => didInputTarget(motor.name, e)}
+							disabled={movingMotor !== null || activeMotor !== null || isTesting === true ||
+								isProbing === true}
+						/>
+						<button
+							type="button"
+							on:click={() => didClickMove(motor.name)}
+							disabled={movingMotor !== null || activeMotor !== null || isTesting === true ||
+								isProbing === true}
+						>
+							{movingMotor === motor.name ? '...' : 'go'}
+						</button>
+					</td>
+					<td>
+						{#if motor.name === 'door'}
+							<button
+								type="button"
+								on:click={() => didClickHome('door')}
+								disabled={activeMotor !== null ||
+									doorAction !== null ||
+									movingMotor !== null ||
+									isTesting === true ||
+								isProbing === true}
+							>
+								home
+							</button>
+							<button
+								type="button"
+								on:click={() => didClickCrash('door')}
+								disabled={activeMotor !== null ||
+									doorAction !== null ||
+									movingMotor !== null ||
+									isTesting === true ||
+								isProbing === true}
+							>
+								crash
+							</button>
+							<button
+								type="button"
+								on:click={() => didClickDoor('open')}
+								disabled={doorAction !== null ||
+									activeMotor !== null ||
+									movingMotor !== null ||
+									isTesting === true ||
+								isProbing === true}
+							>
+								open
+							</button>
+							<button
+								type="button"
+								on:click={() => didClickDoor('close')}
+								disabled={doorAction !== null ||
+									activeMotor !== null ||
+									movingMotor !== null ||
+									isTesting === true ||
+								isProbing === true}
+							>
+								close
+							</button>
+						{:else}
+							<button
+								type="button"
+								on:click={() => didClickHome(motor.name)}
+								disabled={activeMotor !== null ||
+									doorAction !== null ||
+									movingMotor !== null ||
+									isTesting === true ||
+								isProbing === true}
+							>
+								home
+							</button>
+							<button
+								type="button"
+								on:click={() => didClickCrash(motor.name)}
+								disabled={activeMotor !== null ||
+									doorAction !== null ||
+									movingMotor !== null ||
+									isTesting === true ||
+								isProbing === true}
+							>
+								crash
+							</button>
+						{/if}
+					</td>
+				</tr>
+			{/each}
 		</tbody>
 	</table>
 
