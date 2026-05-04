@@ -506,20 +506,15 @@ class IOBlock(BaseModel):
 
 
 class LaserScanReferenceConfig(BaseModel):
-    """Manual Z calibration for one known cell and the laser wall depth measured for that same cell."""
+    """Manual calibration for one known anchor cell used to align laser XY and Z measurements."""
 
     shelf_idx: int = Field(ge=0)
     cell_idx: int = Field(ge=0)
-    z_offset_mm: float
-    wall_depth_mm: float
-
-
-class LaserScanXYReferenceConfig(BaseModel):
-    """Manual XY calibration for one known anchor cell used to shift laser-measured cell positions."""
-
     anchor: Literal["top_right", "top_left", "bottom_right", "bottom_left"] = "top_right"
     x_mm: float
     y_mm: float
+    z_offset_mm: float
+    wall_depth_mm: float
 
 
 class LaserScanConfig(BaseModel):
@@ -530,8 +525,8 @@ class LaserScanConfig(BaseModel):
     hole_height_tolerance_mm: float = Field(10.0, gt=0)
     min_vertical_wall_coverage_mm: float = Field(10.0, gt=0)
     min_horizontal_wall_coverage_mm: float = Field(30.0, gt=0)
-    laser_offset_x_mm: float = 0.0
-    laser_offset_y_mm: float = 0.0
+    laser_offset_x_mm: Optional[float] = None
+    laser_offset_y_mm: Optional[float] = None
     z_extension_mm: Optional[float] = None
     scan_stage_extension_mm: Optional[float] = Field(default=None, ge=0)
     scan_z_offset_mm: Optional[float] = None
@@ -540,10 +535,8 @@ class LaserScanConfig(BaseModel):
     step_mm: float = Field(5.0, gt=0)
     settle_ms: int = Field(50, ge=0)
     samples_per_point: int = Field(3, ge=1)
-    left_z_reference: Optional[LaserScanReferenceConfig] = None
-    right_z_reference: Optional[LaserScanReferenceConfig] = None
-    left_xy_reference: Optional[LaserScanXYReferenceConfig] = None
-    right_xy_reference: Optional[LaserScanXYReferenceConfig] = None
+    left_reference: Optional[LaserScanReferenceConfig] = None
+    right_reference: Optional[LaserScanReferenceConfig] = None
     left_bounds_x_min_mm: float = 0.0
     left_bounds_x_max_mm: float = 950.0
     left_bounds_y_min_mm: float = 0.0
@@ -569,6 +562,40 @@ class LaserScanConfig(BaseModel):
     angle_calibration_coarse_step_deg: float = Field(0.1, gt=0)
     angle_calibration_fine_window_deg: float = Field(0.3, gt=0)
     angle_calibration_fine_step_deg: float = Field(0.005, gt=0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_legacy_references(cls, value):
+        if isinstance(value, dict) is False:
+            return value
+
+        coerced = value.copy()
+
+        for prefix in ["left", "right"]:
+            reference_key = f"{prefix}_reference"
+            z_reference_key = f"{prefix}_z_reference"
+            xy_reference_key = f"{prefix}_xy_reference"
+
+            if coerced.get(reference_key) is not None:
+                continue
+
+            z_reference = coerced.get(z_reference_key)
+            xy_reference = coerced.get(xy_reference_key)
+
+            if isinstance(z_reference, dict) is False or isinstance(xy_reference, dict) is False:
+                continue
+
+            coerced[reference_key] = {
+                "shelf_idx": z_reference.get("shelf_idx"),
+                "cell_idx": z_reference.get("cell_idx"),
+                "anchor": xy_reference.get("anchor", "top_right"),
+                "x_mm": xy_reference.get("x_mm"),
+                "y_mm": xy_reference.get("y_mm"),
+                "z_offset_mm": z_reference.get("z_offset_mm"),
+                "wall_depth_mm": z_reference.get("wall_depth_mm"),
+            }
+
+        return coerced
 
 
 class GridConfig(BaseModel):
