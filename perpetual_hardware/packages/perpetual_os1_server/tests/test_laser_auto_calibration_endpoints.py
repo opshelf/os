@@ -1048,7 +1048,7 @@ async def test_run_stage_extension_calibration_accepts_no_progress_terminal_stat
     assert prepare_mock.await_args.kwargs['should_move_z'] is False
     assert probe_mock.await_args.kwargs['retract_stage_mm'] == pytest.approx(0.0)
     assert probe_mock.await_args.kwargs['fast_approach_mm'] == pytest.approx(0.0)
-    assert probe_mock.await_args.kwargs['timeout_s'] == pytest.approx(30.0)
+    assert probe_mock.await_args.kwargs['timeout_s'] == pytest.approx(60.0)
     stage_motor.move_to_position.assert_awaited_once_with(pytest.approx(45.0), rpm=100)
     assert manager._update_snapshot.await_args_list[-1].kwargs['stage_detail']['stall_status'] == 'no_progress'
     assert manager._update_snapshot.await_args_list[-1].kwargs['stage_detail']['calibrated_stage_extension_mm'] == pytest.approx(45.0)
