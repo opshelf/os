@@ -4,21 +4,4 @@ services:
     volumes:
       - "/dev:/dev"
       - "/sys:/sys:ro"
-    devices:
-      - "/dev/ttyUSB0:/dev/ttyUSB0"
-      - "/dev/ttyUSB1:/dev/ttyUSB1"
-      - "/dev/i2c-11:/dev/i2c-11"
-      - "/dev/bus/usb:/dev/bus/usb"
-      - "/dev/usb/lp0:/dev/usb/lp0"
-      - /dev/media0:/dev/media0
-      - /dev/video0:/dev/video0
-      - /dev/video2:/dev/video2
-      - /dev/video3:/dev/video3
-      - /dev/video4:/dev/video4
-      - /dev/video5:/dev/video5
-      - /dev/video6:/dev/video6
-      - /dev/video7:/dev/video7
-      - /dev/video8:/dev/video8
-      - /dev/video9:/dev/video9
-      - /dev/video10:/dev/video10
 
