@@ -158,6 +158,7 @@ def validate_scan_plan(
 	settle_ms: int,
 	samples_per_point: int,
 	label: str = "laser scan",
+	should_validate_point_count: bool = True,
 ) -> None:
 	validate_scan_bounds(bounds)
 	validated_step_mm = validate_finite_value(step_mm, f"{label} step_mm")
@@ -171,6 +172,9 @@ def validate_scan_plan(
 	if samples_per_point <= 0:
 		raise ValueError(f"{label} samples_per_point must be greater than zero")
 
+	if should_validate_point_count is False:
+		return
+
 	x_count = int(math.floor(abs(bounds.x_max - bounds.x_min) / validated_step_mm)) + 2
 	y_count = int(math.floor(abs(bounds.y_max - bounds.y_min) / validated_step_mm)) + 2
 	total_points = x_count * y_count
@@ -183,22 +187,37 @@ def validate_scan_plan(
 
 
 
-def get_scan_stage_extension_mm(scan_config: Any) -> float:
-	configured_value = getattr(scan_config, "scan_stage_extension_mm", None)
+def get_laser_scan_stage_extension_mm(scan_config: Any) -> float:
+	configured_value = getattr(scan_config, "laser_scan_stage_extension_mm", None)
 
 	if configured_value is None:
 		return LASER_SCAN_STAGE_EXTENSION_MM
 
-	return validate_finite_value(configured_value, "robot.grid.scan.scan_stage_extension_mm")
+	return validate_finite_value(configured_value, "robot.grid.scan.laser_scan_stage_extension_mm")
 
 
-def get_scan_z_offset_mm(scan_config: Any) -> float:
-	configured_value = getattr(scan_config, "scan_z_offset_mm", None)
+def get_laser_scan_z_offset_from_place_mm(scan_config: Any) -> float:
+	configured_value = getattr(
+		scan_config,
+		"laser_scan_z_offset_from_place_mm",
+		None,
+	)
 
 	if configured_value is None:
 		return LASER_SCAN_Z_OFFSET_MM
 
-	return validate_finite_value(configured_value, "robot.grid.scan.scan_z_offset_mm")
+	return validate_finite_value(
+		configured_value,
+		"robot.grid.scan.laser_scan_z_offset_from_place_mm",
+	)
+
+
+def get_laser_sample_settle_ms(scan_config: Any) -> int:
+	return int(scan_config.laser_sample_settle_ms)
+
+
+def get_laser_samples_per_point(scan_config: Any) -> int:
+	return int(scan_config.laser_samples_per_point)
 
 
 def get_scan_reference(
@@ -322,8 +341,8 @@ def validate_laser_structure_parameters(
 		raise ValueError("xy_reference y_mm resolves outside scan Y bounds")
 
 
-def get_shelf_hole_sweep_offsets_mm(scan_config: Any) -> list[float]:
-	configured_offsets = getattr(scan_config, "shelf_hole_sweep_offsets_mm", None)
+def get_shelf_hole_probe_y_offsets_mm(scan_config: Any) -> list[float]:
+	configured_offsets = getattr(scan_config, "shelf_hole_probe_y_offsets_mm", None)
 
 	if configured_offsets is None:
 		return [SHELF_HOLE_SWEEP_OFFSET_MM]
@@ -337,8 +356,8 @@ def get_shelf_hole_sweep_offsets_mm(scan_config: Any) -> list[float]:
 	]
 
 
-def get_fine_scan_margin_y_mm(scan_config: Any) -> float:
-	configured_margin_mm = getattr(scan_config, "fine_scan_margin_y_mm", None)
+def get_fine_cell_scan_y_margin_mm(scan_config: Any) -> float:
+	configured_margin_mm = getattr(scan_config, "fine_cell_scan_y_margin_mm", None)
 
 	if configured_margin_mm is None:
 		return FINE_SCAN_MARGIN_Y_MM
@@ -633,6 +652,7 @@ def build_run_parameters(
 		step_mm=step_mm,
 		settle_ms=settle_ms,
 		samples_per_point=samples_per_point,
+		should_validate_point_count=False,
 	)
 	validate_laser_structure_parameters(
 		scan_config=scan_config,
@@ -643,9 +663,9 @@ def build_run_parameters(
 	z_reference = get_scan_z_reference(scan_config=scan_config, side=side)
 	z_delta = get_scan_z_delta(scan_config=scan_config, side=side)
 	xy_reference = get_scan_xy_reference(scan_config=scan_config, side=side)
-	hole_sweep_offsets_mm = get_shelf_hole_sweep_offsets_mm(scan_config)
-	scan_stage_extension_mm = get_scan_stage_extension_mm(scan_config)
-	scan_z_offset_mm = get_scan_z_offset_mm(scan_config)
+	hole_probe_y_offsets_mm = get_shelf_hole_probe_y_offsets_mm(scan_config)
+	laser_scan_stage_extension_mm = get_laser_scan_stage_extension_mm(scan_config)
+	laser_scan_z_offset_from_place_mm = get_laser_scan_z_offset_from_place_mm(scan_config)
 	laser_offset_x_mm, laser_offset_y_mm = require_laser_offsets(scan_config)
 
 	return {
@@ -684,13 +704,13 @@ def build_run_parameters(
 			"coarse_step_mm": COARSE_SCAN_STEP_MM,
 			"shelf_scout_step_mm": SHELF_SCOUT_STEP_MM,
 			"shelf_sweep_x_step_mm": SHELF_SWEEP_X_STEP_MM,
-			"shelf_hole_sweep_offsets_mm": list(hole_sweep_offsets_mm),
+			"shelf_hole_probe_y_offsets_mm": list(hole_probe_y_offsets_mm),
 			"settle_ms": settle_ms,
 			"samples_per_point": samples_per_point,
 			"coarse_settle_ms": coarse_settle_ms,
 			"coarse_samples_per_point": coarse_samples_per_point,
-			"laser_scan_stage_extension_mm": scan_stage_extension_mm,
-			"laser_scan_z_offset_mm": scan_z_offset_mm,
+			"laser_scan_stage_extension_mm": laser_scan_stage_extension_mm,
+			"laser_scan_z_offset_from_place_mm": laser_scan_z_offset_from_place_mm,
 			"laser_offset_x_mm": laser_offset_x_mm,
 			"laser_offset_y_mm": laser_offset_y_mm,
 			"z_reference": {
@@ -1095,7 +1115,7 @@ async def get_laser_scan_z_extension_mm(tool: Any, scan_config: Any) -> float:
 	if z_extension_place is None:
 		raise ValueError("Z_EXTENSION_PLACE parameter is not configured")
 
-	return float(z_extension_place) + get_scan_z_offset_mm(scan_config)
+	return float(z_extension_place) + get_laser_scan_z_offset_from_place_mm(scan_config)
 
 
 async def ensure_scan_tool_ready(tool: Any) -> None:
@@ -1138,7 +1158,7 @@ async def enter_scan_mode(tool: Any, side: StorageModuleSide, scan_config: Any) 
 		side_number = 1
 		target_position = "back"
 
-	stage_extension_mm = get_scan_stage_extension_mm(scan_config)
+	stage_extension_mm = get_laser_scan_stage_extension_mm(scan_config)
 	z_extension_mm = await get_laser_scan_z_extension_mm(tool, scan_config)
 	z_move_rpm = await tool.get_param("Z_MOVE_RPM")
 	z_move_accel = await tool.get_param("Z_MOVE_ACCEL")
@@ -1248,7 +1268,7 @@ async def capture_shelf_candidates(
 	scout_x_positions = build_shelf_scout_x_positions(bounds=bounds, side=side)
 	scout_y_positions = list(reversed(build_axis_positions(bounds.y_min, bounds.y_max, SHELF_SCOUT_STEP_MM)))
 	hole_sweep_x_positions = build_axis_positions(bounds.x_min, bounds.x_max, SHELF_SWEEP_X_STEP_MM)
-	hole_sweep_offsets_mm = get_shelf_hole_sweep_offsets_mm(scan_config)
+	hole_probe_y_offsets_mm = get_shelf_hole_probe_y_offsets_mm(scan_config)
 	shelf_edges: list[ShelfSurfaceEdge] = []
 	horizontal_wall_depth_values: list[list[float | None]] = []
 	candidates: list[GapCandidateRegion] = []
@@ -1345,7 +1365,7 @@ async def capture_shelf_candidates(
 
 	for shelf_idx, shelf_edge in enumerate(filtered_shelf_edges, start=1):
 		raise_if_cancelled(should_abort)
-		for offset_idx, offset_mm in enumerate(hole_sweep_offsets_mm, start=1):
+		for offset_idx, offset_mm in enumerate(hole_probe_y_offsets_mm, start=1):
 			raise_if_cancelled(should_abort)
 			sweep_y_mm = shelf_edge.y_mm + offset_mm
 
@@ -1354,7 +1374,7 @@ async def capture_shelf_candidates(
 
 			print_status(
 				f"phase=shelf-hole-scan shelf={shelf_idx}/{len(filtered_shelf_edges)} "
-				f"offset={offset_idx}/{len(hole_sweep_offsets_mm)} y={sweep_y_mm:.2f}"
+				f"offset={offset_idx}/{len(hole_probe_y_offsets_mm)} y={sweep_y_mm:.2f}"
 			)
 			sweep_depth_values = await scan_line_positions(
 				tool,
@@ -1380,7 +1400,7 @@ async def capture_shelf_candidates(
 					"shelf_idx": shelf_idx,
 					"shelf_count": len(filtered_shelf_edges),
 					"offset_idx": offset_idx,
-					"offset_count": len(hole_sweep_offsets_mm),
+					"offset_count": len(hole_probe_y_offsets_mm),
 					"y_position": sweep_y_mm,
 				},
 			)
@@ -1666,9 +1686,9 @@ def build_fine_scan_bounds(
 	overall_bounds: ScanBounds,
 	scan_config: Any,
 ) -> ScanBounds:
-	fine_scan_margin_y_mm = get_fine_scan_margin_y_mm(scan_config)
+	fine_cell_scan_y_margin_mm = get_fine_cell_scan_y_margin_mm(scan_config)
 	y_margin_mm = max(
-		fine_scan_margin_y_mm + 10.0,
+		fine_cell_scan_y_margin_mm + 10.0,
 		(scan_config.expected_hole_height_mm / 2.0) + 12.0,
 	)
 
@@ -2939,6 +2959,13 @@ async def capture_cross_scan(
 	on_update: Optional[Callable[[GridScanResult, str, float], None]] = None,
 	should_abort: Callable[[], bool] | None = None,
 ) -> tuple[GridScanResult, list[ScanDetectedCell]]:
+	validate_scan_plan(
+		bounds=bounds,
+		step_mm=step_mm,
+		settle_ms=settle_ms,
+		samples_per_point=samples_per_point,
+		label="fine cell scan",
+	)
 	fine_scan = create_empty_grid_scan(
 		bounds=bounds,
 		step_mm=step_mm,
@@ -3202,6 +3229,7 @@ async def run_staged_scan(
 		step_mm=fine_step_mm,
 		settle_ms=settle_ms,
 		samples_per_point=samples_per_point,
+		should_validate_point_count=False,
 	)
 	validate_laser_structure_parameters(
 		scan_config=scan_config,
@@ -3926,8 +3954,8 @@ def build_single_shelf_known_edge_y(
 	if len(candidate_center_y_values) == 0:
 		raise ValueError(f"Shelf {shelf_idx} has no calibration points on {side.value}")
 
-	hole_sweep_offsets_mm = get_shelf_hole_sweep_offsets_mm(scan_config)
-	reference_offset_mm = float(hole_sweep_offsets_mm[0])
+	hole_probe_y_offsets_mm = get_shelf_hole_probe_y_offsets_mm(scan_config)
+	reference_offset_mm = float(hole_probe_y_offsets_mm[0])
 	target_center_y_mm = float(np.median(np.array(candidate_center_y_values, dtype=np.float32)))
 
 	return [target_center_y_mm - reference_offset_mm]

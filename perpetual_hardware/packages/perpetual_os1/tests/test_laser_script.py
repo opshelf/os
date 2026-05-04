@@ -24,8 +24,8 @@ def build_config():
 		robot=SimpleNamespace(
 			grid=SimpleNamespace(
 				scan=SimpleNamespace(
-					settle_ms=40,
-					samples_per_point=3,
+					laser_sample_settle_ms=40,
+					laser_samples_per_point=3,
 					laser_offset_x_mm=51.0,
 					laser_offset_y_mm=0.0,
 					wall_depth_tolerance_mm=2.0,
