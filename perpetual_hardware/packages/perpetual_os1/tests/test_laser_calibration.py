@@ -15,6 +15,7 @@ from perpetual_os1.laser_calibration import (
 	build_single_cell_rescan_candidate,
 	build_run_parameters,
 	capture_shelf_candidates,
+	enter_scan_mode,
 	find_first_positive_run_segment,
 	find_gap_run_containing_position,
 	GapCandidateRegion,
@@ -25,6 +26,7 @@ from perpetual_os1.laser_calibration import (
 	run_staged_scan,
 	run_with_temp_robot_config,
 	scan_shelf_scout_line,
+	RIGHT_MODULE_ROTATION_SAFE_X_MM,
 	SingleCellRescanTarget,
 )
 from perpetual_os1.laser_scan import ScanBounds
@@ -251,6 +253,46 @@ async def test_scan_shelf_scout_line_passes_abort_to_gantry_wait() -> None:
 		)
 
 	assert gantry_wait.await_args.kwargs['should_abort'] is not None
+
+
+@pytest.mark.asyncio
+async def test_enter_scan_mode_uses_safe_x_for_right_module() -> None:
+	params = {
+		"SCAN_POSITION": [900.0, 1200.0],
+		"Z_EXTENSION_PLACE": 100.0,
+		"Z_MOVE_RPM": 50.0,
+		"Z_MOVE_ACCEL": 60.0,
+		"ROTATION_FRONT": 0.0,
+		"ROTATION_BACK": 180.0,
+	}
+	tool = SimpleNamespace(
+		_laser_enabled=True,
+		_laser=object(),
+		_mx=object(),
+		_my=object(),
+		_mr=SimpleNamespace(get_position=AsyncMock(return_value=180.0)),
+		_ms=SimpleNamespace(ready=AsyncMock(), move_to_position=AsyncMock()),
+		_mg=SimpleNamespace(move_to_position=AsyncMock()),
+		get_param=AsyncMock(side_effect=lambda name: params[name]),
+		retract=AsyncMock(),
+		move=AsyncMock(),
+		rotate_to_position=AsyncMock(),
+	)
+
+	await enter_scan_mode(
+		tool,
+		side=StorageModuleSide.RIGHT,
+		scan_config=SimpleNamespace(),
+	)
+
+	first_move = tool.move.await_args_list[0].args[0]
+	second_move = tool.move.await_args_list[1].args[0]
+	assert first_move.x == pytest.approx(RIGHT_MODULE_ROTATION_SAFE_X_MM)
+	assert first_move.y == pytest.approx(1200.0)
+	assert first_move.s == 1
+	assert second_move.x == pytest.approx(900.0)
+	assert second_move.y == pytest.approx(1200.0)
+	assert second_move.s == 1
 
 
 @pytest.mark.asyncio
