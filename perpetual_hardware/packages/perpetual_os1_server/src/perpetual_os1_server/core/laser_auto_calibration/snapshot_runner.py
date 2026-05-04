@@ -279,7 +279,7 @@ class SnapshotRunnerMixin:
     @asynccontextmanager
     async def _patch_status_callbacks(self, scan_callback=None, angle_callback=None):
         original_scan_print = laser_module.print_status
-        original_angle_print = angle_module.print_status
+        previous_angle_printer: Any = angle_module.print_status
         pending_task: asyncio.Task[None] | None = None
 
         def didSchedule(callback: Any, message: str) -> None:
@@ -302,19 +302,19 @@ class SnapshotRunnerMixin:
                 didSchedule(scan_callback, message)
 
         def did_print_angle(message: str) -> None:
-            original_angle_print(message)
+            previous_angle_printer(message)
 
             if angle_callback is not None:
                 didSchedule(angle_callback, message)
 
         laser_module.print_status = did_print_scan
-        angle_module.print_status = did_print_angle
+        previous_angle_printer = angle_module.set_status_printer(did_print_angle)
 
         try:
             yield
         finally:
             laser_module.print_status = original_scan_print
-            angle_module.print_status = original_angle_print
+            angle_module.set_status_printer(previous_angle_printer)
 
             if pending_task is not None:
                 current_task = asyncio.current_task()
