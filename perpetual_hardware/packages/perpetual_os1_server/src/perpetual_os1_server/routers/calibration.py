@@ -19,7 +19,7 @@ from perpetual_os1.storage import (
 	StorageModuleCellLocation,
 	StorageModuleSide,
 )
-from perpetual_os1.exceptions import IOBoxError, MotorError
+from perpetual_os1.exceptions import IOBoxError, MotorError, ToolError
 from hardware.exceptions import MotorError as HardwareMotorError
 
 from perpetual_os1_server.core.robot import get_robot_worker
@@ -332,7 +332,7 @@ async def _raise_motor_error(
 	worker.set_needs_home(message, axes=axes)
 	await worker.get_status_snapshot(force_refresh=True)
 	raise HTTPException(
-		status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+		status_code=status.HTTP_409_CONFLICT,
 		detail=_build_error_detail(
 			message,
 			code="motor_fault",
@@ -939,7 +939,7 @@ async def test_gripper(request: TestRequest):
 	try:
 		await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
 		await tool.retract()
-	except (MotorError, HardwareMotorError) as e:
+	except (MotorError, HardwareMotorError, ToolError) as e:
 		await _raise_motor_error(worker, f"Failed to retract: {str(e)}", e)
 
 	coord = coordinate
@@ -954,7 +954,7 @@ async def test_gripper(request: TestRequest):
 	try:
 		await tool.pick(coord)
 		await tool.place(coord)
-	except (MotorError, HardwareMotorError) as e:
+	except (MotorError, HardwareMotorError, ToolError) as e:
 		await _raise_motor_error(worker, f"Test failed: {str(e)}", e)
 
 	return {"success": True}
@@ -1013,7 +1013,7 @@ async def test_cycle(request: TestRequest):
 			grid.clear_item(location)
 
 		grid.save()
-	except (MotorError, HardwareMotorError) as e:
+	except (MotorError, HardwareMotorError, ToolError) as e:
 		await _raise_motor_error(worker, f"Cycle test failed: {str(e)}", e)
 	except Exception as exc:
 		raise HTTPException(
