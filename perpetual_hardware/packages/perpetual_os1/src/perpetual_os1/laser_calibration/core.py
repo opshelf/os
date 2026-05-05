@@ -236,44 +236,27 @@ def get_scan_reference(
 	*,
 	scan_config: Any,
 	side: StorageModuleSide,
+	reference_kind: str,
 ) -> Any:
 	prefix = "left" if side == StorageModuleSide.LEFT else "right"
-
-	if side == StorageModuleSide.LEFT:
-		configured_reference = getattr(scan_config, "left_reference", None)
-	else:
-		configured_reference = getattr(scan_config, "right_reference", None)
+	field_name = f"{prefix}_{reference_kind}_reference"
+	configured_reference = getattr(scan_config, field_name, None)
 
 	if configured_reference is None:
-		raise ValueError(f"robot.grid.scan.{prefix}_reference must be configured for laser calibration")
+		legacy_field_name = f"{prefix}_reference"
+		configured_reference = getattr(scan_config, legacy_field_name, None)
+
+	if configured_reference is None:
+		raise ValueError(f"robot.grid.scan.{field_name} must be configured for laser calibration")
 
 	try:
 		shelf_idx = int(configured_reference.shelf_idx)
 		cell_idx = int(configured_reference.cell_idx)
 	except (TypeError, ValueError) as exc:
-		raise ValueError(f"robot.grid.scan.{prefix}_reference shelf_idx and cell_idx must be integers") from exc
+		raise ValueError(f"robot.grid.scan.{field_name} shelf_idx and cell_idx must be integers") from exc
 
 	if shelf_idx < 0 or cell_idx < 0:
-		raise ValueError(f"robot.grid.scan.{prefix}_reference shelf_idx and cell_idx must be zero or greater")
-
-	anchor = str(configured_reference.anchor)
-
-	if anchor not in {"top_right", "top_left", "bottom_right", "bottom_left"}:
-		raise ValueError(f"robot.grid.scan.{prefix}_reference.anchor is invalid")
-
-	validate_finite_value(configured_reference.x_mm, f"robot.grid.scan.{prefix}_reference.x_mm")
-	validate_finite_value(configured_reference.y_mm, f"robot.grid.scan.{prefix}_reference.y_mm")
-	validate_finite_value(
-		configured_reference.z_offset_mm,
-		f"robot.grid.scan.{prefix}_reference.z_offset_mm",
-	)
-	wall_depth_mm = validate_finite_value(
-		configured_reference.wall_depth_mm,
-		f"robot.grid.scan.{prefix}_reference.wall_depth_mm",
-	)
-
-	if wall_depth_mm <= 0.0:
-		raise ValueError(f"robot.grid.scan.{prefix}_reference.wall_depth_mm must be greater than zero")
+		raise ValueError(f"robot.grid.scan.{field_name} shelf_idx and cell_idx must be zero or greater")
 
 	return configured_reference
 
@@ -284,13 +267,26 @@ def get_scan_z_reference(
 	scan_config: Any,
 	side: StorageModuleSide,
 ) -> tuple[int, int, float, float]:
-	configured_reference = get_scan_reference(scan_config=scan_config, side=side)
+	configured_reference = get_scan_reference(scan_config=scan_config, side=side, reference_kind="z")
+	prefix = "left" if side == StorageModuleSide.LEFT else "right"
+	field_name = f"{prefix}_z_reference"
+	z_offset_mm = validate_finite_value(
+		configured_reference.z_offset_mm,
+		f"robot.grid.scan.{field_name}.z_offset_mm",
+	)
+	stage_extension_mm = validate_finite_value(
+		getattr(configured_reference, "stage_extension_mm", 43.0),
+		f"robot.grid.scan.{field_name}.stage_extension_mm",
+	)
+
+	if stage_extension_mm < 0.0:
+		raise ValueError(f"robot.grid.scan.{field_name}.stage_extension_mm must be zero or greater")
 
 	return (
 		int(configured_reference.shelf_idx),
 		int(configured_reference.cell_idx),
-		float(configured_reference.z_offset_mm),
-		float(configured_reference.wall_depth_mm),
+		z_offset_mm,
+		stage_extension_mm,
 	)
 
 
@@ -299,13 +295,28 @@ def get_scan_z_delta(
 	*,
 	scan_config: Any,
 	side: StorageModuleSide,
+	reference_wall_depth_mm: float,
+	current_stage_extension_mm: float,
 ) -> dict[str, Any]:
 	reference = get_scan_z_reference(scan_config=scan_config, side=side)
+	validated_reference_wall_depth_mm = validate_finite_value(
+		reference_wall_depth_mm,
+		"reference_wall_depth_mm",
+	)
+	validated_current_stage_extension_mm = validate_finite_value(
+		current_stage_extension_mm,
+		"current_stage_extension_mm",
+	)
+
+	if validated_reference_wall_depth_mm <= 0.0:
+		raise ValueError("reference_wall_depth_mm must be greater than zero")
 
 	return {
-		"delta_mm": float(reference[2]) - float(reference[3]),
+		"delta_mm": float(reference[2]) - validated_reference_wall_depth_mm + (float(reference[3]) - validated_current_stage_extension_mm),
 		"source": "reference",
 		"reference": reference,
+		"reference_wall_depth_mm": validated_reference_wall_depth_mm,
+		"current_stage_extension_mm": validated_current_stage_extension_mm,
 	}
 
 
@@ -315,7 +326,19 @@ def get_scan_xy_reference(
 	scan_config: Any,
 	side: StorageModuleSide,
 ) -> Any:
-	return get_scan_reference(scan_config=scan_config, side=side)
+	configured_reference = get_scan_reference(scan_config=scan_config, side=side, reference_kind="xy")
+	prefix = "left" if side == StorageModuleSide.LEFT else "right"
+	field_name = f"{prefix}_xy_reference"
+
+	anchor = str(configured_reference.anchor)
+
+	if anchor not in {"top_right", "top_left", "bottom_right", "bottom_left"}:
+		raise ValueError(f"robot.grid.scan.{field_name}.anchor is invalid")
+
+	validate_finite_value(configured_reference.x_mm, f"robot.grid.scan.{field_name}.x_mm")
+	validate_finite_value(configured_reference.y_mm, f"robot.grid.scan.{field_name}.y_mm")
+
+	return configured_reference
 
 
 
@@ -330,8 +353,8 @@ def validate_laser_structure_parameters(
 	z_reference = get_scan_z_reference(scan_config=scan_config, side=side)
 	xy_reference = get_scan_xy_reference(scan_config=scan_config, side=side)
 
-	if abs(float(z_reference[2]) - float(z_reference[3])) > MAX_LASER_OFFSET_ABS_MM:
-		raise ValueError("laser z_reference delta is outside the plausible +/-1000 mm range")
+	if abs(float(z_reference[2])) > MAX_LASER_OFFSET_ABS_MM:
+		raise ValueError("laser z_reference z_offset_mm is outside the plausible +/-1000 mm range")
 
 	if bounds is None or should_validate_reference_bounds is False:
 		return

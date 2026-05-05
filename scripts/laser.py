@@ -87,6 +87,15 @@ def normalize_module(raw_module: str) -> StorageModuleSide:
 	return StorageModuleSide.RIGHT
 
 
+def get_current_shelf_stage_extension_mm(config: Any, side: StorageModuleSide) -> float:
+	parameters = config.robot.tool.parameters
+
+	if side == StorageModuleSide.LEFT:
+		return float(getattr(parameters, 'STAGE_EXTENSION_SHELF_FRONT', 43.0))
+
+	return float(getattr(parameters, 'STAGE_EXTENSION_SHELF_BACK', 43.0))
+
+
 def parse_single_cell_rescan_target(
 	raw_value: str | None,
 ) -> laser_module.SingleCellRescanTarget | None:
@@ -697,10 +706,15 @@ async def run_scan(args: argparse.Namespace) -> int:
 			) is False:
 				raise ValueError('--rescan-cell target is outside the provided scan bounds')
 
+			wall_depth_label = (
+				f'{float(rescan_candidate.wall_depth_mm):.2f}'
+				if rescan_candidate.wall_depth_mm is not None
+				else 'scan-estimated'
+			)
 			laser_module.print_status(
 				f'single_cell_rescan=target:{rescan_target.shelf_idx}:{rescan_target.cell_idx} '
 				f'center_x={candidate_center_x_mm:.2f} center_y={candidate_center_y_mm:.2f} '
-				f'wall_depth_mm={float(rescan_candidate.wall_depth_mm):.2f}'
+				f'wall_depth_mm={wall_depth_label}'
 			)
 		else:
 			bounds = derive_bounds(args)
@@ -726,7 +740,11 @@ async def run_scan(args: argparse.Namespace) -> int:
 					'x_max': float(rescan_candidate.x_max),
 					'y_min': float(rescan_candidate.y_min),
 					'y_max': float(rescan_candidate.y_max),
-					'wall_depth_mm': float(rescan_candidate.wall_depth_mm),
+					'wall_depth_mm': (
+						float(rescan_candidate.wall_depth_mm)
+						if rescan_candidate.wall_depth_mm is not None
+						else None
+					),
 				},
 			}
 
@@ -854,6 +872,7 @@ async def run_scan(args: argparse.Namespace) -> int:
 				detected_cell=matched_cell,
 				wall_depth_mm=float(analysis.wall_depth_mm),
 				scan_config=scan_config,
+				current_stage_extension_mm=get_current_shelf_stage_extension_mm(config, side),
 			)
 		else:
 			laser_module.apply_analysis(
@@ -862,6 +881,7 @@ async def run_scan(args: argparse.Namespace) -> int:
 				grid_path=grid_path,
 				scan_config=scan_config,
 				side=side,
+				current_stage_extension_mm=get_current_shelf_stage_extension_mm(config, side),
 			)
 
 	print_analysis(analysis)

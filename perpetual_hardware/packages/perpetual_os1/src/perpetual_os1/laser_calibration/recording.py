@@ -29,7 +29,6 @@ def build_run_parameters(
 		should_validate_reference_bounds=getattr(args, "rescan_cell", None) is None,
 	)
 	z_reference = get_scan_z_reference(scan_config=scan_config, side=side)
-	z_delta = get_scan_z_delta(scan_config=scan_config, side=side)
 	xy_reference = get_scan_xy_reference(scan_config=scan_config, side=side)
 	hole_probe_y_offsets_mm = get_shelf_hole_probe_y_offsets_mm(scan_config)
 	laser_scan_stage_extension_mm = get_laser_scan_stage_extension_mm(scan_config)
@@ -85,10 +84,8 @@ def build_run_parameters(
 				"shelf_idx": z_reference[0],
 				"cell_idx": z_reference[1],
 				"z_offset_mm": z_reference[2],
-				"wall_depth_mm": z_reference[3],
+				"stage_extension_mm": z_reference[3],
 			},
-			"z_delta_mm": float(z_delta["delta_mm"]),
-			"z_delta_source": str(z_delta["source"]),
 			"xy_reference": {
 				"anchor": str(xy_reference.anchor),
 				"x_mm": float(xy_reference.x_mm),

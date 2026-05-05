@@ -16,6 +16,7 @@ from perpetual_os1.laser_calibration import (
 	build_run_parameters,
 	capture_shelf_candidates,
 	enter_scan_mode,
+	estimate_seeded_candidate_wall_depths,
 	find_first_positive_run_segment,
 	find_gap_segments_in_line,
 	find_gap_run_containing_position,
@@ -588,7 +589,7 @@ def test_apply_xy_reference_offsets_uses_physical_top_left_for_right_side() -> N
 
 
 def test_apply_xy_reference_offsets_requires_reference() -> None:
-	with pytest.raises(ValueError, match='robot.grid.scan.left_reference must be configured'):
+	with pytest.raises(ValueError, match='robot.grid.scan.left_xy_reference must be configured'):
 		apply_xy_reference_offsets(
 			scanned_shelves=[],
 			scan_config=SimpleNamespace(left_reference=None),
@@ -610,7 +611,7 @@ def test_build_single_cell_rescan_candidate_requires_z_reference() -> None:
 		left_reference=None,
 	)
 
-	with pytest.raises(ValueError, match='robot.grid.scan.left_reference must be configured'):
+	with pytest.raises(ValueError, match='robot.grid.scan.left_z_reference must be configured'):
 		build_single_cell_rescan_candidate(
 			grid=grid,
 			side=StorageModuleSide.LEFT,
@@ -665,9 +666,9 @@ def test_build_single_cell_rescan_candidate_rejects_invalid_offset_value() -> No
 		)
 
 
-def test_build_single_cell_rescan_candidate_rejects_invalid_z_reference_value() -> None:
+def test_build_single_cell_rescan_candidate_allows_scan_estimated_wall_depth() -> None:
 	target_cell = SimpleNamespace(
-		calibration_point=SimpleNamespace(x=100.0, y=200.0, z_offset=8.5),
+		calibration_point=SimpleNamespace(x=100.0, y=200.0, z_offset=0.0),
 	)
 	target_shelf = SimpleNamespace(get_cell=lambda cell_idx: target_cell)
 	grid = SimpleNamespace(get_shelf=lambda side, shelf_idx: target_shelf)
@@ -676,16 +677,17 @@ def test_build_single_cell_rescan_candidate_rejects_invalid_z_reference_value() 
 		laser_offset_y_mm=0.0,
 		expected_hole_width_mm=26.0,
 		expected_hole_height_mm=30.0,
-		left_reference=SimpleNamespace(shelf_idx=12, cell_idx=0, anchor='top_right', x_mm=0.0, y_mm=0.0, z_offset_mm=15.0, wall_depth_mm=0.0),
+		left_reference=SimpleNamespace(shelf_idx=12, cell_idx=0, anchor='top_right', x_mm=0.0, y_mm=0.0, z_offset_mm=15.0),
 	)
 
-	with pytest.raises(ValueError, match='wall_depth_mm must be greater than zero'):
-		build_single_cell_rescan_candidate(
-			grid=grid,
-			side=StorageModuleSide.LEFT,
-			target=SingleCellRescanTarget(shelf_idx=1, cell_idx=2),
-			scan_config=scan_config,
-		)
+	candidate = build_single_cell_rescan_candidate(
+		grid=grid,
+		side=StorageModuleSide.LEFT,
+		target=SingleCellRescanTarget(shelf_idx=1, cell_idx=2),
+		scan_config=scan_config,
+	)
+
+	assert candidate.wall_depth_mm is None
 
 
 def test_build_run_parameters_allows_rescan_bounds_away_from_xy_reference() -> None:
@@ -822,7 +824,7 @@ def test_load_continue_scan_context_reads_latest_incomplete_run(tmp_path: Path) 
 	assert coarse_samples_per_point == 2
 
 
-def test_build_single_cell_rescan_candidate_uses_target_point_and_z_delta() -> None:
+def test_build_single_cell_rescan_candidate_uses_target_point_without_z_depth_seed() -> None:
 	target_cell = SimpleNamespace(
 		calibration_point=SimpleNamespace(x=100.0, y=200.0, z_offset=8.5),
 	)
@@ -848,7 +850,43 @@ def test_build_single_cell_rescan_candidate_uses_target_point_and_z_delta() -> N
 	assert candidate.x_max == pytest.approx(62.0)
 	assert candidate.y_min == pytest.approx(185.0)
 	assert candidate.y_max == pytest.approx(215.0)
-	assert candidate.wall_depth_mm == pytest.approx(2.5)
+	assert candidate.wall_depth_mm is None
+
+
+@pytest.mark.asyncio
+async def test_estimate_seeded_candidate_wall_depth_initializes_empty_coarse_scan() -> None:
+	candidate = GapCandidateRegion(
+		x_min=12.0,
+		x_max=28.0,
+		y_min=20.0,
+		y_max=40.0,
+		wall_depth_mm=None,
+	)
+	coarse_scan = GridScanResult(x_positions=[], y_positions=[], depth_rows=[])
+	scan_config = SimpleNamespace(
+		expected_hole_width_mm=26.0,
+		hole_width_tolerance_mm=4.0,
+		wall_depth_tolerance_mm=1.0,
+	)
+
+	async def didScanLinePositions(*args, **kwargs):
+		positions = kwargs['positions']
+		return [10.0 if position < 12.0 or position > 32.0 else 0.0 for position in positions]
+
+	with patch('perpetual_os1.laser_calibration.staged_scan.scan_line_positions', side_effect=didScanLinePositions):
+		await estimate_seeded_candidate_wall_depths(
+			SimpleNamespace(),
+			bounds=ScanBounds(x_min=0.0, x_max=40.0, y_min=0.0, y_max=60.0),
+			candidates=[candidate],
+			settle_ms=0,
+			samples_per_point=1,
+			scan_config=scan_config,
+			coarse_scan=coarse_scan,
+		)
+
+	assert candidate.wall_depth_mm == pytest.approx(10.0)
+	assert len(coarse_scan.x_positions) > 0
+	assert len(coarse_scan.y_positions) > 0
 
 
 def test_build_single_shelf_known_edge_y_uses_calibrated_cells() -> None:
@@ -899,7 +937,7 @@ def test_apply_single_cell_rescan_updates_target_cell_and_saves_grid() -> None:
 
 	assert calibration_point.x == pytest.approx(123.0)
 	assert calibration_point.y == pytest.approx(456.0)
-	assert calibration_point.z_offset == pytest.approx(11.5)
+	assert calibration_point.z_offset == pytest.approx(3.0)
 	grid.save.assert_called_once_with()
 
 
@@ -949,15 +987,25 @@ def test_apply_single_shelf_analysis_replaces_only_target_shelf(tmp_path: Path) 
 	)
 
 	with patch('perpetual_os1.laser_calibration.build_shelves_from_scan', return_value=[scanned_shelf]):
-		with patch('perpetual_os1.laser_calibration.apply_wall_depth_z_offsets'):
-			apply_single_shelf_analysis(
-				analysis=analysis,
-				grid=grid,
-				grid_path=grid_path,
-				scan_config=SimpleNamespace(),
-				side=StorageModuleSide.LEFT,
-				target_shelf_idx=1,
-			)
+		with patch('perpetual_os1.laser_calibration.staged_scan.apply_xy_reference_offsets') as apply_xy_reference_offsets_mock:
+			with patch('perpetual_os1.laser_calibration.apply_wall_depth_z_offsets'):
+				apply_single_shelf_analysis(
+					analysis=analysis,
+					grid=grid,
+					grid_path=grid_path,
+					scan_config=SimpleNamespace(
+						left_xy_reference=SimpleNamespace(
+							shelf_idx=0,
+							cell_idx=0,
+							anchor='top_left',
+							x_mm=10.0,
+							y_mm=20.0,
+						),
+					),
+					side=StorageModuleSide.LEFT,
+					target_shelf_idx=1,
+				)
+		apply_xy_reference_offsets_mock.assert_not_called()
 
 	updated_grid = StorageGrid.load_from_file(str(grid_path))
 

@@ -575,28 +575,17 @@ def build_single_cell_rescan_candidate(
 	candidate_center_y_mm = float(target_cell.calibration_point.y) + laser_offset_y_mm
 	half_width_mm = float(scan_config.expected_hole_width_mm) / 2.0
 	half_height_mm = float(scan_config.expected_hole_height_mm) / 2.0
-	z_delta = get_scan_z_delta(
+	get_scan_z_reference(
 		scan_config=scan_config,
 		side=side,
 	)
-	wall_depth_mm = float(target_cell.calibration_point.z_offset) - float(z_delta["delta_mm"])
-
-	if wall_depth_mm <= 0:
-		z_reference = get_scan_z_reference(
-			scan_config=scan_config,
-			side=side,
-		)
-		wall_depth_mm = float(z_reference[3])
-
-	if wall_depth_mm <= 0:
-		raise ValueError("Cannot resolve wall depth for --rescan-cell target")
 
 	return GapCandidateRegion(
 		x_min=candidate_center_x_mm - half_width_mm,
 		x_max=candidate_center_x_mm + half_width_mm,
 		y_min=candidate_center_y_mm - half_height_mm,
 		y_max=candidate_center_y_mm + half_height_mm,
-		wall_depth_mm=wall_depth_mm,
+		wall_depth_mm=None,
 		wall_sample_count=1,
 	)
 
