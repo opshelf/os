@@ -145,7 +145,10 @@ class StageRunnerMixin:
                     f"stage extension probe reached limit without stall at {stage_position_mm:.3f} mm"
                 )
 
-            calibrated_stage_extension_mm = max(0.0, float(math.floor(stage_position_mm)))
+            calibrated_stage_extension_mm = max(
+                0.0,
+                float(math.floor(stage_position_mm)) - STAGE_EXTENSION_STALL_BACKOFF_MM,
+            )
             self._raise_if_abort_requested()
             await tool._ms.move_to_position(calibrated_stage_extension_mm, rpm=probe_rpm)
             await self._update_snapshot(
@@ -163,6 +166,7 @@ class StageRunnerMixin:
                     "stall_status": status,
                     "alarm_code": alarm_code,
                     "stall_stage_mm": float(stage_position_mm),
+                    "stage_backoff_mm": STAGE_EXTENSION_STALL_BACKOFF_MM,
                     "calibrated_stage_extension_mm": calibrated_stage_extension_mm,
                 },
             )
