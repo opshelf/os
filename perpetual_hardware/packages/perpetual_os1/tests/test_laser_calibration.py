@@ -17,6 +17,7 @@ from perpetual_os1.laser_calibration import (
 	capture_shelf_candidates,
 	enter_scan_mode,
 	find_first_positive_run_segment,
+	find_gap_segments_in_line,
 	find_gap_run_containing_position,
 	GapCandidateRegion,
 	get_scanned_anchor_cell,
@@ -69,6 +70,28 @@ def test_laser_scan_config_rejects_legacy_field_names() -> None:
 				},
 			}
 		)
+
+
+def test_find_gap_segments_in_line_matches_expected_hole_width() -> None:
+	positions = [float(idx * 4) for idx in range(12)]
+	values = [10.0, 10.0, 10.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 10.0, 10.0, 10.0]
+	scan_config = SimpleNamespace(
+		expected_hole_width_mm=26.0,
+		hole_width_tolerance_mm=2.0,
+		wall_depth_tolerance_mm=1.0,
+	)
+
+	wall_depth_mm, segments = find_gap_segments_in_line(
+		values=values,
+		positions=positions,
+		step_mm=4.0,
+		scan_config=scan_config,
+	)
+
+	assert wall_depth_mm == pytest.approx(10.0)
+	assert len(segments) == 1
+	assert segments[0].width_mm == pytest.approx(24.0)
+
 
 @pytest.mark.asyncio
 async def test_run_staged_scan_skips_retract_when_cancelled(tmp_path: Path) -> None:
