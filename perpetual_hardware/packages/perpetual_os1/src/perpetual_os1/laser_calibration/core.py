@@ -121,6 +121,14 @@ def require_scan_config_parameter(scan_config: Any, parameter_name: str) -> floa
 	return validate_finite_value(configured_value, f"robot.grid.scan.{parameter_name}")
 
 
+def dimensions_match(
+	actual_mm: float,
+	*,
+	expected_mm: float,
+	tolerance_mm: float,
+) -> bool:
+	return (expected_mm - tolerance_mm) <= actual_mm <= (expected_mm + tolerance_mm)
+
 
 def validate_laser_offset(parameter_name: str, value: float) -> None:
 	if abs(value) > MAX_LASER_OFFSET_ABS_MM:
