@@ -192,9 +192,11 @@ class ScopeRunnerMixin:
             target=target,
             scan_config=scan_config,
         )
-        if candidate.wall_depth_mm is None:
-            raise ValueError("Single-cell rescan candidate is missing wall depth")
-        candidate_wall_depth_mm = float(candidate.wall_depth_mm)
+        candidate_wall_depth_mm = (
+            float(candidate.wall_depth_mm)
+            if candidate.wall_depth_mm is not None
+            else None
+        )
         bounds = laser_module.build_single_cell_rescan_bounds(
             candidate=candidate,
             scan_config=scan_config,

@@ -68,6 +68,7 @@ class ApplyRunnerMixin:
                 metadata_path=str(completed_result.analysis.metadata_path),
                 scan_config=scan_config,
                 side=completed_result.side,
+                current_stage_extension_mm=float(params_dict[_side_to_stage_extension_param_name(completed_result.side)]),
             )
 
             if completed_result.side == StorageModuleSide.LEFT:
@@ -132,6 +133,9 @@ class ApplyRunnerMixin:
             scan_config=scan_config,
             side=side,
             target_shelf_idx=shelf_idx,
+            current_stage_extension_mm=float(
+                getattr(config.robot.tool.parameters, _side_to_stage_extension_param_name(side))
+            ),
         )
         worker._robot._grid = laser_module.load_grid(grid_path)
 
@@ -174,6 +178,9 @@ class ApplyRunnerMixin:
             detected_cell=detected_cell,
             wall_depth_mm=float(analysis.wall_depth_mm),
             scan_config=scan_config,
+            current_stage_extension_mm=float(
+                getattr(config.robot.tool.parameters, _side_to_stage_extension_param_name(side))
+            ),
         )
         worker._robot._grid = laser_module.load_grid(grid_path)
 

@@ -142,6 +142,18 @@ async def run_staged_scan(
 				if seeded_wall_depth_mm is not None:
 					wall_depth_mm = float(seeded_wall_depth_mm)
 
+
+				if wall_depth_mm <= 0.0:
+					await estimate_seeded_candidate_wall_depths(
+						tool,
+						bounds=bounds,
+						candidates=candidates,
+						settle_ms=coarse_settle_ms,
+						samples_per_point=coarse_samples_per_point,
+						scan_config=scan_config,
+						coarse_scan=coarse_scan,
+						should_abort=should_abort,
+					)
 				if wall_depth_mm <= 0.0:
 					seeded_wall_depth_values = [
 						float(candidate.wall_depth_mm)
@@ -592,6 +604,66 @@ def resolve_z_reference_cell(
 	return get_scan_z_reference(scan_config=scan_config, side=side)
 
 
+async def estimate_seeded_candidate_wall_depths(
+	tool: Any,
+	*,
+	bounds: ScanBounds,
+	candidates: list[GapCandidateRegion],
+	settle_ms: int,
+	samples_per_point: int,
+	scan_config: Any,
+	coarse_scan: GridScanResult,
+	should_abort: Callable[[], bool] | None = None,
+) -> None:
+	x_positions = build_axis_positions(bounds.x_min, bounds.x_max, SHELF_SWEEP_X_STEP_MM)
+
+	if len(coarse_scan.x_positions) == 0 or len(coarse_scan.y_positions) == 0:
+		initialized_scan = create_sparse_shelf_scan(bounds=bounds)
+		coarse_scan.x_positions = initialized_scan.x_positions
+		coarse_scan.y_positions = initialized_scan.y_positions
+		coarse_scan.depth_rows = initialized_scan.depth_rows
+
+	for candidate_idx, candidate in enumerate(candidates, start=1):
+		if candidate.wall_depth_mm is not None and float(candidate.wall_depth_mm) > 0.0:
+			continue
+
+		raise_if_cancelled(should_abort)
+		scan_y_mm = float((candidate.y_min + candidate.y_max) / 2.0)
+		depth_values = await scan_line_positions(
+			tool,
+			axis="x",
+			positions=x_positions,
+			fixed_mm=scan_y_mm,
+			settle_ms=settle_ms,
+			samples_per_point=samples_per_point,
+			progress_label=f"seeded_wall_depth_{candidate_idx}",
+			should_abort=should_abort,
+		)
+		merge_line_scan_into_sparse_scan(
+			coarse_scan,
+			axis="x",
+			positions=x_positions,
+			fixed_mm=scan_y_mm,
+			depth_values=depth_values,
+		)
+		wall_depth_mm, _ = find_gap_segments_in_line(
+			values=depth_values,
+			positions=x_positions,
+			step_mm=SHELF_SWEEP_X_STEP_MM,
+			scan_config=scan_config,
+		)
+
+		if wall_depth_mm <= 0.0:
+			continue
+
+		candidate.wall_depth_mm = float(wall_depth_mm)
+		candidate.wall_sample_count = max(1, int(candidate.wall_sample_count))
+		print_status(
+			f"seeded_wall_depth candidate={candidate_idx}/{len(candidates)} "
+			f"y={scan_y_mm:.2f} wall_depth_mm={wall_depth_mm:.2f}"
+		)
+
+
 def apply_wall_depth_z_offsets(
 	*,
 	analysis: Any,
@@ -599,6 +671,7 @@ def apply_wall_depth_z_offsets(
 	metadata_path: str,
 	scan_config: Any,
 	side: StorageModuleSide,
+	current_stage_extension_mm: float = 43.0,
 ) -> None:
 	metadata_file = Path(metadata_path)
 
@@ -621,9 +694,22 @@ def apply_wall_depth_z_offsets(
 		scan_config=scan_config,
 		side=side,
 	)
+	reference_candidate = candidate_lookup.get((reference_key[0], reference_key[1]))
+	reference_wall_depth_mm: float | None = None
+
+	if reference_candidate is not None and reference_candidate.wall_depth_mm is not None:
+		reference_wall_depth_mm = float(reference_candidate.wall_depth_mm)
+	elif getattr(analysis, "wall_depth_mm", 0.0) is not None and float(analysis.wall_depth_mm) > 0.0:
+		reference_wall_depth_mm = float(analysis.wall_depth_mm)
+
+	if reference_wall_depth_mm is None:
+		raise ValueError("Cannot resolve z reference wall depth from scan results")
+
 	z_delta = get_scan_z_delta(
 		scan_config=scan_config,
 		side=side,
+		reference_wall_depth_mm=reference_wall_depth_mm,
+		current_stage_extension_mm=current_stage_extension_mm,
 	)
 
 	z_delta_mm = float(z_delta["delta_mm"])
@@ -645,7 +731,9 @@ def apply_wall_depth_z_offsets(
 	print_status(
 		f"z_offset_inference=applied reference={reference_key[0]}:{reference_key[1]} "
 		f"reference_z_offset_mm={reference_key[2]:.3f} "
-		f"reference_wall_depth_mm={reference_key[3]:.3f} "
+		f"reference_stage_extension_mm={reference_key[3]:.3f} "
+		f"current_stage_extension_mm={float(current_stage_extension_mm):.3f} "
+		f"reference_wall_depth_mm={reference_wall_depth_mm:.3f} "
 		f"delta_mm={z_delta_mm:.3f} updated_cells={updated_cell_count}"
 	)
 
@@ -791,6 +879,7 @@ def apply_single_cell_rescan(
 	detected_cell: ScanDetectedCell,
 	wall_depth_mm: float,
 	scan_config: Any,
+	current_stage_extension_mm: float = 43.0,
 ) -> None:
 	target_cell = resolve_target_cell(
 		grid=grid,
@@ -798,14 +887,25 @@ def apply_single_cell_rescan(
 		target=target,
 	)
 	calibration_point = target_cell.calibration_point
+	previous_z_offset = float(calibration_point.z_offset)
 
 	calibration_point.x = float(detected_cell.tool_x_mm)
 	calibration_point.y = float(detected_cell.tool_y_mm)
-	z_delta = get_scan_z_delta(
+	z_reference = get_scan_z_reference(
 		scan_config=scan_config,
 		side=side,
 	)
-	calibration_point.z_offset = float(wall_depth_mm) + float(z_delta["delta_mm"])
+
+	if int(target.shelf_idx) == int(z_reference[0]) and int(target.cell_idx) == int(z_reference[1]):
+		z_delta = get_scan_z_delta(
+			scan_config=scan_config,
+			side=side,
+			reference_wall_depth_mm=float(wall_depth_mm),
+			current_stage_extension_mm=current_stage_extension_mm,
+		)
+		calibration_point.z_offset = float(wall_depth_mm) + float(z_delta["delta_mm"])
+	else:
+		calibration_point.z_offset = previous_z_offset
 
 	grid.save()
 	print_status(
@@ -825,6 +925,7 @@ def apply_single_shelf_analysis(
 	scan_config: Any,
 	side: StorageModuleSide,
 	target_shelf_idx: int,
+	current_stage_extension_mm: float = 43.0,
 ) -> None:
 	if len(analysis.shelves) == 0:
 		raise ValueError("No tray openings detected from scan")
@@ -853,12 +954,24 @@ def apply_single_shelf_analysis(
 	scanned_shelf = scanned_shelves[0]
 	scanned_shelf.shelf_idx = target_shelf_idx
 	scanned_shelf.divider_width = float(target_shelf.divider_width)
+	xy_reference = get_scan_xy_reference(
+		scan_config=scan_config,
+		side=side,
+	)
+
+	if int(xy_reference.shelf_idx) == int(target_shelf_idx):
+		apply_xy_reference_offsets(
+			scanned_shelves=[scanned_shelf],
+			scan_config=scan_config,
+			side=side,
+		)
 	apply_wall_depth_z_offsets(
 		analysis=analysis,
 		scanned_shelves=[scanned_shelf],
 		metadata_path=str(analysis.metadata_path),
 		scan_config=scan_config,
 		side=side,
+		current_stage_extension_mm=current_stage_extension_mm,
 	)
 	left_module = list(grid.left_module)
 	right_module = list(grid.right_module)
@@ -947,6 +1060,7 @@ def apply_analysis(
 	grid_path: Path,
 	scan_config: Any,
 	side: StorageModuleSide,
+	current_stage_extension_mm: float = 43.0,
 ) -> None:
 	if len(analysis.shelves) == 0:
 		raise ValueError("No tray openings detected from scan")
@@ -968,6 +1082,7 @@ def apply_analysis(
 		metadata_path=str(analysis.metadata_path),
 		scan_config=scan_config,
 		side=side,
+		current_stage_extension_mm=current_stage_extension_mm,
 	)
 	left_module = list(grid.left_module)
 	right_module = list(grid.right_module)

@@ -928,6 +928,47 @@ async def test_persist_completed_results_saves_stage_extensions() -> None:
     assert worker._robot._grid is reloaded_grid
 
 
+
+@pytest.mark.asyncio
+async def test_run_single_cell_allows_scan_estimated_wall_depth() -> None:
+    manager = LaserAutoCalibrationManager()
+    manager._update_snapshot = AsyncMock()
+    config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=SimpleNamespace())))
+    grid = SimpleNamespace()
+    candidate = laser_module.GapCandidateRegion(
+        x_min=10.0,
+        x_max=20.0,
+        y_min=30.0,
+        y_max=40.0,
+        wall_depth_mm=None,
+    )
+    analysis = SimpleNamespace()
+    target = laser_module.SingleCellRescanTarget(shelf_idx=1, cell_idx=2)
+    worker = SimpleNamespace()
+
+    with patch('perpetual_os1_server.core.laser_auto_calibration.get_root_config', return_value=config):
+        with patch('perpetual_os1_server.core.laser_auto_calibration.resolve_grid_path', return_value='storage.json'):
+            with patch('perpetual_os1_server.core.laser_auto_calibration.laser_module.load_grid', return_value=grid):
+                with patch('perpetual_os1_server.core.laser_auto_calibration.laser_module.build_single_cell_rescan_candidate', return_value=candidate):
+                    with patch('perpetual_os1_server.core.laser_auto_calibration.laser_module.build_single_cell_rescan_bounds', return_value=ScanBounds(x_min=0.0, x_max=50.0, y_min=0.0, y_max=80.0)):
+                        with patch.object(manager, '_run_scan_analysis', AsyncMock(return_value=analysis)) as scan_mock:
+                            with patch.object(manager, '_persist_single_cell_result', AsyncMock()) as persist_mock:
+                                await manager._run_single_cell(
+                                    worker,
+                                    StorageModuleSide.LEFT,
+                                    target,
+                                )
+
+    assert scan_mock.await_args.kwargs['seeded_candidates'] == [candidate]
+    assert scan_mock.await_args.kwargs['seeded_wall_depth_mm'] is None
+    persist_mock.assert_awaited_once_with(
+        worker,
+        StorageModuleSide.LEFT,
+        analysis,
+        target,
+        candidate,
+    )
+
 @pytest.mark.asyncio
 async def test_run_io_box_calibration_passes_configured_laser_offset_and_persists_axis_values() -> None:
     manager = LaserAutoCalibrationManager()

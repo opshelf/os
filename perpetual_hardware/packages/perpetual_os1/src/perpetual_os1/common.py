@@ -505,16 +505,31 @@ class IOBlock(BaseModel):
         return value
 
 
-class LaserScanReferenceConfig(BaseModel):
-    """Manual calibration for one known anchor cell used to align laser XY and Z measurements."""
+class LaserScanXYReferenceConfig(BaseModel):
+    """Manual calibration for one known anchor cell used to align laser XY measurements."""
 
     shelf_idx: int = Field(ge=0)
     cell_idx: int = Field(ge=0)
     anchor: Literal["top_right", "top_left", "bottom_right", "bottom_left"] = "top_right"
     x_mm: float
     y_mm: float
+
+
+class LaserScanZReferenceConfig(BaseModel):
+    """Manual calibration for one known cell used to align laser wall depth to shelf Z reach."""
+
+    shelf_idx: int = Field(ge=0)
+    cell_idx: int = Field(ge=0)
     z_offset_mm: float
-    wall_depth_mm: float
+    stage_extension_mm: float = Field(43.0, ge=0)
+
+
+class LaserScanReferenceConfig(LaserScanXYReferenceConfig):
+    """Legacy combined reference accepted for backwards-compatible config loading."""
+
+    z_offset_mm: float
+    stage_extension_mm: float = Field(43.0, ge=0)
+    wall_depth_mm: Optional[float] = None
 
 
 class LaserScanConfig(BaseModel):
@@ -535,6 +550,10 @@ class LaserScanConfig(BaseModel):
     fine_scan_step_mm: float = Field(5.0, gt=0)
     laser_sample_settle_ms: int = Field(50, ge=0)
     laser_samples_per_point: int = Field(3, ge=1)
+    left_xy_reference: Optional[LaserScanXYReferenceConfig] = None
+    right_xy_reference: Optional[LaserScanXYReferenceConfig] = None
+    left_z_reference: Optional[LaserScanZReferenceConfig] = None
+    right_z_reference: Optional[LaserScanZReferenceConfig] = None
     left_reference: Optional[LaserScanReferenceConfig] = None
     right_reference: Optional[LaserScanReferenceConfig] = None
     left_bounds_x_min_mm: float = 0.0
@@ -577,10 +596,6 @@ class LaserScanConfig(BaseModel):
             "scan_z_offset_mm": "laser_scan_z_offset_from_place_mm",
             "shelf_hole_sweep_offsets_mm": "shelf_hole_probe_y_offsets_mm",
             "fine_scan_margin_y_mm": "fine_cell_scan_y_margin_mm",
-            "left_xy_reference": "left_reference",
-            "left_z_reference": "left_reference",
-            "right_xy_reference": "right_reference",
-            "right_z_reference": "right_reference",
         }
         configured_legacy_names = [
             legacy_name

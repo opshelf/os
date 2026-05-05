@@ -62,9 +62,11 @@ class ScanRunnerMixin:
 
         if rescan_target is not None and seeded_candidates is not None and len(seeded_candidates) == 1:
             candidate = seeded_candidates[0]
-            if candidate.wall_depth_mm is None:
-                raise ValueError("Single-cell rescan candidate is missing wall depth")
-            candidate_wall_depth_mm = float(candidate.wall_depth_mm)
+            candidate_wall_depth_mm = (
+                float(candidate.wall_depth_mm)
+                if candidate.wall_depth_mm is not None
+                else None
+            )
             run_parameters["single_cell_rescan"] = {
                 "shelf_idx": int(rescan_target.shelf_idx),
                 "cell_idx": int(rescan_target.cell_idx),
