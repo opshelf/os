@@ -60,7 +60,7 @@
 			const result = await probeMotors();
 			for (const r of result.results) {
 				if (r.responsive === true && r.position_mm !== null) {
-					moveTargets[r.motor_name] = r.position_mm.toString();
+					moveTargets[r.motor_name] = r.position_mm.toFixed(2);
 				}
 			}
 		} catch (err) {
@@ -346,13 +346,17 @@
 							placeholder={unitForMotor(motor.name)}
 							value={moveTargets[motor.name] ?? ''}
 							on:input={(e) => didInputTarget(motor.name, e)}
-							disabled={movingMotor !== null || activeMotor !== null || isTesting === true ||
+							disabled={movingMotor !== null ||
+								activeMotor !== null ||
+								isTesting === true ||
 								isProbing === true}
 						/>
 						<button
 							type="button"
 							on:click={() => didClickMove(motor.name)}
-							disabled={movingMotor !== null || activeMotor !== null || isTesting === true ||
+							disabled={movingMotor !== null ||
+								activeMotor !== null ||
+								isTesting === true ||
 								isProbing === true}
 						>
 							{movingMotor === motor.name ? '...' : 'go'}
@@ -423,13 +427,17 @@
 							placeholder={unitForMotor(motor.name)}
 							value={moveTargets[motor.name] ?? ''}
 							on:input={(e) => didInputTarget(motor.name, e)}
-							disabled={movingMotor !== null || activeMotor !== null || isTesting === true ||
+							disabled={movingMotor !== null ||
+								activeMotor !== null ||
+								isTesting === true ||
 								isProbing === true}
 						/>
 						<button
 							type="button"
 							on:click={() => didClickMove(motor.name)}
-							disabled={movingMotor !== null || activeMotor !== null || isTesting === true ||
+							disabled={movingMotor !== null ||
+								activeMotor !== null ||
+								isTesting === true ||
 								isProbing === true}
 						>
 							{movingMotor === motor.name ? '...' : 'go'}
@@ -538,13 +546,17 @@
 							placeholder="mm"
 							value={moveTargets[motor.name] ?? ''}
 							on:input={(e) => didInputTarget(motor.name, e)}
-							disabled={movingMotor !== null || activeMotor !== null || isTesting === true ||
+							disabled={movingMotor !== null ||
+								activeMotor !== null ||
+								isTesting === true ||
 								isProbing === true}
 						/>
 						<button
 							type="button"
 							on:click={() => didClickMove(motor.name)}
-							disabled={movingMotor !== null || activeMotor !== null || isTesting === true ||
+							disabled={movingMotor !== null ||
+								activeMotor !== null ||
+								isTesting === true ||
 								isProbing === true}
 						>
 							{movingMotor === motor.name ? '...' : 'go'}
@@ -559,7 +571,7 @@
 									doorAction !== null ||
 									movingMotor !== null ||
 									isTesting === true ||
-								isProbing === true}
+									isProbing === true}
 							>
 								home
 							</button>
@@ -570,7 +582,7 @@
 									doorAction !== null ||
 									movingMotor !== null ||
 									isTesting === true ||
-								isProbing === true}
+									isProbing === true}
 							>
 								crash
 							</button>
@@ -581,7 +593,7 @@
 									activeMotor !== null ||
 									movingMotor !== null ||
 									isTesting === true ||
-								isProbing === true}
+									isProbing === true}
 							>
 								open
 							</button>
@@ -592,7 +604,7 @@
 									activeMotor !== null ||
 									movingMotor !== null ||
 									isTesting === true ||
-								isProbing === true}
+									isProbing === true}
 							>
 								close
 							</button>
@@ -604,7 +616,7 @@
 									doorAction !== null ||
 									movingMotor !== null ||
 									isTesting === true ||
-								isProbing === true}
+									isProbing === true}
 							>
 								home
 							</button>
@@ -615,7 +627,7 @@
 									doorAction !== null ||
 									movingMotor !== null ||
 									isTesting === true ||
-								isProbing === true}
+									isProbing === true}
 							>
 								crash
 							</button>
