@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import multiprocessing
+import queue
+import time
+from multiprocessing.context import BaseContext
+from multiprocessing.queues import Queue
 from typing import Optional, Union
 
 import cv2
@@ -13,6 +18,74 @@ logger = get_logger(__name__)
 
 CameraManager = Union["CameraStreamManager", "ToolCameraStreamManager"]
 camera_registry: dict[str, CameraManager] = {}
+
+
+def _tool_camera_worker(
+	rtsp_url: str,
+	frame_queue: Queue,
+	stop_event: multiprocessing.synchronize.Event,
+	target_fps: int,
+	max_frame_width: int,
+	jpeg_quality: int,
+) -> None:
+	cap: Optional[cv2.VideoCapture] = None
+	frame_interval = 1.0 / target_fps
+
+	try:
+		while stop_event.is_set() is False:
+			loop_start = time.monotonic()
+
+			try:
+				if cap is None or cap.isOpened() is False:
+					cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
+					cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+					cap.set(cv2.CAP_PROP_FRAME_WIDTH, max_frame_width)
+					cap.set(cv2.CAP_PROP_FPS, target_fps)
+
+					if cap.isOpened() is False:
+						time.sleep(2.0)
+						continue
+
+				source_fps = cap.get(cv2.CAP_PROP_FPS)
+				frames_to_skip = 1
+				if source_fps > target_fps:
+					frames_to_skip = min(30, max(1, int(source_fps / target_fps) - 1))
+
+				for _ in range(frames_to_skip):
+					cap.grab()
+
+				ret, frame = cap.read()
+				if ret is False or frame is None:
+					time.sleep(0.5)
+					continue
+
+				height, width = frame.shape[:2]
+				if width > max_frame_width:
+					target_height = max(1, int(height * (max_frame_width / width)))
+					frame = cv2.resize(frame, (max_frame_width, target_height), interpolation=cv2.INTER_AREA)
+
+				success, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality])
+				if success is True:
+					frame_bytes = buffer.tobytes()
+					while frame_queue.empty() is False:
+						try:
+							frame_queue.get_nowait()
+						except queue.Empty:
+							break
+					try:
+						frame_queue.put_nowait(frame_bytes)
+					except queue.Full:
+						pass
+
+			except Exception:
+				time.sleep(1.0)
+				continue
+
+			elapsed = time.monotonic() - loop_start
+			time.sleep(max(0.0, frame_interval - elapsed))
+	finally:
+		if cap is not None:
+			cap.release()
 
 class CameraStreamManager:
 	def __init__(self, camera: AFSCam):
@@ -125,6 +198,10 @@ class ToolCameraStreamManager:
 		self.latest_frame: Optional[bytes] = None
 		self.frame_lock = asyncio.Lock()
 		self.capture_task: Optional[asyncio.Task] = None
+		self.process: Optional[multiprocessing.Process] = None
+		self.stop_event: Optional[multiprocessing.synchronize.Event] = None
+		self.frame_queue: Optional[Queue] = None
+		self.process_context: BaseContext = multiprocessing.get_context("spawn")
 		self.target_fps = 5
 		self.frame_interval = 1.0 / self.target_fps
 		self.max_frame_width = 640
@@ -137,6 +214,7 @@ class ToolCameraStreamManager:
 
 		self.calibration_complete.set()
 		self.is_running = True
+		self._start_worker()
 		self.capture_task = asyncio.create_task(self._capture_loop())
 		logger.info("tool_camera_ready", rtsp_url=self.rtsp_url)
 
@@ -154,6 +232,7 @@ class ToolCameraStreamManager:
 				pass
 			self.capture_task = None
 
+		self._stop_worker()
 		self.latest_frame = None
 
 	def increment_consumers(self) -> int:
@@ -164,87 +243,81 @@ class ToolCameraStreamManager:
 		self.consumer_count = max(0, self.consumer_count - 1)
 		return self.consumer_count
 
-	def _create_capture(self) -> cv2.VideoCapture:
-		cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
-		cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-		cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.max_frame_width)
-		cap.set(cv2.CAP_PROP_FPS, self.target_fps)
-		return cap
+	def _start_worker(self) -> None:
+		self._stop_worker()
 
-	def _get_frames_to_skip(self, cap: cv2.VideoCapture) -> int:
-		source_fps = cap.get(cv2.CAP_PROP_FPS)
+		self.frame_queue = self.process_context.Queue(maxsize=2)
+		self.stop_event = self.process_context.Event()
+		self.process = self.process_context.Process(
+			target=_tool_camera_worker,
+			args=(
+				self.rtsp_url,
+				self.frame_queue,
+				self.stop_event,
+				self.target_fps,
+				self.max_frame_width,
+				self.jpeg_quality,
+			),
+			daemon=True,
+		)
+		self.process.start()
+		logger.info("tool_camera_worker_started", rtsp_url=self.rtsp_url, pid=self.process.pid)
 
-		if source_fps <= self.target_fps:
-			return 1
+	def _stop_worker(self) -> None:
+		if self.stop_event is not None:
+			self.stop_event.set()
 
-		return min(30, max(1, int(source_fps / self.target_fps) - 1))
+		if self.process is not None:
+			self.process.join(timeout=2.0)
+			if self.process.is_alive() is True:
+				self.process.terminate()
+				self.process.join(timeout=2.0)
+			if self.process.is_alive() is True:
+				self.process.kill()
+				self.process.join(timeout=1.0)
 
-	def _prepare_frame(self, frame: np.ndarray) -> np.ndarray:
-		height, width = frame.shape[:2]
+		self.process = None
+		self.stop_event = None
+		self.frame_queue = None
 
-		if width <= self.max_frame_width:
-			return frame
+	def _drain_frame_queue(self) -> Optional[bytes]:
+		if self.frame_queue is None:
+			return None
 
-		target_height = max(1, int(height * (self.max_frame_width / width)))
+		latest_frame = None
 
-		return cv2.resize(frame, (self.max_frame_width, target_height), interpolation=cv2.INTER_AREA)
+		while True:
+			try:
+				latest_frame = self.frame_queue.get_nowait()
+			except queue.Empty:
+				return latest_frame
 
 	async def _capture_loop(self) -> None:
-		cap: Optional[cv2.VideoCapture] = None
+		restart_delay = 1.0
 
-		try:
-			frames_to_skip = 1
+		while self.is_running is True:
+			if self.process is None or self.process.is_alive() is False:
+				exitcode = None if self.process is None else self.process.exitcode
+				logger.error(
+					"tool_camera_worker_exited",
+					rtsp_url=self.rtsp_url,
+					exitcode=exitcode,
+					restart_delay=restart_delay,
+				)
+				await asyncio.sleep(restart_delay)
+				if self.is_running is False:
+					return
+				self._start_worker()
+				restart_delay = min(30.0, restart_delay * 2.0)
+				continue
 
-			while self.is_running is True:
-				loop_start = asyncio.get_event_loop().time()
+			frame = self._drain_frame_queue()
+			if frame is not None:
+				restart_delay = 1.0
+				async with self.frame_lock:
+					self.latest_frame = frame
 
-				try:
-					if cap is None or cap.isOpened() is False:
-						cap = self._create_capture()
-						if cap.isOpened() is False:
-							logger.warning("tool_camera_connection_failed", rtsp_url=self.rtsp_url)
-							await asyncio.sleep(2.0)
-							continue
-						frames_to_skip = self._get_frames_to_skip(cap)
-
-					loop = asyncio.get_event_loop()
-
-					def sync_capture() -> Optional[np.ndarray]:
-						if cap is None:
-							return None
-						for _ in range(frames_to_skip):
-							cap.grab()
-						ret, frame = cap.read()
-						if ret is True and frame is not None:
-							return frame
-						return None
-
-					frame = await loop.run_in_executor(None, sync_capture)
-
-					if frame is None:
-						await asyncio.sleep(0.5)
-						continue
-
-					frame = self._prepare_frame(frame)
-					success, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality])
-
-					if success is True:
-						async with self.frame_lock:
-							self.latest_frame = buffer.tobytes()
-
-				except Exception as e:
-					logger.error("tool_camera_error", error=str(e), error_type=type(e).__name__, exc_info=True)
-					await asyncio.sleep(1.0)
-					continue
-
-				elapsed = asyncio.get_event_loop().time() - loop_start
-				sleep_time = max(0.0, self.frame_interval - elapsed)
-				await asyncio.sleep(sleep_time)
-
-		finally:
-			if cap is not None:
-				cap.release()
-
+			await asyncio.sleep(self.frame_interval)
 	async def get_latest_frame(self) -> Optional[bytes]:
 		async with self.frame_lock:
 			return self.latest_frame
