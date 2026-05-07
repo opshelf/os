@@ -121,6 +121,7 @@
 		<button type="button" on:click={loadCameras}>refresh</button>
 		<button
 			type="button"
+			class="flip-button"
 			class:active={isImageFlipped}
 			on:click={didToggleImageFlip}
 			aria-pressed={isImageFlipped}
@@ -160,6 +161,10 @@
 		align-items: center;
 	}
 
+	.flip-button {
+		min-width: 2em;
+	}
+
 	.button-row button.active {
 		font-weight: 700;
 	}
@@ -176,6 +181,8 @@
 		width: 100%;
 		height: 100%;
 		display: block;
+		position: relative;
+		z-index: 0;
 	}
 
 	.stream-container img.flipped {
@@ -185,6 +192,7 @@
 	.aim {
 		position: absolute;
 		background: red;
+		z-index: 1;
 	}
 
 	.aim-left {
