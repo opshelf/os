@@ -21,7 +21,9 @@
 	let statusError = '';
 	let streamError = false;
 	let loading = true;
+	let isImageFlipped = false;
 
+	const cameraFlipStorageKey = 'opshelf.camera.isImageFlipped';
 	$: streamUrl =
 		selectedCameraId !== '' ? buildAuthenticatedUrl(`/camera/${selectedCameraId}`) : '';
 	$: selectedCamera = cameras.find((c) => c.id === selectedCameraId) ?? null;
@@ -30,6 +32,8 @@
 		if (browser === false) {
 			return;
 		}
+
+		isImageFlipped = localStorage.getItem(cameraFlipStorageKey) === 'true';
 		loadCameras();
 	});
 
@@ -54,6 +58,11 @@
 		const target = event.target as HTMLSelectElement;
 		selectedCameraId = target.value;
 		streamError = false;
+	}
+
+	function didToggleImageFlip(): void {
+		isImageFlipped = isImageFlipped === false;
+		localStorage.setItem(cameraFlipStorageKey, String(isImageFlipped));
 	}
 
 	function didStreamError(): void {
@@ -108,7 +117,15 @@
 
 	<div style="height: 1.5em"></div>
 
-	<button type="button" on:click={loadCameras}>refresh</button>
+	<div class="button-row">
+		<button type="button" on:click={loadCameras}>refresh</button>
+		<button
+			type="button"
+			class:active={isImageFlipped}
+			on:click={didToggleImageFlip}
+			aria-pressed={isImageFlipped}
+		>↕︎</button>
+	</div>
 
 	<div style="height: 1.5em"></div>
 
@@ -121,7 +138,13 @@
 				<div class="aim aim-bottom"></div>
 			{/if}
 
-			<img src={streamUrl} alt="camera feed" on:error={didStreamError} on:load={didStreamLoad} />
+			<img
+				class:flipped={isImageFlipped}
+				src={streamUrl}
+				alt="camera feed"
+				on:error={didStreamError}
+				on:load={didStreamLoad}
+			/>
 		</div>
 	{/if}
 
@@ -131,6 +154,16 @@
 {/if}
 
 <style>
+	.button-row {
+		display: flex;
+		gap: 1.5em;
+		align-items: center;
+	}
+
+	.button-row button.active {
+		font-weight: 700;
+	}
+
 	.stream-container {
 		display: block;
 		position: relative;
@@ -143,6 +176,10 @@
 		width: 100%;
 		height: 100%;
 		display: block;
+	}
+
+	.stream-container img.flipped {
+		transform: rotate(180deg);
 	}
 
 	.aim {
