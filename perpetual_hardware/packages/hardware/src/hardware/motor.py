@@ -135,8 +135,8 @@ class Servo:
             if activation_status:
                 return
 
-            if time.monotonic() - start_time > 3:
-                raise MotorTimeoutError("Motor activation timed out after 3 seconds")
+            if time.monotonic() - start_time > 6:
+                raise MotorTimeoutError("Motor activation timed out after 6 seconds")
 
             await asyncio.sleep(0.01)
 
