@@ -6,6 +6,7 @@ COPY package*.json ./
 RUN npm install --prefer-offline --no-audit
 
 COPY . .
+RUN npx svelte-kit sync
 
 EXPOSE 8080
 
