@@ -260,6 +260,29 @@ class StorageGrid(BaseModel):
 			return self.right_module
 		return self.left_module
 
+	def _set_side(self, side: StorageModuleSide, shelves: List[Shelf]) -> None:
+		if side == StorageModuleSide.RIGHT:
+			self.right_module = shelves
+		else:
+			self.left_module = shelves
+
+	def remove_shelf(self, side: StorageModuleSide, shelf_idx: int) -> None:
+		"""Remove a shelf and all its cells from the given side.
+		Raises IndexError if shelf_idx is not found."""
+		self.get_shelf(side, shelf_idx)  # raises IndexError if absent
+		side_list = self.get_side(side)
+		self._set_side(side, [s for s in side_list if s.shelf_idx != shelf_idx])
+		self.save()
+
+	def remove_cell(self, side: StorageModuleSide, shelf_idx: int, cell_idx: int) -> None:
+		"""Remove a single cell from the given shelf.
+		Raises IndexError if shelf_idx or cell_idx is not found."""
+		shelf = self.get_shelf(side, shelf_idx)  # raises IndexError if shelf absent
+		before = len(shelf.cells)
+		shelf.cells = [c for c in shelf.cells if c.cell_idx != cell_idx]
+		if len(shelf.cells) == before:
+			raise IndexError(f"Invalid cell_idx: {cell_idx}")
+		self.save()
 	def get_shelf(self, side: StorageModuleSide, shelf_idx: int) -> Shelf:
 		for shelf in self.get_side(side):
 			if shelf.shelf_idx == shelf_idx:
