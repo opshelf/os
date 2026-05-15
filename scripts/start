@@ -73,6 +73,30 @@ write_mode_file() {
 	fi
 }
 
+is_hardware_expected() {
+	python3 - "$DATA_DIR/config.json" "$DATA_DIR/settings.json" <<'PY'
+import json
+import sys
+
+for path in sys.argv[1:]:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        continue
+
+    robot_app = data.get("robot_app")
+    if isinstance(robot_app, dict) and robot_app.get("enabled") is True:
+        sys.exit(0)
+
+    robot = data.get("robot")
+    if isinstance(robot, dict) and robot.get("enabled") is True:
+        sys.exit(0)
+
+sys.exit(1)
+PY
+}
+
 while [[ $# -gt 0 ]]; do
 	case $1 in
 		-h|--hardware)
@@ -153,6 +177,11 @@ if [[ -n "$LAST_MODE" && "$LAST_MODE" != "$MODE" && "$BUILD" == false ]]; then
 		echo "mode switch ($LAST_MODE -> $MODE) crosses build boundary, forcing rebuild"
 		BUILD=true
 	fi
+fi
+
+if [[ "$HARDWARE" == false ]] && is_hardware_expected; then
+	HARDWARE=true
+	echo "hardware config detected; enabling docker-compose.hardware.yml"
 fi
 
 echo "starting in $MODE mode"

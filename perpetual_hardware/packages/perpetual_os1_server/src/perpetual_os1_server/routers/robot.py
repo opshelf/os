@@ -14,7 +14,7 @@ from sse_starlette.sse import EventSourceResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from perpetual_os1_server.core.robot import get_robot_worker
+from perpetual_os1_server.core.robot import get_robot_health, get_robot_worker
 from perpetual_os1_server.core.laser_auto_calibration import is_laser_auto_calibration_running
 from perpetual_os1_server.core.storage import StorageService
 from perpetual_os1_server.routers.common import SuccessResponse
@@ -595,8 +595,8 @@ async def stream_sse() -> EventSourceResponse:
                 yield {"data": initial_payload}
 
             if status_queue is None:
+                yield {"event": "robot_unavailable", "data": json.dumps(get_robot_health())}
                 return
-
             while True:
                 message = await status_queue.get()
                 occupied_cells = await get_occupied_cells_from_db()

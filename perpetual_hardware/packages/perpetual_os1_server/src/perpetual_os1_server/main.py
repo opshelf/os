@@ -21,7 +21,7 @@ from sentry_sdk.integrations.starlette import StarletteIntegration
 from perpetual_os1.device import get_device_id
 from perpetual_os1.operating_mode import should_enable_sentry
 from perpetual_os1_server.core.logging_config import configure_logging, get_logger
-from perpetual_os1_server.core.robot import init_robot_worker, stop_robot_worker
+from perpetual_os1_server.core.robot import get_robot_health, init_robot_worker, set_robot_initialization_error, stop_robot_worker
 from perpetual_os1_server.core.storage import StorageService
 from perpetual_os1_server.core.camera import init_tool_camera_manager, init_camera_manager, init_overhead_camera_manager
 from perpetual_os1_server.settings import Settings
@@ -403,6 +403,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 				robot_started = True
 				logger.info("robot_worker_started", status="success")
 			except Exception as e:
+				set_robot_initialization_error(e)
 				logger.error(
 					"robot_initialization_failed",
 					error=str(e),
@@ -527,8 +528,19 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
 
 
 @app.get("/api/health")
-async def health() -> dict[str, str]:
-	return {"status": "ok", "mode": get_operating_mode().value}
+async def health() -> JSONResponse:
+	body: dict[str, str] = {"status": "ok", "mode": get_operating_mode().value}
+	robot_health = get_robot_health()
+
+	if robot_health["status"] == "error":
+		body["status"] = "degraded"
+		body["robot_status"] = "error"
+		body["robot_error"] = robot_health["error"]
+		body["robot_error_type"] = robot_health["error_type"]
+		return JSONResponse(status_code=503, content=body)
+
+	body["robot_status"] = robot_health["status"]
+	return JSONResponse(content=body)
 
 
 @app.get("/api/system/info")

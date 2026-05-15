@@ -19,6 +19,8 @@ logger = logging.getLogger(__name__)
 
 robot_worker: Optional[r_worker.RobotWorker] = None
 event_listener: Optional[RobotEventListener] = None
+robot_initialization_error: Optional[str] = None
+robot_initialization_error_type: Optional[str] = None
 
 
 def validate_robot_config() -> None:
@@ -42,8 +44,10 @@ def validate_robot_config() -> None:
 
 
 async def init_robot_worker() -> None:
-    global robot_worker, event_listener
+    global robot_worker, event_listener, robot_initialization_error, robot_initialization_error_type
 
+    robot_initialization_error = None
+    robot_initialization_error_type = None
     logger.info("Validating robot configuration")
     validate_robot_config()
 
@@ -87,3 +91,24 @@ async def get_robot_worker() -> r_worker.RobotWorker:
         return robot_worker
 
     raise ValueError("Robot Worker was Not Initialized")
+
+
+def set_robot_initialization_error(error: Exception) -> None:
+    global robot_initialization_error, robot_initialization_error_type
+
+    robot_initialization_error = str(error)
+    robot_initialization_error_type = type(error).__name__
+
+
+def get_robot_health() -> dict[str, str]:
+    if robot_worker is not None:
+        return {"status": "ok"}
+
+    if robot_initialization_error is not None:
+        return {
+            "status": "error",
+            "error": robot_initialization_error,
+            "error_type": robot_initialization_error_type or "Error",
+        }
+
+    return {"status": "disabled"}
