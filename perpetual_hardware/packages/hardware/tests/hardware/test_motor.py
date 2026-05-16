@@ -474,6 +474,48 @@ async def test_motor_get_position_caches_zero_position(mock_controller):
 
 
 @pytest.mark.asyncio
+async def test_motor_get_position_maps_zero_physical_position_to_logical_position(mock_controller):
+    params = SimpleNamespace(
+        motor_id=1,
+        position_reg_high=0x602C,
+        position_reg_low=0x602D,
+        ppr=1,
+        mpr=1,
+        lim=180,
+        physical_to_logical=lambda physical: 180.0 - physical,
+    )
+    motor = Motor(mock_controller, params)
+    motor._cur_pos = 7.5
+
+    mock_controller.read_holding_registers.side_effect = [0, 0]
+
+    position = await motor.get_position()
+
+    assert position == 180.0
+    assert motor._cur_pos == 180.0
+
+
+@pytest.mark.asyncio
+async def test_motor_absolute_move_uses_logical_to_physical_mapping(mock_controller):
+    params = SimpleNamespace(
+        motor_id=1,
+        lim=180.0,
+        lower_lim=0.0,
+        mpr=1.0,
+        ppr=1,
+        rpm=300,
+        accel=100,
+        logical_to_physical=lambda logical: 180.0 - logical,
+    )
+    motor = Motor(mock_controller, params)
+
+    await motor.move_to_position_no_wait(0.0)
+
+    mock_controller.write_single_register.assert_any_call(1, 0x6201, 0)
+    mock_controller.write_single_register.assert_any_call(1, 0x6202, 180)
+
+
+@pytest.mark.asyncio
 async def test_motor_get_position_decodes_signed_32_bit_values(mock_controller):
     params = SimpleNamespace(
         motor_id=1,
