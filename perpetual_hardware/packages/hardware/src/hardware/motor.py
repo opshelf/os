@@ -281,11 +281,13 @@ class Motor():
 
         return self._home_sensor
 
-    def _get_home_direction(self) -> int:
+    def _is_physical_mapping_inverted(self) -> bool:
         p0 = self._params.phys_at_zero if self._params.phys_at_zero is not None else 0
         pm = self._params.phys_at_max if self._params.phys_at_max is not None else self._params.lim
-        is_inverted = p0 > pm
-        return int(self._params.dr) ^ 1 ^ (1 if is_inverted else 0)
+        return p0 > pm
+
+    def _get_home_direction(self) -> int:
+        return int(self._params.dr) ^ 1 ^ (1 if self._is_physical_mapping_inverted() else 0)
 
     async def _prepare_home_motion(self, rpm: int, direction: int) -> None:
         await self.set_param("Control word", 0x1111)
@@ -375,13 +377,21 @@ class Motor():
             backoff_mm = DEFAULT_HOME_APPROACH_BACKOFF_MM
 
         lower_lim = float(getattr(self._params, "lower_lim", 0.0))
-        return min(float(self._params.lim), max(lower_lim, lower_lim + backoff_mm))
+        upper_lim = float(self._params.lim)
+
+        if self._is_physical_mapping_inverted() is True:
+            return max(lower_lim, upper_lim - backoff_mm)
+
+        return min(upper_lim, max(lower_lim, lower_lim + backoff_mm))
 
     async def _move_near_home(self, rpm: int) -> None:
         target_mm = self._get_home_approach_target_mm()
         current_position_mm = await self.get_position()
 
-        if float(current_position_mm) <= target_mm + HOME_APPROACH_TOLERANCE_MM:
+        if self._is_physical_mapping_inverted() is True:
+            if float(current_position_mm) >= target_mm - HOME_APPROACH_TOLERANCE_MM:
+                return
+        elif float(current_position_mm) <= target_mm + HOME_APPROACH_TOLERANCE_MM:
             return
 
         await self.move_to_position(target_mm, rpm=rpm)

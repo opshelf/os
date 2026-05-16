@@ -292,6 +292,41 @@ async def test_move_near_home_uses_release_target_when_absolute_release_is_confi
 
 
 @pytest.mark.asyncio
+async def test_move_near_home_uses_upper_logical_target_when_mapping_is_inverted(mock_controller):
+    params = make_motor_params(
+        lim=184.5,
+        phys_at_zero=184.5,
+        phys_at_max=0.0,
+    )
+    motor = Motor(mock_controller, params)
+    motor.get_position = AsyncMock(return_value=0.0)
+    motor.move_to_position = AsyncMock()
+
+    await motor._move_near_home(params.ret_rpm)
+
+    motor.move_to_position.assert_awaited_once_with(
+        184.5 - 5.0,
+        rpm=params.ret_rpm,
+    )
+
+
+@pytest.mark.asyncio
+async def test_move_near_home_skips_when_inverted_mapping_is_near_home(mock_controller):
+    params = make_motor_params(
+        lim=184.5,
+        phys_at_zero=184.5,
+        phys_at_max=0.0,
+    )
+    motor = Motor(mock_controller, params)
+    motor.get_position = AsyncMock(return_value=180.0)
+    motor.move_to_position = AsyncMock()
+
+    await motor._move_near_home(params.ret_rpm)
+
+    motor.move_to_position.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_motor_home_with_sensor_sets_zero_and_marks_homed(mock_controller, monkeypatch):
     sensor = DummyHomeSensor([False, False, True, True, False, False, True])
     params = make_motor_params(home_sensor=make_home_sensor_config())
