@@ -281,11 +281,13 @@ class Motor():
 
         return self._home_sensor
 
-    def _get_home_direction(self) -> int:
+    def _is_physical_mapping_inverted(self) -> bool:
         p0 = self._params.phys_at_zero if self._params.phys_at_zero is not None else 0
         pm = self._params.phys_at_max if self._params.phys_at_max is not None else self._params.lim
-        is_inverted = p0 > pm
-        return int(self._params.dr) ^ 1 ^ (1 if is_inverted else 0)
+        return p0 > pm
+
+    def _get_home_direction(self) -> int:
+        return int(self._params.dr) ^ 1 ^ (1 if self._is_physical_mapping_inverted() else 0)
 
     async def _prepare_home_motion(self, rpm: int, direction: int) -> None:
         await self.set_param("Control word", 0x1111)
@@ -375,16 +377,29 @@ class Motor():
             backoff_mm = DEFAULT_HOME_APPROACH_BACKOFF_MM
 
         lower_lim = float(getattr(self._params, "lower_lim", 0.0))
-        return min(float(self._params.lim), max(lower_lim, lower_lim + backoff_mm))
+        upper_lim = float(self._params.lim)
+
+        if self._is_physical_mapping_inverted() is True:
+            return max(lower_lim, upper_lim - backoff_mm)
+
+        return min(upper_lim, max(lower_lim, lower_lim + backoff_mm))
+
+    def _is_at_home_approach_target(self, position_mm: float) -> bool:
+        target_mm = self._get_home_approach_target_mm()
+
+        if self._is_physical_mapping_inverted() is True:
+            return position_mm >= target_mm - HOME_APPROACH_TOLERANCE_MM
+
+        return position_mm <= target_mm + HOME_APPROACH_TOLERANCE_MM
 
     async def _move_near_home(self, rpm: int) -> None:
         target_mm = self._get_home_approach_target_mm()
         current_position_mm = await self.get_position()
 
-        if float(current_position_mm) <= target_mm + HOME_APPROACH_TOLERANCE_MM:
+        if self._is_at_home_approach_target(float(current_position_mm)) is True:
             return
 
-        await self.move_to_position(target_mm, rpm=rpm)
+        await self.move_to_position(target_mm, rpm=rpm, homing=True)
 
     async def _home_with_sensor(self, sensor_cfg: Any) -> None:
         sensor = self._get_home_sensor()
@@ -481,7 +496,14 @@ class Motor():
             return MotorStatus.ERROR
 
     # TODO add axis limits
-    async def move_to_position(self, value: float, rpm: Optional[int] = None, accel: Optional[int] = None) -> None:  # mm
+    async def move_to_position(
+        self,
+        value: float,
+        rpm: Optional[int] = None,
+        accel: Optional[int] = None,
+        *,
+        homing: bool = False,
+    ) -> None:  # mm
         """Move the motor to an absolute position in millimeters.
         
         Args:
@@ -504,7 +526,7 @@ class Motor():
 
             t0 = time.monotonic()
             await self._start_absolute_move(value, rpm, accel)
-            status = await self.wait_for_move(timeout=MOTOR_MOVE_TIMEOUT)
+            status = await self.wait_for_move(timeout=MOTOR_MOVE_TIMEOUT, homing=homing)
             elapsed = time.monotonic() - t0
 
             if self._on_move_complete is not None:
@@ -697,10 +719,6 @@ class Motor():
             if pos & 0x8000_0000:
                 pos -= 0x1_0000_0000
 
-            if not pos:
-                self._cur_pos = 0.0
-                return 0.0
-                
             ppr = getattr(self._params, "ppr", 10000)
 
             physical_pos = (pos / ppr) * self._params.mpr
@@ -981,9 +999,7 @@ class Motor():
             is_at_home_approach_target = False
 
             if homing and self._cur_pos is not None:
-                is_at_home_approach_target = (
-                    float(self._cur_pos) <= self._get_home_approach_target_mm() + HOME_APPROACH_TOLERANCE_MM
-                )
+                is_at_home_approach_target = self._is_at_home_approach_target(float(self._cur_pos))
 
             if homing and alarm_code == 32 and (has_moved is True or is_at_home_approach_target is True):
                 await self.stop()

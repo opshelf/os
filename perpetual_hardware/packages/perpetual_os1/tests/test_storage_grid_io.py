@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from perpetual_os1.common import RootConfig, resolve_grid_path, CONFIG_PATH
+from perpetual_os1.common import RootConfig, resolve_grid_path, CONFIG_PATH, write_json_file_with_backup
 from perpetual_os1.storage import StorageGrid, StorageValidationError
 
 
@@ -302,3 +302,22 @@ class TestSaveToFile:
 
 		payload = json.loads(out.read_text())
 		assert payload["filename"] == str(out.resolve())
+
+	def test_write_failure_preserves_existing_file(self, tmp_path):
+		out = tmp_path / "grid.json"
+		out.write_text(json.dumps(EMPTY_GRID))
+
+		with pytest.raises(TypeError):
+			write_json_file_with_backup(
+				out,
+				{"bad": object()},
+				backup_group_name="storage",
+			)
+
+		assert json.loads(out.read_text()) == EMPTY_GRID
+		assert list(tmp_path.glob(".grid.json.*.tmp")) == []
+
+		backups = list((tmp_path / "storage").glob("*.json"))
+
+		assert len(backups) == 1
+		assert json.loads(backups[0].read_text()) == EMPTY_GRID
