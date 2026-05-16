@@ -4,9 +4,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from datetime import datetime, timezone
-import json
-import shutil
 import sys
 import traceback
 from pathlib import Path
@@ -23,7 +20,13 @@ for import_path in reversed(PYTHON_PATHS):
 
 import perpetual_os1.laser_angle_calibration as angle_module
 import perpetual_os1.laser_calibration as laser_module
-from perpetual_os1.common import CONFIG_PATH, Parameters, load_config_file, resolve_grid_path
+from perpetual_os1.common import (
+	CONFIG_PATH,
+	Parameters,
+	load_config_file,
+	resolve_grid_path,
+	write_json_file_with_backup,
+)
 from perpetual_os1.laser_scan import ScanBounds, build_axis_positions
 from perpetual_os1.storage import StorageModuleSide
 
@@ -173,23 +176,13 @@ def print_analysis(analysis: Any) -> None:
 			)
 
 
-def persist_config(config: Any, config_path: str) -> Path | None:
-	config_file = Path(config_path).resolve()
-	backup_path: Path | None = None
-
-	if config_file.exists() is True:
-
-		backup_path = config_file.parent / (
-			f"{config_file.name}.{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.bak"
-		)
-		shutil.copy2(config_file, backup_path)
-
-	config_file.parent.mkdir(parents=True, exist_ok=True)
-	config_file.write_text(
-		json.dumps(config.model_dump(mode='json'), indent='\t'),
-		encoding='utf-8',
+def persist_config(config: Any, config_path: str) -> None:
+	write_json_file_with_backup(
+		Path(config_path).resolve(),
+		config.model_dump(mode='json'),
+		indent='\t',
+		backup_group_name='config',
 	)
-	return backup_path
 
 
 def derive_scans_dir(config_path: str) -> str:
@@ -451,10 +444,7 @@ def apply_angle_calibration_result(
 	params_data[rotation_param] = updated_rotation_deg
 	config.robot.tool.parameters = Parameters.model_validate(params_data)
 
-	backup_path = persist_config(config, config_path)
-
-	if backup_path is not None:
-		laser_module.print_status(f'config_backup_path={backup_path}')
+	persist_config(config, config_path)
 
 	laser_module.print_status(
 		f'angle_calibration_apply=updated param={rotation_param} '
