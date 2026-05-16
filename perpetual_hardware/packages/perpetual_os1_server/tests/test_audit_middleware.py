@@ -1,11 +1,10 @@
 import pytest
-from unittest.mock import patch, MagicMock
 from sqlalchemy import select
-import json
 from httpx import AsyncClient
 
 from perpetual_os1_server.database.session import AsyncSessionLocal
-from perpetual_os1_server.database.models import User, AuditLog
+from perpetual_os1_server.database.models import AuditLog
+from perpetual_os1_server.main import app
 
 
 @pytest.mark.anyio
@@ -246,3 +245,22 @@ async def test_audit_duration_tracking(unauthenticated_client: AsyncClient) -> N
 		log = res.scalar_one()
 		assert log.request_duration_ms is not None
 		assert log.request_duration_ms >= 0
+
+
+@pytest.mark.anyio
+async def test_audit_error_response_keeps_cors_header(unauthenticated_client: AsyncClient) -> None:
+	path = "/api/test/audit-error"
+
+	if all(getattr(route, "path", None) != path for route in app.routes):
+		@app.get(path)
+		async def audit_error_route() -> None:
+			raise RuntimeError("audit error route failed")
+
+	response = await unauthenticated_client.get(
+		path,
+		headers={"Origin": "http://dev-ui.test"},
+	)
+
+	assert response.status_code == 500
+	assert response.headers["access-control-allow-origin"] == "*"
+	assert response.json()["detail"]["code"] == "internal_error"

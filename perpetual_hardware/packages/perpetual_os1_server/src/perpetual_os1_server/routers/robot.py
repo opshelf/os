@@ -16,6 +16,7 @@ from sqlalchemy import select
 
 from perpetual_os1_server.core.robot import get_robot_health, get_robot_worker
 from perpetual_os1_server.core.laser_auto_calibration import is_laser_auto_calibration_running
+from perpetual_os1_server.core.manual_motion import manual_motion_guard, robot_command_enqueue_guard
 from perpetual_os1_server.core.storage import StorageService
 from perpetual_os1_server.routers.common import SuccessResponse
 from perpetual_os1_server.settings import get_settings, get_operating_mode
@@ -30,6 +31,10 @@ from .auth_deps import (
 router = APIRouter(tags=["robot"])
 
 _MOTOR_ID_RE = re.compile(r"motor\s+(\d+)", re.IGNORECASE)
+
+
+def _error_detail(message: str, code: str) -> dict[str, str]:
+    return {"message": message, "code": code}
 
 
 async def _ensure_laser_auto_calibration_not_running() -> None:
@@ -218,7 +223,8 @@ async def robot_commands(
                 detail="You do not have permission to retrieve this item"
             )
 
-    await worker.enqueue_command(command)
+    async with robot_command_enqueue_guard():
+        await worker.enqueue_command(command)
     return SuccessResponse()
 
 
@@ -256,10 +262,11 @@ async def control_gripper(
 ) -> SuccessResponse:
     await _ensure_laser_auto_calibration_not_running()
 
-    if state == "release":
-        await worker.release_gripper()
-    else:
-        await worker.grip()
+    async with manual_motion_guard(f"gripper:{state}", worker=worker):
+        if state == "release":
+            await worker.release_gripper()
+        else:
+            await worker.grip()
     return SuccessResponse()
 
 
@@ -454,21 +461,24 @@ async def home_motor(
         )
 
     try:
-        if motor_name == "rotate":
-            await worker._robot._tool.ensure_safe_rotation_stage_extension()
-        await motor.clear_alarm()
-        await motor.home()
-        worker.clear_needs_home_axes([motor_name])
-        if worker.needs_home() and worker.needs_home_axes() == []:
-            if _reason_matches_motor(worker.needs_home_reason(), motor_name, motor):
-                worker.clear_needs_home()
-        await worker.get_status_snapshot(force_refresh=True)
-        return {"success": True, "motor": motor_name}
+        async with manual_motion_guard(f"motor_home:{motor_name}", worker=worker):
+            if motor_name == "rotate":
+                await worker._robot._tool.ensure_safe_rotation_stage_extension()
+            await motor.clear_alarm()
+            await motor.home()
+            worker.clear_needs_home_axes([motor_name])
+            if worker.needs_home() and worker.needs_home_axes() == []:
+                if _reason_matches_motor(worker.needs_home_reason(), motor_name, motor):
+                    worker.clear_needs_home()
+            await worker.get_status_snapshot(force_refresh=True)
+            return {"success": True, "motor": motor_name}
+    except HTTPException:
+        raise
     except Exception as exc:
         logging.error("Motor home failed: %s", exc)
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Motor home failed: {exc}",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=_error_detail(f"Motor home failed: {exc}", "motor_home_failed"),
         ) from exc
 
 
@@ -526,15 +536,18 @@ async def move_motor(
         )
 
     try:
-        if motor_name == "rotate":
-            await worker._robot._tool.ensure_safe_rotation_stage_extension()
-        await motor.move_to_position(request.position_mm)
-        return {"success": True, "motor": motor_name, "position_mm": request.position_mm}
+        async with manual_motion_guard(f"motor_move:{motor_name}", worker=worker):
+            if motor_name == "rotate":
+                await worker._robot._tool.ensure_safe_rotation_stage_extension()
+            await motor.move_to_position(request.position_mm)
+            return {"success": True, "motor": motor_name, "position_mm": request.position_mm}
+    except HTTPException:
+        raise
     except Exception as exc:
         logging.error("Motor move failed: %s", exc)
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Motor move failed: {exc}",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=_error_detail(f"Motor move failed: {exc}", "motor_move_failed"),
         ) from exc
 
 
@@ -544,19 +557,22 @@ async def control_door(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
 ) -> dict:
     try:
-        if action == "open":
-            await worker._robot._io.open_door()
-        elif action == "close":
-            await worker._robot._io.close_door()
-        elif action == "home":
-            await worker._robot._io.home_door()
+        async with manual_motion_guard(f"door:{action}", worker=worker):
+            if action == "open":
+                await worker._robot._io.open_door()
+            elif action == "close":
+                await worker._robot._io.close_door()
+            elif action == "home":
+                await worker._robot._io.home_door()
 
-        return {"success": True, "action": action}
+            return {"success": True, "action": action}
+    except HTTPException:
+        raise
     except Exception as exc:
         logging.error("Door control failed: %s", exc)
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Door {action} failed: {exc}",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=_error_detail(f"Door {action} failed: {exc}", "door_control_failed"),
         ) from exc
 
 
