@@ -211,6 +211,20 @@ export async function getStorageGrid(): Promise<StorageGrid> {
 	return apiFetch<StorageGrid>(`/storage/grid?_t=${timestamp}`);
 }
 
+export async function deleteShelf(side: string, shelfIdx: number): Promise<{ success: boolean }> {
+	const params = new URLSearchParams({ side, shelf_idx: String(shelfIdx) });
+	return apiFetch<{ success: boolean }>(`/storage/grid/shelf?${params}`, {
+		method: 'DELETE'
+	});
+}
+
+export async function deleteCell(side: string, shelfIdx: number, cellIdx: number): Promise<{ success: boolean }> {
+	const params = new URLSearchParams({ side, shelf_idx: String(shelfIdx), cell_idx: String(cellIdx) });
+	return apiFetch<{ success: boolean }>(`/storage/grid/cell?${params}`, {
+		method: 'DELETE'
+	});
+}
+
 export async function getCalibrationStatus(): Promise<CalibrationStatus> {
 	return apiFetch<CalibrationStatus>('/calibration/status');
 }

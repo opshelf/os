@@ -17,6 +17,8 @@
 		homeMotor,
 		getShelfStageExtension,
 		controlGripper,
+		deleteShelf,
+		deleteCell,
 		type ApiErrorDetail,
 		type CalibrationStatus,
 		type StorageGrid,
@@ -54,6 +56,8 @@
 	let isHoming = $state<boolean>(false);
 	let isAddingShelf = $state<boolean>(false);
 	let isAddingCell = $state<boolean>(false);
+	let isDeletingShelf = $state<boolean>(false);
+	let isDeletingCell = $state<boolean>(false);
 
 	const TOOL_AXES = new Set(['z_axis', 'stage']);
 	const ADD_SHELF_VALUE = '__add_shelf__';
@@ -675,6 +679,62 @@
 		}
 	}
 
+	function getSideInitial(): string {
+		return selectedSide === 'left_module' ? 'L' : 'R';
+	}
+
+	async function didClickDeleteShelf(): Promise<void> {
+		const initial = getSideInitial();
+		const confirmed = confirm(`are you sure you want to delete shelf ${initial}:${selectedShelf}?`);
+		if (confirmed !== true) {
+			return;
+		}
+
+		isDeletingShelf = true;
+		error = '';
+		message = '';
+		warning = '';
+
+		try {
+			await deleteShelf(selectedSide, selectedShelf);
+			storageGrid = await getStorageGrid();
+			syncSelection();
+			currentPosition = null;
+			message = `shelf ${initial}:${selectedShelf} deleted`;
+		} catch (err) {
+			handleNeedsHomeError(err);
+			error = err instanceof Error ? err.message : 'failed to delete shelf';
+		} finally {
+			isDeletingShelf = false;
+		}
+	}
+
+	async function didClickDeleteCell(): Promise<void> {
+		const initial = getSideInitial();
+		const confirmed = confirm(`are you sure you want to delete cell ${initial}:${selectedShelf}:${selectedCell}?`);
+		if (confirmed !== true) {
+			return;
+		}
+
+		isDeletingCell = true;
+		error = '';
+		message = '';
+		warning = '';
+
+		try {
+			await deleteCell(selectedSide, selectedShelf, selectedCell);
+			storageGrid = await getStorageGrid();
+			syncSelection();
+			currentPosition = null;
+			message = `cell ${initial}:${selectedShelf}:${selectedCell} deleted`;
+		} catch (err) {
+			handleNeedsHomeError(err);
+			error = err instanceof Error ? err.message : 'failed to delete cell';
+		} finally {
+			isDeletingCell = false;
+		}
+	}
+
 	function handleShelfNeedsHome(event: CustomEvent<CalibrationStatus>): void {
 		applyNeedsHomeStatus(event.detail);
 	}
@@ -738,7 +798,33 @@
 						>
 							calibrate
 						</button>
-						{#if currentPosition !== null}
+						<button
+							type="button"
+							onclick={didClickDeleteShelf}
+							disabled={isMoving === true ||
+								isTesting === true ||
+								isExtending === true ||
+								needsHome === true ||
+								isHoming === true ||
+								isDeletingShelf === true ||
+								isDeletingCell === true}
+						>
+							delete shelf
+						</button>
+						<button
+							type="button"
+							onclick={didClickDeleteCell}
+							disabled={isMoving === true ||
+								isTesting === true ||
+								isExtending === true ||
+								needsHome === true ||
+								isHoming === true ||
+								isDeletingShelf === true ||
+								isDeletingCell === true}
+						>
+							delete cell
+						</button>
+					{#if currentPosition !== null}
 							<button
 								type="button"
 								onclick={didClickExtend}

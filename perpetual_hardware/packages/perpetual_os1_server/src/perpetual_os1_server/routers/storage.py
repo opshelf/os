@@ -16,6 +16,7 @@ from ..core.storage import StorageService
 from ..core.validation import ValidationError
 from .auth_deps import can_user_retrieve_item, get_current_user, require_permissions
 from ..database.session import get_db
+from perpetual_os1.storage import StorageModuleSide
 
 router = APIRouter(tags=["storage"])
 
@@ -546,3 +547,39 @@ async def get_storage_grid() -> Dict[str, Any]:
 
     return grid.model_dump()
 
+
+
+@router.delete("/grid/shelf", dependencies=[Depends(require_permissions("storage:write"))])
+async def delete_shelf(
+	side: StorageModuleSide = Query(...), shelf_idx: int = Query(...)
+) -> Dict[str, Any]:
+	"""Delete a shelf and all its cells from the grid."""
+	try:
+		grid = _get_robot_grid()
+		grid.remove_shelf(side, shelf_idx)
+		return {"success": True}
+	except IndexError as exc:
+		raise HTTPException(status_code=404, detail=str(exc))
+	except Exception as exc:
+		raise HTTPException(
+			status_code=500,
+			detail=f"Failed to delete shelf: {exc}",
+		) from exc
+
+
+@router.delete("/grid/cell", dependencies=[Depends(require_permissions("storage:write"))])
+async def delete_cell(
+	side: StorageModuleSide = Query(...), shelf_idx: int = Query(...), cell_idx: int = Query(...)
+) -> Dict[str, Any]:
+	"""Delete a single cell from the given shelf."""
+	try:
+		grid = _get_robot_grid()
+		grid.remove_cell(side, shelf_idx, cell_idx)
+		return {"success": True}
+	except IndexError as exc:
+		raise HTTPException(status_code=404, detail=str(exc))
+	except Exception as exc:
+		raise HTTPException(
+			status_code=500,
+			detail=f"Failed to delete cell: {exc}",
+		) from exc
