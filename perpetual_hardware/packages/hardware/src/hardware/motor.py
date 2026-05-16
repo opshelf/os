@@ -697,10 +697,6 @@ class Motor():
             if pos & 0x8000_0000:
                 pos -= 0x1_0000_0000
 
-            if not pos:
-                self._cur_pos = 0.0
-                return 0.0
-                
             ppr = getattr(self._params, "ppr", 10000)
 
             physical_pos = (pos / ppr) * self._params.mpr
