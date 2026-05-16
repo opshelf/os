@@ -14,6 +14,7 @@ from hardware.exceptions import MotorError as HardwareMotorError
 
 from perpetual_os1_server.core.robot import get_robot_worker
 from perpetual_os1_server.core.laser_auto_calibration import is_laser_auto_calibration_running
+from perpetual_os1_server.core.manual_motion import manual_motion_guard
 from perpetual_os1_server.routers.common import SuccessResponse
 from perpetual_os1_server.routers.auth_deps import get_current_user
 from perpetual_os1_server.routers.calibration import _ensure_ready, _clear_motors_for_move
@@ -141,14 +142,15 @@ async def start_demo_cycle() -> SuccessResponse:
 
 	tool = robot._tool
 
-	await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
+	async with manual_motion_guard("demo_cycle_start", worker=worker):
+		await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
 
-	_stop_event = asyncio.Event()
-	_is_running = True
-	_current_cell_index = 0
-	_total_cells = len(cells)
-	worker._demo_cycling = True
-	_demo_task = asyncio.create_task(_run_demo_cycle(worker, cells))
+		_stop_event = asyncio.Event()
+		_is_running = True
+		_current_cell_index = 0
+		_total_cells = len(cells)
+		worker._demo_cycling = True
+		_demo_task = asyncio.create_task(_run_demo_cycle(worker, cells))
 
 	return SuccessResponse()
 
