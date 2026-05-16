@@ -1,3 +1,4 @@
+import asyncio
 import pytest
 from httpx import AsyncClient
 from unittest.mock import patch, MagicMock, AsyncMock
@@ -30,6 +31,8 @@ def _mock_worker(motors: dict[str, AsyncMock] | None = None):
 	worker.needs_home_reason = MagicMock(return_value=None)
 	worker.clear_needs_home = MagicMock()
 	worker.get_status_snapshot = AsyncMock(return_value={})
+	worker._current_command = None
+	worker._demo_cycling = False
 
 	if motors is None:
 		motors = {
@@ -129,6 +132,88 @@ async def test_move_motor_success(client: AsyncClient) -> None:
 
 
 @pytest.mark.anyio
+async def test_move_motor_conflict_while_move_running(client: AsyncClient) -> None:
+	started = asyncio.Event()
+	finish = asyncio.Event()
+
+	async def did_move(_position: float) -> None:
+		started.set()
+		await finish.wait()
+
+	motor = _mock_motor(100.0)
+	motor.move_to_position = AsyncMock(side_effect=did_move)
+	motors = {
+		"door": _mock_motor(50.0),
+		"x_axis": motor,
+		"y_axis": _mock_motor(200.0),
+		"z_axis": _mock_motor(150.0),
+		"stage": _mock_motor(75.0),
+		"rotate": _mock_motor(0.0),
+	}
+	mock_worker = _mock_worker(motors)
+
+	with patch("perpetual_os1_server.routers.robot.get_settings", return_value=_mock_settings()):
+		with patch("perpetual_os1_server.routers.robot.get_robot_worker", return_value=mock_worker):
+			first = asyncio.create_task(client.post(
+				"/api/robot/debug/motors/x_axis/move",
+				json={"position_mm": 250.5},
+			))
+			await started.wait()
+			second = await client.post(
+				"/api/robot/debug/motors/y_axis/move",
+				json={"position_mm": 125.0},
+			)
+			finish.set()
+			first_response = await first
+
+	assert first_response.status_code == 200
+	assert second.status_code == 409
+	assert second.json()["detail"]["code"] == "movement_in_progress"
+
+
+@pytest.mark.anyio
+async def test_robot_command_conflicts_while_manual_move_running(client: AsyncClient) -> None:
+	started = asyncio.Event()
+	finish = asyncio.Event()
+
+	async def did_move(_position: float) -> None:
+		started.set()
+		await finish.wait()
+
+	motor = _mock_motor(100.0)
+	motor.move_to_position = AsyncMock(side_effect=did_move)
+	motors = {
+		"door": _mock_motor(50.0),
+		"x_axis": motor,
+		"y_axis": _mock_motor(200.0),
+		"z_axis": _mock_motor(150.0),
+		"stage": _mock_motor(75.0),
+		"rotate": _mock_motor(0.0),
+	}
+	mock_worker = _mock_worker(motors)
+	mock_worker.enqueue_command = AsyncMock()
+
+	with patch("perpetual_os1_server.routers.robot.get_settings", return_value=_mock_settings()):
+		with patch("perpetual_os1_server.routers.robot.get_robot_worker", return_value=mock_worker):
+			move_task = asyncio.create_task(client.post(
+				"/api/robot/debug/motors/x_axis/move",
+				json={"position_mm": 250.5},
+			))
+			await started.wait()
+			command_response = await client.post(
+				"/api/robot/commands",
+				json={"command": "home"},
+			)
+			finish.set()
+			move_response = await move_task
+
+	assert move_response.status_code == 200
+	assert command_response.status_code == 409
+	assert command_response.json()["detail"]["code"] == "movement_in_progress"
+	mock_worker.enqueue_command.assert_not_awaited()
+
+
+@pytest.mark.anyio
 async def test_move_motor_not_found(client: AsyncClient) -> None:
 	mock_worker = _mock_worker()
 
@@ -165,8 +250,10 @@ async def test_move_motor_failure(client: AsyncClient) -> None:
 				json={"position_mm": 100.0},
 			)
 
-	assert response.status_code == 500
-	assert "motor timeout" in response.json()["detail"].lower()
+	assert response.status_code == 503
+	detail = response.json()["detail"]
+	assert detail["code"] == "motor_move_failed"
+	assert "motor timeout" in detail["message"].lower()
 
 
 @pytest.mark.anyio

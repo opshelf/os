@@ -28,6 +28,7 @@ from perpetual_os1_server.core.laser_auto_calibration import (
 	LaserAutoCalibrationSnapshot,
 	get_laser_auto_calibration_manager,
 )
+from perpetual_os1_server.core.manual_motion import ensure_robot_available_for_manual_motion, manual_motion_guard
 from perpetual_os1_server.routers.auth_deps import get_current_user
 from perpetual_os1_server.settings import get_root_config, save_root_config
 
@@ -73,17 +74,7 @@ class TestRequest(BaseModel):
 
 
 def _ensure_robot_not_busy(worker) -> None:
-	if getattr(worker, "_current_command", None) is not None:
-		raise HTTPException(
-			status_code=status.HTTP_409_CONFLICT,
-			detail="Robot is busy processing another command",
-		)
-
-	if getattr(worker, "_demo_cycling", False) is True:
-		raise HTTPException(
-			status_code=status.HTTP_409_CONFLICT,
-			detail="Demo cycle is already running",
-		)
+	ensure_robot_available_for_manual_motion(worker)
 
 
 def _build_test_location(request: TestRequest) -> StorageModuleCellLocation:
@@ -506,19 +497,20 @@ async def _move_tool_to_coordinate(
 	tool = worker._robot._tool
 
 	try:
-		await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
-		await tool.move(coord)
+		async with manual_motion_guard("calibration_move", worker=worker):
+			await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
+			await tool.move(coord)
 
-		target_position: Literal["front", "back"] = "front" if coord.s == 0 else "back"
-		await tool.rotate_to_position(target_position)
+			target_position: Literal["front", "back"] = "front" if coord.s == 0 else "back"
+			await tool.rotate_to_position(target_position)
 
-		if tool._mg is not None:
-			grip_ext = await tool.get_param("Z_EXTENSION_PLACE")
-			if grip_ext is not None:
-				grip_rpm = await tool.get_param("Z_MOVE_RPM")
-				grip_accel = await tool.get_param("Z_MOVE_ACCEL")
-				target_z = grip_ext + coord.z_offset
-				await tool._mg.move_to_position(target_z, rpm=grip_rpm, accel=grip_accel)
+			if tool._mg is not None:
+				grip_ext = await tool.get_param("Z_EXTENSION_PLACE")
+				if grip_ext is not None:
+					grip_rpm = await tool.get_param("Z_MOVE_RPM")
+					grip_accel = await tool.get_param("Z_MOVE_ACCEL")
+					target_z = grip_ext + coord.z_offset
+					await tool._mg.move_to_position(target_z, rpm=grip_rpm, accel=grip_accel)
 	except (MotorError, HardwareMotorError) as e:
 		await _raise_motor_error(worker, f"Failed to move to cell: {str(e)}", e)
 
@@ -842,50 +834,51 @@ async def jog_axis(request: JogRequest) -> PositionResponse:
 	warnings: list[str] = []
 
 	try:
-		if request.axis == "x":
-			if tool._mx is None:
-				raise HTTPException(
-					status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-					detail="X motor not configured",
-				)
-			await _clear_motors_for_move(tool, gantry=True)
-			new_x = _clamp_value(new_x + request.delta, x_limit, "X axis", warnings)
-			await tool._mx.move_to_position(new_x)
-		elif request.axis == "y":
-			if tool._my is None:
-				raise HTTPException(
-					status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-					detail="Y motor not configured",
-				)
-			await _clear_motors_for_move(tool, gantry=True)
-			new_y = _clamp_value(new_y + request.delta, y_limit, "Y axis", warnings)
-			await tool._my.move_to_position(new_y)
-		elif request.axis == "z":
-			if tool._mg is None:
-				raise HTTPException(
-					status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-					detail="Gripper motor not configured",
-				)
-			await _clear_motors_for_move(tool, gripper=True)
-			grip_ext = await tool.get_param("Z_EXTENSION_PLACE")
-			if grip_ext is None:
-				raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Z_EXTENSION_PLACE not configured")
-			current_gripper_pos = grip_ext + _current_position.z_offset
-			z_limit = tool._mg._params.lim
-			new_gripper_pos = _clamp_value(current_gripper_pos + request.delta, z_limit, "Z axis", warnings)
-			new_z = new_gripper_pos - grip_ext
-			grip_rpm = await tool.get_param("Z_MOVE_RPM")
-			grip_accel = await tool.get_param("Z_MOVE_ACCEL")
-			await tool._mg.move_to_position(new_gripper_pos, rpm=grip_rpm, accel=grip_accel)
-		elif request.axis == "stage":
-			if tool._ms is None:
-				raise HTTPException(
-					status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-					detail="Stage motor not configured",
-				)
-			await _clear_motors_for_move(tool, stage=True)
-			new_slide = _clamp_value(new_slide + request.delta, stage_limit, "Stage", warnings)
-			await tool._ms.move_to_position(new_slide)
+		async with manual_motion_guard("calibration_jog", worker=worker):
+			if request.axis == "x":
+				if tool._mx is None:
+					raise HTTPException(
+						status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+						detail="X motor not configured",
+					)
+				await _clear_motors_for_move(tool, gantry=True)
+				new_x = _clamp_value(new_x + request.delta, x_limit, "X axis", warnings)
+				await tool._mx.move_to_position(new_x)
+			elif request.axis == "y":
+				if tool._my is None:
+					raise HTTPException(
+						status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+						detail="Y motor not configured",
+					)
+				await _clear_motors_for_move(tool, gantry=True)
+				new_y = _clamp_value(new_y + request.delta, y_limit, "Y axis", warnings)
+				await tool._my.move_to_position(new_y)
+			elif request.axis == "z":
+				if tool._mg is None:
+					raise HTTPException(
+						status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+						detail="Gripper motor not configured",
+					)
+				await _clear_motors_for_move(tool, gripper=True)
+				grip_ext = await tool.get_param("Z_EXTENSION_PLACE")
+				if grip_ext is None:
+					raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Z_EXTENSION_PLACE not configured")
+				current_gripper_pos = grip_ext + _current_position.z_offset
+				z_limit = tool._mg._params.lim
+				new_gripper_pos = _clamp_value(current_gripper_pos + request.delta, z_limit, "Z axis", warnings)
+				new_z = new_gripper_pos - grip_ext
+				grip_rpm = await tool.get_param("Z_MOVE_RPM")
+				grip_accel = await tool.get_param("Z_MOVE_ACCEL")
+				await tool._mg.move_to_position(new_gripper_pos, rpm=grip_rpm, accel=grip_accel)
+			elif request.axis == "stage":
+				if tool._ms is None:
+					raise HTTPException(
+						status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+						detail="Stage motor not configured",
+					)
+				await _clear_motors_for_move(tool, stage=True)
+				new_slide = _clamp_value(new_slide + request.delta, stage_limit, "Stage", warnings)
+				await tool._ms.move_to_position(new_slide)
 	except (MotorError, HardwareMotorError) as e:
 		axes: Optional[list[str]] = None
 		if request.axis == "z":
@@ -936,27 +929,27 @@ async def test_gripper(request: TestRequest):
 
 	tool = worker._robot._tool
 
-	try:
-		await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
-		await tool.retract()
-	except (MotorError, HardwareMotorError, ToolError) as e:
-		await _raise_motor_error(worker, f"Failed to retract: {str(e)}", e)
+	async with manual_motion_guard("calibration_test_gripper", worker=worker):
+		try:
+			await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
+			await tool.retract()
+		except (MotorError, HardwareMotorError, ToolError) as e:
+			await _raise_motor_error(worker, f"Failed to retract: {str(e)}", e)
 
-	coord = coordinate
-	_current_position = PositionResponse(
-		x=coord.x,
-		y=coord.y,
-		z_offset=coord.z_offset,
-		slide_extension=await _get_current_stage_extension(tool),
-	)
-	_current_side = coord.s
+		coord = coordinate
+		_current_position = PositionResponse(
+			x=coord.x,
+			y=coord.y,
+			z_offset=coord.z_offset,
+			slide_extension=await _get_current_stage_extension(tool),
+		)
+		_current_side = coord.s
 
-	try:
-		await tool.pick(coord)
-		await tool.place(coord)
-	except (MotorError, HardwareMotorError, ToolError) as e:
-		await _raise_motor_error(worker, f"Test failed: {str(e)}", e)
-
+		try:
+			await tool.pick(coord)
+			await tool.place(coord)
+		except (MotorError, HardwareMotorError, ToolError) as e:
+			await _raise_motor_error(worker, f"Test failed: {str(e)}", e)
 	return {"success": True}
 
 
@@ -996,31 +989,31 @@ async def test_cycle(request: TestRequest):
 	if is_initially_occupied is False:
 		cycle_item = _build_cycle_test_item(cell, location)
 
-	try:
-		await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
+	async with manual_motion_guard("calibration_test_cycle", worker=worker):
+		try:
+			await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
 
-		if is_initially_occupied is True:
-			await robot.io_place(coordinate)
-			grid.clear_item(location)
+			if is_initially_occupied is True:
+				await robot.io_place(coordinate)
+				grid.clear_item(location)
 
-			await robot.io_pick(coordinate)
-			grid.store_item(location, cycle_item)
-		else:
-			await robot.io_pick(coordinate)
-			grid.store_item(location, cycle_item)
+				await robot.io_pick(coordinate)
+				grid.store_item(location, cycle_item)
+			else:
+				await robot.io_pick(coordinate)
+				grid.store_item(location, cycle_item)
 
-			await robot.io_place(coordinate)
-			grid.clear_item(location)
+				await robot.io_place(coordinate)
+				grid.clear_item(location)
 
-		grid.save()
-	except (MotorError, HardwareMotorError, ToolError) as e:
-		await _raise_motor_error(worker, f"Cycle test failed: {str(e)}", e)
-	except Exception as exc:
-		raise HTTPException(
-			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-			detail=f"Cycle test failed: {exc}",
-		) from exc
-
+			grid.save()
+		except (MotorError, HardwareMotorError, ToolError) as e:
+			await _raise_motor_error(worker, f"Cycle test failed: {str(e)}", e)
+		except Exception as exc:
+			raise HTTPException(
+				status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+				detail=f"Cycle test failed: {exc}",
+			) from exc
 	return {"success": True}
 
 
@@ -1089,8 +1082,9 @@ async def home_tool_motors() -> CalibrationStatusResponse:
 		)
 
 	try:
-		await tool._ms.home()
-		await tool._mg.home()
+		async with manual_motion_guard("calibration_home_tool_motors", worker=worker):
+			await tool._ms.home()
+			await tool._mg.home()
 	except (MotorError, HardwareMotorError) as e:
 		await _raise_motor_error(worker, f"Failed to home tool motors: {str(e)}", e, axes=["stage", "z_axis"])
 
@@ -1186,22 +1180,22 @@ async def move_to_iobox_position(position: Literal["low", "high"]) -> IOBoxPosit
 		x = _iobox_current.pickup_high_x
 		y = _iobox_current.pickup_high_y
 
-	try:
-		await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
-		await tool.rotate_to_position("front")
-	except (MotorError, HardwareMotorError) as e:
-		await _raise_motor_error(worker, f"Motor error: {str(e)}", e, axes=["rotate"])
+	async with manual_motion_guard("calibration_iobox_move", worker=worker):
+		try:
+			await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
+			await tool.rotate_to_position("front")
+		except (MotorError, HardwareMotorError) as e:
+			await _raise_motor_error(worker, f"Motor error: {str(e)}", e, axes=["rotate"])
 
-	try:
-		await io.open_door()
-	except (IOBoxError, MotorError, HardwareMotorError) as e:
-		logging.getLogger(__name__).warning(f"Door open failed (continuing): {e}")
+		try:
+			await io.open_door()
+		except (IOBoxError, MotorError, HardwareMotorError) as e:
+			logging.getLogger(__name__).warning(f"Door open failed (continuing): {e}")
 
-	try:
-		await tool.move(AxisCoordinate(x, y))
-	except (MotorError, HardwareMotorError) as e:
-		await _raise_motor_error(worker, f"Motor error: {str(e)}", e)
-
+		try:
+			await tool.move(AxisCoordinate(x, y))
+		except (MotorError, HardwareMotorError) as e:
+			await _raise_motor_error(worker, f"Motor error: {str(e)}", e)
 	_iobox_position = position
 	_iobox_current.warnings = None
 
@@ -1241,57 +1235,58 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 	warnings: list[str] = []
 
 	try:
-		if request.axis == "x":
-			if tool._mx is None:
-				raise HTTPException(
-					status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-					detail="X motor not configured",
-				)
-			await _clear_motors_for_move(tool, gantry=True)
-			if request.position == "low":
-				new_x = _clamp_value(_iobox_current.pickup_low_x + request.delta, x_limit, "X axis", warnings)
-				await tool._mx.move_to_position(new_x)
-				_iobox_current.pickup_low_x = new_x
-			else:
-				new_x = _clamp_value(_iobox_current.pickup_high_x + request.delta, x_limit, "X axis", warnings)
-				await tool._mx.move_to_position(new_x)
-				_iobox_current.pickup_high_x = new_x
-		elif request.axis == "y":
-			if tool._my is None:
-				raise HTTPException(
-					status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-					detail="Y motor not configured",
-				)
-			await _clear_motors_for_move(tool, gantry=True)
-			if request.position == "low":
-				new_y = _clamp_value(_iobox_current.pickup_low_y + request.delta, y_limit, "Y axis", warnings)
-				await tool._my.move_to_position(new_y)
-				_iobox_current.pickup_low_y = new_y
-			else:
-				new_y = _clamp_value(_iobox_current.pickup_high_y + request.delta, y_limit, "Y axis", warnings)
-				await tool._my.move_to_position(new_y)
-				_iobox_current.pickup_high_y = new_y
-		elif request.axis == "z":
-			if tool._mg is None:
-				raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Gripper motor not configured")
-			await _clear_motors_for_move(tool, gripper=True)
-			current_z = await tool._mg.get_position()
-			z_limit = tool._mg._params.lim
-			if current_z < 0 or current_z > z_limit:
-				current_z = _iobox_current.z_extension
-			new_z = _clamp_value(current_z + request.delta, z_limit, "Z axis", warnings)
-			grip_rpm = await tool.get_param("Z_MOVE_RPM")
-			grip_accel = await tool.get_param("Z_MOVE_ACCEL")
-			await tool._mg.move_to_position(new_z, rpm=grip_rpm, accel=grip_accel)
-			_iobox_current.z_extension = new_z
-		elif request.axis == "stage":
-			if tool._ms is None:
-				raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Stage motor not configured")
-			await _clear_motors_for_move(tool, stage=True)
-			stage_limit = tool._ms._params.lim
-			new_stage = _clamp_value(_iobox_current.stage_extension + request.delta, stage_limit, "Stage", warnings)
-			await tool._ms.move_to_position(new_stage)
-			_iobox_current.stage_extension = new_stage
+		async with manual_motion_guard("calibration_iobox_jog", worker=worker):
+			if request.axis == "x":
+				if tool._mx is None:
+					raise HTTPException(
+						status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+						detail="X motor not configured",
+					)
+				await _clear_motors_for_move(tool, gantry=True)
+				if request.position == "low":
+					new_x = _clamp_value(_iobox_current.pickup_low_x + request.delta, x_limit, "X axis", warnings)
+					await tool._mx.move_to_position(new_x)
+					_iobox_current.pickup_low_x = new_x
+				else:
+					new_x = _clamp_value(_iobox_current.pickup_high_x + request.delta, x_limit, "X axis", warnings)
+					await tool._mx.move_to_position(new_x)
+					_iobox_current.pickup_high_x = new_x
+			elif request.axis == "y":
+				if tool._my is None:
+					raise HTTPException(
+						status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+						detail="Y motor not configured",
+					)
+				await _clear_motors_for_move(tool, gantry=True)
+				if request.position == "low":
+					new_y = _clamp_value(_iobox_current.pickup_low_y + request.delta, y_limit, "Y axis", warnings)
+					await tool._my.move_to_position(new_y)
+					_iobox_current.pickup_low_y = new_y
+				else:
+					new_y = _clamp_value(_iobox_current.pickup_high_y + request.delta, y_limit, "Y axis", warnings)
+					await tool._my.move_to_position(new_y)
+					_iobox_current.pickup_high_y = new_y
+			elif request.axis == "z":
+				if tool._mg is None:
+					raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Gripper motor not configured")
+				await _clear_motors_for_move(tool, gripper=True)
+				current_z = await tool._mg.get_position()
+				z_limit = tool._mg._params.lim
+				if current_z < 0 or current_z > z_limit:
+					current_z = _iobox_current.z_extension
+				new_z = _clamp_value(current_z + request.delta, z_limit, "Z axis", warnings)
+				grip_rpm = await tool.get_param("Z_MOVE_RPM")
+				grip_accel = await tool.get_param("Z_MOVE_ACCEL")
+				await tool._mg.move_to_position(new_z, rpm=grip_rpm, accel=grip_accel)
+				_iobox_current.z_extension = new_z
+			elif request.axis == "stage":
+				if tool._ms is None:
+					raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Stage motor not configured")
+				await _clear_motors_for_move(tool, stage=True)
+				stage_limit = tool._ms._params.lim
+				new_stage = _clamp_value(_iobox_current.stage_extension + request.delta, stage_limit, "Stage", warnings)
+				await tool._ms.move_to_position(new_stage)
+				_iobox_current.stage_extension = new_stage
 	except (MotorError, HardwareMotorError) as e:
 		axes: Optional[list[str]] = None
 		if request.axis == "z":
@@ -1332,54 +1327,54 @@ async def test_iobox_sequence(with_gripper: bool = False):
 	tool = worker._robot._tool
 	io = worker._robot._io
 
-	try:
-		await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
-		await tool.rotate_to_position("front")
-	except (MotorError, HardwareMotorError) as e:
-		await _raise_motor_error(worker, f"Motor error: {str(e)}", e)
+	async with manual_motion_guard("calibration_iobox_test", worker=worker):
+		try:
+			await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
+			await tool.rotate_to_position("front")
+		except (MotorError, HardwareMotorError) as e:
+			await _raise_motor_error(worker, f"Motor error: {str(e)}", e)
 
-	try:
-		await io.open_door()
-	except (IOBoxError, MotorError, HardwareMotorError) as e:
-		logging.getLogger(__name__).warning(f"Door open failed (continuing): {e}")
+		try:
+			await io.open_door()
+		except (IOBoxError, MotorError, HardwareMotorError) as e:
+			logging.getLogger(__name__).warning(f"Door open failed (continuing): {e}")
 
-	try:
-		await tool.move(AxisCoordinate(_iobox_current.pickup_low_x, _iobox_current.pickup_low_y))
-	except (MotorError, HardwareMotorError) as e:
-		await _raise_motor_error(worker, f"Motor error: {str(e)}", e)
+		try:
+			await tool.move(AxisCoordinate(_iobox_current.pickup_low_x, _iobox_current.pickup_low_y))
+		except (MotorError, HardwareMotorError) as e:
+			await _raise_motor_error(worker, f"Motor error: {str(e)}", e)
 
-	stage_ext = _iobox_current.stage_extension
-	grip_ext = _iobox_current.z_extension
-	grip_rpm = await tool.get_param("Z_MOVE_RPM")
-	grip_accel = await tool.get_param("Z_MOVE_ACCEL")
-	stage_nudge = await tool.get_param("STAGE_NUDGE")
+		stage_ext = _iobox_current.stage_extension
+		grip_ext = _iobox_current.z_extension
+		grip_rpm = await tool.get_param("Z_MOVE_RPM")
+		grip_accel = await tool.get_param("Z_MOVE_ACCEL")
+		stage_nudge = await tool.get_param("STAGE_NUDGE")
 
-	if tool._ms is None or tool._mg is None:
-		raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Motors not configured")
+		if tool._ms is None or tool._mg is None:
+			raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Motors not configured")
 
-	if stage_nudge is None:
-		raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="STAGE_NUDGE not configured")
+		if stage_nudge is None:
+			raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="STAGE_NUDGE not configured")
 
-	stage_limit = _get_stage_limit(tool)
-	_validate_stage_target(stage_ext, stage_limit, "STAGE_EXTENSION_IO_BOX")
-	_validate_stage_target(stage_ext + stage_nudge, stage_limit, "STAGE_EXTENSION_IO_BOX + STAGE_NUDGE")
+		stage_limit = _get_stage_limit(tool)
+		_validate_stage_target(stage_ext, stage_limit, "STAGE_EXTENSION_IO_BOX")
+		_validate_stage_target(stage_ext + stage_nudge, stage_limit, "STAGE_EXTENSION_IO_BOX + STAGE_NUDGE")
 
-	try:
-		await tool._ms.move_to_position(stage_ext)
-		await tool._mg.move_to_position(grip_ext, rpm=grip_rpm, accel=grip_accel)
-		await tool._ms.move_to_position(stage_ext + stage_nudge)
+		try:
+			await tool._ms.move_to_position(stage_ext)
+			await tool._mg.move_to_position(grip_ext, rpm=grip_rpm, accel=grip_accel)
+			await tool._ms.move_to_position(stage_ext + stage_nudge)
 
-		if with_gripper is True:
-			await tool._gs.open()
+			if with_gripper is True:
+				await tool._gs.open()
 
-		await tool.move(AxisCoordinate(_iobox_current.pickup_high_x, _iobox_current.pickup_high_y))
-		await tool.retract()
+			await tool.move(AxisCoordinate(_iobox_current.pickup_high_x, _iobox_current.pickup_high_y))
+			await tool.retract()
 
-		if with_gripper is True:
-			await tool._gs.close()
-	except (MotorError, HardwareMotorError) as e:
-		await _raise_motor_error(worker, f"Motor error: {str(e)}", e)
-
+			if with_gripper is True:
+				await tool._gs.close()
+		except (MotorError, HardwareMotorError) as e:
+			await _raise_motor_error(worker, f"Motor error: {str(e)}", e)
 	return {"success": True}
 
 
@@ -1417,21 +1412,21 @@ async def save_iobox_calibration(request: IOBoxSaveRequest):
 
 	worker._robot.reload_parameters()
 
-	try:
-		await worker._robot._tool._gs.close()
-	except Exception:
-		pass
+	async with manual_motion_guard("calibration_iobox_save_home", worker=worker):
+		try:
+			await worker._robot._tool._gs.close()
+		except Exception:
+			pass
 
-	try:
-		await worker._robot._tool.home()
-	except (MotorError, HardwareMotorError) as e:
-		await _raise_motor_error(worker, f"Failed to home tool: {str(e)}", e)
+		try:
+			await worker._robot._tool.home()
+		except (MotorError, HardwareMotorError) as e:
+			await _raise_motor_error(worker, f"Failed to home tool: {str(e)}", e)
 
-	try:
-		await worker._robot._io.home_door()
-	except Exception:
-		pass
-
+		try:
+			await worker._robot._io.home_door()
+		except Exception:
+			pass
 	worker.clear_needs_home()
 	await worker.get_status_snapshot(force_refresh=True)
 
@@ -1489,9 +1484,10 @@ async def rotate_to_angle(angle: float):
 	rotation_limit = tool._mr._params.lim
 	clamped_angle = max(0, min(rotation_limit, angle))
 	try:
-		await _clear_motors_for_move(tool, rotation=True)
-		await tool.ensure_safe_rotation_stage_extension()
-		await tool._mr.move_to_position(clamped_angle)
+		async with manual_motion_guard("calibration_rotation", worker=worker):
+			await _clear_motors_for_move(tool, rotation=True)
+			await tool.ensure_safe_rotation_stage_extension()
+			await tool._mr.move_to_position(clamped_angle)
 	except (MotorError, HardwareMotorError) as e:
 		await _raise_motor_error(worker, f"Rotation failed: {str(e)}", e, axes=["rotate"])
 
@@ -1615,9 +1611,10 @@ async def move_stage(request: StageMoveRequest):
 	target = _clamp_value(request.position, stage_limit, "Stage", warnings)
 
 	try:
-		await _clear_motors_for_move(tool, stage=True)
-		await tool._ms.move_to_position(target)
-		await tool._ms.stop()
+		async with manual_motion_guard("calibration_stage", worker=worker):
+			await _clear_motors_for_move(tool, stage=True)
+			await tool._ms.move_to_position(target)
+			await tool._ms.stop()
 	except (MotorError, HardwareMotorError) as e:
 		await _raise_motor_error(worker, f"Motor error: {str(e)}", e)
 
@@ -1640,7 +1637,8 @@ async def abort_calibration():
 	tool = worker._robot._tool
 
 	try:
-		await tool.home()
+		async with manual_motion_guard("calibration_abort", worker=worker):
+			await tool.home()
 		worker.clear_needs_home()
 		await worker.get_status_snapshot(force_refresh=True)
 		return {"success": True}

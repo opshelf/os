@@ -68,8 +68,10 @@ class AuditMiddleware(BaseHTTPMiddleware):
 			traceback.print_exc()
 			response = JSONResponse(
 				status_code=500,
-				content={"detail": "Internal server error"}
+				content={"detail": {"message": "Internal server error", "code": "internal_error"}}
 			)
+			if request.headers.get("origin") is not None:
+				response.headers["Access-Control-Allow-Origin"] = "*"
 
 		duration_ms = int((time.time() - start_time) * 1000)
 
