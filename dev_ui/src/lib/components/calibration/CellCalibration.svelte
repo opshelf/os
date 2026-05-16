@@ -684,8 +684,10 @@
 	}
 
 	async function didClickDeleteShelf(): Promise<void> {
-		const initial = getSideInitial();
-		const confirmed = confirm(`are you sure you want to delete shelf ${initial}:${selectedShelf}?`);
+		const side = selectedSide;
+		const shelfIdx = selectedShelf;
+		const initial = side === 'left_module' ? 'L' : 'R';
+		const confirmed = confirm(`are you sure you want to delete shelf ${initial}:${shelfIdx}?`);
 		if (confirmed !== true) {
 			return;
 		}
@@ -696,11 +698,11 @@
 		warning = '';
 
 		try {
-			await deleteShelf(selectedSide, selectedShelf);
+			await deleteShelf(side, shelfIdx);
 			storageGrid = await getStorageGrid();
 			syncSelection();
 			currentPosition = null;
-			message = `shelf ${initial}:${selectedShelf} deleted`;
+			message = `shelf ${initial}:${shelfIdx} deleted`;
 		} catch (err) {
 			handleNeedsHomeError(err);
 			error = err instanceof Error ? err.message : 'failed to delete shelf';
@@ -710,8 +712,11 @@
 	}
 
 	async function didClickDeleteCell(): Promise<void> {
-		const initial = getSideInitial();
-		const confirmed = confirm(`are you sure you want to delete cell ${initial}:${selectedShelf}:${selectedCell}?`);
+		const side = selectedSide;
+		const shelfIdx = selectedShelf;
+		const cellIdx = selectedCell;
+		const initial = side === 'left_module' ? 'L' : 'R';
+		const confirmed = confirm(`are you sure you want to delete cell ${initial}:${shelfIdx}:${cellIdx}?`);
 		if (confirmed !== true) {
 			return;
 		}
@@ -722,11 +727,11 @@
 		warning = '';
 
 		try {
-			await deleteCell(selectedSide, selectedShelf, selectedCell);
+			await deleteCell(side, shelfIdx, cellIdx);
 			storageGrid = await getStorageGrid();
 			syncSelection();
 			currentPosition = null;
-			message = `cell ${initial}:${selectedShelf}:${selectedCell} deleted`;
+			message = `cell ${initial}:${shelfIdx}:${cellIdx} deleted`;
 		} catch (err) {
 			handleNeedsHomeError(err);
 			error = err instanceof Error ? err.message : 'failed to delete cell';
