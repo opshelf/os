@@ -288,7 +288,43 @@ async def test_move_near_home_uses_release_target_when_absolute_release_is_confi
 
     await motor._move_near_home(params.ret_rpm)
 
-    motor.move_to_position.assert_awaited_once_with(12.0, rpm=params.ret_rpm)
+    motor.move_to_position.assert_awaited_once_with(12.0, rpm=params.ret_rpm, homing=True)
+
+
+@pytest.mark.asyncio
+async def test_move_near_home_uses_upper_logical_target_when_mapping_is_inverted(mock_controller):
+    params = make_motor_params(
+        lim=184.5,
+        phys_at_zero=184.5,
+        phys_at_max=0.0,
+    )
+    motor = Motor(mock_controller, params)
+    motor.get_position = AsyncMock(return_value=0.0)
+    motor.move_to_position = AsyncMock()
+
+    await motor._move_near_home(params.ret_rpm)
+
+    motor.move_to_position.assert_awaited_once_with(
+        184.5 - 5.0,
+        rpm=params.ret_rpm,
+        homing=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_move_near_home_skips_when_inverted_mapping_is_near_home(mock_controller):
+    params = make_motor_params(
+        lim=184.5,
+        phys_at_zero=184.5,
+        phys_at_max=0.0,
+    )
+    motor = Motor(mock_controller, params)
+    motor.get_position = AsyncMock(return_value=180.0)
+    motor.move_to_position = AsyncMock()
+
+    await motor._move_near_home(params.ret_rpm)
+
+    motor.move_to_position.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -471,6 +507,48 @@ async def test_motor_get_position_caches_zero_position(mock_controller):
 
     assert position == 0.0
     assert motor._cur_pos == 0.0
+
+
+@pytest.mark.asyncio
+async def test_motor_get_position_maps_zero_physical_position_to_logical_position(mock_controller):
+    params = SimpleNamespace(
+        motor_id=1,
+        position_reg_high=0x602C,
+        position_reg_low=0x602D,
+        ppr=1,
+        mpr=1,
+        lim=180,
+        physical_to_logical=lambda physical: 180.0 - physical,
+    )
+    motor = Motor(mock_controller, params)
+    motor._cur_pos = 7.5
+
+    mock_controller.read_holding_registers.side_effect = [0, 0]
+
+    position = await motor.get_position()
+
+    assert position == 180.0
+    assert motor._cur_pos == 180.0
+
+
+@pytest.mark.asyncio
+async def test_motor_absolute_move_uses_logical_to_physical_mapping(mock_controller):
+    params = SimpleNamespace(
+        motor_id=1,
+        lim=180.0,
+        lower_lim=0.0,
+        mpr=1.0,
+        ppr=1,
+        rpm=300,
+        accel=100,
+        logical_to_physical=lambda logical: 180.0 - logical,
+    )
+    motor = Motor(mock_controller, params)
+
+    await motor.move_to_position_no_wait(0.0)
+
+    mock_controller.write_single_register.assert_any_call(1, 0x6201, 0)
+    mock_controller.write_single_register.assert_any_call(1, 0x6202, 180)
 
 
 @pytest.mark.asyncio
