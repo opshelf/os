@@ -36,6 +36,7 @@ configure_logging()
 logger = get_logger(__name__)
 
 SENSITIVE_HEADER_NAMES = {"authorization", "cookie"}
+PYMODBUS_REQUEST_ID_MISMATCH_PREFIX = "ERROR: request ask for id="
 
 
 def _redact_sensitive_mapping(value: Any) -> Any:
@@ -57,22 +58,51 @@ def _redact_sensitive_mapping(value: Any) -> Any:
 	return value
 
 
+def _is_pymodbus_request_id_mismatch(message: Any) -> bool:
+	return isinstance(message, str) is True and message.startswith(PYMODBUS_REQUEST_ID_MISMATCH_PREFIX)
+
+
+def _sentry_log_is_pymodbus_request_id_mismatch(log: dict[str, Any]) -> bool:
+	for key in ("body", "message"):
+		if _is_pymodbus_request_id_mismatch(log.get(key)) is True:
+			return True
+
+	attributes_value = log.get("attributes")
+	if isinstance(attributes_value, dict) is False:
+		return False
+
+	return any(_is_pymodbus_request_id_mismatch(value) is True for value in attributes_value.values())
+
+
 def _before_send_sentry_event(event: dict[str, Any], _hint: dict[str, Any]) -> dict[str, Any] | None:
+	if _is_pymodbus_request_id_mismatch(event.get("message")) is True:
+		return None
+
+	for entry in event.get("entries", []):
+		if isinstance(entry, dict) is False:
+			continue
+
+		data = entry.get("data")
+		if isinstance(data, dict) is False:
+			continue
+
+		if _is_pymodbus_request_id_mismatch(data.get("formatted")) is True:
+			return None
+
 	request_value = event.get("request")
-	if isinstance(request_value, dict) is False:
-		return event
-
-	request = cast(dict[str, Any], request_value)
-	headers_value = request.get("headers")
-	if isinstance(headers_value, dict) is False:
-		return event
-
-	request["headers"] = _redact_sensitive_mapping(headers_value)
+	if isinstance(request_value, dict) is True:
+		request = cast(dict[str, Any], request_value)
+		headers_value = request.get("headers")
+		if isinstance(headers_value, dict) is True:
+			request["headers"] = _redact_sensitive_mapping(headers_value)
 
 	return event
 
 
 def _before_send_sentry_log(log: dict[str, Any], _hint: dict[str, Any]) -> dict[str, Any] | None:
+	if _sentry_log_is_pymodbus_request_id_mismatch(log) is True:
+		return None
+
 	attributes_value = log.get("attributes")
 	if isinstance(attributes_value, dict) is False:
 		return log
@@ -404,7 +434,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 				logger.info("robot_worker_started", status="success")
 			except Exception as e:
 				set_robot_initialization_error(e)
-				logger.error(
+				logger.warning(
 					"robot_initialization_failed",
 					error=str(e),
 					error_type=type(e).__name__,

@@ -70,6 +70,51 @@ async def test_configure_sentry_enables_demo_and_production(tmp_path) -> None:
 			set_context_mock.assert_called()
 
 
+def test_before_send_sentry_event_drops_pymodbus_request_id_mismatch() -> None:
+	event = {
+		"message": "ERROR: request ask for id=2 but got id=3, Skipping.",
+	}
+
+	assert main._before_send_sentry_event(event, {}) is None
+
+
+def test_before_send_sentry_event_drops_pymodbus_request_id_mismatch_entry() -> None:
+	event = {
+		"entries": [
+			{
+				"data": {
+					"formatted": "ERROR: request ask for id=2 but got id=3, Skipping.",
+				}
+			}
+		]
+	}
+
+	assert main._before_send_sentry_event(event, {}) is None
+
+
+def test_before_send_sentry_log_drops_pymodbus_request_id_mismatch() -> None:
+	log = {
+		"body": "ERROR: request ask for id=2 but got id=3, Skipping.",
+	}
+
+	assert main._before_send_sentry_log(log, {}) is None
+
+
+def test_before_send_sentry_event_redacts_headers() -> None:
+	event = {
+		"request": {
+			"headers": {
+				"authorization": "secret",
+				"x-request-id": "request-id",
+			}
+		}
+	}
+
+	assert main._before_send_sentry_event(event, {}) == event
+	assert event["request"]["headers"]["authorization"] == "[Filtered]"
+	assert event["request"]["headers"]["x-request-id"] == "request-id"
+
+
 
 @pytest.mark.anyio
 async def test_report_error_skips_sentry_in_development(tmp_path) -> None:
