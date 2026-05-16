@@ -384,17 +384,22 @@ class Motor():
 
         return min(upper_lim, max(lower_lim, lower_lim + backoff_mm))
 
+    def _is_at_home_approach_target(self, position_mm: float) -> bool:
+        target_mm = self._get_home_approach_target_mm()
+
+        if self._is_physical_mapping_inverted() is True:
+            return position_mm >= target_mm - HOME_APPROACH_TOLERANCE_MM
+
+        return position_mm <= target_mm + HOME_APPROACH_TOLERANCE_MM
+
     async def _move_near_home(self, rpm: int) -> None:
         target_mm = self._get_home_approach_target_mm()
         current_position_mm = await self.get_position()
 
-        if self._is_physical_mapping_inverted() is True:
-            if float(current_position_mm) >= target_mm - HOME_APPROACH_TOLERANCE_MM:
-                return
-        elif float(current_position_mm) <= target_mm + HOME_APPROACH_TOLERANCE_MM:
+        if self._is_at_home_approach_target(float(current_position_mm)) is True:
             return
 
-        await self.move_to_position(target_mm, rpm=rpm)
+        await self.move_to_position(target_mm, rpm=rpm, homing=True)
 
     async def _home_with_sensor(self, sensor_cfg: Any) -> None:
         sensor = self._get_home_sensor()
@@ -491,7 +496,14 @@ class Motor():
             return MotorStatus.ERROR
 
     # TODO add axis limits
-    async def move_to_position(self, value: float, rpm: Optional[int] = None, accel: Optional[int] = None) -> None:  # mm
+    async def move_to_position(
+        self,
+        value: float,
+        rpm: Optional[int] = None,
+        accel: Optional[int] = None,
+        *,
+        homing: bool = False,
+    ) -> None:  # mm
         """Move the motor to an absolute position in millimeters.
         
         Args:
@@ -514,7 +526,7 @@ class Motor():
 
             t0 = time.monotonic()
             await self._start_absolute_move(value, rpm, accel)
-            status = await self.wait_for_move(timeout=MOTOR_MOVE_TIMEOUT)
+            status = await self.wait_for_move(timeout=MOTOR_MOVE_TIMEOUT, homing=homing)
             elapsed = time.monotonic() - t0
 
             if self._on_move_complete is not None:
@@ -987,9 +999,7 @@ class Motor():
             is_at_home_approach_target = False
 
             if homing and self._cur_pos is not None:
-                is_at_home_approach_target = (
-                    float(self._cur_pos) <= self._get_home_approach_target_mm() + HOME_APPROACH_TOLERANCE_MM
-                )
+                is_at_home_approach_target = self._is_at_home_approach_target(float(self._cur_pos))
 
             if homing and alarm_code == 32 and (has_moved is True or is_at_home_approach_target is True):
                 await self.stop()

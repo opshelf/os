@@ -288,7 +288,7 @@ async def test_move_near_home_uses_release_target_when_absolute_release_is_confi
 
     await motor._move_near_home(params.ret_rpm)
 
-    motor.move_to_position.assert_awaited_once_with(12.0, rpm=params.ret_rpm)
+    motor.move_to_position.assert_awaited_once_with(12.0, rpm=params.ret_rpm, homing=True)
 
 
 @pytest.mark.asyncio
@@ -307,6 +307,7 @@ async def test_move_near_home_uses_upper_logical_target_when_mapping_is_inverted
     motor.move_to_position.assert_awaited_once_with(
         184.5 - 5.0,
         rpm=params.ret_rpm,
+        homing=True,
     )
 
 
