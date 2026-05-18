@@ -88,12 +88,12 @@ def test_filter_shelf_edges_discards_top_margin_and_close_duplicates() -> None:
 	]
 
 
-def test_build_shelf_scout_x_positions_preserves_right_and_reference_behavior() -> None:
+def test_build_shelf_scout_x_positions_preserves_right_zero_and_reference_behavior() -> None:
 	assert build_shelf_scout_x_positions(
 		x_min_mm=0.0,
 		x_max_mm=900.0,
 		is_right_side=True,
-	) == [25.0]
+	) == [0.0]
 	assert build_shelf_scout_x_positions(
 		x_min_mm=0.0,
 		x_max_mm=900.0,
