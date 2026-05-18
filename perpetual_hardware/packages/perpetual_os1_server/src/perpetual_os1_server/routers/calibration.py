@@ -993,18 +993,11 @@ async def test_cycle(request: TestRequest):
 		try:
 			await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
 
-			if is_initially_occupied is True:
-				await robot.io_place(coordinate)
-				grid.clear_item(location)
+			await robot.io_place(coordinate)
+			grid.clear_item(location)
 
-				await robot.io_pick(coordinate)
-				grid.store_item(location, cycle_item)
-			else:
-				await robot.io_pick(coordinate)
-				grid.store_item(location, cycle_item)
-
-				await robot.io_place(coordinate)
-				grid.clear_item(location)
+			await robot.io_pick(coordinate)
+			grid.store_item(location, cycle_item)
 
 			grid.save()
 		except (MotorError, HardwareMotorError, ToolError) as e:
