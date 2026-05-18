@@ -10,6 +10,7 @@ from perpetual_os1.laser_angle_calibration import (
 	filter_shelf_edges,
 	get_default_rotation_center_deg,
 	prepare_capture_pose,
+	resolve_rotation_center_deg,
 	probe_stage_until_stall,
 	run_with_temp_robot_config,
 )
@@ -21,6 +22,18 @@ def test_get_default_rotation_center_deg_uses_front_for_left() -> None:
 
 def test_get_default_rotation_center_deg_uses_back_for_right() -> None:
 	assert get_default_rotation_center_deg('right') == 180.0
+
+
+def test_resolve_rotation_center_deg_uses_configured_front_for_left() -> None:
+	parameters = SimpleNamespace(ROTATION_FRONT=184.5, ROTATION_BACK=4.5)
+
+	assert resolve_rotation_center_deg('left', parameters) == 184.5
+
+
+def test_resolve_rotation_center_deg_uses_configured_back_for_right() -> None:
+	parameters = SimpleNamespace(ROTATION_FRONT=184.5, ROTATION_BACK=4.5)
+
+	assert resolve_rotation_center_deg('right', parameters) == 4.5
 
 
 def test_filter_shelf_edges_keeps_only_detected_edges() -> None:

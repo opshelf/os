@@ -6,7 +6,7 @@ from typing import Any
 
 import numpy as np
 
-from .capture import enter_capture_mode, get_default_rotation_center_deg, prepare_capture_pose, resolve_capture_y_mm
+from .capture import enter_capture_mode, prepare_capture_pose, resolve_capture_y_mm, resolve_rotation_center_deg
 from .config import (
 	get_laser_sample_settle_ms,
 	get_laser_samples_per_point,
@@ -162,16 +162,17 @@ async def run_stage_stall_capture(
 		rotation_center_deg = float(
 			args.rotation_center_deg
 			if args.rotation_center_deg is not None
-			else get_default_rotation_center_deg(side_name)
+			else resolve_rotation_center_deg(side_name, config.robot.tool.parameters)
 		)
 
 		for rotation_deg in rotation_positions:
 			absolute_rotation_deg = rotation_center_deg + float(rotation_deg)
 
-			if absolute_rotation_deg < 0.0 or absolute_rotation_deg > 180.0:
+			rotation_limit_deg = float(tool._mr._params.lim)
+			if absolute_rotation_deg < 0.0 or absolute_rotation_deg > rotation_limit_deg:
 				raise ValueError(
 					'rotation sweep exceeds motor range '
-					f'(absolute target {absolute_rotation_deg:.3f} deg is outside 0..180)'
+					f'(absolute target {absolute_rotation_deg:.3f} deg is outside 0..{rotation_limit_deg:.3f})'
 				)
 
 		z_extension_place = await tool.get_param('Z_EXTENSION_PLACE')

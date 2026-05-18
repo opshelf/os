@@ -7,6 +7,7 @@ from .capture import (
 	get_default_rotation_center_deg,
 	prepare_capture_pose,
 	resolve_capture_y_mm,
+	resolve_rotation_center_deg,
 )
 from .cli import (
 	add_fit_arguments,

@@ -154,12 +154,16 @@ def test_build_angle_z_offset_positions_prefers_center_slice() -> None:
     assert z_offset_positions == [0.0]
 
 
-def test_build_angle_rotation_center_deg_uses_front_for_left() -> None:
-    assert _build_angle_rotation_center_deg(StorageModuleSide.LEFT) == 0.0
+def test_build_angle_rotation_center_deg_uses_configured_front_for_left() -> None:
+    parameters = SimpleNamespace(ROTATION_FRONT=184.5, ROTATION_BACK=4.5)
+
+    assert _build_angle_rotation_center_deg(parameters, StorageModuleSide.LEFT) == 184.5
 
 
-def test_build_angle_rotation_center_deg_uses_back_for_right() -> None:
-    assert _build_angle_rotation_center_deg(StorageModuleSide.RIGHT) == 180.0
+def test_build_angle_rotation_center_deg_uses_configured_back_for_right() -> None:
+    parameters = SimpleNamespace(ROTATION_FRONT=184.5, ROTATION_BACK=4.5)
+
+    assert _build_angle_rotation_center_deg(parameters, StorageModuleSide.RIGHT) == 4.5
 
 
 def test_build_bounds_for_side_clamps_x_min_away_from_zero() -> None:
@@ -209,6 +213,7 @@ def test_build_angle_fit_inputs_flips_right_side_rotation_sign() -> None:
         StorageModuleSide.RIGHT,
         SimpleNamespace(laser_offset_x_mm=51.0),
         raw_samples,
+        180.0,
     )
 
     assert [sample.rotation_deg for sample in fit_samples] == [8.0, -0.0, -8.0]
@@ -219,9 +224,25 @@ def test_build_angle_fit_inputs_flips_right_side_rotation_sign() -> None:
 def test_build_angle_rotation_positions_for_right_keeps_non_positive_half() -> None:
     positions = [-8.0, -7.0, -6.0, -5.0, -4.0, -3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
 
-    filtered_positions = _build_angle_rotation_positions_for_side(StorageModuleSide.RIGHT, positions)
+    filtered_positions = _build_angle_rotation_positions_for_side(StorageModuleSide.RIGHT, positions, 180.0, 180.0)
 
     assert filtered_positions == [-8.0, -7.0, -6.0, -5.0, -4.0, -3.0, -2.0, -1.0, 0.0]
+
+
+def test_build_angle_rotation_positions_for_right_keeps_non_positive_half_at_standard_center_with_full_limit() -> None:
+    positions = [-8.0, -7.0, -6.0, -5.0, -4.0, -3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
+
+    filtered_positions = _build_angle_rotation_positions_for_side(StorageModuleSide.RIGHT, positions, 180.0, 360.0)
+
+    assert filtered_positions == [-8.0, -7.0, -6.0, -5.0, -4.0, -3.0, -2.0, -1.0, 0.0]
+
+
+def test_build_angle_rotation_positions_for_right_keeps_non_negative_half_near_lower_limit() -> None:
+    positions = [-4.0, -3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
+
+    filtered_positions = _build_angle_rotation_positions_for_side(StorageModuleSide.RIGHT, positions, 4.5, 185.0)
+
+    assert filtered_positions == [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
 
 
 def test_right_side_mirrored_negative_half_sweep_reduces_fit_error() -> None:
@@ -260,12 +281,13 @@ def test_right_side_mirrored_negative_half_sweep_reduces_fit_error() -> None:
         laser_offset_z_mm=0.0,
         beam_zero_deg=0.0,
     )
-    filtered_positions = set(_build_angle_rotation_positions_for_side(StorageModuleSide.RIGHT, rotation_positions))
+    filtered_positions = set(_build_angle_rotation_positions_for_side(StorageModuleSide.RIGHT, rotation_positions, 180.0, 180.0))
     one_sided_samples = [sample for sample in raw_samples if sample.rotation_deg in filtered_positions]
     fit_samples, laser_offset_x_mm = _build_angle_fit_inputs(
         StorageModuleSide.RIGHT,
         SimpleNamespace(laser_offset_x_mm=51.0),
         one_sided_samples,
+        180.0,
     )
     one_sided_fit = angle_module.search_best_alpha(
         fit_samples,
@@ -313,6 +335,7 @@ def test_left_side_angle_fit_ignores_configured_laser_offset_x() -> None:
         StorageModuleSide.LEFT,
         SimpleNamespace(laser_offset_x_mm=51.0),
         raw_samples,
+        0.0,
     )
     fit_result = angle_module.search_best_alpha(
         fit_samples,
@@ -635,7 +658,7 @@ async def test_run_all_sides_processes_right_before_left() -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_angle_calibration_uses_geometric_center_not_previous_rotation() -> None:
+async def test_run_angle_calibration_uses_configured_rotation_center() -> None:
     manager = LaserAutoCalibrationManager()
     tool = SimpleNamespace(
         _laser_enabled=True,
@@ -692,11 +715,11 @@ async def test_run_angle_calibration_uses_geometric_center_not_previous_rotation
                                 ScanBounds(x_min=5.0, x_max=950.0, y_min=0.0, y_max=1250.0),
                             )
 
-    assert resolve_mock.await_args.kwargs['rotation_center_deg'] == pytest.approx(0.0)
+    assert resolve_mock.await_args.kwargs['rotation_center_deg'] == pytest.approx(3.815)
     assert prepare_mock.await_args.kwargs['should_use_safe_right_rotation_path'] is True
     assert result.previous_rotation_deg == pytest.approx(3.815)
     assert result.alpha_deg == pytest.approx(3.815)
-    assert result.updated_rotation_deg == pytest.approx(3.815)
+    assert result.updated_rotation_deg == pytest.approx(7.63)
 
 
 @pytest.mark.asyncio
@@ -814,10 +837,10 @@ async def test_run_angle_calibration_allows_measured_right_rotation_above_180() 
                                 ScanBounds(x_min=5.0, x_max=950.0, y_min=0.0, y_max=1250.0),
                             )
 
-    assert resolve_mock.await_args.kwargs['rotation_center_deg'] == pytest.approx(180.0)
+    assert resolve_mock.await_args.kwargs['rotation_center_deg'] == pytest.approx(183.0)
     assert result.previous_rotation_deg == pytest.approx(183.0)
     assert result.alpha_deg == pytest.approx(8.0)
-    assert result.updated_rotation_deg == pytest.approx(188.0)
+    assert result.updated_rotation_deg == pytest.approx(191.0)
 
 
 @pytest.mark.asyncio
