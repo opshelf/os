@@ -233,8 +233,8 @@ def _module_name_to_side(side_name: Literal["left_module", "right_module"]) -> S
     return StorageModuleSide.RIGHT
 
 
-def _build_angle_rotation_center_deg(side: StorageModuleSide) -> float:
-    return float(angle_module.get_default_rotation_center_deg(_side_to_short_name(side)))
+def _build_angle_rotation_center_deg(parameters: Any, side: StorageModuleSide) -> float:
+    return angle_module.resolve_rotation_center_deg(_side_to_short_name(side), parameters)
 
 
 def _side_to_rotation_param_name(side: StorageModuleSide) -> str:
@@ -352,13 +352,13 @@ def _build_angle_fit_inputs(
     side: StorageModuleSide,
     scan_config: Any,
     samples: list[angle_module.LaserAngleCalibrationSample],
+    rotation_center_deg: float,
 ) -> tuple[list[angle_module.LaserAngleCalibrationSample], float]:
     laser_offset_x_mm = 0.0
 
     if side != StorageModuleSide.RIGHT:
         return samples, laser_offset_x_mm
 
-    rotation_center_deg = _build_angle_rotation_center_deg(side)
     adjusted_samples = [
         angle_module.LaserAngleCalibrationSample(
             axis_x_mm=float(sample.axis_x_mm),
@@ -378,14 +378,21 @@ def _build_angle_fit_inputs(
 def _build_angle_rotation_positions_for_side(
     side: StorageModuleSide,
     positions: list[float],
+    rotation_center_deg: float,
+    rotation_limit_deg: float,
 ) -> list[float]:
     if side != StorageModuleSide.RIGHT:
         return positions
 
-    filtered_positions = [position for position in positions if position <= 0.0]
+    if rotation_center_deg < rotation_limit_deg / 2.0:
+        filtered_positions = [position for position in positions if position >= 0.0]
+        direction_label = "at or above center"
+    else:
+        filtered_positions = [position for position in positions if position <= 0.0]
+        direction_label = "at or below center"
 
     if len(filtered_positions) == 0:
-        raise ValueError("right-side rotation sweep has no valid positions at or below center")
+        raise ValueError(f"right-side rotation sweep has no valid positions {direction_label}")
 
     return filtered_positions
 

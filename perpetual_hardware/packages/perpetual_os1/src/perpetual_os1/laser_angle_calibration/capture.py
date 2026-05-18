@@ -29,6 +29,20 @@ def get_default_rotation_center_deg(side_name: str) -> float:
 	return LEFT_MODULE_ROTATION_CENTER_DEG
 
 
+def resolve_rotation_center_deg(side_name: str, parameters: Any) -> float:
+	parameter_name = 'ROTATION_BACK' if side_name == 'right' else 'ROTATION_FRONT'
+
+	if isinstance(parameters, dict):
+		value = parameters.get(parameter_name)
+	else:
+		value = getattr(parameters, parameter_name, None)
+
+	if value is None:
+		raise ValueError(f'{parameter_name} is required for {side_name} module angle calibration')
+
+	return float(value)
+
+
 async def enter_capture_mode(
 	tool: Any,
 	*,
@@ -290,16 +304,17 @@ async def capture_samples_with_robot(args: argparse.Namespace) -> tuple[list[Las
 		rotation_center_deg = float(
 			args.rotation_center_deg
 			if args.rotation_center_deg is not None
-			else get_default_rotation_center_deg(side_name)
+			else resolve_rotation_center_deg(side_name, config.robot.tool.parameters)
 		)
 
+		rotation_limit_deg = float(tool._mr._params.lim)
 		for rotation_deg in rotation_positions:
 			absolute_rotation_deg = rotation_center_deg + float(rotation_deg)
 
-			if absolute_rotation_deg < 0.0 or absolute_rotation_deg > 180.0:
+			if absolute_rotation_deg < 0.0 or absolute_rotation_deg > rotation_limit_deg:
 				raise ValueError(
 					'rotation sweep exceeds motor range '
-					f'(absolute target {absolute_rotation_deg:.3f} deg is outside 0..180)'
+					f'(absolute target {absolute_rotation_deg:.3f} deg is outside 0..{rotation_limit_deg:.3f})'
 				)
 
 		z_extension_place = await tool.get_param('Z_EXTENSION_PLACE')

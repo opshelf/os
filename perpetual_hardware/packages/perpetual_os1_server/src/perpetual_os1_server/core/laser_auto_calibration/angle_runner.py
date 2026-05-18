@@ -37,14 +37,19 @@ class AngleRunnerMixin:
             raise ValueError(f"{rotation_param} is required")
 
         previous_rotation_deg = float(previous_rotation_value)
-        rotation_center_deg = _build_angle_rotation_center_deg(side)
+        rotation_center_deg = previous_rotation_deg
         rotation_limit_deg = float(tool._mr._params.lim)
         rotation_positions = _build_valid_rotation_positions(
             scan_config,
             rotation_center_deg,
             rotation_limit_deg,
         )
-        rotation_positions = _build_angle_rotation_positions_for_side(side, rotation_positions)
+        rotation_positions = _build_angle_rotation_positions_for_side(
+            side,
+            rotation_positions,
+            rotation_center_deg,
+            rotation_limit_deg,
+        )
         z_extension_place = await tool.get_param("Z_EXTENSION_PLACE")
         z_move_rpm = await tool.get_param("Z_MOVE_RPM")
         z_move_accel = await tool.get_param("Z_MOVE_ACCEL")
@@ -147,7 +152,7 @@ class AngleRunnerMixin:
                                 f"sample=ok x={x_mm:.3f} z={target_z_mm:.3f} rotation_deg={rotation_deg:.3f} distance_mm={depth_mm:.3f}"
                             )
                 self._raise_if_abort_requested()
-                fit_samples, laser_offset_x_mm = _build_angle_fit_inputs(side, scan_config, samples)
+                fit_samples, laser_offset_x_mm = _build_angle_fit_inputs(side, scan_config, samples, rotation_center_deg)
                 fit_result = angle_module.search_best_alpha(
                     fit_samples,
                     alpha_min_deg=float(scan_config.angle_calibration_alpha_min_deg),
