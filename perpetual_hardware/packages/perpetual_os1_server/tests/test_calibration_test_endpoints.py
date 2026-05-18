@@ -49,11 +49,20 @@ def build_worker(grid: StorageGrid):
 		_ms=SimpleNamespace(get_position=AsyncMock(return_value=0.0)),
 	)
 
+	call_order: list[str] = []
+
+	async def did_io_pick(*args, **kwargs):
+		call_order.append('store')
+
+	async def did_io_place(*args, **kwargs):
+		call_order.append('retrieve')
+
 	robot = SimpleNamespace(
 		_grid=grid,
 		_tool=tool,
-		io_pick=AsyncMock(),
-		io_place=AsyncMock(),
+		io_pick=AsyncMock(side_effect=did_io_pick),
+		io_place=AsyncMock(side_effect=did_io_place),
+		call_order=call_order,
 	)
 
 	return SimpleNamespace(
@@ -93,7 +102,7 @@ async def test_quick_test_picks_and_places_selected_cell(client) -> None:
 
 
 @pytest.mark.asyncio
-async def test_cycle_test_runs_store_then_retrieve_for_empty_cell(client) -> None:
+async def test_cycle_test_runs_retrieve_then_store_for_empty_cell(client) -> None:
 	grid = build_grid(is_occupied=False)
 	worker = build_worker(grid)
 
@@ -107,15 +116,16 @@ async def test_cycle_test_runs_store_then_retrieve_for_empty_cell(client) -> Non
 	assert response.status_code == 200
 	assert worker._robot.io_pick.await_count == 1
 	assert worker._robot.io_place.await_count == 1
+	assert worker._robot.call_order == ['retrieve', 'store']
 
 	cell = grid.left_module[0].cells[0]
 
-	assert cell.status == CellStatus.AVAILABLE
-	assert cell.item is None
+	assert cell.status == CellStatus.OCCUPIED
+	assert cell.item is not None
 
 
 @pytest.mark.asyncio
-async def test_cycle_test_runs_retrieve_then_restore_for_occupied_cell(client) -> None:
+async def test_cycle_test_runs_retrieve_then_store_for_occupied_cell(client) -> None:
 	grid = build_grid(is_occupied=True)
 	worker = build_worker(grid)
 	original_item = grid.left_module[0].cells[0].item.model_copy(deep=True)
@@ -130,6 +140,7 @@ async def test_cycle_test_runs_retrieve_then_restore_for_occupied_cell(client) -
 	assert response.status_code == 200
 	assert worker._robot.io_place.await_count == 1
 	assert worker._robot.io_pick.await_count == 1
+	assert worker._robot.call_order == ['retrieve', 'store']
 
 	cell = grid.left_module[0].cells[0]
 
