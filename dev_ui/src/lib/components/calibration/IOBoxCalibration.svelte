@@ -110,6 +110,9 @@
 			isSaving === true ||
 			!needsToolHome
 	);
+	const editInputsDisabled = $derived(
+		isMoving === true || needsHome === true || isHoming === true || isPositioned === false
+	);
 
 	onMount(function () {
 		if (browser === false) {
@@ -658,7 +661,7 @@
 						type="number"
 						step="0.5"
 						bind:value={editLowX}
-						disabled={isMoving === true || needsHome === true || isHoming === true}
+						disabled={editInputsDisabled}
 					/>
 					<button
 						type="button"
@@ -678,7 +681,7 @@
 						type="number"
 						step="0.5"
 						bind:value={editLowY}
-						disabled={isMoving === true || needsHome === true || isHoming === true}
+						disabled={editInputsDisabled}
 					/>
 					<button
 						type="button"
@@ -700,7 +703,7 @@
 						type="number"
 						step="0.5"
 						bind:value={editHighX}
-						disabled={isMoving === true || needsHome === true || isHoming === true}
+						disabled={editInputsDisabled}
 					/>
 					<button
 						type="button"
@@ -720,7 +723,7 @@
 						type="number"
 						step="0.5"
 						bind:value={editHighY}
-						disabled={isMoving === true || needsHome === true || isHoming === true}
+						disabled={editInputsDisabled}
 					/>
 					<button
 						type="button"
@@ -742,7 +745,7 @@
 						type="number"
 						step="0.5"
 						bind:value={editZ}
-						disabled={isMoving === true || needsHome === true || isHoming === true}
+						disabled={editInputsDisabled}
 					/>
 					<button
 						type="button"
@@ -762,7 +765,7 @@
 						type="number"
 						step="0.5"
 						bind:value={editStage}
-						disabled={isMoving === true || needsHome === true || isHoming === true}
+						disabled={editInputsDisabled}
 					/>
 					<button
 						type="button"
