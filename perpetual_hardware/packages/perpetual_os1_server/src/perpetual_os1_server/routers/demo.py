@@ -9,17 +9,38 @@ from pydantic import BaseModel
 
 from perpetual_os1.common import AxisCoordinate
 from perpetual_os1.exceptions import MotorError, MovementError, ToolError
-from perpetual_os1.storage import StorageModuleCellLocation, StorageModuleSide
+from perpetual_os1.storage import StorageModuleCellLocation
 from hardware.exceptions import MotorError as HardwareMotorError
 
-from perpetual_os1_server.core.robot import get_robot_worker
 from perpetual_os1_server.core.laser_auto_calibration import is_laser_auto_calibration_running
+from perpetual_os1_server.core.robot import get_robot_worker
 from perpetual_os1_server.core.manual_motion import manual_motion_guard
 from perpetual_os1_server.routers.common import SuccessResponse
+from perpetual_os1_server.core.storage_module import side_to_s
 from perpetual_os1_server.routers.auth_deps import get_current_user
 from perpetual_os1_server.routers.calibration import _ensure_ready, _clear_motors_for_move
 
 logger = logging.getLogger(__name__)
+
+
+async def ensure_laser_auto_calibration_not_running() -> None:
+	if await is_laser_auto_calibration_running() is False:
+		return
+
+	raise HTTPException(
+		status_code=status.HTTP_409_CONFLICT,
+		detail="laser auto calibration is running",
+	)
+
+
+async def get_robot_worker_or_503():
+	try:
+		return await get_robot_worker()
+	except ValueError as exc:
+		raise HTTPException(
+			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+			detail="Robot is not initialized",
+		) from exc
 
 router = APIRouter(prefix="/api/demo", tags=["demo"], dependencies=[Depends(get_current_user)])
 
@@ -30,26 +51,10 @@ _current_cell_index: Optional[int] = None
 _total_cells: Optional[int] = None
 
 
-async def _ensure_laser_auto_calibration_not_running() -> None:
-	if await is_laser_auto_calibration_running() is False:
-		return
-
-	raise HTTPException(
-		status_code=status.HTTP_409_CONFLICT,
-		detail="laser auto calibration is running",
-	)
-
-
 class DemoCycleStatusResponse(BaseModel):
 	is_running: bool
 	current_cell_index: Optional[int] = None
 	total_cells: Optional[int] = None
-
-
-def _side_to_s(side: StorageModuleSide) -> int:
-	if side == StorageModuleSide.LEFT:
-		return 0
-	return 1
 
 
 def _build_cell_list(robot) -> list[tuple[StorageModuleCellLocation, AxisCoordinate, Optional[float]]]:
@@ -60,7 +65,7 @@ def _build_cell_list(robot) -> list[tuple[StorageModuleCellLocation, AxisCoordin
 	for location in robot._demo_cell_map.values():
 		cal_coord = grid.get_cell_coordinate(location)
 		coord = cal_coord.to_axis_coordinate()
-		coord.s = _side_to_s(location.side)
+		coord.s = side_to_s(location.side)
 		nudge = robot._get_demo_nudge(location)
 		cells.append((location, coord, nudge))
 
@@ -112,7 +117,7 @@ async def _run_demo_cycle(worker, cells: list[tuple[StorageModuleCellLocation, A
 async def start_demo_cycle() -> SuccessResponse:
 	global _demo_task, _stop_event, _is_running, _current_cell_index, _total_cells
 
-	await _ensure_laser_auto_calibration_not_running()
+	await ensure_laser_auto_calibration_not_running()
 
 	if _is_running is True:
 		raise HTTPException(
@@ -120,13 +125,7 @@ async def start_demo_cycle() -> SuccessResponse:
 			detail="Demo cycle is already running",
 		)
 
-	try:
-		worker = await get_robot_worker()
-	except ValueError as e:
-		raise HTTPException(
-			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail="Robot is not initialized",
-		) from e
+	worker = await get_robot_worker_or_503()
 
 	_ensure_ready(worker)
 

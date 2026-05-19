@@ -35,6 +35,19 @@ class RoleResponse(BaseModel):
 	created_at: str
 	updated_at: str
 
+async def _build_role_response(db: AsyncSession, role: Role, user_count: int | None = None) -> RoleResponse:
+	if user_count is None:
+		user_count = int(await db.scalar(select(func.count()).select_from(User).filter(User.role_id == role.id)) or 0)
+
+	return RoleResponse(
+		id=role.id,
+		name=role.name,
+		permissions=role.permissions,
+		user_count=user_count,
+		created_at=role.created_at.isoformat(),
+		updated_at=role.updated_at.isoformat(),
+	)
+
 @router.get("", response_model=List[RoleResponse])
 async def list_roles(
 	db: AsyncSession = Depends(get_db),
@@ -44,17 +57,10 @@ async def list_roles(
 	roles_result = await db.execute(select(Role))
 	roles = roles_result.scalars().all()
 	
-	return [
-		RoleResponse(
-			id=role.id,
-			name=role.name,
-			permissions=role.permissions,
-			user_count=int(await db.scalar(select(func.count()).select_from(User).filter(User.role_id == role.id)) or 0),
-			created_at=role.created_at.isoformat(),
-			updated_at=role.updated_at.isoformat()
-		)
-		for role in roles
-	]
+	counts_result = await db.execute(select(User.role_id, func.count()).group_by(User.role_id))
+	user_counts = {role_id: int(count) for role_id, count in counts_result.all()}
+
+	return [await _build_role_response(db, role, user_count=user_counts.get(role.id, 0)) for role in roles]
 
 @router.post("", response_model=RoleResponse, dependencies=[Depends(require_permissions("roles:write"))])
 async def create_role(
@@ -80,14 +86,7 @@ async def create_role(
 	await db.commit()
 	await db.refresh(role)
 	
-	return RoleResponse(
-		id=role.id,
-		name=role.name,
-		permissions=role.permissions,
-		user_count=0,
-		created_at=role.created_at.isoformat(),
-		updated_at=role.updated_at.isoformat()
-	)
+	return await _build_role_response(db, role, user_count=0)
 
 @router.get("/{role_id}", response_model=RoleResponse)
 async def get_role(
@@ -104,14 +103,7 @@ async def get_role(
 			detail="Role not found"
 		)
 	
-	return RoleResponse(
-		id=role.id,
-		name=role.name,
-		permissions=role.permissions,
-		user_count=int(await db.scalar(select(func.count()).select_from(User).filter(User.role_id == role.id)) or 0),
-		created_at=role.created_at.isoformat(),
-		updated_at=role.updated_at.isoformat()
-	)
+	return await _build_role_response(db, role)
 
 @router.put("/{role_id}", response_model=RoleResponse, dependencies=[Depends(require_permissions("roles:write"))])
 async def update_role(
@@ -150,14 +142,7 @@ async def update_role(
 	await db.commit()
 	await db.refresh(role)
 	
-	return RoleResponse(
-		id=role.id,
-		name=role.name,
-		permissions=role.permissions,
-		user_count=int(await db.scalar(select(func.count()).select_from(User).filter(User.role_id == role.id)) or 0),
-		created_at=role.created_at.isoformat(),
-		updated_at=role.updated_at.isoformat()
-	)
+	return await _build_role_response(db, role)
 
 @router.delete("/{role_id}", dependencies=[Depends(require_permissions("roles:delete"))])
 async def delete_role(

@@ -24,6 +24,7 @@ from perpetual_os1.storage import StorageModuleSide
 from perpetual_os1.robot_worker import RobotWorker
 
 from perpetual_os1_server.settings import clear_config_cache, get_config_path, get_root_config, save_root_config
+from perpetual_os1_server.core.storage_module import module_name_to_side
 
 logger = logging.getLogger(__name__)
 
@@ -227,10 +228,7 @@ def _side_to_short_name(side: StorageModuleSide) -> Literal["left", "right"]:
 
 
 def _module_name_to_side(side_name: Literal["left_module", "right_module"]) -> StorageModuleSide:
-    if side_name == "left_module":
-        return StorageModuleSide.LEFT
-
-    return StorageModuleSide.RIGHT
+    return module_name_to_side(side_name)
 
 
 def _build_angle_rotation_center_deg(parameters: Any, side: StorageModuleSide) -> float:

@@ -281,11 +281,7 @@ export async function runCalibrationQuickTest(
 	shelfIdx: number,
 	cellIdx: number
 ): Promise<void> {
-	await apiFetch('/calibration/test', {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ side, shelf_idx: shelfIdx, cell_idx: cellIdx })
-	});
+	await testGripper(side, shelfIdx, cellIdx);
 }
 
 export async function runCalibrationCycleTest(
