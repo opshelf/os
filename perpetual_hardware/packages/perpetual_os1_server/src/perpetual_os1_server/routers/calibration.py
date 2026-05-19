@@ -1101,6 +1101,23 @@ class IOBoxPositionResponse(BaseModel):
 	warnings: Optional[list[str]] = None
 
 
+IOBOX_CALIBRATION_DECIMAL_PLACES = 2
+
+
+def _round_iobox_calibration_value(value: float) -> float:
+	return round(float(value), IOBOX_CALIBRATION_DECIMAL_PLACES)
+
+
+def _round_iobox_position(position: IOBoxPositionResponse) -> IOBoxPositionResponse:
+	position.pickup_low_x = _round_iobox_calibration_value(position.pickup_low_x)
+	position.pickup_low_y = _round_iobox_calibration_value(position.pickup_low_y)
+	position.pickup_high_x = _round_iobox_calibration_value(position.pickup_high_x)
+	position.pickup_high_y = _round_iobox_calibration_value(position.pickup_high_y)
+	position.z_extension = _round_iobox_calibration_value(position.z_extension)
+	position.stage_extension = _round_iobox_calibration_value(position.stage_extension)
+	return position
+
+
 class IOBoxJogRequest(BaseModel):
 	position: Literal["low", "high"]
 	axis: Literal["x", "y", "z", "stage"]
@@ -1128,12 +1145,12 @@ async def get_iobox_calibration() -> IOBoxPositionResponse:
 	params = config.robot.tool.parameters
 
 	_iobox_current = IOBoxPositionResponse(
-		pickup_low_x=params.PICKUP_POSITION_L[0],
-		pickup_low_y=params.PICKUP_POSITION_L[1],
-		pickup_high_x=params.PICKUP_POSITION_H[0],
-		pickup_high_y=params.PICKUP_POSITION_H[1],
-		z_extension=params.Z_EXTENSION_IO,
-		stage_extension=params.STAGE_EXTENSION_IO_BOX,
+		pickup_low_x=_round_iobox_calibration_value(params.PICKUP_POSITION_L[0]),
+		pickup_low_y=_round_iobox_calibration_value(params.PICKUP_POSITION_L[1]),
+		pickup_high_x=_round_iobox_calibration_value(params.PICKUP_POSITION_H[0]),
+		pickup_high_y=_round_iobox_calibration_value(params.PICKUP_POSITION_H[1]),
+		z_extension=_round_iobox_calibration_value(params.Z_EXTENSION_IO),
+		stage_extension=_round_iobox_calibration_value(params.STAGE_EXTENSION_IO_BOX),
 	)
 
 	return _iobox_current
@@ -1238,10 +1255,12 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 				await _clear_motors_for_move(tool, gantry=True)
 				if request.position == "low":
 					new_x = _clamp_value(_iobox_current.pickup_low_x + request.delta, x_limit, "X axis", warnings)
+					new_x = _round_iobox_calibration_value(new_x)
 					await tool._mx.move_to_position(new_x)
 					_iobox_current.pickup_low_x = new_x
 				else:
 					new_x = _clamp_value(_iobox_current.pickup_high_x + request.delta, x_limit, "X axis", warnings)
+					new_x = _round_iobox_calibration_value(new_x)
 					await tool._mx.move_to_position(new_x)
 					_iobox_current.pickup_high_x = new_x
 			elif request.axis == "y":
@@ -1253,21 +1272,21 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 				await _clear_motors_for_move(tool, gantry=True)
 				if request.position == "low":
 					new_y = _clamp_value(_iobox_current.pickup_low_y + request.delta, y_limit, "Y axis", warnings)
+					new_y = _round_iobox_calibration_value(new_y)
 					await tool._my.move_to_position(new_y)
 					_iobox_current.pickup_low_y = new_y
 				else:
 					new_y = _clamp_value(_iobox_current.pickup_high_y + request.delta, y_limit, "Y axis", warnings)
+					new_y = _round_iobox_calibration_value(new_y)
 					await tool._my.move_to_position(new_y)
 					_iobox_current.pickup_high_y = new_y
 			elif request.axis == "z":
 				if tool._mg is None:
 					raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Gripper motor not configured")
 				await _clear_motors_for_move(tool, gripper=True)
-				current_z = await tool._mg.get_position()
 				z_limit = tool._mg._params.lim
-				if current_z < 0 or current_z > z_limit:
-					current_z = _iobox_current.z_extension
-				new_z = _clamp_value(current_z + request.delta, z_limit, "Z axis", warnings)
+				new_z = _clamp_value(_iobox_current.z_extension + request.delta, z_limit, "Z axis", warnings)
+				new_z = _round_iobox_calibration_value(new_z)
 				grip_rpm = await tool.get_param("Z_MOVE_RPM")
 				grip_accel = await tool.get_param("Z_MOVE_ACCEL")
 				await tool._mg.move_to_position(new_z, rpm=grip_rpm, accel=grip_accel)
@@ -1278,6 +1297,7 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 				await _clear_motors_for_move(tool, stage=True)
 				stage_limit = tool._ms._params.lim
 				new_stage = _clamp_value(_iobox_current.stage_extension + request.delta, stage_limit, "Stage", warnings)
+				new_stage = _round_iobox_calibration_value(new_stage)
 				await tool._ms.move_to_position(new_stage)
 				_iobox_current.stage_extension = new_stage
 	except (MotorError, HardwareMotorError) as e:
@@ -1395,8 +1415,8 @@ async def save_iobox_calibration(request: IOBoxSaveRequest):
 	params_dict = config.robot.tool.parameters.model_dump()
 	params_dict["PICKUP_POSITION_L"] = (int(request.pickup_low_x), int(request.pickup_low_y))
 	params_dict["PICKUP_POSITION_H"] = (int(request.pickup_high_x), int(request.pickup_high_y))
-	params_dict["Z_EXTENSION_IO"] = request.z_extension
-	params_dict["STAGE_EXTENSION_IO_BOX"] = request.stage_extension
+	params_dict["Z_EXTENSION_IO"] = _round_iobox_calibration_value(request.z_extension)
+	params_dict["STAGE_EXTENSION_IO_BOX"] = _round_iobox_calibration_value(request.stage_extension)
 
 	from perpetual_os1.common import Parameters
 	config.robot.tool.parameters = Parameters.model_validate(params_dict)
@@ -1423,13 +1443,15 @@ async def save_iobox_calibration(request: IOBoxSaveRequest):
 	worker.clear_needs_home()
 	await worker.get_status_snapshot(force_refresh=True)
 
-	_iobox_current = IOBoxPositionResponse(
-		pickup_low_x=request.pickup_low_x,
-		pickup_low_y=request.pickup_low_y,
-		pickup_high_x=request.pickup_high_x,
-		pickup_high_y=request.pickup_high_y,
-		z_extension=request.z_extension,
-		stage_extension=request.stage_extension,
+	_iobox_current = _round_iobox_position(
+		IOBoxPositionResponse(
+			pickup_low_x=request.pickup_low_x,
+			pickup_low_y=request.pickup_low_y,
+			pickup_high_x=request.pickup_high_x,
+			pickup_high_y=request.pickup_high_y,
+			z_extension=request.z_extension,
+			stage_extension=request.stage_extension,
+		)
 	)
 
 	return {"success": True}
