@@ -21,6 +21,17 @@
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import StatusMessage from '$lib/components/StatusMessage.svelte';
 
+	type IOBoxEditField = 'lowX' | 'lowY' | 'highX' | 'highY' | 'z' | 'stage';
+
+	interface IOBoxEditValues {
+		lowX: number;
+		lowY: number;
+		highX: number;
+		highY: number;
+		z: number;
+		stage: number;
+	}
+
 	let ioboxPosition = $state<IOBoxPosition | null>(null);
 	let loading = $state<boolean>(false);
 	let error = $state<string>('');
@@ -63,6 +74,20 @@
 	);
 	const homeMessage = $derived(
 		needsHome ? `home required${needsHomeReason !== '' ? `: ${needsHomeReason}` : ''}` : ''
+	);
+	const isLowXDirty = $derived(ioboxPosition !== null && editLowX !== ioboxPosition.pickup_low_x);
+	const isLowYDirty = $derived(ioboxPosition !== null && editLowY !== ioboxPosition.pickup_low_y);
+	const isHighXDirty = $derived(ioboxPosition !== null && editHighX !== ioboxPosition.pickup_high_x);
+	const isHighYDirty = $derived(ioboxPosition !== null && editHighY !== ioboxPosition.pickup_high_y);
+	const isZDirty = $derived(ioboxPosition !== null && editZ !== ioboxPosition.z_extension);
+	const isStageDirty = $derived(ioboxPosition !== null && editStage !== ioboxPosition.stage_extension);
+	const hasDirtyValues = $derived(
+		isLowXDirty === true ||
+			isLowYDirty === true ||
+			isHighXDirty === true ||
+			isHighYDirty === true ||
+			isZDirty === true ||
+			isStageDirty === true
 	);
 	const duplicateHomeError = $derived.by(() => {
 		if (needsHome !== true || error === '') {
@@ -148,6 +173,7 @@
 		try {
 			const status = await homeToolMotors();
 			applyNeedsHomeStatus(status);
+			isPositioned = false;
 			message = 'tool motors homed';
 		} catch (err) {
 			handleNeedsHomeError(err);
@@ -168,6 +194,8 @@
 	}
 
 	async function didClickMove(): Promise<void> {
+		const editValues = getEditValues();
+
 		isMoving = true;
 		error = '';
 		message = '';
@@ -176,8 +204,9 @@
 		try {
 			ioboxPosition = await moveToIOBoxPosition(selectedPosition);
 			syncEditValues();
+			restoreEditValues(editValues, []);
 			isPositioned = true;
-			message = `moved to ${selectedPosition} position`;
+			message = `started ${selectedPosition} calibration`;
 		} catch (err) {
 			handleNeedsHomeError(err);
 			error = err instanceof Error ? err.message : 'failed to move to io box position';
@@ -186,7 +215,10 @@
 		}
 	}
 
-	async function didClickJog(axis: 'x' | 'y' | 'z' | 'stage', delta: number): Promise<void> {
+	async function didClickJog(axis: 'x' | 'y' | 'z' | 'stage', delta: number): Promise<boolean> {
+		const editValues = getEditValues();
+		const movedField = getMovedField(selectedPosition, axis);
+
 		isMoving = true;
 		error = '';
 		message = '';
@@ -195,11 +227,14 @@
 		try {
 			ioboxPosition = await jogIOBoxAxis(selectedPosition, axis, delta);
 			syncEditValues();
+			restoreEditValues(editValues, [movedField]);
 			const warnings = ioboxPosition?.warnings ?? [];
 			warning = warnings.length > 0 ? warnings.join('; ') : '';
+			return true;
 		} catch (err) {
 			handleNeedsHomeError(err);
 			error = err instanceof Error ? err.message : 'failed to jog io box axis';
+			return false;
 		} finally {
 			isMoving = false;
 		}
@@ -254,6 +289,7 @@
 		try {
 			await saveIOBoxCalibration(ioboxPosition);
 			await loadCalibrationStatus();
+			isPositioned = false;
 			message = 'io box calibration saved and robot homed';
 		} catch (err) {
 			handleNeedsHomeError(err);
@@ -276,11 +312,13 @@
 			resetComplete = true;
 			const status = await homeToolMotors();
 			applyNeedsHomeStatus(status);
+			isPositioned = false;
 			message = 'io box position reset from config and tool motors homed';
 		} catch (err) {
 			handleNeedsHomeError(err);
 			if (resetComplete) {
 				message = 'io box position reset from config';
+				isPositioned = false;
 				error = err instanceof Error ? err.message : 'failed to home tool motors after reset';
 			} else {
 				error = err instanceof Error ? err.message : 'failed to reset io box position';
@@ -306,68 +344,203 @@
 		editStage = ioboxPosition.stage_extension;
 	}
 
-	async function didClickMoveLowX(): Promise<void> {
+	function getEditValues(): IOBoxEditValues {
+		return {
+			lowX: editLowX,
+			lowY: editLowY,
+			highX: editHighX,
+			highY: editHighY,
+			z: editZ,
+			stage: editStage
+		};
+	}
+
+	function restoreEditValues(values: IOBoxEditValues, movedFields: IOBoxEditField[]): void {
+		if (!movedFields.includes('lowX')) {
+			editLowX = values.lowX;
+		}
+		if (!movedFields.includes('lowY')) {
+			editLowY = values.lowY;
+		}
+		if (!movedFields.includes('highX')) {
+			editHighX = values.highX;
+		}
+		if (!movedFields.includes('highY')) {
+			editHighY = values.highY;
+		}
+		if (!movedFields.includes('z')) {
+			editZ = values.z;
+		}
+		if (!movedFields.includes('stage')) {
+			editStage = values.stage;
+		}
+	}
+
+	function getMovedField(position: 'low' | 'high', axis: 'x' | 'y' | 'z' | 'stage'): IOBoxEditField {
+		if (axis === 'z' || axis === 'stage') {
+			return axis;
+		}
+
+		if (position === 'low') {
+			return axis === 'x' ? 'lowX' : 'lowY';
+		}
+
+		return axis === 'x' ? 'highX' : 'highY';
+	}
+
+	async function didClickMoveLowX(): Promise<boolean> {
 		if (ioboxPosition === null) {
-			return;
+			return false;
 		}
 
 		const delta = editLowX - ioboxPosition.pickup_low_x;
 
 		selectedPosition = 'low';
-		await didClickJog('x', delta);
+		return didClickJog('x', delta);
 	}
 
-	async function didClickMoveLowY(): Promise<void> {
+	async function didClickMoveLowY(): Promise<boolean> {
 		if (ioboxPosition === null) {
-			return;
+			return false;
 		}
 
 		const delta = editLowY - ioboxPosition.pickup_low_y;
 
 		selectedPosition = 'low';
-		await didClickJog('y', delta);
+		return didClickJog('y', delta);
 	}
 
-	async function didClickMoveHighX(): Promise<void> {
+	async function didClickMoveHighX(): Promise<boolean> {
 		if (ioboxPosition === null) {
-			return;
+			return false;
 		}
 
 		const delta = editHighX - ioboxPosition.pickup_high_x;
 
 		selectedPosition = 'high';
-		await didClickJog('x', delta);
+		return didClickJog('x', delta);
 	}
 
-	async function didClickMoveHighY(): Promise<void> {
+	async function didClickMoveHighY(): Promise<boolean> {
 		if (ioboxPosition === null) {
-			return;
+			return false;
 		}
 
 		const delta = editHighY - ioboxPosition.pickup_high_y;
 
 		selectedPosition = 'high';
-		await didClickJog('y', delta);
+		return didClickJog('y', delta);
 	}
 
-	async function didClickMoveZ(): Promise<void> {
+	async function didClickMoveZ(): Promise<boolean> {
 		if (ioboxPosition === null) {
-			return;
+			return false;
 		}
 
 		const delta = editZ - ioboxPosition.z_extension;
 
-		await didClickJog('z', delta);
+		return didClickJog('z', delta);
 	}
 
-	async function didClickMoveStage(): Promise<void> {
+	async function didClickMoveStage(): Promise<boolean> {
 		if (ioboxPosition === null) {
-			return;
+			return false;
 		}
 
 		const delta = editStage - ioboxPosition.stage_extension;
 
-		await didClickJog('stage', delta);
+		return didClickJog('stage', delta);
+	}
+
+	async function didClickMoveAll(): Promise<void> {
+		if (ioboxPosition === null || hasDirtyValues === false || isPositioned === false) {
+			return;
+		}
+
+		const targetValues = getEditValues();
+		const moveWarnings: string[] = [];
+
+		async function didMoveChangedField(move: () => Promise<boolean>): Promise<boolean> {
+			const didMove = await move();
+
+			if (warning !== '') {
+				moveWarnings.push(warning);
+			}
+
+			return didMove;
+		}
+
+		async function didStartPosition(position: 'low' | 'high'): Promise<boolean> {
+			selectedPosition = position;
+			await didClickMove();
+
+			return error === '';
+		}
+
+		if (targetValues.lowX !== ioboxPosition.pickup_low_x || targetValues.lowY !== ioboxPosition.pickup_low_y) {
+			if ((await didStartPosition('low')) === false) {
+				return;
+			}
+
+			if (targetValues.lowX !== ioboxPosition.pickup_low_x) {
+				editLowX = targetValues.lowX;
+				if ((await didMoveChangedField(didClickMoveLowX)) === false) {
+					return;
+				}
+			}
+
+			if (targetValues.lowY !== ioboxPosition.pickup_low_y) {
+				editLowY = targetValues.lowY;
+				if ((await didMoveChangedField(didClickMoveLowY)) === false) {
+					return;
+				}
+			}
+		}
+
+		if (targetValues.highX !== ioboxPosition.pickup_high_x || targetValues.highY !== ioboxPosition.pickup_high_y) {
+			if ((await didStartPosition('high')) === false) {
+				return;
+			}
+
+			if (targetValues.highX !== ioboxPosition.pickup_high_x) {
+				editHighX = targetValues.highX;
+				if ((await didMoveChangedField(didClickMoveHighX)) === false) {
+					return;
+				}
+			}
+
+			if (targetValues.highY !== ioboxPosition.pickup_high_y) {
+				editHighY = targetValues.highY;
+				if ((await didMoveChangedField(didClickMoveHighY)) === false) {
+					return;
+				}
+			}
+		}
+
+		if (targetValues.z !== ioboxPosition.z_extension || targetValues.stage !== ioboxPosition.stage_extension) {
+			await didClickExtend();
+
+			if (error !== '') {
+				return;
+			}
+
+			if (targetValues.z !== ioboxPosition.z_extension) {
+				editZ = targetValues.z;
+				if ((await didMoveChangedField(didClickMoveZ)) === false) {
+					return;
+				}
+			}
+
+			if (targetValues.stage !== ioboxPosition.stage_extension) {
+				editStage = targetValues.stage;
+				if ((await didMoveChangedField(didClickMoveStage)) === false) {
+					return;
+				}
+			}
+		}
+
+		warning = moveWarnings.join('; ');
+		message = 'moved all changed values';
 	}
 
 	async function didClickExtend(): Promise<void> {
@@ -402,6 +575,7 @@
 			await homeMotor('stage');
 			await homeMotor('z_axis');
 			await loadCalibration();
+			isPositioned = false;
 			message = 'stage and z retracted';
 		} catch (err) {
 			handleNeedsHomeError(err);
@@ -470,9 +644,10 @@
 						disabled={isMoving === true ||
 							isTesting === true ||
 							needsHome === true ||
-							isHoming === true}
+							isHoming === true ||
+							isPositioned === true}
 					>
-						move
+						start calibration
 					</button>
 				</td>
 			</tr>
@@ -488,7 +663,11 @@
 					<button
 						type="button"
 						onclick={didClickMoveLowX}
-						disabled={isMoving === true || needsHome === true || isHoming === true}
+						disabled={isMoving === true ||
+							needsHome === true ||
+							isHoming === true ||
+							isPositioned === false ||
+							isLowXDirty === false}
 					>
 						move
 					</button>
@@ -504,7 +683,11 @@
 					<button
 						type="button"
 						onclick={didClickMoveLowY}
-						disabled={isMoving === true || needsHome === true || isHoming === true}
+						disabled={isMoving === true ||
+							needsHome === true ||
+							isHoming === true ||
+							isPositioned === false ||
+							isLowYDirty === false}
 					>
 						move
 					</button>
@@ -522,7 +705,11 @@
 					<button
 						type="button"
 						onclick={didClickMoveHighX}
-						disabled={isMoving === true || needsHome === true || isHoming === true}
+						disabled={isMoving === true ||
+							needsHome === true ||
+							isHoming === true ||
+							isPositioned === false ||
+							isHighXDirty === false}
 					>
 						move
 					</button>
@@ -538,7 +725,11 @@
 					<button
 						type="button"
 						onclick={didClickMoveHighY}
-						disabled={isMoving === true || needsHome === true || isHoming === true}
+						disabled={isMoving === true ||
+							needsHome === true ||
+							isHoming === true ||
+							isPositioned === false ||
+							isHighYDirty === false}
 					>
 						move
 					</button>
@@ -556,7 +747,11 @@
 					<button
 						type="button"
 						onclick={didClickMoveZ}
-						disabled={isMoving === true || needsHome === true || isHoming === true}
+						disabled={isMoving === true ||
+							needsHome === true ||
+							isHoming === true ||
+							isPositioned === false ||
+							isZDirty === false}
 					>
 						move
 					</button>
@@ -572,9 +767,28 @@
 					<button
 						type="button"
 						onclick={didClickMoveStage}
-						disabled={isMoving === true || needsHome === true || isHoming === true}
+						disabled={isMoving === true ||
+							needsHome === true ||
+							isHoming === true ||
+							isPositioned === false ||
+							isStageDirty === false}
 					>
 						move
+					</button>
+				</td>
+			</tr>
+			<tr>
+				<td colspan="2">
+					<button
+						type="button"
+						onclick={didClickMoveAll}
+						disabled={isMoving === true ||
+							needsHome === true ||
+							isHoming === true ||
+							isPositioned === false ||
+							hasDirtyValues === false}
+					>
+						move all to changed values
 					</button>
 				</td>
 			</tr>
@@ -714,7 +928,8 @@
 				isTesting === true ||
 				isSaving === true ||
 				needsHome === true ||
-				isHoming === true}
+				isHoming === true ||
+				hasDirtyValues === true}
 		>
 			test
 		</button>
@@ -725,7 +940,8 @@
 				isTesting === true ||
 				isSaving === true ||
 				needsHome === true ||
-				isHoming === true}
+				isHoming === true ||
+				hasDirtyValues === true}
 		>
 			test with gripper
 		</button>
@@ -747,7 +963,9 @@
 				isTesting === true ||
 				isSaving === true ||
 				needsHome === true ||
-				isHoming === true}
+				isHoming === true ||
+				isPositioned === false ||
+				hasDirtyValues === true}
 		>
 			save
 		</button>
