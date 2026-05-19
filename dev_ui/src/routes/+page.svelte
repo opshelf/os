@@ -1,19 +1,9 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
-	import { onDestroy, onMount } from 'svelte';
-	import { apiFetch, createReconnectingEventSource, getApiBase, isApiConnected } from '$lib';
+	import { onMount } from 'svelte';
+	import { apiFetch, getApiBase, isApiConnected, robotStatus, robotStatusError, robotStatusLastUpdate } from '$lib';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 
-	type WorkerStatusPayload = {
-		robot_status?: Record<string, unknown> | null;
-		running?: boolean;
-		current_command?: Record<string, unknown> | null;
-		queue_length?: number;
-		error_queue?: Array<Record<string, unknown>>;
-		queued_operations?: Array<{ command?: Record<string, unknown>; timestamp?: string }>;
-		needs_home?: boolean;
-		needs_home_reason?: string | null;
-	};
 
 	type StorageCell = {
 		shelf_idx: number;
@@ -25,10 +15,6 @@
 	const apiBase = getApiBase();
 	const hostname = browser ? window.location.hostname : '';
 
-	let status: WorkerStatusPayload | null = null;
-	let statusError = '';
-	let statusConnected = false;
-	let lastStatusUpdate = '';
 
 	let lanIp = '';
 
@@ -36,20 +22,6 @@
 	let storageError = '';
 	let storageLoading = true;
 
-	let statusStream: ReturnType<typeof createReconnectingEventSource> | null = null;
-
-	function handleStatusMessage(raw: string): void {
-		try {
-			const payload = JSON.parse(raw) as WorkerStatusPayload;
-			status = payload;
-			statusConnected = true;
-			statusError = '';
-			lastStatusUpdate = new Date().toLocaleString();
-			isApiConnected.set(true);
-		} catch (error) {
-			statusError = 'failed to parse robot status payload';
-		}
-	}
 
 	async function loadStorage(): Promise<void> {
 		storageLoading = true;
@@ -122,35 +94,6 @@
 	onMount(() => {
 		loadStorage();
 		loadSystemInfo();
-		if (!browser) {
-			return;
-		}
-
-		const stream = createReconnectingEventSource({
-			path: '/robot/status',
-			onOpen: () => {
-				statusConnected = true;
-				statusError = '';
-				isApiConnected.set(true);
-			},
-			onMessage: (event) => {
-				handleStatusMessage(event.data);
-			},
-			onError: () => {
-				statusConnected = false;
-				statusError = 'lost connection to robot status stream';
-			}
-		});
-		statusStream = stream;
-		stream.connect();
-
-		return () => {
-			stream.close();
-		};
-	});
-
-	onDestroy(() => {
-		statusStream?.close();
 	});
 </script>
 
@@ -175,20 +118,20 @@
 		</tr>
 		<tr>
 			<td>stream status</td>
-			<td>{statusConnected ? 'connected' : 'disconnected'}</td>
+			<td>{$isApiConnected ? 'connected' : 'disconnected'}</td>
 		</tr>
 		<tr>
 			<td>last update</td>
-			<td>{lastStatusUpdate || 'waiting for first event'}</td>
+			<td>{$robotStatusLastUpdate || 'waiting for first event'}</td>
 		</tr>
-		{#if statusError}
+		{#if $robotStatusError}
 			<tr>
-				<td colspan="2"><ErrorMessage message={statusError} /></td>
+				<td colspan="2"><ErrorMessage message={$robotStatusError} /></td>
 			</tr>
 		{/if}
 	</tbody>
 
-	{#if status}
+	{#if $robotStatus}
 		<thead>
 			<tr>
 				<th colspan="2">current robot state</th>
@@ -197,20 +140,20 @@
 		<tbody>
 			<tr>
 				<td>worker running</td>
-				<td>{status.running ? 'yes' : 'no'}</td>
+				<td>{$robotStatus.running ? 'yes' : 'no'}</td>
 			</tr>
 			<tr>
 				<td>queued commands</td>
-				<td>{status.queue_length ?? 0}</td>
+				<td>{$robotStatus.queue_length ?? 0}</td>
 			</tr>
 			<tr>
 				<td>light curtain</td>
 				<td>
-					{#if status.robot_status?.curtain_blocked === null}
+					{#if $robotStatus.robot_status?.curtain_blocked === null}
 						disabled
-					{:else if status.robot_status?.curtain_blocked === true}
+					{:else if $robotStatus.robot_status?.curtain_blocked === true}
 						blocked
-					{:else if status.robot_status?.curtain_blocked === false}
+					{:else if $robotStatus.robot_status?.curtain_blocked === false}
 						clear
 					{:else}
 						unknown
@@ -220,9 +163,9 @@
 			<tr>
 				<td>door</td>
 				<td>
-					{#if status.robot_status?.door_open === null}
+					{#if $robotStatus.robot_status?.door_open === null}
 						unknown
-					{:else if status.robot_status?.door_open === true}
+					{:else if $robotStatus.robot_status?.door_open === true}
 						open
 					{:else}
 						closed
@@ -232,9 +175,9 @@
 			<tr>
 				<td>home required</td>
 				<td>
-					{#if status.needs_home}
-						yes{#if status.needs_home_reason}
-							({status.needs_home_reason}){/if}
+					{#if $robotStatus.needs_home}
+						yes{#if $robotStatus.needs_home_reason}
+							({$robotStatus.needs_home_reason}){/if}
 					{:else}
 						no
 					{/if}
@@ -242,14 +185,14 @@
 			</tr>
 		</tbody>
 
-		{#if status.current_command}
+		{#if $robotStatus.current_command}
 			<thead>
 				<tr>
 					<th colspan="2">current command</th>
 				</tr>
 			</thead>
 			<tbody>
-				{#each formatCommand(status.current_command) as entry}
+				{#each formatCommand($robotStatus.current_command) as entry}
 					<tr>
 						<td>{entry.field}</td>
 						<td>{entry.value}</td>
@@ -258,7 +201,7 @@
 			</tbody>
 		{/if}
 
-		{#if status.error_queue && status.error_queue.length > 0}
+		{#if $robotStatus.error_queue && $robotStatus.error_queue.length > 0}
 			<thead>
 				<tr>
 					<th>recent errors - type</th>
@@ -266,7 +209,7 @@
 				</tr>
 			</thead>
 			<tbody>
-				{#each status.error_queue as error}
+				{#each $robotStatus.error_queue as error}
 					<tr>
 						<td>{formatValue(error.error_type)}</td>
 						<td>{formatValue(error.message)}</td>
