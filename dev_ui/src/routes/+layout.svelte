@@ -122,7 +122,7 @@
 {#if authReady === false || $isApiConnected === false}
 	<div class="connection-overlay">
 		<div class="connection-message">
-			{authReady === false ? 'AUTHENTICATING' : 'CONNECTING, PLEASE WAIT'}
+			{authReady === false ? 'AUTHENTICATING, PLEASE WAIT' : 'CONNECTING, PLEASE WAIT'}
 		</div>
 	</div>
 {/if}

@@ -62,30 +62,57 @@ export function createReconnectingEventSource(
 		return shouldReconnect === false || source !== null;
 	}
 
+	function scheduleReconnect(): void {
+		if (shouldReconnect === false) {
+			return;
+		}
+
+		clearReconnectTimer();
+		reconnectTimer = setTimeout(() => {
+			reconnectTimer = null;
+			void reconnect();
+		}, reconnectDelayMs);
+	}
+
+	async function authenticateForConnection(): Promise<void> {
+		try {
+			if (isAuthenticated() === true) {
+				await ensureValidToken();
+				return;
+			}
+
+			await loginAsDeveloper();
+		} catch {
+			await loginAsDeveloper();
+		}
+	}
+
 	async function reconnect(): Promise<void> {
 		if (shouldStopReconnecting() === true) {
 			return;
 		}
 
 		try {
-			if (isAuthenticated() === true) {
-				await ensureValidToken();
-			} else {
-				await loginAsDeveloper();
-			}
+			await authenticateForConnection();
 		} catch {
-			try {
-				await loginAsDeveloper();
-			} catch {
-				return;
-			}
+			options.onError?.();
+			scheduleReconnect();
+			return;
 		}
 
 		if (shouldStopReconnecting() === true) {
 			return;
 		}
 
-		const nextSource = new EventSource(resolveUrl());
+		let nextSource: EventSource;
+		try {
+			nextSource = new EventSource(resolveUrl());
+		} catch {
+			options.onError?.();
+			scheduleReconnect();
+			return;
+		}
+
 		source = nextSource;
 
 		if (options.events !== undefined) {
@@ -105,11 +132,7 @@ export function createReconnectingEventSource(
 		nextSource.onerror = () => {
 			closeSource();
 			options.onError?.();
-			clearReconnectTimer();
-			reconnectTimer = setTimeout(() => {
-				reconnectTimer = null;
-				void reconnect();
-			}, reconnectDelayMs);
+			scheduleReconnect();
 		};
 	}
 
