@@ -589,7 +589,7 @@ async def system_info() -> dict[str, str | None]:
 	except OSError:
 		pass
 
-	return {"lan_ip": lan_ip}
+	return {"device_id": get_device_id(), "lan_ip": lan_ip}
 
 
 app.include_router(auth.router)

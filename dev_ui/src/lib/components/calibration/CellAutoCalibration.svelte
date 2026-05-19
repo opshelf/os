@@ -11,6 +11,7 @@
 		type LaserAutoCalibrationSnapshot,
 		type StorageGrid
 	} from '$lib/api';
+	import { createReconnectingEventSource, type ReconnectingEventSource } from '$lib/sse';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import StatusMessage from '$lib/components/StatusMessage.svelte';
 
@@ -28,7 +29,7 @@
 	let selectedShelf = $state<string>('');
 	let selectedCell = $state<string>('');
 	let activeRequestedScope = $state<LaserAutoCalibrationRequest | null>(null);
-	let stream = $state<EventSource | null>(null);
+	let stream = $state<ReconnectingEventSource | null>(null);
 
 	const isSessionActive = $derived.by(() => {
 		if (snapshot === null) {
@@ -289,7 +290,6 @@
 			return;
 		}
 
-		stream.removeEventListener('snapshot', didReceiveSnapshot);
 		stream.close();
 		stream = null;
 		isStreamOpen = false;
@@ -423,11 +423,16 @@
 		error = '';
 		message = '';
 
-		const nextStream = new EventSource(buildLaserAutoCalibrationStreamUrl(getRequestedScope()));
-		nextStream.addEventListener('snapshot', didReceiveSnapshot);
-		nextStream.onopen = didOpenStream;
-		nextStream.onerror = didReceiveStreamError;
+		const nextStream = createReconnectingEventSource({
+			path: () => buildLaserAutoCalibrationStreamUrl(activeRequestedScope ?? getRequestedScope()),
+			onOpen: didOpenStream,
+			onError: didReceiveStreamError,
+			events: {
+				snapshot: didReceiveSnapshot
+			}
+		});
 		stream = nextStream;
+		nextStream.connect();
 	}
 
 	async function didClickAbort(): Promise<void> {
