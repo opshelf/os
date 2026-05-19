@@ -314,7 +314,7 @@
 		const delta = editLowX - ioboxPosition.pickup_low_x;
 
 		selectedPosition = 'low';
-		await didClickJog('x', -delta);
+		await didClickJog('x', delta);
 	}
 
 	async function didClickMoveLowY(): Promise<void> {
@@ -336,7 +336,7 @@
 		const delta = editHighX - ioboxPosition.pickup_high_x;
 
 		selectedPosition = 'high';
-		await didClickJog('x', -delta);
+		await didClickJog('x', delta);
 	}
 
 	async function didClickMoveHighY(): Promise<void> {
@@ -627,14 +627,14 @@
 				<span class="axis-label">X</span>
 				<button
 					type="button"
-					onclick={() => didClickJog('x', jogStep)}
+					onclick={() => didClickJog('x', -jogStep)}
 					disabled={isMoving === true || needsHome === true || isHoming === true}
 				>
 					-
 				</button>
 				<button
 					type="button"
-					onclick={() => didClickJog('x', -jogStep)}
+					onclick={() => didClickJog('x', jogStep)}
 					disabled={isMoving === true || needsHome === true || isHoming === true}
 				>
 					+
