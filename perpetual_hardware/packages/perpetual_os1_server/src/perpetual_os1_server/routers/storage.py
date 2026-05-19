@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import functools
+import json
 import logging
-import re
 import time
 from typing import Any, Callable, Dict, List, Optional, Union, cast
 
@@ -169,24 +169,25 @@ def _serialize_capacity(capacity: Union[str, DimensionsPayload, None]) -> Option
 
 
 def _deserialize_capacity(capacity: str) -> DimensionsPayload:
-    import json as json_module
+    stripped = capacity.strip()
+    if stripped == "":
+        return DimensionsPayload(width=0.0, height=0.0, length=0.0)
 
-    try:
-        data = json_module.loads(capacity)
-        if isinstance(data, dict):
-            return DimensionsPayload(
-                width=float(data.get("width", 0.0)),
-                height=float(data.get("height", 0.0)),
-                length=float(data.get("length", 0.0)),
-            )
-    except (json_module.JSONDecodeError, TypeError, ValueError):
-        pass
+    if stripped.startswith("{"):
+        data = json.loads(stripped)
+        if isinstance(data, dict) is False:
+            raise ValueError("capacity JSON must be an object")
+        return DimensionsPayload(
+            width=float(data.get("width", 0.0)),
+            height=float(data.get("height", 0.0)),
+            length=float(data.get("length", 0.0)),
+        )
 
-    numbers = [float(match) for match in re.findall(r"\d+(?:\.\d+)?", capacity)]
-    if len(numbers) >= 3:
-        width, height, length = numbers[:3]
-    else:
-        width = height = length = 0.0
+    parts = stripped.lower().split("x")
+    if len(parts) != 3:
+        return DimensionsPayload(width=0.0, height=0.0, length=0.0)
+
+    width, height, length = (float(part.strip()) for part in parts)
     return DimensionsPayload(width=width, height=height, length=length)
 
 
@@ -355,11 +356,8 @@ async def delete_item(
 
     deleted = await storage_service.delete_item(upca)
 
-    if deleted:
-        try:
-            await storage_service.sync_to_json(transaction_committed=True)
-        except Exception as json_error:  # pragma: no cover - best effort logging
-            logging.error(f"JSON sync failed after item deletion: {str(json_error)}")
+    if deleted is False:
+        raise HTTPException(status_code=404, detail="Item not found")
 
     return {"message": "Item deleted successfully"}
 
@@ -393,8 +391,6 @@ async def add_item_location(
     if not storage_location:
         raise HTTPException(status_code=400, detail="Failed to add location")
 
-    await storage_service.sync_to_json()
-
     return await _load_item_with_locations(upca, storage_service, current_user)
 
 
@@ -414,8 +410,6 @@ async def _remove_item_location_impl(
 
     if not success:
         raise HTTPException(status_code=404, detail="Location not found")
-
-    await storage_service.sync_to_json()
 
 
 @router.delete("/items/{upca}/locations", dependencies=[Depends(require_permissions("storage:write"))])
