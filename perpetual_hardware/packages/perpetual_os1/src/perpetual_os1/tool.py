@@ -172,7 +172,7 @@ class Tool:
         """Mark the tool as faulted - manual intervention required."""
         self._mstatus = ToolMotionStatus.ERROR
         self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
-        self._logger.error(
+        self._logger.warning(
             "Tool fault detected - manual intervention required",
             extra={"error": str(exc)},
         )
