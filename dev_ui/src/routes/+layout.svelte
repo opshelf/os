@@ -2,7 +2,16 @@
 	import { page } from '$app/stores';
 	import { browser } from '$app/environment';
 	import { onMount } from 'svelte';
-	import { loginAsDeveloper, isAuthenticated, isApiConnected } from '$lib';
+	import {
+		createReconnectingEventSource,
+		isApiConnected,
+		isAuthenticated,
+		loginAsDeveloper,
+		robotStatus,
+		robotStatusError,
+		robotStatusLastUpdate,
+		type WorkerStatusPayload
+	} from '$lib';
 	import '../app.css';
 
 	const version = import.meta.env.PUBLIC_VERSION;
@@ -18,6 +27,7 @@
 
 	let { children } = $props();
 	let authReady = $state(false);
+	let statusStream: ReturnType<typeof createReconnectingEventSource> | null = null;
 
 	function isActiveLink(href: string, currentPath: string): boolean {
 		if (href === '/') {
@@ -26,20 +36,57 @@
 		return currentPath.startsWith(href);
 	}
 
-	onMount(async () => {
+	function didReceiveRobotStatus(raw: string): void {
+		try {
+			robotStatus.set(JSON.parse(raw) as WorkerStatusPayload);
+			robotStatusError.set('');
+			robotStatusLastUpdate.set(new Date().toLocaleString());
+			isApiConnected.set(true);
+		} catch {
+			robotStatusError.set('failed to parse robot status payload');
+		}
+	}
+
+	onMount(() => {
 		if (browser === false) {
 			return;
 		}
 
-		if (isAuthenticated() === false) {
-			try {
-				await loginAsDeveloper();
-			} catch (error) {
-				console.error('failed to authenticate as developer:', error);
+		async function startStatusStream(): Promise<void> {
+			if (isAuthenticated() === false) {
+				try {
+					await loginAsDeveloper();
+				} catch (error) {
+					console.error('failed to authenticate as developer:', error);
+				}
 			}
+
+			authReady = true;
+
+			const stream = createReconnectingEventSource({
+				path: '/robot/status',
+				onOpen: () => {
+					isApiConnected.set(true);
+					robotStatusError.set('');
+				},
+				onMessage: (event) => {
+					didReceiveRobotStatus(event.data);
+				},
+				onError: () => {
+					isApiConnected.set(false);
+					robotStatusError.set('lost connection to robot status stream');
+				}
+			});
+			statusStream = stream;
+			stream.connect();
 		}
 
-		authReady = true;
+		void startStatusStream();
+
+		return () => {
+			statusStream?.close();
+			statusStream = null;
+		};
 	});
 </script>
 
