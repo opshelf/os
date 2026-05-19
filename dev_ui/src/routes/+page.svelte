@@ -1,53 +1,12 @@
 <script lang="ts">
-	import { browser } from '$app/environment';
 	import { onMount } from 'svelte';
 	import { apiFetch, getApiBase, isApiConnected, robotStatus, robotStatusError, robotStatusLastUpdate } from '$lib';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 
-
-	type StorageCell = {
-		shelf_idx: number;
-		cell_idx: number;
-		capacity: string;
-		status: string;
-	};
-
 	const apiBase = getApiBase();
-	const hostname = browser ? window.location.hostname : '';
 
-
+	let deviceId = '';
 	let lanIp = '';
-
-	let storageCells: StorageCell[] = [];
-	let storageError = '';
-	let storageLoading = true;
-
-
-	async function loadStorage(): Promise<void> {
-		storageLoading = true;
-		storageError = '';
-		try {
-			const data = await apiFetch<StorageCell[]>('/storage/locations');
-			if (Array.isArray(data)) {
-				storageCells = data;
-			} else {
-				storageError = 'unexpected storage payload format';
-			}
-		} catch (error) {
-			storageError = error instanceof Error ? error.message : 'failed to load storage locations';
-		} finally {
-			storageLoading = false;
-		}
-	}
-
-	function storageSummary(): Array<{ status: string; count: number }> {
-		const summary = new Map<string, number>();
-		for (const cell of storageCells) {
-			const key = cell.status ?? 'unknown';
-			summary.set(key, (summary.get(key) ?? 0) + 1);
-		}
-		return Array.from(summary.entries()).map(([status, count]) => ({ status, count }));
-	}
 
 	function formatCommand(
 		command: Record<string, unknown> | null | undefined
@@ -83,16 +42,17 @@
 
 	async function loadSystemInfo(): Promise<void> {
 		try {
-			const data = await apiFetch<{ lan_ip: string | null }>('/system/info');
+			const data = await apiFetch<{ device_id: string; lan_ip: string | null }>('/system/info');
 
+			deviceId = data.device_id;
 			lanIp = data.lan_ip ?? '';
 		} catch {
+			deviceId = '';
 			lanIp = '';
 		}
 	}
 
 	onMount(() => {
-		loadStorage();
 		loadSystemInfo();
 	});
 </script>
@@ -110,7 +70,7 @@
 		</tr>
 		<tr>
 			<td>device id</td>
-			<td>{hostname}</td>
+			<td>{deviceId || 'loading...'}</td>
 		</tr>
 		<tr>
 			<td>lan ip</td>
@@ -143,10 +103,6 @@
 				<td>{$robotStatus.running ? 'yes' : 'no'}</td>
 			</tr>
 			<tr>
-				<td>queued commands</td>
-				<td>{$robotStatus.queue_length ?? 0}</td>
-			</tr>
-			<tr>
 				<td>light curtain</td>
 				<td>
 					{#if $robotStatus.robot_status?.curtain_blocked === null}
@@ -157,18 +113,6 @@
 						clear
 					{:else}
 						unknown
-					{/if}
-				</td>
-			</tr>
-			<tr>
-				<td>door</td>
-				<td>
-					{#if $robotStatus.robot_status?.door_open === null}
-						unknown
-					{:else if $robotStatus.robot_status?.door_open === true}
-						open
-					{:else}
-						closed
 					{/if}
 				</td>
 			</tr>
@@ -219,61 +163,4 @@
 		{/if}
 	{/if}
 
-	<thead>
-		<tr>
-			<th colspan="2">storage summary</th>
-		</tr>
-	</thead>
-	<tbody>
-		{#if storageLoading}
-			<tr>
-				<td colspan="2">loading storage data...</td>
-			</tr>
-		{:else if storageError}
-			<tr>
-				<td colspan="2"><ErrorMessage message={storageError} /></td>
-			</tr>
-		{:else}
-			<tr>
-				<td>total cells</td>
-				<td>{storageCells.length}</td>
-			</tr>
-		{/if}
-	</tbody>
-
-	{#if !storageLoading && !storageError && storageCells.length > 0}
-		<thead>
-			<tr>
-				<th>cells by status</th>
-				<th>count</th>
-			</tr>
-		</thead>
-		<tbody>
-			{#each storageSummary() as row}
-				<tr>
-					<td>{row.status}</td>
-					<td>{row.count}</td>
-				</tr>
-			{/each}
-		</tbody>
-
-		<thead>
-			<tr>
-				<th>shelf</th>
-				<th>cell</th>
-				<th>capacity</th>
-				<th>status</th>
-			</tr>
-		</thead>
-		<tbody>
-			{#each storageCells.slice(0, 10) as cell}
-				<tr>
-					<td>{cell.shelf_idx}</td>
-					<td>{cell.cell_idx}</td>
-					<td>{cell.capacity}</td>
-					<td>{cell.status}</td>
-				</tr>
-			{/each}
-		</tbody>
-	{/if}
 </table>
