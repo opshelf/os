@@ -69,14 +69,16 @@
 </nav>
 
 <main>
-	{#if $isApiConnected === false}
-		<p class="offline-message">api is offline, re-connecting...</p>
-	{:else if authReady === true}
-		{@render children?.()}
-	{:else}
-		<p>authenticating...</p>
-	{/if}
+	{@render children?.()}
 </main>
+
+{#if authReady === false || $isApiConnected === false}
+	<div class="connection-overlay">
+		<div class="connection-message">
+			{authReady === false ? 'AUTHENTICATING' : 'CONNECTING, PLEASE WAIT'}
+		</div>
+	</div>
+{/if}
 
 <div class="logo-container">
 	<table class="logo-table">
@@ -89,10 +91,22 @@
 </div>
 
 <style>
-	.offline-message {
+	.connection-overlay {
 		position: fixed;
-		bottom: 2em;
-		left: 2em;
+		inset: 0;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background-color: rgba(255, 255, 255, 0.85);
+		z-index: 1000;
+	}
+
+	.connection-message {
+		padding: 5px;
+		border: 2px solid black;
+		background-color: white;
+		text-transform: uppercase;
+		box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.25);
 	}
 
 	.logo-container {
