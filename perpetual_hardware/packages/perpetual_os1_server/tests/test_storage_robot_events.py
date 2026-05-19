@@ -134,7 +134,6 @@ async def test_process_robot_event_updates_weight_from_scale() -> None:
             dimensions={"width": 1.0, "height": 1.0, "length": 1.0},
             weight=50.0,
             metadata={"name": "Has Weight"},
-            sync_to_json=False,
         )
 
     payload = {

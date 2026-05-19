@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -127,6 +128,38 @@ def _mock_iobox_worker():
 		needs_home_reason=lambda: None,
 		needs_home_axes=lambda: [],
 	)
+
+
+@pytest.mark.anyio
+async def test_iobox_jog_initializes_cached_calibration_without_deadlock(client) -> None:
+	from perpetual_os1_server.routers import calibration
+
+	worker = _mock_iobox_worker()
+	calibration._iobox_current = None
+	params = SimpleNamespace(
+		PICKUP_POSITION_L=[100.0, 200.0],
+		PICKUP_POSITION_H=[110.0, 210.0],
+		Z_EXTENSION_IO=10.0,
+		STAGE_EXTENSION_IO_BOX=20.0,
+	)
+	config = SimpleNamespace(robot=SimpleNamespace(tool=SimpleNamespace(parameters=params)))
+
+	try:
+		with patch("perpetual_os1_server.routers.calibration.get_root_config", return_value=config):
+			with patch("perpetual_os1_server.routers.calibration.get_robot_worker", AsyncMock(return_value=worker)):
+				with patch("perpetual_os1_server.routers.calibration._clear_motors_for_move", AsyncMock()):
+					response = await asyncio.wait_for(
+						client.post(
+							"/api/calibration/iobox/jog",
+							json={"position": "low", "axis": "z", "delta": 0.5},
+						),
+						timeout=1.0,
+					)
+
+		assert response.status_code == 200
+		assert response.json()["z_extension"] == pytest.approx(10.5)
+	finally:
+		calibration._iobox_current = None
 
 
 @pytest.mark.anyio

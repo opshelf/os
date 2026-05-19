@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import functools
+import json
 import logging
-import re
 import time
 from typing import Any, Callable, Dict, List, Optional, Union, cast
 
@@ -39,7 +39,7 @@ class ItemCreate(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     upca: str
-    name: str
+    name: str = Field(max_length=255)
     dimensions: Optional[Dict[str, float]] = None
     weight: Optional[float] = None
     item_metadata: Optional[Dict[str, Any]] = Field(default=None, alias="item_metadata")
@@ -64,7 +64,7 @@ class ItemUpdate(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    name: Optional[str] = None
+    name: Optional[str] = Field(default=None, max_length=255)
     dimensions: Optional[Dict[str, float]] = None
     weight: Optional[float] = None
     item_metadata: Optional[Dict[str, Any]] = Field(default=None, alias="item_metadata")
@@ -169,24 +169,32 @@ def _serialize_capacity(capacity: Union[str, DimensionsPayload, None]) -> Option
 
 
 def _deserialize_capacity(capacity: str) -> DimensionsPayload:
-    import json as json_module
+    stripped = capacity.strip()
+    if stripped == "":
+        return DimensionsPayload(width=0.0, height=0.0, length=0.0)
 
-    try:
-        data = json_module.loads(capacity)
-        if isinstance(data, dict):
+    if stripped.startswith("{"):
+        try:
+            data = json.loads(stripped)
+            if isinstance(data, dict) is False:
+                return DimensionsPayload(width=0.0, height=0.0, length=0.0)
             return DimensionsPayload(
                 width=float(data.get("width", 0.0)),
                 height=float(data.get("height", 0.0)),
                 length=float(data.get("length", 0.0)),
             )
-    except (json_module.JSONDecodeError, TypeError, ValueError):
-        pass
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return DimensionsPayload(width=0.0, height=0.0, length=0.0)
 
-    numbers = [float(match) for match in re.findall(r"\d+(?:\.\d+)?", capacity)]
-    if len(numbers) >= 3:
-        width, height, length = numbers[:3]
-    else:
-        width = height = length = 0.0
+    parts = stripped.lower().split("x")
+    if len(parts) != 3:
+        return DimensionsPayload(width=0.0, height=0.0, length=0.0)
+
+    try:
+        width, height, length = (float(part.strip()) for part in parts)
+    except ValueError:
+        return DimensionsPayload(width=0.0, height=0.0, length=0.0)
+
     return DimensionsPayload(width=width, height=height, length=length)
 
 
@@ -355,11 +363,8 @@ async def delete_item(
 
     deleted = await storage_service.delete_item(upca)
 
-    if deleted:
-        try:
-            await storage_service.sync_to_json(transaction_committed=True)
-        except Exception as json_error:  # pragma: no cover - best effort logging
-            logging.error(f"JSON sync failed after item deletion: {str(json_error)}")
+    if deleted is False:
+        raise HTTPException(status_code=404, detail="Item not found")
 
     return {"message": "Item deleted successfully"}
 
@@ -393,8 +398,6 @@ async def add_item_location(
     if not storage_location:
         raise HTTPException(status_code=400, detail="Failed to add location")
 
-    await storage_service.sync_to_json()
-
     return await _load_item_with_locations(upca, storage_service, current_user)
 
 
@@ -414,8 +417,6 @@ async def _remove_item_location_impl(
 
     if not success:
         raise HTTPException(status_code=404, detail="Location not found")
-
-    await storage_service.sync_to_json()
 
 
 @router.delete("/items/{upca}/locations", dependencies=[Depends(require_permissions("storage:write"))])

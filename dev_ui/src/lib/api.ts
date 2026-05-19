@@ -105,11 +105,8 @@ function formatErrorMessage(message: string, detail?: ApiErrorDetail): string {
 	if (detail?.reason && detail.reason !== message) {
 		output = `${output} (${detail.reason})`;
 	}
-	if (detail?.needs_home) {
-		const lower = output.toLowerCase();
-		if (!lower.includes('home')) {
-			output = `${output} (home required)`;
-		}
+	if (detail?.needs_home && detail.reason === undefined) {
+		output = `${output} (home required)`;
 	}
 	return output;
 }
@@ -281,11 +278,7 @@ export async function runCalibrationQuickTest(
 	shelfIdx: number,
 	cellIdx: number
 ): Promise<void> {
-	await apiFetch('/calibration/test', {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ side, shelf_idx: shelfIdx, cell_idx: cellIdx })
-	});
+	await testGripper(side, shelfIdx, cellIdx);
 }
 
 export async function runCalibrationCycleTest(

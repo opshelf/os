@@ -78,6 +78,21 @@ class UserListResponse(BaseModel):
 	offset: int
 	limit: int
 
+def _build_user_response(user: User) -> UserResponse:
+	return UserResponse(
+		id=user.id,
+		email=str(user.email),
+		first_name=str(user.first_name),
+		last_name=str(user.last_name),
+		role_id=user.role_id,
+		role_name=str(user.role.name) if user.role.name else "",
+		access_level_id=user.access_level_id,
+		access_level_name=str(user.access_level.name) if user.access_level and user.access_level.name else None,
+		is_active=bool(user.is_active),
+		created_at=user.created_at.isoformat() if user.created_at else "",
+		updated_at=user.updated_at.isoformat() if user.updated_at else "",
+	)
+
 @router.get("", response_model=UserListResponse)
 async def list_users(
 	offset: int = Query(0, ge=0),
@@ -109,22 +124,7 @@ async def list_users(
 	users = users_result.scalars().all()
 	
 	return UserListResponse(
-		users=[
-			UserResponse(
-				id=user.id,
-				email=str(user.email),
-				first_name=str(user.first_name),
-				last_name=str(user.last_name),
-				role_id=user.role_id,
-				role_name=str(user.role.name) if user.role.name else "",
-				access_level_id=user.access_level_id,
-				access_level_name=str(user.access_level.name) if user.access_level and user.access_level.name else None,
-				is_active=bool(user.is_active),
-				created_at=user.created_at.isoformat() if user.created_at else "",
-				updated_at=user.updated_at.isoformat() if user.updated_at else ""
-			)
-			for user in users
-		],
+		users=[_build_user_response(user) for user in users],
 		total=int(total or 0),
 		offset=offset,
 		limit=limit
@@ -186,19 +186,7 @@ async def create_user(
 	user_result = await db.execute(select(User).options(selectinload(User.role), selectinload(User.access_level)).filter(User.id == user.id))
 	user = user_result.scalar_one()
 	
-	return UserResponse(
-		id=user.id,
-		email=str(user.email),
-		first_name=str(user.first_name),
-		last_name=str(user.last_name),
-		role_id=user.role_id,
-		role_name=str(user.role.name) if user.role.name else "",
-		access_level_id=user.access_level_id,
-		access_level_name=str(user.access_level.name) if user.access_level and user.access_level.name else None,
-		is_active=bool(user.is_active),
-		created_at=user.created_at.isoformat() if user.created_at else "",
-		updated_at=user.updated_at.isoformat() if user.updated_at else ""
-	)
+	return _build_user_response(user)
 
 @router.get("/{user_id}", response_model=UserResponse)
 async def get_user(
@@ -215,19 +203,7 @@ async def get_user(
 			detail="User not found"
 		)
 	
-	return UserResponse(
-		id=user.id,
-		email=str(user.email),
-		first_name=str(user.first_name),
-		last_name=str(user.last_name),
-		role_id=user.role_id,
-		role_name=str(user.role.name) if user.role.name else "",
-		access_level_id=user.access_level_id,
-		access_level_name=str(user.access_level.name) if user.access_level and user.access_level.name else None,
-		is_active=bool(user.is_active),
-		created_at=user.created_at.isoformat() if user.created_at else "",
-		updated_at=user.updated_at.isoformat() if user.updated_at else ""
-	)
+	return _build_user_response(user)
 
 @router.put("/{user_id}", response_model=UserResponse, dependencies=[Depends(require_permissions("users:write"))])
 async def update_user(
@@ -304,19 +280,7 @@ async def update_user(
 	user_result = await db.execute(select(User).options(selectinload(User.role), selectinload(User.access_level)).filter(User.id == user.id))
 	user = user_result.scalar_one()
 	
-	return UserResponse(
-		id=user.id,
-		email=str(user.email),
-		first_name=str(user.first_name),
-		last_name=str(user.last_name),
-		role_id=user.role_id,
-		role_name=str(user.role.name) if user.role.name else "",
-		access_level_id=user.access_level_id,
-		access_level_name=str(user.access_level.name) if user.access_level and user.access_level.name else None,
-		is_active=bool(user.is_active),
-		created_at=user.created_at.isoformat() if user.created_at else "",
-		updated_at=user.updated_at.isoformat() if user.updated_at else ""
-	)
+	return _build_user_response(user)
 
 @router.delete("/{user_id}", dependencies=[Depends(require_permissions("users:delete"))])
 async def delete_user(

@@ -1,6 +1,5 @@
 """Storage service for managing inventory items and locations."""
 import asyncio
-import logging
 from typing import Any, Dict, List, Optional
 from weakref import WeakKeyDictionary
 
@@ -31,12 +30,6 @@ class StorageService:
         self.session = session
         self._lock = _get_session_lock(session)
 
-    @staticmethod
-    def _normalize_weight(weight: Optional[float]) -> Optional[float]:
-        if weight is None:
-            return None
-        return float(weight)
-
     async def detect_migration_needed(self) -> bool:
         """Legacy JSON migration removed; database is the single source of truth."""
         return False
@@ -47,15 +40,14 @@ class StorageService:
 
     async def create_item(self, upca: str, name: str, dimensions: Optional[Dict[str, float]],
                         weight: Optional[float] = None, metadata: Optional[Dict[str, Any]] = None,
-                        access_level_id: Optional[int] = None,
-                        sync_to_json: bool = True) -> Item:
+                        access_level_id: Optional[int] = None) -> Item:
         """Create or upsert an item in the database."""
         resolved_dimensions = dimensions or {"length": 1.0, "width": 1.0, "height": 1.0}
 
         StorageValidator.validate_item_creation(upca, name, resolved_dimensions, weight, metadata)
 
         normalized_metadata = metadata or {}
-        normalized_weight = self._normalize_weight(weight)
+        normalized_weight = float(weight) if weight is not None else None
 
         async with self._lock:
             try:
@@ -87,12 +79,6 @@ class StorageService:
             except Exception:
                 await self.session.rollback()
                 raise
-
-        if sync_to_json:
-            try:
-                await self.sync_to_json(transaction_committed=True)
-            except Exception as json_error:  # pragma: no cover - best effort logging
-                logging.error(f"JSON sync failed after item creation: {str(json_error)}")
 
         return item
 
@@ -136,7 +122,7 @@ class StorageService:
             return None
 
         StorageValidator.validate_item_update(name, dimensions, weight, metadata)
-        normalized_weight = self._normalize_weight(weight) if weight is not None else None
+        normalized_weight = float(weight) if weight is not None else None
 
         async with self._lock:
             try:
@@ -305,11 +291,6 @@ class StorageService:
                 await self.session.rollback()
                 raise
 
-    async def sync_to_json(self, transaction_committed: bool = False) -> bool:
-        """No-op placeholder for deprecated JSON syncing."""
-        logging.debug("sync_to_json skipped; database is authoritative for storage state")
-        return True
-
     async def get_all_occupied_cells(self) -> List[tuple]:
         """Return list of (side, shelf_idx, cell_idx, upca) for all occupied cells."""
         result = await self.session.execute(
@@ -325,30 +306,16 @@ class StorageService:
         LocationValidator.validate_location(shelf_idx, cell_idx)
 
         async with self._lock:
-            try:
-                result = await self.session.execute(
-                    select(StorageCell)
-                    .where(StorageCell.shelf_idx == shelf_idx)
-                    .where(StorageCell.cell_idx == cell_idx)
-                    .with_for_update()
-                )
-                existing_cell = result.scalar_one_or_none()
+            result = await self.session.execute(
+                select(StorageCell)
+                .where(StorageCell.shelf_idx == shelf_idx)
+                .where(StorageCell.cell_idx == cell_idx)
+                .with_for_update()
+            )
+            existing_cell = result.scalar_one_or_none()
 
-                if existing_cell:
-                    raise ValidationError(f"Storage cell at shelf {shelf_idx}, cell {cell_idx} already exists")
-            except Exception:
-                try:
-                    result = await self.session.execute(
-                        select(StorageCell)
-                        .where(StorageCell.shelf_idx == shelf_idx)
-                        .where(StorageCell.cell_idx == cell_idx)
-                    )
-                    existing_cell = result.scalar_one_or_none()
-
-                    if existing_cell:
-                        raise ValidationError(f"Storage cell at shelf {shelf_idx}, cell {cell_idx} already exists")
-                except Exception as exc:  # pragma: no cover - defensive path
-                    raise ValidationError("Failed to check storage cell existence due to database locking issues") from exc
+            if existing_cell is not None:
+                raise ValidationError(f"Storage cell at shelf {shelf_idx}, cell {cell_idx} already exists")
 
             try:
                 cell = StorageCell(
