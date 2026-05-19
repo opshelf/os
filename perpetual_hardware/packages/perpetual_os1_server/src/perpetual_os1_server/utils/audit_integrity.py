@@ -8,8 +8,10 @@ import hmac
 import json
 import logging
 import os
-import secrets
 from typing import Any, Dict, Optional
+
+from perpetual_os1.common import OperatingMode
+from perpetual_os1_server.settings import get_operating_mode
 
 
 _HMAC_KEY_CACHE: Optional[bytes] = None
@@ -28,10 +30,11 @@ def _load_hmac_key() -> bytes:
             _HMAC_KEY_CACHE = bytes.fromhex(key)
         except ValueError:
             _HMAC_KEY_CACHE = key.encode("utf-8")
+    elif get_operating_mode() == OperatingMode.production:
+        raise RuntimeError("AUDIT_HMAC_KEY must be set in production")
     else:
-        _HMAC_KEY_CACHE = secrets.token_bytes(32)
-
-        logger.warning("AUDIT_HMAC_KEY is not set; using ephemeral key (dev only)")
+        _HMAC_KEY_CACHE = b"development-audit-hmac-key-not-for-production"
+        logger.warning("AUDIT_HMAC_KEY is not set; using deterministic development key")
 
     return _HMAC_KEY_CACHE
 

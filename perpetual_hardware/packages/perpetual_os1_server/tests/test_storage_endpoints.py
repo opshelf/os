@@ -2,6 +2,17 @@ import pytest
 from httpx import AsyncClient
 
 
+
+@pytest.mark.parametrize("raw_capacity", ["10cm x 20cm x 30cm", "1x2xbad", "{bad", "{"])
+def test_deserialize_capacity_tolerates_invalid_strings(raw_capacity: str) -> None:
+    from perpetual_os1_server.routers.storage import _deserialize_capacity
+
+    capacity = _deserialize_capacity(raw_capacity)
+
+    assert capacity.width == 0.0
+    assert capacity.height == 0.0
+    assert capacity.length == 0.0
+
 @pytest.mark.anyio
 async def test_storage_items_endpoint_unauthorized(unauthenticated_client: AsyncClient) -> None:
     """Test storage endpoints without authorization."""

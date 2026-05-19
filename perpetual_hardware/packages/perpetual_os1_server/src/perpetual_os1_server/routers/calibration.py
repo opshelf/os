@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import re
-from typing import Literal, Optional
+from collections.abc import Awaitable, Callable
+from typing import Literal, Optional, ParamSpec, TypeVar
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
@@ -28,13 +30,50 @@ from perpetual_os1_server.core.laser_auto_calibration import (
 	LaserAutoCalibrationSnapshot,
 	get_laser_auto_calibration_manager,
 )
-from perpetual_os1_server.core.manual_motion import ensure_robot_available_for_manual_motion, manual_motion_guard
+from perpetual_os1_server.core.manual_motion import manual_motion_guard
 from perpetual_os1_server.routers.auth_deps import get_current_user
+from perpetual_os1_server.core.storage_module import module_name_to_side, side_to_s
 from perpetual_os1_server.settings import get_root_config, save_root_config
 
 router = APIRouter(prefix="/api/calibration", tags=["calibration"], dependencies=[Depends(get_current_user)])
 
 _MOTOR_ID_RE = re.compile(r"motor\s+(\d+)", re.IGNORECASE)
+P = ParamSpec("P")
+T = TypeVar("T")
+
+_calibration_state_lock = asyncio.Lock()
+
+
+def serialize_calibration_state(function: Callable[P, Awaitable[T]]) -> Callable[P, Awaitable[T]]:
+    @functools.wraps(function)
+    async def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
+        async with _calibration_state_lock:
+            return await function(*args, **kwargs)
+
+    return wrapper
+
+
+
+async def ensure_laser_auto_calibration_not_running() -> None:
+	manager = get_laser_auto_calibration_manager()
+
+	if await manager.is_active() is False:
+		return
+
+	raise HTTPException(
+		status_code=status.HTTP_409_CONFLICT,
+		detail="laser auto calibration is running",
+	)
+
+
+async def get_robot_worker_or_503():
+	try:
+		return await get_robot_worker()
+	except ValueError as exc:
+		raise HTTPException(
+			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+			detail="Robot is not initialized",
+		) from exc
 _DEFAULT_SHELF_HEIGHT = 200.0
 _DEFAULT_SHELF_WIDTH = 480.0
 _DEFAULT_DIVIDER_WIDTH = 12.0
@@ -72,9 +111,6 @@ class TestRequest(BaseModel):
 	shelf_idx: int
 	cell_idx: int
 
-
-def _ensure_robot_not_busy(worker) -> None:
-	ensure_robot_available_for_manual_motion(worker)
 
 
 def _build_test_location(request: TestRequest) -> StorageModuleCellLocation:
@@ -184,18 +220,6 @@ class LaserReadingResponse(BaseModel):
 _current_position: Optional[PositionResponse] = None
 _current_side: int = 0
 _current_side_name: str = "left_module"
-
-
-async def _ensure_laser_auto_calibration_not_running() -> None:
-	manager = get_laser_auto_calibration_manager()
-
-	if await manager.is_active() is False:
-		return
-
-	raise HTTPException(
-		status_code=status.HTTP_409_CONFLICT,
-		detail="laser auto calibration is running",
-	)
 
 
 def _build_error_detail(
@@ -334,15 +358,11 @@ async def _raise_motor_error(
 
 
 def _parse_side(side: str) -> StorageModuleSide:
-	if side == "left_module":
-		return StorageModuleSide.LEFT
-	return StorageModuleSide.RIGHT
+	return module_name_to_side(side)
 
 
 def _side_to_s(side: str) -> int:
-	if side == "left_module":
-		return 0
-	return 1
+	return side_to_s(module_name_to_side(side))
 
 
 def _get_shelf(grid, side: StorageModuleSide, shelf_idx: int):
@@ -587,13 +607,7 @@ def _validate_stage_target(value: float, limit: float, label: str) -> None:
 
 @router.get("/status", response_model=CalibrationStatusResponse)
 async def get_calibration_status() -> CalibrationStatusResponse:
-	try:
-		worker = await get_robot_worker()
-	except ValueError as e:
-		raise HTTPException(
-			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail="Robot is not initialized",
-		) from e
+	worker = await get_robot_worker_or_503()
 
 	return CalibrationStatusResponse(
 		needs_home=worker.needs_home(),
@@ -604,13 +618,7 @@ async def get_calibration_status() -> CalibrationStatusResponse:
 
 @router.get("/storage")
 async def get_storage():
-	try:
-		worker = await get_robot_worker()
-	except ValueError as e:
-		raise HTTPException(
-			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail="Robot is not initialized",
-		) from e
+	worker = await get_robot_worker_or_503()
 
 	grid = worker._robot._grid
 	return grid.model_dump()
@@ -618,15 +626,9 @@ async def get_storage():
 
 @router.get("/laser/read", response_model=LaserReadingResponse)
 async def read_laser() -> LaserReadingResponse:
-	await _ensure_laser_auto_calibration_not_running()
+	await ensure_laser_auto_calibration_not_running()
 
-	try:
-		worker = await get_robot_worker()
-	except ValueError as exc:
-		raise HTTPException(
-			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail="Robot is not initialized",
-		) from exc
+	worker = await get_robot_worker_or_503()
 
 	try:
 		distance_mm = await worker._robot.get_laser_distance()
@@ -744,16 +746,11 @@ async def stream_laser_auto_calibration(
 
 
 @router.post("/move", response_model=PositionResponse)
+@serialize_calibration_state
 async def move_to_cell(request: MoveRequest) -> PositionResponse:
-	await _ensure_laser_auto_calibration_not_running()
+	await ensure_laser_auto_calibration_not_running()
 
-	try:
-		worker = await get_robot_worker()
-	except ValueError as e:
-		raise HTTPException(
-			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail="Robot is not initialized",
-		) from e
+	worker = await get_robot_worker_or_503()
 
 	grid = worker._robot._grid
 
@@ -780,16 +777,11 @@ async def move_to_cell(request: MoveRequest) -> PositionResponse:
 
 
 @router.post("/move/position", response_model=PositionResponse)
+@serialize_calibration_state
 async def move_to_position(request: MovePositionRequest) -> PositionResponse:
-	await _ensure_laser_auto_calibration_not_running()
+	await ensure_laser_auto_calibration_not_running()
 
-	try:
-		worker = await get_robot_worker()
-	except ValueError as e:
-		raise HTTPException(
-			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail="Robot is not initialized",
-		) from e
+	worker = await get_robot_worker_or_503()
 
 	_ensure_ready(worker)
 	tool = worker._robot._tool
@@ -800,10 +792,11 @@ async def move_to_position(request: MovePositionRequest) -> PositionResponse:
 
 
 @router.post("/jog", response_model=PositionResponse)
+@serialize_calibration_state
 async def jog_axis(request: JogRequest) -> PositionResponse:
 	global _current_position
 
-	await _ensure_laser_auto_calibration_not_running()
+	await ensure_laser_auto_calibration_not_running()
 
 	if _current_position is None:
 		raise HTTPException(
@@ -811,13 +804,7 @@ async def jog_axis(request: JogRequest) -> PositionResponse:
 			detail="No active calibration session. Move to a cell first.",
 		)
 
-	try:
-		worker = await get_robot_worker()
-	except ValueError as e:
-		raise HTTPException(
-			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail="Robot is not initialized",
-		) from e
+	worker = await get_robot_worker_or_503()
 
 	_ensure_ready(worker)
 
@@ -900,21 +887,15 @@ async def jog_axis(request: JogRequest) -> PositionResponse:
 
 
 @router.post("/test")
+@serialize_calibration_state
 async def test_gripper(request: TestRequest):
 	global _current_position, _current_side
 
-	await _ensure_laser_auto_calibration_not_running()
+	await ensure_laser_auto_calibration_not_running()
 
-	try:
-		worker = await get_robot_worker()
-	except ValueError as e:
-		raise HTTPException(
-			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail="Robot is not initialized",
-		) from e
+	worker = await get_robot_worker_or_503()
 
 	_ensure_ready(worker)
-	_ensure_robot_not_busy(worker)
 
 	location = _build_test_location(request)
 	grid = worker._robot._grid
@@ -955,18 +936,11 @@ async def test_gripper(request: TestRequest):
 
 @router.post("/test/cycle")
 async def test_cycle(request: TestRequest):
-	await _ensure_laser_auto_calibration_not_running()
+	await ensure_laser_auto_calibration_not_running()
 
-	try:
-		worker = await get_robot_worker()
-	except ValueError as e:
-		raise HTTPException(
-			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail="Robot is not initialized",
-		) from e
+	worker = await get_robot_worker_or_503()
 
 	_ensure_ready(worker)
-	_ensure_robot_not_busy(worker)
 
 	robot = worker._robot
 	tool = robot._tool
@@ -1012,15 +986,9 @@ async def test_cycle(request: TestRequest):
 
 @router.post("/save")
 async def save_calibration(request: SaveRequest):
-	await _ensure_laser_auto_calibration_not_running()
+	await ensure_laser_auto_calibration_not_running()
 
-	try:
-		worker = await get_robot_worker()
-	except ValueError as e:
-		raise HTTPException(
-			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail="Robot is not initialized",
-		) from e
+	worker = await get_robot_worker_or_503()
 
 	grid = worker._robot._grid
 	_validate_non_negative_index(request.shelf_idx, "shelf_idx")
@@ -1056,15 +1024,9 @@ async def save_calibration(request: SaveRequest):
 
 @router.post("/home_tool_motors", response_model=CalibrationStatusResponse)
 async def home_tool_motors() -> CalibrationStatusResponse:
-	await _ensure_laser_auto_calibration_not_running()
+	await ensure_laser_auto_calibration_not_running()
 
-	try:
-		worker = await get_robot_worker()
-	except ValueError as e:
-		raise HTTPException(
-			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail="Robot is not initialized",
-		) from e
+	worker = await get_robot_worker_or_503()
 
 	tool = worker._robot._tool
 
@@ -1137,8 +1099,7 @@ _iobox_position: Literal["low", "high"] = "low"
 _iobox_current: Optional[IOBoxPositionResponse] = None
 
 
-@router.get("/iobox", response_model=IOBoxPositionResponse)
-async def get_iobox_calibration() -> IOBoxPositionResponse:
+def _load_iobox_calibration() -> IOBoxPositionResponse:
 	global _iobox_current
 
 	config = get_root_config()
@@ -1156,39 +1117,41 @@ async def get_iobox_calibration() -> IOBoxPositionResponse:
 	return _iobox_current
 
 
+@router.get("/iobox", response_model=IOBoxPositionResponse)
+@serialize_calibration_state
+async def get_iobox_calibration() -> IOBoxPositionResponse:
+	return _load_iobox_calibration()
+
+
+async def _get_iobox_current_or_error() -> IOBoxPositionResponse:
+	if _iobox_current is None:
+		return _load_iobox_calibration()
+
+	return _iobox_current
+
+
 @router.post("/iobox/move", response_model=IOBoxPositionResponse)
+@serialize_calibration_state
 async def move_to_iobox_position(position: Literal["low", "high"]) -> IOBoxPositionResponse:
 	global _iobox_position, _iobox_current
 
-	await _ensure_laser_auto_calibration_not_running()
+	await ensure_laser_auto_calibration_not_running()
 
-	try:
-		worker = await get_robot_worker()
-	except ValueError as e:
-		raise HTTPException(
-			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail="Robot is not initialized",
-		) from e
+	worker = await get_robot_worker_or_503()
 
 	_ensure_ready(worker)
 
-	if _iobox_current is None:
-		await get_iobox_calibration()
-	if _iobox_current is None:
-		raise HTTPException(
-			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-			detail="Failed to initialize IOBox calibration",
-		)
+	iobox_current = await _get_iobox_current_or_error()
 
 	tool = worker._robot._tool
 	io = worker._robot._io
 
 	if position == "low":
-		x = _iobox_current.pickup_low_x
-		y = _iobox_current.pickup_low_y
+		x = iobox_current.pickup_low_x
+		y = iobox_current.pickup_low_y
 	else:
-		x = _iobox_current.pickup_high_x
-		y = _iobox_current.pickup_high_y
+		x = iobox_current.pickup_high_x
+		y = iobox_current.pickup_high_y
 
 	async with manual_motion_guard("calibration_iobox_move", worker=worker):
 		try:
@@ -1207,32 +1170,21 @@ async def move_to_iobox_position(position: Literal["low", "high"]) -> IOBoxPosit
 		except (MotorError, HardwareMotorError) as e:
 			await _raise_motor_error(worker, f"Motor error: {str(e)}", e)
 	_iobox_position = position
-	_iobox_current.warnings = None
+	iobox_current.warnings = None
 
-	return _iobox_current
+	return iobox_current
 
 
 @router.post("/iobox/jog", response_model=IOBoxPositionResponse)
+@serialize_calibration_state
 async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 	global _iobox_current, _iobox_position
 
-	await _ensure_laser_auto_calibration_not_running()
+	await ensure_laser_auto_calibration_not_running()
 
-	if _iobox_current is None:
-		await get_iobox_calibration()
-	if _iobox_current is None:
-		raise HTTPException(
-			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-			detail="Failed to initialize IOBox calibration",
-		)
+	iobox_current = await _get_iobox_current_or_error()
 
-	try:
-		worker = await get_robot_worker()
-	except ValueError as e:
-		raise HTTPException(
-			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail="Robot is not initialized",
-		) from e
+	worker = await get_robot_worker_or_503()
 
 	_ensure_ready(worker)
 
@@ -1254,15 +1206,15 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 					)
 				await _clear_motors_for_move(tool, gantry=True)
 				if request.position == "low":
-					new_x = _clamp_value(_iobox_current.pickup_low_x + request.delta, x_limit, "X axis", warnings)
+					new_x = _clamp_value(iobox_current.pickup_low_x + request.delta, x_limit, "X axis", warnings)
 					new_x = _round_iobox_calibration_value(new_x)
 					await tool._mx.move_to_position(new_x)
-					_iobox_current.pickup_low_x = new_x
+					iobox_current.pickup_low_x = new_x
 				else:
-					new_x = _clamp_value(_iobox_current.pickup_high_x + request.delta, x_limit, "X axis", warnings)
+					new_x = _clamp_value(iobox_current.pickup_high_x + request.delta, x_limit, "X axis", warnings)
 					new_x = _round_iobox_calibration_value(new_x)
 					await tool._mx.move_to_position(new_x)
-					_iobox_current.pickup_high_x = new_x
+					iobox_current.pickup_high_x = new_x
 			elif request.axis == "y":
 				if tool._my is None:
 					raise HTTPException(
@@ -1271,35 +1223,35 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 					)
 				await _clear_motors_for_move(tool, gantry=True)
 				if request.position == "low":
-					new_y = _clamp_value(_iobox_current.pickup_low_y + request.delta, y_limit, "Y axis", warnings)
+					new_y = _clamp_value(iobox_current.pickup_low_y + request.delta, y_limit, "Y axis", warnings)
 					new_y = _round_iobox_calibration_value(new_y)
 					await tool._my.move_to_position(new_y)
-					_iobox_current.pickup_low_y = new_y
+					iobox_current.pickup_low_y = new_y
 				else:
-					new_y = _clamp_value(_iobox_current.pickup_high_y + request.delta, y_limit, "Y axis", warnings)
+					new_y = _clamp_value(iobox_current.pickup_high_y + request.delta, y_limit, "Y axis", warnings)
 					new_y = _round_iobox_calibration_value(new_y)
 					await tool._my.move_to_position(new_y)
-					_iobox_current.pickup_high_y = new_y
+					iobox_current.pickup_high_y = new_y
 			elif request.axis == "z":
 				if tool._mg is None:
 					raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Gripper motor not configured")
 				await _clear_motors_for_move(tool, gripper=True)
 				z_limit = tool._mg._params.lim
-				new_z = _clamp_value(_iobox_current.z_extension + request.delta, z_limit, "Z axis", warnings)
+				new_z = _clamp_value(iobox_current.z_extension + request.delta, z_limit, "Z axis", warnings)
 				new_z = _round_iobox_calibration_value(new_z)
 				grip_rpm = await tool.get_param("Z_MOVE_RPM")
 				grip_accel = await tool.get_param("Z_MOVE_ACCEL")
 				await tool._mg.move_to_position(new_z, rpm=grip_rpm, accel=grip_accel)
-				_iobox_current.z_extension = new_z
+				iobox_current.z_extension = new_z
 			elif request.axis == "stage":
 				if tool._ms is None:
 					raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Stage motor not configured")
 				await _clear_motors_for_move(tool, stage=True)
 				stage_limit = tool._ms._params.lim
-				new_stage = _clamp_value(_iobox_current.stage_extension + request.delta, stage_limit, "Stage", warnings)
+				new_stage = _clamp_value(iobox_current.stage_extension + request.delta, stage_limit, "Stage", warnings)
 				new_stage = _round_iobox_calibration_value(new_stage)
 				await tool._ms.move_to_position(new_stage)
-				_iobox_current.stage_extension = new_stage
+				iobox_current.stage_extension = new_stage
 	except (MotorError, HardwareMotorError) as e:
 		axes: Optional[list[str]] = None
 		if request.axis == "z":
@@ -1308,32 +1260,21 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 			axes = ["stage"]
 		await _raise_motor_error(worker, f"Motor error: {str(e)}", e, axes=axes)
 
-	_iobox_current.warnings = warnings if warnings else None
+	iobox_current.warnings = warnings if warnings else None
 
-	return _iobox_current
+	return iobox_current
 
 
 @router.post("/iobox/test")
+@serialize_calibration_state
 async def test_iobox_sequence(with_gripper: bool = False):
 	global _iobox_current
 
-	await _ensure_laser_auto_calibration_not_running()
+	await ensure_laser_auto_calibration_not_running()
 
-	if _iobox_current is None:
-		await get_iobox_calibration()
-	if _iobox_current is None:
-		raise HTTPException(
-			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-			detail="Failed to initialize IOBox calibration",
-		)
+	iobox_current = await _get_iobox_current_or_error()
 
-	try:
-		worker = await get_robot_worker()
-	except ValueError as e:
-		raise HTTPException(
-			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail="Robot is not initialized",
-		) from e
+	worker = await get_robot_worker_or_503()
 
 	_ensure_ready(worker)
 
@@ -1353,12 +1294,12 @@ async def test_iobox_sequence(with_gripper: bool = False):
 			logging.getLogger(__name__).warning(f"Door open failed (continuing): {e}")
 
 		try:
-			await tool.move(AxisCoordinate(_iobox_current.pickup_low_x, _iobox_current.pickup_low_y))
+			await tool.move(AxisCoordinate(iobox_current.pickup_low_x, iobox_current.pickup_low_y))
 		except (MotorError, HardwareMotorError) as e:
 			await _raise_motor_error(worker, f"Motor error: {str(e)}", e)
 
-		stage_ext = _iobox_current.stage_extension
-		grip_ext = _iobox_current.z_extension
+		stage_ext = iobox_current.stage_extension
+		grip_ext = iobox_current.z_extension
 		grip_rpm = await tool.get_param("Z_MOVE_RPM")
 		grip_accel = await tool.get_param("Z_MOVE_ACCEL")
 		stage_nudge = await tool.get_param("STAGE_NUDGE")
@@ -1381,7 +1322,7 @@ async def test_iobox_sequence(with_gripper: bool = False):
 			if with_gripper is True:
 				await tool._gs.open()
 
-			await tool.move(AxisCoordinate(_iobox_current.pickup_high_x, _iobox_current.pickup_high_y))
+			await tool.move(AxisCoordinate(iobox_current.pickup_high_x, iobox_current.pickup_high_y))
 			await tool.retract()
 
 			if with_gripper is True:
@@ -1392,18 +1333,13 @@ async def test_iobox_sequence(with_gripper: bool = False):
 
 
 @router.post("/iobox/save")
+@serialize_calibration_state
 async def save_iobox_calibration(request: IOBoxSaveRequest):
 	global _iobox_current
 
-	await _ensure_laser_auto_calibration_not_running()
+	await ensure_laser_auto_calibration_not_running()
 
-	try:
-		worker = await get_robot_worker()
-	except ValueError as e:
-		raise HTTPException(
-			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail="Robot is not initialized",
-		) from e
+	worker = await get_robot_worker_or_503()
 
 	config = get_root_config()
 
@@ -1480,15 +1416,9 @@ async def get_rotation_angles() -> RotationAnglesResponse:
 
 @router.post("/rotation/rotate")
 async def rotate_to_angle(angle: float):
-	await _ensure_laser_auto_calibration_not_running()
+	await ensure_laser_auto_calibration_not_running()
 
-	try:
-		worker = await get_robot_worker()
-	except ValueError as e:
-		raise HTTPException(
-			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail="Robot is not initialized",
-		) from e
+	worker = await get_robot_worker_or_503()
 
 	_ensure_ready(worker)
 
@@ -1511,7 +1441,7 @@ async def rotate_to_angle(angle: float):
 
 @router.post("/rotation/save")
 async def save_rotation_angles(request: RotateSaveRequest):
-	await _ensure_laser_auto_calibration_not_running()
+	await ensure_laser_auto_calibration_not_running()
 
 	config = get_root_config()
 
@@ -1556,7 +1486,7 @@ async def get_shelf_stage_extension() -> ShelfStageExtensionResponse:
 
 @router.post("/shelf/save")
 async def save_shelf_stage_extension(request: ShelfStageExtensionSaveRequest):
-	await _ensure_laser_auto_calibration_not_running()
+	await ensure_laser_auto_calibration_not_running()
 
 	config = get_root_config()
 
@@ -1600,15 +1530,9 @@ class StageMoveRequest(BaseModel):
 
 @router.post("/stage/move")
 async def move_stage(request: StageMoveRequest):
-	await _ensure_laser_auto_calibration_not_running()
+	await ensure_laser_auto_calibration_not_running()
 
-	try:
-		worker = await get_robot_worker()
-	except ValueError as e:
-		raise HTTPException(
-			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail="Robot is not initialized",
-		) from e
+	worker = await get_robot_worker_or_503()
 
 	_ensure_ready(worker)
 
@@ -1639,15 +1563,9 @@ async def move_stage(request: StageMoveRequest):
 @router.post("/abort")
 async def abort_calibration():
 	"""Abort current calibration operation and home the tool."""
-	await _ensure_laser_auto_calibration_not_running()
+	await ensure_laser_auto_calibration_not_running()
 
-	try:
-		worker = await get_robot_worker()
-	except ValueError as e:
-		raise HTTPException(
-			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail="Robot is not initialized",
-		) from e
+	worker = await get_robot_worker_or_503()
 
 	tool = worker._robot._tool
 

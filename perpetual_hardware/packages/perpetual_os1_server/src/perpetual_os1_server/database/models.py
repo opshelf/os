@@ -1,11 +1,30 @@
 """Database models for authentication and audit system."""
 from typing import List, Dict, Any, Optional
-from sqlalchemy import Integer, String, Boolean, DateTime, Text, JSON, ForeignKey, func, Index, Float, UniqueConstraint
+from sqlalchemy import Integer, String, Boolean, DateTime, Text, JSON, ForeignKey, func, Index, Float, UniqueConstraint, TypeDecorator
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 from datetime import datetime, timezone
 from .base import Base
 from pydantic import ConfigDict
 from ..utils.audit_constants import LEGACY_COMMAND_RECORDS_FIELD
+
+
+class UTCDateTime(TypeDecorator[datetime]):
+	impl = DateTime(timezone=True)
+	cache_ok = True
+
+	def process_bind_param(self, value: datetime | None, dialect) -> datetime | None:
+		if value is None:
+			return None
+		if value.tzinfo is None:
+			return value.replace(tzinfo=timezone.utc)
+		return value.astimezone(timezone.utc)
+
+	def process_result_value(self, value: datetime | None, dialect) -> datetime | None:
+		if value is None:
+			return None
+		if value.tzinfo is None:
+			return value.replace(tzinfo=timezone.utc)
+		return value.astimezone(timezone.utc)
 
 class Role(Base):
 	"""Role model for RBAC."""
@@ -59,7 +78,7 @@ class AuditLog(Base):
 
 	id: Mapped[int] = mapped_column(Integer, primary_key=True)
 	user_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
-	timestamp: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+	timestamp: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, default=lambda: datetime.now(timezone.utc))
 	method: Mapped[str] = mapped_column(String(10), nullable=False)
 	endpoint: Mapped[str] = mapped_column(String(255), nullable=False)
 	request_body: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
