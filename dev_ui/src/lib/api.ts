@@ -105,11 +105,8 @@ function formatErrorMessage(message: string, detail?: ApiErrorDetail): string {
 	if (detail?.reason && detail.reason !== message) {
 		output = `${output} (${detail.reason})`;
 	}
-	if (detail?.needs_home) {
-		const lower = output.toLowerCase();
-		if (!lower.includes('home')) {
-			output = `${output} (home required)`;
-		}
+	if (detail?.needs_home && detail.reason === undefined) {
+		output = `${output} (home required)`;
 	}
 	return output;
 }

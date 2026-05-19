@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import re
-from typing import Literal, Optional
+from collections.abc import Awaitable, Callable
+from typing import Literal, Optional, ParamSpec, TypeVar
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
@@ -36,6 +38,20 @@ from perpetual_os1_server.settings import get_root_config, save_root_config
 router = APIRouter(prefix="/api/calibration", tags=["calibration"], dependencies=[Depends(get_current_user)])
 
 _MOTOR_ID_RE = re.compile(r"motor\s+(\d+)", re.IGNORECASE)
+P = ParamSpec("P")
+T = TypeVar("T")
+
+_calibration_state_lock = asyncio.Lock()
+
+
+def serialize_calibration_state(function: Callable[P, Awaitable[T]]) -> Callable[P, Awaitable[T]]:
+    @functools.wraps(function)
+    async def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
+        async with _calibration_state_lock:
+            return await function(*args, **kwargs)
+
+    return wrapper
+
 
 
 async def ensure_laser_auto_calibration_not_running() -> None:
@@ -730,6 +746,7 @@ async def stream_laser_auto_calibration(
 
 
 @router.post("/move", response_model=PositionResponse)
+@serialize_calibration_state
 async def move_to_cell(request: MoveRequest) -> PositionResponse:
 	await ensure_laser_auto_calibration_not_running()
 
@@ -760,6 +777,7 @@ async def move_to_cell(request: MoveRequest) -> PositionResponse:
 
 
 @router.post("/move/position", response_model=PositionResponse)
+@serialize_calibration_state
 async def move_to_position(request: MovePositionRequest) -> PositionResponse:
 	await ensure_laser_auto_calibration_not_running()
 
@@ -774,6 +792,7 @@ async def move_to_position(request: MovePositionRequest) -> PositionResponse:
 
 
 @router.post("/jog", response_model=PositionResponse)
+@serialize_calibration_state
 async def jog_axis(request: JogRequest) -> PositionResponse:
 	global _current_position
 
@@ -868,6 +887,7 @@ async def jog_axis(request: JogRequest) -> PositionResponse:
 
 
 @router.post("/test")
+@serialize_calibration_state
 async def test_gripper(request: TestRequest):
 	global _current_position, _current_side
 
@@ -1080,6 +1100,7 @@ _iobox_current: Optional[IOBoxPositionResponse] = None
 
 
 @router.get("/iobox", response_model=IOBoxPositionResponse)
+@serialize_calibration_state
 async def get_iobox_calibration() -> IOBoxPositionResponse:
 	global _iobox_current
 
@@ -1106,6 +1127,7 @@ async def _get_iobox_current_or_error() -> IOBoxPositionResponse:
 
 
 @router.post("/iobox/move", response_model=IOBoxPositionResponse)
+@serialize_calibration_state
 async def move_to_iobox_position(position: Literal["low", "high"]) -> IOBoxPositionResponse:
 	global _iobox_position, _iobox_current
 
@@ -1150,6 +1172,7 @@ async def move_to_iobox_position(position: Literal["low", "high"]) -> IOBoxPosit
 
 
 @router.post("/iobox/jog", response_model=IOBoxPositionResponse)
+@serialize_calibration_state
 async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 	global _iobox_current, _iobox_position
 
@@ -1239,6 +1262,7 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 
 
 @router.post("/iobox/test")
+@serialize_calibration_state
 async def test_iobox_sequence(with_gripper: bool = False):
 	global _iobox_current
 
@@ -1305,6 +1329,7 @@ async def test_iobox_sequence(with_gripper: bool = False):
 
 
 @router.post("/iobox/save")
+@serialize_calibration_state
 async def save_iobox_calibration(request: IOBoxSaveRequest):
 	global _iobox_current
 

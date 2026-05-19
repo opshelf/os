@@ -76,10 +76,10 @@ async def process_robot_event(payload: dict[str, Any]) -> None:
             try:
                 removed = await storage_service.remove_item_location(upca, side, shelf_idx_int, cell_idx_int)
                 if removed:
-                    try:
-                        await storage_service.sync_to_json(transaction_committed=True)
-                    except Exception as sync_err:  # pragma: no cover - best effort logging
-                        logger.warning("Failed to sync storage JSON after retrieval: %s", sync_err)
+                    logger.info(
+                        "Removed location for retrieved item: upca=%s side=%s shelf=%s cell=%s",
+                        upca, side, shelf_idx_int, cell_idx_int,
+                    )
             except Exception as err:
                 logger.exception("Failed to process retrieve_item event for %s: %s", upca, err)
 
@@ -152,7 +152,6 @@ async def process_robot_event(payload: dict[str, Any]) -> None:
                         dimensions=None,
                         weight=normalized_weight,
                         metadata={"name": str(upca)},
-                        sync_to_json=False,
                     )
                 elif normalized_weight is not None:
                     weights_differ = existing_item.weight != normalized_weight
@@ -183,11 +182,6 @@ async def process_robot_event(payload: dict[str, Any]) -> None:
 
                 if already_assigned is False:
                     await storage_service.add_item_location(str(upca), side, shelf_idx_int, cell_idx_int)
-
-                try:
-                    await storage_service.sync_to_json(transaction_committed=True)
-                except Exception as sync_err:  # pragma: no cover - best effort logging
-                    logger.warning("Failed to sync storage JSON after storage event: %s", sync_err)
             except Exception as err:
                 logger.exception("Failed to process store_item event for %s: %s", upca, err)
 
