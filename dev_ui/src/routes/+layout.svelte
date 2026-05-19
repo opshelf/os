@@ -28,6 +28,7 @@
 	let { children } = $props();
 	let authReady = $state(false);
 	let statusStream: ReturnType<typeof createReconnectingEventSource> | null = null;
+	let didReceiveRobotUnavailable = false;
 
 	function isActiveLink(href: string, currentPath: string): boolean {
 		if (href === '/') {
@@ -38,6 +39,7 @@
 
 	function didReceiveRobotStatus(raw: string): void {
 		try {
+			didReceiveRobotUnavailable = false;
 			robotStatus.set(JSON.parse(raw) as WorkerStatusPayload);
 			robotStatusError.set('');
 			robotStatusLastUpdate.set(new Date().toLocaleString());
@@ -46,6 +48,7 @@
 			robotStatusError.set('failed to parse robot status payload');
 		}
 	}
+
 
 	onMount(() => {
 		if (browser === false) {
@@ -65,6 +68,7 @@
 
 			const stream = createReconnectingEventSource({
 				path: '/robot/status',
+				refreshAuthenticationOnError: () => didReceiveRobotUnavailable === false,
 				onOpen: () => {
 					isApiConnected.set(true);
 					robotStatusError.set('');
@@ -73,8 +77,27 @@
 					didReceiveRobotStatus(event.data);
 				},
 				onError: () => {
+
+					if (didReceiveRobotUnavailable === true) {
+						didReceiveRobotUnavailable = false;
+						isApiConnected.set(true);
+						return;
+					}
+
 					isApiConnected.set(false);
 					robotStatusError.set('lost connection to robot status stream');
+				},
+				events: {
+					robot_unavailable: (event) => {
+						if (event instanceof MessageEvent === false) {
+							return;
+						}
+
+						didReceiveRobotUnavailable = true;
+						robotStatus.set(null);
+						robotStatusError.set(event.data);
+						isApiConnected.set(true);
+					}
 				}
 			});
 			statusStream = stream;
@@ -97,15 +120,13 @@
 
 <nav>
 	<ul>
-		{#if $isApiConnected === true}
-			{#each links as link}
-				<li>
-					<a href={link.href} class:active={isActiveLink(link.href, $page.url.pathname)}>
-						{link.label}
-					</a>
-				</li>
-			{/each}
-		{/if}
+		{#each links as link}
+			<li>
+				<a href={link.href} class:active={isActiveLink(link.href, $page.url.pathname)}>
+					{link.label}
+				</a>
+			</li>
+		{/each}
 
 		<li class="spacer-flexible"></li>
 

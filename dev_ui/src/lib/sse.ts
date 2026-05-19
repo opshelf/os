@@ -1,11 +1,12 @@
 import { buildAuthenticatedUrl } from './api';
-import { ensureValidToken, isAuthenticated, loginAsDeveloper } from './auth';
+import { ensureValidToken, isAuthenticated, loginAsDeveloper, logout } from './auth';
 
 type EventHandler = (event: MessageEvent<string>) => void;
 
 type ReconnectingEventSourceOptions = {
 	path: string | (() => string);
 	reconnectDelayMs?: number;
+	refreshAuthenticationOnError?: boolean | (() => boolean);
 	onOpen?: () => void;
 	onMessage?: EventHandler;
 	onError?: () => void;
@@ -24,6 +25,7 @@ export function createReconnectingEventSource(
 	let source: EventSource | null = null;
 	let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 	let shouldReconnect = true;
+	let shouldRefreshAuthentication = false;
 	const reconnectDelayMs = options.reconnectDelayMs ?? 2000;
 
 	function clearReconnectTimer(): void {
@@ -74,8 +76,23 @@ export function createReconnectingEventSource(
 		}, reconnectDelayMs);
 	}
 
+	function shouldRefreshAuthenticationAfterError(): boolean {
+		if (typeof options.refreshAuthenticationOnError === 'function') {
+			return options.refreshAuthenticationOnError();
+		}
+
+		return options.refreshAuthenticationOnError ?? false;
+	}
+
 	async function authenticateForConnection(): Promise<void> {
 		try {
+			if (shouldRefreshAuthentication === true) {
+				logout();
+				await loginAsDeveloper();
+				shouldRefreshAuthentication = false;
+				return;
+			}
+
 			if (isAuthenticated() === true) {
 				await ensureValidToken();
 				return;
@@ -84,6 +101,7 @@ export function createReconnectingEventSource(
 			await loginAsDeveloper();
 		} catch {
 			await loginAsDeveloper();
+			shouldRefreshAuthentication = false;
 		}
 	}
 
@@ -130,6 +148,10 @@ export function createReconnectingEventSource(
 		}
 
 		nextSource.onerror = () => {
+			if (shouldRefreshAuthenticationAfterError() === true) {
+				shouldRefreshAuthentication = true;
+				logout();
+			}
 			closeSource();
 			options.onError?.();
 			scheduleReconnect();
