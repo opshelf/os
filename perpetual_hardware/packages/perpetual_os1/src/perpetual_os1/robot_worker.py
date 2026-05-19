@@ -755,7 +755,7 @@ class RobotWorker:
                             await self.publish_event(result.model_dump_json())
                             logging.info("Published command result to event queue")
                         except Exception as err:
-                            logging.error("Command execution error: %s", err)
+                            logging.warning("Command execution error: %s", err)
 
                             is_hardware_fault = isinstance(err, (MotorError, MovementError, ToolError))
 

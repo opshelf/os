@@ -343,7 +343,7 @@ class IOBox:
             )
 
             if self._door_bad_reading_count >= self._door_max_bad_readings:
-                self._logger.error(
+                self._logger.warning(
                     "Too many bad door readings; attempting door motor recovery",
                     extra={"bad_reading_count": self._door_bad_reading_count},
                 )
