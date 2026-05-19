@@ -174,20 +174,27 @@ def _deserialize_capacity(capacity: str) -> DimensionsPayload:
         return DimensionsPayload(width=0.0, height=0.0, length=0.0)
 
     if stripped.startswith("{"):
-        data = json.loads(stripped)
-        if isinstance(data, dict) is False:
-            raise ValueError("capacity JSON must be an object")
-        return DimensionsPayload(
-            width=float(data.get("width", 0.0)),
-            height=float(data.get("height", 0.0)),
-            length=float(data.get("length", 0.0)),
-        )
+        try:
+            data = json.loads(stripped)
+            if isinstance(data, dict) is False:
+                return DimensionsPayload(width=0.0, height=0.0, length=0.0)
+            return DimensionsPayload(
+                width=float(data.get("width", 0.0)),
+                height=float(data.get("height", 0.0)),
+                length=float(data.get("length", 0.0)),
+            )
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return DimensionsPayload(width=0.0, height=0.0, length=0.0)
 
     parts = stripped.lower().split("x")
     if len(parts) != 3:
         return DimensionsPayload(width=0.0, height=0.0, length=0.0)
 
-    width, height, length = (float(part.strip()) for part in parts)
+    try:
+        width, height, length = (float(part.strip()) for part in parts)
+    except ValueError:
+        return DimensionsPayload(width=0.0, height=0.0, length=0.0)
+
     return DimensionsPayload(width=width, height=height, length=length)
 
 

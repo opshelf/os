@@ -1099,9 +1099,7 @@ _iobox_position: Literal["low", "high"] = "low"
 _iobox_current: Optional[IOBoxPositionResponse] = None
 
 
-@router.get("/iobox", response_model=IOBoxPositionResponse)
-@serialize_calibration_state
-async def get_iobox_calibration() -> IOBoxPositionResponse:
+def _load_iobox_calibration() -> IOBoxPositionResponse:
 	global _iobox_current
 
 	config = get_root_config()
@@ -1119,9 +1117,15 @@ async def get_iobox_calibration() -> IOBoxPositionResponse:
 	return _iobox_current
 
 
+@router.get("/iobox", response_model=IOBoxPositionResponse)
+@serialize_calibration_state
+async def get_iobox_calibration() -> IOBoxPositionResponse:
+	return _load_iobox_calibration()
+
+
 async def _get_iobox_current_or_error() -> IOBoxPositionResponse:
 	if _iobox_current is None:
-		return await get_iobox_calibration()
+		return _load_iobox_calibration()
 
 	return _iobox_current
 
