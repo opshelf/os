@@ -39,7 +39,7 @@ class ItemCreate(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     upca: str
-    name: str
+    name: str = Field(max_length=255)
     dimensions: Optional[Dict[str, float]] = None
     weight: Optional[float] = None
     item_metadata: Optional[Dict[str, Any]] = Field(default=None, alias="item_metadata")
@@ -64,7 +64,7 @@ class ItemUpdate(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    name: Optional[str] = None
+    name: Optional[str] = Field(default=None, max_length=255)
     dimensions: Optional[Dict[str, float]] = None
     weight: Optional[float] = None
     item_metadata: Optional[Dict[str, Any]] = Field(default=None, alias="item_metadata")

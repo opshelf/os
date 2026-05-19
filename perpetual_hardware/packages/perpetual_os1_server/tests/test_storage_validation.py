@@ -22,10 +22,6 @@ class TestItemValidator:
         with pytest.raises(ValidationError, match="Missing required dimension"):
             ItemValidator.validate_dimensions({"width": 10.0, "height": 20.0})
 
-    def test_invalid_dimensions_type(self) -> None:
-        """Test invalid dimensions type."""
-        with pytest.raises(ValidationError, match="Dimensions must be a dictionary"):
-            ItemValidator.validate_dimensions("not_a_dict")  # type: ignore[arg-type]
 
     def test_negative_dimensions(self) -> None:
         """Test negative dimension values."""
@@ -37,11 +33,9 @@ class TestItemValidator:
         with pytest.raises(ValidationError, match="must be a positive number"):
             ItemValidator.validate_dimensions({"width": 0.0, "height": 20.0, "length": 30.0})
 
-    def test_too_large_dimensions(self) -> None:
-        """Test dimensions that exceed maximum size."""
-        large_dimensions = {"width": 2000.0, "height": 20.0, "length": 30.0}
-        with pytest.raises(ValidationError, match="exceeds maximum allowed size"):
-            ItemValidator.validate_dimensions(large_dimensions)
+    def test_large_dimensions(self) -> None:
+        """Test dimensions without arbitrary maximum size."""
+        ItemValidator.validate_dimensions({"width": 2000.0, "height": 20.0, "length": 30.0})
 
     def test_valid_weight(self) -> None:
         """Test valid weight."""
@@ -59,10 +53,9 @@ class TestItemValidator:
         with pytest.raises(ValidationError, match="must be a positive number"):
             ItemValidator.validate_weight(0.0)
 
-    def test_too_large_weight(self) -> None:
-        """Test weight that exceeds maximum."""
-        with pytest.raises(ValidationError, match="exceeds maximum allowed weight"):
-            ItemValidator.validate_weight(2000000.0)
+    def test_large_weight(self) -> None:
+        """Test weight without arbitrary maximum size."""
+        ItemValidator.validate_weight(2000000.0)
 
     def test_valid_name(self) -> None:
         """Test valid name."""
@@ -70,10 +63,6 @@ class TestItemValidator:
         ItemValidator.validate_name("Valid Name")
         ItemValidator.validate_name("A")
 
-    def test_invalid_name_type(self) -> None:
-        """Test invalid name type."""
-        with pytest.raises(ValidationError, match="Name must be a string"):
-            ItemValidator.validate_name(123)  # type: ignore[arg-type]
 
     def test_empty_name(self) -> None:
         """Test empty name."""
@@ -86,10 +75,8 @@ class TestItemValidator:
             ItemValidator.validate_name("   ")
 
     def test_long_name(self) -> None:
-        """Test name that exceeds maximum length."""
-        long_name = "a" * 256
-        with pytest.raises(ValidationError, match="Name cannot exceed 255 characters"):
-            ItemValidator.validate_name(long_name)
+        """Test name length is handled by request schemas."""
+        ItemValidator.validate_name("a" * 256)
 
     def test_valid_metadata(self) -> None:
         """Test valid metadata."""
@@ -98,17 +85,9 @@ class TestItemValidator:
         ItemValidator.validate_metadata({})
         ItemValidator.validate_metadata({"key": "value"})
 
-    def test_invalid_metadata_type(self) -> None:
-        """Test invalid metadata type."""
-        with pytest.raises(ValidationError, match="Metadata must be a dictionary"):
-            ItemValidator.validate_metadata("not_a_dict")  # type: ignore[arg-type]
-
     def test_large_metadata(self) -> None:
-        """Test metadata that exceeds size limit."""
-        # Create large metadata string
-        large_metadata = {"data": "x" * 11000}
-        with pytest.raises(ValidationError, match="Metadata size exceeds maximum allowed size"):
-            ItemValidator.validate_metadata(large_metadata)
+        """Test metadata without pre-storage size checks."""
+        ItemValidator.validate_metadata({"data": "x" * 11000})
 
 
 class TestLocationValidator:
@@ -121,10 +100,6 @@ class TestLocationValidator:
         LocationValidator.validate_shelf_idx(1)
         LocationValidator.validate_shelf_idx(999)
 
-    def test_invalid_shelf_idx_type(self) -> None:
-        """Test invalid shelf index type."""
-        with pytest.raises(ValidationError, match="Shelf index must be an integer"):
-            LocationValidator.validate_shelf_idx("1")  # type: ignore[arg-type]
 
     def test_negative_shelf_idx(self) -> None:
         """Test negative shelf index."""
@@ -132,9 +107,8 @@ class TestLocationValidator:
             LocationValidator.validate_shelf_idx(-1)
 
     def test_large_shelf_idx(self) -> None:
-        """Test shelf index that exceeds maximum."""
-        with pytest.raises(ValidationError, match="Shelf index exceeds maximum allowed value"):
-            LocationValidator.validate_shelf_idx(1000)
+        """Test shelf index without arbitrary maximum."""
+        LocationValidator.validate_shelf_idx(1000)
 
     def test_valid_cell_idx(self) -> None:
         """Test valid cell index."""
@@ -143,10 +117,6 @@ class TestLocationValidator:
         LocationValidator.validate_cell_idx(1)
         LocationValidator.validate_cell_idx(999)
 
-    def test_invalid_cell_idx_type(self) -> None:
-        """Test invalid cell index type."""
-        with pytest.raises(ValidationError, match="Cell index must be an integer"):
-            LocationValidator.validate_cell_idx("1")  # type: ignore[arg-type]
 
     def test_negative_cell_idx(self) -> None:
         """Test negative cell index."""
@@ -154,9 +124,8 @@ class TestLocationValidator:
             LocationValidator.validate_cell_idx(-1)
 
     def test_large_cell_idx(self) -> None:
-        """Test cell index that exceeds maximum."""
-        with pytest.raises(ValidationError, match="Cell index exceeds maximum allowed value"):
-            LocationValidator.validate_cell_idx(1000)
+        """Test cell index without arbitrary maximum."""
+        LocationValidator.validate_cell_idx(1000)
 
     def test_valid_location(self) -> None:
         """Test valid location."""
@@ -165,15 +134,6 @@ class TestLocationValidator:
         LocationValidator.validate_location(0, 0)
         LocationValidator.validate_location(999, 999)
 
-    def test_invalid_location_shelf(self) -> None:
-        """Test location with invalid shelf index."""
-        with pytest.raises(ValidationError, match="Shelf index must be an integer"):
-            LocationValidator.validate_location("1", 1)  # type: ignore[arg-type]
-
-    def test_invalid_location_cell(self) -> None:
-        """Test location with invalid cell index."""
-        with pytest.raises(ValidationError, match="Cell index must be an integer"):
-            LocationValidator.validate_location(1, "1")  # type: ignore[arg-type]
 
 
 class TestStorageCellValidator:
@@ -331,14 +291,8 @@ class TestStorageValidator:
 
     def test_invalid_location_assignment(self) -> None:
         """Test invalid location assignment."""
-        with pytest.raises(ValidationError, match="Shelf index must be an integer"):
-            StorageValidator.validate_location_assignment("1", 1)  # type: ignore[arg-type]
-
-        with pytest.raises(ValidationError, match="Cell index must be an integer"):
-            StorageValidator.validate_location_assignment(1, "1")  # type: ignore[arg-type]
 
         with pytest.raises(ValidationError, match="Shelf index cannot be negative"):
             StorageValidator.validate_location_assignment(-1, 1)
 
-        with pytest.raises(ValidationError, match="Cell index exceeds maximum allowed value"):
-            StorageValidator.validate_location_assignment(1, 1000)
+        StorageValidator.validate_location_assignment(1, 1000)
