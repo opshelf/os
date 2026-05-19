@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
 	import { onDestroy, onMount } from 'svelte';
-	import { apiFetch, buildAuthenticatedUrl, getApiBase, isApiConnected } from '$lib';
+	import { apiFetch, createReconnectingEventSource, getApiBase, isApiConnected } from '$lib';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 
 	type WorkerStatusPayload = {
@@ -36,7 +36,7 @@
 	let storageError = '';
 	let storageLoading = true;
 
-	let eventSource: EventSource | null = null;
+	let statusStream: ReturnType<typeof createReconnectingEventSource> | null = null;
 
 	function handleStatusMessage(raw: string): void {
 		try {
@@ -126,32 +126,31 @@
 			return;
 		}
 
-		const source = new EventSource(buildAuthenticatedUrl('/robot/status'));
-		eventSource = source;
-
-		source.onopen = () => {
-			statusConnected = true;
-			statusError = '';
-			isApiConnected.set(true);
-		};
-
-		source.onmessage = (event: MessageEvent<string>) => {
-			handleStatusMessage(event.data);
-		};
-
-		source.onerror = () => {
-			statusConnected = false;
-			statusError = 'lost connection to robot status stream';
-			isApiConnected.set(false);
-		};
+		const stream = createReconnectingEventSource({
+			path: '/robot/status',
+			onOpen: () => {
+				statusConnected = true;
+				statusError = '';
+				isApiConnected.set(true);
+			},
+			onMessage: (event) => {
+				handleStatusMessage(event.data);
+			},
+			onError: () => {
+				statusConnected = false;
+				statusError = 'lost connection to robot status stream';
+			}
+		});
+		statusStream = stream;
+		stream.connect();
 
 		return () => {
-			source.close();
+			stream.close();
 		};
 	});
 
 	onDestroy(() => {
-		eventSource?.close();
+		statusStream?.close();
 	});
 </script>
 

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
 	import { onMount, onDestroy } from 'svelte';
-	import { getScannerStatus, sendScannerScan, getApiBase, type ScannerStatus } from '$lib/api';
+	import { createReconnectingEventSource, getScannerStatus, sendScannerScan, type ScannerStatus } from '$lib';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import StatusMessage from '$lib/components/StatusMessage.svelte';
 
@@ -14,7 +14,7 @@
 	let isRefreshing = false;
 	let isSending = false;
 	let simulatedCode = '';
-	let eventSource: EventSource | null = null;
+	let eventsStream: ReturnType<typeof createReconnectingEventSource> | null = null;
 
 	async function fetchStatus(): Promise<void> {
 		try {
@@ -85,38 +85,30 @@
 	}
 
 	function connectEventSource(): void {
-		if (eventSource !== null) {
+		if (eventsStream !== null) {
 			return;
 		}
 
-		const url = `${getApiBase()}/robot/events`;
-		eventSource = new EventSource(url);
-
-		eventSource.onmessage = function (event) {
-			try {
-				const data = JSON.parse(event.data);
-				if (data.kind === 'label_scanned' && typeof data.payload === 'string') {
-					latestReading = data.payload;
+		const stream = createReconnectingEventSource({
+			path: '/robot/events',
+			onMessage: (event) => {
+				try {
+					const data = JSON.parse(event.data);
+					if (data.kind === 'label_scanned' && typeof data.payload === 'string') {
+						latestReading = data.payload;
+					}
+				} catch {
+					return;
 				}
-			} catch {
-				// ignore parse errors
 			}
-		};
-
-		eventSource.onerror = function () {
-			if (eventSource !== null) {
-				eventSource.close();
-				eventSource = null;
-			}
-			setTimeout(connectEventSource, 2000);
-		};
+		});
+		eventsStream = stream;
+		stream.connect();
 	}
 
 	function disconnectEventSource(): void {
-		if (eventSource !== null) {
-			eventSource.close();
-			eventSource = null;
-		}
+		eventsStream?.close();
+		eventsStream = null;
 	}
 
 	async function initialLoad(): Promise<void> {
