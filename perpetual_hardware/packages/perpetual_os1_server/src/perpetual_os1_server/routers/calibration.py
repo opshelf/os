@@ -28,7 +28,7 @@ from perpetual_os1_server.core.laser_auto_calibration import (
 	LaserAutoCalibrationSnapshot,
 	get_laser_auto_calibration_manager,
 )
-from perpetual_os1_server.core.manual_motion import ensure_robot_available_for_manual_motion, manual_motion_guard
+from perpetual_os1_server.core.manual_motion import manual_motion_guard
 from perpetual_os1_server.routers.auth_deps import get_current_user
 from perpetual_os1_server.core.storage_module import module_name_to_side, side_to_s
 from perpetual_os1_server.settings import get_root_config, save_root_config
@@ -95,9 +95,6 @@ class TestRequest(BaseModel):
 	shelf_idx: int
 	cell_idx: int
 
-
-def _ensure_robot_not_busy(worker) -> None:
-	ensure_robot_available_for_manual_motion(worker)
 
 
 def _build_test_location(request: TestRequest) -> StorageModuleCellLocation:
@@ -879,7 +876,6 @@ async def test_gripper(request: TestRequest):
 	worker = await get_robot_worker_or_503()
 
 	_ensure_ready(worker)
-	_ensure_robot_not_busy(worker)
 
 	location = _build_test_location(request)
 	grid = worker._robot._grid
@@ -925,7 +921,6 @@ async def test_cycle(request: TestRequest):
 	worker = await get_robot_worker_or_503()
 
 	_ensure_ready(worker)
-	_ensure_robot_not_busy(worker)
 
 	robot = worker._robot
 	tool = robot._tool
@@ -1105,12 +1100,7 @@ async def get_iobox_calibration() -> IOBoxPositionResponse:
 
 async def _get_iobox_current_or_error() -> IOBoxPositionResponse:
 	if _iobox_current is None:
-		await get_iobox_calibration()
-	if _iobox_current is None:
-		raise HTTPException(
-			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-			detail="Failed to initialize IOBox calibration",
-		)
+		return await get_iobox_calibration()
 
 	return _iobox_current
 

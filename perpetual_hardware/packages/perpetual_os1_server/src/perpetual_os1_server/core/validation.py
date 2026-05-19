@@ -13,50 +13,29 @@ class ItemValidator:
     @staticmethod
     def validate_dimensions(dimensions: Dict[str, float]) -> None:
         """Validate item dimensions."""
-        if not isinstance(dimensions, dict):
-            raise ValidationError("Dimensions must be a dictionary")
-
         required_keys = ["width", "height", "length"]
         for key in required_keys:
             if key not in dimensions:
                 raise ValidationError(f"Missing required dimension: {key}")
-            if not isinstance(dimensions[key], (int, float)) or dimensions[key] <= 0:
+            if dimensions[key] <= 0:
                 raise ValidationError(f"{key} must be a positive number")
-
-        max_dimension = 1000.0
-        for key, value in dimensions.items():
-            if value > max_dimension:
-                raise ValidationError(f"{key} exceeds maximum allowed size of {max_dimension}cm")
 
     @staticmethod
     def validate_weight(weight: Optional[float]) -> None:
         """Validate item weight."""
-        if weight is not None:
-            if not isinstance(weight, (int, float)) or weight <= 0:
-                raise ValidationError("Weight must be a positive number")
-            if weight > 1000000:
-                raise ValidationError("Weight exceeds maximum allowed weight of 1000kg")
+        if weight is not None and weight <= 0:
+            raise ValidationError("Weight must be a positive number")
 
     @staticmethod
     def validate_name(name: str) -> None:
         """Validate item name."""
-        if not isinstance(name, str):
-            raise ValidationError("Name must be a string")
         if len(name.strip()) == 0:
             raise ValidationError("Name cannot be empty")
-        if len(name) > 255:
-            raise ValidationError("Name cannot exceed 255 characters")
 
     @staticmethod
     def validate_metadata(metadata: Optional[Dict[str, Any]]) -> None:
         """Validate item metadata."""
-        if metadata is not None:
-            if not isinstance(metadata, dict):
-                raise ValidationError("Metadata must be a dictionary")
-            import json
-            metadata_str = json.dumps(metadata)
-            if len(metadata_str) > 10000:
-                raise ValidationError("Metadata size exceeds maximum allowed size")
+        return
 
 
 class LocationValidator:
@@ -65,22 +44,14 @@ class LocationValidator:
     @staticmethod
     def validate_shelf_idx(shelf_idx: int) -> None:
         """Validate shelf index."""
-        if not isinstance(shelf_idx, int):
-            raise ValidationError("Shelf index must be an integer")
         if shelf_idx < 0:
             raise ValidationError("Shelf index cannot be negative")
-        if shelf_idx > 999:
-            raise ValidationError("Shelf index exceeds maximum allowed value")
 
     @staticmethod
     def validate_cell_idx(cell_idx: int) -> None:
         """Validate cell index."""
-        if not isinstance(cell_idx, int):
-            raise ValidationError("Cell index must be an integer")
         if cell_idx < 0:
             raise ValidationError("Cell index cannot be negative")
-        if cell_idx > 999:
-            raise ValidationError("Cell index exceeds maximum allowed value")
 
     @staticmethod
     def validate_location(shelf_idx: int, cell_idx: int) -> None:

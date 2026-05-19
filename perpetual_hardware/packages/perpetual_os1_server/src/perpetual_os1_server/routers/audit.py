@@ -196,17 +196,7 @@ async def verify_audit_chain(
 	error_message = None
 
 	for log in logs:
-		# Rebuild payload deterministically to recompute hash
-		# SQLite doesn't preserve timezone info, so we need to add it back
-		from datetime import timezone as tz
-		timestamp_iso = None
-		if log.timestamp:
-			if log.timestamp.tzinfo is None:
-				# Add UTC timezone info since audit logs are created with UTC
-				timestamp_iso = log.timestamp.replace(tzinfo=tz.utc).isoformat()
-			else:
-				timestamp_iso = log.timestamp.isoformat()
-		
+		timestamp_iso = log.timestamp.isoformat() if log.timestamp else None
 		payload = {
 			"timestamp": timestamp_iso,
 			"method": log.method,

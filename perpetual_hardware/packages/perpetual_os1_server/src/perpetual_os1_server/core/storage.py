@@ -325,30 +325,16 @@ class StorageService:
         LocationValidator.validate_location(shelf_idx, cell_idx)
 
         async with self._lock:
-            try:
-                result = await self.session.execute(
-                    select(StorageCell)
-                    .where(StorageCell.shelf_idx == shelf_idx)
-                    .where(StorageCell.cell_idx == cell_idx)
-                    .with_for_update()
-                )
-                existing_cell = result.scalar_one_or_none()
+            result = await self.session.execute(
+                select(StorageCell)
+                .where(StorageCell.shelf_idx == shelf_idx)
+                .where(StorageCell.cell_idx == cell_idx)
+                .with_for_update()
+            )
+            existing_cell = result.scalar_one_or_none()
 
-                if existing_cell:
-                    raise ValidationError(f"Storage cell at shelf {shelf_idx}, cell {cell_idx} already exists")
-            except Exception:
-                try:
-                    result = await self.session.execute(
-                        select(StorageCell)
-                        .where(StorageCell.shelf_idx == shelf_idx)
-                        .where(StorageCell.cell_idx == cell_idx)
-                    )
-                    existing_cell = result.scalar_one_or_none()
-
-                    if existing_cell:
-                        raise ValidationError(f"Storage cell at shelf {shelf_idx}, cell {cell_idx} already exists")
-                except Exception as exc:  # pragma: no cover - defensive path
-                    raise ValidationError("Failed to check storage cell existence due to database locking issues") from exc
+            if existing_cell is not None:
+                raise ValidationError(f"Storage cell at shelf {shelf_idx}, cell {cell_idx} already exists")
 
             try:
                 cell = StorageCell(
