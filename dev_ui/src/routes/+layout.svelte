@@ -2,7 +2,16 @@
 	import { page } from '$app/stores';
 	import { browser } from '$app/environment';
 	import { onMount } from 'svelte';
-	import { loginAsDeveloper, isAuthenticated, isApiConnected } from '$lib';
+	import {
+		createReconnectingEventSource,
+		isApiConnected,
+		isAuthenticated,
+		loginAsDeveloper,
+		robotStatus,
+		robotStatusError,
+		robotStatusLastUpdate,
+		type WorkerStatusPayload
+	} from '$lib';
 	import '../app.css';
 
 	const version = import.meta.env.PUBLIC_VERSION;
@@ -18,6 +27,8 @@
 
 	let { children } = $props();
 	let authReady = $state(false);
+	let statusStream: ReturnType<typeof createReconnectingEventSource> | null = null;
+	let didReceiveRobotUnavailable = false;
 
 	function isActiveLink(href: string, currentPath: string): boolean {
 		if (href === '/') {
@@ -26,20 +37,79 @@
 		return currentPath.startsWith(href);
 	}
 
-	onMount(async () => {
+	function didReceiveRobotStatus(raw: string): void {
+		try {
+			didReceiveRobotUnavailable = false;
+			robotStatus.set(JSON.parse(raw) as WorkerStatusPayload);
+			robotStatusError.set('');
+			robotStatusLastUpdate.set(new Date().toLocaleString());
+			isApiConnected.set(true);
+		} catch {
+			robotStatusError.set('failed to parse robot status payload');
+		}
+	}
+
+
+	onMount(() => {
 		if (browser === false) {
 			return;
 		}
 
-		if (isAuthenticated() === false) {
-			try {
-				await loginAsDeveloper();
-			} catch (error) {
-				console.error('failed to authenticate as developer:', error);
+		async function startStatusStream(): Promise<void> {
+			if (isAuthenticated() === false) {
+				try {
+					await loginAsDeveloper();
+				} catch (error) {
+					console.error('failed to authenticate as developer:', error);
+				}
 			}
+
+			authReady = true;
+
+			const stream = createReconnectingEventSource({
+				path: '/robot/status',
+				refreshAuthenticationOnError: () => didReceiveRobotUnavailable === false,
+				onOpen: () => {
+					isApiConnected.set(true);
+					robotStatusError.set('');
+				},
+				onMessage: (event) => {
+					didReceiveRobotStatus(event.data);
+				},
+				onError: () => {
+
+					if (didReceiveRobotUnavailable === true) {
+						didReceiveRobotUnavailable = false;
+						isApiConnected.set(true);
+						return;
+					}
+
+					isApiConnected.set(false);
+					robotStatusError.set('lost connection to robot status stream');
+				},
+				events: {
+					robot_unavailable: (event) => {
+						if (event instanceof MessageEvent === false) {
+							return;
+						}
+
+						didReceiveRobotUnavailable = true;
+						robotStatus.set(null);
+						robotStatusError.set(event.data);
+						isApiConnected.set(true);
+					}
+				}
+			});
+			statusStream = stream;
+			stream.connect();
 		}
 
-		authReady = true;
+		void startStatusStream();
+
+		return () => {
+			statusStream?.close();
+			statusStream = null;
+		};
 	});
 </script>
 
@@ -50,15 +120,13 @@
 
 <nav>
 	<ul>
-		{#if $isApiConnected === true}
-			{#each links as link}
-				<li>
-					<a href={link.href} class:active={isActiveLink(link.href, $page.url.pathname)}>
-						{link.label}
-					</a>
-				</li>
-			{/each}
-		{/if}
+		{#each links as link}
+			<li>
+				<a href={link.href} class:active={isActiveLink(link.href, $page.url.pathname)}>
+					{link.label}
+				</a>
+			</li>
+		{/each}
 
 		<li class="spacer-flexible"></li>
 
@@ -69,14 +137,16 @@
 </nav>
 
 <main>
-	{#if $isApiConnected === false}
-		<p class="offline-message">api is offline, re-connecting...</p>
-	{:else if authReady === true}
-		{@render children?.()}
-	{:else}
-		<p>authenticating...</p>
-	{/if}
+	{@render children?.()}
 </main>
+
+{#if authReady === false || $isApiConnected === false}
+	<div class="connection-overlay">
+		<div class="connection-message">
+			{authReady === false ? 'AUTHENTICATING, PLEASE WAIT' : 'CONNECTING, PLEASE WAIT'}
+		</div>
+	</div>
+{/if}
 
 <div class="logo-container">
 	<table class="logo-table">
@@ -89,10 +159,22 @@
 </div>
 
 <style>
-	.offline-message {
+	.connection-overlay {
 		position: fixed;
-		bottom: 2em;
-		left: 2em;
+		inset: 0;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background-color: rgba(255, 255, 255, 0.85);
+		z-index: 1000;
+	}
+
+	.connection-message {
+		padding: 5px;
+		border: 2px solid black;
+		background-color: white;
+		text-transform: uppercase;
+		box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.25);
 	}
 
 	.logo-container {

@@ -621,7 +621,12 @@ async def stream_sse() -> EventSourceResponse:
             if worker is not None and status_queue is not None:
                 await worker.unsubscribe_status(status_queue)
 
-    return EventSourceResponse(event_generator())
+    return EventSourceResponse(
+        event_generator(),
+        ping=15,
+        send_timeout=30,
+        headers={"Cache-Control": "no-cache"},
+    )
 
 
 @router.get("/events", dependencies=[Depends(get_current_user)])
