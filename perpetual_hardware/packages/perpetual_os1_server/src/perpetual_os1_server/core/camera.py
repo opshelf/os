@@ -6,7 +6,7 @@ import queue
 import time
 from multiprocessing.context import BaseContext
 from multiprocessing.queues import Queue
-from typing import Optional, Union
+from typing import Any, Optional, Union, cast
 
 import cv2
 import numpy as np
@@ -19,6 +19,21 @@ logger = get_logger(__name__)
 CameraManager = Union["CameraStreamManager", "ToolCameraStreamManager"]
 camera_registry: dict[str, CameraManager] = {}
 
+
+def _get_tool_camera_frames_to_skip(source_fps: float, target_fps: int) -> int:
+	if source_fps > target_fps:
+		return min(30, max(1, int(source_fps / target_fps) - 1))
+
+	return 1
+
+
+def _prepare_tool_camera_frame(frame: np.ndarray, max_frame_width: int) -> np.ndarray:
+	height, width = frame.shape[:2]
+	if width <= max_frame_width:
+		return frame
+
+	target_height = max(1, int(height * (max_frame_width / width)))
+	return cv2.resize(frame, (max_frame_width, target_height), interpolation=cv2.INTER_AREA)
 
 def _tool_camera_worker(
 	rtsp_url: str,
@@ -47,9 +62,7 @@ def _tool_camera_worker(
 						continue
 
 				source_fps = cap.get(cv2.CAP_PROP_FPS)
-				frames_to_skip = 1
-				if source_fps > target_fps:
-					frames_to_skip = min(30, max(1, int(source_fps / target_fps) - 1))
+				frames_to_skip = _get_tool_camera_frames_to_skip(source_fps, target_fps)
 
 				for _ in range(frames_to_skip):
 					cap.grab()
@@ -59,10 +72,7 @@ def _tool_camera_worker(
 					time.sleep(0.5)
 					continue
 
-				height, width = frame.shape[:2]
-				if width > max_frame_width:
-					target_height = max(1, int(height * (max_frame_width / width)))
-					frame = cv2.resize(frame, (max_frame_width, target_height), interpolation=cv2.INTER_AREA)
+				frame = _prepare_tool_camera_frame(frame, max_frame_width)
 
 				success, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality])
 				if success is True:
@@ -246,9 +256,10 @@ class ToolCameraStreamManager:
 	def _start_worker(self) -> None:
 		self._stop_worker()
 
-		self.frame_queue = self.process_context.Queue(maxsize=2)
-		self.stop_event = self.process_context.Event()
-		self.process = self.process_context.Process(
+		process_context = cast(Any, self.process_context)
+		self.frame_queue = process_context.Queue(maxsize=2)
+		self.stop_event = process_context.Event()
+		self.process = process_context.Process(
 			target=_tool_camera_worker,
 			args=(
 				self.rtsp_url,
@@ -279,6 +290,14 @@ class ToolCameraStreamManager:
 		self.process = None
 		self.stop_event = None
 		self.frame_queue = None
+
+	def _prepare_frame(self, frame: np.ndarray) -> np.ndarray:
+		return _prepare_tool_camera_frame(frame, self.max_frame_width)
+
+	def _get_frames_to_skip(self, cap: cv2.VideoCapture) -> int:
+		source_fps = cap.get(cv2.CAP_PROP_FPS)
+		return _get_tool_camera_frames_to_skip(source_fps, self.target_fps)
+
 
 	def _drain_frame_queue(self) -> Optional[bytes]:
 		if self.frame_queue is None:

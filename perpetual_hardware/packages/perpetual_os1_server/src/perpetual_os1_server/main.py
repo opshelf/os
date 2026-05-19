@@ -71,7 +71,8 @@ def _sentry_log_is_pymodbus_request_id_mismatch(log: dict[str, Any]) -> bool:
 	if isinstance(attributes_value, dict) is False:
 		return False
 
-	return any(_is_pymodbus_request_id_mismatch(value) is True for value in attributes_value.values())
+	attributes = cast(dict[str, Any], attributes_value)
+	return any(_is_pymodbus_request_id_mismatch(value) is True for value in attributes.values())
 
 
 def _before_send_sentry_event(event: dict[str, Any], _hint: dict[str, Any]) -> dict[str, Any] | None:
