@@ -346,15 +346,24 @@ def _build_estimated_rotation_deg(rotation_center_deg: float, fit_result: Any) -
     return float(rotation_center_deg) + float(fit_result.alpha_deg)
 
 
+def _should_mirror_right_angle_fit(
+    side: StorageModuleSide,
+    rotation_center_deg: float,
+    rotation_limit_deg: float,
+) -> bool:
+    return side == StorageModuleSide.RIGHT and rotation_center_deg >= rotation_limit_deg / 2.0
+
+
 def _build_angle_fit_inputs(
     side: StorageModuleSide,
     scan_config: Any,
     samples: list[angle_module.LaserAngleCalibrationSample],
     rotation_center_deg: float,
+    rotation_limit_deg: float,
 ) -> tuple[list[angle_module.LaserAngleCalibrationSample], float]:
     laser_offset_x_mm = 0.0
 
-    if side != StorageModuleSide.RIGHT:
+    if _should_mirror_right_angle_fit(side, rotation_center_deg, rotation_limit_deg) is False:
         return samples, laser_offset_x_mm
 
     adjusted_samples = [

@@ -108,7 +108,8 @@ class SharedModbusController:
             raise ValueError("function_code must be 3 or 4")
 
         async with self.lock:
-            for attempt in range(2):
+            max_attempts = 3
+            for attempt in range(max_attempts):
                 try:
                     if function_code == 4:
                         result = await self.client.read_input_registers(
@@ -158,12 +159,29 @@ class SharedModbusController:
 
                     return tuple(int(value) for value in registers)
                 except (ModbusIOException, ModbusConnectionError, ModbusTimeoutError, ModbusException, asyncio.TimeoutError) as e:
-                    if attempt == 0:
+                    if attempt < max_attempts - 1:
                         reconnected = await self._reconnect()
                         if not reconnected:
                             raise ModbusConnectionError(f"Reconnection failed after error: {str(e)}") from e
                         continue
                     raise ModbusError(f"Modbus read failed after reconnect: {str(e)}") from e
+                except ModbusError as e:
+                    if attempt < max_attempts - 1:
+                        logger.warning(
+                            "Modbus read failed, retrying",
+                            extra={
+                                "unit_id": unit_id,
+                                "function_code": function_code,
+                                "address": address,
+                                "count": count,
+                                "attempt": attempt + 1,
+                                "max_attempts": max_attempts,
+                                "error": str(e),
+                            },
+                        )
+                        await asyncio.sleep(0.05 * (attempt + 1))
+                        continue
+                    raise
                 except Exception as e:
                     raise ModbusError(f"Unexpected error reading from unit {unit_id}: {str(e)}") from e
         raise ModbusError(f"Failed to read from unit {unit_id} after retries")

@@ -426,6 +426,46 @@ def print_io_box_scout_result(result: laser_module.IOBoxScoutResult) -> None:
 	print(f'io_box_final_y_refined: {result.final_y_refined}')
 
 
+def should_mirror_right_angle_fit(
+	side: StorageModuleSide,
+	rotation_center_deg: float,
+	rotation_limit_deg: float,
+) -> bool:
+	return side == StorageModuleSide.RIGHT and rotation_center_deg >= rotation_limit_deg / 2.0
+
+
+def build_angle_fit_inputs(
+	*,
+	side: StorageModuleSide,
+	samples: list[angle_module.LaserAngleCalibrationSample],
+	rotation_center_deg: float,
+	rotation_limit_deg: float,
+) -> tuple[list[angle_module.LaserAngleCalibrationSample], float]:
+	laser_offset_x_mm = 0.0
+
+	if should_mirror_right_angle_fit(side, rotation_center_deg, rotation_limit_deg) is False:
+		return samples, laser_offset_x_mm
+
+	adjusted_samples = [
+		angle_module.LaserAngleCalibrationSample(
+			axis_x_mm=float(sample.axis_x_mm),
+			axis_z_mm=float(sample.axis_z_mm),
+			rotation_deg=-float(sample.rotation_deg),
+			absolute_rotation_deg=(2.0 * rotation_center_deg) - float(sample.absolute_rotation_deg),
+			stage_extension_mm=float(sample.stage_extension_mm),
+			z_extension_mm=float(sample.z_extension_mm),
+			distance_mm=float(sample.distance_mm),
+		)
+		for sample in samples
+	]
+
+	return adjusted_samples, laser_offset_x_mm
+
+
+def get_rotation_limit_deg(config: Any) -> float:
+	return float(config.robot.tool.motors.by_name('rotate').lim)
+
+
 def apply_angle_calibration_result(
 	*,
 	config: Any,
@@ -481,6 +521,8 @@ async def run_angle_calibration(
 
 		args.rotation_center_deg = float(getattr(config.robot.tool.parameters, rotation_param))
 
+	args.y_range = None
+	rotation_limit_deg = get_rotation_limit_deg(config)
 	laser_module.print_status('phase=angle-calibration')
 	laser_module.print_status(
 		f'angle_calibration_setup module={side.value} '
@@ -491,14 +533,20 @@ async def run_angle_calibration(
 	)
 
 	samples, capture_metadata = await angle_module.capture_samples_with_robot(args)
+	fit_samples, fit_laser_offset_x_mm = build_angle_fit_inputs(
+		side=side,
+		samples=samples,
+		rotation_center_deg=float(args.rotation_center_deg),
+		rotation_limit_deg=rotation_limit_deg,
+	)
 	fit_result = angle_module.search_best_alpha(
-		samples,
+		fit_samples,
 		alpha_min_deg=float(args.alpha_min_deg),
 		alpha_max_deg=float(args.alpha_max_deg),
 		coarse_step_deg=float(args.coarse_step_deg),
 		fine_window_deg=float(args.fine_window_deg),
 		fine_step_deg=float(args.fine_step_deg),
-		laser_offset_x_mm=laser_offset_x_mm,
+		laser_offset_x_mm=fit_laser_offset_x_mm,
 		laser_offset_z_mm=laser_offset_z_mm,
 		beam_zero_deg=beam_zero_deg,
 	)
@@ -508,11 +556,11 @@ async def run_angle_calibration(
 		angle_module.write_output_document(
 			output_path=args.output,
 			mode='capture',
-			samples=samples,
+			samples=fit_samples,
 			fit_result=fit_result,
 			metadata={
 				**capture_metadata,
-				'laser_offset_x_mm': laser_offset_x_mm,
+				'laser_offset_x_mm': fit_laser_offset_x_mm,
 				'laser_offset_z_mm': laser_offset_z_mm,
 				'beam_zero_deg': beam_zero_deg,
 			},

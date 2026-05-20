@@ -154,7 +154,7 @@ class AngleRunnerMixin:
                                 f"sample=ok x={x_mm:.3f} z={target_z_mm:.3f} rotation_deg={rotation_deg:.3f} distance_mm={depth_mm:.3f}"
                             )
                 self._raise_if_abort_requested()
-                fit_samples, laser_offset_x_mm = _build_angle_fit_inputs(side, scan_config, samples, rotation_center_deg)
+                fit_samples, laser_offset_x_mm = _build_angle_fit_inputs(side, scan_config, samples, rotation_center_deg, rotation_limit_deg)
                 fit_result = angle_module.search_best_alpha(
                     fit_samples,
                     alpha_min_deg=float(scan_config.angle_calibration_alpha_min_deg),
