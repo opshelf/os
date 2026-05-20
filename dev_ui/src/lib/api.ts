@@ -420,9 +420,13 @@ export interface LaserAutoCalibrationSnapshot {
 }
 
 export function buildLaserAutoCalibrationStreamUrl(
-	request: LaserAutoCalibrationRequest = { mode: 'all', include_io_box: true }
+	request: LaserAutoCalibrationRequest = { mode: 'all', include_io_box: true },
+	options: { subscribeOnly?: boolean } = {}
 ): string {
 	const url = new URL(buildAuthenticatedUrl('/calibration/laser/stream'));
+	if (options.subscribeOnly === true) {
+		url.searchParams.set('subscribe_only', 'true');
+	}
 
 	if (request.mode === 'io_box') {
 		url.searchParams.set('mode', 'io_box');

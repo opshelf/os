@@ -1579,6 +1579,28 @@ async def test_stream_laser_auto_calibration_reuses_running_session() -> None:
     assert manager.ensure_calls == 0
 
 
+
+@pytest.mark.asyncio
+async def test_stream_laser_auto_calibration_subscribe_only_does_not_start_when_idle() -> None:
+    snapshot = _build_snapshot(state="completed")
+    manager = FakeLaserManager(snapshot=snapshot, is_active=False)
+
+    with patch(
+        "perpetual_os1_server.routers.calibration.get_laser_auto_calibration_manager",
+        return_value=manager,
+    ):
+        request = SimpleNamespace(is_disconnected=AsyncMock(return_value=False))
+        response = await calibration_router.stream_laser_auto_calibration(
+            request,
+            subscribe_only=True,
+        )
+        chunk = await anext(response.body_iterator)
+        await response.body_iterator.aclose()
+
+    payload = json.loads(chunk["data"])
+    assert payload["state"] == "completed"
+    assert manager.ensure_calls == 0
+
 @pytest.mark.asyncio
 async def test_stream_laser_auto_calibration_starts_single_shelf_scope() -> None:
     snapshot = _build_snapshot()
