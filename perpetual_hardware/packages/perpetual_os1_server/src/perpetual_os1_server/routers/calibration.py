@@ -668,12 +668,13 @@ async def stream_laser_auto_calibration(
 	cell_idx: int | None = None,
 	mode: Literal["all", "io_box"] | None = None,
 	include_io_box: bool | None = None,
+	subscribe_only: bool = False,
 ) -> EventSourceResponse:
 	requested_scope = _build_laser_auto_calibration_scope(side, shelf_idx, cell_idx, mode, include_io_box)
 	manager = get_laser_auto_calibration_manager()
 	is_active = await manager.is_active()
 
-	if is_active is False:
+	if is_active is False and subscribe_only is False:
 		try:
 			worker = await get_robot_worker()
 		except ValueError as exc:

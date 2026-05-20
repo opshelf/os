@@ -109,7 +109,7 @@
 			syncScopeSelection(getSnapshotRequestedScope(nextSnapshot));
 
 			if (shouldAutoConnect(nextSnapshot) === true) {
-				void didClickStart();
+				void didConnectStream(true);
 			}
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'failed to load auto calibration status';
@@ -418,13 +418,20 @@
 
 		activeRequestedScope = getRequestedScope();
 
+		didConnectStream(false);
+	}
+
+	function didConnectStream(shouldSubscribeOnly: boolean): void {
 		didCloseStream();
 		isConnecting = true;
 		error = '';
 		message = '';
 
 		const nextStream = createReconnectingEventSource({
-			path: () => buildLaserAutoCalibrationStreamUrl(activeRequestedScope ?? getRequestedScope()),
+			path: () =>
+				buildLaserAutoCalibrationStreamUrl(activeRequestedScope ?? getRequestedScope(), {
+					subscribeOnly: shouldSubscribeOnly
+				}),
 			onOpen: didOpenStream,
 			onError: didReceiveStreamError,
 			events: {
