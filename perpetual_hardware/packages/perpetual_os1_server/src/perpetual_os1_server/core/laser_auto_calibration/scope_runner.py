@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from statistics import median
 
 from .models import *
 
@@ -159,17 +160,39 @@ class ScopeRunnerMixin:
         grid_path = Path(resolve_grid_path(config))
         grid = laser_module.load_grid(grid_path)
         bounds = _build_bounds_for_side(scan_config, side)
-        known_shelf_edge_y = laser_module.build_single_shelf_known_edge_y(
+        target_shelf = laser_module.resolve_target_shelf(
             grid=grid,
             side=side,
             shelf_idx=shelf_idx,
-            scan_config=scan_config,
+        )
+        target_cell_y_values = [
+            float(cell.calibration_point.y)
+            for cell in target_shelf.cells
+            if cell.calibration_point is not None
+        ]
+
+        if len(target_cell_y_values) == 0:
+            raise ValueError(f"Shelf {shelf_idx} has no calibration points on {side.value}")
+
+        target_center_y_mm = float(median(target_cell_y_values))
+        local_y_margin_mm = max(
+            80.0,
+            float(scan_config.expected_hole_height_mm)
+            + max(float(offset_mm) for offset_mm in laser_module.get_shelf_hole_probe_y_offsets_mm(scan_config))
+            + 30.0,
+        )
+        local_bounds = ScanBounds(
+            x_min=bounds.x_min,
+            x_max=bounds.x_max,
+            y_min=max(bounds.y_min, target_center_y_mm - local_y_margin_mm),
+            y_max=min(bounds.y_max, target_center_y_mm + local_y_margin_mm),
         )
         analysis = await self._run_scan_analysis(
             worker,
             side,
-            bounds,
-            known_shelf_edge_y=known_shelf_edge_y,
+            local_bounds,
+            known_shelf_edge_y=None,
+            should_validate_reference_bounds=False,
         )
         await self._persist_single_shelf_result(
             worker,

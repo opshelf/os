@@ -763,6 +763,43 @@ def test_build_run_parameters_rejects_full_scan_bounds_away_from_xy_reference() 
 		)
 
 
+
+def test_build_run_parameters_adds_right_laser_offset_for_reference_bounds() -> None:
+	args = SimpleNamespace(
+		module='right',
+		x=(0.0, 950.0),
+		y=(0.0, 1210.0),
+		y_offset=0.0,
+		settle_ms=None,
+		samples_per_point=None,
+		known_shelf_edge_y=None,
+		npy=None,
+		scans_dir='scans',
+		config='config.json',
+		apply=True,
+		shelf_scout_only=False,
+		rescan_cell=None,
+	)
+	scan_config = SimpleNamespace(
+		laser_offset_x_mm=51.0,
+		laser_offset_y_mm=0.0,
+		right_reference=SimpleNamespace(shelf_idx=1, cell_idx=0, anchor='top_left', x_mm=11.0, y_mm=1162.5, z_offset_mm=11.0, wall_depth_mm=9.0),
+	)
+
+	run_parameters = build_run_parameters(
+		args=args,
+		side=StorageModuleSide.RIGHT,
+		bounds=ScanBounds(x_min=0.0, x_max=950.0, y_min=0.0, y_max=1210.0),
+		step_mm=2.0,
+		settle_ms=0,
+		samples_per_point=1,
+		coarse_settle_ms=0,
+		coarse_samples_per_point=1,
+		scan_config=scan_config,
+	)
+
+	assert run_parameters['resolved']['xy_reference']['x_mm'] == pytest.approx(11.0)
+
 def test_load_continue_scan_context_reads_latest_incomplete_run(tmp_path: Path) -> None:
 	completed_run_dir = tmp_path / 'completed-run'
 	completed_run_dir.mkdir()
