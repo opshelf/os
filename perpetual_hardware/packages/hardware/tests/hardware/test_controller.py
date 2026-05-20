@@ -1,7 +1,7 @@
 import pytest
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 from hardware.controller import SharedModbusController
-from hardware.exceptions import ModbusError
+from hardware.exceptions import ModbusConnectionError, ModbusError
 
 @pytest.mark.asyncio
 async def test_controller_initialization():
@@ -112,3 +112,42 @@ async def test_controller_error_handling(mock_modbus_client):
     # Test error handling
     with pytest.raises(ModbusError):
         await controller.read_holding_registers(1, 0x100)
+
+
+@pytest.mark.asyncio
+async def test_controller_retries_modbus_read_error(mock_modbus_client):
+    controller = SharedModbusController("/dev/ttyUSB0", 115200)
+    controller.client = mock_modbus_client
+
+    error_result = Mock()
+    error_result.isError.return_value = True
+    ok_result = Mock()
+    ok_result.isError.return_value = False
+    ok_result.registers = [42]
+    mock_modbus_client.read_holding_registers.side_effect = [error_result, ok_result]
+
+    value = await controller.read_holding_registers(1, 0x100)
+
+    assert value == 42
+    assert mock_modbus_client.read_holding_registers.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_controller_reconnects_on_modbus_connection_error(mock_modbus_client):
+    controller = SharedModbusController("/dev/ttyUSB0", 115200)
+    controller.client = mock_modbus_client
+
+    ok_result = Mock()
+    ok_result.isError.return_value = False
+    ok_result.registers = [42]
+    mock_modbus_client.read_holding_registers.side_effect = [
+        ModbusConnectionError("connection lost"),
+        ok_result,
+    ]
+    controller._reconnect = AsyncMock(return_value=True)
+
+    value = await controller.read_holding_registers(1, 0x100)
+
+    assert value == 42
+    controller._reconnect.assert_awaited_once()
+    assert mock_modbus_client.read_holding_registers.call_count == 2

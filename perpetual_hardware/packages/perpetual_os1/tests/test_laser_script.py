@@ -45,7 +45,10 @@ def build_config():
 						'ROTATION_FRONT': 3.83,
 						'ROTATION_BACK': 185.255,
 					},
-				)
+				),
+				motors=SimpleNamespace(
+					by_name=lambda name: SimpleNamespace(lim=360.0),
+				),
 			),
 		)
 	)
@@ -322,3 +325,68 @@ def test_main_dispatches_angle_calibration_to_package_module(monkeypatch: pytest
 	capture_samples_with_robot.assert_awaited_once()
 	search_best_alpha.assert_called_once()
 	print_fit_result.assert_called_once_with(fit_result)
+	assert search_best_alpha.call_args.kwargs['laser_offset_x_mm'] == pytest.approx(0.0)
+
+
+def test_main_uses_adjusted_laser_offset_for_mirrored_right_angle_fit(
+	monkeypatch: pytest.MonkeyPatch,
+	tmp_path: Path,
+) -> None:
+	module = load_laser_script_module()
+	config = build_config()
+	fit_result = SimpleNamespace(alpha_deg=1.25)
+	samples = [
+		module.angle_module.LaserAngleCalibrationSample(
+			axis_x_mm=945.0,
+			axis_z_mm=140.5,
+			rotation_deg=-8.0,
+			absolute_rotation_deg=177.255,
+			stage_extension_mm=13.0,
+			z_extension_mm=140.5,
+			distance_mm=8.0,
+		)
+	]
+	capture_samples_with_robot = AsyncMock(return_value=(samples, {'module': 'right'}))
+	search_best_alpha = Mock(return_value=fit_result)
+	write_output_document = Mock()
+	monkeypatch.setattr(module, 'load_config_file', lambda path: config)
+	monkeypatch.setattr(module, 'resolve_grid_path', lambda config: 'storage.json')
+	monkeypatch.setattr(module.laser_module, 'load_grid', lambda path: SimpleNamespace())
+	monkeypatch.setattr(module.angle_module, 'capture_samples_with_robot', capture_samples_with_robot)
+	monkeypatch.setattr(module.angle_module, 'search_best_alpha', search_best_alpha)
+	monkeypatch.setattr(module.angle_module, 'print_fit_result', Mock())
+	monkeypatch.setattr(module.angle_module, 'write_output_document', write_output_document)
+
+	result = module.main(
+		[
+			'--calibrate-angle',
+			'--module',
+			'right',
+			'--x-range',
+			'0',
+			'10',
+			'1',
+			'--y-mm',
+			'100',
+			'--z-offset-range',
+			'0',
+			'0',
+			'1',
+			'--rotation-range',
+			'0',
+			'0',
+			'1',
+			'--output',
+			str(tmp_path / 'angle.json'),
+		]
+	)
+
+	assert result == 0
+	search_best_alpha.assert_called_once()
+	fit_samples = search_best_alpha.call_args.args[0]
+	assert fit_samples[0].rotation_deg == pytest.approx(8.0)
+	assert fit_samples[0].absolute_rotation_deg == pytest.approx(193.255)
+	assert search_best_alpha.call_args.kwargs['laser_offset_x_mm'] == pytest.approx(0.0)
+	write_output_document.assert_called_once()
+	assert write_output_document.call_args.kwargs['samples'] == fit_samples
+	assert write_output_document.call_args.kwargs['metadata']['laser_offset_x_mm'] == pytest.approx(0.0)

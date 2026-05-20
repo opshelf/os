@@ -214,10 +214,12 @@ def test_build_angle_fit_inputs_flips_right_side_rotation_sign() -> None:
         SimpleNamespace(laser_offset_x_mm=51.0),
         raw_samples,
         180.0,
+        180.0,
     )
 
     assert [sample.rotation_deg for sample in fit_samples] == [8.0, -0.0, -8.0]
     assert [sample.absolute_rotation_deg for sample in fit_samples] == [188.0, 180.0, 172.0]
+
     assert laser_offset_x_mm == pytest.approx(0.0)
 
 
@@ -243,6 +245,32 @@ def test_build_angle_rotation_positions_for_right_keeps_non_negative_half_near_l
     filtered_positions = _build_angle_rotation_positions_for_side(StorageModuleSide.RIGHT, positions, 4.5, 185.0)
 
     assert filtered_positions == [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
+
+
+def test_build_angle_fit_inputs_keeps_lower_limit_right_side_rotation_sign() -> None:
+    raw_samples = [
+        angle_module.LaserAngleCalibrationSample(
+            axis_x_mm=945.0,
+            axis_z_mm=140.5,
+            rotation_deg=rotation_deg,
+            absolute_rotation_deg=4.5 + rotation_deg,
+            stage_extension_mm=13.0,
+            z_extension_mm=140.5,
+            distance_mm=8.0,
+        )
+        for rotation_deg in [0.0, 4.0, 8.0]
+    ]
+
+    fit_samples, laser_offset_x_mm = _build_angle_fit_inputs(
+        StorageModuleSide.RIGHT,
+        SimpleNamespace(laser_offset_x_mm=51.0),
+        raw_samples,
+        4.5,
+        185.0,
+    )
+
+    assert fit_samples == raw_samples
+    assert laser_offset_x_mm == pytest.approx(0.0)
 
 
 def test_right_side_mirrored_negative_half_sweep_reduces_fit_error() -> None:
@@ -287,6 +315,7 @@ def test_right_side_mirrored_negative_half_sweep_reduces_fit_error() -> None:
         StorageModuleSide.RIGHT,
         SimpleNamespace(laser_offset_x_mm=51.0),
         one_sided_samples,
+        180.0,
         180.0,
     )
     one_sided_fit = angle_module.search_best_alpha(
@@ -336,6 +365,7 @@ def test_left_side_angle_fit_ignores_configured_laser_offset_x() -> None:
         SimpleNamespace(laser_offset_x_mm=51.0),
         raw_samples,
         0.0,
+        180.0,
     )
     fit_result = angle_module.search_best_alpha(
         fit_samples,
