@@ -26,7 +26,11 @@ def build_run_parameters(
 		scan_config=scan_config,
 		side=side,
 		bounds=bounds,
-		should_validate_reference_bounds=getattr(args, "rescan_cell", None) is None,
+		should_validate_reference_bounds=getattr(
+			args,
+			"should_validate_reference_bounds",
+			getattr(args, "rescan_cell", None) is None,
+		),
 	)
 	z_reference = get_scan_z_reference(scan_config=scan_config, side=side)
 	xy_reference = get_scan_xy_reference(scan_config=scan_config, side=side)

@@ -19,6 +19,7 @@ class ScanRunnerMixin:
         seeded_candidates: list[laser_module.GapCandidateRegion] | None = None,
         seeded_wall_depth_mm: float | None = None,
         rescan_target: laser_module.SingleCellRescanTarget | None = None,
+        should_validate_reference_bounds: bool = True,
     ) -> Any:
         side_name = _side_to_module_name(side)
         config = get_root_config()
@@ -50,6 +51,7 @@ class ScanRunnerMixin:
             apply=True,
             shelf_scout_only=False,
             rescan_cell=raw_rescan_target,
+            should_validate_reference_bounds=should_validate_reference_bounds and raw_rescan_target is None,
         )
         run_parameters = laser_module.build_run_parameters(
             args=args,
@@ -115,6 +117,7 @@ class ScanRunnerMixin:
                 seeded_candidates=seeded_candidates,
                 seeded_wall_depth_mm=seeded_wall_depth_mm,
                 recorder=recorder,
+                should_validate_reference_bounds=should_validate_reference_bounds,
                 should_abort=self._should_abort_work,
             )
 

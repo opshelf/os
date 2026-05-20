@@ -360,7 +360,10 @@ def validate_laser_structure_parameters(
 		return
 
 	validate_scan_bounds(bounds)
-	reference_laser_x_mm = float(xy_reference.x_mm) - laser_offset_x_mm
+	if side == StorageModuleSide.RIGHT:
+		reference_laser_x_mm = float(xy_reference.x_mm) + laser_offset_x_mm
+	else:
+		reference_laser_x_mm = float(xy_reference.x_mm) - laser_offset_x_mm
 	reference_laser_y_mm = float(xy_reference.y_mm) + laser_offset_y_mm
 
 	if reference_laser_x_mm < bounds.x_min - SCAN_REFERENCE_BOUNDS_MARGIN_MM:
