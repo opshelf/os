@@ -14,7 +14,10 @@ from perpetual_os1.laser_angle_calibration import (
 	probe_stage_until_stall,
 	run_with_temp_robot_config,
 )
-from perpetual_os1.laser_angle_calibration.stage_stall import retract_stage_after_stall
+from perpetual_os1.laser_angle_calibration.stage_stall import (
+	resolve_stage_retract_target,
+	retract_stage_after_stall,
+)
 
 
 def test_get_default_rotation_center_deg_uses_front_for_left() -> None:
@@ -312,6 +315,31 @@ async def test_probe_stage_until_stall_can_skip_auto_retract() -> None:
 	assert stage_motor.move_to_position.await_count == 2
 	assert stage_motor.move_to_position.await_args_list[0].args == (3.0,)
 	assert stage_motor.move_to_position.await_args_list[1].args == (40.0,)
+
+def test_resolve_stage_retract_target_backs_off_from_stall() -> None:
+	assert resolve_stage_retract_target(
+		did_stall=True,
+		stage_position_mm=32.5,
+		probe_start_mm=3.0,
+		stage_backoff_mm=8.0,
+	) == pytest.approx(24.5)
+
+	assert resolve_stage_retract_target(
+		did_stall=True,
+		stage_position_mm=7.0,
+		probe_start_mm=3.0,
+		stage_backoff_mm=8.0,
+	) == pytest.approx(3.0)
+
+
+def test_resolve_stage_retract_target_uses_start_without_stall() -> None:
+	assert resolve_stage_retract_target(
+		did_stall=False,
+		stage_position_mm=50.0,
+		probe_start_mm=3.0,
+		stage_backoff_mm=8.0,
+	) == pytest.approx(3.0)
+
 
 @pytest.mark.asyncio
 async def test_retract_stage_after_stall_retries_after_fault() -> None:

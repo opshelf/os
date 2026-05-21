@@ -116,6 +116,19 @@ def should_stop_after_stage_drop(
 	return updated_run_count >= stop_after_fall_count, updated_run_count
 
 
+def resolve_stage_retract_target(
+	*,
+	did_stall: bool,
+	stage_position_mm: float,
+	probe_start_mm: float,
+	stage_backoff_mm: float,
+) -> float:
+	if did_stall is False:
+		return probe_start_mm
+
+	return max(probe_start_mm, stage_position_mm - max(stage_backoff_mm, 0.0))
+
+
 async def retract_stage_after_stall(
 	tool: Any,
 	*,
@@ -243,6 +256,7 @@ async def run_stage_stall_capture(
 		probe_rpm = int(args.stage_probe_rpm if args.stage_probe_rpm is not None else default_probe_rpm)
 		fast_approach_rpm = int(args.fast_approach_rpm if args.fast_approach_rpm is not None else probe_rpm)
 		probe_step_mm = float(args.probe_step_mm)
+		stage_backoff_mm = float(args.stage_backoff_mm)
 		fall_run_count = 0
 		best_stage_position_mm: float | None = None
 		previous_stage_position_mm: float | None = None
@@ -260,6 +274,7 @@ async def run_stage_stall_capture(
 				'stage_start_mm': probe_start_mm,
 				'stage_target_mm': probe_target_mm,
 				'stage_probe_rpm': probe_rpm,
+				'stage_backoff_mm': stage_backoff_mm,
 				'fast_approach_mm': float(args.fast_approach_mm),
 				'fast_approach_rpm': fast_approach_rpm,
 				'probe_step_mm': probe_step_mm,
@@ -296,6 +311,7 @@ async def run_stage_stall_capture(
 			z_move_rpm=float(z_move_rpm),
 			z_move_accel=float(z_move_accel),
 		)
+		current_probe_start_mm = probe_start_mm
 
 		for rotation_idx, rotation_deg in enumerate(rotation_positions, start=1):
 			absolute_rotation_deg = rotation_center_deg + float(rotation_deg)
@@ -310,7 +326,7 @@ async def run_stage_stall_capture(
 				x_mm=probe_x_mm,
 				y_mm=capture_y_mm,
 				absolute_rotation_deg=absolute_rotation_deg,
-				stage_extension_mm=probe_start_mm,
+				stage_extension_mm=current_probe_start_mm,
 				z_mm=base_z_mm,
 				z_move_rpm=float(z_move_rpm),
 				z_move_accel=float(z_move_accel),
@@ -321,7 +337,7 @@ async def run_stage_stall_capture(
 			did_stall, stage_position_mm, status, alarm_code = await probe_stage_until_stall(
 				tool,
 				target_stage_mm=probe_target_mm,
-				retract_stage_mm=probe_start_mm,
+				retract_stage_mm=current_probe_start_mm,
 				settle_ms=settle_ms,
 				timeout_s=float(args.stage_timeout_s),
 				probe_rpm=probe_rpm,
@@ -374,12 +390,19 @@ async def run_stage_stall_capture(
 				)
 				fall_run_count = 0
 
-			print_status(f'stage_probe=retract target_mm={probe_start_mm:.3f}')
+			stage_retract_target_mm = resolve_stage_retract_target(
+				did_stall=did_stall,
+				stage_position_mm=stage_position_mm,
+				probe_start_mm=probe_start_mm,
+				stage_backoff_mm=stage_backoff_mm,
+			)
+			print_status(f'stage_probe=retract target_mm={stage_retract_target_mm:.3f}')
 			await retract_stage_after_stall(
 				tool,
-				retract_stage_mm=probe_start_mm,
+				retract_stage_mm=stage_retract_target_mm,
 				probe_rpm=probe_rpm,
 			)
+			current_probe_start_mm = stage_retract_target_mm
 
 			if should_stop is True:
 				print_status('stage_probe=stop reason=stage_position_falling')
