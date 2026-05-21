@@ -160,6 +160,16 @@ async def retract_stage_after_stall(
 
 	raise RuntimeError('stage retract after stall failed')
 
+
+async def finish_stage_stall_capture(
+	tool: Any,
+	*,
+	z_move_rpm: float,
+	z_move_accel: float,
+) -> None:
+	await tool._mg.move_to_position(1, rpm=z_move_rpm, accel=z_move_accel)
+	await tool._ms.idle()
+
 async def run_stage_stall_capture(
 	args: argparse.Namespace,
 ) -> tuple[list[StageStallProbeSample], dict[str, Any], list[dict[str, Any]], dict[str, Any] | None]:
@@ -407,7 +417,11 @@ async def run_stage_stall_capture(
 			if should_stop is True:
 				print_status('stage_probe=stop reason=stage_position_falling')
 				break
-		await tool.retract()
+		await finish_stage_stall_capture(
+			tool,
+			z_move_rpm=float(z_move_rpm),
+			z_move_accel=float(z_move_accel),
+		)
 		angle_summaries, best_summary = summarize_stage_stall_samples(samples)
 
 		return samples, build_metadata(), angle_summaries, best_summary
