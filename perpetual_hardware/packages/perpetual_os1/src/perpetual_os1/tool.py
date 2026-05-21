@@ -60,6 +60,34 @@ TOOL_WAIT_TIMEOUT = MOTOR_WAIT_TIMEOUT * 2
 GANTRY_OUTER_TIMEOUT = 120.0
 TOOL_OUTER_TIMEOUT = 60.0
 ROTATION_HOME_SAFE_X_MM = 475.0
+ROTATION_HOME_ORIENTATION_EPSILON_DEG = 1e-6
+
+
+class RotationHomeOrientation(Enum):
+    LEFT_MODULE = "left_module"
+    RIGHT_MODULE = "right_module"
+
+
+def derive_rotation_home_orientation(
+    rotation_front: float,
+    rotation_back: float,
+    *,
+    epsilon_deg: float = ROTATION_HOME_ORIENTATION_EPSILON_DEG,
+) -> RotationHomeOrientation:
+    front_distance = abs(float(rotation_front))
+    back_distance = abs(float(rotation_back))
+
+    if abs(front_distance - back_distance) <= epsilon_deg:
+        raise ConfigError(
+            "Cannot derive rotation home orientation: "
+            "ROTATION_FRONT and ROTATION_BACK are equally close to home"
+        )
+
+    if front_distance < back_distance:
+        return RotationHomeOrientation.LEFT_MODULE
+
+    return RotationHomeOrientation.RIGHT_MODULE
+
 
 class Tool:
     def __init__(
@@ -221,6 +249,10 @@ class Tool:
 
                 did_extend_stage = await self.ensure_safe_rotation_stage_extension()
                 await self._mr.home()
+                await self.rotate_to_home_orientation(
+                    _nested=True,
+                    should_ensure_safe_stage_extension=False,
+                )
                 if did_extend_stage is True and self._ms is not None:
                     await self._ms.home()
             if self._mx is not None:
@@ -255,6 +287,55 @@ class Tool:
 
         await self._ms.move_to_position(safe_extension_mm)
         return True
+
+    async def get_rotation_home_orientation(self) -> RotationHomeOrientation:
+        rotation_front = await self.get_param("ROTATION_FRONT")
+        rotation_back = await self.get_param("ROTATION_BACK")
+
+        if rotation_front is None or rotation_back is None:
+            raise ConfigError("Missing ROTATION_FRONT or ROTATION_BACK parameter")
+
+        return derive_rotation_home_orientation(float(rotation_front), float(rotation_back))
+
+    async def rotate_to_home_orientation(
+        self,
+        *,
+        _nested: bool = False,
+        should_ensure_safe_stage_extension: bool = True,
+    ) -> None:
+        if self._mr is None:
+            raise MotorError("Rotate motor required for rotation")
+
+        try:
+            rotation_front = await self.get_param("ROTATION_FRONT")
+            rotation_back = await self.get_param("ROTATION_BACK")
+
+            if rotation_front is None or rotation_back is None:
+                raise ConfigError("Missing ROTATION_FRONT or ROTATION_BACK parameter")
+
+            orientation = derive_rotation_home_orientation(float(rotation_front), float(rotation_back))
+            target_angle = float(rotation_front)
+
+            if orientation == RotationHomeOrientation.RIGHT_MODULE:
+                target_angle = float(rotation_back)
+
+            if _nested is False:
+                self._mstatus = ToolMotionStatus.MOVING
+                self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+
+            if should_ensure_safe_stage_extension is True:
+                await self.ensure_safe_rotation_stage_extension()
+
+            await self._mr.move_to_position(target_angle)
+
+            if _nested is False:
+                self._mstatus = ToolMotionStatus.IDLE
+                self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
+        except Exception as e:
+            await self._handle_fault(e)
+            if isinstance(e, ConfigError):
+                raise
+            raise MovementError(f"Tool rotation to home orientation failed: {str(e)}") from e
 
     async def clear_alarms(self) -> None:
         """

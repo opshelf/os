@@ -3,9 +3,104 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from perpetual_os1.exceptions import ConfigError
-from perpetual_os1.tool import ROTATION_HOME_SAFE_X_MM, Tool, ToolItemStatus
+from perpetual_os1.exceptions import ConfigError, MovementError
+from perpetual_os1.tool import (
+    ROTATION_HOME_SAFE_X_MM,
+    RotationHomeOrientation,
+    Tool,
+    ToolItemStatus,
+    ToolMotionStatus,
+    derive_rotation_home_orientation,
+)
 
+
+def test_derive_rotation_home_orientation_detects_left_module() -> None:
+    orientation = derive_rotation_home_orientation(rotation_front=4.0, rotation_back=184.0)
+
+    assert orientation == RotationHomeOrientation.LEFT_MODULE
+
+
+def test_derive_rotation_home_orientation_detects_right_module() -> None:
+    orientation = derive_rotation_home_orientation(rotation_front=184.0, rotation_back=4.0)
+
+    assert orientation == RotationHomeOrientation.RIGHT_MODULE
+
+
+def test_derive_rotation_home_orientation_rejects_ambiguous_angles() -> None:
+    with pytest.raises(ConfigError, match="equally close to home"):
+        derive_rotation_home_orientation(rotation_front=4.0, rotation_back=-4.0)
+
+
+@pytest.mark.asyncio
+async def test_home_moves_rotate_to_front_after_homing_for_left_facing_device() -> None:
+    rotate_motor = AsyncMock()
+    rotate_motor.home = AsyncMock()
+    rotate_motor.move_to_position = AsyncMock()
+
+    tool = Tool.__new__(Tool)
+    tool._ms = None
+    tool._mg = None
+    tool._mr = rotate_motor
+    tool._mx = None
+    tool._my = None
+    tool._istatus = ToolItemStatus.EMPTY
+    tool.get_param = AsyncMock(side_effect=lambda name: {
+        'ROTATION_FRONT': 4.0,
+        'ROTATION_BACK': 184.0,
+    }[name])
+    tool._handle_fault = AsyncMock()
+
+    await tool.home()
+
+    rotate_motor.home.assert_awaited_once()
+    rotate_motor.move_to_position.assert_awaited_once_with(4.0)
+
+
+@pytest.mark.asyncio
+async def test_home_moves_rotate_to_back_after_homing_for_right_facing_device() -> None:
+    rotate_motor = AsyncMock()
+    rotate_motor.home = AsyncMock()
+    rotate_motor.move_to_position = AsyncMock()
+
+    tool = Tool.__new__(Tool)
+    tool._ms = None
+    tool._mg = None
+    tool._mr = rotate_motor
+    tool._mx = None
+    tool._my = None
+    tool._istatus = ToolItemStatus.EMPTY
+    tool.get_param = AsyncMock(side_effect=lambda name: {
+        'ROTATION_FRONT': 184.0,
+        'ROTATION_BACK': 4.0,
+    }[name])
+    tool._handle_fault = AsyncMock()
+
+    await tool.home()
+
+    rotate_motor.home.assert_awaited_once()
+    rotate_motor.move_to_position.assert_awaited_once_with(4.0)
+
+
+@pytest.mark.asyncio
+async def test_rotate_to_home_orientation_marks_error_when_move_fails() -> None:
+    rotate_motor = AsyncMock()
+    rotate_motor.move_to_position = AsyncMock(side_effect=RuntimeError("boom"))
+
+    tool = Tool.__new__(Tool)
+    tool._ms = None
+    tool._mr = rotate_motor
+    tool._istatus = ToolItemStatus.EMPTY
+    tool._logger = SimpleNamespace(warning=lambda *args, **kwargs: None)
+    tool.get_param = AsyncMock(side_effect=lambda name: {
+        'ROTATION_FRONT': 4.0,
+        'ROTATION_BACK': 184.0,
+    }[name])
+
+    with pytest.raises(MovementError, match="Tool rotation to home orientation failed"):
+        await tool.rotate_to_home_orientation()
+
+    assert tool._mstatus == ToolMotionStatus.ERROR
+    assert tool._status.motion == ToolMotionStatus.ERROR
 
 def _mock_stage_motor(
     limit: float = 50.0, position: float = 0.0, safe_extension_mm: float = 8.5
@@ -73,7 +168,10 @@ async def test_home_retracts_stage_after_safe_rotation_extension() -> None:
     tool._mx = None
     tool._my = None
     tool._istatus = ToolItemStatus.EMPTY
-    tool.get_param = AsyncMock(return_value=0.0)
+    tool.get_param = AsyncMock(side_effect=lambda name: {
+        'ROTATION_FRONT': 0.0,
+        'ROTATION_BACK': 184.0,
+    }[name])
     tool._handle_fault = AsyncMock()
 
     await tool.home()
@@ -115,7 +213,10 @@ async def test_home_moves_x_before_rotate_home_when_rotation_is_past_front() -> 
     tool._mx = x_motor
     tool._my = y_motor
     tool._istatus = ToolItemStatus.EMPTY
-    tool.get_param = AsyncMock(return_value=0.0)
+    tool.get_param = AsyncMock(side_effect=lambda name: {
+        'ROTATION_FRONT': 0.0,
+        'ROTATION_BACK': 184.0,
+    }[name])
     tool._handle_fault = AsyncMock()
     tool.ensure_safe_rotation_stage_extension = AsyncMock(return_value=False)
 
@@ -129,7 +230,7 @@ async def test_home_moves_x_before_rotate_home_when_rotation_is_past_front() -> 
         'x_home',
         'y_home',
     ]
-    tool.get_param.assert_awaited_once_with('ROTATION_FRONT')
+    tool.get_param.assert_any_await('ROTATION_FRONT')
     rotate_motor.get_position.assert_awaited_once()
 
 
@@ -161,7 +262,10 @@ async def test_home_does_not_move_x_before_rotate_home_when_rotation_is_at_front
     tool._mx = x_motor
     tool._my = y_motor
     tool._istatus = ToolItemStatus.EMPTY
-    tool.get_param = AsyncMock(return_value=0.0)
+    tool.get_param = AsyncMock(side_effect=lambda name: {
+        'ROTATION_FRONT': 0.0,
+        'ROTATION_BACK': 184.0,
+    }[name])
     tool._handle_fault = AsyncMock()
     tool.ensure_safe_rotation_stage_extension = AsyncMock(return_value=False)
 

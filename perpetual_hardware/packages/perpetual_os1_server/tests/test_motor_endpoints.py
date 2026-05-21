@@ -48,6 +48,7 @@ def _mock_worker(motors: dict[str, AsyncMock] | None = None):
 	robot._get_motor_by_name = MagicMock(side_effect=lambda name: motors.get(name))
 	robot._tool = MagicMock()
 	robot._tool.ensure_safe_rotation_stage_extension = AsyncMock()
+	robot._tool.rotate_to_home_orientation = AsyncMock()
 	worker._robot = robot
 
 	return worker
@@ -316,3 +317,6 @@ async def test_home_rotate_motor_extends_stage_before_rotation(client: AsyncClie
 	mock_worker._robot._tool.ensure_safe_rotation_stage_extension.assert_awaited_once()
 	rotate_motor.clear_alarm.assert_awaited_once()
 	rotate_motor.home.assert_awaited_once()
+	mock_worker._robot._tool.rotate_to_home_orientation.assert_awaited_once_with(
+		should_ensure_safe_stage_extension=False,
+	)
