@@ -266,7 +266,7 @@ def parse_args() -> argparse.Namespace:
 	stage_stall_parser.add_argument('--stage-start-mm', type=float, default=3.0)
 	stage_stall_parser.add_argument('--stage-target-mm', type=float)
 	stage_stall_parser.add_argument('--stage-probe-rpm', type=int)
-	stage_stall_parser.add_argument('--fast-approach-mm', type=float, default=40.0)
+	stage_stall_parser.add_argument('--fast-approach-mm', type=float, default=0.0)
 	stage_stall_parser.add_argument('--fast-approach-rpm', type=int)
 	stage_stall_parser.add_argument('--probe-step-mm', type=float, default=0.5)
 	stage_stall_parser.add_argument('--stage-timeout-s', type=float, default=15.0)

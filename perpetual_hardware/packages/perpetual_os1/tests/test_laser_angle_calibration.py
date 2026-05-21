@@ -14,6 +14,7 @@ from perpetual_os1.laser_angle_calibration import (
 	probe_stage_until_stall,
 	run_with_temp_robot_config,
 )
+from perpetual_os1.laser_angle_calibration.stage_stall import retract_stage_after_stall
 
 
 def test_get_default_rotation_center_deg_uses_front_for_left() -> None:
@@ -311,6 +312,27 @@ async def test_probe_stage_until_stall_can_skip_auto_retract() -> None:
 	assert stage_motor.move_to_position.await_count == 2
 	assert stage_motor.move_to_position.await_args_list[0].args == (3.0,)
 	assert stage_motor.move_to_position.await_args_list[1].args == (40.0,)
+
+@pytest.mark.asyncio
+async def test_retract_stage_after_stall_retries_after_fault() -> None:
+	error = RuntimeError('stage fault')
+	stage_motor = SimpleNamespace(
+		clear_alarm=AsyncMock(),
+		move_to_position=AsyncMock(side_effect=[error, None]),
+	)
+	tool = SimpleNamespace(_ms=stage_motor)
+
+	await retract_stage_after_stall(
+		tool,
+		retract_stage_mm=3.0,
+		probe_rpm=30,
+		settle_s=0.0,
+		max_attempts=2,
+	)
+
+	assert stage_motor.clear_alarm.await_count == 2
+	assert stage_motor.move_to_position.await_count == 2
+	stage_motor.move_to_position.assert_awaited_with(3.0, rpm=30)
 
 
 @pytest.mark.asyncio
