@@ -342,8 +342,16 @@ def _build_angle_z_offset_positions(scan_config: Any) -> list[float]:
     ]
 
 
+def _build_nominal_rotation_deg(rotation_center_deg: float) -> float:
+    rotation_center_deg = float(rotation_center_deg)
+    if abs(rotation_center_deg - 180.0) < abs(rotation_center_deg):
+        return 180.0
+
+    return 0.0
+
+
 def _build_estimated_rotation_deg(rotation_center_deg: float, fit_result: Any) -> float:
-    return float(rotation_center_deg) + float(fit_result.alpha_deg)
+    return _build_nominal_rotation_deg(rotation_center_deg) + float(fit_result.alpha_deg)
 
 
 def _should_mirror_right_angle_fit(
