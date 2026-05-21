@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -114,6 +115,38 @@ def should_stop_after_stage_drop(
 	updated_run_count = fall_run_count + 1
 	return updated_run_count >= stop_after_fall_count, updated_run_count
 
+
+async def retract_stage_after_stall(
+	tool: Any,
+	*,
+	retract_stage_mm: float,
+	probe_rpm: int | None,
+	settle_s: float = 0.15,
+	max_attempts: int = 2,
+) -> None:
+	last_error: BaseException | None = None
+
+	for attempt_idx in range(max_attempts):
+		await tool._ms.clear_alarm()
+
+		if settle_s > 0.0:
+			await asyncio.sleep(settle_s)
+
+		try:
+			await tool._ms.move_to_position(retract_stage_mm, rpm=probe_rpm)
+			return
+		except Exception as exc:
+			last_error = exc
+			print_status(
+				f'stage_probe=retract_retry attempt={attempt_idx + 1}/{max_attempts} '
+				f'error={exc}'
+			)
+
+	if last_error is not None:
+		raise last_error
+
+	raise RuntimeError('stage retract after stall failed')
+
 async def run_stage_stall_capture(
 	args: argparse.Namespace,
 ) -> tuple[list[StageStallProbeSample], dict[str, Any], list[dict[str, Any]], dict[str, Any] | None]:
@@ -206,13 +239,50 @@ async def run_stage_stall_capture(
 		stage_limit_mm = float(tool._ms._params.lim)
 		probe_target_mm = float(args.stage_target_mm if args.stage_target_mm is not None else stage_limit_mm)
 		probe_start_mm = float(args.stage_start_mm)
-		default_probe_rpm = min(int(tool._ms._params.rpm), 100)
+		default_probe_rpm = min(int(tool._ms._params.rpm), 30)
 		probe_rpm = int(args.stage_probe_rpm if args.stage_probe_rpm is not None else default_probe_rpm)
-		fast_approach_rpm = int(args.fast_approach_rpm if args.fast_approach_rpm is not None else int(tool._ms._params.rpm))
+		fast_approach_rpm = int(args.fast_approach_rpm if args.fast_approach_rpm is not None else probe_rpm)
 		probe_step_mm = float(args.probe_step_mm)
 		fall_run_count = 0
 		best_stage_position_mm: float | None = None
 		previous_stage_position_mm: float | None = None
+
+		def build_metadata() -> dict[str, Any]:
+			return {
+				'config_path': str(Path(args.config).resolve()),
+				'module': side_name,
+				'probe_x_mm': probe_x_mm,
+				'y_mm': capture_y_mm,
+				'y_range': None if args.y_range is None else [float(args.y_range[0]), float(args.y_range[1])],
+				'rotation_positions': rotation_positions,
+				'rotation_center_deg': rotation_center_deg,
+				'stage_limit_mm': stage_limit_mm,
+				'stage_start_mm': probe_start_mm,
+				'stage_target_mm': probe_target_mm,
+				'stage_probe_rpm': probe_rpm,
+				'fast_approach_mm': float(args.fast_approach_mm),
+				'fast_approach_rpm': fast_approach_rpm,
+				'probe_step_mm': probe_step_mm,
+				'no_progress_timeout_s': float(args.no_progress_timeout_s),
+				'base_z_mm': base_z_mm,
+				'settle_ms': settle_ms,
+				'samples_per_point': samples_per_point,
+			}
+
+		def didPersistSamples() -> None:
+			if args.output is None:
+				return
+
+			from .reporting import write_stage_stall_output_document
+
+			angle_summaries, best_summary = summarize_stage_stall_samples(samples)
+			write_stage_stall_output_document(
+				output_path=Path(args.output),
+				metadata=build_metadata(),
+				samples=samples,
+				angle_summaries=angle_summaries,
+				best_summary=best_summary,
+			)
 
 		await enter_capture_mode(
 			tool,
@@ -259,6 +329,7 @@ async def run_stage_stall_capture(
 				probe_step_mm=probe_step_mm,
 				fast_approach_mm=float(args.fast_approach_mm),
 				fast_approach_rpm=fast_approach_rpm,
+				auto_retract=False,
 			)
 			samples.append(
 				StageStallProbeSample(
@@ -272,6 +343,9 @@ async def run_stage_stall_capture(
 					alarm_code=None if alarm_code is None else int(alarm_code),
 				)
 			)
+			didPersistSamples()
+
+			should_stop = False
 
 			if did_stall is True:
 				print_status(
@@ -292,42 +366,28 @@ async def run_stage_stall_capture(
 					stop_after_fall_count=int(args.stop_after_fall_count),
 				)
 				previous_stage_position_mm = stage_position_mm
+			else:
+				print_status(
+					f'stage_probe=skip rotation_deg={float(rotation_deg):.3f} '
+					f'absolute_rotation_deg={absolute_rotation_deg:.3f} '
+					f'status={status} stage_position_mm={stage_position_mm:.3f}'
+				)
+				fall_run_count = 0
 
-				if should_stop is True:
-					print_status('stage_probe=stop reason=stage_position_falling')
-					break
-				continue
-
-			print_status(
-				f'stage_probe=skip rotation_deg={float(rotation_deg):.3f} '
-				f'absolute_rotation_deg={absolute_rotation_deg:.3f} '
-				f'status={status} stage_position_mm={stage_position_mm:.3f}'
+			print_status(f'stage_probe=retract target_mm={probe_start_mm:.3f}')
+			await retract_stage_after_stall(
+				tool,
+				retract_stage_mm=probe_start_mm,
+				probe_rpm=probe_rpm,
 			)
-			fall_run_count = 0
 
+			if should_stop is True:
+				print_status('stage_probe=stop reason=stage_position_falling')
+				break
 		await tool.retract()
 		angle_summaries, best_summary = summarize_stage_stall_samples(samples)
 
-		return samples, {
-			'config_path': str(Path(args.config).resolve()),
-			'module': side_name,
-			'probe_x_mm': probe_x_mm,
-			'y_mm': capture_y_mm,
-			'y_range': None if args.y_range is None else [float(args.y_range[0]), float(args.y_range[1])],
-			'rotation_positions': rotation_positions,
-			'rotation_center_deg': rotation_center_deg,
-			'stage_limit_mm': stage_limit_mm,
-			'stage_start_mm': probe_start_mm,
-			'stage_target_mm': probe_target_mm,
-			'stage_probe_rpm': probe_rpm,
-			'fast_approach_mm': float(args.fast_approach_mm),
-			'fast_approach_rpm': fast_approach_rpm,
-			'probe_step_mm': probe_step_mm,
-			'no_progress_timeout_s': float(args.no_progress_timeout_s),
-			'base_z_mm': base_z_mm,
-			'settle_ms': settle_ms,
-			'samples_per_point': samples_per_point,
-		}, angle_summaries, best_summary
+		return samples, build_metadata(), angle_summaries, best_summary
 
 	return await run_with_temp_robot_config(
 		config=config,
