@@ -392,9 +392,27 @@ class Motor():
 
         return position_mm <= target_mm + HOME_APPROACH_TOLERANCE_MM
 
+    def should_move_near_home_before_homing(self) -> bool:
+        return getattr(self._params, "motor_name", None) != "stage"
+
     async def _move_near_home(self, rpm: int) -> None:
         target_mm = self._get_home_approach_target_mm()
         current_position_mm = await self.get_position()
+        should_move_near_home = self.should_move_near_home_before_homing()
+        self._logger.info(
+            "Pre-home approach",
+            extra={
+                "motor_id": self._motor_id,
+                "motor_name": getattr(self._params, "motor_name", None),
+                "enabled": should_move_near_home,
+                "current_position_mm": current_position_mm,
+                "target_mm": target_mm,
+                "rpm": rpm,
+            },
+        )
+
+        if should_move_near_home is False:
+            return
 
         if self._is_at_home_approach_target(float(current_position_mm)) is True:
             return
@@ -1114,9 +1132,14 @@ class Motor():
 
             home_dir = self._get_home_direction()
 
+            home_rpm = self._params.home_rpm or self._params.ret_rpm
+
             try:
-                home_rpm = self._params.home_rpm or self._params.ret_rpm
                 await self._move_near_home(self._params.ret_rpm)
+            except Exception as e:
+                raise MotorConfigError(f"Failed during pre-home approach: {str(e)}") from e
+
+            try:
                 await self._prepare_home_motion(home_rpm, home_dir)
             except Exception as e:
                 raise MotorConfigError(f"Failed to configure homing parameters: {str(e)}") from e
