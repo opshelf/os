@@ -414,6 +414,11 @@ async def run_stage_stall_capture(
 			if should_stop is True:
 				print_status('stage_probe=stop reason=stage_position_falling')
 				break
+
+			if rotation_idx < len(rotation_positions):
+				print_status('stage_probe=home_after_retract')
+				await tool._ms.home()
+				current_probe_start_mm = probe_start_mm
 		await finish_stage_stall_capture(
 			tool,
 			z_move_rpm=float(z_move_rpm),
