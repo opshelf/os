@@ -185,12 +185,12 @@ def test_build_bounds_for_side_clamps_x_min_away_from_zero() -> None:
     assert right_bounds.x_min == pytest.approx(5.0)
 
 
-def test_build_estimated_rotation_deg_offsets_previous_rotation() -> None:
+def test_build_estimated_rotation_deg_offsets_nominal_rotation() -> None:
     fit_result = SimpleNamespace(alpha_deg=4.2)
 
-    estimated_rotation_deg = _build_estimated_rotation_deg(172.8, fit_result)
-
-    assert estimated_rotation_deg == pytest.approx(177.0)
+    assert _build_estimated_rotation_deg(172.8, fit_result) == pytest.approx(184.2)
+    assert _build_estimated_rotation_deg(184.5, SimpleNamespace(alpha_deg=3.91)) == pytest.approx(183.91)
+    assert _build_estimated_rotation_deg(3.765, SimpleNamespace(alpha_deg=3.91)) == pytest.approx(3.91)
 
 
 def test_build_angle_fit_inputs_flips_right_side_rotation_sign() -> None:
@@ -749,7 +749,7 @@ async def test_run_angle_calibration_uses_configured_rotation_center() -> None:
     assert prepare_mock.await_args.kwargs['should_use_safe_right_rotation_path'] is True
     assert result.previous_rotation_deg == pytest.approx(3.815)
     assert result.alpha_deg == pytest.approx(3.815)
-    assert result.updated_rotation_deg == pytest.approx(7.63)
+    assert result.updated_rotation_deg == pytest.approx(3.815)
 
 
 @pytest.mark.asyncio
@@ -870,7 +870,7 @@ async def test_run_angle_calibration_allows_measured_right_rotation_above_180() 
     assert resolve_mock.await_args.kwargs['rotation_center_deg'] == pytest.approx(183.0)
     assert result.previous_rotation_deg == pytest.approx(183.0)
     assert result.alpha_deg == pytest.approx(8.0)
-    assert result.updated_rotation_deg == pytest.approx(191.0)
+    assert result.updated_rotation_deg == pytest.approx(188.0)
 
 
 @pytest.mark.asyncio

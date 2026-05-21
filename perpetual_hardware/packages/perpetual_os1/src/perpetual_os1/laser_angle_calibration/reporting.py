@@ -86,20 +86,30 @@ def print_fit_result(fit_result: AlphaFitResult) -> None:
 	print_status(f'line_angle_deg={fit_result.line.line_angle_deg:.4f}')
 
 
+def build_nominal_rotation_deg(rotation_center_deg: float) -> float:
+	rotation_center_deg = float(rotation_center_deg)
+	if abs(rotation_center_deg - 180.0) < abs(rotation_center_deg):
+		return 180.0
+
+	return 0.0
+
+
 def print_estimated_rotation_from_metadata(
 	*,
 	fit_result: AlphaFitResult,
 	metadata: dict[str, Any],
 ) -> None:
-	estimated_rotation_deg = -float(fit_result.alpha_deg)
-	print_status(f'estimated_rotation_deg={estimated_rotation_deg:.4f}')
-
 	rotation_center_deg = metadata.get('rotation_center_deg')
-
 	if rotation_center_deg is None:
+		estimated_rotation_deg = float(fit_result.alpha_deg)
+		print_status(f'estimated_rotation_deg={estimated_rotation_deg:.4f}')
 		return
 
+	nominal_rotation_deg = build_nominal_rotation_deg(float(rotation_center_deg))
+	estimated_rotation_deg = nominal_rotation_deg + float(fit_result.alpha_deg)
+	print_status(f'estimated_rotation_deg={estimated_rotation_deg:.4f}')
 	print_status(f'rotation_center_deg={float(rotation_center_deg):.4f}')
+	print_status(f'nominal_rotation_deg={nominal_rotation_deg:.4f}')
 	print_status(
 		f'rotation_correction_deg={estimated_rotation_deg - float(rotation_center_deg):.4f}'
 	)
