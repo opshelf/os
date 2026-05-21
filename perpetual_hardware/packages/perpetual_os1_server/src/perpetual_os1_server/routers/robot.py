@@ -466,6 +466,10 @@ async def home_motor(
                 await worker._robot._tool.ensure_safe_rotation_stage_extension()
             await motor.clear_alarm()
             await motor.home()
+            if motor_name == "rotate":
+                await worker._robot._tool.rotate_to_home_orientation(
+                    should_ensure_safe_stage_extension=False,
+                )
             worker.clear_needs_home_axes([motor_name])
             if worker.needs_home() and worker.needs_home_axes() == []:
                 if _reason_matches_motor(worker.needs_home_reason(), motor_name, motor):
