@@ -123,9 +123,6 @@ def resolve_stage_retract_target(
 	probe_start_mm: float,
 	stage_backoff_mm: float,
 ) -> float:
-	if did_stall is False:
-		return probe_start_mm
-
 	return max(probe_start_mm, stage_position_mm - max(stage_backoff_mm, 0.0))
 
 
