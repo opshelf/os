@@ -91,6 +91,7 @@ def test_motor_rotation_safety_flag_defaults_to_disabled():
     stage_motor = config.robot.tool.motors.by_name("stage")
 
     assert stage_motor.rotation_safe_stage_extension_enabled is False
+    assert stage_motor.rotation_safe_stage_extension_mm == pytest.approx(8.5)
 
 
 def test_assert_config_requires_laser_bus_when_laser_enabled():

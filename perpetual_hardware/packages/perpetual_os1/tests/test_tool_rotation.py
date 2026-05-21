@@ -4,17 +4,16 @@ from unittest.mock import AsyncMock
 import pytest
 
 from perpetual_os1.exceptions import ConfigError
-from perpetual_os1.tool import (
-    ROTATION_HOME_SAFE_X_MM,
-    ROTATION_SAFE_STAGE_EXTENSION_MM,
-    Tool,
-    ToolItemStatus,
-)
+from perpetual_os1.tool import ROTATION_HOME_SAFE_X_MM, Tool, ToolItemStatus
 
 
-def _mock_stage_motor(limit: float = 50.0, position: float = 0.0) -> AsyncMock:
+def _mock_stage_motor(
+    limit: float = 50.0, position: float = 0.0, safe_extension_mm: float = 8.5
+) -> AsyncMock:
     motor = AsyncMock()
-    motor._params = SimpleNamespace(lim=limit)
+    motor._params = SimpleNamespace(
+        lim=limit, rotation_safe_stage_extension_mm=safe_extension_mm
+    )
     motor.get_position = AsyncMock(return_value=position)
     motor.move_to_position = AsyncMock()
     return motor
@@ -41,16 +40,16 @@ async def test_ensure_safe_rotation_stage_extension_moves_when_enabled() -> None
     did_extend = await tool.ensure_safe_rotation_stage_extension()
 
     assert did_extend is True
-    tool._ms.move_to_position.assert_awaited_once_with(ROTATION_SAFE_STAGE_EXTENSION_MM)
+    tool._ms.move_to_position.assert_awaited_once_with(8.5)
 
 
 @pytest.mark.asyncio
 async def test_ensure_safe_rotation_stage_extension_raises_when_limit_too_small() -> None:
     tool = Tool.__new__(Tool)
-    tool._ms = _mock_stage_motor(limit=5.0, position=0.0)
+    tool._ms = _mock_stage_motor(limit=5.0, position=0.0, safe_extension_mm=8.5)
     tool._ms._params.rotation_safe_stage_extension_enabled = True
 
-    with pytest.raises(ConfigError, match="ROTATION_SAFE_STAGE_EXTENSION_MM exceeds stage limit"):
+    with pytest.raises(ConfigError, match="rotation_safe_stage_extension_mm exceeds stage limit"):
         await tool.ensure_safe_rotation_stage_extension()
 
 
@@ -81,7 +80,7 @@ async def test_home_retracts_stage_after_safe_rotation_extension() -> None:
 
     assert events == [
         'stage_home',
-        f'stage_move:{ROTATION_SAFE_STAGE_EXTENSION_MM}',
+        'stage_move:8.5',
         'rotate_home',
         'stage_home',
     ]
