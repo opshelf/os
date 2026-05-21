@@ -333,13 +333,13 @@ def test_resolve_stage_retract_target_backs_off_from_stall() -> None:
 	) == pytest.approx(3.0)
 
 
-def test_resolve_stage_retract_target_uses_start_without_stall() -> None:
+def test_resolve_stage_retract_target_backs_off_without_stall() -> None:
 	assert resolve_stage_retract_target(
 		did_stall=False,
 		stage_position_mm=50.0,
 		probe_start_mm=3.0,
 		stage_backoff_mm=8.0,
-	) == pytest.approx(3.0)
+	) == pytest.approx(42.0)
 
 
 @pytest.mark.asyncio
