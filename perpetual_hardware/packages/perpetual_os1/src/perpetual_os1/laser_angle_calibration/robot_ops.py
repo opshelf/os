@@ -127,7 +127,19 @@ async def probe_stage_until_stall(
 
 	if fast_target_mm > retract_stage_mm:
 		raise_if_cancelled(should_abort)
-		await tool._ms.move_to_position(fast_target_mm, rpm=fast_approach_rpm)
+		try:
+			await tool._ms.move_to_position(fast_target_mm, rpm=fast_approach_rpm)
+		except Exception:
+			await asyncio.sleep(0.03)
+			stage_position_mm = await tool._ms.get_position()
+			alarm_code = await tool._ms.get_param('Current alarm')
+			await tool._ms.clear_alarm()
+
+			if auto_retract is True:
+				await tool._ms.move_to_position(retract_stage_mm, rpm=probe_rpm)
+
+			return True, float(stage_position_mm), 'fast_approach_fault', alarm_code
+
 		current_target_mm = fast_target_mm
 
 	position_epsilon_mm = 0.02

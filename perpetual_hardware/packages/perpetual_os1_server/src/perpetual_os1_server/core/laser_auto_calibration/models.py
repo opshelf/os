@@ -40,6 +40,14 @@ ANGLE_CAPTURE_RE = re.compile(
 ANGLE_SAMPLE_RE = re.compile(
     r"sample=(?P<status>ok|invalid) x=(?P<x>-?\d+(?:\.\d+)?) z=(?P<z>-?\d+(?:\.\d+)?) rotation_deg=(?P<rotation>-?\d+(?:\.\d+)?)(?: distance_mm=(?P<distance>-?\d+(?:\.\d+)?))?"
 )
+STAGE_STALL_CAPTURE_RE = re.compile(
+    r"phase=stage-stall rotation=(?P<rotation_idx>\d+)/(?P<rotation_count>\d+) absolute_rotation_deg=(?P<absolute>-?\d+(?:\.\d+)?)"
+)
+STAGE_STALL_PROBE_RE = re.compile(
+    r"stage_probe=(?P<status>stall|skip) rotation_deg=(?P<rotation>-?\d+(?:\.\d+)?) "
+    r"absolute_rotation_deg=(?P<absolute>-?\d+(?:\.\d+)?) "
+    r"(?:status=(?P<probe_status>[a-z_]+) )?stage_position_mm=(?P<stage>-?\d+(?:\.\d+)?)"
+)
 ANGLE_SCOUT_SAMPLE_RE = re.compile(
     r"(?P<label>shelf_scout_\d+)=(?P<sample_idx>\d+)/(?P<sample_count>\d+) x=(?P<x>-?\d+(?:\.\d+)?) y=(?P<y>-?\d+(?:\.\d+)?) depth=(?P<depth>none|-?\d+(?:\.\d+)?)"
 )
@@ -62,6 +70,7 @@ STAGE_EXTENSION_PROBE_STEP_MM = 0.5
 STAGE_EXTENSION_PROBE_TIMEOUT_S = 60.0
 STAGE_EXTENSION_NO_PROGRESS_TIMEOUT_S = 0.2
 STAGE_EXTENSION_STALL_BACKOFF_MM = 5.0
+ANGLE_STAGE_STALL_DEFAULT_PROBE_X_MM = 475.0
 IO_BOX_MIN_CONFIGURED_LASER_OFFSET_X_MM = 1.0
 
 
@@ -120,6 +129,7 @@ class LaserAutoCalibrationCell(BaseModel):
 
 
 class LaserAutoCalibrationAngleResult(BaseModel):
+    method: Literal["stage_stall", "laser_fit"] = "laser_fit"
     side: Literal["left_module", "right_module"]
     alpha_deg: float
     sample_count: int
@@ -129,6 +139,7 @@ class LaserAutoCalibrationAngleResult(BaseModel):
     line_angle_deg: float
     previous_rotation_deg: float
     updated_rotation_deg: float
+    stage_position_mm: float | None = None
 
 
 class LaserAutoCalibrationIOBoxResult(BaseModel):
@@ -342,6 +353,40 @@ def _build_angle_z_offset_positions(scan_config: Any) -> list[float]:
     ]
 
 
+def _get_scan_config_value(scan_config: Any, name: str, default: Any) -> Any:
+    return getattr(scan_config, name, default)
+
+
+def _build_stage_stall_rotation_positions(
+    scan_config: Any,
+    side: StorageModuleSide,
+    rotation_center_deg: float,
+    rotation_limit_deg: float,
+) -> list[float]:
+    requested_positions = angle_module.build_axis_positions(
+        float(_get_scan_config_value(scan_config, "angle_calibration_stage_stall_rotation_min_deg", -3.0)),
+        float(_get_scan_config_value(scan_config, "angle_calibration_stage_stall_rotation_max_deg", 3.0)),
+        float(_get_scan_config_value(scan_config, "angle_calibration_rotation_step_deg", 1.0)),
+    )
+    valid_positions = [
+        float(rotation_deg)
+        for rotation_deg in requested_positions
+        if 0.0 <= rotation_center_deg + float(rotation_deg) <= rotation_limit_deg
+    ]
+
+    if len(valid_positions) == 0:
+        raise ValueError(
+            "stage-stall rotation sweep has no valid positions "
+            f"for center {rotation_center_deg:.3f} deg within 0..{rotation_limit_deg:.3f}"
+        )
+
+    return _build_angle_rotation_positions_for_side(side, valid_positions, rotation_center_deg, rotation_limit_deg)
+
+
+def _resolve_stage_stall_probe_x_mm(scan_config: Any) -> float:
+    return float(_get_scan_config_value(scan_config, "angle_calibration_stage_stall_probe_x_mm", ANGLE_STAGE_STALL_DEFAULT_PROBE_X_MM))
+
+
 def _build_nominal_rotation_deg(rotation_center_deg: float) -> float:
     rotation_center_deg = float(rotation_center_deg)
     if abs(rotation_center_deg - 180.0) < abs(rotation_center_deg):
@@ -530,6 +575,8 @@ __all__ = [
     "AUTO_SCAN_X_MIN_MM",
     "RIGHT_AUTO_SCAN_X_MAX_MM",
     "ANGLE_DEBUG_DIR_NAME",
+    "STAGE_STALL_CAPTURE_RE",
+    "STAGE_STALL_PROBE_RE",
     "ANGLE_CAPTURE_RE",
     "ANGLE_SAMPLE_RE",
     "ANGLE_SCOUT_SAMPLE_RE",
@@ -549,6 +596,7 @@ __all__ = [
     "STAGE_EXTENSION_NO_PROGRESS_TIMEOUT_S",
     "STAGE_EXTENSION_STALL_BACKOFF_MM",
     "IO_BOX_MIN_CONFIGURED_LASER_OFFSET_X_MM",
+    "ANGLE_STAGE_STALL_DEFAULT_PROBE_X_MM",
     "_resolve_io_box_laser_offset_x_mm",
     "_should_skip_motion_cleanup_on_cancel",
     "LaserAutoCalibrationShelfEdge",
@@ -573,6 +621,9 @@ __all__ = [
     "_build_valid_rotation_positions",
     "_build_angle_x_positions",
     "_build_angle_z_offset_positions",
+    "_build_stage_stall_rotation_positions",
+    "_resolve_stage_stall_probe_x_mm",
+    "_build_nominal_rotation_deg",
     "_build_estimated_rotation_deg",
     "_build_angle_fit_inputs",
     "_build_angle_rotation_positions_for_side",

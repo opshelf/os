@@ -126,6 +126,30 @@ def resolve_stage_retract_target(
 	return max(probe_start_mm, stage_position_mm - max(stage_backoff_mm, 0.0))
 
 
+def resolve_stage_stall_fast_approach_mm(
+	*,
+	requested_fast_approach_mm: float | None,
+	parameters: Any,
+	side_name: str,
+	probe_start_mm: float,
+	probe_target_mm: float,
+	margin_mm: float = 2.0,
+) -> float:
+	if requested_fast_approach_mm is not None:
+		return min(probe_target_mm, max(probe_start_mm, float(requested_fast_approach_mm)))
+
+	parameter_name = 'STAGE_EXTENSION_SHELF_FRONT' if side_name == 'left' else 'STAGE_EXTENSION_SHELF_BACK'
+	if isinstance(parameters, dict):
+		stage_extension_mm = parameters.get(parameter_name)
+	else:
+		stage_extension_mm = getattr(parameters, parameter_name, None)
+
+	if stage_extension_mm is None:
+		return probe_start_mm
+
+	return min(probe_target_mm, max(probe_start_mm, float(stage_extension_mm) - max(float(margin_mm), 0.0)))
+
+
 async def retract_stage_after_stall(
 	tool: Any,
 	*,
@@ -262,6 +286,14 @@ async def run_stage_stall_capture(
 		default_probe_rpm = min(int(tool._ms._params.rpm), 30)
 		probe_rpm = int(args.stage_probe_rpm if args.stage_probe_rpm is not None else default_probe_rpm)
 		fast_approach_rpm = int(args.fast_approach_rpm if args.fast_approach_rpm is not None else probe_rpm)
+		fast_approach_mm = resolve_stage_stall_fast_approach_mm(
+			requested_fast_approach_mm=args.fast_approach_mm,
+			parameters=config.robot.tool.parameters,
+			side_name=side_name,
+			probe_start_mm=probe_start_mm,
+			probe_target_mm=probe_target_mm,
+			margin_mm=float(args.fast_approach_margin_mm),
+		)
 		probe_step_mm = float(args.probe_step_mm)
 		stage_backoff_mm = float(args.stage_backoff_mm)
 		fall_run_count = 0
@@ -282,7 +314,7 @@ async def run_stage_stall_capture(
 				'stage_target_mm': probe_target_mm,
 				'stage_probe_rpm': probe_rpm,
 				'stage_backoff_mm': stage_backoff_mm,
-				'fast_approach_mm': float(args.fast_approach_mm),
+				'fast_approach_mm': fast_approach_mm,
 				'fast_approach_rpm': fast_approach_rpm,
 				'probe_step_mm': probe_step_mm,
 				'no_progress_timeout_s': float(args.no_progress_timeout_s),
@@ -350,7 +382,7 @@ async def run_stage_stall_capture(
 				probe_rpm=probe_rpm,
 				no_progress_s=float(args.no_progress_timeout_s),
 				probe_step_mm=probe_step_mm,
-				fast_approach_mm=float(args.fast_approach_mm),
+				fast_approach_mm=fast_approach_mm,
 				fast_approach_rpm=fast_approach_rpm,
 				auto_retract=False,
 			)

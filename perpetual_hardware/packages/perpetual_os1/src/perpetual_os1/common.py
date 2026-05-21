@@ -641,6 +641,21 @@ class LaserScanConfig(BaseModel):
     angle_calibration_coarse_step_deg: float = Field(0.1, gt=0)
     angle_calibration_fine_window_deg: float = Field(0.3, gt=0)
     angle_calibration_fine_step_deg: float = Field(0.005, gt=0)
+    angle_calibration_method: Literal["stage_stall", "laser_fit"] = "stage_stall"
+    angle_calibration_stage_stall_rotation_min_deg: float = -3.0
+    angle_calibration_stage_stall_rotation_max_deg: float = 3.0
+    angle_calibration_stage_stall_probe_x_mm: Optional[float] = 475.0
+    angle_calibration_stage_stall_start_mm: float = Field(3.0, ge=0)
+    angle_calibration_stage_stall_target_mm: Optional[float] = Field(default=None, gt=0)
+    angle_calibration_stage_stall_probe_step_mm: float = Field(0.5, gt=0)
+    angle_calibration_stage_stall_probe_rpm: int = Field(20, gt=0)
+    angle_calibration_stage_stall_fast_approach_margin_mm: float = Field(2.0, ge=0)
+    angle_calibration_stage_stall_fast_approach_rpm: int = Field(20, gt=0)
+    angle_calibration_stage_stall_timeout_s: float = Field(30.0, gt=0)
+    angle_calibration_stage_stall_no_progress_timeout_s: float = Field(0.25, gt=0)
+    angle_calibration_stage_stall_backoff_mm: float = Field(8.0, ge=0)
+    angle_calibration_stage_stall_fall_threshold_mm: float = Field(0.15, ge=0)
+    angle_calibration_stage_stall_stop_after_fall_count: int = Field(1, ge=1)
 
     @model_validator(mode="before")
     @classmethod

@@ -16,6 +16,21 @@ class AngleRunnerMixin:
     ) -> LaserAutoCalibrationAngleResult:
         config = get_root_config()
         scan_config = config.robot.grid.scan
+        method = getattr(scan_config, "angle_calibration_method", None)
+
+        if method == "stage_stall":
+            return await self._run_stage_stall_angle_calibration_for_side(worker, side, bounds)
+
+        return await self._run_laser_fit_angle_calibration_for_side(worker, side, bounds)
+
+    async def _run_laser_fit_angle_calibration_for_side(
+        self,
+        worker: RobotWorker,
+        side: StorageModuleSide,
+        bounds: ScanBounds,
+    ) -> LaserAutoCalibrationAngleResult:
+        config = get_root_config()
+        scan_config = config.robot.grid.scan
         tool = worker._robot._tool
 
         if tool._laser_enabled is False or tool._laser is None:
@@ -180,6 +195,7 @@ class AngleRunnerMixin:
             )
 
         return LaserAutoCalibrationAngleResult(
+            method="laser_fit",
             side=_side_to_module_name(side),
             alpha_deg=float(fit_result.alpha_deg),
             sample_count=int(fit_result.sample_count),
@@ -190,6 +206,246 @@ class AngleRunnerMixin:
             previous_rotation_deg=previous_rotation_deg,
             updated_rotation_deg=updated_rotation_deg,
         )
+
+    async def _run_stage_stall_angle_calibration_for_side(
+        self,
+        worker: RobotWorker,
+        side: StorageModuleSide,
+        bounds: ScanBounds,
+    ) -> LaserAutoCalibrationAngleResult:
+        config = get_root_config()
+        scan_config = config.robot.grid.scan
+        tool = worker._robot._tool
+
+        if tool._laser_enabled is False or tool._laser is None:
+            raise ValueError("Laser is not enabled")
+
+        if tool._mx is None or tool._my is None or tool._mg is None or tool._ms is None or tool._mr is None:
+            raise ValueError("x, y, z, stage, and rotation motors are required")
+
+        side_name = _side_to_short_name(side)
+        side_module_name = _side_to_module_name(side)
+        side_number = 0 if side == StorageModuleSide.LEFT else 1
+        rotation_param = _side_to_rotation_param_name(side)
+        previous_rotation_value = await tool.get_param(rotation_param)
+
+        if previous_rotation_value is None:
+            raise ValueError(f"{rotation_param} is required")
+
+        previous_rotation_deg = float(previous_rotation_value)
+        rotation_center_deg = previous_rotation_deg
+        rotation_limit_deg = float(tool._mr._params.lim)
+        rotation_positions = _build_stage_stall_rotation_positions(
+            scan_config,
+            side,
+            rotation_center_deg,
+            rotation_limit_deg,
+        )
+        settle_ms = int(laser_module.get_laser_sample_settle_ms(scan_config))
+        samples_per_point = int(laser_module.get_laser_samples_per_point(scan_config))
+        laser_scan_z_offset_from_place_mm = laser_module.get_laser_scan_z_offset_from_place_mm(scan_config)
+        stage_extension_mm = laser_module.get_laser_scan_stage_extension_mm(scan_config)
+        z_extension_place = await tool.get_param("Z_EXTENSION_PLACE")
+        z_move_rpm = await tool.get_param("Z_MOVE_RPM")
+        z_move_accel = await tool.get_param("Z_MOVE_ACCEL")
+
+        if z_extension_place is None or z_move_rpm is None or z_move_accel is None:
+            raise ValueError("Z_EXTENSION_PLACE, Z_MOVE_RPM, and Z_MOVE_ACCEL are required")
+
+        base_z_mm = float(z_extension_place) + laser_scan_z_offset_from_place_mm
+        probe_x_mm = _resolve_stage_stall_probe_x_mm(scan_config)
+        stage_limit_mm = float(tool._ms._params.lim)
+        probe_start_mm = float(getattr(scan_config, "angle_calibration_stage_stall_start_mm", 3.0))
+        raw_probe_target_mm = getattr(scan_config, "angle_calibration_stage_stall_target_mm", None)
+        probe_target_mm = float(raw_probe_target_mm if raw_probe_target_mm is not None else stage_limit_mm)
+        probe_step_mm = float(getattr(scan_config, "angle_calibration_stage_stall_probe_step_mm", 0.5))
+        probe_rpm = int(getattr(scan_config, "angle_calibration_stage_stall_probe_rpm", 20))
+        fast_approach_rpm = int(getattr(scan_config, "angle_calibration_stage_stall_fast_approach_rpm", probe_rpm))
+        fast_approach_mm = angle_module.resolve_stage_stall_fast_approach_mm(
+            requested_fast_approach_mm=None,
+            parameters=worker._robot._tool._params.parameters,
+            side_name=side_name,
+            probe_start_mm=probe_start_mm,
+            probe_target_mm=probe_target_mm,
+            margin_mm=float(getattr(scan_config, "angle_calibration_stage_stall_fast_approach_margin_mm", 2.0)),
+        )
+        stage_backoff_mm = float(getattr(scan_config, "angle_calibration_stage_stall_backoff_mm", 8.0))
+        stage_timeout_s = float(getattr(scan_config, "angle_calibration_stage_stall_timeout_s", 30.0))
+        no_progress_timeout_s = float(getattr(scan_config, "angle_calibration_stage_stall_no_progress_timeout_s", 0.25))
+        fall_threshold_mm = float(getattr(scan_config, "angle_calibration_stage_stall_fall_threshold_mm", 0.15))
+        stop_after_fall_count = int(getattr(scan_config, "angle_calibration_stage_stall_stop_after_fall_count", 1))
+        angle_args = argparse.Namespace(
+            y_mm=None,
+            y_range=(bounds.y_min, bounds.y_max),
+            scout_x_mm=None,
+        )
+        samples: list[angle_module.StageStallProbeSample] = []
+        fall_run_count = 0
+        best_stage_position_mm: float | None = None
+        previous_stage_position_mm: float | None = None
+        capture_y_mm = float("nan")
+
+        async with self._patch_status_callbacks(
+            scan_callback=None,
+            angle_callback=self._build_angle_status_callback(side_module_name),
+        ):
+            try:
+                self._raise_if_abort_requested()
+                await tool.retract()
+                capture_y_mm = await angle_module.resolve_capture_y_mm(
+                    tool,
+                    args=angle_args,
+                    scan_config=scan_config,
+                    side_name=side_name,
+                    side_number=side_number,
+                    x_positions=[probe_x_mm],
+                    rotation_center_deg=rotation_center_deg,
+                    stage_extension_mm=stage_extension_mm,
+                    base_z_mm=base_z_mm,
+                    z_move_rpm=float(z_move_rpm),
+                    z_move_accel=float(z_move_accel),
+                    settle_ms=settle_ms,
+                    samples_per_point=samples_per_point,
+                    should_abort=self._should_abort_work,
+                )
+                current_probe_start_mm = probe_start_mm
+
+                for rotation_idx, rotation_deg in enumerate(rotation_positions, start=1):
+                    self._raise_if_abort_requested()
+                    absolute_rotation_deg = rotation_center_deg + float(rotation_deg)
+                    angle_module.print_status(
+                        f"phase=stage-stall rotation={rotation_idx}/{len(rotation_positions)} "
+                        f"absolute_rotation_deg={absolute_rotation_deg:.3f}"
+                    )
+                    await angle_module.prepare_capture_pose(
+                        tool,
+                        side_name=side_name,
+                        side_number=side_number,
+                        x_mm=probe_x_mm,
+                        y_mm=capture_y_mm,
+                        absolute_rotation_deg=absolute_rotation_deg,
+                        stage_extension_mm=current_probe_start_mm,
+                        z_mm=base_z_mm,
+                        z_move_rpm=float(z_move_rpm),
+                        z_move_accel=float(z_move_accel),
+                        should_rotate=True,
+                        should_use_safe_right_rotation_path=True,
+                        should_move_z=False,
+                        should_abort=self._should_abort_work,
+                    )
+                    self._raise_if_abort_requested()
+                    did_stall, stage_position_mm, status, alarm_code = await angle_module.probe_stage_until_stall(
+                        tool,
+                        target_stage_mm=probe_target_mm,
+                        retract_stage_mm=current_probe_start_mm,
+                        settle_ms=settle_ms,
+                        timeout_s=stage_timeout_s,
+                        probe_rpm=probe_rpm,
+                        no_progress_s=no_progress_timeout_s,
+                        probe_step_mm=probe_step_mm,
+                        fast_approach_mm=fast_approach_mm,
+                        fast_approach_rpm=fast_approach_rpm,
+                        auto_retract=False,
+                        should_abort=self._should_abort_work,
+                    )
+                    sample = angle_module.StageStallProbeSample(
+                        rotation_deg=float(rotation_deg),
+                        absolute_rotation_deg=absolute_rotation_deg,
+                        probe_x_mm=probe_x_mm,
+                        probe_y_mm=capture_y_mm,
+                        stage_position_mm=stage_position_mm,
+                        stalled=did_stall,
+                        status=status,
+                        alarm_code=None if alarm_code is None else int(alarm_code),
+                    )
+                    samples.append(sample)
+                    should_stop = False
+
+                    if did_stall is True:
+                        angle_module.print_status(
+                            f"stage_probe=stall rotation_deg={float(rotation_deg):.3f} "
+                            f"absolute_rotation_deg={absolute_rotation_deg:.3f} "
+                            f"stage_position_mm={stage_position_mm:.3f}"
+                        )
+
+                        if best_stage_position_mm is None or stage_position_mm > best_stage_position_mm:
+                            best_stage_position_mm = stage_position_mm
+
+                        should_stop, fall_run_count = angle_module.should_stop_after_stage_drop(
+                            best_stage_position_mm=best_stage_position_mm,
+                            current_stage_position_mm=stage_position_mm,
+                            previous_stage_position_mm=previous_stage_position_mm,
+                            fall_threshold_mm=fall_threshold_mm,
+                            fall_run_count=fall_run_count,
+                            stop_after_fall_count=stop_after_fall_count,
+                        )
+                        previous_stage_position_mm = stage_position_mm
+                    else:
+                        angle_module.print_status(
+                            f"stage_probe=skip rotation_deg={float(rotation_deg):.3f} "
+                            f"absolute_rotation_deg={absolute_rotation_deg:.3f} "
+                            f"status={status} stage_position_mm={stage_position_mm:.3f}"
+                        )
+                        fall_run_count = 0
+
+                    stage_retract_target_mm = angle_module.resolve_stage_retract_target(
+                        did_stall=did_stall,
+                        stage_position_mm=stage_position_mm,
+                        probe_start_mm=probe_start_mm,
+                        stage_backoff_mm=stage_backoff_mm,
+                    )
+                    angle_module.print_status(f"stage_probe=retract target_mm={stage_retract_target_mm:.3f}")
+                    await angle_module.retract_stage_after_stall(
+                        tool,
+                        retract_stage_mm=stage_retract_target_mm,
+                        probe_rpm=probe_rpm,
+                    )
+                    current_probe_start_mm = stage_retract_target_mm
+
+                    if should_stop is True:
+                        angle_module.print_status("stage_probe=stop reason=stage_position_falling")
+                        break
+
+                    if rotation_idx < len(rotation_positions):
+                        angle_module.print_status("stage_probe=home_after_retract")
+                        await tool._ms.home()
+                        current_probe_start_mm = probe_start_mm
+            finally:
+                if _should_skip_motion_cleanup_on_cancel() is False:
+                    await angle_module.finish_stage_stall_capture(
+                        tool,
+                        z_move_rpm=float(z_move_rpm),
+                        z_move_accel=float(z_move_accel),
+                    )
+
+        angle_summaries, best_summary = angle_module.summarize_stage_stall_samples(samples)
+
+        if best_summary is None:
+            raise ValueError("stage-stall angle calibration did not detect any stage contacts")
+
+        updated_rotation_deg = float(best_summary["absolute_rotation_deg"])
+        alpha_deg = updated_rotation_deg - _build_nominal_rotation_deg(previous_rotation_deg)
+
+        if updated_rotation_deg < 0.0 or updated_rotation_deg > rotation_limit_deg:
+            raise ValueError(
+                "stage-stall rotation is outside motor range "
+                f"({updated_rotation_deg:.3f} deg is outside 0..{rotation_limit_deg:.3f})"
+            )
+
+        return LaserAutoCalibrationAngleResult(
+            method="stage_stall",
+            side=side_module_name,
+            alpha_deg=alpha_deg,
+            sample_count=len(samples),
+            capture_y_mm=float(capture_y_mm),
+            rms_residual_mm=0.0,
+            max_abs_residual_mm=0.0,
+            line_angle_deg=0.0,
+            previous_rotation_deg=previous_rotation_deg,
+            updated_rotation_deg=updated_rotation_deg,
+            stage_position_mm=float(best_summary["median_stage_position_mm"]),
+        )
+
 
     async def _apply_angle_calibration_in_memory(
         self,

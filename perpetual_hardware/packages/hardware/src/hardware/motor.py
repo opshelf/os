@@ -399,17 +399,6 @@ class Motor():
         target_mm = self._get_home_approach_target_mm()
         current_position_mm = await self.get_position()
         should_move_near_home = self.should_move_near_home_before_homing()
-        self._logger.info(
-            "Pre-home approach",
-            extra={
-                "motor_id": self._motor_id,
-                "motor_name": getattr(self._params, "motor_name", None),
-                "enabled": should_move_near_home,
-                "current_position_mm": current_position_mm,
-                "target_mm": target_mm,
-                "rpm": rpm,
-            },
-        )
 
         if should_move_near_home is False:
             return
