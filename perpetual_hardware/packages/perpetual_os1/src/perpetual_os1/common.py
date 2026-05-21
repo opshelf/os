@@ -229,6 +229,7 @@ class Motor(BaseModel):
     motor_id: int = Field(..., ge=0)  # tighten if desired
     enabled: bool = Field(default=True)
     rotation_safe_stage_extension_enabled: bool = Field(default=False)
+    rotation_safe_stage_extension_mm: float = Field(default=8.5, ge=0)
     Ip: int = Field(..., ge=0)        # keeping exact key casing
     rpm: int = Field(..., gt=0)
     dr: Literal[0, 1]

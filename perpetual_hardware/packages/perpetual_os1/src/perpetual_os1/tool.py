@@ -59,7 +59,6 @@ GANTRY_WAIT_TIMEOUT = MOTOR_WAIT_TIMEOUT * 2
 TOOL_WAIT_TIMEOUT = MOTOR_WAIT_TIMEOUT * 2
 GANTRY_OUTER_TIMEOUT = 120.0
 TOOL_OUTER_TIMEOUT = 60.0
-ROTATION_SAFE_STAGE_EXTENSION_MM = 6.0
 ROTATION_HOME_SAFE_X_MM = 475.0
 
 class Tool:
@@ -242,18 +241,19 @@ class Tool:
         if is_enabled is not True:
             return False
 
+        safe_extension_mm = self._ms._params.rotation_safe_stage_extension_mm
         stage_limit = self._ms._params.lim
-        if ROTATION_SAFE_STAGE_EXTENSION_MM > stage_limit:
+        if safe_extension_mm > stage_limit:
             raise ConfigError(
-                "ROTATION_SAFE_STAGE_EXTENSION_MM exceeds stage limit "
-                f"({ROTATION_SAFE_STAGE_EXTENSION_MM} > {stage_limit})"
+                "rotation_safe_stage_extension_mm exceeds stage limit "
+                f"({safe_extension_mm} > {stage_limit})"
             )
 
         position = await self._ms.get_position()
-        if position >= ROTATION_SAFE_STAGE_EXTENSION_MM:
+        if position >= safe_extension_mm:
             return False
 
-        await self._ms.move_to_position(ROTATION_SAFE_STAGE_EXTENSION_MM)
+        await self._ms.move_to_position(safe_extension_mm)
         return True
 
     async def clear_alarms(self) -> None:
