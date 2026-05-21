@@ -85,7 +85,11 @@ from .shelf_scout import (
 	set_y_brake_for_shelf_scouting,
 )
 from .stage_stall import (
+	finish_stage_stall_capture,
 	resolve_probe_x_mm,
+	resolve_stage_retract_target,
+	resolve_stage_stall_fast_approach_mm,
+	retract_stage_after_stall,
 	run_stage_stall_capture,
 	should_stop_after_stage_drop,
 	summarize_stage_stall_samples,

@@ -317,6 +317,39 @@ async def test_probe_stage_until_stall_can_skip_auto_retract() -> None:
 	assert stage_motor.move_to_position.await_args_list[0].args == (3.0,)
 	assert stage_motor.move_to_position.await_args_list[1].args == (40.0,)
 
+
+@pytest.mark.asyncio
+async def test_probe_stage_until_stall_reports_fast_approach_fault() -> None:
+	stage_motor = SimpleNamespace(
+		move_to_position=AsyncMock(side_effect=[None, RuntimeError('stage fault')]),
+		move_to_position_no_wait=AsyncMock(),
+		clear_alarm=AsyncMock(),
+		stop=AsyncMock(),
+		get_position=AsyncMock(return_value=42.0),
+		get_param=AsyncMock(return_value=0),
+	)
+	tool = SimpleNamespace(_ms=stage_motor)
+
+	did_stall, stage_position_mm, status, alarm_code = await probe_stage_until_stall(
+		tool,
+		target_stage_mm=50.0,
+		retract_stage_mm=3.0,
+		settle_ms=0,
+		timeout_s=1.0,
+		probe_rpm=50,
+		no_progress_s=0.0,
+		probe_step_mm=1.0,
+		fast_approach_mm=45.0,
+		fast_approach_rpm=100,
+		auto_retract=False,
+	)
+
+	assert did_stall is True
+	assert stage_position_mm == pytest.approx(42.0)
+	assert status == 'fast_approach_fault'
+	assert alarm_code == 0
+	stage_motor.move_to_position_no_wait.assert_not_awaited()
+
 def test_resolve_stage_retract_target_backs_off_from_stall() -> None:
 	assert resolve_stage_retract_target(
 		did_stall=True,

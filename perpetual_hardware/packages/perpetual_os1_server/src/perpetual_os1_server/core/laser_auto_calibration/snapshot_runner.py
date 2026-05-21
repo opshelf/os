@@ -208,6 +208,8 @@ class SnapshotRunnerMixin:
             sample_match = ANGLE_SAMPLE_RE.search(message)
             scout_sample_match = ANGLE_SCOUT_SAMPLE_RE.search(message)
             alpha_match = ANGLE_RESULT_RE.search(message)
+            stage_stall_capture_match = STAGE_STALL_CAPTURE_RE.search(message)
+            stage_stall_probe_match = STAGE_STALL_PROBE_RE.search(message)
 
             if message.startswith("phase=shelf-scout") is True:
                 stage_detail["subphase"] = "shelf-scout"
@@ -263,6 +265,29 @@ class SnapshotRunnerMixin:
                         ),
                     }
                 )
+
+            if stage_stall_capture_match is not None:
+                stage_detail.update(
+                    {
+                        "subphase": "stage-stall",
+                        "rotation_idx": int(stage_stall_capture_match.group("rotation_idx")),
+                        "rotation_count": int(stage_stall_capture_match.group("rotation_count")),
+                        "absolute_rotation_deg": float(stage_stall_capture_match.group("absolute")),
+                    }
+                )
+
+            if stage_stall_probe_match is not None:
+                stage_detail.update(
+                    {
+                        "subphase": "stage-stall",
+                        "sample_status": stage_stall_probe_match.group("status"),
+                        "sample_rotation_deg": float(stage_stall_probe_match.group("rotation")),
+                        "absolute_rotation_deg": float(stage_stall_probe_match.group("absolute")),
+                        "stage_position_mm": float(stage_stall_probe_match.group("stage")),
+                        "stage_probe_status": stage_stall_probe_match.group("probe_status"),
+                    }
+                )
+
 
             if alpha_match is not None:
                 stage_detail.update(
