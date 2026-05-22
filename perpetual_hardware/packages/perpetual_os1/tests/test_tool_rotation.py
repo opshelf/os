@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -147,6 +147,73 @@ async def test_ensure_safe_rotation_stage_extension_raises_when_limit_too_small(
     with pytest.raises(ConfigError, match="rotation_safe_stage_extension_mm exceeds stage limit"):
         await tool.ensure_safe_rotation_stage_extension()
 
+@pytest.mark.asyncio
+async def test_retract_homes_stage_when_stage_retract_faults() -> None:
+    stage_error = RuntimeError('stage fault')
+    stage_motor = _mock_stage_motor(position=0.0)
+    stage_motor.clear_alarm = AsyncMock()
+    stage_motor.home = AsyncMock()
+    stage_motor.idle = AsyncMock()
+    stage_motor.move_to_position = AsyncMock(side_effect=stage_error)
+
+    z_motor = AsyncMock()
+    z_motor.move_to_position = AsyncMock()
+
+    tool = Tool.__new__(Tool)
+    tool._ms = stage_motor
+    tool._mg = z_motor
+    tool._mstatus = ToolMotionStatus.IDLE
+    tool._istatus = ToolItemStatus.EMPTY
+    tool._status = SimpleNamespace(motion=ToolMotionStatus.IDLE, item=ToolItemStatus.EMPTY)
+    tool._handle_fault = AsyncMock()
+    tool._logger = Mock()
+    tool.get_param = AsyncMock(side_effect=lambda name: {
+        'Z_MOVE_RPM': 100.0,
+        'Z_MOVE_ACCEL': 200.0,
+    }[name])
+
+    await tool.retract()
+
+    z_motor.move_to_position.assert_awaited_once_with(1, rpm=100.0, accel=200.0)
+    stage_motor.move_to_position.assert_awaited_once_with(3.0)
+    stage_motor.clear_alarm.assert_awaited_once()
+    stage_motor.home.assert_awaited_once()
+    stage_motor.idle.assert_awaited_once()
+    tool._handle_fault.assert_not_awaited()
+    assert tool._mstatus == ToolMotionStatus.IDLE
+
+
+@pytest.mark.asyncio
+async def test_retract_fails_when_stage_home_recovery_leaves_stage_unsafe() -> None:
+    stage_error = RuntimeError('stage fault')
+    stage_motor = _mock_stage_motor(position=6.0)
+    stage_motor.clear_alarm = AsyncMock()
+    stage_motor.home = AsyncMock()
+    stage_motor.idle = AsyncMock()
+    stage_motor.move_to_position = AsyncMock(side_effect=stage_error)
+
+    z_motor = AsyncMock()
+    z_motor.move_to_position = AsyncMock()
+
+    tool = Tool.__new__(Tool)
+    tool._ms = stage_motor
+    tool._mg = z_motor
+    tool._mstatus = ToolMotionStatus.IDLE
+    tool._istatus = ToolItemStatus.EMPTY
+    tool._status = SimpleNamespace(motion=ToolMotionStatus.IDLE, item=ToolItemStatus.EMPTY)
+    tool._handle_fault = AsyncMock()
+    tool._logger = Mock()
+    tool.get_param = AsyncMock(side_effect=lambda name: {
+        'Z_MOVE_RPM': 100.0,
+        'Z_MOVE_ACCEL': 200.0,
+    }[name])
+
+    with pytest.raises(MovementError, match='Tool retraction failed'):
+        await tool.retract()
+
+    stage_motor.home.assert_awaited_once()
+    stage_motor.idle.assert_not_awaited()
+    tool._handle_fault.assert_awaited_once()
 
 @pytest.mark.asyncio
 async def test_home_retracts_stage_after_safe_rotation_extension() -> None:

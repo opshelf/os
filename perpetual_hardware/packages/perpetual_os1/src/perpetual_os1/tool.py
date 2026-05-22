@@ -62,6 +62,8 @@ TOOL_OUTER_TIMEOUT = 60.0
 ROTATION_HOME_SAFE_X_MM = 475.0
 ROTATION_HOME_ORIENTATION_EPSILON_DEG = 1e-6
 
+STAGE_RETRACT_TARGET_MM = 3.0
+STAGE_RETRACT_SAFE_THRESHOLD_MM = 5.0
 
 class RotationHomeOrientation(Enum):
     LEFT_MODULE = "left_module"
@@ -287,6 +289,32 @@ class Tool:
 
         await self._ms.move_to_position(safe_extension_mm)
         return True
+
+    async def _home_stage_after_retract_fault(self, error: BaseException) -> None:
+        if self._ms is None:
+            raise MotorError("Stage motor required for retract recovery") from error
+
+        self._logger.warning(
+            "Stage retract failed; homing stage as recovery",
+            extra={"error": str(error)},
+        )
+
+        try:
+            await self._ms.clear_alarm()
+        except Exception as clear_error:
+            self._logger.warning(
+                "Failed to clear stage alarm before retract recovery home",
+                extra={"error": str(clear_error)},
+            )
+
+        await self._ms.home()
+        stage_position = await self._ms.get_position()
+
+        if stage_position > STAGE_RETRACT_SAFE_THRESHOLD_MM:
+            raise MovementError(
+                "Stage retract recovery home left stage outside safe threshold "
+                f"({stage_position:.3f} > {STAGE_RETRACT_SAFE_THRESHOLD_MM:.3f})"
+            ) from error
 
     async def get_rotation_home_orientation(self) -> RotationHomeOrientation:
         rotation_front = await self.get_param("ROTATION_FRONT")
@@ -589,7 +617,10 @@ class Tool:
             if grip_rpm is None or grip_accel is None:
                 raise ConfigError("Missing gripper move speed")
             await self._mg.move_to_position(1, rpm=grip_rpm, accel=grip_accel)
-            await self._ms.move_to_position(3.0)
+            try:
+                await self._ms.move_to_position(STAGE_RETRACT_TARGET_MM)
+            except Exception as stage_error:
+                await self._home_stage_after_retract_fault(stage_error)
             await self._ms.idle()
             if _nested is False:
                 self._mstatus = ToolMotionStatus.IDLE
