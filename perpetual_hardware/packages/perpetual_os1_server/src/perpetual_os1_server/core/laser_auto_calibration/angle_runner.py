@@ -233,7 +233,7 @@ class AngleRunnerMixin:
             raise ValueError(f"{rotation_param} is required")
 
         previous_rotation_deg = float(previous_rotation_value)
-        rotation_center_deg = previous_rotation_deg
+        rotation_center_deg = _build_stage_stall_rotation_center_deg(side)
         rotation_limit_deg = float(tool._mr._params.lim)
         rotation_positions = _build_stage_stall_rotation_positions(
             scan_config,
@@ -272,8 +272,6 @@ class AngleRunnerMixin:
         stage_backoff_mm = float(getattr(scan_config, "angle_calibration_stage_stall_backoff_mm", 8.0))
         stage_timeout_s = float(getattr(scan_config, "angle_calibration_stage_stall_timeout_s", 30.0))
         no_progress_timeout_s = float(getattr(scan_config, "angle_calibration_stage_stall_no_progress_timeout_s", 0.25))
-        fall_threshold_mm = float(getattr(scan_config, "angle_calibration_stage_stall_fall_threshold_mm", 0.15))
-        stop_after_fall_count = int(getattr(scan_config, "angle_calibration_stage_stall_stop_after_fall_count", 1))
         angle_args = argparse.Namespace(
             y_mm=None,
             y_range=(bounds.y_min, bounds.y_max),
@@ -316,9 +314,6 @@ class AngleRunnerMixin:
                 ) -> list[angle_module.StageStallProbeSample]:
                     nonlocal current_probe_start_mm
                     pass_samples: list[angle_module.StageStallProbeSample] = []
-                    pass_fall_run_count = 0
-                    pass_best_stage_position_mm: float | None = None
-                    pass_previous_stage_position_mm: float | None = None
 
                     for rotation_idx, rotation_deg in enumerate(pass_rotation_positions, start=1):
                         self._raise_if_abort_requested()
@@ -372,8 +367,6 @@ class AngleRunnerMixin:
                         )
                         samples.append(sample)
                         pass_samples.append(sample)
-                        should_stop = False
-
                         if did_stall is True:
                             angle_module.print_status(
                                 f"stage_probe=stall pass={pass_name} "
@@ -381,19 +374,6 @@ class AngleRunnerMixin:
                                 f"absolute_rotation_deg={absolute_rotation_deg:.3f} "
                                 f"stage_position_mm={stage_position_mm:.3f}"
                             )
-
-                            if pass_best_stage_position_mm is None or stage_position_mm > pass_best_stage_position_mm:
-                                pass_best_stage_position_mm = stage_position_mm
-
-                            should_stop, pass_fall_run_count = angle_module.should_stop_after_stage_drop(
-                                best_stage_position_mm=pass_best_stage_position_mm,
-                                current_stage_position_mm=stage_position_mm,
-                                previous_stage_position_mm=pass_previous_stage_position_mm,
-                                fall_threshold_mm=fall_threshold_mm,
-                                fall_run_count=pass_fall_run_count,
-                                stop_after_fall_count=stop_after_fall_count,
-                            )
-                            pass_previous_stage_position_mm = stage_position_mm
                         else:
                             angle_module.print_status(
                                 f"stage_probe=skip pass={pass_name} "
@@ -401,7 +381,6 @@ class AngleRunnerMixin:
                                 f"absolute_rotation_deg={absolute_rotation_deg:.3f} "
                                 f"status={status} stage_position_mm={stage_position_mm:.3f}"
                             )
-                            pass_fall_run_count = 0
 
                         stage_retract_target_mm = angle_module.resolve_stage_retract_target(
                             did_stall=did_stall,
@@ -418,13 +397,6 @@ class AngleRunnerMixin:
                             probe_rpm=probe_rpm,
                         )
                         current_probe_start_mm = stage_retract_target_mm
-
-                        if should_stop is True:
-                            angle_module.print_status(
-                                f"stage_probe=stop pass={pass_name} reason=stage_position_falling"
-                            )
-                            break
-
                         if rotation_idx < len(pass_rotation_positions):
                             angle_module.print_status(f"stage_probe=home_after_retract pass={pass_name}")
                             await tool._ms.home()
@@ -479,7 +451,7 @@ class AngleRunnerMixin:
             raise ValueError("stage-stall angle calibration did not detect any stage contacts")
 
         updated_rotation_deg = float(best_summary["absolute_rotation_deg"])
-        alpha_deg = updated_rotation_deg - _build_nominal_rotation_deg(previous_rotation_deg)
+        alpha_deg = updated_rotation_deg - rotation_center_deg
 
         if updated_rotation_deg < 0.0 or updated_rotation_deg > rotation_limit_deg:
             raise ValueError(
