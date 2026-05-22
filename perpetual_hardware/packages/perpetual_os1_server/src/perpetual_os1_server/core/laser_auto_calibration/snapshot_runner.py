@@ -287,6 +287,11 @@ class SnapshotRunnerMixin:
                         "stage_position_mm": float(stage_stall_probe_match.group("stage")),
                         "stage_stall_pass": stage_stall_probe_match.group("pass_name"),
                         "stage_probe_status": stage_stall_probe_match.group("probe_status"),
+                        "stage_alarm_code": (
+                            None
+                            if stage_stall_probe_match.group("alarm_code") in (None, "none")
+                            else int(stage_stall_probe_match.group("alarm_code"))
+                        ),
                     }
                 )
 

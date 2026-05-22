@@ -50,6 +50,7 @@ STAGE_STALL_PROBE_RE = re.compile(
     r"rotation_deg=(?P<rotation>-?\d+(?:\.\d+)?) "
     r"absolute_rotation_deg=(?P<absolute>-?\d+(?:\.\d+)?) "
     r"(?:status=(?P<probe_status>[a-z_]+) )?stage_position_mm=(?P<stage>-?\d+(?:\.\d+)?)"
+    r"(?: alarm_code=(?P<alarm_code>none|-?\d+))?"
 )
 ANGLE_SCOUT_SAMPLE_RE = re.compile(
     r"(?P<label>shelf_scout_\d+)=(?P<sample_idx>\d+)/(?P<sample_count>\d+) x=(?P<x>-?\d+(?:\.\d+)?) y=(?P<y>-?\d+(?:\.\d+)?) depth=(?P<depth>none|-?\d+(?:\.\d+)?)"

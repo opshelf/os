@@ -3,8 +3,50 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 from .models import *
+
+def _write_stage_stall_angle_debug_document(
+    *,
+    side_name: str,
+    previous_rotation_deg: float,
+    rotation_center_deg: float,
+    capture_y_mm: float,
+    probe_x_mm: float,
+    fast_approach_mm: float,
+    samples: list[Any],
+    coarse_summaries: list[dict[str, Any]],
+    fine_summaries: list[dict[str, Any]],
+    validation_summaries: list[dict[str, Any]],
+    selected_summaries: list[dict[str, Any]],
+    best_summary: dict[str, Any],
+    selected_pass: str,
+    rotation_positions: list[float],
+) -> Path:
+    timestamp = _get_timestamp().replace(":", "").replace("+0000", "Z").replace("+00:00", "Z")
+    output_path = Path(_build_default_scans_dir()) / ANGLE_DEBUG_DIR_NAME / f"{side_name}-stage-stall-{timestamp}.json"
+    angle_module.write_stage_stall_output_document(
+        output_path=output_path,
+        metadata={
+            "side": side_name,
+            "previous_rotation_deg": float(previous_rotation_deg),
+            "rotation_center_deg": float(rotation_center_deg),
+            "capture_y_mm": float(capture_y_mm),
+            "probe_x_mm": float(probe_x_mm),
+            "fast_approach_mm": float(fast_approach_mm),
+            "coarse_rotation_positions": rotation_positions,
+            "coarse_summaries": coarse_summaries,
+            "fine_summaries": fine_summaries,
+            "validation_summaries": validation_summaries,
+            "selected_pass": selected_pass,
+        },
+        samples=samples,
+        angle_summaries=selected_summaries,
+        best_summary=best_summary,
+    )
+    return output_path
+
 
 
 class AngleRunnerMixin:
@@ -262,7 +304,11 @@ class AngleRunnerMixin:
         probe_rpm = int(getattr(scan_config, "angle_calibration_stage_stall_probe_rpm", 20))
         fast_approach_rpm = int(getattr(scan_config, "angle_calibration_stage_stall_fast_approach_rpm", probe_rpm))
         fast_approach_mm = angle_module.resolve_stage_stall_fast_approach_mm(
-            requested_fast_approach_mm=None,
+            requested_fast_approach_mm=getattr(
+                scan_config,
+                "angle_calibration_stage_stall_fast_approach_mm",
+                20.0,
+            ),
             parameters=worker._robot._tool._params.parameters,
             side_name=side_name,
             probe_start_mm=probe_start_mm,
@@ -280,6 +326,7 @@ class AngleRunnerMixin:
         samples: list[angle_module.StageStallProbeSample] = []
         coarse_samples: list[angle_module.StageStallProbeSample] = []
         fine_samples: list[angle_module.StageStallProbeSample] = []
+        validation_samples: list[angle_module.StageStallProbeSample] = []
         capture_y_mm = float("nan")
 
         async with self._patch_status_callbacks(
@@ -368,11 +415,14 @@ class AngleRunnerMixin:
                         samples.append(sample)
                         pass_samples.append(sample)
                         if did_stall is True:
+                            alarm_label = "none" if alarm_code is None else str(int(alarm_code))
                             angle_module.print_status(
                                 f"stage_probe=stall pass={pass_name} "
                                 f"rotation_deg={float(rotation_deg):.3f} "
                                 f"absolute_rotation_deg={absolute_rotation_deg:.3f} "
-                                f"stage_position_mm={stage_position_mm:.3f}"
+                                f"status={status} "
+                                f"stage_position_mm={stage_position_mm:.3f} "
+                                f"alarm_code={alarm_label}"
                             )
                         else:
                             angle_module.print_status(
@@ -431,6 +481,46 @@ class AngleRunnerMixin:
                             pass_name="fine",
                             pass_rotation_positions=fine_rotation_positions,
                         )
+
+                    fine_summaries, fine_best_summary = angle_module.summarize_stage_stall_samples(fine_samples)
+
+                    if fine_best_summary is not None:
+                        validation_count = int(
+                            getattr(scan_config, "angle_calibration_stage_stall_validation_count", 3)
+                        )
+                        validation_repeats = int(
+                            getattr(scan_config, "angle_calibration_stage_stall_validation_repeats", 3)
+                        )
+                        validation_summaries = [
+                            summary
+                            for summary in fine_summaries
+                            if summary["median_stage_position_mm"] is not None
+                        ]
+                        validation_summaries.sort(
+                            key=lambda summary: float(summary["median_stage_position_mm"]),
+                            reverse=True,
+                        )
+                        validation_rotation_positions: list[float] = []
+
+                        for summary in validation_summaries[:validation_count]:
+                            validation_rotation_positions.extend(
+                                [float(summary["rotation_deg"])] * validation_repeats
+                            )
+
+                        if len(validation_rotation_positions) > 0:
+                            angle_module.print_status(
+                                "stage_probe=validation_window "
+                                f"positions={len(validation_rotation_positions)} "
+                                f"unique_angles={min(validation_count, len(validation_summaries))} "
+                                f"repeats={validation_repeats}"
+                            )
+                            angle_module.print_status("stage_probe=home_before_validation")
+                            await tool._ms.home()
+                            current_probe_start_mm = probe_start_mm
+                            validation_samples = await did_run_stage_stall_pass(
+                                pass_name="validation",
+                                pass_rotation_positions=validation_rotation_positions,
+                            )
             finally:
                 if _should_skip_motion_cleanup_on_cancel() is False:
                     await angle_module.finish_stage_stall_capture(
@@ -439,13 +529,22 @@ class AngleRunnerMixin:
                         z_move_accel=float(z_move_accel),
                     )
 
+        validation_summaries, validation_best_summary = angle_module.summarize_stage_stall_samples(validation_samples)
         fine_summaries, fine_best_summary = angle_module.summarize_stage_stall_samples(fine_samples)
         coarse_summaries, coarse_best_summary = angle_module.summarize_stage_stall_samples(coarse_samples)
-        _angle_summaries, best_summary = (
-            (fine_summaries, fine_best_summary)
-            if fine_best_summary is not None
-            else (coarse_summaries, coarse_best_summary)
-        )
+        selected_pass = "validation"
+        selected_summaries = validation_summaries
+        best_summary = validation_best_summary
+
+        if best_summary is None:
+            selected_pass = "fine"
+            selected_summaries = fine_summaries
+            best_summary = fine_best_summary
+
+        if best_summary is None:
+            selected_pass = "coarse"
+            selected_summaries = coarse_summaries
+            best_summary = coarse_best_summary
 
         if best_summary is None:
             raise ValueError("stage-stall angle calibration did not detect any stage contacts")
@@ -458,6 +557,27 @@ class AngleRunnerMixin:
                 "stage-stall rotation is outside motor range "
                 f"({updated_rotation_deg:.3f} deg is outside 0..{rotation_limit_deg:.3f})"
             )
+
+        try:
+            debug_path = _write_stage_stall_angle_debug_document(
+                side_name=side_module_name,
+                previous_rotation_deg=previous_rotation_deg,
+                rotation_center_deg=rotation_center_deg,
+                capture_y_mm=capture_y_mm,
+                probe_x_mm=probe_x_mm,
+                fast_approach_mm=fast_approach_mm,
+                samples=samples,
+                coarse_summaries=coarse_summaries,
+                fine_summaries=fine_summaries,
+                validation_summaries=validation_summaries,
+                selected_summaries=selected_summaries,
+                best_summary=best_summary,
+                selected_pass=selected_pass,
+                rotation_positions=rotation_positions,
+            )
+            angle_module.print_status(f"stage_probe=debug path={debug_path}")
+        except Exception as exc:
+            logger.warning("Failed to write stage-stall angle debug document: %s", exc)
 
         return LaserAutoCalibrationAngleResult(
             method="stage_stall",
