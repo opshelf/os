@@ -23,6 +23,8 @@ from perpetual_os1_server.core.laser_auto_calibration import (
     _build_angle_z_offset_positions,
     _build_bounds_for_side,
     _build_stage_extension_probe_y_mm,
+    _build_stage_stall_fine_rotation_positions,
+    _build_stage_stall_rotation_positions,
     _resolve_io_box_laser_offset_x_mm,
     _SideState,
     LaserAutoCalibrationAngleResult,
@@ -125,6 +127,42 @@ def test_build_valid_rotation_positions_respects_rotation_motor_limit() -> None:
     assert rotation_positions[-1] == 2.0
     assert 3.0 not in rotation_positions
 
+
+
+def test_build_stage_stall_rotation_positions_uses_wide_coarse_defaults() -> None:
+    scan_config = SimpleNamespace()
+
+    rotation_positions = _build_stage_stall_rotation_positions(
+        scan_config,
+        StorageModuleSide.RIGHT,
+        4.5,
+        360.0,
+    )
+
+    assert rotation_positions[0] == pytest.approx(-4.5)
+    assert rotation_positions[-1] == pytest.approx(1.0)
+    absolute_positions = [4.5 + rotation_deg for rotation_deg in rotation_positions]
+    assert 0.0 in absolute_positions
+    assert 5.5 in absolute_positions
+    assert 2.0 not in rotation_positions
+
+
+def test_build_stage_stall_fine_rotation_positions_centers_on_coarse_best() -> None:
+    scan_config = SimpleNamespace(
+        angle_calibration_stage_stall_fine_window_deg=1.5,
+        angle_calibration_stage_stall_fine_step_deg=0.25,
+    )
+
+    rotation_positions = _build_stage_stall_fine_rotation_positions(
+        scan_config,
+        -1.0,
+        4.5,
+        360.0,
+    )
+
+    assert rotation_positions[0] == pytest.approx(-2.5)
+    assert rotation_positions[-1] == pytest.approx(0.5)
+    assert -1.0 in rotation_positions
 
 def test_build_angle_x_positions_runs_from_high_x_to_low_x() -> None:
     scan_config = SimpleNamespace(
@@ -528,6 +566,8 @@ async def test_run_angle_calibration_uses_stage_stall_method_when_configured() -
         angle_calibration_stage_stall_backoff_mm=8.0,
         angle_calibration_stage_stall_fall_threshold_mm=0.15,
         angle_calibration_stage_stall_stop_after_fall_count=1,
+        angle_calibration_stage_stall_fine_window_deg=0.0,
+        angle_calibration_stage_stall_fine_step_deg=0.25,
         laser_sample_settle_ms=0,
         laser_samples_per_point=1,
         laser_scan_z_offset_from_place_mm=0.0,
