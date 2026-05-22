@@ -360,6 +360,13 @@ def _get_scan_config_value(scan_config: Any, name: str, default: Any) -> Any:
     return getattr(scan_config, name, default)
 
 
+def _build_stage_stall_rotation_center_deg(side: StorageModuleSide) -> float:
+    if side == StorageModuleSide.LEFT:
+        return 180.0
+
+    return 0.0
+
+
 def _build_stage_stall_rotation_positions(
     scan_config: Any,
     side: StorageModuleSide,
@@ -372,14 +379,14 @@ def _build_stage_stall_rotation_positions(
             _get_scan_config_value(
                 scan_config,
                 "angle_calibration_stage_stall_coarse_min_deg",
-                _get_scan_config_value(scan_config, "angle_calibration_stage_stall_rotation_min_deg", -4.5),
+                _get_scan_config_value(scan_config, "angle_calibration_stage_stall_rotation_min_deg", 0.0),
             )
         ),
         float(
             _get_scan_config_value(
                 scan_config,
                 "angle_calibration_stage_stall_coarse_max_deg",
-                _get_scan_config_value(scan_config, "angle_calibration_stage_stall_rotation_max_deg", 1.0),
+                _get_scan_config_value(scan_config, "angle_calibration_stage_stall_rotation_max_deg", 5.5),
             )
         ),
         float(
@@ -694,6 +701,7 @@ __all__ = [
     "_side_to_rotation_param_name",
     "_side_to_stage_extension_param_name",
     "_build_stage_extension_probe_y_mm",
+    "_build_stage_stall_rotation_center_deg",
     "_build_bounds_for_side",
     "_build_valid_rotation_positions",
     "_build_angle_x_positions",
