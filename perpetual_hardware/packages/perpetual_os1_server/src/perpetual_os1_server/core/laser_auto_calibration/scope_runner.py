@@ -86,6 +86,7 @@ class ScopeRunnerMixin:
             worker,
             StorageModuleSide.RIGHT,
             right_bounds,
+            top_shelf_y_mm=float(right_angle_result.capture_y_mm),
         )
         right_stage_extension_mm = await self._run_stage_extension_calibration_for_side(
             worker,
@@ -128,16 +129,11 @@ class ScopeRunnerMixin:
         bounds = _build_bounds_for_side(scan_config, side)
         angle_result = await self._run_angle_calibration_for_side(worker, side, bounds)
         await self._apply_angle_calibration_in_memory(worker, side, angle_result)
-        top_shelf_y_mm: float | None = None
-
-        if side == StorageModuleSide.LEFT:
-            top_shelf_y_mm = float(angle_result.capture_y_mm)
-
         probe_y_mm = await self._resolve_stage_extension_probe_y_mm(
             worker,
             side,
             bounds,
-            top_shelf_y_mm=top_shelf_y_mm,
+            top_shelf_y_mm=float(angle_result.capture_y_mm),
         )
         stage_extension_mm = await self._run_stage_extension_calibration_for_side(
             worker,
