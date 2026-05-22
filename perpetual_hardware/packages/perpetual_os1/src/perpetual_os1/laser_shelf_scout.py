@@ -8,7 +8,6 @@ SHELF_SCOUT_STEP_MM = 2.0
 SHELF_SCOUT_X_OFFSETS_MM = [0.0]
 RIGHT_MODULE_SHELF_SCOUT_X_MM = 0.0
 SHELF_EDGE_CONFIRMATION_COUNT = 3
-SHELF_EDGE_CENTER_OFFSET_FROM_LOST_DEPTH_MM = 8.0
 SHELF_BRIM_MIN_HEIGHT_MM = 8.0
 SHELF_BRIM_MAX_HEIGHT_MM = 14.0
 SHELF_MIN_SPACING_MM = 40.0
@@ -87,17 +86,24 @@ def build_shelf_edge_for_run(
 	y_positions: list[float],
 	run_start_idx: int,
 	run_end_idx: int,
-	lost_depth_idx: int,
+	is_bounded_band: bool,
 ) -> ShelfSurfaceEdge | None:
 	run_length = run_end_idx - run_start_idx + 1
+	band_height_mm = abs(y_positions[run_end_idx] - y_positions[run_start_idx]) + SHELF_SCOUT_STEP_MM
 
 	if run_length < SHELF_EDGE_CONFIRMATION_COUNT:
 		return None
 
-	if lost_depth_idx < 0 or lost_depth_idx >= len(y_positions):
+	if is_bounded_band is False:
 		return None
 
-	center_y_mm = float(y_positions[lost_depth_idx]) + SHELF_EDGE_CENTER_OFFSET_FROM_LOST_DEPTH_MM
+	if band_height_mm < SHELF_BRIM_MIN_HEIGHT_MM:
+		return None
+
+	if band_height_mm > SHELF_BRIM_MAX_HEIGHT_MM:
+		return None
+
+	center_y_mm = float((y_positions[run_start_idx] + y_positions[run_end_idx]) / 2.0)
 	return ShelfSurfaceEdge(x_mm=x_mm, y_mm=center_y_mm)
 
 
@@ -196,7 +202,7 @@ async def scan_shelf_scout_line(
 			y_positions=y_positions,
 			run_start_idx=run_start_idx,
 			run_end_idx=run_end_idx,
-			lost_depth_idx=position_idx,
+			is_bounded_band=run_start_idx > 0,
 		)
 
 		if edge is not None:
@@ -217,5 +223,20 @@ async def scan_shelf_scout_line(
 		run_start_idx = None
 		run_end_idx = None
 		position_idx += 1
+
+	if run_start_idx is not None and run_end_idx is not None:
+		edge = build_shelf_edge_for_run(
+			x_mm=x_mm,
+			y_positions=y_positions,
+			run_start_idx=run_start_idx,
+			run_end_idx=run_end_idx,
+			is_bounded_band=run_start_idx > 0 and run_end_idx < len(y_positions) - 1,
+		)
+
+		if edge is not None:
+			detected_edges.append(edge)
+
+			if stop_after_first_edge is True:
+				return depth_values, detected_edges
 
 	return depth_values, detected_edges
