@@ -7,6 +7,7 @@ import pytest
 from perpetual_os1.laser_angle_calibration import (
 	RIGHT_MODULE_ROTATION_SAFE_X_MM,
 	ShelfSurfaceEdge,
+	build_shelf_scout_x_positions,
 	filter_shelf_edges,
 	get_default_rotation_center_deg,
 	prepare_capture_pose,
@@ -70,6 +71,37 @@ def test_filter_shelf_edges_discards_close_duplicates_without_appending_floor() 
 		ShelfSurfaceEdge(x_mm=25.0, y_mm=80.0),
 		ShelfSurfaceEdge(x_mm=25.0, y_mm=35.0),
 	]
+
+
+def test_angle_shelf_scout_uses_configured_scan_bounds_instead_of_probe_x() -> None:
+	scan_config = SimpleNamespace(
+		left_bounds_x_min_mm=0.0,
+		left_bounds_x_max_mm=950.0,
+		left_xy_reference=SimpleNamespace(x_mm=358.5),
+	)
+
+	assert build_shelf_scout_x_positions(
+		scan_config=scan_config,
+		x_min_mm=475.0,
+		x_max_mm=475.0,
+		side_name='left',
+		scout_x_mm=None,
+	) == [950.0]
+
+
+def test_angle_shelf_scout_explicit_x_overrides_configured_scan_bounds() -> None:
+	scan_config = SimpleNamespace(
+		left_bounds_x_min_mm=0.0,
+		left_bounds_x_max_mm=950.0,
+	)
+
+	assert build_shelf_scout_x_positions(
+		scan_config=scan_config,
+		x_min_mm=475.0,
+		x_max_mm=475.0,
+		side_name='left',
+		scout_x_mm=475.0,
+	) == [475.0]
 
 
 @pytest.mark.asyncio

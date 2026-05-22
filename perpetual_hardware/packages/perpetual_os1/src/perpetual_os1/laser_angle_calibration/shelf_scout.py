@@ -41,18 +41,26 @@ def build_shelf_scout_x_positions(
 	scout_x_mm: float | None,
 ) -> list[float]:
 	left_reference_x_mm: float | None = None
+	resolved_x_min_mm = float(x_min_mm)
+	resolved_x_max_mm = float(x_max_mm)
 
 	if scout_x_mm is None:
+		configured_x_min_mm = getattr(scan_config, f'{side_name}_bounds_x_min_mm', None)
+		configured_x_max_mm = getattr(scan_config, f'{side_name}_bounds_x_max_mm', None)
+
+		if configured_x_min_mm is not None and configured_x_max_mm is not None:
+			resolved_x_min_mm = float(configured_x_min_mm)
+			resolved_x_max_mm = float(configured_x_max_mm)
+
 		left_reference = getattr(scan_config, 'left_xy_reference', None)
 		if left_reference is None:
 			left_reference = getattr(scan_config, 'left_reference', None)
 
 		if left_reference is not None:
 			left_reference_x_mm = float(left_reference.x_mm)
-
 	return build_shared_shelf_scout_x_positions(
-		x_min_mm=x_min_mm,
-		x_max_mm=x_max_mm,
+		x_min_mm=resolved_x_min_mm,
+		x_max_mm=resolved_x_max_mm,
 		is_right_side=side_name == 'right',
 		scout_x_mm=scout_x_mm,
 		left_reference_x_mm=left_reference_x_mm,
