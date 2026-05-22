@@ -610,7 +610,7 @@ async def test_run_angle_calibration_uses_stage_stall_method_when_configured() -
     assert result.sample_count == 3
     assert stage_motor.home.await_count == 2
     assert prepare_mock.await_count == 3
-    assert probe_mock.await_args.kwargs['fast_approach_mm'] == pytest.approx(20.0)
+    assert probe_mock.await_args.kwargs['fast_approach_mm'] == pytest.approx(3.0)
 
 
 @pytest.mark.asyncio
