@@ -22,7 +22,7 @@ def _write_stage_stall_angle_debug_document(
     fine_summaries: list[dict[str, Any]],
     validation_summaries: list[dict[str, Any]],
     selected_summaries: list[dict[str, Any]],
-    best_summary: dict[str, Any],
+    best_summary: dict[str, Any] | None,
     selected_pass: str,
     rotation_positions: list[float],
 ) -> Path:
@@ -719,6 +719,29 @@ class AngleRunnerMixin:
             best_summary = coarse_best_summary
 
         if best_summary is None:
+            try:
+                debug_path = _write_stage_stall_angle_debug_document(
+                    side_name=side_module_name,
+                    previous_rotation_deg=previous_rotation_deg,
+                    rotation_center_deg=rotation_center_deg,
+                    capture_y_mm=capture_y_mm,
+                    probe_x_mm=probe_x_mm,
+                    fast_approach_mm=fast_approach_mm,
+                    min_valid_stage_position_mm=min_valid_stage_position_mm,
+                    validation_plateau_tolerance_mm=validation_plateau_tolerance_mm,
+                    samples=samples,
+                    coarse_summaries=coarse_summaries,
+                    fine_summaries=fine_summaries,
+                    validation_summaries=validation_summaries,
+                    selected_summaries=selected_summaries,
+                    best_summary=None,
+                    selected_pass="invalid",
+                    rotation_positions=rotation_positions,
+                )
+                angle_module.print_status(f"stage_probe=debug path={debug_path}")
+            except Exception as exc:
+                logger.warning("Failed to write stage-stall angle debug document: %s", exc)
+
             raise ValueError("stage-stall angle calibration did not detect any valid stage contacts")
 
         updated_rotation_deg = float(best_summary["absolute_rotation_deg"])
