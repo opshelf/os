@@ -48,3 +48,4 @@ class StageStallProbeSample:
 	stalled: bool
 	status: str
 	alarm_code: int | None
+	pass_name: str = 'coarse'

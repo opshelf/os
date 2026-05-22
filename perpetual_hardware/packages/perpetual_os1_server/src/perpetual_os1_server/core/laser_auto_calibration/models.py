@@ -41,10 +41,13 @@ ANGLE_SAMPLE_RE = re.compile(
     r"sample=(?P<status>ok|invalid) x=(?P<x>-?\d+(?:\.\d+)?) z=(?P<z>-?\d+(?:\.\d+)?) rotation_deg=(?P<rotation>-?\d+(?:\.\d+)?)(?: distance_mm=(?P<distance>-?\d+(?:\.\d+)?))?"
 )
 STAGE_STALL_CAPTURE_RE = re.compile(
-    r"phase=stage-stall rotation=(?P<rotation_idx>\d+)/(?P<rotation_count>\d+) absolute_rotation_deg=(?P<absolute>-?\d+(?:\.\d+)?)"
+    r"phase=stage-stall (?:pass=(?P<pass_name>[a-z_]+) )?"
+    r"rotation=(?P<rotation_idx>\d+)/(?P<rotation_count>\d+) "
+    r"absolute_rotation_deg=(?P<absolute>-?\d+(?:\.\d+)?)"
 )
 STAGE_STALL_PROBE_RE = re.compile(
-    r"stage_probe=(?P<status>stall|skip) rotation_deg=(?P<rotation>-?\d+(?:\.\d+)?) "
+    r"stage_probe=(?P<status>stall|skip) (?:pass=(?P<pass_name>[a-z_]+) )?"
+    r"rotation_deg=(?P<rotation>-?\d+(?:\.\d+)?) "
     r"absolute_rotation_deg=(?P<absolute>-?\d+(?:\.\d+)?) "
     r"(?:status=(?P<probe_status>[a-z_]+) )?stage_position_mm=(?P<stage>-?\d+(?:\.\d+)?)"
 )
@@ -363,24 +366,98 @@ def _build_stage_stall_rotation_positions(
     rotation_center_deg: float,
     rotation_limit_deg: float,
 ) -> list[float]:
+    del side
     requested_positions = angle_module.build_axis_positions(
-        float(_get_scan_config_value(scan_config, "angle_calibration_stage_stall_rotation_min_deg", -3.0)),
-        float(_get_scan_config_value(scan_config, "angle_calibration_stage_stall_rotation_max_deg", 3.0)),
-        float(_get_scan_config_value(scan_config, "angle_calibration_rotation_step_deg", 1.0)),
+        float(
+            _get_scan_config_value(
+                scan_config,
+                "angle_calibration_stage_stall_coarse_min_deg",
+                _get_scan_config_value(scan_config, "angle_calibration_stage_stall_rotation_min_deg", -4.5),
+            )
+        ),
+        float(
+            _get_scan_config_value(
+                scan_config,
+                "angle_calibration_stage_stall_coarse_max_deg",
+                _get_scan_config_value(scan_config, "angle_calibration_stage_stall_rotation_max_deg", 1.0),
+            )
+        ),
+        float(
+            _get_scan_config_value(
+                scan_config,
+                "angle_calibration_stage_stall_coarse_step_deg",
+                _get_scan_config_value(scan_config, "angle_calibration_rotation_step_deg", 1.0),
+            )
+        ),
     )
-    valid_positions = [
-        float(rotation_deg)
-        for rotation_deg in requested_positions
-        if 0.0 <= rotation_center_deg + float(rotation_deg) <= rotation_limit_deg
-    ]
+    valid_positions = _build_valid_stage_stall_rotation_positions(
+        requested_positions,
+        rotation_center_deg,
+        rotation_limit_deg,
+    )
 
     if len(valid_positions) == 0:
         raise ValueError(
-            "stage-stall rotation sweep has no valid positions "
+            "stage-stall coarse rotation sweep has no valid positions "
             f"for center {rotation_center_deg:.3f} deg within 0..{rotation_limit_deg:.3f}"
         )
 
-    return _build_angle_rotation_positions_for_side(side, valid_positions, rotation_center_deg, rotation_limit_deg)
+    return valid_positions
+
+
+def _build_stage_stall_fine_rotation_positions(
+    scan_config: Any,
+    coarse_best_rotation_deg: float,
+    rotation_center_deg: float,
+    rotation_limit_deg: float,
+) -> list[float]:
+    fine_window_deg = float(
+        _get_scan_config_value(scan_config, "angle_calibration_stage_stall_fine_window_deg", 1.5)
+    )
+
+    if fine_window_deg <= 0.0:
+        return []
+
+    requested_positions = angle_module.build_axis_positions(
+        float(coarse_best_rotation_deg) - fine_window_deg,
+        float(coarse_best_rotation_deg) + fine_window_deg,
+        float(_get_scan_config_value(scan_config, "angle_calibration_stage_stall_fine_step_deg", 0.25)),
+    )
+    valid_positions = _build_valid_stage_stall_rotation_positions(
+        requested_positions,
+        rotation_center_deg,
+        rotation_limit_deg,
+    )
+
+    if len(valid_positions) == 0:
+        raise ValueError(
+            "stage-stall fine rotation sweep has no valid positions "
+            f"for center {rotation_center_deg:.3f} deg within 0..{rotation_limit_deg:.3f}"
+        )
+
+    return valid_positions
+
+
+def _build_valid_stage_stall_rotation_positions(
+    requested_positions: list[float],
+    rotation_center_deg: float,
+    rotation_limit_deg: float,
+) -> list[float]:
+    valid_positions: list[float] = []
+    seen_positions: set[float] = set()
+
+    for rotation_deg in requested_positions:
+        rotation_deg = float(rotation_deg)
+        rounded_rotation_deg = round(rotation_deg, 6)
+
+        if rounded_rotation_deg in seen_positions:
+            continue
+
+        if 0.0 <= rotation_center_deg + rotation_deg <= rotation_limit_deg:
+            valid_positions.append(rotation_deg)
+            seen_positions.add(rounded_rotation_deg)
+
+    return valid_positions
 
 
 def _resolve_stage_stall_probe_x_mm(scan_config: Any) -> float:
@@ -622,6 +699,7 @@ __all__ = [
     "_build_angle_x_positions",
     "_build_angle_z_offset_positions",
     "_build_stage_stall_rotation_positions",
+    "_build_stage_stall_fine_rotation_positions",
     "_resolve_stage_stall_probe_x_mm",
     "_build_nominal_rotation_deg",
     "_build_estimated_rotation_deg",

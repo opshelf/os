@@ -273,6 +273,7 @@ class SnapshotRunnerMixin:
                         "rotation_idx": int(stage_stall_capture_match.group("rotation_idx")),
                         "rotation_count": int(stage_stall_capture_match.group("rotation_count")),
                         "absolute_rotation_deg": float(stage_stall_capture_match.group("absolute")),
+                        "stage_stall_pass": stage_stall_capture_match.group("pass_name"),
                     }
                 )
 
@@ -284,6 +285,7 @@ class SnapshotRunnerMixin:
                         "sample_rotation_deg": float(stage_stall_probe_match.group("rotation")),
                         "absolute_rotation_deg": float(stage_stall_probe_match.group("absolute")),
                         "stage_position_mm": float(stage_stall_probe_match.group("stage")),
+                        "stage_stall_pass": stage_stall_probe_match.group("pass_name"),
                         "stage_probe_status": stage_stall_probe_match.group("probe_status"),
                     }
                 )
