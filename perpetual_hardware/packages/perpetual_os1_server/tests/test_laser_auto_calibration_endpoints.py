@@ -610,8 +610,91 @@ async def test_run_angle_calibration_uses_stage_stall_method_when_configured() -
     assert result.sample_count == 3
     assert stage_motor.home.await_count == 2
     assert prepare_mock.await_count == 3
-    assert probe_mock.await_args.kwargs['fast_approach_mm'] == pytest.approx(50.0)
+    assert probe_mock.await_args.kwargs['fast_approach_mm'] == pytest.approx(20.0)
 
+
+@pytest.mark.asyncio
+async def test_run_angle_calibration_validates_top_fine_angles_by_median() -> None:
+    manager = LaserAutoCalibrationManager()
+    manager._update_snapshot = AsyncMock()
+    stage_motor = SimpleNamespace(
+        _params=SimpleNamespace(lim=75.0, rpm=100),
+        home=AsyncMock(),
+    )
+    tool = SimpleNamespace(
+        _laser_enabled=True,
+        _laser=object(),
+        _mx=object(),
+        _my=object(),
+        _mg=object(),
+        _ms=stage_motor,
+        _mr=SimpleNamespace(_params=SimpleNamespace(lim=270.0)),
+        _params=SimpleNamespace(
+            parameters=SimpleNamespace(
+                STAGE_EXTENSION_SHELF_FRONT=52.0,
+                STAGE_EXTENSION_SHELF_BACK=37.0,
+            )
+        ),
+        retract=AsyncMock(),
+        get_param=AsyncMock(side_effect=[4.5, 160.5, 800.0, 1200.0]),
+    )
+    worker = SimpleNamespace(_robot=SimpleNamespace(_tool=tool))
+    scan_config = SimpleNamespace(
+        angle_calibration_method='stage_stall',
+        angle_calibration_stage_stall_rotation_min_deg=0.0,
+        angle_calibration_stage_stall_rotation_max_deg=1.0,
+        angle_calibration_rotation_step_deg=1.0,
+        angle_calibration_stage_stall_probe_x_mm=475.0,
+        angle_calibration_stage_stall_start_mm=3.0,
+        angle_calibration_stage_stall_target_mm=None,
+        angle_calibration_stage_stall_probe_step_mm=0.5,
+        angle_calibration_stage_stall_probe_rpm=20,
+        angle_calibration_stage_stall_fast_approach_mm=20.0,
+        angle_calibration_stage_stall_fast_approach_margin_mm=2.0,
+        angle_calibration_stage_stall_fast_approach_rpm=20,
+        angle_calibration_stage_stall_timeout_s=30.0,
+        angle_calibration_stage_stall_no_progress_timeout_s=0.25,
+        angle_calibration_stage_stall_backoff_mm=8.0,
+        angle_calibration_stage_stall_fine_window_deg=0.25,
+        angle_calibration_stage_stall_fine_step_deg=0.25,
+        angle_calibration_stage_stall_validation_count=2,
+        angle_calibration_stage_stall_validation_repeats=2,
+        laser_sample_settle_ms=0,
+        laser_samples_per_point=1,
+        laser_scan_z_offset_from_place_mm=0.0,
+        laser_scan_stage_extension_mm=60.0,
+    )
+    config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=scan_config)))
+    probe_results = [
+        (True, 20.0, 'no_progress', 0),
+        (True, 25.0, 'no_progress', 0),
+        (True, 30.0, 'no_progress', 0),
+        (True, 31.0, 'no_progress', 0),
+        (True, 20.0, 'no_progress', 0),
+        (True, 28.0, 'no_progress', 0),
+        (True, 29.0, 'no_progress', 0),
+        (True, 32.0, 'no_progress', 0),
+        (True, 33.0, 'no_progress', 0),
+    ]
+
+    with patch('perpetual_os1_server.core.laser_auto_calibration.get_root_config', return_value=config):
+        with patch.object(angle_module, 'resolve_capture_y_mm', AsyncMock(return_value=1144.0)):
+            with patch.object(angle_module, 'prepare_capture_pose', AsyncMock()):
+                with patch.object(angle_module, 'probe_stage_until_stall', AsyncMock(side_effect=probe_results)):
+                    with patch.object(angle_module, 'retract_stage_after_stall', AsyncMock()):
+                        with patch.object(angle_module, 'finish_stage_stall_capture', AsyncMock()):
+                            with patch.object(angle_module, 'write_stage_stall_output_document') as write_mock:
+                                result = await manager._run_angle_calibration_for_side(
+                                    worker,
+                                    StorageModuleSide.RIGHT,
+                                    ScanBounds(x_min=5.0, x_max=950.0, y_min=1000.0, y_max=1210.0),
+                                )
+
+    assert result.updated_rotation_deg == pytest.approx(0.75)
+    assert result.alpha_deg == pytest.approx(0.75)
+    assert result.stage_position_mm == pytest.approx(32.5)
+    assert result.sample_count == 9
+    assert write_mock.call_args.kwargs['metadata']['selected_pass'] == 'validation'
 
 @pytest.mark.asyncio
 async def test_run_angle_calibration_skips_final_retract_when_cancelled() -> None:
