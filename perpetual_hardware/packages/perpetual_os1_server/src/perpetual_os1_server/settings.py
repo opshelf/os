@@ -208,7 +208,7 @@ def _build_minimal_config(data: dict) -> dict:
                         "angle_calibration_stage_stall_coarse_step_deg": 1.0,
                         "angle_calibration_stage_stall_fine_window_deg": 1.5,
                         "angle_calibration_stage_stall_fine_step_deg": 0.25,
-                        "angle_calibration_stage_stall_fast_approach_mm": 20.0,
+                        "angle_calibration_stage_stall_fast_approach_mm": 0.0,
                         "angle_calibration_stage_stall_validation_count": 3,
                         "angle_calibration_stage_stall_validation_repeats": 3,
                         "angle_calibration_stage_stall_validation_retry_count": 1,

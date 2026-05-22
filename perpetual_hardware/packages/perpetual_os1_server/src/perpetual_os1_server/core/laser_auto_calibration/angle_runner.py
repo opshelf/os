@@ -400,7 +400,7 @@ class AngleRunnerMixin:
             requested_fast_approach_mm=getattr(
                 scan_config,
                 "angle_calibration_stage_stall_fast_approach_mm",
-                20.0,
+                0.0,
             ),
             parameters=worker._robot._tool._params.parameters,
             side_name=side_name,
