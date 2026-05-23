@@ -214,8 +214,9 @@ def _build_minimal_config(data: dict) -> dict:
                         "angle_calibration_stage_stall_validation_retry_count": 1,
                         "angle_calibration_stage_stall_coarse_retry_count": 1,
                         "angle_calibration_stage_stall_min_valid_stage_position_mm": 40.0,
-                        "angle_calibration_stage_stall_validation_plateau_tolerance_mm": 0.5,
+                        "angle_calibration_stage_stall_validation_plateau_tolerance_mm": 0.75,
                         "angle_calibration_stage_stall_coarse_validation_count": 1,
+                        "angle_calibration_stage_stall_validation_high_side_window_deg": 0.75,
                     },
                 },
             "io": {

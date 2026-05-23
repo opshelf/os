@@ -68,6 +68,7 @@ def _build_stage_stall_validation_rotation_positions(
     validation_count: int,
     validation_repeats: int,
     coarse_validation_count: int,
+    high_side_window_deg: float,
 ) -> list[float]:
     if validation_count <= 0 or validation_repeats <= 0:
         return []
@@ -92,16 +93,35 @@ def _build_stage_stall_validation_rotation_positions(
     )
     candidate_rotations: list[float] = []
 
-    for summary in ordered_fine_summaries[:validation_count]:
-        candidate_rotations.append(float(summary["rotation_deg"]))
-
-    for summary in ordered_coarse_summaries[:coarse_validation_count]:
-        rotation_deg = float(summary["rotation_deg"])
-
+    def did_append_candidate(rotation_deg: float) -> None:
         if any(abs(rotation_deg - candidate) < 1e-9 for candidate in candidate_rotations):
-            continue
+            return
 
         candidate_rotations.append(rotation_deg)
+
+    for summary in ordered_fine_summaries[:validation_count]:
+        did_append_candidate(float(summary["rotation_deg"]))
+
+    if len(ordered_fine_summaries) > 0 and high_side_window_deg > 0.0:
+        best_fine_rotation_deg = float(ordered_fine_summaries[0]["rotation_deg"])
+        high_side_summaries = sorted(
+            fine_summaries,
+            key=lambda summary: float(summary["rotation_deg"]),
+        )
+
+        for summary in high_side_summaries:
+            rotation_deg = float(summary["rotation_deg"])
+
+            if rotation_deg < best_fine_rotation_deg:
+                continue
+
+            if rotation_deg > best_fine_rotation_deg + high_side_window_deg:
+                continue
+
+            did_append_candidate(rotation_deg)
+
+    for summary in ordered_coarse_summaries[:coarse_validation_count]:
+        did_append_candidate(float(summary["rotation_deg"]))
 
     validation_rotation_positions: list[float] = []
 
@@ -421,10 +441,13 @@ class AngleRunnerMixin:
             getattr(scan_config, "angle_calibration_stage_stall_coarse_retry_count", 1)
         )
         validation_plateau_tolerance_mm = float(
-            getattr(scan_config, "angle_calibration_stage_stall_validation_plateau_tolerance_mm", 0.5)
+            getattr(scan_config, "angle_calibration_stage_stall_validation_plateau_tolerance_mm", 0.75)
         )
         coarse_validation_count = int(
             getattr(scan_config, "angle_calibration_stage_stall_coarse_validation_count", 1)
+        )
+        validation_high_side_window_deg = float(
+            getattr(scan_config, "angle_calibration_stage_stall_validation_high_side_window_deg", 0.75)
         )
         angle_args = argparse.Namespace(
             y_mm=None,
@@ -630,6 +653,7 @@ class AngleRunnerMixin:
                             validation_count=validation_count,
                             validation_repeats=validation_repeats,
                             coarse_validation_count=coarse_validation_count,
+                            high_side_window_deg=validation_high_side_window_deg,
                         )
 
                         if len(validation_rotation_positions) > 0:

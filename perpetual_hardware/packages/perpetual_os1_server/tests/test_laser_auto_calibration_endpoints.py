@@ -34,6 +34,10 @@ from perpetual_os1_server.core.laser_auto_calibration import (
     _build_estimated_rotation_deg,
     _build_valid_rotation_positions,
 )
+from perpetual_os1_server.core.laser_auto_calibration.angle_runner import (
+    _build_stage_stall_validation_rotation_positions,
+    _select_stage_stall_best_summary,
+)
 from perpetual_os1_server.routers import robot as robot_router
 from perpetual_os1_server.core.laser_auto_calibration import LaserAutoCalibrationSnapshot
 from perpetual_os1_server.routers import calibration as calibration_router
@@ -169,6 +173,55 @@ def test_build_stage_stall_fine_rotation_positions_centers_on_coarse_best() -> N
     assert rotation_positions[-1] == pytest.approx(5.5)
     assert 4.0 in rotation_positions
 
+
+def test_build_stage_stall_validation_positions_includes_high_side_window() -> None:
+    fine_summaries = [
+        {"rotation_deg": 3.75, "median_stage_position_mm": 42.53},
+        {"rotation_deg": 4.0, "median_stage_position_mm": 42.23},
+        {"rotation_deg": 4.25, "median_stage_position_mm": 29.21},
+        {"rotation_deg": 4.5, "median_stage_position_mm": 29.19},
+    ]
+
+    rotation_positions = _build_stage_stall_validation_rotation_positions(
+        fine_summaries=fine_summaries,
+        coarse_summaries=[],
+        validation_count=2,
+        validation_repeats=3,
+        coarse_validation_count=0,
+        high_side_window_deg=0.75,
+    )
+
+    assert rotation_positions == [
+        3.75,
+        3.75,
+        3.75,
+        4.0,
+        4.0,
+        4.0,
+        4.25,
+        4.25,
+        4.25,
+        4.5,
+        4.5,
+        4.5,
+    ]
+
+
+def test_select_stage_stall_best_summary_chooses_larger_plateau_angle() -> None:
+    summaries = [
+        {"rotation_deg": 3.75, "absolute_rotation_deg": 3.75, "median_stage_position_mm": 42.265},
+        {"rotation_deg": 4.0, "absolute_rotation_deg": 4.0, "median_stage_position_mm": 42.14},
+        {"rotation_deg": 4.5, "absolute_rotation_deg": 4.5, "median_stage_position_mm": 41.725},
+    ]
+
+    best_summary = _select_stage_stall_best_summary(
+        summaries,
+        min_stage_position_mm=40.0,
+        plateau_tolerance_mm=0.75,
+    )
+
+    assert best_summary is not None
+    assert best_summary["rotation_deg"] == pytest.approx(4.5)
 def test_build_angle_x_positions_runs_from_high_x_to_low_x() -> None:
     scan_config = SimpleNamespace(
         angle_calibration_x_min_mm=50.0,
@@ -663,6 +716,7 @@ async def test_run_angle_calibration_validates_top_fine_angles_by_median() -> No
         angle_calibration_stage_stall_min_valid_stage_position_mm=0.0,
         angle_calibration_stage_stall_validation_plateau_tolerance_mm=0.0,
         angle_calibration_stage_stall_coarse_validation_count=0,
+        angle_calibration_stage_stall_validation_high_side_window_deg=0.0,
         laser_sample_settle_ms=0,
         laser_samples_per_point=1,
         laser_scan_z_offset_from_place_mm=0.0,
@@ -751,6 +805,7 @@ async def test_run_angle_calibration_retries_low_validation_contacts() -> None:
         angle_calibration_stage_stall_min_valid_stage_position_mm=35.0,
         angle_calibration_stage_stall_validation_plateau_tolerance_mm=0.5,
         angle_calibration_stage_stall_coarse_validation_count=0,
+        angle_calibration_stage_stall_validation_high_side_window_deg=0.0,
         laser_sample_settle_ms=0,
         laser_samples_per_point=1,
         laser_scan_z_offset_from_place_mm=0.0,
