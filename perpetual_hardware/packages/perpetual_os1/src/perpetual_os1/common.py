@@ -647,6 +647,7 @@ class LaserScanConfig(BaseModel):
     angle_calibration_stage_stall_coarse_min_deg: float = 0.0
     angle_calibration_stage_stall_coarse_max_deg: float = 5.5
     angle_calibration_stage_stall_coarse_step_deg: float = Field(1.0, gt=0)
+    angle_calibration_stage_stall_coarse_start_deg: Optional[float] = 4.5
     angle_calibration_stage_stall_fine_window_deg: float = Field(1.5, ge=0)
     angle_calibration_stage_stall_fine_step_deg: float = Field(0.25, gt=0)
     angle_calibration_stage_stall_fast_approach_mm: Optional[float] = Field(default=0.0, ge=0)

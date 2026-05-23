@@ -144,11 +144,12 @@ def test_build_stage_stall_rotation_positions_uses_wide_coarse_defaults() -> Non
         360.0,
     )
 
-    assert rotation_positions[0] == pytest.approx(0.0)
-    assert rotation_positions[-1] == pytest.approx(5.5)
+    assert rotation_positions[0] == pytest.approx(5.0)
+    assert rotation_positions[-1] == pytest.approx(0.0)
     assert 0.0 in rotation_positions
     assert 5.5 in rotation_positions
     assert 6.0 not in rotation_positions
+    assert rotation_positions[1] == pytest.approx(4.0)
 
 
 def test_build_stage_stall_rotation_center_uses_nominal_side_angles() -> None:
@@ -727,6 +728,7 @@ async def test_run_angle_calibration_validates_top_fine_angles_by_median() -> No
         angle_calibration_stage_stall_rotation_min_deg=0.0,
         angle_calibration_stage_stall_rotation_max_deg=1.0,
         angle_calibration_rotation_step_deg=1.0,
+        angle_calibration_stage_stall_coarse_start_deg=None,
         angle_calibration_stage_stall_probe_x_mm=475.0,
         angle_calibration_stage_stall_start_mm=3.0,
         angle_calibration_stage_stall_target_mm=None,
@@ -818,6 +820,7 @@ async def test_run_angle_calibration_retries_low_validation_contacts() -> None:
         angle_calibration_stage_stall_rotation_min_deg=0.0,
         angle_calibration_stage_stall_rotation_max_deg=1.0,
         angle_calibration_rotation_step_deg=1.0,
+        angle_calibration_stage_stall_coarse_start_deg=None,
         angle_calibration_stage_stall_probe_x_mm=475.0,
         angle_calibration_stage_stall_start_mm=3.0,
         angle_calibration_stage_stall_target_mm=None,
