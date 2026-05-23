@@ -209,9 +209,9 @@ def test_build_stage_stall_validation_positions_includes_high_side_window() -> N
 
 def test_select_stage_stall_best_summary_chooses_larger_plateau_angle() -> None:
     summaries = [
-        {"rotation_deg": 3.75, "absolute_rotation_deg": 3.75, "median_stage_position_mm": 42.265},
-        {"rotation_deg": 4.0, "absolute_rotation_deg": 4.0, "median_stage_position_mm": 42.14},
-        {"rotation_deg": 4.5, "absolute_rotation_deg": 4.5, "median_stage_position_mm": 41.725},
+        {"rotation_deg": 3.75, "absolute_rotation_deg": 3.75, "median_stage_position_mm": 42.265, "valid_stall_count": 1},
+        {"rotation_deg": 4.0, "absolute_rotation_deg": 4.0, "median_stage_position_mm": 42.14, "valid_stall_count": 1},
+        {"rotation_deg": 4.5, "absolute_rotation_deg": 4.5, "median_stage_position_mm": 41.725, "valid_stall_count": 1},
     ]
 
     best_summary = _select_stage_stall_best_summary(
@@ -222,6 +222,36 @@ def test_select_stage_stall_best_summary_chooses_larger_plateau_angle() -> None:
 
     assert best_summary is not None
     assert best_summary["rotation_deg"] == pytest.approx(4.5)
+
+
+def test_select_stage_stall_best_summary_requires_valid_sample_count() -> None:
+    summaries = [
+        {
+            "rotation_deg": 4.0,
+            "absolute_rotation_deg": 4.0,
+            "median_stage_position_mm": 42.0,
+            "valid_stall_count": 1,
+            "stall_count": 3,
+        },
+        {
+            "rotation_deg": 4.25,
+            "absolute_rotation_deg": 4.25,
+            "median_stage_position_mm": 41.8,
+            "valid_stall_count": 2,
+            "stall_count": 3,
+        },
+    ]
+
+    best_summary = _select_stage_stall_best_summary(
+        summaries,
+        min_stage_position_mm=40.0,
+        plateau_tolerance_mm=0.75,
+        min_valid_sample_count=2,
+    )
+
+    assert best_summary is not None
+    assert best_summary["rotation_deg"] == pytest.approx(4.25)
+
 def test_build_angle_x_positions_runs_from_high_x_to_low_x() -> None:
     scan_config = SimpleNamespace(
         angle_calibration_x_min_mm=50.0,
@@ -717,6 +747,8 @@ async def test_run_angle_calibration_validates_top_fine_angles_by_median() -> No
         angle_calibration_stage_stall_validation_plateau_tolerance_mm=0.0,
         angle_calibration_stage_stall_coarse_validation_count=0,
         angle_calibration_stage_stall_validation_high_side_window_deg=0.0,
+        angle_calibration_stage_stall_low_contact_retry_count=0,
+        angle_calibration_stage_stall_validation_min_valid_sample_count=2,
         laser_sample_settle_ms=0,
         laser_samples_per_point=1,
         laser_scan_z_offset_from_place_mm=0.0,
@@ -806,6 +838,8 @@ async def test_run_angle_calibration_retries_low_validation_contacts() -> None:
         angle_calibration_stage_stall_validation_plateau_tolerance_mm=0.5,
         angle_calibration_stage_stall_coarse_validation_count=0,
         angle_calibration_stage_stall_validation_high_side_window_deg=0.0,
+        angle_calibration_stage_stall_low_contact_retry_count=0,
+        angle_calibration_stage_stall_validation_min_valid_sample_count=2,
         laser_sample_settle_ms=0,
         laser_samples_per_point=1,
         laser_scan_z_offset_from_place_mm=0.0,
