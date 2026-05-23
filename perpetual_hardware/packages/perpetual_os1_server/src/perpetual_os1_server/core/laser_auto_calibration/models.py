@@ -374,7 +374,11 @@ def _build_stage_stall_rotation_positions(
     rotation_center_deg: float,
     rotation_limit_deg: float,
 ) -> list[float]:
-    del side
+    coarse_start_deg = _get_scan_config_value(
+        scan_config,
+        "angle_calibration_stage_stall_coarse_start_deg",
+        4.5,
+    )
     requested_positions = angle_module.build_axis_positions(
         float(
             _get_scan_config_value(
@@ -410,7 +414,13 @@ def _build_stage_stall_rotation_positions(
             f"for center {rotation_center_deg:.3f} deg within 0..{rotation_limit_deg:.3f}"
         )
 
-    return valid_positions
+    if coarse_start_deg is None:
+        return valid_positions
+
+    return sorted(
+        valid_positions,
+        key=lambda position_deg: (abs(float(position_deg) - float(coarse_start_deg)), -float(position_deg)),
+    )
 
 
 def _build_stage_stall_fine_rotation_positions(
