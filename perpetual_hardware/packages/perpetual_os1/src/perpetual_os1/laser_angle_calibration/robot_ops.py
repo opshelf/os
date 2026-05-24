@@ -112,6 +112,7 @@ async def probe_stage_until_stall(
 	fast_approach_mm: float,
 	fast_approach_rpm: int | None,
 	auto_retract: bool = True,
+	should_use_continuous_move: bool = False,
 	should_abort: Callable[[], bool] | None = None,
 ) -> tuple[bool, float, str, int | None]:
 	raise_if_cancelled(should_abort)
@@ -144,10 +145,11 @@ async def probe_stage_until_stall(
 
 	position_epsilon_mm = 0.02
 	target_tolerance_mm = max(0.35, float(probe_step_mm) * 0.75)
+	step_mm = target_stage_mm - retract_stage_mm if should_use_continuous_move is True else probe_step_mm
 
 	while current_target_mm < target_stage_mm:
 		raise_if_cancelled(should_abort)
-		next_target_mm = min(current_target_mm + probe_step_mm, target_stage_mm)
+		next_target_mm = min(current_target_mm + step_mm, target_stage_mm)
 		await tool._ms.move_to_position_no_wait(next_target_mm, rpm=probe_rpm)
 		last_movement_time = time.monotonic()
 		last_position_mm = await tool._ms.get_position()
