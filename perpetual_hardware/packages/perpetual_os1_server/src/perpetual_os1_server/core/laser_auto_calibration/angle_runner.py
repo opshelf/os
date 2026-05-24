@@ -567,6 +567,7 @@ class AngleRunnerMixin:
                                 fast_approach_mm=fast_approach_mm,
                                 fast_approach_rpm=fast_approach_rpm,
                                 auto_retract=False,
+                                should_use_continuous_move=True,
                                 should_abort=self._should_abort_work,
                             )
                             sample = angle_module.StageStallProbeSample(
