@@ -571,7 +571,10 @@ def build_single_cell_rescan_candidate(
 	)
 
 	laser_offset_x_mm, laser_offset_y_mm = require_laser_offsets(scan_config)
-	candidate_center_x_mm = float(target_cell.calibration_point.x) - laser_offset_x_mm
+	if side == StorageModuleSide.RIGHT:
+		candidate_center_x_mm = float(target_cell.calibration_point.x) + laser_offset_x_mm
+	else:
+		candidate_center_x_mm = float(target_cell.calibration_point.x) - laser_offset_x_mm
 	candidate_center_y_mm = float(target_cell.calibration_point.y) + laser_offset_y_mm
 	half_width_mm = float(scan_config.expected_hole_width_mm) / 2.0
 	half_height_mm = float(scan_config.expected_hole_height_mm) / 2.0
