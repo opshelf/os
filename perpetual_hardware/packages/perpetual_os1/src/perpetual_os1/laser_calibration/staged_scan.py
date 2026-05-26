@@ -648,24 +648,33 @@ def restore_reference_cells(
 	scan_config: Any,
 	side: StorageModuleSide,
 	) -> None:
-	xy_reference = get_scan_xy_reference(scan_config=scan_config, side=side)
-	z_reference = get_scan_z_reference(scan_config=scan_config, side=side)
+	try:
+		xy_reference = get_scan_xy_reference(scan_config=scan_config, side=side)
+	except ValueError:
+		xy_reference = None
+
+	try:
+		z_reference = get_scan_z_reference(scan_config=scan_config, side=side)
+	except ValueError:
+		z_reference = None
 	restored_xy_count = 0
 	restored_z_count = 0
 
 	for shelf in scanned_shelves:
-		for cell in shelf.cells:
+		for cell in getattr(shelf, "cells", []):
 			if cell.calibration_point is None:
 				continue
 
-			if int(shelf.shelf_idx) == int(xy_reference.shelf_idx) and int(cell.cell_idx) == int(xy_reference.cell_idx):
-				cell.calibration_point.x = float(xy_reference.x_mm)
-				cell.calibration_point.y = float(xy_reference.y_mm)
-				restored_xy_count += 1
+			if xy_reference is not None:
+				if int(shelf.shelf_idx) == int(xy_reference.shelf_idx) and int(cell.cell_idx) == int(xy_reference.cell_idx):
+					cell.calibration_point.x = float(xy_reference.x_mm)
+					cell.calibration_point.y = float(xy_reference.y_mm)
+					restored_xy_count += 1
 
-			if int(shelf.shelf_idx) == int(z_reference[0]) and int(cell.cell_idx) == int(z_reference[1]):
-				cell.calibration_point.z_offset = float(z_reference[2])
-				restored_z_count += 1
+			if z_reference is not None:
+				if int(shelf.shelf_idx) == int(z_reference[0]) and int(cell.cell_idx) == int(z_reference[1]):
+					cell.calibration_point.z_offset = float(z_reference[2])
+					restored_z_count += 1
 
 	if restored_xy_count > 0 or restored_z_count > 0:
 		print_status(
@@ -968,11 +977,23 @@ def apply_single_cell_rescan(
 	xy_reference_detected_cell: ScanDetectedCell | None = None,
 	z_reference_wall_depth_mm: float | None = None,
 	) -> None:
-	target_cell = resolve_target_cell(
+	target_shelf = resolve_target_shelf(
 		grid=grid,
 		side=side,
-		target=target,
+		shelf_idx=target.shelf_idx,
 	)
+	try:
+		target_cell = target_shelf.get_cell(target.cell_idx)
+	except IndexError as exc:
+		raise ValueError(
+			f"Cell {target.cell_idx} does not exist on {side.value} shelf {target.shelf_idx}"
+		) from exc
+
+	if target_cell.calibration_point is None:
+		raise ValueError(
+			f"Cell {target.shelf_idx}:{target.cell_idx} has no calibration point"
+		)
+
 	calibration_point = target_cell.calibration_point
 	previous_z_offset = float(calibration_point.z_offset)
 	calibration_x = float(detected_cell.tool_x_mm)
