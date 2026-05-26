@@ -150,6 +150,7 @@ async def test_prepare_capture_pose_rotates_in_place_for_right_when_rotation_cha
 		ensure_safe_rotation_x_position=AsyncMock(return_value=945.0),
 		restore_safe_rotation_x_position=AsyncMock(),
 		ensure_safe_rotation_stage_extension=AsyncMock(),
+		is_rotation_at_position=AsyncMock(return_value=False),
 	)
 
 	await prepare_capture_pose(
@@ -188,6 +189,7 @@ async def test_prepare_capture_pose_uses_safe_right_rotation_path_when_requested
 		ensure_safe_rotation_x_position=AsyncMock(return_value=RIGHT_MODULE_ROTATION_SAFE_X_MM),
 		restore_safe_rotation_x_position=AsyncMock(),
 		ensure_safe_rotation_stage_extension=AsyncMock(),
+		is_rotation_at_position=AsyncMock(return_value=False),
 	)
 
 	await prepare_capture_pose(
@@ -227,6 +229,7 @@ async def test_prepare_capture_pose_uses_safe_rotation_path_for_left_when_reques
 		ensure_safe_rotation_x_position=AsyncMock(return_value=RIGHT_MODULE_ROTATION_SAFE_X_MM),
 		restore_safe_rotation_x_position=AsyncMock(),
 		ensure_safe_rotation_stage_extension=AsyncMock(),
+		is_rotation_at_position=AsyncMock(return_value=False),
 	)
 
 	await prepare_capture_pose(

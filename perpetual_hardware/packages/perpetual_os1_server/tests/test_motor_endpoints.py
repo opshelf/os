@@ -50,6 +50,7 @@ def _mock_worker(motors: dict[str, AsyncMock] | None = None):
 	robot._tool.ensure_safe_rotation_stage_extension = AsyncMock()
 	robot._tool.ensure_safe_rotation_x_position = AsyncMock(return_value=None)
 	robot._tool.restore_safe_rotation_x_position = AsyncMock()
+	robot._tool.is_rotation_at_position = AsyncMock(return_value=False)
 	robot._tool.rotate_to_home_orientation = AsyncMock()
 	worker._robot = robot
 
