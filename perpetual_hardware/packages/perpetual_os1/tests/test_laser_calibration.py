@@ -1055,6 +1055,52 @@ def test_apply_single_cell_rescan_applies_reference_xy_and_z_offsets() -> None:
 	assert calibration_point.z_offset == pytest.approx(12.0)
 	grid.save.assert_called_once_with()
 
+
+def test_apply_single_cell_rescan_keeps_reference_values_fixed() -> None:
+	calibration_point = SimpleNamespace(x=1.0, y=2.0, z_offset=3.0)
+	target_cell = SimpleNamespace(cell_idx=0, calibration_point=calibration_point)
+	target_shelf = SimpleNamespace(
+		shelf_idx=3,
+		cells=[target_cell],
+		get_cell=lambda cell_idx: target_cell,
+	)
+	grid = SimpleNamespace(
+		get_shelf=lambda side, shelf_idx: target_shelf,
+		save=Mock(),
+	)
+	scan_config = SimpleNamespace(
+		right_xy_reference=SimpleNamespace(
+			shelf_idx=3,
+			cell_idx=0,
+			anchor='top_left',
+			x_mm=11.0,
+			y_mm=1162.5,
+		),
+		right_z_reference=SimpleNamespace(
+			shelf_idx=3,
+			cell_idx=0,
+			z_offset_mm=11.0,
+			stage_extension_mm=37.0,
+		),
+	)
+	detected_cell = SimpleNamespace(tool_x_mm=12.0, tool_y_mm=1163.0)
+
+	apply_single_cell_rescan(
+		grid=grid,
+		target=SingleCellRescanTarget(shelf_idx=3, cell_idx=0),
+		side=StorageModuleSide.RIGHT,
+		detected_cell=detected_cell,
+		wall_depth_mm=8.0,
+		scan_config=scan_config,
+		xy_reference_detected_cell=detected_cell,
+		z_reference_wall_depth_mm=8.0,
+		current_stage_extension_mm=37.0,
+	)
+
+	assert calibration_point.x == pytest.approx(11.0)
+	assert calibration_point.y == pytest.approx(1162.5)
+	assert calibration_point.z_offset == pytest.approx(11.0)
+
 def test_apply_single_shelf_analysis_replaces_only_target_shelf(tmp_path: Path) -> None:
 	target_shelf = Shelf(
 		shelf_idx=1,
