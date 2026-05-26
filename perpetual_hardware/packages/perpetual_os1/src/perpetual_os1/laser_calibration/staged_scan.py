@@ -1013,6 +1013,11 @@ def apply_single_cell_rescan(
 	else:
 		calibration_point.z_offset = previous_z_offset
 
+	restore_reference_cells(
+		scanned_shelves=[target_shelf],
+		scan_config=scan_config,
+		side=side,
+	)
 	grid.save()
 	print_status(
 		f"single_cell_apply=updated side={side.value} "
@@ -1092,6 +1097,11 @@ def apply_single_shelf_analysis(
 		side=side,
 		current_stage_extension_mm=current_stage_extension_mm,
 		z_reference_wall_depth_mm=z_reference_wall_depth_mm,
+	)
+	restore_reference_cells(
+		scanned_shelves=[scanned_shelf],
+		scan_config=scan_config,
+		side=side,
 	)
 	left_module = list(grid.left_module)
 	right_module = list(grid.right_module)
