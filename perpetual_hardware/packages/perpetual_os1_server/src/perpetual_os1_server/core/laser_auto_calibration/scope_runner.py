@@ -8,6 +8,23 @@ from statistics import median
 from .models import *
 
 
+
+def _get_xy_reference_target(scan_config: Any, side: StorageModuleSide) -> laser_module.SingleCellRescanTarget:
+    xy_reference = laser_module.get_scan_xy_reference(scan_config=scan_config, side=side)
+    return laser_module.SingleCellRescanTarget(
+        shelf_idx=int(xy_reference.shelf_idx),
+        cell_idx=int(xy_reference.cell_idx),
+    )
+
+
+def _get_z_reference_target(scan_config: Any, side: StorageModuleSide) -> laser_module.SingleCellRescanTarget:
+    z_reference = laser_module.get_scan_z_reference(scan_config=scan_config, side=side)
+    return laser_module.SingleCellRescanTarget(
+        shelf_idx=int(z_reference[0]),
+        cell_idx=int(z_reference[1]),
+    )
+
+
 class ScopeRunnerMixin:
     async def _run_requested_scope(
         self,
@@ -145,6 +162,46 @@ class ScopeRunnerMixin:
         completed_results.append(await self._run_side(worker, side, angle_result))
         await self._persist_completed_results(worker, completed_results)
 
+    async def _run_reference_cell_scan(
+        self,
+        worker: RobotWorker,
+        side: StorageModuleSide,
+        target: laser_module.SingleCellRescanTarget,
+    ) -> tuple[Any, laser_module.GapCandidateRegion, Any]:
+        config = get_root_config()
+        scan_config = config.robot.grid.scan
+        grid_path = Path(resolve_grid_path(config))
+        grid = laser_module.load_grid(grid_path)
+        candidate = laser_module.build_single_cell_rescan_candidate(
+            grid=grid,
+            side=side,
+            target=target,
+            scan_config=scan_config,
+        )
+        bounds = laser_module.build_single_cell_rescan_bounds(
+            candidate=candidate,
+            scan_config=scan_config,
+        )
+        analysis = await self._run_scan_analysis(
+            worker,
+            side,
+            bounds,
+            seeded_candidates=[candidate],
+            rescan_target=target,
+        )
+        detected_cell = laser_module.find_detected_cell_for_candidate(
+            analysis=analysis,
+            candidate=candidate,
+        )
+
+        if detected_cell is None:
+            raise ValueError(
+                f"No detected cell matched reference calibration target {target.shelf_idx}:{target.cell_idx}"
+            )
+
+        return analysis, candidate, detected_cell
+
+
     async def _run_single_shelf(
         self,
         worker: RobotWorker,
@@ -190,11 +247,37 @@ class ScopeRunnerMixin:
             known_shelf_edge_y=None,
             should_validate_reference_bounds=False,
         )
+        xy_reference_target = _get_xy_reference_target(scan_config, side)
+        z_reference_target = _get_z_reference_target(scan_config, side)
+        reference_scans: dict[tuple[int, int], tuple[Any, Any]] = {}
+
+        for reference_target in [xy_reference_target, z_reference_target]:
+            reference_key = (int(reference_target.shelf_idx), int(reference_target.cell_idx))
+            if reference_key in reference_scans:
+                continue
+
+            reference_analysis, _, reference_detected_cell = await self._run_reference_cell_scan(
+                worker,
+                side,
+                reference_target,
+            )
+            reference_scans[reference_key] = (reference_analysis, reference_detected_cell)
+
+        _, xy_reference_detected_cell = reference_scans[(
+            int(xy_reference_target.shelf_idx),
+            int(xy_reference_target.cell_idx),
+        )]
+        z_reference_analysis, _ = reference_scans[(
+            int(z_reference_target.shelf_idx),
+            int(z_reference_target.cell_idx),
+        )]
         await self._persist_single_shelf_result(
             worker,
             side,
             analysis,
             shelf_idx,
+            xy_reference_detected_cell=xy_reference_detected_cell,
+            z_reference_wall_depth_mm=float(z_reference_analysis.wall_depth_mm),
         )
 
     async def _run_single_cell(
@@ -230,12 +313,52 @@ class ScopeRunnerMixin:
             seeded_wall_depth_mm=candidate_wall_depth_mm,
             rescan_target=target,
         )
+        detected_cell = laser_module.find_detected_cell_for_candidate(
+            analysis=analysis,
+            candidate=candidate,
+        )
+
+        if detected_cell is None:
+            raise ValueError("No detected cell matched the single-cell calibration target")
+
+        xy_reference_target = _get_xy_reference_target(scan_config, side)
+        z_reference_target = _get_z_reference_target(scan_config, side)
+        xy_reference_detected_cell = detected_cell
+        z_reference_wall_depth_mm: float | None = None
+        reference_scans: dict[tuple[int, int], tuple[Any, Any]] = {
+            (int(target.shelf_idx), int(target.cell_idx)): (analysis, detected_cell),
+        }
+
+        for reference_target in [xy_reference_target, z_reference_target]:
+            reference_key = (int(reference_target.shelf_idx), int(reference_target.cell_idx))
+            if reference_key in reference_scans:
+                continue
+
+            reference_analysis, _, reference_detected_cell = await self._run_reference_cell_scan(
+                worker,
+                side,
+                reference_target,
+            )
+            reference_scans[reference_key] = (reference_analysis, reference_detected_cell)
+
+        _, xy_reference_detected_cell = reference_scans[(
+            int(xy_reference_target.shelf_idx),
+            int(xy_reference_target.cell_idx),
+        )]
+        z_reference_analysis, _ = reference_scans[(
+            int(z_reference_target.shelf_idx),
+            int(z_reference_target.cell_idx),
+        )]
+        z_reference_wall_depth_mm = float(z_reference_analysis.wall_depth_mm)
+
         await self._persist_single_cell_result(
             worker,
             side,
             analysis,
             target,
             candidate,
+            xy_reference_detected_cell=xy_reference_detected_cell,
+            z_reference_wall_depth_mm=z_reference_wall_depth_mm,
         )
 
     async def _home_after_abort(self, worker: RobotWorker) -> None:

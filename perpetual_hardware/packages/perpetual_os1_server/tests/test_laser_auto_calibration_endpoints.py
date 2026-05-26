@@ -1414,7 +1414,27 @@ async def test_persist_completed_results_saves_stage_extensions() -> None:
 async def test_run_single_cell_allows_scan_estimated_wall_depth() -> None:
     manager = LaserAutoCalibrationManager()
     manager._update_snapshot = AsyncMock()
-    config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=SimpleNamespace())))
+    config = SimpleNamespace(
+        robot=SimpleNamespace(
+            grid=SimpleNamespace(
+                scan=SimpleNamespace(
+                    left_xy_reference=SimpleNamespace(
+                        shelf_idx=1,
+                        cell_idx=2,
+                        anchor='top_left',
+                        x_mm=15.0,
+                        y_mm=35.0,
+                    ),
+                    left_z_reference=SimpleNamespace(
+                        shelf_idx=1,
+                        cell_idx=2,
+                        z_offset_mm=9.0,
+                        stage_extension_mm=43.0,
+                    ),
+                )
+            )
+        )
+    )
     grid = SimpleNamespace()
     candidate = laser_module.GapCandidateRegion(
         x_min=10.0,
@@ -1423,7 +1443,20 @@ async def test_run_single_cell_allows_scan_estimated_wall_depth() -> None:
         y_max=40.0,
         wall_depth_mm=None,
     )
-    analysis = SimpleNamespace()
+    detected_cell = SimpleNamespace(
+        shelf_idx=1,
+        cell_idx=2,
+        center_x_mm=15.0,
+        center_y_mm=35.0,
+        tool_x_mm=16.0,
+        tool_y_mm=34.0,
+        width_mm=10.0,
+        height_mm=10.0,
+    )
+    analysis = SimpleNamespace(
+        shelves=[SimpleNamespace(cells=[detected_cell])],
+        wall_depth_mm=8.0,
+    )
     target = laser_module.SingleCellRescanTarget(shelf_idx=1, cell_idx=2)
     worker = SimpleNamespace()
 
@@ -1448,6 +1481,8 @@ async def test_run_single_cell_allows_scan_estimated_wall_depth() -> None:
         analysis,
         target,
         candidate,
+        xy_reference_detected_cell=detected_cell,
+        z_reference_wall_depth_mm=8.0,
     )
 
 @pytest.mark.asyncio
