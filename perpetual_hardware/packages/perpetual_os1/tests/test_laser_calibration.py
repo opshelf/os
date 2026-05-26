@@ -890,6 +890,41 @@ def test_build_single_cell_rescan_candidate_uses_target_point_without_z_depth_se
 	assert candidate.wall_depth_mm is None
 
 
+def test_build_single_cell_rescan_candidate_adds_x_offset_for_right_side() -> None:
+	target_cell = SimpleNamespace(
+		calibration_point=SimpleNamespace(x=11.0, y=1162.5, z_offset=8.5),
+	)
+	target_shelf = SimpleNamespace(get_cell=lambda cell_idx: target_cell)
+	grid = SimpleNamespace(get_shelf=lambda side, shelf_idx: target_shelf)
+	scan_config = SimpleNamespace(
+		laser_offset_x_mm=51.0,
+		laser_offset_y_mm=0.0,
+		expected_hole_width_mm=26.0,
+		expected_hole_height_mm=30.0,
+		right_reference=SimpleNamespace(
+			shelf_idx=3,
+			cell_idx=0,
+			anchor='top_left',
+			x_mm=11.0,
+			y_mm=1162.5,
+			z_offset_mm=15.0,
+			wall_depth_mm=9.0,
+		),
+	)
+
+	candidate = build_single_cell_rescan_candidate(
+		grid=grid,
+		side=StorageModuleSide.RIGHT,
+		target=SingleCellRescanTarget(shelf_idx=3, cell_idx=0),
+		scan_config=scan_config,
+	)
+
+	assert candidate.x_min == pytest.approx(49.0)
+	assert candidate.x_max == pytest.approx(75.0)
+	assert candidate.y_min == pytest.approx(1147.5)
+	assert candidate.y_max == pytest.approx(1177.5)
+
+
 @pytest.mark.asyncio
 async def test_estimate_seeded_candidate_wall_depth_initializes_empty_coarse_scan() -> None:
 	candidate = GapCandidateRegion(
