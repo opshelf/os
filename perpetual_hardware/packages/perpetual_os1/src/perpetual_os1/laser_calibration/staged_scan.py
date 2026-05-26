@@ -760,6 +760,7 @@ def apply_wall_depth_z_offsets(
 	side: StorageModuleSide,
 	current_stage_extension_mm: float = 43.0,
 	z_reference_wall_depth_mm: float | None = None,
+	should_use_analysis_wall_depth_fallback: bool = True,
 	) -> None:
 	metadata_file = Path(metadata_path)
 
@@ -789,7 +790,7 @@ def apply_wall_depth_z_offsets(
 		reference_wall_depth_mm = float(z_reference_wall_depth_mm)
 	elif reference_candidate is not None and reference_candidate.wall_depth_mm is not None:
 		reference_wall_depth_mm = float(reference_candidate.wall_depth_mm)
-	elif getattr(analysis, "wall_depth_mm", 0.0) is not None and float(analysis.wall_depth_mm) > 0.0:
+	elif should_use_analysis_wall_depth_fallback is True and getattr(analysis, "wall_depth_mm", 0.0) is not None and float(analysis.wall_depth_mm) > 0.0:
 		reference_wall_depth_mm = float(analysis.wall_depth_mm)
 	if reference_wall_depth_mm is None:
 		raise ValueError("Cannot resolve z reference wall depth from scan results")
@@ -999,6 +1000,7 @@ def apply_single_cell_rescan(
 	calibration_x = float(detected_cell.tool_x_mm)
 	calibration_y = float(detected_cell.tool_y_mm)
 
+	xy_reference = get_scan_xy_reference(scan_config=scan_config, side=side)
 	if xy_reference_detected_cell is not None:
 		delta_x_mm, delta_y_mm = get_xy_reference_delta(
 			detected_cell=xy_reference_detected_cell,
@@ -1007,6 +1009,9 @@ def apply_single_cell_rescan(
 		)
 		calibration_x += delta_x_mm
 		calibration_y += delta_y_mm
+	elif int(target.shelf_idx) == int(xy_reference.shelf_idx) and int(target.cell_idx) == int(xy_reference.cell_idx):
+		calibration_x = float(xy_reference.x_mm)
+		calibration_y = float(xy_reference.y_mm)
 
 	calibration_point.x = calibration_x
 	calibration_point.y = calibration_y
@@ -1024,13 +1029,7 @@ def apply_single_cell_rescan(
 		)
 		calibration_point.z_offset = float(wall_depth_mm) + float(z_delta["delta_mm"])
 	elif int(target.shelf_idx) == int(z_reference[0]) and int(target.cell_idx) == int(z_reference[1]):
-		z_delta = get_scan_z_delta(
-			scan_config=scan_config,
-			side=side,
-			reference_wall_depth_mm=float(wall_depth_mm),
-			current_stage_extension_mm=current_stage_extension_mm,
-		)
-		calibration_point.z_offset = float(wall_depth_mm) + float(z_delta["delta_mm"])
+		calibration_point.z_offset = float(z_reference[2])
 	else:
 		calibration_point.z_offset = previous_z_offset
 
@@ -1088,10 +1087,6 @@ def apply_single_shelf_analysis(
 	scanned_shelf = scanned_shelves[0]
 	scanned_shelf.shelf_idx = target_shelf_idx
 	scanned_shelf.divider_width = float(target_shelf.divider_width)
-	xy_reference = get_scan_xy_reference(
-		scan_config=scan_config,
-		side=side,
-	)
 
 	if xy_reference_detected_cell is not None:
 		delta_x_mm, delta_y_mm = get_xy_reference_delta(
@@ -1104,12 +1099,6 @@ def apply_single_shelf_analysis(
 			delta_x_mm=delta_x_mm,
 			delta_y_mm=delta_y_mm,
 		)
-	elif int(xy_reference.shelf_idx) == int(target_shelf_idx):
-		apply_xy_reference_offsets(
-			scanned_shelves=[scanned_shelf],
-			scan_config=scan_config,
-			side=side,
-		)
 	apply_wall_depth_z_offsets(
 		analysis=analysis,
 		scanned_shelves=[scanned_shelf],
@@ -1118,6 +1107,7 @@ def apply_single_shelf_analysis(
 		side=side,
 		current_stage_extension_mm=current_stage_extension_mm,
 		z_reference_wall_depth_mm=z_reference_wall_depth_mm,
+		should_use_analysis_wall_depth_fallback=False,
 	)
 	restore_reference_cells(
 		scanned_shelves=[scanned_shelf],

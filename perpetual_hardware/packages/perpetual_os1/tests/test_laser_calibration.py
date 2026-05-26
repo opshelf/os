@@ -1013,10 +1013,14 @@ def test_apply_single_cell_rescan_updates_target_cell_and_saves_grid() -> None:
 	grid.save.assert_called_once_with()
 
 
-def test_apply_single_cell_rescan_applies_reference_xy_and_z_offsets() -> None:
+def test_apply_single_cell_rescan_uses_raw_target_values_without_reference_rescan_offsets() -> None:
 	calibration_point = SimpleNamespace(x=1.0, y=2.0, z_offset=3.0)
-	target_cell = SimpleNamespace(calibration_point=calibration_point)
-	target_shelf = SimpleNamespace(get_cell=lambda cell_idx: target_cell)
+	target_cell = SimpleNamespace(cell_idx=1, calibration_point=calibration_point)
+	target_shelf = SimpleNamespace(
+		shelf_idx=0,
+		cells=[target_cell],
+		get_cell=lambda cell_idx: target_cell,
+	)
 	grid = SimpleNamespace(
 		get_shelf=lambda side, shelf_idx: target_shelf,
 		save=Mock(),
@@ -1037,7 +1041,6 @@ def test_apply_single_cell_rescan_applies_reference_xy_and_z_offsets() -> None:
 		),
 	)
 	detected_cell = SimpleNamespace(tool_x_mm=123.0, tool_y_mm=456.0)
-	xy_reference_detected_cell = SimpleNamespace(tool_x_mm=120.0, tool_y_mm=450.0)
 
 	apply_single_cell_rescan(
 		grid=grid,
@@ -1046,12 +1049,11 @@ def test_apply_single_cell_rescan_applies_reference_xy_and_z_offsets() -> None:
 		detected_cell=detected_cell,
 		wall_depth_mm=8.0,
 		scan_config=scan_config,
-		xy_reference_detected_cell=xy_reference_detected_cell,
 		z_reference_wall_depth_mm=11.0,
 	)
 
-	assert calibration_point.x == pytest.approx(133.0)
-	assert calibration_point.y == pytest.approx(446.0)
+	assert calibration_point.x == pytest.approx(123.0)
+	assert calibration_point.y == pytest.approx(456.0)
 	assert calibration_point.z_offset == pytest.approx(12.0)
 	grid.save.assert_called_once_with()
 
@@ -1215,7 +1217,6 @@ def test_apply_single_shelf_analysis_applies_reference_scan_offsets(tmp_path: Pa
 			y_mm=200.0,
 		),
 	)
-	xy_reference_detected_cell = SimpleNamespace(tool_x_mm=95.0, tool_y_mm=190.0)
 
 	with patch('perpetual_os1.laser_calibration.build_shelves_from_scan', return_value=[scanned_shelf]):
 		apply_single_shelf_analysis(
@@ -1225,14 +1226,13 @@ def test_apply_single_shelf_analysis_applies_reference_scan_offsets(tmp_path: Pa
 			scan_config=scan_config,
 			side=StorageModuleSide.LEFT,
 			target_shelf_idx=1,
-			xy_reference_detected_cell=xy_reference_detected_cell,
 			z_reference_wall_depth_mm=12.3,
 		)
 
 	updated_grid = StorageGrid.load_from_file(str(grid_path))
 	updated_point = updated_grid.left_module[0].cells[0].calibration_point
-	assert updated_point.x == pytest.approx(105.0)
-	assert updated_point.y == pytest.approx(210.0)
+	assert updated_point.x == pytest.approx(100.0)
+	assert updated_point.y == pytest.approx(200.0)
 
 
 @pytest.mark.asyncio
