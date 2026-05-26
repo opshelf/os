@@ -597,11 +597,56 @@ def apply_xy_reference_offsets(
 	)
 
 
+def get_xy_reference_delta(
+	*,
+	detected_cell: ScanDetectedCell,
+	scan_config: Any,
+	side: StorageModuleSide,
+	) -> tuple[float, float]:
+	xy_reference = get_scan_xy_reference(scan_config=scan_config, side=side)
+	delta_x_mm = float(xy_reference.x_mm) - float(detected_cell.tool_x_mm)
+	delta_y_mm = float(xy_reference.y_mm) - float(detected_cell.tool_y_mm)
+
+	print_status(
+		f"xy_offset_inference=reference_scan anchor={xy_reference.anchor} "
+		f"reference_x_mm={float(xy_reference.x_mm):.3f} "
+		f"reference_y_mm={float(xy_reference.y_mm):.3f} "
+		f"detected_x_mm={float(detected_cell.tool_x_mm):.3f} "
+		f"detected_y_mm={float(detected_cell.tool_y_mm):.3f} "
+		f"delta_x_mm={delta_x_mm:.3f} delta_y_mm={delta_y_mm:.3f}"
+	)
+
+	return delta_x_mm, delta_y_mm
+
+
+def apply_xy_reference_delta(
+	*,
+	scanned_shelves: list[Any],
+	delta_x_mm: float,
+	delta_y_mm: float,
+	) -> None:
+	updated_cell_count = 0
+
+	for shelf in scanned_shelves:
+		for cell in shelf.cells:
+			if cell.calibration_point is None:
+				continue
+
+			cell.calibration_point.x = float(cell.calibration_point.x) + float(delta_x_mm)
+			cell.calibration_point.y = float(cell.calibration_point.y) + float(delta_y_mm)
+			updated_cell_count += 1
+
+	print_status(
+		f"xy_offset_inference=applied delta_x_mm={float(delta_x_mm):.3f} "
+		f"delta_y_mm={float(delta_y_mm):.3f} updated_cells={updated_cell_count}"
+	)
+
+
 def resolve_z_reference_cell(
 	*,
 	scan_config: Any,
 	side: StorageModuleSide,
-	) -> tuple[int, int, float, float] | None:
+	) -> tuple[int, int, float, float]:
 	return get_scan_z_reference(scan_config=scan_config, side=side)
 
 
@@ -673,7 +718,8 @@ def apply_wall_depth_z_offsets(
 	scan_config: Any,
 	side: StorageModuleSide,
 	current_stage_extension_mm: float = 43.0,
-) -> None:
+	z_reference_wall_depth_mm: float | None = None,
+	) -> None:
 	metadata_file = Path(metadata_path)
 
 	if metadata_file.exists() is False:
@@ -698,11 +744,12 @@ def apply_wall_depth_z_offsets(
 	reference_candidate = candidate_lookup.get((reference_key[0], reference_key[1]))
 	reference_wall_depth_mm: float | None = None
 
-	if reference_candidate is not None and reference_candidate.wall_depth_mm is not None:
+	if z_reference_wall_depth_mm is not None:
+		reference_wall_depth_mm = float(z_reference_wall_depth_mm)
+	elif reference_candidate is not None and reference_candidate.wall_depth_mm is not None:
 		reference_wall_depth_mm = float(reference_candidate.wall_depth_mm)
 	elif getattr(analysis, "wall_depth_mm", 0.0) is not None and float(analysis.wall_depth_mm) > 0.0:
 		reference_wall_depth_mm = float(analysis.wall_depth_mm)
-
 	if reference_wall_depth_mm is None:
 		raise ValueError("Cannot resolve z reference wall depth from scan results")
 
@@ -881,7 +928,9 @@ def apply_single_cell_rescan(
 	wall_depth_mm: float,
 	scan_config: Any,
 	current_stage_extension_mm: float = 43.0,
-) -> None:
+	xy_reference_detected_cell: ScanDetectedCell | None = None,
+	z_reference_wall_depth_mm: float | None = None,
+	) -> None:
 	target_cell = resolve_target_cell(
 		grid=grid,
 		side=side,
@@ -889,15 +938,34 @@ def apply_single_cell_rescan(
 	)
 	calibration_point = target_cell.calibration_point
 	previous_z_offset = float(calibration_point.z_offset)
+	calibration_x = float(detected_cell.tool_x_mm)
+	calibration_y = float(detected_cell.tool_y_mm)
 
-	calibration_point.x = float(detected_cell.tool_x_mm)
-	calibration_point.y = float(detected_cell.tool_y_mm)
+	if xy_reference_detected_cell is not None:
+		delta_x_mm, delta_y_mm = get_xy_reference_delta(
+			detected_cell=xy_reference_detected_cell,
+			scan_config=scan_config,
+			side=side,
+		)
+		calibration_x += delta_x_mm
+		calibration_y += delta_y_mm
+
+	calibration_point.x = calibration_x
+	calibration_point.y = calibration_y
 	z_reference = get_scan_z_reference(
 		scan_config=scan_config,
 		side=side,
 	)
 
-	if int(target.shelf_idx) == int(z_reference[0]) and int(target.cell_idx) == int(z_reference[1]):
+	if z_reference_wall_depth_mm is not None:
+		z_delta = get_scan_z_delta(
+			scan_config=scan_config,
+			side=side,
+			reference_wall_depth_mm=float(z_reference_wall_depth_mm),
+			current_stage_extension_mm=current_stage_extension_mm,
+		)
+		calibration_point.z_offset = float(wall_depth_mm) + float(z_delta["delta_mm"])
+	elif int(target.shelf_idx) == int(z_reference[0]) and int(target.cell_idx) == int(z_reference[1]):
 		z_delta = get_scan_z_delta(
 			scan_config=scan_config,
 			side=side,
@@ -927,7 +995,9 @@ def apply_single_shelf_analysis(
 	side: StorageModuleSide,
 	target_shelf_idx: int,
 	current_stage_extension_mm: float = 43.0,
-) -> None:
+	xy_reference_detected_cell: ScanDetectedCell | None = None,
+	z_reference_wall_depth_mm: float | None = None,
+	) -> None:
 	if len(analysis.shelves) == 0:
 		raise ValueError("No tray openings detected from scan")
 
@@ -960,7 +1030,18 @@ def apply_single_shelf_analysis(
 		side=side,
 	)
 
-	if int(xy_reference.shelf_idx) == int(target_shelf_idx):
+	if xy_reference_detected_cell is not None:
+		delta_x_mm, delta_y_mm = get_xy_reference_delta(
+			detected_cell=xy_reference_detected_cell,
+			scan_config=scan_config,
+			side=side,
+		)
+		apply_xy_reference_delta(
+			scanned_shelves=[scanned_shelf],
+			delta_x_mm=delta_x_mm,
+			delta_y_mm=delta_y_mm,
+		)
+	elif int(xy_reference.shelf_idx) == int(target_shelf_idx):
 		apply_xy_reference_offsets(
 			scanned_shelves=[scanned_shelf],
 			scan_config=scan_config,
@@ -973,6 +1054,7 @@ def apply_single_shelf_analysis(
 		scan_config=scan_config,
 		side=side,
 		current_stage_extension_mm=current_stage_extension_mm,
+		z_reference_wall_depth_mm=z_reference_wall_depth_mm,
 	)
 	left_module = list(grid.left_module)
 	right_module = list(grid.right_module)
