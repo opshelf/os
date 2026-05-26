@@ -993,6 +993,8 @@ def test_apply_single_cell_rescan_updates_target_cell_and_saves_grid() -> None:
 		save=Mock(),
 	)
 	scan_config = SimpleNamespace(
+		laser_offset_x_mm=0.0,
+		laser_offset_y_mm=0.0,
 		left_reference=SimpleNamespace(shelf_idx=12, cell_idx=0, anchor='top_right', x_mm=0.0, y_mm=0.0, z_offset_mm=15.0, wall_depth_mm=11.0),
 		right_reference=None,
 	)
@@ -1007,13 +1009,13 @@ def test_apply_single_cell_rescan_updates_target_cell_and_saves_grid() -> None:
 		scan_config=scan_config,
 	)
 
-	assert calibration_point.x == pytest.approx(123.0)
-	assert calibration_point.y == pytest.approx(456.0)
+	assert calibration_point.x == pytest.approx(1.0)
+	assert calibration_point.y == pytest.approx(2.0)
 	assert calibration_point.z_offset == pytest.approx(3.0)
 	grid.save.assert_called_once_with()
 
 
-def test_apply_single_cell_rescan_uses_raw_target_values_without_reference_rescan_offsets() -> None:
+def test_apply_single_cell_rescan_preserves_xy_without_reference_rescan() -> None:
 	calibration_point = SimpleNamespace(x=1.0, y=2.0, z_offset=3.0)
 	target_cell = SimpleNamespace(cell_idx=1, calibration_point=calibration_point)
 	target_shelf = SimpleNamespace(
@@ -1026,6 +1028,8 @@ def test_apply_single_cell_rescan_uses_raw_target_values_without_reference_resca
 		save=Mock(),
 	)
 	scan_config = SimpleNamespace(
+		laser_offset_x_mm=10.0,
+		laser_offset_y_mm=-5.0,
 		left_xy_reference=SimpleNamespace(
 			shelf_idx=12,
 			cell_idx=0,
@@ -1052,8 +1056,8 @@ def test_apply_single_cell_rescan_uses_raw_target_values_without_reference_resca
 		z_reference_wall_depth_mm=11.0,
 	)
 
-	assert calibration_point.x == pytest.approx(123.0)
-	assert calibration_point.y == pytest.approx(456.0)
+	assert calibration_point.x == pytest.approx(1.0)
+	assert calibration_point.y == pytest.approx(2.0)
 	assert calibration_point.z_offset == pytest.approx(12.0)
 	grid.save.assert_called_once_with()
 
@@ -1156,6 +1160,8 @@ def test_apply_single_shelf_analysis_replaces_only_target_shelf(tmp_path: Path) 
 					grid=grid,
 					grid_path=grid_path,
 					scan_config=SimpleNamespace(
+						laser_offset_x_mm=0.0,
+						laser_offset_y_mm=0.0,
 						left_xy_reference=SimpleNamespace(
 							shelf_idx=0,
 							cell_idx=0,
@@ -1178,7 +1184,7 @@ def test_apply_single_shelf_analysis_replaces_only_target_shelf(tmp_path: Path) 
 	assert updated_grid.left_module[2].shelf_idx == 2
 
 
-def test_apply_single_shelf_analysis_applies_reference_scan_offsets(tmp_path: Path) -> None:
+def test_apply_single_shelf_analysis_aligns_to_existing_shelf_without_reference_rescan(tmp_path: Path) -> None:
 	target_shelf = Shelf(
 		shelf_idx=1,
 		shelf_height=100.0,
@@ -1209,6 +1215,8 @@ def test_apply_single_shelf_analysis_applies_reference_scan_offsets(tmp_path: Pa
 		metadata_path=str(tmp_path / 'metadata.json'),
 	)
 	scan_config = SimpleNamespace(
+		laser_offset_x_mm=0.0,
+		laser_offset_y_mm=0.0,
 		left_xy_reference=SimpleNamespace(
 			shelf_idx=0,
 			cell_idx=0,
@@ -1231,8 +1239,8 @@ def test_apply_single_shelf_analysis_applies_reference_scan_offsets(tmp_path: Pa
 
 	updated_grid = StorageGrid.load_from_file(str(grid_path))
 	updated_point = updated_grid.left_module[0].cells[0].calibration_point
-	assert updated_point.x == pytest.approx(100.0)
-	assert updated_point.y == pytest.approx(200.0)
+	assert updated_point.x == pytest.approx(10.0)
+	assert updated_point.y == pytest.approx(20.0)
 
 
 @pytest.mark.asyncio
