@@ -1481,8 +1481,6 @@ async def test_run_single_cell_allows_scan_estimated_wall_depth() -> None:
         analysis,
         target,
         candidate,
-        xy_reference_detected_cell=detected_cell,
-        z_reference_wall_depth_mm=8.0,
     )
 
 @pytest.mark.asyncio
