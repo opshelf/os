@@ -147,6 +147,8 @@ async def test_prepare_capture_pose_rotates_in_place_for_right_when_rotation_cha
 		_ms=SimpleNamespace(ready=AsyncMock(), move_to_position=AsyncMock()),
 		_mg=SimpleNamespace(move_to_position=AsyncMock()),
 		gantry_wait=AsyncMock(),
+		ensure_safe_rotation_x_position=AsyncMock(return_value=945.0),
+		restore_safe_rotation_x_position=AsyncMock(),
 		ensure_safe_rotation_stage_extension=AsyncMock(),
 	)
 
@@ -166,8 +168,10 @@ async def test_prepare_capture_pose_rotates_in_place_for_right_when_rotation_cha
 		should_move_z=False,
 	)
 
+	tool.ensure_safe_rotation_x_position.assert_awaited_once()
 	tool.ensure_safe_rotation_stage_extension.assert_awaited_once()
 	tool._mr.move_to_position.assert_awaited_once_with(172.0)
+	tool.restore_safe_rotation_x_position.assert_awaited_once_with(945.0)
 	tool._mx.move_to_position_no_wait.assert_awaited_once_with(945.0)
 	tool._my.move_to_position_no_wait.assert_awaited_once_with(1096.0)
 
@@ -181,6 +185,8 @@ async def test_prepare_capture_pose_uses_safe_right_rotation_path_when_requested
 		_ms=SimpleNamespace(ready=AsyncMock(), move_to_position=AsyncMock()),
 		_mg=SimpleNamespace(move_to_position=AsyncMock()),
 		gantry_wait=AsyncMock(),
+		ensure_safe_rotation_x_position=AsyncMock(return_value=RIGHT_MODULE_ROTATION_SAFE_X_MM),
+		restore_safe_rotation_x_position=AsyncMock(),
 		ensure_safe_rotation_stage_extension=AsyncMock(),
 	)
 
@@ -200,8 +206,10 @@ async def test_prepare_capture_pose_uses_safe_right_rotation_path_when_requested
 		should_move_z=False,
 	)
 
+	tool.ensure_safe_rotation_x_position.assert_awaited_once()
 	tool.ensure_safe_rotation_stage_extension.assert_awaited_once()
 	tool._mr.move_to_position.assert_awaited_once_with(180.0)
+	tool.restore_safe_rotation_x_position.assert_awaited_once_with(RIGHT_MODULE_ROTATION_SAFE_X_MM)
 	assert tool._mx.move_to_position_no_wait.await_args_list[0].args == (RIGHT_MODULE_ROTATION_SAFE_X_MM,)
 	assert tool._mx.move_to_position_no_wait.await_args_list[1].args == (945.0,)
 	assert tool._mr.move_to_position.await_args_list[0].args == (180.0,)
@@ -216,6 +224,8 @@ async def test_prepare_capture_pose_uses_safe_rotation_path_for_left_when_reques
 		_ms=SimpleNamespace(ready=AsyncMock(), move_to_position=AsyncMock()),
 		_mg=SimpleNamespace(move_to_position=AsyncMock()),
 		gantry_wait=AsyncMock(),
+		ensure_safe_rotation_x_position=AsyncMock(return_value=RIGHT_MODULE_ROTATION_SAFE_X_MM),
+		restore_safe_rotation_x_position=AsyncMock(),
 		ensure_safe_rotation_stage_extension=AsyncMock(),
 	)
 
@@ -235,8 +245,10 @@ async def test_prepare_capture_pose_uses_safe_rotation_path_for_left_when_reques
 		should_move_z=False,
 	)
 
+	tool.ensure_safe_rotation_x_position.assert_awaited_once()
 	tool.ensure_safe_rotation_stage_extension.assert_awaited_once()
 	tool._mr.move_to_position.assert_awaited_once_with(0.0)
+	tool.restore_safe_rotation_x_position.assert_awaited_once_with(RIGHT_MODULE_ROTATION_SAFE_X_MM)
 	assert tool._mx.move_to_position_no_wait.await_args_list[0].args == (RIGHT_MODULE_ROTATION_SAFE_X_MM,)
 	assert tool._mx.move_to_position_no_wait.await_args_list[1].args == (950.0,)
 

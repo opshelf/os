@@ -1432,8 +1432,12 @@ async def rotate_to_angle(angle: float):
 	try:
 		async with manual_motion_guard("calibration_rotation", worker=worker):
 			await _clear_motors_for_move(tool, rotation=True)
-			await tool.ensure_safe_rotation_stage_extension()
-			await tool._mr.move_to_position(clamped_angle)
+			original_x = await tool.ensure_safe_rotation_x_position()
+			try:
+				await tool.ensure_safe_rotation_stage_extension()
+				await tool._mr.move_to_position(clamped_angle)
+			finally:
+				await tool.restore_safe_rotation_x_position(original_x)
 	except (MotorError, HardwareMotorError) as e:
 		await _raise_motor_error(worker, f"Rotation failed: {str(e)}", e, axes=["rotate"])
 

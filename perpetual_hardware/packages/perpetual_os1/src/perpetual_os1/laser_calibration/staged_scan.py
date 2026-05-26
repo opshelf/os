@@ -642,6 +642,38 @@ def apply_xy_reference_delta(
 	)
 
 
+def restore_reference_cells(
+	*,
+	scanned_shelves: list[Any],
+	scan_config: Any,
+	side: StorageModuleSide,
+	) -> None:
+	xy_reference = get_scan_xy_reference(scan_config=scan_config, side=side)
+	z_reference = get_scan_z_reference(scan_config=scan_config, side=side)
+	restored_xy_count = 0
+	restored_z_count = 0
+
+	for shelf in scanned_shelves:
+		for cell in shelf.cells:
+			if cell.calibration_point is None:
+				continue
+
+			if int(shelf.shelf_idx) == int(xy_reference.shelf_idx) and int(cell.cell_idx) == int(xy_reference.cell_idx):
+				cell.calibration_point.x = float(xy_reference.x_mm)
+				cell.calibration_point.y = float(xy_reference.y_mm)
+				restored_xy_count += 1
+
+			if int(shelf.shelf_idx) == int(z_reference[0]) and int(cell.cell_idx) == int(z_reference[1]):
+				cell.calibration_point.z_offset = float(z_reference[2])
+				restored_z_count += 1
+
+	if restored_xy_count > 0 or restored_z_count > 0:
+		print_status(
+			f"reference_restore=applied xy_cells={restored_xy_count} "
+			f"z_cells={restored_z_count}"
+		)
+
+
 def resolve_z_reference_cell(
 	*,
 	scan_config: Any,
@@ -776,6 +808,11 @@ def apply_wall_depth_z_offsets(
 			cell.calibration_point.z_offset = float(candidate.wall_depth_mm) + z_delta_mm
 			updated_cell_count += 1
 
+	restore_reference_cells(
+		scanned_shelves=scanned_shelves,
+		scan_config=scan_config,
+		side=side,
+	)
 	print_status(
 		f"z_offset_inference=applied reference={reference_key[0]}:{reference_key[1]} "
 		f"reference_z_offset_mm={reference_key[2]:.3f} "
