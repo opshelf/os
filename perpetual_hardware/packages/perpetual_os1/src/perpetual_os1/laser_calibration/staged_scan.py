@@ -619,6 +619,42 @@ def get_xy_reference_delta(
 	return delta_x_mm, delta_y_mm
 
 
+def get_existing_shelf_xy_delta(
+	*,
+	scanned_shelf: Any,
+	target_shelf: Any,
+	) -> tuple[float, float]:
+	existing_lookup = {
+		int(cell.cell_idx): cell
+		for cell in getattr(target_shelf, "cells", [])
+		if getattr(cell, "calibration_point", None) is not None
+	}
+	delta_x_values: list[float] = []
+	delta_y_values: list[float] = []
+
+	for scanned_cell in getattr(scanned_shelf, "cells", []):
+		if scanned_cell.calibration_point is None:
+			continue
+
+		existing_cell = existing_lookup.get(int(scanned_cell.cell_idx))
+		if existing_cell is None:
+			continue
+
+		delta_x_values.append(float(existing_cell.calibration_point.x) - float(scanned_cell.calibration_point.x))
+		delta_y_values.append(float(existing_cell.calibration_point.y) - float(scanned_cell.calibration_point.y))
+
+	if len(delta_x_values) == 0 or len(delta_y_values) == 0:
+		raise ValueError("Cannot align partial shelf rescan without existing matching calibration cells")
+
+	delta_x_mm = float(np.median(np.array(delta_x_values, dtype=np.float32)))
+	delta_y_mm = float(np.median(np.array(delta_y_values, dtype=np.float32)))
+	print_status(
+		f"xy_offset_inference=existing_shelf delta_x_mm={delta_x_mm:.3f} "
+		f"delta_y_mm={delta_y_mm:.3f} matched_cells={len(delta_x_values)}"
+	)
+	return delta_x_mm, delta_y_mm
+
+
 def apply_xy_reference_delta(
 	*,
 	scanned_shelves: list[Any],
@@ -1009,7 +1045,12 @@ def apply_single_cell_rescan(
 		)
 		calibration_x += delta_x_mm
 		calibration_y += delta_y_mm
-	elif int(target.shelf_idx) == int(xy_reference.shelf_idx) and int(target.cell_idx) == int(xy_reference.cell_idx):
+	else:
+		print_status("xy_offset_inference=skipped reason=single_cell_preserves_existing_frame")
+		calibration_x = float(calibration_point.x)
+		calibration_y = float(calibration_point.y)
+
+	if int(target.shelf_idx) == int(xy_reference.shelf_idx) and int(target.cell_idx) == int(xy_reference.cell_idx):
 		calibration_x = float(xy_reference.x_mm)
 		calibration_y = float(xy_reference.y_mm)
 
@@ -1093,6 +1134,16 @@ def apply_single_shelf_analysis(
 			detected_cell=xy_reference_detected_cell,
 			scan_config=scan_config,
 			side=side,
+		)
+		apply_xy_reference_delta(
+			scanned_shelves=[scanned_shelf],
+			delta_x_mm=delta_x_mm,
+			delta_y_mm=delta_y_mm,
+		)
+	else:
+		delta_x_mm, delta_y_mm = get_existing_shelf_xy_delta(
+			scanned_shelf=scanned_shelf,
+			target_shelf=target_shelf,
 		)
 		apply_xy_reference_delta(
 			scanned_shelves=[scanned_shelf],
