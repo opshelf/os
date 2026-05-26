@@ -463,9 +463,16 @@ async def home_motor(
     try:
         async with manual_motion_guard(f"motor_home:{motor_name}", worker=worker):
             if motor_name == "rotate":
-                await worker._robot._tool.ensure_safe_rotation_stage_extension()
-            await motor.clear_alarm()
-            await motor.home()
+                original_x = await worker._robot._tool.ensure_safe_rotation_x_position()
+                try:
+                    await worker._robot._tool.ensure_safe_rotation_stage_extension()
+                    await motor.clear_alarm()
+                    await motor.home()
+                finally:
+                    await worker._robot._tool.restore_safe_rotation_x_position(original_x)
+            else:
+                await motor.clear_alarm()
+                await motor.home()
             if motor_name == "rotate":
                 await worker._robot._tool.rotate_to_home_orientation(
                     should_ensure_safe_stage_extension=False,
@@ -542,8 +549,14 @@ async def move_motor(
     try:
         async with manual_motion_guard(f"motor_move:{motor_name}", worker=worker):
             if motor_name == "rotate":
-                await worker._robot._tool.ensure_safe_rotation_stage_extension()
-            await motor.move_to_position(request.position_mm)
+                original_x = await worker._robot._tool.ensure_safe_rotation_x_position()
+                try:
+                    await worker._robot._tool.ensure_safe_rotation_stage_extension()
+                    await motor.move_to_position(request.position_mm)
+                finally:
+                    await worker._robot._tool.restore_safe_rotation_x_position(original_x)
+            else:
+                await motor.move_to_position(request.position_mm)
             return {"success": True, "motor": motor_name, "position_mm": request.position_mm}
     except HTTPException:
         raise

@@ -60,6 +60,7 @@ TOOL_WAIT_TIMEOUT = MOTOR_WAIT_TIMEOUT * 2
 GANTRY_OUTER_TIMEOUT = 120.0
 TOOL_OUTER_TIMEOUT = 60.0
 ROTATION_HOME_SAFE_X_MM = 475.0
+ROTATION_SAFE_X_MARGIN_MM = 60.0
 ROTATION_HOME_ORIENTATION_EPSILON_DEG = 1e-6
 
 STAGE_RETRACT_TARGET_MM = 3.0
@@ -242,19 +243,25 @@ class Tool:
                 await self._mg.home()
             if self._mr is not None:
 
+                original_x = None
                 if self._mx is not None:
                     rotation_front = await self.get_param("ROTATION_FRONT")
                     current_rotation = await self._mr.get_position()
 
                     if current_rotation > rotation_front:
                         await self._mx.move_to_position(ROTATION_HOME_SAFE_X_MM)
+                    else:
+                        original_x = await self.ensure_safe_rotation_x_position()
 
-                did_extend_stage = await self.ensure_safe_rotation_stage_extension()
-                await self._mr.home()
-                await self.rotate_to_home_orientation(
-                    _nested=True,
-                    should_ensure_safe_stage_extension=False,
-                )
+                try:
+                    did_extend_stage = await self.ensure_safe_rotation_stage_extension()
+                    await self._mr.home()
+                    await self.rotate_to_home_orientation(
+                        _nested=True,
+                        should_ensure_safe_stage_extension=False,
+                    )
+                finally:
+                    await self.restore_safe_rotation_x_position(original_x)
                 if did_extend_stage is True and self._ms is not None:
                     await self._ms.home()
             if self._mx is not None:
@@ -289,6 +296,40 @@ class Tool:
 
         await self._ms.move_to_position(safe_extension_mm)
         return True
+
+    async def ensure_safe_rotation_x_position(self) -> Optional[float]:
+        x_motor = getattr(self, "_mx", None)
+        if x_motor is None:
+            return None
+
+        margin_mm = ROTATION_SAFE_X_MARGIN_MM
+        lower_lim = float(getattr(x_motor._params, "lower_lim", 0.0))
+        upper_lim = float(x_motor._params.lim)
+
+        if upper_lim - lower_lim < margin_mm * 2:
+            raise ConfigError(
+                "X axis limit is too small for safe rotation margin "
+                f"({upper_lim - lower_lim} < {margin_mm * 2})"
+            )
+
+        current_x = await x_motor.get_position()
+
+        if current_x < lower_lim + margin_mm:
+            await x_motor.move_to_position(lower_lim + margin_mm)
+            return current_x
+
+        if current_x > upper_lim - margin_mm:
+            await x_motor.move_to_position(upper_lim - margin_mm)
+            return current_x
+
+        return None
+
+    async def restore_safe_rotation_x_position(self, original_x: Optional[float]) -> None:
+        x_motor = getattr(self, "_mx", None)
+        if original_x is None or x_motor is None:
+            return
+
+        await x_motor.move_to_position(original_x)
 
     async def _home_stage_after_retract_fault(self, error: BaseException) -> None:
         if self._ms is None:
@@ -351,10 +392,14 @@ class Tool:
                 self._mstatus = ToolMotionStatus.MOVING
                 self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
 
-            if should_ensure_safe_stage_extension is True:
-                await self.ensure_safe_rotation_stage_extension()
+            original_x = await self.ensure_safe_rotation_x_position()
+            try:
+                if should_ensure_safe_stage_extension is True:
+                    await self.ensure_safe_rotation_stage_extension()
 
-            await self._mr.move_to_position(target_angle)
+                await self._mr.move_to_position(target_angle)
+            finally:
+                await self.restore_safe_rotation_x_position(original_x)
 
             if _nested is False:
                 self._mstatus = ToolMotionStatus.IDLE
@@ -696,8 +741,12 @@ class Tool:
             if _nested is False:
                 self._mstatus = ToolMotionStatus.MOVING
                 self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
-            await self.ensure_safe_rotation_stage_extension()
-            await self._mr.move_to_position(target_angle)
+            original_x = await self.ensure_safe_rotation_x_position()
+            try:
+                await self.ensure_safe_rotation_stage_extension()
+                await self._mr.move_to_position(target_angle)
+            finally:
+                await self.restore_safe_rotation_x_position(original_x)
             if _nested is False:
                 self._mstatus = ToolMotionStatus.IDLE
                 self._status = ToolStatus(motion=self._mstatus, item=self._istatus)
