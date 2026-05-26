@@ -62,6 +62,7 @@ TOOL_OUTER_TIMEOUT = 60.0
 ROTATION_HOME_SAFE_X_MM = 475.0
 ROTATION_SAFE_X_MARGIN_MM = 60.0
 ROTATION_HOME_ORIENTATION_EPSILON_DEG = 1e-6
+ROTATION_POSITION_EPSILON_DEG = 0.05
 
 STAGE_RETRACT_TARGET_MM = 3.0
 STAGE_RETRACT_SAFE_THRESHOLD_MM = 5.0
@@ -336,7 +337,7 @@ class Tool:
             raise MotorError("Rotate motor required for rotation")
 
         current_angle = await self._mr.get_position()
-        return abs(float(current_angle) - float(target_angle)) <= ROTATION_HOME_ORIENTATION_EPSILON_DEG
+        return abs(float(current_angle) - float(target_angle)) <= ROTATION_POSITION_EPSILON_DEG
 
     async def _home_stage_after_retract_fault(self, error: BaseException) -> None:
         if self._ms is None:

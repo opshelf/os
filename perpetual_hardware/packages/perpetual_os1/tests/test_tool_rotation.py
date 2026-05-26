@@ -231,6 +231,37 @@ async def test_rotate_to_position_skips_safety_when_angle_is_already_current() -
 
 
 @pytest.mark.asyncio
+async def test_rotate_to_position_skips_safety_when_angle_is_within_position_tolerance() -> None:
+    x_motor = _mock_x_motor(position=25.0)
+
+    rotate_motor = AsyncMock()
+    rotate_motor.get_position = AsyncMock(return_value=4.03)
+    rotate_motor.move_to_position = AsyncMock()
+
+    stage_motor = _mock_stage_motor(position=0.0)
+    stage_motor._params.rotation_safe_stage_extension_enabled = True
+
+    tool = Tool.__new__(Tool)
+    tool._ms = stage_motor
+    tool._mr = rotate_motor
+    tool._mx = x_motor
+    tool._istatus = ToolItemStatus.EMPTY
+    tool._mstatus = ToolMotionStatus.IDLE
+    tool._status = SimpleNamespace(motion=ToolMotionStatus.IDLE, item=ToolItemStatus.EMPTY)
+    tool._handle_fault = AsyncMock()
+    tool.get_param = AsyncMock(side_effect=lambda name: {
+        'ROTATION_FRONT': 4.0,
+        'ROTATION_BACK': 184.0,
+    }[name])
+
+    await tool.rotate_to_position("front")
+
+    x_motor.move_to_position.assert_not_awaited()
+    stage_motor.move_to_position.assert_not_awaited()
+    rotate_motor.move_to_position.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_ensure_safe_rotation_stage_extension_skips_when_disabled() -> None:
     tool = Tool.__new__(Tool)
     tool._ms = _mock_stage_motor(position=0.0)
