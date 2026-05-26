@@ -94,24 +94,32 @@ async def prepare_capture_pose(
 	should_abort: Callable[[], bool] | None = None,
 ) -> None:
 	if should_rotate is True and should_use_safe_right_rotation_path is True:
-		await move_gantry_direct(
-			tool,
-			x_mm=ROTATION_SAFE_X_MM,
-			y_mm=y_mm,
-			should_abort=should_abort,
-		)
-		original_x = await tool.ensure_safe_rotation_x_position()
-		try:
-			await tool.ensure_safe_rotation_stage_extension()
-			await tool._mr.move_to_position(absolute_rotation_deg)
-		finally:
-			await tool.restore_safe_rotation_x_position(original_x)
-		await move_gantry_direct(
-			tool,
-			x_mm=x_mm,
-			y_mm=y_mm,
-			should_abort=should_abort,
-		)
+		if await tool.is_rotation_at_position(absolute_rotation_deg):
+			await move_gantry_direct(
+				tool,
+				x_mm=x_mm,
+				y_mm=y_mm,
+				should_abort=should_abort,
+			)
+		else:
+			await move_gantry_direct(
+				tool,
+				x_mm=ROTATION_SAFE_X_MM,
+				y_mm=y_mm,
+				should_abort=should_abort,
+			)
+			original_x = await tool.ensure_safe_rotation_x_position()
+			try:
+				await tool.ensure_safe_rotation_stage_extension()
+				await tool._mr.move_to_position(absolute_rotation_deg)
+			finally:
+				await tool.restore_safe_rotation_x_position(original_x)
+			await move_gantry_direct(
+				tool,
+				x_mm=x_mm,
+				y_mm=y_mm,
+				should_abort=should_abort,
+			)
 	else:
 		await move_gantry_direct(
 			tool,
@@ -120,7 +128,7 @@ async def prepare_capture_pose(
 			should_abort=should_abort,
 		)
 
-		if should_rotate is True:
+		if should_rotate is True and await tool.is_rotation_at_position(absolute_rotation_deg) is False:
 			original_x = await tool.ensure_safe_rotation_x_position()
 			try:
 				await tool.ensure_safe_rotation_stage_extension()

@@ -549,6 +549,9 @@ async def move_motor(
     try:
         async with manual_motion_guard(f"motor_move:{motor_name}", worker=worker):
             if motor_name == "rotate":
+                if await worker._robot._tool.is_rotation_at_position(request.position_mm):
+                    return {"success": True, "motor": motor_name, "position_mm": request.position_mm}
+
                 original_x = await worker._robot._tool.ensure_safe_rotation_x_position()
                 try:
                     await worker._robot._tool.ensure_safe_rotation_stage_extension()

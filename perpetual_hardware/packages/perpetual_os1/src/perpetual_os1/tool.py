@@ -331,6 +331,13 @@ class Tool:
 
         await x_motor.move_to_position(original_x)
 
+    async def is_rotation_at_position(self, target_angle: float) -> bool:
+        if self._mr is None:
+            raise MotorError("Rotate motor required for rotation")
+
+        current_angle = await self._mr.get_position()
+        return abs(float(current_angle) - float(target_angle)) <= ROTATION_HOME_ORIENTATION_EPSILON_DEG
+
     async def _home_stage_after_retract_fault(self, error: BaseException) -> None:
         if self._ms is None:
             raise MotorError("Stage motor required for retract recovery") from error
@@ -387,6 +394,9 @@ class Tool:
 
             if orientation == RotationHomeOrientation.RIGHT_MODULE:
                 target_angle = float(rotation_back)
+
+            if await self.is_rotation_at_position(target_angle):
+                return
 
             if _nested is False:
                 self._mstatus = ToolMotionStatus.MOVING
@@ -737,6 +747,9 @@ class Tool:
             target_angle = await self.get_param(param)
             if target_angle is None:
                 raise ConfigError(f"Missing rotation parameter: {param}")
+
+            if await self.is_rotation_at_position(target_angle):
+                return
 
             if _nested is False:
                 self._mstatus = ToolMotionStatus.MOVING

@@ -174,6 +174,7 @@ async def test_rotate_to_position_restores_original_x_after_safe_edge_move() -> 
     x_motor.move_to_position = AsyncMock(side_effect=lambda position: events.append(f"x_move:{position}"))
 
     rotate_motor = AsyncMock()
+    rotate_motor.get_position = AsyncMock(return_value=0.0)
     rotate_motor.move_to_position = AsyncMock(side_effect=lambda position: events.append(f"rotate:{position}"))
 
     tool = Tool.__new__(Tool)
@@ -196,6 +197,37 @@ async def test_rotate_to_position_restores_original_x_after_safe_edge_move() -> 
         "rotate:4.0",
         "x_move:25.0",
     ]
+
+
+@pytest.mark.asyncio
+async def test_rotate_to_position_skips_safety_when_angle_is_already_current() -> None:
+    x_motor = _mock_x_motor(position=25.0)
+
+    rotate_motor = AsyncMock()
+    rotate_motor.get_position = AsyncMock(return_value=4.0)
+    rotate_motor.move_to_position = AsyncMock()
+
+    stage_motor = _mock_stage_motor(position=0.0)
+    stage_motor._params.rotation_safe_stage_extension_enabled = True
+
+    tool = Tool.__new__(Tool)
+    tool._ms = stage_motor
+    tool._mr = rotate_motor
+    tool._mx = x_motor
+    tool._istatus = ToolItemStatus.EMPTY
+    tool._mstatus = ToolMotionStatus.IDLE
+    tool._status = SimpleNamespace(motion=ToolMotionStatus.IDLE, item=ToolItemStatus.EMPTY)
+    tool._handle_fault = AsyncMock()
+    tool.get_param = AsyncMock(side_effect=lambda name: {
+        'ROTATION_FRONT': 4.0,
+        'ROTATION_BACK': 184.0,
+    }[name])
+
+    await tool.rotate_to_position("front")
+
+    x_motor.move_to_position.assert_not_awaited()
+    stage_motor.move_to_position.assert_not_awaited()
+    rotate_motor.move_to_position.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -384,7 +416,7 @@ async def test_home_moves_x_before_rotate_home_when_rotation_is_past_front() -> 
         'y_home',
     ]
     tool.get_param.assert_any_await('ROTATION_FRONT')
-    rotate_motor.get_position.assert_awaited_once()
+    assert rotate_motor.get_position.await_count == 2
 
 
 @pytest.mark.asyncio
@@ -481,7 +513,6 @@ async def test_home_moves_x_from_edge_before_rotate_home_when_rotation_is_at_fro
         'z_home',
         'x_move:60.0',
         'rotate_home',
-        'rotate_move:0.0',
         'x_move:25.0',
         'x_home',
         'y_home',
