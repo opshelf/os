@@ -1099,16 +1099,19 @@ def apply_single_shelf_analysis(
 			delta_x_mm=delta_x_mm,
 			delta_y_mm=delta_y_mm,
 		)
-	apply_wall_depth_z_offsets(
-		analysis=analysis,
-		scanned_shelves=[scanned_shelf],
-		metadata_path=str(analysis.metadata_path),
-		scan_config=scan_config,
-		side=side,
-		current_stage_extension_mm=current_stage_extension_mm,
-		z_reference_wall_depth_mm=z_reference_wall_depth_mm,
-		should_use_analysis_wall_depth_fallback=False,
-	)
+	if z_reference_wall_depth_mm is not None:
+		apply_wall_depth_z_offsets(
+			analysis=analysis,
+			scanned_shelves=[scanned_shelf],
+			metadata_path=str(analysis.metadata_path),
+			scan_config=scan_config,
+			side=side,
+			current_stage_extension_mm=current_stage_extension_mm,
+			z_reference_wall_depth_mm=z_reference_wall_depth_mm,
+			should_use_analysis_wall_depth_fallback=False,
+		)
+	else:
+		print_status("z_offset_inference=skipped reason=partial_rescan_preserves_existing_z_offsets")
 	restore_reference_cells(
 		scanned_shelves=[scanned_shelf],
 		scan_config=scan_config,
