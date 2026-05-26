@@ -256,16 +256,17 @@ async def print_label(upca: str) -> dict[str, str | bool]:
     settings = get_settings()
     config = _build_label_configuration(upca)
 
-    try:
-        create_label(config)
-    except Exception as exc:
-        logging.exception("Failed to generate label for %s", upca)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to generate label",
-        ) from exc
-
     printed = False
+    if settings.printer.enabled is False:
+        try:
+            create_label(config)
+        except Exception as exc:
+            logging.exception("Failed to generate label for %s", upca)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to generate label",
+            ) from exc
+
     if settings.printer.enabled:
         # _dispatch_to_printer(config.output_path)
         printer.print_barcode(sym="UPC-A", payload=upca)
