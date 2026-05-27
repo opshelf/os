@@ -255,7 +255,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_emergency_stop_clears_command_state_in_background(self):
         from openshelf_os.robot_worker import RobotWorker
-        from openshelf_os.robot import HomeCommand
+        from openshelf_os.robot_commands import HomeCommand
 
         robot = MockRobot()
         RobotWorker._instance = None

@@ -1,10 +1,10 @@
-import os
+from __future__ import annotations
+
 import errno
+import logging
+import os
 import random
 import time
-import logging
-
-from __future__ import annotations
 from typing import Optional, List
 
 ESC = b"\x1b"

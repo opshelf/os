@@ -7,7 +7,7 @@ from typing import AsyncGenerator, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
-from openshelf_os.robot import RobotCommands, RetrieveItemCommand, StoreItemCommand
+from openshelf_os.robot_commands import RobotCommands, RetrieveItemCommand, StoreItemCommand
 import logging
 from openshelf_os.robot_worker import RobotWorker
 from sse_starlette.sse import EventSourceResponse
