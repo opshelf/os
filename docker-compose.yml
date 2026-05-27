@@ -9,7 +9,7 @@ services:
     volumes:
       - /etc/cups:/etc/cups:ro
       - /etc/opshelf:/etc/opshelf:ro
-      - ./perpetual_hardware/data:/app/perpetual_hardware/data
+      - ./openshelf_hardware/data:/app/openshelf_hardware/data
     environment:
       - ENV=${ENV:-dev}
       - OPERATING_MODE=${OPERATING_MODE:-development}

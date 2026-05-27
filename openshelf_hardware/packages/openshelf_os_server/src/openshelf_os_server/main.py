@@ -203,7 +203,7 @@ def _get_tool_camera_url(settings: Settings) -> str | None:
 
 	config_paths = [
 		CONFIG_PATH,
-		Path("/app/perpetual_hardware/data/config.json"),
+		Path("/app/openshelf_hardware/data/config.json"),
 	]
 
 	for config_path in config_paths:
@@ -625,9 +625,9 @@ def start() -> None:
 
 	if reload_enabled is True:
 		reload_dirs = [
-			"/app/perpetual_hardware/packages/hardware/src/hardware",
-			"/app/perpetual_hardware/packages/openshelf_os/src/openshelf_os",
-			"/app/perpetual_hardware/packages/openshelf_os_server/src/openshelf_os_server",
+			"/app/openshelf_hardware/packages/hardware/src/hardware",
+			"/app/openshelf_hardware/packages/openshelf_os/src/openshelf_os",
+			"/app/openshelf_hardware/packages/openshelf_os_server/src/openshelf_os_server",
 		]
 		reload_includes = ["*.py"]
 		reload_excludes = ["*.json", "*.db", "*.db-shm", "*.db-wal"]

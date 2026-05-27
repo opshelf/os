@@ -11,8 +11,8 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PYTHON_PATHS = [
-	REPO_ROOT / 'perpetual_hardware/packages/openshelf_os/src',
-	REPO_ROOT / 'perpetual_hardware/packages/hardware/src',
+	REPO_ROOT / 'openshelf_hardware/packages/openshelf_os/src',
+	REPO_ROOT / 'openshelf_hardware/packages/hardware/src',
 ]
 
 for import_path in reversed(PYTHON_PATHS):

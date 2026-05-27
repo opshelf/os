@@ -10,14 +10,14 @@ the stack is container-first and runs two services:
 
 the backend uses in-process queues for robot commands and live event/status fanout.
 
-the backend persists runtime data in `perpetual_hardware/data` (including local sqlite state, settings, and mode tracking).
+the backend persists runtime data in `openshelf_hardware/data` (including local sqlite state, settings, and mode tracking).
 
 ## architecture
 
 - `dev_ui/`: sveltekit frontend used for local and device ui workflows
-- `perpetual_hardware/packages/hardware/`: low-level hardware integrations
-- `perpetual_hardware/packages/openshelf_os/`: domain and orchestration logic
-- `perpetual_hardware/packages/openshelf_os_server/`: fastapi app, routers, auth, storage, and database migrations
+- `openshelf_hardware/packages/hardware/`: low-level hardware integrations
+- `openshelf_hardware/packages/openshelf_os/`: domain and orchestration logic
+- `openshelf_hardware/packages/openshelf_os_server/`: fastapi app, routers, auth, storage, and database migrations
 - `docker-compose.yml`: base stack (`api`, `dev_ui`)
 - `docker-compose.dev.yml`: development overrides (hot reload for api/ui source)
 - `docker-compose.hardware.yml`: usb/device passthrough for hardware-connected machines
@@ -46,7 +46,7 @@ normal local development start:
 ./scripts/start --mode development
 ```
 
-plain `./scripts/start` reuses `perpetual_hardware/data/.mode` when present. if no mode file exists, it starts in `production` mode.
+plain `./scripts/start` reuses `openshelf_hardware/data/.mode` when present. if no mode file exists, it starts in `production` mode.
 
 useful variants:
 
@@ -81,7 +81,7 @@ docker compose -f docker-compose.yml logs -f api
 docker compose -f docker-compose.yml logs -f dev_ui
 ```
 
-in development mode, api source under `perpetual_hardware/packages/*/src` and ui source under `dev_ui/src` are bind-mounted into the containers.
+in development mode, api source under `openshelf_hardware/packages/*/src` and ui source under `dev_ui/src` are bind-mounted into the containers.
 
 dependency changes, dockerfile changes, or mode switches across the development/non-development boundary need a rebuild:
 
@@ -89,14 +89,14 @@ dependency changes, dockerfile changes, or mode switches across the development/
 ./scripts/start --mode development --build
 ```
 
-runtime state lives in `perpetual_hardware/data`. delete or edit this directory carefully because it contains the local sqlite database and mode files.
+runtime state lives in `openshelf_hardware/data`. delete or edit this directory carefully because it contains the local sqlite database and mode files.
 
 ## local quality checks
 
 backend:
 
 ```bash
-cd perpetual_hardware
+cd openshelf_hardware
 uv sync
 uv run pytest
 uv run ruff check packages
@@ -157,5 +157,5 @@ example one-off laser command on a development pi:
 
 ```bash
 cd /opt/opshelf/repos/openshelf_os
-docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.hardware.yml run --rm --entrypoint sh -v /opt/opshelf/repos/openshelf_os/scripts:/app/scripts:ro api -lc 'cd /app/perpetual_hardware && uv run python /app/scripts/laser.py --config /app/perpetual_hardware/data/config.json'
+docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.hardware.yml run --rm --entrypoint sh -v /opt/opshelf/repos/openshelf_os/scripts:/app/scripts:ro api -lc 'cd /app/openshelf_hardware && uv run python /app/scripts/laser.py --config /app/openshelf_hardware/data/config.json'
 ```
