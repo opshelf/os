@@ -44,12 +44,12 @@ openshelf_hardware/data/.demo_seeded
 
 # Database files
 data
-openshelf_hardware/packages/perpetual_os1_server/data/base.db
-openshelf_hardware/packages/perpetual_os1_server/data/base.db-shm
-openshelf_hardware/packages/perpetual_os1_server/data/base.db-wal
-openshelf_hardware/packages/perpetual_os1_server/data/auth.db
-openshelf_hardware/packages/perpetual_os1_server/data/auth.db-shm
-openshelf_hardware/packages/perpetual_os1_server/data/auth.db-wal
+openshelf_hardware/packages/openshelf_os1_server/data/base.db
+openshelf_hardware/packages/openshelf_os1_server/data/base.db-shm
+openshelf_hardware/packages/openshelf_os1_server/data/base.db-wal
+openshelf_hardware/packages/openshelf_os1_server/data/auth.db
+openshelf_hardware/packages/openshelf_os1_server/data/auth.db-shm
+openshelf_hardware/packages/openshelf_os1_server/data/auth.db-wal
 
 # Agents
 .pi

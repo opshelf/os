@@ -375,8 +375,8 @@ class RobotWorker:
 
     async def connect(self) -> None:
         if self._should_enable_barcode() and self._barcode is None:
-            port: str = os.getenv("OPENSHELF_BARCODE_PORT") or os.getenv("PERPETUAL_BARCODE_PORT", "/dev/serial/by-id/usb-Linux_4.9.84_Barcode_Scanner-if00")  # type: ignore[assignment]
-            baudrate_raw: str = os.getenv("OPENSHELF_BARCODE_BAUDRATE") or os.getenv("PERPETUAL_BARCODE_BAUDRATE", "115200")  # type: ignore[assignment]
+            port: str = os.getenv("OPENSHELF_BARCODE_PORT", "/dev/serial/by-id/usb-Linux_4.9.84_Barcode_Scanner-if00")  # type: ignore[assignment]
+            baudrate_raw: str = os.getenv("OPENSHELF_BARCODE_BAUDRATE", "115200")  # type: ignore[assignment]
             baudrate = int(baudrate_raw)
             try:
                 self._barcode = BarcodeService(port=port, baudrate=baudrate)
@@ -523,9 +523,9 @@ class RobotWorker:
         asyncio.create_task(_cleanup_after_stop())
 
     def _should_enable_barcode(self) -> bool:
-        disable_raw: str = os.getenv("OPENSHELF_DISABLE_BARCODE") or os.getenv("PERPETUAL_DISABLE_BARCODE", "false")  # type: ignore[assignment]
+        disable_raw: str = os.getenv("OPENSHELF_DISABLE_BARCODE", "false")  # type: ignore[assignment]
         return disable_raw.lower() not in {"1", "true", "yes"}
-        disable_raw = os.getenv("OPENSHELF_DISABLE_BARCODE") or os.getenv("PERPETUAL_DISABLE_BARCODE", "false")
+        disable_raw = os.getenv("OPENSHELF_DISABLE_BARCODE", "false")
         return disable_raw.lower() not in {"1", "true", "yes"}
 
     async def _run_barcode_bridge(self) -> None:
