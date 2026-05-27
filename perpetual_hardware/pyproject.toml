@@ -1,5 +1,5 @@
 [project]
-name = "perpetual-hardware"
+name = "openshelf-hardware"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
@@ -11,8 +11,8 @@ dependencies = [
 [tool.uv.workspace]
 members = [
 	"packages/hardware",
-    "packages/perpetual_os1",
-    "packages/perpetual_os1_server",
+    "packages/openshelf_os",
+    "packages/openshelf_os_server",
 ]
 
 [dependency-groups]
@@ -26,7 +26,7 @@ dev = [
 [tool.mypy]
 python_version = "3.12"
 explicit_package_bases = true
-mypy_path = "packages/hardware/src:packages/perpetual_os1/src:packages/perpetual_os1_server/src"
+mypy_path = "packages/hardware/src:packages/openshelf_os/src:packages/openshelf_os_server/src"
 exclude = ["tests/"]
 ignore_missing_imports = true
 warn_unused_ignores = false

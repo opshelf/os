@@ -11,24 +11,24 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PYTHON_PATHS = [
-	REPO_ROOT / 'perpetual_hardware/packages/perpetual_os1/src',
+	REPO_ROOT / 'perpetual_hardware/packages/openshelf_os/src',
 	REPO_ROOT / 'perpetual_hardware/packages/hardware/src',
 ]
 
 for import_path in reversed(PYTHON_PATHS):
 	sys.path.insert(0, str(import_path))
 
-import perpetual_os1.laser_angle_calibration as angle_module
-import perpetual_os1.laser_calibration as laser_module
-from perpetual_os1.common import (
+import openshelf_os.laser_angle_calibration as angle_module
+import openshelf_os.laser_calibration as laser_module
+from openshelf_os.common import (
 	CONFIG_PATH,
 	Parameters,
 	load_config_file,
 	resolve_grid_path,
 	write_json_file_with_backup,
 )
-from perpetual_os1.laser_scan import ScanBounds, build_axis_positions
-from perpetual_os1.storage import StorageModuleSide
+from openshelf_os.laser_scan import ScanBounds, build_axis_positions
+from openshelf_os.storage import StorageModuleSide
 
 DEFAULT_SCANS_DIR_NAME = 'calibration'
 

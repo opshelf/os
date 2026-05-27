@@ -34,11 +34,11 @@ RUN mkdir -p /app/perpetual_hardware/data && \
 	echo 'export "PATH=$PATH:my_path"' >> /etc/profile
 
 WORKDIR /app/perpetual_hardware
-RUN uv sync && uv pip install -e packages/hardware -e packages/perpetual_os1 -e packages/perpetual_os1_server
+RUN uv sync && uv pip install -e packages/hardware -e packages/openshelf_os -e packages/openshelf_os_server
 
 WORKDIR /app/perpetual_hardware
 
 EXPOSE 8000
-RUN chmod +x /app/perpetual_hardware/packages/perpetual_os1_server/entrypoint.sh
+RUN chmod +x /app/perpetual_hardware/packages/openshelf_os_server/entrypoint.sh
 
-ENTRYPOINT ["/bin/sh", "/app/perpetual_hardware/packages/perpetual_os1_server/entrypoint.sh"]
+ENTRYPOINT ["/bin/sh", "/app/perpetual_hardware/packages/openshelf_os_server/entrypoint.sh"]
