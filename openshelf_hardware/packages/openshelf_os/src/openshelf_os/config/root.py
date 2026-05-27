@@ -86,8 +86,11 @@ class RootConfig(BaseModel):
         motors: Motors = getattr(self.robot, section).motors
         if (name is None) == (motor_id is None):
             raise ValueError("Provide exactly one of name or motor_id")
-        assert motor_id is not None  # validated by the mutual-exclusion check above
-        return motors.by_name(name) if name is not None else motors.by_id(motor_id)
+        if name is not None:
+            return motors.by_name(name)
+        if motor_id is not None:
+            return motors.by_id(motor_id)
+        raise ValueError("Provide exactly one of name or motor_id")
 
     def get_poe_camera(self) -> PoeCamera:
         return self.robot.tool.poe_camera
