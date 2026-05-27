@@ -40,6 +40,7 @@ class IOBoxStatus(Enum):
     READY = 1
     ERROR = 2
 
+
 class IOBox:
     def __init__(self,
                  motorcontroller: Controller,
@@ -47,6 +48,7 @@ class IOBox:
                  params: c.IOBlock,
                  safety=None,
                  ):
+
         self._scalecontroller = scalecontroller
         self._motorcontroller = motorcontroller
         self._status = IOBoxStatus.IDLE
@@ -81,7 +83,6 @@ class IOBox:
         self._door_max_position_mm: float = 1000.0
 
     def reload_parameters(self) -> None:
-        """Reload IO parameters from config.json without restarting."""
         from openshelf_os.common import load_config_file
 
         config = load_config_file(c.CONFIG_PATH)
@@ -94,22 +95,18 @@ class IOBox:
         self._logger.info("IO parameters reloaded from config.json")
 
     async def configure(self):
-        """
-        Configure and initialize IOBox components.
-
-        Raises:
-            IOBoxError: If configuration of any component fails
-        """
         try:
             if self._md is not None:
                 await self._md.configure()
                 await self._md.home()
             else:
                 self._logger.info("Door motor disabled via config")
+
             if self._scale_enabled is True:
                 self._scale_ready = True
             else:
                 self._logger.info("Scale disabled via config")
+
             self._status = IOBoxStatus.IDLE
         except Exception as e:
             self._status = IOBoxStatus.ERROR
@@ -121,6 +118,7 @@ class IOBox:
 
     async def _configure_curtain(self) -> None:
         curtain_cfg = getattr(self._params, "curtain", None)
+
         if curtain_cfg is None:
             self._logger.info("Curtain sensor configuration missing; skipping setup")
             return
@@ -140,17 +138,19 @@ class IOBox:
             on_change=self._handle_curtain_change,
         )
         await self._curtain_monitor.start()
+
         self._logger.info(
             "Curtain monitor started",
             extra={"pin": pin, "poll_interval_s": poll_interval},
         )
 
     async def _ensure_scale_ready(self) -> None:
-        """Ensure the scale interface is configured before reading."""
         if self._scale_enabled is False:
             return
+
         if self._scale_ready is True:
             return
+
         self._scale_ready = True
 
     def print_random_barcode(
@@ -161,9 +161,9 @@ class IOBox:
         hri: str = "none",
         feed_after: int = 2,
     ) -> str:
-        """Generate and print a random UPC-A code using the USB printer."""
         if self._printer is None:
             raise IOBoxError("Printer not configured")
+
         try:
             return self._printer.print_random_upca(
                 height=height,
@@ -176,17 +176,16 @@ class IOBox:
             raise IOBoxError(f"Failed to print barcode: {str(exc)}") from exc
 
     async def get_weight(self) -> Optional[float]:
-        """
-        Get stable weight reading from scale in grams.
-        Returns None if scale fails or is disabled.
-        """
         if self._scale_enabled is False or self._scale is None:
             return None
+
         start_time = time.monotonic()
+
         try:
             await self._ensure_scale_ready()
             weight = await self._scale.wait_for_stable_weight(timeout=15.0, poll_interval=0.1)
             elapsed = time.monotonic() - start_time
+
             if weight is None:
                 self._logger.warning(
                     "Scale did not stabilize within timeout",
@@ -197,6 +196,7 @@ class IOBox:
                     "Scale stabilized",
                     extra={"elapsed_s": round(elapsed, 3), "weight_grams": weight},
                 )
+
             return weight
         except Exception as e:
             elapsed = time.monotonic() - start_time
@@ -207,35 +207,24 @@ class IOBox:
             return None
     
     async def open_door(self):
-        """
-        Open IOBox door.
-
-        Raises:
-            IOBoxError: If door motor is not configured or disabled
-            MotorError: If door movement fails
-        """
         if self._md is None:
             raise IOBoxError("Door motor not configured or disabled")
 
         try:
             if self._curtain_state:
                 raise IOBoxError("Curtain is blocked; refusing to open door")
+
             await self._md.move_to_position(self._params.motors.by_name("door").lim)
             await self.refresh_door_state(force=True)
         except Exception as e:
             self._status = IOBoxStatus.ERROR
+
             if isinstance(e, IOBoxError):
                 raise
+
             raise MotorError(f"Failed to open door: {str(e)}") from e
 
     async def close_door(self):
-        """
-        Close IOBox door.
-
-        Raises:
-            IOBoxError: If door motor is not configured or disabled
-            MotorError: If door movement fails
-        """
         if self._md is None:
             raise IOBoxError("Door motor not configured or disabled")
 
@@ -245,14 +234,13 @@ class IOBox:
             await self.refresh_door_state(force=True)
         except Exception as e:
             self._status = IOBoxStatus.ERROR
+
             if isinstance(e, IOBoxError):
                 raise
+
             raise MotorError(f"Failed to close door: {str(e)}") from e
 
     async def home_door(self) -> None:
-        """
-        Home the door motor, forcing the door closed first when curtain is clear.
-        """
         if self._md is None:
             self._logger.info("Door motor not configured; skipping home")
             return
@@ -261,20 +249,22 @@ class IOBox:
             if not self._curtain_state:
                 await self.close_door()
             await self._md.home()
+
         except Exception as e:
             self._status = IOBoxStatus.ERROR
+
             if isinstance(e, IOBoxError):
                 raise
-            raise MotorError(f"Failed to home door: {str(e)}") from e
 
-    # curtain worker?
+            raise MotorError(f"Failed to home door: {str(e)}") from e
 
     def _handle_curtain_change(self, state: Optional[bool]) -> None:
         previous = self._curtain_state
         self._curtain_state = state
-        # Force a fresh door read when curtain blocks to avoid stale inference.
+
         if state:
             self._door_force_refresh_on_block = True
+
         self._logger.debug(
             "Curtain state change",
             extra={
@@ -283,6 +273,7 @@ class IOBox:
                 "force_door_refresh": bool(state),
             },
         )
+
         if self._curtain_listener:
             try:
                 self._curtain_listener(state)
@@ -296,24 +287,25 @@ class IOBox:
         return self._door_open
 
     async def refresh_door_state(self, *, force: bool = False) -> Optional[bool]:
-        """
-        Best-effort inference of door state from motor position.
-        Returns the latest cached state if the read fails.
-        """
         if self._md is None:
             return self._door_open
+
         if self._door_force_refresh_on_block:
             self._logger.debug("Forcing door refresh after curtain block")
             force = True
             self._door_force_refresh_on_block = False
+
         now = time.monotonic()
+
         if not force and self._door_last_read_at is not None:
             if now - self._door_last_read_at < self._door_min_refresh_s:
                 return self._door_open
+
         try:
             position_mm = await self._md.get_position()
         except Exception as exc:
             self._logger.debug("Door position read failed: %s", exc)
+
             return self._door_open
 
         if position_mm is None:
@@ -321,9 +313,11 @@ class IOBox:
                 "Door position read returned None; using cached state",
                 extra={"cached_open": self._door_open},
             )
+
             return self._door_open
 
         door_limit = self._params.motors.by_name("door").lim
+
         is_out_of_range = (
             position_mm < 0
             or position_mm > door_limit * 1.5
@@ -332,6 +326,7 @@ class IOBox:
 
         if is_out_of_range:
             self._door_bad_reading_count += 1
+
             self._logger.warning(
                 "Door position out of range; using cached state",
                 extra={
@@ -347,7 +342,9 @@ class IOBox:
                     "Too many bad door readings; attempting door motor recovery",
                     extra={"bad_reading_count": self._door_bad_reading_count},
                 )
+
                 self._door_bad_reading_count = 0
+
                 try:
                     await self._md.home()
                     self._logger.info("Door motor homed successfully after bad readings")
@@ -364,6 +361,7 @@ class IOBox:
             self._door_candidate_state = None
             self._door_candidate_since = None
             self._door_last_read_at = now
+
             return self._door_open
 
         if self._door_debounce_s <= 0:
@@ -373,6 +371,7 @@ class IOBox:
                 "Door state inferred",
                 extra={"position_mm": position_mm, "open": inferred, "threshold_mm": threshold},
             )
+
             return self._door_open
 
         if self._door_candidate_state != inferred:
@@ -381,6 +380,7 @@ class IOBox:
             return self._door_open
 
         assert self._door_candidate_since is not None
+
         if now - self._door_candidate_since >= self._door_debounce_s:
             self._door_open = inferred
             self._door_last_read_at = now
@@ -395,24 +395,19 @@ class IOBox:
                     "debounce_s": self._door_debounce_s,
                 },
             )
+
         return self._door_open
 
     def set_curtain_listener(self, listener) -> None:
         self._curtain_listener = listener
+
         if self._curtain_state is not None and self._curtain_listener:
             try:
                 self._curtain_listener(self._curtain_state)
             except Exception as exc:
                 self._logger.warning("Curtain listener failed: %s", exc)
 
-    # shutdown/teardown
     async def stop(self) -> None:
-        """
-        Stop all IOBox components safely.
-        
-        Note: Attempts best-effort cleanup of all components,
-        continues even if individual stops fail.
-        """
         errors = []
         
         if self._md is not None:

@@ -5,10 +5,10 @@ import os
 import re
 import time
 import traceback
+import sentry_sdk
+
 from datetime import datetime, timezone
 from typing import Optional, List, Any, Dict
-
-import sentry_sdk
 from openshelf_os.robot import (
     Robot,
     RobotCommands,
@@ -19,7 +19,7 @@ from openshelf_os.robot import (
     InitializeCommand,
 )
 from openshelf_os.robot_defs import WorkerError, QueuedOperation, WorkerStatusWithQueue
-from openshelf_os.barcode_protocol import BarcodeService
+from openshelf_os.barcode_service import BarcodeService
 from openshelf_os.exceptions import MotorError, MovementError, ToolError
 
 logger = logging.getLogger(__name__)
@@ -377,6 +377,7 @@ class RobotWorker:
             port: str = os.getenv("OPENSHELF_BARCODE_PORT", "/dev/serial/by-id/usb-Linux_4.9.84_Barcode_Scanner-if00")  # type: ignore[assignment]
             baudrate_raw: str = os.getenv("OPENSHELF_BARCODE_BAUDRATE", "115200")  # type: ignore[assignment]
             baudrate = int(baudrate_raw)
+
             try:
                 self._barcode = BarcodeService(port=port, baudrate=baudrate)
                 await self._barcode.start()
@@ -391,8 +392,6 @@ class RobotWorker:
                 self._barcode_task = None
 
         self._robot.register_curtain_listener(self._on_curtain_change)
-
-        # Curtain change publishing is driven by Robot.get_status() reads when status is requested.
 
     async def clear_commands(self) -> None:
         while self._command_queue.empty() is False:
