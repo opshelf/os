@@ -181,7 +181,7 @@ class Robot:
         tool_params = self._config.get("robot.tool", {})
         io_params = self._config.get("robot.io", {})
 
-        from hardware.motor import CurtainSafety
+        from hardware.curtain import CurtainSafety
         self._curtain_safety = CurtainSafety()
         self._tool = Tool(
             motorcontroller=self._motorbus,
@@ -1091,6 +1091,7 @@ class Robot:
             return False
 
         motor.set_fault()
+
         return True
 
     async def release_gripper(self) -> None:

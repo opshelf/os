@@ -213,17 +213,6 @@ def write_json_file_with_backup(
 
 # --------------------------- Motor -----------------------------
 
-class HomeSensorConfig(BaseModel):
-    enabled: bool = True
-    pin: int = Field(..., ge=0)
-    inverted: bool = True
-    poll_interval_s: float = Field(0.01, gt=0)
-    disable_brake_during_home: bool = False
-    release_mode: Literal["jog", "absolute"] = "jog"
-    release_backoff_mm: float = Field(5.0, gt=0)
-    release_target_mm: Optional[float] = Field(default=None, ge=0)
-    precision_rpm: Optional[int] = Field(default=None, gt=0)
-
 class Motor(BaseModel):
     motor_name: str = Field(..., min_length=1)
     motor_id: int = Field(..., ge=0)  # tighten if desired
@@ -248,7 +237,6 @@ class Motor(BaseModel):
     status_complete_bit: int = Field(default=5)
     ppr: int = Field(default=10000, ge=200, le=100000)
     max_following_error: int = Field(default=4000, ge=100, le=65535)
-    home_sensor: Optional[HomeSensorConfig] = None
 
     @field_validator("motor_name")
     @classmethod

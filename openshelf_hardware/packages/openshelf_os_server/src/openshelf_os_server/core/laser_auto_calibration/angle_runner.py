@@ -407,6 +407,9 @@ class AngleRunnerMixin:
         if tool._mx is None or tool._my is None or tool._mg is None or tool._ms is None or tool._mr is None:
             raise ValueError("x, y, z, stage, and rotation motors are required")
 
+        stage_motor = tool._ms
+        rotation_motor = tool._mr
+
         side_name = _side_to_short_name(side)
         side_module_name = _side_to_module_name(side)
         side_number = 0 if side == StorageModuleSide.LEFT else 1
@@ -418,7 +421,7 @@ class AngleRunnerMixin:
 
         previous_rotation_deg = float(previous_rotation_value)
         rotation_center_deg = _build_stage_stall_rotation_center_deg(side)
-        rotation_limit_deg = float(tool._mr._params.lim)
+        rotation_limit_deg = float(rotation_motor._params.lim)
         rotation_positions = _build_stage_stall_rotation_positions(
             scan_config,
             side,
@@ -438,7 +441,7 @@ class AngleRunnerMixin:
 
         base_z_mm = float(z_extension_place) + laser_scan_z_offset_from_place_mm
         probe_x_mm = _resolve_stage_stall_probe_x_mm(scan_config)
-        stage_limit_mm = float(tool._ms._params.lim)
+        stage_limit_mm = float(stage_motor._params.lim)
         probe_start_mm = float(getattr(scan_config, "angle_calibration_stage_stall_start_mm", 3.0))
         raw_probe_target_mm = getattr(scan_config, "angle_calibration_stage_stall_target_mm", None)
         probe_target_mm = float(raw_probe_target_mm if raw_probe_target_mm is not None else stage_limit_mm)
@@ -633,12 +636,12 @@ class AngleRunnerMixin:
                                 f"stage_position_mm={stage_position_mm:.3f} "
                                 f"min_stage_position_mm={min_valid_stage_position_mm:.3f}"
                             )
-                            await tool._ms.home()
+                            await stage_motor.home()
                             current_probe_start_mm = probe_start_mm
 
                         if rotation_idx < len(pass_rotation_positions):
                             angle_module.print_status(f"stage_probe=home_after_retract pass={pass_name}")
-                            await tool._ms.home()
+                            await stage_motor.home()
                             current_probe_start_mm = probe_start_mm
 
                     return pass_samples
@@ -672,7 +675,7 @@ class AngleRunnerMixin:
 
                     if coarse_attempt_idx < coarse_retry_count:
                         angle_module.print_status("stage_probe=home_before_coarse_retry")
-                        await tool._ms.home()
+                        await stage_motor.home()
                         current_probe_start_mm = probe_start_mm
 
                 if coarse_best_summary is not None:
@@ -690,7 +693,7 @@ class AngleRunnerMixin:
 
                     if len(fine_rotation_positions) > 0:
                         angle_module.print_status("stage_probe=home_before_fine")
-                        await tool._ms.home()
+                        await stage_motor.home()
                         current_probe_start_mm = probe_start_mm
                         fine_samples = await did_run_stage_stall_pass(
                             pass_name="fine",
@@ -730,7 +733,7 @@ class AngleRunnerMixin:
                             for validation_attempt_idx in range(validation_retry_count + 1):
                                 pass_name = "validation" if validation_attempt_idx == 0 else "validation_retry"
                                 angle_module.print_status(f"stage_probe=home_before_{pass_name}")
-                                await tool._ms.home()
+                                await stage_motor.home()
                                 current_probe_start_mm = probe_start_mm
                                 attempt_samples = await did_run_stage_stall_pass(
                                     pass_name=pass_name,

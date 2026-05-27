@@ -4,7 +4,8 @@ from openshelf_os.common import Motor as MotorConfig
 
 from hardware.controller import SharedModbusController as Controller
 from hardware.laser import LaserSensor
-from hardware.motor import Motor, Servo, MotorStatus, MOTOR_WAIT_TIMEOUT
+from hardware.motor import Motor, MotorStatus, MOTOR_WAIT_TIMEOUT
+from hardware.servo import Servo
 from hardware.toolcam import ToolCamera
 from openshelf_os.exceptions import (
     MotorError, ConfigError,

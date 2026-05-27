@@ -132,34 +132,3 @@ def test_assert_config_accepts_enabled_laser_with_bus():
     config = RootConfig.model_validate(data)
 
     assert_config(config)
-
-
-def test_motor_home_sensor_config_is_optional_and_parses():
-    data = copy.deepcopy(MINIMAL_CONFIG_DICT)
-    data["robot"]["tool"]["motors"] = [
-        {
-            "motor_name": "x_axis",
-            "motor_id": 5,
-            "Ip": 10,
-            "rpm": 100,
-            "dr": 0,
-            "mpr": 80,
-            "accel": 100,
-            "ret_rpm": 50,
-            "lim": 1000,
-            "home_sensor": {
-                "pin": 25,
-                "poll_interval_s": 0.02,
-                "release_backoff_mm": 5.0,
-                "precision_rpm": 25,
-            },
-        }
-    ]
-
-    config = RootConfig.model_validate(data)
-
-    motor = config.robot.tool.motors.by_name("x_axis")
-    assert motor.home_sensor is not None
-    assert motor.home_sensor.pin == 25
-    assert motor.home_sensor.inverted is True
-    assert motor.home_sensor.release_mode == "jog"

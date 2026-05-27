@@ -4,26 +4,8 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from hardware.exceptions import MotorTimeoutError
-from hardware.motor import Motor, MotorStatus, Servo
-
-
-class DummyHomeSensor:
-    def __init__(self, states: list[bool]) -> None:
-        self._states = list(states)
-        self._index = 0
-
-    def read(self) -> bool:
-        if self._index >= len(self._states):
-            return self._states[-1]
-
-        state = self._states[self._index]
-        self._index += 1
-        return state
-
-    def cleanup(self) -> None:
-        return None
-
+from hardware.motor import Motor, MotorStatus
+from hardware.servo import Servo
 
 def make_motor_params(**overrides):
     params = {
@@ -43,26 +25,11 @@ def make_motor_params(**overrides):
         'status_complete_bit': 5,
         'ppr': 10000,
         'max_following_error': 4000,
-        'home_sensor': None,
     }
     params.update(overrides)
     return SimpleNamespace(**params)
 
 
-def make_home_sensor_config(**overrides):
-    config = {
-        'enabled': True,
-        'pin': 25,
-        'inverted': True,
-        'poll_interval_s': 0.0,
-        'disable_brake_during_home': False,
-        'release_mode': 'jog',
-        'release_backoff_mm': 5.0,
-        'release_target_mm': None,
-        'precision_rpm': 50,
-    }
-    config.update(overrides)
-    return SimpleNamespace(**config)
 
 
 @pytest.mark.asyncio
@@ -259,39 +226,6 @@ async def test_motor_home_moves_near_home_before_sensorless_seek(mock_controller
 
 
 @pytest.mark.asyncio
-async def test_motor_home_with_sensor_moves_near_home_before_sensor_seek(mock_controller, monkeypatch):
-    sensor = DummyHomeSensor([False, True, False, True])
-    params = make_motor_params(home_sensor=make_home_sensor_config())
-    motor = Motor(mock_controller, params)
-    motor.clear_alarm = AsyncMock()
-
-    monkeypatch.setattr('hardware.motor.HomeSensor', lambda **_kwargs: sensor)
-    motor._move_near_home = AsyncMock()
-    motor.stop = AsyncMock(return_value=MotorStatus.STOPPED)
-    motor.move_config = AsyncMock()
-    motor.jog = AsyncMock(return_value=MotorStatus.STOPPED)
-    motor.get_param = AsyncMock(return_value=0)
-
-    await motor.home()
-
-    motor._move_near_home.assert_awaited_once_with(params.ret_rpm)
-
-
-@pytest.mark.asyncio
-async def test_move_near_home_uses_release_target_when_absolute_release_is_configured(mock_controller):
-    params = make_motor_params(
-        home_sensor=make_home_sensor_config(release_mode='absolute', release_target_mm=12.0)
-    )
-    motor = Motor(mock_controller, params)
-    motor.get_position = AsyncMock(return_value=40.0)
-    motor.move_to_position = AsyncMock()
-
-    await motor._move_near_home(params.ret_rpm)
-
-    motor.move_to_position.assert_awaited_once_with(12.0, rpm=params.ret_rpm, homing=True)
-
-
-@pytest.mark.asyncio
 async def test_move_near_home_uses_upper_logical_target_when_mapping_is_inverted(mock_controller):
     params = make_motor_params(
         lim=184.5,
@@ -338,143 +272,6 @@ async def test_move_near_home_skips_stage_motor(mock_controller):
 
     motor.move_to_position.assert_not_awaited()
 
-
-@pytest.mark.asyncio
-async def test_motor_home_with_sensor_sets_zero_and_marks_homed(mock_controller, monkeypatch):
-    sensor = DummyHomeSensor([False, False, True, True, False, False, True])
-    params = make_motor_params(home_sensor=make_home_sensor_config())
-    motor = Motor(mock_controller, params)
-    motor.clear_alarm = AsyncMock()
-
-    monkeypatch.setattr('hardware.motor.HomeSensor', lambda **_kwargs: sensor)
-    motor._move_near_home = AsyncMock()
-    motor.stop = AsyncMock(return_value=MotorStatus.STOPPED)
-    motor.move_config = AsyncMock()
-    motor.jog = AsyncMock(return_value=MotorStatus.STOPPED)
-    motor.get_param = AsyncMock(return_value=0)
-
-    await motor.home()
-
-    assert motor.is_homed() is True
-    assert motor.is_hard_stopped() is False
-    assert motor.jog.await_count == 1
-    assert motor.move_config.await_count == 1
-    assert any(call.args == (1, 0x6002, 0x21) for call in mock_controller.write_single_register.await_args_list)
-
-
-@pytest.mark.asyncio
-async def test_motor_home_with_sensor_releases_switch_before_first_seek(mock_controller, monkeypatch):
-    sensor = DummyHomeSensor([True, False, False, True, True, False, False, True])
-    params = make_motor_params(home_sensor=make_home_sensor_config())
-    motor = Motor(mock_controller, params)
-    motor.clear_alarm = AsyncMock()
-
-    monkeypatch.setattr('hardware.motor.HomeSensor', lambda **_kwargs: sensor)
-    motor._move_near_home = AsyncMock()
-    motor.stop = AsyncMock(return_value=MotorStatus.STOPPED)
-    motor.move_config = AsyncMock()
-    motor.jog = AsyncMock(return_value=MotorStatus.STOPPED)
-    motor.get_param = AsyncMock(return_value=0)
-
-    await motor.home()
-
-    assert motor.jog.await_count == 2
-    assert motor.move_config.await_count == 1
-
-
-@pytest.mark.asyncio
-async def test_motor_home_with_sensor_times_out_when_sensor_never_triggers(mock_controller, monkeypatch):
-    sensor = DummyHomeSensor([False, False, False, False])
-    params = make_motor_params(home_sensor=make_home_sensor_config())
-    motor = Motor(mock_controller, params)
-    motor.clear_alarm = AsyncMock()
-
-    class FakeMonotonic:
-        def __init__(self) -> None:
-            self._value = 0.0
-
-        def __call__(self) -> float:
-            self._value += 200.0
-            return self._value
-
-    monkeypatch.setattr('hardware.motor.HomeSensor', lambda **_kwargs: sensor)
-    monkeypatch.setattr('hardware.motor.time.monotonic', FakeMonotonic())
-    motor._move_near_home = AsyncMock()
-    motor.stop = AsyncMock(return_value=MotorStatus.STOPPED)
-    motor.jog = AsyncMock(return_value=MotorStatus.STOPPED)
-    motor.get_param = AsyncMock(return_value=0)
-
-    with pytest.raises(MotorTimeoutError, match='timed out waiting for sensor'):
-        await motor.home()
-
-
-@pytest.mark.asyncio
-async def test_motor_home_with_sensor_supports_absolute_release_mode(mock_controller, monkeypatch):
-    sensor = DummyHomeSensor([False, False, True, True, False, False, True])
-    params = make_motor_params(
-        home_sensor=make_home_sensor_config(release_mode='absolute', release_target_mm=10.0)
-    )
-    motor = Motor(mock_controller, params)
-    motor.clear_alarm = AsyncMock()
-
-    monkeypatch.setattr('hardware.motor.HomeSensor', lambda **_kwargs: sensor)
-    motor._move_near_home = AsyncMock()
-    motor.stop = AsyncMock(return_value=MotorStatus.STOPPED)
-    motor.move_config = AsyncMock()
-    motor.jog = AsyncMock(return_value=MotorStatus.STOPPED)
-    motor.get_param = AsyncMock(return_value=0)
-
-    await motor.home()
-
-    assert motor.jog.await_count == 1
-    assert motor.move_config.await_count == 1
-
-
-@pytest.mark.asyncio
-async def test_motor_home_with_absolute_release_mode_rezeros_before_release(mock_controller, monkeypatch):
-    sensor = DummyHomeSensor([True, True, False, False, True, True, False, False, True])
-    params = make_motor_params(
-        home_sensor=make_home_sensor_config(release_mode='absolute', release_target_mm=10.0)
-    )
-    motor = Motor(mock_controller, params)
-    motor.clear_alarm = AsyncMock()
-
-    monkeypatch.setattr('hardware.motor.HomeSensor', lambda **_kwargs: sensor)
-    motor._move_near_home = AsyncMock()
-    motor.stop = AsyncMock(return_value=MotorStatus.STOPPED)
-    motor.move_config = AsyncMock()
-    motor.jog = AsyncMock(return_value=MotorStatus.STOPPED)
-    motor.get_param = AsyncMock(return_value=0)
-
-    await motor.home()
-
-    assert motor.jog.await_count == 3
-    assert motor.move_config.await_count == 1
-
-
-@pytest.mark.asyncio
-async def test_motor_home_with_sensor_can_disable_brake_during_home(mock_controller, monkeypatch):
-    sensor = DummyHomeSensor([False, False, True, True, False, False, True])
-    params = make_motor_params(
-        home_sensor=make_home_sensor_config(disable_brake_during_home=True)
-    )
-    motor = Motor(mock_controller, params)
-    motor.clear_alarm = AsyncMock()
-
-    monkeypatch.setattr('hardware.motor.HomeSensor', lambda **_kwargs: sensor)
-    motor._move_near_home = AsyncMock()
-    motor.stop = AsyncMock(return_value=MotorStatus.STOPPED)
-    motor.move_config = AsyncMock()
-    motor.jog = AsyncMock(return_value=MotorStatus.STOPPED)
-    motor.get_param = AsyncMock(return_value=0)
-    motor.disable_brake_output = AsyncMock(return_value=None)
-    motor.restore_brake_output = AsyncMock(return_value=None)
-
-    await motor.home()
-
-    assert motor.move_config.await_count == 1
-    motor.disable_brake_output.assert_awaited_once()
-    motor.restore_brake_output.assert_awaited_once()
 
 @pytest.mark.asyncio
 async def test_motor_returns_last_good_position_when_garbage_persists(mock_controller):

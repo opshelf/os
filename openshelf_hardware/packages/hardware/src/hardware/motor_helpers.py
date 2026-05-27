@@ -4,9 +4,7 @@ from typing import List, Dict, Union, Optional
 
 TRIGGER = 0x6002
 
-# Full list of parsed register-parameter pairs from the datasheet, formatted for readability and export
 motor_registers = [
-    # Format: Register, Param No., Name, Description, Range, Default, Unit
     (0x0001, "Pr0.00", "Pulse/revolution", "Pulse count per revolution", "200-51200", 10000, "P/R"),
     (0x0003, "Pr0.01", "Control Mode", "0=open loop, 2=closed loop", "0-255", 2, "--"),
     (0x0005, "Pr0.02", "Control mode source", "Invalid", "0-10", 1, "--"),
@@ -73,7 +71,6 @@ motor_registers = [
     (0x6010, None, "Homing low velocity", "Second segment precise homing velocity", "rpm", "0–5000", "--"),
     (0x6011, None, "Homing acceleration", "Acceleration during homing", "ms/1000rpm", "--", "--"),
     (0x6012, None, "Homing deceleration", "Deceleration during homing", "ms/1000rpm", "--", "--"),
-    # (0x6002, None, "Set current position to 0", "Write 0x21 to set current motor position to zero", "--", "--", "--"),
     (0x6000, None, "Auto-homing enable", "bit2 = 1 enables auto-homing at power-on", "--", "bitfield", "--"),
     (0x602D, None, "Position Low (Actual)", "", "--", "bitfield", "--"),
     (0x602C, None, "Position High (Actual)", "", "--", "bitfield", "--"),
@@ -87,10 +84,6 @@ motor_registers = [
     (0x6207, "Pr9.07", "Special Parameter", "Path 0 links to Pr8.02, others reserved", "--", None, "--")
 ]
 
-# the other 15 paths are exactly the same 8 register structure
-
-
-# Convert to list of dicts for exporting or interactive usage
 register_dict_list: List[Dict[str, Union[str, int, None]]] = [
     OrderedDict([
         ("Register", f"0x{reg:04X}"),
@@ -105,42 +98,26 @@ register_dict_list: List[Dict[str, Union[str, int, None]]] = [
 ]
 
 def get_register_by_name(param_name: str) -> Optional[int]:
-    """Get a register address by its parameter name.
-    
-    Args:
-        param_name: Name of the register parameter
-        
-    Returns:
-        Register address as an integer, or None if not found
-    """
     if not param_name:
         return None
         
     for entry in register_dict_list:
         name = entry.get("Name", "")
+
         if isinstance(name, str) and name.strip().lower() == param_name.strip().lower():
             register = entry.get("Register")
+
             if register is None:
                 continue
+
             try:
                 return int(str(register), 16)
             except (ValueError, TypeError) as e:
                 raise ValueError(f"Invalid register value for {param_name}: {e}") from e
+
     return None
 
 def rev_to_pulse(rev: float, ppr: int = 10000) -> tuple[int, int]:
-    """Convert motor revolutions to pulse counts.
-
-    Args:
-        rev: Number of motor revolutions
-        ppr: Pulses per revolution (default 10000)
-
-    Returns:
-        Tuple of (high_bytes, low_bytes) for 32-bit pulse count
-
-    Raises:
-        ValueError: If input value is invalid
-    """
     if not isinstance(rev, (int, float)):
         raise ValueError(f"Revolution count must be a number, got {type(rev)}")
 
@@ -148,23 +125,12 @@ def rev_to_pulse(rev: float, ppr: int = 10000) -> tuple[int, int]:
         val = int(rev * ppr)
         top_bytes = (val >> 16) & 0xFFFF
         bottom_bytes = val & 0xFFFF
+
         return top_bytes, bottom_bytes
     except (ValueError, TypeError, OverflowError) as e:
         raise ValueError(f"Failed to convert {rev} revolutions to pulses: {str(e)}") from e
 
 def mm_to_rev(mm: float, mpr: float) -> float:
-    """Convert millimeters to motor revolutions.
-    
-    Args:
-        mm: Distance in millimeters
-        mpr: Millimeters per revolution
-        
-    Returns:
-        Number of motor revolutions
-        
-    Raises:
-        ValueError: If input values are invalid or mpr is zero
-    """
     if not isinstance(mm, (int, float)) or not isinstance(mpr, (int, float)):
         raise ValueError("Distance and mpr must be numbers")
         
@@ -177,18 +143,6 @@ def mm_to_rev(mm: float, mpr: float) -> float:
         raise ValueError(f"Failed to convert {mm}mm at {mpr}mm/rev: {str(e)}") from e
 
 def rpm_to_mms(rpm: float, mpr: float) -> float:
-    """Convert RPM to millimeters per second.
-    
-    Args:
-        rpm: Motor speed in revolutions per minute
-        mpr: Millimeters per revolution
-        
-    Returns:
-        Speed in millimeters per second
-        
-    Raises:
-        ValueError: If input values are invalid
-    """
     if not isinstance(rpm, (int, float)) or not isinstance(mpr, (int, float)):
         raise ValueError("RPM and mpr must be numbers")
         
@@ -199,21 +153,6 @@ def rpm_to_mms(rpm: float, mpr: float) -> float:
         raise ValueError(f"Failed to convert {rpm}RPM at {mpr}mm/rev: {str(e)}") from e
         
 def accel_time_to_mms2(accel_time: float, mpr: float) -> float:
-    """Convert acceleration time from ms/1000rpm to mm/s².
-    
-    The motor's acceleration parameter is specified in milliseconds to reach 1000 RPM.
-    This function converts it to real-world acceleration in mm/s².
-    
-    Args:
-        accel_time: Time in milliseconds to reach 1000 RPM
-        mpr: Millimeters per revolution
-        
-    Returns:
-        Acceleration in millimeters per second squared
-        
-    Raises:
-        ValueError: If input values are invalid or accel_time is zero
-    """
     if not isinstance(accel_time, (int, float)) or not isinstance(mpr, (int, float)):
         raise ValueError("Acceleration time and mpr must be numbers")
         
@@ -221,13 +160,9 @@ def accel_time_to_mms2(accel_time: float, mpr: float) -> float:
         raise ValueError("Acceleration time must be positive")
         
     try:
-        # Convert acceleration time to seconds
         accel_seconds = accel_time / 1000.0
-        
-        # Convert target speed (1000 RPM) to mm/s
         target_speed = rpm_to_mms(1000.0, mpr)
         
-        # Calculate acceleration (v = a*t, so a = v/t)
         return target_speed / accel_seconds
         
     except (ValueError, TypeError) as e:
