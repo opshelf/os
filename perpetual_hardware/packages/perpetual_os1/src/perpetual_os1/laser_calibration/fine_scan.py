@@ -162,6 +162,77 @@ async def probe_line_from_center(
 	)
 
 
+async def refine_horizontal_segment(
+	tool: Any,
+	*,
+	segment: LineGapSegment,
+	fixed_mm: float,
+	bounds: ScanBounds,
+	settle_ms: int,
+	samples_per_point: int,
+	wall_depth_mm: float,
+	expected_span_mm: float,
+	progress_prefix: str,
+	should_abort: Callable[[], bool] | None = None,
+	) -> Optional[LineGapSegment]:
+	refined_x_min_mm = max(
+		float(bounds.x_min),
+		float(segment.start_mm) - FINE_X_REFINEMENT_MARGIN_MM,
+	)
+	refined_x_max_mm = min(
+		float(bounds.x_max),
+		float(segment.end_mm) + FINE_X_REFINEMENT_MARGIN_MM,
+	)
+
+	if refined_x_max_mm <= refined_x_min_mm:
+		return None
+
+	positions = build_axis_positions(
+		refined_x_min_mm,
+		refined_x_max_mm,
+		FINE_X_REFINEMENT_STEP_MM,
+	)
+
+	if len(positions) < 3:
+		return None
+
+	refinement_scan = GridScanResult(
+		x_positions=positions,
+		y_positions=[fixed_mm],
+		depth_rows=[[None for _ in positions]],
+	)
+	center_idx = find_nearest_position_index(
+		positions,
+		float(segment.center_mm),
+	)
+	refined_segment = await probe_line_from_center(
+		tool,
+		base_scan=refinement_scan,
+		axis="x",
+		positions=positions,
+		fixed_mm=fixed_mm,
+		center_idx=center_idx,
+		step_mm=FINE_X_REFINEMENT_STEP_MM,
+		progress_prefix=progress_prefix,
+		settle_ms=settle_ms,
+		samples_per_point=samples_per_point,
+		wall_depth_mm=wall_depth_mm,
+		expected_span_mm=expected_span_mm,
+		should_abort=should_abort,
+	)
+
+	if refined_segment is None:
+		return None
+
+	print_status(
+		f"x_refinement=applied original_center_mm={float(segment.center_mm):.3f} "
+		f"refined_center_mm={float(refined_segment.center_mm):.3f} "
+		f"delta_mm={float(refined_segment.center_mm) - float(segment.center_mm):.3f} "
+		f"step_mm={FINE_X_REFINEMENT_STEP_MM:.3f}"
+	)
+	return refined_segment
+
+
 def build_detected_cell_from_segments(
 	*,
 	x_segment: LineGapSegment,
@@ -458,6 +529,22 @@ async def capture_cross_scan(
 
 	if refined_horizontal_segment is not None:
 		horizontal_segment = refined_horizontal_segment
+
+	precision_horizontal_segment = await refine_horizontal_segment(
+		tool,
+		segment=horizontal_segment,
+		fixed_mm=refined_horizontal_y_mm,
+		bounds=bounds,
+		settle_ms=settle_ms,
+		samples_per_point=samples_per_point,
+		wall_depth_mm=wall_depth_mm,
+		expected_span_mm=scan_config.expected_hole_width_mm,
+		progress_prefix=f"{progress_prefix}_h_precision",
+		should_abort=should_abort,
+	)
+
+	if precision_horizontal_segment is not None:
+		horizontal_segment = precision_horizontal_segment
 
 	detected_cell = build_detected_cell_from_segments(
 		x_segment=horizontal_segment,
