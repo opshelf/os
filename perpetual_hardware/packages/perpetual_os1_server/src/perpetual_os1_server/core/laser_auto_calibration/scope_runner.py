@@ -264,35 +264,47 @@ class ScopeRunnerMixin:
         scan_config = config.robot.grid.scan
         grid_path = Path(resolve_grid_path(config))
         grid = laser_module.load_grid(grid_path)
-        candidate = laser_module.build_single_cell_rescan_candidate(
+        bounds = _build_bounds_for_side(scan_config, side)
+        target_shelf = laser_module.resolve_target_shelf(
             grid=grid,
             side=side,
-            target=target,
-            scan_config=scan_config,
+            shelf_idx=target.shelf_idx,
         )
-        candidate_wall_depth_mm = (
-            float(candidate.wall_depth_mm)
-            if candidate.wall_depth_mm is not None
-            else None
+        target_cell_y_values = [
+            float(cell.calibration_point.y)
+            for cell in target_shelf.cells
+            if cell.calibration_point is not None
+        ]
+
+        if len(target_cell_y_values) == 0:
+            raise ValueError(f"Shelf {target.shelf_idx} has no calibration points on {side.value}")
+
+        target_center_y_mm = float(median(target_cell_y_values))
+        local_y_margin_mm = max(
+            80.0,
+            float(scan_config.expected_hole_height_mm)
+            + max(float(offset_mm) for offset_mm in laser_module.get_shelf_hole_probe_y_offsets_mm(scan_config))
+            + 30.0,
         )
-        bounds = laser_module.build_single_cell_rescan_bounds(
-            candidate=candidate,
-            scan_config=scan_config,
+        local_bounds = ScanBounds(
+            x_min=bounds.x_min,
+            x_max=bounds.x_max,
+            y_min=max(bounds.y_min, target_center_y_mm - local_y_margin_mm),
+            y_max=min(bounds.y_max, target_center_y_mm + local_y_margin_mm),
         )
         analysis = await self._run_scan_analysis(
             worker,
             side,
-            bounds,
-            seeded_candidates=[candidate],
-            seeded_wall_depth_mm=candidate_wall_depth_mm,
+            local_bounds,
+            known_shelf_edge_y=None,
+            should_validate_reference_bounds=False,
             rescan_target=target,
         )
-        await self._persist_single_cell_result(
+        await self._persist_single_cell_shelf_result(
             worker,
             side,
             analysis,
             target,
-            candidate,
         )
 
     async def _home_after_abort(self, worker: RobotWorker) -> None:
