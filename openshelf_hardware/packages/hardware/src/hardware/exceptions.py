@@ -1,8 +1,3 @@
-"""
-Low-level hardware exceptions for the hardware package.
-These exceptions handle fundamental hardware communication and control errors.
-"""
-
 class HardwareError(Exception):
     """Base exception for all hardware-related errors."""
     pass

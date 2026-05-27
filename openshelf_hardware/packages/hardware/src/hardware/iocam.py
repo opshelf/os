@@ -27,6 +27,7 @@ def _resolve_innomaker_device(output: str) -> int:
             break
 
         match = re.search(r"/dev/video(\d+)", lines[i + 1])
+
         if match is not None:
             return int(match.group(1))
 
@@ -36,7 +37,6 @@ def _resolve_innomaker_device(output: str) -> int:
 
 
 def _find_innomaker_device() -> int:
-    """Return the /dev/video index for the Innomaker camera."""
     try:
         result = subprocess.run(
             ["v4l2-ctl", "--list-devices"],
@@ -53,14 +53,6 @@ def _find_innomaker_device() -> int:
 
 
 class AFSCam:
-    """
-    IO box USB color camera (Innomaker U20CAM) for monitoring / debugging.
-
-    - await start()
-    - capture_raw() for unprocessed BGR frames
-    - await stop()
-    """
-
     def __init__(self, usb_params) -> None:
         self.square_mm = usb_params.square_mm
         self.fx_px = usb_params.fx_px
@@ -74,18 +66,19 @@ class AFSCam:
         self._usb: Optional[cv2.VideoCapture] = None
 
     def _init_usb(self, *, use_auto_exposure: bool = True) -> None:
-        """Initialize USB camera (auto-detect Innomaker U20CAM)."""
         try:
             usb_index = _find_innomaker_device()
             self._usb_index = usb_index
             logger.info("Found Innomaker U20CAM at /dev/video%s", usb_index)
 
             self._usb = cv2.VideoCapture(usb_index, cv2.CAP_V4L2)
+
             if not self._usb.isOpened():
                 raise CameraConnectionError(f"Failed to open Innomaker at index {usb_index}")
 
             if self._usb_fourcc:
                 fourcc = cv2.VideoWriter_fourcc(*self._usb_fourcc)
+
                 if not self._usb.set(cv2.CAP_PROP_FOURCC, fourcc):
                     raise CameraConfigError(f"Failed to set FOURCC to {self._usb_fourcc}")
 
@@ -96,17 +89,19 @@ class AFSCam:
                     raise CameraConfigError(f"Failed to set exposure {self._usb_exposure}")
 
             ok, frame0 = self._usb.read()
+
             if not ok or frame0 is None:
                 raise CameraError("Failed to capture initial frame")
 
         except Exception as e:
             self._cleanup_usb()
+
             if not isinstance(e, (CameraConnectionError, CameraConfigError, CameraNotPresentError)):
                 raise CameraError(f"USB camera initialization failed: {e}") from e
+
             raise
 
     async def start(self) -> None:
-        """Open the USB camera with auto-exposure (typical monitoring setup)."""
         try:
             self._init_usb(use_auto_exposure=True)
         except Exception as e:
@@ -123,11 +118,11 @@ class AFSCam:
             raise
 
     def capture_raw(self) -> Optional[np.ndarray]:
-        """Capture a single raw frame from USB camera without any processing."""
         if self._usb is None:
             return None
 
         ok, frame = self._usb.read()
+
         if ok is True and frame is not None:
             return frame
 
@@ -139,4 +134,5 @@ class AFSCam:
                 self._usb.release()
             except Exception:
                 pass
+
             self._usb = None

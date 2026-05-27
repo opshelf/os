@@ -1,10 +1,10 @@
-#!/usr/bin/env python3
-from __future__ import annotations
 import os
 import errno
 import random
 import time
 import logging
+
+from __future__ import annotations
 from typing import Optional, List
 
 ESC = b"\x1b"
@@ -17,7 +17,6 @@ DEFAULT_PRINT_DENSITY = 64
 
 HRI_MAP = {"none":0, "above":1, "below":2, "both":3}
 
-# GS k (mode B) symbology map
 SYMS = {
     "UPC-A":65, "UPCA":65,
     "UPC-E":66, "UPCE":66,
@@ -31,30 +30,24 @@ SYMS = {
     "UCC/EAN128":74, "GS1-128":74, "EAN128":74,
 }
 
+logger = logging.getLogger(__name__).getChild("printer")
+
 def _calculate_upc_check_digit(digits: List[str]) -> int:
     odd_sum = sum(int(digits[i]) for i in range(0, 11, 2))
     even_sum = sum(int(digits[i]) for i in range(1, 11, 2))
     total = odd_sum * 3 + even_sum
+
     return (10 - (total % 10)) % 10
 
 
 def generate_random_upca() -> str:
     digits = [str(random.randint(0, 9)) for _ in range(11)]
     check_digit = _calculate_upc_check_digit(digits)
-    return "".join(digits) + str(check_digit)
 
-logger = logging.getLogger(__name__).getChild("printer")
+    return "".join(digits) + str(check_digit)
 
 
 class USBPrinter:
-    """
-    ESC/POS direct-write printer for /dev/usb/lp0
-    Designed to be robust inside Docker containers.
-
-    Implements delays and reduced density to prevent thermal protection
-    and command loss issues documented in T9E-US specification.
-    """
-
     def __init__(
         self,
         device: str = "/dev/usb/lp0",
@@ -68,15 +61,16 @@ class USBPrinter:
         self._write_count = 0
         self._last_write_time: Optional[float] = None
 
-    # --------- lifecycle ----------
     def open(self) -> None:
         if self._fd is not None:
             return
 
         logger.debug("Opening printer device", extra={"device": self.device})
+
         self._fd = os.open(self.device, os.O_WRONLY | os.O_SYNC | os.O_CLOEXEC)
         self._write_count = 0
         self._last_write_time = None
+
         logger.info(
             "Printer device opened",
             extra={"device": self.device, "flags": "O_WRONLY|O_SYNC|O_CLOEXEC"},
@@ -92,6 +86,7 @@ class USBPrinter:
                 self._fd = None
                 self._write_count = 0
                 self._last_write_time = None
+
                 logger.info(
                     "Printer device closed",
                     extra={"device": self.device, "total_writes": write_count},
@@ -99,12 +94,12 @@ class USBPrinter:
 
     def __enter__(self) -> "USBPrinter":
         self.open()
+
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
         self.close()
 
-    # --------- low-level write with one automatic reopen ----------
     def _wait_command_delay(self) -> None:
         if self._last_write_time is not None and self.command_delay > 0:
             elapsed = time.monotonic() - self._last_write_time
@@ -115,6 +110,7 @@ class USBPrinter:
                     "Waiting between commands",
                     extra={"delay_ms": remaining * 1000, "device": self.device},
                 )
+
                 time.sleep(remaining)
 
     def _write_all(self, data: bytes, description: str = "data") -> None:
@@ -136,6 +132,7 @@ class USBPrinter:
                         "data_len": len(data),
                     },
                 )
+
                 self.close()
                 time.sleep(0.2)
                 self.open()
@@ -150,6 +147,7 @@ class USBPrinter:
                     },
                     exc_info=True,
                 )
+
                 raise
 
     def _write_all_once(self, data: bytes, description: str = "data") -> None:
@@ -171,6 +169,7 @@ class USBPrinter:
                         "description": description,
                     },
                 )
+
                 raise OSError(errno.EIO, "short write to printer")
 
             total += n
@@ -188,11 +187,12 @@ class USBPrinter:
             },
         )
 
-    # --------- ESC/POS helpers ----------
     def init(self) -> None:
         logger.debug("Sending printer init command", extra={"device": self.device})
+
         self._write_all(ESC + b"@", description="ESC @ init")
         time.sleep(self.init_delay)
+
         logger.debug(
             "Init delay complete",
             extra={"device": self.device, "delay_ms": self.init_delay * 1000},
@@ -203,6 +203,7 @@ class USBPrinter:
             raise ValueError("density must be 0..255")
 
         self._write_all(GS + b"E" + bytes([density]), description=f"GS E {density} density")
+
         logger.debug("Set print density", extra={"device": self.device, "density": density})
 
     def set_hri(self, where: str = "none") -> None:
@@ -223,14 +224,15 @@ class USBPrinter:
 
     def _build_barcode_cmd(self, sym: str, data: bytes) -> bytes:
         m = SYMS.get(sym.upper())
+
         if m is None:
             raise ValueError(f"unsupported symbology: {sym}")
+
         if not (1 <= len(data) <= 255):
             raise ValueError("data length must be 1..255")
-        # GS k m n [data]
+
         return GS + b"k" + bytes([m, len(data)]) + data
 
-    # --------- public API ----------
     def print_barcode(
         self,
         sym: str = "CODE128",

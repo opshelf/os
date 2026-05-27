@@ -32,12 +32,6 @@ class CurtainSafety:
 
 
 class CurtainSensor:
-    """
-    Lightweight wrapper around the curtain GPIO input.
-
-    Raises on construction if GPIO is unavailable.
-    """
-
     def __init__(
         self,
         *,
@@ -46,25 +40,26 @@ class CurtainSensor:
     ) -> None:
         if GPIO is None:
             raise RuntimeError("RPi.GPIO not available")
+
         self.pin = pin
         self._inverted = inverted
-        GPIO.setup(pin, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
         self._last_state: Optional[bool] = None
+
+        GPIO.setup(pin, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
 
     def read(self) -> bool:
         raw = GPIO.input(self.pin) == GPIO.HIGH  # type: ignore[arg-type]
         result = not raw if self._inverted else raw
+
         self._last_state = result
+
         return result
 
     def cleanup(self) -> None:
         GPIO.cleanup(self.pin)  # type: ignore[arg-type]
 
 
-
 class CurtainMonitor:
-    """Polls a CurtainSensor and invokes a sync callback on state change."""
-
     def __init__(
         self,
         sensor: CurtainSensor,
@@ -81,8 +76,10 @@ class CurtainMonitor:
     async def start(self) -> None:
         if self._task:
             return
+
         self._last = self._sensor.read()
         self._on_change(self._last)
+
         logger.info(
             "Curtain monitor started",
             extra={
@@ -91,28 +88,34 @@ class CurtainMonitor:
                 "initial_blocked": self._last,
             },
         )
+
         self._task = asyncio.create_task(self._run(), name="curtain-monitor")
 
     async def stop(self) -> None:
         if self._task:
             self._task.cancel()
+
             try:
                 await self._task
             except asyncio.CancelledError:
                 pass
+
             logger.info(
                 "Curtain monitor stopped",
                 extra={"pin": getattr(self._sensor, "pin", None)},
             )
+
             self._task = None
 
     async def _run(self) -> None:
         try:
             while True:
                 state = self._sensor.read()
+
                 if state != self._last:
                     self._last = state
                     self._on_change(state)
+
                 await asyncio.sleep(self._poll_interval)
         except asyncio.CancelledError:
             raise

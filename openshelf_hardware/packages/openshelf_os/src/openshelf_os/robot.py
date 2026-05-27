@@ -27,7 +27,6 @@ class RobotConfigError(Exception):
     """Exception raised for robot configuration errors."""
     pass
 
-from openshelf_os.robot_state import RobotStateManager  # noqa: E402
 
 import logging  # noqa: E402
 from typing import Any, Dict, Optional, Union, Literal, Annotated, List, TYPE_CHECKING  # noqa: E402
@@ -203,7 +202,6 @@ class Robot:
         self._status: RobotStatus | None = None
 
         self._state: RobotState = RobotState(current_cell=None)
-        self._state_manager = RobotStateManager()
         self._motor_time_accumulator: float = 0.0
 
         self._demo_cell_map: dict[str, StorageModuleCellLocation] | None = None

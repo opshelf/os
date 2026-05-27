@@ -1,9 +1,9 @@
 import time
 import asyncio
 import functools
-from dataclasses import dataclass
 import logging
 
+from dataclasses import dataclass
 from hardware import motor_helpers
 from hardware.controller import SharedModbusController
 from enum import Enum

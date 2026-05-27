@@ -1,8 +1,7 @@
-from __future__ import annotations
-
 import logging
-from typing import Optional
 
+from __future__ import annotations
+from typing import Optional
 from hardware.controller import SharedModbusController
 
 logger = logging.getLogger(__name__).getChild("laser")
@@ -48,7 +47,9 @@ class LaserSensor:
                 "baudrate": getattr(self.modbus_controller, "baudrate", None),
             },
         )
+
         await self.modbus_controller.connect()
+
         return bool(getattr(self.modbus_controller.client, "connected", True))
 
     async def close(self) -> None:
@@ -120,4 +121,5 @@ class LaserSensor:
                 extra={"unit_id": self.device_id},
                 exc_info=True,
             )
+
             return None
