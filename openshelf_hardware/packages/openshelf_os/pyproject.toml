@@ -1,0 +1,28 @@
+[project]
+name = "openshelf_os"
+version = "0.1.0"
+description = "Add your description here"
+authors = [
+    { name = "emgardner", email = "gardner.ethan10@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+	"hardware",
+	"pydantic",
+	"pymodbus>=3.11.2",
+	"opencv-python",
+	"sentry-sdk>=2.35.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv.sources]
+hardware = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "ruff>=0.14.6",
+    "pytest>=8.3.0",
+]

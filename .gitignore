@@ -37,23 +37,21 @@ data/demo.json
 *.log
 
 # Runtime mode
-perpetual_hardware/data/.mode
-perpetual_hardware/data/.last_mode
-perpetual_hardware/data/.last_start_mode
-perpetual_hardware/data/.demo_seeded
+openshelf_hardware/data/.mode
+openshelf_hardware/data/.last_mode
+openshelf_hardware/data/.last_start_mode
+openshelf_hardware/data/.demo_seeded
 
 # Database files
 data
-perpetual_hardware/packages/perpetual_os1_server/data/base.db
-perpetual_hardware/packages/perpetual_os1_server/data/base.db-shm
-perpetual_hardware/packages/perpetual_os1_server/data/base.db-wal
-perpetual_hardware/packages/perpetual_os1_server/data/auth.db
-perpetual_hardware/packages/perpetual_os1_server/data/auth.db-shm
-perpetual_hardware/packages/perpetual_os1_server/data/auth.db-wal
+openshelf_hardware/packages/openshelf_os1_server/data/base.db
+openshelf_hardware/packages/openshelf_os1_server/data/base.db-shm
+openshelf_hardware/packages/openshelf_os1_server/data/base.db-wal
+openshelf_hardware/packages/openshelf_os1_server/data/auth.db
+openshelf_hardware/packages/openshelf_os1_server/data/auth.db-shm
+openshelf_hardware/packages/openshelf_os1_server/data/auth.db-wal
 
 # Agents
-.mcp.json
-opencode.json
 .pi
 
 # Camera files

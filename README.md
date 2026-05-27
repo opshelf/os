@@ -1,8 +1,8 @@
-# perpetual os
+# openshelf os
 
 ## overview
 
-this repo contains the local runtime for perpetual devices.
+this repo contains the local runtime for openshelf devices.
 the stack is container-first and runs two services:
 
 - `dev_ui`: sveltekit ui on `http://localhost:8080`
@@ -10,14 +10,14 @@ the stack is container-first and runs two services:
 
 the backend uses in-process queues for robot commands and live event/status fanout.
 
-the backend persists runtime data in `perpetual_hardware/data` (including local sqlite state, settings, and mode tracking).
+the backend persists runtime data in `openshelf_hardware/data` (including local sqlite state, settings, and mode tracking).
 
 ## architecture
 
 - `dev_ui/`: sveltekit frontend used for local and device ui workflows
-- `perpetual_hardware/packages/hardware/`: low-level hardware integrations
-- `perpetual_hardware/packages/perpetual_os1/`: domain and orchestration logic
-- `perpetual_hardware/packages/perpetual_os1_server/`: fastapi app, routers, auth, storage, and database migrations
+- `openshelf_hardware/packages/hardware/`: low-level hardware integrations
+- `openshelf_hardware/packages/openshelf_os/`: domain and orchestration logic
+- `openshelf_hardware/packages/openshelf_os_server/`: fastapi app, routers, auth, storage, and database migrations
 - `docker-compose.yml`: base stack (`api`, `dev_ui`)
 - `docker-compose.dev.yml`: development overrides (hot reload for api/ui source)
 - `docker-compose.hardware.yml`: usb/device passthrough for hardware-connected machines
@@ -46,7 +46,7 @@ normal local development start:
 ./scripts/start --mode development
 ```
 
-plain `./scripts/start` reuses `perpetual_hardware/data/.mode` when present. if no mode file exists, it starts in `production` mode.
+plain `./scripts/start` reuses `openshelf_hardware/data/.mode` when present. if no mode file exists, it starts in `production` mode.
 
 useful variants:
 
@@ -81,7 +81,7 @@ docker compose -f docker-compose.yml logs -f api
 docker compose -f docker-compose.yml logs -f dev_ui
 ```
 
-in development mode, api source under `perpetual_hardware/packages/*/src` and ui source under `dev_ui/src` are bind-mounted into the containers.
+in development mode, api source under `openshelf_hardware/packages/*/src` and ui source under `dev_ui/src` are bind-mounted into the containers.
 
 dependency changes, dockerfile changes, or mode switches across the development/non-development boundary need a rebuild:
 
@@ -89,18 +89,18 @@ dependency changes, dockerfile changes, or mode switches across the development/
 ./scripts/start --mode development --build
 ```
 
-runtime state lives in `perpetual_hardware/data`. delete or edit this directory carefully because it contains the local sqlite database and mode files.
+runtime state lives in `openshelf_hardware/data`. delete or edit this directory carefully because it contains the local sqlite database and mode files.
 
 ## local quality checks
 
 backend:
 
 ```bash
-cd perpetual_hardware
+cd openshelf_hardware
 uv sync
 uv run pytest
 uv run ruff check packages
-uv run mypy packages/perpetual_os1_server/src
+uv run mypy packages/openshelf_os_server/src
 ```
 
 frontend:
@@ -135,13 +135,13 @@ forward local ports for ui/api access:
 on current lab devices, the checkout is usually:
 
 ```bash
-/opt/opshelf/repos/perpetual_os
+/opt/opshelf/repos/openshelf_os
 ```
 
 for feature work on a development pi, inspect the branch and worktree before pulling:
 
 ```bash
-cd /opt/opshelf/repos/perpetual_os
+cd /opt/opshelf/repos/openshelf_os
 git status --short --branch
 git pull
 ./scripts/start --mode development --hardware
@@ -156,6 +156,6 @@ run hardware scripts from a hardware-enabled development environment. for device
 example one-off laser command on a development pi:
 
 ```bash
-cd /opt/opshelf/repos/perpetual_os
-docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.hardware.yml run --rm --entrypoint sh -v /opt/opshelf/repos/perpetual_os/scripts:/app/scripts:ro api -lc 'cd /app/perpetual_hardware && uv run python /app/scripts/laser.py --config /app/perpetual_hardware/data/config.json'
+cd /opt/opshelf/repos/openshelf_os
+docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.hardware.yml run --rm --entrypoint sh -v /opt/opshelf/repos/openshelf_os/scripts:/app/scripts:ro api -lc 'cd /app/openshelf_hardware && uv run python /app/scripts/laser.py --config /app/openshelf_hardware/data/config.json'
 ```
