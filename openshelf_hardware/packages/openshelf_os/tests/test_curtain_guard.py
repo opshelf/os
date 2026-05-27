@@ -206,11 +206,15 @@ class _DummyCurtainSafety:
 
 hardware_module = types.ModuleType("hardware")
 hardware_controller = types.SimpleNamespace(SharedModbusController=_DummySharedModbusController)
-hardware_motor = types.SimpleNamespace(Motor=_DummyMotor, CurtainSafety=_DummyCurtainSafety)
+hardware_motor = types.SimpleNamespace(Motor=_DummyMotor)
 hardware_motor.Servo = _DummyMotor
 hardware_motor.MotorStatus = types.SimpleNamespace
 hardware_motor.MOTOR_WAIT_TIMEOUT = 0
-hardware_curtain = types.SimpleNamespace(CurtainSensor=_DummyCurtainSensor, CurtainMonitor=_DummyCurtainMonitor)
+hardware_curtain = types.SimpleNamespace(
+    CurtainSafety=_DummyCurtainSafety,
+    CurtainSensor=_DummyCurtainSensor,
+    CurtainMonitor=_DummyCurtainMonitor,
+)
 hardware_scale = types.SimpleNamespace(Scale=_DummyScale)
 hardware_toolcam = types.SimpleNamespace(ToolCamera=object)
 hardware_iocam = types.SimpleNamespace(AFSCam=object)

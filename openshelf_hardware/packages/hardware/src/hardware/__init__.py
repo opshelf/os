@@ -23,7 +23,8 @@ motor_helpers
 """
 
 from .controller import SharedModbusController
-from .motor import Servo, MotorStatus
+from .motor import MotorStatus
+from .servo import Servo
 from .iocam import AFSCam
 from .laser import LaserSensor
 from .toolcam import ToolCamera

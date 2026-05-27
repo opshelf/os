@@ -13,6 +13,24 @@ except (ModuleNotFoundError, RuntimeError):
 logger = logging.getLogger(__name__).getChild("curtain")
 
 
+class CurtainSafety:
+    def __init__(self) -> None:
+        self._clear = asyncio.Event()
+        self._clear.set()
+        self.blocked = False
+
+    def block(self) -> None:
+        self.blocked = True
+        self._clear.clear()
+
+    def unblock(self) -> None:
+        self.blocked = False
+        self._clear.set()
+
+    async def wait_clear(self) -> None:
+        await self._clear.wait()
+
+
 class CurtainSensor:
     """
     Lightweight wrapper around the curtain GPIO input.
