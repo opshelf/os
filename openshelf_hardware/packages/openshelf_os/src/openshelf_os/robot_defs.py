@@ -3,7 +3,8 @@ from datetime import datetime, timezone
 from typing import Optional, List, Any
 from pydantic import BaseModel, Field
 
-from openshelf_os.robot import RobotCommands, RobotStatus
+from openshelf_os.robot_commands import RobotCommands
+from openshelf_os.robot_status import RobotStatus
 
 
 class WorkerError(BaseModel):

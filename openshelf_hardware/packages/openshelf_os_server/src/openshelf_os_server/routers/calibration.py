@@ -430,9 +430,7 @@ def _build_default_cell_template(shelf) -> Cell:
 			height=max(float(shelf.shelf_height), 1.0),
 			length=_DEFAULT_CELL_LENGTH,
 		),
-		empty=False,
 	)
-
 
 def _get_shelf_template(grid, side: StorageModuleSide) -> Shelf:
 	shelves = grid.get_side(side)
@@ -498,7 +496,6 @@ def _ensure_cell(grid, side: StorageModuleSide, shelf, cell_idx: int):
 		item=None,
 		calibration_point=None,
 		dimensions=template.dimensions.model_copy(deep=True),
-		empty=template.empty,
 	)
 	shelf.cells.append(new_cell)
 

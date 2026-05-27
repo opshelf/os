@@ -1,7 +1,7 @@
+from __future__ import annotations
+
 import asyncio
 import logging
-
-from __future__ import annotations
 from typing import Optional, Dict, Any, Tuple
 from hardware.controller import SharedModbusController
 
