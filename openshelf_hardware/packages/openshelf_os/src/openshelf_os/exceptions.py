@@ -3,8 +3,6 @@
 class OpenshelfError(Exception):
     """Base exception for all OpenShelf OS errors."""
     pass
-    """Base exception for all Perpetual OS errors."""
-    pass
 
 class MotorError(OpenshelfError):
     """Exception raised for motor-related errors."""
