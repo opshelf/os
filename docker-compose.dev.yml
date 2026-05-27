@@ -2,8 +2,8 @@ services:
   api:
     volumes:
       - ./perpetual_hardware/packages/hardware/src/hardware:/app/perpetual_hardware/packages/hardware/src/hardware
-      - ./perpetual_hardware/packages/perpetual_os1/src/perpetual_os1:/app/perpetual_hardware/packages/perpetual_os1/src/perpetual_os1
-      - ./perpetual_hardware/packages/perpetual_os1_server/src/perpetual_os1_server:/app/perpetual_hardware/packages/perpetual_os1_server/src/perpetual_os1_server
+      - ./perpetual_hardware/packages/openshelf_os/src/openshelf_os:/app/perpetual_hardware/packages/openshelf_os/src/openshelf_os
+      - ./perpetual_hardware/packages/openshelf_os_server/src/openshelf_os_server:/app/perpetual_hardware/packages/openshelf_os_server/src/openshelf_os_server
     environment:
       - UVICORN_RELOAD=true
 

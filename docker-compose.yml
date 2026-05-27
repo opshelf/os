@@ -1,4 +1,4 @@
-name: perpetual_os
+name: openshelf_os
 
 services:
   api:
@@ -17,6 +17,8 @@ services:
       - DEVICE_ID=${DEVICE_ID:-}
       - PERPETUAL_BARCODE_PORT=/dev/ttyACM0
       - PERPETUAL_BARCODE_BAUDRATE=115200
+      - OPENSHELF_BARCODE_PORT=/dev/ttyACM0
+      - OPENSHELF_BARCODE_BAUDRATE=115200
       - JWT_SECRET=${JWT_SECRET:-INSECURE_JWT_SECRET}
       - AUDIT_HMAC_KEY=${AUDIT_HMAC_KEY:-INSECURE_AUDIT_HMAC_KEY}
       - SENTRY_DSN_API=${SENTRY_DSN_API:-}
