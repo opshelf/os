@@ -143,6 +143,15 @@ class TestResolveGridPath:
 
 		assert os.path.isabs(result) is True
 
+	def test_uses_provided_config_path_for_relative_grid_path(self, tmp_path):
+		config = _make_config("storage.json")
+		config_path = tmp_path / "nested" / "config.json"
+		result = resolve_grid_path(config, config_path)
+
+		expected = str((config_path.parent / "storage.json").resolve())
+
+		assert result == expected
+
 
 class TestLoadFromFile:
 

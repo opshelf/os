@@ -62,7 +62,7 @@ class Robot:
         )
         self._io = IOBox(motorcontroller=self._motorbus, scalecontroller=self._scalebus, params=io_params, safety=self._curtain_safety)
 
-        self._grid_path = resolve_grid_path(self._config)
+        self._grid_path = resolve_grid_path(self._config, CONFIG_PATH)
 
         try:
             self._grid = StorageGrid.load_from_file(self._grid_path)

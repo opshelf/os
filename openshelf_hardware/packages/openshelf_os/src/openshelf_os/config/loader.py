@@ -46,8 +46,9 @@ def load_config_file(path: Union[str, Any]) -> RootConfig:
     return load_and_validate_config(raw, str(path_obj))
 
 
-def resolve_grid_path(config: RootConfig) -> str:
-    return str((CONFIG_PATH.parent / config.robot.grid.path).resolve())
+def resolve_grid_path(config: RootConfig, config_path: Union[str, Any] = CONFIG_PATH) -> str:
+    path_obj = Path(config_path) if isinstance(config_path, str) else config_path
+    return str((path_obj.parent / config.robot.grid.path).resolve())
 
 
 def assert_config(config: RootConfig, requirements: Optional[List[str]] = None) -> None:
