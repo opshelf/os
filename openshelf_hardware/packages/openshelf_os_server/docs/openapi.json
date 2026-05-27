@@ -1,0 +1,5058 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "OpenShelf OS Server API",
+    "description": "API for controlling OpenShelf OS robotic automation system including gantry, storage, scanner, and scale operations",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/api/health": {
+      "get": {
+        "summary": "Health",
+        "operationId": "health_api_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/users": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Get Public Users",
+        "description": "Get list of active users for lock screen selection.\nReturns limited information (no sensitive data).",
+        "operationId": "get_public_users_api_auth_users_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PublicUserResponse"
+                  },
+                  "type": "array",
+                  "title": "Response Get Public Users Api Auth Users Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/login": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Login Form",
+        "description": "OAuth2 compatible login endpoint for form data.",
+        "operationId": "login_form_api_auth_login_post",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_login_form_api_auth_login_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Login Form Api Auth Login Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/login/json": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Login Json",
+        "description": "JSON login endpoint (alternative to form).",
+        "operationId": "login_json_api_auth_login_json_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/refresh": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Refresh Token",
+        "description": "Refresh access token using refresh token.",
+        "operationId": "refresh_token_api_auth_refresh_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/logout": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Logout",
+        "description": "Logout current user (placeholder for token blacklisting).",
+        "operationId": "logout_api_auth_logout_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Logout Api Auth Logout Post"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/auth/me": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Get Current User Info",
+        "description": "Get current user information.",
+        "operationId": "get_current_user_info_api_auth_me_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/openshelf_os_server__routers__auth__UserResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/users": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "List Users",
+        "description": "List all users with pagination.",
+        "operationId": "list_users_api_users_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "is_active",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Is Active"
+            }
+          },
+          {
+            "name": "role_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Role Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Create User",
+        "description": "Create a new user.",
+        "operationId": "create_user_api_users_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/openshelf_os_server__routers__users__UserResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/users/{user_id}": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Get User",
+        "description": "Get a specific user.",
+        "operationId": "get_user_api_users__user_id__get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/openshelf_os_server__routers__users__UserResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Update User",
+        "description": "Update a user.",
+        "operationId": "update_user_api_users__user_id__put",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "User Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/openshelf_os_server__routers__users__UserResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Delete User",
+        "description": "Soft delete a user by setting inactive.",
+        "operationId": "delete_user_api_users__user_id__delete",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Delete User Api Users  User Id  Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/roles": {
+      "get": {
+        "tags": [
+          "roles"
+        ],
+        "summary": "List Roles",
+        "description": "List all roles.",
+        "operationId": "list_roles_api_roles_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/RoleResponse"
+                  },
+                  "type": "array",
+                  "title": "Response List Roles Api Roles Get"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "roles"
+        ],
+        "summary": "Create Role",
+        "description": "Create a new role.",
+        "operationId": "create_role_api_roles_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoleCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoleResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/roles/{role_id}": {
+      "get": {
+        "tags": [
+          "roles"
+        ],
+        "summary": "Get Role",
+        "description": "Get a specific role.",
+        "operationId": "get_role_api_roles__role_id__get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "role_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Role Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoleResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "roles"
+        ],
+        "summary": "Update Role",
+        "description": "Update a role.",
+        "operationId": "update_role_api_roles__role_id__put",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "role_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Role Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoleUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoleResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "roles"
+        ],
+        "summary": "Delete Role",
+        "description": "Delete a role.",
+        "operationId": "delete_role_api_roles__role_id__delete",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "role_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Role Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Delete Role Api Roles  Role Id  Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/audit/logs": {
+      "get": {
+        "tags": [
+          "audit"
+        ],
+        "summary": "List Audit Logs",
+        "description": "Query audit logs with filters.",
+        "operationId": "list_audit_logs_api_audit_logs_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by user ID",
+              "title": "User Id"
+            },
+            "description": "Filter by user ID"
+          },
+          {
+            "name": "date_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Start date (ISO format)",
+              "title": "Date From"
+            },
+            "description": "Start date (ISO format)"
+          },
+          {
+            "name": "date_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "End date (ISO format)",
+              "title": "Date To"
+            },
+            "description": "End date (ISO format)"
+          },
+          {
+            "name": "endpoint",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by API endpoint",
+              "title": "Endpoint"
+            },
+            "description": "Filter by API endpoint"
+          },
+          {
+            "name": "method",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by HTTP method",
+              "title": "Method"
+            },
+            "description": "Filter by HTTP method"
+          },
+          {
+            "name": "status_code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by response status",
+              "title": "Status Code"
+            },
+            "description": "Filter by response status"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
+              "description": "Max results",
+              "default": 100,
+              "title": "Limit"
+            },
+            "description": "Max results"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Pagination offset",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "Pagination offset"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditLogListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/audit/logs/{log_id}": {
+      "get": {
+        "tags": [
+          "audit"
+        ],
+        "summary": "Get Audit Log",
+        "description": "Get a specific audit log entry.",
+        "operationId": "get_audit_log_api_audit_logs__log_id__get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "log_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Log Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditLogResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/audit/verify": {
+      "get": {
+        "tags": [
+          "audit"
+        ],
+        "summary": "Verify Audit Chain",
+        "description": "Verify linkage, hashes, and HMACs over protected audit entries.\n\nExisting queries remain unchanged; this is an additive, lightweight check.",
+        "operationId": "verify_audit_chain_api_audit_verify_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "from_seq",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Start seq_no (inclusive)",
+              "title": "From Seq"
+            },
+            "description": "Start seq_no (inclusive)"
+          },
+          {
+            "name": "to_seq",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "End seq_no (inclusive)",
+              "title": "To Seq"
+            },
+            "description": "End seq_no (inclusive)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditVerifyResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/gantry": {
+      "post": {
+        "summary": "Gantry",
+        "operationId": "gantry_api_gantry_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/ShutdownCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/openshelf_os__gantry__StopCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/openshelf_os__gantry__InitializeCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/openshelf_os__gantry__HomeCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/openshelf_os__gantry__MoveRelativeCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/openshelf_os__gantry__MoveCommand"
+                  }
+                ],
+                "title": "Command",
+                "discriminator": {
+                  "propertyName": "command",
+                  "mapping": {
+                    "shutdown": "#/components/schemas/ShutdownCommand",
+                    "stop": "#/components/schemas/openshelf_os__gantry__StopCommand",
+                    "initialize": "#/components/schemas/openshelf_os__gantry__InitializeCommand",
+                    "home": "#/components/schemas/openshelf_os__gantry__HomeCommand",
+                    "move_relative": "#/components/schemas/openshelf_os__gantry__MoveRelativeCommand",
+                    "move": "#/components/schemas/openshelf_os__gantry__MoveCommand"
+                  }
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/robot/commands": {
+      "post": {
+        "summary": "Robot Commands",
+        "operationId": "robot_commands_api_robot_commands_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/openshelf_os__robot__StopCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/openshelf_os__robot__InitializeCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/openshelf_os__robot__HomeCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/UnsafeMoveCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/openshelf_os__robot__MoveCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/IdleCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/GrabBoxCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/PlaceBoxCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/MoveToPickupLocationCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/DropOffItemCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/PickupItemCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/GrabCellCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/PlaceCellCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/StoreItemCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/RetrieveItemCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/GantryCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ToolCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ReturnCellCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/SizeItemCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ToggleScalePowerCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ToggleScalePrintCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ToggleScaleTareCommand"
+                  }
+                ],
+                "title": "Command",
+                "discriminator": {
+                  "propertyName": "command",
+                  "mapping": {
+                    "stop": "#/components/schemas/openshelf_os__robot__StopCommand",
+                    "initialize": "#/components/schemas/openshelf_os__robot__InitializeCommand",
+                    "home": "#/components/schemas/openshelf_os__robot__HomeCommand",
+                    "unsafe_move": "#/components/schemas/UnsafeMoveCommand",
+                    "move": "#/components/schemas/openshelf_os__robot__MoveCommand",
+                    "idle": "#/components/schemas/IdleCommand",
+                    "grab_box": "#/components/schemas/GrabBoxCommand",
+                    "place_box": "#/components/schemas/PlaceBoxCommand",
+                    "move_to_pickup_location": "#/components/schemas/MoveToPickupLocationCommand",
+                    "drop_off_item": "#/components/schemas/DropOffItemCommand",
+                    "pickup_item": "#/components/schemas/PickupItemCommand",
+                    "grab_cell": "#/components/schemas/GrabCellCommand",
+                    "place_cell": "#/components/schemas/PlaceCellCommand",
+                    "store_item": "#/components/schemas/StoreItemCommand",
+                    "retrieve_item": "#/components/schemas/RetrieveItemCommand",
+                    "gantry_command": "#/components/schemas/GantryCommand",
+                    "tool_command": "#/components/schemas/ToolCommand",
+                    "return_cell": "#/components/schemas/ReturnCellCommand",
+                    "size_item": "#/components/schemas/SizeItemCommand",
+                    "toggle_scale_power": "#/components/schemas/ToggleScalePowerCommand",
+                    "toggle_scale_print": "#/components/schemas/ToggleScalePrintCommand",
+                    "toggle_scale_tare": "#/components/schemas/ToggleScaleTareCommand"
+                  }
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/robot/start": {
+      "post": {
+        "summary": "Start Robot",
+        "operationId": "start_robot_api_robot_start_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/robot/stop": {
+      "post": {
+        "summary": "Stop Robot",
+        "operationId": "stop_robot_api_robot_stop_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/robot/clear_commands": {
+      "post": {
+        "summary": "Clear Robot Commands",
+        "operationId": "clear_robot_commands_api_robot_clear_commands_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/robot/configuration": {
+      "get": {
+        "summary": "Configuration",
+        "operationId": "configuration_api_robot_configuration_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RobotConfiguration-Output"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      },
+      "post": {
+        "summary": "Set Configuration",
+        "operationId": "set_configuration_api_robot_configuration_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RobotConfiguration-Input"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/robot/storage": {
+      "post": {
+        "summary": "Set Storage",
+        "operationId": "set_storage_api_robot_storage_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StorageGrid"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/robot/status": {
+      "get": {
+        "summary": "Stream Sse",
+        "description": "SSE endpoint that streams live messages to the client.",
+        "operationId": "stream_sse_api_robot_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/scale/readings": {
+      "get": {
+        "summary": "Stream Sse",
+        "description": "SSE endpoint that streams live messages to the client.",
+        "operationId": "stream_sse_api_scale_readings_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/scanner/scans": {
+      "get": {
+        "summary": "Stream Sse",
+        "description": "SSE endpoint that streams live messages to the client.",
+        "operationId": "stream_sse_api_scanner_scans_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/print/": {
+      "post": {
+        "summary": "Print",
+        "operationId": "print_api_print__post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrintRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/print/{upca}": {
+      "post": {
+        "summary": "Print Upca",
+        "operationId": "print_upca_api_print__upca__post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "upca",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Upca"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/print/custom/{upca}": {
+      "post": {
+        "summary": "Print Custom",
+        "operationId": "print_custom_api_print_custom__upca__post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "upca",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Upca"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrintRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sizes/": {
+      "get": {
+        "summary": "Get Size Data",
+        "description": "Get size data from database or JSON for backward compatibility.",
+        "operationId": "get_size_data_api_sizes__get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "use_json",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Use Json"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SizeDatabase"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Add Size Item",
+        "description": "Add size item to database and sync to JSON.",
+        "operationId": "add_size_item_api_sizes__put",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "use_json",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Use Json"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateSizeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SizeDatabase"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Add Item",
+        "description": "Add item with generated UPCA to database and sync to JSON.",
+        "operationId": "add_item_api_sizes__post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "use_json",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Use Json"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ItemInformation"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SizeDatabase"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sizes/{upca}": {
+      "delete": {
+        "summary": "Remove Item",
+        "description": "Remove item from database and sync to JSON.",
+        "operationId": "remove_item_api_sizes__upca__delete",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "upca",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Upca"
+            }
+          },
+          {
+            "name": "use_json",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Use Json"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SizeDatabase"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/storage/items": {
+      "get": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_storage_items_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "args",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "title": "Args"
+            }
+          },
+          {
+            "name": "kwargs",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "title": "Kwargs"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create Item",
+        "description": "Create a new item.",
+        "operationId": "create_item_api_storage_items_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ItemCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemWithLocations"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/storage/items/{upca}": {
+      "get": {
+        "summary": "Get Item",
+        "description": "Get a specific item by UPCA.",
+        "operationId": "get_item_api_storage_items__upca__get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "upca",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Upca"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemWithLocations"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Update Item",
+        "description": "Update an existing item.",
+        "operationId": "update_item_api_storage_items__upca__put",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "upca",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Upca"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ItemUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemWithLocations"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_storage_items__upca__delete",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "args",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "title": "Args"
+            }
+          },
+          {
+            "name": "kwargs",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "title": "Kwargs"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/storage/items/{upca}/locations": {
+      "post": {
+        "summary": "Add Item Location",
+        "description": "Add a location for an item.",
+        "operationId": "add_item_location_api_storage_items__upca__locations_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "upca",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Upca"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ItemLocationCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemLocationResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Remove Item Location",
+        "description": "Remove a specific location for an item.",
+        "operationId": "remove_item_location_api_storage_items__upca__locations_delete",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "upca",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Upca"
+            }
+          },
+          {
+            "name": "shelf_idx",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Shelf Idx"
+            }
+          },
+          {
+            "name": "cell_idx",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cell Idx"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Remove Item Location Api Storage Items  Upca  Locations Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/storage/locations": {
+      "post": {
+        "summary": "Create Storage Cell",
+        "description": "Create a new storage cell.",
+        "operationId": "create_storage_cell_api_storage_locations_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StorageCellCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StorageCellResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "Get Storage Cells",
+        "description": "Get storage cells with optional filtering.",
+        "operationId": "get_storage_cells_api_storage_locations_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "shelf_idx",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by shelf index",
+              "title": "Shelf Idx"
+            },
+            "description": "Filter by shelf index"
+          },
+          {
+            "name": "cell_idx",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by cell index",
+              "title": "Cell Idx"
+            },
+            "description": "Filter by cell index"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/StorageCellResponse"
+                  },
+                  "title": "Response Get Storage Cells Api Storage Locations Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/storage/locations/{shelf_idx}/{cell_idx}": {
+      "put": {
+        "summary": "Update Storage Cell",
+        "description": "Update storage cell status.",
+        "operationId": "update_storage_cell_api_storage_locations__shelf_idx___cell_idx__put",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "shelf_idx",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Shelf Idx"
+            }
+          },
+          {
+            "name": "cell_idx",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cell Idx"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StorageCellUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StorageCellResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AuditLogListResponse": {
+        "properties": {
+          "logs": {
+            "items": {
+              "$ref": "#/components/schemas/AuditLogResponse"
+            },
+            "type": "array",
+            "title": "Logs"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          }
+        },
+        "type": "object",
+        "required": [
+          "logs",
+          "total",
+          "offset",
+          "limit"
+        ],
+        "title": "AuditLogListResponse",
+        "description": "Audit log list response."
+      },
+      "AuditLogResponse": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Id"
+          },
+          "user_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Email"
+          },
+          "timestamp": {
+            "type": "string",
+            "title": "Timestamp"
+          },
+          "method": {
+            "type": "string",
+            "title": "Method"
+          },
+          "endpoint": {
+            "type": "string",
+            "title": "Endpoint"
+          },
+          "request_body": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Body"
+          },
+          "response_status": {
+            "type": "integer",
+            "title": "Response Status"
+          },
+          "response_body": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Response Body"
+          },
+          "command_records": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nats Commands"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "ip_address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ip Address"
+          },
+          "user_agent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Agent"
+          },
+          "request_duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Duration Ms"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "user_id",
+          "user_email",
+          "timestamp",
+          "method",
+          "endpoint",
+          "request_body",
+          "response_status",
+          "response_body",
+          "command_records",
+          "error_message",
+          "ip_address",
+          "user_agent",
+          "request_duration_ms"
+        ],
+        "title": "AuditLogResponse",
+        "description": "Audit log response model."
+      },
+      "AuditVerifyResponse": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "checked": {
+            "type": "integer",
+            "title": "Checked"
+          },
+          "first_error_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Error Seq"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok",
+          "checked",
+          "first_error_seq",
+          "message"
+        ],
+        "title": "AuditVerifyResponse"
+      },
+      "Body_login_form_api_auth_login_post": {
+        "properties": {
+          "grant_type": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^password$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grant Type"
+          },
+          "username": {
+            "type": "string",
+            "title": "Username"
+          },
+          "password": {
+            "type": "string",
+            "title": "Password"
+          },
+          "scope": {
+            "type": "string",
+            "title": "Scope",
+            "default": ""
+          },
+          "client_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Id"
+          },
+          "client_secret": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Secret"
+          }
+        },
+        "type": "object",
+        "required": [
+          "username",
+          "password"
+        ],
+        "title": "Body_login_form_api_auth_login_post"
+      },
+      "CalibrationCoordinate": {
+        "properties": {
+          "x": {
+            "type": "number",
+            "title": "X"
+          },
+          "y": {
+            "type": "number",
+            "title": "Y"
+          },
+          "z": {
+            "type": "number",
+            "title": "Z"
+          }
+        },
+        "type": "object",
+        "required": [
+          "x",
+          "y",
+          "z"
+        ],
+        "title": "CalibrationCoordinate"
+      },
+      "CanAxisConfiguration-Input": {
+        "properties": {
+          "can_id": {
+            "type": "integer",
+            "title": "Can Id"
+          },
+          "configuration": {
+            "$ref": "#/components/schemas/StepperMotorConfig"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "axis_type": {
+            "type": "string",
+            "title": "Axis Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "can_id",
+          "configuration",
+          "name",
+          "axis_type"
+        ],
+        "title": "CanAxisConfiguration"
+      },
+      "CanAxisConfiguration-Output": {
+        "properties": {
+          "can_id": {
+            "type": "integer",
+            "title": "Can Id"
+          },
+          "configuration": {
+            "$ref": "#/components/schemas/StepperMotorConfig"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "axis_type": {
+            "type": "string",
+            "title": "Axis Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "can_id",
+          "configuration",
+          "name",
+          "axis_type"
+        ],
+        "title": "CanAxisConfiguration"
+      },
+      "Cell": {
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/CellStatus"
+          },
+          "item": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CellItem"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "calibration_point": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CalibrationCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "dimensions": {
+            "$ref": "#/components/schemas/Dimensions"
+          },
+          "empty": {
+            "type": "boolean",
+            "title": "Empty",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "item",
+          "calibration_point",
+          "dimensions"
+        ],
+        "title": "Cell"
+      },
+      "CellItem": {
+        "properties": {
+          "weight": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weight"
+          },
+          "dimensions": {
+            "$ref": "#/components/schemas/Dimensions"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Json"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "upca": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Upca"
+          }
+        },
+        "type": "object",
+        "required": [
+          "dimensions"
+        ],
+        "title": "CellItem"
+      },
+      "CellStatus": {
+        "type": "string",
+        "enum": [
+          "OCCUPIED",
+          "EMPTY",
+          "BLOCKED"
+        ],
+        "title": "CellStatus"
+      },
+      "CloseGripperCommand": {
+        "properties": {
+          "command": {
+            "type": "string",
+            "const": "close_gripper",
+            "title": "Command"
+          }
+        },
+        "type": "object",
+        "required": [
+          "command"
+        ],
+        "title": "CloseGripperCommand"
+      },
+      "Dimensions": {
+        "properties": {
+          "length": {
+            "type": "number",
+            "title": "Length"
+          },
+          "width": {
+            "type": "number",
+            "title": "Width"
+          },
+          "height": {
+            "type": "number",
+            "title": "Height"
+          }
+        },
+        "type": "object",
+        "required": [
+          "length",
+          "width",
+          "height"
+        ],
+        "title": "Dimensions"
+      },
+      "DoorConfiguration-Input": {
+        "properties": {
+          "open_position": {
+            "type": "number",
+            "title": "Open Position",
+            "default": 200.0
+          },
+          "close_position": {
+            "type": "number",
+            "title": "Close Position",
+            "default": 1.0
+          },
+          "axis": {
+            "$ref": "#/components/schemas/CanAxisConfiguration-Input"
+          }
+        },
+        "type": "object",
+        "required": [
+          "axis"
+        ],
+        "title": "DoorConfiguration"
+      },
+      "DoorConfiguration-Output": {
+        "properties": {
+          "open_position": {
+            "type": "number",
+            "title": "Open Position",
+            "default": 200.0
+          },
+          "close_position": {
+            "type": "number",
+            "title": "Close Position",
+            "default": 1.0
+          },
+          "axis": {
+            "$ref": "#/components/schemas/CanAxisConfiguration-Output"
+          }
+        },
+        "type": "object",
+        "required": [
+          "axis"
+        ],
+        "title": "DoorConfiguration"
+      },
+      "DropOffItemCommand": {
+        "properties": {
+          "command": {
+            "type": "string",
+            "const": "drop_off_item",
+            "title": "Command",
+            "default": "drop_off_item"
+          }
+        },
+        "type": "object",
+        "title": "DropOffItemCommand"
+      },
+      "ExtendGripperCommand": {
+        "properties": {
+          "command": {
+            "type": "string",
+            "const": "extend_gripper",
+            "title": "Command"
+          }
+        },
+        "type": "object",
+        "required": [
+          "command"
+        ],
+        "title": "ExtendGripperCommand"
+      },
+      "GantryCommand": {
+        "properties": {
+          "command": {
+            "type": "string",
+            "const": "gantry_command",
+            "title": "Command",
+            "default": "gantry_command"
+          },
+          "payload": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ShutdownCommand"
+              },
+              {
+                "$ref": "#/components/schemas/openshelf_os__gantry__StopCommand"
+              },
+              {
+                "$ref": "#/components/schemas/openshelf_os__gantry__InitializeCommand"
+              },
+              {
+                "$ref": "#/components/schemas/openshelf_os__gantry__HomeCommand"
+              },
+              {
+                "$ref": "#/components/schemas/openshelf_os__gantry__MoveRelativeCommand"
+              },
+              {
+                "$ref": "#/components/schemas/openshelf_os__gantry__MoveCommand"
+              }
+            ],
+            "title": "Payload",
+            "discriminator": {
+              "propertyName": "command",
+              "mapping": {
+                "home": "#/components/schemas/openshelf_os__gantry__HomeCommand",
+                "initialize": "#/components/schemas/openshelf_os__gantry__InitializeCommand",
+                "move": "#/components/schemas/openshelf_os__gantry__MoveCommand",
+                "move_relative": "#/components/schemas/openshelf_os__gantry__MoveRelativeCommand",
+                "shutdown": "#/components/schemas/ShutdownCommand",
+                "stop": "#/components/schemas/openshelf_os__gantry__StopCommand"
+              }
+            }
+          }
+        },
+        "type": "object",
+        "required": [
+          "payload"
+        ],
+        "title": "GantryCommand"
+      },
+      "GantryConfiguration-Input": {
+        "properties": {
+          "x_axis": {
+            "$ref": "#/components/schemas/CanAxisConfiguration-Input"
+          },
+          "y_axis": {
+            "$ref": "#/components/schemas/CanAxisConfiguration-Input"
+          }
+        },
+        "type": "object",
+        "required": [
+          "x_axis",
+          "y_axis"
+        ],
+        "title": "GantryConfiguration"
+      },
+      "GantryConfiguration-Output": {
+        "properties": {
+          "x_axis": {
+            "$ref": "#/components/schemas/CanAxisConfiguration-Output"
+          },
+          "y_axis": {
+            "$ref": "#/components/schemas/CanAxisConfiguration-Output"
+          }
+        },
+        "type": "object",
+        "required": [
+          "x_axis",
+          "y_axis"
+        ],
+        "title": "GantryConfiguration"
+      },
+      "GantryCoordinate": {
+        "properties": {
+          "x": {
+            "type": "number",
+            "title": "X"
+          },
+          "y": {
+            "type": "number",
+            "title": "Y"
+          }
+        },
+        "type": "object",
+        "required": [
+          "x",
+          "y"
+        ],
+        "title": "GantryCoordinate"
+      },
+      "GrabBoxCommand": {
+        "properties": {
+          "command": {
+            "type": "string",
+            "const": "grab_box",
+            "title": "Command",
+            "default": "grab_box"
+          },
+          "coordinate": {
+            "$ref": "#/components/schemas/GantryCoordinate"
+          },
+          "width": {
+            "type": "number",
+            "title": "Width"
+          }
+        },
+        "type": "object",
+        "required": [
+          "coordinate",
+          "width"
+        ],
+        "title": "GrabBoxCommand"
+      },
+      "GrabCellCommand": {
+        "properties": {
+          "command": {
+            "type": "string",
+            "const": "grab_cell",
+            "title": "Command",
+            "default": "grab_cell"
+          },
+          "location": {
+            "$ref": "#/components/schemas/StorageModuleCellLocation"
+          }
+        },
+        "type": "object",
+        "required": [
+          "location"
+        ],
+        "title": "GrabCellCommand"
+      },
+      "GripperConfiguration": {
+        "properties": {
+          "min_width": {
+            "type": "number",
+            "title": "Min Width",
+            "default": 20.0
+          },
+          "max_width": {
+            "type": "number",
+            "title": "Max Width",
+            "default": 40.0
+          },
+          "gripper_pickup_width": {
+            "type": "number",
+            "title": "Gripper Pickup Width",
+            "default": 30.0
+          }
+        },
+        "type": "object",
+        "title": "GripperConfiguration"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "IdleCommand": {
+        "properties": {
+          "command": {
+            "type": "string",
+            "const": "idle",
+            "title": "Command",
+            "default": "idle"
+          }
+        },
+        "type": "object",
+        "title": "IdleCommand"
+      },
+      "ItemCreate": {
+        "properties": {
+          "upca": {
+            "type": "string",
+            "title": "Upca"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "dimensions": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Dimensions"
+          },
+          "weight": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weight"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          }
+        },
+        "type": "object",
+        "required": [
+          "upca",
+          "name",
+          "dimensions"
+        ],
+        "title": "ItemCreate"
+      },
+      "ItemInformation": {
+        "properties": {
+          "size": {
+            "$ref": "#/components/schemas/Dimensions"
+          },
+          "data": {
+            "$ref": "#/components/schemas/Json"
+          }
+        },
+        "type": "object",
+        "required": [
+          "size",
+          "data"
+        ],
+        "title": "ItemInformation"
+      },
+      "ItemLocationCreate": {
+        "properties": {
+          "shelf_idx": {
+            "type": "integer",
+            "title": "Shelf Idx"
+          },
+          "cell_idx": {
+            "type": "integer",
+            "title": "Cell Idx"
+          }
+        },
+        "type": "object",
+        "required": [
+          "shelf_idx",
+          "cell_idx"
+        ],
+        "title": "ItemLocationCreate"
+      },
+      "ItemLocationResponse": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "item_id": {
+            "type": "integer",
+            "title": "Item Id"
+          },
+          "shelf_idx": {
+            "type": "integer",
+            "title": "Shelf Idx"
+          },
+          "cell_idx": {
+            "type": "integer",
+            "title": "Cell Idx"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "item_id",
+          "shelf_idx",
+          "cell_idx",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ItemLocationResponse"
+      },
+      "ItemUpdate": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "dimensions": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "number"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dimensions"
+          },
+          "weight": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weight"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          }
+        },
+        "type": "object",
+        "title": "ItemUpdate"
+      },
+      "ItemWithLocations": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "upca": {
+            "type": "string",
+            "title": "Upca"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "dimensions": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Dimensions"
+          },
+          "weight": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weight"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "locations": {
+            "items": {},
+            "type": "array",
+            "title": "Locations"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "upca",
+          "name",
+          "dimensions",
+          "weight",
+          "metadata",
+          "locations",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ItemWithLocations"
+      },
+      "Json": {
+        "additionalProperties": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "items": {},
+              "type": "array"
+            }
+          ]
+        },
+        "type": "object"
+      },
+      "LoginRequest": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "title": "Email"
+          },
+          "pin": {
+            "type": "string",
+            "title": "Pin"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email",
+          "pin"
+        ],
+        "title": "LoginRequest",
+        "description": "Login request model."
+      },
+      "MoveToPickupLocationCommand": {
+        "properties": {
+          "command": {
+            "type": "string",
+            "const": "move_to_pickup_location",
+            "title": "Command",
+            "default": "move_to_pickup_location"
+          }
+        },
+        "type": "object",
+        "title": "MoveToPickupLocationCommand"
+      },
+      "OpenGripperCommand": {
+        "properties": {
+          "command": {
+            "type": "string",
+            "const": "open_gripper",
+            "title": "Command"
+          }
+        },
+        "type": "object",
+        "required": [
+          "command"
+        ],
+        "title": "OpenGripperCommand"
+      },
+      "PickupItemCommand": {
+        "properties": {
+          "command": {
+            "type": "string",
+            "const": "pickup_item",
+            "title": "Command",
+            "default": "pickup_item"
+          }
+        },
+        "type": "object",
+        "title": "PickupItemCommand"
+      },
+      "PlaceBoxCommand": {
+        "properties": {
+          "command": {
+            "type": "string",
+            "const": "place_box",
+            "title": "Command",
+            "default": "place_box"
+          },
+          "coordinate": {
+            "$ref": "#/components/schemas/GantryCoordinate"
+          },
+          "width": {
+            "type": "number",
+            "title": "Width"
+          }
+        },
+        "type": "object",
+        "required": [
+          "coordinate",
+          "width"
+        ],
+        "title": "PlaceBoxCommand"
+      },
+      "PlaceCellCommand": {
+        "properties": {
+          "command": {
+            "type": "string",
+            "const": "place_cell",
+            "title": "Command",
+            "default": "place_cell"
+          },
+          "location": {
+            "$ref": "#/components/schemas/StorageModuleCellLocation"
+          }
+        },
+        "type": "object",
+        "required": [
+          "location"
+        ],
+        "title": "PlaceCellCommand"
+      },
+      "PrepareGripperCommand": {
+        "properties": {
+          "command": {
+            "type": "string",
+            "const": "prepare_gripper",
+            "title": "Command"
+          }
+        },
+        "type": "object",
+        "required": [
+          "command"
+        ],
+        "title": "PrepareGripperCommand"
+      },
+      "PrintRequest": {
+        "properties": {
+          "dimensions": {
+            "$ref": "#/components/schemas/Dimensions"
+          },
+          "item": {
+            "$ref": "#/components/schemas/Json"
+          }
+        },
+        "type": "object",
+        "required": [
+          "dimensions",
+          "item"
+        ],
+        "title": "PrintRequest"
+      },
+      "PublicUserResponse": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "title": "Email"
+          },
+          "firstName": {
+            "type": "string",
+            "title": "Firstname"
+          },
+          "lastName": {
+            "type": "string",
+            "title": "Lastname"
+          },
+          "role": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Role"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email",
+          "firstName",
+          "lastName",
+          "role"
+        ],
+        "title": "PublicUserResponse",
+        "description": "Public user information for lock screen."
+      },
+      "RefreshRequest": {
+        "properties": {
+          "refresh_token": {
+            "type": "string",
+            "title": "Refresh Token"
+          }
+        },
+        "type": "object",
+        "required": [
+          "refresh_token"
+        ],
+        "title": "RefreshRequest",
+        "description": "Refresh token request."
+      },
+      "RetractGripperCommand": {
+        "properties": {
+          "command": {
+            "type": "string",
+            "const": "retract_gripper",
+            "title": "Command"
+          }
+        },
+        "type": "object",
+        "required": [
+          "command"
+        ],
+        "title": "RetractGripperCommand"
+      },
+      "RetrieveItemCommand": {
+        "properties": {
+          "command": {
+            "type": "string",
+            "const": "retrieve_item",
+            "title": "Command",
+            "default": "retrieve_item"
+          },
+          "location": {
+            "$ref": "#/components/schemas/StorageModuleCellLocation"
+          }
+        },
+        "type": "object",
+        "required": [
+          "location"
+        ],
+        "title": "RetrieveItemCommand"
+      },
+      "ReturnCellCommand": {
+        "properties": {
+          "command": {
+            "type": "string",
+            "const": "return_cell",
+            "title": "Command",
+            "default": "return_cell"
+          }
+        },
+        "type": "object",
+        "title": "ReturnCellCommand"
+      },
+      "RobotConfiguration-Input": {
+        "properties": {
+          "tool": {
+            "$ref": "#/components/schemas/ToolConfiguration-Input"
+          },
+          "gantry": {
+            "$ref": "#/components/schemas/GantryConfiguration-Input"
+          },
+          "door": {
+            "$ref": "#/components/schemas/DoorConfiguration-Input"
+          },
+          "y_safe": {
+            "type": "number",
+            "title": "Y Safe"
+          },
+          "idle_position": {
+            "$ref": "#/components/schemas/GantryCoordinate"
+          },
+          "place_offset": {
+            "$ref": "#/components/schemas/GantryCoordinate"
+          },
+          "pickup_location": {
+            "$ref": "#/components/schemas/GantryCoordinate"
+          },
+          "pickup_location_offset": {
+            "$ref": "#/components/schemas/GantryCoordinate"
+          },
+          "curtain_axis_configuration": {
+            "$ref": "#/components/schemas/CanAxisConfiguration-Input"
+          },
+          "state_file": {
+            "type": "string",
+            "title": "State File",
+            "default": "state.json"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tool",
+          "gantry",
+          "door",
+          "y_safe",
+          "idle_position",
+          "place_offset",
+          "pickup_location",
+          "pickup_location_offset",
+          "curtain_axis_configuration"
+        ],
+        "title": "RobotConfiguration"
+      },
+      "RobotConfiguration-Output": {
+        "properties": {
+          "tool": {
+            "$ref": "#/components/schemas/ToolConfiguration-Output"
+          },
+          "gantry": {
+            "$ref": "#/components/schemas/GantryConfiguration-Output"
+          },
+          "door": {
+            "$ref": "#/components/schemas/DoorConfiguration-Output"
+          },
+          "y_safe": {
+            "type": "number",
+            "title": "Y Safe"
+          },
+          "idle_position": {
+            "$ref": "#/components/schemas/GantryCoordinate"
+          },
+          "place_offset": {
+            "$ref": "#/components/schemas/GantryCoordinate"
+          },
+          "pickup_location": {
+            "$ref": "#/components/schemas/GantryCoordinate"
+          },
+          "pickup_location_offset": {
+            "$ref": "#/components/schemas/GantryCoordinate"
+          },
+          "curtain_axis_configuration": {
+            "$ref": "#/components/schemas/CanAxisConfiguration-Output"
+          },
+          "state_file": {
+            "type": "string",
+            "title": "State File",
+            "default": "state.json"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tool",
+          "gantry",
+          "door",
+          "y_safe",
+          "idle_position",
+          "place_offset",
+          "pickup_location",
+          "pickup_location_offset",
+          "curtain_axis_configuration"
+        ],
+        "title": "RobotConfiguration"
+      },
+      "RoleCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "permissions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Permissions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "permissions"
+        ],
+        "title": "RoleCreate",
+        "description": "Role creation request."
+      },
+      "RoleResponse": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "permissions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Permissions"
+          },
+          "user_count": {
+            "type": "integer",
+            "title": "User Count"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "permissions",
+          "user_count",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "RoleResponse",
+        "description": "Role response model."
+      },
+      "RoleUpdate": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "permissions": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Permissions"
+          }
+        },
+        "type": "object",
+        "title": "RoleUpdate",
+        "description": "Role update request."
+      },
+      "Rotation": {
+        "type": "string",
+        "enum": [
+          "CW",
+          "CCW"
+        ],
+        "title": "Rotation"
+      },
+      "SetJawSizeCommand": {
+        "properties": {
+          "command": {
+            "type": "string",
+            "const": "set_jaw_size",
+            "title": "Command"
+          },
+          "size": {
+            "type": "number",
+            "title": "Size"
+          }
+        },
+        "type": "object",
+        "required": [
+          "command",
+          "size"
+        ],
+        "title": "SetJawSizeCommand"
+      },
+      "Shelf": {
+        "properties": {
+          "shelf_height": {
+            "type": "number",
+            "title": "Shelf Height"
+          },
+          "shelf_width": {
+            "type": "number",
+            "title": "Shelf Width"
+          },
+          "cells": {
+            "items": {
+              "$ref": "#/components/schemas/Cell"
+            },
+            "type": "array",
+            "title": "Cells"
+          },
+          "divider_width": {
+            "type": "number",
+            "title": "Divider Width",
+            "default": 8.0
+          }
+        },
+        "type": "object",
+        "required": [
+          "shelf_height",
+          "shelf_width",
+          "cells"
+        ],
+        "title": "Shelf"
+      },
+      "ShutdownCommand": {
+        "properties": {
+          "command": {
+            "type": "string",
+            "const": "shutdown",
+            "title": "Command"
+          }
+        },
+        "type": "object",
+        "required": [
+          "command"
+        ],
+        "title": "ShutdownCommand"
+      },
+      "SizeDatabase": {
+        "properties": {
+          "items": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ItemInformation"
+            },
+            "type": "object",
+            "title": "Items",
+            "default": {}
+          },
+          "filename": {
+            "type": "string",
+            "title": "Filename",
+            "default": "size.json"
+          }
+        },
+        "type": "object",
+        "title": "SizeDatabase"
+      },
+      "SizeItemCommand": {
+        "properties": {
+          "command": {
+            "type": "string",
+            "const": "size_item",
+            "title": "Command",
+            "default": "size_item"
+          }
+        },
+        "type": "object",
+        "title": "SizeItemCommand"
+      },
+      "StepperMotorConfig": {
+        "properties": {
+          "microsteps": {
+            "type": "integer",
+            "title": "Microsteps"
+          },
+          "steps_per_rev": {
+            "type": "integer",
+            "title": "Steps Per Rev"
+          },
+          "work_current": {
+            "type": "integer",
+            "title": "Work Current"
+          },
+          "holding_current": {
+            "type": "integer",
+            "title": "Holding Current"
+          },
+          "homing_current": {
+            "type": "integer",
+            "title": "Homing Current"
+          },
+          "velocity": {
+            "type": "number",
+            "title": "Velocity"
+          },
+          "acceleration": {
+            "type": "integer",
+            "title": "Acceleration"
+          },
+          "homing_speed": {
+            "type": "number",
+            "title": "Homing Speed"
+          },
+          "steps_per_mm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Steps Per Mm"
+          },
+          "encoder_ppr": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Encoder Ppr"
+          },
+          "max_velocity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Velocity"
+          },
+          "max_acceleration": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Acceleration"
+          },
+          "min_travel": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Travel"
+          },
+          "max_travel": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Travel"
+          },
+          "max_encoder_deviation": {
+            "type": "integer",
+            "title": "Max Encoder Deviation",
+            "default": 500
+          },
+          "max_encoder_deviation_homing": {
+            "type": "integer",
+            "title": "Max Encoder Deviation Homing",
+            "default": 100
+          },
+          "safety": {
+            "type": "boolean",
+            "title": "Safety",
+            "default": true
+          },
+          "invert_coordinates": {
+            "type": "boolean",
+            "title": "Invert Coordinates",
+            "default": false
+          },
+          "external_encoder": {
+            "type": "boolean",
+            "title": "External Encoder",
+            "default": false
+          },
+          "home_direction": {
+            "$ref": "#/components/schemas/Rotation",
+            "default": "CW"
+          },
+          "brake": {
+            "type": "boolean",
+            "title": "Brake",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "microsteps",
+          "steps_per_rev",
+          "work_current",
+          "holding_current",
+          "homing_current",
+          "velocity",
+          "acceleration",
+          "homing_speed",
+          "steps_per_mm",
+          "encoder_ppr",
+          "max_velocity",
+          "max_acceleration",
+          "min_travel",
+          "max_travel"
+        ],
+        "title": "StepperMotorConfig"
+      },
+      "StorageCellCreate": {
+        "properties": {
+          "shelf_idx": {
+            "type": "integer",
+            "title": "Shelf Idx"
+          },
+          "cell_idx": {
+            "type": "integer",
+            "title": "Cell Idx"
+          },
+          "capacity": {
+            "type": "string",
+            "title": "Capacity"
+          }
+        },
+        "type": "object",
+        "required": [
+          "shelf_idx",
+          "cell_idx",
+          "capacity"
+        ],
+        "title": "StorageCellCreate"
+      },
+      "StorageCellResponse": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "shelf_idx": {
+            "type": "integer",
+            "title": "Shelf Idx"
+          },
+          "cell_idx": {
+            "type": "integer",
+            "title": "Cell Idx"
+          },
+          "capacity": {
+            "type": "string",
+            "title": "Capacity"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "shelf_idx",
+          "cell_idx",
+          "capacity",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "StorageCellResponse"
+      },
+      "StorageCellUpdate": {
+        "properties": {
+          "capacity": {
+            "type": "string",
+            "title": "Capacity"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          }
+        },
+        "type": "object",
+        "required": [
+          "capacity",
+          "status"
+        ],
+        "title": "StorageCellUpdate"
+      },
+      "StorageGrid": {
+        "properties": {
+          "left_module": {
+            "items": {
+              "$ref": "#/components/schemas/Shelf"
+            },
+            "type": "array",
+            "title": "Left Module"
+          },
+          "right_module": {
+            "items": {
+              "$ref": "#/components/schemas/Shelf"
+            },
+            "type": "array",
+            "title": "Right Module"
+          },
+          "filename": {
+            "type": "string",
+            "title": "Filename",
+            "default": "storage.json"
+          }
+        },
+        "type": "object",
+        "required": [
+          "left_module",
+          "right_module"
+        ],
+        "title": "StorageGrid"
+      },
+      "StorageModuleCellLocation": {
+        "properties": {
+          "side": {
+            "$ref": "#/components/schemas/StorageModuleSide"
+          },
+          "shelf_idx": {
+            "type": "integer",
+            "title": "Shelf Idx"
+          },
+          "cell_idx": {
+            "type": "integer",
+            "title": "Cell Idx"
+          }
+        },
+        "type": "object",
+        "required": [
+          "side",
+          "shelf_idx",
+          "cell_idx"
+        ],
+        "title": "StorageModuleCellLocation"
+      },
+      "StorageModuleSide": {
+        "type": "string",
+        "enum": [
+          "right_module",
+          "left_module"
+        ],
+        "title": "StorageModuleSide"
+      },
+      "StoreItemCommand": {
+        "properties": {
+          "command": {
+            "type": "string",
+            "const": "store_item",
+            "title": "Command",
+            "default": "store_item"
+          },
+          "location": {
+            "$ref": "#/components/schemas/StorageModuleCellLocation"
+          },
+          "item": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CellItem"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "location",
+          "item"
+        ],
+        "title": "StoreItemCommand"
+      },
+      "SuccessResponse": {
+        "properties": {
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "success"
+          }
+        },
+        "type": "object",
+        "title": "SuccessResponse"
+      },
+      "ToggleScalePowerCommand": {
+        "properties": {
+          "command": {
+            "type": "string",
+            "const": "toggle_scale_power",
+            "title": "Command",
+            "default": "toggle_scale_power"
+          }
+        },
+        "type": "object",
+        "title": "ToggleScalePowerCommand"
+      },
+      "ToggleScalePrintCommand": {
+        "properties": {
+          "command": {
+            "type": "string",
+            "const": "toggle_scale_print",
+            "title": "Command",
+            "default": "toggle_scale_print"
+          }
+        },
+        "type": "object",
+        "title": "ToggleScalePrintCommand"
+      },
+      "ToggleScaleTareCommand": {
+        "properties": {
+          "command": {
+            "type": "string",
+            "const": "toggle_scale_tare",
+            "title": "Command",
+            "default": "toggle_scale_tare"
+          }
+        },
+        "type": "object",
+        "title": "ToggleScaleTareCommand"
+      },
+      "TokenResponse": {
+        "properties": {
+          "access_token": {
+            "type": "string",
+            "title": "Access Token"
+          },
+          "refresh_token": {
+            "type": "string",
+            "title": "Refresh Token"
+          },
+          "token_type": {
+            "type": "string",
+            "title": "Token Type",
+            "default": "bearer"
+          },
+          "expires_in": {
+            "type": "integer",
+            "title": "Expires In"
+          }
+        },
+        "type": "object",
+        "required": [
+          "access_token",
+          "refresh_token",
+          "expires_in"
+        ],
+        "title": "TokenResponse",
+        "description": "Token response model."
+      },
+      "ToolCommand": {
+        "properties": {
+          "command": {
+            "type": "string",
+            "const": "tool_command",
+            "title": "Command",
+            "default": "tool_command"
+          },
+          "payload": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/openshelf_os__tool__StopCommand"
+              },
+              {
+                "$ref": "#/components/schemas/openshelf_os__tool__InitializeCommand"
+              },
+              {
+                "$ref": "#/components/schemas/openshelf_os__tool__HomeCommand"
+              },
+              {
+                "$ref": "#/components/schemas/openshelf_os__tool__MoveCommand"
+              },
+              {
+                "$ref": "#/components/schemas/openshelf_os__tool__MoveRelativeCommand"
+              },
+              {
+                "$ref": "#/components/schemas/SetJawSizeCommand"
+              },
+              {
+                "$ref": "#/components/schemas/ExtendGripperCommand"
+              },
+              {
+                "$ref": "#/components/schemas/RetractGripperCommand"
+              },
+              {
+                "$ref": "#/components/schemas/OpenGripperCommand"
+              },
+              {
+                "$ref": "#/components/schemas/CloseGripperCommand"
+              },
+              {
+                "$ref": "#/components/schemas/PrepareGripperCommand"
+              }
+            ],
+            "title": "Payload",
+            "discriminator": {
+              "propertyName": "command",
+              "mapping": {
+                "close_gripper": "#/components/schemas/CloseGripperCommand",
+                "extend_gripper": "#/components/schemas/ExtendGripperCommand",
+                "home": "#/components/schemas/openshelf_os__tool__HomeCommand",
+                "initialize": "#/components/schemas/openshelf_os__tool__InitializeCommand",
+                "move": "#/components/schemas/openshelf_os__tool__MoveCommand",
+                "move_relative": "#/components/schemas/openshelf_os__tool__MoveRelativeCommand",
+                "open_gripper": "#/components/schemas/OpenGripperCommand",
+                "prepare_gripper": "#/components/schemas/PrepareGripperCommand",
+                "retract_gripper": "#/components/schemas/RetractGripperCommand",
+                "set_jaw_size": "#/components/schemas/SetJawSizeCommand",
+                "stop": "#/components/schemas/openshelf_os__tool__StopCommand"
+              }
+            }
+          }
+        },
+        "type": "object",
+        "required": [
+          "payload"
+        ],
+        "title": "ToolCommand"
+      },
+      "ToolConfiguration-Input": {
+        "properties": {
+          "gripper": {
+            "$ref": "#/components/schemas/GripperConfiguration"
+          },
+          "z_axis": {
+            "$ref": "#/components/schemas/CanAxisConfiguration-Input"
+          },
+          "rotation": {
+            "$ref": "#/components/schemas/CanAxisConfiguration-Input"
+          },
+          "tool_shelf_offset": {
+            "type": "number",
+            "title": "Tool Shelf Offset"
+          },
+          "tool_retracted_offset": {
+            "type": "number",
+            "title": "Tool Retracted Offset"
+          },
+          "tool_extension_offset": {
+            "type": "number",
+            "title": "Tool Extension Offset"
+          },
+          "tool_pickup_extension": {
+            "type": "number",
+            "title": "Tool Pickup Extension"
+          }
+        },
+        "type": "object",
+        "required": [
+          "gripper",
+          "z_axis",
+          "rotation",
+          "tool_shelf_offset",
+          "tool_retracted_offset",
+          "tool_extension_offset",
+          "tool_pickup_extension"
+        ],
+        "title": "ToolConfiguration"
+      },
+      "ToolConfiguration-Output": {
+        "properties": {
+          "gripper": {
+            "$ref": "#/components/schemas/GripperConfiguration"
+          },
+          "z_axis": {
+            "$ref": "#/components/schemas/CanAxisConfiguration-Output"
+          },
+          "rotation": {
+            "$ref": "#/components/schemas/CanAxisConfiguration-Output"
+          },
+          "tool_shelf_offset": {
+            "type": "number",
+            "title": "Tool Shelf Offset"
+          },
+          "tool_retracted_offset": {
+            "type": "number",
+            "title": "Tool Retracted Offset"
+          },
+          "tool_extension_offset": {
+            "type": "number",
+            "title": "Tool Extension Offset"
+          },
+          "tool_pickup_extension": {
+            "type": "number",
+            "title": "Tool Pickup Extension"
+          }
+        },
+        "type": "object",
+        "required": [
+          "gripper",
+          "z_axis",
+          "rotation",
+          "tool_shelf_offset",
+          "tool_retracted_offset",
+          "tool_extension_offset",
+          "tool_pickup_extension"
+        ],
+        "title": "ToolConfiguration"
+      },
+      "UnsafeMoveCommand": {
+        "properties": {
+          "command": {
+            "type": "string",
+            "const": "unsafe_move",
+            "title": "Command",
+            "default": "unsafe_move"
+          },
+          "coordinate": {
+            "$ref": "#/components/schemas/GantryCoordinate"
+          }
+        },
+        "type": "object",
+        "required": [
+          "coordinate"
+        ],
+        "title": "UnsafeMoveCommand"
+      },
+      "UpdateSizeRequest": {
+        "properties": {
+          "upca": {
+            "type": "string",
+            "title": "Upca"
+          },
+          "item": {
+            "$ref": "#/components/schemas/ItemInformation"
+          }
+        },
+        "type": "object",
+        "required": [
+          "upca",
+          "item"
+        ],
+        "title": "UpdateSizeRequest"
+      },
+      "UserCreate": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "title": "Email"
+          },
+          "first_name": {
+            "type": "string",
+            "title": "First Name"
+          },
+          "last_name": {
+            "type": "string",
+            "title": "Last Name"
+          },
+          "pin": {
+            "type": "string",
+            "title": "Pin"
+          },
+          "role_id": {
+            "type": "integer",
+            "title": "Role Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email",
+          "first_name",
+          "last_name",
+          "pin",
+          "role_id"
+        ],
+        "title": "UserCreate",
+        "description": "User creation request."
+      },
+      "UserListResponse": {
+        "properties": {
+          "users": {
+            "items": {
+              "$ref": "#/components/schemas/openshelf_os_server__routers__users__UserResponse"
+            },
+            "type": "array",
+            "title": "Users"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          }
+        },
+        "type": "object",
+        "required": [
+          "users",
+          "total",
+          "offset",
+          "limit"
+        ],
+        "title": "UserListResponse",
+        "description": "User list response."
+      },
+      "UserUpdate": {
+        "properties": {
+          "email": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "email"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "first_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Name"
+          },
+          "last_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Name"
+          },
+          "pin": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pin"
+          },
+          "role_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role Id"
+          },
+          "is_active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Active"
+          }
+        },
+        "type": "object",
+        "title": "UserUpdate",
+        "description": "User update request."
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "openshelf_os__gantry__HomeCommand": {
+        "properties": {
+          "command": {
+            "type": "string",
+            "const": "home",
+            "title": "Command"
+          }
+        },
+        "type": "object",
+        "required": [
+          "command"
+        ],
+        "title": "HomeCommand"
+      },
+      "openshelf_os__gantry__InitializeCommand": {
+        "properties": {
+          "command": {
+            "type": "string",
+            "const": "initialize",
+            "title": "Command"
+          }
+        },
+        "type": "object",
+        "required": [
+          "command"
+        ],
+        "title": "InitializeCommand"
+      },
+      "openshelf_os__gantry__MoveCommand": {
+        "properties": {
+          "command": {
+            "type": "string",
+            "const": "move",
+            "title": "Command"
+          },
+          "coordinate": {
+            "$ref": "#/components/schemas/GantryCoordinate"
+          }
+        },
+        "type": "object",
+        "required": [
+          "command",
+          "coordinate"
+        ],
+        "title": "MoveCommand"
+      },
+      "openshelf_os__gantry__MoveRelativeCommand": {
+        "properties": {
+          "command": {
+            "type": "string",
+            "const": "move_relative",
+            "title": "Command"
+          },
+          "coordinate": {
+            "$ref": "#/components/schemas/GantryCoordinate"
+          }
+        },
+        "type": "object",
+        "required": [
+          "command",
+          "coordinate"
+        ],
+        "title": "MoveRelativeCommand"
+      },
+      "openshelf_os__gantry__StopCommand": {
+        "properties": {
+          "command": {
+            "type": "string",
+            "const": "stop",
+            "title": "Command"
+          }
+        },
+        "type": "object",
+        "required": [
+          "command"
+        ],
+        "title": "StopCommand"
+      },
+      "openshelf_os__robot__HomeCommand": {
+        "properties": {
+          "command": {
+            "type": "string",
+            "const": "home",
+            "title": "Command",
+            "default": "home"
+          }
+        },
+        "type": "object",
+        "title": "HomeCommand"
+      },
+      "openshelf_os__robot__InitializeCommand": {
+        "properties": {
+          "command": {
+            "type": "string",
+            "const": "initialize",
+            "title": "Command",
+            "default": "initialize"
+          }
+        },
+        "type": "object",
+        "title": "InitializeCommand"
+      },
+      "openshelf_os__robot__MoveCommand": {
+        "properties": {
+          "command": {
+            "type": "string",
+            "const": "move",
+            "title": "Command",
+            "default": "move"
+          },
+          "coordinate": {
+            "$ref": "#/components/schemas/GantryCoordinate"
+          }
+        },
+        "type": "object",
+        "required": [
+          "coordinate"
+        ],
+        "title": "MoveCommand"
+      },
+      "openshelf_os__robot__StopCommand": {
+        "properties": {
+          "command": {
+            "type": "string",
+            "const": "stop",
+            "title": "Command",
+            "default": "stop"
+          }
+        },
+        "type": "object",
+        "title": "StopCommand"
+      },
+      "openshelf_os__tool__HomeCommand": {
+        "properties": {
+          "command": {
+            "type": "string",
+            "const": "home",
+            "title": "Command"
+          }
+        },
+        "type": "object",
+        "required": [
+          "command"
+        ],
+        "title": "HomeCommand"
+      },
+      "openshelf_os__tool__InitializeCommand": {
+        "properties": {
+          "command": {
+            "type": "string",
+            "const": "initialize",
+            "title": "Command"
+          }
+        },
+        "type": "object",
+        "required": [
+          "command"
+        ],
+        "title": "InitializeCommand"
+      },
+      "openshelf_os__tool__MoveCommand": {
+        "properties": {
+          "command": {
+            "type": "string",
+            "const": "move",
+            "title": "Command"
+          },
+          "position": {
+            "type": "number",
+            "title": "Position"
+          }
+        },
+        "type": "object",
+        "required": [
+          "command",
+          "position"
+        ],
+        "title": "MoveCommand"
+      },
+      "openshelf_os__tool__MoveRelativeCommand": {
+        "properties": {
+          "command": {
+            "type": "string",
+            "const": "move_relative",
+            "title": "Command"
+          },
+          "position": {
+            "type": "number",
+            "title": "Position"
+          }
+        },
+        "type": "object",
+        "required": [
+          "command",
+          "position"
+        ],
+        "title": "MoveRelativeCommand"
+      },
+      "openshelf_os__tool__StopCommand": {
+        "properties": {
+          "command": {
+            "type": "string",
+            "const": "stop",
+            "title": "Command"
+          }
+        },
+        "type": "object",
+        "required": [
+          "command"
+        ],
+        "title": "StopCommand"
+      },
+      "openshelf_os_server__routers__auth__UserResponse": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "email": {
+            "type": "string",
+            "title": "Email"
+          },
+          "first_name": {
+            "type": "string",
+            "title": "First Name"
+          },
+          "last_name": {
+            "type": "string",
+            "title": "Last Name"
+          },
+          "role": {
+            "type": "string",
+            "title": "Role"
+          },
+          "permissions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Permissions"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "email",
+          "first_name",
+          "last_name",
+          "role",
+          "permissions",
+          "is_active"
+        ],
+        "title": "UserResponse",
+        "description": "User response model."
+      },
+      "openshelf_os_server__routers__users__UserResponse": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "email": {
+            "type": "string",
+            "title": "Email"
+          },
+          "first_name": {
+            "type": "string",
+            "title": "First Name"
+          },
+          "last_name": {
+            "type": "string",
+            "title": "Last Name"
+          },
+          "role_id": {
+            "type": "integer",
+            "title": "Role Id"
+          },
+          "role_name": {
+            "type": "string",
+            "title": "Role Name"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "email",
+          "first_name",
+          "last_name",
+          "role_id",
+          "role_name",
+          "is_active",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "UserResponse",
+        "description": "User response model."
+      }
+    },
+    "securitySchemes": {
+      "OAuth2PasswordBearer": {
+        "type": "oauth2",
+        "flows": {
+          "password": {
+            "scopes": {},
+            "tokenUrl": "/api/auth/login"
+          }
+        }
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "auth",
+      "description": "Authentication and user management"
+    },
+    {
+      "name": "robot",
+      "description": "Robot control and configuration"
+    },
+    {
+      "name": "gantry",
+      "description": "Gantry movement and positioning"
+    },
+    {
+      "name": "storage",
+      "description": "Storage grid and inventory management"
+    },
+    {
+      "name": "scanner",
+      "description": "Barcode scanning operations"
+    },
+    {
+      "name": "scale",
+      "description": "Scale and weight measurements"
+    },
+    {
+      "name": "printer",
+      "description": "Label printing operations"
+    },
+    {
+      "name": "sizes",
+      "description": "File size management"
+    },
+    {
+      "name": "users",
+      "description": "User management"
+    },
+    {
+      "name": "roles",
+      "description": "Role and permission management"
+    },
+    {
+      "name": "audit",
+      "description": "Audit logging"
+    }
+  ]
+}
