@@ -1418,6 +1418,11 @@ async def test_run_single_cell_allows_scan_estimated_wall_depth() -> None:
         robot=SimpleNamespace(
             grid=SimpleNamespace(
                 scan=SimpleNamespace(
+                        left_bounds_x_min_mm=0.0,
+                        left_bounds_x_max_mm=100.0,
+                        left_bounds_y_min_mm=0.0,
+                        left_bounds_y_max_mm=100.0,
+                        expected_hole_height_mm=30.0,
                     left_xy_reference=SimpleNamespace(
                         shelf_idx=1,
                         cell_idx=2,
@@ -1435,26 +1440,15 @@ async def test_run_single_cell_allows_scan_estimated_wall_depth() -> None:
             )
         )
     )
-    grid = SimpleNamespace()
-    candidate = laser_module.GapCandidateRegion(
-        x_min=10.0,
-        x_max=20.0,
-        y_min=30.0,
-        y_max=40.0,
-        wall_depth_mm=None,
+    target_shelf = SimpleNamespace(
+        cells=[
+            SimpleNamespace(calibration_point=SimpleNamespace(y=30.0)),
+            SimpleNamespace(calibration_point=SimpleNamespace(y=35.0)),
+        ]
     )
-    detected_cell = SimpleNamespace(
-        shelf_idx=1,
-        cell_idx=2,
-        center_x_mm=15.0,
-        center_y_mm=35.0,
-        tool_x_mm=16.0,
-        tool_y_mm=34.0,
-        width_mm=10.0,
-        height_mm=10.0,
-    )
+    grid = SimpleNamespace(get_shelf=lambda side, shelf_idx: target_shelf)
     analysis = SimpleNamespace(
-        shelves=[SimpleNamespace(cells=[detected_cell])],
+        shelves=[SimpleNamespace(cells=[])],
         wall_depth_mm=8.0,
     )
     target = laser_module.SingleCellRescanTarget(shelf_idx=1, cell_idx=2)
@@ -1463,24 +1457,22 @@ async def test_run_single_cell_allows_scan_estimated_wall_depth() -> None:
     with patch('perpetual_os1_server.core.laser_auto_calibration.get_root_config', return_value=config):
         with patch('perpetual_os1_server.core.laser_auto_calibration.resolve_grid_path', return_value='storage.json'):
             with patch('perpetual_os1_server.core.laser_auto_calibration.laser_module.load_grid', return_value=grid):
-                with patch('perpetual_os1_server.core.laser_auto_calibration.laser_module.build_single_cell_rescan_candidate', return_value=candidate):
-                    with patch('perpetual_os1_server.core.laser_auto_calibration.laser_module.build_single_cell_rescan_bounds', return_value=ScanBounds(x_min=0.0, x_max=50.0, y_min=0.0, y_max=80.0)):
-                        with patch.object(manager, '_run_scan_analysis', AsyncMock(return_value=analysis)) as scan_mock:
-                            with patch.object(manager, '_persist_single_cell_result', AsyncMock()) as persist_mock:
-                                await manager._run_single_cell(
-                                    worker,
-                                    StorageModuleSide.LEFT,
-                                    target,
-                                )
+                with patch.object(manager, '_run_scan_analysis', AsyncMock(return_value=analysis)) as scan_mock:
+                    with patch.object(manager, '_persist_single_cell_shelf_result', AsyncMock()) as persist_mock:
+                        await manager._run_single_cell(
+                            worker,
+                            StorageModuleSide.LEFT,
+                            target,
+                        )
 
-    assert scan_mock.await_args.kwargs['seeded_candidates'] == [candidate]
-    assert scan_mock.await_args.kwargs['seeded_wall_depth_mm'] is None
+    assert scan_mock.await_args.kwargs['known_shelf_edge_y'] is None
+    assert scan_mock.await_args.kwargs['should_validate_reference_bounds'] is False
+    assert scan_mock.await_args.kwargs['rescan_target'] == target
     persist_mock.assert_awaited_once_with(
         worker,
         StorageModuleSide.LEFT,
         analysis,
         target,
-        candidate,
     )
 
 @pytest.mark.asyncio

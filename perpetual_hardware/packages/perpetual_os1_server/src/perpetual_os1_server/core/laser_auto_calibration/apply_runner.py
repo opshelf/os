@@ -194,6 +194,40 @@ class ApplyRunnerMixin:
         )
         worker._robot._grid = laser_module.load_grid(grid_path)
 
+    async def _persist_single_cell_shelf_result(
+        self,
+        worker: RobotWorker,
+        side: StorageModuleSide,
+        analysis: Any,
+        target: laser_module.SingleCellRescanTarget,
+    ) -> None:
+        await self._update_snapshot(
+            state="applying",
+            current_stage="apply",
+            stage_detail={
+                "phase": "apply",
+                "scope": "cell",
+                "side": _side_to_module_name(side),
+                "shelf_idx": int(target.shelf_idx),
+                "cell_idx": int(target.cell_idx),
+            },
+        )
+
+        config = get_root_config()
+        scan_config = config.robot.grid.scan
+        grid_path = Path(resolve_grid_path(config))
+        grid = laser_module.load_grid(grid_path)
+        laser_module.apply_single_cell_shelf_analysis(
+            analysis=analysis,
+            grid=grid,
+            grid_path=grid_path,
+            scan_config=scan_config,
+            side=side,
+            target=target,
+        )
+        worker._robot._grid = laser_module.load_grid(grid_path)
+
+
     async def _get_current_calibration_params(self, worker: RobotWorker) -> dict[str, float]:
         front = await worker._robot._tool.get_param("ROTATION_FRONT")
         back = await worker._robot._tool.get_param("ROTATION_BACK")
