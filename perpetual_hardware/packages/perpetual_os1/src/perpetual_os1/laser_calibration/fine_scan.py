@@ -233,6 +233,91 @@ async def refine_horizontal_segment(
 	return refined_segment
 
 
+async def refine_horizontal_segment_across_rows(
+	tool: Any,
+	*,
+	segment: LineGapSegment,
+	fixed_mm: float,
+	bounds: ScanBounds,
+	settle_ms: int,
+	samples_per_point: int,
+	wall_depth_mm: float,
+	expected_span_mm: float,
+	width_tolerance_mm: float,
+	progress_prefix: str,
+	should_abort: Callable[[], bool] | None = None,
+	) -> Optional[LineGapSegment]:
+	row_offsets_mm = [0.0, -2.0, 2.0, -4.0, 4.0]
+	valid_segments: list[LineGapSegment] = []
+
+	for row_idx, row_offset_mm in enumerate(row_offsets_mm, start=1):
+		refined_segment = await refine_horizontal_segment(
+			tool,
+			segment=segment,
+			fixed_mm=float(fixed_mm) + float(row_offset_mm),
+			bounds=bounds,
+			settle_ms=settle_ms,
+			samples_per_point=samples_per_point,
+			wall_depth_mm=wall_depth_mm,
+			expected_span_mm=expected_span_mm,
+			progress_prefix=f"{progress_prefix}_r{row_idx}",
+			should_abort=should_abort,
+		)
+
+		if refined_segment is None:
+			continue
+
+		if dimensions_match(
+			refined_segment.width_mm,
+			expected_mm=expected_span_mm,
+			tolerance_mm=width_tolerance_mm,
+		) is False:
+			print_status(
+				f"x_refinement_row=rejected row={row_idx} "
+				f"y={float(fixed_mm) + float(row_offset_mm):.3f} "
+				f"center_mm={float(refined_segment.center_mm):.3f} "
+				f"width_mm={float(refined_segment.width_mm):.3f}"
+			)
+			continue
+
+		valid_segments.append(refined_segment)
+		print_status(
+			f"x_refinement_row=accepted row={row_idx} "
+			f"y={float(fixed_mm) + float(row_offset_mm):.3f} "
+			f"center_mm={float(refined_segment.center_mm):.3f} "
+			f"width_mm={float(refined_segment.width_mm):.3f}"
+		)
+
+	if len(valid_segments) == 0:
+		return None
+
+	center_values = np.array([float(current.center_mm) for current in valid_segments], dtype=np.float32)
+	width_values = np.array([float(current.width_mm) for current in valid_segments], dtype=np.float32)
+	median_center_mm = float(np.median(center_values))
+	median_width_mm = float(np.median(width_values))
+	median_start_mm = median_center_mm - (median_width_mm / 2.0)
+	median_end_mm = median_center_mm + (median_width_mm / 2.0)
+	selected_segment = min(
+		valid_segments,
+		key=lambda current: abs(float(current.center_mm) - median_center_mm),
+	)
+	print_status(
+		f"x_refinement=median rows={len(valid_segments)} "
+		f"original_center_mm={float(segment.center_mm):.3f} "
+		f"median_center_mm={median_center_mm:.3f} "
+		f"delta_mm={median_center_mm - float(segment.center_mm):.3f} "
+		f"median_width_mm={median_width_mm:.3f}"
+	)
+	return LineGapSegment(
+		start_idx=selected_segment.start_idx,
+		end_idx=selected_segment.end_idx,
+		start_mm=median_start_mm,
+		end_mm=median_end_mm,
+		width_mm=median_width_mm,
+		center_mm=median_center_mm,
+	)
+
+
 def build_detected_cell_from_segments(
 	*,
 	x_segment: LineGapSegment,
@@ -530,7 +615,7 @@ async def capture_cross_scan(
 	if refined_horizontal_segment is not None:
 		horizontal_segment = refined_horizontal_segment
 
-	precision_horizontal_segment = await refine_horizontal_segment(
+	precision_horizontal_segment = await refine_horizontal_segment_across_rows(
 		tool,
 		segment=horizontal_segment,
 		fixed_mm=refined_horizontal_y_mm,
@@ -539,6 +624,7 @@ async def capture_cross_scan(
 		samples_per_point=samples_per_point,
 		wall_depth_mm=wall_depth_mm,
 		expected_span_mm=scan_config.expected_hole_width_mm,
+		width_tolerance_mm=scan_config.hole_width_tolerance_mm + FINE_X_REFINEMENT_STEP_MM,
 		progress_prefix=f"{progress_prefix}_h_precision",
 		should_abort=should_abort,
 	)
