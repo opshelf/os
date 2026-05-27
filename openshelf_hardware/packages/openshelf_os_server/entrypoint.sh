@@ -2,7 +2,7 @@
 set -eu
 
 PYTHON_BIN=""
-ENV_PATH="/app/perpetual_hardware/.venv"
+ENV_PATH="/app/openshelf_hardware/.venv"
 
 if [ -x "${ENV_PATH}/bin/python" ]; then
 	PYTHON_BIN="${ENV_PATH}/bin/python"
@@ -25,7 +25,7 @@ fi
 # Resolve printer queue/URI from config.json
 QUEUE_FROM_CONFIG=""
 if [ -z "${PRINTER_QUEUE:-}" ] && [ -z "${PRINTER:-}" ] && [ -n "$PYTHON_BIN" ]; then
-	for config_path in "/app/perpetual_hardware/data/config.json" "/app/perpetual_hardware/data/settings.json"; do
+	for config_path in "/app/openshelf_hardware/data/config.json" "/app/openshelf_hardware/data/settings.json"; do
 		if [ -f "$config_path" ]; then
 			QUEUE_FROM_CONFIG=$("$PYTHON_BIN" - "$config_path" <<'PY'
 import json, pathlib, sys
@@ -65,7 +65,7 @@ else
 fi
 
 start_api() {
-	cd /app/perpetual_hardware && exec uv run start
+	cd /app/openshelf_hardware && exec uv run start
 }
 
 start_api

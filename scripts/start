@@ -1,7 +1,7 @@
 #!/bin/bash
 
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-DATA_DIR="$SCRIPT_DIR/perpetual_hardware/data"
+DATA_DIR="$SCRIPT_DIR/openshelf_hardware/data"
 
 MODE_FILE="$DATA_DIR/.mode"
 LAST_MODE_FILE="$DATA_DIR/.last_start_mode"
