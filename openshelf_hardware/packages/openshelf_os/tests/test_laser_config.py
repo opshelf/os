@@ -94,6 +94,25 @@ def test_motor_rotation_safety_flag_defaults_to_disabled():
     assert stage_motor.rotation_safe_stage_extension_mm == pytest.approx(8.5)
 
 
+def test_root_config_get_motor_supports_name_and_id_lookup():
+    data = copy.deepcopy(MINIMAL_CONFIG_DICT)
+    data["robot"]["tool"]["motors"] = [{
+        "motor_name": "stage",
+        "motor_id": 1,
+        "Ip": 1,
+        "rpm": 1,
+        "dr": 0,
+        "mpr": 1,
+        "accel": 1,
+        "ret_rpm": 1,
+        "lim": 10,
+    }]
+    config = RootConfig.model_validate(data)
+
+    assert config.get_motor("tool", name="stage").motor_id == 1
+    assert config.get_motor("tool", motor_id=1).motor_name == "stage"
+
+
 def test_assert_config_requires_laser_bus_when_laser_enabled():
     data = copy.deepcopy(MINIMAL_CONFIG_DICT)
     data["robot"]["tool"]["laser"] = {"enabled": True}
