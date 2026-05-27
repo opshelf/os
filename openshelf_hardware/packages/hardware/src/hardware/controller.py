@@ -1,8 +1,8 @@
 import asyncio
 import logging
-from typing import List, Optional, Sequence
-
 import pymodbus
+
+from typing import List, Optional, Sequence
 from pymodbus.client import AsyncModbusSerialClient
 from pymodbus.exceptions import ModbusException, ModbusIOException
 
@@ -26,27 +26,20 @@ class SharedModbusController:
         self.timeout = timeout
         self.parity = parity
         self.client = None
-        self.lock = asyncio.Lock()  # ensures only one coroutine accesses the bus at a time
-        
+        self.lock = asyncio.Lock()
 
     async def _reconnect(self) -> bool:
-        """Attempt to reconnect to the Modbus device. Returns True if successful."""
         try:
             if self.client:
                 await self.close()
+
             await self.connect()
+
             return self.client is not None and self.client.connected
         except Exception:
             return False
 
     async def connect(self) -> None:
-        """
-        Initialize and connect to the Modbus device.
-        
-        Raises:
-            ModbusConnectionError: If connection fails
-            ModbusConfigError: If client configuration is invalid
-        """
         try:
             self.client = AsyncModbusSerialClient(
                 port=self.port,
@@ -60,6 +53,7 @@ class SharedModbusController:
             )
             
             connected = await self.client.connect()
+
             if not connected or not self.client.connected:
                 raise ModbusConnectionError(
                     f"Failed to connect to Modbus device on port {self.port} "
@@ -82,22 +76,6 @@ class SharedModbusController:
         count: int = 1,
         function_code: int = 3,
     ) -> tuple[int, ...]:
-        """
-        Read one or more holding registers.
-        
-        Args:
-            unit_id: Modbus device ID
-            address: Register address to read from
-            count: Number of registers to read
-            
-        Raises:
-            ModbusError: If read operation fails
-            ModbusTimeoutError: If operation times out
-            ModbusConnectionError: If connection is lost
-            
-        Returns:
-            Tuple of register values in the order returned by the device.
-        """
         if not self.client or not self.client.connected:
             raise ModbusConnectionError("Not connected to Modbus device")
 
@@ -109,6 +87,7 @@ class SharedModbusController:
 
         async with self.lock:
             max_attempts = 3
+
             for attempt in range(max_attempts):
                 try:
                     if function_code == 4:
@@ -123,16 +102,19 @@ class SharedModbusController:
                             count=count,
                             device_id=unit_id
                         )
+
                     if result is None:
                         raise ModbusError(
                             f"No response from unit {unit_id} while reading function "
                             f"{function_code} "
                             f"{count} register(s) starting at {address}"
                         )
+
                     if result.isError():
                         raise ModbusError(
                             f"Read error from unit {unit_id}, function {function_code}, register {address}: {result}"
                         )
+
                     registers = getattr(result, "registers", None)
 
                     if isinstance(registers, Sequence) is False:
@@ -164,6 +146,7 @@ class SharedModbusController:
                         if not reconnected:
                             raise ModbusConnectionError(f"Reconnection failed after error: {str(e)}") from e
                         continue
+
                     raise ModbusError(f"Modbus read failed after reconnect: {str(e)}") from e
                 except ModbusError as e:
                     if attempt < max_attempts - 1:
@@ -179,11 +162,15 @@ class SharedModbusController:
                                 "error": str(e),
                             },
                         )
+
                         await asyncio.sleep(0.05 * (attempt + 1))
+
                         continue
+
                     raise
                 except Exception as e:
                     raise ModbusError(f"Unexpected error reading from unit {unit_id}: {str(e)}") from e
+
         raise ModbusError(f"Failed to read from unit {unit_id} after retries")
 
     async def read_holding_register_block(
@@ -232,19 +219,6 @@ class SharedModbusController:
         address: int,
         value: int
     ) -> None:
-        """
-        Write a value to a single register.
-        
-        Args:
-            unit_id: Modbus device ID
-            address: Register address to write to
-            value: Value to write
-            
-        Raises:
-            ModbusError: If write operation fails
-            ModbusTimeoutError: If operation times out
-            ModbusConnectionError: If connection is lost
-        """
         if not self.client or not self.client.connected:
             raise ModbusConnectionError("Not connected to Modbus device")
 
@@ -256,22 +230,26 @@ class SharedModbusController:
                         value=value,
                         device_id=int(unit_id)
                     )
+
                     if result is None:
                         raise ModbusError(
                             f"No response from unit {unit_id} while writing "
                             f"value {value} to register {address}"
                         )
+
                     if result.isError():
                         raise ModbusError(
                             f"Write error to unit {unit_id}, register {address}: {result}"
                         )
                     return
+
                 except (ModbusIOException, ModbusConnectionError, ModbusTimeoutError, ModbusException, asyncio.TimeoutError) as e:
                     if attempt == 0:
                         reconnected = await self._reconnect()
                         if not reconnected:
                             raise ModbusConnectionError(f"Reconnection failed after error: {str(e)}") from e
                         continue
+
                     raise ModbusError(f"Modbus write failed after reconnect: {str(e)}") from e
                 except Exception as e:
                     raise ModbusError(f"Unexpected error writing to unit {unit_id}: {str(e)}") from e
@@ -282,20 +260,6 @@ class SharedModbusController:
         address: int,
         values: List[int]
     ) -> None:
-        """
-        Write values to multiple consecutive registers.
-        
-        Args:
-            unit_id: Modbus device ID
-            address: Starting register address 
-            values: List of values to write
-            
-        Raises:
-            ModbusError: If write operation fails
-            ModbusTimeoutError: If operation times out
-            ModbusConnectionError: If connection is lost
-            ValueError: If values list is empty
-        """
         if not self.client or not self.client.connected:
             raise ModbusConnectionError("Not connected to Modbus device")
 
@@ -310,22 +274,27 @@ class SharedModbusController:
                         values=values,
                         device_id=int(unit_id)
                     )
+
                     if result is None:
                         raise ModbusError(
                             f"No response from unit {unit_id} while writing "
                             f"{len(values)} values starting at register {address}"
                         )
+
                     if result.isError():
                         raise ModbusError(
                             f"Write error to unit {unit_id}, registers {address}-{address+len(values)-1}: {result}"
                         )
+
                     return
                 except (ModbusIOException, ModbusConnectionError, ModbusTimeoutError, ModbusException, asyncio.TimeoutError) as e:
                     if attempt == 0:
                         reconnected = await self._reconnect()
+
                         if not reconnected:
                             raise ModbusConnectionError(f"Reconnection failed after error: {str(e)}") from e
                         continue
+
                     raise ModbusError(f"Modbus multi-write failed after reconnect: {str(e)}") from e
                 except Exception as e:
                     raise ModbusError(f"Unexpected error writing to unit {unit_id}: {str(e)}") from e

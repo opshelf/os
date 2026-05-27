@@ -18,7 +18,7 @@ from openshelf_os.robot import (
     HomeCommand,
     InitializeCommand,
 )
-from openshelf_os.robot_defs import WorkerError, QueuedOperation, WorkerStatus, WorkerStatusWithQueue
+from openshelf_os.robot_defs import WorkerError, QueuedOperation, WorkerStatusWithQueue
 from openshelf_os.barcode_protocol import BarcodeService
 from openshelf_os.exceptions import MotorError, MovementError, ToolError
 
@@ -238,7 +238,6 @@ class RobotWorker:
         self._queued_commands: List[QueuedOperation] = []
         self._status_subscribers: List[asyncio.Queue[str]] = []
         self._event_subscribers: List[asyncio.Queue[str]] = []
-        self._use_enhanced_status = True
         self._barcode: Optional[BarcodeService] = None
         self._barcode_task: Optional[asyncio.Task] = None
         self._latest_status_payload: Optional[str] = None
@@ -525,8 +524,6 @@ class RobotWorker:
     def _should_enable_barcode(self) -> bool:
         disable_raw: str = os.getenv("OPENSHELF_DISABLE_BARCODE", "false")  # type: ignore[assignment]
         return disable_raw.lower() not in {"1", "true", "yes"}
-        disable_raw = os.getenv("OPENSHELF_DISABLE_BARCODE", "false")
-        return disable_raw.lower() not in {"1", "true", "yes"}
 
     async def _run_barcode_bridge(self) -> None:
         if not self._barcode:
@@ -619,35 +616,22 @@ class RobotWorker:
             robot_status.door_open = self._door_open
             robot_status.awaiting_curtain_ack = self._awaiting_curtain_ack
 
-        status: WorkerStatus | WorkerStatusWithQueue
+        status: WorkerStatusWithQueue
 
-        if self._use_enhanced_status:
-            pending_count, queued_ops = await self._get_pending_messages_info()
-            status = WorkerStatusWithQueue(
-                robot_status=robot_status,
-                running=self._running,
-                current_command=self._current_command,
-                queued_operations=queued_ops[:10],
-                queue_length=pending_count,
-                error_queue=list(self._error_queue),
-                is_crashed=self._is_crashed,
-                crash_reason=self._crash_reason,
-                needs_home=self.needs_home(),
-                needs_home_reason=self._needs_home_reason,
-                needs_home_axes=self.needs_home_axes(),
-            )
-        else:
-            status = WorkerStatus(
-                robot_status=robot_status,
-                running=self._running,
-                current_command=self._current_command,
-                error_queue=list(self._error_queue),
-                is_crashed=self._is_crashed,
-                crash_reason=self._crash_reason,
-                needs_home=self.needs_home(),
-                needs_home_reason=self._needs_home_reason,
-                needs_home_axes=self.needs_home_axes(),
-            )
+        pending_count, queued_ops = await self._get_pending_messages_info()
+        status = WorkerStatusWithQueue(
+            robot_status=robot_status,
+            running=self._running,
+            current_command=self._current_command,
+            queued_operations=queued_ops[:10],
+            queue_length=pending_count,
+            error_queue=list(self._error_queue),
+            is_crashed=self._is_crashed,
+            crash_reason=self._crash_reason,
+            needs_home=self.needs_home(),
+            needs_home_reason=self._needs_home_reason,
+            needs_home_axes=self.needs_home_axes(),
+        )
 
         status_payload = status.model_dump(mode="json")
 
