@@ -61,7 +61,7 @@ try:
 except Exception:
     sys.modules.setdefault("cv2", types.SimpleNamespace())
 
-from openshelf_os.robot_worker import _transform_worker_status_payload
+from openshelf_os.robot.worker import _transform_worker_status_payload
 
 
 def test_transform_worker_payload_includes_needs_home() -> None:
