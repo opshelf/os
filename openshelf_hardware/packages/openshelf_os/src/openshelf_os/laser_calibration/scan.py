@@ -27,12 +27,6 @@ class ScanBounds(BaseModel):
 	y_max: float
 
 
-class ScanPointReading(BaseModel):
-	x_mm: float
-	y_mm: float
-	depth_mm: Optional[float] = None
-
-
 class ScanDetectedCell(BaseModel):
 	shelf_idx: int
 	cell_idx: int

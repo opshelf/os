@@ -151,19 +151,3 @@ def rpm_to_mms(rpm: float, mpr: float) -> float:
         return mm_per_min / 60.0
     except (ValueError, TypeError) as e:
         raise ValueError(f"Failed to convert {rpm}RPM at {mpr}mm/rev: {str(e)}") from e
-        
-def accel_time_to_mms2(accel_time: float, mpr: float) -> float:
-    if not isinstance(accel_time, (int, float)) or not isinstance(mpr, (int, float)):
-        raise ValueError("Acceleration time and mpr must be numbers")
-        
-    if accel_time <= 0:
-        raise ValueError("Acceleration time must be positive")
-        
-    try:
-        accel_seconds = accel_time / 1000.0
-        target_speed = rpm_to_mms(1000.0, mpr)
-        
-        return target_speed / accel_seconds
-        
-    except (ValueError, TypeError) as e:
-        raise ValueError(f"Failed to convert {accel_time}ms/1000rpm at {mpr}mm/rev: {str(e)}") from e

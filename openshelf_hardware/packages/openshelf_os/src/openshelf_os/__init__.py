@@ -127,7 +127,3 @@ def _before_send_sentry_log(log: dict[str, Any], _hint: dict[str, Any]) -> dict[
 
 
 sentry_enabled = _configure_sentry()
-
-
-def hello() -> str:
-	return "Hello from openshelf_os!"

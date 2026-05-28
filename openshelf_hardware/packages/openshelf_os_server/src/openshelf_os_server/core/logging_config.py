@@ -159,16 +159,6 @@ def set_correlation_id(correlation_id: str) -> None:
 	correlation_id_var.set(correlation_id)
 
 
-def set_device_id(device_id: str) -> None:
-	"""Set device ID for current context."""
-	device_id_var.set(device_id)
-
-
-def set_user_id(user_id: int) -> None:
-	"""Set user ID for current context."""
-	user_id_var.set(user_id)
-
-
 def clear_context() -> None:
 	"""Clear all context variables."""
 	correlation_id_var.set(None)
