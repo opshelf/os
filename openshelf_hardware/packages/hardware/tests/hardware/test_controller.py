@@ -99,6 +99,34 @@ async def test_controller_write_single_register(mock_modbus_client):
         address=0x100, value=42, device_id=1
     )
 
+
+@pytest.mark.asyncio
+async def test_controller_write_single_register_preserves_modbus_error(mock_modbus_client):
+    controller = SharedModbusController("/dev/ttyUSB0", 115200)
+    controller.client = mock_modbus_client
+
+    result = Mock()
+    result.isError.return_value = True
+    mock_modbus_client.write_register.return_value = result
+
+    with pytest.raises(ModbusError, match="Write error to unit 1, register 256") as exc_info:
+        await controller.write_single_register(1, 0x100, 42)
+
+    assert "Unexpected error writing" not in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_controller_write_multiple_registers_preserves_modbus_error(mock_modbus_client):
+    controller = SharedModbusController("/dev/ttyUSB0", 115200)
+    controller.client = mock_modbus_client
+
+    mock_modbus_client.write_registers.return_value = None
+
+    with pytest.raises(ModbusError, match="No response from unit 1 while writing") as exc_info:
+        await controller.write_multiple_registers(1, 0x100, [42, 43])
+
+    assert "Unexpected error writing" not in str(exc_info.value)
+
 @pytest.mark.asyncio
 async def test_controller_error_handling(mock_modbus_client):
     controller = SharedModbusController("/dev/ttyUSB0", 115200)
