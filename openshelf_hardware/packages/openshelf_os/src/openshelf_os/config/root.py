@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -23,7 +23,7 @@ from openshelf_os.config.settings import (
 class RootConfig(BaseModel):
     name: str
     version: str
-    description: Optional[str] = None
+    description: str | None = None
     robot: Robot
     status: Literal["idle", "running", "error"] = "idle"
 
@@ -41,13 +41,27 @@ class RootConfig(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _migrate_robot_enabled(cls, values: Dict[str, Any]) -> Dict[str, Any]:
-        if isinstance(values, dict) and "robot_app" not in values:
-            if "robot" in values and isinstance(values["robot"], dict):
-                robot_enabled = values["robot"].pop("enabled", None)
-                if robot_enabled is not None:
-                    values["robot_app"] = {"enabled": robot_enabled}
-        return values
+    def _migrate_robot_enabled(cls, values: Any) -> Any:
+        if isinstance(values, dict) is False:
+            return values
+
+        if "robot_app" in values:
+            return values
+
+        robot = values.get("robot")
+        if isinstance(robot, dict) is False:
+            return values
+
+        robot_enabled = robot.get("enabled")
+        if robot_enabled is None:
+            return values
+
+        data = dict(values)
+        robot_data = dict(robot)
+        robot_data.pop("enabled", None)
+        data["robot"] = robot_data
+        data["robot_app"] = {"enabled": robot_enabled}
+        return data
 
 
     def get(self, dotted_path: str, default: Any = ...) -> Any:
