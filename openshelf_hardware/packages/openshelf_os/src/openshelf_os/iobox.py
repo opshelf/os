@@ -152,28 +152,6 @@ class IOBox:
 
         self._scale_ready = True
 
-    def print_random_barcode(
-        self,
-        *,
-        height: int = 96,
-        width: int = 3,
-        hri: str = "none",
-        feed_after: int = 2,
-    ) -> str:
-        if self._printer is None:
-            raise IOBoxError("Printer not configured")
-
-        try:
-            return self._printer.print_random_upca(
-                height=height,
-                width=width,
-                hri=hri,
-                feed_after=feed_after,
-            )
-        except Exception as exc:
-            self._status = IOBoxStatus.ERROR
-            raise IOBoxError(f"Failed to print barcode: {str(exc)}") from exc
-
     async def get_weight(self) -> Optional[float]:
         if self._scale_enabled is False or self._scale is None:
             return None

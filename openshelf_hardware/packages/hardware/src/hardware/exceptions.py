@@ -38,15 +38,6 @@ class CameraConfigError(CameraError):
 class ImageError(CameraError):
     """Image capture or processing error."""
     pass
-
-class ImageProcessingError(ImageError):
-    """Error during image processing or analysis."""
-    pass
-
-class CalibrationError(CameraError):
-    """Camera calibration error."""
-    pass
-
 class MotorError(HardwareError):
     """Base class for motor-related errors."""
     pass
@@ -63,23 +54,10 @@ class MotorConfigError(MotorError):
     """Error in motor configuration."""
     pass
 
-class MotorMovementError(MotorError):
-    """Error during motor movement."""
-    pass
-
-class MotorStateError(MotorError):
-    """Invalid motor state transition."""
-    pass
-
-
 class PrinterError(HardwareError):
     """Base class for printer-related errors."""
     pass
 
 class PrinterConnectionError(PrinterError):
     """Printer connection or initialization failed."""
-    pass
-
-class PrinterIOError(PrinterError):
-    """Printer I/O error."""
     pass
