@@ -6,8 +6,9 @@ import serial.tools.list_ports
 logger = logging.getLogger(__name__).getChild("barcode")
 
 class _BarcodeProtocol(asyncio.Protocol):
-    def __init__(self, on_line):
+    def __init__(self, on_line, on_connection_lost):
         self.on_line = on_line
+        self.on_connection_lost = on_connection_lost
         self._buf = bytearray()
 
     def data_received(self, data: bytes) -> None:
@@ -37,6 +38,7 @@ class _BarcodeProtocol(asyncio.Protocol):
             "Barcode scanner connection lost",
             extra={"error": str(exc) if exc else None},
         )
+        self.on_connection_lost()
 
 
 class BarcodeService:
@@ -89,11 +91,7 @@ class BarcodeService:
         return self
 
     async def __anext__(self):
-        try:
-            item = await self.get()
-            return item
-        except asyncio.CancelledError:
-            raise StopAsyncIteration
+        return await self.get()
 
     async def _run(self):
         backoff = 0.5
@@ -120,8 +118,13 @@ class BarcodeService:
                     extra={"port": port, "baudrate": self.baudrate},
                 )
 
+                connection_lost = asyncio.Event()
+
                 coro = serial_asyncio.create_serial_connection(
-                    loop, lambda: _BarcodeProtocol(on_line), port, baudrate=self.baudrate
+                    loop,
+                    lambda: _BarcodeProtocol(on_line, connection_lost.set),
+                    port,
+                    baudrate=self.baudrate,
                 )
 
                 self._transport, self._protocol = await coro
@@ -129,10 +132,7 @@ class BarcodeService:
 
                 logger.info("Barcode scanner connected", extra={"port": port})
 
-                while not self._stop_evt.is_set():
-                    await asyncio.sleep(0.2)
-
-                break
+                await connection_lost.wait()
             except asyncio.CancelledError:
                 break
             except Exception as exc:
