@@ -33,7 +33,7 @@ from openshelf_os_server.core.laser_auto_calibration import (
 )
 from openshelf_os_server.core.manual_motion import manual_motion_guard
 from openshelf_os_server.routers.auth_deps import get_current_user
-from openshelf_os_server.core.storage_module import module_name_to_side, side_to_s
+from openshelf_os_server.core.storage_module import side_to_s
 from openshelf_os_server.settings import get_root_config, save_root_config
 
 router = APIRouter(prefix="/api/calibration", tags=["calibration"], dependencies=[Depends(get_current_user)])
@@ -90,13 +90,13 @@ class PositionResponse(BaseModel):
 
 
 class MoveRequest(BaseModel):
-	side: Literal["left_module", "right_module"]
+	side: StorageModuleSide
 	shelf_idx: int
 	cell_idx: int
 
 
 class MovePositionRequest(BaseModel):
-	side: Literal["left_module", "right_module"]
+	side: StorageModuleSide
 	x: float
 	y: float
 	z_offset: float = 0.0
@@ -108,7 +108,7 @@ class JogRequest(BaseModel):
 
 
 class TestRequest(BaseModel):
-	side: Literal["left_module", "right_module"]
+	side: StorageModuleSide
 	shelf_idx: int
 	cell_idx: int
 
@@ -116,14 +116,14 @@ class TestRequest(BaseModel):
 
 def _build_test_location(request: TestRequest) -> StorageModuleCellLocation:
 	return StorageModuleCellLocation(
-		side=_parse_side(request.side),
+		side=request.side,
 		shelf_idx=request.shelf_idx,
 		cell_idx=request.cell_idx,
 	)
 
 
 def _build_laser_auto_calibration_scope(
-	side: Literal["left_module", "right_module"] | None,
+	side: StorageModuleSide | None,
 	shelf_idx: int | None,
 	cell_idx: int | None,
 	mode: Literal["all", "io_box"] | None,
@@ -199,7 +199,7 @@ def _build_cycle_test_item(cell, location: StorageModuleCellLocation) -> CellIte
 
 
 class SaveRequest(BaseModel):
-	side: Literal["left_module", "right_module"]
+	side: StorageModuleSide
 	shelf_idx: int
 	cell_idx: int
 	x: float
@@ -358,12 +358,8 @@ async def _raise_motor_error(
 	) from exc
 
 
-def _parse_side(side: str) -> StorageModuleSide:
-	return module_name_to_side(side)
-
-
-def _side_to_s(side: str) -> int:
-	return side_to_s(module_name_to_side(side))
+def _side_to_s(side: StorageModuleSide) -> int:
+	return side_to_s(side)
 
 
 def _get_shelf(grid, side: StorageModuleSide, shelf_idx: int):
@@ -507,7 +503,7 @@ async def _move_tool_to_coordinate(
 	worker,
 	coord: AxisCoordinate,
 	*,
-	side_name: Literal["left_module", "right_module"],
+	side_name: StorageModuleSide,
 	warnings: Optional[list[str]] = None,
 ) -> PositionResponse:
 	global _current_position, _current_side, _current_side_name
@@ -535,7 +531,7 @@ async def _move_tool_to_coordinate(
 	slide_extension = await _get_current_stage_extension(tool)
 
 	_current_side = coord.s
-	_current_side_name = side_name
+	_current_side_name = side_name.value
 	warnings_payload = warnings if warnings else None
 	_current_position = PositionResponse(
 		x=coord.x,
@@ -661,7 +657,7 @@ async def abort_laser_auto_calibration() -> LaserAutoCalibrationSnapshot:
 @router.get("/laser/stream")
 async def stream_laser_auto_calibration(
 	request: Request,
-	side: Literal["left_module", "right_module"] | None = None,
+	side: StorageModuleSide | None = None,
 	shelf_idx: int | None = None,
 	cell_idx: int | None = None,
 	mode: Literal["all", "io_box"] | None = None,
@@ -753,7 +749,7 @@ async def move_to_cell(request: MoveRequest) -> PositionResponse:
 
 	grid = worker._robot._grid
 
-	side_enum = _parse_side(request.side)
+	side_enum = request.side
 	shelf = _get_shelf(grid, side_enum, request.shelf_idx)
 	cell = _get_cell(shelf, request.cell_idx)
 
@@ -993,7 +989,7 @@ async def save_calibration(request: SaveRequest):
 	_validate_non_negative_index(request.shelf_idx, "shelf_idx")
 	_validate_non_negative_index(request.cell_idx, "cell_idx")
 
-	side_enum = _parse_side(request.side)
+	side_enum = request.side
 	shelf = _ensure_shelf(grid, side_enum, request.shelf_idx)
 	cell = _ensure_cell(grid, side_enum, shelf, request.cell_idx)
 
