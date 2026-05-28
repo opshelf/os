@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from openshelf_os.laser_calibration import GapCandidateRegion
-from openshelf_os.laser_scan import ScanBounds
+from openshelf_os.laser_calibration.scan import ScanBounds
 
 
 def load_laser_script_module():

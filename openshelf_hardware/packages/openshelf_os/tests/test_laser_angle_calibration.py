@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from openshelf_os.laser_angle_calibration import (
+from openshelf_os.laser_calibration.angle import (
 	RIGHT_MODULE_ROTATION_SAFE_X_MM,
 	ShelfSurfaceEdge,
 	build_shelf_scout_x_positions,
@@ -15,7 +15,7 @@ from openshelf_os.laser_angle_calibration import (
 	probe_stage_until_stall,
 	run_with_temp_robot_config,
 )
-from openshelf_os.laser_angle_calibration.stage_stall import (
+from openshelf_os.laser_calibration.angle.stage_stall import (
 	finish_stage_stall_capture,
 	resolve_stage_retract_target,
 	retract_stage_after_stall,
@@ -509,7 +509,7 @@ async def test_run_with_temp_robot_config_skips_stop_when_cancelled(tmp_path) ->
 		started.set()
 		await asyncio.sleep(10)
 
-	with patch('openshelf_os.laser_angle_calibration.build_standalone_config', return_value={}):
+	with patch('openshelf_os.laser_calibration.angle.build_standalone_config', return_value={}):
 		with patch('openshelf_os.robot.Robot', return_value=robot):
 			task = asyncio.create_task(
 				run_with_temp_robot_config(

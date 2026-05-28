@@ -46,7 +46,7 @@ class ScopeRunnerMixin:
         if requested_scope.side is None:
             raise ValueError("A scoped auto calibration request requires a side")
 
-        side = _module_name_to_side(requested_scope.side)
+        side = requested_scope.side
 
         if requested_scope.mode == "side":
             await self._run_single_side(worker, side)

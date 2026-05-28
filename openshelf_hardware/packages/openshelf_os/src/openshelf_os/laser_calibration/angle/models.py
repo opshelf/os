@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from openshelf_os import laser_shelf_scout as shared_shelf_scout
+from openshelf_os.laser_calibration import shelf_scout as shared_shelf_scout
 
 ShelfSurfaceEdge = shared_shelf_scout.ShelfSurfaceEdge
 

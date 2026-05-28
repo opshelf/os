@@ -32,7 +32,7 @@ from openshelf_os.laser_calibration import (
 	RIGHT_MODULE_ROTATION_SAFE_X_MM,
 	SingleCellRescanTarget,
 )
-from openshelf_os.laser_scan import ScanBounds
+from openshelf_os.laser_calibration.scan import ScanBounds
 from openshelf_os.storage import CalibrationCoordinate, Cell, CellStatus, Dimensions, Shelf, StorageGrid, StorageModuleSide
 
 

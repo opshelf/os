@@ -16,15 +16,15 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
-from openshelf_os import laser_angle_calibration as angle_module
+from openshelf_os.laser_calibration import angle as angle_module
 from openshelf_os import laser_calibration as laser_module
 from openshelf_os.common import Parameters, resolve_grid_path
-from openshelf_os.laser_scan import ScanBounds
+from openshelf_os.laser_calibration.scan import ScanBounds
 from openshelf_os.storage import StorageModuleSide
-from openshelf_os.robot_worker import RobotWorker
+from openshelf_os.robot.worker import RobotWorker
 
 from openshelf_os_server.settings import clear_config_cache, get_config_path, get_root_config, save_root_config
-from openshelf_os_server.core.storage_module import module_name_to_side
+from openshelf_os_server.core.storage_module import StorageModuleSideName
 
 logger = logging.getLogger(__name__)
 
@@ -102,13 +102,13 @@ def _should_skip_motion_cleanup_on_cancel() -> bool:
 
 
 class LaserAutoCalibrationShelfEdge(BaseModel):
-    side: Literal["left_module", "right_module"]
+    side: StorageModuleSide
     x_mm: float
     y_mm: float
 
 
 class LaserAutoCalibrationCandidate(BaseModel):
-    side: Literal["left_module", "right_module"]
+    side: StorageModuleSide
     shelf_idx: int | None = None
     x_min: float
     x_max: float
@@ -120,7 +120,7 @@ class LaserAutoCalibrationCandidate(BaseModel):
 
 
 class LaserAutoCalibrationCell(BaseModel):
-    side: Literal["left_module", "right_module"]
+    side: StorageModuleSide
     shelf_idx: int
     cell_idx: int
     tool_x_mm: float
@@ -134,7 +134,7 @@ class LaserAutoCalibrationCell(BaseModel):
 
 class LaserAutoCalibrationAngleResult(BaseModel):
     method: Literal["stage_stall", "laser_fit"] = "laser_fit"
-    side: Literal["left_module", "right_module"]
+    side: StorageModuleSide
     alpha_deg: float
     sample_count: int
     capture_y_mm: float
@@ -157,7 +157,7 @@ class LaserAutoCalibrationIOBoxResult(BaseModel):
 
 class LaserAutoCalibrationScope(BaseModel):
     mode: Literal["all", "side", "shelf", "cell", "io_box"] = "all"
-    side: Literal["left_module", "right_module"] | None = None
+    side: StorageModuleSide | None = None
     shelf_idx: int | None = None
     cell_idx: int | None = None
     include_io_box: bool = False
@@ -168,7 +168,7 @@ class LaserAutoCalibrationSnapshot(BaseModel):
     session_id: str | None = None
     run_id: str | None = None
     requested_scope: LaserAutoCalibrationScope = Field(default_factory=LaserAutoCalibrationScope)
-    current_side: Literal["left_module", "right_module"] | None = None
+    current_side: StorageModuleSide | None = None
     current_stage: str | None = None
     bounds: ScanBounds | None = None
     started_at: str | None = None
@@ -228,7 +228,7 @@ def _build_default_scans_dir() -> str:
     return str((Path("data") / DEFAULT_SCANS_DIR_NAME).resolve())
 
 
-def _side_to_module_name(side: StorageModuleSide) -> Literal["left_module", "right_module"]:
+def _side_to_module_name(side: StorageModuleSide) -> StorageModuleSideName:
     if side == StorageModuleSide.LEFT:
         return "left_module"
 
@@ -241,9 +241,6 @@ def _side_to_short_name(side: StorageModuleSide) -> Literal["left", "right"]:
 
     return "right"
 
-
-def _module_name_to_side(side_name: Literal["left_module", "right_module"]) -> StorageModuleSide:
-    return module_name_to_side(side_name)
 
 
 def _build_angle_rotation_center_deg(parameters: Any, side: StorageModuleSide) -> float:
@@ -573,7 +570,7 @@ def _build_angle_calibration_sample(
 
 
 def _build_candidate_rows(
-    side_name: Literal["left_module", "right_module"],
+    side_name: StorageModuleSideName,
     candidate_rows: list[dict[str, Any]],
     shelf_edges: list[LaserAutoCalibrationShelfEdge],
 ) -> list[LaserAutoCalibrationCandidate]:
@@ -592,7 +589,7 @@ def _build_candidate_rows(
 
         candidates.append(
             LaserAutoCalibrationCandidate(
-                side=side_name,
+                side=StorageModuleSide(side_name),
                 shelf_idx=shelf_idx,
                 x_min=float(row["x_min"]),
                 x_max=float(row["x_max"]),
@@ -612,7 +609,7 @@ def _build_candidate_rows(
 
 
 def _build_cell_rows(
-    side_name: Literal["left_module", "right_module"],
+    side_name: StorageModuleSideName,
     fine_scan_rows: list[dict[str, Any]],
 ) -> list[LaserAutoCalibrationCell]:
     cells: list[LaserAutoCalibrationCell] = []
@@ -621,7 +618,7 @@ def _build_cell_rows(
         for cell_row in fine_row.get("detected_cells", []):
             cells.append(
                 LaserAutoCalibrationCell(
-                    side=side_name,
+                    side=StorageModuleSide(side_name),
                     shelf_idx=int(cell_row["shelf_idx"]),
                     cell_idx=int(cell_row["cell_idx"]),
                     tool_x_mm=float(cell_row["tool_x_mm"]),
@@ -638,7 +635,7 @@ def _build_cell_rows(
                 )
             )
 
-    cells.sort(key=lambda cell: (cell.side, cell.shelf_idx, cell.cell_idx))
+    cells.sort(key=lambda cell: (cell.side.value, cell.shelf_idx, cell.cell_idx))
     return cells
 
 
@@ -658,12 +655,12 @@ __all__ = [
     "resolve_grid_path",
     "ScanBounds",
     "StorageModuleSide",
+    "StorageModuleSideName",
     "RobotWorker",
     "clear_config_cache",
     "get_config_path",
     "get_root_config",
     "save_root_config",
-    "module_name_to_side",
     "logger",
     "ACTIVE_SESSION_STATES",
     "DEFAULT_SCANS_DIR_NAME",
@@ -707,7 +704,6 @@ __all__ = [
     "_build_default_scans_dir",
     "_side_to_module_name",
     "_side_to_short_name",
-    "_module_name_to_side",
     "_build_angle_rotation_center_deg",
     "_side_to_rotation_param_name",
     "_side_to_stage_extension_param_name",

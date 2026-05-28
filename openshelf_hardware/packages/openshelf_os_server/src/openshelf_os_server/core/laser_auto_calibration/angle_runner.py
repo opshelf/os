@@ -380,7 +380,7 @@ class AngleRunnerMixin:
 
         return LaserAutoCalibrationAngleResult(
             method="laser_fit",
-            side=_side_to_module_name(side),
+            side=side,
             alpha_deg=float(fit_result.alpha_deg),
             sample_count=int(fit_result.sample_count),
             capture_y_mm=float(capture_y_mm),
@@ -882,7 +882,7 @@ class AngleRunnerMixin:
 
         return LaserAutoCalibrationAngleResult(
             method="stage_stall",
-            side=side_module_name,
+            side=side,
             alpha_deg=alpha_deg,
             sample_count=len(samples),
             capture_y_mm=float(capture_y_mm),

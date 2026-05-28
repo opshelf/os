@@ -13,7 +13,7 @@ from .models import *
 class SnapshotRunnerMixin:
     async def _refresh_scan_side_state(
         self,
-        side_name: Literal["left_module", "right_module"],
+        side_name: StorageModuleSideName,
         recorder: Any,
         bounds: ScanBounds,
     ) -> None:
@@ -26,7 +26,7 @@ class SnapshotRunnerMixin:
             side_state.run_id = str(metadata.get("run_id", recorder.run_id))
             side_state.shelf_edges = [
                 LaserAutoCalibrationShelfEdge(
-                    side=side_name,
+                    side=StorageModuleSide(side_name),
                     x_mm=float(row["x_mm"]),
                     y_mm=float(row["y_mm"]),
                 )
@@ -72,7 +72,7 @@ class SnapshotRunnerMixin:
         if self._should_abort_work() is True:
             raise asyncio.CancelledError()
 
-    def _build_scan_status_callback(self, side_name: Literal["left_module", "right_module"], recorder: Any, bounds: ScanBounds):
+    def _build_scan_status_callback(self, side_name: StorageModuleSideName, recorder: Any, bounds: ScanBounds):
         async def did_receive_status(message: str) -> None:
             if self._should_preserve_cancelling_snapshot() is True:
                 return
@@ -379,6 +379,8 @@ class SnapshotRunnerMixin:
     async def _sync_snapshot(self, **updates: Any) -> LaserAutoCalibrationSnapshot:
         async with self._lock:
             for key, value in updates.items():
+                if key == "current_side" and value is not None:
+                    value = StorageModuleSide(value)
                 setattr(self._snapshot, key, value)
 
             self._snapshot.updated_at = _get_timestamp()
@@ -398,17 +400,17 @@ class SnapshotRunnerMixin:
 
             self._snapshot.shelf_edges = sorted(
                 shelf_edges,
-                key=lambda edge: (edge.side, -edge.y_mm, edge.x_mm),
+                key=lambda edge: (edge.side.value, -edge.y_mm, edge.x_mm),
             )
             self._snapshot.shelf_candidates = sorted(
                 candidates,
-                key=lambda candidate: (candidate.side, candidate.shelf_idx if candidate.shelf_idx is not None else 999, candidate.y_min, candidate.x_min),
+                key=lambda candidate: (candidate.side.value, candidate.shelf_idx if candidate.shelf_idx is not None else 999, candidate.y_min, candidate.x_min),
             )
             self._snapshot.detected_cells = sorted(
                 cells,
-                key=lambda cell: (cell.side, cell.shelf_idx, cell.cell_idx),
+                key=lambda cell: (cell.side.value, cell.shelf_idx, cell.cell_idx),
             )
-            self._snapshot.angle_results = sorted(angle_results, key=lambda result: result.side)
+            self._snapshot.angle_results = sorted(angle_results, key=lambda result: result.side.value)
             left_side_state = self._side_states.get("left_module", _SideState())
             right_side_state = self._side_states.get("right_module", _SideState())
             self._snapshot.left_scouted_shelf_count = max(

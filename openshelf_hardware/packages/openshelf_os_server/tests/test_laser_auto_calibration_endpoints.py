@@ -8,10 +8,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
-from openshelf_os import laser_angle_calibration as angle_module
+from openshelf_os.laser_calibration import angle as angle_module
 from openshelf_os import laser_calibration as laser_module
 from openshelf_os.common import Parameters
-from openshelf_os.laser_scan import ScanBounds
+from openshelf_os.laser_calibration.scan import ScanBounds
 from openshelf_os.storage import StorageModuleSide
 from openshelf_os_server.core.laser_auto_calibration import (
     _build_angle_rotation_center_deg,

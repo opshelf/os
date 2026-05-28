@@ -18,7 +18,7 @@ PYTHON_PATHS = [
 for import_path in reversed(PYTHON_PATHS):
 	sys.path.insert(0, str(import_path))
 
-import openshelf_os.laser_angle_calibration as angle_module
+import openshelf_os.laser_calibration.angle as angle_module
 import openshelf_os.laser_calibration as laser_module
 from openshelf_os.common import (
 	CONFIG_PATH,
@@ -27,7 +27,7 @@ from openshelf_os.common import (
 	resolve_grid_path,
 	write_json_file_with_backup,
 )
-from openshelf_os.laser_scan import ScanBounds, build_axis_positions
+from openshelf_os.laser_calibration.scan import ScanBounds, build_axis_positions
 from openshelf_os.storage import StorageModuleSide
 
 DEFAULT_SCANS_DIR_NAME = 'calibration'
