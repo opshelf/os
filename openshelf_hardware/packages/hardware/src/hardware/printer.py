@@ -1,49 +1,48 @@
 from __future__ import annotations
-
 import errno
 import logging
 import os
 import random
 import time
+
 from typing import Optional, List
+from hardware.exceptions import PrinterConnectionError
 
 ESC = b"\x1b"
 GS = b"\x1d"
-DLE = b"\x10"
 
 DEFAULT_INIT_DELAY = 0.1
 DEFAULT_COMMAND_DELAY = 0.02
 DEFAULT_PRINT_DENSITY = 64
 
-HRI_MAP = {"none":0, "above":1, "below":2, "both":3}
+HRI_MAP = {"none": 0, "above": 1, "below": 2, "both": 3}
 
 SYMS = {
-    "UPC-A":65, "UPCA":65,
-    "UPC-E":66, "UPCE":66,
-    "EAN13":67, "JAN13":67,
-    "EAN8":68,  "JAN8":68,
-    "CODE39":69, "CODE-39":69,
-    "ITF":70, "I2OF5":70, "INTERLEAVED2OF5":70,
-    "CODABAR":71, "NW-7":71,
-    "CODE93":72,
-    "CODE128":73,
-    "UCC/EAN128":74, "GS1-128":74, "EAN128":74,
+    "UPC-A": 65, "UPCA": 65,
+    "UPC-E": 66, "UPCE": 66,
+    "EAN13": 67, "JAN13": 67,
+    "EAN8": 68,  "JAN8": 68,
+    "CODE39": 69, "CODE-39": 69,
+    "ITF": 70, "I2OF5": 70, "INTERLEAVED2OF5": 70,
+    "CODABAR": 71, "NW-7": 71,
+    "CODE93": 72,
+    "CODE128": 73,
+    "UCC/EAN128": 74, "GS1-128": 74, "EAN128": 74,
 }
 
 logger = logging.getLogger(__name__).getChild("printer")
+
 
 def _calculate_upc_check_digit(digits: List[str]) -> int:
     odd_sum = sum(int(digits[i]) for i in range(0, 11, 2))
     even_sum = sum(int(digits[i]) for i in range(1, 11, 2))
     total = odd_sum * 3 + even_sum
-
     return (10 - (total % 10)) % 10
 
 
 def generate_random_upca() -> str:
     digits = [str(random.randint(0, 9)) for _ in range(11)]
     check_digit = _calculate_upc_check_digit(digits)
-
     return "".join(digits) + str(check_digit)
 
 
@@ -61,11 +60,9 @@ class USBPrinter:
         self._write_count = 0
         self._last_write_time: Optional[float] = None
 
-    def open(self) -> None:
+    def start(self) -> None:
         if self._fd is not None:
             return
-
-        logger.debug("Opening printer device", extra={"device": self.device})
 
         self._fd = os.open(self.device, os.O_WRONLY | os.O_SYNC | os.O_CLOEXEC)
         self._write_count = 0
@@ -76,7 +73,7 @@ class USBPrinter:
             extra={"device": self.device, "flags": "O_WRONLY|O_SYNC|O_CLOEXEC"},
         )
 
-    def close(self) -> None:
+    def stop(self) -> None:
         if self._fd is not None:
             write_count = self._write_count
 
@@ -93,12 +90,18 @@ class USBPrinter:
                 )
 
     def __enter__(self) -> "USBPrinter":
-        self.open()
-
+        self.start()
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
-        self.close()
+        self.stop()
+
+    async def __aenter__(self) -> "USBPrinter":
+        self.start()
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        self.stop()
 
     def _wait_command_delay(self) -> None:
         if self._last_write_time is not None and self.command_delay > 0:
@@ -106,16 +109,13 @@ class USBPrinter:
             remaining = self.command_delay - elapsed
 
             if remaining > 0:
-                logger.debug(
-                    "Waiting between commands",
-                    extra={"delay_ms": remaining * 1000, "device": self.device},
-                )
-
                 time.sleep(remaining)
 
     def _write_all(self, data: bytes, description: str = "data") -> None:
         if self._fd is None:
-            self.open()
+            raise PrinterConnectionError(
+                f"Printer not started (device {self.device})"
+            )
 
         self._wait_command_delay()
 
@@ -133,9 +133,9 @@ class USBPrinter:
                     },
                 )
 
-                self.close()
+                self.stop()
                 time.sleep(0.2)
-                self.open()
+                self.start()
                 self._write_all_once(data, description)
             else:
                 logger.error(
@@ -177,34 +177,15 @@ class USBPrinter:
         self._write_count += 1
         self._last_write_time = time.monotonic()
 
-        logger.debug(
-            "Wrote to printer",
-            extra={
-                "device": self.device,
-                "bytes": len(data),
-                "description": description,
-                "write_num": self._write_count,
-            },
-        )
-
     def init(self) -> None:
-        logger.debug("Sending printer init command", extra={"device": self.device})
-
         self._write_all(ESC + b"@", description="ESC @ init")
         time.sleep(self.init_delay)
-
-        logger.debug(
-            "Init delay complete",
-            extra={"device": self.device, "delay_ms": self.init_delay * 1000},
-        )
 
     def set_print_density(self, density: int = DEFAULT_PRINT_DENSITY) -> None:
         if not (0 <= density <= 255):
             raise ValueError("density must be 0..255")
 
         self._write_all(GS + b"E" + bytes([density]), description=f"GS E {density} density")
-
-        logger.debug("Set print density", extra={"device": self.device, "density": density})
 
     def set_hri(self, where: str = "none") -> None:
         n = HRI_MAP.get(where.lower(), 0)
@@ -297,6 +278,7 @@ class USBPrinter:
         density: int = DEFAULT_PRINT_DENSITY,
     ) -> str:
         upca = generate_random_upca()
+
         logger.info("Generated random UPC-A", extra={"device": self.device, "upca": upca})
 
         self.print_barcode(
