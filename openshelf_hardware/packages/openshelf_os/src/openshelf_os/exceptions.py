@@ -27,11 +27,6 @@ class GripperError(ToolError):
 class MovementError(ToolError):
     """Exception raised for movement-related errors."""
     pass
-
-class StorageError(OpenshelfError):
-    """Exception raised for storage-related errors."""
-    pass
-
 class IOBoxError(OpenshelfError):
     """Exception raised for IO box-related errors."""
     pass
@@ -39,11 +34,6 @@ class IOBoxError(OpenshelfError):
 
 class OperationTimeoutError(OpenshelfError):
     """Exception raised when an operation exceeds its timeout."""
-    pass
-
-
-class ScanTimeoutError(OperationTimeoutError):
-    """Exception raised when camera scanning operation times out."""
     pass
 
 

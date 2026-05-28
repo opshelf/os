@@ -184,17 +184,6 @@ class CameraStreamManager:
 			sleep_time = max(0.0, self.frame_interval - elapsed)
 			await asyncio.sleep(sleep_time)
 
-	def _draw_detection_overlay(self, frame: np.ndarray, bbox: tuple[int, int, int, int]) -> np.ndarray:
-		annotated = frame.copy()
-		x, y, w, h = bbox
-		cv2.rectangle(annotated, (x, y), (x + w, y + h), (0, 255, 0), 2)
-
-		cx = x + w // 2
-		cy = y + h // 2
-		cv2.circle(annotated, (cx, cy), 5, (0, 255, 0), -1)
-
-		return annotated
-
 	async def get_latest_frame(self) -> Optional[bytes]:
 		async with self.frame_lock:
 			return self.latest_frame
@@ -378,26 +367,6 @@ async def init_overhead_camera_manager(rtsp_url: str) -> None:
 	logger.info("overhead_camera_registered", rtsp_url=rtsp_url)
 
 
-async def start_camera_stream() -> None:
-	global camera_manager
-
-	if camera_manager is None:
-		raise ValueError("Camera manager not initialized")
-
-	camera_manager.increment_consumers()
-
-
-async def stop_camera_stream() -> None:
-	global camera_manager
-
-	if camera_manager is None:
-		return
-
-	consumer_count = camera_manager.decrement_consumers()
-
-	if consumer_count == 0 and camera_manager.is_running is True:
-		await camera_manager.stop()
-
 
 async def start_camera_stream_by_id(camera_id: str) -> None:
 	manager = camera_registry.get(camera_id)
@@ -423,21 +392,8 @@ async def stop_camera_stream_by_id(camera_id: str) -> None:
 		await manager.stop()
 
 
-async def get_camera_manager() -> CameraStreamManager:
-	global camera_manager
-
-	if camera_manager is None:
-		raise ValueError("Camera manager not initialized")
-
-	return camera_manager
-
-
 def get_camera_manager_by_id(camera_id: str) -> Optional[CameraManager]:
 	return camera_registry.get(camera_id)
-
-
-def get_all_camera_managers() -> dict[str, CameraManager]:
-	return camera_registry
 
 
 def get_all_cameras_status() -> list[dict]:

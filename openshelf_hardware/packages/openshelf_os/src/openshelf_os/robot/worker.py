@@ -306,9 +306,6 @@ class RobotWorker:
 
         return success
 
-    def get_latest_status_payload(self) -> Optional[str]:
-        return self._latest_status_payload
-
     def needs_home(self) -> bool:
         return self._needs_home_unknown or bool(self._needs_home_axes)
 
@@ -429,9 +426,6 @@ class RobotWorker:
             subscribers.remove(queue)
         except ValueError:
             return
-
-    def clear_errors(self) -> None:
-        self._error_queue = []
 
     def clear_crash_state(self) -> None:
         self._is_crashed = False
