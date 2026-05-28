@@ -154,6 +154,8 @@ async function readErrorDetail(
 	return { message: text };
 }
 
+export type StorageModuleSide = 'left_module' | 'right_module';
+
 export interface Position {
 	x: number;
 	y: number;
@@ -208,14 +210,14 @@ export async function getStorageGrid(): Promise<StorageGrid> {
 	return apiFetch<StorageGrid>(`/storage/grid?_t=${timestamp}`);
 }
 
-export async function deleteShelf(side: string, shelfIdx: number): Promise<{ success: boolean }> {
+export async function deleteShelf(side: StorageModuleSide, shelfIdx: number): Promise<{ success: boolean }> {
 	const params = new URLSearchParams({ side, shelf_idx: String(shelfIdx) });
 	return apiFetch<{ success: boolean }>(`/storage/grid/shelf?${params}`, {
 		method: 'DELETE'
 	});
 }
 
-export async function deleteCell(side: string, shelfIdx: number, cellIdx: number): Promise<{ success: boolean }> {
+export async function deleteCell(side: StorageModuleSide, shelfIdx: number, cellIdx: number): Promise<{ success: boolean }> {
 	const params = new URLSearchParams({ side, shelf_idx: String(shelfIdx), cell_idx: String(cellIdx) });
 	return apiFetch<{ success: boolean }>(`/storage/grid/cell?${params}`, {
 		method: 'DELETE'
@@ -233,7 +235,7 @@ export async function homeToolMotors(): Promise<CalibrationStatus> {
 }
 
 export async function moveToCell(
-	side: string,
+	side: StorageModuleSide,
 	shelfIdx: number,
 	cellIdx: number
 ): Promise<Position> {
@@ -245,7 +247,7 @@ export async function moveToCell(
 }
 
 export async function moveToPosition(
-	side: string,
+	side: StorageModuleSide,
 	x: number,
 	y: number,
 	zOffset: number
@@ -265,7 +267,7 @@ export async function jogAxis(axis: 'x' | 'y' | 'z' | 'stage', delta: number): P
 	});
 }
 
-export async function testGripper(side: string, shelfIdx: number, cellIdx: number): Promise<void> {
+export async function testGripper(side: StorageModuleSide, shelfIdx: number, cellIdx: number): Promise<void> {
 	await apiFetch('/calibration/test', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
@@ -274,7 +276,7 @@ export async function testGripper(side: string, shelfIdx: number, cellIdx: numbe
 }
 
 export async function runCalibrationQuickTest(
-	side: string,
+	side: StorageModuleSide,
 	shelfIdx: number,
 	cellIdx: number
 ): Promise<void> {
@@ -282,7 +284,7 @@ export async function runCalibrationQuickTest(
 }
 
 export async function runCalibrationCycleTest(
-	side: string,
+	side: StorageModuleSide,
 	shelfIdx: number,
 	cellIdx: number
 ): Promise<void> {
@@ -294,7 +296,7 @@ export async function runCalibrationCycleTest(
 }
 
 export async function saveCalibration(
-	side: string,
+	side: StorageModuleSide,
 	shelfIdx: number,
 	cellIdx: number,
 	x: number,
@@ -330,13 +332,13 @@ export interface CalibrationScanBounds {
 }
 
 export interface LaserAutoCalibrationShelfEdge {
-	side: 'left_module' | 'right_module';
+	side: StorageModuleSide;
 	x_mm: number;
 	y_mm: number;
 }
 
 export interface LaserAutoCalibrationCandidate {
-	side: 'left_module' | 'right_module';
+	side: StorageModuleSide;
 	shelf_idx: number | null;
 	x_min: number;
 	x_max: number;
@@ -348,7 +350,7 @@ export interface LaserAutoCalibrationCandidate {
 }
 
 export interface LaserAutoCalibrationCell {
-	side: 'left_module' | 'right_module';
+	side: StorageModuleSide;
 	shelf_idx: number;
 	cell_idx: number;
 	tool_x_mm: number;
@@ -361,7 +363,7 @@ export interface LaserAutoCalibrationCell {
 }
 
 export interface LaserAutoCalibrationAngleResult {
-	side: 'left_module' | 'right_module';
+	side: StorageModuleSide;
 	alpha_deg: number;
 	sample_count: number;
 	capture_y_mm: number;
@@ -383,7 +385,7 @@ export interface LaserAutoCalibrationIOBoxResult {
 
 export interface LaserAutoCalibrationRequest {
 	mode: 'all' | 'side' | 'shelf' | 'cell' | 'io_box';
-	side?: 'left_module' | 'right_module';
+	side?: StorageModuleSide;
 	shelf_idx?: number;
 	cell_idx?: number;
 	include_io_box?: boolean;
@@ -394,7 +396,7 @@ export interface LaserAutoCalibrationSnapshot {
 	session_id: string | null;
 	run_id: string | null;
 	requested_scope?: LaserAutoCalibrationRequest;
-	current_side: 'left_module' | 'right_module' | null;
+	current_side: StorageModuleSide | null;
 	current_stage: string | null;
 	bounds: CalibrationScanBounds | null;
 	started_at: string | null;

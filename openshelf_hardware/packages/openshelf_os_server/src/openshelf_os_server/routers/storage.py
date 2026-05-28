@@ -20,7 +20,8 @@ from ..core.storage import StorageService
 from ..core.validation import ValidationError
 from .auth_deps import can_user_retrieve_item, get_current_user, require_permissions
 from ..database.session import get_db
-from openshelf_os.storage import StorageGrid, StorageModuleSide
+from openshelf_os.storage import StorageGrid
+from openshelf_os_server.core.storage_module import StorageModuleSideDto
 
 router = APIRouter(tags=["storage"])
 
@@ -85,7 +86,7 @@ class ItemUpdate(BaseModel):
 class ItemLocationCreate(BaseModel):
     """Request payload for assigning a location to an item."""
 
-    side: str
+    side: StorageModuleSideDto
     shelf_idx: int
     cell_idx: int
 
@@ -407,7 +408,7 @@ async def add_item_location(
 
 async def _remove_item_location_impl(
     upca: str,
-    side: str,
+    side: StorageModuleSideDto,
     shelf_idx: int,
     cell_idx: int,
     storage_service: StorageService,
@@ -426,7 +427,7 @@ async def _remove_item_location_impl(
 @router.delete("/items/{upca}/locations", dependencies=[Depends(require_permissions("storage:write"))])
 async def remove_item_location(
     upca: str,
-    side: str,
+    side: StorageModuleSideDto,
     shelf_idx: int,
     cell_idx: int,
     session: AsyncSession = Depends(get_db),
@@ -445,7 +446,7 @@ async def remove_item_location(
 )
 async def remove_item_location_by_path(
     upca: str,
-    side: str,
+    side: StorageModuleSideDto,
     shelf_idx: int,
     cell_idx: int,
     session: AsyncSession = Depends(get_db),
@@ -552,7 +553,7 @@ async def get_storage_grid() -> Dict[str, Any]:
 
 @router.delete("/grid/shelf", dependencies=[Depends(require_permissions("storage:write"))])
 async def delete_shelf(
-	side: StorageModuleSide = Query(...), shelf_idx: int = Query(...)
+	side: StorageModuleSideDto = Query(...), shelf_idx: int = Query(...)
 ) -> Dict[str, Any]:
 	"""Delete a shelf and all its cells from the grid."""
 	try:
@@ -570,7 +571,7 @@ async def delete_shelf(
 
 @router.delete("/grid/cell", dependencies=[Depends(require_permissions("storage:write"))])
 async def delete_cell(
-	side: StorageModuleSide = Query(...), shelf_idx: int = Query(...), cell_idx: int = Query(...)
+	side: StorageModuleSideDto = Query(...), shelf_idx: int = Query(...), cell_idx: int = Query(...)
 ) -> Dict[str, Any]:
 	"""Delete a single cell from the given shelf."""
 	try:

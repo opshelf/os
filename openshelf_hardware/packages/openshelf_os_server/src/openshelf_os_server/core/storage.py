@@ -7,6 +7,9 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from openshelf_os.storage import StorageModuleSide
+from openshelf_os_server.core.storage_module import StorageModuleSideName, module_name_to_side
+
 from ..database.models import Item, ItemLocation, StorageCell
 from .validation import LocationValidator, StorageCellValidator, StorageValidator, ValidationError
 
@@ -168,6 +171,7 @@ class StorageService:
 
     async def get_item_locations(self, upca: str) -> List[ItemLocation]:
         """Get all locations for a specific item."""
+
         result = await self.session.execute(
             select(ItemLocation)
             .join(Item)
@@ -176,7 +180,7 @@ class StorageService:
         )
         return list(result.scalars().all())
 
-    async def add_item_location(self, upca: str, side: str, shelf_idx: int, cell_idx: int) -> Optional[ItemLocation]:
+    async def add_item_location(self, upca: str, side: StorageModuleSideName | str | StorageModuleSide, shelf_idx: int, cell_idx: int) -> Optional[ItemLocation]:
         """Add a location for an item."""
         result = await self.session.execute(
             select(Item).where(Item.upca == upca)
@@ -187,11 +191,12 @@ class StorageService:
             return None
 
         StorageValidator.validate_location_assignment(shelf_idx, cell_idx)
+        side_enum = module_name_to_side(side)
 
         async with self._lock:
             existing = await self.session.execute(
                 select(ItemLocation)
-                .where(ItemLocation.side == side)
+                .where(ItemLocation.side == side_enum.value)
                 .where(ItemLocation.shelf_idx == shelf_idx)
                 .where(ItemLocation.cell_idx == cell_idx)
             )
@@ -199,13 +204,13 @@ class StorageService:
 
             if existing_location is not None:
                 raise ValidationError(
-                    f"Cell ({side}, shelf={shelf_idx}, cell={cell_idx}) is already occupied by item_id={existing_location.item_id}"
+                    f"Cell ({side_enum.value}, shelf={shelf_idx}, cell={cell_idx}) is already occupied by item_id={existing_location.item_id}"
                 )
 
             try:
                 location = ItemLocation(
                     item_id=item.id,
-                    side=side,
+                    side=side_enum.value,
                     shelf_idx=shelf_idx,
                     cell_idx=cell_idx,
                 )
@@ -217,13 +222,15 @@ class StorageService:
                 await self.session.rollback()
                 raise
 
-    async def remove_item_location(self, upca: str, side: str, shelf_idx: int, cell_idx: int) -> bool:
+    async def remove_item_location(self, upca: str, side: StorageModuleSideName | str | StorageModuleSide, shelf_idx: int, cell_idx: int) -> bool:
         """Remove a specific location for an item."""
+        side_enum = module_name_to_side(side)
+
         result = await self.session.execute(
             select(ItemLocation)
             .join(Item)
             .where(Item.upca == upca)
-            .where(ItemLocation.side == side)
+            .where(ItemLocation.side == side_enum.value)
             .where(ItemLocation.shelf_idx == shelf_idx)
             .where(ItemLocation.cell_idx == cell_idx)
         )
