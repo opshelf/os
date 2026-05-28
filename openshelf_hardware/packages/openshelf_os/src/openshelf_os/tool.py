@@ -809,9 +809,11 @@ class Tool:
 
         except MotorWaitTimeoutError:
             raise
+
         except MovementError:
             await self._handle_fault(MovementError("Tool motor error"))
             raise
+
         except Exception as e:
             await self._handle_fault(e)
             raise MovementError(f"Tool wait failed: {str(e)}") from e
@@ -900,8 +902,10 @@ class Tool:
 
                 if self._mx is not None:
                     rotation_front = await self.get_param("ROTATION_FRONT")
+
                     if rotation_front is None:
                         raise ConfigError("Missing ROTATION_FRONT parameter")
+
                     current_rotation = await self._mr.get_position()
 
                     if current_rotation > float(rotation_front):
@@ -929,4 +933,5 @@ class Tool:
 
         except Exception as e:
             await self._handle_fault(e)
+
             raise MotorError(f"Failed to home tool: {str(e)}") from e

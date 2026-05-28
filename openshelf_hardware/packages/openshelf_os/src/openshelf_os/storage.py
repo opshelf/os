@@ -94,25 +94,29 @@ class Shelf(BaseModel):
 	def verify_tray_heights(self) -> Self:
 		if all(self.shelf_height >= cell.dimensions.height for cell in self.cells):
 			return self
+
 		raise ValidationError("All Trays must be less than the height of the containing shelf")
 
 	@model_validator(mode="after")
 	def sort_cells(self) -> Self:
 		self.cells.sort(key=lambda cell: cell.cell_idx)
+
 		return self
 
 	def get_cell(self, cell_idx: int) -> Cell:
 		for cell in self.cells:
 			if cell.cell_idx == cell_idx:
 				return cell
+
 		raise IndexError(f"Invalid cell_idx: {cell_idx}")
 
 	def get_cell_location(self, cell_idx: int) -> CalibrationCoordinate:
 		cell = self.get_cell(cell_idx)
+
 		if cell.calibration_point is None:
 			raise Exception("Invalid Calibration Point")
-		return dataclass_replace(cell.calibration_point)
 
+		return dataclass_replace(cell.calibration_point)
 
 
 class CellLocationData(BaseModel):
@@ -134,6 +138,7 @@ class StorageGrid(BaseModel):
 
 		for side_key in ("left_module", "right_module"):
 			shelves_raw = normalized.get(side_key)
+
 			if isinstance(shelves_raw, list) is False:
 				continue
 
@@ -166,6 +171,7 @@ class StorageGrid(BaseModel):
 							continue
 
 						cell_data = dict(cell_raw)
+
 						if "cell_idx" not in cell_data:
 							cell_data["cell_idx"] = cell_position
 
@@ -188,6 +194,7 @@ class StorageGrid(BaseModel):
 	def sort_shelves(self) -> Self:
 		self.left_module.sort(key=lambda shelf: shelf.shelf_idx)
 		self.right_module.sort(key=lambda shelf: shelf.shelf_idx)
+
 		return self
 
 	@classmethod
@@ -226,7 +233,6 @@ class StorageGrid(BaseModel):
 	def save(self) -> None:
 		self.save_to_file(self.filename)
 
-
 	def get_side(self, side: StorageModuleSide) -> List[Shelf]:
 		if side == StorageModuleSide.RIGHT:
 			return self.right_module
@@ -260,8 +266,6 @@ class StorageGrid(BaseModel):
 				return shelf
 
 		raise IndexError(f"Invalid shelf_idx: {shelf_idx}")
-
-
 
 	def get_cell(self, location: StorageModuleCellLocation) -> Cell:
 		shelf = self.get_shelf(location.side, location.shelf_idx)
@@ -369,6 +373,7 @@ class StorageGrid(BaseModel):
 						cell.dimensions.width * cell.dimensions.height
 						- item.dimensions.width * item.dimensions.height
 					)
+
 					possible_slots.append(
 						(
 							StorageModuleCellLocation(
@@ -391,6 +396,7 @@ class StorageGrid(BaseModel):
 						cell.dimensions.width * cell.dimensions.height
 						- item.dimensions.width * item.dimensions.height
 					)
+
 					possible_slots.append(
 						(
 							StorageModuleCellLocation(
@@ -403,8 +409,10 @@ class StorageGrid(BaseModel):
 					)
 
 		possible_slots.sort(key=lambda entry: entry[1])
+
 		if possible_slots:
 			return possible_slots[0][0]
+
 		return None
 
 
