@@ -4,7 +4,7 @@ from __future__ import annotations
 from .core import *
 from .recording import *
 from .motion import *
-from openshelf_os.laser_shelf_scout import (
+from openshelf_os.laser_calibration.shelf_scout import (
 	build_shelf_scout_x_positions as build_shared_shelf_scout_x_positions,
 	filter_shelf_edges as filter_shared_shelf_edges,
 	scan_shelf_scout_line as scan_shared_shelf_scout_line,

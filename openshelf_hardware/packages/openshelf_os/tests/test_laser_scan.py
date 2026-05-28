@@ -5,13 +5,13 @@ import pytest
 
 np = pytest.importorskip("numpy")
 
-from openshelf_os.laser_scan import (
+from openshelf_os.laser_calibration.scan import (  # noqa: E402
 	ScanBounds,
 	analyze_scan_capture,
 	build_shelves_from_scan,
 	create_scan_capture,
 )
-from openshelf_os.storage import StorageGrid, StorageModuleSide
+from openshelf_os.storage import StorageGrid, StorageModuleSide  # noqa: E402
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 SYNTHETIC_LASER_SCAN_PATH = FIXTURES_DIR / "laser_scan_synthetic.npy"

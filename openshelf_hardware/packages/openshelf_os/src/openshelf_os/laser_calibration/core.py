@@ -15,7 +15,7 @@ from typing import Any, Callable, Optional
 from uuid import uuid4
 
 from openshelf_os.common import AxisCoordinate
-from openshelf_os.laser_scan import (
+from openshelf_os.laser_calibration.scan import (
 	ScanBounds,
 	ScanAnalysisResult,
 	ScanDetectedCell,
@@ -26,10 +26,10 @@ from openshelf_os.laser_scan import (
 	create_scan_capture,
 )
 import openshelf_os.common as common_module
-import openshelf_os.robot as robot_module
+import openshelf_os.robot.core as robot_module
 from openshelf_os.robot import Robot
 from openshelf_os.storage import StorageGrid, StorageModuleSide
-from openshelf_os.laser_shelf_scout import (
+from openshelf_os.laser_calibration.shelf_scout import (
 	GAP_DEPTH_THRESHOLD_MM,
 	RIGHT_MODULE_SHELF_SCOUT_X_MM,
 	SHELF_BRIM_MAX_HEIGHT_MM,

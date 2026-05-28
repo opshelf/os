@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from openshelf_os import laser_shelf_scout as shared_shelf_scout
+from openshelf_os.laser_calibration import shelf_scout as shared_shelf_scout
 
 GAP_DEPTH_THRESHOLD_MM = shared_shelf_scout.GAP_DEPTH_THRESHOLD_MM
 RIGHT_MODULE_SHELF_SCOUT_X_MM = shared_shelf_scout.RIGHT_MODULE_SHELF_SCOUT_X_MM

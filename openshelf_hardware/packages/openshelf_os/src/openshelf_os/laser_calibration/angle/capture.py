@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 from typing import Any, Callable
 
-import openshelf_os.laser_angle_calibration as angle_module
+import openshelf_os.laser_calibration.angle as angle_module
 from openshelf_os.common import load_config_file
 
 from .config import (

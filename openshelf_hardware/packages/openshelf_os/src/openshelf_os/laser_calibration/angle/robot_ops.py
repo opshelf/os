@@ -8,9 +8,9 @@ from pathlib import Path
 from typing import Any, Callable
 
 import openshelf_os.common as common_module
-import openshelf_os.laser_angle_calibration as angle_module
-import openshelf_os.robot as robot_module
-from openshelf_os.robot import Robot
+import openshelf_os.laser_calibration.angle as angle_module
+import openshelf_os.robot as robot_package
+import openshelf_os.robot.core as robot_module
 
 from .constants import GAP_DEPTH_THRESHOLD_MM
 from .status import print_status, raise_if_cancelled, should_skip_motion_cleanup_on_cancel
@@ -39,7 +39,7 @@ async def run_with_temp_robot_config(
 	robot_module.CONFIG_PATH = temp_config_path
 
 	try:
-		robot = Robot()
+		robot = robot_package.Robot()
 		print_status('phase=robot-configure')
 		await robot.configure()
 

@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from openshelf_os.laser_shelf_scout import (
+from openshelf_os.laser_calibration.shelf_scout import (
 	ShelfSurfaceEdge,
 	build_shelf_scout_x_positions,
 	filter_shelf_edges,
