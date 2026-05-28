@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from openshelf_os.common import AxisCoordinate
+from openshelf_os.common import Parameters
 from openshelf_os.storage import (
 	CalibrationCoordinate,
 	Cell,
@@ -1352,7 +1353,6 @@ async def save_iobox_calibration(request: IOBoxSaveRequest):
 	params_dict["Z_EXTENSION_IO"] = _round_iobox_calibration_value(request.z_extension)
 	params_dict["STAGE_EXTENSION_IO_BOX"] = _round_iobox_calibration_value(request.stage_extension)
 
-	from openshelf_os.common import Parameters
 	config.robot.tool.parameters = Parameters.model_validate(params_dict)
 
 	save_root_config(config)
@@ -1453,7 +1453,6 @@ async def save_rotation_angles(request: RotateSaveRequest):
 	params_dict["ROTATION_FRONT"] = request.front
 	params_dict["ROTATION_BACK"] = request.back
 
-	from openshelf_os.common import Parameters
 	config.robot.tool.parameters = Parameters.model_validate(params_dict)
 
 	save_root_config(config)
@@ -1514,7 +1513,6 @@ async def save_shelf_stage_extension(request: ShelfStageExtensionSaveRequest):
 	params_dict["STAGE_EXTENSION_SHELF_FRONT"] = request.front
 	params_dict["STAGE_EXTENSION_SHELF_BACK"] = request.back
 
-	from openshelf_os.common import Parameters
 	config.robot.tool.parameters = Parameters.model_validate(params_dict)
 
 	save_root_config(config)

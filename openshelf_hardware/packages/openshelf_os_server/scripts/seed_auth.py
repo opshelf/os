@@ -2,6 +2,7 @@
 """Seed initial authentication data."""
 import sys
 import asyncio
+import os
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).parent.parent / "src"))
@@ -122,8 +123,6 @@ async def seed_roles(db: AsyncSession) -> None:
 
 async def seed_dev_users(db: AsyncSession) -> None:
 	"""Create development users if they don't exist."""
-	import os
-	
 	if os.getenv("ENV", "").lower() not in ["dev", "development"]:
 		print("Skipping dev users - not in development mode")
 		return

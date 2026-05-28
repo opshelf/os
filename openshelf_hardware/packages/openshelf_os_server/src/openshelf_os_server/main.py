@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import subprocess
@@ -7,19 +8,31 @@ import sys
 import traceback
 from contextlib import asynccontextmanager
 import logging
+import socket
+import struct
 from pathlib import Path
 from typing import Any, AsyncGenerator, cast
 
 import sentry_sdk
+import uvicorn
+from alembic import command
+from alembic.config import Config
+from argon2 import PasswordHasher
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.logging import LoggingIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
+from sentry_sdk.transport import HttpTransport
+from sqlalchemy import delete, select
 
 from openshelf_os.device import get_device_id
+from hardware.exceptions import CameraNotPresentError
+from hardware.iocam import AFSCam
+from openshelf_os.common import CONFIG_PATH, OperatingMode, UsbCamera, load_config_file, resolve_grid_path
 from openshelf_os.operating_mode import should_enable_sentry
+from openshelf_os.storage import StorageGrid
 from openshelf_os_server.core.logging_config import configure_logging, get_logger
 from openshelf_os_server.core.robot import get_robot_health, init_robot_worker, set_robot_initialization_error, stop_robot_worker
 from openshelf_os_server.core.storage import StorageService
@@ -27,6 +40,7 @@ from openshelf_os_server.core.camera import init_tool_camera_manager, init_camer
 from openshelf_os_server.settings import Settings
 from openshelf_os_server.database.base import Base, engine, get_database_url
 from openshelf_os_server.database.session import AsyncSessionLocal
+from openshelf_os_server.database.models import Item, ItemLocation, Role, User
 from openshelf_os_server.middleware.audit import AuditMiddleware
 from openshelf_os_server.middleware.correlation import CorrelationIdMiddleware
 from openshelf_os_server.routers import access_levels, audit, auth, calibration, camera, demo, printer, report, robot, roles, storage, system, telemetry, users
@@ -129,8 +143,6 @@ def _configure_sentry() -> bool:
 		logger.warning("sentry_not_configured", reason="SENTRY_DSN_API not set", mode=mode.value)
 		return False
 
-	from sentry_sdk.transport import HttpTransport
-
 	sentry_sdk.init(
 		dsn=sentry_dsn,
 		enable_logs=True,
@@ -163,9 +175,6 @@ sentry_enabled = _configure_sentry()
 
 
 def _run_migrations() -> None:
-	from alembic import command
-	from alembic.config import Config
-
 	try:
 		script_location = Path(__file__).parent / "alembic"
 
@@ -199,8 +208,6 @@ def _get_tool_camera_url(settings: Settings) -> str | None:
 	if settings.tool_camera.enabled is True and settings.tool_camera.rtsp_url != "":
 		return settings.tool_camera.rtsp_url
 
-	from openshelf_os.common import CONFIG_PATH
-
 	config_paths = [
 		CONFIG_PATH,
 		Path("/app/openshelf_hardware/data/config.json"),
@@ -232,8 +239,6 @@ def _get_overhead_camera_url(settings: Settings) -> str | None:
 
 
 def _get_io_camera_config() -> dict | None:
-	from openshelf_os.common import CONFIG_PATH
-
 	if CONFIG_PATH.exists() is False:
 		return None
 
@@ -254,11 +259,6 @@ def _get_io_camera_config() -> dict | None:
 
 
 async def _ensure_developer_user() -> None:
-	from sqlalchemy import select
-	from argon2 import PasswordHasher
-	from openshelf_os_server.database.models import User, Role
-	from openshelf_os_server.database.session import AsyncSessionLocal
-
 	async with AsyncSessionLocal() as db:
 		result = await db.execute(
 			select(User).filter(User.email == "developer@opshelf.com")
@@ -295,10 +295,6 @@ async def _ensure_developer_user() -> None:
 
 
 async def _seed_auth_if_requested() -> None:
-	from sqlalchemy import select
-	from openshelf_os_server.database.models import User
-	from openshelf_os_server.database.session import AsyncSessionLocal
-
 	if os.getenv("RUN_SEED_SCRIPT", "false").lower() not in {"1", "true", "yes"}:
 		return
 
@@ -322,9 +318,6 @@ LAST_MODE_FILE = Path("data/.last_mode")
 
 
 async def _wipe_inventory() -> None:
-	from sqlalchemy import delete
-	from openshelf_os_server.database.models import Item, ItemLocation
-
 	async with AsyncSessionLocal() as session:
 		await session.execute(delete(ItemLocation))
 		await session.execute(delete(Item))
@@ -332,9 +325,6 @@ async def _wipe_inventory() -> None:
 
 
 def _reset_storage_grid() -> None:
-	from openshelf_os.common import CONFIG_PATH, load_config_file, resolve_grid_path
-	from openshelf_os.storage import StorageGrid
-
 	if CONFIG_PATH.exists() is False:
 		return
 
@@ -382,8 +372,6 @@ def _run_demo_seed() -> bool:
 
 
 async def _apply_mode_transition() -> None:
-	from openshelf_os.common import OperatingMode
-
 	mode = get_operating_mode()
 
 	last_mode = None
@@ -471,10 +459,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 		usb_config = _get_io_camera_config()
 		if usb_config is not None:
 			try:
-				from hardware.iocam import AFSCam
-				from hardware.exceptions import CameraNotPresentError
-				from openshelf_os.common import UsbCamera
-
 				usb_params = UsbCamera(**usb_config)
 				io_camera = AFSCam(usb_params)
 				await io_camera.start()
@@ -576,10 +560,6 @@ async def health() -> JSONResponse:
 
 @app.get("/api/system/info")
 async def system_info() -> dict[str, str | None]:
-	import fcntl
-	import socket
-	import struct
-
 	lan_ip: str | None = None
 	try:
 		s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -610,13 +590,9 @@ app.include_router(telemetry.router, prefix="/api")
 
 
 def start() -> None:
-	import uvicorn
-
 	log_config = uvicorn.config.LOGGING_CONFIG
 	log_config["loggers"]["uvicorn.access"]["level"] = "ERROR"
 	log_config["loggers"]["watchfiles"] = {"level": "ERROR"}
-
-	import os
 
 	reload_enabled = os.environ.get("UVICORN_RELOAD", "false").lower() == "true"
 	reload_dirs = None

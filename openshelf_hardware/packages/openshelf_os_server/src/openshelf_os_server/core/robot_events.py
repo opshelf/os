@@ -5,6 +5,8 @@ from typing import Any, Optional
 
 from sqlalchemy import select
 
+import openshelf_os_server.core.robot as robot_core
+
 from openshelf_os.robot_worker import RobotWorker
 from openshelf_os_server.core.storage import StorageService
 from openshelf_os_server.database.models import Telemetry
@@ -14,11 +16,9 @@ logger = logging.getLogger(__name__)
 
 
 async def flush_telemetry(is_cycle: bool) -> None:
-    from openshelf_os_server.core.robot import robot_worker
-
     motor_seconds = 0.0
-    if robot_worker is not None:
-        motor_seconds = robot_worker.drain_motor_time()
+    if robot_core.robot_worker is not None:
+        motor_seconds = robot_core.robot_worker.drain_motor_time()
 
     try:
         async with AsyncSessionLocal() as session:
