@@ -7,19 +7,8 @@ from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
 import jwt
 from jwt.exceptions import InvalidTokenError
-from pydantic import BaseModel
 
 ph = PasswordHasher()
-
-class TokenData(BaseModel):
-	"""Token payload data."""
-	sub: str
-	exp: datetime
-	type: str
-	user_id: int
-	role: str
-	permissions: list[str]
-	access_level: Optional[str] = None
 
 class AuthService:
 	"""Authentication service for managing tokens and passwords."""
@@ -92,11 +81,3 @@ class AuthService:
 			return cast(Dict[str, Any], payload)
 		except InvalidTokenError:
 			return None
-	
-	def is_token_valid(self, token: str, token_type: str = "access") -> bool:
-		"""Check if a token is valid and of the correct type."""
-		payload = self.decode_token(token)
-		if payload is None:
-			return False
-		
-		return payload.get("type") == token_type

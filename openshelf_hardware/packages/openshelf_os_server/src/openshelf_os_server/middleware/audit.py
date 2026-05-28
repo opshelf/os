@@ -185,15 +185,3 @@ class AuditMiddleware(BaseHTTPMiddleware):
 				await db.commit()
 			except Exception:
 				traceback.print_exc()
-
-def capture_command(command: Dict[str, Any]) -> None:
-	"""Capture a command for audit logging."""
-	try:
-		commands = command_records_context.get()
-		commands.append({
-			"timestamp": datetime.now(timezone.utc).isoformat(),
-			"command": command
-		})
-		command_records_context.set(commands)
-	except Exception:
-		pass
