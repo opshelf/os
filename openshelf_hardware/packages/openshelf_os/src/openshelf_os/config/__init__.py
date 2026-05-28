@@ -1,4 +1,4 @@
-from openshelf_os.config.types import AxisCoordinate, ToolCoordinate, TwoInt
+from openshelf_os.config.types import AxisCoordinate, TwoInt
 from openshelf_os.config.exceptions import ConfigError, ConfigValidationError, ConfigMissingError
 from openshelf_os.config.file_io import write_json_file_with_backup, create_timestamped_json_backup
 from openshelf_os.config.settings import (
@@ -42,7 +42,6 @@ from openshelf_os.config.loader import CONFIG_PATH, load_and_validate_config, lo
 
 __all__ = [
     "AxisCoordinate",
-    "ToolCoordinate",
     "TwoInt",
     "ConfigError",
     "ConfigValidationError",

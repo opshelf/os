@@ -44,20 +44,26 @@ class LaserScanConfig(BaseModel):
     fine_scan_step_mm: float = Field(2.0, gt=0)
     laser_sample_settle_ms: int = Field(50, ge=0)
     laser_samples_per_point: int = Field(3, ge=1)
+
     left_xy_reference: Optional[LaserScanXYReferenceConfig] = None
     right_xy_reference: Optional[LaserScanXYReferenceConfig] = None
     left_z_reference: Optional[LaserScanZReferenceConfig] = None
     right_z_reference: Optional[LaserScanZReferenceConfig] = None
     left_reference: Optional[LaserScanReferenceConfig] = None
     right_reference: Optional[LaserScanReferenceConfig] = None
+
     left_bounds_x_min_mm: float = 0.0
     left_bounds_x_max_mm: float = 950.0
     left_bounds_y_min_mm: float = 0.0
     left_bounds_y_max_mm: float = 1250.0
+
     right_bounds_x_min_mm: float = 0.0
     right_bounds_x_max_mm: float = 950.0
     right_bounds_y_min_mm: float = 0.0
     right_bounds_y_max_mm: float = 1250.0
+
+    angle_calibration_method: Literal["stage_stall", "laser_fit"] = "stage_stall"
+
     angle_calibration_x_min_mm: float = 0.0
     angle_calibration_x_max_mm: float = 950.0
     angle_calibration_x_step_mm: float = Field(100.0, gt=0)
@@ -75,7 +81,7 @@ class LaserScanConfig(BaseModel):
     angle_calibration_coarse_step_deg: float = Field(0.1, gt=0)
     angle_calibration_fine_window_deg: float = Field(0.3, gt=0)
     angle_calibration_fine_step_deg: float = Field(0.005, gt=0)
-    angle_calibration_method: Literal["stage_stall", "laser_fit"] = "stage_stall"
+
     angle_calibration_stage_stall_rotation_min_deg: float = 0.0
     angle_calibration_stage_stall_rotation_max_deg: float = 5.5
     angle_calibration_stage_stall_coarse_min_deg: float = 0.0
@@ -123,6 +129,7 @@ class LaserScanConfig(BaseModel):
             "shelf_hole_sweep_offsets_mm": "shelf_hole_probe_y_offsets_mm",
             "fine_scan_margin_y_mm": "fine_cell_scan_y_margin_mm",
         }
+
         configured_legacy_names = [
             legacy_name
             for legacy_name in legacy_field_names
@@ -136,5 +143,7 @@ class LaserScanConfig(BaseModel):
             f"{legacy_name}->{legacy_field_names[legacy_name]}"
             for legacy_name in configured_legacy_names
         ]
+
         replacement_label = ", ".join(replacement_names)
+
         raise ValueError(f"Legacy laser scan config keys are not supported: {replacement_label}")

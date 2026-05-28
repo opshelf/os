@@ -1324,10 +1324,6 @@ async def test_persist_completed_results_saves_stage_extensions() -> None:
             'Z_MOVE_ACCEL': 1,
             'ROTATION_FRONT': 0,
             'ROTATION_BACK': 180,
-            'JOG_X': 0,
-            'JOG_Y': 0,
-            'PXMM': 1,
-            'PYMM': 1,
         }
     )
     scan_config = SimpleNamespace()
@@ -1496,10 +1492,6 @@ async def test_run_io_box_calibration_passes_configured_laser_offset_and_persist
             'Z_MOVE_ACCEL': 1,
             'ROTATION_FRONT': 0,
             'ROTATION_BACK': 180,
-            'JOG_X': 0,
-            'JOG_Y': 0,
-            'PXMM': 1,
-            'PYMM': 1,
         }
     )
     scan_config = SimpleNamespace(

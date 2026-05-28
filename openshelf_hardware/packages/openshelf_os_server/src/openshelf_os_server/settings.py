@@ -23,6 +23,7 @@ from openshelf_os.common import (
     ConfigValidationError,
     OperatingMode,
     write_json_file_with_backup,
+    load_and_validate_config,
 )
 
 logger = logging.getLogger(__name__)
@@ -137,19 +138,10 @@ def _build_minimal_config(data: dict) -> dict:
                     "Z_MOVE_ACCEL": 1,
                     "ROTATION_FRONT": 0,
                     "ROTATION_BACK": 0,
-                    "JOG_X": 0,
-                    "JOG_Y": 0,
-                    "PXMM": 1,
-                    "PYMM": 1,
                 },
                 "motors": [],
                 "poe_camera": {
-                    "ip": "127.0.0.1",
-                    "port": 80,
                     "url": "",
-                    "H_ref_size": [1920, 1080],
-                    "pattern_size": [9, 6],
-                    "square_size_mm": 25.0,
                 },
                 "laser": {
                     "enabled": False,
@@ -228,12 +220,6 @@ def _build_minimal_config(data: dict) -> dict:
                     "usb_index": 0,
                     "usb_fourcc": "MJPG",
                     "usb_exposure": 25,
-                    "square_mm": 7.5,
-                    "fx_px": 708,
-                    "fy_px": 708,
-                    "px_per_mm": 1.2,
-                    "confidence_min": 0,
-                    "headless_fallback_path": "./fallback.jpg",
                 },
             },
             "bus": {
@@ -333,7 +319,6 @@ def get_root_config() -> RootConfig:
         logger.warning("No config file found in %s, using defaults", CONFIG_PATHS)
         data = _build_minimal_config({})
         data = _apply_env_overrides(data)
-        from openshelf_os.common import load_and_validate_config
         _cached_config = load_and_validate_config(data)
         _cached_config_path = Path("data/config.json")
         return _cached_config
@@ -352,8 +337,6 @@ def get_root_config() -> RootConfig:
             data = json.load(f)
 
     data = _apply_env_overrides(data)
-
-    from openshelf_os.common import load_and_validate_config
 
     try:
         _cached_config = load_and_validate_config(data, str(found_path))

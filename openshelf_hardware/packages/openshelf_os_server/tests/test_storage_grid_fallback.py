@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from openshelf_os.storage import StorageGrid, StorageValidationError
+from openshelf_os_server.routers.storage import _get_robot_grid
 
 
 MINIMAL_CONFIG = {
@@ -27,19 +28,10 @@ MINIMAL_CONFIG = {
 				"Z_MOVE_ACCEL": 1,
 				"ROTATION_FRONT": 0,
 				"ROTATION_BACK": 0,
-				"JOG_X": 0,
-				"JOG_Y": 0,
-				"PXMM": 1,
-				"PYMM": 1,
 			},
 			"motors": [],
 			"poe_camera": {
-				"ip": "127.0.0.1",
-				"port": 80,
 				"url": "",
-				"H_ref_size": [1920, 1080],
-				"pattern_size": [9, 6],
-				"square_size_mm": 25.0,
 			},
 		},
 		"grid": {"path": "storage.json"},
@@ -49,12 +41,6 @@ MINIMAL_CONFIG = {
 				"usb_index": 0,
 				"usb_fourcc": "MJPG",
 				"usb_exposure": 25,
-				"square_mm": 7.5,
-				"fx_px": 708,
-				"fy_px": 708,
-				"px_per_mm": 1.2,
-				"confidence_min": 0,
-				"headless_fallback_path": "./fallback.jpg",
 			},
 		},
 	},
@@ -76,8 +62,6 @@ def _write_config_and_grid(tmp_path, grid_data=None):
 class TestGetRobotGrid:
 
 	def test_returns_robot_worker_grid_when_available(self):
-		from openshelf_os_server.routers.storage import _get_robot_grid
-
 		fake_grid = StorageGrid()
 
 		mock_robot = MagicMock()
@@ -92,8 +76,6 @@ class TestGetRobotGrid:
 		assert result is fake_grid
 
 	def test_fallback_loads_from_config_path(self, tmp_path):
-		from openshelf_os_server.routers.storage import _get_robot_grid
-
 		grid_data = {"left_module": [], "right_module": []}
 		config_path = _write_config_and_grid(tmp_path, grid_data)
 
@@ -108,8 +90,6 @@ class TestGetRobotGrid:
 		assert result.right_module == []
 
 	def test_fallback_raises_on_missing_storage_file(self, tmp_path):
-		from openshelf_os_server.routers.storage import _get_robot_grid
-
 		config_path = _write_config_and_grid(tmp_path, grid_data=None)
 
 		with (

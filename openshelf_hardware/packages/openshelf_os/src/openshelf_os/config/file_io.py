@@ -36,6 +36,7 @@ def create_timestamped_json_backup(
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
     backup_path = backup_dir / f"{timestamp}{resolved_path.suffix}"
     shutil.copy2(resolved_path, backup_path)
+
     return backup_path
 
 
@@ -89,6 +90,7 @@ def _write_json_file_atomically(
         os.replace(temp_path, target_path)
         _sync_parent_directory(target_path)
         temp_path = None
+
     finally:
         if temp_fd != -1:
             os.close(temp_fd)
@@ -105,7 +107,9 @@ def write_json_file_with_backup(
     backup_group_name: str | None = None,
 ) -> Path:
     resolved_path = Path(target_path).resolve()
+
     resolved_path.parent.mkdir(parents=True, exist_ok=True)
+
     create_timestamped_json_backup(
         resolved_path,
         backup_group_name=backup_group_name,
