@@ -6,13 +6,6 @@ from hardware.iocam import AFSCam, _resolve_innomaker_device
 from unittest.mock import Mock, patch
 
 
-@pytest.mark.asyncio
-async def test_afscam_initialization(sample_usb_params):
-    cam = AFSCam(sample_usb_params)
-
-    assert cam.square_mm == sample_usb_params.square_mm
-    assert cam.fx_px == sample_usb_params.fx_px
-    assert cam.fy_px == sample_usb_params.fy_px
 
 
 @pytest.mark.asyncio

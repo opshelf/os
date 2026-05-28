@@ -50,7 +50,6 @@ class CurtainSensor:
     def read(self) -> bool:
         raw = GPIO.input(self.pin) == GPIO.HIGH  # type: ignore[arg-type]
         result = not raw if self._inverted else raw
-
         self._last_state = result
 
         return result
@@ -117,8 +116,10 @@ class CurtainMonitor:
                     self._on_change(state)
 
                 await asyncio.sleep(self._poll_interval)
+
         except asyncio.CancelledError:
             raise
+
         except Exception as exc:  # pragma: no cover - hardware dependent
             logger.warning(
                 "Curtain monitor crashed",

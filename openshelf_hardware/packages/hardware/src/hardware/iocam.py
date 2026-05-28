@@ -1,10 +1,10 @@
 import logging
 import re
 import subprocess
-from typing import Optional
-
 import cv2
 import numpy as np
+
+from typing import Any, Optional
 
 from hardware.exceptions import (
     CameraError,
@@ -44,8 +44,10 @@ def _find_innomaker_device() -> int:
             text=True,
             check=True,
         )
+
     except FileNotFoundError as e:
         raise CameraConnectionError("v4l2-ctl is not installed.") from e
+
     except subprocess.CalledProcessError as e:
         raise CameraConnectionError(f"Failed to run v4l2-ctl: {e}") from e
 
@@ -53,16 +55,10 @@ def _find_innomaker_device() -> int:
 
 
 class AFSCam:
-    def __init__(self, usb_params) -> None:
-        self.square_mm = usb_params.square_mm
-        self.fx_px = usb_params.fx_px
-        self.fy_px = usb_params.fy_px
-        self.px_per_mm = usb_params.px_per_mm
-
+    def __init__(self, usb_params: Any) -> None:
         self._usb_index = usb_params.usb_index
         self._usb_fourcc = usb_params.usb_fourcc
         self._usb_exposure = usb_params.usb_exposure
-
         self._usb: Optional[cv2.VideoCapture] = None
 
     def _init_usb(self, *, use_auto_exposure: bool = True) -> None:
@@ -82,7 +78,7 @@ class AFSCam:
                 if not self._usb.set(cv2.CAP_PROP_FOURCC, fourcc):
                     raise CameraConfigError(f"Failed to set FOURCC to {self._usb_fourcc}")
 
-            if use_auto_exposure is True:
+            if use_auto_exposure:
                 self._usb.set(cv2.CAP_PROP_AUTO_EXPOSURE, 3)
             elif self._usb_exposure is not None:
                 if not self._usb.set(cv2.CAP_PROP_EXPOSURE, float(self._usb_exposure)):
@@ -102,20 +98,10 @@ class AFSCam:
             raise
 
     async def start(self) -> None:
-        try:
-            self._init_usb(use_auto_exposure=True)
-        except Exception as e:
-            if not isinstance(e, CameraError):
-                raise CameraError(f"Camera initialization failed: {str(e)}") from e
-            raise
+        self._init_usb(use_auto_exposure=True)
 
     async def stop(self) -> None:
-        try:
-            self._cleanup_usb()
-        except Exception as e:
-            if not isinstance(e, CameraError):
-                raise CameraError(f"Failed to stop cameras: {str(e)}") from e
-            raise
+        self._cleanup_usb()
 
     def capture_raw(self) -> Optional[np.ndarray]:
         if self._usb is None:
@@ -123,7 +109,7 @@ class AFSCam:
 
         ok, frame = self._usb.read()
 
-        if ok is True and frame is not None:
+        if ok and frame is not None:
             return frame
 
         return None
