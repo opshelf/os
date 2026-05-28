@@ -20,8 +20,6 @@ def _pair_len2(v: List[Union[int, float]], name: str) -> Tuple[Union[int, float]
     return v[0], v[1]
 
 
-# ---------- Motor ----------
-
 class Motor(BaseModel):
     motor_name: str = Field(..., min_length=1)
     motor_id: int = Field(..., ge=0)
@@ -122,8 +120,6 @@ class Motors(RootModel[List[Motor]]):
         raise KeyError(f"Motor with id '{motor_id}' not found")
 
 
-# ---------- Cameras ----------
-
 class PoeCamera(BaseModel):
     url: str
 
@@ -133,8 +129,6 @@ class UsbCamera(BaseModel):
     usb_fourcc: str = Field(..., min_length=1)
     usb_exposure: Union[int, float]
 
-
-# ---------- Peripherals ----------
 
 class CurtainConfig(BaseModel):
     enabled: bool = True
@@ -169,8 +163,6 @@ class LaserConfig(BaseModel):
         return self
 
 
-# ---------- Buses ----------
-
 class ModbusBusConfig(BaseModel):
     ports: List[str] = Field(default_factory=list)
     baudrate: int = Field(..., gt=0)
@@ -194,8 +186,6 @@ class RobotBus(BaseModel):
     scale: ModbusBusConfig
     laser: Optional[ModbusBusConfig] = None
 
-
-# ---------- Parameters / tool / IO ----------
 
 class Parameters(BaseModel):
     IDLE_POSITION: TwoInt
@@ -258,8 +248,6 @@ class IOBlock(BaseModel):
         return value
 
 
-# ---------- Grid ----------
-
 class GridConfig(BaseModel):
     path: str = Field(..., min_length=1)
     scan: LaserScanConfig = Field(default_factory=LaserScanConfig)  # type: ignore[arg-type]
@@ -283,8 +271,6 @@ class GridConfig(BaseModel):
 
         return value
 
-
-# ---------- Robot ----------
 
 class Robot(BaseModel):
     tool: Tool
