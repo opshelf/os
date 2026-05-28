@@ -115,10 +115,6 @@ def sample_usb_params() -> AttrDict:
         usb_index=0,
         usb_fourcc="MJPG",
         usb_exposure=10,
-        square_mm=25.0,
-        fx_px=600.0,
-        fy_px=600.0,
-        px_per_mm=2.0,
     )
 
 

@@ -1,6 +1,6 @@
-from __future__ import annotations
-
 import logging
+
+from __future__ import annotations
 from typing import Optional
 from hardware.controller import SharedModbusController
 
@@ -54,6 +54,7 @@ class LaserSensor:
 
     async def close(self) -> None:
         logger.debug("Closing laser controller", extra={"unit_id": self.device_id})
+
         await self.modbus_controller.close()
 
     async def read_registers(self) -> tuple[int, ...]:
@@ -115,6 +116,7 @@ class LaserSensor:
     async def read_distance_mm_or_none(self) -> Optional[float]:
         try:
             return await self.read_distance_mm()
+
         except Exception:
             logger.warning(
                 "Laser distance read failed",
