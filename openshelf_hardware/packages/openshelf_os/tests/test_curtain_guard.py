@@ -254,7 +254,7 @@ except Exception:
     sys.modules.setdefault("serial.tools", serial_tools)
     sys.modules.setdefault("serial.tools.list_ports", serial_tools.list_ports)
 
-from openshelf_os.robot_worker import RobotWorker
+from openshelf_os.robot.worker import RobotWorker
 from openshelf_os.robot import Robot
 
 

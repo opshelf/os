@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, call
 
 import pytest
 
-import openshelf_os.robot as robot_module
+import openshelf_os.robot.core as robot_module
 
 
 def make_bus_settings() -> dict[str, dict[str, object]]:

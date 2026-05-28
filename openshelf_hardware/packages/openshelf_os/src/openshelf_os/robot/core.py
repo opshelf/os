@@ -11,15 +11,15 @@ from hardware.curtain import CurtainSafety
 from openshelf_os.common import AxisCoordinate, ConfigError, load_config_file, CONFIG_PATH, resolve_grid_path
 from openshelf_os.exceptions import MotorError, MovementError, ToolError
 from openshelf_os.iobox import IOBox
-from openshelf_os.laser_scan import (
+from openshelf_os.laser_calibration.scan import (
     ScanAnalysisResult, ScanBounds, analyze_scan_capture,
     build_axis_positions, build_shelves_from_scan, create_scan_capture,
 )
-from openshelf_os.robot_commands import (
+from openshelf_os.robot.commands import (
     RobotCommands, StopCommand, InitializeCommand, IdleCommand, HomeCommand,
     MoveCommand, RetrieveItemCommand, StoreItemCommand,
 )
-from openshelf_os.robot_status import (
+from openshelf_os.robot.status import (
     RobotResponse, RobotCommandSuccessful, RobotCommandError,
     RobotStatus, GantryStatus, ToolAxisStatus, RobotState, AxisTelemetry,
 )

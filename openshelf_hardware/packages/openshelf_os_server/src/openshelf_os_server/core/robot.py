@@ -2,7 +2,7 @@ import logging
 from typing import Optional
 
 from openshelf_os import robot as r
-from openshelf_os import robot_worker as r_worker
+import openshelf_os.robot.worker as r_worker
 from openshelf_os.common import (
     ConfigError,
     ConfigMissingError,

@@ -9,10 +9,10 @@ import sentry_sdk
 
 from datetime import datetime, timezone
 from typing import Optional, List, Any, Dict
-from openshelf_os.robot import Robot
-from openshelf_os.robot_commands import RobotCommands, StopCommand, HomeCommand, InitializeCommand
-from openshelf_os.robot_status import RobotResponse, RobotCommandSuccessful
-from openshelf_os.robot_defs import WorkerError, QueuedOperation, WorkerStatusWithQueue
+from openshelf_os.robot.core import Robot
+from openshelf_os.robot.commands import RobotCommands, StopCommand, HomeCommand, InitializeCommand
+from openshelf_os.robot.status import RobotResponse, RobotCommandSuccessful
+from openshelf_os.robot.models import WorkerError, QueuedOperation, WorkerStatusWithQueue
 from openshelf_os.barcode_service import BarcodeService
 from openshelf_os.exceptions import MotorError, MovementError, ToolError
 

@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 import openshelf_os_server.core.robot as robot_core
 
-from openshelf_os.robot_worker import RobotWorker
+from openshelf_os.robot.worker import RobotWorker
 from openshelf_os_server.core.storage import StorageService
 from openshelf_os_server.database.models import Telemetry
 from openshelf_os_server.database.session import AsyncSessionLocal

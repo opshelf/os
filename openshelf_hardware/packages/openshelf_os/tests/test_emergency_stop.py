@@ -1,5 +1,5 @@
 """Emergency stop unit tests."""
-# ruff: noqa: E402
+# ruff: noqa: E402, PLC0415
 
 import asyncio
 import pathlib
@@ -177,7 +177,7 @@ class MockRobot:
         pass
 class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
     async def test_emergency_stop_sets_crash_state_and_pauses_curtain(self):
-        from openshelf_os.robot_worker import RobotWorker
+        from openshelf_os.robot.worker import RobotWorker
 
         robot = MockRobot()
         RobotWorker._instance = None
@@ -195,7 +195,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
         RobotWorker._instance = None
 
     async def test_emergency_stop_is_instant(self):
-        from openshelf_os.robot_worker import RobotWorker
+        from openshelf_os.robot.worker import RobotWorker
 
         robot = MockRobot()
         RobotWorker._instance = None
@@ -212,7 +212,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
         RobotWorker._instance = None
 
     async def test_clear_crash_state_resumes_curtain(self):
-        from openshelf_os.robot_worker import RobotWorker
+        from openshelf_os.robot.worker import RobotWorker
 
         robot = MockRobot()
         RobotWorker._instance = None
@@ -228,7 +228,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
         RobotWorker._instance = None
 
     async def test_emergency_stop_cancels_running_task(self):
-        from openshelf_os.robot_worker import RobotWorker
+        from openshelf_os.robot.worker import RobotWorker
 
         robot = MockRobot()
         RobotWorker._instance = None
@@ -254,8 +254,8 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
         RobotWorker._instance = None
 
     async def test_emergency_stop_clears_command_state_in_background(self):
-        from openshelf_os.robot_worker import RobotWorker
-        from openshelf_os.robot_commands import HomeCommand
+        from openshelf_os.robot.worker import RobotWorker
+        from openshelf_os.robot.commands import HomeCommand
 
         robot = MockRobot()
         RobotWorker._instance = None
