@@ -4,6 +4,9 @@ import argparse
 from pathlib import Path
 from typing import Any, Callable
 
+import openshelf_os.laser_angle_calibration as angle_module
+from openshelf_os.common import load_config_file
+
 from .config import (
 	get_laser_sample_settle_ms,
 	get_laser_samples_per_point,
@@ -161,7 +164,6 @@ async def resolve_capture_y_mm(
 	should_abort: Callable[[], bool] | None = None,
 ) -> float:
 	raise_if_cancelled(should_abort)
-	import openshelf_os.laser_angle_calibration as angle_module
 	raw_y_mm = getattr(args, 'y_mm', None)
 	raw_y_range = getattr(args, 'y_range', None)
 	raw_scout_x_mm = getattr(args, 'scout_x_mm', None)
@@ -271,8 +273,6 @@ async def resolve_capture_y_mm(
 
 
 async def capture_samples_with_robot(args: argparse.Namespace) -> tuple[list[LaserAngleCalibrationSample], dict[str, Any]]:
-	from openshelf_os.common import load_config_file
-
 	config = load_config_file(args.config)
 	scan_config = config.robot.grid.scan
 	settle_ms = int(

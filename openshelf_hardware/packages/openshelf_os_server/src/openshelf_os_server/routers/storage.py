@@ -12,12 +12,15 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+import openshelf_os.common as common
+import openshelf_os_server.core.robot as robot_core
+
 from ..database.models import Item, ItemLocation, User
 from ..core.storage import StorageService
 from ..core.validation import ValidationError
 from .auth_deps import can_user_retrieve_item, get_current_user, require_permissions
 from ..database.session import get_db
-from openshelf_os.storage import StorageModuleSide
+from openshelf_os.storage import StorageGrid, StorageModuleSide
 
 router = APIRouter(tags=["storage"])
 
@@ -523,13 +526,8 @@ async def update_storage_cell(
 
 
 def _get_robot_grid():
-    from ..core.robot import robot_worker
-
-    if robot_worker is not None and robot_worker._robot._grid is not None:
-        return robot_worker._robot._grid
-
-    from openshelf_os.storage import StorageGrid
-    import openshelf_os.common as common
+    if robot_core.robot_worker is not None and robot_core.robot_worker._robot._grid is not None:
+        return robot_core.robot_worker._robot._grid
 
     config_path = common.CONFIG_PATH
     config = common.load_config_file(config_path)

@@ -7,6 +7,8 @@ from typing import Any
 
 import numpy as np
 
+from openshelf_os.common import load_config_file
+
 from .capture import enter_capture_mode, prepare_capture_pose, resolve_capture_y_mm, resolve_rotation_center_deg
 from .config import (
 	get_laser_sample_settle_ms,
@@ -16,6 +18,7 @@ from .config import (
 )
 from .geometry import build_axis_positions
 from .models import StageStallProbeSample
+from .reporting import write_stage_stall_output_document
 from .robot_ops import probe_stage_until_stall, run_with_temp_robot_config
 from .shelf_scout import build_shelf_scout_x_positions
 from .status import print_status
@@ -194,8 +197,6 @@ async def finish_stage_stall_capture(
 async def run_stage_stall_capture(
 	args: argparse.Namespace,
 ) -> tuple[list[StageStallProbeSample], dict[str, Any], list[dict[str, Any]], dict[str, Any] | None]:
-	from openshelf_os.common import load_config_file
-
 	config = load_config_file(args.config)
 	scan_config = config.robot.grid.scan
 	settle_ms = int(
@@ -326,8 +327,6 @@ async def run_stage_stall_capture(
 		def didPersistSamples() -> None:
 			if args.output is None:
 				return
-
-			from .reporting import write_stage_stall_output_document
 
 			angle_summaries, best_summary = summarize_stage_stall_samples(samples)
 			write_stage_stall_output_document(

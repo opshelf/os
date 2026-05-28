@@ -3,6 +3,13 @@ from __future__ import annotations
 
 from .core import *
 
+def get_coarse_settle_ms(fine_settle_ms: int) -> int:
+    return max(0, fine_settle_ms // 2)
+
+
+def get_coarse_samples_per_point(fine_samples_per_point: int) -> int:
+    return 1
+
 def build_run_parameters(
 	*,
 	args: argparse.Namespace,
@@ -216,8 +223,6 @@ def find_latest_incomplete_run(scans_dir: str) -> StagedScanRecorder:
 def load_continue_scan_context(
 	scans_dir: str,
 ) -> tuple[StagedScanRecorder, StorageModuleSide, ScanBounds, float, int, int, int, int]:
-	from .fine_scan import get_coarse_samples_per_point, get_coarse_settle_ms
-
 	recorder = find_latest_incomplete_run(scans_dir)
 	run_parameters_document = load_json_file(recorder.run_parameters_path)
 	run_parameters = run_parameters_document["run_parameters"]

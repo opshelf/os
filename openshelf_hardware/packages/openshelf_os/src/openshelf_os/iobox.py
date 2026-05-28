@@ -7,6 +7,7 @@ from openshelf_os.exceptions import (
     IOBoxError, MotorError, ConfigError
 )
 import openshelf_os.common as c
+from openshelf_os.common import load_config_file
 
 from hardware.scale import Scale
 from enum import Enum
@@ -83,8 +84,6 @@ class IOBox:
         self._door_max_position_mm: float = 1000.0
 
     def reload_parameters(self) -> None:
-        from openshelf_os.common import load_config_file
-
         config = load_config_file(c.CONFIG_PATH)
         io_config = config.get("robot.io", None)
 
