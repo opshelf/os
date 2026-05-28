@@ -1,6 +1,5 @@
 from openshelf_os.config import (
     AxisCoordinate,
-    ToolCoordinate,
     TwoInt,
     ConfigError,
     ConfigValidationError,
@@ -49,7 +48,6 @@ from openshelf_os.operating_mode import OperatingMode
 
 __all__ = [
     "AxisCoordinate",
-    "ToolCoordinate",
     "TwoInt",
     "ConfigError",
     "ConfigValidationError",

@@ -43,16 +43,3 @@ class AxisCoordinate:
             s=self.s,
             z_offset=self.z_offset - other.z_offset,
         )
-
-
-@dataclass
-class ToolCoordinate:
-    g: float  # gripper
-    s: float  # stage
-    r: float  # rotation (only 0 or 180) -- does not add/subtract
-
-    def __add__(self, other: "ToolCoordinate") -> "ToolCoordinate":
-        return ToolCoordinate(g=self.g + other.g, s=self.s + other.s, r=self.r)
-
-    def __sub__(self, other: "ToolCoordinate") -> "ToolCoordinate":
-        return ToolCoordinate(g=self.g - other.g, s=self.s - other.s, r=self.r)

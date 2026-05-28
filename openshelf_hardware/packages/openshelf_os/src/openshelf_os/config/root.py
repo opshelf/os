@@ -1,17 +1,10 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
-from openshelf_os.config.models import (
-    Motor,
-    Motors,
-    PoeCamera,
-    UsbCamera,
-    LaserConfig,
-    Robot,
-)
+from openshelf_os.config.models import Robot
 from openshelf_os.config.settings import (
     AuthSettings,
     CameraAppSettings,
@@ -25,7 +18,6 @@ from openshelf_os.config.settings import (
     StorageSettings,
     ToolCameraSettings,
 )
-from openshelf_os.config.types import TwoInt
 
 
 class RootConfig(BaseModel):
@@ -57,52 +49,6 @@ class RootConfig(BaseModel):
                     values["robot_app"] = {"enabled": robot_enabled}
         return values
 
-    # ----------- Convenience Getters (typed) -----------
-
-    def get_status(self) -> Literal["idle", "running", "error"]:
-        return self.status
-
-    def get_parameter(self, key: str) -> Any:
-        params = self.robot.tool.parameters
-        if not hasattr(params, key):
-            raise KeyError(f"Parameter '{key}' not found")
-        return getattr(params, key)
-
-    def get_pxmm(self) -> float:
-        return self.robot.tool.parameters.PXMM
-
-    def get_pymm(self) -> float:
-        return self.robot.tool.parameters.PYMM
-
-    def get_idle_position(self) -> TwoInt:
-        return self.robot.tool.parameters.IDLE_POSITION
-
-    def list_motors(self, section: Literal["tool", "io"]) -> List[str]:
-        motors: Motors = getattr(self.robot, section).motors
-        return motors.names()
-
-    def get_motor(self, section: Literal["tool", "io"], *, name: Optional[str] = None,
-                  motor_id: Optional[int] = None) -> Motor:
-        motors: Motors = getattr(self.robot, section).motors
-        if (name is None) == (motor_id is None):
-            raise ValueError("Provide exactly one of name or motor_id")
-        if name is not None:
-            return motors.by_name(name)
-        if motor_id is not None:
-            return motors.by_id(motor_id)
-        raise ValueError("Provide exactly one of name or motor_id")
-
-    def get_poe_camera(self) -> PoeCamera:
-        return self.robot.tool.poe_camera
-
-    def get_usb_camera(self) -> UsbCamera:
-        return self.robot.io.usb_camera
-
-    def get_tool_laser(self) -> LaserConfig:
-        return self.robot.tool.laser
-
-    def get_grid(self) -> Dict[str, Any]:
-        return self.robot.grid.model_dump()
 
     def get(self, dotted_path: str, default: Any = ...) -> Any:
         cur: Any = self

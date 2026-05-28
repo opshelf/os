@@ -26,19 +26,10 @@ MINIMAL_CONFIG_DICT = {
                 "Z_MOVE_ACCEL": 1,
                 "ROTATION_FRONT": 0,
                 "ROTATION_BACK": 0,
-                "JOG_X": 0,
-                "JOG_Y": 0,
-                "PXMM": 1,
-                "PYMM": 1,
             },
             "motors": [],
             "poe_camera": {
-                "ip": "127.0.0.1",
-                "port": 80,
                 "url": "",
-                "H_ref_size": [1920, 1080],
-                "pattern_size": [9, 6],
-                "square_size_mm": 25.0,
             },
         },
         "grid": {"path": "storage.json"},
@@ -48,12 +39,6 @@ MINIMAL_CONFIG_DICT = {
                 "usb_index": 0,
                 "usb_fourcc": "MJPG",
                 "usb_exposure": 25,
-                "square_mm": 7.5,
-                "fx_px": 708,
-                "fy_px": 708,
-                "px_per_mm": 1.2,
-                "confidence_min": 0,
-                "headless_fallback_path": "./fallback.jpg",
             },
         },
     },
@@ -109,8 +94,8 @@ def test_root_config_get_motor_supports_name_and_id_lookup():
     }]
     config = RootConfig.model_validate(data)
 
-    assert config.get_motor("tool", name="stage").motor_id == 1
-    assert config.get_motor("tool", motor_id=1).motor_name == "stage"
+    assert config.robot.tool.motors.by_name("stage").motor_id == 1
+    assert config.robot.tool.motors.by_id(1).motor_name == "stage"
 
 
 def test_assert_config_requires_laser_bus_when_laser_enabled():

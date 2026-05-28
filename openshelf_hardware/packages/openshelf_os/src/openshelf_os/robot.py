@@ -7,6 +7,7 @@ from pathlib import Path as _Path
 from typing import Any, Dict, Optional, List, TYPE_CHECKING
 
 from hardware.controller import SharedModbusController as Controller
+from hardware.curtain import CurtainSafety
 from openshelf_os.common import AxisCoordinate, ConfigError, load_config_file, CONFIG_PATH, resolve_grid_path
 from openshelf_os.exceptions import MotorError, MovementError, ToolError
 from openshelf_os.iobox import IOBox
@@ -52,7 +53,6 @@ class Robot:
         tool_params = self._config.get("robot.tool", {})
         io_params = self._config.get("robot.io", {})
 
-        from hardware.curtain import CurtainSafety
         self._curtain_safety = CurtainSafety()
         self._tool = Tool(
             motorcontroller=self._motorbus,
@@ -372,13 +372,6 @@ class Robot:
                     side, shelf_idx, cell_idx, str(e)
                 )
 
-    def get_param(self, param: str):
-        try:
-            if hasattr(self._config.robot, param):
-                return getattr(self._config.robot, param)
-            return self._config.robot.grid.get_param(param)
-        except Exception as e:
-            raise ConfigError(f"Failed to get parameter {param}: {str(e)}") from e
 
     # ------------------------------------------------------------------ #
     #  Status

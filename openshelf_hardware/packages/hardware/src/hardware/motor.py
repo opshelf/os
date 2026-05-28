@@ -72,6 +72,7 @@ class MotionFaultState:
     stall_detected: bool
     no_progress: bool
 
+
 class Motor():
     _motor_id: int
     _controller: SharedModbusController

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Literal, Optional, Tuple, Union
+from typing import List, Literal, Optional, Tuple, Union
 
 from pydantic import BaseModel, Field, RootModel, field_validator, model_validator
 
@@ -91,22 +91,24 @@ class Motor(BaseModel):
     def logical_to_physical(self, logical: float) -> float:
         p0 = self.phys_at_zero if self.phys_at_zero is not None else 0
         pm = self.phys_at_max if self.phys_at_max is not None else self.lim
+
         return p0 + (logical / self.lim) * (pm - p0)
 
     def physical_to_logical(self, physical: float) -> float:
         p0 = self.phys_at_zero if self.phys_at_zero is not None else 0
         pm = self.phys_at_max if self.phys_at_max is not None else self.lim
+
         return (physical - p0) / (pm - p0) * self.lim
 
     def logical_to_physical_delta(self, logical_delta: float) -> float:
         p0 = self.phys_at_zero if self.phys_at_zero is not None else 0
         pm = self.phys_at_max if self.phys_at_max is not None else self.lim
         scale = (pm - p0) / self.lim
+
         return logical_delta * scale
 
 
 class Motors(RootModel[List[Motor]]):
-
     def by_name(self, name: str) -> Motor:
         for m in self.root:
             if m.motor_name == name:
@@ -119,60 +121,17 @@ class Motors(RootModel[List[Motor]]):
                 return m
         raise KeyError(f"Motor with id '{motor_id}' not found")
 
-    def names(self) -> List[str]:
-        return [m.motor_name for m in self.root]
-
-    def ids(self) -> List[int]:
-        return [m.motor_id for m in self.root]
-
 
 # ---------- Cameras ----------
 
 class PoeCamera(BaseModel):
-    ip: str
-    port: int = Field(..., ge=1, le=65535)
     url: str
-
-    calibration_status: Literal["uncalibrated", "calibrated"] = "uncalibrated"
-    mtx: Optional[List[List[float]]] = None
-    dist: Optional[List[float]] = None
-    rvecs: Optional[List[List[float]]] = None
-    tvecs: Optional[List[List[float]]] = None
-    newcameramtx: Optional[List[List[float]]] = None
-    roi: Optional[List[int]] = None
-    H: Optional[List[List[float]]] = None
-    map1: Optional[Any] = None
-    map2: Optional[Any] = None
-    map_size: Optional[List[int]] = None
-
-    H_ref_size: TwoInt
-    board_W_mm: Optional[float] = None
-    board_H_mm: Optional[float] = None
-    pattern_size: TwoInt
-    square_size_mm: float = Field(..., gt=0)
-
-    @field_validator("H_ref_size", "pattern_size", mode="before")
-    @classmethod
-    def _as_tuple_len2(cls, v):
-        a, b = _pair_len2(v, "pair")
-        return int(a), int(b)
-
-    @field_validator("square_size_mm")
-    @classmethod
-    def _square_pos(cls, v):
-        return _positive(v, "square_size_mm")
 
 
 class UsbCamera(BaseModel):
     usb_index: int = Field(..., ge=0)
     usb_fourcc: str = Field(..., min_length=1)
     usb_exposure: Union[int, float]
-    square_mm: float = Field(..., gt=0)
-    fx_px: float = Field(..., gt=0)
-    fy_px: float = Field(..., gt=0)
-    px_per_mm: float = Field(..., gt=0)
-    confidence_min: int = Field(..., ge=0)
-    headless_fallback_path: str = Field(..., min_length=1)
 
 
 # ---------- Peripherals ----------
@@ -180,6 +139,7 @@ class UsbCamera(BaseModel):
 class CurtainConfig(BaseModel):
     enabled: bool = True
     pin: int = Field(2, ge=0)
+    inverted: bool = False
     poll_interval_s: float = Field(0.01, gt=0)
     door_open_threshold_mm: float = Field(5.0, ge=0)
     door_debounce_s: float = Field(0.0, ge=0)
@@ -253,10 +213,6 @@ class Parameters(BaseModel):
     Z_MOVE_ACCEL: int = Field(..., gt=0)
     ROTATION_FRONT: float
     ROTATION_BACK: float
-    JOG_X: Union[int, float]
-    JOG_Y: Union[int, float]
-    PXMM: float
-    PYMM: float
 
     @field_validator(
         "IDLE_POSITION",
@@ -269,11 +225,6 @@ class Parameters(BaseModel):
     def _pairs_to_tuple(cls, v):
         a, b = _pair_len2(v, "position")
         return int(a), int(b)
-
-    @field_validator("PXMM", "PYMM")
-    @classmethod
-    def _positive_pxmm(cls, v, info):
-        return _positive(v, info.field_name)
 
 
 class Gripper(BaseModel):
@@ -311,8 +262,6 @@ class IOBlock(BaseModel):
 
 class GridConfig(BaseModel):
     path: str = Field(..., min_length=1)
-    cell_spacing_per_shelf: Optional[Union[float, List[Union[int, float]]]] = None
-    cells_per_shelf: Optional[Union[int, List[int], List[List[int]], Dict[str, List[int]]]] = None
     scan: LaserScanConfig = Field(default_factory=LaserScanConfig)  # type: ignore[arg-type]
 
     @model_validator(mode="before")
@@ -320,24 +269,19 @@ class GridConfig(BaseModel):
     def _coerce_legacy(cls, value):
         if isinstance(value, str):
             return {"path": value}
+
         if isinstance(value, dict):
             coerced = value.copy()
+
             if "storage" in coerced and "path" not in coerced:
                 coerced["path"] = coerced.pop("storage")
+
             if "file" in coerced and "path" not in coerced:
                 coerced["path"] = coerced.pop("file")
-            return coerced
-        return value
 
-    def get_param(self, key: str) -> Any:
-        alias_map = {
-            "CELL_SPACINGS": "cell_spacing_per_shelf",
-            "CELLS_PER_SHELF": "cells_per_shelf",
-        }
-        target = alias_map.get(key, key)
-        if hasattr(self, target):
-            return getattr(self, target)
-        raise KeyError(f"Grid parameter '{key}' not found")
+            return coerced
+
+        return value
 
 
 # ---------- Robot ----------
@@ -347,5 +291,3 @@ class Robot(BaseModel):
     grid: GridConfig
     io: IOBlock
     bus: Optional[RobotBus] = None
-    store_detection_window_s: float = Field(1.0, ge=0)
-    store_detection_attempts: int = Field(1, ge=1)

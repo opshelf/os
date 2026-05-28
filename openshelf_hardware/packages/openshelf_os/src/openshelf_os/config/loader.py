@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import io
 import json
+
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
-
 from pydantic import ValidationError
-
 from openshelf_os.config.exceptions import ConfigError, ConfigMissingError, ConfigValidationError
 from openshelf_os.config.root import RootConfig
 
@@ -29,9 +29,6 @@ def load_and_validate_config(cfg: Union[Dict[str, Any], str], source_path: Optio
 
 
 def load_config_file(path: Union[str, Any]) -> RootConfig:
-    import io
-    from pathlib import Path
-
     path_obj = Path(path) if isinstance(path, str) else path
 
     if path_obj.exists() is False:
@@ -48,6 +45,7 @@ def load_config_file(path: Union[str, Any]) -> RootConfig:
 
 def resolve_grid_path(config: RootConfig, config_path: Union[str, Any] = CONFIG_PATH) -> str:
     path_obj = Path(config_path) if isinstance(config_path, str) else config_path
+
     return str((path_obj.parent / config.robot.grid.path).resolve())
 
 
@@ -60,6 +58,7 @@ def assert_config(config: RootConfig, requirements: Optional[List[str]] = None) 
     for req in requirements:
         try:
             value = config.get(req)
+
             if value is None:
                 errors.append(f"Required config '{req}' is None")
         except KeyError:
