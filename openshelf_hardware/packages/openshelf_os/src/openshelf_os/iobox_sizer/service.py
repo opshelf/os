@@ -158,6 +158,12 @@ class IOBoxSizerService:
         if self.config.tof.aggregation == "mean":
             return float(statistics.mean(values))
 
+        if self.config.tof.aggregation == "nearest":
+            return min(values)
+
+        if self.config.tof.aggregation == "farthest":
+            return max(values)
+
         return float(statistics.median(values))
 
     def _camera_depth_scale(self, selected: IOBoxSizerToFReading | None) -> float | None:
