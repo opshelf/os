@@ -607,6 +607,8 @@ export interface MotorProbeResult {
 
 export interface MotorProbeResponse {
 	results: MotorProbeResult[];
+	busy: boolean;
+	reason: string | null;
 }
 
 export async function probeMotors(): Promise<MotorProbeResponse> {
