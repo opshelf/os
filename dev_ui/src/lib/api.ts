@@ -580,10 +580,13 @@ export interface SizerToFConfig {
 	channels: number[];
 	timing_budget_ms: number;
 	read_timeout_s: number;
+	samples: number;
+	sample_interval_ms: number;
+	aggregation: 'median' | 'mean';
 }
 
 export interface SizerDetectionConfig {
-	mode: 'brightness' | 'rectangle';
+	mode: 'brightness' | 'rectangle' | 'difference' | 'circle';
 	roi_x: number;
 	roi_y: number;
 	roi_width: number;
@@ -594,6 +597,7 @@ export interface SizerDetectionConfig {
 	white_rgb_min: [number, number, number];
 	min_area_px: number;
 	blank_frame_path: string;
+	contour_selection: 'largest' | 'center';
 }
 
 export interface SizerCalibrationParams {
@@ -637,7 +641,7 @@ export interface SizerDimensions {
 
 export interface SizerMeasurement {
 	detected: boolean;
-	mode: 'brightness' | 'rectangle';
+	mode: 'brightness' | 'rectangle' | 'difference' | 'circle';
 	width_px: number | null;
 	height_px: number | null;
 	center_x: number | null;

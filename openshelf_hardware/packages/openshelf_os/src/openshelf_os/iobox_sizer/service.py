@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import statistics
 import time
 from pathlib import Path
 
@@ -54,10 +55,7 @@ class IOBoxSizerService:
             for reading in self.tof_bus.read_all_distances_mm():
                 accumulators[reading.sensor_index].append(reading.distance_mm)
 
-        return [
-            (sum(values) / len(values)) if values else None
-            for values in accumulators
-        ]
+        return [(sum(values) / len(values)) if values else None for values in accumulators]
 
     def measure(self) -> IOBoxSizerMeasurement:
         started = time.monotonic()
@@ -71,10 +69,21 @@ class IOBoxSizerService:
         dimensions = None
 
         if detection.detected is True:
-            if self.config.calibration.mm_per_px_x is not None and self.config.calibration.mm_per_px_y is not None:
+            if (
+                self.config.calibration.mm_per_px_x is not None
+                and self.config.calibration.mm_per_px_y is not None
+            ):
+                depth_scale = self._camera_depth_scale(selected)
+                if self.config.calibration.apply_depth_compensation is True and depth_scale is None:
+                    warnings.append("camera_depth_compensation_unavailable")
+
                 dimensions = IOBoxSizerDimensions(
-                    width=detection.width_px * self.config.calibration.mm_per_px_x,
-                    height=detection.height_px * self.config.calibration.mm_per_px_y,
+                    width=detection.width_px
+                    * self.config.calibration.mm_per_px_x
+                    * (depth_scale or 1.0),
+                    height=detection.height_px
+                    * self.config.calibration.mm_per_px_y
+                    * (depth_scale or 1.0),
                     length=selected.depth_delta_mm if selected is not None else None,
                 )
             else:
@@ -105,24 +114,67 @@ class IOBoxSizerService:
         )
 
     def _read_tof(self) -> list[IOBoxSizerToFReading]:
-        readings: list[IOBoxSizerToFReading] = []
+        sample_count = self.config.tof.samples
+        accumulators: list[list[float]] = [[] for _ in self.config.tof.channels]
+        errors: list[str | None] = [None for _ in self.config.tof.channels]
 
+        for sample_index in range(sample_count):
+            for index in range(len(self.config.tof.channels)):
+                try:
+                    raw = self.tof_bus.read_distance_mm(index)
+                except Exception as exc:
+                    if errors[index] is None:
+                        errors[index] = str(exc)
+                    continue
+
+                accumulators[index].append(raw.distance_mm)
+
+            if sample_index < sample_count - 1 and self.config.tof.sample_interval_ms > 0:
+                time.sleep(self.config.tof.sample_interval_ms / 1000)
+
+        readings: list[IOBoxSizerToFReading] = []
         for index, channel in enumerate(self.config.tof.channels):
-            try:
-                raw = self.tof_bus.read_distance_mm(index)
-            except Exception as exc:
-                readings.append(
-                    IOBoxSizerToFReading(
-                        sensor_index=index,
-                        sensor_channel=channel,
-                        error=str(exc),
-                    )
+            values = accumulators[index]
+            if values:
+                raw = ToFReading(
+                    sensor_index=index,
+                    channel=channel,
+                    distance_mm=self._aggregate_tof_samples(values),
                 )
+                readings.append(self._build_tof_reading(raw))
                 continue
 
-            readings.append(self._build_tof_reading(raw))
+            readings.append(
+                IOBoxSizerToFReading(
+                    sensor_index=index,
+                    sensor_channel=channel,
+                    error=errors[index] or "sensor returned no samples",
+                )
+            )
 
         return readings
+
+    def _aggregate_tof_samples(self, values: list[float]) -> float:
+        if self.config.tof.aggregation == "mean":
+            return float(statistics.mean(values))
+
+        return float(statistics.median(values))
+
+    def _camera_depth_scale(self, selected: IOBoxSizerToFReading | None) -> float | None:
+        if self.config.calibration.apply_depth_compensation is False or selected is None:
+            return None
+
+        if selected.depth_mm is None or selected.sensor_index is None:
+            return None
+
+        if selected.sensor_index >= len(self.config.calibration.tof_blank_mm):
+            return None
+
+        blank = self.config.calibration.tof_blank_mm[selected.sensor_index]
+        if blank is None or blank <= 0 or selected.depth_mm <= 0:
+            return None
+
+        return selected.depth_mm / blank
 
     def _build_tof_reading(self, raw: ToFReading) -> IOBoxSizerToFReading:
         blank = None

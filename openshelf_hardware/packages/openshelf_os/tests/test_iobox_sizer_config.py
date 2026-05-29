@@ -30,3 +30,14 @@ def test_tof_channels_are_validated(channels: list[int]) -> None:
 def test_tof_addresses_are_validated(address: int) -> None:
     with pytest.raises(ValidationError):
         IOBoxSizerToFConfig(mux_address=address)
+
+
+@pytest.mark.parametrize("samples", [0, 26])
+def test_tof_samples_are_validated(samples: int) -> None:
+    with pytest.raises(ValidationError):
+        IOBoxSizerToFConfig(samples=samples)
+
+
+def test_tof_aggregation_is_validated() -> None:
+    with pytest.raises(ValidationError):
+        IOBoxSizerToFConfig(aggregation="mode")
