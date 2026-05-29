@@ -50,3 +50,53 @@ def test_iobox_sizer_service_reads_tof_per_channel() -> None:
         "depth_delta_mm": None,
         "error": "sensor 1 failed",
     }
+
+
+class SequencedToFBus:
+    def __init__(self) -> None:
+        self.values = {
+            0: [100.0, 160.0, 120.0],
+            1: [310.0, 300.0, 305.0],
+        }
+
+    def read_distance_mm(self, sensor_index: int) -> ToFReading:
+        value = self.values[sensor_index].pop(0)
+        return ToFReading(
+            sensor_index=sensor_index,
+            channel=6 + sensor_index,
+            distance_mm=value,
+        )
+
+
+def test_iobox_sizer_service_can_median_filter_tof_samples() -> None:
+    service = IOBoxSizerService(
+        config=IOBoxSizerConfig(
+            tof={"channels": [6, 7], "samples": 3},
+            calibration={"tof_blank_mm": [200.0, 400.0]},
+        ),
+        camera=FakeCamera(),
+        tof_bus=SequencedToFBus(),
+    )
+
+    readings = service._read_tof()
+
+    assert readings[0].depth_mm == 120.0
+    assert readings[0].depth_delta_mm == 80.0
+    assert readings[1].depth_mm == 305.0
+    assert readings[1].depth_delta_mm == 95.0
+
+
+def test_iobox_sizer_service_can_mean_filter_tof_samples() -> None:
+    service = IOBoxSizerService(
+        config=IOBoxSizerConfig(
+            tof={"channels": [6, 7], "samples": 3, "aggregation": "mean"},
+            calibration={"tof_blank_mm": [200.0, 400.0]},
+        ),
+        camera=FakeCamera(),
+        tof_bus=SequencedToFBus(),
+    )
+
+    readings = service._read_tof()
+
+    assert readings[0].depth_mm == 126.66666666666667
+    assert readings[1].depth_mm == 305.0

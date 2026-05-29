@@ -22,7 +22,7 @@ class IOBoxSizerDimensions(BaseModel):
 
 class IOBoxSizerMeasurement(BaseModel):
     detected: bool
-    mode: Literal["brightness", "rectangle"]
+    mode: Literal["brightness", "rectangle", "difference", "circle"]
     width_px: int | None = None
     height_px: int | None = None
     center_x: float | None = None
