@@ -33,6 +33,11 @@
 	let moveTargets: Record<string, string> = {};
 	let movingMotor: string | null = null;
 	let isProbing = false;
+	let motorPositions: Record<string, string> = {};
+	let probeBusyReason: string | null = null;
+	let pollError = '';
+
+	const POSITION_POLL_INTERVAL_MS = 1000;
 
 	let activeAction: 'crash' | 'home' | null = null;
 
@@ -42,6 +47,15 @@
 		}
 
 		return 'mm';
+	}
+
+	function positionLabelForMotor(motorName: string): string {
+		const position = motorPositions[motorName];
+		if (position === undefined) {
+			return '-';
+		}
+
+		return `${position} ${unitForMotor(motorName)}`;
 	}
 
 	async function fetchMotors(): Promise<void> {
@@ -54,17 +68,44 @@
 	}
 
 	async function fetchPositions(): Promise<void> {
+		if (isProbing === true) {
+			return;
+		}
+
+		if (browser === true && document.visibilityState !== 'visible') {
+			return;
+		}
+
 		isProbing = true;
-		error = '';
 		try {
 			const result = await probeMotors();
+
+			if (result.busy === true) {
+				probeBusyReason = result.reason;
+				return;
+			}
+
+			probeBusyReason = null;
+			pollError = '';
+
+			const nextPositions = { ...motorPositions };
+			const nextTargets = { ...moveTargets };
+
 			for (const r of result.results) {
 				if (r.responsive === true && r.position_mm !== null) {
-					moveTargets[r.motor_name] = r.position_mm.toFixed(2);
+					const position = r.position_mm.toFixed(2);
+					nextPositions[r.motor_name] = position;
+
+					if (nextTargets[r.motor_name] === undefined) {
+						nextTargets[r.motor_name] = position;
+					}
 				}
 			}
+
+			motorPositions = nextPositions;
+			moveTargets = nextTargets;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'failed to probe motors';
+			pollError = err instanceof Error ? err.message : 'failed to probe motors';
 		} finally {
 			isProbing = false;
 		}
@@ -267,7 +308,24 @@
 			return;
 		}
 
-		initialLoad();
+		void initialLoad();
+
+		const didChangeVisibility = (): void => {
+			if (document.visibilityState === 'visible') {
+				void fetchPositions();
+			}
+		};
+
+		const interval = setInterval(() => {
+			void fetchPositions();
+		}, POSITION_POLL_INTERVAL_MS);
+
+		document.addEventListener('visibilitychange', didChangeVisibility);
+
+		return () => {
+			clearInterval(interval);
+			document.removeEventListener('visibilitychange', didChangeVisibility);
+		};
 	});
 </script>
 
@@ -281,8 +339,7 @@
 			disabled={isTesting === true ||
 				activeMotor !== null ||
 				movingMotor !== null ||
-				isHomingAll === true ||
-				isProbing === true}
+				isHomingAll === true}
 		>
 			{isTesting === true ? 'testing...' : 'TEST ALL'}
 		</button>
@@ -292,23 +349,19 @@
 			disabled={isHomingAll === true ||
 				activeMotor !== null ||
 				movingMotor !== null ||
-				isTesting === true ||
-				isProbing === true}
+				isTesting === true}
 		>
 			{isHomingAll === true ? 'homing...' : 'HOME ALL'}
 		</button>
-		<button
-			type="button"
-			on:click={fetchPositions}
-			disabled={isProbing === true ||
-				activeMotor !== null ||
-				movingMotor !== null ||
-				isTesting === true ||
-				isHomingAll === true}
-		>
-			{isProbing === true ? 'probing...' : 'PROBE ALL'}
-		</button>
 	</div>
+
+	{#if probeBusyReason !== null}
+		<p class="poll-status">positions paused while robot is moving ({probeBusyReason})</p>
+	{/if}
+
+	{#if pollError !== ''}
+		<p class="poll-status poll-status-error">position updates unavailable: {pollError}</p>
+	{/if}
 
 	<table>
 		<thead>
@@ -340,6 +393,7 @@
 						{/if}
 					</td>
 					<td>
+						<div class="position-label">current: {positionLabelForMotor(motor.name)}</div>
 						<input
 							type="number"
 							step="0.1"
@@ -348,16 +402,14 @@
 							on:input={(e) => didInputTarget(motor.name, e)}
 							disabled={movingMotor !== null ||
 								activeMotor !== null ||
-								isTesting === true ||
-								isProbing === true}
+								isTesting === true}
 						/>
 						<button
 							type="button"
 							on:click={() => didClickMove(motor.name)}
 							disabled={movingMotor !== null ||
 								activeMotor !== null ||
-								isTesting === true ||
-								isProbing === true}
+								isTesting === true}
 						>
 							{movingMotor === motor.name ? '...' : 'go'}
 						</button>
@@ -370,8 +422,7 @@
 								gripperAction !== null ||
 								doorAction !== null ||
 								movingMotor !== null ||
-								isTesting === true ||
-								isProbing === true}
+								isTesting === true}
 						>
 							home
 						</button>
@@ -382,8 +433,7 @@
 								gripperAction !== null ||
 								doorAction !== null ||
 								movingMotor !== null ||
-								isTesting === true ||
-								isProbing === true}
+								isTesting === true}
 						>
 							crash
 						</button>
@@ -421,6 +471,7 @@
 						{/if}
 					</td>
 					<td>
+						<div class="position-label">current: {positionLabelForMotor(motor.name)}</div>
 						<input
 							type="number"
 							step="0.1"
@@ -429,16 +480,14 @@
 							on:input={(e) => didInputTarget(motor.name, e)}
 							disabled={movingMotor !== null ||
 								activeMotor !== null ||
-								isTesting === true ||
-								isProbing === true}
+								isTesting === true}
 						/>
 						<button
 							type="button"
 							on:click={() => didClickMove(motor.name)}
 							disabled={movingMotor !== null ||
 								activeMotor !== null ||
-								isTesting === true ||
-								isProbing === true}
+								isTesting === true}
 						>
 							{movingMotor === motor.name ? '...' : 'go'}
 						</button>
@@ -450,8 +499,7 @@
 							disabled={activeMotor !== null ||
 								gripperAction !== null ||
 								movingMotor !== null ||
-								isTesting === true ||
-								isProbing === true}
+								isTesting === true}
 						>
 							home
 						</button>
@@ -461,8 +509,7 @@
 							disabled={activeMotor !== null ||
 								gripperAction !== null ||
 								movingMotor !== null ||
-								isTesting === true ||
-								isProbing === true}
+								isTesting === true}
 						>
 							crash
 						</button>
@@ -491,8 +538,7 @@
 						disabled={gripperAction !== null ||
 							activeMotor !== null ||
 							movingMotor !== null ||
-							isTesting === true ||
-							isProbing === true}
+							isTesting === true}
 					>
 						grip
 					</button>
@@ -502,8 +548,7 @@
 						disabled={gripperAction !== null ||
 							activeMotor !== null ||
 							movingMotor !== null ||
-							isTesting === true ||
-							isProbing === true}
+							isTesting === true}
 					>
 						release
 					</button>
@@ -540,6 +585,7 @@
 						{/if}
 					</td>
 					<td>
+						<div class="position-label">current: {positionLabelForMotor(motor.name)}</div>
 						<input
 							type="number"
 							step="0.1"
@@ -548,16 +594,14 @@
 							on:input={(e) => didInputTarget(motor.name, e)}
 							disabled={movingMotor !== null ||
 								activeMotor !== null ||
-								isTesting === true ||
-								isProbing === true}
+								isTesting === true}
 						/>
 						<button
 							type="button"
 							on:click={() => didClickMove(motor.name)}
 							disabled={movingMotor !== null ||
 								activeMotor !== null ||
-								isTesting === true ||
-								isProbing === true}
+								isTesting === true}
 						>
 							{movingMotor === motor.name ? '...' : 'go'}
 						</button>
@@ -570,8 +614,7 @@
 								disabled={activeMotor !== null ||
 									doorAction !== null ||
 									movingMotor !== null ||
-									isTesting === true ||
-									isProbing === true}
+									isTesting === true}
 							>
 								home
 							</button>
@@ -581,8 +624,7 @@
 								disabled={activeMotor !== null ||
 									doorAction !== null ||
 									movingMotor !== null ||
-									isTesting === true ||
-									isProbing === true}
+									isTesting === true}
 							>
 								crash
 							</button>
@@ -592,8 +634,7 @@
 								disabled={doorAction !== null ||
 									activeMotor !== null ||
 									movingMotor !== null ||
-									isTesting === true ||
-									isProbing === true}
+									isTesting === true}
 							>
 								open
 							</button>
@@ -603,8 +644,7 @@
 								disabled={doorAction !== null ||
 									activeMotor !== null ||
 									movingMotor !== null ||
-									isTesting === true ||
-									isProbing === true}
+									isTesting === true}
 							>
 								close
 							</button>
@@ -615,8 +655,7 @@
 								disabled={activeMotor !== null ||
 									doorAction !== null ||
 									movingMotor !== null ||
-									isTesting === true ||
-									isProbing === true}
+									isTesting === true}
 							>
 								home
 							</button>
@@ -626,8 +665,7 @@
 								disabled={activeMotor !== null ||
 									doorAction !== null ||
 									movingMotor !== null ||
-									isTesting === true ||
-									isProbing === true}
+									isTesting === true}
 							>
 								crash
 							</button>
@@ -656,6 +694,15 @@
 		display: flex;
 	}
 
+	.poll-status {
+		color: #666;
+		margin-bottom: 1rem;
+	}
+
+	.poll-status-error {
+		color: red;
+	}
+
 	button {
 		margin-top: 0;
 	}
@@ -663,6 +710,12 @@
 	input[type='number'] {
 		width: 80px;
 		margin-right: 4px;
+	}
+
+	.position-label {
+		color: #666;
+		font-size: 0.9rem;
+		margin-bottom: 0.25rem;
 	}
 
 	.motor-id {
