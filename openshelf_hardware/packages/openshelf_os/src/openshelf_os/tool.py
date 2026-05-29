@@ -217,10 +217,101 @@ class Tool:
     #  Fault, status, and configuration
     # ------------------------------------------------------------------ #
 
-    async def _handle_fault(self, exc: Exception) -> None:
+    def _snapshot_motor(self, axis: str, motor: Optional[Motor]) -> dict[str, Any]:
+        snapshot: dict[str, Any] = {"axis": axis, "configured": motor is not None}
+        if motor is None:
+            return snapshot
+
+        for key, attr in (
+            ("motor_id", "_motor_id"),
+            ("position_mm", "_cur_pos"),
+            ("target_mm", "_target_pos"),
+            ("simulated_fault", "_simulated_fault"),
+        ):
+            try:
+                snapshot[key] = getattr(motor, attr, None)
+            except Exception as exc:
+                snapshot[f"{key}_error"] = str(exc)
+
+        try:
+            status = getattr(motor, "_status", None)
+            snapshot["status"] = getattr(status, "name", status)
+        except Exception as exc:
+            snapshot["status_error"] = str(exc)
+
+        for key, reader in (("homed", motor.is_homed), ("hard_stopped", motor.is_hard_stopped)):
+            try:
+                snapshot[key] = reader()
+            except Exception as exc:
+                snapshot[f"{key}_error"] = str(exc)
+
+        return snapshot
+
+    @staticmethod
+    def _safe_dump(value: Any) -> Any:
+        if value is None:
+            return None
+        if hasattr(value, "model_dump"):
+            return value.model_dump(mode="json")
+        if hasattr(value, "__dataclass_fields__"):
+            return {key: Tool._safe_dump(getattr(value, key)) for key in value.__dataclass_fields__}
+        if isinstance(value, dict):
+            return {key: Tool._safe_dump(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [Tool._safe_dump(item) for item in value]
+        return value
+
+
+    def _motor_snapshot(self) -> dict[str, dict[str, Any]]:
+        motors = {
+            "x_axis": getattr(self, "_mx", None),
+            "y_axis": getattr(self, "_my", None),
+            "z_axis": getattr(self, "_mg", None),
+            "stage": getattr(self, "_ms", None),
+            "rotate": getattr(self, "_mr", None),
+        }
+        return {axis: self._snapshot_motor(axis, motor) for axis, motor in motors.items()}
+
+    async def _handle_fault(
+        self,
+        exc: Exception,
+        *,
+        phase: str | None = None,
+        coordinate: Any = None,
+        axis_statuses: dict[str, Any] | None = None,
+        target_position: Any = None,
+    ) -> None:
+        existing_context = getattr(exc, "fault_context", None)
+        if existing_context is None:
+            cause = getattr(exc, "__cause__", None)
+            existing_context = getattr(cause, "fault_context", None)
+
+        previous_context = dict(existing_context) if isinstance(existing_context, dict) else None
+
+        context: dict[str, Any] = previous_context.copy() if previous_context is not None else {}
+        context.update(
+            {
+                "exception_type": type(exc).__name__,
+                "exception_message": str(exc),
+                "motors": self._motor_snapshot(),
+            }
+        )
+
+        if phase is not None:
+            if previous_context is not None and previous_context.get("phase") != phase:
+                context["previous_fault_context"] = previous_context
+            context["phase"] = phase
+        if coordinate is not None:
+            context["coordinate"] = self._safe_dump(coordinate)
+        if axis_statuses is not None:
+            context["axis_statuses"] = axis_statuses
+        if target_position is not None:
+            context["target_position"] = target_position
+
+        setattr(exc, "fault_context", context)
         self._logger.warning(
             "Tool fault detected - manual intervention required",
-            extra={"error": str(exc)},
+            extra=context,
         )
 
     async def get_param(self, param: str) -> Optional[Any]:
@@ -435,8 +526,11 @@ class Tool:
             await self.gantry_wait()
 
         except Exception as e:
-            await self._handle_fault(e)
-            raise MovementError(f"Gantry movement failed: {str(e)}") from e
+            await self._handle_fault(e, phase="gantry.move", coordinate=coordinate)
+            err = MovementError(f"Gantry movement failed: {str(e)}")
+            if hasattr(e, "fault_context"):
+                setattr(err, "fault_context", getattr(e, "fault_context"))
+            raise err from e
 
     async def gantry_wait(
         self,
@@ -448,6 +542,7 @@ class Tool:
 
         start_time = time.monotonic()
         terminal_error_states = {MotorStatus.ERROR, MotorStatus.FAULT, MotorStatus.TIMEOUT}
+        axis_statuses: dict[str, str] = {}
 
         try:
             while True:
@@ -456,6 +551,7 @@ class Tool:
 
                 mx_f = await self._mx.wait_for_move(timeout=GANTRY_WAIT_TIMEOUT, should_abort=should_abort)
                 my_f = await self._my.wait_for_move(timeout=GANTRY_WAIT_TIMEOUT, should_abort=should_abort)
+                axis_statuses = {"x_axis": mx_f.name, "y_axis": my_f.name}
 
                 if mx_f == MotorStatus.STOPPED and my_f == MotorStatus.STOPPED:
                     return
@@ -465,8 +561,12 @@ class Tool:
 
         except MotorWaitTimeoutError:
             raise
-        except MovementError:
-            await self._handle_fault(MovementError("Gantry motor error"))
+        except MovementError as e:
+            await self._handle_fault(
+                e,
+                phase="gantry.wait",
+                axis_statuses=axis_statuses,
+            )
             raise
         except Exception as e:
             await self._handle_fault(e)
@@ -783,6 +883,7 @@ class Tool:
 
         start_time = time.monotonic()
         terminal_error_states = {MotorStatus.ERROR, MotorStatus.FAULT, MotorStatus.TIMEOUT}
+        axis_statuses: dict[str, str] = {}
 
         try:
             while True:
@@ -800,6 +901,7 @@ class Tool:
                     homing=homing,
                     should_abort=should_abort,
                 )
+                axis_statuses = {"z_axis": mg_f.name, "stage": ms_f.name}
 
                 if mg_f == MotorStatus.STOPPED and ms_f == MotorStatus.STOPPED:
                     return
@@ -810,8 +912,12 @@ class Tool:
         except MotorWaitTimeoutError:
             raise
 
-        except MovementError:
-            await self._handle_fault(MovementError("Tool motor error"))
+        except MovementError as e:
+            await self._handle_fault(
+                e,
+                phase="tool.wait",
+                axis_statuses=axis_statuses,
+            )
             raise
 
         except Exception as e:
