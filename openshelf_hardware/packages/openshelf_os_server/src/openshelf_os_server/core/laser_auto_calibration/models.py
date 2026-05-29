@@ -161,6 +161,7 @@ class LaserAutoCalibrationScope(BaseModel):
     shelf_idx: int | None = None
     cell_idx: int | None = None
     include_io_box: bool = False
+    include_angle_calibration: bool = True
 
 
 class LaserAutoCalibrationSnapshot(BaseModel):
@@ -212,7 +213,7 @@ class _CompletedSideResult:
     side: StorageModuleSide
     bounds: ScanBounds
     analysis: Any
-    angle_result: LaserAutoCalibrationAngleResult
+    angle_result: LaserAutoCalibrationAngleResult | None
 
 
 def _get_timestamp() -> str:

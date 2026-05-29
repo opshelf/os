@@ -34,7 +34,8 @@ class ApplyRunnerMixin:
             if side_state is None or side_state.stage_extension_mm is None:
                 raise ValueError(f"Missing stage extension calibration result for {_side_to_module_name(completed_result.side)}")
 
-            params_dict[rotation_param] = completed_result.angle_result.updated_rotation_deg
+            if completed_result.angle_result is not None:
+                params_dict[rotation_param] = completed_result.angle_result.updated_rotation_deg
             params_dict[stage_extension_param] = float(side_state.stage_extension_mm)
 
         next_config.robot.tool.parameters = Parameters.model_validate(params_dict)

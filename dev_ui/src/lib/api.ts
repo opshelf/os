@@ -389,6 +389,7 @@ export interface LaserAutoCalibrationRequest {
 	shelf_idx?: number;
 	cell_idx?: number;
 	include_io_box?: boolean;
+	include_angle_calibration?: boolean;
 }
 
 export interface LaserAutoCalibrationSnapshot {
@@ -422,7 +423,11 @@ export interface LaserAutoCalibrationSnapshot {
 }
 
 export function buildLaserAutoCalibrationStreamUrl(
-	request: LaserAutoCalibrationRequest = { mode: 'all', include_io_box: true },
+	request: LaserAutoCalibrationRequest = {
+		mode: 'all',
+		include_io_box: true,
+		include_angle_calibration: true
+	},
 	options: { subscribeOnly?: boolean } = {}
 ): string {
 	const url = new URL(buildAuthenticatedUrl('/calibration/laser/stream'));
@@ -437,6 +442,10 @@ export function buildLaserAutoCalibrationStreamUrl(
 
 	if (request.include_io_box !== undefined) {
 		url.searchParams.set('include_io_box', String(request.include_io_box));
+	}
+
+	if (request.include_angle_calibration !== undefined) {
+		url.searchParams.set('include_angle_calibration', String(request.include_angle_calibration));
 	}
 
 	if (request.mode === 'all') {

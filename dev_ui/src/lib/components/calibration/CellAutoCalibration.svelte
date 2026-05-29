@@ -25,6 +25,7 @@
 	let isAborting = $state<boolean>(false);
 	let isAllSelected = $state<boolean>(true);
 	let isIoBoxSelected = $state<boolean>(true);
+	let isAngleCalibrationSelected = $state<boolean>(true);
 	let selectedSide = $state<'' | 'left_module' | 'right_module'>('');
 	let selectedShelf = $state<string>('');
 	let selectedCell = $state<string>('');
@@ -62,6 +63,10 @@
 		);
 	});
 
+	const isAngleCalibrationDisabled = $derived.by(() => {
+		return selectedShelf !== '' || isSelectionDisabled === true;
+	});
+
 	const isStartDisabled = $derived.by(() => {
 		if (isConnecting === true || isStreamOpen === true || isStreamReconnecting === true) {
 			return true;
@@ -75,7 +80,11 @@
 	});
 
 	const startButtonLabel = 'calibrate';
-	const defaultRequestedScope: LaserAutoCalibrationRequest = { mode: 'all', include_io_box: true };
+	const defaultRequestedScope: LaserAutoCalibrationRequest = {
+		mode: 'all',
+		include_io_box: true,
+		include_angle_calibration: true
+	};
 
 	onMount(function () {
 		if (browser === false) {
@@ -220,10 +229,12 @@
 
 	function syncScopeSelection(requestedScope: LaserAutoCalibrationRequest): void {
 		isIoBoxSelected = requestedScope.include_io_box === true || requestedScope.mode === 'io_box';
+		isAngleCalibrationSelected = requestedScope.include_angle_calibration !== false;
 
 		if (requestedScope.mode === 'all') {
 			isAllSelected = true;
 			isIoBoxSelected = true;
+			isAngleCalibrationSelected = requestedScope.include_angle_calibration !== false;
 			selectedSide = '';
 			selectedShelf = '';
 			selectedCell = '';
@@ -236,6 +247,7 @@
 			selectedSide = '';
 			selectedShelf = '';
 			selectedCell = '';
+			isAngleCalibrationSelected = false;
 			return;
 		}
 
@@ -248,22 +260,31 @@
 		const nextCell = requestedScope.cell_idx === undefined ? '' : String(requestedScope.cell_idx);
 
 		syncSelection(nextShelf, nextCell);
+
+		if (requestedScope.mode === 'shelf' || requestedScope.mode === 'cell') {
+			isAngleCalibrationSelected = false;
+		}
 	}
 
 	function getRequestedScope(): LaserAutoCalibrationRequest {
 		if (isAllSelected === true) {
-			return { mode: 'all', include_io_box: true };
+			return {
+				mode: 'all',
+				include_io_box: true,
+				include_angle_calibration: isAngleCalibrationSelected
+			};
 		}
 
 		if (selectedSide === '') {
-			return { mode: 'io_box', include_io_box: true };
+			return { mode: 'io_box', include_io_box: true, include_angle_calibration: false };
 		}
 
 		if (selectedShelf === '') {
 			return {
 				mode: 'side',
 				side: selectedSide,
-				include_io_box: isIoBoxSelected
+				include_io_box: isIoBoxSelected,
+				include_angle_calibration: isAngleCalibrationSelected
 			};
 		}
 
@@ -272,7 +293,8 @@
 				mode: 'shelf',
 				side: selectedSide,
 				shelf_idx: Number(selectedShelf),
-				include_io_box: isIoBoxSelected
+				include_io_box: isIoBoxSelected,
+				include_angle_calibration: false
 			};
 		}
 
@@ -281,7 +303,8 @@
 			side: selectedSide,
 			shelf_idx: Number(selectedShelf),
 			cell_idx: Number(selectedCell),
-			include_io_box: isIoBoxSelected
+			include_io_box: isIoBoxSelected,
+			include_angle_calibration: false
 		};
 	}
 
@@ -367,6 +390,7 @@
 
 		isAllSelected = target.checked;
 		isIoBoxSelected = isAllSelected;
+		isAngleCalibrationSelected = true;
 
 		if (isAllSelected === true) {
 			selectedSide = '';
@@ -383,6 +407,7 @@
 
 		selectedSide = target.value as '' | 'left_module' | 'right_module';
 		syncSelection();
+		isAngleCalibrationSelected = selectedShelf === '';
 		error = '';
 		message = '';
 	}
@@ -391,6 +416,7 @@
 		const target = event.target as HTMLSelectElement;
 
 		syncSelection(target.value);
+		isAngleCalibrationSelected = selectedShelf === '';
 		error = '';
 		message = '';
 	}
@@ -399,6 +425,9 @@
 		const target = event.target as HTMLSelectElement;
 
 		selectedCell = target.value;
+		if (selectedCell !== '') {
+			isAngleCalibrationSelected = false;
+		}
 		error = '';
 		message = '';
 	}
@@ -407,6 +436,14 @@
 		const target = event.target as HTMLInputElement;
 
 		isIoBoxSelected = target.checked;
+		error = '';
+		message = '';
+	}
+
+	function didChangeAngleCalibration(event: Event): void {
+		const target = event.target as HTMLInputElement;
+
+		isAngleCalibrationSelected = target.checked;
 		error = '';
 		message = '';
 	}
@@ -605,6 +642,19 @@
 							{/each}
 						</select>
 					</div>
+				</td>
+			</tr>
+			<tr>
+				<td colspan="3">
+					<label class="all-toggle">
+						<input
+							type="checkbox"
+							checked={isAngleCalibrationSelected}
+							onchange={didChangeAngleCalibration}
+							disabled={isAngleCalibrationDisabled}
+						/>
+						<span>angle calibration</span>
+					</label>
 				</td>
 			</tr>
 			<tr>
