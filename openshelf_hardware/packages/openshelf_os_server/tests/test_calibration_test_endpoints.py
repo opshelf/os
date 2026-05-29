@@ -103,38 +103,6 @@ async def test_quick_test_picks_and_places_selected_cell(client) -> None:
 
 
 @pytest.mark.asyncio
-async def test_quick_batch_test_picks_and_places_selected_cells_with_one_setup(client) -> None:
-	grid = build_grid(is_occupied=False)
-	grid.left_module[0].cells.append(
-		Cell(
-			cell_idx=1,
-			status=CellStatus.AVAILABLE,
-			item=None,
-			calibration_point=CalibrationCoordinate(x=124.0, y=457.0, z_offset=8.5, s=0),
-			dimensions=Dimensions(width=100.0, height=200.0, length=100.0),
-		)
-	)
-	worker = build_worker(grid)
-
-	with patch('openshelf_os_server.routers.calibration.get_robot_worker', AsyncMock(return_value=worker)):
-		with patch('openshelf_os_server.routers.calibration._clear_motors_for_move', AsyncMock()) as clear_motors:
-			response = await client.post(
-				'/api/calibration/test/batch',
-				json={
-					'cells': [
-						{'side': 'left_module', 'shelf_idx': 0, 'cell_idx': 0},
-						{'side': 'left_module', 'shelf_idx': 0, 'cell_idx': 1},
-					]
-				},
-			)
-
-	assert response.status_code == 200
-	assert clear_motors.await_count == 1
-	assert worker._robot._tool.retract.await_count == 1
-	assert worker._robot._tool.pick.await_count == 2
-	assert worker._robot._tool.place.await_count == 2
-
-@pytest.mark.asyncio
 async def test_cycle_test_runs_retrieve_then_store_for_empty_cell(client) -> None:
 	grid = build_grid(is_occupied=False)
 	worker = build_worker(grid)

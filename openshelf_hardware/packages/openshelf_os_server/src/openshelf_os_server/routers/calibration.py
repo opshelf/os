@@ -113,8 +113,6 @@ class TestRequest(BaseModel):
 	cell_idx: int
 
 
-class TestBatchRequest(BaseModel):
-	cells: list[TestRequest]
 
 
 
@@ -933,71 +931,6 @@ async def test_gripper(request: TestRequest):
 	return {"success": True}
 
 
-@router.post("/test/batch")
-@serialize_calibration_state
-async def test_gripper_batch(request: TestBatchRequest):
-	global _current_position, _current_side
-
-	await ensure_laser_auto_calibration_not_running()
-
-	worker = await get_robot_worker_or_503()
-
-	_ensure_ready(worker)
-
-	if len(request.cells) == 0:
-		raise HTTPException(
-			status_code=status.HTTP_400_BAD_REQUEST,
-			detail="cells must not be empty",
-		)
-
-	grid = worker._robot._grid
-	test_points = []
-
-	for cell_request in request.cells:
-		location = _build_test_location(cell_request)
-
-		try:
-			coordinate = _build_coordinate_for_location(grid, location)
-		except (IndexError, ValueError, Exception) as exc:
-			raise HTTPException(
-				status_code=status.HTTP_400_BAD_REQUEST,
-				detail=str(exc),
-			) from exc
-
-		test_points.append((cell_request, coordinate))
-
-	tool = worker._robot._tool
-	results = []
-
-	async with manual_motion_guard("calibration_test_gripper_batch", worker=worker):
-		try:
-			await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
-			await tool.retract()
-		except (MotorError, HardwareMotorError, ToolError) as e:
-			await _raise_motor_error(worker, f"Failed to retract: {str(e)}", e)
-
-		for cell_request, coord in test_points:
-			_current_position = PositionResponse(
-				x=coord.x,
-				y=coord.y,
-				z_offset=coord.z_offset,
-				slide_extension=await _get_current_stage_extension(tool),
-			)
-			_current_side = coord.s
-
-			try:
-				await tool.pick(coord)
-				await tool.place(coord)
-			except (MotorError, HardwareMotorError, ToolError) as e:
-				await _raise_motor_error(worker, f"Test failed: {str(e)}", e)
-
-			results.append({
-				"side": cell_request.side,
-				"shelf_idx": cell_request.shelf_idx,
-				"cell_idx": cell_request.cell_idx,
-			})
-
-	return {"success": True, "results": results}
 
 
 @router.post("/test/cycle")
