@@ -14,7 +14,6 @@ from openshelf_os.common import (
     StorageSettings,
     PrinterSettings,
     ScannerSettings,
-    CameraAppSettings,
     ToolCameraSettings,
     OverheadCameraSettings,
     AuthSettings,
@@ -40,7 +39,6 @@ class Settings(BaseModel):
     scanner: ScannerSettings
     robot: RobotAppSettings
     scale: ScaleAppSettings
-    camera: CameraAppSettings
     tool_camera: ToolCameraSettings
     overhead_camera: OverheadCameraSettings
     auth: AuthSettings
@@ -53,7 +51,6 @@ class Settings(BaseModel):
             scanner=config.scanner,
             robot=config.robot_app,
             scale=config.scale,
-            camera=config.camera,
             tool_camera=config.tool_camera,
             overhead_camera=config.overhead_camera,
             auth=config.auth,
@@ -216,11 +213,6 @@ def _build_minimal_config(data: dict) -> dict:
                 },
             "io": {
                 "motors": [],
-                "usb_camera": {
-                    "usb_index": 0,
-                    "usb_fourcc": "MJPG",
-                    "usb_exposure": 25,
-                },
             },
             "bus": {
                 "motor": {
