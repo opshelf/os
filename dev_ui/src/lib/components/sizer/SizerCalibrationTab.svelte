@@ -124,8 +124,12 @@
 		};
 	}
 
-	function parseOptionalNumber(value: string): number | null {
-		const trimmed = value.trim();
+	function parseOptionalNumber(value: string | number | null | undefined): number | null {
+		if (value === null || value === undefined) {
+			return null;
+		}
+
+		const trimmed = String(value).trim();
 		if (trimmed === '') {
 			return null;
 		}
