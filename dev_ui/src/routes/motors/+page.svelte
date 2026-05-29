@@ -33,8 +33,8 @@
 	let moveTargets: Record<string, string> = {};
 	let movingMotor: string | null = null;
 	let isProbing = false;
+	let sectionAction: string | null = null;
 	let motorPositions: Record<string, string> = {};
-	let probeBusyReason: string | null = null;
 	let pollError = '';
 
 	const POSITION_POLL_INTERVAL_MS = 1000;
@@ -49,13 +49,52 @@
 		return 'mm';
 	}
 
-	function positionLabelForMotor(motorName: string): string {
-		const position = motorPositions[motorName];
+	function positionLabelForMotor(motorName: string, position: string | undefined): string {
 		if (position === undefined) {
 			return '-';
 		}
 
 		return `${position} ${unitForMotor(motorName)}`;
+	}
+
+	function gantryMotors(): MotorInfo[] {
+		if (motors === null) {
+			return [];
+		}
+
+		const toolMotors = motors.tool;
+
+		return ['x_axis', 'y_axis']
+			.map((motorName) => toolMotors.find((motor) => motor.name === motorName))
+			.filter((motor): motor is MotorInfo => motor !== undefined);
+	}
+
+	function toolMotors(): MotorInfo[] {
+		if (motors === null) {
+			return [];
+		}
+
+		return motors.tool.filter((motor) => motor.name !== 'x_axis' && motor.name !== 'y_axis');
+	}
+
+	function ioMotors(): MotorInfo[] {
+		if (motors === null) {
+			return [];
+		}
+
+		return motors.io;
+	}
+
+	function isActionDisabled(): boolean {
+		return (
+			activeMotor !== null ||
+			movingMotor !== null ||
+			gripperAction !== null ||
+			doorAction !== null ||
+			isTesting === true ||
+			isHomingAll === true ||
+			sectionAction !== null
+		);
 	}
 
 	async function fetchMotors(): Promise<void> {
@@ -81,11 +120,8 @@
 			const result = await probeMotors();
 
 			if (result.busy === true) {
-				probeBusyReason = result.reason;
 				return;
 			}
-
-			probeBusyReason = null;
 			pollError = '';
 
 			const nextPositions = { ...motorPositions };
@@ -264,6 +300,84 @@
 		}
 	}
 
+	async function didClickHomeSection(
+		sectionName: string,
+		sectionMotors: MotorInfo[]
+	): Promise<void> {
+		sectionAction = `${sectionName}:home`;
+		error = '';
+		message = '';
+
+		try {
+			for (const motor of sectionMotors) {
+				activeMotor = motor.name;
+				activeAction = 'home';
+				const result = await homeMotor(motor.name);
+
+				if (result.success !== true) {
+					error = `failed to home ${motor.name}`;
+					return;
+				}
+			}
+
+			message = `${sectionName} motors homed`;
+		} catch (err) {
+			error = err instanceof Error ? err.message : `${sectionName} home failed`;
+		} finally {
+			activeMotor = null;
+			activeAction = null;
+			sectionAction = null;
+		}
+	}
+
+	async function didClickMoveSection(
+		sectionName: string,
+		sectionMotors: MotorInfo[]
+	): Promise<void> {
+		const targets: { motor: MotorInfo; positionMm: number }[] = [];
+
+		for (const motor of sectionMotors) {
+			const targetValue = moveTargets[motor.name];
+
+			if (targetValue === undefined || targetValue === '') {
+				error = `enter a position for ${motor.name}`;
+				return;
+			}
+
+			const positionMm = parseFloat(targetValue);
+
+			if (Number.isNaN(positionMm) === true) {
+				error = `invalid position value for ${motor.name}`;
+				return;
+			}
+
+			targets.push({ motor, positionMm });
+		}
+
+		sectionAction = `${sectionName}:move`;
+		error = '';
+		message = '';
+
+		try {
+			for (const target of targets) {
+				movingMotor = target.motor.name;
+				const result = await moveMotor(target.motor.name, target.positionMm);
+
+				if (result.success !== true) {
+					error = `failed to move ${target.motor.name}`;
+					return;
+				}
+			}
+
+			message = `${sectionName} motors moved`;
+		} catch (err) {
+			error = err instanceof Error ? err.message : `${sectionName} move failed`;
+		} finally {
+			movingMotor = null;
+			sectionAction = null;
+		}
+	}
+
 	async function didClickMove(motorName: string): Promise<void> {
 		const targetValue = moveTargets[motorName];
 
@@ -355,32 +469,45 @@
 		</button>
 	</div>
 
-	{#if probeBusyReason !== null}
-		<p class="poll-status">positions paused while robot is moving ({probeBusyReason})</p>
-	{/if}
-
 	{#if pollError !== ''}
 		<p class="poll-status poll-status-error">position updates unavailable: {pollError}</p>
 	{/if}
 
-	<table>
+	<table class="motor-table">
 		<thead>
 			<tr>
-				<th colspan="5">gantry motors</th>
+				<th colspan="6">
+					<div class="section-heading">
+						<span>gantry motors</span>
+						<span>
+							<button
+								type="button"
+								on:click={() => didClickHomeSection('gantry', gantryMotors())}
+								disabled={isActionDisabled()}>HOME</button
+							>
+							<button
+								type="button"
+								on:click={() => didClickMoveSection('gantry', gantryMotors())}
+								disabled={isActionDisabled()}>MOVE</button
+							>
+						</span>
+					</div>
+				</th>
 			</tr>
 			<tr>
 				<th>id</th>
-				<th>motor</th>
+				<th class="motor-name">motor</th>
 				<th>status</th>
+				<th class="position-column">POSITION</th>
 				<th>move to</th>
 				<th>actions</th>
 			</tr>
 		</thead>
 		<tbody>
-			{#each motors.tool.filter((m) => m.name === 'x_axis' || m.name === 'y_axis') as motor (motor.name)}
+			{#each gantryMotors() as motor (motor.name)}
 				<tr>
 					<td class="motor-id">{motor.motor_id}</td>
-					<td>{motor.name}</td>
+					<td class="motor-name">{motor.name}</td>
 					<td>
 						{#if testingMotor === motor.name}
 							<span class="status-testing">TEST</span>
@@ -392,26 +519,24 @@
 							<span class="status-unknown">-</span>
 						{/if}
 					</td>
+					<td class="position-column"
+						>{positionLabelForMotor(motor.name, motorPositions[motor.name])}</td
+					>
 					<td>
-						<div class="position-label">current: {positionLabelForMotor(motor.name)}</div>
 						<input
 							type="number"
 							step="0.1"
 							placeholder={unitForMotor(motor.name)}
 							value={moveTargets[motor.name] ?? ''}
 							on:input={(e) => didInputTarget(motor.name, e)}
-							disabled={movingMotor !== null ||
-								activeMotor !== null ||
-								isTesting === true}
+							disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
 						/>
 						<button
 							type="button"
 							on:click={() => didClickMove(motor.name)}
-							disabled={movingMotor !== null ||
-								activeMotor !== null ||
-								isTesting === true}
+							disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
 						>
-							{movingMotor === motor.name ? '...' : 'go'}
+							go
 						</button>
 					</td>
 					<td>
@@ -441,24 +566,43 @@
 				</tr>
 			{/each}
 		</tbody>
+	</table>
 
+	<table class="motor-table">
 		<thead>
 			<tr>
-				<th colspan="5">tool motors</th>
+				<th colspan="6">
+					<div class="section-heading">
+						<span>tool motors</span>
+						<span>
+							<button
+								type="button"
+								on:click={() => didClickHomeSection('tool', toolMotors())}
+								disabled={isActionDisabled()}>HOME</button
+							>
+							<button
+								type="button"
+								on:click={() => didClickMoveSection('tool', toolMotors())}
+								disabled={isActionDisabled()}>MOVE</button
+							>
+						</span>
+					</div>
+				</th>
 			</tr>
 			<tr>
 				<th>id</th>
-				<th>motor</th>
+				<th class="motor-name">motor</th>
 				<th>status</th>
+				<th class="position-column">POSITION</th>
 				<th>move to</th>
 				<th>actions</th>
 			</tr>
 		</thead>
 		<tbody>
-			{#each motors.tool.filter((m) => m.name !== 'x_axis' && m.name !== 'y_axis') as motor (motor.name)}
+			{#each toolMotors() as motor (motor.name)}
 				<tr>
 					<td class="motor-id">{motor.motor_id}</td>
-					<td>{motor.name}</td>
+					<td class="motor-name">{motor.name}</td>
 					<td>
 						{#if testingMotor === motor.name}
 							<span class="status-testing">TEST</span>
@@ -470,24 +614,22 @@
 							<span class="status-unknown">-</span>
 						{/if}
 					</td>
+					<td class="position-column"
+						>{positionLabelForMotor(motor.name, motorPositions[motor.name])}</td
+					>
 					<td>
-						<div class="position-label">current: {positionLabelForMotor(motor.name)}</div>
 						<input
 							type="number"
 							step="0.1"
 							placeholder={unitForMotor(motor.name)}
 							value={moveTargets[motor.name] ?? ''}
 							on:input={(e) => didInputTarget(motor.name, e)}
-							disabled={movingMotor !== null ||
-								activeMotor !== null ||
-								isTesting === true}
+							disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
 						/>
 						<button
 							type="button"
 							on:click={() => didClickMove(motor.name)}
-							disabled={movingMotor !== null ||
-								activeMotor !== null ||
-								isTesting === true}
+							disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
 						>
 							{movingMotor === motor.name ? '...' : 'go'}
 						</button>
@@ -518,7 +660,7 @@
 			{/each}
 			<tr>
 				<td class="motor-id">9</td>
-				<td>gripper</td>
+				<td class="motor-name">gripper</td>
 				<td>
 					{#if testingMotor === 'gripper'}
 						<span class="status-testing">TEST</span>
@@ -530,6 +672,7 @@
 						<span class="status-unknown">-</span>
 					{/if}
 				</td>
+				<td class="position-column">-</td>
 				<td>-</td>
 				<td>
 					<button
@@ -555,24 +698,43 @@
 				</td>
 			</tr>
 		</tbody>
+	</table>
 
+	<table class="motor-table">
 		<thead>
 			<tr>
-				<th colspan="5">io motors</th>
+				<th colspan="6">
+					<div class="section-heading">
+						<span>io motors</span>
+						<span>
+							<button
+								type="button"
+								on:click={() => didClickHomeSection('io', ioMotors())}
+								disabled={isActionDisabled()}>HOME</button
+							>
+							<button
+								type="button"
+								on:click={() => didClickMoveSection('io', ioMotors())}
+								disabled={isActionDisabled()}>MOVE</button
+							>
+						</span>
+					</div>
+				</th>
 			</tr>
 			<tr>
 				<th>id</th>
-				<th>motor</th>
+				<th class="motor-name">motor</th>
 				<th>status</th>
+				<th class="position-column">POSITION</th>
 				<th>move to</th>
 				<th>actions</th>
 			</tr>
 		</thead>
 		<tbody>
-			{#each motors.io as motor (motor.name)}
+			{#each ioMotors() as motor (motor.name)}
 				<tr>
 					<td class="motor-id">{motor.motor_id}</td>
-					<td>{motor.name}</td>
+					<td class="motor-name">{motor.name}</td>
 					<td>
 						{#if testingMotor === motor.name}
 							<span class="status-testing">TEST</span>
@@ -584,24 +746,22 @@
 							<span class="status-unknown">-</span>
 						{/if}
 					</td>
+					<td class="position-column"
+						>{positionLabelForMotor(motor.name, motorPositions[motor.name])}</td
+					>
 					<td>
-						<div class="position-label">current: {positionLabelForMotor(motor.name)}</div>
 						<input
 							type="number"
 							step="0.1"
 							placeholder="mm"
 							value={moveTargets[motor.name] ?? ''}
 							on:input={(e) => didInputTarget(motor.name, e)}
-							disabled={movingMotor !== null ||
-								activeMotor !== null ||
-								isTesting === true}
+							disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
 						/>
 						<button
 							type="button"
 							on:click={() => didClickMove(motor.name)}
-							disabled={movingMotor !== null ||
-								activeMotor !== null ||
-								isTesting === true}
+							disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
 						>
 							{movingMotor === motor.name ? '...' : 'go'}
 						</button>
@@ -694,6 +854,33 @@
 		display: flex;
 	}
 
+	td {
+		white-space: nowrap;
+	}
+
+	.motor-name {
+		width: 120px;
+	}
+
+	.position-column {
+		width: 120px;
+	}
+
+	.motor-table + .motor-table {
+		margin-top: 1.5em;
+	}
+
+	.section-heading {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+	}
+
+	.section-heading span:last-child {
+		display: flex;
+		gap: 0.5rem;
+	}
+
 	.poll-status {
 		color: #666;
 		margin-bottom: 1rem;
@@ -710,12 +897,6 @@
 	input[type='number'] {
 		width: 80px;
 		margin-right: 4px;
-	}
-
-	.position-label {
-		color: #666;
-		font-size: 0.9rem;
-		margin-bottom: 0.25rem;
 	}
 
 	.motor-id {
