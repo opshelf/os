@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 import json
 import re
 from typing import AsyncGenerator, Callable, List, Literal, Optional, cast
@@ -15,6 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from openshelf_os_server.core.robot import get_robot_health, get_robot_worker
+from openshelf_os_server.core.iobox_sizer import capture_store_observer_measurement
+from openshelf_os_server.core.logging_config import correlation_id_var
 from openshelf_os_server.core.laser_auto_calibration import is_laser_auto_calibration_running
 from openshelf_os_server.core.manual_motion import (
     get_manual_motion_operation,
@@ -190,8 +193,9 @@ async def robot_commands(
 
     if isinstance(command, StoreItemCommand):
         logging.info("Processing StoreItemCommand: item=%s", command.item)
-        item_data = command.item or {}
+        item_data = deepcopy(command.item or {})
         upca = item_data.get("upca")
+        human_dimensions_source = "command_payload" if item_data.get("dimensions") is not None else "none"
 
         if upca is not None:
             logging.info("Looking up item by upca: %s", upca)
@@ -202,6 +206,7 @@ async def robot_commands(
                 logging.info("Found item in db: name=%s, dimensions=%s", item.name, item.dimensions)
                 item_data["dimensions"] = item.dimensions
                 item_data["name"] = item.name
+                human_dimensions_source = "db"
                 if item.weight is not None:
                     item_data["weight"] = item.weight
                 command = StoreItemCommand(item=item_data)
@@ -209,6 +214,19 @@ async def robot_commands(
                 logging.info("Item not found in db for upca: %s", upca)
 
         logging.info("Final StoreItemCommand: item=%s", command.item)
+        final_item_data = command.item or {}
+        try:
+            await capture_store_observer_measurement(
+                upca=final_item_data.get("upca"),
+                item_name=final_item_data.get("name"),
+                user_id=current_user.id,
+                request_correlation_id=correlation_id_var.get(),
+                command_payload=command.model_dump(mode="json"),
+                human_dimensions=deepcopy(final_item_data.get("dimensions")),
+                human_dimensions_source=human_dimensions_source,
+            )
+        except Exception as exc:
+            logging.warning("IO box sizer observer capture failed: %s", exc)
 
     if isinstance(command, RetrieveItemCommand):
         try:

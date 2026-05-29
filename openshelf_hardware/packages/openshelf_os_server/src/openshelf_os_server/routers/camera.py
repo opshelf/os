@@ -31,6 +31,9 @@ async def mjpeg_stream_generator_for_camera(
 			if await request.is_disconnected() is True:
 				break
 
+			if manager.unregistered.is_set() is True:
+				break
+
 			if manager.calibration_complete.is_set() is False:
 				if black_frame_cache is None:
 					black = np.zeros((480, 640, 3), dtype=np.uint8)

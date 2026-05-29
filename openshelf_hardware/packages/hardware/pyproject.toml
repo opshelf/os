@@ -4,7 +4,14 @@ version = "0.1.0"
 description = "Add your description here"
 requires-python = ">=3.12"
 dependencies = [
+    "adafruit-blinka>=8.0.0",
+    "adafruit-circuitpython-busdevice>=5.0.0",
+    "adafruit-circuitpython-tca9548a>=0.8.0",
+    "adafruit-circuitpython-vl53l1x>=1.2.9",
+    "opencv-python",
     "pydantic>=2.10.0",
+    "pyftdi>=0.56.0",
+    "pyusb>=1.2.1",
     "rpi-lgpio; sys_platform == 'linux'",
 ]
 

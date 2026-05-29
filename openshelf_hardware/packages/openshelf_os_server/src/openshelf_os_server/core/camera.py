@@ -6,15 +6,18 @@ import queue
 import time
 from multiprocessing.context import BaseContext
 from multiprocessing.queues import Queue
-from typing import Any, Optional, Union, cast
+from typing import Any, Optional, Protocol, Union, cast
 
 import cv2
 import numpy as np
-from hardware.iocam import AFSCam
 
 from openshelf_os_server.core.logging_config import get_logger
 
 logger = get_logger(__name__)
+
+class RawCamera(Protocol):
+	def capture_raw(self) -> np.ndarray: ...
+
 
 CameraManager = Union["CameraStreamManager", "ToolCameraStreamManager"]
 camera_registry: dict[str, CameraManager] = {}
@@ -98,8 +101,9 @@ def _tool_camera_worker(
 			cap.release()
 
 class CameraStreamManager:
-	def __init__(self, camera: AFSCam):
-		self.camera: Optional[AFSCam] = camera
+	def __init__(self, camera: RawCamera, camera_type: str = "OpenCvCamera"):
+		self.camera: Optional[RawCamera] = camera
+		self.camera_type = camera_type
 		self.is_running = False
 		self.consumer_count = 0
 		self.latest_frame: Optional[bytes] = None
@@ -108,6 +112,7 @@ class CameraStreamManager:
 		self.target_fps = 12
 		self.frame_interval = 1.0 / self.target_fps
 		self.calibration_complete = asyncio.Event()
+		self.unregistered = asyncio.Event()
 
 	# run and then pull from this, or size separately
 	async def start(self) -> None:
@@ -133,7 +138,9 @@ class CameraStreamManager:
 				pass
 			self.capture_task = None
 
-		self.camera = None
+		if self.unregistered.is_set() is True:
+			self.camera = None
+
 		self.latest_frame = None
 
 	def increment_consumers(self) -> int:
@@ -206,6 +213,7 @@ class ToolCameraStreamManager:
 		self.max_frame_width = 640
 		self.jpeg_quality = 65
 		self.calibration_complete = asyncio.Event()
+		self.unregistered = asyncio.Event()
 
 	async def start(self) -> None:
 		if self.is_running is True:
@@ -335,12 +343,27 @@ camera_manager: Optional[CameraStreamManager] = None
 tool_camera_manager: Optional[ToolCameraStreamManager] = None
 overhead_camera_manager: Optional[ToolCameraStreamManager] = None
 
-async def init_camera_manager(camera: AFSCam) -> None:
+async def init_camera_manager(camera: RawCamera) -> None:
 	global camera_manager, camera_registry
 
 	camera_manager = CameraStreamManager(camera=camera)
 	camera_registry["io"] = camera_manager
 	logger.info("io_camera_registered")
+
+
+async def init_sizer_camera_manager(camera: RawCamera) -> None:
+	camera_registry["iobox_sizer"] = CameraStreamManager(camera=camera, camera_type="IOBoxSizerCamera")
+	logger.info("iobox_sizer_camera_registered")
+
+
+async def unregister_camera_manager(camera_id: str) -> None:
+	manager = camera_registry.pop(camera_id, None)
+
+	if manager is None:
+		return
+
+	manager.unregistered.set()
+	await manager.stop()
 
 
 async def init_tool_camera_manager(rtsp_url: str) -> None:
@@ -401,7 +424,7 @@ def get_all_cameras_status() -> list[dict]:
 
 	for camera_id, manager in camera_registry.items():
 		if isinstance(manager, CameraStreamManager):
-			camera_type = "IOCamera"
+			camera_type = getattr(manager, "camera_type", "OpenCvCamera")
 		elif camera_id == "overhead":
 			camera_type = "OverheadCamera"
 		else:

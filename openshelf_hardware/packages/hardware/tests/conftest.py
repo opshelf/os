@@ -6,9 +6,6 @@ import numpy as np
 import pytest
 from unittest.mock import AsyncMock, Mock
 
-from hardware.exceptions import CameraConnectionError
-
-
 class AttrDict(SimpleNamespace):
     def __getitem__(self, key: str) -> Any:
         return getattr(self, key)
@@ -51,26 +48,6 @@ class _FakeVideoCapture:
 
 
 @pytest.fixture(autouse=True)
-def patch_iocam(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("hardware.iocam._find_innomaker_device", lambda: 0, raising=False)
-    monkeypatch.setattr("cv2.VideoCapture", _FakeVideoCapture)
-
-    def _fake_init_usb(self, *args: Any, use_auto_exposure: bool = True, **kwargs: Any) -> None:
-        self._usb = cv2.VideoCapture(self._usb_index)
-        if not self._usb.isOpened():
-            raise CameraConnectionError("Failed to open mock USB camera")
-        if self._usb_fourcc:
-            fourcc = cv2.VideoWriter_fourcc(*self._usb_fourcc)
-            self._usb.set(cv2.CAP_PROP_FOURCC, fourcc)
-        if use_auto_exposure is True:
-            self._usb.set(cv2.CAP_PROP_AUTO_EXPOSURE, 3)
-        elif self._usb_exposure is not None:
-            self._usb.set(cv2.CAP_PROP_EXPOSURE, float(self._usb_exposure))
-
-    monkeypatch.setattr("hardware.iocam.AFSCam._init_usb", _fake_init_usb)
-
-
-@pytest.fixture(autouse=True)
 def patch_toolcam_time(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_time = _FakeTime()
     monkeypatch.setattr("hardware.toolcam.time.time", fake_time.time)
@@ -109,14 +86,6 @@ def mock_controller() -> AsyncMock:
     controller.client.connected = True
     return controller
 
-
-@pytest.fixture
-def sample_usb_params() -> AttrDict:
-    return AttrDict(
-        usb_index=0,
-        usb_fourcc="MJPG",
-        usb_exposure=10,
-    )
 
 
 @pytest.fixture

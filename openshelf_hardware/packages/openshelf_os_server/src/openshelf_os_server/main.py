@@ -28,22 +28,21 @@ from sentry_sdk.transport import HttpTransport
 from sqlalchemy import delete, select
 
 from openshelf_os.device import get_device_id
-from hardware.exceptions import CameraNotPresentError
-from hardware.iocam import AFSCam
-from openshelf_os.common import CONFIG_PATH, OperatingMode, UsbCamera, load_config_file, resolve_grid_path
+from openshelf_os.common import CONFIG_PATH, OperatingMode, load_config_file, resolve_grid_path
 from openshelf_os.operating_mode import should_enable_sentry
 from openshelf_os.storage import StorageGrid
 from openshelf_os_server.core.logging_config import configure_logging, get_logger
 from openshelf_os_server.core.robot import get_robot_health, init_robot_worker, set_robot_initialization_error, stop_robot_worker
 from openshelf_os_server.core.storage import StorageService
-from openshelf_os_server.core.camera import init_tool_camera_manager, init_camera_manager, init_overhead_camera_manager
+from openshelf_os_server.core.camera import init_tool_camera_manager, init_overhead_camera_manager
+from openshelf_os_server.core.iobox_sizer import init_iobox_sizer, stop_iobox_sizer
 from openshelf_os_server.settings import Settings
 from openshelf_os_server.database.base import Base, engine, get_database_url
 from openshelf_os_server.database.session import AsyncSessionLocal
 from openshelf_os_server.database.models import Item, ItemLocation, Role, User
 from openshelf_os_server.middleware.audit import AuditMiddleware
 from openshelf_os_server.middleware.correlation import CorrelationIdMiddleware
-from openshelf_os_server.routers import access_levels, audit, auth, calibration, camera, demo, printer, report, robot, roles, storage, system, telemetry, users
+from openshelf_os_server.routers import access_levels, audit, auth, calibration, camera, demo, iobox_sizer, printer, report, robot, roles, storage, system, telemetry, users
 from openshelf_os_server.settings import get_settings, get_operating_mode
 
 configure_logging()
@@ -205,7 +204,10 @@ def _run_migrations() -> None:
 
 
 def _get_tool_camera_url(settings: Settings) -> str | None:
-	if settings.tool_camera.enabled is True and settings.tool_camera.rtsp_url != "":
+	if settings.tool_camera.enabled is False:
+		return None
+
+	if settings.tool_camera.rtsp_url != "":
 		return settings.tool_camera.rtsp_url
 
 	config_paths = [
@@ -235,26 +237,6 @@ def _get_tool_camera_url(settings: Settings) -> str | None:
 def _get_overhead_camera_url(settings: Settings) -> str | None:
 	if settings.overhead_camera.enabled is True and settings.overhead_camera.rtsp_url != "":
 		return settings.overhead_camera.rtsp_url
-	return None
-
-
-def _get_io_camera_config() -> dict | None:
-	if CONFIG_PATH.exists() is False:
-		return None
-
-	try:
-		with open(CONFIG_PATH) as f:
-			config = json.load(f)
-
-		io_config = config.get("robot", {}).get("io", {})
-		usb_camera = io_config.get("usb_camera")
-
-		if usb_camera is not None:
-			logger.info("io_camera_config_found", config_path=str(CONFIG_PATH))
-			return usb_camera
-	except Exception as e:
-		logger.warning("failed_to_read_io_camera_config", config_path=str(CONFIG_PATH), error=str(e))
-
 	return None
 
 
@@ -455,25 +437,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 		except Exception as e:
 			logger.error("overhead_camera_initialization_failed", error=str(e), exc_info=True)
 
-	if settings.camera.enabled is True:
-		usb_config = _get_io_camera_config()
-		if usb_config is not None:
-			try:
-				usb_params = UsbCamera(**usb_config)
-				io_camera = AFSCam(usb_params)
-				await io_camera.start()
-				await init_camera_manager(io_camera)
-				logger.info("io_camera_initialized")
-			except CameraNotPresentError as e:
-				logger.warning(
-					"io_camera_unavailable",
-					reason="not_detected",
-					error=str(e),
-				)
-			except Exception as e:
-				logger.error("io_camera_initialization_failed", error=str(e), exc_info=True)
-		else:
-			logger.warning("io_camera_config_not_found")
+	try:
+		await init_iobox_sizer()
+	except Exception as e:
+		logger.warning("iobox_sizer_startup_failed", error=str(e), error_type=type(e).__name__, exc_info=True)
 
 	async def get_storage_session() -> AsyncGenerator[StorageService, None]:
 		async with AsyncSessionLocal() as session:
@@ -489,6 +456,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 		if robot_started is True:
 			await stop_robot_worker()
 			logger.info("robot_worker_stopped")
+		await stop_iobox_sizer()
 		if storage_override_set is True:
 			app.dependency_overrides.pop(StorageService, None)
 
@@ -579,6 +547,7 @@ app.include_router(roles.router)
 app.include_router(access_levels.router)
 app.include_router(audit.router)
 app.include_router(camera.router, prefix="/api/camera")
+app.include_router(iobox_sizer.router, prefix="/api/iobox/sizer")
 app.include_router(robot.router, prefix="/api/robot")
 app.include_router(storage.router, prefix="/api/storage")
 app.include_router(printer.router, prefix="/api/print")
