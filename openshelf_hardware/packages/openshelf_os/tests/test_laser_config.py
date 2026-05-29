@@ -35,11 +35,6 @@ MINIMAL_CONFIG_DICT = {
         "grid": {"path": "storage.json"},
         "io": {
             "motors": [],
-            "usb_camera": {
-                "usb_index": 0,
-                "usb_fourcc": "MJPG",
-                "usb_exposure": 25,
-            },
         },
     },
     "auth": {"require_auth": False},

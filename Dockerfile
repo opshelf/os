@@ -7,6 +7,7 @@ ENV UV_PYTHON=3.13
 RUN apt-get update && apt-get -y install --no-install-recommends \
 	libgl1 \
 	libglib2.0-0 \
+	libusb-1.0-0 \
 	build-essential \
 	gcc \
 	swig \

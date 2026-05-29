@@ -1,9 +1,10 @@
 import asyncio
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch, MagicMock
 
 import numpy as np
 import pytest
 from httpx import AsyncClient
-from unittest.mock import AsyncMock, patch, MagicMock
 
 from openshelf_os_server.core.camera import (
 	camera_registry,
@@ -12,6 +13,7 @@ from openshelf_os_server.core.camera import (
 	stop_camera_stream_by_id,
 )
 
+from openshelf_os_server.main import _get_tool_camera_url
 
 @pytest.mark.anyio
 async def test_list_cameras_empty(client: AsyncClient) -> None:
@@ -25,13 +27,14 @@ async def test_list_cameras_empty(client: AsyncClient) -> None:
 
 
 @pytest.mark.anyio
-async def test_list_cameras_with_io_camera(client: AsyncClient) -> None:
+async def test_list_cameras_with_sizer_camera(client: AsyncClient) -> None:
 	mock_manager = MagicMock(spec=CameraStreamManager)
 	mock_manager.is_running = True
 	mock_manager.consumer_count = 2
 	mock_manager.latest_frame = b"fake_frame"
+	mock_manager.camera_type = "IOBoxSizerCamera"
 
-	with patch.dict(camera_registry, {"io": mock_manager}, clear=True):
+	with patch.dict(camera_registry, {"iobox_sizer": mock_manager}, clear=True):
 		response = await client.get("/api/camera")
 
 	assert response.status_code == 200
@@ -39,8 +42,8 @@ async def test_list_cameras_with_io_camera(client: AsyncClient) -> None:
 	assert len(data["cameras"]) == 1
 
 	camera = data["cameras"][0]
-	assert camera["id"] == "io"
-	assert camera["type"] == "IOCamera"
+	assert camera["id"] == "iobox_sizer"
+	assert camera["type"] == "IOBoxSizerCamera"
 	assert camera["running"] is True
 	assert camera["consumers"] == 2
 	assert camera["has_frame"] is True
@@ -70,17 +73,18 @@ async def test_list_cameras_with_tool_camera(client: AsyncClient) -> None:
 
 @pytest.mark.anyio
 async def test_list_cameras_multiple(client: AsyncClient) -> None:
-	mock_io = MagicMock(spec=CameraStreamManager)
-	mock_io.is_running = True
-	mock_io.consumer_count = 1
-	mock_io.latest_frame = b"frame"
+	mock_sizer = MagicMock(spec=CameraStreamManager)
+	mock_sizer.is_running = True
+	mock_sizer.consumer_count = 1
+	mock_sizer.latest_frame = b"frame"
+	mock_sizer.camera_type = "IOBoxSizerCamera"
 
 	mock_tool = MagicMock(spec=ToolCameraStreamManager)
 	mock_tool.is_running = True
 	mock_tool.consumer_count = 0
 	mock_tool.latest_frame = None
 
-	with patch.dict(camera_registry, {"io": mock_io, "tool": mock_tool}, clear=True):
+	with patch.dict(camera_registry, {"iobox_sizer": mock_sizer, "tool": mock_tool}, clear=True):
 		response = await client.get("/api/camera")
 
 	assert response.status_code == 200
@@ -88,7 +92,7 @@ async def test_list_cameras_multiple(client: AsyncClient) -> None:
 	assert len(data["cameras"]) == 2
 
 	camera_ids = [c["id"] for c in data["cameras"]]
-	assert "io" in camera_ids
+	assert "iobox_sizer" in camera_ids
 	assert "tool" in camera_ids
 
 
@@ -104,9 +108,9 @@ async def test_stream_camera_not_found(client: AsyncClient) -> None:
 
 @pytest.mark.anyio
 async def test_stream_camera_invalid_id(client: AsyncClient) -> None:
-	mock_io = MagicMock(spec=CameraStreamManager)
+	mock_sizer = MagicMock(spec=CameraStreamManager)
 
-	with patch.dict(camera_registry, {"io": mock_io}, clear=True):
+	with patch.dict(camera_registry, {"iobox_sizer": mock_sizer}, clear=True):
 		response = await client.get("/api/camera/invalid_camera")
 
 	assert response.status_code == 404
@@ -116,34 +120,62 @@ async def test_stream_camera_invalid_id(client: AsyncClient) -> None:
 
 @pytest.mark.anyio
 async def test_camera_types_identified_correctly(client: AsyncClient) -> None:
-	io_manager = MagicMock(spec=CameraStreamManager)
-	io_manager.is_running = False
-	io_manager.consumer_count = 0
-	io_manager.latest_frame = None
+	sizer_manager = MagicMock(spec=CameraStreamManager)
+	sizer_manager.is_running = False
+	sizer_manager.consumer_count = 0
+	sizer_manager.latest_frame = None
+	sizer_manager.camera_type = "IOBoxSizerCamera"
 
 	tool_manager = MagicMock(spec=ToolCameraStreamManager)
 	tool_manager.is_running = False
 	tool_manager.consumer_count = 0
 	tool_manager.latest_frame = None
 
-	with patch.dict(camera_registry, {"io": io_manager, "tool": tool_manager}, clear=True):
+	with patch.dict(camera_registry, {"iobox_sizer": sizer_manager, "tool": tool_manager}, clear=True):
 		response = await client.get("/api/camera")
 
 	assert response.status_code == 200
 	data = response.json()
 
-	io_camera = next((c for c in data["cameras"] if c["id"] == "io"), None)
+	sizer_camera = next((c for c in data["cameras"] if c["id"] == "iobox_sizer"), None)
 	tool_camera = next((c for c in data["cameras"] if c["id"] == "tool"), None)
 
-	assert io_camera is not None
-	assert io_camera["type"] == "IOCamera"
+	assert sizer_camera is not None
+	assert sizer_camera["type"] == "IOBoxSizerCamera"
 
 	assert tool_camera is not None
 	assert tool_camera["type"] == "ToolCamera"
 
 
+def test_get_tool_camera_url_ignores_config_url_when_disabled(tmp_path, monkeypatch) -> None:
+	data_path = tmp_path / "data"
+	data_path.mkdir()
+	(data_path / "config.json").write_text(
+		'{"robot":{"tool":{"poe_camera":{"url":"rtsp://camera"}}}}',
+		encoding="utf-8",
+	)
+	monkeypatch.chdir(tmp_path)
+
+	settings = SimpleNamespace(tool_camera=SimpleNamespace(enabled=False, rtsp_url=""))
+
+	assert _get_tool_camera_url(settings) is None
+
+
+def test_get_tool_camera_url_uses_config_url_when_enabled(tmp_path, monkeypatch) -> None:
+	data_path = tmp_path / "data"
+	data_path.mkdir()
+	(data_path / "config.json").write_text(
+		'{"robot":{"tool":{"poe_camera":{"url":"rtsp://camera"}}}}',
+		encoding="utf-8",
+	)
+	monkeypatch.chdir(tmp_path)
+
+	settings = SimpleNamespace(tool_camera=SimpleNamespace(enabled=True, rtsp_url=""))
+
+	assert _get_tool_camera_url(settings) == "rtsp://camera"
+
 @pytest.mark.anyio
-async def test_io_stream_manager_always_calls_capture_raw() -> None:
+async def test_opencv_stream_manager_always_calls_capture_raw() -> None:
 	mock_cam = MagicMock()
 	mock_cam.capture_raw.return_value = np.zeros((480, 640, 3), dtype=np.uint8)
 	manager = CameraStreamManager(camera=mock_cam)

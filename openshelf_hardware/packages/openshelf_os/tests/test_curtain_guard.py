@@ -217,7 +217,6 @@ hardware_curtain = types.SimpleNamespace(
 )
 hardware_scale = types.SimpleNamespace(Scale=_DummyScale)
 hardware_toolcam = types.SimpleNamespace(ToolCamera=object)
-hardware_iocam = types.SimpleNamespace(AFSCam=object)
 hardware_laser = types.SimpleNamespace(LaserSensor=object)
 
 hardware_module.controller = hardware_controller
@@ -225,7 +224,6 @@ hardware_module.motor = hardware_motor
 hardware_module.curtain = hardware_curtain
 hardware_module.scale = hardware_scale
 hardware_module.toolcam = hardware_toolcam
-hardware_module.iocam = hardware_iocam
 hardware_module.laser = hardware_laser
 
 sys.modules.setdefault("hardware", hardware_module)
@@ -234,7 +232,6 @@ sys.modules.setdefault("hardware.motor", hardware_motor)
 sys.modules.setdefault("hardware.curtain", hardware_curtain)
 sys.modules.setdefault("hardware.scale", hardware_scale)
 sys.modules.setdefault("hardware.toolcam", hardware_toolcam)
-sys.modules.setdefault("hardware.iocam", hardware_iocam)
 sys.modules.setdefault("hardware.laser", hardware_laser)
 
 # Stub serial_asyncio used by barcode protocol.
