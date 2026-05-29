@@ -1,0 +1,52 @@
+from __future__ import annotations
+
+from hardware.tof import ToFReading
+from openshelf_os.config.models import IOBoxSizerConfig
+from openshelf_os.iobox_sizer.service import IOBoxSizerService
+
+
+class FakeCamera:
+    def start(self) -> None:
+        return None
+
+    def stop(self) -> None:
+        return None
+
+    def capture_raw(self):
+        raise AssertionError("not used")
+
+
+class FakeToFBus:
+    def read_distance_mm(self, sensor_index: int) -> ToFReading:
+        if sensor_index == 0:
+            return ToFReading(sensor_index=0, channel=6, distance_mm=120.0)
+
+        raise RuntimeError("sensor 1 failed")
+
+
+def test_iobox_sizer_service_reads_tof_per_channel() -> None:
+    service = IOBoxSizerService(
+        config=IOBoxSizerConfig(
+            tof={"channels": [6, 7]},
+            calibration={"tof_blank_mm": [200.0, 300.0]},
+        ),
+        camera=FakeCamera(),
+        tof_bus=FakeToFBus(),
+    )
+
+    readings = service._read_tof()
+
+    assert readings[0].model_dump() == {
+        "sensor_index": 0,
+        "sensor_channel": 6,
+        "depth_mm": 120.0,
+        "depth_delta_mm": 80.0,
+        "error": None,
+    }
+    assert readings[1].model_dump() == {
+        "sensor_index": 1,
+        "sensor_channel": 7,
+        "depth_mm": None,
+        "depth_delta_mm": None,
+        "error": "sensor 1 failed",
+    }

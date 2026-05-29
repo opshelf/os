@@ -12,9 +12,6 @@ controller
 motor
     Motor control interface for servo motors using Modbus protocol
 
-iocam
-    Time-of-Flight (TOF) camera interface for item sizing and detection
-
 toolcam
     Tool-mounted camera interface for frame capture
 
@@ -25,15 +22,18 @@ motor_helpers
 from .controller import SharedModbusController
 from .motor import MotorStatus
 from .servo import Servo
-from .iocam import AFSCam
 from .laser import LaserSensor
 from .toolcam import ToolCamera
+from .uvc_camera import UvcCamera
+from .tof import ToFReading, ToFSensorBus
 
 __all__ = [
     'SharedModbusController',
     'Servo',
     'MotorStatus',
-    'AFSCam',
     'LaserSensor',
-    'ToolCamera'
+    'ToolCamera',
+    'UvcCamera',
+    'ToFReading',
+    'ToFSensorBus',
 ]

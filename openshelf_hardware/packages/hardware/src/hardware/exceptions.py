@@ -38,6 +38,22 @@ class CameraConfigError(CameraError):
 class ImageError(CameraError):
     """Image capture or processing error."""
     pass
+
+class ToFError(HardwareError):
+    """Base class for time-of-flight sensor errors."""
+    pass
+
+class ToFConnectionError(ToFError):
+    """Failed to establish time-of-flight sensor connection."""
+    pass
+
+class ToFReadError(ToFError):
+    """Failed to read a time-of-flight sensor measurement."""
+    pass
+
+class ToFConfigError(ToFError):
+    """Time-of-flight sensor configuration error."""
+    pass
 class MotorError(HardwareError):
     """Base class for motor-related errors."""
     pass

@@ -130,6 +130,90 @@ class UsbCamera(BaseModel):
     usb_exposure: Union[int, float]
 
 
+class IOBoxSizerCameraConfig(BaseModel):
+    device: Union[str, int] = "/dev/video0"
+    width: int = Field(1280, gt=0)
+    height: int = Field(720, gt=0)
+    fps: int = Field(100, gt=0)
+    flip_horizontal: bool = True
+    buffer_size: int = Field(1, gt=0)
+
+
+class IOBoxSizerToFConfig(BaseModel):
+    ftdi_url: str = Field("ftdi://ftdi:232h/1", min_length=1)
+    mux_address: int = Field(112, ge=0, le=127)
+    sensor_address: int = Field(41, ge=0, le=127)
+    channels: List[int] = Field(default_factory=lambda: [6, 7])
+    timing_budget_ms: int = Field(200, gt=0)
+    read_timeout_s: float = Field(0.5, gt=0)
+
+    @field_validator("channels")
+    @classmethod
+    def _validate_channels(cls, value: List[int]) -> List[int]:
+        if len(value) == 0:
+            raise ValueError("channels must contain at least one channel")
+
+        if len(set(value)) != len(value):
+            raise ValueError("channels must be unique")
+
+        for channel in value:
+            if channel < 0 or channel > 7:
+                raise ValueError("channels must be integers in range 0..7")
+
+        return value
+
+
+class IOBoxSizerDetectionConfig(BaseModel):
+    mode: Literal["brightness", "rectangle"] = "brightness"
+    roi_x: int = Field(320, ge=0)
+    roi_y: int = Field(180, ge=0)
+    roi_width: int = Field(640, gt=0)
+    roi_height: int = Field(360, gt=0)
+    diff_threshold: int = Field(15, ge=0, le=255)
+    hsv_v_min: int = Field(170, ge=0, le=255)
+    hsv_s_max: int = Field(55, ge=0, le=255)
+    white_rgb_min: Tuple[int, int, int] = Field(default=(200, 200, 200))
+    min_area_px: int = Field(500, gt=0)
+    blank_frame_path: str = "data/iobox_sizer/blank_frame.png"
+
+    @field_validator("white_rgb_min", mode="before")
+    @classmethod
+    def _validate_rgb_triplet(cls, value) -> Tuple[int, int, int]:
+        if isinstance(value, (list, tuple)) is False or len(value) != 3:
+            raise ValueError("white_rgb_min must be a 3-element list/tuple")
+
+        rgb = tuple(int(component) for component in value)
+        if any(component < 0 or component > 255 for component in rgb):
+            raise ValueError("white_rgb_min values must be in range 0..255")
+
+        return rgb
+
+
+class IOBoxSizerCalibrationConfig(BaseModel):
+    tof_blank_mm: List[Optional[float]] = Field(default_factory=lambda: [None, None])
+    mm_per_px_x: Optional[float] = Field(default=None, gt=0)
+    mm_per_px_y: Optional[float] = Field(default=None, gt=0)
+    apply_depth_compensation: bool = False
+
+
+class IOBoxSizerHistoryConfig(BaseModel):
+    save_debug_images: bool = False
+    debug_image_dir: str = "data/iobox_sizer/captures"
+    max_recent_results: int = Field(200, gt=0)
+
+
+class IOBoxSizerConfig(BaseModel):
+    enabled: bool = False
+    observer_mode_enabled: bool = True
+    measure_on_store: bool = True
+    store_measurement_timeout_s: float = Field(2.0, gt=0)
+    camera: IOBoxSizerCameraConfig = Field(default_factory=IOBoxSizerCameraConfig)
+    tof: IOBoxSizerToFConfig = Field(default_factory=IOBoxSizerToFConfig)
+    detection: IOBoxSizerDetectionConfig = Field(default_factory=IOBoxSizerDetectionConfig)
+    calibration: IOBoxSizerCalibrationConfig = Field(default_factory=IOBoxSizerCalibrationConfig)
+    history: IOBoxSizerHistoryConfig = Field(default_factory=IOBoxSizerHistoryConfig)
+
+
 class CurtainConfig(BaseModel):
     enabled: bool = True
     pin: int = Field(2, ge=0)
@@ -234,9 +318,10 @@ class Tool(BaseModel):
 
 class IOBlock(BaseModel):
     motors: Motors
-    usb_camera: UsbCamera
+    usb_camera: Optional[UsbCamera] = None
     curtain: CurtainConfig = Field(default_factory=CurtainConfig)  # type: ignore[arg-type]
     scale: ScaleConfig = Field(default_factory=ScaleConfig)  # type: ignore[arg-type]
+    sizer: IOBoxSizerConfig = Field(default_factory=IOBoxSizerConfig)
 
     @model_validator(mode="before")
     @classmethod

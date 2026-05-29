@@ -20,10 +20,6 @@ class ScannerSettings(BaseModel):
     enabled: bool = False
 
 
-class CameraAppSettings(BaseModel):
-    enabled: bool = False
-
-
 class ToolCameraSettings(BaseModel):
     enabled: bool = False
     rtsp_url: str = ""
