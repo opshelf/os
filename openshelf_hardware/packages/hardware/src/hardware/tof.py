@@ -37,6 +37,10 @@ class ToFSensorBus:
         channels: list[int],
         timing_budget_ms: int,
         read_timeout_s: float,
+        distance_mode: int | None = None,
+        roi_width: int | None = None,
+        roi_height: int | None = None,
+        roi_center: int | None = None,
         sensor_factory: Callable[[Any, int], DistanceSensor] | None = None,
     ) -> None:
         if not ftdi_url:
@@ -49,6 +53,16 @@ class ToFSensorBus:
             raise ToFConfigError("channels must be in range 0..7")
         if timing_budget_ms <= 0 or read_timeout_s <= 0:
             raise ToFConfigError("timing budget and read timeout must be positive")
+        if distance_mode is not None and distance_mode not in (1, 2):
+            raise ToFConfigError("distance mode must be 1 (short) or 2 (long)")
+        if (roi_width is None) != (roi_height is None):
+            raise ToFConfigError("roi_width and roi_height must be configured together")
+        if roi_width is not None and (roi_width < 1 or roi_width > 16):
+            raise ToFConfigError("roi_width must be in range 1..16")
+        if roi_height is not None and (roi_height < 1 or roi_height > 16):
+            raise ToFConfigError("roi_height must be in range 1..16")
+        if roi_center is not None and (roi_center < 0 or roi_center > 255):
+            raise ToFConfigError("roi_center must be in range 0..255")
 
         self.ftdi_url = ftdi_url
         self.mux_address = mux_address
@@ -56,6 +70,10 @@ class ToFSensorBus:
         self.channels = list(channels)
         self.timing_budget_ms = timing_budget_ms
         self.read_timeout_s = read_timeout_s
+        self.distance_mode = distance_mode
+        self.roi_width = roi_width
+        self.roi_height = roi_height
+        self.roi_center = roi_center
         self._sensor_factory = sensor_factory
         self._lock = threading.Lock()
         self._i2c: Any | None = None
@@ -134,6 +152,18 @@ class ToFSensorBus:
                 self._sensors = []
                 raise ToFConnectionError(str(exc)) from exc
 
+    def _configure_adafruit_sensor(self, sensor: Any) -> None:
+        if self.distance_mode is not None:
+            sensor.distance_mode = self.distance_mode
+
+        if self.roi_width is not None and self.roi_height is not None:
+            sensor.roi_xy = (self.roi_width, self.roi_height)
+
+        if self.roi_center is not None:
+            sensor.roi_center = self.roi_center
+
+        sensor.timing_budget = self.timing_budget_ms
+
     def _connect_adafruit(self) -> None:
         previous_ftdi_url = os.environ.get("BLINKA_FT232H")
         os.environ["BLINKA_FT232H"] = self.ftdi_url
@@ -145,9 +175,7 @@ class ToFSensorBus:
                 adafruit_tca9548a = import_module("adafruit_tca9548a")
                 adafruit_vl53l1x = import_module("adafruit_vl53l1x")
             except ImportError as exc:
-                raise ToFConnectionError(
-                    "Adafruit TOF dependencies are not installed"
-                ) from exc
+                raise ToFConnectionError("Adafruit TOF dependencies are not installed") from exc
 
             sensors: list[DistanceSensor] = []
             try:
@@ -158,7 +186,7 @@ class ToFSensorBus:
                     sensor = adafruit_vl53l1x.VL53L1X(
                         self._mux[channel], address=self.sensor_address
                     )
-                    sensor.timing_budget = self.timing_budget_ms
+                    self._configure_adafruit_sensor(sensor)
                     sensor.start_ranging()
                     sensors.append(sensor)
             except Exception:

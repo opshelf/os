@@ -37,6 +37,9 @@ class FakeAdafruitSensor:
 
     def __init__(self, *, should_fail_on_stop: bool = False) -> None:
         self.timing_budget: int | None = None
+        self.distance_mode: int | None = None
+        self.roi_xy: tuple[int, int] | None = None
+        self.roi_center: int | None = None
         self.did_stop_ranging = False
         self.did_clear_interrupt = False
         self.should_fail_on_stop = should_fail_on_stop
@@ -108,6 +111,7 @@ def test_tof_bus_reads_adafruit_sensor_distances_in_mm_and_sets_ftdi_url(
 
     def did_import_module(name: str):
         if name == "board":
+
             class BoardModule:
                 SCL = object()
                 SDA = object()
@@ -115,6 +119,7 @@ def test_tof_bus_reads_adafruit_sensor_distances_in_mm_and_sets_ftdi_url(
             return BoardModule
 
         if name == "busio":
+
             class BusIOModule:
                 class I2C:
                     def __init__(self, scl: object, sda: object) -> None:
@@ -127,6 +132,7 @@ def test_tof_bus_reads_adafruit_sensor_distances_in_mm_and_sets_ftdi_url(
             return BusIOModule
 
         if name == "adafruit_tca9548a":
+
             class TcaModule:
                 @staticmethod
                 def TCA9548A(_i2c: object, address: int) -> FakeMux:
@@ -136,6 +142,7 @@ def test_tof_bus_reads_adafruit_sensor_distances_in_mm_and_sets_ftdi_url(
             return TcaModule
 
         if name == "adafruit_vl53l1x":
+
             class Vl53Module:
                 @staticmethod
                 def VL53L1X(_channel: object, address: int) -> FakeAdafruitSensor:
@@ -155,6 +162,10 @@ def test_tof_bus_reads_adafruit_sensor_distances_in_mm_and_sets_ftdi_url(
         channels=[6],
         timing_budget_ms=200,
         read_timeout_s=0.1,
+        distance_mode=1,
+        roi_width=4,
+        roi_height=4,
+        roi_center=199,
     )
 
     bus.connect()
@@ -164,16 +175,22 @@ def test_tof_bus_reads_adafruit_sensor_distances_in_mm_and_sets_ftdi_url(
     assert os.environ["BLINKA_FT232H"] == "ftdi://previous"
     assert reading.distance_mm == pytest.approx(123.0)
     assert first_sensor.did_clear_interrupt is True
+    assert first_sensor.distance_mode == 1
+    assert first_sensor.roi_xy == (4, 4)
+    assert first_sensor.roi_center == 199
+    assert first_sensor.timing_budget == 200
 
 
-
-def test_tof_bus_stops_started_sensors_when_adafruit_connect_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_tof_bus_stops_started_sensors_when_adafruit_connect_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     first_sensor = FakeAdafruitSensor()
     created_i2c = FakeI2C(has_deinit=True)
     sensor_calls = 0
 
     def did_import_module(name: str):
         if name == "board":
+
             class BoardModule:
                 SCL = object()
                 SDA = object()
@@ -181,6 +198,7 @@ def test_tof_bus_stops_started_sensors_when_adafruit_connect_fails(monkeypatch: 
             return BoardModule
 
         if name == "busio":
+
             class BusIOModule:
                 class I2C:
                     def __new__(cls, scl: object, sda: object) -> FakeI2C:
@@ -189,6 +207,7 @@ def test_tof_bus_stops_started_sensors_when_adafruit_connect_fails(monkeypatch: 
             return BusIOModule
 
         if name == "adafruit_tca9548a":
+
             class TcaModule:
                 @staticmethod
                 def TCA9548A(_i2c: object, address: int) -> FakeMux:
@@ -198,6 +217,7 @@ def test_tof_bus_stops_started_sensors_when_adafruit_connect_fails(monkeypatch: 
             return TcaModule
 
         if name == "adafruit_vl53l1x":
+
             class Vl53Module:
                 @staticmethod
                 def VL53L1X(_channel: object, address: int) -> FakeAdafruitSensor:
@@ -241,6 +261,7 @@ def test_tof_bus_closes_i2c_when_sensor_stop_fails_on_connect_cleanup(
 
     def did_import_module(name: str):
         if name == "board":
+
             class BoardModule:
                 SCL = object()
                 SDA = object()
@@ -248,6 +269,7 @@ def test_tof_bus_closes_i2c_when_sensor_stop_fails_on_connect_cleanup(
             return BoardModule
 
         if name == "busio":
+
             class BusIOModule:
                 class I2C:
                     def __new__(cls, scl: object, sda: object) -> FakeI2C:
@@ -256,6 +278,7 @@ def test_tof_bus_closes_i2c_when_sensor_stop_fails_on_connect_cleanup(
             return BusIOModule
 
         if name == "adafruit_tca9548a":
+
             class TcaModule:
                 @staticmethod
                 def TCA9548A(_i2c: object, address: int) -> FakeMux:
@@ -265,6 +288,7 @@ def test_tof_bus_closes_i2c_when_sensor_stop_fails_on_connect_cleanup(
             return TcaModule
 
         if name == "adafruit_vl53l1x":
+
             class Vl53Module:
                 @staticmethod
                 def VL53L1X(_channel: object, address: int) -> FakeAdafruitSensor:
