@@ -288,7 +288,7 @@ async def test_motor_returns_last_good_position_when_garbage_persists(mock_contr
     motor._cur_pos = 7.5
     motor._logger = Mock()
 
-    mock_controller.read_holding_registers.side_effect = [100, 0, 100, 0]
+    mock_controller.read_holding_register_block.side_effect = [(0, 100), (0, 100)]
 
     position = await motor.get_position()
 
@@ -310,7 +310,7 @@ async def test_motor_get_position_caches_zero_position(mock_controller):
     motor = Motor(mock_controller, params)
     motor._cur_pos = 7.5
 
-    mock_controller.read_holding_registers.side_effect = [0, 0]
+    mock_controller.read_holding_register_block.return_value = (0, 0)
 
     position = await motor.get_position()
 
@@ -332,7 +332,7 @@ async def test_motor_get_position_maps_zero_physical_position_to_logical_positio
     motor = Motor(mock_controller, params)
     motor._cur_pos = 7.5
 
-    mock_controller.read_holding_registers.side_effect = [0, 0]
+    mock_controller.read_holding_register_block.return_value = (0, 0)
 
     position = await motor.get_position()
 
@@ -373,12 +373,77 @@ async def test_motor_get_position_decodes_signed_32_bit_values(mock_controller):
     )
     motor = Motor(mock_controller, params)
 
-    mock_controller.read_holding_registers.side_effect = [0xFFDC, 0xFFFF]
+    mock_controller.read_holding_register_block.return_value = (0xFFFF, 0xFFDC)
 
     position = await motor.get_position()
 
     assert position == pytest.approx(-0.18)
     assert motor._cur_pos == pytest.approx(-0.18)
+
+
+@pytest.mark.asyncio
+async def test_motor_get_position_reads_contiguous_registers_as_block(mock_controller):
+    params = SimpleNamespace(
+        motor_id=31,
+        position_reg_high=0x602E,
+        position_reg_low=0x602F,
+        ppr=10000,
+        mpr=12,
+        lim=100,
+        physical_to_logical=lambda physical: physical,
+    )
+    motor = Motor(mock_controller, params)
+
+    mock_controller.read_holding_register_block.return_value = (1, 0)
+
+    position = await motor.get_position()
+
+    assert position == pytest.approx(78.6432)
+    mock_controller.read_holding_register_block.assert_awaited_once_with(31, 0x602E, count=2)
+    mock_controller.read_holding_registers.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_motor_get_position_reads_reversed_contiguous_registers_as_block(mock_controller):
+    params = SimpleNamespace(
+        motor_id=31,
+        position_reg_high=0x602E,
+        position_reg_low=0x602D,
+        ppr=10000,
+        mpr=12,
+        lim=100,
+        physical_to_logical=lambda physical: physical,
+    )
+    motor = Motor(mock_controller, params)
+
+    mock_controller.read_holding_register_block.return_value = (0, 1)
+
+    position = await motor.get_position()
+
+    assert position == pytest.approx(78.6432)
+    mock_controller.read_holding_register_block.assert_awaited_once_with(31, 0x602D, count=2)
+    mock_controller.read_holding_registers.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_motor_get_position_falls_back_to_separate_reads_for_noncontiguous_registers(mock_controller):
+    params = SimpleNamespace(
+        motor_id=31,
+        position_reg_high=0x602E,
+        position_reg_low=0x6031,
+        ppr=10000,
+        mpr=12,
+        lim=100,
+        physical_to_logical=lambda physical: physical,
+    )
+    motor = Motor(mock_controller, params)
+
+    mock_controller.read_holding_registers.side_effect = [0, 1]
+
+    position = await motor.get_position()
+
+    assert position == pytest.approx(78.6432)
+    mock_controller.read_holding_register_block.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -396,7 +461,12 @@ async def test_motor_throttles_repeated_garbage_position_logs(mock_controller):
     motor._cur_pos = 7.5
     motor._logger = Mock()
 
-    mock_controller.read_holding_registers.side_effect = [100, 0, 100, 0, 100, 0, 100, 0]
+    mock_controller.read_holding_register_block.side_effect = [
+        (0, 100),
+        (0, 100),
+        (0, 100),
+        (0, 100),
+    ]
 
     first = await motor.get_position()
     second = await motor.get_position()

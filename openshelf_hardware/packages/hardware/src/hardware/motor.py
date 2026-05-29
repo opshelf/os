@@ -234,8 +234,21 @@ class Motor():
             reg_high = getattr(self._params, "position_reg_high", 0x602C)
             reg_low = getattr(self._params, "position_reg_low", 0x602D)
 
-            pos_l = await self._controller.read_holding_registers(self._motor_id, reg_low)
-            pos_h = await self._controller.read_holding_registers(self._motor_id, reg_high)
+            if abs(reg_low - reg_high) == 1:
+                reg_start = min(reg_high, reg_low)
+                first_reg, second_reg = await self._controller.read_holding_register_block(
+                    self._motor_id,
+                    reg_start,
+                    count=2,
+                )
+
+                if reg_high == reg_start:
+                    pos_h, pos_l = first_reg, second_reg
+                else:
+                    pos_l, pos_h = first_reg, second_reg
+            else:
+                pos_l = await self._controller.read_holding_registers(self._motor_id, reg_low)
+                pos_h = await self._controller.read_holding_registers(self._motor_id, reg_high)
 
             if pos_l is None or pos_h is None:
                 raise MotorError(f"Failed to read position registers for motor {self._motor_id}")
@@ -264,8 +277,21 @@ class Motor():
 
                 await asyncio.sleep(0.1)
 
-                pos_l = await self._controller.read_holding_registers(self._motor_id, reg_low)
-                pos_h = await self._controller.read_holding_registers(self._motor_id, reg_high)
+                if abs(reg_low - reg_high) == 1:
+                    reg_start = min(reg_high, reg_low)
+                    first_reg, second_reg = await self._controller.read_holding_register_block(
+                        self._motor_id,
+                        reg_start,
+                        count=2,
+                    )
+
+                    if reg_high == reg_start:
+                        pos_h, pos_l = first_reg, second_reg
+                    else:
+                        pos_l, pos_h = first_reg, second_reg
+                else:
+                    pos_l = await self._controller.read_holding_registers(self._motor_id, reg_low)
+                    pos_h = await self._controller.read_holding_registers(self._motor_id, reg_high)
 
                 if pos_l is None or pos_h is None:
                     raise MotorError(f"Failed to re-read position for motor {self._motor_id}")
