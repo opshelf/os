@@ -1,9 +1,10 @@
 import asyncio
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch, MagicMock
 
 import numpy as np
 import pytest
 from httpx import AsyncClient
-from unittest.mock import AsyncMock, patch, MagicMock
 
 from openshelf_os_server.core.camera import (
 	camera_registry,
@@ -12,6 +13,7 @@ from openshelf_os_server.core.camera import (
 	stop_camera_stream_by_id,
 )
 
+from openshelf_os_server.main import _get_tool_camera_url
 
 @pytest.mark.anyio
 async def test_list_cameras_empty(client: AsyncClient) -> None:
@@ -144,6 +146,33 @@ async def test_camera_types_identified_correctly(client: AsyncClient) -> None:
 	assert tool_camera is not None
 	assert tool_camera["type"] == "ToolCamera"
 
+
+def test_get_tool_camera_url_ignores_config_url_when_disabled(tmp_path, monkeypatch) -> None:
+	data_path = tmp_path / "data"
+	data_path.mkdir()
+	(data_path / "config.json").write_text(
+		'{"robot":{"tool":{"poe_camera":{"url":"rtsp://camera"}}}}',
+		encoding="utf-8",
+	)
+	monkeypatch.chdir(tmp_path)
+
+	settings = SimpleNamespace(tool_camera=SimpleNamespace(enabled=False, rtsp_url=""))
+
+	assert _get_tool_camera_url(settings) is None
+
+
+def test_get_tool_camera_url_uses_config_url_when_enabled(tmp_path, monkeypatch) -> None:
+	data_path = tmp_path / "data"
+	data_path.mkdir()
+	(data_path / "config.json").write_text(
+		'{"robot":{"tool":{"poe_camera":{"url":"rtsp://camera"}}}}',
+		encoding="utf-8",
+	)
+	monkeypatch.chdir(tmp_path)
+
+	settings = SimpleNamespace(tool_camera=SimpleNamespace(enabled=True, rtsp_url=""))
+
+	assert _get_tool_camera_url(settings) == "rtsp://camera"
 
 @pytest.mark.anyio
 async def test_opencv_stream_manager_always_calls_capture_raw() -> None:
