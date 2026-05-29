@@ -582,7 +582,7 @@ export interface SizerToFConfig {
 	read_timeout_s: number;
 	samples: number;
 	sample_interval_ms: number;
-	aggregation: 'median' | 'mean';
+	aggregation: 'median' | 'mean' | 'nearest' | 'farthest';
 }
 
 export interface SizerDetectionConfig {

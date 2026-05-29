@@ -100,3 +100,35 @@ def test_iobox_sizer_service_can_mean_filter_tof_samples() -> None:
 
     assert readings[0].depth_mm == 126.66666666666667
     assert readings[1].depth_mm == 305.0
+
+
+def test_iobox_sizer_service_can_use_nearest_tof_sample() -> None:
+    service = IOBoxSizerService(
+        config=IOBoxSizerConfig(
+            tof={"channels": [6, 7], "samples": 3, "aggregation": "nearest"},
+            calibration={"tof_blank_mm": [200.0, 400.0]},
+        ),
+        camera=FakeCamera(),
+        tof_bus=SequencedToFBus(),
+    )
+
+    readings = service._read_tof()
+
+    assert readings[0].depth_mm == 100.0
+    assert readings[1].depth_mm == 300.0
+
+
+def test_iobox_sizer_service_can_use_farthest_tof_sample() -> None:
+    service = IOBoxSizerService(
+        config=IOBoxSizerConfig(
+            tof={"channels": [6, 7], "samples": 3, "aggregation": "farthest"},
+            calibration={"tof_blank_mm": [200.0, 400.0]},
+        ),
+        camera=FakeCamera(),
+        tof_bus=SequencedToFBus(),
+    )
+
+    readings = service._read_tof()
+
+    assert readings[0].depth_mm == 160.0
+    assert readings[1].depth_mm == 310.0

@@ -150,7 +150,7 @@ class IOBoxSizerToFConfig(BaseModel):
     read_timeout_s: float = Field(0.5, gt=0)
     samples: int = Field(1, ge=1, le=25)
     sample_interval_ms: int = Field(0, ge=0, le=1000)
-    aggregation: Literal["median", "mean"] = "median"
+    aggregation: Literal["median", "mean", "nearest", "farthest"] = "median"
 
     @field_validator("channels")
     @classmethod
