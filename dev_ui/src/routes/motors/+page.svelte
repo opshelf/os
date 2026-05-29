@@ -469,10 +469,6 @@
 		</button>
 	</div>
 
-	{#if pollError !== ''}
-		<p class="poll-status poll-status-error">position updates unavailable: {pollError}</p>
-	{/if}
-
 	<table class="motor-table">
 		<thead>
 			<tr>
@@ -881,14 +877,6 @@
 		gap: 0.5rem;
 	}
 
-	.poll-status {
-		color: #666;
-		margin-bottom: 1rem;
-	}
-
-	.poll-status-error {
-		color: red;
-	}
 
 	button {
 		margin-top: 0;
