@@ -69,13 +69,18 @@ async def test_audit_list_with_filters(client: AsyncClient) -> None:
 
 
 @pytest.mark.anyio
-async def test_audit_list_filter_by_user_id(client: AsyncClient) -> None:
-	admin_token = await login(client, "admin@opshelf.com", "1234")
+async def test_audit_list_filter_by_user_id(
+	client: AsyncClient,
+	unauthenticated_client: AsyncClient,
+) -> None:
+	admin_token = await login(unauthenticated_client, "admin@opshelf.com", "1234")
 	admin_headers = {"Authorization": f"Bearer {admin_token}"}
 
 	# Get admin user id
 	me_resp = await client.get("/api/auth/me", headers=admin_headers)
 	admin_id = me_resp.json()["id"]
+	admin_users_response = await unauthenticated_client.get("/api/users", headers=admin_headers)
+	assert admin_users_response.status_code == 200
 
 	# Create another user and generate logs
 	async with AsyncSessionLocal() as db:
@@ -102,9 +107,10 @@ async def test_audit_list_filter_by_user_id(client: AsyncClient) -> None:
 		test_user_id = test_user.id
 
 	# Generate logs as test user
-	test_token = await login(client, "test_filter@opshelf.com", "9999")
+	test_token = await login(unauthenticated_client, "test_filter@opshelf.com", "9999")
 	test_headers = {"Authorization": f"Bearer {test_token}"}
-	await client.get("/api/auth/me", headers=test_headers)
+	users_response = await unauthenticated_client.get("/api/users", headers=test_headers)
+	assert users_response.status_code == 200
 
 	# Filter by admin user id
 	resp = await client.get(f"/api/audit/logs?user_id={admin_id}", headers=admin_headers)

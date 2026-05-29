@@ -75,6 +75,13 @@ class User(Base):
 class AuditLog(Base):
 	"""Audit log model for tracking all API operations."""
 	__tablename__ = "audit_logs"
+	__table_args__ = (
+		Index("ix_audit_logs_timestamp", "timestamp"),
+		Index("ix_audit_logs_user_id_timestamp", "user_id", "timestamp"),
+		Index("ix_audit_logs_endpoint_timestamp", "endpoint", "timestamp"),
+		Index("ix_audit_logs_method_endpoint_timestamp", "method", "endpoint", "timestamp"),
+		Index("ix_audit_logs_response_status_timestamp", "response_status", "timestamp"),
+	)
 
 	id: Mapped[int] = mapped_column(Integer, primary_key=True)
 	user_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)

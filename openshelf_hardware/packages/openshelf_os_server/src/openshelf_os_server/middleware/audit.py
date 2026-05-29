@@ -25,16 +25,84 @@ from ..routers.auth_deps import get_current_user_optional
 
 command_records_context: ContextVar[List[Dict[str, Any]]] = ContextVar("command_records", default=[])
 
-EXCLUDED_ENDPOINTS = frozenset([
-	"/api/health",
+IGNORED_METHODS = frozenset(["OPTIONS"])
+ALWAYS_EXCLUDED_ENDPOINTS = frozenset([
+    "/api/health",
 ])
+SUCCESSFUL_READ_METHODS = frozenset(["GET", "HEAD"])
+SUCCESSFUL_READ_EXCLUDED_ENDPOINTS = frozenset([
+    "/api/auth/me",
+    "/api/auth/users",
+    "/api/access_levels",
+    "/api/access-levels",
+    "/api/storage/items",
+    "/api/storage/grid",
+    "/api/storage/locations",
+    "/api/system/info",
+    "/api/system/mode",
+    "/api/telemetry",
+    "/api/camera",
+    "/api/robot/status",
+    "/api/robot/events",
+    "/api/robot/debug/scale",
+    "/api/robot/debug/scale/calibration/status",
+    "/api/robot/debug/scale/calibration/params",
+    "/api/calibration/status",
+])
+SUCCESSFUL_READ_EXCLUDED_PREFIXES = (
+    "/api/storage/items/",
+    "/api/robot/debug/",
+)
+SENSITIVE_FIELD_NAMES = frozenset([
+    "pin",
+    "password",
+    "token",
+    "access_token",
+    "refresh_token",
+    "authorization",
+    "secret",
+    "api_key",
+    "hmac_key",
+])
+REDACTED_VALUE = "[REDACTED]"
+
+
+def is_successful_read_excluded_endpoint(path: str) -> bool:
+    if path in SUCCESSFUL_READ_EXCLUDED_ENDPOINTS:
+        return True
+    return any(path.startswith(prefix) for prefix in SUCCESSFUL_READ_EXCLUDED_PREFIXES)
+
+
+def should_skip_before_request(request: Request) -> bool:
+    if request.method in IGNORED_METHODS:
+        return True
+    return request.url.path in ALWAYS_EXCLUDED_ENDPOINTS
+
+
+def should_skip_after_response(request: Request, status_code: int) -> bool:
+    if status_code >= 400:
+        return False
+    if request.method not in SUCCESSFUL_READ_METHODS:
+        return False
+    return is_successful_read_excluded_endpoint(request.url.path)
+
+
+def redact_sensitive_values(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: REDACTED_VALUE if key.lower() in SENSITIVE_FIELD_NAMES else redact_sensitive_values(child)
+            for key, child in value.items()
+        }
+    if isinstance(value, list):
+        return [redact_sensitive_values(item) for item in value]
+    return value
 
 class AuditMiddleware(BaseHTTPMiddleware):
 	"""Middleware to log all API requests and responses."""
 
 	async def dispatch(self, request: Request, call_next: Callable) -> Response:
 		"""Process and log each request."""
-		if request.url.path in EXCLUDED_ENDPOINTS:
+		if should_skip_before_request(request):
 			return await call_next(request)
 
 		command_records_context.set([])
@@ -46,7 +114,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
 			try:
 				body = await request.body()
 				if body:
-					request_body = json.loads(body)
+					request_body = redact_sensitive_values(json.loads(body))
 				
 				async def receive() -> dict[str, Any]:
 					return {"type": "http.request", "body": body}
@@ -74,6 +142,9 @@ class AuditMiddleware(BaseHTTPMiddleware):
 				response.headers["Access-Control-Allow-Origin"] = "*"
 
 		duration_ms = int((time.time() - start_time) * 1000)
+
+		if should_skip_after_response(request, status_code):
+			return response
 
 		try:
 			await self._log_request(
