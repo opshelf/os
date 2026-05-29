@@ -162,6 +162,8 @@ def _transform_worker_status_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         },
         "tool": {
             "z_axis": _normalize_axis_status(((robot_status_payload.get("tool") or {}).get("z_axis"))),
+            "stage": _normalize_axis_status(((robot_status_payload.get("tool") or {}).get("stage"))),
+            "rotate": _normalize_axis_status(((robot_status_payload.get("tool") or {}).get("rotate"))),
         },
         "state": {
             "current_cell": state_payload.get("current_cell"),
@@ -171,6 +173,11 @@ def _transform_worker_status_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         "door_open": door_open,
         "curtain_guard_active": curtain_guard_active,
         "awaiting_curtain_ack": awaiting_curtain_ack,
+        "motors": {
+            axis: _normalize_axis_status(payload)
+            for axis, payload in (robot_status_payload.get("motors") or {}).items()
+            if isinstance(payload, dict)
+        },
     }
 
     errors: List[Dict[str, Any]] = []
@@ -181,6 +188,7 @@ def _transform_worker_status_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     transformed["is_crashed"] = payload.get("is_crashed", False)
     transformed["crash_reason"] = payload.get("crash_reason")
+    transformed["crash_context"] = payload.get("crash_context")
     transformed["needs_home"] = payload.get("needs_home", False)
     transformed["needs_home_reason"] = payload.get("needs_home_reason")
     transformed["needs_home_axes"] = payload.get("needs_home_axes", [])
@@ -245,6 +253,7 @@ class RobotWorker:
         self._logger = logging.getLogger(__name__).getChild("worker.guard")
         self._is_crashed: bool = False
         self._crash_reason: Optional[str] = None
+        self._crash_context: Optional[dict[str, Any]] = None
         self._needs_home_axes: set[str] = set()
         self._needs_home_unknown: bool = False
         self._needs_home_reason: Optional[str] = None
@@ -300,8 +309,18 @@ class RobotWorker:
         success = self._robot.simulate_motor_crash(motor_name)
 
         if success is True:
-            self.set_crash_state(f"Simulated motor fault on {motor_name}")
-            self.set_needs_home(f"Simulated motor fault on {motor_name}", axes=[motor_name])
+            reason = f"Simulated motor fault on {motor_name}"
+            self.set_needs_home(reason, axes=[motor_name])
+            context = await self._build_error_context(RuntimeError(reason), is_hardware_fault=True)
+            self.set_crash_state(reason, context=context)
+            self._report_error(
+                WorkerError(
+                    error_type="HardwareFault",
+                    message=reason,
+                    context=context,
+                    stack_trace="",
+                )
+            )
             await self._publish_status()
 
         return success
@@ -334,15 +353,74 @@ class RobotWorker:
             self._error_queue.pop(0)
         self._error_queue.append(error)
 
+    async def _build_error_context(
+        self,
+        err: Exception,
+        *,
+        is_hardware_fault: bool,
+    ) -> dict[str, Any]:
+        elapsed_seconds = None
+        if self._command_started_at is not None:
+            elapsed_seconds = time.monotonic() - self._command_started_at
+
+        diagnostic_snapshot: dict[str, Any] | None = None
+        try:
+            diagnostic_snapshot = await self._robot.get_diagnostic_snapshot()
+        except Exception as snapshot_error:
+            diagnostic_snapshot = {"snapshot_error": str(snapshot_error)}
+
+        operation_context = None
+        try:
+            operation_context = self._robot.get_operation_context()
+        except Exception as context_error:
+            operation_context = {"context_error": str(context_error)}
+
+        fault_context = getattr(err, "fault_context", None)
+        if fault_context is None and getattr(err, "__cause__", None) is not None:
+            fault_context = getattr(err.__cause__, "fault_context", None)
+
+        context: dict[str, Any] = {
+            "command": self._current_command.model_dump(mode="json") if self._current_command else None,
+            "queued_operation": self._current_operation.model_dump(mode="json") if self._current_operation else None,
+            "elapsed_seconds": elapsed_seconds,
+            "operation_context": operation_context,
+            "diagnostic_snapshot": diagnostic_snapshot,
+            "hardware_fault": {
+                "is_hardware_fault": is_hardware_fault,
+                "exception_type": type(err).__name__,
+                "message": str(err),
+                "needs_home_axes": self.needs_home_axes(),
+                "fault_context": fault_context,
+            },
+        }
+        return context
+
     def _report_error(self, error: WorkerError, exc: Optional[Exception] = None) -> None:
         sentry_event_id: Optional[str] = None
         try:
             with sentry_sdk.push_scope() as scope:
                 scope.set_tag("error_type", error.error_type)
-                if error.context:
-                    scope.set_context("worker_error", error.context)
+                scope.set_tag("hardware_fault", str(error.error_type == "HardwareFault").lower())
+                context = error.context or {}
+                operation_context = context.get("operation_context")
+                diagnostic_snapshot = context.get("diagnostic_snapshot")
+                hardware_fault = context.get("hardware_fault")
                 if self._current_command:
                     scope.set_tag("command", getattr(self._current_command, "command", "unknown"))
+                elif context.get("command") and isinstance(context.get("command"), dict):
+                    scope.set_tag("command", context["command"].get("command", "unknown"))
+                if hardware_fault and isinstance(hardware_fault, dict):
+                    scope.set_tag("exception_type", hardware_fault.get("exception_type", "unknown"))
+                    needs_home_axes = hardware_fault.get("needs_home_axes")
+                    if isinstance(needs_home_axes, list) and len(needs_home_axes) <= 6:
+                        scope.set_tag("needs_home_axes", ",".join(str(axis) for axis in needs_home_axes))
+                    scope.set_context("hardware_fault", hardware_fault)
+                if context:
+                    scope.set_context("worker_error", context)
+                if operation_context:
+                    scope.set_context("robot_operation", operation_context)
+                if diagnostic_snapshot:
+                    scope.set_context("robot_diagnostics", diagnostic_snapshot)
                 if error.stack_trace:
                     scope.set_extra("stack_trace", error.stack_trace)
 
@@ -362,6 +440,12 @@ class RobotWorker:
             error.context["sentry_event_id"] = sentry_event_id
 
         self._add_error(error)
+
+    def _clear_robot_operation_context(self) -> None:
+        try:
+            self._robot.clear_operation_context()
+        except Exception:
+            pass
 
     async def connect(self) -> None:
         if self._should_enable_barcode() and self._barcode is None:
@@ -430,12 +514,14 @@ class RobotWorker:
     def clear_crash_state(self) -> None:
         self._is_crashed = False
         self._crash_reason = None
+        self._crash_context = None
         self._robot.resume_after_curtain()
         self.clear_needs_home()
 
-    def set_crash_state(self, reason: str) -> None:
+    def set_crash_state(self, reason: str, context: Optional[dict[str, Any]] = None) -> None:
         self._is_crashed = True
         self._crash_reason = reason
+        self._crash_context = context
 
     def clear_needs_home(self) -> None:
         self._needs_home_axes.clear()
@@ -615,6 +701,7 @@ class RobotWorker:
             error_queue=list(self._error_queue),
             is_crashed=self._is_crashed,
             crash_reason=self._crash_reason,
+            crash_context=self._crash_context,
             needs_home=self.needs_home(),
             needs_home_reason=self._needs_home_reason,
             needs_home_axes=self.needs_home_axes(),
@@ -699,6 +786,7 @@ class RobotWorker:
                             ),
                         )
 
+                        self._clear_robot_operation_context()
                         self._remove_current_operation()
                         self._current_task = None
                         self._current_command = None
@@ -734,20 +822,25 @@ class RobotWorker:
                             is_hardware_fault = isinstance(err, (MotorError, MovementError, ToolError))
 
                             if is_hardware_fault:
-                                self.set_crash_state(str(err))
                                 self.set_needs_home(str(err))
                                 logging.warning("Hardware fault detected - robot in crash state: %s", type(err).__name__)
+
+                            error_context = await self._build_error_context(err, is_hardware_fault=is_hardware_fault)
+
+                            if is_hardware_fault:
+                                self.set_crash_state(str(err), context=error_context)
 
                             self._report_error(
                                 WorkerError(
                                     error_type="HardwareFault" if is_hardware_fault else "CommandExecutionError",
                                     message=str(err),
-                                    context={"command": self._current_command.model_dump() if self._current_command else None},
+                                    context=error_context,
                                     stack_trace=traceback.format_exc(),
                                 ),
                                 exc=err,
                             )
 
+                        self._clear_robot_operation_context()
                         self._remove_current_operation()
                         self._current_task = None
                         self._current_command = None
@@ -779,6 +872,7 @@ class RobotWorker:
                     except asyncio.CancelledError:
                         pass
 
+                self._clear_robot_operation_context()
                 try:
                     await self._publish_status()
                 except Exception as publish_err:

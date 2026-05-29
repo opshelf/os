@@ -33,6 +33,8 @@ class AxisTelemetry(BaseModel):
 
 class ToolAxisStatus(BaseModel):
     z_axis: AxisTelemetry
+    stage: Optional[AxisTelemetry] = None
+    rotate: Optional[AxisTelemetry] = None
 
 
 class GantryStatus(BaseModel):
@@ -53,6 +55,7 @@ class RobotStatus(BaseModel):
     door_open: Optional[bool] = None
     curtain_guard_active: Optional[bool] = None
     awaiting_curtain_ack: bool = False
+    motors: dict[str, AxisTelemetry] = Field(default_factory=dict)
 
 
 class RobotCommandSuccessful(BaseModel):

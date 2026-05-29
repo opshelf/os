@@ -71,6 +71,8 @@ class Robot:
             self._grid = StorageGrid()
 
         self._state: RobotState = RobotState(current_cell=None)
+        self._operation_context: dict[str, Any] = {}
+        self._last_fault_context: dict[str, Any] | None = None
         self._motor_time_accumulator: float = 0.0
 
         self._demo_cell_map: dict[str, StorageModuleCellLocation] | None = None
@@ -264,6 +266,145 @@ class Robot:
         return value
 
     # ------------------------------------------------------------------ #
+    #  Diagnostics and operation context
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _safe_model_dump(value: Any) -> Any:
+        if value is None:
+            return None
+        if hasattr(value, "model_dump"):
+            return value.model_dump(mode="json")
+        if isinstance(value, dict):
+            return {key: Robot._safe_model_dump(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [Robot._safe_model_dump(item) for item in value]
+        if hasattr(value, "__dataclass_fields__"):
+            return {key: Robot._safe_model_dump(getattr(value, key)) for key in value.__dataclass_fields__}
+        return value
+
+    def set_operation_context(
+        self,
+        *,
+        command: str | None = None,
+        phase: str | None = None,
+        target_cell: Any = None,
+        target_coordinate: Any = None,
+        item: Any = None,
+        nudge_override: float | None = None,
+    ) -> None:
+        updates: dict[str, Any] = {}
+        if command is not None:
+            updates["command"] = command
+        if phase is not None:
+            updates["phase"] = phase
+        if target_cell is not None:
+            updates["target_cell"] = self._safe_model_dump(target_cell)
+        if target_coordinate is not None:
+            updates["target_coordinate"] = self._safe_model_dump(target_coordinate)
+        if item is not None:
+            updates["item"] = self._safe_model_dump(item)
+        if nudge_override is not None:
+            updates["nudge_override"] = nudge_override
+
+        self._operation_context = {**self._operation_context, **updates}
+
+    def clear_operation_context(self) -> None:
+        self._operation_context = {}
+
+    def get_operation_context(self) -> dict[str, Any] | None:
+        if not self._operation_context:
+            return None
+        return self._safe_model_dump(self._operation_context)
+
+    def _capture_fault_context(self, err: BaseException) -> None:
+        fault_context = getattr(err, "fault_context", None)
+        self._last_fault_context = {
+            "operation_context": self.get_operation_context(),
+            "exception_type": type(err).__name__,
+            "message": str(err),
+        }
+        if isinstance(fault_context, dict):
+            self._last_fault_context["tool_fault"] = self._safe_model_dump(fault_context)
+
+    def get_last_fault_context(self) -> dict[str, Any] | None:
+        if self._last_fault_context is None:
+            return None
+        return self._safe_model_dump(self._last_fault_context)
+
+    def _motor_diagnostic_snapshot(self, axis: str, motor: Optional["Motor"]) -> dict[str, Any]:
+        snapshot: dict[str, Any] = {"axis": axis, "configured": motor is not None}
+        if motor is None:
+            return snapshot
+
+        try:
+            snapshot["motor_id"] = getattr(motor, "_motor_id", None)
+        except Exception as exc:
+            snapshot["motor_id_error"] = str(exc)
+
+        for key, attr in (
+            ("position_mm", "_cur_pos"),
+            ("target_mm", "_target_pos"),
+            ("simulated_fault", "_simulated_fault"),
+        ):
+            try:
+                snapshot[key] = getattr(motor, attr, None)
+            except Exception as exc:
+                snapshot[f"{key}_error"] = str(exc)
+
+        try:
+            status = getattr(motor, "_status", None)
+            snapshot["status"] = getattr(status, "name", status)
+        except Exception as exc:
+            snapshot["status_error"] = str(exc)
+
+        for key, reader in (
+            ("homed", motor.is_homed),
+            ("hard_stopped", motor.is_hard_stopped),
+        ):
+            try:
+                snapshot[key] = reader()
+            except Exception as exc:
+                snapshot[f"{key}_error"] = str(exc)
+
+        try:
+            params = getattr(motor, "_params", None)
+            snapshot["lower_limit_mm"] = getattr(params, "lower_lim", None)
+            snapshot["limit_mm"] = getattr(params, "lim", None)
+        except Exception as exc:
+            snapshot["limits_error"] = str(exc)
+
+        return snapshot
+
+    async def get_diagnostic_snapshot(self) -> dict[str, Any]:
+        motors: dict[str, dict[str, Any]] = {}
+        for axis in ["x_axis", "y_axis", "z_axis", "stage", "rotate", "door"]:
+            try:
+                motors[axis] = self._motor_diagnostic_snapshot(axis, self._get_motor_by_name(axis))
+            except Exception as exc:
+                motors[axis] = {"axis": axis, "snapshot_error": str(exc)}
+
+        snapshot: dict[str, Any] = {
+            "current_cell": self._safe_model_dump(self._state.current_cell),
+            "operation_context": self.get_operation_context(),
+            "last_fault_context": self.get_last_fault_context(),
+            "motors": motors,
+            "io": {},
+        }
+
+        try:
+            snapshot["io"]["curtain_blocked"] = self.get_curtain_state()
+        except Exception as exc:
+            snapshot["io"]["curtain_blocked_error"] = str(exc)
+
+        try:
+            snapshot["io"]["door_open"] = self.get_door_state()
+        except Exception as exc:
+            snapshot["io"]["door_open_error"] = str(exc)
+
+        return snapshot
+
+    # ------------------------------------------------------------------ #
     #  Demo cell mapping
     # ------------------------------------------------------------------ #
 
@@ -397,7 +538,9 @@ class Robot:
             y_axis=await self._build_axis_status(getattr(self._tool, "_my", None)),
         )
         tool_status = ToolAxisStatus(
-            z_axis=await self._build_axis_status(getattr(self._tool, "_mg", None))
+            z_axis=await self._build_axis_status(getattr(self._tool, "_mg", None)),
+            stage=await self._build_axis_status(getattr(self._tool, "_ms", None)),
+            rotate=await self._build_axis_status(getattr(self._tool, "_mr", None)),
         )
         state = RobotState(current_cell=self._state.current_cell)
         door_open = await self.refresh_door_state()
@@ -408,6 +551,14 @@ class Robot:
             storage=self._grid,
             curtain_blocked=self.get_curtain_state(),
             door_open=door_open,
+            motors={
+                "x_axis": gantry_status.x_axis,
+                "y_axis": gantry_status.y_axis,
+                "z_axis": tool_status.z_axis,
+                "stage": tool_status.stage or AxisTelemetry(),
+                "rotate": tool_status.rotate or AxisTelemetry(),
+                "door": await self._build_axis_status(getattr(self._io, "_md", None)),
+            },
         )
         return status
 
@@ -455,18 +606,30 @@ class Robot:
         if self._tool._my is None:
             raise ConfigError("Y-axis motor not configured")
 
+        self.set_operation_context(phase="io_place.pick_from_shelf", target_coordinate=coord)
         await self._tool.pick(coord)
+        self.set_operation_context(phase="io_place.rotate_to_front")
         await self._tool.rotate_to_position("front")
+        self.set_operation_context(phase="io_place.move_to_io_position")
         await self._tool.move(AxisCoordinate(ppl[0], ppl[1]))
+        self.set_operation_context(phase="io_place.open_door")
         await self._io.open_door()
+        self.set_operation_context(phase="io_place.extend_into_io", nudge_override=nudge_override)
         await self._tool.extend_IO(nudge_override=nudge_override)
+        self.set_operation_context(phase="io_place.y_axis_transfer")
         await self._tool._my.move_to_position(pph[1])
+        self.set_operation_context(phase="io_place.retract")
         await self._tool.retract()
+        self.set_operation_context(phase="io_place.close_door")
         await self._io.close_door()
+        self.set_operation_context(phase="io_place.return_to_shelf_coordinate")
         await self._tool.move(coord)
+        self.set_operation_context(phase="io_place.place_at_shelf_coordinate")
         await self._tool.place(coord)
 
+        self.set_operation_context(phase="io_place.home_door")
         await self._io.home_door()
+        self.set_operation_context(phase="io_place.clear_alarms")
         await self._tool.clear_alarms()
 
     async def io_pick(self, coord: AxisCoordinate):
@@ -478,18 +641,30 @@ class Robot:
         if self._tool._my is None:
             raise ConfigError("Y-axis motor not configured")
 
+        self.set_operation_context(phase="io_pick.pick_from_shelf_cell", target_coordinate=coord)
         await self._tool.pick(coord)
+        self.set_operation_context(phase="io_pick.rotate_to_front")
         await self._tool.rotate_to_position("front")
+        self.set_operation_context(phase="io_pick.move_to_io_high_position")
         await self._tool.move(AxisCoordinate(pph[0], pph[1]))
+        self.set_operation_context(phase="io_pick.open_door")
         await self._io.open_door()
+        self.set_operation_context(phase="io_pick.extend_into_io")
         await self._tool.extend()
+        self.set_operation_context(phase="io_pick.y_axis_transfer")
         await self._tool._my.move_to_position(ppl[1])
+        self.set_operation_context(phase="io_pick.retract")
         await self._tool.retract()
+        self.set_operation_context(phase="io_pick.close_door")
         await self._io.close_door()
+        self.set_operation_context(phase="io_pick.return_to_shelf_coordinate")
         await self._tool.move(coord)
+        self.set_operation_context(phase="io_pick.place_back_at_shelf_coordinate")
         await self._tool.place(coord)
 
+        self.set_operation_context(phase="io_pick.home_door")
         await self._io.home_door()
+        self.set_operation_context(phase="io_pick.clear_alarms")
         await self._tool.clear_alarms()
 
     # ------------------------------------------------------------------ #
@@ -518,6 +693,11 @@ class Robot:
         if isinstance(item_payload, dict):
             provided_dimensions = item_payload.get("dimensions")
 
+        self.set_operation_context(
+            command=command_name,
+            phase="store.resolving_item_location",
+            item={"upca": resolved_upca, "name": resolved_item_name},
+        )
         if provided_dimensions is None:
             return RobotCommandError(command=command_name, error="Item dimensions required")
 
@@ -568,15 +748,24 @@ class Robot:
             return RobotCommandError(command=command_name, error="No suitable storage location found")
 
         self._state.current_cell = location
+        self.set_operation_context(
+            command=command_name,
+            phase="store.moving_from_shelf_to_io",
+            target_cell=location,
+            item={"upca": resolved_upca, "name": resolved_item_name},
+        )
         try:
             coord = self._grid.get_cell_coordinate(location)
+            self.set_operation_context(target_coordinate=coord.to_axis_coordinate())
             self._logger.info("Store: starting io_pick at %s", location)
             await self.io_pick(coord.to_axis_coordinate())
             self._logger.info("Store: io_pick completed")
+            self.set_operation_context(phase="store.grid_update_commit")
             self._grid.store_item(location, item)
             self._logger.info("Store: command successful for %s at %s", resolved_item_name, location)
             return RobotCommandSuccessful(command=command_name, location=location, upca=resolved_upca, weight=weight)
-        except (MotorError, MovementError, ToolError):
+        except (MotorError, MovementError, ToolError) as err:
+            self._capture_fault_context(err)
             raise
         except Exception as exc:
             self._logger.exception("Store command failed for %s", resolved_item_name)
@@ -659,6 +848,7 @@ class Robot:
         if not self._grid:
             return RobotCommandError(command=command_name, error="Storage grid not initialized")
 
+        self.set_operation_context(command=command_name, phase="retrieve.resolving_cell_location")
         try:
             location = StorageModuleCellLocation(**location_payload)
         except Exception:
@@ -684,15 +874,21 @@ class Robot:
             upca_from_data = cached_item.data.get("upca") if cached_item.data else None
             retrieved_upca = cached_item.upca or (str(upca_from_data) if upca_from_data is not None else None)
 
+        self.set_operation_context(command=command_name, phase="retrieve.moving_from_io_to_shelf", target_cell=location)
         try:
             coord = self._grid.get_cell_coordinate(location).to_axis_coordinate()
+            self.set_operation_context(target_coordinate=coord)
 
             nudge_override = self._get_demo_nudge(location) if self._demo_cell_map is not None else None
+            if nudge_override is not None:
+                self.set_operation_context(nudge_override=nudge_override)
 
             await self.io_place(coord, nudge_override=nudge_override)
+            self.set_operation_context(phase="retrieve.grid_clear_commit")
             self._grid.clear_item(location)
             return RobotCommandSuccessful(command=command_name, location=location, upca=retrieved_upca)
-        except (MotorError, MovementError, ToolError):
+        except (MotorError, MovementError, ToolError) as err:
+            self._capture_fault_context(err)
             raise
         except Exception as exc:
             self._logger.exception(
@@ -715,36 +911,41 @@ class Robot:
         try:
             if isinstance(command, StopCommand):
                 await self.stop()
-                return RobotCommandSuccessful(command=command_name)
+                result: RobotResponse = RobotCommandSuccessful(command=command_name)
             elif isinstance(command, InitializeCommand):
                 await self._tool.configure()
-                return RobotCommandSuccessful(command=command_name)
+                result = RobotCommandSuccessful(command=command_name)
             elif isinstance(command, IdleCommand):
                 await self.idle()
-                return RobotCommandSuccessful(command=command_name)
+                result = RobotCommandSuccessful(command=command_name)
             elif isinstance(command, HomeCommand):
                 await self._tool.home()
                 await self._io.home_door()
-                return RobotCommandSuccessful(command=command_name)
+                result = RobotCommandSuccessful(command=command_name)
             elif isinstance(command, MoveCommand):
+                self.set_operation_context(command=command_name, phase="move", target_coordinate=command.coordinate)
                 await self._tool.move(command.coordinate)
-                return RobotCommandSuccessful(command=command_name)
+                result = RobotCommandSuccessful(command=command_name)
             elif isinstance(command, StoreItemCommand):
                 payload = getattr(command, "upca", None)
                 if payload is None:
                     payload = getattr(command, "item", None)
-                return await self.store(payload)
+                result = await self.store(payload)
             elif isinstance(command, RetrieveItemCommand):
                 if command.upca:
-                    return await self.retrieve_by_upca(command.upca, location_payload=command.location)
-                if command.location:
-                    return await self.retrieve_by_location(command.location)
-                return RobotCommandError(command=command_name, error="Missing upca or location for retrieval")
+                    result = await self.retrieve_by_upca(command.upca, location_payload=command.location)
+                elif command.location:
+                    result = await self.retrieve_by_location(command.location)
+                else:
+                    result = RobotCommandError(command=command_name, error="Missing upca or location for retrieval")
             else:
-                return RobotCommandError(command=command_name, error="Invalid Robot Command")
+                result = RobotCommandError(command=command_name, error="Invalid Robot Command")
+            self.clear_operation_context()
+            return result
         except (MotorError, MovementError, ToolError):
             raise
         except Exception as exc:
+            self.clear_operation_context()
             self._logger.exception("Unhandled error while processing command %s", command_name)
             sentry_sdk.capture_exception(exc)
             return RobotCommandError(
