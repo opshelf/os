@@ -147,13 +147,6 @@ async def capture_camera_blank_endpoint() -> dict[str, Any]:
 	return {"success": True, "blank_frame_path": path}
 
 
-@router.post(
-	"/reconnect",
-	dependencies=[Depends(get_current_user), Depends(require_permissions("robot:control"))],
-)
-async def reconnect_endpoint() -> dict[str, Any]:
-	await reload_iobox_sizer_config()
-	return {"success": True, "status": get_iobox_sizer_status()}
 
 
 @router.get("/measurements", dependencies=[Depends(get_current_user)])
