@@ -9,12 +9,22 @@ from fastapi import HTTPException, status
 _motion_lock = asyncio.Lock()
 _current_operation: str | None = None
 
-
 def _conflict_detail(message: str, *, reason: str | None = None) -> dict[str, str]:
 	detail = {"message": message, "code": "movement_in_progress"}
 	if reason is not None:
 		detail["reason"] = reason
 	return detail
+
+
+def get_manual_motion_operation() -> str | None:
+	if _motion_lock.locked() is not True:
+		return None
+
+	return _current_operation or "manual_motion"
+
+
+def _should_wait_for_probe(operation: str) -> bool:
+	return operation != "motor_probe" and _current_operation == "motor_probe"
 
 
 def _has_pending_commands(worker_state: dict[str, Any]) -> bool:
@@ -79,7 +89,7 @@ async def manual_motion_guard(operation: str, worker=None) -> AsyncIterator[None
 	if worker is not None:
 		ensure_robot_available_for_manual_motion(worker)
 
-	if _motion_lock.locked() is True:
+	if _motion_lock.locked() is True and _should_wait_for_probe(operation) is not True:
 		raise HTTPException(
 			status_code=status.HTTP_409_CONFLICT,
 			detail=_conflict_detail(
@@ -89,9 +99,12 @@ async def manual_motion_guard(operation: str, worker=None) -> AsyncIterator[None
 		)
 
 	await _motion_lock.acquire()
-	_current_operation = operation
 
 	try:
+		if worker is not None:
+			ensure_robot_available_for_manual_motion(worker)
+
+		_current_operation = operation
 		yield
 	finally:
 		_current_operation = None
@@ -102,7 +115,7 @@ async def manual_motion_guard(operation: str, worker=None) -> AsyncIterator[None
 async def robot_command_enqueue_guard() -> AsyncIterator[None]:
 	global _current_operation
 
-	if _motion_lock.locked() is True:
+	if _motion_lock.locked() is True and _should_wait_for_probe("robot_command_enqueue") is not True:
 		raise HTTPException(
 			status_code=status.HTTP_409_CONFLICT,
 			detail=_conflict_detail(

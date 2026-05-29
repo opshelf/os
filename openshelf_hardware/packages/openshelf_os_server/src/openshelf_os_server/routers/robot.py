@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from typing import AsyncGenerator, Dict, List, Literal, Optional
+from typing import AsyncGenerator, Callable, List, Literal, Optional, cast
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -16,7 +16,11 @@ from sqlalchemy import select
 
 from openshelf_os_server.core.robot import get_robot_health, get_robot_worker
 from openshelf_os_server.core.laser_auto_calibration import is_laser_auto_calibration_running
-from openshelf_os_server.core.manual_motion import manual_motion_guard, robot_command_enqueue_guard
+from openshelf_os_server.core.manual_motion import (
+    get_manual_motion_operation,
+    manual_motion_guard,
+    robot_command_enqueue_guard,
+)
 from openshelf_os_server.core.storage import StorageService
 from openshelf_os_server.routers.common import SuccessResponse
 from openshelf_os_server.settings import get_settings, get_operating_mode
@@ -65,6 +69,31 @@ def _reason_matches_motor(reason: Optional[str], motor_name: str, motor) -> bool
         return False
 
     return getattr(motor, "_motor_id", None) == motor_id
+
+
+def _probe_busy_reason(worker: RobotWorker) -> Optional[str]:
+    manual_operation = get_manual_motion_operation()
+    if manual_operation is not None:
+        return manual_operation
+
+    worker_state = getattr(worker, "__dict__", {})
+    if worker_state.get("_current_command") is not None:
+        return "robot_command_in_progress"
+
+    command_queue = worker_state.get("_command_queue")
+    qsize = getattr(command_queue, "qsize", None)
+    if callable(qsize) is True:
+        try:
+            qsize_fn = cast(Callable[[], int], qsize)
+            if qsize_fn() > 0:
+                return "robot_command_queued"
+        except Exception:
+            pass
+
+    if worker_state.get("_demo_cycling", False) is True:
+        return "demo_cycle_in_progress"
+
+    return None
 
 
 def overlay_db_occupancy(payload_json: str, occupied: set[tuple[str, int, int]]) -> str:
@@ -119,6 +148,12 @@ class MotorProbeResult(BaseModel):
     responsive: bool
     position_mm: Optional[float] = None
     error: Optional[str] = None
+
+
+class MotorProbeResponse(BaseModel):
+    results: List[MotorProbeResult] = Field(default_factory=list)
+    busy: bool = False
+    reason: Optional[str] = None
 
 
 class MotorMoveRequest(BaseModel):
@@ -496,40 +531,52 @@ async def home_motor(
 @router.post("/debug/motors/probe", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
 async def probe_motors(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
-) -> Dict[str, List[MotorProbeResult]]:
-    motor_names = worker.get_motor_names()
-    results: List[MotorProbeResult] = []
+) -> MotorProbeResponse:
+    busy_reason = _probe_busy_reason(worker)
+    if busy_reason is not None:
+        return MotorProbeResponse(busy=True, reason=busy_reason)
 
-    all_motors: List[str] = []
-    for section_motors in motor_names.values():
-        all_motors.extend(section_motors)
+    try:
+        async with manual_motion_guard("motor_probe", worker=worker):
+            motor_names = worker.get_motor_names()
+            results: List[MotorProbeResult] = []
 
-    for motor_name in all_motors:
-        motor = worker._robot._get_motor_by_name(motor_name)
+            all_motors: List[str] = []
+            for section_motors in motor_names.values():
+                all_motors.extend(section_motors)
 
-        if motor is None:
-            results.append(MotorProbeResult(
-                motor_name=motor_name,
-                responsive=False,
-                error="motor not found",
-            ))
-            continue
+            for motor_name in all_motors:
+                motor = worker._robot._get_motor_by_name(motor_name)
 
-        try:
-            position = await motor.get_position()
-            results.append(MotorProbeResult(
-                motor_name=motor_name,
-                responsive=True,
-                position_mm=position,
-            ))
-        except Exception as exc:
-            results.append(MotorProbeResult(
-                motor_name=motor_name,
-                responsive=False,
-                error=str(exc),
-            ))
+                if motor is None:
+                    results.append(MotorProbeResult(
+                        motor_name=motor_name,
+                        responsive=False,
+                        error="motor not found",
+                    ))
+                    continue
 
-    return {"results": results}
+                try:
+                    position = await motor.get_position()
+                    results.append(MotorProbeResult(
+                        motor_name=motor_name,
+                        responsive=True,
+                        position_mm=position,
+                    ))
+                except Exception as exc:
+                    results.append(MotorProbeResult(
+                        motor_name=motor_name,
+                        responsive=False,
+                        error=str(exc),
+                    ))
+
+            return MotorProbeResponse(results=results)
+    except HTTPException as exc:
+        if exc.status_code != status.HTTP_409_CONFLICT:
+            raise
+
+        reason = exc.detail.get("reason") if isinstance(exc.detail, dict) else None
+        return MotorProbeResponse(busy=True, reason=reason)
 
 
 @router.post("/debug/motors/{motor_name}/move", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
