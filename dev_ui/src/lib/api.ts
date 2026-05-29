@@ -587,6 +587,7 @@ export interface SizerToFConfig {
 	roi_width: number | null;
 	roi_height: number | null;
 	roi_center: number | null;
+	preferred_sensor_index: number | null;
 }
 
 export interface SizerDetectionConfig {

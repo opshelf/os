@@ -132,3 +132,19 @@ def test_iobox_sizer_service_can_use_farthest_tof_sample() -> None:
 
     assert readings[0].depth_mm == 160.0
     assert readings[1].depth_mm == 310.0
+
+
+def test_iobox_sizer_service_can_prefer_specific_tof_sensor() -> None:
+    service = IOBoxSizerService(
+        config=IOBoxSizerConfig(
+            tof={"channels": [6, 7], "preferred_sensor_index": 0},
+            calibration={"tof_blank_mm": [200.0, 300.0]},
+        ),
+        camera=FakeCamera(),
+        tof_bus=FakeToFBus(),
+    )
+    readings = service._read_tof()
+
+    selected = service._select_reading(readings)
+
+    assert selected is readings[0]
