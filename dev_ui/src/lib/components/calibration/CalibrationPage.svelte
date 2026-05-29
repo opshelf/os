@@ -30,10 +30,10 @@
 
 <div class="toggle-group">
 	<a class:selected={selectedView === 'cell_auto'} href={tabHref('/calibration/auto')}>auto</a>
-	<a class:selected={selectedView === 'cell_manual'} href={tabHref('/calibration/cells')}>cells</a>
+	<a class:selected={selectedView === 'cell_manual'} href={tabHref('/calibration/cells')}>manual</a>
 	<a class:selected={selectedView === 'io'} href={tabHref('/calibration/io-box')}>io box</a>
 	<a class:selected={selectedView === 'rotation'} href={tabHref('/calibration/tool-rotation')}>
-		tool rotation
+		rotation
 	</a>
 	<a class:selected={selectedView === 'test'} href={tabHref('/calibration/test')}>test</a>
 </div>

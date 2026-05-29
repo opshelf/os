@@ -18,7 +18,7 @@
 
 	const links = [
 		{ href: '/', label: 'status' },
-		{ href: '/calibration', label: 'calibration' },
+		{ href: '/calibration', label: 'storage' },
 		{ href: '/camera', label: 'cameras' },
 		{ href: '/scale', label: 'scale' },
 		{ href: '/sizer', label: 'sizer' },
@@ -50,7 +50,6 @@
 		}
 	}
 
-
 	onMount(() => {
 		if (browser === false) {
 			return;
@@ -78,7 +77,6 @@
 					didReceiveRobotStatus(event.data);
 				},
 				onError: () => {
-
 					if (didReceiveRobotUnavailable === true) {
 						didReceiveRobotUnavailable = false;
 						isApiConnected.set(true);
