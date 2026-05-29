@@ -5,7 +5,6 @@
 		calibrateSizerTofBlank,
 		captureSizerCameraBlank,
 		getSizerConfig,
-		reconnectSizer,
 		setSizerConfig,
 		type SizerConfig
 	} from '$lib/api';
@@ -20,19 +19,14 @@
 	let isLoading = $state(true);
 	let isRefreshing = $state(false);
 	let isApplying = $state(false);
-	let isCalibratingTof = $state(false);
 	let isCapturingBlank = $state(false);
-	let isReconnecting = $state(false);
+	let isCalibratingTof = $state(false);
 
-	let tofBlank0 = $state('');
-	let tofBlank1 = $state('');
 	let mmPerPxX = $state('');
 	let mmPerPxY = $state('');
 
 	function setCalibrationInputs(nextConfig: SizerConfig): void {
 		config = nextConfig;
-		tofBlank0 = formatOptionalInput(nextConfig.calibration.tof_blank_mm[0] ?? null);
-		tofBlank1 = formatOptionalInput(nextConfig.calibration.tof_blank_mm[1] ?? null);
 		mmPerPxX = formatOptionalInput(nextConfig.calibration.mm_per_px_x);
 		mmPerPxY = formatOptionalInput(nextConfig.calibration.mm_per_px_y);
 	}
@@ -114,22 +108,6 @@
 		}
 	}
 
-	async function didClickReconnect(): Promise<void> {
-		isReconnecting = true;
-		configError = '';
-		message = '';
-
-		try {
-			await reconnectSizer();
-			await fetchConfig();
-			message = 'sizer reconnected';
-		} catch (err) {
-			configError = err instanceof Error ? err.message : 'failed to reconnect sizer';
-		} finally {
-			isReconnecting = false;
-		}
-	}
-
 	function buildConfig(): SizerConfig | null {
 		if (config === null) {
 			configError = 'sizer config not loaded';
@@ -140,7 +118,6 @@
 			...config,
 			calibration: {
 				...config.calibration,
-				tof_blank_mm: [parseOptionalNumber(tofBlank0), parseOptionalNumber(tofBlank1)],
 				mm_per_px_x: parseOptionalNumber(mmPerPxX),
 				mm_per_px_y: parseOptionalNumber(mmPerPxY)
 			}
@@ -162,7 +139,7 @@
 	}
 
 	function isActionBusy(): boolean {
-		return isApplying || isCalibratingTof || isCapturingBlank || isReconnecting;
+		return isApplying || isCalibratingTof || isCapturingBlank;
 	}
 
 	async function initialLoad(): Promise<void> {
@@ -187,26 +164,6 @@
 {#if isLoading === true}
 	<p>loading sizer data...</p>
 {:else}
-	<table style="margin-bottom: 1.5em">
-		<thead>
-			<tr>
-				<th colspan="2">tof calibration</th>
-			</tr>
-		</thead>
-		<tbody>
-			<tr
-				><td>tof blank 0 (mm)</td><td
-					><input type="number" bind:value={tofBlank0} step="0.01" placeholder="none" /></td
-				></tr
-			>
-			<tr
-				><td>tof blank 1 (mm)</td><td
-					><input type="number" bind:value={tofBlank1} step="0.01" placeholder="none" /></td
-				></tr
-			>
-		</tbody>
-	</table>
-
 	<table style="margin-bottom: 1.5em">
 		<thead>
 			<tr>
@@ -255,11 +212,7 @@
 			disabled={isRefreshing === true || isActionBusy() === true}>refresh</button
 		>
 		<button type="button" onclick={didClickApplyParams} disabled={isApplying === true}
-			>apply params</button
-		>
-
-		<button type="button" onclick={didClickReconnect} disabled={isReconnecting === true}
-			>reconnect</button
+			>save params</button
 		>
 	</div>
 

@@ -694,11 +694,6 @@ export async function captureSizerCameraBlank(): Promise<{ success: boolean; bla
 	});
 }
 
-export async function reconnectSizer(): Promise<{ success: boolean; status: SizerStatus }> {
-	return apiFetch<{ success: boolean; status: SizerStatus }>('/iobox/sizer/reconnect', {
-		method: 'POST'
-	});
-}
 
 export const getIOBoxSizerStatus = getSizerStatus;
 export const getIOBoxSizerConfig = getSizerConfig;
