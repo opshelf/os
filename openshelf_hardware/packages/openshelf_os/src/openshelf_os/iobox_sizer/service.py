@@ -201,6 +201,12 @@ class IOBoxSizerService:
             if reading.depth_delta_mm is not None and reading.error is None
         ]
         if with_delta:
+            preferred = self.config.tof.preferred_sensor_index
+            if preferred is not None:
+                for reading in with_delta:
+                    if reading.sensor_index == preferred:
+                        return reading
+
             return max(with_delta, key=lambda reading: abs(reading.depth_delta_mm or 0))
 
         for reading in readings:

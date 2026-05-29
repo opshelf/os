@@ -52,3 +52,8 @@ def test_tof_roi_dimensions_must_be_paired() -> None:
 def test_tof_roi_center_is_validated(roi_center: int) -> None:
     with pytest.raises(ValidationError):
         IOBoxSizerToFConfig(roi_center=roi_center)
+
+
+def test_tof_preferred_sensor_index_must_reference_channel() -> None:
+    with pytest.raises(ValidationError):
+        IOBoxSizerToFConfig(channels=[6, 7], preferred_sensor_index=2)

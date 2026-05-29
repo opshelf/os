@@ -155,6 +155,7 @@ class IOBoxSizerToFConfig(BaseModel):
     roi_width: Optional[int] = Field(default=None, ge=1, le=16)
     roi_height: Optional[int] = Field(default=None, ge=1, le=16)
     roi_center: Optional[int] = Field(default=None, ge=0, le=255)
+    preferred_sensor_index: Optional[int] = Field(default=None, ge=0)
 
     @field_validator("channels")
     @classmethod
@@ -172,9 +173,14 @@ class IOBoxSizerToFConfig(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def _validate_roi_pair(self) -> "IOBoxSizerToFConfig":
+    def _validate_tof_selection(self) -> "IOBoxSizerToFConfig":
         if (self.roi_width is None) != (self.roi_height is None):
             raise ValueError("roi_width and roi_height must be configured together")
+
+        if self.preferred_sensor_index is not None and self.preferred_sensor_index >= len(
+            self.channels
+        ):
+            raise ValueError("preferred_sensor_index must reference a configured channel")
 
         return self
 
