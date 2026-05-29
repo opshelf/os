@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
-	import { onMount } from 'svelte';
 	import {
 		getScaleReading,
 		getScaleCalibrationStatus,
@@ -183,11 +182,12 @@
 		return '0x' + value.toString(16).toUpperCase().padStart(4, '0');
 	}
 
-	async function initialLoad(): Promise<void> {
+	async function loadSelectedView(view: ScaleView): Promise<void> {
 		isLoading = true;
+		message = '';
 
 		try {
-			if (selectedView === 'status') {
+			if (view === 'status') {
 				await fetchReading();
 			} else {
 				await fetchCalibrationStatus();
@@ -198,12 +198,12 @@
 		}
 	}
 
-	onMount(function () {
+	$effect(() => {
 		if (browser === false) {
 			return;
 		}
 
-		initialLoad();
+		void loadSelectedView(selectedView);
 	});
 </script>
 
