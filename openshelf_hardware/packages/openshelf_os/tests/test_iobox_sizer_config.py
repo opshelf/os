@@ -41,3 +41,14 @@ def test_tof_samples_are_validated(samples: int) -> None:
 def test_tof_aggregation_is_validated() -> None:
     with pytest.raises(ValidationError):
         IOBoxSizerToFConfig(aggregation="mode")
+
+
+def test_tof_roi_dimensions_must_be_paired() -> None:
+    with pytest.raises(ValidationError):
+        IOBoxSizerToFConfig(roi_width=4)
+
+
+@pytest.mark.parametrize("roi_center", [-1, 256])
+def test_tof_roi_center_is_validated(roi_center: int) -> None:
+    with pytest.raises(ValidationError):
+        IOBoxSizerToFConfig(roi_center=roi_center)

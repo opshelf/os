@@ -151,6 +151,10 @@ class IOBoxSizerToFConfig(BaseModel):
     samples: int = Field(1, ge=1, le=25)
     sample_interval_ms: int = Field(0, ge=0, le=1000)
     aggregation: Literal["median", "mean", "nearest", "farthest"] = "median"
+    distance_mode: Optional[Literal[1, 2]] = None
+    roi_width: Optional[int] = Field(default=None, ge=1, le=16)
+    roi_height: Optional[int] = Field(default=None, ge=1, le=16)
+    roi_center: Optional[int] = Field(default=None, ge=0, le=255)
 
     @field_validator("channels")
     @classmethod
@@ -166,6 +170,13 @@ class IOBoxSizerToFConfig(BaseModel):
                 raise ValueError("channels must be integers in range 0..7")
 
         return value
+
+    @model_validator(mode="after")
+    def _validate_roi_pair(self) -> "IOBoxSizerToFConfig":
+        if (self.roi_width is None) != (self.roi_height is None):
+            raise ValueError("roi_width and roi_height must be configured together")
+
+        return self
 
 
 class IOBoxSizerDetectionConfig(BaseModel):

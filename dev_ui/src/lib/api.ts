@@ -583,6 +583,10 @@ export interface SizerToFConfig {
 	samples: number;
 	sample_interval_ms: number;
 	aggregation: 'median' | 'mean' | 'nearest' | 'farthest';
+	distance_mode: 1 | 2 | null;
+	roi_width: number | null;
+	roi_height: number | null;
+	roi_center: number | null;
 }
 
 export interface SizerDetectionConfig {
