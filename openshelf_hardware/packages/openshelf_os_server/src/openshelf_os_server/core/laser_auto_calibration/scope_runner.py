@@ -32,7 +32,7 @@ class ScopeRunnerMixin:
         requested_scope: LaserAutoCalibrationScope,
     ) -> None:
         if requested_scope.mode == "all":
-            await self._run_all_sides(worker)
+            await self._run_all_sides(worker, requested_scope.include_angle_calibration)
 
             if requested_scope.include_io_box is True:
                 await self._run_io_box_calibration(worker)
@@ -49,7 +49,7 @@ class ScopeRunnerMixin:
         side = requested_scope.side
 
         if requested_scope.mode == "side":
-            await self._run_single_side(worker, side)
+            await self._run_single_side(worker, side, requested_scope.include_angle_calibration)
 
             if requested_scope.include_io_box is True:
                 await self._run_io_box_calibration(worker)
@@ -87,23 +87,26 @@ class ScopeRunnerMixin:
 
         raise ValueError(f"Unsupported auto calibration scope: {requested_scope.mode}")
 
-    async def _run_all_sides(self, worker: RobotWorker) -> None:
+    async def _run_all_sides(self, worker: RobotWorker, include_angle_calibration: bool = True) -> None:
         completed_results: list[_CompletedSideResult] = []
         scan_config = get_root_config().robot.grid.scan
         left_bounds = _build_bounds_for_side(scan_config, StorageModuleSide.LEFT)
         right_bounds = _build_bounds_for_side(scan_config, StorageModuleSide.RIGHT)
+        right_angle_result: LaserAutoCalibrationAngleResult | None = None
+        left_angle_result: LaserAutoCalibrationAngleResult | None = None
 
-        right_angle_result = await self._run_angle_calibration_for_side(worker, StorageModuleSide.RIGHT, right_bounds)
-        await self._apply_angle_calibration_in_memory(worker, StorageModuleSide.RIGHT, right_angle_result)
+        if include_angle_calibration is True:
+            right_angle_result = await self._run_angle_calibration_for_side(worker, StorageModuleSide.RIGHT, right_bounds)
+            await self._apply_angle_calibration_in_memory(worker, StorageModuleSide.RIGHT, right_angle_result)
 
-        left_angle_result = await self._run_angle_calibration_for_side(worker, StorageModuleSide.LEFT, left_bounds)
-        await self._apply_angle_calibration_in_memory(worker, StorageModuleSide.LEFT, left_angle_result)
+            left_angle_result = await self._run_angle_calibration_for_side(worker, StorageModuleSide.LEFT, left_bounds)
+            await self._apply_angle_calibration_in_memory(worker, StorageModuleSide.LEFT, left_angle_result)
 
         right_probe_y_mm = await self._resolve_stage_extension_probe_y_mm(
             worker,
             StorageModuleSide.RIGHT,
             right_bounds,
-            top_shelf_y_mm=float(right_angle_result.capture_y_mm),
+            top_shelf_y_mm=None if right_angle_result is None else float(right_angle_result.capture_y_mm),
         )
         right_stage_extension_mm = await self._run_stage_extension_calibration_for_side(
             worker,
@@ -121,7 +124,7 @@ class ScopeRunnerMixin:
             worker,
             StorageModuleSide.LEFT,
             left_bounds,
-            top_shelf_y_mm=float(left_angle_result.capture_y_mm),
+            top_shelf_y_mm=None if left_angle_result is None else float(left_angle_result.capture_y_mm),
         )
         left_stage_extension_mm = await self._run_stage_extension_calibration_for_side(
             worker,
@@ -140,17 +143,26 @@ class ScopeRunnerMixin:
 
         await self._persist_completed_results(worker, completed_results)
 
-    async def _run_single_side(self, worker: RobotWorker, side: StorageModuleSide) -> None:
+    async def _run_single_side(
+        self,
+        worker: RobotWorker,
+        side: StorageModuleSide,
+        include_angle_calibration: bool = True,
+    ) -> None:
         completed_results: list[_CompletedSideResult] = []
         scan_config = get_root_config().robot.grid.scan
         bounds = _build_bounds_for_side(scan_config, side)
-        angle_result = await self._run_angle_calibration_for_side(worker, side, bounds)
-        await self._apply_angle_calibration_in_memory(worker, side, angle_result)
+        angle_result: LaserAutoCalibrationAngleResult | None = None
+
+        if include_angle_calibration is True:
+            angle_result = await self._run_angle_calibration_for_side(worker, side, bounds)
+            await self._apply_angle_calibration_in_memory(worker, side, angle_result)
+
         probe_y_mm = await self._resolve_stage_extension_probe_y_mm(
             worker,
             side,
             bounds,
-            top_shelf_y_mm=float(angle_result.capture_y_mm),
+            top_shelf_y_mm=None if angle_result is None else float(angle_result.capture_y_mm),
         )
         stage_extension_mm = await self._run_stage_extension_calibration_for_side(
             worker,
@@ -325,13 +337,14 @@ class ScopeRunnerMixin:
         self,
         worker: RobotWorker,
         side: StorageModuleSide,
-        angle_result: LaserAutoCalibrationAngleResult,
+        angle_result: LaserAutoCalibrationAngleResult | None,
     ) -> _CompletedSideResult:
         config = get_root_config()
         scan_config = config.robot.grid.scan
         bounds = _build_bounds_for_side(scan_config, side)
 
-        await self._apply_angle_calibration_in_memory(worker, side, angle_result)
+        if angle_result is not None:
+            await self._apply_angle_calibration_in_memory(worker, side, angle_result)
         analysis = await self._run_scan_analysis(worker, side, bounds)
 
         return _CompletedSideResult(
