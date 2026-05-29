@@ -204,7 +204,10 @@ def _run_migrations() -> None:
 
 
 def _get_tool_camera_url(settings: Settings) -> str | None:
-	if settings.tool_camera.enabled is True and settings.tool_camera.rtsp_url != "":
+	if settings.tool_camera.enabled is False:
+		return None
+
+	if settings.tool_camera.rtsp_url != "":
 		return settings.tool_camera.rtsp_url
 
 	config_paths = [
