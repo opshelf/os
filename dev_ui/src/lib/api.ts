@@ -555,6 +555,156 @@ export async function tareScale(): Promise<{ success: boolean }> {
 	});
 }
 
+export interface SizerCameraConfig {
+	device: string | number;
+	width: number;
+	height: number;
+	fps: number;
+	flip_horizontal: boolean;
+	buffer_size: number;
+}
+
+export interface SizerToFConfig {
+	ftdi_url: string;
+	mux_address: number;
+	sensor_address: number;
+	channels: number[];
+	timing_budget_ms: number;
+	read_timeout_s: number;
+}
+
+export interface SizerDetectionConfig {
+	mode: 'brightness' | 'rectangle';
+	roi_x: number;
+	roi_y: number;
+	roi_width: number;
+	roi_height: number;
+	diff_threshold: number;
+	hsv_v_min: number;
+	hsv_s_max: number;
+	white_rgb_min: [number, number, number];
+	min_area_px: number;
+	blank_frame_path: string;
+}
+
+export interface SizerCalibrationParams {
+	tof_blank_mm: Array<number | null>;
+	mm_per_px_x: number | null;
+	mm_per_px_y: number | null;
+	apply_depth_compensation: boolean;
+}
+
+export interface SizerHistoryConfig {
+	save_debug_images: boolean;
+	debug_image_dir: string;
+	max_recent_results: number;
+}
+
+export interface SizerConfig {
+	enabled: boolean;
+	observer_mode_enabled: boolean;
+	measure_on_store: boolean;
+	store_measurement_timeout_s: number;
+	camera: SizerCameraConfig;
+	tof: SizerToFConfig;
+	detection: SizerDetectionConfig;
+	calibration: SizerCalibrationParams;
+	history: SizerHistoryConfig;
+}
+
+export interface SizerToFReading {
+	sensor_index: number;
+	sensor_channel: number;
+	depth_mm: number | null;
+	depth_delta_mm: number | null;
+	error: string | null;
+}
+
+export interface SizerDimensions {
+	width: number;
+	height: number;
+	length: number | null;
+}
+
+export interface SizerMeasurement {
+	detected: boolean;
+	mode: 'brightness' | 'rectangle';
+	width_px: number | null;
+	height_px: number | null;
+	center_x: number | null;
+	center_y: number | null;
+	frame_width: number;
+	frame_height: number;
+	depth_mm: number | null;
+	depth_delta_mm: number | null;
+	sensor_index: number | null;
+	sensor_channel: number | null;
+	tof_readings: SizerToFReading[];
+	dimensions_mm: SizerDimensions | null;
+	calibration_warnings: string[];
+	timestamp: string;
+	duration_ms: number;
+	debug_image_path: string | null;
+}
+
+export interface SizerStatus {
+	enabled?: boolean;
+	available?: boolean;
+	running?: boolean;
+	observer_mode_enabled?: boolean;
+	error?: string | null;
+	[key: string]: unknown;
+}
+
+export async function getSizerStatus(): Promise<SizerStatus> {
+	return apiFetch<SizerStatus>('/iobox/sizer/status');
+}
+
+export async function getSizerConfig(): Promise<SizerConfig> {
+	return apiFetch<SizerConfig>('/iobox/sizer/config');
+}
+
+export async function setSizerConfig(config: SizerConfig): Promise<{ success: boolean; config: SizerConfig; status: SizerStatus }> {
+	return apiFetch<{ success: boolean; config: SizerConfig; status: SizerStatus }>('/iobox/sizer/config', {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(config)
+	});
+}
+
+export async function measureSizer(save = true): Promise<{ success: boolean; measurement: SizerMeasurement }> {
+	return apiFetch<{ success: boolean; measurement: SizerMeasurement }>('/iobox/sizer/measure', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ save })
+	});
+}
+
+export async function calibrateSizerTofBlank(samples = 20): Promise<{ success: boolean; tof_blank_mm: Array<number | null> }> {
+	return apiFetch<{ success: boolean; tof_blank_mm: Array<number | null> }>('/iobox/sizer/calibration/tof-blank', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ samples })
+	});
+}
+
+export async function captureSizerCameraBlank(): Promise<{ success: boolean; blank_frame_path: string }> {
+	return apiFetch<{ success: boolean; blank_frame_path: string }>('/iobox/sizer/calibration/camera-blank', {
+		method: 'POST'
+	});
+}
+
+export async function reconnectSizer(): Promise<{ success: boolean; status: SizerStatus }> {
+	return apiFetch<{ success: boolean; status: SizerStatus }>('/iobox/sizer/reconnect', {
+		method: 'POST'
+	});
+}
+
+export const getIOBoxSizerStatus = getSizerStatus;
+export const getIOBoxSizerConfig = getSizerConfig;
+export const setIOBoxSizerConfig = setSizerConfig;
+export const measureIOBoxSizer = measureSizer;
+
 export interface ScannerStatus {
 	connected: boolean;
 	enabled: boolean;
