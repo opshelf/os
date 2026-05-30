@@ -4,12 +4,15 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any
 
+from sqlalchemy import select
 from hardware.tof import ToFSensorBus
 from hardware.uvc_camera import UvcCamera
 from openshelf_os.config.models import IOBoxSizerConfig
 from openshelf_os.iobox_sizer.models import IOBoxSizerMeasurement
 from openshelf_os.iobox_sizer.service import IOBoxSizerService
 from openshelf_os_server.core.camera import init_sizer_camera_manager, unregister_camera_manager
+from openshelf_os_server.database.models import Item, ItemSizerMeasurement
+from openshelf_os_server.database.session import AsyncSessionLocal
 from openshelf_os_server.core.logging_config import get_logger
 from openshelf_os_server.settings import get_root_config
 
@@ -210,6 +213,78 @@ def _consume_measurement_task_result(task: asyncio.Task[IOBoxSizerMeasurement]) 
 		)
 
 
+async def record_store_sizer_measurement(
+	*,
+	upca: str | None,
+	item_name: str | None,
+	user_id: int | None,
+	request_correlation_id: str | None,
+	command_payload: dict[str, Any] | None,
+	human_dimensions: dict[str, Any] | None,
+	human_dimensions_source: str | None,
+	measurement: IOBoxSizerMeasurement | None,
+	error: Exception | None,
+	error_type: str | None = None,
+	error_message: str | None = None,
+	should_raise: bool = False,
+) -> None:
+	try:
+		auto_dimensions = None
+		measurement_timestamp = None
+		raw_measurement = None
+		detected = False
+
+		if measurement is not None:
+			detected = measurement.detected
+			measurement_timestamp = measurement.timestamp
+			raw_measurement = measurement.model_dump(mode="json")
+
+			if measurement.dimensions_mm is not None:
+				auto_dimensions = measurement.dimensions_mm.model_dump(mode="json")
+
+		resolved_error_type = error_type
+		resolved_error_message = error_message
+		if error is not None:
+			resolved_error_type = resolved_error_type or type(error).__name__
+			resolved_error_message = resolved_error_message or str(error)
+
+		async with AsyncSessionLocal() as session:
+			item_id = None
+			if upca is not None:
+				result = await session.execute(select(Item.id).where(Item.upca == upca))
+				item_id = result.scalar_one_or_none()
+
+			session.add(
+				ItemSizerMeasurement(
+					item_id=item_id,
+					upca=upca,
+					item_name=item_name,
+					user_id=user_id,
+					request_correlation_id=request_correlation_id,
+					manual_dimensions=human_dimensions,
+					manual_dimensions_source=human_dimensions_source,
+					auto_dimensions=auto_dimensions,
+					raw_measurement=raw_measurement,
+					command_payload=command_payload,
+					detected=detected,
+					error_type=resolved_error_type,
+					error_message=resolved_error_message,
+					measurement_timestamp=measurement_timestamp,
+				)
+			)
+			await session.commit()
+	except Exception as exc:
+		logger.warning(
+			"iobox_sizer_observer_measurement_persist_failed",
+			upca=upca,
+			error=str(exc),
+			error_type=type(exc).__name__,
+			exc_info=True,
+		)
+		if should_raise is True:
+			raise
+
+
 async def capture_store_observer_measurement(
 	*,
 	upca: str | None,
@@ -235,6 +310,17 @@ async def capture_store_observer_measurement(
 			timeout=config.store_measurement_timeout_s,
 		)
 		logger.info("iobox_sizer_observer_capture_completed", upca=upca, detected=measurement.detected)
+		await record_store_sizer_measurement(
+			upca=upca,
+			item_name=item_name,
+			user_id=user_id,
+			request_correlation_id=request_correlation_id,
+			command_payload=command_payload,
+			human_dimensions=human_dimensions,
+			human_dimensions_source=human_dimensions_source,
+			measurement=measurement,
+			error=None,
+		)
 	except asyncio.TimeoutError as exc:
 		measurement_task.add_done_callback(_consume_measurement_task_result)
 		logger.warning(
@@ -243,6 +329,19 @@ async def capture_store_observer_measurement(
 			error=str(exc),
 			error_type=type(exc).__name__,
 		)
+		await record_store_sizer_measurement(
+			upca=upca,
+			item_name=item_name,
+			user_id=user_id,
+			request_correlation_id=request_correlation_id,
+			command_payload=command_payload,
+			human_dimensions=human_dimensions,
+			human_dimensions_source=human_dimensions_source,
+			measurement=None,
+			error=exc,
+			error_type="TimeoutError",
+			error_message=f"Timed out after {config.store_measurement_timeout_s}s",
+		)
 		return
 	except Exception as exc:
 		logger.warning(
@@ -250,4 +349,15 @@ async def capture_store_observer_measurement(
 			upca=upca,
 			error=str(exc),
 			error_type=type(exc).__name__,
+		)
+		await record_store_sizer_measurement(
+			upca=upca,
+			item_name=item_name,
+			user_id=user_id,
+			request_correlation_id=request_correlation_id,
+			command_payload=command_payload,
+			human_dimensions=human_dimensions,
+			human_dimensions_source=human_dimensions_source,
+			measurement=None,
+			error=exc,
 		)
