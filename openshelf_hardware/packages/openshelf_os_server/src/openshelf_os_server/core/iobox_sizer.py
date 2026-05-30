@@ -1,19 +1,16 @@
 from __future__ import annotations
 
 import asyncio
-import time
 from dataclasses import dataclass
 from typing import Any
 
 from hardware.tof import ToFSensorBus
 from hardware.uvc_camera import UvcCamera
 from openshelf_os.config.models import IOBoxSizerConfig
-from openshelf_os.iobox_sizer.models import IOBoxSizerMeasurement, IOBoxSizerMeasurementError
+from openshelf_os.iobox_sizer.models import IOBoxSizerMeasurement
 from openshelf_os.iobox_sizer.service import IOBoxSizerService
 from openshelf_os_server.core.camera import init_sizer_camera_manager, unregister_camera_manager
-from openshelf_os_server.core.iobox_sizer_history import build_config_snapshot, record_measurement
 from openshelf_os_server.core.logging_config import get_logger
-from openshelf_os_server.database.session import AsyncSessionLocal
 from openshelf_os_server.settings import get_root_config
 
 logger = get_logger(__name__)
@@ -228,9 +225,7 @@ async def capture_store_observer_measurement(
 		logger.info("iobox_sizer_observer_capture_skipped", reason="disabled")
 		return
 
-	config_snapshot = build_config_snapshot(config)
 	logger.info("iobox_sizer_observer_capture_started", upca=upca)
-	started = time.monotonic()
 
 	measurement_task = asyncio.create_task(measure_iobox_size())
 
@@ -239,74 +234,19 @@ async def capture_store_observer_measurement(
 			asyncio.shield(measurement_task),
 			timeout=config.store_measurement_timeout_s,
 		)
-		async with AsyncSessionLocal() as db:
-			await record_measurement(
-				db,
-				trigger="store_item_command",
-				observer_mode=True,
-				upca=upca,
-				item_name=item_name,
-				user_id=user_id,
-				request_correlation_id=request_correlation_id,
-				command_payload=command_payload,
-				human_dimensions=human_dimensions,
-				human_dimensions_source=human_dimensions_source,
-				measurement=measurement,
-				config_snapshot=config_snapshot,
-			)
-		logger.info("iobox_sizer_observer_capture_saved", upca=upca, detected=measurement.detected)
+		logger.info("iobox_sizer_observer_capture_completed", upca=upca, detected=measurement.detected)
 	except asyncio.TimeoutError as exc:
 		measurement_task.add_done_callback(_consume_measurement_task_result)
-		error = IOBoxSizerMeasurementError(
-			error_type=type(exc).__name__,
-			error_message=str(exc),
-			duration_ms=int((time.monotonic() - started) * 1000),
-		)
-		async with AsyncSessionLocal() as db:
-			await record_measurement(
-				db,
-				trigger="store_item_command",
-				observer_mode=True,
-				upca=upca,
-				item_name=item_name,
-				user_id=user_id,
-				request_correlation_id=request_correlation_id,
-				command_payload=command_payload,
-				human_dimensions=human_dimensions,
-				human_dimensions_source=human_dimensions_source,
-				error=error,
-				config_snapshot=config_snapshot,
-			)
 		logger.warning(
-			"iobox_sizer_observer_capture_saved",
+			"iobox_sizer_observer_capture_timed_out",
 			upca=upca,
 			error=str(exc),
 			error_type=type(exc).__name__,
 		)
 		return
 	except Exception as exc:
-		error = IOBoxSizerMeasurementError(
-			error_type=type(exc).__name__,
-			error_message=str(exc),
-			duration_ms=int((time.monotonic() - started) * 1000),
-		)
-		async with AsyncSessionLocal() as db:
-			await record_measurement(
-				db,
-				trigger="store_item_command",
-				observer_mode=True,
-				upca=upca,
-				item_name=item_name,
-				user_id=user_id,
-				request_correlation_id=request_correlation_id,
-				command_payload=command_payload,
-				human_dimensions=human_dimensions,
-				human_dimensions_source=human_dimensions_source,
-				error=error,
-				config_snapshot=config_snapshot,
-			)
 		logger.warning(
-			"iobox_sizer_observer_capture_saved",
+			"iobox_sizer_observer_capture_failed",
 			upca=upca,
 			error=str(exc),
 			error_type=type(exc).__name__,

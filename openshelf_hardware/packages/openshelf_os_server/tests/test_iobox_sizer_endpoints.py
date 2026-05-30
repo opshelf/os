@@ -42,37 +42,31 @@ async def test_sizer_measure_unavailable_returns_503(client: AsyncClient) -> Non
         "openshelf_os_server.routers.iobox_sizer.measure_iobox_size",
         AsyncMock(side_effect=RuntimeError("not connected")),
     ):
-        response = await client.post("/api/iobox/sizer/measure", json={"save": False})
+        response = await client.post("/api/iobox/sizer/measure")
 
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "iobox_sizer_unavailable"
 
 
 @pytest.mark.anyio
-async def test_sizer_manual_measurement_is_saved_and_listed(client: AsyncClient) -> None:
+async def test_sizer_manual_measurement_returns_current_result(client: AsyncClient) -> None:
     with patch(
         "openshelf_os_server.routers.iobox_sizer.measure_iobox_size",
         AsyncMock(return_value=_measurement()),
     ):
-        response = await client.post("/api/iobox/sizer/measure", json={"save": True})
+        response = await client.post("/api/iobox/sizer/measure")
 
     assert response.status_code == 200
     assert response.json()["measurement"]["detected"] is True
 
-    history_response = await client.get("/api/iobox/sizer/measurements?limit=5")
-
-    assert history_response.status_code == 200
-    rows = history_response.json()["measurements"]
-    assert any(row["trigger"] == "manual" and row["detected"] is True for row in rows)
-
 
 @pytest.mark.anyio
-async def test_sizer_measurement_history_can_include_no_detection(client: AsyncClient) -> None:
+async def test_sizer_measurement_can_include_no_detection(client: AsyncClient) -> None:
     with patch(
         "openshelf_os_server.routers.iobox_sizer.measure_iobox_size",
         AsyncMock(return_value=_measurement(detected=False)),
     ):
-        response = await client.post("/api/iobox/sizer/measure", json={"save": True})
+        response = await client.post("/api/iobox/sizer/measure")
 
     assert response.status_code == 200
     assert response.json()["measurement"]["detected"] is False

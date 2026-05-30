@@ -690,11 +690,9 @@ export async function setSizerConfig(config: SizerConfig): Promise<{ success: bo
 	});
 }
 
-export async function measureSizer(save = true): Promise<{ success: boolean; measurement: SizerMeasurement }> {
+export async function measureSizer(): Promise<{ success: boolean; measurement: SizerMeasurement }> {
 	return apiFetch<{ success: boolean; measurement: SizerMeasurement }>('/iobox/sizer/measure', {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ save })
+		method: 'POST'
 	});
 }
 
