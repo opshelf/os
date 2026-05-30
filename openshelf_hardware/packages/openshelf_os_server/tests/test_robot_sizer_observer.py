@@ -1,28 +1,41 @@
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import delete, select
 
 from openshelf_os.iobox_sizer.models import IOBoxSizerDimensions, IOBoxSizerMeasurement
+from openshelf_os.robot.commands import StoreItemCommand
 from openshelf_os_server.core.iobox_sizer import record_store_sizer_measurement
 from openshelf_os_server.database.models import Item, ItemSizerMeasurement
 from openshelf_os_server.database.session import AsyncSessionLocal
+from openshelf_os_server.routers import robot as robot_router
 
 
-def _settings() -> SimpleNamespace:
-    ...
+def _robot_enabled_settings() -> SimpleNamespace:
+    return SimpleNamespace(robot=SimpleNamespace(enabled=True))
 
 
 def _worker() -> AsyncMock:
-    ...
+    worker = AsyncMock()
+    worker.enqueue_command = AsyncMock()
+    return worker
+
+
+def _empty_item_db() -> AsyncMock:
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = None
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=result)
+    return db
 
 
 @pytest.mark.anyio
-async def test_store_item_observer_capture_does_not_mutate_command_payload(client: AsyncClient) -> None:
+async def test_store_item_observer_capture_does_not_mutate_command_payload() -> None:
     worker = _worker()
+    db = _empty_item_db()
     expected_dimensions = {"width": 1, "height": 2, "length": 3}
     payload = {
         "command": "store_item",
@@ -34,20 +47,18 @@ async def test_store_item_observer_capture_does_not_mutate_command_payload(clien
     }
 
     with (
-        patch("openshelf_os_server.core.iobox_sizer.get_iobox_sizer_config", return_value=_settings()),
-        patch("openshelf_os_server.core.iobox_sizer.CameraManager", autospec=True) as mock_cmr,
+        patch("openshelf_os_server.routers.robot.is_laser_auto_calibration_running", AsyncMock(return_value=False)),
         patch(
-            "openshelf_os_server.core.iobox_sizer.capture_store_observer_measurement",
+            "openshelf_os_server.routers.robot.capture_store_observer_measurement",
+            new_callable=AsyncMock,
             return_value=None,
         ) as observer,
     ):
-        from openshelf_os_server.api.routes.robot_commands import enqueue_store
-
-        await enqueue_store(
+        await robot_router.robot_commands(
+            command=StoreItemCommand(**payload),
             worker=worker,
-            command=payload,
-            user_id=1,
-            request_correlation_id="test-correlation-id",
+            current_user=SimpleNamespace(id=1),
+            db=db,
         )
 
     queued_command = worker.enqueue_command.await_args.args[0]
@@ -68,15 +79,15 @@ async def test_store_item_continues_when_observer_capture_raises(client: AsyncCl
     }
 
     with (
-        patch("openshelf_os_server.core.iobox_sizer.get_iobox_sizer_config", return_value=_settings()),
-        patch("openshelf_os_server.core.iobox_sizer.CameraManager", autospec=True) as mock_cmr,
+        patch("openshelf_os_server.routers.robot.get_settings", return_value=_robot_enabled_settings()),
+        patch("openshelf_os_server.routers.robot.get_robot_worker", return_value=worker),
+        patch("openshelf_os_server.routers.robot.is_laser_auto_calibration_running", AsyncMock(return_value=False)),
         patch(
-            "openshelf_os_server.core.iobox_sizer.capture_store_observer_measurement",
+            "openshelf_os_server.routers.robot.capture_store_observer_measurement",
+            new_callable=AsyncMock,
             side_effect=Exception("measurement error"),
         ),
     ):
-        from openshelf_os_server.api.routes.robot_commands import enqueue_store
-
         response = await client.post("/api/robot/commands", json=payload)
 
     assert response.status_code == 200
