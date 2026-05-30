@@ -1,4 +1,3 @@
-"""Database models for authentication and audit system."""
 from typing import List, Dict, Any, Optional
 from sqlalchemy import Integer, String, Boolean, DateTime, Text, JSON, ForeignKey, func, Index, Float, UniqueConstraint, TypeDecorator
 from sqlalchemy.orm import relationship, Mapped, mapped_column
@@ -160,40 +159,6 @@ class Telemetry(Base):
 	motor_movement_seconds: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
 	updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
-
-class IOBoxSizerMeasurement(Base):
-	__tablename__ = "iobox_sizer_measurements"
-	__table_args__ = (
-		Index("ix_iobox_sizer_measurements_created_at", "created_at"),
-		Index("ix_iobox_sizer_measurements_upca_created_at", "upca", "created_at"),
-		Index("ix_iobox_sizer_measurements_trigger_created_at", "trigger", "created_at"),
-	)
-
-	id: Mapped[int] = mapped_column(Integer, primary_key=True)
-	created_at: Mapped[datetime] = mapped_column(
-		UTCDateTime(),
-		nullable=False,
-		default=lambda: datetime.now(timezone.utc),
-	)
-	trigger: Mapped[str] = mapped_column(String(50), nullable=False)
-	observer_mode: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-	upca: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
-	item_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-	user_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
-	request_correlation_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-	command_payload: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
-	human_dimensions: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
-	human_dimensions_source: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
-	measurement: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
-	detected: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-	success: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-	error_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-	error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-	duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-	config_snapshot: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
-	debug_image_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
-
-	user: Mapped[Optional["User"]] = relationship("User")
 
 
 class StorageCell(Base):
