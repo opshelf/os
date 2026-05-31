@@ -1,4 +1,3 @@
-"""Database models for authentication and audit system."""
 from typing import List, Dict, Any, Optional
 from sqlalchemy import Integer, String, Boolean, DateTime, Text, JSON, ForeignKey, func, Index, Float, UniqueConstraint, TypeDecorator
 from sqlalchemy.orm import relationship, Mapped, mapped_column
@@ -129,7 +128,43 @@ class Item(Base):
 		back_populates="item",
 		order_by="ItemLocation.updated_at.desc()"
 	)
+	sizer_measurements: Mapped[List["ItemSizerMeasurement"]] = relationship("ItemSizerMeasurement", back_populates="item", passive_deletes=True)
 	access_level: Mapped[Optional["AccessLevel"]] = relationship("AccessLevel", back_populates="items")
+
+class ItemSizerMeasurement(Base):
+	"""Auto-sizer measurement captured during store requests."""
+	__tablename__ = "item_sizer_measurements"
+	__table_args__ = (
+		Index("ix_item_sizer_measurements_item_id", "item_id"),
+		Index("ix_item_sizer_measurements_upca", "upca"),
+		Index("ix_item_sizer_measurements_request_correlation_id", "request_correlation_id"),
+		Index("ix_item_sizer_measurements_created_at", "created_at"),
+	)
+
+	model_config = ConfigDict(arbitrary_types_allowed=True)
+
+	id: Mapped[int] = mapped_column(Integer, primary_key=True)
+	item_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("items.id", ondelete="SET NULL"), nullable=True)
+	upca: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+	item_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+	user_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+	request_correlation_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+	manual_dimensions: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+	manual_dimensions_source: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+	auto_dimensions: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+	raw_measurement: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+	command_payload: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+
+	detected: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+	error_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+	error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+	measurement_timestamp: Mapped[Optional[datetime]] = mapped_column(UTCDateTime(), nullable=True)
+	created_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, default=lambda: datetime.now(timezone.utc))
+
+	item: Mapped[Optional["Item"]] = relationship("Item", back_populates="sizer_measurements")
+
 
 class ItemLocation(Base):
 	"""ItemLocation model for tracking where items are stored."""
@@ -160,40 +195,6 @@ class Telemetry(Base):
 	motor_movement_seconds: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
 	updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
-
-class IOBoxSizerMeasurement(Base):
-	__tablename__ = "iobox_sizer_measurements"
-	__table_args__ = (
-		Index("ix_iobox_sizer_measurements_created_at", "created_at"),
-		Index("ix_iobox_sizer_measurements_upca_created_at", "upca", "created_at"),
-		Index("ix_iobox_sizer_measurements_trigger_created_at", "trigger", "created_at"),
-	)
-
-	id: Mapped[int] = mapped_column(Integer, primary_key=True)
-	created_at: Mapped[datetime] = mapped_column(
-		UTCDateTime(),
-		nullable=False,
-		default=lambda: datetime.now(timezone.utc),
-	)
-	trigger: Mapped[str] = mapped_column(String(50), nullable=False)
-	observer_mode: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-	upca: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
-	item_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-	user_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
-	request_correlation_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-	command_payload: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
-	human_dimensions: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
-	human_dimensions_source: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
-	measurement: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
-	detected: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-	success: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-	error_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-	error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-	duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-	config_snapshot: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
-	debug_image_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
-
-	user: Mapped[Optional["User"]] = relationship("User")
 
 
 class StorageCell(Base):

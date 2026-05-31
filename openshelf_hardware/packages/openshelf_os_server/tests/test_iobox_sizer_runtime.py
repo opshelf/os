@@ -69,13 +69,6 @@ class ImmediateService:
         )
 
 
-class AsyncSessionContext:
-    async def __aenter__(self) -> object:
-        return object()
-
-    async def __aexit__(self, exc_type: object, exc: object, tb: object) -> bool:
-        return False
-
 
 class ReloadService:
     def __init__(self, name: str, events: list[str]) -> None:
@@ -201,7 +194,6 @@ async def test_capture_store_observer_measurement_times_out_without_cancelling_m
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     finished = asyncio.Event()
-    record_calls: list[dict[str, object]] = []
     measurement = IOBoxSizerMeasurement(
         detected=True,
         mode="brightness",
@@ -230,19 +222,12 @@ async def test_capture_store_observer_measurement_times_out_without_cancelling_m
         finished.set()
         return measurement
 
-    async def did_record_measurement(db: object, **kwargs: object) -> None:
-        assert db is not None
-        record_calls.append(kwargs)
-
     monkeypatch.setattr(
         iobox_sizer,
         "get_root_config",
         lambda: SimpleNamespace(robot=SimpleNamespace(io=SimpleNamespace(sizer=config))),
     )
-    monkeypatch.setattr(iobox_sizer, "build_config_snapshot", lambda current_config: {"enabled": current_config.enabled})
     monkeypatch.setattr(iobox_sizer, "measure_iobox_size", did_measure_iobox_size)
-    monkeypatch.setattr(iobox_sizer, "record_measurement", did_record_measurement)
-    monkeypatch.setattr(iobox_sizer, "AsyncSessionLocal", AsyncSessionContext)
 
     started = time.monotonic()
     await iobox_sizer.capture_store_observer_measurement(
@@ -257,8 +242,5 @@ async def test_capture_store_observer_measurement_times_out_without_cancelling_m
     elapsed = time.monotonic() - started
 
     assert elapsed < 0.05
-    assert len(record_calls) == 1
-    assert isinstance(record_calls[0]["error"], iobox_sizer.IOBoxSizerMeasurementError)
-    assert record_calls[0].get("measurement") is None
 
     await asyncio.wait_for(finished.wait(), timeout=0.2)

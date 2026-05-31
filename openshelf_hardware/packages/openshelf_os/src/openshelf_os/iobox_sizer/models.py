@@ -22,7 +22,7 @@ class IOBoxSizerDimensions(BaseModel):
 
 class IOBoxSizerMeasurement(BaseModel):
     detected: bool
-    mode: Literal["brightness", "rectangle"]
+    mode: Literal["brightness", "rectangle", "difference", "circle"]
     width_px: int | None = None
     height_px: int | None = None
     center_x: float | None = None
@@ -39,11 +39,3 @@ class IOBoxSizerMeasurement(BaseModel):
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     duration_ms: int
     debug_image_path: str | None = None
-
-
-class IOBoxSizerMeasurementError(BaseModel):
-    success: bool = False
-    error_type: str
-    error_message: str
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    duration_ms: int | None = None

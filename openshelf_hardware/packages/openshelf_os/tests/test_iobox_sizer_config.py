@@ -30,3 +30,30 @@ def test_tof_channels_are_validated(channels: list[int]) -> None:
 def test_tof_addresses_are_validated(address: int) -> None:
     with pytest.raises(ValidationError):
         IOBoxSizerToFConfig(mux_address=address)
+
+
+@pytest.mark.parametrize("samples", [0, 26])
+def test_tof_samples_are_validated(samples: int) -> None:
+    with pytest.raises(ValidationError):
+        IOBoxSizerToFConfig(samples=samples)
+
+
+def test_tof_aggregation_is_validated() -> None:
+    with pytest.raises(ValidationError):
+        IOBoxSizerToFConfig(aggregation="mode")
+
+
+def test_tof_roi_dimensions_must_be_paired() -> None:
+    with pytest.raises(ValidationError):
+        IOBoxSizerToFConfig(roi_width=4)
+
+
+@pytest.mark.parametrize("roi_center", [-1, 256])
+def test_tof_roi_center_is_validated(roi_center: int) -> None:
+    with pytest.raises(ValidationError):
+        IOBoxSizerToFConfig(roi_center=roi_center)
+
+
+def test_tof_preferred_sensor_index_must_reference_channel() -> None:
+    with pytest.raises(ValidationError):
+        IOBoxSizerToFConfig(channels=[6, 7], preferred_sensor_index=2)

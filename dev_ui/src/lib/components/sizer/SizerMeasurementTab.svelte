@@ -16,7 +16,7 @@
 		message = '';
 
 		try {
-			const result = await measureSizer(true);
+			const result = await measureSizer();
 			measurement = result.measurement;
 			message = result.success === true ? 'measurement complete' : '';
 		} catch (err) {
