@@ -580,10 +580,18 @@ export interface SizerToFConfig {
 	channels: number[];
 	timing_budget_ms: number;
 	read_timeout_s: number;
+	samples: number;
+	sample_interval_ms: number;
+	aggregation: 'median' | 'mean' | 'nearest' | 'farthest';
+	distance_mode: 1 | 2 | null;
+	roi_width: number | null;
+	roi_height: number | null;
+	roi_center: number | null;
+	preferred_sensor_index: number | null;
 }
 
 export interface SizerDetectionConfig {
-	mode: 'brightness' | 'rectangle';
+	mode: 'brightness' | 'rectangle' | 'difference' | 'circle';
 	roi_x: number;
 	roi_y: number;
 	roi_width: number;
@@ -594,6 +602,7 @@ export interface SizerDetectionConfig {
 	white_rgb_min: [number, number, number];
 	min_area_px: number;
 	blank_frame_path: string;
+	contour_selection: 'largest' | 'center';
 }
 
 export interface SizerCalibrationParams {
@@ -637,7 +646,7 @@ export interface SizerDimensions {
 
 export interface SizerMeasurement {
 	detected: boolean;
-	mode: 'brightness' | 'rectangle';
+	mode: 'brightness' | 'rectangle' | 'difference' | 'circle';
 	width_px: number | null;
 	height_px: number | null;
 	center_x: number | null;
@@ -681,11 +690,9 @@ export async function setSizerConfig(config: SizerConfig): Promise<{ success: bo
 	});
 }
 
-export async function measureSizer(save = true): Promise<{ success: boolean; measurement: SizerMeasurement }> {
+export async function measureSizer(): Promise<{ success: boolean; measurement: SizerMeasurement }> {
 	return apiFetch<{ success: boolean; measurement: SizerMeasurement }>('/iobox/sizer/measure', {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ save })
+		method: 'POST'
 	});
 }
 

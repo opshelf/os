@@ -1,19 +1,19 @@
 from __future__ import annotations
 
 import asyncio
-import time
 from dataclasses import dataclass
 from typing import Any
 
+from sqlalchemy import select
 from hardware.tof import ToFSensorBus
 from hardware.uvc_camera import UvcCamera
 from openshelf_os.config.models import IOBoxSizerConfig
-from openshelf_os.iobox_sizer.models import IOBoxSizerMeasurement, IOBoxSizerMeasurementError
+from openshelf_os.iobox_sizer.models import IOBoxSizerMeasurement
 from openshelf_os.iobox_sizer.service import IOBoxSizerService
 from openshelf_os_server.core.camera import init_sizer_camera_manager, unregister_camera_manager
-from openshelf_os_server.core.iobox_sizer_history import build_config_snapshot, record_measurement
-from openshelf_os_server.core.logging_config import get_logger
+from openshelf_os_server.database.models import Item, ItemSizerMeasurement
 from openshelf_os_server.database.session import AsyncSessionLocal
+from openshelf_os_server.core.logging_config import get_logger
 from openshelf_os_server.settings import get_root_config
 
 logger = get_logger(__name__)
@@ -50,6 +50,10 @@ def _make_service(config: IOBoxSizerConfig) -> IOBoxSizerService:
 		channels=config.tof.channels,
 		timing_budget_ms=config.tof.timing_budget_ms,
 		read_timeout_s=config.tof.read_timeout_s,
+		distance_mode=config.tof.distance_mode,
+		roi_width=config.tof.roi_width,
+		roi_height=config.tof.roi_height,
+		roi_center=config.tof.roi_center,
 	)
 	return IOBoxSizerService(config=config, camera=camera, tof_bus=tof_bus)
 
@@ -209,6 +213,78 @@ def _consume_measurement_task_result(task: asyncio.Task[IOBoxSizerMeasurement]) 
 		)
 
 
+async def record_store_sizer_measurement(
+	*,
+	upca: str | None,
+	item_name: str | None,
+	user_id: int | None,
+	request_correlation_id: str | None,
+	command_payload: dict[str, Any] | None,
+	human_dimensions: dict[str, Any] | None,
+	human_dimensions_source: str | None,
+	measurement: IOBoxSizerMeasurement | None,
+	error: Exception | None,
+	error_type: str | None = None,
+	error_message: str | None = None,
+	should_raise: bool = False,
+) -> None:
+	try:
+		auto_dimensions = None
+		measurement_timestamp = None
+		raw_measurement = None
+		detected = False
+
+		if measurement is not None:
+			detected = measurement.detected
+			measurement_timestamp = measurement.timestamp
+			raw_measurement = measurement.model_dump(mode="json")
+
+			if measurement.dimensions_mm is not None:
+				auto_dimensions = measurement.dimensions_mm.model_dump(mode="json")
+
+		resolved_error_type = error_type
+		resolved_error_message = error_message
+		if error is not None:
+			resolved_error_type = resolved_error_type or type(error).__name__
+			resolved_error_message = resolved_error_message or str(error)
+
+		async with AsyncSessionLocal() as session:
+			item_id = None
+			if upca is not None:
+				result = await session.execute(select(Item.id).where(Item.upca == upca))
+				item_id = result.scalar_one_or_none()
+
+			session.add(
+				ItemSizerMeasurement(
+					item_id=item_id,
+					upca=upca,
+					item_name=item_name,
+					user_id=user_id,
+					request_correlation_id=request_correlation_id,
+					manual_dimensions=human_dimensions,
+					manual_dimensions_source=human_dimensions_source,
+					auto_dimensions=auto_dimensions,
+					raw_measurement=raw_measurement,
+					command_payload=command_payload,
+					detected=detected,
+					error_type=resolved_error_type,
+					error_message=resolved_error_message,
+					measurement_timestamp=measurement_timestamp,
+				)
+			)
+			await session.commit()
+	except Exception as exc:
+		logger.warning(
+			"iobox_sizer_observer_measurement_persist_failed",
+			upca=upca,
+			error=str(exc),
+			error_type=type(exc).__name__,
+			exc_info=True,
+		)
+		if should_raise is True:
+			raise
+
+
 async def capture_store_observer_measurement(
 	*,
 	upca: str | None,
@@ -224,9 +300,7 @@ async def capture_store_observer_measurement(
 		logger.info("iobox_sizer_observer_capture_skipped", reason="disabled")
 		return
 
-	config_snapshot = build_config_snapshot(config)
 	logger.info("iobox_sizer_observer_capture_started", upca=upca)
-	started = time.monotonic()
 
 	measurement_task = asyncio.create_task(measure_iobox_size())
 
@@ -235,75 +309,55 @@ async def capture_store_observer_measurement(
 			asyncio.shield(measurement_task),
 			timeout=config.store_measurement_timeout_s,
 		)
-		async with AsyncSessionLocal() as db:
-			await record_measurement(
-				db,
-				trigger="store_item_command",
-				observer_mode=True,
-				upca=upca,
-				item_name=item_name,
-				user_id=user_id,
-				request_correlation_id=request_correlation_id,
-				command_payload=command_payload,
-				human_dimensions=human_dimensions,
-				human_dimensions_source=human_dimensions_source,
-				measurement=measurement,
-				config_snapshot=config_snapshot,
-			)
-		logger.info("iobox_sizer_observer_capture_saved", upca=upca, detected=measurement.detected)
+		logger.info("iobox_sizer_observer_capture_completed", upca=upca, detected=measurement.detected)
+		await record_store_sizer_measurement(
+			upca=upca,
+			item_name=item_name,
+			user_id=user_id,
+			request_correlation_id=request_correlation_id,
+			command_payload=command_payload,
+			human_dimensions=human_dimensions,
+			human_dimensions_source=human_dimensions_source,
+			measurement=measurement,
+			error=None,
+		)
 	except asyncio.TimeoutError as exc:
 		measurement_task.add_done_callback(_consume_measurement_task_result)
-		error = IOBoxSizerMeasurementError(
-			error_type=type(exc).__name__,
-			error_message=str(exc),
-			duration_ms=int((time.monotonic() - started) * 1000),
-		)
-		async with AsyncSessionLocal() as db:
-			await record_measurement(
-				db,
-				trigger="store_item_command",
-				observer_mode=True,
-				upca=upca,
-				item_name=item_name,
-				user_id=user_id,
-				request_correlation_id=request_correlation_id,
-				command_payload=command_payload,
-				human_dimensions=human_dimensions,
-				human_dimensions_source=human_dimensions_source,
-				error=error,
-				config_snapshot=config_snapshot,
-			)
 		logger.warning(
-			"iobox_sizer_observer_capture_saved",
+			"iobox_sizer_observer_capture_timed_out",
 			upca=upca,
 			error=str(exc),
 			error_type=type(exc).__name__,
+		)
+		await record_store_sizer_measurement(
+			upca=upca,
+			item_name=item_name,
+			user_id=user_id,
+			request_correlation_id=request_correlation_id,
+			command_payload=command_payload,
+			human_dimensions=human_dimensions,
+			human_dimensions_source=human_dimensions_source,
+			measurement=None,
+			error=exc,
+			error_type="TimeoutError",
+			error_message=f"Timed out after {config.store_measurement_timeout_s}s",
 		)
 		return
 	except Exception as exc:
-		error = IOBoxSizerMeasurementError(
-			error_type=type(exc).__name__,
-			error_message=str(exc),
-			duration_ms=int((time.monotonic() - started) * 1000),
-		)
-		async with AsyncSessionLocal() as db:
-			await record_measurement(
-				db,
-				trigger="store_item_command",
-				observer_mode=True,
-				upca=upca,
-				item_name=item_name,
-				user_id=user_id,
-				request_correlation_id=request_correlation_id,
-				command_payload=command_payload,
-				human_dimensions=human_dimensions,
-				human_dimensions_source=human_dimensions_source,
-				error=error,
-				config_snapshot=config_snapshot,
-			)
 		logger.warning(
-			"iobox_sizer_observer_capture_saved",
+			"iobox_sizer_observer_capture_failed",
 			upca=upca,
 			error=str(exc),
 			error_type=type(exc).__name__,
+		)
+		await record_store_sizer_measurement(
+			upca=upca,
+			item_name=item_name,
+			user_id=user_id,
+			request_correlation_id=request_correlation_id,
+			command_payload=command_payload,
+			human_dimensions=human_dimensions,
+			human_dimensions_source=human_dimensions_source,
+			measurement=None,
+			error=exc,
 		)

@@ -14,7 +14,9 @@ def _positive(v: Union[int, float], name: str) -> Union[int, float]:
     return v
 
 
-def _pair_len2(v: List[Union[int, float]], name: str) -> Tuple[Union[int, float], Union[int, float]]:
+def _pair_len2(
+    v: List[Union[int, float]], name: str
+) -> Tuple[Union[int, float], Union[int, float]]:
     if len(v) != 2:
         raise ValueError(f"{name} must be a 2-element list/tuple")
     return v[0], v[1]
@@ -146,6 +148,14 @@ class IOBoxSizerToFConfig(BaseModel):
     channels: List[int] = Field(default_factory=lambda: [6, 7])
     timing_budget_ms: int = Field(200, gt=0)
     read_timeout_s: float = Field(0.5, gt=0)
+    samples: int = Field(1, ge=1, le=25)
+    sample_interval_ms: int = Field(0, ge=0, le=1000)
+    aggregation: Literal["median", "mean", "nearest", "farthest"] = "median"
+    distance_mode: Optional[Literal[1, 2]] = None
+    roi_width: Optional[int] = Field(default=None, ge=1, le=16)
+    roi_height: Optional[int] = Field(default=None, ge=1, le=16)
+    roi_center: Optional[int] = Field(default=None, ge=0, le=255)
+    preferred_sensor_index: Optional[int] = Field(default=None, ge=0)
 
     @field_validator("channels")
     @classmethod
@@ -162,9 +172,21 @@ class IOBoxSizerToFConfig(BaseModel):
 
         return value
 
+    @model_validator(mode="after")
+    def _validate_tof_selection(self) -> "IOBoxSizerToFConfig":
+        if (self.roi_width is None) != (self.roi_height is None):
+            raise ValueError("roi_width and roi_height must be configured together")
+
+        if self.preferred_sensor_index is not None and self.preferred_sensor_index >= len(
+            self.channels
+        ):
+            raise ValueError("preferred_sensor_index must reference a configured channel")
+
+        return self
+
 
 class IOBoxSizerDetectionConfig(BaseModel):
-    mode: Literal["brightness", "rectangle"] = "brightness"
+    mode: Literal["brightness", "rectangle", "difference", "circle"] = "brightness"
     roi_x: int = Field(320, ge=0)
     roi_y: int = Field(180, ge=0)
     roi_width: int = Field(640, gt=0)
@@ -175,6 +197,7 @@ class IOBoxSizerDetectionConfig(BaseModel):
     white_rgb_min: Tuple[int, int, int] = Field(default=(200, 200, 200))
     min_area_px: int = Field(500, gt=0)
     blank_frame_path: str = "data/iobox_sizer/blank_frame.png"
+    contour_selection: Literal["largest", "center"] = "largest"
 
     @field_validator("white_rgb_min", mode="before")
     @classmethod
