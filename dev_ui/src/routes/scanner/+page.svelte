@@ -1,7 +1,12 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
 	import { onMount, onDestroy } from 'svelte';
-	import { createReconnectingEventSource, getScannerStatus, sendScannerScan, type ScannerStatus } from '$lib';
+	import {
+		createReconnectingEventSource,
+		getScannerStatus,
+		sendScannerScan,
+		type ScannerStatus
+	} from '$lib';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import StatusMessage from '$lib/components/StatusMessage.svelte';
 
@@ -229,11 +234,11 @@
 <style>
 	.reading {
 		font-family: monospace;
-		font-size: 1.2em;
+		font-size: 1.1.5em;
 	}
 
 	input[type='text'] {
-		width: 12em;
+		width: 11.5em;
 		padding: 4px;
 		border: 1px solid black;
 		font-family: inherit;
