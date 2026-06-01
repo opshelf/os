@@ -805,6 +805,34 @@ export async function controlDoor(action: DoorAction): Promise<{ success: boolea
 	});
 }
 
+export type CabinetLockAction = 'lock' | 'unlock';
+
+export interface CabinetLockState {
+	top_locked: boolean;
+	bottom_locked: boolean;
+	locked: boolean;
+}
+
+export interface CabinetLockResponse {
+	success: boolean;
+	action: CabinetLockAction;
+	locks: CabinetLockState;
+}
+
+export interface CabinetStatusResponse {
+	locks: CabinetLockState;
+}
+
+export async function getCabinetStatus(): Promise<CabinetStatusResponse> {
+	return apiFetch<CabinetStatusResponse>('/cabinet/status');
+}
+
+export async function controlCabinetLock(action: CabinetLockAction): Promise<CabinetLockResponse> {
+	return apiFetch<CabinetLockResponse>(`/cabinet/lock?action=${action}`, {
+		method: 'POST'
+	});
+}
+
 export interface IOBoxPosition {
 	pickup_low_x: number;
 	pickup_low_y: number;
