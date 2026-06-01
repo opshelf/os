@@ -45,3 +45,5 @@ def test_robot_gpio_empty_object_expands_to_defaults() -> None:
 
     assert isinstance(robot.gpio, GpioConfig)
     assert "light_curtain" in robot.gpio.pins
+    assert "cabinet_top_closed" in robot.gpio.pins
+    assert "cabinet_bot_closed" in robot.gpio.pins

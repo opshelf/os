@@ -807,20 +807,20 @@ export async function controlDoor(action: DoorAction): Promise<{ success: boolea
 
 export type CabinetLockAction = 'lock' | 'unlock';
 
-export interface CabinetLockState {
-	top_locked: boolean;
-	bottom_locked: boolean;
-	locked: boolean;
+export interface CabinetDoorState {
+	top_closed: boolean;
+	bottom_closed: boolean;
+	closed: boolean;
 }
 
 export interface CabinetLockResponse {
 	success: boolean;
 	action: CabinetLockAction;
-	locks: CabinetLockState;
+	doors: CabinetDoorState;
 }
 
 export interface CabinetStatusResponse {
-	locks: CabinetLockState;
+	doors: CabinetDoorState;
 }
 
 export async function getCabinetStatus(): Promise<CabinetStatusResponse> {

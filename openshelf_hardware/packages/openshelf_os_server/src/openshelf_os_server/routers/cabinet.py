@@ -16,20 +16,20 @@ from openshelf_os_server.settings import get_settings
 router = APIRouter(tags=["cabinet"])
 
 
-class CabinetLockState(BaseModel):
-    top_locked: bool
-    bottom_locked: bool
-    locked: bool
+class CabinetDoorState(BaseModel):
+    top_closed: bool
+    bottom_closed: bool
+    closed: bool
 
 
 class CabinetLockResponse(BaseModel):
     success: bool
     action: Literal["lock", "unlock"]
-    locks: CabinetLockState
+    doors: CabinetDoorState
 
 
 class CabinetStatusResponse(BaseModel):
-    locks: CabinetLockState
+    doors: CabinetDoorState
 
 
 async def check_robot_enabled() -> None:
@@ -69,7 +69,7 @@ async def get_cabinet_status(
 ) -> CabinetStatusResponse:
     try:
         cabinet_status = worker._robot._cabinet.get_status()
-        return CabinetStatusResponse(locks=CabinetLockState(**cabinet_status["locks"]))
+        return CabinetStatusResponse(doors=CabinetDoorState(**cabinet_status["doors"]))
     except HTTPException:
         raise
     except Exception as exc:
@@ -89,14 +89,14 @@ async def control_cabinet_lock(
         await ensure_laser_auto_calibration_not_running()
         async with manual_motion_guard(f"cabinet_lock:{action}", worker=worker):
             if action == "lock":
-                locks = await worker._robot._cabinet.lock()
+                doors = await worker._robot._cabinet.lock()
             else:
-                locks = await worker._robot._cabinet.unlock()
+                doors = await worker._robot._cabinet.unlock()
 
             return CabinetLockResponse(
                 success=True,
                 action=action,
-                locks=CabinetLockState(**locks),
+                doors=CabinetDoorState(**doors),
             )
     except HTTPException:
         raise

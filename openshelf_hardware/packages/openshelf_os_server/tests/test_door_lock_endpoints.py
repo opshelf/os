@@ -17,13 +17,13 @@ def _mock_worker():
 	worker._robot = MagicMock()
 	worker._robot._cabinet = MagicMock()
 	worker._robot._cabinet.get_status = MagicMock(
-		return_value={"locks": {"top_locked": True, "bottom_locked": True, "locked": True}}
+		return_value={"doors": {"top_closed": True, "bottom_closed": True, "closed": True}}
 	)
 	worker._robot._cabinet.lock = AsyncMock(
-		return_value={"top_locked": True, "bottom_locked": True, "locked": True}
+		return_value={"top_closed": True, "bottom_closed": True, "closed": True}
 	)
 	worker._robot._cabinet.unlock = AsyncMock(
-		return_value={"top_locked": False, "bottom_locked": False, "locked": False}
+		return_value={"top_closed": False, "bottom_closed": False, "closed": False}
 	)
 	return worker
 
@@ -38,7 +38,7 @@ async def test_get_cabinet_status(client: AsyncClient) -> None:
 
 	assert response.status_code == 200
 	assert response.json() == {
-		"locks": {"top_locked": True, "bottom_locked": True, "locked": True}
+		"doors": {"top_closed": True, "bottom_closed": True, "closed": True}
 	}
 	worker._robot._cabinet.get_status.assert_called_once()
 
@@ -55,7 +55,7 @@ async def test_lock_cabinet(client: AsyncClient) -> None:
 	assert response.json() == {
 		"success": True,
 		"action": "lock",
-		"locks": {"top_locked": True, "bottom_locked": True, "locked": True},
+		"doors": {"top_closed": True, "bottom_closed": True, "closed": True},
 	}
 	worker._robot._cabinet.lock.assert_awaited_once()
 	worker._robot._cabinet.unlock.assert_not_awaited()
@@ -73,7 +73,7 @@ async def test_unlock_cabinet(client: AsyncClient) -> None:
 	assert response.json() == {
 		"success": True,
 		"action": "unlock",
-		"locks": {"top_locked": False, "bottom_locked": False, "locked": False},
+		"doors": {"top_closed": False, "bottom_closed": False, "closed": False},
 	}
 	worker._robot._cabinet.unlock.assert_awaited_once()
 	worker._robot._cabinet.lock.assert_not_awaited()
