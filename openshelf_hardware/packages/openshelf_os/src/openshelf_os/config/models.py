@@ -237,6 +237,117 @@ class IOBoxSizerConfig(BaseModel):
     history: IOBoxSizerHistoryConfig = Field(default_factory=IOBoxSizerHistoryConfig)
 
 
+class GpioInterruptConfig(BaseModel):
+    board: Literal["rpi"] = "rpi"
+    pin: int = Field(..., ge=0)
+    pull: Literal["up", "down", "off"] = "up"
+    edge: Literal["rising", "falling", "both"] = "falling"
+    debounce_ms: int = Field(default=0, ge=0)
+
+
+class GpioExpanderConfig(BaseModel):
+    name: str = Field(..., min_length=1)
+    type: Literal["pcf8575"] = "pcf8575"
+    bus: int = Field(1, ge=0)
+    address: int = Field(0x20, ge=0, le=0x7F)
+    interrupt: Optional[GpioInterruptConfig] = None
+
+
+class GpioPinConfig(BaseModel):
+    board: Literal["rpi", "pcf8575"]
+    pin: int = Field(..., ge=0)
+    direction: Literal["input", "output"]
+    expander: Optional[str] = None
+    pull: Literal["up", "down", "off"] = "off"
+    inverted: bool = False
+    debounce_ms: int = Field(default=0, ge=0)
+    initial: Optional[bool] = None
+    shutdown: Optional[bool] = None
+    required: bool = True
+
+    @model_validator(mode="after")
+    def _validate_pin(self) -> "GpioPinConfig":
+        if self.board == "pcf8575" and self.expander is None:
+            raise ValueError("PCF8575 GPIO pins require expander")
+        if self.board == "rpi" and self.expander is not None:
+            raise ValueError("Raspberry Pi GPIO pins cannot set expander")
+        if self.direction == "input" and (self.initial is not None or self.shutdown is not None):
+            raise ValueError("GPIO inputs cannot set initial or shutdown")
+        return self
+
+
+def _default_gpio_expanders() -> List[GpioExpanderConfig]:
+    return [
+        GpioExpanderConfig(
+            name="main",
+            bus=1,
+            address=0x20,
+            interrupt=GpioInterruptConfig(pin=4, pull="up", edge="falling"),
+        )
+    ]
+
+
+def _rpi_input(pin: int) -> GpioPinConfig:
+    return GpioPinConfig(board="rpi", pin=pin, direction="input", pull="up", inverted=True)
+
+
+def _rpi_output(pin: int, *, initial: Optional[bool] = None, shutdown: Optional[bool] = None) -> GpioPinConfig:
+    return GpioPinConfig(
+        board="rpi",
+        pin=pin,
+        direction="output",
+        initial=initial,
+        shutdown=shutdown,
+    )
+
+
+def _pcf_input(pin: int) -> GpioPinConfig:
+    return GpioPinConfig(
+        board="pcf8575",
+        expander="main",
+        pin=pin,
+        direction="input",
+        inverted=True,
+    )
+
+
+def _default_gpio_pins() -> dict[str, GpioPinConfig]:
+    return {
+        "tool_limit_r": _rpi_input(8),
+        "tool_limit_s": _rpi_input(7),
+        "tool_limit_z": _rpi_input(25),
+        "cabinet_top_locked": _rpi_input(17),
+        "cabinet_bot_locked": _rpi_input(27),
+        "estop": _rpi_input(18),
+        "tool_1": _rpi_input(1),
+        "io_standby": _rpi_output(23),
+        "tool_standby": _rpi_output(24),
+        "power_control": _rpi_output(16),
+        "cabinet_top_unlock": _rpi_output(5, initial=False, shutdown=False),
+        "cabinet_bot_unlock": _rpi_output(6, initial=False, shutdown=False),
+        "y_limit_min": _pcf_input(0),
+        "y_limit_max": _pcf_input(1),
+        "y_1": _pcf_input(2),
+        "y_2": _pcf_input(3),
+        "x_limit_min": _pcf_input(4),
+        "x_limit_max": _pcf_input(5),
+        "x_1": _pcf_input(6),
+        "x_2": _pcf_input(7),
+        "tool_2": _pcf_input(8),
+        "tool_3": _pcf_input(9),
+        "io_2": _pcf_input(10),
+        "io_1": _pcf_input(11),
+        "io_limit_max": _pcf_input(12),
+        "io_limit_min": _pcf_input(13),
+        "light_curtain": _pcf_input(15),
+    }
+
+
+class GpioConfig(BaseModel):
+    expanders: List[GpioExpanderConfig] = Field(default_factory=_default_gpio_expanders)
+    pins: dict[str, GpioPinConfig] = Field(default_factory=_default_gpio_pins)
+
+
 class CurtainConfig(BaseModel):
     enabled: bool = True
     pin: int = Field(2, ge=0)
@@ -385,3 +496,4 @@ class Robot(BaseModel):
     grid: GridConfig
     io: IOBlock
     bus: Optional[RobotBus] = None
+    gpio: Optional[GpioConfig] = None

@@ -48,6 +48,7 @@ class IOBox:
                  scalecontroller: Controller,
                  params: c.IOBlock,
                  safety=None,
+                 gpio=None,
                  ):
 
         self._scalecontroller = scalecontroller
@@ -55,6 +56,7 @@ class IOBox:
         self._status = IOBoxStatus.IDLE
         self._params = params
         self._logger = logging.getLogger(__name__).getChild("IOBox")
+        self._gpio = gpio
 
         self._md: Optional[Motor] = _create_motor_if_enabled(
             motorcontroller, self._params.motors, "door", safety, self._logger
@@ -130,7 +132,12 @@ class IOBox:
         poll_interval = curtain_cfg.poll_interval_s
         inverted = getattr(curtain_cfg, "inverted", False)
 
-        self._curtain_sensor = CurtainSensor(pin=pin, inverted=inverted)
+        if self._gpio is not None and self._gpio.has_pin("light_curtain"):
+            curtain_input = self._gpio.input("light_curtain")
+            self._curtain_sensor = CurtainSensor(input_device=curtain_input)
+            pin = curtain_input.pin
+        else:
+            self._curtain_sensor = CurtainSensor(pin=pin, inverted=inverted)
         self._curtain_monitor = CurtainMonitor(
             self._curtain_sensor,
             poll_interval=poll_interval,
@@ -140,7 +147,7 @@ class IOBox:
 
         self._logger.info(
             "Curtain monitor started",
-            extra={"pin": pin, "poll_interval_s": poll_interval},
+            extra={"pin": pin, "poll_interval_s": poll_interval, "shared_gpio": self._gpio is not None},
         )
 
     async def _ensure_scale_ready(self) -> None:
