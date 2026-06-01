@@ -29,6 +29,12 @@ from openshelf_os.storage import (
 )
 from openshelf_os.tool import Tool
 
+_GpioManager: Any
+try:
+    from hardware.gpio import GpioManager as _GpioManager
+except Exception:
+    _GpioManager = None
+
 if TYPE_CHECKING:
     from hardware.motor import Motor
 
@@ -52,6 +58,8 @@ class Robot:
 
         tool_params = self._config.get("robot.tool", {})
         io_params = self._config.get("robot.io", {})
+        gpio_config = getattr(self._config.robot, "gpio", None)
+        self._gpio = _GpioManager.from_config(gpio_config) if _GpioManager is not None else None
 
         self._curtain_safety = CurtainSafety()
         self._tool = Tool(
@@ -60,7 +68,13 @@ class Robot:
             params=tool_params,
             safety=self._curtain_safety,
         )
-        self._io = IOBox(motorcontroller=self._motorbus, scalecontroller=self._scalebus, params=io_params, safety=self._curtain_safety)
+        self._io = IOBox(
+            motorcontroller=self._motorbus,
+            scalecontroller=self._scalebus,
+            params=io_params,
+            safety=self._curtain_safety,
+            gpio=self._gpio,
+        )
 
         self._grid_path = resolve_grid_path(self._config, CONFIG_PATH)
 
@@ -108,6 +122,10 @@ class Robot:
         else:
             self._logger.info("laser_bus_skipped: laser is disabled in config")
 
+        gpio = getattr(self, "_gpio", None)
+        if gpio is not None:
+            gpio.apply_initial_outputs()
+
         await self._tool.configure()
         await self._io.configure()
 
@@ -122,6 +140,10 @@ class Robot:
         for motor in [self._tool._mx, self._tool._my, self._tool._mg, self._tool._ms, self._tool._mr, self._io._md]:
             if motor is not None:
                 motor.cleanup()
+
+        gpio = getattr(self, "_gpio", None)
+        if gpio is not None:
+            gpio.close()
 
         if self._motorbus:
             await self._motorbus.close()
