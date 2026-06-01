@@ -21,6 +21,12 @@
 		initialCell?: number;
 	}
 
+	interface StoredCellSelection {
+		side?: 'left_module' | 'right_module';
+		shelf?: number;
+		cell?: number;
+	}
+
 	let { initialSide, initialShelf, initialCell }: Props = $props();
 
 	let storageGrid = $state<StorageGrid | null>(null);
@@ -39,6 +45,7 @@
 	let needsHomeAxes = $state<string[]>([]);
 
 	const TOOL_AXES = new Set(['z_axis', 'stage']);
+	const TEST_SELECTION_STORAGE_KEY = 'opshelf.calibration.test.selection';
 
 	const needsToolHome = $derived(needsHomeAxes.some((axis) => TOOL_AXES.has(axis)));
 	const homeMessage = $derived(
@@ -54,6 +61,7 @@
 			return;
 		}
 
+		restoreSelection();
 		void didLoad();
 	});
 
@@ -68,12 +76,76 @@
 		try {
 			storageGrid = await getStorageGrid();
 			syncSelection(initialShelf ?? selectedShelf, initialCell ?? selectedCell);
+			persistSelection();
 		} catch (err) {
 			handleNeedsHomeError(err);
 			loadError = err instanceof Error ? err.message : 'failed to load storage grid';
 		} finally {
 			loading = false;
 		}
+	}
+
+	function restoreSelection(): void {
+		const storedSelection = readStoredSelection();
+
+		if (storedSelection === null) {
+			return;
+		}
+
+		if (initialSide === undefined && storedSelection.side !== undefined) {
+			selectedSide = storedSelection.side;
+		}
+
+		if (initialShelf === undefined && storedSelection.shelf !== undefined) {
+			selectedShelf = storedSelection.shelf;
+		}
+
+		if (initialCell === undefined && storedSelection.cell !== undefined) {
+			selectedCell = storedSelection.cell;
+		}
+	}
+
+	function readStoredSelection(): StoredCellSelection | null {
+		try {
+			const storedSelection = window.localStorage.getItem(TEST_SELECTION_STORAGE_KEY);
+
+			if (storedSelection === null) {
+				return null;
+			}
+
+			const parsedSelection = JSON.parse(storedSelection) as StoredCellSelection;
+
+			return {
+				side: isStorageModuleSide(parsedSelection.side) === true ? parsedSelection.side : undefined,
+				shelf: isSelectionIndex(parsedSelection.shelf) === true ? parsedSelection.shelf : undefined,
+				cell: isSelectionIndex(parsedSelection.cell) === true ? parsedSelection.cell : undefined
+			};
+		} catch {
+			return null;
+		}
+	}
+
+	function persistSelection(): void {
+		try {
+			window.localStorage.setItem(
+				TEST_SELECTION_STORAGE_KEY,
+				JSON.stringify({
+					side: selectedSide,
+					shelf: selectedShelf,
+					cell: selectedCell
+				})
+			);
+		} catch {
+			return;
+		}
+	}
+
+	function isStorageModuleSide(value: unknown): value is 'left_module' | 'right_module' {
+		return value === 'left_module' || value === 'right_module';
+	}
+
+	function isSelectionIndex(value: unknown): value is number {
+		return typeof value === 'number' && Number.isInteger(value) === true && value >= 0;
 	}
 
 	async function didLoadCalibrationStatus(): Promise<void> {
@@ -170,6 +242,7 @@
 
 		selectedSide = target.value as 'left_module' | 'right_module';
 		syncSelection();
+		persistSelection();
 		error = '';
 		message = '';
 	}
@@ -179,6 +252,7 @@
 
 		selectedShelf = parseInt(target.value, 10);
 		syncSelection(selectedShelf);
+		persistSelection();
 		error = '';
 		message = '';
 	}
@@ -187,6 +261,7 @@
 		const target = event.target as HTMLSelectElement;
 
 		selectedCell = parseInt(target.value, 10);
+		persistSelection();
 		error = '';
 		message = '';
 	}
