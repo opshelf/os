@@ -133,7 +133,7 @@ class LaserAutoCalibrationCell(BaseModel):
 
 
 class LaserAutoCalibrationAngleResult(BaseModel):
-    method: Literal["stage_stall", "laser_fit"] = "laser_fit"
+    method: Literal["stage_stall"] = "stage_stall"
     side: StorageModuleSide
     alpha_deg: float
     sample_count: int
@@ -285,39 +285,6 @@ def _build_bounds_for_side(scan_config: Any, side: StorageModuleSide) -> ScanBou
     )
 
 
-def _build_valid_rotation_positions(
-    scan_config: Any,
-    rotation_center_deg: float,
-    rotation_limit_deg: float,
-) -> list[float]:
-    requested_positions = angle_module.build_axis_positions(
-        float(scan_config.angle_calibration_rotation_min_deg),
-        float(scan_config.angle_calibration_rotation_max_deg),
-        float(scan_config.angle_calibration_rotation_step_deg),
-    )
-    valid_positions = [
-        float(rotation_deg)
-        for rotation_deg in requested_positions
-        if 0.0 <= rotation_center_deg + float(rotation_deg) <= rotation_limit_deg
-    ]
-
-    if len(valid_positions) == 0:
-        raise ValueError(
-            "rotation sweep has no valid positions "
-            f"for center {rotation_center_deg:.3f} deg within 0..{rotation_limit_deg:.3f}"
-        )
-
-    if len(valid_positions) != len(requested_positions):
-        angle_module.print_status(
-            "rotation_sweep_clipped "
-            f"requested={len(requested_positions)} "
-            f"valid={len(valid_positions)} "
-            f"center_deg={rotation_center_deg:.3f} "
-            f"rotation_limit_deg={rotation_limit_deg:.3f}"
-        )
-
-    return valid_positions
-
 
 def _build_angle_x_positions(scan_config: Any) -> list[float]:
     x_positions = angle_module.build_axis_positions(
@@ -330,29 +297,6 @@ def _build_angle_x_positions(scan_config: Any) -> list[float]:
 
     return x_positions[:x_count]
 
-
-def _build_angle_z_offset_positions(scan_config: Any) -> list[float]:
-    z_offset_positions = angle_module.build_axis_positions(
-        float(scan_config.angle_calibration_z_offset_min_mm),
-        float(scan_config.angle_calibration_z_offset_max_mm),
-        float(scan_config.angle_calibration_z_offset_step_mm),
-    )
-    z_offset_count = int(getattr(scan_config, "angle_calibration_z_offset_count", 1))
-
-    if z_offset_count >= len(z_offset_positions):
-        return z_offset_positions
-
-    prioritized_positions = sorted(
-        z_offset_positions,
-        key=lambda offset_mm: (abs(float(offset_mm)), float(offset_mm)),
-    )
-    selected_positions = set(prioritized_positions[:z_offset_count])
-
-    return [
-        float(offset_mm)
-        for offset_mm in z_offset_positions
-        if float(offset_mm) in selected_positions
-    ]
 
 
 def _get_scan_config_value(scan_config: Any, name: str, default: Any) -> Any:
@@ -479,95 +423,6 @@ def _build_valid_stage_stall_rotation_positions(
 def _resolve_stage_stall_probe_x_mm(scan_config: Any) -> float:
     return float(_get_scan_config_value(scan_config, "angle_calibration_stage_stall_probe_x_mm", ANGLE_STAGE_STALL_DEFAULT_PROBE_X_MM))
 
-
-def _build_nominal_rotation_deg(rotation_center_deg: float) -> float:
-    rotation_center_deg = float(rotation_center_deg)
-    if abs(rotation_center_deg - 180.0) < abs(rotation_center_deg):
-        return 180.0
-
-    return 0.0
-
-
-def _build_estimated_rotation_deg(rotation_center_deg: float, fit_result: Any) -> float:
-    return _build_nominal_rotation_deg(rotation_center_deg) + float(fit_result.alpha_deg)
-
-
-def _should_mirror_right_angle_fit(
-    side: StorageModuleSide,
-    rotation_center_deg: float,
-    rotation_limit_deg: float,
-) -> bool:
-    return side == StorageModuleSide.RIGHT and rotation_center_deg >= rotation_limit_deg / 2.0
-
-
-def _build_angle_fit_inputs(
-    side: StorageModuleSide,
-    scan_config: Any,
-    samples: list[angle_module.LaserAngleCalibrationSample],
-    rotation_center_deg: float,
-    rotation_limit_deg: float,
-) -> tuple[list[angle_module.LaserAngleCalibrationSample], float]:
-    laser_offset_x_mm = 0.0
-
-    if _should_mirror_right_angle_fit(side, rotation_center_deg, rotation_limit_deg) is False:
-        return samples, laser_offset_x_mm
-
-    adjusted_samples = [
-        angle_module.LaserAngleCalibrationSample(
-            axis_x_mm=float(sample.axis_x_mm),
-            axis_z_mm=float(sample.axis_z_mm),
-            rotation_deg=-float(sample.rotation_deg),
-            absolute_rotation_deg=(2.0 * rotation_center_deg) - float(sample.absolute_rotation_deg),
-            stage_extension_mm=float(sample.stage_extension_mm),
-            z_extension_mm=float(sample.z_extension_mm),
-            distance_mm=float(sample.distance_mm),
-        )
-        for sample in samples
-    ]
-
-    return adjusted_samples, laser_offset_x_mm
-
-
-def _build_angle_rotation_positions_for_side(
-    side: StorageModuleSide,
-    positions: list[float],
-    rotation_center_deg: float,
-    rotation_limit_deg: float,
-) -> list[float]:
-    if side != StorageModuleSide.RIGHT:
-        return positions
-
-    if rotation_center_deg < rotation_limit_deg / 2.0:
-        filtered_positions = [position for position in positions if position >= 0.0]
-        direction_label = "at or above center"
-    else:
-        filtered_positions = [position for position in positions if position <= 0.0]
-        direction_label = "at or below center"
-
-    if len(filtered_positions) == 0:
-        raise ValueError(f"right-side rotation sweep has no valid positions {direction_label}")
-
-    return filtered_positions
-
-
-def _build_angle_calibration_sample(
-    *,
-    x_mm: float,
-    target_z_mm: float,
-    rotation_deg: float,
-    absolute_rotation_deg: float,
-    stage_extension_mm: float,
-    depth_mm: float,
-) -> angle_module.LaserAngleCalibrationSample:
-    return angle_module.LaserAngleCalibrationSample(
-        axis_x_mm=float(x_mm),
-        axis_z_mm=float(target_z_mm),
-        rotation_deg=float(rotation_deg),
-        absolute_rotation_deg=float(absolute_rotation_deg),
-        stage_extension_mm=float(stage_extension_mm),
-        z_extension_mm=float(target_z_mm),
-        distance_mm=float(depth_mm),
-    )
 
 
 def _build_candidate_rows(
@@ -711,17 +566,10 @@ __all__ = [
     "_build_stage_extension_probe_y_mm",
     "_build_stage_stall_rotation_center_deg",
     "_build_bounds_for_side",
-    "_build_valid_rotation_positions",
     "_build_angle_x_positions",
-    "_build_angle_z_offset_positions",
     "_build_stage_stall_rotation_positions",
     "_build_stage_stall_fine_rotation_positions",
     "_resolve_stage_stall_probe_x_mm",
-    "_build_nominal_rotation_deg",
-    "_build_estimated_rotation_deg",
-    "_build_angle_fit_inputs",
-    "_build_angle_rotation_positions_for_side",
-    "_build_angle_calibration_sample",
     "_build_candidate_rows",
     "_build_cell_rows",
 ]

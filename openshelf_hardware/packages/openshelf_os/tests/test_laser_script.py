@@ -6,7 +6,8 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from openshelf_os.laser_calibration import GapCandidateRegion
-from openshelf_os.laser_calibration.scan import ScanBounds
+from openshelf_os.laser_calibration.scan import ScanBounds, ScanDetectedCell
+from openshelf_os.storage import StorageModuleSide
 
 
 def load_laser_script_module():
@@ -28,6 +29,19 @@ def build_config():
 					laser_samples_per_point=3,
 					laser_offset_x_mm=51.0,
 					laser_offset_y_mm=0.0,
+					left_xy_reference=SimpleNamespace(
+						shelf_idx=0,
+						cell_idx=1,
+						anchor='top_right',
+						x_mm=10.0,
+						y_mm=20.0,
+					),
+					left_z_reference=SimpleNamespace(
+						shelf_idx=0,
+						cell_idx=1,
+						z_offset_mm=8.0,
+						stage_extension_mm=43.0,
+					),
 					wall_depth_tolerance_mm=2.0,
 					expected_hole_width_mm=26.0,
 					expected_hole_height_mm=30.0,
@@ -59,7 +73,7 @@ def build_analysis(raw_scan_path: str = '/tmp/run/coarse.npy'):
 		raw_scan_path=raw_scan_path,
 		run_id='run-id',
 		shelves=[],
-		side=SimpleNamespace(value='left'),
+		side=StorageModuleSide.LEFT,
 		bounds=SimpleNamespace(x_min=0.0, x_max=10.0, y_min=0.0, y_max=10.0),
 		wall_depth_mm=8.0,
 	)
@@ -188,6 +202,272 @@ def test_main_dispatches_rescan_apply_to_package_methods(monkeypatch: pytest.Mon
 	apply_single_cell_rescan.assert_called_once()
 	apply_analysis.assert_not_called()
 
+def build_reference_apply() -> dict:
+	return {
+		'xy_reference_detected_cell': ScanDetectedCell(
+			shelf_idx=0,
+			cell_idx=1,
+			center_x_mm=10.0,
+			center_y_mm=20.0,
+			tool_x_mm=30.0,
+			tool_y_mm=40.0,
+			width_mm=50.0,
+			height_mm=60.0,
+			point_count=7,
+			bbox_x_min=1.0,
+			bbox_x_max=2.0,
+			bbox_y_min=3.0,
+			bbox_y_max=4.0,
+		).model_dump(),
+		'z_reference_wall_depth_mm': 8.5,
+		'xy_reference_target': {
+			'shelf_idx': 0,
+			'cell_idx': 1,
+		},
+		'z_reference_target': {
+			'shelf_idx': 0,
+			'cell_idx': 1,
+		},
+	}
+
+
+def test_load_reference_apply_rejects_changed_reference_target() -> None:
+	module = load_laser_script_module()
+	config = build_config()
+	config.robot.grid.scan.left_xy_reference.shelf_idx = 9
+
+	with pytest.raises(ValueError, match='different reference targets'):
+		module.load_reference_apply_data(
+			run_parameters={'reference_apply': build_reference_apply()},
+			scan_config=config.robot.grid.scan,
+			side=StorageModuleSide.LEFT,
+		)
+
+
+def test_load_reference_apply_allows_same_target_reference_value_change() -> None:
+	module = load_laser_script_module()
+	config = build_config()
+	config.robot.grid.scan.left_xy_reference.x_mm = 99.0
+	config.robot.grid.scan.left_xy_reference.y_mm = 199.0
+	config.robot.grid.scan.left_z_reference.z_offset_mm = 18.0
+	config.robot.grid.scan.left_z_reference.stage_extension_mm = 44.0
+
+	xy_reference_detected_cell, z_reference_wall_depth_mm = module.load_reference_apply_data(
+		run_parameters={'reference_apply': build_reference_apply()},
+		scan_config=config.robot.grid.scan,
+		side=StorageModuleSide.LEFT,
+	)
+
+	assert xy_reference_detected_cell.tool_x_mm == 30.0
+	assert z_reference_wall_depth_mm == 8.5
+
+
+def test_from_run_apply_uses_single_shelf_scope(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+	module = load_laser_script_module()
+	config = build_config()
+	analysis = build_analysis(str(tmp_path / 'run' / 'coarse.npy'))
+	analysis.metadata_path = str(tmp_path / 'run' / 'metadata.json')
+	apply_single_shelf_analysis = Mock()
+	apply_analysis = Mock()
+
+	monkeypatch.setattr(module, 'load_config_file', lambda path: config)
+	monkeypatch.setattr(module, 'resolve_grid_path', lambda config: 'storage.json')
+	monkeypatch.setattr(module.laser_module, 'load_grid', lambda path: SimpleNamespace())
+	monkeypatch.setattr(module.laser_module, 'load_staged_scan_analysis', lambda *args, **kwargs: analysis)
+	monkeypatch.setattr(
+		module,
+		'load_run_parameters_for_analysis',
+		lambda analysis: {
+			'auto_calibration_scope': {
+				'mode': 'shelf',
+				'side': 'left',
+				'shelf_idx': 2,
+			},
+			'reference_apply': build_reference_apply(),
+		},
+	)
+	monkeypatch.setattr(module.laser_module, 'apply_single_shelf_analysis', apply_single_shelf_analysis)
+	monkeypatch.setattr(module.laser_module, 'apply_analysis', apply_analysis)
+	monkeypatch.setattr(module, 'print_analysis', lambda analysis: None)
+
+	result = module.main(['--from-run', str(tmp_path / 'run'), '--apply'])
+
+	assert result == 0
+	apply_single_shelf_analysis.assert_called_once()
+	assert apply_single_shelf_analysis.call_args.kwargs['target_shelf_idx'] == 2
+	assert apply_single_shelf_analysis.call_args.kwargs['xy_reference_detected_cell'].tool_x_mm == 30.0
+	assert apply_single_shelf_analysis.call_args.kwargs['z_reference_wall_depth_mm'] == 8.5
+	apply_analysis.assert_not_called()
+
+
+def test_from_run_apply_single_shelf_scope_requires_reference_apply(
+	monkeypatch: pytest.MonkeyPatch,
+	tmp_path: Path,
+	capsys: pytest.CaptureFixture[str],
+) -> None:
+	module = load_laser_script_module()
+	config = build_config()
+	analysis = build_analysis(str(tmp_path / 'run' / 'coarse.npy'))
+	analysis.metadata_path = str(tmp_path / 'run' / 'metadata.json')
+
+	monkeypatch.setattr(module, 'load_config_file', lambda path: config)
+	monkeypatch.setattr(module, 'resolve_grid_path', lambda config: 'storage.json')
+	monkeypatch.setattr(module.laser_module, 'load_grid', lambda path: SimpleNamespace())
+	monkeypatch.setattr(module.laser_module, 'load_staged_scan_analysis', lambda *args, **kwargs: analysis)
+	monkeypatch.setattr(
+		module,
+		'load_run_parameters_for_analysis',
+		lambda analysis: {
+			'auto_calibration_scope': {
+				'mode': 'shelf',
+				'side': 'left',
+				'shelf_idx': 2,
+			},
+		},
+	)
+
+	result = module.main(['--from-run', str(tmp_path / 'run'), '--apply'])
+
+	assert result == 1
+	assert 'reference apply metadata' in capsys.readouterr().err
+
+
+def test_from_run_apply_uses_legacy_single_cell_without_reference_apply(
+	monkeypatch: pytest.MonkeyPatch,
+	tmp_path: Path,
+) -> None:
+	module = load_laser_script_module()
+	config = build_config()
+	analysis = build_analysis(str(tmp_path / 'run' / 'coarse.npy'))
+	analysis.metadata_path = str(tmp_path / 'run' / 'metadata.json')
+	candidate = GapCandidateRegion(x_min=10.0, x_max=20.0, y_min=30.0, y_max=40.0, wall_depth_mm=8.0)
+	detected_cell = SimpleNamespace(tool_x_mm=100.0, tool_y_mm=200.0)
+	apply_single_cell_rescan = Mock()
+	load_reference_apply_data = Mock(side_effect=AssertionError('unexpected reference apply load'))
+
+	monkeypatch.setattr(module, 'load_config_file', lambda path: config)
+	monkeypatch.setattr(module, 'resolve_grid_path', lambda config: 'storage.json')
+	monkeypatch.setattr(module.laser_module, 'load_grid', lambda path: SimpleNamespace())
+	monkeypatch.setattr(module.laser_module, 'load_staged_scan_analysis', lambda *args, **kwargs: analysis)
+	monkeypatch.setattr(
+		module,
+		'load_run_parameters_for_analysis',
+		lambda analysis: {
+			'single_cell_rescan': {
+				'shelf_idx': 1,
+				'cell_idx': 2,
+				'candidate': {
+					'x_min': candidate.x_min,
+					'x_max': candidate.x_max,
+					'y_min': candidate.y_min,
+					'y_max': candidate.y_max,
+					'wall_depth_mm': candidate.wall_depth_mm,
+				},
+			},
+		},
+	)
+	monkeypatch.setattr(module.laser_module, 'find_detected_cell_for_candidate', lambda **kwargs: detected_cell)
+	monkeypatch.setattr(module.laser_module, 'apply_single_cell_rescan', apply_single_cell_rescan)
+	monkeypatch.setattr(module, 'load_reference_apply_data', load_reference_apply_data)
+	monkeypatch.setattr(module, 'print_analysis', lambda analysis: None)
+
+	result = module.main(['--from-run', str(tmp_path / 'run'), '--apply'])
+
+	assert result == 0
+	load_reference_apply_data.assert_not_called()
+	apply_single_cell_rescan.assert_called_once()
+	assert apply_single_cell_rescan.call_args.kwargs['xy_reference_detected_cell'] is None
+	assert apply_single_cell_rescan.call_args.kwargs['z_reference_wall_depth_mm'] is None
+
+
+def test_from_run_apply_scoped_single_cell_requires_reference_apply(
+	monkeypatch: pytest.MonkeyPatch,
+	tmp_path: Path,
+	capsys: pytest.CaptureFixture[str],
+) -> None:
+	module = load_laser_script_module()
+	config = build_config()
+	analysis = build_analysis(str(tmp_path / 'run' / 'coarse.npy'))
+	analysis.metadata_path = str(tmp_path / 'run' / 'metadata.json')
+	candidate = GapCandidateRegion(x_min=10.0, x_max=20.0, y_min=30.0, y_max=40.0, wall_depth_mm=8.0)
+	detected_cell = SimpleNamespace(tool_x_mm=100.0, tool_y_mm=200.0)
+
+	monkeypatch.setattr(module, 'load_config_file', lambda path: config)
+	monkeypatch.setattr(module, 'resolve_grid_path', lambda config: 'storage.json')
+	monkeypatch.setattr(module.laser_module, 'load_grid', lambda path: SimpleNamespace())
+	monkeypatch.setattr(module.laser_module, 'load_staged_scan_analysis', lambda *args, **kwargs: analysis)
+	monkeypatch.setattr(
+		module,
+		'load_run_parameters_for_analysis',
+		lambda analysis: {
+			'auto_calibration_scope': {
+				'mode': 'cell',
+				'side': 'left',
+				'shelf_idx': 1,
+				'cell_idx': 2,
+			},
+			'single_cell_rescan': {
+				'shelf_idx': 1,
+				'cell_idx': 2,
+				'candidate': {
+					'x_min': candidate.x_min,
+					'x_max': candidate.x_max,
+					'y_min': candidate.y_min,
+					'y_max': candidate.y_max,
+					'wall_depth_mm': candidate.wall_depth_mm,
+				},
+			},
+		},
+	)
+	monkeypatch.setattr(module.laser_module, 'find_detected_cell_for_candidate', lambda **kwargs: detected_cell)
+
+	result = module.main(['--from-run', str(tmp_path / 'run'), '--apply'])
+
+	assert result == 1
+	assert 'reference apply metadata' in capsys.readouterr().err
+
+
+def test_from_run_apply_uses_single_cell_reference_apply(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+	module = load_laser_script_module()
+	config = build_config()
+	analysis = build_analysis(str(tmp_path / 'run' / 'coarse.npy'))
+	analysis.metadata_path = str(tmp_path / 'run' / 'metadata.json')
+	candidate = GapCandidateRegion(x_min=10.0, x_max=20.0, y_min=30.0, y_max=40.0, wall_depth_mm=8.0)
+	detected_cell = SimpleNamespace(tool_x_mm=100.0, tool_y_mm=200.0)
+	apply_single_cell_rescan = Mock()
+
+	monkeypatch.setattr(module, 'load_config_file', lambda path: config)
+	monkeypatch.setattr(module, 'resolve_grid_path', lambda config: 'storage.json')
+	monkeypatch.setattr(module.laser_module, 'load_grid', lambda path: SimpleNamespace())
+	monkeypatch.setattr(module.laser_module, 'load_staged_scan_analysis', lambda *args, **kwargs: analysis)
+	monkeypatch.setattr(
+		module,
+		'load_run_parameters_for_analysis',
+		lambda analysis: {
+			'single_cell_rescan': {
+				'shelf_idx': 1,
+				'cell_idx': 2,
+				'candidate': {
+					'x_min': candidate.x_min,
+					'x_max': candidate.x_max,
+					'y_min': candidate.y_min,
+					'y_max': candidate.y_max,
+					'wall_depth_mm': candidate.wall_depth_mm,
+				},
+			},
+			'reference_apply': build_reference_apply(),
+		},
+	)
+	monkeypatch.setattr(module.laser_module, 'find_detected_cell_for_candidate', lambda **kwargs: detected_cell)
+	monkeypatch.setattr(module.laser_module, 'apply_single_cell_rescan', apply_single_cell_rescan)
+	monkeypatch.setattr(module, 'print_analysis', lambda analysis: None)
+
+	result = module.main(['--from-run', str(tmp_path / 'run'), '--apply'])
+
+	assert result == 0
+	apply_single_cell_rescan.assert_called_once()
+	assert apply_single_cell_rescan.call_args.kwargs['xy_reference_detected_cell'].tool_x_mm == 30.0
+	assert apply_single_cell_rescan.call_args.kwargs['z_reference_wall_depth_mm'] == 8.5
 
 def test_print_io_box_scout_result_includes_calibration_points(capsys: pytest.CaptureFixture[str]) -> None:
 	module = load_laser_script_module()
@@ -284,20 +564,8 @@ def test_main_dispatches_io_box_calibration_to_package_method(monkeypatch: pytes
 	assert run_io_box_scout.await_args.kwargs['laser_offset_x_mm'] == pytest.approx(51.0)
 
 
-def test_main_dispatches_angle_calibration_to_package_module(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_main_rejects_removed_laser_fit_angle_calibration(capsys: pytest.CaptureFixture[str]) -> None:
 	module = load_laser_script_module()
-	config = build_config()
-	fit_result = SimpleNamespace(alpha_deg=1.25)
-	capture_samples_with_robot = AsyncMock(return_value=(['sample'], {'module': 'left'}))
-	search_best_alpha = Mock(return_value=fit_result)
-	print_fit_result = Mock()
-
-	monkeypatch.setattr(module, 'load_config_file', lambda path: config)
-	monkeypatch.setattr(module, 'resolve_grid_path', lambda config: 'storage.json')
-	monkeypatch.setattr(module.laser_module, 'load_grid', lambda path: SimpleNamespace())
-	monkeypatch.setattr(module.angle_module, 'capture_samples_with_robot', capture_samples_with_robot)
-	monkeypatch.setattr(module.angle_module, 'search_best_alpha', search_best_alpha)
-	monkeypatch.setattr(module.angle_module, 'print_fit_result', print_fit_result)
 
 	result = module.main(
 		[
@@ -321,72 +589,5 @@ def test_main_dispatches_angle_calibration_to_package_module(monkeypatch: pytest
 		]
 	)
 
-	assert result == 0
-	capture_samples_with_robot.assert_awaited_once()
-	search_best_alpha.assert_called_once()
-	print_fit_result.assert_called_once_with(fit_result)
-	assert search_best_alpha.call_args.kwargs['laser_offset_x_mm'] == pytest.approx(0.0)
-
-
-def test_main_uses_adjusted_laser_offset_for_mirrored_right_angle_fit(
-	monkeypatch: pytest.MonkeyPatch,
-	tmp_path: Path,
-) -> None:
-	module = load_laser_script_module()
-	config = build_config()
-	fit_result = SimpleNamespace(alpha_deg=1.25)
-	samples = [
-		module.angle_module.LaserAngleCalibrationSample(
-			axis_x_mm=945.0,
-			axis_z_mm=140.5,
-			rotation_deg=-8.0,
-			absolute_rotation_deg=177.255,
-			stage_extension_mm=13.0,
-			z_extension_mm=140.5,
-			distance_mm=8.0,
-		)
-	]
-	capture_samples_with_robot = AsyncMock(return_value=(samples, {'module': 'right'}))
-	search_best_alpha = Mock(return_value=fit_result)
-	write_output_document = Mock()
-	monkeypatch.setattr(module, 'load_config_file', lambda path: config)
-	monkeypatch.setattr(module, 'resolve_grid_path', lambda config: 'storage.json')
-	monkeypatch.setattr(module.laser_module, 'load_grid', lambda path: SimpleNamespace())
-	monkeypatch.setattr(module.angle_module, 'capture_samples_with_robot', capture_samples_with_robot)
-	monkeypatch.setattr(module.angle_module, 'search_best_alpha', search_best_alpha)
-	monkeypatch.setattr(module.angle_module, 'print_fit_result', Mock())
-	monkeypatch.setattr(module.angle_module, 'write_output_document', write_output_document)
-
-	result = module.main(
-		[
-			'--calibrate-angle',
-			'--module',
-			'right',
-			'--x-range',
-			'0',
-			'10',
-			'1',
-			'--y-mm',
-			'100',
-			'--z-offset-range',
-			'0',
-			'0',
-			'1',
-			'--rotation-range',
-			'0',
-			'0',
-			'1',
-			'--output',
-			str(tmp_path / 'angle.json'),
-		]
-	)
-
-	assert result == 0
-	search_best_alpha.assert_called_once()
-	fit_samples = search_best_alpha.call_args.args[0]
-	assert fit_samples[0].rotation_deg == pytest.approx(8.0)
-	assert fit_samples[0].absolute_rotation_deg == pytest.approx(193.255)
-	assert search_best_alpha.call_args.kwargs['laser_offset_x_mm'] == pytest.approx(0.0)
-	write_output_document.assert_called_once()
-	assert write_output_document.call_args.kwargs['samples'] == fit_samples
-	assert write_output_document.call_args.kwargs['metadata']['laser_offset_x_mm'] == pytest.approx(0.0)
+	assert result == 1
+	assert 'laser-fit calibration was removed' in capsys.readouterr().err

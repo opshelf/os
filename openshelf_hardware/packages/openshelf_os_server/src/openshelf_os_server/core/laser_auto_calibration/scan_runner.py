@@ -20,6 +20,8 @@ class ScanRunnerMixin:
         seeded_wall_depth_mm: float | None = None,
         rescan_target: laser_module.SingleCellRescanTarget | None = None,
         should_validate_reference_bounds: bool = True,
+        run_scope: dict[str, Any] | None = None,
+        reference_apply: dict[str, Any] | None = None,
     ) -> Any:
         side_name = _side_to_module_name(side)
         config = get_root_config()
@@ -64,6 +66,12 @@ class ScanRunnerMixin:
             coarse_samples_per_point=coarse_samples_per_point,
             scan_config=scan_config,
         )
+
+        if run_scope is not None:
+            run_parameters["auto_calibration_scope"] = run_scope
+
+        if reference_apply is not None:
+            run_parameters["reference_apply"] = reference_apply
 
         if rescan_target is not None and seeded_candidates is not None and len(seeded_candidates) == 1:
             candidate = seeded_candidates[0]

@@ -1377,6 +1377,369 @@ def apply_analysis(
 	storage_grid.save()
 
 
+def resolve_staged_run_dir(path: Path | str) -> Path:
+    run_path = Path(path)
+
+    if run_path.is_file() is True:
+        if run_path.name != "metadata.json":
+            raise ValueError("staged run file must be metadata.json")
+
+        return run_path.parent
+
+    return run_path
+
+
+def resolve_saved_raw_scan_path(
+    *,
+    run_dir: Path,
+    raw_scan_path: str,
+    label: str,
+    require_exists: bool,
+) -> Path:
+    saved_path = Path(raw_scan_path)
+
+    if saved_path.is_absolute() is False:
+        resolved_path = run_dir / saved_path
+
+        if resolved_path.exists() is True or require_exists is False:
+            return resolved_path
+
+        raise FileNotFoundError(f"Saved {label} raw scan file not found at {resolved_path}")
+
+    if saved_path.exists() is True:
+        return saved_path
+
+    local_path = run_dir / saved_path.name
+
+    if local_path.exists() is True:
+        return local_path
+
+    if require_exists is False:
+        return saved_path
+
+    raise FileNotFoundError(
+        f"Saved {label} raw scan file not found at {saved_path} or {local_path}"
+    )
+
+
+def find_replay_gap_segment(
+	*,
+	values: list[float | None],
+	positions: list[float],
+	step_mm: float,
+	wall_depth_mm: float,
+	expected_width_mm: float,
+	width_tolerance_mm: float,
+	center_mm: float,
+	scan_config: Any,
+) -> LineGapSegment | None:
+	if len(values) != len(positions):
+		raise ValueError("values and positions must have the same length")
+
+	matched_segments: list[LineGapSegment] = []
+	start_idx: int | None = None
+
+	for idx in range(len(values) + 1):
+		is_gap = False
+
+		if idx < len(values):
+			is_gap = is_hole_interior_depth(
+				values[idx],
+				wall_depth_mm=wall_depth_mm,
+			)
+
+		if is_gap is True and start_idx is None:
+			start_idx = idx
+			continue
+
+		if is_gap is True or start_idx is None:
+			continue
+
+		end_idx = idx - 1
+		left_idx = start_idx - 1
+		right_idx = end_idx + 1
+
+		if left_idx < 0 or right_idx >= len(values):
+			start_idx = None
+			continue
+
+		segment = build_line_run_segment(
+			positions=positions,
+			start_idx=start_idx,
+			end_idx=end_idx,
+			step_mm=step_mm,
+		)
+
+		if dimensions_match(
+			segment.width_mm,
+			expected_mm=expected_width_mm,
+			tolerance_mm=width_tolerance_mm,
+		) is False:
+			start_idx = None
+			continue
+
+		if has_wall_nearby(
+			values,
+			wall_depth_mm=wall_depth_mm,
+			tolerance_mm=scan_config.wall_depth_tolerance_mm,
+			start_idx=left_idx,
+			direction=-1,
+		) is False:
+			start_idx = None
+			continue
+
+		if has_wall_nearby(
+			values,
+			wall_depth_mm=wall_depth_mm,
+			tolerance_mm=scan_config.wall_depth_tolerance_mm,
+			start_idx=right_idx,
+			direction=1,
+		) is False:
+			start_idx = None
+			continue
+
+		matched_segments.append(segment)
+		start_idx = None
+
+	if len(matched_segments) == 0:
+		return None
+
+	return min(
+		matched_segments,
+		key=lambda segment: abs(float(segment.center_mm) - float(center_mm)),
+	)
+
+
+def build_detected_cell_from_saved_fine_scan(
+	*,
+	fine_scan: GridScanResult,
+	candidate: GapCandidateRegion,
+	fine_step_mm: float,
+	wall_depth_mm: float,
+	scan_config: Any,
+) -> ScanDetectedCell | None:
+	if wall_depth_mm <= 0.0:
+		return None
+
+	candidate_center_x_mm, candidate_center_y_mm = get_candidate_center(candidate)
+	horizontal_segments: list[LineGapSegment] = []
+
+	for row in fine_scan.depth_rows:
+		if any(value is not None for value in row) is False:
+			continue
+
+		segment = find_replay_gap_segment(
+			values=row,
+			positions=fine_scan.x_positions,
+			step_mm=fine_step_mm,
+			wall_depth_mm=wall_depth_mm,
+			expected_width_mm=scan_config.expected_hole_width_mm,
+			width_tolerance_mm=scan_config.hole_width_tolerance_mm + fine_step_mm,
+			center_mm=candidate_center_x_mm,
+			scan_config=scan_config,
+		)
+
+		if segment is not None:
+			horizontal_segments.append(segment)
+
+	if len(horizontal_segments) == 0:
+		return None
+
+	horizontal_segment = min(
+		horizontal_segments,
+		key=lambda segment: abs(float(segment.center_mm) - candidate_center_x_mm),
+	)
+	vertical_segments: list[LineGapSegment] = []
+
+	for col_idx, _ in enumerate(fine_scan.x_positions):
+		column_values = [row[col_idx] for row in fine_scan.depth_rows]
+
+		if any(value is not None for value in column_values) is False:
+			continue
+
+		segment = find_replay_gap_segment(
+			values=column_values,
+			positions=fine_scan.y_positions,
+			step_mm=fine_step_mm,
+			wall_depth_mm=wall_depth_mm,
+			expected_width_mm=scan_config.expected_hole_height_mm,
+			width_tolerance_mm=scan_config.hole_height_tolerance_mm + fine_step_mm,
+			center_mm=candidate_center_y_mm,
+			scan_config=scan_config,
+		)
+
+		if segment is None:
+			continue
+
+		vertical_segments.append(segment)
+
+	if len(vertical_segments) == 0:
+		return None
+
+	vertical_segment = min(
+		vertical_segments,
+		key=lambda segment: abs(float(segment.center_mm) - candidate_center_y_mm),
+	)
+	return build_detected_cell_from_segments(
+		x_segment=horizontal_segment,
+		y_segment=vertical_segment,
+		step_mm=fine_step_mm,
+		scan_config=scan_config,
+	)
+
+
+def load_staged_scan_analysis(
+    path: Path | str,
+    *,
+    scan_config: Any,
+    require_completed: bool = True,
+) -> ScanAnalysisResult:
+    run_dir = resolve_staged_run_dir(path)
+    metadata_path = run_dir / "metadata.json"
+
+    if metadata_path.exists() is False:
+        raise FileNotFoundError(f"No staged scan metadata found at {metadata_path}")
+
+    metadata = load_json_file(metadata_path)
+
+    if require_completed is True and metadata.get("status") != "completed":
+        raise ValueError(f"Staged scan {run_dir} is not completed")
+
+    side = StorageModuleSide(metadata["side"])
+    bounds = ScanBounds.model_validate(metadata["bounds"])
+    fine_step_mm = float(metadata["fine_step_mm"])
+    candidates = load_candidates_from_metadata(metadata)
+    detected_cells: list[ScanDetectedCell] = []
+
+    for fine_entry_idx, fine_entry in enumerate(metadata.get("fine_scans", [])):
+        if fine_entry.get("status") != "completed":
+            continue
+
+        raw_fine_path_value = str(fine_entry.get("raw_scan_path", ""))
+
+        if raw_fine_path_value == "":
+            continue
+
+        raw_fine_path = resolve_saved_raw_scan_path(
+            run_dir=run_dir,
+            raw_scan_path=raw_fine_path_value,
+            label="fine",
+            require_exists=True,
+        )
+
+        candidate_index = int(fine_entry.get("candidate_index", fine_entry_idx))
+
+        if candidate_index < 0 or candidate_index >= len(candidates):
+            continue
+
+        candidate = candidates[candidate_index]
+        fine_bounds = ScanBounds.model_validate(fine_entry["bounds"])
+        fine_scan = load_partial_grid_scan(
+            npy_path=raw_fine_path,
+            bounds=fine_bounds,
+            step_mm=fine_step_mm,
+        )
+        candidate_wall_depth_mm = float(metadata.get("wall_depth_mm", 0.0))
+
+        if candidate.wall_depth_mm is not None:
+            candidate_wall_depth_mm = float(candidate.wall_depth_mm)
+
+        detected_cell = build_detected_cell_from_saved_fine_scan(
+            fine_scan=fine_scan,
+            candidate=candidate,
+            fine_step_mm=fine_step_mm,
+            wall_depth_mm=candidate_wall_depth_mm,
+            scan_config=scan_config,
+        )
+
+        if detected_cell is not None:
+            detected_cells.append(detected_cell)
+
+    deduped_cells = dedupe_detected_cells(
+        detected_cells,
+        scan_config=scan_config,
+    )
+    shelves = build_detected_shelves(
+        deduped_cells,
+        side=side,
+        shelf_threshold_mm=get_shelf_grouping_threshold_mm(
+            step_mm=fine_step_mm,
+            scan_config=scan_config,
+        ),
+    )
+    raw_scan_path = str(metadata.get("coarse_scan", {}).get("raw_scan_path", run_dir / "coarse_depth.npy"))
+    coarse_raw_path = resolve_saved_raw_scan_path(
+        run_dir=run_dir,
+        raw_scan_path=raw_scan_path,
+        label="coarse",
+        require_exists=False,
+    )
+
+    raw_scan_path = str(coarse_raw_path)
+    created_at = datetime.now(timezone.utc)
+
+    if metadata.get("created_at") is not None:
+        created_at = datetime.fromisoformat(str(metadata["created_at"]))
+
+    total_points = 0
+    valid_points = 0
+
+    if coarse_raw_path.exists() is True:
+        coarse_scan = load_partial_grid_scan(
+            npy_path=coarse_raw_path,
+            bounds=bounds,
+            step_mm=float(metadata.get("coarse_step_mm", COARSE_SCAN_STEP_MM)),
+        )
+        total_points += count_valid_points(coarse_scan.depth_rows)
+        valid_points += count_valid_points(coarse_scan.depth_rows)
+
+    for fine_entry in metadata.get("fine_scans", []):
+        raw_fine_path_value = str(fine_entry.get("raw_scan_path", ""))
+
+        if raw_fine_path_value == "":
+            continue
+
+        if fine_entry.get("status") != "completed":
+            continue
+
+        raw_fine_path = resolve_saved_raw_scan_path(
+            run_dir=run_dir,
+            raw_scan_path=raw_fine_path_value,
+            label="fine",
+            require_exists=True,
+        )
+
+        fine_bounds = ScanBounds.model_validate(fine_entry["bounds"])
+        fine_scan = load_partial_grid_scan(
+            npy_path=raw_fine_path,
+            bounds=fine_bounds,
+            step_mm=fine_step_mm,
+        )
+        total_points += count_valid_points(fine_scan.depth_rows)
+        valid_points += count_valid_points(fine_scan.depth_rows)
+
+    return ScanAnalysisResult(
+        run_id=str(metadata.get("run_id", run_dir.name)),
+        side=side,
+        bounds=bounds,
+        step_mm=fine_step_mm,
+        samples_per_point=int(metadata["samples_per_point"]),
+        settle_ms=int(metadata["settle_ms"]),
+        wall_depth_mm=float(metadata.get("wall_depth_mm", 0.0)),
+        wall_depth_tolerance_mm=float(scan_config.wall_depth_tolerance_mm),
+        expected_hole_width_mm=float(scan_config.expected_hole_width_mm),
+        expected_hole_height_mm=float(scan_config.expected_hole_height_mm),
+        min_vertical_wall_coverage_mm=float(scan_config.min_vertical_wall_coverage_mm),
+        min_horizontal_wall_coverage_mm=float(scan_config.min_horizontal_wall_coverage_mm),
+        total_points=total_points,
+        valid_points=valid_points,
+        raw_scan_path=raw_scan_path,
+        metadata_path=str(metadata_path),
+        shelves=shelves,
+        created_at=created_at,
+    )
+
+
 def analyze_depth_rows(
 	*,
 	side: StorageModuleSide,

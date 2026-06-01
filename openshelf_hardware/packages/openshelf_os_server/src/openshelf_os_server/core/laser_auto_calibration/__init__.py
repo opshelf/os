@@ -31,9 +31,6 @@ _PATCHED_NAMES = [
     "resolve_grid_path",
     "_build_bounds_for_side",
     "_build_angle_x_positions",
-    "_build_valid_rotation_positions",
-    "_build_angle_z_offset_positions",
-    "_build_angle_rotation_positions_for_side",
     "laser_module",
     "angle_module",
 ]

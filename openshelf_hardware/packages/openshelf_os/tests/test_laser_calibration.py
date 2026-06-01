@@ -25,6 +25,7 @@ from openshelf_os.laser_calibration import (
 	get_scanned_anchor_cell,
 	GridScanResult,
 	load_continue_scan_context,
+	load_staged_scan_analysis,
 	run_io_box_scout,
 	run_staged_scan,
 	run_with_temp_robot_config,
@@ -72,6 +73,117 @@ def test_laser_scan_config_rejects_legacy_field_names() -> None:
 				},
 			}
 		)
+
+
+def build_replay_scan_config(*, expected_hole_width_mm: float) -> SimpleNamespace:
+	return SimpleNamespace(
+		laser_offset_x_mm=1.0,
+		laser_offset_y_mm=2.0,
+		expected_hole_width_mm=expected_hole_width_mm,
+		expected_hole_height_mm=25.0,
+		hole_width_tolerance_mm=1.0,
+		hole_height_tolerance_mm=1.0,
+		wall_depth_tolerance_mm=1.0,
+		min_vertical_wall_coverage_mm=0.0,
+		min_horizontal_wall_coverage_mm=0.0,
+	)
+
+
+def write_replay_run(tmp_path: Path) -> Path:
+	np = pytest.importorskip("numpy")
+	run_dir = tmp_path / "scan-run"
+	run_dir.mkdir()
+	fine_depth = np.full((9, 9), np.nan, dtype=np.float32)
+	fine_depth[4, :] = 10.0
+	fine_depth[4, 2:7] = 0.0
+	fine_depth[:, 4] = 10.0
+	fine_depth[2:7, 4] = 0.0
+	fine_path = run_dir / "fine_00.npy"
+	np.save(fine_path, fine_depth)
+	metadata = {
+		"run_id": "scan-run",
+		"status": "completed",
+		"side": StorageModuleSide.LEFT.value,
+		"bounds": {"x_min": 0.0, "x_max": 40.0, "y_min": 0.0, "y_max": 40.0},
+		"fine_step_mm": 5.0,
+		"coarse_step_mm": 5.0,
+		"samples_per_point": 1,
+		"settle_ms": 0,
+		"wall_depth_mm": 10.0,
+		"coarse_scan": {"raw_scan_path": "coarse_depth.npy"},
+		"candidates": [
+			{
+				"x_min": 8.0,
+				"x_max": 32.0,
+				"y_min": 8.0,
+				"y_max": 32.0,
+				"row_count": 1,
+				"wall_depth_mm": 10.0,
+				"wall_sample_count": 1,
+			}
+		],
+		"fine_scans": [
+			{
+				"candidate_index": 0,
+				"status": "completed",
+				"bounds": {"x_min": 0.0, "x_max": 40.0, "y_min": 0.0, "y_max": 40.0},
+				"raw_scan_path": str(fine_path),
+				"detected_cells": [
+					{
+						"shelf_idx": 0,
+						"cell_idx": 0,
+						"center_x_mm": 20.0,
+						"center_y_mm": 20.0,
+						"tool_x_mm": 21.0,
+						"tool_y_mm": 18.0,
+						"width_mm": 25.0,
+						"height_mm": 25.0,
+						"point_count": 5,
+						"bbox_x_min": 10.0,
+						"bbox_x_max": 30.0,
+						"bbox_y_min": 10.0,
+						"bbox_y_max": 30.0,
+					}
+				],
+			}
+		],
+	}
+	(run_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+	return run_dir
+
+
+def test_load_staged_scan_analysis_replays_raw_fine_scan_with_current_config(tmp_path: Path) -> None:
+	run_dir = write_replay_run(tmp_path)
+
+	matching_analysis = load_staged_scan_analysis(
+		run_dir,
+		scan_config=build_replay_scan_config(expected_hole_width_mm=25.0),
+	)
+	changed_analysis = load_staged_scan_analysis(
+		run_dir,
+		scan_config=build_replay_scan_config(expected_hole_width_mm=40.0),
+	)
+
+	assert len(matching_analysis.shelves) == 1
+	assert len(matching_analysis.shelves[0].cells) == 1
+	assert changed_analysis.shelves == []
+
+
+def test_load_staged_scan_analysis_replays_copied_raw_fine_scan(tmp_path: Path) -> None:
+	run_dir = write_replay_run(tmp_path)
+	metadata_path = run_dir / "metadata.json"
+	metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+	metadata["fine_scans"][0]["raw_scan_path"] = str(tmp_path / "old-run" / "fine_00.npy")
+	metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+	analysis = load_staged_scan_analysis(
+		run_dir,
+		scan_config=build_replay_scan_config(expected_hole_width_mm=25.0),
+	)
+
+	assert len(analysis.shelves) == 1
+	assert len(analysis.shelves[0].cells) == 1
+	assert analysis.total_points == 17
 
 
 def test_find_gap_segments_in_line_matches_expected_hole_width() -> None:
