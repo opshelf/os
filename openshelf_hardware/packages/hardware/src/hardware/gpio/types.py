@@ -50,8 +50,10 @@ class GpioInterruptSpec:
     def __post_init__(self) -> None:
         if self.board != "rpi":
             raise GpioConfigError("PCF8575 interrupt pins must use the rpi board")
+
         if self.pin < 0:
             raise GpioConfigError("GPIO interrupt pin must be >= 0")
+
         if self.debounce_ms < 0:
             raise GpioConfigError("GPIO interrupt debounce_ms must be >= 0")
 
@@ -67,8 +69,10 @@ class GpioExpanderSpec:
     def __post_init__(self) -> None:
         if not self.name:
             raise GpioConfigError("GPIO expander name is required")
+
         if self.bus < 0:
             raise GpioConfigError("GPIO expander bus must be >= 0")
+
         if self.address < 0 or self.address > 0x7F:
             raise GpioConfigError("GPIO expander address must be in range 0..127")
 
@@ -90,14 +94,19 @@ class GpioPinSpec:
     def __post_init__(self) -> None:
         if not self.name:
             raise GpioConfigError("GPIO pin name is required")
+
         if self.pin < 0:
             raise GpioConfigError(f"GPIO pin '{self.name}' must be >= 0")
+
         if self.debounce_ms < 0:
             raise GpioConfigError(f"GPIO pin '{self.name}' debounce_ms must be >= 0")
+
         if self.board == "pcf8575" and not self.expander:
             raise GpioConfigError(f"GPIO pin '{self.name}' requires an expander")
+
         if self.board == "rpi" and self.expander is not None:
             raise GpioConfigError(f"GPIO pin '{self.name}' cannot set expander for rpi board")
+
         if self.direction == "input" and (self.initial is not None or self.shutdown is not None):
             raise GpioConfigError(f"GPIO input '{self.name}' cannot set initial or shutdown")
 
@@ -196,6 +205,7 @@ class DigitalInput:
 
             last_value = value
             last_emit_at = now
+
             did_dispatch(
                 GpioEvent(
                     name=self._spec.name,
@@ -214,6 +224,7 @@ class DigitalInput:
 
         if emit_initial is True:
             last_emit_at = time.monotonic()
+
             did_dispatch(
                 GpioEvent(
                     name=self._spec.name,
@@ -257,6 +268,7 @@ class DigitalOutput:
 
     def read(self) -> bool:
         raw_value = self._backend.read(self._spec)
+
         return self._spec.to_logical(raw_value)
 
     def write(self, value: bool) -> None:

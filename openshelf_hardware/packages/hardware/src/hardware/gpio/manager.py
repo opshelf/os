@@ -39,6 +39,7 @@ class GpioManager:
     @classmethod
     def from_config(cls, config: Any | None, *, fake: bool = False) -> "GpioManager":
         data = _to_dict(config)
+
         if data is None:
             data = {}
 
@@ -70,6 +71,7 @@ class GpioManager:
             pull=pull,  # type: ignore[arg-type]
             inverted=inverted,
         )
+
         return cls({name: spec})
 
     def has_pin(self, name: str) -> bool:
@@ -78,40 +80,53 @@ class GpioManager:
     def input(self, name: str) -> DigitalInput:
         if self._closed is True:
             raise GpioConfigError("GPIO manager is closed")
+
         spec = self._require_pin(name)
+
         if spec.direction != "input":
             raise GpioConfigError(f"GPIO pin '{name}' is not configured as input")
+
         if name not in self._inputs:
             backend = self._backend_for(spec)
             backend.setup_input(spec)
             self._inputs[name] = DigitalInput(spec, backend)
+
         return self._inputs[name]
 
     def output(self, name: str) -> DigitalOutput:
         if self._closed is True:
             raise GpioConfigError("GPIO manager is closed")
+
         spec = self._require_pin(name)
+
         if spec.direction != "output":
             raise GpioConfigError(f"GPIO pin '{name}' is not configured as output")
+
         if name not in self._outputs:
             backend = self._backend_for(spec)
             backend.setup_output(spec)
             self._outputs[name] = DigitalOutput(spec, backend)
+
         return self._outputs[name]
 
     def apply_initial_outputs(self) -> None:
         for name, spec in self._pins.items():
             if spec.direction != "output" or spec.initial is None:
                 continue
+
             self.output(name)
 
     def set_fake_input(self, name: str, value: bool, *, raw: bool = False) -> None:
         spec = self._require_pin(name)
+
         if self._fake is False:
             raise GpioConfigError("set_fake_input is only available on fake GPIO managers")
+
         backend = self._backend_for(spec)
+
         if not isinstance(backend, FakeGpioBackend):
             raise GpioConfigError("GPIO manager is not using the fake backend")
+
         backend.set_raw(spec, value if raw is True else spec.to_raw(value))
 
     def close(self) -> None:
@@ -132,6 +147,7 @@ class GpioManager:
                 errors.append(exc)
 
         self._closed = True
+
         if errors:
             raise GpioConfigError("GPIO close failed") from errors[0]
 
@@ -151,11 +167,14 @@ class GpioManager:
         if spec.board == "pcf8575":
             if spec.expander is None:
                 raise GpioConfigError(f"GPIO pin '{spec.name}' requires an expander")
+
             expander = self._expanders.get(spec.expander)
+
             if expander is None:
                 raise GpioConfigError(
                     f"GPIO pin '{spec.name}' references unknown expander '{spec.expander}'"
                 )
+
             return self._get_or_create_backend(
                 f"pcf8575:{spec.expander}",
                 lambda: Pcf8575Backend(expander, rpi_backend=self._rpi_backend()),
@@ -169,51 +188,66 @@ class GpioManager:
     def _get_or_create_backend(self, key: str, factory: Callable[[], GpioBackend]) -> GpioBackend:
         if key in self._injected_backends:
             return self._injected_backends[key]
+
         if key not in self._created_backends:
             self._created_backends[key] = factory()
+
         return self._created_backends[key]
 
     def _unique_backends(self) -> list[GpioBackend]:
         seen: set[int] = set()
         result: list[GpioBackend] = []
+
         for backend in [*self._created_backends.values(), *self._injected_backends.values()]:
             identity = id(backend)
+
             if identity in seen:
                 continue
+
             seen.add(identity)
             result.append(backend)
+
         return result
 
     def _validate_unique_physical_pins(self) -> None:
         claimed: dict[tuple[str, str | None, int], str] = {}
+
         for name, spec in self._pins.items():
             previous = claimed.get(spec.physical_key)
+
             if previous is not None:
                 raise GpioConfigError(
                     f"GPIO pins '{previous}' and '{name}' share physical pin {spec.physical_key}"
                 )
+
             claimed[spec.physical_key] = name
 
         for expander in self._expanders.values():
             interrupt = expander.interrupt
+
             if interrupt is None:
                 continue
+
             key = (interrupt.board, None, interrupt.pin)
             previous = claimed.get(key)
+
             if previous is not None:
                 raise GpioConfigError(
                     f"GPIO expander '{expander.name}' interrupt shares physical pin with '{previous}'"
                 )
+
             claimed[key] = f"{expander.name}_interrupt"
 
 
 def _to_dict(value: Any | None) -> dict[str, Any] | None:
     if value is None:
         return None
+
     if isinstance(value, Mapping):
         return dict(value)
 
     model_dump = cast(Callable[[], dict[str, Any]] | None, getattr(value, "model_dump", None))
+
     if model_dump is not None:
         return model_dump()
 
@@ -221,6 +255,7 @@ def _to_dict(value: Any | None) -> dict[str, Any] | None:
     for key in ("expanders", "pins"):
         if hasattr(value, key):
             result[key] = getattr(value, key)
+
     return result
 
 
@@ -228,6 +263,7 @@ def _parse_expander(value: Any) -> GpioExpanderSpec:
     data = _to_plain_dict(value)
     interrupt_data = data.get("interrupt") or data.get("interrupt_pin")
     interrupt = _parse_interrupt(interrupt_data) if interrupt_data is not None else None
+
     return GpioExpanderSpec(
         name=str(data["name"]),
         kind=data.get("type", data.get("kind", "pcf8575")),
@@ -239,6 +275,7 @@ def _parse_expander(value: Any) -> GpioExpanderSpec:
 
 def _parse_interrupt(value: Any) -> GpioInterruptSpec:
     data = _to_plain_dict(value)
+
     return GpioInterruptSpec(
         board=data.get("board", "rpi"),
         pin=int(data["pin"]),
@@ -250,6 +287,7 @@ def _parse_interrupt(value: Any) -> GpioInterruptSpec:
 
 def _parse_pin(name: str, value: Any) -> GpioPinSpec:
     data = _to_plain_dict(value)
+
     return GpioPinSpec(
         name=name,
         board=data["board"],
@@ -270,6 +308,7 @@ def _to_plain_dict(value: Any) -> dict[str, Any]:
         return dict(value)
 
     model_dump = cast(Callable[[], dict[str, Any]] | None, getattr(value, "model_dump", None))
+
     if model_dump is not None:
         return model_dump()
 

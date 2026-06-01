@@ -661,6 +661,7 @@ async def control_door(
         ) from exc
 
 
+
 async def get_occupied_cells_from_db() -> set[tuple[str, int, int]]:
     async with AsyncSessionLocal() as session:
         service = StorageService(session)
