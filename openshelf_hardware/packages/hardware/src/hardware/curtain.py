@@ -1,14 +1,10 @@
 from __future__ import annotations
+
 import asyncio
 import logging
-from typing import Optional
+from typing import Callable, Optional
 
-try:
-    import RPi.GPIO as GPIO  # type: ignore[import]
-    GPIO.setmode(GPIO.BCM)
-    GPIO.setwarnings(False)
-except (ModuleNotFoundError, RuntimeError):
-    GPIO = None  # type: ignore[assignment]
+from hardware.gpio import DigitalInput, GpioEvent, GpioManager, GpioSubscription
 
 logger = logging.getLogger(__name__).getChild("curtain")
 
@@ -37,25 +33,40 @@ class CurtainSensor:
         *,
         pin: int = 2,
         inverted: bool = False,
+        input_device: DigitalInput | None = None,
     ) -> None:
-        if GPIO is None:
-            raise RuntimeError("RPi.GPIO not available")
+        self._owned_manager: GpioManager | None = None
+        if input_device is None:
+            self._owned_manager = GpioManager.for_legacy_rpi_input(
+                "curtain",
+                pin=pin,
+                inverted=inverted,
+                pull="down",
+            )
+            input_device = self._owned_manager.input("curtain")
 
-        self.pin = pin
-        self._inverted = inverted
+        self._input = input_device
+        self.pin = input_device.pin
         self._last_state: Optional[bool] = None
 
-        GPIO.setup(pin, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
-
     def read(self) -> bool:
-        raw = GPIO.input(self.pin) == GPIO.HIGH  # type: ignore[arg-type]
-        result = not raw if self._inverted else raw
+        result = self._input.read()
         self._last_state = result
-
         return result
 
+    def subscribe(self, on_change: Callable[[bool], None]) -> GpioSubscription:
+        def did_change(event: GpioEvent) -> None:
+            self._last_state = event.value
+            on_change(event.value)
+
+        return self._input.subscribe(did_change)
+
     def cleanup(self) -> None:
-        GPIO.cleanup(self.pin)  # type: ignore[arg-type]
+        if self._owned_manager is None:
+            return
+
+        self._owned_manager.close()
+        self._owned_manager = None
 
 
 class CurtainMonitor:
@@ -70,14 +81,25 @@ class CurtainMonitor:
         self._poll_interval = poll_interval
         self._on_change = on_change
         self._task: Optional[asyncio.Task] = None
+        self._subscription: GpioSubscription | None = None
         self._last: Optional[bool] = None
 
     async def start(self) -> None:
-        if self._task:
+        if self._task or self._subscription:
             return
 
         self._last = self._sensor.read()
         self._on_change(self._last)
+
+        try:
+            self._subscription = self._sensor.subscribe(self._handle_change)
+        except Exception:
+            logger.warning(
+                "Curtain interrupt subscription failed, falling back to polling",
+                extra={"pin": getattr(self._sensor, "pin", None)},
+                exc_info=True,
+            )
+            self._task = asyncio.create_task(self._run(), name="curtain-monitor")
 
         logger.info(
             "Curtain monitor started",
@@ -85,12 +107,15 @@ class CurtainMonitor:
                 "pin": getattr(self._sensor, "pin", None),
                 "poll_interval_s": self._poll_interval,
                 "initial_blocked": self._last,
+                "subscription_enabled": self._subscription is not None,
             },
         )
 
-        self._task = asyncio.create_task(self._run(), name="curtain-monitor")
-
     async def stop(self) -> None:
+        if self._subscription is not None:
+            self._subscription.close()
+            self._subscription = None
+
         if self._task:
             self._task.cancel()
 
@@ -99,22 +124,25 @@ class CurtainMonitor:
             except asyncio.CancelledError:
                 pass
 
-            logger.info(
-                "Curtain monitor stopped",
-                extra={"pin": getattr(self._sensor, "pin", None)},
-            )
-
             self._task = None
+
+        logger.info(
+            "Curtain monitor stopped",
+            extra={"pin": getattr(self._sensor, "pin", None)},
+        )
+
+    def _handle_change(self, state: bool) -> None:
+        if state == self._last:
+            return
+
+        self._last = state
+        self._on_change(state)
 
     async def _run(self) -> None:
         try:
             while True:
                 state = self._sensor.read()
-
-                if state != self._last:
-                    self._last = state
-                    self._on_change(state)
-
+                self._handle_change(state)
                 await asyncio.sleep(self._poll_interval)
 
         except asyncio.CancelledError:
