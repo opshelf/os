@@ -2,17 +2,18 @@
 	import {
 		controlCabinetLock,
 		getCabinetStatus,
-		type CabinetLockAction,
-		type CabinetLockState
+		type CabinetDoorState,
+		type CabinetLockAction
 	} from '$lib/api';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import StatusMessage from '$lib/components/StatusMessage.svelte';
+	import { onMount } from 'svelte';
 
 	let activeAction: CabinetLockAction | null = $state(null);
 	let isRefreshing = $state(false);
 	let error = $state('');
 	let message = $state('');
-	let lockState: CabinetLockState | null = $state(null);
+	let doorState: CabinetDoorState | null = $state(null);
 
 	async function didRefreshStatus(): Promise<void> {
 		isRefreshing = true;
@@ -20,7 +21,7 @@
 
 		try {
 			const response = await getCabinetStatus();
-			lockState = response.locks;
+			doorState = response.doors;
 			message = 'cabinet status refreshed';
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'failed to refresh cabinet status';
@@ -36,14 +37,18 @@
 
 		try {
 			const response = await controlCabinetLock(action);
-			lockState = response.locks;
-			message = action === 'lock' ? 'cabinet locked' : 'cabinet unlocked';
+			doorState = response.doors;
+			message = `cabinet ${action} command sent`;
 		} catch (err) {
 			error = err instanceof Error ? err.message : `failed to ${action} cabinet`;
 		} finally {
 			activeAction = null;
 		}
 	}
+
+	onMount(() => {
+		didRefreshStatus();
+	});
 </script>
 
 <svelte:head>
@@ -63,22 +68,25 @@
 	>
 		UNLOCK
 	</button>
+	<button disabled={activeAction !== null || isRefreshing === true} onclick={didRefreshStatus}>
+		REFRESH
+	</button>
 </div>
 
-{#if lockState !== null}
+{#if doorState !== null}
 	<table>
 		<tbody>
 			<tr>
-				<td>top lock engaged</td>
-				<td>{lockState.top_locked ? 'yes' : 'no'}</td>
+				<td>top door closed</td>
+				<td>{doorState.top_closed ? 'yes' : 'no'}</td>
 			</tr>
 			<tr>
-				<td>bottom lock engaged</td>
-				<td>{lockState.bottom_locked ? 'yes' : 'no'}</td>
+				<td>bottom door closed</td>
+				<td>{doorState.bottom_closed ? 'yes' : 'no'}</td>
 			</tr>
 			<tr>
-				<td>both locked</td>
-				<td>{lockState.locked ? 'yes' : 'no'}</td>
+				<td>both doors closed</td>
+				<td>{doorState.closed ? 'yes' : 'no'}</td>
 			</tr>
 		</tbody>
 	</table>
