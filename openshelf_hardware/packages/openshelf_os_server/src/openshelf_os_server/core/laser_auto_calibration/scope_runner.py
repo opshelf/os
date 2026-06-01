@@ -2,6 +2,7 @@
 # mypy: disable-error-code=attr-defined
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from statistics import median
 
@@ -23,6 +24,65 @@ def _get_z_reference_target(scan_config: Any, side: StorageModuleSide) -> laser_
         shelf_idx=int(z_reference[0]),
         cell_idx=int(z_reference[1]),
     )
+
+
+def _rescan_targets_match(
+    left: laser_module.SingleCellRescanTarget,
+    right: laser_module.SingleCellRescanTarget,
+) -> bool:
+    return int(left.shelf_idx) == int(right.shelf_idx) and int(left.cell_idx) == int(right.cell_idx)
+
+
+def _rescan_target_key(target: laser_module.SingleCellRescanTarget) -> tuple[int, int]:
+    return (int(target.shelf_idx), int(target.cell_idx))
+
+
+def _resolve_reference_wall_depth_mm(
+    analysis: Any,
+    candidate: laser_module.GapCandidateRegion,
+) -> float:
+    if candidate.wall_depth_mm is not None and float(candidate.wall_depth_mm) > 0.0:
+        return float(candidate.wall_depth_mm)
+
+    if getattr(analysis, "wall_depth_mm", None) is not None and float(analysis.wall_depth_mm) > 0.0:
+        return float(analysis.wall_depth_mm)
+
+    raise ValueError("Reference cell scan did not resolve a valid wall depth")
+
+
+def _build_reference_apply_metadata(
+    xy_reference_detected_cell: Any | None,
+    z_reference_wall_depth_mm: float | None,
+    xy_reference_target: laser_module.SingleCellRescanTarget,
+    z_reference_target: laser_module.SingleCellRescanTarget,
+) -> dict[str, Any]:
+    if xy_reference_detected_cell is None:
+        raise ValueError("Reference cell scans did not resolve an XY reference cell")
+
+    if z_reference_wall_depth_mm is None:
+        raise ValueError("Reference cell scans did not resolve a Z reference wall depth")
+
+    return {
+        "xy_reference_detected_cell": xy_reference_detected_cell.model_dump(),
+        "z_reference_wall_depth_mm": float(z_reference_wall_depth_mm),
+        "xy_reference_target": {
+            "shelf_idx": int(xy_reference_target.shelf_idx),
+            "cell_idx": int(xy_reference_target.cell_idx),
+        },
+        "z_reference_target": {
+            "shelf_idx": int(z_reference_target.shelf_idx),
+            "cell_idx": int(z_reference_target.cell_idx),
+        },
+    }
+
+
+def _persist_reference_apply_metadata(analysis: Any, reference_apply: dict[str, Any]) -> None:
+    run_parameters_path = Path(analysis.metadata_path).resolve().parent / "run_parameters.json"
+    run_parameters_document = laser_module.load_json_file(run_parameters_path)
+    run_parameters = dict(run_parameters_document.get("run_parameters", {}))
+    run_parameters["reference_apply"] = reference_apply
+    run_parameters_document["run_parameters"] = run_parameters
+    run_parameters_path.write_text(json.dumps(run_parameters_document, indent="\t"), encoding="utf-8")
 
 
 class ScopeRunnerMixin:
@@ -214,6 +274,58 @@ class ScopeRunnerMixin:
         return analysis, candidate, detected_cell
 
 
+    async def _run_partial_reference_scans(
+        self,
+        worker: RobotWorker,
+        side: StorageModuleSide,
+        *,
+        reuse_target: laser_module.SingleCellRescanTarget | None = None,
+        reuse_analysis: Any | None = None,
+        reuse_candidate: laser_module.GapCandidateRegion | None = None,
+        reuse_detected_cell: Any | None = None,
+    ) -> tuple[Any | None, float | None]:
+        scan_config = get_root_config().robot.grid.scan
+        xy_reference_target = _get_xy_reference_target(scan_config, side)
+        z_reference_target = _get_z_reference_target(scan_config, side)
+        xy_reference_detected_cell: Any | None = None
+        z_reference_wall_depth_mm: float | None = None
+        reference_results: dict[tuple[int, int], tuple[Any, laser_module.GapCandidateRegion, Any]] = {}
+
+        if (
+            reuse_target is not None
+            and reuse_analysis is not None
+            and reuse_candidate is not None
+            and reuse_detected_cell is not None
+        ):
+            reference_results[_rescan_target_key(reuse_target)] = (
+                reuse_analysis,
+                reuse_candidate,
+                reuse_detected_cell,
+            )
+
+        for reference_target in (xy_reference_target, z_reference_target):
+            reference_key = _rescan_target_key(reference_target)
+
+            if reference_key not in reference_results:
+                reference_results[reference_key] = await self._run_reference_cell_scan(
+                    worker,
+                    side,
+                    reference_target,
+                )
+
+            reference_analysis, reference_candidate, reference_detected_cell = reference_results[reference_key]
+
+            if _rescan_targets_match(reference_target, xy_reference_target) is True:
+                xy_reference_detected_cell = reference_detected_cell
+
+            if _rescan_targets_match(reference_target, z_reference_target) is True:
+                z_reference_wall_depth_mm = _resolve_reference_wall_depth_mm(
+                    reference_analysis,
+                    reference_candidate,
+                )
+
+        return xy_reference_detected_cell, z_reference_wall_depth_mm
+
     async def _run_single_shelf(
         self,
         worker: RobotWorker,
@@ -252,18 +364,42 @@ class ScopeRunnerMixin:
             y_min=max(bounds.y_min, target_center_y_mm - local_y_margin_mm),
             y_max=min(bounds.y_max, target_center_y_mm + local_y_margin_mm),
         )
+        known_shelf_edge_y = laser_module.build_single_shelf_known_edge_y(
+            grid=grid,
+            side=side,
+            shelf_idx=shelf_idx,
+            scan_config=scan_config,
+        )
+        xy_reference_detected_cell, z_reference_wall_depth_mm = await self._run_partial_reference_scans(
+            worker,
+            side,
+        )
+        reference_apply = _build_reference_apply_metadata(
+            xy_reference_detected_cell,
+            z_reference_wall_depth_mm,
+            _get_xy_reference_target(scan_config, side),
+            _get_z_reference_target(scan_config, side),
+        )
         analysis = await self._run_scan_analysis(
             worker,
             side,
             local_bounds,
-            known_shelf_edge_y=None,
+            known_shelf_edge_y=known_shelf_edge_y,
             should_validate_reference_bounds=False,
+            run_scope={
+                "mode": "shelf",
+                "side": side.value,
+                "shelf_idx": int(shelf_idx),
+            },
+            reference_apply=reference_apply,
         )
         await self._persist_single_shelf_result(
             worker,
             side,
             analysis,
             shelf_idx,
+            xy_reference_detected_cell=xy_reference_detected_cell,
+            z_reference_wall_depth_mm=z_reference_wall_depth_mm,
         )
 
     async def _run_single_cell(
@@ -272,51 +408,35 @@ class ScopeRunnerMixin:
         side: StorageModuleSide,
         target: laser_module.SingleCellRescanTarget,
     ) -> None:
-        config = get_root_config()
-        scan_config = config.robot.grid.scan
-        grid_path = Path(resolve_grid_path(config))
-        grid = laser_module.load_grid(grid_path)
-        bounds = _build_bounds_for_side(scan_config, side)
-        target_shelf = laser_module.resolve_target_shelf(
-            grid=grid,
-            side=side,
-            shelf_idx=target.shelf_idx,
-        )
-        target_cell_y_values = [
-            float(cell.calibration_point.y)
-            for cell in target_shelf.cells
-            if cell.calibration_point is not None
-        ]
-
-        if len(target_cell_y_values) == 0:
-            raise ValueError(f"Shelf {target.shelf_idx} has no calibration points on {side.value}")
-
-        target_center_y_mm = float(median(target_cell_y_values))
-        local_y_margin_mm = max(
-            80.0,
-            float(scan_config.expected_hole_height_mm)
-            + max(float(offset_mm) for offset_mm in laser_module.get_shelf_hole_probe_y_offsets_mm(scan_config))
-            + 30.0,
-        )
-        local_bounds = ScanBounds(
-            x_min=bounds.x_min,
-            x_max=bounds.x_max,
-            y_min=max(bounds.y_min, target_center_y_mm - local_y_margin_mm),
-            y_max=min(bounds.y_max, target_center_y_mm + local_y_margin_mm),
-        )
-        analysis = await self._run_scan_analysis(
+        analysis, candidate, detected_cell = await self._run_reference_cell_scan(
             worker,
             side,
-            local_bounds,
-            known_shelf_edge_y=None,
-            should_validate_reference_bounds=False,
-            rescan_target=target,
+            target,
         )
-        await self._persist_single_cell_shelf_result(
+        xy_reference_detected_cell, z_reference_wall_depth_mm = await self._run_partial_reference_scans(
+            worker,
+            side,
+            reuse_target=target,
+            reuse_analysis=analysis,
+            reuse_candidate=candidate,
+            reuse_detected_cell=detected_cell,
+        )
+        scan_config = get_root_config().robot.grid.scan
+        reference_apply = _build_reference_apply_metadata(
+            xy_reference_detected_cell,
+            z_reference_wall_depth_mm,
+            _get_xy_reference_target(scan_config, side),
+            _get_z_reference_target(scan_config, side),
+        )
+        _persist_reference_apply_metadata(analysis, reference_apply)
+        await self._persist_single_cell_result(
             worker,
             side,
             analysis,
             target,
+            candidate,
+            xy_reference_detected_cell=xy_reference_detected_cell,
+            z_reference_wall_depth_mm=z_reference_wall_depth_mm,
         )
 
     async def _home_after_abort(self, worker: RobotWorker) -> None:

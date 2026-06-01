@@ -62,7 +62,7 @@ class LaserScanConfig(BaseModel):
     right_bounds_y_min_mm: float = 0.0
     right_bounds_y_max_mm: float = 1250.0
 
-    angle_calibration_method: Literal["stage_stall", "laser_fit"] = "stage_stall"
+    angle_calibration_method: Literal["stage_stall"] = "stage_stall"
 
     angle_calibration_x_min_mm: float = 0.0
     angle_calibration_x_max_mm: float = 950.0

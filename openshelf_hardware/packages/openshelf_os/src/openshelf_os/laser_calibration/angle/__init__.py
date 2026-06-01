@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from .capture import (
-	capture_samples_with_robot,
 	enter_capture_mode,
 	get_default_rotation_center_deg,
 	prepare_capture_pose,
@@ -10,14 +9,10 @@ from .capture import (
 	resolve_rotation_center_deg,
 )
 from .cli import (
-	add_fit_arguments,
 	main,
 	parse_args,
 	parse_pair_argument,
 	parse_range_argument,
-	run_capture_async,
-	run_fit,
-	run_simulate,
 	run_stage_stall_async,
 	validate_args,
 )
@@ -48,28 +43,12 @@ from .constants import (
 )
 from .geometry import (
 	build_axis_positions,
-	build_line_direction,
-	build_line_normal,
-	build_rotation_matrix,
-	fit_alpha_at_value,
-	fit_line,
-	generate_synthetic_samples,
-	intersect_ray_with_line,
-	reconstruct_hit_points,
-	search_best_alpha,
 )
 from .models import (
-	AlphaFitResult,
-	FittedLine,
-	LaserAngleCalibrationSample,
 	ShelfSurfaceEdge,
 	StageStallProbeSample,
 )
 from .reporting import (
-	load_samples,
-	print_estimated_rotation_from_metadata,
-	print_fit_result,
-	write_output_document,
 	write_stage_stall_output_document,
 )
 from .robot_ops import (

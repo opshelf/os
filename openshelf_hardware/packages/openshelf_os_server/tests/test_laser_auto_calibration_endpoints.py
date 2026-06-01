@@ -11,16 +11,12 @@ from fastapi import HTTPException
 from openshelf_os.laser_calibration import angle as angle_module
 from openshelf_os import laser_calibration as laser_module
 from openshelf_os.common import Parameters
-from openshelf_os.laser_calibration.scan import ScanBounds
+from openshelf_os.laser_calibration.scan import ScanBounds, ScanDetectedCell
 from openshelf_os.storage import StorageModuleSide
 from openshelf_os_server.core.laser_auto_calibration import (
     _build_angle_rotation_center_deg,
-    _build_angle_calibration_sample,
     _build_default_scans_dir,
-    _build_angle_fit_inputs,
-    _build_angle_rotation_positions_for_side,
     _build_angle_x_positions,
-    _build_angle_z_offset_positions,
     _build_bounds_for_side,
     _build_stage_extension_probe_y_mm,
     _build_stage_stall_fine_rotation_positions,
@@ -31,8 +27,6 @@ from openshelf_os_server.core.laser_auto_calibration import (
     LaserAutoCalibrationAngleResult,
     LaserAutoCalibrationScope,
     LaserAutoCalibrationManager,
-    _build_estimated_rotation_deg,
-    _build_valid_rotation_positions,
 )
 from openshelf_os_server.core.laser_auto_calibration.angle_runner import (
     _build_stage_stall_validation_rotation_positions,
@@ -96,19 +90,6 @@ def _build_snapshot(state: str = "running") -> LaserAutoCalibrationSnapshot:
     )
 
 
-def test_build_valid_rotation_positions_clips_out_of_range_targets() -> None:
-    scan_config = SimpleNamespace(
-        angle_calibration_rotation_min_deg=-8.0,
-        angle_calibration_rotation_max_deg=8.0,
-        angle_calibration_rotation_step_deg=1.0,
-    )
-
-    rotation_positions = _build_valid_rotation_positions(scan_config, 4.2, 180.0)
-
-    assert rotation_positions[0] == -4.0
-    assert rotation_positions[-1] == 8.0
-    assert -5.0 not in rotation_positions
-
 
 def test_build_default_scans_dir_uses_config_data_directory(tmp_path: Path) -> None:
     config_path = tmp_path / "data" / "config.json"
@@ -118,19 +99,6 @@ def test_build_default_scans_dir_uses_config_data_directory(tmp_path: Path) -> N
     with patch("openshelf_os_server.core.laser_auto_calibration.get_config_path", return_value=config_path):
         assert _build_default_scans_dir() == str((config_path.parent / "calibration").resolve())
 
-
-def test_build_valid_rotation_positions_respects_rotation_motor_limit() -> None:
-    scan_config = SimpleNamespace(
-        angle_calibration_rotation_min_deg=-8.0,
-        angle_calibration_rotation_max_deg=8.0,
-        angle_calibration_rotation_step_deg=1.0,
-    )
-
-    rotation_positions = _build_valid_rotation_positions(scan_config, 358.0, 360.0)
-
-    assert rotation_positions[0] == -8.0
-    assert rotation_positions[-1] == 2.0
-    assert 3.0 not in rotation_positions
 
 
 
@@ -268,17 +236,6 @@ def test_build_angle_x_positions_runs_from_high_x_to_low_x() -> None:
     assert len(x_positions) == 5
 
 
-def test_build_angle_z_offset_positions_prefers_center_slice() -> None:
-    scan_config = SimpleNamespace(
-        angle_calibration_z_offset_min_mm=-8.0,
-        angle_calibration_z_offset_max_mm=8.0,
-        angle_calibration_z_offset_step_mm=4.0,
-        angle_calibration_z_offset_count=1,
-    )
-
-    z_offset_positions = _build_angle_z_offset_positions(scan_config)
-
-    assert z_offset_positions == [0.0]
 
 
 def test_build_angle_rotation_center_deg_uses_configured_front_for_left() -> None:
@@ -311,217 +268,6 @@ def test_build_bounds_for_side_clamps_x_min_away_from_zero() -> None:
     assert left_bounds.x_min == pytest.approx(5.0)
     assert right_bounds.x_min == pytest.approx(5.0)
 
-
-def test_build_estimated_rotation_deg_offsets_nominal_rotation() -> None:
-    fit_result = SimpleNamespace(alpha_deg=4.2)
-
-    assert _build_estimated_rotation_deg(172.8, fit_result) == pytest.approx(184.2)
-    assert _build_estimated_rotation_deg(184.5, SimpleNamespace(alpha_deg=3.91)) == pytest.approx(183.91)
-    assert _build_estimated_rotation_deg(3.765, SimpleNamespace(alpha_deg=3.91)) == pytest.approx(3.91)
-
-
-def test_build_angle_fit_inputs_flips_right_side_rotation_sign() -> None:
-    raw_samples: list[angle_module.LaserAngleCalibrationSample] = []
-
-    for rotation_deg in [-8.0, 0.0, 8.0]:
-        raw_samples.append(
-            angle_module.LaserAngleCalibrationSample(
-                axis_x_mm=945.0,
-                axis_z_mm=140.5,
-                rotation_deg=rotation_deg,
-                absolute_rotation_deg=180.0 + rotation_deg,
-                stage_extension_mm=13.0,
-                z_extension_mm=140.5,
-                distance_mm=8.0,
-            )
-        )
-
-    fit_samples, laser_offset_x_mm = _build_angle_fit_inputs(
-        StorageModuleSide.RIGHT,
-        SimpleNamespace(laser_offset_x_mm=51.0),
-        raw_samples,
-        180.0,
-        180.0,
-    )
-
-    assert [sample.rotation_deg for sample in fit_samples] == [8.0, -0.0, -8.0]
-    assert [sample.absolute_rotation_deg for sample in fit_samples] == [188.0, 180.0, 172.0]
-
-    assert laser_offset_x_mm == pytest.approx(0.0)
-
-
-def test_build_angle_rotation_positions_for_right_keeps_non_positive_half() -> None:
-    positions = [-8.0, -7.0, -6.0, -5.0, -4.0, -3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
-
-    filtered_positions = _build_angle_rotation_positions_for_side(StorageModuleSide.RIGHT, positions, 180.0, 180.0)
-
-    assert filtered_positions == [-8.0, -7.0, -6.0, -5.0, -4.0, -3.0, -2.0, -1.0, 0.0]
-
-
-def test_build_angle_rotation_positions_for_right_keeps_non_positive_half_at_standard_center_with_full_limit() -> None:
-    positions = [-8.0, -7.0, -6.0, -5.0, -4.0, -3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
-
-    filtered_positions = _build_angle_rotation_positions_for_side(StorageModuleSide.RIGHT, positions, 180.0, 360.0)
-
-    assert filtered_positions == [-8.0, -7.0, -6.0, -5.0, -4.0, -3.0, -2.0, -1.0, 0.0]
-
-
-def test_build_angle_rotation_positions_for_right_keeps_non_negative_half_near_lower_limit() -> None:
-    positions = [-4.0, -3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
-
-    filtered_positions = _build_angle_rotation_positions_for_side(StorageModuleSide.RIGHT, positions, 4.5, 185.0)
-
-    assert filtered_positions == [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
-
-
-def test_build_angle_fit_inputs_keeps_lower_limit_right_side_rotation_sign() -> None:
-    raw_samples = [
-        angle_module.LaserAngleCalibrationSample(
-            axis_x_mm=945.0,
-            axis_z_mm=140.5,
-            rotation_deg=rotation_deg,
-            absolute_rotation_deg=4.5 + rotation_deg,
-            stage_extension_mm=13.0,
-            z_extension_mm=140.5,
-            distance_mm=8.0,
-        )
-        for rotation_deg in [0.0, 4.0, 8.0]
-    ]
-
-    fit_samples, laser_offset_x_mm = _build_angle_fit_inputs(
-        StorageModuleSide.RIGHT,
-        SimpleNamespace(laser_offset_x_mm=51.0),
-        raw_samples,
-        4.5,
-        185.0,
-    )
-
-    assert fit_samples == raw_samples
-    assert laser_offset_x_mm == pytest.approx(0.0)
-
-
-def test_right_side_mirrored_negative_half_sweep_reduces_fit_error() -> None:
-    raw_samples: list[angle_module.LaserAngleCalibrationSample] = []
-    measured_distances_by_x = {
-        945.0: [8.495, 8.361, 8.155, 8.060, 7.908, 7.765, 7.662, 7.547, 7.398, 7.313, 7.187, 7.108, 6.972, 6.905, 6.822, 6.740, 6.679],
-        845.0: [8.508, 8.357, 8.207, 8.059, 7.943, 7.808, 7.685, 7.568, 7.432, 7.332, 7.215, 7.107, 7.005, 6.928, 6.852, 6.778, 6.716],
-        745.0: [8.513, 8.381, 8.203, 8.047, 7.927, 7.834, 7.681, 7.557, 7.452, 7.348, 7.256, 7.163, 7.062, 6.956, 6.884, 6.795, 6.711],
-        645.0: [8.531, 8.443, 8.209, 8.058, 7.964, 7.834, 7.683, 7.565, 7.410, 7.332, 7.253, 7.148, 7.046, 6.973, 6.881, 6.813, 6.764],
-        545.0: [8.545, 8.406, 8.250, 8.106, 7.941, 7.807, 7.695, 7.579, 7.484, 7.366, 7.260, 7.142, 7.050, 6.991, 6.891, 6.822, 6.754],
-    }
-    rotation_positions = [-8.0, -7.0, -6.0, -5.0, -4.0, -3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
-
-    for axis_x_mm, distances in measured_distances_by_x.items():
-        for rotation_deg, distance_mm in zip(rotation_positions, distances):
-            raw_samples.append(
-                angle_module.LaserAngleCalibrationSample(
-                    axis_x_mm=axis_x_mm,
-                    axis_z_mm=140.5,
-                    rotation_deg=rotation_deg,
-                    absolute_rotation_deg=180.0 + rotation_deg,
-                    stage_extension_mm=13.0,
-                    z_extension_mm=140.5,
-                    distance_mm=distance_mm,
-                )
-            )
-
-    full_fit = angle_module.search_best_alpha(
-        raw_samples,
-        alpha_min_deg=-20.0,
-        alpha_max_deg=20.0,
-        coarse_step_deg=0.1,
-        fine_window_deg=0.3,
-        fine_step_deg=0.005,
-        laser_offset_x_mm=0.0,
-        laser_offset_z_mm=0.0,
-        beam_zero_deg=0.0,
-    )
-    filtered_positions = set(_build_angle_rotation_positions_for_side(StorageModuleSide.RIGHT, rotation_positions, 180.0, 180.0))
-    one_sided_samples = [sample for sample in raw_samples if sample.rotation_deg in filtered_positions]
-    fit_samples, laser_offset_x_mm = _build_angle_fit_inputs(
-        StorageModuleSide.RIGHT,
-        SimpleNamespace(laser_offset_x_mm=51.0),
-        one_sided_samples,
-        180.0,
-        180.0,
-    )
-    one_sided_fit = angle_module.search_best_alpha(
-        fit_samples,
-        alpha_min_deg=-20.0,
-        alpha_max_deg=20.0,
-        coarse_step_deg=0.1,
-        fine_window_deg=0.3,
-        fine_step_deg=0.005,
-        laser_offset_x_mm=laser_offset_x_mm,
-        laser_offset_z_mm=0.0,
-        beam_zero_deg=0.0,
-    )
-
-    assert full_fit.alpha_deg == pytest.approx(7.98)
-    assert one_sided_fit.alpha_deg == pytest.approx(4.98)
-    assert one_sided_fit.line.rms_residual_mm < full_fit.line.rms_residual_mm
-
-
-def test_left_side_angle_fit_ignores_configured_laser_offset_x() -> None:
-    raw_samples: list[angle_module.LaserAngleCalibrationSample] = []
-    measured_distances_by_x = {
-        945.0: [7.349, 7.230, 7.135, 7.038, 6.949, 6.875, 6.782, 6.723, 6.612],
-        845.0: [7.342, 7.240, 7.162, 7.053, 6.958, 6.829, 6.807, 6.705, 6.627],
-        745.0: [7.344, 7.251, 7.136, 7.039, 6.955, 6.861, 6.789, 6.722, 6.650],
-        645.0: [7.343, 7.271, 7.156, 7.066, 6.953, 6.903, 6.810, 6.714, 6.654],
-        545.0: [7.361, 7.249, 7.164, 7.069, 6.952, 6.895, 6.797, 6.748, 6.641],
-    }
-    rotation_positions = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
-
-    for axis_x_mm, distances in measured_distances_by_x.items():
-        for rotation_deg, distance_mm in zip(rotation_positions, distances):
-            raw_samples.append(
-                angle_module.LaserAngleCalibrationSample(
-                    axis_x_mm=axis_x_mm,
-                    axis_z_mm=140.5,
-                    rotation_deg=rotation_deg,
-                    absolute_rotation_deg=rotation_deg,
-                    stage_extension_mm=13.0,
-                    z_extension_mm=140.5,
-                    distance_mm=distance_mm,
-                )
-            )
-
-    fit_samples, laser_offset_x_mm = _build_angle_fit_inputs(
-        StorageModuleSide.LEFT,
-        SimpleNamespace(laser_offset_x_mm=51.0),
-        raw_samples,
-        0.0,
-        180.0,
-    )
-    fit_result = angle_module.search_best_alpha(
-        fit_samples,
-        alpha_min_deg=-10.0,
-        alpha_max_deg=10.0,
-        coarse_step_deg=0.1,
-        fine_window_deg=0.3,
-        fine_step_deg=0.005,
-        laser_offset_x_mm=laser_offset_x_mm,
-        laser_offset_z_mm=0.0,
-        beam_zero_deg=0.0,
-    )
-
-    assert laser_offset_x_mm == pytest.approx(0.0)
-    assert fit_result.alpha_deg == pytest.approx(3.82)
-
-
-def test_build_angle_calibration_sample_keeps_target_z_in_local_offset() -> None:
-    sample = _build_angle_calibration_sample(
-        x_mm=640.0,
-        target_z_mm=140.5,
-        rotation_deg=4.0,
-        absolute_rotation_deg=184.0,
-        stage_extension_mm=13.0,
-        depth_mm=55.0,
-    )
-
-    assert sample.axis_z_mm == pytest.approx(140.5)
-    assert sample.z_extension_mm == pytest.approx(140.5)
 
 
 @pytest.mark.asyncio
@@ -893,8 +639,9 @@ async def test_run_angle_calibration_skips_final_retract_when_cancelled() -> Non
         _mx=object(),
         _my=object(),
         _mg=object(),
-        _ms=object(),
+        _ms=SimpleNamespace(_params=SimpleNamespace(lim=100.0)),
         _mr=SimpleNamespace(_params=SimpleNamespace(lim=360.0)),
+        _params=SimpleNamespace(parameters=SimpleNamespace()),
         retract=AsyncMock(),
         get_param=AsyncMock(side_effect=[3.815, 100.0, 200.0, 200.0]),
     )
@@ -951,8 +698,9 @@ async def test_run_angle_calibration_raises_when_abort_requested_during_capture(
         _mx=object(),
         _my=object(),
         _mg=object(),
-        _ms=object(),
+        _ms=SimpleNamespace(_params=SimpleNamespace(lim=100.0)),
         _mr=SimpleNamespace(_params=SimpleNamespace(lim=360.0)),
+        _params=SimpleNamespace(parameters=SimpleNamespace()),
         retract=AsyncMock(),
         get_param=AsyncMock(side_effect=[3.815, 100.0, 200.0, 200.0]),
     )
@@ -1116,190 +864,37 @@ async def test_run_single_side_uses_angle_capture_y_for_stage_probe() -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_angle_calibration_uses_configured_rotation_center() -> None:
+async def test_run_angle_calibration_uses_stage_stall_only() -> None:
     manager = LaserAutoCalibrationManager()
-    tool = SimpleNamespace(
-        _laser_enabled=True,
-        _laser=object(),
-        _mx=object(),
-        _my=object(),
-        _mg=object(),
-        _ms=object(),
-        _mr=SimpleNamespace(_params=SimpleNamespace(lim=360.0)),
-        retract=AsyncMock(),
-        get_param=AsyncMock(side_effect=[3.815, 100.0, 200.0, 200.0]),
+    expected = LaserAutoCalibrationAngleResult(
+        method='stage_stall',
+        side=StorageModuleSide.LEFT,
+        alpha_deg=1.5,
+        sample_count=2,
+        capture_y_mm=100.0,
+        rms_residual_mm=0.0,
+        max_abs_residual_mm=0.0,
+        line_angle_deg=1.5,
+        previous_rotation_deg=10.0,
+        updated_rotation_deg=11.5,
+        stage_position_mm=42.0,
     )
-    worker = SimpleNamespace(_robot=SimpleNamespace(_tool=tool))
-    scan_config = SimpleNamespace(
-        laser_sample_settle_ms=0,
-        laser_samples_per_point=1,
-        laser_scan_stage_extension_mm=None,
-        laser_scan_z_offset_from_place_mm=None,
-        angle_calibration_x_min_mm=50.0,
-        angle_calibration_x_max_mm=940.0,
-        angle_calibration_x_step_mm=100.0,
-        angle_calibration_x_count=1,
-        angle_calibration_z_offset_min_mm=0.0,
-        angle_calibration_z_offset_max_mm=0.0,
-        angle_calibration_z_offset_step_mm=1.0,
-        angle_calibration_z_offset_count=1,
-        angle_calibration_rotation_min_deg=0.0,
-        angle_calibration_rotation_max_deg=0.0,
-        angle_calibration_rotation_step_deg=1.0,
-        angle_calibration_alpha_min_deg=-10.0,
-        angle_calibration_alpha_max_deg=10.0,
-        angle_calibration_coarse_step_deg=0.1,
-        angle_calibration_fine_window_deg=0.3,
-        angle_calibration_fine_step_deg=0.005,
-        laser_offset_x_mm=0.0,
-        angle_calibration_beam_zero_deg=0.0,
-    )
-    config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=scan_config)))
-    fit_result = SimpleNamespace(
-        alpha_deg=3.815,
-        sample_count=1,
-        line=SimpleNamespace(rms_residual_mm=0.1, max_abs_residual_mm=0.2, line_angle_deg=90.0),
-    )
+    worker = SimpleNamespace()
+    bounds = ScanBounds(x_min=5.0, x_max=950.0, y_min=0.0, y_max=1250.0)
 
-    with patch('openshelf_os_server.core.laser_auto_calibration.get_root_config', return_value=config):
-        with patch.object(angle_module, 'resolve_capture_y_mm', AsyncMock(return_value=1095.0)) as resolve_mock:
-            with patch.object(angle_module, 'prepare_capture_pose', AsyncMock()) as prepare_mock:
-                with patch.object(angle_module, 'sample_laser_depth', AsyncMock(return_value=5.0)):
-                    with patch.object(angle_module, 'search_best_alpha', return_value=fit_result):
-                        with patch.object(angle_module, 'print_fit_result'):
-                            result = await manager._run_angle_calibration_for_side(
-                                worker,
-                                StorageModuleSide.LEFT,
-                                ScanBounds(x_min=5.0, x_max=950.0, y_min=0.0, y_max=1250.0),
-                            )
+    with patch.object(
+        manager,
+        '_run_stage_stall_angle_calibration_for_side',
+        AsyncMock(return_value=expected),
+    ) as stage_stall_mock:
+        result = await manager._run_angle_calibration_for_side(
+            worker,
+            StorageModuleSide.LEFT,
+            bounds,
+        )
 
-    assert resolve_mock.await_args.kwargs['rotation_center_deg'] == pytest.approx(3.815)
-    assert prepare_mock.await_args.kwargs['should_use_safe_right_rotation_path'] is True
-    assert result.previous_rotation_deg == pytest.approx(3.815)
-    assert result.alpha_deg == pytest.approx(3.815)
-    assert result.updated_rotation_deg == pytest.approx(3.815)
-
-
-@pytest.mark.asyncio
-async def test_run_angle_calibration_samples_all_x_positions_before_next_rotation() -> None:
-    manager = LaserAutoCalibrationManager()
-    tool = SimpleNamespace(
-        _laser_enabled=True,
-        _laser=object(),
-        _mx=object(),
-        _my=object(),
-        _mg=object(),
-        _ms=object(),
-        _mr=SimpleNamespace(_params=SimpleNamespace(lim=360.0)),
-        retract=AsyncMock(),
-        get_param=AsyncMock(side_effect=[0.0, 100.0, 200.0, 200.0]),
-    )
-    worker = SimpleNamespace(_robot=SimpleNamespace(_tool=tool))
-    scan_config = SimpleNamespace(
-        laser_sample_settle_ms=0,
-        laser_samples_per_point=1,
-        laser_scan_stage_extension_mm=None,
-        laser_scan_z_offset_from_place_mm=None,
-        angle_calibration_alpha_min_deg=-10.0,
-        angle_calibration_alpha_max_deg=10.0,
-        angle_calibration_coarse_step_deg=0.1,
-        angle_calibration_fine_window_deg=0.3,
-        angle_calibration_fine_step_deg=0.005,
-        laser_offset_x_mm=0.0,
-        angle_calibration_beam_zero_deg=0.0,
-    )
-    config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=scan_config)))
-    fit_result = SimpleNamespace(
-        alpha_deg=0.0,
-        sample_count=4,
-        line=SimpleNamespace(rms_residual_mm=0.1, max_abs_residual_mm=0.2, line_angle_deg=90.0),
-    )
-
-    with patch('openshelf_os_server.core.laser_auto_calibration.get_root_config', return_value=config):
-        with patch('openshelf_os_server.core.laser_auto_calibration._build_angle_x_positions', return_value=[100.0, 200.0]):
-            with patch('openshelf_os_server.core.laser_auto_calibration._build_valid_rotation_positions', return_value=[0.0, 1.0]):
-                with patch('openshelf_os_server.core.laser_auto_calibration._build_angle_z_offset_positions', return_value=[0.0]):
-                    with patch('openshelf_os_server.core.laser_auto_calibration._build_angle_rotation_positions_for_side', return_value=[0.0, 1.0]):
-                        with patch.object(angle_module, 'resolve_capture_y_mm', AsyncMock(return_value=1095.0)):
-                            with patch.object(angle_module, 'prepare_capture_pose', AsyncMock()) as prepare_mock:
-                                with patch.object(angle_module, 'sample_laser_depth', AsyncMock(return_value=5.0)):
-                                    with patch.object(angle_module, 'search_best_alpha', return_value=fit_result):
-                                        with patch.object(angle_module, 'print_fit_result'):
-                                            await manager._run_angle_calibration_for_side(
-                                                worker,
-                                                StorageModuleSide.LEFT,
-                                                ScanBounds(x_min=5.0, x_max=950.0, y_min=0.0, y_max=1250.0),
-                                            )
-
-    assert [call.kwargs['absolute_rotation_deg'] for call in prepare_mock.await_args_list] == [0.0, 0.0, 1.0, 1.0]
-    assert [call.kwargs['x_mm'] for call in prepare_mock.await_args_list] == [100.0, 200.0, 100.0, 200.0]
-    assert [call.kwargs['should_rotate'] for call in prepare_mock.await_args_list] == [False, False, True, False]
-    assert all(call.kwargs['should_use_safe_right_rotation_path'] is True for call in prepare_mock.await_args_list)
-
-
-@pytest.mark.asyncio
-async def test_run_angle_calibration_allows_measured_right_rotation_above_180() -> None:
-    manager = LaserAutoCalibrationManager()
-    tool = SimpleNamespace(
-        _laser_enabled=True,
-        _laser=object(),
-        _mx=object(),
-        _my=object(),
-        _mg=object(),
-        _ms=object(),
-        _mr=SimpleNamespace(_params=SimpleNamespace(lim=360.0)),
-        retract=AsyncMock(),
-        get_param=AsyncMock(side_effect=[183.0, 100.0, 200.0, 200.0]),
-    )
-    worker = SimpleNamespace(_robot=SimpleNamespace(_tool=tool))
-    scan_config = SimpleNamespace(
-        laser_sample_settle_ms=0,
-        laser_samples_per_point=1,
-        laser_scan_stage_extension_mm=None,
-        laser_scan_z_offset_from_place_mm=None,
-        angle_calibration_x_min_mm=50.0,
-        angle_calibration_x_max_mm=940.0,
-        angle_calibration_x_step_mm=100.0,
-        angle_calibration_x_count=1,
-        angle_calibration_z_offset_min_mm=0.0,
-        angle_calibration_z_offset_max_mm=0.0,
-        angle_calibration_z_offset_step_mm=1.0,
-        angle_calibration_z_offset_count=1,
-        angle_calibration_rotation_min_deg=0.0,
-        angle_calibration_rotation_max_deg=0.0,
-        angle_calibration_rotation_step_deg=1.0,
-        angle_calibration_alpha_min_deg=-10.0,
-        angle_calibration_alpha_max_deg=10.0,
-        angle_calibration_coarse_step_deg=0.1,
-        angle_calibration_fine_window_deg=0.3,
-        angle_calibration_fine_step_deg=0.005,
-        laser_offset_x_mm=0.0,
-        angle_calibration_beam_zero_deg=0.0,
-    )
-    config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=scan_config)))
-    fit_result = SimpleNamespace(
-        alpha_deg=8.0,
-        sample_count=1,
-        line=SimpleNamespace(rms_residual_mm=0.1, max_abs_residual_mm=0.2, line_angle_deg=90.0),
-    )
-
-    with patch('openshelf_os_server.core.laser_auto_calibration.get_root_config', return_value=config):
-        with patch.object(angle_module, 'resolve_capture_y_mm', AsyncMock(return_value=1095.0)) as resolve_mock:
-            with patch.object(angle_module, 'prepare_capture_pose', AsyncMock()):
-                with patch.object(angle_module, 'sample_laser_depth', AsyncMock(return_value=5.0)):
-                    with patch.object(angle_module, 'search_best_alpha', return_value=fit_result):
-                        with patch.object(angle_module, 'print_fit_result'):
-                            result = await manager._run_angle_calibration_for_side(
-                                worker,
-                                StorageModuleSide.RIGHT,
-                                ScanBounds(x_min=5.0, x_max=950.0, y_min=0.0, y_max=1250.0),
-                            )
-
-    assert resolve_mock.await_args.kwargs['rotation_center_deg'] == pytest.approx(183.0)
-    assert result.previous_rotation_deg == pytest.approx(183.0)
-    assert result.alpha_deg == pytest.approx(8.0)
-    assert result.updated_rotation_deg == pytest.approx(188.0)
-
+    assert result == expected
+    stage_stall_mock.assert_awaited_once_with(worker, StorageModuleSide.LEFT, bounds)
 
 @pytest.mark.asyncio
 async def test_persist_completed_results_saves_stage_extensions() -> None:
@@ -1407,69 +1002,88 @@ async def test_persist_completed_results_saves_stage_extensions() -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_single_cell_allows_scan_estimated_wall_depth() -> None:
+async def test_run_single_cell_uses_seeded_cell_rescan_and_reference_offsets() -> None:
     manager = LaserAutoCalibrationManager()
-    manager._update_snapshot = AsyncMock()
-    config = SimpleNamespace(
-        robot=SimpleNamespace(
-            grid=SimpleNamespace(
-                scan=SimpleNamespace(
-                        left_bounds_x_min_mm=0.0,
-                        left_bounds_x_max_mm=100.0,
-                        left_bounds_y_min_mm=0.0,
-                        left_bounds_y_max_mm=100.0,
-                        expected_hole_height_mm=30.0,
-                    left_xy_reference=SimpleNamespace(
-                        shelf_idx=1,
-                        cell_idx=2,
-                        anchor='top_left',
-                        x_mm=15.0,
-                        y_mm=35.0,
-                    ),
-                    left_z_reference=SimpleNamespace(
-                        shelf_idx=1,
-                        cell_idx=2,
-                        z_offset_mm=9.0,
-                        stage_extension_mm=43.0,
-                    ),
-                )
-            )
-        )
-    )
-    target_shelf = SimpleNamespace(
-        cells=[
-            SimpleNamespace(calibration_point=SimpleNamespace(y=30.0)),
-            SimpleNamespace(calibration_point=SimpleNamespace(y=35.0)),
-        ]
-    )
-    grid = SimpleNamespace(get_shelf=lambda side, shelf_idx: target_shelf)
     analysis = SimpleNamespace(
         shelves=[SimpleNamespace(cells=[])],
         wall_depth_mm=8.0,
     )
+    candidate = laser_module.GapCandidateRegion(
+        x_min=1.0,
+        x_max=2.0,
+        y_min=3.0,
+        y_max=4.0,
+        wall_depth_mm=8.0,
+    )
+    detected_cell = SimpleNamespace(tool_x_mm=10.0, tool_y_mm=20.0)
+    xy_reference_detected_cell = ScanDetectedCell(
+        shelf_idx=0,
+        cell_idx=1,
+        center_x_mm=10.0,
+        center_y_mm=20.0,
+        tool_x_mm=11.0,
+        tool_y_mm=21.0,
+        width_mm=30.0,
+        height_mm=40.0,
+        point_count=5,
+        bbox_x_min=1.0,
+        bbox_x_max=2.0,
+        bbox_y_min=3.0,
+        bbox_y_max=4.0,
+    )
     target = laser_module.SingleCellRescanTarget(shelf_idx=1, cell_idx=2)
     worker = SimpleNamespace()
 
-    with patch('openshelf_os_server.core.laser_auto_calibration.get_root_config', return_value=config):
-        with patch('openshelf_os_server.core.laser_auto_calibration.resolve_grid_path', return_value='storage.json'):
-            with patch('openshelf_os_server.core.laser_auto_calibration.laser_module.load_grid', return_value=grid):
-                with patch.object(manager, '_run_scan_analysis', AsyncMock(return_value=analysis)) as scan_mock:
-                    with patch.object(manager, '_persist_single_cell_shelf_result', AsyncMock()) as persist_mock:
-                        await manager._run_single_cell(
-                            worker,
-                            StorageModuleSide.LEFT,
-                            target,
-                        )
+    with patch.object(
+        manager,
+        '_run_reference_cell_scan',
+        AsyncMock(return_value=(analysis, candidate, detected_cell)),
+    ) as target_scan_mock:
+        with patch.object(
+            manager,
+            '_run_partial_reference_scans',
+            AsyncMock(return_value=(xy_reference_detected_cell, 8.0)),
+        ) as reference_scan_mock:
+            with patch.object(manager, '_persist_single_cell_result', AsyncMock()) as persist_mock:
+                with patch(
+                    'openshelf_os_server.core.laser_auto_calibration.scope_runner._persist_reference_apply_metadata'
+                ) as persist_reference_mock:
+                    with patch(
+                        'openshelf_os_server.core.laser_auto_calibration.scope_runner._get_xy_reference_target',
+                        return_value=laser_module.SingleCellRescanTarget(shelf_idx=0, cell_idx=1),
+                    ):
+                        with patch(
+                            'openshelf_os_server.core.laser_auto_calibration.scope_runner._get_z_reference_target',
+                            return_value=laser_module.SingleCellRescanTarget(shelf_idx=0, cell_idx=1),
+                        ):
+                            await manager._run_single_cell(
+                                worker,
+                                StorageModuleSide.LEFT,
+                                target,
+                            )
 
-    assert scan_mock.await_args.kwargs['known_shelf_edge_y'] is None
-    assert scan_mock.await_args.kwargs['should_validate_reference_bounds'] is False
-    assert scan_mock.await_args.kwargs['rescan_target'] == target
+    target_scan_mock.assert_awaited_once_with(worker, StorageModuleSide.LEFT, target)
+    reference_scan_mock.assert_awaited_once_with(
+        worker,
+        StorageModuleSide.LEFT,
+        reuse_target=target,
+        reuse_analysis=analysis,
+        reuse_candidate=candidate,
+        reuse_detected_cell=detected_cell,
+    )
     persist_mock.assert_awaited_once_with(
         worker,
         StorageModuleSide.LEFT,
         analysis,
         target,
+        candidate,
+        xy_reference_detected_cell=xy_reference_detected_cell,
+        z_reference_wall_depth_mm=8.0,
     )
+    persist_reference_mock.assert_called_once()
+    assert persist_reference_mock.call_args.args[1]['xy_reference_detected_cell']['tool_x_mm'] == 11.0
+    assert persist_reference_mock.call_args.args[1]['xy_reference_target'] == {'shelf_idx': 0, 'cell_idx': 1}
+    assert persist_reference_mock.call_args.args[1]['z_reference_target'] == {'shelf_idx': 0, 'cell_idx': 1}
 
 @pytest.mark.asyncio
 async def test_run_io_box_calibration_passes_configured_laser_offset_and_persists_axis_values() -> None:

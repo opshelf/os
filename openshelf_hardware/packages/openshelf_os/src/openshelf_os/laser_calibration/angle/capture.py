@@ -1,27 +1,17 @@
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 from typing import Any, Callable
 
 import openshelf_os.laser_calibration.angle as angle_module
-from openshelf_os.common import load_config_file
-
-from .config import (
-	get_laser_sample_settle_ms,
-	get_laser_samples_per_point,
-	get_laser_scan_stage_extension_mm,
-	get_laser_scan_z_offset_from_place_mm,
-)
 from .constants import (
 	LEFT_MODULE_ROTATION_CENTER_DEG,
 	RIGHT_MODULE_ROTATION_CENTER_DEG,
 	ROTATION_SAFE_X_MM,
 	SHELF_SCOUT_STEP_MM,
 )
-from .geometry import build_axis_positions
-from .models import LaserAngleCalibrationSample, ShelfSurfaceEdge
-from .robot_ops import move_gantry_direct, run_with_temp_robot_config, sample_laser_depth
+from .models import ShelfSurfaceEdge
+from .robot_ops import move_gantry_direct
 from .status import print_status, raise_if_cancelled
 
 
@@ -270,183 +260,3 @@ async def resolve_capture_y_mm(
 	target_y_mm = float(filtered_edges[0].y_mm)
 	print_status(f'angle_capture_y_mm={target_y_mm:.2f}')
 	return target_y_mm
-
-
-async def capture_samples_with_robot(args: argparse.Namespace) -> tuple[list[LaserAngleCalibrationSample], dict[str, Any]]:
-	config = load_config_file(args.config)
-	scan_config = config.robot.grid.scan
-	settle_ms = int(
-		args.settle_ms
-		if args.settle_ms is not None
-		else get_laser_sample_settle_ms(scan_config)
-	)
-	samples_per_point = int(
-		args.samples_per_point
-		if args.samples_per_point is not None
-		else get_laser_samples_per_point(scan_config)
-	)
-	x_positions = build_axis_positions(args.x_range[0], args.x_range[1], args.x_range[2])
-	z_offset_positions = build_axis_positions(
-		args.z_offset_range[0],
-		args.z_offset_range[1],
-		args.z_offset_range[2],
-	)
-	rotation_positions = build_axis_positions(
-		args.rotation_range[0],
-		args.rotation_range[1],
-		args.rotation_range[2],
-	)
-	stage_extension_mm = float(
-		args.stage_extension_mm
-		if args.stage_extension_mm is not None
-		else get_laser_scan_stage_extension_mm(scan_config)
-	)
-	laser_scan_z_offset_from_place_mm = get_laser_scan_z_offset_from_place_mm(
-		scan_config
-	)
-	samples: list[LaserAngleCalibrationSample] = []
-
-	async def did_run(robot: Any) -> tuple[list[LaserAngleCalibrationSample], dict[str, Any]]:
-		tool = robot._tool
-
-		if tool._laser_enabled is False or tool._laser is None:
-			raise ValueError('laser is not enabled')
-
-		if tool._mx is None or tool._my is None or tool._mg is None or tool._ms is None or tool._mr is None:
-			raise ValueError('x, y, z, stage, and rotation motors are required')
-
-		side_name = args.module
-		side_number = 0 if side_name == 'left' else 1
-		rotation_center_deg = float(
-			args.rotation_center_deg
-			if args.rotation_center_deg is not None
-			else resolve_rotation_center_deg(side_name, config.robot.tool.parameters)
-		)
-
-		rotation_limit_deg = float(tool._mr._params.lim)
-		for rotation_deg in rotation_positions:
-			absolute_rotation_deg = rotation_center_deg + float(rotation_deg)
-
-			if absolute_rotation_deg < 0.0 or absolute_rotation_deg > rotation_limit_deg:
-				raise ValueError(
-					'rotation sweep exceeds motor range '
-					f'(absolute target {absolute_rotation_deg:.3f} deg is outside 0..{rotation_limit_deg:.3f})'
-				)
-
-		z_extension_place = await tool.get_param('Z_EXTENSION_PLACE')
-		z_move_rpm = await tool.get_param('Z_MOVE_RPM')
-		z_move_accel = await tool.get_param('Z_MOVE_ACCEL')
-
-		if z_extension_place is None or z_move_rpm is None or z_move_accel is None:
-			raise ValueError('Z_EXTENSION_PLACE, Z_MOVE_RPM, and Z_MOVE_ACCEL are required')
-
-		base_z_mm = float(
-			args.base_z_mm
-			if args.base_z_mm is not None
-			else float(z_extension_place) + laser_scan_z_offset_from_place_mm
-		)
-		current_z_mm: float | None = None
-		await tool.retract()
-		capture_y_mm = await resolve_capture_y_mm(
-			tool,
-			args=args,
-			scan_config=scan_config,
-			side_name=side_name,
-			side_number=side_number,
-			x_positions=x_positions,
-			rotation_center_deg=rotation_center_deg,
-			stage_extension_mm=stage_extension_mm,
-			base_z_mm=base_z_mm,
-			z_move_rpm=float(z_move_rpm),
-			z_move_accel=float(z_move_accel),
-			settle_ms=settle_ms,
-			samples_per_point=samples_per_point,
-		)
-		current_z_mm = base_z_mm
-		current_absolute_rotation_deg: float | None = rotation_center_deg
-
-		for z_offset_mm in z_offset_positions:
-			target_z_mm = base_z_mm + float(z_offset_mm)
-
-			for rotation_idx, rotation_deg in enumerate(rotation_positions, start=1):
-				absolute_rotation_deg = rotation_center_deg + float(rotation_deg)
-
-				for x_idx, x_mm in enumerate(x_positions, start=1):
-					print_status(
-						f'phase=capture x={x_idx}/{len(x_positions)} '
-						f'z={z_offset_mm:.2f} '
-						f'rotation={rotation_idx}/{len(rotation_positions)} '
-						f'absolute_rotation_deg={absolute_rotation_deg:.3f}'
-					)
-					await prepare_capture_pose(
-						tool,
-						side_name=side_name,
-						side_number=side_number,
-						x_mm=float(x_mm),
-						y_mm=capture_y_mm,
-						absolute_rotation_deg=absolute_rotation_deg,
-						stage_extension_mm=stage_extension_mm,
-						z_mm=target_z_mm,
-						z_move_rpm=float(z_move_rpm),
-						z_move_accel=float(z_move_accel),
-						should_rotate=current_absolute_rotation_deg != absolute_rotation_deg,
-						should_use_safe_right_rotation_path=True,
-						should_move_z=current_z_mm != target_z_mm,
-					)
-					current_z_mm = target_z_mm
-					current_absolute_rotation_deg = absolute_rotation_deg
-					depth_mm = await sample_laser_depth(
-						tool,
-						settle_ms=settle_ms,
-						samples_per_point=samples_per_point,
-					)
-
-					if depth_mm is None:
-						print_status(
-							f'sample=invalid x={x_mm:.3f} '
-							f'z={target_z_mm:.3f} '
-							f'rotation_deg={rotation_deg:.3f}'
-						)
-						continue
-
-					samples.append(
-						LaserAngleCalibrationSample(
-							axis_x_mm=float(x_mm),
-							axis_z_mm=target_z_mm,
-							rotation_deg=float(rotation_deg),
-							absolute_rotation_deg=float(absolute_rotation_deg),
-							stage_extension_mm=stage_extension_mm,
-							z_extension_mm=target_z_mm,
-							distance_mm=float(depth_mm),
-						)
-					)
-					print_status(
-						f'sample=ok x={x_mm:.3f} '
-						f'z={target_z_mm:.3f} '
-						f'rotation_deg={rotation_deg:.3f} '
-						f'distance_mm={depth_mm:.3f}'
-					)
-
-		await tool.retract()
-
-		return samples, {
-			'config_path': str(Path(args.config).resolve()),
-			'module': side_name,
-			'y_mm': float(capture_y_mm),
-			'y_range': None if args.y_range is None else [float(args.y_range[0]), float(args.y_range[1])],
-			'x_positions': x_positions,
-			'z_offset_positions': z_offset_positions,
-			'rotation_positions': rotation_positions,
-			'stage_extension_mm': stage_extension_mm,
-			'base_z_mm': base_z_mm,
-			'rotation_center_deg': rotation_center_deg,
-			'settle_ms': settle_ms,
-			'samples_per_point': samples_per_point,
-		}
-
-	return await run_with_temp_robot_config(
-		config=config,
-		config_path=args.config,
-		did_run=did_run,
-		shutdown_action=args.shutdown_action,
-	)

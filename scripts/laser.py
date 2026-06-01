@@ -18,14 +18,11 @@ PYTHON_PATHS = [
 for import_path in reversed(PYTHON_PATHS):
 	sys.path.insert(0, str(import_path))
 
-import openshelf_os.laser_calibration.angle as angle_module
 import openshelf_os.laser_calibration as laser_module
 from openshelf_os.common import (
 	CONFIG_PATH,
-	Parameters,
 	load_config_file,
 	resolve_grid_path,
-	write_json_file_with_backup,
 )
 from openshelf_os.laser_calibration.scan import ScanBounds, build_axis_positions
 from openshelf_os.storage import StorageModuleSide
@@ -35,7 +32,7 @@ DEFAULT_SCANS_DIR_NAME = 'calibration'
 
 def build_parser() -> argparse.ArgumentParser:
 	parser = argparse.ArgumentParser(
-		description='Run tray scan, single-cell rescan, validation, angle calibration, or IO box scouting.'
+		description='Run tray scan, single-cell rescan, validation, saved-run replay, or IO box scouting.'
 	)
 	parser.add_argument('--module', choices=['left', 'right'])
 	parser.add_argument('--x', nargs=2, metavar=('MIN', 'MAX'), type=float)
@@ -49,11 +46,12 @@ def build_parser() -> argparse.ArgumentParser:
 	parser.add_argument('--config', default=str(CONFIG_PATH))
 	parser.add_argument('--apply', action='store_true')
 	parser.add_argument('--continue', dest='continue_scan', action='store_true')
+	parser.add_argument('--from-run', type=Path)
 	parser.add_argument('--shelf-scout-only', action='store_true')
 	parser.add_argument('--rescan-cell', type=str)
 	parser.add_argument('--validate-cell', type=str)
 	parser.add_argument('--validate-cycles', type=int, default=1)
-	parser.add_argument('--calibrate-angle', action='store_true')
+	parser.add_argument('--calibrate-angle', action='store_true', help=argparse.SUPPRESS)
 	parser.add_argument('--calibrate-io-box', action='store_true')
 	parser.add_argument('--io-box-interior-width-mm', type=float, default=laser_module.IO_BOX_INTERIOR_WIDTH_MM)
 	parser.add_argument('--io-box-x-mm', type=float, default=laser_module.IO_BOX_DEFAULT_START_X_MM)
@@ -63,23 +61,23 @@ def build_parser() -> argparse.ArgumentParser:
 	parser.add_argument('--io-box-coarse-step-mm', type=float, default=laser_module.IO_BOX_COARSE_STEP_MM)
 	parser.add_argument('--io-box-fine-step-mm', type=float, default=laser_module.IO_BOX_FINE_STEP_MM)
 	parser.add_argument('--io-box-fine-margin-mm', type=float, default=laser_module.IO_BOX_FINE_MARGIN_MM)
-	parser.add_argument('--x-range', nargs=3, metavar=('MIN', 'MAX', 'STEP'), type=float)
-	parser.add_argument('--y-mm', type=float)
-	parser.add_argument('--z-offset-range', nargs=3, metavar=('MIN', 'MAX', 'STEP'), type=float)
-	parser.add_argument('--rotation-range', nargs=3, metavar=('MIN', 'MAX', 'STEP'), type=float)
-	parser.add_argument('--rotation-center-deg', type=float)
-	parser.add_argument('--stage-extension-mm', type=float)
-	parser.add_argument('--base-z-mm', type=float)
+	parser.add_argument('--x-range', nargs=3, metavar=('MIN', 'MAX', 'STEP'), type=float, help=argparse.SUPPRESS)
+	parser.add_argument('--y-mm', type=float, help=argparse.SUPPRESS)
+	parser.add_argument('--z-offset-range', nargs=3, metavar=('MIN', 'MAX', 'STEP'), type=float, help=argparse.SUPPRESS)
+	parser.add_argument('--rotation-range', nargs=3, metavar=('MIN', 'MAX', 'STEP'), type=float, help=argparse.SUPPRESS)
+	parser.add_argument('--rotation-center-deg', type=float, help=argparse.SUPPRESS)
+	parser.add_argument('--stage-extension-mm', type=float, help=argparse.SUPPRESS)
+	parser.add_argument('--base-z-mm', type=float, help=argparse.SUPPRESS)
 	parser.add_argument('--shutdown-action', choices=['stop', 'shutdown'], default='shutdown')
 	parser.add_argument('--laser-offset-x-mm', type=float)
-	parser.add_argument('--laser-offset-z-mm', type=float)
-	parser.add_argument('--beam-zero-deg', type=float, default=0.0)
-	parser.add_argument('--alpha-min-deg', type=float, default=-10.0)
-	parser.add_argument('--alpha-max-deg', type=float, default=10.0)
-	parser.add_argument('--coarse-step-deg', type=float, default=0.1)
-	parser.add_argument('--fine-window-deg', type=float, default=0.3)
-	parser.add_argument('--fine-step-deg', type=float, default=0.005)
-	parser.add_argument('--output', type=Path)
+	parser.add_argument('--laser-offset-z-mm', type=float, help=argparse.SUPPRESS)
+	parser.add_argument('--beam-zero-deg', type=float, default=0.0, help=argparse.SUPPRESS)
+	parser.add_argument('--alpha-min-deg', type=float, default=-10.0, help=argparse.SUPPRESS)
+	parser.add_argument('--alpha-max-deg', type=float, default=10.0, help=argparse.SUPPRESS)
+	parser.add_argument('--coarse-step-deg', type=float, default=0.1, help=argparse.SUPPRESS)
+	parser.add_argument('--fine-window-deg', type=float, default=0.3, help=argparse.SUPPRESS)
+	parser.add_argument('--fine-step-deg', type=float, default=0.005, help=argparse.SUPPRESS)
+	parser.add_argument('--output', type=Path, help=argparse.SUPPRESS)
 	return parser
 
 
@@ -176,81 +174,10 @@ def print_analysis(analysis: Any) -> None:
 			)
 
 
-def persist_config(config: Any, config_path: str) -> None:
-	write_json_file_with_backup(
-		Path(config_path).resolve(),
-		config.model_dump(mode='json'),
-		indent='\t',
-		backup_group_name='config',
-	)
-
-
 def derive_scans_dir(config_path: str) -> str:
 	config_file = Path(config_path).resolve()
 	return str((config_file.parent / DEFAULT_SCANS_DIR_NAME).resolve())
 
-
-def validate_angle_calibration_args(args: argparse.Namespace) -> None:
-	if args.module is None:
-		raise ValueError('--module is required with --calibrate-angle')
-
-	if args.x_range is None:
-		raise ValueError('--x-range is required with --calibrate-angle')
-
-	if args.y_mm is None:
-		raise ValueError('--y-mm is required with --calibrate-angle')
-
-	if args.z_offset_range is None:
-		raise ValueError('--z-offset-range is required with --calibrate-angle')
-
-	if args.rotation_range is None:
-		raise ValueError('--rotation-range is required with --calibrate-angle')
-
-	if args.continue_scan is True:
-		raise ValueError('--continue cannot be used with --calibrate-angle')
-
-	if args.npy is not None:
-		raise ValueError('--npy cannot be used with --calibrate-angle')
-
-	if args.rescan_cell is not None:
-		raise ValueError('--rescan-cell cannot be used with --calibrate-angle')
-
-	if args.validate_cell is not None:
-		raise ValueError('--validate-cell cannot be used with --calibrate-angle')
-
-	if args.shelf_scout_only is True:
-		raise ValueError('--shelf-scout-only cannot be used with --calibrate-angle')
-
-	if args.known_shelf_edge_y is not None:
-		raise ValueError('--known-shelf-edge-y cannot be used with --calibrate-angle')
-
-	if args.x is not None or args.y is not None:
-		raise ValueError('--x/--y cannot be used with --calibrate-angle; use --x-range and --y-mm')
-
-	if args.step is not None:
-		raise ValueError('--step cannot be used with --calibrate-angle; use --x-range/--rotation-range')
-
-	if args.y_offset != 0.0:
-		raise ValueError('--y-offset cannot be used with --calibrate-angle')
-
-	if args.calibrate_io_box is True:
-		raise ValueError('--calibrate-io-box cannot be used with --calibrate-angle')
-
-	if args.alpha_max_deg < args.alpha_min_deg:
-		raise ValueError('--alpha-min-deg must be <= --alpha-max-deg')
-
-	if args.coarse_step_deg <= 0.0:
-		raise ValueError('--coarse-step-deg must be positive')
-
-	if args.fine_window_deg <= 0.0:
-		raise ValueError('--fine-window-deg must be positive')
-
-	if args.fine_step_deg <= 0.0:
-		raise ValueError('--fine-step-deg must be positive')
-
-	args.x_range = angle_module.parse_range_argument(args.x_range)
-	args.z_offset_range = angle_module.parse_range_argument(args.z_offset_range)
-	args.rotation_range = angle_module.parse_range_argument(args.rotation_range)
 
 
 def validate_io_box_calibration_args(args: argparse.Namespace) -> None:
@@ -426,159 +353,171 @@ def print_io_box_scout_result(result: laser_module.IOBoxScoutResult) -> None:
 	print(f'io_box_final_y_refined: {result.final_y_refined}')
 
 
-def should_mirror_right_angle_fit(
-	side: StorageModuleSide,
-	rotation_center_deg: float,
-	rotation_limit_deg: float,
-) -> bool:
-	return side == StorageModuleSide.RIGHT and rotation_center_deg >= rotation_limit_deg / 2.0
+def load_run_parameters_for_analysis(analysis: Any) -> dict[str, Any]:
+	run_parameters_path = Path(analysis.metadata_path).resolve().parent / 'run_parameters.json'
+
+	if run_parameters_path.exists() is False:
+		return {}
+
+	document = laser_module.load_json_file(run_parameters_path)
+	return dict(document.get('run_parameters', {}))
 
 
-def build_angle_fit_inputs(
+def load_reference_target(reference_apply: dict[str, Any], field_name: str) -> tuple[int, int]:
+	target = reference_apply.get(field_name)
+
+	if isinstance(target, dict) is False:
+		raise ValueError(f'Saved scoped run is missing {field_name} reference apply metadata')
+
+	return int(target['shelf_idx']), int(target['cell_idx'])
+
+
+def validate_reference_apply_targets(
 	*,
+	reference_apply: dict[str, Any],
+	scan_config: Any,
 	side: StorageModuleSide,
-	samples: list[angle_module.LaserAngleCalibrationSample],
-	rotation_center_deg: float,
-	rotation_limit_deg: float,
-) -> tuple[list[angle_module.LaserAngleCalibrationSample], float]:
-	laser_offset_x_mm = 0.0
-
-	if should_mirror_right_angle_fit(side, rotation_center_deg, rotation_limit_deg) is False:
-		return samples, laser_offset_x_mm
-
-	adjusted_samples = [
-		angle_module.LaserAngleCalibrationSample(
-			axis_x_mm=float(sample.axis_x_mm),
-			axis_z_mm=float(sample.axis_z_mm),
-			rotation_deg=-float(sample.rotation_deg),
-			absolute_rotation_deg=(2.0 * rotation_center_deg) - float(sample.absolute_rotation_deg),
-			stage_extension_mm=float(sample.stage_extension_mm),
-			z_extension_mm=float(sample.z_extension_mm),
-			distance_mm=float(sample.distance_mm),
-		)
-		for sample in samples
-	]
-
-	return adjusted_samples, laser_offset_x_mm
-
-
-def get_rotation_limit_deg(config: Any) -> float:
-	return float(config.robot.tool.motors.by_name('rotate').lim)
-
-
-def apply_angle_calibration_result(
-	*,
-	config: Any,
-	config_path: str,
-	side: StorageModuleSide,
-	alpha_deg: float,
 ) -> None:
-	rotation_param = 'ROTATION_FRONT'
+	saved_xy_target = load_reference_target(reference_apply, 'xy_reference_target')
+	saved_z_target = load_reference_target(reference_apply, 'z_reference_target')
+	current_xy_reference = laser_module.get_scan_xy_reference(scan_config=scan_config, side=side)
+	current_z_reference = laser_module.get_scan_z_reference(scan_config=scan_config, side=side)
+	current_xy_target = (int(current_xy_reference.shelf_idx), int(current_xy_reference.cell_idx))
+	current_z_target = (int(current_z_reference[0]), int(current_z_reference[1]))
 
-	if side == StorageModuleSide.RIGHT:
-		rotation_param = 'ROTATION_BACK'
-
-	current_rotation_deg = float(getattr(config.robot.tool.parameters, rotation_param))
-	updated_rotation_deg = current_rotation_deg + alpha_deg
-	params_data = config.robot.tool.parameters.model_dump()
-	params_data[rotation_param] = updated_rotation_deg
-	config.robot.tool.parameters = Parameters.model_validate(params_data)
-
-	persist_config(config, config_path)
-
-	laser_module.print_status(
-		f'angle_calibration_apply=updated param={rotation_param} '
-		f'previous_deg={current_rotation_deg:.4f} alpha_deg={alpha_deg:.4f} '
-		f'updated_deg={updated_rotation_deg:.4f}'
-	)
+	if saved_xy_target != current_xy_target or saved_z_target != current_z_target:
+		raise ValueError(
+			'Saved scoped run used different reference targets and cannot be applied to the current config'
+		)
 
 
-async def run_angle_calibration(
+def load_reference_apply_data(
 	*,
-	args: argparse.Namespace,
-	config: Any,
-) -> int:
-	validate_angle_calibration_args(args)
-	scan_config = config.robot.grid.scan
-	side = normalize_module(args.module)
-	laser_offset_x_mm = (
-		float(args.laser_offset_x_mm)
-		if args.laser_offset_x_mm is not None
-		else laser_module.require_scan_config_parameter(scan_config, 'laser_offset_x_mm')
-	)
-	laser_offset_z_mm = (
-		float(args.laser_offset_z_mm)
-		if args.laser_offset_z_mm is not None
-		else 0.0
-	)
-	beam_zero_deg = float(args.beam_zero_deg)
+	run_parameters: dict[str, Any],
+	scan_config: Any,
+	side: StorageModuleSide,
+) -> tuple[Any, float]:
+	reference_apply = run_parameters.get('reference_apply')
 
-	if args.rotation_center_deg is None:
-		rotation_param = 'ROTATION_FRONT'
+	if isinstance(reference_apply, dict) is False:
+		raise ValueError('Saved scoped run is missing reference apply metadata')
 
-		if side == StorageModuleSide.RIGHT:
-			rotation_param = 'ROTATION_BACK'
-
-		args.rotation_center_deg = float(getattr(config.robot.tool.parameters, rotation_param))
-
-	args.y_range = None
-	rotation_limit_deg = get_rotation_limit_deg(config)
-	laser_module.print_status('phase=angle-calibration')
-	laser_module.print_status(
-		f'angle_calibration_setup module={side.value} '
-		f'x_range={args.x_range} y_mm={float(args.y_mm):.3f} '
-		f'z_offset_range={args.z_offset_range} rotation_range={args.rotation_range} '
-		f'laser_offset_x_mm={laser_offset_x_mm:.3f} laser_offset_z_mm={laser_offset_z_mm:.3f} '
-		f'beam_zero_deg={beam_zero_deg:.3f}'
-	)
-
-	samples, capture_metadata = await angle_module.capture_samples_with_robot(args)
-	fit_samples, fit_laser_offset_x_mm = build_angle_fit_inputs(
+	validate_reference_apply_targets(
+		reference_apply=reference_apply,
+		scan_config=scan_config,
 		side=side,
-		samples=samples,
-		rotation_center_deg=float(args.rotation_center_deg),
-		rotation_limit_deg=rotation_limit_deg,
 	)
-	fit_result = angle_module.search_best_alpha(
-		fit_samples,
-		alpha_min_deg=float(args.alpha_min_deg),
-		alpha_max_deg=float(args.alpha_max_deg),
-		coarse_step_deg=float(args.coarse_step_deg),
-		fine_window_deg=float(args.fine_window_deg),
-		fine_step_deg=float(args.fine_step_deg),
-		laser_offset_x_mm=fit_laser_offset_x_mm,
-		laser_offset_z_mm=laser_offset_z_mm,
-		beam_zero_deg=beam_zero_deg,
+	xy_reference_detected_cell = reference_apply.get('xy_reference_detected_cell')
+	z_reference_wall_depth_mm = reference_apply.get('z_reference_wall_depth_mm')
+
+	if isinstance(xy_reference_detected_cell, dict) is False:
+		raise ValueError('Saved scoped run is missing XY reference apply metadata')
+
+	if z_reference_wall_depth_mm is None:
+		raise ValueError('Saved scoped run is missing Z reference apply metadata')
+
+	return laser_module.ScanDetectedCell.model_validate(xy_reference_detected_cell), float(z_reference_wall_depth_mm)
+
+
+def apply_loaded_run_analysis(
+	*,
+	analysis: Any,
+	config: Any,
+	grid: Any,
+	grid_path: Path,
+	run_parameters: dict[str, Any],
+) -> None:
+	auto_calibration_scope = run_parameters.get('auto_calibration_scope')
+	single_cell_rescan = run_parameters.get('single_cell_rescan')
+
+	if isinstance(auto_calibration_scope, dict) is True:
+		scope_mode = auto_calibration_scope.get('mode')
+
+		if scope_mode == 'shelf':
+			xy_reference_detected_cell, z_reference_wall_depth_mm = load_reference_apply_data(
+				run_parameters=run_parameters,
+				scan_config=config.robot.grid.scan,
+				side=analysis.side,
+			)
+			laser_module.apply_single_shelf_analysis(
+				analysis=analysis,
+				grid=grid,
+				grid_path=grid_path,
+				scan_config=config.robot.grid.scan,
+				side=analysis.side,
+				target_shelf_idx=int(auto_calibration_scope['shelf_idx']),
+				current_stage_extension_mm=get_current_shelf_stage_extension_mm(config, analysis.side),
+				xy_reference_detected_cell=xy_reference_detected_cell,
+				z_reference_wall_depth_mm=z_reference_wall_depth_mm,
+			)
+			return
+
+	if isinstance(single_cell_rescan, dict) is True:
+		candidate_data = single_cell_rescan.get('candidate')
+
+		if isinstance(candidate_data, dict) is False:
+			raise ValueError('Saved single-cell run is missing candidate metadata')
+
+		target = laser_module.SingleCellRescanTarget(
+			shelf_idx=int(single_cell_rescan['shelf_idx']),
+			cell_idx=int(single_cell_rescan['cell_idx']),
+		)
+		candidate = laser_module.GapCandidateRegion(
+			x_min=float(candidate_data['x_min']),
+			x_max=float(candidate_data['x_max']),
+			y_min=float(candidate_data['y_min']),
+			y_max=float(candidate_data['y_max']),
+			wall_depth_mm=(
+				None
+				if candidate_data.get('wall_depth_mm') is None
+				else float(candidate_data['wall_depth_mm'])
+			),
+		)
+		matched_cell = laser_module.find_detected_cell_for_candidate(
+			analysis=analysis,
+			candidate=candidate,
+		)
+
+		if matched_cell is None:
+			raise ValueError('No detected cell matched saved --rescan-cell target')
+
+		if isinstance(auto_calibration_scope, dict) is True or 'reference_apply' in run_parameters:
+			xy_reference_detected_cell, z_reference_wall_depth_mm = load_reference_apply_data(
+				run_parameters=run_parameters,
+				scan_config=config.robot.grid.scan,
+				side=analysis.side,
+			)
+		else:
+			xy_reference_detected_cell = None
+			z_reference_wall_depth_mm = None
+
+		laser_module.apply_single_cell_rescan(
+			grid=grid,
+			target=target,
+			side=analysis.side,
+			detected_cell=matched_cell,
+			wall_depth_mm=float(analysis.wall_depth_mm),
+			scan_config=config.robot.grid.scan,
+			current_stage_extension_mm=get_current_shelf_stage_extension_mm(config, analysis.side),
+			xy_reference_detected_cell=xy_reference_detected_cell,
+			z_reference_wall_depth_mm=z_reference_wall_depth_mm,
+		)
+		return
+
+	laser_module.apply_analysis(
+		analysis=analysis,
+		grid=grid,
+		grid_path=grid_path,
+		scan_config=config.robot.grid.scan,
+		side=analysis.side,
+		current_stage_extension_mm=get_current_shelf_stage_extension_mm(config, analysis.side),
 	)
-	angle_module.print_fit_result(fit_result)
-
-	if args.output is not None:
-		angle_module.write_output_document(
-			output_path=args.output,
-			mode='capture',
-			samples=fit_samples,
-			fit_result=fit_result,
-			metadata={
-				**capture_metadata,
-				'laser_offset_x_mm': fit_laser_offset_x_mm,
-				'laser_offset_z_mm': laser_offset_z_mm,
-				'beam_zero_deg': beam_zero_deg,
-			},
-		)
-		laser_module.print_status(f'angle_calibration_output={args.output}')
-
-	if args.apply is True:
-		apply_angle_calibration_result(
-			config=config,
-			config_path=args.config,
-			side=side,
-			alpha_deg=float(fit_result.alpha_deg),
-		)
-
-	return 0
 
 
 async def run_scan(args: argparse.Namespace) -> int:
+	if args.calibrate_angle is True:
+		raise ValueError('--calibrate-angle laser-fit calibration was removed; use API auto calibration for stage-stall angle calibration')
+
 	laser_module.print_status('phase=config')
 	config = load_config_file(args.config)
 	scans_dir = derive_scans_dir(args.config)
@@ -591,11 +530,48 @@ async def run_scan(args: argparse.Namespace) -> int:
 	grid_path = Path(resolve_grid_path(config))
 	grid = laser_module.load_grid(grid_path)
 
+	if args.from_run is not None:
+		if args.continue_scan is True:
+			raise ValueError('--from-run cannot be used with --continue')
+
+		if args.npy is not None:
+			raise ValueError('--from-run cannot be used with --npy')
+
+		if args.calibrate_io_box is True:
+			raise ValueError('--from-run cannot be used with --calibrate-io-box')
+
+
+		if args.rescan_cell is not None or args.validate_cell is not None:
+			raise ValueError('--from-run cannot be used with --rescan-cell or --validate-cell')
+
+		laser_module.print_status('phase=load-run')
+		analysis = laser_module.load_staged_scan_analysis(
+			args.from_run,
+			scan_config=scan_config,
+		)
+		run_parameters = load_run_parameters_for_analysis(analysis)
+
+		if args.apply is True:
+			laser_module.print_status('phase=apply')
+			apply_loaded_run_analysis(
+				analysis=analysis,
+				config=config,
+				grid=grid,
+				grid_path=grid_path,
+				run_parameters=run_parameters,
+			)
+
+		print_analysis(analysis)
+		run_parameters_path = Path(analysis.metadata_path).resolve().parent / 'run_parameters.json'
+
+		if run_parameters_path.exists() is True:
+			print(f'run_parameters_path: {run_parameters_path}')
+
+		return 0
+
 	if args.calibrate_io_box is True:
 		return await run_io_box_calibration(args=args, config=config)
 
-	if args.calibrate_angle is True:
-		return await run_angle_calibration(args=args, config=config)
 
 	if rescan_target is not None and validation_target is not None:
 		raise ValueError('--rescan-cell cannot be used with --validate-cell')

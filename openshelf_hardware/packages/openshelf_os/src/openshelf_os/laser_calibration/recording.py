@@ -312,7 +312,7 @@ def load_partial_grid_scan(
 		for value in row:
 			float_value = float(value)
 
-			if np.isfinite(float_value) is True:
+			if bool(np.isfinite(float_value)) is True:
 				depth_row.append(float_value)
 				continue
 
@@ -465,7 +465,7 @@ def load_depth_rows_from_npy(
 		for value in row:
 			float_value = float(value)
 
-			if np.isfinite(float_value) is True:
+			if bool(np.isfinite(float_value)) is True:
 				depth_row.append(float_value)
 				continue
 
