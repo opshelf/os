@@ -364,12 +364,6 @@ class ScopeRunnerMixin:
             y_min=max(bounds.y_min, target_center_y_mm - local_y_margin_mm),
             y_max=min(bounds.y_max, target_center_y_mm + local_y_margin_mm),
         )
-        known_shelf_edge_y = laser_module.build_single_shelf_known_edge_y(
-            grid=grid,
-            side=side,
-            shelf_idx=shelf_idx,
-            scan_config=scan_config,
-        )
         xy_reference_detected_cell, z_reference_wall_depth_mm = await self._run_partial_reference_scans(
             worker,
             side,
@@ -384,7 +378,7 @@ class ScopeRunnerMixin:
             worker,
             side,
             local_bounds,
-            known_shelf_edge_y=known_shelf_edge_y,
+            known_shelf_edge_y=None,
             should_validate_reference_bounds=False,
             run_scope={
                 "mode": "shelf",

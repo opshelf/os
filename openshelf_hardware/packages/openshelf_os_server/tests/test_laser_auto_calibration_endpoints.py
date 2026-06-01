@@ -1002,6 +1002,81 @@ async def test_persist_completed_results_saves_stage_extensions() -> None:
 
 
 @pytest.mark.asyncio
+async def test_run_single_shelf_scouts_local_edge_instead_of_using_grid_derived_edge() -> None:
+    manager = LaserAutoCalibrationManager()
+    manager._update_snapshot = AsyncMock()
+    scan_config = SimpleNamespace(
+        right_bounds_x_min_mm=0.0,
+        right_bounds_x_max_mm=950.0,
+        right_bounds_y_min_mm=0.0,
+        right_bounds_y_max_mm=1250.0,
+        expected_hole_height_mm=30.0,
+        right_xy_reference=SimpleNamespace(
+            shelf_idx=6,
+            cell_idx=0,
+            anchor='top_left',
+            x_mm=8.0,
+            y_mm=1162.5,
+        ),
+        right_z_reference=SimpleNamespace(
+            shelf_idx=6,
+            cell_idx=0,
+            z_offset_mm=9.0,
+            stage_extension_mm=47.0,
+        ),
+    )
+    config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=scan_config)))
+    target_shelf = SimpleNamespace(
+        cells=[
+            SimpleNamespace(calibration_point=SimpleNamespace(y=62.0)),
+            SimpleNamespace(calibration_point=SimpleNamespace(y=63.0)),
+        ]
+    )
+    grid = SimpleNamespace(get_shelf=lambda side, shelf_idx: target_shelf)
+    analysis = SimpleNamespace(shelves=[SimpleNamespace(cells=[])])
+    xy_reference_detected_cell = ScanDetectedCell(
+        shelf_idx=0,
+        cell_idx=1,
+        center_x_mm=10.0,
+        center_y_mm=20.0,
+        tool_x_mm=11.0,
+        tool_y_mm=21.0,
+        width_mm=30.0,
+        height_mm=40.0,
+        point_count=5,
+        bbox_x_min=1.0,
+        bbox_x_max=2.0,
+        bbox_y_min=3.0,
+        bbox_y_max=4.0,
+    )
+    worker = SimpleNamespace()
+
+    with patch('openshelf_os_server.core.laser_auto_calibration.get_root_config', return_value=config):
+        with patch('openshelf_os_server.core.laser_auto_calibration.resolve_grid_path', return_value='storage.json'):
+            with patch('openshelf_os_server.core.laser_auto_calibration.laser_module.load_grid', return_value=grid):
+                with patch(
+                    'openshelf_os_server.core.laser_auto_calibration.laser_module.build_single_shelf_known_edge_y',
+                    side_effect=AssertionError('single shelf calibration should scout the local shelf edge'),
+                ):
+                    with patch.object(
+                        manager,
+                        '_run_partial_reference_scans',
+                        AsyncMock(return_value=(xy_reference_detected_cell, 8.0)),
+                    ):
+                        with patch(
+                            'openshelf_os_server.core.laser_auto_calibration.scope_runner._build_reference_apply_metadata',
+                            return_value={'reference_apply': True},
+                        ):
+                            with patch.object(manager, '_run_scan_analysis', AsyncMock(return_value=analysis)) as scan_mock:
+                                with patch.object(manager, '_persist_single_shelf_result', AsyncMock()) as persist_mock:
+                                    await manager._run_single_shelf(worker, StorageModuleSide.RIGHT, 0)
+
+    assert scan_mock.await_args.kwargs['known_shelf_edge_y'] is None
+    assert scan_mock.await_args.kwargs['should_validate_reference_bounds'] is False
+    persist_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_run_single_cell_uses_seeded_cell_rescan_and_reference_offsets() -> None:
     manager = LaserAutoCalibrationManager()
     analysis = SimpleNamespace(
