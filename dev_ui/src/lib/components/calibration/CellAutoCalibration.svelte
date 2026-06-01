@@ -681,7 +681,7 @@
 							onclick={didClickAbort}
 							disabled={isAborting === true || isSessionActive === false}
 						>
-							{isAborting === true ? 'aborting...' : 'abort'}
+							abort
 						</button>
 					</div>
 				</td>
