@@ -77,16 +77,12 @@
 	<table>
 		<tbody>
 			<tr>
-				<td>top door closed</td>
-				<td>{doorState.top_closed ? 'yes' : 'no'}</td>
+				<td>top closed</td>
+				<td>{doorState.top_closed ? 'no' : 'yes'}</td>
 			</tr>
 			<tr>
-				<td>bottom door closed</td>
-				<td>{doorState.bottom_closed ? 'yes' : 'no'}</td>
-			</tr>
-			<tr>
-				<td>both doors closed</td>
-				<td>{doorState.closed ? 'yes' : 'no'}</td>
+				<td>bottom closed</td>
+				<td>{doorState.bottom_closed ? 'no' : 'yes'}</td>
 			</tr>
 		</tbody>
 	</table>
