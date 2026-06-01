@@ -74,7 +74,7 @@
 </div>
 
 {#if doorState !== null}
-	<table>
+	<table style="margin-top: 1.5em">
 		<tbody>
 			<tr>
 				<td>top closed</td>
@@ -100,6 +100,5 @@
 	.actions {
 		display: flex;
 		gap: 1em;
-		margin: 1em 0;
 	}
 </style>

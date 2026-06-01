@@ -159,11 +159,10 @@
 </div>
 
 <style>
-
 	.logo-container {
 		position: fixed;
-		bottom: 2em;
-		right: 2em;
+		bottom: 1.5em;
+		right: 1.5em;
 	}
 
 	.logo-table {

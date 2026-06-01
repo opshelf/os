@@ -716,7 +716,9 @@
 		const shelfIdx = selectedShelf;
 		const cellIdx = selectedCell;
 		const initial = side === 'left_module' ? 'L' : 'R';
-		const confirmed = confirm(`are you sure you want to delete cell ${initial}:${shelfIdx}:${cellIdx}?`);
+		const confirmed = confirm(
+			`are you sure you want to delete cell ${initial}:${shelfIdx}:${cellIdx}?`
+		);
 		if (confirmed !== true) {
 			return;
 		}
@@ -829,7 +831,7 @@
 						>
 							delete cell
 						</button>
-					{#if currentPosition !== null}
+						{#if currentPosition !== null}
 							<button
 								type="button"
 								onclick={didClickExtend}
@@ -1087,8 +1089,8 @@
 
 <style>
 	.shelf-section {
-		margin-top: 2em;
-		padding-top: 2em;
+		margin-top: 1.5em;
+		padding-top: 1.5em;
 		border-top: 2px dashed #000;
 	}
 
@@ -1112,8 +1114,8 @@
 
 	.jog-controls {
 		display: flex;
-		gap: 2em;
-		margin-top: 2em;
+		gap: 1.5em;
+		margin-top: 1.5em;
 		margin-bottom: 1em;
 	}
 
@@ -1129,8 +1131,8 @@
 	}
 
 	.jog-axis button {
-		min-width: 2em;
-		min-height: 2em;
+		min-width: 1.5em;
+		min-height: 1.5em;
 		font-size: 1.5em;
 		margin-top: 0;
 		padding: 2.5px;
@@ -1139,12 +1141,12 @@
 	.action-buttons {
 		display: flex;
 		gap: 1em;
-		margin-top: 2em;
+		margin-top: 1.5em;
 		align-items: center;
 	}
 
 	.section-divider {
-		margin-top: 2em;
+		margin-top: 1.5em;
 		border-top: 2px black dashed;
 	}
 
