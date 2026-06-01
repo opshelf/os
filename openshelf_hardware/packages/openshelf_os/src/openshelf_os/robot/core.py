@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional, List, TYPE_CHECKING
 
 from hardware.controller import SharedModbusController as Controller
 from hardware.curtain import CurtainSafety
+from openshelf_os.cabinet import Cabinet
 from openshelf_os.common import AxisCoordinate, ConfigError, load_config_file, CONFIG_PATH, resolve_grid_path
 from openshelf_os.exceptions import MotorError, MovementError, ToolError
 from openshelf_os.iobox import IOBox
@@ -75,6 +76,7 @@ class Robot:
             safety=self._curtain_safety,
             gpio=self._gpio,
         )
+        self._cabinet = Cabinet(gpio=self._gpio)
 
         self._grid_path = resolve_grid_path(self._config, CONFIG_PATH)
 

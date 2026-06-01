@@ -23,6 +23,7 @@
 		{ href: '/scale', label: 'scale' },
 		{ href: '/sizer', label: 'sizer' },
 		{ href: '/scanner', label: 'scanner' },
+		{ href: '/cabinet', label: 'cabinet' },
 		{ href: '/motors', label: 'motors' }
 	];
 
