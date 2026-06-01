@@ -158,23 +158,6 @@
 </div>
 
 <style>
-	.connection-overlay {
-		position: fixed;
-		inset: 0;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		background-color: rgba(255, 255, 255, 0.85);
-		z-index: 1000;
-	}
-
-	.connection-message {
-		padding: 5px;
-		border: 2px solid black;
-		background-color: white;
-		text-transform: uppercase;
-		box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.25);
-	}
 
 	.logo-container {
 		position: fixed;
