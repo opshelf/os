@@ -50,6 +50,7 @@ class Pcf8575Backend:
 
     def setup_input(self, spec: GpioPinSpec) -> None:
         self._validate_spec(spec)
+
         with self._lock:
             self._ensure_device()
             try:
@@ -61,9 +62,11 @@ class Pcf8575Backend:
 
     def setup_output(self, spec: GpioPinSpec) -> None:
         self._validate_spec(spec)
+
         with self._lock:
             self._ensure_device()
             raw_initial = spec.to_raw(spec.initial) if spec.initial is not None else False
+
             try:
                 self._set_latch_bit_locked(spec.pin, raw_initial)
                 self._write_latch_locked()
@@ -73,6 +76,7 @@ class Pcf8575Backend:
 
     def read(self, spec: GpioPinSpec) -> bool:
         self._validate_spec(spec)
+
         with self._lock:
             try:
                 state = self._refresh_port_state_locked()
@@ -82,8 +86,10 @@ class Pcf8575Backend:
 
     def write(self, spec: GpioPinSpec, raw_value: bool) -> None:
         self._validate_spec(spec)
+
         with self._lock:
             self._ensure_device()
+
             try:
                 self._set_latch_bit_locked(spec.pin, raw_value)
                 self._write_latch_locked()
@@ -109,8 +115,10 @@ class Pcf8575Backend:
         def did_unsubscribe() -> None:
             with self._lock:
                 callbacks = self._callbacks.get(spec.pin)
+
                 if callbacks is None:
                     return
+
                 if callback in callbacks:
                     callbacks.remove(callback)
 
@@ -121,6 +129,7 @@ class Pcf8575Backend:
             if self._interrupt_subscription is not None:
                 self._interrupt_subscription.close()
                 self._interrupt_subscription = None
+
             self._callbacks.clear()
             i2c = self._i2c
             self._i2c = None
@@ -132,6 +141,7 @@ class Pcf8575Backend:
             return
 
         deinit = cast(Callable[[], None] | None, getattr(i2c, "deinit", None))
+
         if deinit is not None:
             try:
                 deinit()
@@ -162,6 +172,7 @@ class Pcf8575Backend:
         self._i2c = busio.I2C(board.SCL, board.SDA)
         self._pcf = adafruit_pcf8575.PCF8575(self._i2c, address=self._expander.address)
         self._port_state = int(self._pcf.read_gpio())
+
         return self._pcf
 
     def _ensure_interrupt_locked(self) -> None:
@@ -169,6 +180,7 @@ class Pcf8575Backend:
             return
 
         interrupt = self._expander.interrupt
+
         if interrupt is None:
             raise GpioConfigError(
                 f"PCF8575 expander '{self._expander.name}' has no interrupt pin configured"
@@ -182,6 +194,7 @@ class Pcf8575Backend:
             pull=interrupt.pull,
             debounce_ms=interrupt.debounce_ms,
         )
+
         self._rpi_backend.setup_input(interrupt_spec)
         self._refresh_port_state_locked()
         self._interrupt_subscription = self._rpi_backend.subscribe(
@@ -194,6 +207,7 @@ class Pcf8575Backend:
     def _did_interrupt(self) -> None:
         with self._lock:
             previous = self._port_state
+
             try:
                 current = self._refresh_port_state_locked()
             except Exception:
@@ -212,6 +226,7 @@ class Pcf8575Backend:
             for pin, callbacks in self._callbacks.items():
                 if changed & (1 << pin) == 0:
                     continue
+
                 pending.append((list(callbacks), self._bit_is_high(current, pin)))
 
         for callbacks, raw_value in pending:
@@ -222,6 +237,7 @@ class Pcf8575Backend:
         pcf = self._ensure_device()
         state = int(pcf.read_gpio()) & 0xFFFF
         self._port_state = state
+
         return state
 
     def _write_latch_locked(self) -> None:
@@ -233,10 +249,12 @@ class Pcf8575Backend:
             self._write_latch |= 1 << pin
         else:
             self._write_latch &= ~(1 << pin)
+
         self._write_latch &= 0xFFFF
 
     def _set_cached_bit_locked(self, pin: int, raw_value: bool) -> None:
         state = self._port_state
+
         if state is None:
             state = self._refresh_port_state_locked()
         if raw_value is True:
@@ -247,6 +265,7 @@ class Pcf8575Backend:
     def _validate_spec(self, spec: GpioPinSpec) -> None:
         if spec.board != "pcf8575":
             raise GpioConfigError(f"GPIO pin '{spec.name}' is not a PCF8575 pin")
+
         if spec.expander != self._expander.name:
             raise GpioConfigError(
                 f"GPIO pin '{spec.name}' is assigned to unknown PCF8575 expander '{spec.expander}'"

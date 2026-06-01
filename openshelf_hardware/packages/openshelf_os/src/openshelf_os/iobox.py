@@ -242,6 +242,7 @@ class IOBox:
 
             raise MotorError(f"Failed to home door: {str(e)}") from e
 
+
     def _handle_curtain_change(self, state: Optional[bool]) -> None:
         previous = self._curtain_state
         self._curtain_state = state

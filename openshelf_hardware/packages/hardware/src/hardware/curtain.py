@@ -36,6 +36,7 @@ class CurtainSensor:
         input_device: DigitalInput | None = None,
     ) -> None:
         self._owned_manager: GpioManager | None = None
+
         if input_device is None:
             self._owned_manager = GpioManager.for_legacy_rpi_input(
                 "curtain",
@@ -43,6 +44,7 @@ class CurtainSensor:
                 inverted=inverted,
                 pull="down",
             )
+
             input_device = self._owned_manager.input("curtain")
 
         self._input = input_device
@@ -52,6 +54,7 @@ class CurtainSensor:
     def read(self) -> bool:
         result = self._input.read()
         self._last_state = result
+
         return result
 
     def subscribe(self, on_change: Callable[[bool], None]) -> GpioSubscription:
