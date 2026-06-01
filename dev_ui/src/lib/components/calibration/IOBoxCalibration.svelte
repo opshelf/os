@@ -991,7 +991,7 @@
 
 <div class="action-buttons home-actions">
 	<button type="button" onclick={didClickHomeToolMotors} disabled={homingDisabled}>
-		{isHoming === true ? 'homing...' : 'home tool motors'}
+		home tool motors
 	</button>
 </div>
 
