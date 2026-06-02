@@ -50,7 +50,7 @@ async def seeded_db() -> AsyncGenerator[None, None]:
                 "users:read", "users:write", "users:delete",
                 "roles:read", "roles:write", "roles:delete",
                 "robot:control",
-                "storage:read", "storage:write", "storage:delete",
+                "storage:read", "storage:write", "storage:delete", "storage:access",
                 "audit:read"
             ],
             "operator": [
@@ -133,7 +133,7 @@ def auth_headers(seeded_db: AsyncGenerator[None, None]) -> dict[str, str]:
         user_id=1,
         email="admin@opshelf.com",
         role="admin",
-        permissions=["users:read", "users:write", "robot:control", "storage:read", "storage:write"],
+        permissions=["users:read", "users:write", "robot:control", "storage:read", "storage:write", "storage:access"],
         access_level=None,
         expires_minutes=60,
     )

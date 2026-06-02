@@ -105,3 +105,36 @@ def test_transform_worker_payload_preserves_axis_telemetry() -> None:
     assert result["robot_status"]["gantry"]["x_axis"]["homed"] == 1
     assert result["robot_status"]["gantry"]["y_axis"]["hard_stopped"] == 1
     assert result["robot_status"]["tool"]["z_axis"]["position"] == 3.25
+
+
+def test_transform_worker_payload_preserves_safety_status() -> None:
+    payload = {
+        "robot_status": {
+            "storage": {"left_module": [], "right_module": []},
+            "state": {"current_cell": None},
+            "cabinet_doors": {
+                "top_closed": False,
+                "bottom_closed": True,
+                "closed": False,
+                "top_open": True,
+                "bottom_open": False,
+                "open": True,
+            },
+            "safety": {
+                "active": True,
+                "motion_blocked": True,
+                "awaiting_ack": True,
+                "can_acknowledge": False,
+                "active_sources": ["cabinet_doors"],
+                "sources": {"cabinet_doors": {"active": True}},
+                "interruption_id": 1,
+                "last_changed_at": "2026-06-01T00:00:00+00:00",
+            },
+        },
+        "error_queue": [],
+    }
+
+    result = _transform_worker_status_payload(payload)
+
+    assert result["robot_status"]["cabinet_doors"]["open"] is True
+    assert result["robot_status"]["safety"]["active_sources"] == ["cabinet_doors"]

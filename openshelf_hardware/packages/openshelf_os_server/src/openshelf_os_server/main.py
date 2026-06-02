@@ -276,6 +276,24 @@ async def _ensure_developer_user() -> None:
 		logger.info("developer_user_created", email="developer@opshelf.com")
 
 
+async def _ensure_default_role_permissions() -> None:
+	async with AsyncSessionLocal() as db:
+		result = await db.execute(select(Role).filter(Role.name == "admin"))
+		admin_role = result.scalar_one_or_none()
+
+		if admin_role is None:
+			return
+
+		permissions = list(admin_role.permissions or [])
+		if "*" in permissions or "storage:access" in permissions:
+			return
+
+		permissions.append("storage:access")
+		admin_role.permissions = permissions
+		await db.commit()
+		logger.info("admin_role_permission_added", permission="storage:access")
+
+
 async def _seed_auth_if_requested() -> None:
 	if os.getenv("RUN_SEED_SCRIPT", "false").lower() not in {"1", "true", "yes"}:
 		return
@@ -391,6 +409,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 		await conn.run_sync(Base.metadata.create_all)
 
 	await _seed_auth_if_requested()
+	await _ensure_default_role_permissions()
 	await _ensure_developer_user()
 	await _apply_mode_transition()
 

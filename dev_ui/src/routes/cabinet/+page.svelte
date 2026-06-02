@@ -78,11 +78,11 @@
 		<tbody>
 			<tr>
 				<td>top closed</td>
-				<td>{doorState.top_closed ? 'no' : 'yes'}</td>
+				<td>{doorState.top_closed ? 'yes' : 'no'}</td>
 			</tr>
 			<tr>
 				<td>bottom closed</td>
-				<td>{doorState.bottom_closed ? 'no' : 'yes'}</td>
+				<td>{doorState.bottom_closed ? 'yes' : 'no'}</td>
 			</tr>
 		</tbody>
 	</table>

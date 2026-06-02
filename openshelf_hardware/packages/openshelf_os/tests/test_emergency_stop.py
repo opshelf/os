@@ -108,7 +108,7 @@ class _DummyMotor:
         return None
 
 
-class _DummyCurtainSafety:
+class _DummyMotionSafetyInterlock:
     def __init__(self):
         self.blocked = False
 
@@ -119,7 +119,11 @@ class _DummyCurtainSafety:
 hardware_module = types.ModuleType("hardware")
 hardware_controller = types.SimpleNamespace(SharedModbusController=_DummySharedModbusController)
 hardware_motor = types.SimpleNamespace(Motor=_DummyMotor, Servo=_DummyMotor, MotorStatus=types.SimpleNamespace, MOTOR_WAIT_TIMEOUT=0)
-hardware_curtain = types.SimpleNamespace(CurtainSafety=_DummyCurtainSafety, CurtainSensor=object, CurtainMonitor=object)
+hardware_curtain = types.SimpleNamespace(
+    MotionSafetyInterlock=_DummyMotionSafetyInterlock,
+    CurtainSensor=object,
+    CurtainMonitor=object,
+)
 hardware_scale = types.SimpleNamespace(Scale=object)
 hardware_toolcam = types.SimpleNamespace(ToolCamera=object)
 hardware_laser = types.SimpleNamespace(LaserSensor=object)
@@ -159,18 +163,21 @@ except Exception:
 
 class MockRobot:
     def __init__(self):
-        self.curtain_paused = False
+        self.safety_paused = False
 
-    def pause_for_curtain(self):
-        self.curtain_paused = True
+    def block_motion_for_safety(self):
+        self.safety_paused = True
 
-    def resume_after_curtain(self):
-        self.curtain_paused = False
+    def release_motion_safety(self):
+        self.safety_paused = False
 
     async def get_status(self):
         return None
 
-    def register_curtain_listener(self, cb):
+    def register_light_curtain_listener(self, cb):
+        pass
+
+    def register_cabinet_door_listener(self, cb):
         pass
 class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
     async def test_emergency_stop_sets_crash_state_and_pauses_curtain(self):
@@ -181,13 +188,13 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
         worker = RobotWorker(robot)
 
         self.assertFalse(worker._is_crashed)
-        self.assertFalse(robot.curtain_paused)
+        self.assertFalse(robot.safety_paused)
 
         await worker.emergency_stop("test reason")
 
         self.assertTrue(worker._is_crashed)
         self.assertEqual(worker._crash_reason, "test reason")
-        self.assertTrue(robot.curtain_paused)
+        self.assertTrue(robot.safety_paused)
 
         RobotWorker._instance = None
 
@@ -204,7 +211,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertLess(elapsed, 0.1)
         self.assertTrue(worker._is_crashed)
-        self.assertTrue(robot.curtain_paused)
+        self.assertTrue(robot.safety_paused)
 
         RobotWorker._instance = None
 
@@ -216,11 +223,11 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
         worker = RobotWorker(robot)
 
         await worker.emergency_stop("test")
-        self.assertTrue(robot.curtain_paused)
+        self.assertTrue(robot.safety_paused)
 
         worker.clear_crash_state()
         self.assertFalse(worker._is_crashed)
-        self.assertFalse(robot.curtain_paused)
+        self.assertFalse(robot.safety_paused)
 
         RobotWorker._instance = None
 
