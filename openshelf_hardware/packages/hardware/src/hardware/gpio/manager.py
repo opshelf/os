@@ -54,25 +54,6 @@ class GpioManager:
 
         return cls(pins, expanders, fake=fake)
 
-    @classmethod
-    def for_legacy_rpi_input(
-        cls,
-        name: str,
-        *,
-        pin: int,
-        inverted: bool = False,
-        pull: str = "down",
-    ) -> "GpioManager":
-        spec = GpioPinSpec(
-            name=name,
-            board="rpi",
-            pin=pin,
-            direction="input",
-            pull=pull,  # type: ignore[arg-type]
-            inverted=inverted,
-        )
-
-        return cls({name: spec})
 
     def has_pin(self, name: str) -> bool:
         return name in self._pins

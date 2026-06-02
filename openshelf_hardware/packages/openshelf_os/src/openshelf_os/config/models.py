@@ -350,8 +350,6 @@ class GpioConfig(BaseModel):
 
 class CurtainConfig(BaseModel):
     enabled: bool = True
-    pin: int = Field(2, ge=0)
-    inverted: bool = False
     poll_interval_s: float = Field(0.01, gt=0)
     door_open_threshold_mm: float = Field(5.0, ge=0)
     door_debounce_s: float = Field(0.0, ge=0)

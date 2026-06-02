@@ -128,16 +128,13 @@ class IOBox:
             self._logger.info("Curtain sensor disabled via config")
             return
 
-        pin = curtain_cfg.pin
         poll_interval = curtain_cfg.poll_interval_s
-        inverted = getattr(curtain_cfg, "inverted", False)
 
-        if self._gpio is not None and self._gpio.has_pin("light_curtain"):
-            curtain_input = self._gpio.input("light_curtain")
-            self._curtain_sensor = CurtainSensor(input_device=curtain_input)
-            pin = curtain_input.pin
-        else:
-            self._curtain_sensor = CurtainSensor(pin=pin, inverted=inverted)
+        if self._gpio is None or self._gpio.has_pin("light_curtain") is False:
+            raise ConfigError("Light curtain requires shared GPIO pin 'light_curtain'")
+
+        curtain_input = self._gpio.input("light_curtain")
+        self._curtain_sensor = CurtainSensor(input_device=curtain_input)
         self._curtain_monitor = CurtainMonitor(
             self._curtain_sensor,
             poll_interval=poll_interval,
@@ -147,7 +144,12 @@ class IOBox:
 
         self._logger.info(
             "Curtain monitor started",
-            extra={"pin": pin, "poll_interval_s": poll_interval, "shared_gpio": self._gpio is not None},
+            extra={
+                "pin": curtain_input.pin,
+                "board": getattr(curtain_input, "board", None),
+                "poll_interval_s": poll_interval,
+                "shared_gpio": True,
+            },
         )
 
     async def _ensure_scale_ready(self) -> None:
@@ -407,12 +409,7 @@ class IOBox:
             except Exception as e:
                 errors.append(f"Curtain monitor stop failed: {str(e)}")
 
-        if self._curtain_sensor is not None:
-            try:
-                self._curtain_sensor.cleanup()
-            except Exception:
-                pass
-        
+
         if errors:
             self._status = IOBoxStatus.ERROR
-            raise IOBoxError("Stop errors: " + "; ".join(errors))  
+            raise IOBoxError("Stop errors: " + "; ".join(errors))

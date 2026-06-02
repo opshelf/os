@@ -31,7 +31,7 @@ def make_robot_config() -> dict[str, object]:
     }
 
 
-def test_robot_gpio_is_opt_in_for_legacy_configs() -> None:
+def test_robot_gpio_is_optional_when_not_configured() -> None:
     robot = Robot.model_validate(make_robot_config())
 
     assert robot.gpio is None
