@@ -24,6 +24,9 @@ class CabinetDoorLock:
     def is_closed(self) -> bool:
         return self.closed_input.read()
 
+    def is_unlocked(self) -> bool:
+        return self.unlock_output.read()
+
 
 class Cabinet:
     def __init__(self, *, gpio: Any = None) -> None:
@@ -122,20 +125,33 @@ class Cabinet:
             "open": top_closed is False or bottom_closed is False,
         }
 
-    def get_status(self) -> dict[str, dict[str, bool]]:
-        return {"doors": self.get_door_state()}
+    def get_lock_state(self) -> dict[str, bool]:
+        door_locks = self._require_door_locks()
+        top_unlocked = door_locks["top"].is_unlocked()
+        bottom_unlocked = door_locks["bottom"].is_unlocked()
+        return {
+            "top_unlocked": top_unlocked,
+            "bottom_unlocked": bottom_unlocked,
+            "unlocked": top_unlocked or bottom_unlocked,
+            "top_locked": top_unlocked is False,
+            "bottom_locked": bottom_unlocked is False,
+            "locked": top_unlocked is False and bottom_unlocked is False,
+        }
 
-    async def lock(self) -> dict[str, bool]:
+    def get_status(self) -> dict[str, dict[str, bool]]:
+        return {"doors": self.get_door_state(), "locks": self.get_lock_state()}
+
+    async def lock(self) -> dict[str, dict[str, bool]]:
         door_locks = self._require_door_locks()
         for door_lock in door_locks.values():
             door_lock.lock()
-        return self.get_door_state()
+        return self.get_status()
 
-    async def unlock(self) -> dict[str, bool]:
+    async def unlock(self) -> dict[str, dict[str, bool]]:
         door_locks = self._require_door_locks()
         for door_lock in door_locks.values():
             door_lock.unlock()
-        return self.get_door_state()
+        return self.get_status()
 
     def _did_change_door_input(self, event: GpioEvent) -> None:
         del event

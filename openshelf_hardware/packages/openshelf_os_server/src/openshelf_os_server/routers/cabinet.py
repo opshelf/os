@@ -25,14 +25,25 @@ class CabinetDoorState(BaseModel):
     open: bool
 
 
+class CabinetLockState(BaseModel):
+    top_unlocked: bool
+    bottom_unlocked: bool
+    unlocked: bool
+    top_locked: bool
+    bottom_locked: bool
+    locked: bool
+
+
 class CabinetLockResponse(BaseModel):
     success: bool
     action: Literal["lock", "unlock"]
     doors: CabinetDoorState
+    locks: CabinetLockState
 
 
 class CabinetStatusResponse(BaseModel):
     doors: CabinetDoorState
+    locks: CabinetLockState
 
 
 async def check_robot_enabled() -> None:
@@ -72,7 +83,10 @@ async def get_cabinet_status(
 ) -> CabinetStatusResponse:
     try:
         cabinet_status = worker._robot._cabinet.get_status()
-        return CabinetStatusResponse(doors=CabinetDoorState(**cabinet_status["doors"]))
+        return CabinetStatusResponse(
+            doors=CabinetDoorState(**cabinet_status["doors"]),
+            locks=CabinetLockState(**cabinet_status["locks"]),
+        )
     except HTTPException:
         raise
     except Exception as exc:
@@ -92,14 +106,15 @@ async def control_cabinet_lock(
         await ensure_laser_auto_calibration_not_running()
         async with manual_motion_guard(f"cabinet_lock:{action}", worker=worker):
             if action == "lock":
-                doors = await worker._robot._cabinet.lock()
+                cabinet_status = await worker._robot._cabinet.lock()
             else:
-                doors = await worker._robot._cabinet.unlock()
+                cabinet_status = await worker._robot._cabinet.unlock()
 
             return CabinetLockResponse(
                 success=True,
                 action=action,
-                doors=CabinetDoorState(**doors),
+                doors=CabinetDoorState(**cabinet_status["doors"]),
+                locks=CabinetLockState(**cabinet_status["locks"]),
             )
     except HTTPException:
         raise
