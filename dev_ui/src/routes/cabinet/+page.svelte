@@ -33,18 +33,18 @@
 		}
 	}
 
-	async function didControlCabinetRelease(action: CabinetLatchAction): Promise<void> {
-		activeAction = action;
+	async function didPulseCabinetRelease(): Promise<void> {
+		activeAction = 'release';
 		error = '';
 		message = '';
 
 		try {
-			const response = await controlCabinetRelease(action);
+			const response = await controlCabinetRelease('release');
 			doorState = response.doors;
 			latchState = response.latches;
-			message = `cabinet ${action} command sent`;
+			message = 'cabinet release pulse complete';
 		} catch (err) {
-			error = err instanceof Error ? err.message : `failed to ${action} cabinet`;
+			error = err instanceof Error ? err.message : 'failed to pulse cabinet release';
 		} finally {
 			activeAction = null;
 		}
@@ -60,17 +60,8 @@
 </svelte:head>
 
 <div class="actions">
-	<button
-		disabled={activeAction !== null || isRefreshing === true}
-		onclick={() => didControlCabinetRelease('passive')}
-	>
-		PASSIVE
-	</button>
-	<button
-		disabled={activeAction !== null || isRefreshing === true}
-		onclick={() => didControlCabinetRelease('release')}
-	>
-		RELEASE
+	<button disabled={activeAction !== null || isRefreshing === true} onclick={didPulseCabinetRelease}>
+		PULSE RELEASE
 	</button>
 	<button disabled={activeAction !== null || isRefreshing === true} onclick={didRefreshStatus}>
 		REFRESH
@@ -95,10 +86,6 @@
 {#if latchState !== null}
 	<table style="margin-top: 1.5em">
 		<tbody>
-			<tr>
-				<td>release output</td>
-				<td>{latchState.released ? 'energized' : 'passive'}</td>
-			</tr>
 			<tr>
 				<td>top engaged sensor</td>
 				<td>{latchState.top_engaged ? 'yes' : 'no'}</td>
