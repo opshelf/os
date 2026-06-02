@@ -4,7 +4,7 @@ import asyncio
 import logging
 from typing import Callable, Optional
 
-from hardware.gpio import DigitalInput, GpioEvent, GpioManager, GpioSubscription
+from hardware.gpio import DigitalInput, GpioEvent, GpioSubscription
 
 logger = logging.getLogger(__name__).getChild("curtain")
 
@@ -29,25 +29,7 @@ class MotionSafetyInterlock:
 
 
 class CurtainSensor:
-    def __init__(
-        self,
-        *,
-        pin: int = 2,
-        inverted: bool = False,
-        input_device: DigitalInput | None = None,
-    ) -> None:
-        self._owned_manager: GpioManager | None = None
-
-        if input_device is None:
-            self._owned_manager = GpioManager.for_legacy_rpi_input(
-                "curtain",
-                pin=pin,
-                inverted=inverted,
-                pull="down",
-            )
-
-            input_device = self._owned_manager.input("curtain")
-
+    def __init__(self, *, input_device: DigitalInput) -> None:
         self._input = input_device
         self.pin = input_device.pin
         self._last_state: Optional[bool] = None
@@ -64,13 +46,6 @@ class CurtainSensor:
             on_change(event.value)
 
         return self._input.subscribe(did_change)
-
-    def cleanup(self) -> None:
-        if self._owned_manager is None:
-            return
-
-        self._owned_manager.close()
-        self._owned_manager = None
 
 
 class CurtainMonitor:
