@@ -26,6 +26,28 @@ def _open_doors():
 	}
 
 
+def _locked_locks():
+	return {
+		"top_unlocked": False,
+		"bottom_unlocked": False,
+		"unlocked": False,
+		"top_locked": True,
+		"bottom_locked": True,
+		"locked": True,
+	}
+
+
+def _unlocked_locks():
+	return {
+		"top_unlocked": True,
+		"bottom_unlocked": True,
+		"unlocked": True,
+		"top_locked": False,
+		"bottom_locked": False,
+		"locked": False,
+	}
+
+
 def _mock_settings():
 	mock = MagicMock()
 	mock.robot.enabled = True
@@ -39,9 +61,15 @@ def _mock_worker():
 	worker.is_safety_blocking = MagicMock(return_value=False)
 	worker._robot = MagicMock()
 	worker._robot._cabinet = MagicMock()
-	worker._robot._cabinet.get_status = MagicMock(return_value={"doors": _closed_doors()})
-	worker._robot._cabinet.lock = AsyncMock(return_value=_closed_doors())
-	worker._robot._cabinet.unlock = AsyncMock(return_value=_open_doors())
+	worker._robot._cabinet.get_status = MagicMock(
+		return_value={"doors": _closed_doors(), "locks": _locked_locks()}
+	)
+	worker._robot._cabinet.lock = AsyncMock(
+		return_value={"doors": _closed_doors(), "locks": _locked_locks()}
+	)
+	worker._robot._cabinet.unlock = AsyncMock(
+		return_value={"doors": _open_doors(), "locks": _unlocked_locks()}
+	)
 	return worker
 
 
@@ -54,7 +82,7 @@ async def test_get_cabinet_status(client: AsyncClient) -> None:
 			response = await client.get("/api/cabinet/status")
 
 	assert response.status_code == 200
-	assert response.json() == {"doors": _closed_doors()}
+	assert response.json() == {"doors": _closed_doors(), "locks": _locked_locks()}
 	worker._robot._cabinet.get_status.assert_called_once()
 
 
@@ -71,6 +99,7 @@ async def test_lock_cabinet(client: AsyncClient) -> None:
 		"success": True,
 		"action": "lock",
 		"doors": _closed_doors(),
+		"locks": _locked_locks(),
 	}
 	worker._robot._cabinet.lock.assert_awaited_once()
 	worker._robot._cabinet.unlock.assert_not_awaited()
@@ -89,6 +118,7 @@ async def test_unlock_cabinet(client: AsyncClient) -> None:
 		"success": True,
 		"action": "unlock",
 		"doors": _open_doors(),
+		"locks": _unlocked_locks(),
 	}
 	worker._robot._cabinet.unlock.assert_awaited_once()
 	worker._robot._cabinet.lock.assert_not_awaited()

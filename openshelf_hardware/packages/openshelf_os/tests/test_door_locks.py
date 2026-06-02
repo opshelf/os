@@ -28,6 +28,28 @@ def _open_doors() -> dict[str, bool]:
 	}
 
 
+def _locked_locks() -> dict[str, bool]:
+	return {
+		"top_unlocked": False,
+		"bottom_unlocked": False,
+		"unlocked": False,
+		"top_locked": True,
+		"bottom_locked": True,
+		"locked": True,
+	}
+
+
+def _unlocked_locks() -> dict[str, bool]:
+	return {
+		"top_unlocked": True,
+		"bottom_unlocked": True,
+		"unlocked": True,
+		"top_locked": False,
+		"bottom_locked": False,
+		"locked": False,
+	}
+
+
 def _door_lock_manager() -> GpioManager:
 	return GpioManager(
 		{
@@ -73,18 +95,18 @@ async def test_cabinet_lock_commands_report_door_closed_sensors() -> None:
 	gpio.set_fake_input("cabinet_top_closed", True)
 	gpio.set_fake_input("cabinet_bot_closed", True)
 
-	closed = await cabinet.lock()
+	locked_status = await cabinet.lock()
 
-	assert closed == _closed_doors()
-	assert cabinet.get_status() == {"doors": closed}
+	assert locked_status == {"doors": _closed_doors(), "locks": _locked_locks()}
+	assert cabinet.get_status() == locked_status
 	assert gpio.output("cabinet_top_unlock").read() is False
 	assert gpio.output("cabinet_bot_unlock").read() is False
 
 	gpio.set_fake_input("cabinet_top_closed", False)
 	gpio.set_fake_input("cabinet_bot_closed", False)
-	open_state = await cabinet.unlock()
+	unlocked_status = await cabinet.unlock()
 
-	assert open_state == _open_doors()
+	assert unlocked_status == {"doors": _open_doors(), "locks": _unlocked_locks()}
 	assert gpio.output("cabinet_top_unlock").read() is True
 	assert gpio.output("cabinet_bot_unlock").read() is True
 
