@@ -161,7 +161,7 @@ class IOBox:
             self._logger.info(
                 "Curtain monitor started",
                 extra={
-                    "name": pin_name,
+                    "pin_name": pin_name,
                     "pin": curtain_input.pin,
                     "board": getattr(curtain_input, "board", None),
                     "poll_interval_s": poll_interval,
