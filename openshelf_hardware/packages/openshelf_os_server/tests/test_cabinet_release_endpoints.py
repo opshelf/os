@@ -26,25 +26,25 @@ def _open_doors():
 	}
 
 
-def _locked_locks():
+def _engaged_latches():
 	return {
-		"top_unlocked": False,
-		"bottom_unlocked": False,
-		"unlocked": False,
-		"top_locked": True,
-		"bottom_locked": True,
-		"locked": True,
+		"top_released": False,
+		"bottom_released": False,
+		"released": False,
+		"top_engaged": True,
+		"bottom_engaged": True,
+		"engaged": True,
 	}
 
 
-def _unlocked_locks():
+def _released_latches():
 	return {
-		"top_unlocked": True,
-		"bottom_unlocked": True,
-		"unlocked": True,
-		"top_locked": False,
-		"bottom_locked": False,
-		"locked": False,
+		"top_released": True,
+		"bottom_released": True,
+		"released": True,
+		"top_engaged": False,
+		"bottom_engaged": False,
+		"engaged": False,
 	}
 
 
@@ -62,13 +62,13 @@ def _mock_worker():
 	worker._robot = MagicMock()
 	worker._robot._cabinet = MagicMock()
 	worker._robot._cabinet.get_status = MagicMock(
-		return_value={"doors": _closed_doors(), "locks": _locked_locks()}
+		return_value={"doors": _closed_doors(), "latches": _engaged_latches()}
 	)
-	worker._robot._cabinet.lock = AsyncMock(
-		return_value={"doors": _closed_doors(), "locks": _locked_locks()}
+	worker._robot._cabinet.set_passive = AsyncMock(
+		return_value={"doors": _closed_doors(), "latches": _engaged_latches()}
 	)
-	worker._robot._cabinet.unlock = AsyncMock(
-		return_value={"doors": _open_doors(), "locks": _unlocked_locks()}
+	worker._robot._cabinet.release = AsyncMock(
+		return_value={"doors": _open_doors(), "latches": _released_latches()}
 	)
 	return worker
 
@@ -82,57 +82,57 @@ async def test_get_cabinet_status(client: AsyncClient) -> None:
 			response = await client.get("/api/cabinet/status")
 
 	assert response.status_code == 200
-	assert response.json() == {"doors": _closed_doors(), "locks": _locked_locks()}
+	assert response.json() == {"doors": _closed_doors(), "latches": _engaged_latches()}
 	worker._robot._cabinet.get_status.assert_called_once()
 
 
 @pytest.mark.anyio
-async def test_lock_cabinet(client: AsyncClient) -> None:
+async def test_set_cabinet_latches_passive(client: AsyncClient) -> None:
 	worker = _mock_worker()
 
 	with patch("openshelf_os_server.routers.cabinet.get_settings", return_value=_mock_settings()):
 		with patch("openshelf_os_server.routers.cabinet.get_robot_worker", return_value=worker):
-			response = await client.post("/api/cabinet/lock?action=lock")
+			response = await client.post("/api/cabinet/release?action=passive")
 
 	assert response.status_code == 200
 	assert response.json() == {
 		"success": True,
-		"action": "lock",
+		"action": "passive",
 		"doors": _closed_doors(),
-		"locks": _locked_locks(),
+		"latches": _engaged_latches(),
 	}
-	worker._robot._cabinet.lock.assert_awaited_once()
-	worker._robot._cabinet.unlock.assert_not_awaited()
+	worker._robot._cabinet.set_passive.assert_awaited_once()
+	worker._robot._cabinet.release.assert_not_awaited()
 
 
 @pytest.mark.anyio
-async def test_unlock_cabinet(client: AsyncClient) -> None:
+async def test_release_cabinet_latches(client: AsyncClient) -> None:
 	worker = _mock_worker()
 
 	with patch("openshelf_os_server.routers.cabinet.get_settings", return_value=_mock_settings()):
 		with patch("openshelf_os_server.routers.cabinet.get_robot_worker", return_value=worker):
-			response = await client.post("/api/cabinet/lock?action=unlock")
+			response = await client.post("/api/cabinet/release?action=release")
 
 	assert response.status_code == 200
 	assert response.json() == {
 		"success": True,
-		"action": "unlock",
+		"action": "release",
 		"doors": _open_doors(),
-		"locks": _unlocked_locks(),
+		"latches": _released_latches(),
 	}
-	worker._robot._cabinet.unlock.assert_awaited_once()
-	worker._robot._cabinet.lock.assert_not_awaited()
+	worker._robot._cabinet.release.assert_awaited_once()
+	worker._robot._cabinet.set_passive.assert_not_awaited()
 
 
 @pytest.mark.anyio
-async def test_unlock_cabinet_rejects_safety_interruption(client: AsyncClient) -> None:
+async def test_release_cabinet_latches_rejects_safety_interruption(client: AsyncClient) -> None:
 	worker = _mock_worker()
 	worker._safety_motion_blocked = True
 
 	with patch("openshelf_os_server.routers.cabinet.get_settings", return_value=_mock_settings()):
 		with patch("openshelf_os_server.routers.cabinet.get_robot_worker", return_value=worker):
-			response = await client.post("/api/cabinet/lock?action=unlock")
+			response = await client.post("/api/cabinet/release?action=release")
 
 	assert response.status_code == 409
 	assert response.json()["detail"]["reason"] == "safety_interruption"
-	worker._robot._cabinet.unlock.assert_not_awaited()
+	worker._robot._cabinet.release.assert_not_awaited()
