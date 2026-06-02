@@ -47,3 +47,5 @@ def test_robot_gpio_empty_object_expands_to_defaults() -> None:
     assert "light_curtain" in robot.gpio.pins
     assert "cabinet_top_closed" in robot.gpio.pins
     assert "cabinet_bot_closed" in robot.gpio.pins
+    assert robot.gpio.pins["cabinet_top_closed"].inverted is False
+    assert robot.gpio.pins["cabinet_bot_closed"].inverted is False
