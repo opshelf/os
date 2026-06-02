@@ -39,11 +39,11 @@ def _engaged_latches() -> dict[str, bool]:
 	}
 
 
-def _released_latches() -> dict[str, bool]:
+def _disengaged_latches() -> dict[str, bool]:
 	return {
-		"top_released": True,
-		"bottom_released": True,
-		"released": True,
+		"top_released": False,
+		"bottom_released": False,
+		"released": False,
 		"top_engaged": False,
 		"bottom_engaged": False,
 		"engaged": False,
@@ -89,9 +89,10 @@ def _door_latch_manager() -> GpioManager:
 
 
 @pytest.mark.asyncio
-async def test_cabinet_latch_commands_report_door_closed_sensors() -> None:
+async def test_cabinet_release_pulses_latches_then_returns_passive() -> None:
 	gpio = _door_latch_manager()
 	cabinet = Cabinet(gpio=gpio)
+	cabinet._release_pulse_s = 0.01
 	gpio.set_fake_input("cabinet_top_closed", True)
 	gpio.set_fake_input("cabinet_bot_closed", True)
 
@@ -104,11 +105,17 @@ async def test_cabinet_latch_commands_report_door_closed_sensors() -> None:
 
 	gpio.set_fake_input("cabinet_top_closed", False)
 	gpio.set_fake_input("cabinet_bot_closed", False)
-	released_status = await cabinet.release()
+	release_task = asyncio.create_task(cabinet.release())
+	await asyncio.sleep(0)
 
-	assert released_status == {"doors": _open_doors(), "latches": _released_latches()}
 	assert gpio.output("cabinet_top_unlock").read() is True
 	assert gpio.output("cabinet_bot_unlock").read() is True
+
+	released_status = await release_task
+
+	assert released_status == {"doors": _open_doors(), "latches": _disengaged_latches()}
+	assert gpio.output("cabinet_top_unlock").read() is False
+	assert gpio.output("cabinet_bot_unlock").read() is False
 
 
 @pytest.mark.asyncio
