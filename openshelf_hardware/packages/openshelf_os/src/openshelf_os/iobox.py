@@ -66,8 +66,9 @@ class IOBox:
         self._scale = Scale(scalecontroller) if self._scale_enabled is True else None
         self._scale_ready = False
         self._printer = None
-        self._curtain_sensor: Optional[CurtainSensor] = None
-        self._curtain_monitor: Optional[CurtainMonitor] = None
+        self._curtain_sensors: list[CurtainSensor] = []
+        self._curtain_monitors: list[CurtainMonitor] = []
+        self._curtain_input_states: dict[str, bool] = {}
         self._curtain_state: Optional[bool] = None
         self._curtain_listener = None
         self._door_open: Optional[bool] = None
@@ -130,27 +131,43 @@ class IOBox:
 
         poll_interval = curtain_cfg.poll_interval_s
 
-        if self._gpio is None or self._gpio.has_pin("light_curtain") is False:
-            raise ConfigError("Light curtain requires shared GPIO pin 'light_curtain'")
+        curtain_pin_names = self._curtain_pin_names()
+        if not curtain_pin_names:
+            raise ConfigError(
+                "Light curtain requires shared GPIO pin 'light_curtain_1' or 'light_curtain_2'"
+            )
 
-        curtain_input = self._gpio.input("light_curtain")
-        self._curtain_sensor = CurtainSensor(input_device=curtain_input)
-        self._curtain_monitor = CurtainMonitor(
-            self._curtain_sensor,
-            poll_interval=poll_interval,
-            on_change=self._handle_curtain_change,
-        )
-        await self._curtain_monitor.start()
+        assert self._gpio is not None
 
-        self._logger.info(
-            "Curtain monitor started",
-            extra={
-                "pin": curtain_input.pin,
-                "board": getattr(curtain_input, "board", None),
-                "poll_interval_s": poll_interval,
-                "shared_gpio": True,
-            },
-        )
+        self._curtain_sensors = []
+        self._curtain_monitors = []
+        self._curtain_input_states = {}
+
+        for pin_name in curtain_pin_names:
+            curtain_input = self._gpio.input(pin_name)
+            curtain_sensor = CurtainSensor(input_device=curtain_input)
+            curtain_monitor = CurtainMonitor(
+                curtain_sensor,
+                poll_interval=poll_interval,
+                on_change=lambda state, pin_name=pin_name: self._did_curtain_input_change(
+                    pin_name,
+                    state,
+                ),
+            )
+            self._curtain_sensors.append(curtain_sensor)
+            self._curtain_monitors.append(curtain_monitor)
+            await curtain_monitor.start()
+
+            self._logger.info(
+                "Curtain monitor started",
+                extra={
+                    "name": pin_name,
+                    "pin": curtain_input.pin,
+                    "board": getattr(curtain_input, "board", None),
+                    "poll_interval_s": poll_interval,
+                    "shared_gpio": True,
+                },
+            )
 
     async def _ensure_scale_ready(self) -> None:
         if self._scale_enabled is False:
@@ -394,21 +411,37 @@ class IOBox:
             except Exception as exc:
                 self._logger.warning("Curtain listener failed: %s", exc)
 
+    def _curtain_pin_names(self) -> list[str]:
+        if self._gpio is None:
+            return []
+
+        return [
+            pin_name
+            for pin_name in ("light_curtain_1", "light_curtain_2")
+            if self._gpio.has_pin(pin_name) is True
+        ]
+
+    def _did_curtain_input_change(self, input_name: str, state: bool) -> None:
+        self._curtain_input_states[input_name] = state
+        self._handle_curtain_change(any(self._curtain_input_states.values()))
+
     async def stop(self) -> None:
         errors = []
-        
+
         if self._md is not None:
             try:
                 await self._md.stop()
             except Exception as e:
                 errors.append(f"Door motor stop failed: {str(e)}")
 
-        if self._curtain_monitor is not None:
+        for curtain_monitor in list(self._curtain_monitors):
             try:
-                await self._curtain_monitor.stop()
+                await curtain_monitor.stop()
             except Exception as e:
                 errors.append(f"Curtain monitor stop failed: {str(e)}")
 
+        self._curtain_monitors = []
+        self._curtain_sensors = []
 
         if errors:
             self._status = IOBoxStatus.ERROR
