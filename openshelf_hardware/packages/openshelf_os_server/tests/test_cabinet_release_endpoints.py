@@ -37,11 +37,11 @@ def _engaged_latches():
 	}
 
 
-def _released_latches():
+def _disengaged_latches():
 	return {
-		"top_released": True,
-		"bottom_released": True,
-		"released": True,
+		"top_released": False,
+		"bottom_released": False,
+		"released": False,
 		"top_engaged": False,
 		"bottom_engaged": False,
 		"engaged": False,
@@ -68,7 +68,7 @@ def _mock_worker():
 		return_value={"doors": _closed_doors(), "latches": _engaged_latches()}
 	)
 	worker._robot._cabinet.release = AsyncMock(
-		return_value={"doors": _open_doors(), "latches": _released_latches()}
+		return_value={"doors": _open_doors(), "latches": _disengaged_latches()}
 	)
 	return worker
 
@@ -118,7 +118,7 @@ async def test_release_cabinet_latches(client: AsyncClient) -> None:
 		"success": True,
 		"action": "release",
 		"doors": _open_doors(),
-		"latches": _released_latches(),
+		"latches": _disengaged_latches(),
 	}
 	worker._robot._cabinet.release.assert_awaited_once()
 	worker._robot._cabinet.set_passive.assert_not_awaited()

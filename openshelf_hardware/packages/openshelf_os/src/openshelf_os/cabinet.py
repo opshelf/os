@@ -37,6 +37,7 @@ class Cabinet:
         self._door_subscriptions: list[GpioSubscription] = []
         self._door_monitor_task: asyncio.Task | None = None
         self._door_poll_interval_s = 0.05
+        self._release_pulse_s = 0.75
         self._logger = logging.getLogger(__name__).getChild("Cabinet")
 
     async def configure(self) -> None:
@@ -153,6 +154,11 @@ class Cabinet:
         door_latches = self._require_door_latches()
         for door_latch in door_latches.values():
             door_latch.release()
+        try:
+            await asyncio.sleep(self._release_pulse_s)
+        finally:
+            for door_latch in door_latches.values():
+                door_latch.set_passive()
         return self.get_status()
 
     def _did_change_door_input(self, event: GpioEvent) -> None:
