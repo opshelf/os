@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from hardware.exceptions import GpioConfigError
-from hardware.gpio import DoorLock, GpioManager
+from hardware.gpio import DoorRelease, GpioManager
 from hardware.gpio.fake import FakeGpioBackend
 from hardware.gpio.pcf8575 import Pcf8575Backend
 from hardware.gpio.types import GpioExpanderSpec, GpioInterruptSpec, GpioPinSpec
@@ -195,7 +195,7 @@ def test_pcf8575_interrupt_diffs_changed_pin() -> None:
     assert events == [False]
 
 
-def test_door_lock_uses_unlock_output_and_engaged_sensor() -> None:
+def test_door_release_uses_unlock_output_and_engaged_sensor() -> None:
     manager = GpioManager(
         {
             "cabinet_unlock": GpioPinSpec(
@@ -206,8 +206,8 @@ def test_door_lock_uses_unlock_output_and_engaged_sensor() -> None:
                 initial=False,
                 shutdown=False,
             ),
-            "cabinet_locked": GpioPinSpec(
-                name="cabinet_locked",
+            "cabinet_engaged": GpioPinSpec(
+                name="cabinet_engaged",
                 board="rpi",
                 pin=17,
                 direction="input",
@@ -217,18 +217,18 @@ def test_door_lock_uses_unlock_output_and_engaged_sensor() -> None:
         fake=True,
     )
     unlock = manager.output("cabinet_unlock")
-    locked = manager.input("cabinet_locked")
-    lock = DoorLock(unlock_output=unlock, engaged_input=locked)
+    engaged = manager.input("cabinet_engaged")
+    release = DoorRelease(unlock_output=unlock, engaged_input=engaged)
 
-    manager.set_fake_input("cabinet_locked", True)
+    manager.set_fake_input("cabinet_engaged", True)
 
-    assert lock.is_locked() is True
+    assert release.is_engaged() is True
     assert unlock.read() is False
 
-    lock.unlock()
+    release.release()
 
     assert unlock.read() is True
 
-    lock.lock()
+    release.set_passive()
 
     assert unlock.read() is False
