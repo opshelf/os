@@ -85,6 +85,80 @@ def _persist_reference_apply_metadata(analysis: Any, reference_apply: dict[str, 
     run_parameters_path.write_text(json.dumps(run_parameters_document, indent="\t"), encoding="utf-8")
 
 
+def _get_shelf_calibration_center_y(shelf: Any) -> float | None:
+    y_values = [
+        float(cell.calibration_point.y)
+        for cell in shelf.cells
+        if cell.calibration_point is not None
+    ]
+
+    if len(y_values) == 0:
+        return None
+
+    return float(median(y_values))
+
+
+def _get_side_shelves(grid: Any, side: StorageModuleSide) -> list[Any]:
+    if hasattr(grid, "get_side") is True:
+        return list(grid.get_side(side))
+
+    return list(getattr(grid, side.value, []))
+
+
+def _build_single_shelf_scan_bounds(
+    *,
+    grid: Any,
+    side: StorageModuleSide,
+    target_center_y_mm: float,
+    base_bounds: ScanBounds,
+    local_y_margin_mm: float,
+    shelf_idx: int,
+    scan_config: Any,
+) -> ScanBounds:
+    y_min = max(base_bounds.y_min, target_center_y_mm - local_y_margin_mm)
+    y_max = min(base_bounds.y_max, target_center_y_mm + local_y_margin_mm)
+    hole_probe_y_offsets_mm = laser_module.get_shelf_hole_probe_y_offsets_mm(scan_config)
+    reference_offset_mm = float(hole_probe_y_offsets_mm[0])
+    laser_offset_y_mm = float(getattr(scan_config, "laser_offset_y_mm", 0.0))
+    target_edge_y_mm = target_center_y_mm + laser_offset_y_mm - reference_offset_mm
+    shelf_edges: list[tuple[int, float]] = []
+
+    for shelf in _get_side_shelves(grid, side):
+        center_y_mm = _get_shelf_calibration_center_y(shelf)
+
+        if center_y_mm is None:
+            continue
+
+        edge_y_mm = center_y_mm + laser_offset_y_mm - reference_offset_mm
+        shelf_edges.append((int(shelf.shelf_idx), edge_y_mm))
+
+    previous_edges = [
+        edge_y_mm
+        for current_shelf_idx, edge_y_mm in shelf_edges
+        if current_shelf_idx != shelf_idx and edge_y_mm < target_edge_y_mm
+    ]
+    next_edges = [
+        edge_y_mm
+        for current_shelf_idx, edge_y_mm in shelf_edges
+        if current_shelf_idx != shelf_idx and edge_y_mm > target_edge_y_mm
+    ]
+
+    if len(previous_edges) > 0:
+        previous_edge_y_mm = max(previous_edges)
+        y_min = max(y_min, (previous_edge_y_mm + target_edge_y_mm) / 2.0 + reference_offset_mm)
+
+    if len(next_edges) > 0:
+        next_edge_y_mm = min(next_edges)
+        y_max = min(y_max, (target_edge_y_mm + next_edge_y_mm) / 2.0 + reference_offset_mm)
+
+    return ScanBounds(
+        x_min=base_bounds.x_min,
+        x_max=base_bounds.x_max,
+        y_min=y_min,
+        y_max=y_max,
+    )
+
+
 class ScopeRunnerMixin:
     async def _run_requested_scope(
         self,
@@ -342,27 +416,25 @@ class ScopeRunnerMixin:
             side=side,
             shelf_idx=shelf_idx,
         )
-        target_cell_y_values = [
-            float(cell.calibration_point.y)
-            for cell in target_shelf.cells
-            if cell.calibration_point is not None
-        ]
+        target_center_y_mm = _get_shelf_calibration_center_y(target_shelf)
 
-        if len(target_cell_y_values) == 0:
+        if target_center_y_mm is None:
             raise ValueError(f"Shelf {shelf_idx} has no calibration points on {side.value}")
 
-        target_center_y_mm = float(median(target_cell_y_values))
         local_y_margin_mm = max(
             80.0,
             float(scan_config.expected_hole_height_mm)
             + max(float(offset_mm) for offset_mm in laser_module.get_shelf_hole_probe_y_offsets_mm(scan_config))
             + 30.0,
         )
-        local_bounds = ScanBounds(
-            x_min=bounds.x_min,
-            x_max=bounds.x_max,
-            y_min=max(bounds.y_min, target_center_y_mm - local_y_margin_mm),
-            y_max=min(bounds.y_max, target_center_y_mm + local_y_margin_mm),
+        local_bounds = _build_single_shelf_scan_bounds(
+            grid=grid,
+            side=side,
+            target_center_y_mm=target_center_y_mm,
+            base_bounds=bounds,
+            local_y_margin_mm=local_y_margin_mm,
+            shelf_idx=shelf_idx,
+            scan_config=scan_config,
         )
         xy_reference_detected_cell, z_reference_wall_depth_mm = await self._run_partial_reference_scans(
             worker,
