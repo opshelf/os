@@ -28,29 +28,29 @@ def _open_doors() -> dict[str, bool]:
 	}
 
 
-def _locked_locks() -> dict[str, bool]:
+def _engaged_latches() -> dict[str, bool]:
 	return {
-		"top_unlocked": False,
-		"bottom_unlocked": False,
-		"unlocked": False,
-		"top_locked": True,
-		"bottom_locked": True,
-		"locked": True,
+		"top_released": False,
+		"bottom_released": False,
+		"released": False,
+		"top_engaged": True,
+		"bottom_engaged": True,
+		"engaged": True,
 	}
 
 
-def _unlocked_locks() -> dict[str, bool]:
+def _released_latches() -> dict[str, bool]:
 	return {
-		"top_unlocked": True,
-		"bottom_unlocked": True,
-		"unlocked": True,
-		"top_locked": False,
-		"bottom_locked": False,
-		"locked": False,
+		"top_released": True,
+		"bottom_released": True,
+		"released": True,
+		"top_engaged": False,
+		"bottom_engaged": False,
+		"engaged": False,
 	}
 
 
-def _door_lock_manager() -> GpioManager:
+def _door_latch_manager() -> GpioManager:
 	return GpioManager(
 		{
 			"cabinet_top_unlock": GpioPinSpec(
@@ -89,31 +89,31 @@ def _door_lock_manager() -> GpioManager:
 
 
 @pytest.mark.asyncio
-async def test_cabinet_lock_commands_report_door_closed_sensors() -> None:
-	gpio = _door_lock_manager()
+async def test_cabinet_latch_commands_report_door_closed_sensors() -> None:
+	gpio = _door_latch_manager()
 	cabinet = Cabinet(gpio=gpio)
 	gpio.set_fake_input("cabinet_top_closed", True)
 	gpio.set_fake_input("cabinet_bot_closed", True)
 
-	locked_status = await cabinet.lock()
+	passive_status = await cabinet.set_passive()
 
-	assert locked_status == {"doors": _closed_doors(), "locks": _locked_locks()}
-	assert cabinet.get_status() == locked_status
+	assert passive_status == {"doors": _closed_doors(), "latches": _engaged_latches()}
+	assert cabinet.get_status() == passive_status
 	assert gpio.output("cabinet_top_unlock").read() is False
 	assert gpio.output("cabinet_bot_unlock").read() is False
 
 	gpio.set_fake_input("cabinet_top_closed", False)
 	gpio.set_fake_input("cabinet_bot_closed", False)
-	unlocked_status = await cabinet.unlock()
+	released_status = await cabinet.release()
 
-	assert unlocked_status == {"doors": _open_doors(), "locks": _unlocked_locks()}
+	assert released_status == {"doors": _open_doors(), "latches": _released_latches()}
 	assert gpio.output("cabinet_top_unlock").read() is True
 	assert gpio.output("cabinet_bot_unlock").read() is True
 
 
 @pytest.mark.asyncio
 async def test_cabinet_door_listener_receives_state_changes() -> None:
-	gpio = _door_lock_manager()
+	gpio = _door_latch_manager()
 	cabinet = Cabinet(gpio=gpio)
 	states: list[dict[str, bool]] = []
 

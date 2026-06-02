@@ -1,4 +1,4 @@
-from hardware.gpio.door_lock import DoorLock
+from hardware.gpio.door_release import DoorRelease
 from hardware.gpio.fake import FakeGpioBackend
 from hardware.gpio.manager import GpioManager
 from hardware.gpio.pcf8575 import Pcf8575Backend
@@ -16,7 +16,7 @@ from hardware.gpio.types import (
 __all__ = [
     "DigitalInput",
     "DigitalOutput",
-    "DoorLock",
+    "DoorRelease",
     "FakeGpioBackend",
     "GpioEvent",
     "GpioExpanderSpec",
