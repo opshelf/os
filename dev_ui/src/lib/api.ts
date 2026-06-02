@@ -805,7 +805,7 @@ export async function controlDoor(action: DoorAction): Promise<{ success: boolea
 	});
 }
 
-export type CabinetLockAction = 'lock' | 'unlock';
+export type CabinetLatchAction = 'passive' | 'release';
 
 export interface CabinetDoorState {
 	top_closed: boolean;
@@ -816,22 +816,35 @@ export interface CabinetDoorState {
 	open: boolean;
 }
 
-export interface CabinetLockResponse {
+export interface CabinetLatchState {
+	top_released: boolean;
+	bottom_released: boolean;
+	released: boolean;
+	top_engaged: boolean;
+	bottom_engaged: boolean;
+	engaged: boolean;
+}
+
+export interface CabinetReleaseResponse {
 	success: boolean;
-	action: CabinetLockAction;
+	action: CabinetLatchAction;
 	doors: CabinetDoorState;
+	latches: CabinetLatchState;
 }
 
 export interface CabinetStatusResponse {
 	doors: CabinetDoorState;
+	latches: CabinetLatchState;
 }
 
 export async function getCabinetStatus(): Promise<CabinetStatusResponse> {
 	return apiFetch<CabinetStatusResponse>('/cabinet/status');
 }
 
-export async function controlCabinetLock(action: CabinetLockAction): Promise<CabinetLockResponse> {
-	return apiFetch<CabinetLockResponse>(`/cabinet/lock?action=${action}`, {
+export async function controlCabinetRelease(
+	action: CabinetLatchAction
+): Promise<CabinetReleaseResponse> {
+	return apiFetch<CabinetReleaseResponse>(`/cabinet/release?action=${action}`, {
 		method: 'POST'
 	});
 }
