@@ -49,21 +49,16 @@ async def seeded_db() -> AsyncGenerator[None, None]:
             "admin": [
                 "users:read", "users:write", "users:delete",
                 "roles:read", "roles:write", "roles:delete",
-                "robot:control", "robot:read",
-                "gantry:control", "gantry:read",
-                "tool:control", "tool:read",
+                "robot:control",
                 "storage:read", "storage:write", "storage:delete",
-                "scanner:read", "scanner:control",
-                "workstation:control", "workstation:read",
                 "audit:read"
             ],
             "operator": [
                 "users:read",
-                "workstation:read", "workstation:write",
-                "robot:read", "robot:write",
+                "storage:read",
             ],
             "viewer": [
-                "workstation:read"
+                "storage:read"
             ],
         }
         for name, perms in roles.items():
