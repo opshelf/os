@@ -25,25 +25,25 @@ class CabinetDoorState(BaseModel):
     open: bool
 
 
-class CabinetLockState(BaseModel):
-    top_unlocked: bool
-    bottom_unlocked: bool
-    unlocked: bool
-    top_locked: bool
-    bottom_locked: bool
-    locked: bool
+class CabinetLatchState(BaseModel):
+    top_released: bool
+    bottom_released: bool
+    released: bool
+    top_engaged: bool
+    bottom_engaged: bool
+    engaged: bool
 
 
-class CabinetLockResponse(BaseModel):
+class CabinetReleaseResponse(BaseModel):
     success: bool
-    action: Literal["lock", "unlock"]
+    action: Literal["passive", "release"]
     doors: CabinetDoorState
-    locks: CabinetLockState
+    latches: CabinetLatchState
 
 
 class CabinetStatusResponse(BaseModel):
     doors: CabinetDoorState
-    locks: CabinetLockState
+    latches: CabinetLatchState
 
 
 async def check_robot_enabled() -> None:
@@ -85,7 +85,7 @@ async def get_cabinet_status(
         cabinet_status = worker._robot._cabinet.get_status()
         return CabinetStatusResponse(
             doors=CabinetDoorState(**cabinet_status["doors"]),
-            locks=CabinetLockState(**cabinet_status["locks"]),
+            latches=CabinetLatchState(**cabinet_status["latches"]),
         )
     except HTTPException:
         raise
@@ -97,33 +97,33 @@ async def get_cabinet_status(
         ) from exc
 
 
-@router.post("/lock", dependencies=[Depends(require_permissions("storage:access")), Depends(check_robot_enabled)])
-async def control_cabinet_lock(
-    action: Literal["lock", "unlock"],
+@router.post("/release", dependencies=[Depends(require_permissions("storage:access")), Depends(check_robot_enabled)])
+async def control_cabinet_release(
+    action: Literal["passive", "release"],
     worker: RobotWorker = Depends(get_robot_worker_or_error),
-) -> CabinetLockResponse:
+) -> CabinetReleaseResponse:
     try:
         await ensure_laser_auto_calibration_not_running()
-        async with manual_motion_guard(f"cabinet_lock:{action}", worker=worker):
-            if action == "lock":
-                cabinet_status = await worker._robot._cabinet.lock()
+        async with manual_motion_guard(f"cabinet_release:{action}", worker=worker):
+            if action == "passive":
+                cabinet_status = await worker._robot._cabinet.set_passive()
             else:
-                cabinet_status = await worker._robot._cabinet.unlock()
+                cabinet_status = await worker._robot._cabinet.release()
 
-            return CabinetLockResponse(
+            return CabinetReleaseResponse(
                 success=True,
                 action=action,
                 doors=CabinetDoorState(**cabinet_status["doors"]),
-                locks=CabinetLockState(**cabinet_status["locks"]),
+                latches=CabinetLatchState(**cabinet_status["latches"]),
             )
     except HTTPException:
         raise
     except Exception as exc:
-        logging.error("Cabinet lock control failed: %s", exc)
+        logging.error("Cabinet release control failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={
-                "message": f"Cabinet lock {action} failed: {exc}",
-                "code": "cabinet_lock_control_failed",
+                "message": f"Cabinet release {action} failed: {exc}",
+                "code": "cabinet_release_control_failed",
             },
         ) from exc
