@@ -52,7 +52,20 @@ def ensure_robot_available_for_manual_motion(worker) -> None:
 	current_command = worker_state.get("_current_command")
 	is_demo_cycling = worker_state.get("_demo_cycling", False)
 	has_pending_commands = _has_pending_commands(worker_state)
+	is_safety_blocking = (
+		bool(worker_state.get("_safety_motion_blocked"))
+		or bool(worker_state.get("_awaiting_safety_ack"))
+		or bool(worker_state.get("_safety_active_sources"))
+	)
 
+	if is_safety_blocking is True:
+		raise HTTPException(
+			status_code=status.HTTP_409_CONFLICT,
+			detail=_conflict_detail(
+				"Robot is paused by a safety interruption",
+				reason="safety_interruption",
+			),
+		)
 	if current_command is not None:
 		raise HTTPException(
 			status_code=status.HTTP_409_CONFLICT,

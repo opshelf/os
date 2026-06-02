@@ -9,7 +9,7 @@ from hardware.gpio import DigitalInput, GpioEvent, GpioManager, GpioSubscription
 logger = logging.getLogger(__name__).getChild("curtain")
 
 
-class CurtainSafety:
+class MotionSafetyInterlock:
     def __init__(self) -> None:
         self._clear = asyncio.Event()
         self._clear.set()
@@ -25,6 +25,7 @@ class CurtainSafety:
 
     async def wait_clear(self) -> None:
         await self._clear.wait()
+
 
 
 class CurtainSensor:

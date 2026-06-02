@@ -186,7 +186,7 @@ class _DummyScale:
         return None
 
 
-class _DummyCurtainSafety:
+class _DummyMotionSafetyInterlock:
     def __init__(self):
         self._clear = asyncio.Event()
         self.blocked = False
@@ -211,7 +211,7 @@ hardware_motor.Servo = _DummyMotor
 hardware_motor.MotorStatus = types.SimpleNamespace
 hardware_motor.MOTOR_WAIT_TIMEOUT = 0
 hardware_curtain = types.SimpleNamespace(
-    CurtainSafety=_DummyCurtainSafety,
+    MotionSafetyInterlock=_DummyMotionSafetyInterlock,
     CurtainSensor=_DummyCurtainSensor,
     CurtainMonitor=_DummyCurtainMonitor,
 )
@@ -257,20 +257,41 @@ from openshelf_os.robot import Robot
 
 class FakeRobot:
     def __init__(self) -> None:
+        self._curtain_state = False
         self._door_state = False
+        self._cabinet_door_state = {
+            "top_closed": True,
+            "bottom_closed": True,
+            "closed": True,
+            "top_open": False,
+            "bottom_open": False,
+            "open": False,
+        }
         self.pause_calls = 0
         self.resume_calls = 0
+
+    def set_curtain_state(self, state):
+        self._curtain_state = state
 
     def set_door_state(self, state):
         self._door_state = state
 
+    def set_cabinet_door_state(self, state):
+        self._cabinet_door_state = state
+
+    def get_curtain_state(self):
+        return self._curtain_state
+
     async def refresh_door_state(self):
         return self._door_state
 
-    def pause_for_curtain(self):
+    def get_cabinet_door_state(self):
+        return self._cabinet_door_state
+
+    def block_motion_for_safety(self):
         self.pause_calls += 1
 
-    def resume_after_curtain(self):
+    def release_motion_safety(self):
         self.resume_calls += 1
 
 
@@ -279,70 +300,119 @@ class CurtainGuardTests(unittest.TestCase):
         self.robot = FakeRobot()
         self.worker = RobotWorker(self.robot)
 
+    def test_light_curtain_requires_open_io_door(self):
+        self.robot.set_curtain_state(True)
+        self.robot.set_door_state(False)
+
+        asyncio.run(self.worker._evaluate_safety_guard())
+
+        self.assertFalse(self.worker.get_safety_status()["active"])
+        self.assertEqual(self.robot.pause_calls, 0)
+
     def test_guard_blocks_when_curtain_and_door_open(self):
-        self.worker._curtain_blocked = True
+        self.robot.set_curtain_state(True)
         self.robot.set_door_state(True)
 
-        asyncio.run(self.worker._evaluate_curtain_guard())
+        asyncio.run(self.worker._evaluate_safety_guard())
 
-        self.assertTrue(self.worker._curtain_guard_active)
+        safety = self.worker.get_safety_status()
+        self.assertTrue(safety["active"])
+        self.assertEqual(safety["active_sources"], ["light_curtain"])
+        self.assertTrue(safety["awaiting_ack"])
         self.assertEqual(self.robot.pause_calls, 1)
         self.assertEqual(self.robot.resume_calls, 0)
 
-    def test_guard_blocks_when_door_unknown(self):
-        self.worker._curtain_blocked = True
-        self.robot.set_door_state(None)
-
-        asyncio.run(self.worker._evaluate_curtain_guard())
-
-        self.assertFalse(self.worker._curtain_guard_active)
-        self.assertEqual(self.robot.pause_calls, 0)
-
-    def test_guard_resumes_when_curtain_clears(self):
-        self.worker._curtain_blocked = True
+    def test_guard_waits_for_ack_after_interruption_clears(self):
+        self.robot.set_curtain_state(True)
         self.robot.set_door_state(True)
-        asyncio.run(self.worker._evaluate_curtain_guard())
+        asyncio.run(self.worker._evaluate_safety_guard())
 
-        self.worker._curtain_blocked = False
-        asyncio.run(self.worker._evaluate_curtain_guard())
+        self.robot.set_curtain_state(False)
+        asyncio.run(self.worker._evaluate_safety_guard())
 
-        self.assertFalse(self.worker._curtain_guard_active)
+        safety = self.worker.get_safety_status()
+        self.assertFalse(safety["active"])
+        self.assertTrue(safety["motion_blocked"])
+        self.assertTrue(safety["awaiting_ack"])
+        self.assertEqual(self.robot.resume_calls, 0)
+
+        result = asyncio.run(self.worker.acknowledge_safety_guard())
+
+        self.assertTrue(result["accepted"])
+        self.assertFalse(self.worker.get_safety_status()["motion_blocked"])
         self.assertEqual(self.robot.resume_calls, 1)
 
-    def test_demo_cycling_skips_ack(self):
-        self.worker._demo_cycling = True
-        self.worker._curtain_blocked = True
-        self.robot.set_door_state(True)
-        asyncio.run(self.worker._evaluate_curtain_guard())
+    def test_cabinet_door_open_blocks_without_light_curtain(self):
+        self.robot.set_curtain_state(False)
+        self.robot.set_door_state(False)
+        self.robot.set_cabinet_door_state(
+            {
+                "top_closed": False,
+                "bottom_closed": True,
+                "closed": False,
+                "top_open": True,
+                "bottom_open": False,
+                "open": True,
+            }
+        )
 
-        self.assertTrue(self.worker._curtain_guard_active)
+        asyncio.run(self.worker._evaluate_safety_guard())
+
+        safety = self.worker.get_safety_status()
+        self.assertTrue(safety["active"])
+        self.assertEqual(safety["active_sources"], ["cabinet_doors"])
         self.assertEqual(self.robot.pause_calls, 1)
-        self.assertFalse(self.worker._awaiting_curtain_ack)
 
-        self.worker._curtain_blocked = False
-        asyncio.run(self.worker._evaluate_curtain_guard())
-
-        self.assertFalse(self.worker._curtain_guard_active)
-        self.assertEqual(self.robot.resume_calls, 1)
-        self.assertFalse(self.worker._awaiting_curtain_ack)
-
-    def test_demo_cycling_off_requires_ack(self):
-        self.worker._demo_cycling = False
-        self.worker._curtain_blocked = True
+    def test_overlapping_sources_require_all_clear_before_ack(self):
+        self.robot.set_curtain_state(True)
         self.robot.set_door_state(True)
-        asyncio.run(self.worker._evaluate_curtain_guard())
+        self.robot.set_cabinet_door_state(
+            {
+                "top_closed": False,
+                "bottom_closed": True,
+                "closed": False,
+                "top_open": True,
+                "bottom_open": False,
+                "open": True,
+            }
+        )
+        asyncio.run(self.worker._evaluate_safety_guard())
 
-        self.assertTrue(self.worker._awaiting_curtain_ack)
+        safety = self.worker.get_safety_status()
+        self.assertEqual(safety["active_sources"], ["light_curtain", "cabinet_doors"])
+
+        self.robot.set_curtain_state(False)
+        asyncio.run(self.worker._evaluate_safety_guard())
+        result = asyncio.run(self.worker.acknowledge_safety_guard())
+
+        self.assertFalse(result["accepted"])
+        self.assertEqual(self.worker.get_safety_status()["active_sources"], ["cabinet_doors"])
+        self.assertEqual(self.robot.resume_calls, 0)
+
+        self.robot.set_cabinet_door_state(
+            {
+                "top_closed": True,
+                "bottom_closed": True,
+                "closed": True,
+                "top_open": False,
+                "bottom_open": False,
+                "open": False,
+            }
+        )
+        result = asyncio.run(self.worker.acknowledge_safety_guard())
+
+        self.assertTrue(result["accepted"])
+        self.assertEqual(self.robot.resume_calls, 1)
 
 
 class RobotCurtainPauseTests(unittest.TestCase):
     def setUp(self) -> None:
-        safety = _DummyCurtainSafety()
+        safety = _DummyMotionSafetyInterlock()
         stage = _DummyMotor(safety=safety)
         rotate = _DummyMotor(safety=safety)
 
         robot = Robot.__new__(Robot)
-        robot._curtain_safety = safety
+        robot._motion_safety = safety
         robot._tool = None
         robot._io = None
         robot._logger = logging.getLogger(__name__).getChild("robot.test")
@@ -352,12 +422,12 @@ class RobotCurtainPauseTests(unittest.TestCase):
         self.rotate = rotate
 
     def test_pause_blocks_safety(self):
-        self.robot.pause_for_curtain()
+        self.robot.block_motion_for_safety()
         self.assertTrue(self.safety.blocked)
 
     def test_resume_unblocks_safety(self):
-        self.robot.pause_for_curtain()
-        self.robot.resume_after_curtain()
+        self.robot.block_motion_for_safety()
+        self.robot.release_motion_safety()
         self.assertFalse(self.safety.blocked)
 
     def test_stage_move_waits_for_curtain_resume(self):
@@ -365,9 +435,9 @@ class RobotCurtainPauseTests(unittest.TestCase):
             self.safety.unblock()
             move_task = asyncio.create_task(self.stage.move_to_position(5))
             await asyncio.sleep(0)
-            self.robot.pause_for_curtain()
+            self.robot.block_motion_for_safety()
             await asyncio.sleep(0)
-            self.robot.resume_after_curtain()
+            self.robot.release_motion_safety()
             await move_task
 
         asyncio.run(run_sequence())

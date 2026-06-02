@@ -27,7 +27,7 @@ DEFAULT_ROLES = [
 			"users:read", "users:write", "users:delete",
 			"roles:read", "roles:write", "roles:delete",
 			"robot:control",
-			"storage:read", "storage:write", "storage:delete",
+			"storage:read", "storage:write", "storage:delete", "storage:access",
 			"printer:print",
 			"audit:read"
 		]

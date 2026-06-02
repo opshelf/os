@@ -1,3 +1,4 @@
+import asyncio
 from hardware.gpio import GpioManager
 from hardware.gpio.types import GpioPinSpec
 from openshelf_os.cabinet import Cabinet
@@ -5,9 +6,29 @@ from openshelf_os.cabinet import Cabinet
 import pytest
 
 
-def _door_lock_manager(*, legacy_sensor_names: bool = False) -> GpioManager:
-	top_closed_name = "cabinet_top_locked" if legacy_sensor_names is True else "cabinet_top_closed"
-	bottom_closed_name = "cabinet_bot_locked" if legacy_sensor_names is True else "cabinet_bot_closed"
+def _closed_doors() -> dict[str, bool]:
+	return {
+		"top_closed": True,
+		"bottom_closed": True,
+		"closed": True,
+		"top_open": False,
+		"bottom_open": False,
+		"open": False,
+	}
+
+
+def _open_doors() -> dict[str, bool]:
+	return {
+		"top_closed": False,
+		"bottom_closed": False,
+		"closed": False,
+		"top_open": True,
+		"bottom_open": True,
+		"open": True,
+	}
+
+
+def _door_lock_manager() -> GpioManager:
 	return GpioManager(
 		{
 			"cabinet_top_unlock": GpioPinSpec(
@@ -26,15 +47,15 @@ def _door_lock_manager(*, legacy_sensor_names: bool = False) -> GpioManager:
 				initial=False,
 				shutdown=False,
 			),
-			top_closed_name: GpioPinSpec(
-				name=top_closed_name,
+			"cabinet_top_closed": GpioPinSpec(
+				name="cabinet_top_closed",
 				board="rpi",
 				pin=17,
 				direction="input",
 				inverted=True,
 			),
-			bottom_closed_name: GpioPinSpec(
-				name=bottom_closed_name,
+			"cabinet_bot_closed": GpioPinSpec(
+				name="cabinet_bot_closed",
 				board="rpi",
 				pin=27,
 				direction="input",
@@ -54,7 +75,7 @@ async def test_cabinet_lock_commands_report_door_closed_sensors() -> None:
 
 	closed = await cabinet.lock()
 
-	assert closed == {"top_closed": True, "bottom_closed": True, "closed": True}
+	assert closed == _closed_doors()
 	assert cabinet.get_status() == {"doors": closed}
 	assert gpio.output("cabinet_top_unlock").read() is False
 	assert gpio.output("cabinet_bot_unlock").read() is False
@@ -63,16 +84,31 @@ async def test_cabinet_lock_commands_report_door_closed_sensors() -> None:
 	gpio.set_fake_input("cabinet_bot_closed", False)
 	open_state = await cabinet.unlock()
 
-	assert open_state == {"top_closed": False, "bottom_closed": False, "closed": False}
+	assert open_state == _open_doors()
 	assert gpio.output("cabinet_top_unlock").read() is True
 	assert gpio.output("cabinet_bot_unlock").read() is True
 
 
 @pytest.mark.asyncio
-async def test_cabinet_supports_legacy_locked_sensor_pin_names() -> None:
-	gpio = _door_lock_manager(legacy_sensor_names=True)
+async def test_cabinet_door_listener_receives_state_changes() -> None:
+	gpio = _door_lock_manager()
 	cabinet = Cabinet(gpio=gpio)
-	gpio.set_fake_input("cabinet_top_locked", False)
-	gpio.set_fake_input("cabinet_bot_locked", True)
+	states: list[dict[str, bool]] = []
 
-	assert await cabinet.unlock() == {"top_closed": False, "bottom_closed": True, "closed": False}
+	gpio.set_fake_input("cabinet_top_closed", True)
+	gpio.set_fake_input("cabinet_bot_closed", True)
+	await cabinet.configure()
+	cabinet.set_door_listener(states.append)
+
+	gpio.set_fake_input("cabinet_top_closed", False)
+	await asyncio.sleep(0)
+
+	assert states[-1] == {
+		"top_closed": False,
+		"bottom_closed": True,
+		"closed": False,
+		"top_open": True,
+		"bottom_open": False,
+		"open": True,
+	}
+	await cabinet.stop()

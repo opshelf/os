@@ -811,6 +811,9 @@ export interface CabinetDoorState {
 	top_closed: boolean;
 	bottom_closed: boolean;
 	closed: boolean;
+	top_open: boolean;
+	bottom_open: boolean;
+	open: boolean;
 }
 
 export interface CabinetLockResponse {
@@ -829,6 +832,12 @@ export async function getCabinetStatus(): Promise<CabinetStatusResponse> {
 
 export async function controlCabinetLock(action: CabinetLockAction): Promise<CabinetLockResponse> {
 	return apiFetch<CabinetLockResponse>(`/cabinet/lock?action=${action}`, {
+		method: 'POST'
+	});
+}
+
+export async function acknowledgeSafety(): Promise<{ message: string }> {
+	return apiFetch<{ message: string }>('/robot/safety/acknowledge', {
 		method: 'POST'
 	});
 }

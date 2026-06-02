@@ -323,16 +323,21 @@ async def control_gripper(
     return SuccessResponse()
 
 
-@router.post("/curtain_guard/acknowledge", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
-async def acknowledge_curtain_guard(
+@router.post("/safety/acknowledge", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
+async def acknowledge_safety_guard(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
 ) -> SuccessResponse:
-    accepted = await worker.acknowledge_curtain_guard()
+    result = await worker.acknowledge_safety_guard()
 
-    if accepted is False:
+    if result["accepted"] is False:
+        safety = result.get("safety", {})
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Cannot acknowledge: light curtain is still blocked",
+            detail={
+                "message": "Cannot acknowledge: safety interruption is still active",
+                "code": "safety_interruption_active",
+                "active_sources": safety.get("active_sources", []),
+            },
         )
 
     return SuccessResponse()

@@ -8,6 +8,22 @@
 	let deviceId = '';
 	let lanIp = '';
 
+	function getLightCurtainBlocked(): unknown {
+		const safety = $robotStatus?.robot_status?.safety;
+		if (!safety || typeof safety !== 'object') {
+			return undefined;
+		}
+		const sources = (safety as Record<string, unknown>).sources;
+		if (!sources || typeof sources !== 'object') {
+			return undefined;
+		}
+		const lightCurtain = (sources as Record<string, unknown>).light_curtain;
+		if (!lightCurtain || typeof lightCurtain !== 'object') {
+			return undefined;
+		}
+		return (lightCurtain as Record<string, unknown>).blocked;
+	}
+
 	function formatCommand(
 		command: Record<string, unknown> | null | undefined
 	): Array<{ field: string; value: string }> {
@@ -105,11 +121,11 @@
 			<tr>
 				<td>light curtain</td>
 				<td>
-					{#if $robotStatus.robot_status?.curtain_blocked === null}
+					{#if getLightCurtainBlocked() === null}
 						disabled
-					{:else if $robotStatus.robot_status?.curtain_blocked === true}
+					{:else if getLightCurtainBlocked() === true}
 						blocked
-					{:else if $robotStatus.robot_status?.curtain_blocked === false}
+					{:else if getLightCurtainBlocked() === false}
 						clear
 					{:else}
 						unknown

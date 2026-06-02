@@ -10,7 +10,7 @@ from openshelf_os.robot.worker import RobotWorker
 from openshelf_os_server.core.laser_auto_calibration import is_laser_auto_calibration_running
 from openshelf_os_server.core.manual_motion import manual_motion_guard
 from openshelf_os_server.core.robot import get_robot_worker
-from openshelf_os_server.routers.auth_deps import get_current_user
+from openshelf_os_server.routers.auth_deps import get_current_user, require_permissions
 from openshelf_os_server.settings import get_settings
 
 router = APIRouter(tags=["cabinet"])
@@ -20,6 +20,9 @@ class CabinetDoorState(BaseModel):
     top_closed: bool
     bottom_closed: bool
     closed: bool
+    top_open: bool
+    bottom_open: bool
+    open: bool
 
 
 class CabinetLockResponse(BaseModel):
@@ -80,7 +83,7 @@ async def get_cabinet_status(
         ) from exc
 
 
-@router.post("/lock", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
+@router.post("/lock", dependencies=[Depends(require_permissions("storage:access")), Depends(check_robot_enabled)])
 async def control_cabinet_lock(
     action: Literal["lock", "unlock"],
     worker: RobotWorker = Depends(get_robot_worker_or_error),
