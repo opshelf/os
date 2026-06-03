@@ -290,9 +290,11 @@ class RobotWorker:
         if self._latest_scale_status.available is False:
             return None
 
-        if self._latest_scale_status.stable is False or self._latest_scale_status.valid is False:
+        if self._latest_scale_status.stable is False:
             return None
 
+        if self._latest_scale_status.weight_grams is None:
+            return None
         return self._latest_scale_status
 
     async def get_scale_calibration_status(self) -> Dict[str, Any]:
@@ -394,7 +396,7 @@ class RobotWorker:
         except Exception as err:
             scale_status = self._build_scale_error_status(err)
         else:
-            if scale_status.stable is False or scale_status.valid is False:
+            if scale_status.stable is False:
                 return False
 
         self._latest_scale_status = scale_status

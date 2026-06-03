@@ -189,3 +189,31 @@ def test_scale_refresh_caches_stable_weight() -> None:
         assert worker.get_cached_scale_status() is worker._latest_scale_status
 
     asyncio.run(run())
+
+
+def test_scale_refresh_caches_stable_weight_when_valid_flag_is_false() -> None:
+    async def run() -> None:
+        async def get_scale_data() -> dict[str, object]:
+            return {
+                "weight": 210.0,
+                "decimal_position": 1,
+                "status": {"stable": True, "valid": False, "overload": False, "zero": False},
+            }
+
+        worker = RobotWorker.__new__(RobotWorker)
+        worker._robot = types.SimpleNamespace(get_scale_data=get_scale_data)
+        worker._scale_lock = asyncio.Lock()
+        worker._latest_scale_status = None
+        worker._latest_scale_status_monotonic = None
+        worker._last_published_scale_key = None
+
+        should_publish = await worker._refresh_scale_status()
+
+        assert should_publish is True
+        assert worker._latest_scale_status is not None
+        assert worker._latest_scale_status.valid is False
+        assert worker._latest_scale_status.weight_grams == 210.0
+        assert worker._latest_scale_status.occupied is True
+        assert worker.get_cached_scale_status() is worker._latest_scale_status
+
+    asyncio.run(run())
