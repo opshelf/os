@@ -10,17 +10,13 @@
 		robotStatusLastUpdate
 	} from '$lib';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
-	import StatusMessage from '$lib/components/StatusMessage.svelte';
 
 	const apiBase = getApiBase();
 
 	let deviceId = '';
 	let lanIp = '';
 	let isUnlockingCabinet = false;
-	let cabinetActionError = '';
 	let isHomingRobot = false;
-	let homeActionError = '';
-	let homeActionMessage = '';
 
 	function getLightCurtainBlocked(): unknown {
 		const safety = $robotStatus?.robot_status?.safety;
@@ -209,15 +205,13 @@
 				<td>
 					<div class="status-action-cell">
 						<span>{getCabinetStatus()}</span>
-						<button disabled={isUnlockingCabinet === true || getCabinetStatus() === 'opened'} onclick={didClickCabinetUnlock}>UNLOCK</button>
+						<button
+							disabled={isUnlockingCabinet === true || getCabinetStatus() === 'opened'}
+							onclick={didClickCabinetUnlock}>UNLOCK</button
+						>
 					</div>
 				</td>
 			</tr>
-			{#if cabinetActionError}
-				<tr>
-					<td colspan="2"><ErrorMessage message={cabinetActionError} /></td>
-				</tr>
-			{/if}
 			<tr>
 				<td>home required</td>
 				<td>
@@ -232,20 +226,11 @@
 						</span>
 						<button
 							disabled={$robotStatus.needs_home !== true || isHomingRobot === true}
-							onclick={didClickHome}>HOME</button>
+							onclick={didClickHome}>HOME</button
+						>
 					</div>
 				</td>
 			</tr>
-			{#if homeActionMessage}
-				<tr>
-					<td colspan="2"><StatusMessage message={homeActionMessage} /></td>
-				</tr>
-			{/if}
-			{#if homeActionError}
-				<tr>
-					<td colspan="2"><ErrorMessage message={homeActionError} /></td>
-				</tr>
-			{/if}
 		</tbody>
 
 		{#if $robotStatus.current_command}
@@ -281,7 +266,6 @@
 			</tbody>
 		{/if}
 	{/if}
-
 </table>
 
 <style>
