@@ -209,6 +209,16 @@ async def robot_commands(
                 human_dimensions_source = "db"
                 if item.weight is not None:
                     item_data["weight"] = item.weight
+
+                location_result = await db.execute(
+                    select(ItemLocation).where(ItemLocation.item_id == item.id)
+                )
+                existing_location = location_result.scalars().first()
+                if existing_location is not None:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Item is already stored; retrieve it before storing again",
+                    )
                 command = StoreItemCommand(item=item_data)
             else:
                 logging.info("Item not found in db for upca: %s", upca)
