@@ -77,10 +77,16 @@
 	);
 	const isLowXDirty = $derived(ioboxPosition !== null && editLowX !== ioboxPosition.pickup_low_x);
 	const isLowYDirty = $derived(ioboxPosition !== null && editLowY !== ioboxPosition.pickup_low_y);
-	const isHighXDirty = $derived(ioboxPosition !== null && editHighX !== ioboxPosition.pickup_high_x);
-	const isHighYDirty = $derived(ioboxPosition !== null && editHighY !== ioboxPosition.pickup_high_y);
+	const isHighXDirty = $derived(
+		ioboxPosition !== null && editHighX !== ioboxPosition.pickup_high_x
+	);
+	const isHighYDirty = $derived(
+		ioboxPosition !== null && editHighY !== ioboxPosition.pickup_high_y
+	);
 	const isZDirty = $derived(ioboxPosition !== null && editZ !== ioboxPosition.z_extension);
-	const isStageDirty = $derived(ioboxPosition !== null && editStage !== ioboxPosition.stage_extension);
+	const isStageDirty = $derived(
+		ioboxPosition !== null && editStage !== ioboxPosition.stage_extension
+	);
 	const hasDirtyValues = $derived(
 		isLowXDirty === true ||
 			isLowYDirty === true ||
@@ -379,7 +385,10 @@
 		}
 	}
 
-	function getMovedField(position: 'low' | 'high', axis: 'x' | 'y' | 'z' | 'stage'): IOBoxEditField {
+	function getMovedField(
+		position: 'low' | 'high',
+		axis: 'x' | 'y' | 'z' | 'stage'
+	): IOBoxEditField {
 		if (axis === 'z' || axis === 'stage') {
 			return axis;
 		}
@@ -480,7 +489,10 @@
 			return error === '';
 		}
 
-		if (targetValues.lowX !== ioboxPosition.pickup_low_x || targetValues.lowY !== ioboxPosition.pickup_low_y) {
+		if (
+			targetValues.lowX !== ioboxPosition.pickup_low_x ||
+			targetValues.lowY !== ioboxPosition.pickup_low_y
+		) {
 			if ((await didStartPosition('low')) === false) {
 				return;
 			}
@@ -500,7 +512,10 @@
 			}
 		}
 
-		if (targetValues.highX !== ioboxPosition.pickup_high_x || targetValues.highY !== ioboxPosition.pickup_high_y) {
+		if (
+			targetValues.highX !== ioboxPosition.pickup_high_x ||
+			targetValues.highY !== ioboxPosition.pickup_high_y
+		) {
 			if ((await didStartPosition('high')) === false) {
 				return;
 			}
@@ -520,7 +535,10 @@
 			}
 		}
 
-		if (targetValues.z !== ioboxPosition.z_extension || targetValues.stage !== ioboxPosition.stage_extension) {
+		if (
+			targetValues.z !== ioboxPosition.z_extension ||
+			targetValues.stage !== ioboxPosition.stage_extension
+		) {
 			await didClickExtend();
 
 			if (error !== '') {
@@ -657,12 +675,7 @@
 			<tr>
 				<td>
 					<span class="field-label">low x</span>
-					<input
-						type="number"
-						step="0.5"
-						bind:value={editLowX}
-						disabled={editInputsDisabled}
-					/>
+					<input type="number" step="0.5" bind:value={editLowX} disabled={editInputsDisabled} />
 					<button
 						type="button"
 						onclick={didClickMoveLowX}
@@ -677,12 +690,7 @@
 				</td>
 				<td>
 					<span class="field-label">low y</span>
-					<input
-						type="number"
-						step="0.5"
-						bind:value={editLowY}
-						disabled={editInputsDisabled}
-					/>
+					<input type="number" step="0.5" bind:value={editLowY} disabled={editInputsDisabled} />
 					<button
 						type="button"
 						onclick={didClickMoveLowY}
@@ -699,12 +707,7 @@
 			<tr>
 				<td>
 					<span class="field-label">high x</span>
-					<input
-						type="number"
-						step="0.5"
-						bind:value={editHighX}
-						disabled={editInputsDisabled}
-					/>
+					<input type="number" step="0.5" bind:value={editHighX} disabled={editInputsDisabled} />
 					<button
 						type="button"
 						onclick={didClickMoveHighX}
@@ -719,12 +722,7 @@
 				</td>
 				<td>
 					<span class="field-label">high y</span>
-					<input
-						type="number"
-						step="0.5"
-						bind:value={editHighY}
-						disabled={editInputsDisabled}
-					/>
+					<input type="number" step="0.5" bind:value={editHighY} disabled={editInputsDisabled} />
 					<button
 						type="button"
 						onclick={didClickMoveHighY}
@@ -741,12 +739,7 @@
 			<tr>
 				<td>
 					<span class="field-label">z</span>
-					<input
-						type="number"
-						step="0.5"
-						bind:value={editZ}
-						disabled={editInputsDisabled}
-					/>
+					<input type="number" step="0.5" bind:value={editZ} disabled={editInputsDisabled} />
 					<button
 						type="button"
 						onclick={didClickMoveZ}
@@ -761,12 +754,7 @@
 				</td>
 				<td>
 					<span class="field-label">stage</span>
-					<input
-						type="number"
-						step="0.5"
-						bind:value={editStage}
-						disabled={editInputsDisabled}
-					/>
+					<input type="number" step="0.5" bind:value={editStage} disabled={editInputsDisabled} />
 					<button
 						type="button"
 						onclick={didClickMoveStage}
@@ -991,7 +979,7 @@
 
 <div class="action-buttons home-actions">
 	<button type="button" onclick={didClickHomeToolMotors} disabled={homingDisabled}>
-		{isHoming === true ? 'homing...' : 'home tool motors'}
+		home tool motors
 	</button>
 </div>
 
@@ -1010,8 +998,8 @@
 
 	.jog-controls {
 		display: flex;
-		gap: 2em;
-		margin-top: 2em;
+		gap: 1.5em;
+		margin-top: 1.5em;
 		margin-bottom: 1em;
 	}
 
@@ -1027,8 +1015,8 @@
 	}
 
 	.jog-axis button {
-		min-width: 2em;
-		min-height: 2em;
+		min-width: 1.5em;
+		min-height: 1.5em;
 		font-size: 1.5em;
 		margin-top: 0;
 		padding: 2.5px;
@@ -1041,12 +1029,12 @@
 	}
 
 	.section-divider {
-		margin-top: 2em;
+		margin-top: 1.5em;
 		border-top: 2px black dashed;
 	}
 
 	.home-actions {
-		margin-top: 2em;
+		margin-top: 1.5em;
 		align-items: center;
 	}
 

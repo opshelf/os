@@ -7,7 +7,8 @@ from pathlib import Path as _Path
 from typing import Any, Dict, Optional, List, TYPE_CHECKING
 
 from hardware.controller import SharedModbusController as Controller
-from hardware.curtain import CurtainSafety
+from hardware.curtain import MotionSafetyInterlock
+from openshelf_os.cabinet import Cabinet
 from openshelf_os.common import AxisCoordinate, ConfigError, load_config_file, CONFIG_PATH, resolve_grid_path
 from openshelf_os.exceptions import MotorError, MovementError, ToolError
 from openshelf_os.iobox import IOBox
@@ -21,13 +22,19 @@ from openshelf_os.robot.commands import (
 )
 from openshelf_os.robot.status import (
     RobotResponse, RobotCommandSuccessful, RobotCommandError,
-    RobotStatus, GantryStatus, ToolAxisStatus, RobotState, AxisTelemetry,
+    RobotStatus, GantryStatus, ToolAxisStatus, RobotState, AxisTelemetry, CabinetDoorState,
 )
 from openshelf_os.storage import (
     StorageGrid, Dimensions, StorageModuleSide, CellItem, StorageModuleCellLocation,
     StorageValidationError,
 )
 from openshelf_os.tool import Tool
+
+_GpioManager: Any
+try:
+    from hardware.gpio import GpioManager as _GpioManager
+except Exception:
+    _GpioManager = None
 
 if TYPE_CHECKING:
     from hardware.motor import Motor
@@ -52,15 +59,24 @@ class Robot:
 
         tool_params = self._config.get("robot.tool", {})
         io_params = self._config.get("robot.io", {})
+        gpio_config = getattr(self._config.robot, "gpio", None)
+        self._gpio = _GpioManager.from_config(gpio_config) if _GpioManager is not None else None
 
-        self._curtain_safety = CurtainSafety()
+        self._motion_safety = MotionSafetyInterlock()
         self._tool = Tool(
             motorcontroller=self._motorbus,
             lasercontroller=self._laserbus,
             params=tool_params,
-            safety=self._curtain_safety,
+            safety=self._motion_safety,
         )
-        self._io = IOBox(motorcontroller=self._motorbus, scalecontroller=self._scalebus, params=io_params, safety=self._curtain_safety)
+        self._io = IOBox(
+            motorcontroller=self._motorbus,
+            scalecontroller=self._scalebus,
+            params=io_params,
+            safety=self._motion_safety,
+            gpio=self._gpio,
+        )
+        self._cabinet = Cabinet(gpio=self._gpio)
 
         self._grid_path = resolve_grid_path(self._config, CONFIG_PATH)
 
@@ -108,8 +124,15 @@ class Robot:
         else:
             self._logger.info("laser_bus_skipped: laser is disabled in config")
 
+        gpio = getattr(self, "_gpio", None)
+        if gpio is not None:
+            gpio.apply_initial_outputs()
+
         await self._tool.configure()
         await self._io.configure()
+        cabinet = getattr(self, "_cabinet", None)
+        if cabinet is not None:
+            await cabinet.configure()
 
         for name in ["x_axis", "y_axis", "z_axis", "stage", "rotate", "door"]:
             motor = self._get_motor_by_name(name)
@@ -123,6 +146,10 @@ class Robot:
             if motor is not None:
                 motor.cleanup()
 
+        gpio = getattr(self, "_gpio", None)
+        if gpio is not None:
+            gpio.close()
+
         if self._motorbus:
             await self._motorbus.close()
         if self._scalebus:
@@ -133,6 +160,9 @@ class Robot:
     async def stop(self) -> None:
         await self._tool.stop()
         await self._io.stop()
+        cabinet = getattr(self, "_cabinet", None)
+        if cabinet is not None:
+            await cabinet.stop()
 
     async def idle(self) -> None:
         idle_position = await self._tool.get_param("IDLE_POSITION")
@@ -402,6 +432,11 @@ class Robot:
         except Exception as exc:
             snapshot["io"]["door_open_error"] = str(exc)
 
+        try:
+            snapshot["cabinet"] = {"doors": self.get_cabinet_door_state()}
+        except Exception as exc:
+            snapshot["cabinet"] = {"doors_error": str(exc)}
+
         return snapshot
 
     # ------------------------------------------------------------------ #
@@ -543,14 +578,19 @@ class Robot:
             rotate=await self._build_axis_status(getattr(self._tool, "_mr", None)),
         )
         state = RobotState(current_cell=self._state.current_cell)
-        door_open = await self.refresh_door_state()
+        cabinet_doors_data = self.get_cabinet_door_state()
+        cabinet_doors = (
+            CabinetDoorState(**cabinet_doors_data)
+            if cabinet_doors_data is not None
+            else None
+        )
         status = RobotStatus(
             gantry=gantry_status,
             tool=tool_status,
             state=state,
             storage=self._grid,
-            curtain_blocked=self.get_curtain_state(),
-            door_open=door_open,
+            cabinet_doors=cabinet_doors,
+            io_door_open=self.get_door_state(),
             motors={
                 "x_axis": gantry_status.x_axis,
                 "y_axis": gantry_status.y_axis,
@@ -563,20 +603,25 @@ class Robot:
         return status
 
     # ------------------------------------------------------------------ #
-    #  Curtain / door
+    #  Safety / door
     # ------------------------------------------------------------------ #
 
-    def register_curtain_listener(self, listener) -> None:
+    def register_light_curtain_listener(self, listener) -> None:
         if self._io:
             self._io.set_curtain_listener(listener)
 
-    def pause_for_curtain(self) -> None:
-        self._curtain_safety.block()
-        self._logger.info("Curtain guard engaged")
+    def register_cabinet_door_listener(self, listener) -> None:
+        cabinet = getattr(self, "_cabinet", None)
+        if cabinet:
+            cabinet.set_door_listener(listener)
 
-    def resume_after_curtain(self) -> None:
-        self._curtain_safety.unblock()
-        self._logger.info("Curtain guard cleared")
+    def block_motion_for_safety(self) -> None:
+        self._motion_safety.block()
+        self._logger.info("Safety guard engaged")
+
+    def release_motion_safety(self) -> None:
+        self._motion_safety.unblock()
+        self._logger.info("Safety guard cleared")
 
     def get_curtain_state(self) -> Optional[bool]:
         if self._io:
@@ -587,6 +632,16 @@ class Robot:
         if self._io:
             return self._io.get_door_state()
         return None
+
+    def get_cabinet_door_state(self) -> dict[str, bool] | None:
+        cabinet = getattr(self, "_cabinet", None)
+        if cabinet is None:
+            return None
+
+        try:
+            return cabinet.get_door_state()
+        except ConfigError:
+            return None
 
     async def refresh_door_state(self) -> Optional[bool]:
         if self._io:

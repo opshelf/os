@@ -48,6 +48,7 @@ class IOBox:
                  scalecontroller: Controller,
                  params: c.IOBlock,
                  safety=None,
+                 gpio=None,
                  ):
 
         self._scalecontroller = scalecontroller
@@ -55,6 +56,7 @@ class IOBox:
         self._status = IOBoxStatus.IDLE
         self._params = params
         self._logger = logging.getLogger(__name__).getChild("IOBox")
+        self._gpio = gpio
 
         self._md: Optional[Motor] = _create_motor_if_enabled(
             motorcontroller, self._params.motors, "door", safety, self._logger
@@ -64,8 +66,9 @@ class IOBox:
         self._scale = Scale(scalecontroller) if self._scale_enabled is True else None
         self._scale_ready = False
         self._printer = None
-        self._curtain_sensor: Optional[CurtainSensor] = None
-        self._curtain_monitor: Optional[CurtainMonitor] = None
+        self._curtain_sensors: list[CurtainSensor] = []
+        self._curtain_monitors: list[CurtainMonitor] = []
+        self._curtain_input_states: dict[str, bool] = {}
         self._curtain_state: Optional[bool] = None
         self._curtain_listener = None
         self._door_open: Optional[bool] = None
@@ -126,21 +129,31 @@ class IOBox:
             self._logger.info("Curtain sensor disabled via config")
             return
 
-        pin = curtain_cfg.pin
         poll_interval = curtain_cfg.poll_interval_s
-        inverted = getattr(curtain_cfg, "inverted", False)
 
-        self._curtain_sensor = CurtainSensor(pin=pin, inverted=inverted)
-        self._curtain_monitor = CurtainMonitor(
-            self._curtain_sensor,
+        if self._gpio is None or self._gpio.has_pin("light_curtain") is False:
+            raise ConfigError("Light curtain requires shared GPIO pin 'light_curtain'")
+
+        curtain_input = self._gpio.input("light_curtain")
+        curtain_sensor = CurtainSensor(input_device=curtain_input)
+        curtain_monitor = CurtainMonitor(
+            curtain_sensor,
             poll_interval=poll_interval,
             on_change=self._handle_curtain_change,
         )
-        await self._curtain_monitor.start()
+        self._curtain_sensors = [curtain_sensor]
+        self._curtain_monitors = [curtain_monitor]
+        await curtain_monitor.start()
 
         self._logger.info(
             "Curtain monitor started",
-            extra={"pin": pin, "poll_interval_s": poll_interval},
+            extra={
+                "pin_name": "light_curtain",
+                "pin": curtain_input.pin,
+                "board": getattr(curtain_input, "board", None),
+                "poll_interval_s": poll_interval,
+                "shared_gpio": True,
+            },
         )
 
     async def _ensure_scale_ready(self) -> None:
@@ -234,6 +247,7 @@ class IOBox:
                 raise
 
             raise MotorError(f"Failed to home door: {str(e)}") from e
+
 
     def _handle_curtain_change(self, state: Optional[bool]) -> None:
         previous = self._curtain_state
@@ -384,27 +398,25 @@ class IOBox:
             except Exception as exc:
                 self._logger.warning("Curtain listener failed: %s", exc)
 
+
     async def stop(self) -> None:
         errors = []
-        
+
         if self._md is not None:
             try:
                 await self._md.stop()
             except Exception as e:
                 errors.append(f"Door motor stop failed: {str(e)}")
 
-        if self._curtain_monitor is not None:
+        for curtain_monitor in list(self._curtain_monitors):
             try:
-                await self._curtain_monitor.stop()
+                await curtain_monitor.stop()
             except Exception as e:
                 errors.append(f"Curtain monitor stop failed: {str(e)}")
 
-        if self._curtain_sensor is not None:
-            try:
-                self._curtain_sensor.cleanup()
-            except Exception:
-                pass
-        
+        self._curtain_monitors = []
+        self._curtain_sensors = []
+
         if errors:
             self._status = IOBoxStatus.ERROR
-            raise IOBoxError("Stop errors: " + "; ".join(errors))  
+            raise IOBoxError("Stop errors: " + "; ".join(errors))

@@ -60,8 +60,7 @@ async def _build_robot_context() -> dict[str, Any]:
             "error_queue": status.get("error_queue", []),
             "gantry_position": robot_status.get("gantry"),
             "current_cell": robot_status.get("state", {}).get("current_cell"),
-            "door_open": robot_status.get("door_open"),
-            "curtain_blocked": robot_status.get("curtain_blocked"),
+            "safety": robot_status.get("safety"),
         }
     except ValueError:
         return {"status": "not_initialized"}

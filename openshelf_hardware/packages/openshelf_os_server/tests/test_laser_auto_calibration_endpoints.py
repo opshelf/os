@@ -1002,7 +1002,7 @@ async def test_persist_completed_results_saves_stage_extensions() -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_single_shelf_scouts_local_edge_instead_of_using_grid_derived_edge() -> None:
+async def test_run_single_shelf_scouts_only_between_neighbor_shelf_midpoints() -> None:
     manager = LaserAutoCalibrationManager()
     manager._update_snapshot = AsyncMock()
     scan_config = SimpleNamespace(
@@ -1027,12 +1027,23 @@ async def test_run_single_shelf_scouts_local_edge_instead_of_using_grid_derived_
     )
     config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=scan_config)))
     target_shelf = SimpleNamespace(
+        shelf_idx=0,
         cells=[
             SimpleNamespace(calibration_point=SimpleNamespace(y=62.0)),
             SimpleNamespace(calibration_point=SimpleNamespace(y=63.0)),
-        ]
+        ],
     )
-    grid = SimpleNamespace(get_shelf=lambda side, shelf_idx: target_shelf)
+    next_shelf = SimpleNamespace(
+        shelf_idx=1,
+        cells=[
+            SimpleNamespace(calibration_point=SimpleNamespace(y=162.0)),
+            SimpleNamespace(calibration_point=SimpleNamespace(y=163.0)),
+        ],
+    )
+    grid = SimpleNamespace(
+        get_shelf=lambda side, shelf_idx: target_shelf,
+        get_side=lambda side: [target_shelf, next_shelf],
+    )
     analysis = SimpleNamespace(shelves=[SimpleNamespace(cells=[])])
     xy_reference_detected_cell = ScanDetectedCell(
         shelf_idx=0,
@@ -1073,6 +1084,8 @@ async def test_run_single_shelf_scouts_local_edge_instead_of_using_grid_derived_
 
     assert scan_mock.await_args.kwargs['known_shelf_edge_y'] is None
     assert scan_mock.await_args.kwargs['should_validate_reference_bounds'] is False
+    assert scan_mock.call_args.args[2].y_min == pytest.approx(0.0)
+    assert scan_mock.call_args.args[2].y_max == pytest.approx(112.5)
     persist_mock.assert_awaited_once()
 
 

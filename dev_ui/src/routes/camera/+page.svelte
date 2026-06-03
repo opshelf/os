@@ -124,8 +124,8 @@
 			class="flip-button"
 			class:active={isImageFlipped}
 			on:click={didToggleImageFlip}
-			aria-pressed={isImageFlipped}
-		>↕︎</button>
+			aria-pressed={isImageFlipped}>↕︎</button
+		>
 	</div>
 
 	<div style="height: 1.5em"></div>
@@ -162,7 +162,7 @@
 	}
 
 	.flip-button {
-		min-width: 2em;
+		min-width: 1.5em;
 	}
 
 	.button-row button.active {

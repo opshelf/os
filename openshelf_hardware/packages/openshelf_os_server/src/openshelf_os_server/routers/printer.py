@@ -268,8 +268,10 @@ async def print_label(upca: str) -> dict[str, str | bool]:
             ) from exc
 
     if settings.printer.enabled:
-        # _dispatch_to_printer(config.output_path)
-        printer.print_barcode(sym="UPC-A", payload=upca)
+        try:
+            printer.print_barcode(sym="UPC-A", payload=upca)
+        finally:
+            printer.close()
         printed = True
     else:
         logging.info("Printer disabled; generated label at %s", config.output_path)
