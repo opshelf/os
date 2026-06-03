@@ -590,6 +590,7 @@ class Robot:
             state=state,
             storage=self._grid,
             cabinet_doors=cabinet_doors,
+            io_door_open=self.get_door_state(),
             motors={
                 "x_axis": gantry_status.x_axis,
                 "y_axis": gantry_status.y_axis,

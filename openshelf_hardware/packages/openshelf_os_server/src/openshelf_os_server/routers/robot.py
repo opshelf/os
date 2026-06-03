@@ -230,13 +230,21 @@ async def robot_commands(
 
     if isinstance(command, RetrieveItemCommand):
         try:
-            scale_data = await worker.get_scale_data()
-            weight = abs(scale_data["weight"])
-            if weight > 5.0:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="Please remove the item from the IO box before retrieving another",
-                )
+            scale_status = worker.get_cached_scale_status()
+            if scale_status is not None:
+                if scale_status.occupied is True:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Please remove the item from the IO box before retrieving another",
+                    )
+            else:
+                scale_data = await worker.get_scale_data()
+                weight = abs(scale_data["weight"])
+                if weight > 5.0:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Please remove the item from the IO box before retrieving another",
+                    )
         except HTTPException:
             raise
         except Exception as exc:

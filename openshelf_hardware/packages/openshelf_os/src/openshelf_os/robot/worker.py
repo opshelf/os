@@ -12,7 +12,7 @@ from typing import Optional, List, Any, Dict
 from openshelf_os.robot.core import Robot
 from openshelf_os.robot.commands import RobotCommands, StopCommand, HomeCommand, InitializeCommand
 from openshelf_os.robot.status import (
-    CabinetDoorState, RobotCommandSuccessful, RobotResponse, SafetyStatus,
+    CabinetDoorState, RobotCommandSuccessful, RobotResponse, SafetyStatus, ScaleStatus,
 )
 from openshelf_os.robot.models import WorkerError, QueuedOperation, WorkerStatusWithQueue
 from openshelf_os.barcode_service import BarcodeService
@@ -21,6 +21,10 @@ from openshelf_os.exceptions import MotorError, MovementError, ToolError
 logger = logging.getLogger(__name__)
 
 COMMAND_TIMEOUT_SECONDS = 300
+SCALE_OCCUPIED_THRESHOLD_GRAMS = 5.0
+SCALE_POLL_INTERVAL_SECONDS = 1.0
+SCALE_STATUS_FRESH_SECONDS = 3.0
+SCALE_WEIGHT_PUBLISH_DELTA_GRAMS = 1.0
 
 _MOTOR_ID_RE = re.compile(r"motor\s+(\d+)", re.IGNORECASE)
 
@@ -153,6 +157,7 @@ def _transform_worker_status_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     storage_payload = robot_status_payload.get("storage") or {"left_module": [], "right_module": []}
     cabinet_doors = robot_status_payload.get("cabinet_doors")
     safety_payload = robot_status_payload.get("safety") or {}
+    scale_payload = robot_status_payload.get("scale")
     storage_payload = _normalize_storage_payload(storage_payload)
 
     transformed["robot_status"] = {
@@ -170,6 +175,8 @@ def _transform_worker_status_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         },
         "storage": storage_payload,
         "cabinet_doors": cabinet_doors if isinstance(cabinet_doors, dict) else None,
+        "io_door_open": robot_status_payload.get("io_door_open"),
+        "scale": scale_payload if isinstance(scale_payload, dict) else None,
         "safety": safety_payload if isinstance(safety_payload, dict) else {},
         "motors": {
             axis: _normalize_axis_status(payload)
@@ -228,6 +235,7 @@ class RobotWorker:
 
         self._robot = robot
         self._worker_task: Optional[asyncio.Task] = None
+        self._scale_poll_task: Optional[asyncio.Task] = None
         self._current_task: Optional[asyncio.Task] = None
         self._current_command: Optional[RobotCommands] = None
         self._current_operation: Optional[QueuedOperation] = None
@@ -242,6 +250,10 @@ class RobotWorker:
         self._barcode_task: Optional[asyncio.Task] = None
         self._latest_status_payload: Optional[str] = None
         self._last_published_safety: Optional[str] = None
+        self._scale_lock = asyncio.Lock()
+        self._latest_scale_status: Optional[ScaleStatus] = None
+        self._latest_scale_status_monotonic: Optional[float] = None
+        self._last_published_scale_key: Optional[str] = None
         self._curtain_blocked: Optional[bool] = None
         self._door_open: Optional[bool] = None
         self._cabinet_doors: Optional[Dict[str, bool]] = None
@@ -265,13 +277,31 @@ class RobotWorker:
         return self._robot.drain_motor_time()
 
     async def get_scale_data(self) -> Dict[str, Any]:
-        return await self._robot.get_scale_data()
+        async with self._scale_lock:
+            return await self._robot.get_scale_data()
+
+    def get_cached_scale_status(self, max_age_s: float = SCALE_STATUS_FRESH_SECONDS) -> Optional[ScaleStatus]:
+        if self._latest_scale_status is None or self._latest_scale_status_monotonic is None:
+            return None
+
+        if time.monotonic() - self._latest_scale_status_monotonic > max_age_s:
+            return None
+
+        if self._latest_scale_status.available is False:
+            return None
+
+        if self._latest_scale_status.stable is False or self._latest_scale_status.valid is False:
+            return None
+
+        return self._latest_scale_status
 
     async def get_scale_calibration_status(self) -> Dict[str, Any]:
-        return await self._robot.get_scale_calibration_status()
+        async with self._scale_lock:
+            return await self._robot.get_scale_calibration_status()
 
     async def get_scale_calibration_params(self) -> Dict[str, Any]:
-        return await self._robot.get_scale_calibration_params()
+        async with self._scale_lock:
+            return await self._robot.get_scale_calibration_params()
 
     async def set_scale_calibration_params(
         self,
@@ -280,21 +310,115 @@ class RobotWorker:
         precision: int = 1,
         division: int = 1,
     ) -> bool:
-        return await self._robot.set_scale_calibration_params(
-            full_scale=full_scale,
-            calibration_weight=calibration_weight,
-            precision=precision,
-            division=division,
-        )
+        async with self._scale_lock:
+            return await self._robot.set_scale_calibration_params(
+                full_scale=full_scale,
+                calibration_weight=calibration_weight,
+                precision=precision,
+                division=division,
+            )
 
     async def calibrate_scale_zero(self, timeout: float = 5.0) -> Dict[str, Any]:
-        return await self._robot.calibrate_scale_zero(timeout=timeout)
+        async with self._scale_lock:
+            return await self._robot.calibrate_scale_zero(timeout=timeout)
 
     async def calibrate_scale_weight(self, timeout: float = 5.0) -> Dict[str, Any]:
-        return await self._robot.calibrate_scale_weight(timeout=timeout)
+        async with self._scale_lock:
+            return await self._robot.calibrate_scale_weight(timeout=timeout)
 
     async def scale_tare(self) -> bool:
-        return await self._robot.scale_tare()
+        async with self._scale_lock:
+            return await self._robot.scale_tare()
+
+    def _build_scale_status_from_data(self, data: Dict[str, Any]) -> ScaleStatus:
+        status_payload = data.get("status") if isinstance(data.get("status"), dict) else {}
+        raw_weight = data.get("weight")
+        weight_grams: Optional[float] = None
+
+        if raw_weight is not None:
+            try:
+                weight_grams = abs(float(raw_weight))
+            except (TypeError, ValueError):
+                weight_grams = None
+
+        decimal_position = data.get("decimal_position")
+        if decimal_position is not None:
+            try:
+                decimal_position = int(decimal_position)
+            except (TypeError, ValueError):
+                decimal_position = None
+
+        return ScaleStatus(
+            enabled=True,
+            available=True,
+            weight_grams=weight_grams,
+            stable=status_payload.get("stable") is True,
+            valid=status_payload.get("valid") is True,
+            overload=status_payload.get("overload") is True,
+            zero=status_payload.get("zero") is True,
+            occupied=weight_grams is not None and weight_grams > SCALE_OCCUPIED_THRESHOLD_GRAMS,
+            threshold_grams=SCALE_OCCUPIED_THRESHOLD_GRAMS,
+            decimal_position=decimal_position,
+            updated_at=datetime.now(timezone.utc).isoformat(),
+        )
+
+    def _build_scale_error_status(self, error: Exception) -> ScaleStatus:
+        return ScaleStatus(
+            enabled=True,
+            available=False,
+            occupied=False,
+            threshold_grams=SCALE_OCCUPIED_THRESHOLD_GRAMS,
+            updated_at=datetime.now(timezone.utc).isoformat(),
+            error=str(error),
+        )
+
+    def _scale_publish_key(self, scale_status: ScaleStatus) -> str:
+        payload = scale_status.model_dump(mode="json")
+        payload.pop("updated_at", None)
+
+        weight_grams = scale_status.weight_grams
+        payload.pop("weight_grams", None)
+        payload["weight_bucket"] = (
+            None
+            if weight_grams is None
+            else round(weight_grams / SCALE_WEIGHT_PUBLISH_DELTA_GRAMS)
+        )
+
+        return json.dumps(payload, sort_keys=True)
+
+    async def _refresh_scale_status(self) -> bool:
+        try:
+            async with self._scale_lock:
+                data = await self._robot.get_scale_data()
+            scale_status = self._build_scale_status_from_data(data)
+        except Exception as err:
+            scale_status = self._build_scale_error_status(err)
+        else:
+            if scale_status.stable is False or scale_status.valid is False:
+                return False
+
+        self._latest_scale_status = scale_status
+        self._latest_scale_status_monotonic = time.monotonic()
+        scale_key = self._scale_publish_key(scale_status)
+
+        if scale_key == self._last_published_scale_key:
+            return False
+
+        self._last_published_scale_key = scale_key
+        return True
+
+    async def _poll_scale_status(self) -> None:
+        while self._running is True:
+            try:
+                should_publish = await self._refresh_scale_status()
+                if should_publish is True:
+                    await self._publish_status()
+            except asyncio.CancelledError:
+                raise
+            except Exception as err:
+                logging.warning("Scale poll failed: %s", err)
+
+            await asyncio.sleep(SCALE_POLL_INTERVAL_SECONDS)
 
     def get_scanner_status(self) -> Dict[str, Any]:
         return {
@@ -692,8 +816,9 @@ class RobotWorker:
                 if self._cabinet_doors is not None
                 else None
             )
+            robot_status.io_door_open = self._door_open
             robot_status.safety = SafetyStatus(**self.get_safety_status())
-
+            robot_status.scale = self._latest_scale_status
         status: WorkerStatusWithQueue
 
         pending_count, queued_ops = await self._get_pending_messages_info()
@@ -748,6 +873,9 @@ class RobotWorker:
                     try:
                         queued_operation = await asyncio.wait_for(self._command_queue.get(), timeout=1)
                     except asyncio.TimeoutError:
+                        safety_changed = await self._evaluate_safety_guard()
+                        if safety_changed is True:
+                            await self._publish_status()
                         await asyncio.sleep(0.1)
                         continue
 
@@ -896,8 +1024,11 @@ class RobotWorker:
         self._running = True
         if self._worker_task:
             self._worker_task.cancel()
+        if self._scale_poll_task:
+            self._scale_poll_task.cancel()
         logger.info("Creating process_commands task")
         self._worker_task = asyncio.create_task(self.process_commands())
+        self._scale_poll_task = asyncio.create_task(self._poll_scale_status())
         logger.info("Task created: %s", self._worker_task)
         await self._publish_status()
         logger.info("RobotWorker.start() complete")
@@ -905,6 +1036,15 @@ class RobotWorker:
     async def shutdown(self) -> None:
         logging.info("Shutting down robot worker")
         self._running = False
+
+        if self._scale_poll_task:
+            logging.info("Stopping scale poll")
+            self._scale_poll_task.cancel()
+            try:
+                await self._scale_poll_task
+            except asyncio.CancelledError:
+                pass
+            self._scale_poll_task = None
 
         if self._barcode_task:
             logging.info("Stopping barcode bridge")
@@ -1061,24 +1201,27 @@ class RobotWorker:
         except Exception as exc:  # pragma: no cover - robustness
             logging.debug("Cabinet door state refresh failed: %s", exc)
 
-    def _apply_safety_state(self, active_sources: list[str], sources: dict[str, dict[str, Any]]) -> None:
+    def _apply_safety_state(self, active_sources: list[str], sources: dict[str, dict[str, Any]]) -> bool:
         previous_active_sources = list(self._safety_active_sources)
+        previous_sources = dict(self._safety_sources)
         previous_motion_blocked = self._safety_motion_blocked
         is_interrupted = bool(active_sources)
         was_interrupted = bool(previous_active_sources)
-        sources_changed = active_sources != previous_active_sources
+        active_sources_changed = active_sources != previous_active_sources
+        sources_changed = sources != previous_sources
 
         if is_interrupted is True:
             if was_interrupted is False:
                 self._safety_interruption_id += 1
             self._awaiting_safety_ack = True
 
-        if sources_changed is True:
+        if active_sources_changed is True:
             self._safety_last_changed_at = datetime.now(timezone.utc).isoformat()
 
         self._safety_active_sources = active_sources
         self._safety_sources = sources
         self._safety_motion_blocked = is_interrupted is True or self._awaiting_safety_ack is True
+        motion_blocked_changed = self._safety_motion_blocked != previous_motion_blocked
 
         if self._safety_motion_blocked is True and previous_motion_blocked is False:
             self._robot.block_motion_for_safety()
@@ -1089,7 +1232,7 @@ class RobotWorker:
         ):
             self._robot.release_motion_safety()
 
-        if sources_changed is True or self._safety_motion_blocked != previous_motion_blocked:
+        if active_sources_changed is True or motion_blocked_changed is True:
             self._logger.info(
                 "Safety guard change",
                 extra={
@@ -1099,6 +1242,8 @@ class RobotWorker:
                     "interruption_id": self._safety_interruption_id,
                 },
             )
+
+        return sources_changed is True or active_sources_changed is True or motion_blocked_changed is True
 
     def _on_light_curtain_change(self, state: Optional[bool]) -> None:
         async def _handle() -> None:
@@ -1128,15 +1273,16 @@ class RobotWorker:
 
         asyncio.create_task(_handle())
 
-    async def _evaluate_safety_guard(self, *, refresh: bool = True) -> None:
+    async def _evaluate_safety_guard(self, *, refresh: bool = True) -> bool:
         async with self._guard_lock:
             if refresh is True:
                 await self._refresh_safety_inputs()
 
             active_sources, sources = self._build_safety_sources()
-            self._apply_safety_state(active_sources, sources)
+            did_change = self._apply_safety_state(active_sources, sources)
 
         await self._maybe_publish_safety_event()
+        return did_change
 
     async def acknowledge_safety_guard(self) -> dict[str, Any]:
         async with self._guard_lock:
