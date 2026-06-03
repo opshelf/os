@@ -1,29 +1,46 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
 	import {
-		getScaleReading,
 		getScaleCalibrationStatus,
 		getScaleCalibrationParams,
 		setScaleCalibrationParams,
 		calibrateScaleZero,
 		calibrateScaleWeight,
 		tareScale,
-		type ScaleReading,
 		type ScaleCalibrationStatus,
 		type ScaleCalibrationParams
 	} from '$lib/api';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import StatusMessage from '$lib/components/StatusMessage.svelte';
+	import { robotStatus } from '$lib';
 
 	type ScaleView = 'status' | 'calibration';
+	type ScaleStatus = {
+		available?: boolean;
+		weight_grams?: number | null;
+		stable?: boolean;
+		valid?: boolean;
+		overload?: boolean;
+		zero?: boolean;
+		occupied?: boolean;
+		decimal_position?: number | null;
+		updated_at?: string | null;
+		error?: string | null;
+	};
 
 	let { selectedView }: { selectedView: ScaleView } = $props();
 
-	let reading = $state<ScaleReading | null>(null);
+	const scaleStatus = $derived.by((): ScaleStatus | null => {
+		const scale = $robotStatus?.robot_status?.scale;
+		if (!scale || typeof scale !== 'object') {
+			return null;
+		}
+
+		return scale as ScaleStatus;
+	});
+
 	let calibrationStatus = $state<ScaleCalibrationStatus | null>(null);
 	let calibrationParams = $state<ScaleCalibrationParams | null>(null);
-
-	let readingError = $state('');
 	let calibrationError = $state('');
 	let message = $state('');
 
@@ -38,14 +55,6 @@
 	let precision = $state(1);
 	let division = $state(1);
 
-	async function fetchReading(): Promise<void> {
-		try {
-			reading = await getScaleReading();
-			readingError = '';
-		} catch (err) {
-			readingError = err instanceof Error ? err.message : 'failed to read scale';
-		}
-	}
 
 	async function fetchCalibrationStatus(): Promise<void> {
 		try {
@@ -146,7 +155,6 @@
 			const result = await tareScale();
 			if (result.success === true) {
 				message = 'tare successful';
-				await fetchReading();
 			} else {
 				calibrationError = 'tare failed';
 			}
@@ -160,15 +168,10 @@
 	async function didClickRefresh(): Promise<void> {
 		isRefreshing = true;
 		calibrationError = '';
-		readingError = '';
 
 		try {
-			if (selectedView === 'status') {
-				await fetchReading();
-			} else {
-				await fetchCalibrationStatus();
-				await fetchCalibrationParams();
-			}
+			await fetchCalibrationStatus();
+			await fetchCalibrationParams();
 		} finally {
 			isRefreshing = false;
 		}
@@ -176,6 +179,18 @@
 
 	function formatWeight(grams: number): string {
 		return grams.toFixed(1);
+	}
+
+	function formatBoolean(value: boolean | undefined): string {
+		if (value === true) {
+			return 'yes';
+		}
+
+		if (value === false) {
+			return 'no';
+		}
+
+		return 'unknown';
 	}
 
 	function formatHex(value: number): string {
@@ -187,9 +202,7 @@
 		message = '';
 
 		try {
-			if (view === 'status') {
-				await fetchReading();
-			} else {
+			if (view === 'calibration') {
 				await fetchCalibrationStatus();
 				await fetchCalibrationParams();
 			}
@@ -217,42 +230,26 @@
 			</tr>
 		</thead>
 		<tbody>
-			{#if reading !== null}
-				<tr><td>weight</td><td>{formatWeight(reading.weight_grams)} g</td></tr>
-				<tr><td>stable</td><td class:status-ok={reading.status.stable === true} class:status-error={reading.status.stable === false}>{reading.status.stable ? 'yes' : 'no'}</td></tr>
-				<tr><td>valid</td><td class:status-ok={reading.status.valid === true} class:status-error={reading.status.valid === false}>{reading.status.valid ? 'yes' : 'no'}</td></tr>
-				<tr><td>zero</td><td>{reading.status.zero ? 'yes' : 'no'}</td></tr>
-				<tr><td>overload</td><td class:status-error={reading.status.overload === true}>{reading.status.overload ? 'yes' : 'no'}</td></tr>
-				<tr><td>decimal position</td><td>{reading.decimal_position}</td></tr>
-			{:else if readingError === ''}
-				<tr><td colspan="2">loading...</td></tr>
-			{/if}
-			{#if readingError !== ''}
-				<tr><td colspan="2">{readingError.toUpperCase()}</td></tr>
-			{/if}
-		</tbody>
-		<thead>
-			<tr>
-				<th colspan="2">raw registers</th>
-			</tr>
-		</thead>
-		<tbody>
-			{#if reading !== null}
-				<tr><td>weight hi</td><td>{formatHex(reading.raw_registers.weight_hi)}</td></tr>
-				<tr><td>weight lo</td><td>{formatHex(reading.raw_registers.weight_lo)}</td></tr>
-				<tr><td>decimals</td><td>{reading.raw_registers.decimals}</td></tr>
-				<tr><td>status</td><td>{formatHex(reading.raw_registers.status)}</td></tr>
-			{:else if readingError === ''}
-				<tr><td colspan="2">-</td></tr>
-			{/if}
-			{#if readingError !== ''}
-				<tr><td colspan="2">{readingError.toUpperCase()}</td></tr>
+			{#if scaleStatus !== null}
+				<tr><td>weight</td><td>{typeof scaleStatus.weight_grams === 'number' ? `${formatWeight(scaleStatus.weight_grams)} g` : '-'}</td></tr>
+				<tr><td>io box occupied</td><td class:status-error={scaleStatus.occupied === true} class:status-ok={scaleStatus.occupied === false}>{formatBoolean(scaleStatus.occupied)}</td></tr>
+				<tr><td>available</td><td class:status-ok={scaleStatus.available === true} class:status-error={scaleStatus.available === false}>{formatBoolean(scaleStatus.available)}</td></tr>
+				<tr><td>stable</td><td class:status-ok={scaleStatus.stable === true} class:status-error={scaleStatus.stable === false}>{formatBoolean(scaleStatus.stable)}</td></tr>
+				<tr><td>valid</td><td class:status-ok={scaleStatus.valid === true} class:status-error={scaleStatus.valid === false}>{formatBoolean(scaleStatus.valid)}</td></tr>
+				<tr><td>zero</td><td>{formatBoolean(scaleStatus.zero)}</td></tr>
+				<tr><td>overload</td><td class:status-error={scaleStatus.overload === true}>{formatBoolean(scaleStatus.overload)}</td></tr>
+				<tr><td>decimal position</td><td>{scaleStatus.decimal_position ?? '-'}</td></tr>
+				<tr><td>updated at</td><td>{scaleStatus.updated_at ?? '-'}</td></tr>
+				{#if scaleStatus.error}
+					<tr><td>error</td><td>{scaleStatus.error.toUpperCase()}</td></tr>
+				{/if}
+			{:else}
+				<tr><td colspan="2">waiting for scale status...</td></tr>
 			{/if}
 		</tbody>
 	</table>
 
 	<div class="action-buttons">
-		<button type="button" onclick={didClickRefresh} disabled={isRefreshing === true || isTaring === true}>refresh</button>
 		<button type="button" onclick={didClickTare} disabled={isTaring === true}>tare</button>
 	</div>
 
