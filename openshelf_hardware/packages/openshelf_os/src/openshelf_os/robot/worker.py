@@ -20,7 +20,6 @@ from openshelf_os.exceptions import MotorError, MovementError, ToolError
 
 logger = logging.getLogger(__name__)
 
-COMMAND_TIMEOUT_SECONDS = 300
 SCALE_OCCUPIED_THRESHOLD_GRAMS = 5.0
 SCALE_POLL_INTERVAL_SECONDS = 1.0
 SCALE_STATUS_FRESH_SECONDS = 3.0
@@ -895,39 +894,6 @@ class RobotWorker:
                     self._command_started_at = time.monotonic()
                     self._current_task = asyncio.create_task(self._robot.handle_command(command))
                 else:
-                    elapsed = time.monotonic() - (self._command_started_at or time.monotonic())
-
-                    if elapsed > COMMAND_TIMEOUT_SECONDS and self._current_task.done() is False:
-                        logging.error(
-                            "Command timeout after %.1f seconds: %s",
-                            elapsed,
-                            self._current_command.command if self._current_command else "unknown",
-                        )
-                        self._current_task.cancel()
-
-                        try:
-                            await self._current_task
-                        except asyncio.CancelledError:
-                            pass
-
-                        self._report_error(
-                            WorkerError(
-                                error_type="CommandTimeout",
-                                message=f"Command timed out after {elapsed:.1f} seconds",
-                                context={"command": self._current_command.model_dump() if self._current_command else None},
-                                stack_trace="",
-                            ),
-                        )
-
-                        self._clear_robot_operation_context()
-                        self._remove_current_operation()
-                        self._current_task = None
-                        self._current_command = None
-                        self._current_operation = None
-                        self._command_started_at = None
-                        await self._publish_status()
-                        continue
-
                     if self._current_task.done():
                         logging.info("Command task completed, processing result")
 
