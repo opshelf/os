@@ -557,10 +557,16 @@ def build_shelves_from_scan(
 			status = CellStatus.AVAILABLE
 			item = None
 			z_offset = 0.0
+			dimensions = Dimensions(
+				width=detected_cell.width_mm,
+				height=detected_cell.height_mm,
+				length=default_length_mm,
+			)
 
 			if existing_cell is not None:
 				status = existing_cell.status
 				item = existing_cell.item
+				dimensions = existing_cell.dimensions
 				if existing_cell.calibration_point is not None:
 					z_offset = existing_cell.calibration_point.z_offset
 
@@ -575,19 +581,24 @@ def build_shelves_from_scan(
 						z_offset=z_offset,
 						s=side_number,
 					),
-					dimensions=Dimensions(
-						width=detected_cell.width_mm,
-						height=detected_cell.height_mm,
-						length=default_length_mm,
-					),
+					dimensions=dimensions,
 				)
 			)
+
+		output_shelf_height = detected_shelf.shelf_height_mm
+		output_shelf_width = detected_shelf.shelf_width_mm
+		if existing_shelves is not None:
+			for existing_shelf in existing_shelves:
+				if existing_shelf.shelf_idx == detected_shelf.shelf_idx:
+					output_shelf_height = existing_shelf.shelf_height
+					output_shelf_width = existing_shelf.shelf_width
+					break
 
 		shelves.append(
 			Shelf(
 				shelf_idx=detected_shelf.shelf_idx,
-				shelf_height=detected_shelf.shelf_height_mm,
-				shelf_width=detected_shelf.shelf_width_mm,
+				shelf_height=output_shelf_height,
+				shelf_width=output_shelf_width,
 				cells=cells,
 			)
 		)
