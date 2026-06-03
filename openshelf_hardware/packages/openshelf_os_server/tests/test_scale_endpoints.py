@@ -1,6 +1,10 @@
+from types import SimpleNamespace
 import pytest
 from httpx import AsyncClient
 from unittest.mock import patch, MagicMock, AsyncMock
+from fastapi import HTTPException
+from openshelf_os.robot.commands import RetrieveItemCommand
+from openshelf_os_server.routers import robot as robot_router
 
 
 def _mock_settings():
@@ -17,6 +21,7 @@ def _mock_worker():
 	worker.set_scale_calibration_params = AsyncMock()
 	worker.calibrate_scale_zero = AsyncMock()
 	worker.calibrate_scale_weight = AsyncMock()
+	worker.get_cached_scale_status = MagicMock(return_value=None)
 	return worker
 
 
@@ -237,3 +242,22 @@ async def test_scale_endpoint_service_unavailable(client: AsyncClient) -> None:
 	assert response.status_code == 503
 	data = response.json()
 	assert "Scale not connected" in data["detail"]
+
+
+@pytest.mark.anyio
+async def test_retrieve_command_uses_cached_occupied_scale_status() -> None:
+	worker = _mock_worker()
+	worker.get_cached_scale_status.return_value = SimpleNamespace(occupied=True)
+	db = AsyncMock()
+
+	with patch("openshelf_os_server.routers.robot.is_laser_auto_calibration_running", AsyncMock(return_value=False)):
+		with pytest.raises(HTTPException) as exc_info:
+			await robot_router.robot_commands(
+				command=RetrieveItemCommand(location={"side": "left_module", "shelf_idx": 0, "cell_idx": 0}),
+				worker=worker,
+				current_user=SimpleNamespace(id=1),
+				db=db,
+			)
+
+	assert exc_info.value.status_code == 409
+	worker.get_scale_data.assert_not_awaited()

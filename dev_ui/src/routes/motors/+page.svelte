@@ -455,7 +455,7 @@
 				movingMotor !== null ||
 				isHomingAll === true}
 		>
-			{isTesting === true ? 'testing...' : 'TEST ALL'}
+			TEST ALL
 		</button>
 		<button
 			type="button"
@@ -465,7 +465,7 @@
 				movingMotor !== null ||
 				isTesting === true}
 		>
-			{isHomingAll === true ? 'homing...' : 'HOME ALL'}
+			HOME ALL
 		</button>
 	</div>
 
@@ -627,7 +627,7 @@
 							on:click={() => didClickMove(motor.name)}
 							disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
 						>
-							{movingMotor === motor.name ? '...' : 'go'}
+							go
 						</button>
 					</td>
 					<td>
@@ -759,7 +759,7 @@
 							on:click={() => didClickMove(motor.name)}
 							disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
 						>
-							{movingMotor === motor.name ? '...' : 'go'}
+							go
 						</button>
 					</td>
 					<td>

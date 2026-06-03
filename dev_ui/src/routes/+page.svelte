@@ -1,12 +1,88 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { apiFetch, getApiBase, isApiConnected, robotStatus, robotStatusError, robotStatusLastUpdate } from '$lib';
+	import {
+		apiFetch,
+		controlCabinetRelease,
+		getApiBase,
+		isApiConnected,
+		robotStatus,
+		robotStatusError,
+		robotStatusLastUpdate
+	} from '$lib';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 
 	const apiBase = getApiBase();
 
 	let deviceId = '';
 	let lanIp = '';
+	let isUnlockingCabinet = false;
+	let isHomingRobot = false;
+
+	function getLightCurtainBlocked(): unknown {
+		const safety = $robotStatus?.robot_status?.safety;
+		if (!safety || typeof safety !== 'object') {
+			return undefined;
+		}
+		const sources = (safety as Record<string, unknown>).sources;
+		if (!sources || typeof sources !== 'object') {
+			return undefined;
+		}
+		const lightCurtain = (sources as Record<string, unknown>).light_curtain;
+		if (!lightCurtain || typeof lightCurtain !== 'object') {
+			return undefined;
+		}
+		return (lightCurtain as Record<string, unknown>).blocked;
+	}
+
+	function getIoBoxOccupied(): boolean {
+		const scale = $robotStatus?.robot_status?.scale;
+		if (!scale || typeof scale !== 'object') {
+			return false;
+		}
+		return (scale as Record<string, unknown>).occupied === true;
+	}
+
+	function getCabinetStatus(): 'closed' | 'opened' | 'unknown' {
+		const cabinetDoors = $robotStatus?.robot_status?.cabinet_doors;
+		if (!cabinetDoors || typeof cabinetDoors !== 'object') {
+			return 'unknown';
+		}
+
+		const state = cabinetDoors as Record<string, unknown>;
+		if (typeof state.top_closed !== 'boolean' || typeof state.bottom_closed !== 'boolean') {
+			return 'unknown';
+		}
+
+		return state.top_closed === true && state.bottom_closed === true ? 'closed' : 'opened';
+	}
+
+	async function didClickCabinetUnlock(): Promise<void> {
+		isUnlockingCabinet = true;
+
+		try {
+			await controlCabinetRelease('release');
+		} catch (err) {
+			console.error('failed to unlock cabinet:', err);
+		} finally {
+			isUnlockingCabinet = false;
+		}
+	}
+
+	async function didClickHome(): Promise<void> {
+		isHomingRobot = true;
+
+		try {
+			await apiFetch('/robot/commands', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ command: 'home' })
+			});
+		} catch (err) {
+			console.error('home command failed:', err);
+		} finally {
+			isHomingRobot = false;
+		}
+	}
 
 	function formatCommand(
 		command: Record<string, unknown> | null | undefined
@@ -103,13 +179,17 @@
 				<td>{$robotStatus.running ? 'yes' : 'no'}</td>
 			</tr>
 			<tr>
+				<td>io box</td>
+				<td>{getIoBoxOccupied() ? 'occupied' : 'empty'}</td>
+			</tr>
+			<tr>
 				<td>light curtain</td>
 				<td>
-					{#if $robotStatus.robot_status?.curtain_blocked === null}
+					{#if getLightCurtainBlocked() === null}
 						disabled
-					{:else if $robotStatus.robot_status?.curtain_blocked === true}
+					{:else if getLightCurtainBlocked() === true}
 						blocked
-					{:else if $robotStatus.robot_status?.curtain_blocked === false}
+					{:else if getLightCurtainBlocked() === false}
 						clear
 					{:else}
 						unknown
@@ -117,14 +197,34 @@
 				</td>
 			</tr>
 			<tr>
+				<td>cabinet</td>
+				<td>
+					<div class="status-action-cell">
+						<span>{getCabinetStatus()}</span>
+						<button
+							disabled={isUnlockingCabinet === true || getCabinetStatus() === 'opened'}
+							onclick={didClickCabinetUnlock}>UNLOCK</button
+						>
+					</div>
+				</td>
+			</tr>
+			<tr>
 				<td>home required</td>
 				<td>
-					{#if $robotStatus.needs_home}
-						yes{#if $robotStatus.needs_home_reason}
-							({$robotStatus.needs_home_reason}){/if}
-					{:else}
-						no
-					{/if}
+					<div class="status-action-cell">
+						<span>
+							{#if $robotStatus.needs_home}
+								yes{#if $robotStatus.needs_home_reason}
+									({$robotStatus.needs_home_reason}){/if}
+							{:else}
+								no
+							{/if}
+						</span>
+						<button
+							disabled={$robotStatus.needs_home !== true || isHomingRobot === true}
+							onclick={didClickHome}>HOME</button
+						>
+					</div>
 				</td>
 			</tr>
 		</tbody>
@@ -162,5 +262,13 @@
 			</tbody>
 		{/if}
 	{/if}
-
 </table>
+
+<style>
+	.status-action-cell {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 1em;
+	}
+</style>

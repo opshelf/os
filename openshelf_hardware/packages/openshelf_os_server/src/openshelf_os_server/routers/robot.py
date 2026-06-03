@@ -230,13 +230,21 @@ async def robot_commands(
 
     if isinstance(command, RetrieveItemCommand):
         try:
-            scale_data = await worker.get_scale_data()
-            weight = abs(scale_data["weight"])
-            if weight > 5.0:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="Please remove the item from the IO box before retrieving another",
-                )
+            scale_status = worker.get_cached_scale_status()
+            if scale_status is not None:
+                if scale_status.occupied is True:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Please remove the item from the IO box before retrieving another",
+                    )
+            else:
+                scale_data = await worker.get_scale_data()
+                weight = abs(scale_data["weight"])
+                if weight > 5.0:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Please remove the item from the IO box before retrieving another",
+                    )
         except HTTPException:
             raise
         except Exception as exc:
@@ -323,16 +331,21 @@ async def control_gripper(
     return SuccessResponse()
 
 
-@router.post("/curtain_guard/acknowledge", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
-async def acknowledge_curtain_guard(
+@router.post("/safety/acknowledge", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
+async def acknowledge_safety_guard(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
 ) -> SuccessResponse:
-    accepted = await worker.acknowledge_curtain_guard()
+    result = await worker.acknowledge_safety_guard()
 
-    if accepted is False:
+    if result["accepted"] is False:
+        safety = result.get("safety", {})
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Cannot acknowledge: light curtain is still blocked",
+            detail={
+                "message": "Cannot acknowledge: safety interruption is still active",
+                "code": "safety_interruption_active",
+                "active_sources": safety.get("active_sources", []),
+            },
         )
 
     return SuccessResponse()
@@ -659,6 +672,7 @@ async def control_door(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=_error_detail(f"Door {action} failed: {exc}", "door_control_failed"),
         ) from exc
+
 
 
 async def get_occupied_cells_from_db() -> set[tuple[str, int, int]]:

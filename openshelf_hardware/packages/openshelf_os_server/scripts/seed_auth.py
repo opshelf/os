@@ -26,12 +26,8 @@ DEFAULT_ROLES = [
 		"permissions": [
 			"users:read", "users:write", "users:delete",
 			"roles:read", "roles:write", "roles:delete",
-			"robot:control", "robot:read",
-			"gantry:control", "gantry:read",
-			"tool:control", "tool:read",
-			"storage:read", "storage:write", "storage:delete",
-			"scanner:read", "scanner:control",
-			"workstation:control", "workstation:read",
+			"robot:control",
+			"storage:read", "storage:write", "storage:delete", "storage:access",
 			"printer:print",
 			"audit:read"
 		]
@@ -39,23 +35,14 @@ DEFAULT_ROLES = [
 	{
 		"name": "operator",
 		"permissions": [
-			"robot:control", "robot:read",
-			"gantry:control", "gantry:read",
-			"tool:control", "tool:read",
-			"storage:read",
-			"scanner:read", "scanner:control",
-			"workstation:control", "workstation:read"
+			"robot:control",
+			"storage:read"
 		]
 	},
 	{
 		"name": "viewer",
 		"permissions": [
-			"robot:read",
-			"gantry:read",
-			"tool:read",
-			"storage:read",
-			"scanner:read",
-			"workstation:read"
+			"storage:read"
 		]
 	}
 ]

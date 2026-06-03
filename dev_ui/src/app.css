@@ -20,7 +20,7 @@ body {
 	font-weight: normal;
 	color: black;
 	background-color: white;
-	margin: 2em 2em 6em 2em;
+	margin: 1.5em 1.5em 6em 1.5em;
 }
 
 * {
@@ -92,7 +92,7 @@ button:active {
 }
 
 .message {
-	margin-top: 2em;
+	margin-top: 1.5em;
 	text-transform: uppercase;
 	color: oklch(0.5318 0.2399 256.98999);
 }
@@ -127,8 +127,8 @@ nav a.active {
 
 .version-label {
 	position: fixed;
-	bottom: 2em;
-	left: 2em;
+	bottom: 1.5em;
+	left: 1.5em;
 	background-color: white;
 	text-transform: uppercase;
 }

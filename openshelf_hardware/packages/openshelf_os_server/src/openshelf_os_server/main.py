@@ -42,7 +42,7 @@ from openshelf_os_server.database.session import AsyncSessionLocal
 from openshelf_os_server.database.models import Item, ItemLocation, Role, User
 from openshelf_os_server.middleware.audit import AuditMiddleware
 from openshelf_os_server.middleware.correlation import CorrelationIdMiddleware
-from openshelf_os_server.routers import access_levels, audit, auth, calibration, camera, demo, iobox_sizer, printer, report, robot, roles, storage, system, telemetry, users
+from openshelf_os_server.routers import access_levels, audit, auth, cabinet, calibration, camera, demo, iobox_sizer, printer, report, robot, roles, storage, system, telemetry, users
 from openshelf_os_server.settings import get_settings, get_operating_mode
 
 configure_logging()
@@ -276,6 +276,24 @@ async def _ensure_developer_user() -> None:
 		logger.info("developer_user_created", email="developer@opshelf.com")
 
 
+async def _ensure_default_role_permissions() -> None:
+	async with AsyncSessionLocal() as db:
+		result = await db.execute(select(Role).filter(Role.name == "admin"))
+		admin_role = result.scalar_one_or_none()
+
+		if admin_role is None:
+			return
+
+		permissions = list(admin_role.permissions or [])
+		if "*" in permissions or "storage:access" in permissions:
+			return
+
+		permissions.append("storage:access")
+		admin_role.permissions = permissions
+		await db.commit()
+		logger.info("admin_role_permission_added", permission="storage:access")
+
+
 async def _seed_auth_if_requested() -> None:
 	if os.getenv("RUN_SEED_SCRIPT", "false").lower() not in {"1", "true", "yes"}:
 		return
@@ -391,6 +409,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 		await conn.run_sync(Base.metadata.create_all)
 
 	await _seed_auth_if_requested()
+	await _ensure_default_role_permissions()
 	await _ensure_developer_user()
 	await _apply_mode_transition()
 
@@ -548,6 +567,7 @@ app.include_router(access_levels.router)
 app.include_router(audit.router)
 app.include_router(camera.router, prefix="/api/camera")
 app.include_router(iobox_sizer.router, prefix="/api/iobox/sizer")
+app.include_router(cabinet.router, prefix="/api/cabinet")
 app.include_router(robot.router, prefix="/api/robot")
 app.include_router(storage.router, prefix="/api/storage")
 app.include_router(printer.router, prefix="/api/print")

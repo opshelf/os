@@ -49,21 +49,16 @@ async def seeded_db() -> AsyncGenerator[None, None]:
             "admin": [
                 "users:read", "users:write", "users:delete",
                 "roles:read", "roles:write", "roles:delete",
-                "robot:control", "robot:read",
-                "gantry:control", "gantry:read",
-                "tool:control", "tool:read",
-                "storage:read", "storage:write", "storage:delete",
-                "scanner:read", "scanner:control",
-                "workstation:control", "workstation:read",
+                "robot:control",
+                "storage:read", "storage:write", "storage:delete", "storage:access",
                 "audit:read"
             ],
             "operator": [
                 "users:read",
-                "workstation:read", "workstation:write",
-                "robot:read", "robot:write",
+                "storage:read",
             ],
             "viewer": [
-                "workstation:read"
+                "storage:read"
             ],
         }
         for name, perms in roles.items():
@@ -138,7 +133,7 @@ def auth_headers(seeded_db: AsyncGenerator[None, None]) -> dict[str, str]:
         user_id=1,
         email="admin@opshelf.com",
         role="admin",
-        permissions=["users:read", "users:write", "robot:control", "storage:read", "storage:write"],
+        permissions=["users:read", "users:write", "robot:control", "storage:read", "storage:write", "storage:access"],
         access_level=None,
         expires_minutes=60,
     )

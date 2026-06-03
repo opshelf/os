@@ -1,4 +1,4 @@
-from typing import Literal, Optional, Union
+from typing import Any, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -46,15 +46,50 @@ class RobotState(BaseModel):
     current_cell: Optional[StorageModuleCellLocation] = None
 
 
+class CabinetDoorState(BaseModel):
+    top_closed: bool
+    bottom_closed: bool
+    closed: bool
+    top_open: bool
+    bottom_open: bool
+    open: bool
+
+
+class SafetyStatus(BaseModel):
+    active: bool = False
+    motion_blocked: bool = False
+    awaiting_ack: bool = False
+    can_acknowledge: bool = False
+    active_sources: list[str] = Field(default_factory=list)
+    sources: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    interruption_id: int = 0
+    last_changed_at: Optional[str] = None
+
+
+class ScaleStatus(BaseModel):
+    enabled: bool = True
+    available: bool = False
+    weight_grams: Optional[float] = None
+    stable: bool = False
+    valid: bool = False
+    overload: bool = False
+    zero: bool = False
+    occupied: bool = False
+    threshold_grams: float = 5.0
+    decimal_position: Optional[int] = None
+    updated_at: Optional[str] = None
+    error: Optional[str] = None
+
+
 class RobotStatus(BaseModel):
     gantry: GantryStatus
     tool: ToolAxisStatus
     state: RobotState
     storage: StorageGrid
-    curtain_blocked: Optional[bool] = None
-    door_open: Optional[bool] = None
-    curtain_guard_active: Optional[bool] = None
-    awaiting_curtain_ack: bool = False
+    cabinet_doors: Optional[CabinetDoorState] = None
+    io_door_open: Optional[bool] = None
+    scale: Optional[ScaleStatus] = None
+    safety: SafetyStatus = Field(default_factory=SafetyStatus)
     motors: dict[str, AxisTelemetry] = Field(default_factory=dict)
 
 

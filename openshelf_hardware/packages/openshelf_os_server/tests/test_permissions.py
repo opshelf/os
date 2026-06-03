@@ -6,7 +6,7 @@ def test_permission_checks() -> None:
 
     assert has_permission(perms, "users:read")
     assert has_permission(perms, "roles:write")  # roles:* covers
-    assert has_permission(perms, "gantry:read")  # *:read covers
+    assert has_permission(perms, "storage:read")  # *:read covers
     assert not has_permission(perms, "users:delete")
 
     assert has_any_permission(perms, ["users:delete", "users:read"])  # one matches

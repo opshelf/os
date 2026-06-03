@@ -10,7 +10,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Optional, Callable, Awaitable
 
 if TYPE_CHECKING:
-    from hardware.curtain import CurtainSafety
+    from hardware.curtain import MotionSafetyInterlock
 
 from hardware.exceptions import (
     MotorError, MotorTimeoutError, MotorLimitError,
@@ -82,7 +82,7 @@ class Motor():
     _status: MotorStatus
     _last_bad_position_log_at: Optional[float]
 
-    def __init__(self, controller: SharedModbusController, params: Any, safety: Optional["CurtainSafety"] = None) -> None:
+    def __init__(self, controller: SharedModbusController, params: Any, safety: Optional["MotionSafetyInterlock"] = None) -> None:
         self._motor_id = params.motor_id
         self._controller = controller
         self._params = params
@@ -505,7 +505,7 @@ class Motor():
             if self._safety:
                 if self._safety.blocked:
                     self._logger.debug(
-                        "Curtain guard active before move; waiting to clear",
+                        "Safety guard active before move; waiting to clear",
                         extra={"motor_id": self._motor_id, "target_mm": value},
                     )
                 await self._safety.wait_clear()
@@ -535,7 +535,7 @@ class Motor():
             if self._safety:
                 if self._safety.blocked:
                     self._logger.debug(
-                        "Curtain guard active before move; waiting to clear",
+                        "Safety guard active before move; waiting to clear",
                         extra={"motor_id": self._motor_id, "target_mm": value},
                     )
                 await self._safety.wait_clear()
@@ -714,7 +714,7 @@ class Motor():
         pause_started = time.monotonic()
 
         self._logger.info(
-            "Curtain guard stop",
+            "Safety guard stop",
             extra={"motor_id": self._motor_id, "position_mm": self._cur_pos},
         )
 
@@ -723,7 +723,7 @@ class Motor():
 
         if self._pending_motion:
             self._logger.info(
-                "Curtain guard resume",
+                "Safety guard resume",
                 extra={
                     "motor_id": self._motor_id,
                     "position_mm": self._cur_pos,

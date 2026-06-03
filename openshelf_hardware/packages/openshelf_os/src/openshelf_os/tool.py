@@ -199,19 +199,19 @@ class Tool:
             await self._handle_fault(e)
             raise MotorError(f"Failed to clear alarms: {str(e)}") from e
 
-    def pause_for_curtain(self) -> None:
+    def block_motion_for_safety(self) -> None:
         if self._guard_paused:
             return
 
         self._guard_paused = True
-        self._logger.info("Curtain guard pausing tool")
+        self._logger.info("Safety guard pausing tool")
 
-    def resume_after_curtain(self) -> None:
+    def release_motion_safety(self) -> None:
         if not self._guard_paused:
             return
 
         self._guard_paused = False
-        self._logger.info("Curtain guard cleared for tool")
+        self._logger.info("Safety guard cleared for tool")
 
     # ------------------------------------------------------------------ #
     #  Fault, status, and configuration

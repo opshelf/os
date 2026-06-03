@@ -54,6 +54,32 @@ class ToFReadError(ToFError):
 class ToFConfigError(ToFError):
     """Time-of-flight sensor configuration error."""
     pass
+
+class GpioError(HardwareError):
+    """Base class for GPIO-related errors."""
+    pass
+
+
+class GpioConfigError(GpioError):
+    """GPIO configuration error."""
+    pass
+
+
+class GpioConnectionError(GpioError):
+    """Failed to initialize GPIO hardware."""
+    pass
+
+
+class GpioReadError(GpioError):
+    """Failed to read a GPIO pin."""
+    pass
+
+
+class GpioWriteError(GpioError):
+    """Failed to write a GPIO pin."""
+    pass
+
+
 class MotorError(HardwareError):
     """Base class for motor-related errors."""
     pass

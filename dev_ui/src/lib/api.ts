@@ -805,6 +805,56 @@ export async function controlDoor(action: DoorAction): Promise<{ success: boolea
 	});
 }
 
+export type CabinetLatchAction = 'passive' | 'release';
+
+export interface CabinetDoorState {
+	top_closed: boolean;
+	bottom_closed: boolean;
+	closed: boolean;
+	top_open: boolean;
+	bottom_open: boolean;
+	open: boolean;
+}
+
+export interface CabinetLatchState {
+	top_released: boolean;
+	bottom_released: boolean;
+	released: boolean;
+	top_engaged: boolean;
+	bottom_engaged: boolean;
+	engaged: boolean;
+}
+
+export interface CabinetReleaseResponse {
+	success: boolean;
+	action: CabinetLatchAction;
+	doors: CabinetDoorState;
+	latches: CabinetLatchState;
+}
+
+export interface CabinetStatusResponse {
+	doors: CabinetDoorState;
+	latches: CabinetLatchState;
+}
+
+export async function getCabinetStatus(): Promise<CabinetStatusResponse> {
+	return apiFetch<CabinetStatusResponse>('/cabinet/status');
+}
+
+export async function controlCabinetRelease(
+	action: CabinetLatchAction
+): Promise<CabinetReleaseResponse> {
+	return apiFetch<CabinetReleaseResponse>(`/cabinet/release?action=${action}`, {
+		method: 'POST'
+	});
+}
+
+export async function acknowledgeSafety(): Promise<{ message: string }> {
+	return apiFetch<{ message: string }>('/robot/safety/acknowledge', {
+		method: 'POST'
+	});
+}
+
 export interface IOBoxPosition {
 	pickup_low_x: number;
 	pickup_low_y: number;
