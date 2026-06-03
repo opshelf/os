@@ -4,7 +4,7 @@ import logging
 import sentry_sdk
 
 from pathlib import Path as _Path
-from typing import Any, Dict, Optional, List, TYPE_CHECKING
+from typing import Any, Callable, Dict, Optional, List, TYPE_CHECKING
 
 from hardware.controller import SharedModbusController as Controller
 from hardware.curtain import MotionSafetyInterlock
@@ -88,6 +88,7 @@ class Robot:
 
         self._state: RobotState = RobotState(current_cell=None)
         self._operation_context: dict[str, Any] = {}
+        self._operation_context_listener: Callable[[dict[str, Any] | None], None] | None = None
         self._last_fault_context: dict[str, Any] | None = None
         self._motor_time_accumulator: float = 0.0
 
@@ -338,9 +339,19 @@ class Robot:
             updates["nudge_override"] = nudge_override
 
         self._operation_context = {**self._operation_context, **updates}
+        if self._operation_context_listener is not None:
+            self._operation_context_listener(self.get_operation_context())
 
     def clear_operation_context(self) -> None:
         self._operation_context = {}
+        if self._operation_context_listener is not None:
+            self._operation_context_listener(None)
+
+    def set_operation_context_listener(
+        self,
+        listener: Callable[[dict[str, Any] | None], None] | None,
+    ) -> None:
+        self._operation_context_listener = listener
 
     def get_operation_context(self) -> dict[str, Any] | None:
         if not self._operation_context:

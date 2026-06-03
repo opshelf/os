@@ -596,6 +596,8 @@ class RobotWorker:
 
         self._robot.register_light_curtain_listener(self._on_light_curtain_change)
         self._robot.register_cabinet_door_listener(self._on_cabinet_door_change)
+        if hasattr(self._robot, "set_operation_context_listener"):
+            self._robot.set_operation_context_listener(self._on_operation_context_change)
 
     async def clear_commands(self) -> None:
         while self._command_queue.empty() is False:
@@ -1111,8 +1113,23 @@ class RobotWorker:
         except Exception as err:  # pragma: no cover - observability
             logging.warning("Failed to publish safety event: %s", err)
 
+    def _is_io_door_opening(self) -> bool:
+        try:
+            context = self._robot.get_operation_context()
+        except Exception:
+            return False
+
+        if not isinstance(context, dict):
+            return False
+
+        phase = context.get("phase")
+        return phase in {"io_place.open_door", "io_pick.open_door"}
+
     def _build_safety_sources(self) -> tuple[list[str], dict[str, dict[str, Any]]]:
-        light_curtain_active = bool(self._curtain_blocked) and bool(self._door_open)
+        io_door_opening = self._is_io_door_opening()
+        light_curtain_active = bool(self._curtain_blocked) and (
+            bool(self._door_open) or io_door_opening is True
+        )
         cabinet_doors = dict(self._cabinet_doors or {})
         cabinet_doors_open = cabinet_doors.get("open") is True
 
@@ -1121,6 +1138,7 @@ class RobotWorker:
                 "active": light_curtain_active,
                 "blocked": self._curtain_blocked,
                 "io_door_open": self._door_open,
+                "io_door_opening": io_door_opening,
             },
             "cabinet_doors": {
                 "active": cabinet_doors_open,
@@ -1237,6 +1255,17 @@ class RobotWorker:
             )
             self._cabinet_doors = dict(state)
             await self._evaluate_safety_guard(refresh=False)
+            await self._publish_status()
+
+        asyncio.create_task(_handle())
+
+    def _on_operation_context_change(self, context: dict[str, Any] | None) -> None:
+        async def _handle() -> None:
+            self._logger.debug(
+                "Operation context change received",
+                extra={"context": context},
+            )
+            await self._evaluate_safety_guard()
             await self._publish_status()
 
         asyncio.create_task(_handle())
