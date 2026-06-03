@@ -1,12 +1,27 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { apiFetch, getApiBase, isApiConnected, robotStatus, robotStatusError, robotStatusLastUpdate } from '$lib';
+	import {
+		apiFetch,
+		controlCabinetRelease,
+		getApiBase,
+		isApiConnected,
+		robotStatus,
+		robotStatusError,
+		robotStatusLastUpdate
+	} from '$lib';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
+	import StatusMessage from '$lib/components/StatusMessage.svelte';
 
 	const apiBase = getApiBase();
 
 	let deviceId = '';
 	let lanIp = '';
+	let isUnlockingCabinet = false;
+	let cabinetActionError = '';
+	let cabinetActionMessage = '';
+	let isHomingRobot = false;
+	let homeActionError = '';
+	let homeActionMessage = '';
 
 	function getLightCurtainBlocked(): unknown {
 		const safety = $robotStatus?.robot_status?.safety;
@@ -22,6 +37,62 @@
 			return undefined;
 		}
 		return (lightCurtain as Record<string, unknown>).blocked;
+	}
+
+	function getIoBoxOccupied(): boolean {
+		const scale = $robotStatus?.robot_status?.scale;
+		if (!scale || typeof scale !== 'object') {
+			return false;
+		}
+		return (scale as Record<string, unknown>).occupied === true;
+	}
+
+	function getCabinetStatus(): 'closed' | 'opened' | 'unknown' {
+		const cabinetDoors = $robotStatus?.robot_status?.cabinet_doors;
+		if (!cabinetDoors || typeof cabinetDoors !== 'object') {
+			return 'unknown';
+		}
+
+		const state = cabinetDoors as Record<string, unknown>;
+		if (typeof state.top_closed !== 'boolean' || typeof state.bottom_closed !== 'boolean') {
+			return 'unknown';
+		}
+
+		return state.top_closed === true && state.bottom_closed === true ? 'closed' : 'opened';
+	}
+
+	async function didClickCabinetUnlock(): Promise<void> {
+		isUnlockingCabinet = true;
+		cabinetActionError = '';
+		cabinetActionMessage = '';
+
+		try {
+			await controlCabinetRelease('release');
+			cabinetActionMessage = 'cabinet unlock pulse complete';
+		} catch (err) {
+			cabinetActionError = err instanceof Error ? err.message : 'failed to unlock cabinet';
+		} finally {
+			isUnlockingCabinet = false;
+		}
+	}
+
+	async function didClickHome(): Promise<void> {
+		isHomingRobot = true;
+		homeActionError = '';
+		homeActionMessage = '';
+
+		try {
+			await apiFetch('/robot/commands', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ command: 'home' })
+			});
+			homeActionMessage = 'home command sent';
+		} catch (err) {
+			homeActionError = err instanceof Error ? err.message : 'home command failed';
+		} finally {
+			isHomingRobot = false;
+		}
 	}
 
 	function formatCommand(
@@ -119,6 +190,10 @@
 				<td>{$robotStatus.running ? 'yes' : 'no'}</td>
 			</tr>
 			<tr>
+				<td>io box</td>
+				<td>{getIoBoxOccupied() ? 'occupied' : 'empty'}</td>
+			</tr>
+			<tr>
 				<td>light curtain</td>
 				<td>
 					{#if getLightCurtainBlocked() === null}
@@ -133,16 +208,52 @@
 				</td>
 			</tr>
 			<tr>
-				<td>home required</td>
+				<td>cabinet</td>
 				<td>
-					{#if $robotStatus.needs_home}
-						yes{#if $robotStatus.needs_home_reason}
-							({$robotStatus.needs_home_reason}){/if}
-					{:else}
-						no
-					{/if}
+					<div class="status-action-cell">
+						<span>{getCabinetStatus()}</span>
+						<button disabled={isUnlockingCabinet === true || getCabinetStatus() === 'opened'} onclick={didClickCabinetUnlock}>UNLOCK</button>
+					</div>
 				</td>
 			</tr>
+			{#if cabinetActionMessage}
+				<tr>
+					<td colspan="2"><StatusMessage message={cabinetActionMessage} /></td>
+				</tr>
+			{/if}
+			{#if cabinetActionError}
+				<tr>
+					<td colspan="2"><ErrorMessage message={cabinetActionError} /></td>
+				</tr>
+			{/if}
+			<tr>
+				<td>home required</td>
+				<td>
+					<div class="status-action-cell">
+						<span>
+							{#if $robotStatus.needs_home}
+								yes{#if $robotStatus.needs_home_reason}
+									({$robotStatus.needs_home_reason}){/if}
+							{:else}
+								no
+							{/if}
+						</span>
+						<button
+							disabled={$robotStatus.needs_home !== true || isHomingRobot === true}
+							onclick={didClickHome}>HOME</button>
+					</div>
+				</td>
+			</tr>
+			{#if homeActionMessage}
+				<tr>
+					<td colspan="2"><StatusMessage message={homeActionMessage} /></td>
+				</tr>
+			{/if}
+			{#if homeActionError}
+				<tr>
+					<td colspan="2"><ErrorMessage message={homeActionError} /></td>
+				</tr>
+			{/if}
 		</tbody>
 
 		{#if $robotStatus.current_command}
@@ -180,3 +291,12 @@
 	{/if}
 
 </table>
+
+<style>
+	.status-action-cell {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 1em;
+	}
+</style>
