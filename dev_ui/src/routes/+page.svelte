@@ -58,12 +58,11 @@
 
 	async function didClickCabinetUnlock(): Promise<void> {
 		isUnlockingCabinet = true;
-		cabinetActionError = '';
 
 		try {
 			await controlCabinetRelease('release');
 		} catch (err) {
-			cabinetActionError = err instanceof Error ? err.message : 'failed to unlock cabinet';
+			console.error('failed to unlock cabinet:', err);
 		} finally {
 			isUnlockingCabinet = false;
 		}
@@ -71,8 +70,6 @@
 
 	async function didClickHome(): Promise<void> {
 		isHomingRobot = true;
-		homeActionError = '';
-		homeActionMessage = '';
 
 		try {
 			await apiFetch('/robot/commands', {
@@ -80,9 +77,8 @@
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ command: 'home' })
 			});
-			homeActionMessage = 'home command sent';
 		} catch (err) {
-			homeActionError = err instanceof Error ? err.message : 'home command failed';
+			console.error('home command failed:', err);
 		} finally {
 			isHomingRobot = false;
 		}
