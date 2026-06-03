@@ -18,7 +18,6 @@
 	let lanIp = '';
 	let isUnlockingCabinet = false;
 	let cabinetActionError = '';
-	let cabinetActionMessage = '';
 	let isHomingRobot = false;
 	let homeActionError = '';
 	let homeActionMessage = '';
@@ -64,11 +63,9 @@
 	async function didClickCabinetUnlock(): Promise<void> {
 		isUnlockingCabinet = true;
 		cabinetActionError = '';
-		cabinetActionMessage = '';
 
 		try {
 			await controlCabinetRelease('release');
-			cabinetActionMessage = 'cabinet unlock pulse complete';
 		} catch (err) {
 			cabinetActionError = err instanceof Error ? err.message : 'failed to unlock cabinet';
 		} finally {
@@ -216,11 +213,6 @@
 					</div>
 				</td>
 			</tr>
-			{#if cabinetActionMessage}
-				<tr>
-					<td colspan="2"><StatusMessage message={cabinetActionMessage} /></td>
-				</tr>
-			{/if}
 			{#if cabinetActionError}
 				<tr>
 					<td colspan="2"><ErrorMessage message={cabinetActionError} /></td>
