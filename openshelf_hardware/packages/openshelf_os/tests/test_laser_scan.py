@@ -11,7 +11,15 @@ from openshelf_os.laser_calibration.scan import (  # noqa: E402
 	build_shelves_from_scan,
 	create_scan_capture,
 )
-from openshelf_os.storage import StorageGrid, StorageModuleSide  # noqa: E402
+from openshelf_os.storage import (  # noqa: E402
+	CalibrationCoordinate,
+	Cell,
+	CellStatus,
+	Dimensions,
+	Shelf,
+	StorageGrid,
+	StorageModuleSide,
+)
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 SYNTHETIC_LASER_SCAN_PATH = FIXTURES_DIR / "laser_scan_synthetic.npy"
@@ -117,6 +125,40 @@ def test_analyze_scan_capture_detects_enclosed_holes_and_rejects_boundary_gaps(t
 
 	assert_synthetic_analysis(analysis, shelves)
 
+
+def test_build_shelves_from_scan_preserves_existing_dimensions(tmp_path):
+	capture = build_synthetic_capture()
+
+	analysis = analyze_scan_capture(capture, base_dir=tmp_path)
+	existing_shelf = Shelf(
+		shelf_idx=0,
+		shelf_height=456.0,
+		shelf_width=789.0,
+		cells=[
+			Cell(
+				cell_idx=cell_idx,
+				status=CellStatus.AVAILABLE,
+				item=None,
+				calibration_point=CalibrationCoordinate(x=1.0, y=2.0, z_offset=3.0, s=0),
+				dimensions=Dimensions(length=155.0, width=125.0, height=100.0),
+			)
+			for cell_idx in range(3)
+		],
+	)
+
+	shelves = build_shelves_from_scan(
+		side=StorageModuleSide.LEFT,
+		analysis=analysis,
+		existing_shelves=[existing_shelf],
+	)
+
+	assert shelves[0].shelf_height == pytest.approx(456.0)
+	assert shelves[0].shelf_width == pytest.approx(789.0)
+	for cell in shelves[0].cells:
+		assert cell.dimensions == Dimensions(length=155.0, width=125.0, height=100.0)
+		assert cell.calibration_point is not None
+		assert cell.calibration_point.x != pytest.approx(1.0)
+		assert cell.calibration_point.z_offset == pytest.approx(3.0)
 
 def test_analyze_scan_capture_accepts_synthetic_npy_fixture(tmp_path):
 	depth_array = np.load(SYNTHETIC_LASER_SCAN_PATH)
