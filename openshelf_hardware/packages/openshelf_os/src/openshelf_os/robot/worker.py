@@ -896,6 +896,10 @@ class RobotWorker:
                     self._command_started_at = time.monotonic()
                     self._current_task = asyncio.create_task(self._robot.handle_command(command))
                 else:
+                    safety_changed = await self._evaluate_safety_guard()
+                    if safety_changed is True:
+                        await self._publish_status()
+
                     if self._current_task.done():
                         logging.info("Command task completed, processing result")
 

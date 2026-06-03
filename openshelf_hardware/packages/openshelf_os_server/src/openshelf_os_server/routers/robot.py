@@ -704,11 +704,8 @@ async def stream_sse() -> EventSourceResponse:
         worker = None
 
     if worker is not None:
-        status_queue, current_payload = await worker.subscribe_status()
-        raw_payload = current_payload
-
-        if raw_payload is None:
-            raw_payload = await worker.get_status_snapshot(force_refresh=True)
+        status_queue, _ = await worker.subscribe_status()
+        raw_payload = await worker.get_status_snapshot(force_refresh=True)
 
         if raw_payload is not None:
             occupied_cells = await get_occupied_cells_from_db()
