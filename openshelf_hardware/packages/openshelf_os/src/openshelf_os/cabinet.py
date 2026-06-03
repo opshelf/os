@@ -37,7 +37,7 @@ class Cabinet:
         self._door_subscriptions: list[GpioSubscription] = []
         self._door_monitor_task: asyncio.Task | None = None
         self._door_poll_interval_s = 0.05
-        self._release_pulse_s = 0.75
+        self._release_pulse_s = 0.25
         self._logger = logging.getLogger(__name__).getChild("Cabinet")
 
     async def configure(self) -> None:
