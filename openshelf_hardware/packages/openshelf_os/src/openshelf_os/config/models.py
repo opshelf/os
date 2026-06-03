@@ -287,8 +287,8 @@ def _default_gpio_expanders() -> List[GpioExpanderConfig]:
     ]
 
 
-def _rpi_input(pin: int, *, inverted: bool = True) -> GpioPinConfig:
-    return GpioPinConfig(board="rpi", pin=pin, direction="input", pull="up", inverted=inverted)
+def _rpi_input(pin: int, *, inverted: bool = True, debounce_ms: int = 0) -> GpioPinConfig:
+    return GpioPinConfig(board="rpi", pin=pin, direction="input", pull="up", inverted=inverted, debounce_ms=debounce_ms)
 
 
 def _rpi_output(pin: int, *, initial: Optional[bool] = None, shutdown: Optional[bool] = None) -> GpioPinConfig:
@@ -316,8 +316,8 @@ def _default_gpio_pins() -> dict[str, GpioPinConfig]:
         "tool_limit_r": _rpi_input(8),
         "tool_limit_s": _rpi_input(7),
         "tool_limit_z": _rpi_input(25),
-        "cabinet_top_closed": _rpi_input(17, inverted=False),
-        "cabinet_bot_closed": _rpi_input(27, inverted=False),
+        "cabinet_top_closed": _rpi_input(17, inverted=False, debounce_ms=50),
+        "cabinet_bot_closed": _rpi_input(27, inverted=False, debounce_ms=50),
         "estop": _rpi_input(18),
         "tool_1": _rpi_input(1),
         "io_standby": _rpi_output(23),

@@ -130,7 +130,7 @@ async def test_cabinet_door_listener_receives_state_changes() -> None:
 	cabinet.set_door_listener(states.append)
 
 	gpio.set_fake_input("cabinet_top_closed", False)
-	await asyncio.sleep(0)
+	await asyncio.sleep(cabinet._door_debounce_s + 0.01)
 
 	assert states[-1] == {
 		"top_closed": False,
@@ -140,4 +140,24 @@ async def test_cabinet_door_listener_receives_state_changes() -> None:
 		"bottom_open": False,
 		"open": True,
 	}
+	await cabinet.stop()
+
+
+@pytest.mark.asyncio
+async def test_cabinet_door_listener_ignores_transient_bounce() -> None:
+	gpio = _door_latch_manager()
+	cabinet = Cabinet(gpio=gpio)
+	states: list[dict[str, bool]] = []
+
+	gpio.set_fake_input("cabinet_top_closed", True)
+	gpio.set_fake_input("cabinet_bot_closed", True)
+	await cabinet.configure()
+	cabinet.set_door_listener(states.append)
+
+	gpio.set_fake_input("cabinet_top_closed", False)
+	await asyncio.sleep(cabinet._door_debounce_s / 2)
+	gpio.set_fake_input("cabinet_top_closed", True)
+	await asyncio.sleep(cabinet._door_debounce_s + 0.01)
+
+	assert states == [_closed_doors()]
 	await cabinet.stop()

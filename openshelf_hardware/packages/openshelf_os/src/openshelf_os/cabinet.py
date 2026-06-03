@@ -29,14 +29,17 @@ class CabinetDoorLatch:
 
 
 class Cabinet:
-    def __init__(self, *, gpio: Any = None) -> None:
+    def __init__(self, *, gpio: Any = None, door_debounce_s: float = 0.05) -> None:
         self._gpio = gpio
         self._door_latches: dict[str, CabinetDoorLatch] = {}
         self._door_listener: Callable[[dict[str, bool]], None] | None = None
         self._door_state: dict[str, bool] | None = None
+        self._door_candidate_state: dict[str, bool] | None = None
         self._door_subscriptions: list[GpioSubscription] = []
         self._door_monitor_task: asyncio.Task | None = None
+        self._door_debounce_task: asyncio.Task | None = None
         self._door_poll_interval_s = 0.05
+        self._door_debounce_s = door_debounce_s
         self._release_pulse_s = 0.25
         self._logger = logging.getLogger(__name__).getChild("Cabinet")
 
@@ -66,6 +69,7 @@ class Cabinet:
 
     async def stop(self) -> None:
         self._close_door_subscriptions()
+        await self._cancel_door_debounce()
 
         if self._door_monitor_task is None:
             return
@@ -163,19 +167,78 @@ class Cabinet:
 
     def _did_change_door_input(self, event: GpioEvent) -> None:
         del event
-        self._handle_door_state(self.get_door_state())
+        self._handle_door_state(self.get_door_state(), debounce=True)
 
-    def _handle_door_state(self, state: dict[str, bool]) -> None:
+    def _handle_door_state(self, state: dict[str, bool], *, debounce: bool = False) -> None:
+        if state == self._door_state:
+            self._door_candidate_state = None
+            self._cancel_door_debounce_soon()
+            return
+
+        if debounce is True and self._door_debounce_s > 0:
+            self._schedule_door_debounce(state)
+            return
+
+        self._apply_door_state(state)
+
+    def _apply_door_state(self, state: dict[str, bool]) -> None:
         if state == self._door_state:
             return
 
         previous = self._door_state
         self._door_state = state
+        self._door_candidate_state = None
         self._logger.debug(
             "Cabinet door state change",
             extra={"state": state, "previous": previous},
         )
         self._emit_door_state(state)
+
+    def _schedule_door_debounce(self, state: dict[str, bool]) -> None:
+        if state == self._door_candidate_state:
+            return
+
+        self._door_candidate_state = state
+        self._cancel_door_debounce_soon()
+        self._door_debounce_task = asyncio.create_task(
+            self._apply_door_state_after_debounce(state),
+            name="cabinet-door-debounce",
+        )
+
+    async def _apply_door_state_after_debounce(self, state: dict[str, bool]) -> None:
+        task = asyncio.current_task()
+        try:
+            await asyncio.sleep(self._door_debounce_s)
+            if self.get_door_state() != state:
+                return
+            self._apply_door_state(state)
+        except asyncio.CancelledError:
+            raise
+        finally:
+            if self._door_debounce_task is task:
+                self._door_debounce_task = None
+                self._door_candidate_state = None
+
+    def _cancel_door_debounce_soon(self) -> None:
+        if self._door_debounce_task is None:
+            return
+
+        self._door_debounce_task.cancel()
+        self._door_debounce_task = None
+
+    async def _cancel_door_debounce(self) -> None:
+        task = self._door_debounce_task
+        self._door_debounce_task = None
+        self._door_candidate_state = None
+
+        if task is None:
+            return
+
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
     def _emit_door_state(self, state: dict[str, bool]) -> None:
         if self._door_listener is None:
@@ -189,7 +252,7 @@ class Cabinet:
     async def _monitor_doors(self) -> None:
         try:
             while True:
-                self._handle_door_state(self.get_door_state())
+                self._handle_door_state(self.get_door_state(), debounce=True)
                 await asyncio.sleep(self._door_poll_interval_s)
         except asyncio.CancelledError:
             raise
