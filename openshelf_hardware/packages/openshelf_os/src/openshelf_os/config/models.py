@@ -339,8 +339,7 @@ def _default_gpio_pins() -> dict[str, GpioPinConfig]:
         "io_1": _pcf_input(11),
         "io_limit_max": _pcf_input(12),
         "io_limit_min": _pcf_input(13),
-        "light_curtain_1": _pcf_input(15),
-        "light_curtain_2": _pcf_input(14),
+        "light_curtain": _pcf_input(8),
     }
 
 

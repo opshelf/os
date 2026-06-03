@@ -44,10 +44,8 @@ def test_robot_gpio_empty_object_expands_to_defaults() -> None:
     robot = Robot.model_validate(config)
 
     assert isinstance(robot.gpio, GpioConfig)
-    assert "light_curtain_1" in robot.gpio.pins
-    assert "light_curtain_2" in robot.gpio.pins
-    assert robot.gpio.pins["light_curtain_1"].pin == 15
-    assert robot.gpio.pins["light_curtain_2"].pin == 14
+    assert "light_curtain" in robot.gpio.pins
+    assert robot.gpio.pins["light_curtain"].pin == 8
     assert "cabinet_top_closed" in robot.gpio.pins
     assert "cabinet_bot_closed" in robot.gpio.pins
     assert robot.gpio.pins["cabinet_top_closed"].inverted is False
