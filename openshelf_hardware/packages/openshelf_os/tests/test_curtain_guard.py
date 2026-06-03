@@ -153,23 +153,178 @@ class _DummyMotor:
         return None
 
 
+class _DummyGpioSubscription:
+    def __init__(self, did_close=None):
+        self._did_close = did_close
+        self._closed = False
+
+    def close(self):
+        if self._closed is True:
+            return
+        self._closed = True
+        if self._did_close is not None:
+            self._did_close()
+
+
+class _DummyGpioEvent:
+    def __init__(self, name, value, raw_value):
+        self.name = name
+        self.value = value
+        self.raw_value = raw_value
+        self.timestamp = 0.0
+
+
+class _DummyGpioPinSpec:
+    def __init__(
+        self,
+        *,
+        name,
+        board,
+        pin,
+        direction,
+        expander=None,
+        inverted=False,
+        **_,
+    ):
+        self.name = name
+        self.board = board
+        self.pin = pin
+        self.direction = direction
+        self.expander = expander
+        self.inverted = inverted
+
+    def to_logical(self, raw_value):
+        return not raw_value if self.inverted is True else raw_value
+
+    def to_raw(self, value):
+        return not value if self.inverted is True else value
+
+
+class _DummyDigitalInput:
+    def __init__(self, manager, spec):
+        self._manager = manager
+        self._spec = spec
+        self._subscribers = []
+
+    @property
+    def name(self):
+        return self._spec.name
+
+    @property
+    def pin(self):
+        return self._spec.pin
+
+    @property
+    def board(self):
+        return self._spec.board
+
+    def read(self):
+        return self._spec.to_logical(self._manager._raw_values.get(self.name, False))
+
+    def subscribe(self, callback, *, emit_initial=False):
+        self._subscribers.append(callback)
+        if emit_initial is True:
+            callback(_DummyGpioEvent(self.name, self.read(), self._manager._raw_values.get(self.name, False)))
+
+        def did_close():
+            if callback in self._subscribers:
+                self._subscribers.remove(callback)
+
+        return _DummyGpioSubscription(did_close)
+
+    def _emit(self):
+        raw_value = self._manager._raw_values.get(self.name, False)
+        value = self._spec.to_logical(raw_value)
+        event = _DummyGpioEvent(self.name, value, raw_value)
+        for callback in list(self._subscribers):
+            callback(event)
+
+
+class _DummyDigitalOutput:
+    def __init__(self, manager, spec):
+        self._manager = manager
+        self._spec = spec
+
+    def write(self, value):
+        self._manager._raw_values[self._spec.name] = self._spec.to_raw(value)
+
+    def read(self):
+        return self._spec.to_logical(self._manager._raw_values.get(self._spec.name, False))
+
+
+class _DummyGpioManager:
+    def __init__(self, pins, *_, fake=False, **__):
+        self._pins = dict(pins)
+        self._fake = fake
+        self._inputs = {}
+        self._outputs = {}
+        self._raw_values = {name: False for name in self._pins}
+
+    def has_pin(self, name):
+        return name in self._pins
+
+    def input(self, name):
+        if name not in self._inputs:
+            self._inputs[name] = _DummyDigitalInput(self, self._pins[name])
+        return self._inputs[name]
+
+    def output(self, name):
+        if name not in self._outputs:
+            self._outputs[name] = _DummyDigitalOutput(self, self._pins[name])
+        return self._outputs[name]
+
+    def set_fake_input(self, name, value, *, raw=False):
+        spec = self._pins[name]
+        self._raw_values[name] = value if raw is True else spec.to_raw(value)
+        if name in self._inputs:
+            self._inputs[name]._emit()
+
+
 class _DummyCurtainSensor:
-    def __init__(self, *_, **__):
-        pass
+    def __init__(self, *, input_device=None, **__):
+        self._input = input_device
+        self.pin = getattr(input_device, "pin", None)
+
+    def read(self):
+        if self._input is None:
+            return False
+        return self._input.read()
+
+    def subscribe(self, on_change):
+        if self._input is None:
+            raise RuntimeError("input device not configured")
+
+        def did_change(event):
+            on_change(event.value)
+
+        return self._input.subscribe(did_change)
 
     def cleanup(self):
         return None
 
 
 class _DummyCurtainMonitor:
-    def __init__(self, *_, **__):
-        pass
+    def __init__(self, sensor, *, on_change, **__):
+        self._sensor = sensor
+        self._on_change = on_change
+        self._subscription = None
+        self._last = None
 
     async def start(self):
-        return None
+        self._last = self._sensor.read()
+        self._on_change(self._last)
+        self._subscription = self._sensor.subscribe(self._handle_change)
 
     async def stop(self):
-        return None
+        if self._subscription is not None:
+            self._subscription.close()
+            self._subscription = None
+
+    def _handle_change(self, state):
+        if state == self._last:
+            return
+        self._last = state
+        self._on_change(state)
 
 
 class _DummyScale:
@@ -218,6 +373,19 @@ hardware_curtain = types.SimpleNamespace(
 hardware_scale = types.SimpleNamespace(Scale=_DummyScale)
 hardware_toolcam = types.SimpleNamespace(ToolCamera=object)
 hardware_laser = types.SimpleNamespace(LaserSensor=object)
+hardware_gpio = types.ModuleType("hardware.gpio")
+hardware_gpio_types = types.SimpleNamespace(
+    DigitalInput=_DummyDigitalInput,
+    DigitalOutput=_DummyDigitalOutput,
+    GpioEvent=_DummyGpioEvent,
+    GpioSubscription=_DummyGpioSubscription,
+    GpioPinSpec=_DummyGpioPinSpec,
+    PinDirection=types.SimpleNamespace(INPUT="input", OUTPUT="output"),
+    PinPull=types.SimpleNamespace(UP="up", DOWN="down", NONE="none"),
+)
+hardware_gpio.GpioManager = _DummyGpioManager
+hardware_gpio.GpioPinSpec = _DummyGpioPinSpec
+hardware_gpio.types = hardware_gpio_types
 
 hardware_module.controller = hardware_controller
 hardware_module.motor = hardware_motor
@@ -225,7 +393,7 @@ hardware_module.curtain = hardware_curtain
 hardware_module.scale = hardware_scale
 hardware_module.toolcam = hardware_toolcam
 hardware_module.laser = hardware_laser
-
+hardware_module.gpio = hardware_gpio
 sys.modules.setdefault("hardware", hardware_module)
 sys.modules.setdefault("hardware.controller", hardware_controller)
 sys.modules.setdefault("hardware.motor", hardware_motor)
@@ -233,6 +401,9 @@ sys.modules.setdefault("hardware.curtain", hardware_curtain)
 sys.modules.setdefault("hardware.scale", hardware_scale)
 sys.modules.setdefault("hardware.toolcam", hardware_toolcam)
 sys.modules.setdefault("hardware.laser", hardware_laser)
+sys.modules.setdefault("hardware.gpio", hardware_gpio)
+sys.modules.setdefault("hardware.gpio.types", hardware_gpio_types)
+sys.modules.setdefault("hardware.servo", types.SimpleNamespace(Servo=_DummyMotor))
 
 # Stub serial_asyncio used by barcode protocol.
 try:
@@ -251,8 +422,24 @@ except Exception:
     sys.modules.setdefault("serial.tools", serial_tools)
     sys.modules.setdefault("serial.tools.list_ports", serial_tools.list_ports)
 
-from openshelf_os.robot.worker import RobotWorker
+from openshelf_os.robot.worker import RobotWorker, _transform_worker_status_payload
 from openshelf_os.robot import Robot
+
+if sys.modules.get("hardware") is hardware_module:
+    for module_name in (
+        "hardware",
+        "hardware.controller",
+        "hardware.motor",
+        "hardware.curtain",
+        "hardware.scale",
+        "hardware.toolcam",
+        "hardware.laser",
+        "hardware.gpio",
+        "hardware.gpio.types",
+        "hardware.servo",
+        "openshelf_os.iobox",
+    ):
+        sys.modules.pop(module_name, None)
 
 
 class FakeRobot:
@@ -403,6 +590,44 @@ class CurtainGuardTests(unittest.TestCase):
 
         self.assertTrue(result["accepted"])
         self.assertEqual(self.robot.resume_calls, 1)
+
+    def test_status_transform_preserves_io_door_state(self):
+        payload = _transform_worker_status_payload(
+            {
+                "robot_status": {
+                    "gantry": {},
+                    "tool": {},
+                    "state": {},
+                    "storage": {},
+                    "io_door_open": True,
+                }
+            }
+        )
+
+        self.assertTrue(payload["robot_status"]["io_door_open"])
+
+    def test_idle_poll_publishes_status_when_io_door_changes(self):
+        async def run_test():
+            self.robot.set_curtain_state(False)
+            self.robot.set_door_state(False)
+            await self.worker._evaluate_safety_guard()
+
+            publish_calls = 0
+
+            async def did_publish_status():
+                nonlocal publish_calls
+                publish_calls += 1
+                self.worker._running = False
+
+            self.worker._publish_status = did_publish_status
+            self.robot.set_door_state(True)
+            self.worker._running = True
+
+            await asyncio.wait_for(self.worker.process_commands(), timeout=2)
+
+            self.assertEqual(publish_calls, 1)
+
+        asyncio.run(run_test())
 
 
 class RobotCurtainPauseTests(unittest.TestCase):

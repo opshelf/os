@@ -1,6 +1,7 @@
 """Robot status payload transformation tests."""
 # ruff: noqa: E402
 
+import asyncio
 import pathlib
 import sys
 import types
@@ -61,7 +62,7 @@ try:
 except Exception:
     sys.modules.setdefault("cv2", types.SimpleNamespace())
 
-from openshelf_os.robot.worker import _transform_worker_status_payload
+from openshelf_os.robot.worker import RobotWorker, _transform_worker_status_payload
 
 
 def test_transform_worker_payload_includes_needs_home() -> None:
@@ -138,3 +139,53 @@ def test_transform_worker_payload_preserves_safety_status() -> None:
 
     assert result["robot_status"]["cabinet_doors"]["open"] is True
     assert result["robot_status"]["safety"]["active_sources"] == ["cabinet_doors"]
+
+
+def test_transform_worker_payload_preserves_scale_status() -> None:
+    payload = {
+        "robot_status": {
+            "storage": {"left_module": [], "right_module": []},
+            "state": {"current_cell": None},
+            "scale": {
+                "available": True,
+                "weight_grams": 12.5,
+                "stable": True,
+                "valid": True,
+                "occupied": True,
+                "threshold_grams": 5.0,
+            },
+        },
+        "error_queue": [],
+    }
+
+    result = _transform_worker_status_payload(payload)
+
+    assert result["robot_status"]["scale"]["occupied"] is True
+    assert result["robot_status"]["scale"]["weight_grams"] == 12.5
+
+
+def test_scale_refresh_caches_stable_weight() -> None:
+    async def run() -> None:
+        async def get_scale_data() -> dict[str, object]:
+            return {
+                "weight": -12.5,
+                "decimal_position": 1,
+                "status": {"stable": True, "valid": True, "overload": False, "zero": False},
+            }
+
+        worker = RobotWorker.__new__(RobotWorker)
+        worker._robot = types.SimpleNamespace(get_scale_data=get_scale_data)
+        worker._scale_lock = asyncio.Lock()
+        worker._latest_scale_status = None
+        worker._latest_scale_status_monotonic = None
+        worker._last_published_scale_key = None
+
+        should_publish = await worker._refresh_scale_status()
+
+        assert should_publish is True
+        assert worker._latest_scale_status is not None
+        assert worker._latest_scale_status.weight_grams == 12.5
+        assert worker._latest_scale_status.occupied is True
+        assert worker.get_cached_scale_status() is worker._latest_scale_status
+
+    asyncio.run(run())

@@ -66,12 +66,29 @@ class SafetyStatus(BaseModel):
     last_changed_at: Optional[str] = None
 
 
+class ScaleStatus(BaseModel):
+    enabled: bool = True
+    available: bool = False
+    weight_grams: Optional[float] = None
+    stable: bool = False
+    valid: bool = False
+    overload: bool = False
+    zero: bool = False
+    occupied: bool = False
+    threshold_grams: float = 5.0
+    decimal_position: Optional[int] = None
+    updated_at: Optional[str] = None
+    error: Optional[str] = None
+
+
 class RobotStatus(BaseModel):
     gantry: GantryStatus
     tool: ToolAxisStatus
     state: RobotState
     storage: StorageGrid
     cabinet_doors: Optional[CabinetDoorState] = None
+    io_door_open: Optional[bool] = None
+    scale: Optional[ScaleStatus] = None
     safety: SafetyStatus = Field(default_factory=SafetyStatus)
     motors: dict[str, AxisTelemetry] = Field(default_factory=dict)
 
