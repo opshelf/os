@@ -50,3 +50,5 @@ def test_robot_gpio_empty_object_expands_to_defaults() -> None:
     assert "cabinet_bot_closed" in robot.gpio.pins
     assert robot.gpio.pins["cabinet_top_closed"].inverted is False
     assert robot.gpio.pins["cabinet_bot_closed"].inverted is False
+    assert robot.gpio.pins["cabinet_top_closed"].debounce_ms == 50
+    assert robot.gpio.pins["cabinet_bot_closed"].debounce_ms == 50
