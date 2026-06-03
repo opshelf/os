@@ -1,3 +1,4 @@
+import asyncio
 from typing import Optional
 
 from hardware.controller import SharedModbusController as Controller
@@ -201,8 +202,8 @@ class IOBox:
             raise IOBoxError("Door motor not configured or disabled")
 
         try:
-            if self._curtain_state:
-                raise IOBoxError("Curtain is blocked; refusing to open door")
+            while self._curtain_state:
+                await asyncio.sleep(0.05)
 
             await self._md.move_to_position(self._params.motors.by_name("door").lim)
             await self.refresh_door_state(force=True)

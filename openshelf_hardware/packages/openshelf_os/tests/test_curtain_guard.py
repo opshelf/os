@@ -456,6 +456,7 @@ class FakeRobot:
         }
         self.pause_calls = 0
         self.resume_calls = 0
+        self._operation_context = None
 
     def set_curtain_state(self, state):
         self._curtain_state = state
@@ -466,6 +467,9 @@ class FakeRobot:
     def set_cabinet_door_state(self, state):
         self._cabinet_door_state = state
 
+    def set_operation_context(self, context):
+        self._operation_context = context
+
     def get_curtain_state(self):
         return self._curtain_state
 
@@ -474,6 +478,9 @@ class FakeRobot:
 
     def get_cabinet_door_state(self):
         return self._cabinet_door_state
+
+    def get_operation_context(self):
+        return self._operation_context
 
     def block_motion_for_safety(self):
         self.pause_calls += 1
@@ -495,6 +502,20 @@ class CurtainGuardTests(unittest.TestCase):
 
         self.assertFalse(self.worker.get_safety_status()["active"])
         self.assertEqual(self.robot.pause_calls, 0)
+
+    def test_light_curtain_blocks_when_io_door_is_opening(self):
+        self.robot.set_curtain_state(True)
+        self.robot.set_door_state(False)
+        self.robot.set_operation_context({"phase": "io_place.open_door"})
+
+        asyncio.run(self.worker._evaluate_safety_guard())
+
+        safety = self.worker.get_safety_status()
+        self.assertTrue(safety["active"])
+        self.assertEqual(safety["active_sources"], ["light_curtain"])
+        self.assertTrue(safety["sources"]["light_curtain"]["io_door_opening"])
+        self.assertTrue(safety["awaiting_ack"])
+        self.assertEqual(self.robot.pause_calls, 1)
 
     def test_guard_blocks_when_curtain_and_door_open(self):
         self.robot.set_curtain_state(True)
