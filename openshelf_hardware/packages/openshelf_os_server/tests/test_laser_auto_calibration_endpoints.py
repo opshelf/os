@@ -1002,7 +1002,7 @@ async def test_persist_completed_results_saves_stage_extensions() -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_single_shelf_scouts_only_between_neighbor_shelf_midpoints() -> None:
+async def test_run_single_shelf_uses_known_shelf_edge_with_neighbor_clipped_bounds() -> None:
     manager = LaserAutoCalibrationManager()
     manager._update_snapshot = AsyncMock()
     scan_config = SimpleNamespace(
@@ -1011,6 +1011,8 @@ async def test_run_single_shelf_scouts_only_between_neighbor_shelf_midpoints() -
         right_bounds_y_min_mm=0.0,
         right_bounds_y_max_mm=1250.0,
         expected_hole_height_mm=30.0,
+        laser_offset_y_mm=0.0,
+        shelf_hole_probe_y_offsets_mm=[32.25],
         right_xy_reference=SimpleNamespace(
             shelf_idx=6,
             cell_idx=0,
@@ -1067,8 +1069,8 @@ async def test_run_single_shelf_scouts_only_between_neighbor_shelf_midpoints() -
             with patch('openshelf_os_server.core.laser_auto_calibration.laser_module.load_grid', return_value=grid):
                 with patch(
                     'openshelf_os_server.core.laser_auto_calibration.laser_module.build_single_shelf_known_edge_y',
-                    side_effect=AssertionError('single shelf calibration should scout the local shelf edge'),
-                ):
+                    return_value=[30.75],
+                ) as known_edge_mock:
                     with patch.object(
                         manager,
                         '_run_partial_reference_scans',
@@ -1082,7 +1084,13 @@ async def test_run_single_shelf_scouts_only_between_neighbor_shelf_midpoints() -
                                 with patch.object(manager, '_persist_single_shelf_result', AsyncMock()) as persist_mock:
                                     await manager._run_single_shelf(worker, StorageModuleSide.RIGHT, 0)
 
-    assert scan_mock.await_args.kwargs['known_shelf_edge_y'] is None
+    known_edge_mock.assert_called_once_with(
+        grid=grid,
+        side=StorageModuleSide.RIGHT,
+        shelf_idx=0,
+        scan_config=scan_config,
+    )
+    assert scan_mock.await_args.kwargs['known_shelf_edge_y'] == [30.75]
     assert scan_mock.await_args.kwargs['should_validate_reference_bounds'] is False
     assert scan_mock.call_args.args[2].y_min == pytest.approx(0.0)
     assert scan_mock.call_args.args[2].y_max == pytest.approx(112.5)
