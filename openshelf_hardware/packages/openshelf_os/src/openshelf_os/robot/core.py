@@ -165,6 +165,9 @@ class Robot:
         if cabinet is not None:
             await cabinet.stop()
 
+    async def restore_y_brake_output(self) -> None:
+        await self._tool.restore_y_brake_output()
+
     async def idle(self) -> None:
         idle_position = await self._tool.get_param("IDLE_POSITION")
         if idle_position is None:

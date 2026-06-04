@@ -101,6 +101,15 @@ async def test_motor_disable_and_restore_brake_output(mock_controller):
 
 
 @pytest.mark.asyncio
+async def test_motor_restore_brake_output_writes_even_when_cached(mock_controller):
+    params = make_motor_params()
+    motor = Motor(mock_controller, params)
+
+    await motor.restore_brake_output()
+
+    mock_controller.write_single_register.assert_called_once_with(1, 0x0159, 0xA1)
+
+@pytest.mark.asyncio
 async def test_clear_alarm_rejects_persistent_alarm_32(mock_controller):
     params = make_motor_params()
     motor = Motor(mock_controller, params)

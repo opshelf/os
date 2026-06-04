@@ -78,6 +78,31 @@ async def test_home_moves_rotate_to_back_after_homing_for_right_facing_device() 
 
 
 @pytest.mark.asyncio
+async def test_home_restores_y_brake_before_homing_y_axis() -> None:
+    events: list[str] = []
+
+    class FakeYMotor:
+        async def restore_brake_output(self) -> None:
+            events.append("restore")
+
+        async def home(self) -> None:
+            events.append("home")
+
+    y_motor = FakeYMotor()
+
+    tool = Tool.__new__(Tool)
+    tool._ms = None
+    tool._mg = None
+    tool._mr = None
+    tool._mx = None
+    tool._my = y_motor
+    tool._handle_fault = AsyncMock()
+
+    await tool.home()
+
+    assert events == ["restore", "home"]
+
+@pytest.mark.asyncio
 async def test_rotate_to_home_orientation_marks_error_when_move_fails() -> None:
     rotate_motor = AsyncMock()
     rotate_motor.move_to_position = AsyncMock(side_effect=RuntimeError("boom"))
