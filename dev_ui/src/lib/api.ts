@@ -501,6 +501,30 @@ export function buildLaserAutoCalibrationStreamUrl(
 	return url.toString();
 }
 
+export async function getLaserAutoCalibrationStreamError(
+	request: LaserAutoCalibrationRequest,
+	options: { subscribeOnly?: boolean } = {}
+): Promise<ApiError | null> {
+	const url = buildLaserAutoCalibrationStreamUrl(request, options);
+
+	let response: Response;
+	try {
+		response = await fetch(url, {
+			headers: { Accept: 'text/event-stream' }
+		});
+	} catch {
+		return null;
+	}
+
+	if (response.ok === true) {
+		await response.body?.cancel();
+		return null;
+	}
+
+	const { message, detail } = await readErrorDetail(response);
+	return new ApiError(formatErrorMessage(message, detail), response.status, detail);
+}
+
 export async function getLaserAutoCalibrationStatus(): Promise<LaserAutoCalibrationSnapshot> {
 	return apiFetch<LaserAutoCalibrationSnapshot>('/calibration/laser/status');
 }
