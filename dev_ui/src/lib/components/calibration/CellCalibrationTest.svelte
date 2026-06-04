@@ -6,10 +6,13 @@
 		getCalibrationStatus,
 		getStorageGrid,
 		homeToolMotors,
+		retrieveItem,
 		runCalibrationCycleTest,
 		runCalibrationQuickTest,
+		storeItem,
 		type ApiErrorDetail,
 		type CalibrationStatus,
+		type Cell,
 		type StorageGrid
 	} from '$lib/api';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
@@ -37,6 +40,8 @@
 	let selectedCell = $state<number>(0);
 	let isRunningQuick = $state<boolean>(false);
 	let isRunningCycle = $state<boolean>(false);
+	let isStoring = $state<boolean>(false);
+	let isRetrieving = $state<boolean>(false);
 	let isHoming = $state<boolean>(false);
 	let error = $state<string>('');
 	let message = $state<string>('');
@@ -52,7 +57,12 @@
 		needsHome === true ? `home required${needsHomeReason !== '' ? `: ${needsHomeReason}` : ''}` : ''
 	);
 	const isBusy = $derived(
-		isRunningQuick === true || isRunningCycle === true || isHoming === true || loading === true
+		isRunningQuick === true ||
+		isRunningCycle === true ||
+		isStoring === true ||
+		isRetrieving === true ||
+		isHoming === true ||
+		loading === true
 	);
 	const homingDisabled = $derived(isBusy === true || needsToolHome === false);
 
@@ -211,6 +221,26 @@
 		return shelf.cells;
 	}
 
+	function getSelectedCell(): Cell | null {
+		const cells = getCells();
+
+		return cells.find((cell) => cell.cell_idx === selectedCell) ?? null;
+	}
+
+	function buildMockStoreItem(cell: Cell): Record<string, unknown> {
+		const suffix = `${Date.now()}-${Math.floor(Math.random() * 1000000)}`;
+
+		return {
+			upca: `CAL-${suffix}`,
+			name: `calibration test ${selectedSide}:${selectedShelf}:${selectedCell}`,
+			dimensions: {
+				length: Math.max(cell.dimensions.length * 0.8, 1.0),
+				width: Math.max(cell.dimensions.width * 0.8, 1.0),
+				height: Math.max(cell.dimensions.height * 0.8, 1.0)
+			}
+		};
+	}
+
 	function syncSelection(preferredShelf?: number, preferredCell?: number): void {
 		const shelves = getShelvesForSide(selectedSide);
 
@@ -301,6 +331,49 @@
 		}
 	}
 
+	async function didClickStore(): Promise<void> {
+		const selectedCellData = getSelectedCell();
+
+		if (selectedCellData === null) {
+			error = 'selected cell not found';
+			return;
+		}
+
+		isStoring = true;
+		error = '';
+		message = '';
+
+		try {
+			await storeItem(selectedSide, selectedShelf, selectedCell, buildMockStoreItem(selectedCellData));
+			await didLoadStorage();
+			await didLoadCalibrationStatus();
+			message = 'store command requested';
+		} catch (err) {
+			handleNeedsHomeError(err);
+			error = err instanceof Error ? err.message : 'failed to request store command';
+		} finally {
+			isStoring = false;
+		}
+	}
+
+	async function didClickRetrieve(): Promise<void> {
+		isRetrieving = true;
+		error = '';
+		message = '';
+
+		try {
+			await retrieveItem(selectedSide, selectedShelf, selectedCell);
+			await didLoadStorage();
+			await didLoadCalibrationStatus();
+			message = 'retrieve command requested';
+		} catch (err) {
+			handleNeedsHomeError(err);
+			error = err instanceof Error ? err.message : 'failed to request retrieve command';
+		} finally {
+			isRetrieving = false;
+		}
+	}
+
 	async function didClickHomeToolMotors(): Promise<void> {
 		isHoming = true;
 		error = '';
@@ -364,6 +437,12 @@
 						</button>
 						<button type="button" onclick={didClickCycle} disabled={isBusy === true || needsHome === true}>
 							cycle
+						</button>
+						<button type="button" onclick={didClickStore} disabled={isBusy === true || needsHome === true}>
+							STORE
+						</button>
+						<button type="button" onclick={didClickRetrieve} disabled={isBusy === true || needsHome === true}>
+							RETRIEVE
 						</button>
 					</div>
 				</td>
