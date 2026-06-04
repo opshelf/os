@@ -30,9 +30,12 @@ def _mock_worker(motors: dict[str, AsyncMock] | None = None):
 	worker.needs_home_axes = MagicMock(return_value=[])
 	worker.needs_home_reason = MagicMock(return_value=None)
 	worker.clear_needs_home = MagicMock()
+	worker.clear_crash_state = MagicMock()
 	worker.get_status_snapshot = AsyncMock(return_value={})
 	worker._current_command = None
 	worker._demo_cycling = False
+	worker._is_crashed = False
+	worker._crash_reason = None
 
 	if motors is None:
 		motors = {
@@ -323,3 +326,29 @@ async def test_home_rotate_motor_extends_stage_before_rotation(client: AsyncClie
 	mock_worker._robot._tool.rotate_to_home_orientation.assert_awaited_once_with(
 		should_ensure_safe_stage_extension=False,
 	)
+
+
+@pytest.mark.anyio
+async def test_home_motor_clears_matching_crash_state(client: AsyncClient) -> None:
+	stage_motor = _mock_motor(75.0)
+	stage_motor._motor_id = 30
+	motors = {
+		"door": _mock_motor(50.0),
+		"x_axis": _mock_motor(100.0),
+		"y_axis": _mock_motor(200.0),
+		"z_axis": _mock_motor(150.0),
+		"stage": stage_motor,
+		"rotate": _mock_motor(0.0),
+	}
+	mock_worker = _mock_worker(motors)
+	mock_worker._is_crashed = True
+	mock_worker._crash_reason = "Tool retraction failed: Movement failed for motor 30 (status=FAULT)"
+
+	with patch("openshelf_os_server.routers.robot.get_settings", return_value=_mock_settings()):
+		with patch("openshelf_os_server.routers.robot.get_robot_worker", return_value=mock_worker):
+			response = await client.post("/api/robot/debug/motors/stage/home")
+
+	assert response.status_code == 200
+	stage_motor.clear_alarm.assert_awaited_once()
+	stage_motor.home.assert_awaited_once()
+	mock_worker.clear_crash_state.assert_called_once_with()

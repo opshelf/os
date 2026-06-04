@@ -74,6 +74,16 @@ def _reason_matches_motor(reason: Optional[str], motor_name: str, motor) -> bool
     return getattr(motor, "_motor_id", None) == motor_id
 
 
+def _clear_matching_motor_crash_state(worker: RobotWorker, motor_name: str, motor) -> None:
+    if getattr(worker, "_is_crashed", False) is False:
+        return
+
+    if _reason_matches_motor(getattr(worker, "_crash_reason", None), motor_name, motor) is False:
+        return
+
+    worker.clear_crash_state()
+
+
 def _probe_busy_reason(worker: RobotWorker) -> Optional[str]:
     manual_operation = get_manual_motion_operation()
     if manual_operation is not None:
@@ -557,6 +567,7 @@ async def home_motor(
             if worker.needs_home() and worker.needs_home_axes() == []:
                 if _reason_matches_motor(worker.needs_home_reason(), motor_name, motor):
                     worker.clear_needs_home()
+            _clear_matching_motor_crash_state(worker, motor_name, motor)
             await worker.get_status_snapshot(force_refresh=True)
             return {"success": True, "motor": motor_name}
     except HTTPException:
