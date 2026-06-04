@@ -1273,16 +1273,16 @@ def test_apply_single_cell_shelf_analysis_updates_only_target_xy(tmp_path: Path)
 	)
 	scan_config = SimpleNamespace(
 		left_xy_reference=SimpleNamespace(
-			shelf_idx=9,
+			shelf_idx=0,
 			cell_idx=0,
 			anchor='top_left',
-			x_mm=0.0,
-			y_mm=0.0,
+			x_mm=999.0,
+			y_mm=888.0,
 		),
 		left_z_reference=SimpleNamespace(
-			shelf_idx=9,
+			shelf_idx=0,
 			cell_idx=0,
-			z_offset_mm=0.0,
+			z_offset_mm=777.0,
 			stage_extension_mm=43.0,
 		),
 	)
@@ -1300,6 +1300,7 @@ def test_apply_single_cell_shelf_analysis_updates_only_target_xy(tmp_path: Path)
 	updated_cells = updated_grid.left_module[0].cells
 	assert updated_cells[0].calibration_point.x == pytest.approx(10.0)
 	assert updated_cells[0].calibration_point.y == pytest.approx(20.0)
+	assert updated_cells[0].calibration_point.z_offset == pytest.approx(30.0)
 	assert updated_cells[1].calibration_point.x == pytest.approx(22.0)
 	assert updated_cells[1].calibration_point.y == pytest.approx(20.0)
 	assert updated_cells[1].calibration_point.z_offset == pytest.approx(31.0)
