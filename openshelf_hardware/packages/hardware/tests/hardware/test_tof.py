@@ -110,26 +110,16 @@ def test_tof_bus_reads_adafruit_sensor_distances_in_mm_and_sets_ftdi_url(
     monkeypatch.setenv("BLINKA_FT232H", "ftdi://previous")
 
     def did_import_module(name: str):
-        if name == "board":
+        if name == "adafruit_blinka.microcontroller.ftdi_mpsse.mpsse.i2c":
 
-            class BoardModule:
-                SCL = object()
-                SDA = object()
-
-            return BoardModule
-
-        if name == "busio":
-
-            class BusIOModule:
+            class FtdiI2CModule:
                 class I2C:
-                    def __init__(self, scl: object, sda: object) -> None:
+                    def __init__(self) -> None:
                         nonlocal did_create_i2c
                         did_create_i2c = True
                         assert os.environ["BLINKA_FT232H"] == "ftdi://configured"
-                        self.scl = scl
-                        self.sda = sda
 
-            return BusIOModule
+            return FtdiI2CModule
 
         if name == "adafruit_tca9548a":
 
@@ -189,22 +179,14 @@ def test_tof_bus_stops_started_sensors_when_adafruit_connect_fails(
     sensor_calls = 0
 
     def did_import_module(name: str):
-        if name == "board":
+        if name == "adafruit_blinka.microcontroller.ftdi_mpsse.mpsse.i2c":
 
-            class BoardModule:
-                SCL = object()
-                SDA = object()
-
-            return BoardModule
-
-        if name == "busio":
-
-            class BusIOModule:
+            class FtdiI2CModule:
                 class I2C:
-                    def __new__(cls, scl: object, sda: object) -> FakeI2C:
+                    def __new__(cls) -> FakeI2C:
                         return created_i2c
 
-            return BusIOModule
+            return FtdiI2CModule
 
         if name == "adafruit_tca9548a":
 
@@ -260,22 +242,14 @@ def test_tof_bus_closes_i2c_when_sensor_stop_fails_on_connect_cleanup(
     sensor_calls = 0
 
     def did_import_module(name: str):
-        if name == "board":
+        if name == "adafruit_blinka.microcontroller.ftdi_mpsse.mpsse.i2c":
 
-            class BoardModule:
-                SCL = object()
-                SDA = object()
-
-            return BoardModule
-
-        if name == "busio":
-
-            class BusIOModule:
+            class FtdiI2CModule:
                 class I2C:
-                    def __new__(cls, scl: object, sda: object) -> FakeI2C:
+                    def __new__(cls) -> FakeI2C:
                         return created_i2c
 
-            return BusIOModule
+            return FtdiI2CModule
 
         if name == "adafruit_tca9548a":
 
