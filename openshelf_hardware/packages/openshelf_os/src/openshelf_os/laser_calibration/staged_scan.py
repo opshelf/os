@@ -678,46 +678,6 @@ def apply_xy_reference_delta(
 	)
 
 
-def restore_reference_cells(
-	*,
-	scanned_shelves: list[Any],
-	scan_config: Any,
-	side: StorageModuleSide,
-	) -> None:
-	try:
-		xy_reference = get_scan_xy_reference(scan_config=scan_config, side=side)
-	except ValueError:
-		xy_reference = None
-
-	try:
-		z_reference = get_scan_z_reference(scan_config=scan_config, side=side)
-	except ValueError:
-		z_reference = None
-	restored_xy_count = 0
-	restored_z_count = 0
-
-	for shelf in scanned_shelves:
-		for cell in getattr(shelf, "cells", []):
-			if cell.calibration_point is None:
-				continue
-
-			if xy_reference is not None:
-				if int(shelf.shelf_idx) == int(xy_reference.shelf_idx) and int(cell.cell_idx) == int(xy_reference.cell_idx):
-					cell.calibration_point.x = float(xy_reference.x_mm)
-					cell.calibration_point.y = float(xy_reference.y_mm)
-					restored_xy_count += 1
-
-			if z_reference is not None:
-				if int(shelf.shelf_idx) == int(z_reference[0]) and int(cell.cell_idx) == int(z_reference[1]):
-					cell.calibration_point.z_offset = float(z_reference[2])
-					restored_z_count += 1
-
-	if restored_xy_count > 0 or restored_z_count > 0:
-		print_status(
-			f"reference_restore=applied xy_cells={restored_xy_count} "
-			f"z_cells={restored_z_count}"
-		)
-
 
 def resolve_z_reference_cell(
 	*,
@@ -854,11 +814,6 @@ def apply_wall_depth_z_offsets(
 			cell.calibration_point.z_offset = float(candidate.wall_depth_mm) + z_delta_mm
 			updated_cell_count += 1
 
-	restore_reference_cells(
-		scanned_shelves=scanned_shelves,
-		scan_config=scan_config,
-		side=side,
-	)
 	print_status(
 		f"z_offset_inference=applied reference={reference_key[0]}:{reference_key[1]} "
 		f"reference_z_offset_mm={reference_key[2]:.3f} "
@@ -1036,7 +991,6 @@ def apply_single_cell_rescan(
 	calibration_x = float(detected_cell.tool_x_mm)
 	calibration_y = float(detected_cell.tool_y_mm)
 
-	xy_reference = get_scan_xy_reference(scan_config=scan_config, side=side)
 	if xy_reference_detected_cell is not None:
 		delta_x_mm, delta_y_mm = get_xy_reference_delta(
 			detected_cell=xy_reference_detected_cell,
@@ -1050,16 +1004,9 @@ def apply_single_cell_rescan(
 		calibration_x = float(calibration_point.x)
 		calibration_y = float(calibration_point.y)
 
-	if int(target.shelf_idx) == int(xy_reference.shelf_idx) and int(target.cell_idx) == int(xy_reference.cell_idx):
-		calibration_x = float(xy_reference.x_mm)
-		calibration_y = float(xy_reference.y_mm)
 
 	calibration_point.x = calibration_x
 	calibration_point.y = calibration_y
-	z_reference = get_scan_z_reference(
-		scan_config=scan_config,
-		side=side,
-	)
 
 	if z_reference_wall_depth_mm is not None:
 		z_delta = get_scan_z_delta(
@@ -1069,16 +1016,9 @@ def apply_single_cell_rescan(
 			current_stage_extension_mm=current_stage_extension_mm,
 		)
 		calibration_point.z_offset = float(wall_depth_mm) + float(z_delta["delta_mm"])
-	elif int(target.shelf_idx) == int(z_reference[0]) and int(target.cell_idx) == int(z_reference[1]):
-		calibration_point.z_offset = float(z_reference[2])
 	else:
 		calibration_point.z_offset = previous_z_offset
 
-	restore_reference_cells(
-		scanned_shelves=[target_shelf],
-		scan_config=scan_config,
-		side=side,
-	)
 	grid.save()
 	print_status(
 		f"single_cell_apply=updated side={side.value} "
@@ -1163,11 +1103,6 @@ def apply_single_shelf_analysis(
 		)
 	else:
 		print_status("z_offset_inference=skipped reason=partial_rescan_preserves_existing_z_offsets")
-	restore_reference_cells(
-		scanned_shelves=[scanned_shelf],
-		scan_config=scan_config,
-		side=side,
-	)
 	left_module = list(grid.left_module)
 	right_module = list(grid.right_module)
 	merged_shelves = merge_scanned_shelf(
@@ -1238,11 +1173,6 @@ def apply_single_cell_shelf_analysis(
 		delta_x_mm=delta_x_mm,
 		delta_y_mm=delta_y_mm,
 	)
-	restore_reference_cells(
-		scanned_shelves=[scanned_shelf],
-		scan_config=scan_config,
-		side=side,
-	)
 
 	try:
 		scanned_target_cell = scanned_shelf.get_cell(target.cell_idx)
@@ -1256,11 +1186,6 @@ def apply_single_cell_shelf_analysis(
 
 	target_cell.calibration_point.x = float(scanned_target_cell.calibration_point.x)
 	target_cell.calibration_point.y = float(scanned_target_cell.calibration_point.y)
-	restore_reference_cells(
-		scanned_shelves=[target_shelf],
-		scan_config=scan_config,
-		side=side,
-	)
 	grid.save()
 	print_status(
 		f"single_cell_shelf_apply=updated side={side.value} "
