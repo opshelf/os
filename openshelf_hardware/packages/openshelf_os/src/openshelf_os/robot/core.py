@@ -339,13 +339,15 @@ class Robot:
             updates["nudge_override"] = nudge_override
 
         self._operation_context = {**self._operation_context, **updates}
-        if self._operation_context_listener is not None:
-            self._operation_context_listener(self.get_operation_context())
+        listener = getattr(self, "_operation_context_listener", None)
+        if listener is not None:
+            listener(self.get_operation_context())
 
     def clear_operation_context(self) -> None:
         self._operation_context = {}
-        if self._operation_context_listener is not None:
-            self._operation_context_listener(None)
+        listener = getattr(self, "_operation_context_listener", None)
+        if listener is not None:
+            listener(None)
 
     def set_operation_context_listener(
         self,

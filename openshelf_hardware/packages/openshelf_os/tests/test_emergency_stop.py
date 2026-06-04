@@ -119,6 +119,7 @@ class _DummyMotionSafetyInterlock:
 hardware_module = types.ModuleType("hardware")
 hardware_controller = types.SimpleNamespace(SharedModbusController=_DummySharedModbusController)
 hardware_motor = types.SimpleNamespace(Motor=_DummyMotor, Servo=_DummyMotor, MotorStatus=types.SimpleNamespace, MOTOR_WAIT_TIMEOUT=0)
+hardware_servo = types.SimpleNamespace(Servo=_DummyMotor)
 hardware_curtain = types.SimpleNamespace(
     MotionSafetyInterlock=_DummyMotionSafetyInterlock,
     CurtainSensor=object,
@@ -127,21 +128,33 @@ hardware_curtain = types.SimpleNamespace(
 hardware_scale = types.SimpleNamespace(Scale=object)
 hardware_toolcam = types.SimpleNamespace(ToolCamera=object)
 hardware_laser = types.SimpleNamespace(LaserSensor=object)
+hardware_gpio = types.ModuleType("hardware.gpio")
+hardware_gpio_types = types.ModuleType("hardware.gpio.types")
+hardware_gpio_types.DigitalInput = object
+hardware_gpio_types.DigitalOutput = object
+hardware_gpio_types.GpioEvent = object
+hardware_gpio_types.GpioSubscription = object
+hardware_gpio.types = hardware_gpio_types
 
 hardware_module.controller = hardware_controller
 hardware_module.motor = hardware_motor
+hardware_module.servo = hardware_servo
 hardware_module.curtain = hardware_curtain
 hardware_module.scale = hardware_scale
 hardware_module.toolcam = hardware_toolcam
 hardware_module.laser = hardware_laser
+hardware_module.gpio = hardware_gpio
 
 sys.modules.setdefault("hardware", hardware_module)
 sys.modules.setdefault("hardware.controller", hardware_controller)
 sys.modules.setdefault("hardware.motor", hardware_motor)
+sys.modules.setdefault("hardware.servo", hardware_servo)
 sys.modules.setdefault("hardware.curtain", hardware_curtain)
 sys.modules.setdefault("hardware.scale", hardware_scale)
 sys.modules.setdefault("hardware.toolcam", hardware_toolcam)
 sys.modules.setdefault("hardware.laser", hardware_laser)
+sys.modules.setdefault("hardware.gpio", hardware_gpio)
+sys.modules.setdefault("hardware.gpio.types", hardware_gpio_types)
 
 
 try:
@@ -179,6 +192,29 @@ class MockRobot:
 
     def register_cabinet_door_listener(self, cb):
         pass
+
+
+class FakeEstopInput:
+    def __init__(self):
+        self.value = False
+
+    def read(self):
+        return self.value
+
+
+class FailingEstopInput:
+    def read(self):
+        raise RuntimeError("i2c unavailable")
+
+
+class FailingGpio:
+    def has_pin(self, name):
+        return name == "estop"
+
+    def input(self, name):
+        raise RuntimeError(f"{name} unavailable")
+
+
 class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
     async def test_emergency_stop_sets_crash_state_and_pauses_curtain(self):
         from openshelf_os.robot.worker import RobotWorker
@@ -285,6 +321,98 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
 
         RobotWorker._instance = None
 
+
+    async def test_estop_monitor_fails_safe_when_configured_input_setup_fails(self):
+        from openshelf_os.robot.worker import RobotWorker
+
+        robot = MockRobot()
+        robot._gpio = FailingGpio()
+        RobotWorker._instance = None
+        worker = RobotWorker(robot)
+
+        await worker._start_estop_monitor()
+
+        self.assertTrue(worker._is_crashed)
+        self.assertEqual(worker._crash_reason, "Emergency stop input unavailable")
+        self.assertTrue(worker._is_estop_active)
+        self.assertTrue(robot.safety_paused)
+        self.assertIsNone(worker._estop_monitor_task)
+
+        RobotWorker._instance = None
+
+    async def test_estop_monitor_fails_safe_when_configured_input_read_fails(self):
+        from openshelf_os.robot.worker import RobotWorker
+
+        robot = MockRobot()
+        RobotWorker._instance = None
+        worker = RobotWorker(robot)
+        emergency_stop_calls = []
+        original_emergency_stop = worker.emergency_stop
+
+        async def emergency_stop(reason):
+            emergency_stop_calls.append(reason)
+            await original_emergency_stop(reason)
+
+        worker.emergency_stop = emergency_stop
+        worker._running = True
+        monitor_task = asyncio.create_task(worker._monitor_estop(FailingEstopInput()))
+
+        try:
+            await asyncio.sleep(0.16)
+
+            self.assertTrue(worker._is_crashed)
+            self.assertEqual(worker._crash_reason, "Emergency stop input unavailable")
+            self.assertTrue(worker._is_estop_active)
+            self.assertTrue(robot.safety_paused)
+            self.assertEqual(emergency_stop_calls, ["Emergency stop input unavailable"])
+
+            worker.clear_crash_state()
+
+            self.assertTrue(worker._is_crashed)
+            self.assertEqual(worker._crash_reason, "Emergency stop input unavailable")
+        finally:
+            worker._running = False
+            monitor_task.cancel()
+            try:
+                await monitor_task
+            except asyncio.CancelledError:
+                pass
+            RobotWorker._instance = None
+
+    async def test_estop_monitor_crashes_on_active_input(self):
+        from openshelf_os.robot.worker import RobotWorker
+
+        robot = MockRobot()
+        RobotWorker._instance = None
+        worker = RobotWorker(robot)
+        estop_input = FakeEstopInput()
+        worker._running = True
+        monitor_task = asyncio.create_task(worker._monitor_estop(estop_input))
+
+        try:
+            await asyncio.sleep(0.06)
+            self.assertFalse(worker._is_crashed)
+
+            estop_input.value = True
+            await asyncio.sleep(0.1)
+
+            self.assertTrue(worker._is_crashed)
+            self.assertEqual(worker._crash_reason, "Physical emergency stop triggered")
+            self.assertTrue(robot.safety_paused)
+
+            worker.clear_crash_state()
+
+            self.assertTrue(worker._is_crashed)
+            self.assertEqual(worker._crash_reason, "Physical emergency stop triggered")
+            self.assertTrue(robot.safety_paused)
+        finally:
+            worker._running = False
+            monitor_task.cancel()
+            try:
+                await monitor_task
+            except asyncio.CancelledError:
+                pass
+            RobotWorker._instance = None
 
 if __name__ == "__main__":
     unittest.main()

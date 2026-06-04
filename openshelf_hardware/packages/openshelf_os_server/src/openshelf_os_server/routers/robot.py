@@ -330,12 +330,6 @@ async def clear_robot_commands(worker: RobotWorker = Depends(get_robot_worker_or
     return SuccessResponse()
 
 
-@router.post("/emergency_stop", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
-async def emergency_stop_robot(worker: RobotWorker = Depends(get_robot_worker_or_error)) -> SuccessResponse:
-    await worker.emergency_stop("User initiated emergency stop")
-    return SuccessResponse()
-
-
 @router.post("/gripper", dependencies=[Depends(get_current_user)])
 async def control_gripper(
     state: Literal["grip", "release"],
