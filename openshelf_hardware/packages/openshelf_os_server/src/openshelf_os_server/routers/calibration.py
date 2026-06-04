@@ -337,6 +337,43 @@ def _infer_axes_from_error(worker, exc: Exception) -> Optional[list[str]]:
 	return None
 
 
+def _reason_matches_axis_or_motor(reason: Optional[str], axis: str, motor) -> bool:
+	if not reason:
+		return False
+
+	reason_lower = reason.lower()
+	if axis.lower() in reason_lower:
+		return True
+
+	match = _MOTOR_ID_RE.search(reason)
+	if not match:
+		return False
+
+	try:
+		motor_id = int(match.group(1))
+	except ValueError:
+		return False
+
+	return motor is not None and getattr(motor, "_motor_id", None) == motor_id
+
+
+def _clear_matching_tool_motor_crash_state(worker, axes: list[str]) -> None:
+	if getattr(worker, "_is_crashed", False) is False:
+		return
+
+	reason = getattr(worker, "_crash_reason", None)
+	tool = worker._robot._tool
+	axis_to_motors = {
+		"stage": tool._ms,
+		"z_axis": tool._mg,
+	}
+
+	for axis in axes:
+		if _reason_matches_axis_or_motor(reason, axis, axis_to_motors.get(axis)) is True:
+			worker.clear_crash_state()
+			return
+
+
 async def _clear_motor_alarm(motor) -> None:
 	if motor is not None:
 		await motor.clear_alarm()
@@ -1074,6 +1111,7 @@ async def home_tool_motors() -> CalibrationStatusResponse:
 		await _raise_motor_error(worker, f"Failed to home tool motors: {str(e)}", e, axes=["stage", "z_axis"])
 
 	worker.clear_needs_home_axes(["stage", "z_axis"])
+	_clear_matching_tool_motor_crash_state(worker, ["stage", "z_axis"])
 	await worker.get_status_snapshot(force_refresh=True)
 
 	return CalibrationStatusResponse(
