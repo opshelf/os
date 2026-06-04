@@ -301,7 +301,7 @@ export async function storeItem(
 	cellIdx: number,
 	item: Record<string, unknown>
 ): Promise<{ success: boolean }> {
-	return apiFetch<{ success: boolean }>('/commands', {
+	return apiFetch<{ success: boolean }>('/robot/commands', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -319,7 +319,7 @@ export async function retrieveItem(
 	shelfIdx: number,
 	cellIdx: number
 ): Promise<{ success: boolean }> {
-	return apiFetch<{ success: boolean }>('/commands', {
+	return apiFetch<{ success: boolean }>('/robot/commands', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({
