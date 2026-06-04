@@ -98,6 +98,7 @@ class Motor():
         self._on_move_complete: Optional[Callable[[float], None]] = None
         self._is_homed = False
         self._hard_stopped = False
+        self._should_skip_pre_home_once = False
         self._configured_brake_output_function = int(
             getattr(self._params, "brake_output_function", DEFAULT_BRAKE_OUTPUT_FUNCTION)
         )
@@ -621,32 +622,42 @@ class Motor():
             extra={"motor_id": self._motor_id, "timeout": timeout, "homing": homing},
         )
 
-        while True:
-            await self._raise_if_move_cancelled(should_abort)
+        did_cancel_motion = False
 
-            snapshot = await self._read_motion_snapshot()
-            await self._update_motion_progress(state)
+        try:
+            while True:
+                if self._is_move_cancelled(should_abort) is True:
+                    await self._cancel_motion(homing=homing)
+                    did_cancel_motion = True
+                    raise asyncio.CancelledError()
 
-            if await self._pause_for_safety_if_needed(state):
-                continue
+                snapshot = await self._read_motion_snapshot()
+                await self._update_motion_progress(state)
 
-            if snapshot.is_complete and self._is_completion_stable(state):
-                return await self._finish_completed_move(homing, state)
+                if await self._pause_for_safety_if_needed(state):
+                    continue
 
-            alarm_state = await self._read_alarm_state(homing, state)
+                if snapshot.is_complete and self._is_completion_stable(state):
+                    return await self._finish_completed_move(homing, state)
 
-            if self._is_homing_limit_stop(homing, alarm_state, state):
-                return await self._finish_homing_limit_stop(snapshot, alarm_state, state)
+                alarm_state = await self._read_alarm_state(homing, state)
 
-            fault_state = self._detect_motion_fault(snapshot, alarm_state, state)
+                if self._is_homing_limit_stop(homing, alarm_state, state):
+                    return await self._finish_homing_limit_stop(snapshot, alarm_state, state)
 
-            if fault_state.is_fault:
-                return await self._finish_fault(homing, snapshot, alarm_state, fault_state, state)
+                fault_state = self._detect_motion_fault(snapshot, alarm_state, state)
 
-            if time.monotonic() - state.start_time > timeout:
-                return await self._finish_timeout(timeout, homing, state)
+                if fault_state.is_fault:
+                    return await self._finish_fault(homing, snapshot, alarm_state, fault_state, state)
 
-            await asyncio.sleep(0.01)
+                if time.monotonic() - state.start_time > timeout:
+                    return await self._finish_timeout(timeout, homing, state)
+
+                await asyncio.sleep(0.01)
+        except asyncio.CancelledError:
+            if homing is True and did_cancel_motion is False:
+                await self._cancel_motion(homing=True)
+            raise
 
     def _is_completion_stable(self, state: MotionWaitState) -> bool:
         return state.has_moved or time.monotonic() - state.start_time > 0.5
@@ -659,18 +670,30 @@ class Motor():
         await self.stop()
         self._clear_pending_motion()
 
-    async def _raise_if_move_cancelled(
-        self,
-        should_abort: Callable[[], bool] | None,
-    ) -> None:
+    def _is_move_cancelled(self, should_abort: Callable[[], bool] | None) -> bool:
         current_task = asyncio.current_task()
 
         if should_abort is not None and should_abort() is True:
-            await self._stop_and_clear_motion()
-            raise asyncio.CancelledError()
+            return True
 
-        if current_task is not None and current_task.cancelling() > 0:
-            await self._stop_and_clear_motion()
+        return current_task is not None and current_task.cancelling() > 0
+
+    async def _cancel_motion(self, *, homing: bool = False) -> None:
+        if homing is True:
+            self._should_skip_pre_home_once = True
+            self._is_homed = False
+            self._hard_stopped = True
+
+        await self._stop_and_clear_motion()
+
+    async def _raise_if_move_cancelled(
+        self,
+        should_abort: Callable[[], bool] | None,
+        *,
+        homing: bool = False,
+    ) -> None:
+        if self._is_move_cancelled(should_abort) is True:
+            await self._cancel_motion(homing=homing)
             raise asyncio.CancelledError()
 
     async def _read_motion_snapshot(self) -> MotionSnapshot:
@@ -1000,7 +1023,21 @@ class Motor():
     def should_move_near_home_before_homing(self) -> bool:
         return getattr(self._params, "motor_name", None) != "stage"
 
+    def _should_skip_pre_home_after_interrupted_homing(self) -> bool:
+        if self._should_skip_pre_home_once is False:
+            return False
+
+        self._should_skip_pre_home_once = False
+        self._logger.info(
+            "Skipping pre-home approach after interrupted homing",
+            extra={"motor_id": self._motor_id},
+        )
+        return True
+
     async def _move_near_home(self, rpm: int) -> None:
+        if self._should_skip_pre_home_after_interrupted_homing() is True:
+            return
+
         target_mm = self._get_home_approach_target_mm()
         current_position_mm = await self.get_position()
         should_move_near_home = self.should_move_near_home_before_homing()
@@ -1058,6 +1095,7 @@ class Motor():
 
                 self._is_homed = True
                 self._hard_stopped = False
+                self._should_skip_pre_home_once = False
             elif stop == MotorStatus.FAULT:
                 self._is_homed = False
                 self._hard_stopped = True

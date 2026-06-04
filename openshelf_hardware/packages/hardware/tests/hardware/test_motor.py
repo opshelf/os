@@ -148,6 +148,35 @@ async def test_wait_for_move_stops_and_cancels_when_abort_requested(mock_control
 
 
 @pytest.mark.asyncio
+async def test_wait_for_move_cancelled_during_homing_marks_skip_and_stops(mock_controller):
+    params = make_motor_params()
+    motor = Motor(mock_controller, params)
+    motor.stop = AsyncMock(return_value=MotorStatus.STOPPED)
+    motor._pending_motion = AsyncMock()
+    motor._target_pos = 50.0
+    did_start_read = asyncio.Event()
+
+    async def didReadMotionSnapshot():
+        did_start_read.set()
+        await asyncio.sleep(60)
+
+    motor._read_motion_snapshot = AsyncMock(side_effect=didReadMotionSnapshot)
+
+    task = asyncio.create_task(motor.wait_for_move(homing=True))
+    await did_start_read.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert motor._should_skip_pre_home_once is True
+    assert motor.is_hard_stopped() is True
+    assert motor._pending_motion is None
+    assert motor._target_pos is None
+    motor.stop.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_wait_for_move_does_not_retry_pending_motion_after_alarm_32(mock_controller):
     params = make_motor_params()
     motor = Motor(mock_controller, params)
@@ -247,6 +276,34 @@ async def test_motor_home_moves_near_home_before_sensorless_seek(mock_controller
     motor.clear_alarm.assert_awaited_once()
     motor._move_near_home.assert_awaited_once_with(params.ret_rpm)
 
+
+@pytest.mark.asyncio
+async def test_cancelled_homing_marks_next_home_to_skip_pre_home(mock_controller):
+    params = make_motor_params()
+    motor = Motor(mock_controller, params)
+    motor.stop = AsyncMock(return_value=MotorStatus.STOPPED)
+
+    with pytest.raises(asyncio.CancelledError):
+        await motor._raise_if_move_cancelled(lambda: True, homing=True)
+
+    assert motor._should_skip_pre_home_once is True
+    assert motor.is_hard_stopped() is True
+    motor.stop.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_move_near_home_skips_once_after_interrupted_homing(mock_controller):
+    params = make_motor_params()
+    motor = Motor(mock_controller, params)
+    motor._should_skip_pre_home_once = True
+    motor.get_position = AsyncMock(return_value=50.0)
+    motor.move_to_position = AsyncMock()
+
+    await motor._move_near_home(params.ret_rpm)
+
+    assert motor._should_skip_pre_home_once is False
+    motor.get_position.assert_not_awaited()
+    motor.move_to_position.assert_not_awaited()
 
 @pytest.mark.asyncio
 async def test_move_near_home_uses_upper_logical_target_when_mapping_is_inverted(mock_controller):
