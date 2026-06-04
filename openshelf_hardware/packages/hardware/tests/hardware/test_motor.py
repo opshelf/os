@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from hardware.motor import Motor, MotorStatus
+from hardware.exceptions import MotorError
 from hardware.servo import Servo
 
 def make_motor_params(**overrides):
@@ -97,6 +98,19 @@ async def test_motor_disable_and_restore_brake_output(mock_controller):
 
     mock_controller.write_single_register.assert_any_call(1, 0x0159, 0x24)
     mock_controller.write_single_register.assert_any_call(1, 0x0159, 0xA1)
+
+
+@pytest.mark.asyncio
+async def test_clear_alarm_rejects_persistent_alarm_32(mock_controller):
+    params = make_motor_params()
+    motor = Motor(mock_controller, params)
+    motor.move_config = AsyncMock()
+    motor.get_param = AsyncMock(return_value=32)
+
+    with pytest.raises(MotorError, match="Alarm 32 persists after clear attempt"):
+        await motor.clear_alarm()
+
+    assert motor.get_param.await_count == 3
 
 
 @pytest.mark.asyncio
@@ -241,7 +255,7 @@ async def test_move_near_home_uses_upper_logical_target_when_mapping_is_inverted
     motor.move_to_position.assert_awaited_once_with(
         184.5 - 5.0,
         rpm=params.ret_rpm,
-        homing=True,
+        homing=False,
     )
 
 

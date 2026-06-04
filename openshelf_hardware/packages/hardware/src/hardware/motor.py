@@ -372,11 +372,11 @@ class Motor():
 
             for _ in range(3):
                 alarm_code = await self.get_param("Current alarm")
-                if alarm_code is None or alarm_code in (0, 32):
+                if alarm_code is None or alarm_code == 0:
                     break
                 await asyncio.sleep(0.05)
 
-            if alarm_code is not None and alarm_code not in (0, 32):
+            if alarm_code is not None and alarm_code != 0:
                 raise MotorError(f"Alarm {alarm_code} persists after clear attempt")
 
             self._status = MotorStatus.STOPPED
@@ -1011,7 +1011,7 @@ class Motor():
         if self._is_at_home_approach_target(float(current_position_mm)) is True:
             return
 
-        await self.move_to_position(target_mm, rpm=rpm, homing=True)
+        await self.move_to_position(target_mm, rpm=rpm, homing=False)
 
     # ------------------------------------------------------------------ #
     #  Public homing API
