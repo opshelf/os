@@ -188,6 +188,12 @@ class Tool:
 
             raise MotorError(f"Failed to stop tool: {str(e)}") from e
 
+    async def restore_y_brake_output(self) -> None:
+        if self._my is None:
+            return
+
+        await self._my.restore_brake_output()
+
     async def clear_alarms(self) -> None:
         try:
             if self._mg is not None:
@@ -997,6 +1003,7 @@ class Tool:
 
     async def home(self) -> None:
         try:
+            await self.restore_y_brake_output()
             if self._ms is not None:
                 await self._ms.home()
 

@@ -342,10 +342,10 @@ class Motor():
     #  Brake management
     # ------------------------------------------------------------------ #
 
-    async def set_brake_output_function(self, value: int) -> None:
+    async def set_brake_output_function(self, value: int, *, force: bool = False) -> None:
         brake_output_function = int(value)
 
-        if self._active_brake_output_function == brake_output_function:
+        if force is False and self._active_brake_output_function == brake_output_function:
             return
 
         await self.set_param("SO2 output function", brake_output_function)
@@ -355,7 +355,7 @@ class Motor():
         await self.set_brake_output_function(RELEASED_BRAKE_OUTPUT_FUNCTION)
 
     async def restore_brake_output(self) -> None:
-        await self.set_brake_output_function(self._configured_brake_output_function)
+        await self.set_brake_output_function(self._configured_brake_output_function, force=True)
 
     # ------------------------------------------------------------------ #
     #  Alarm / fault management

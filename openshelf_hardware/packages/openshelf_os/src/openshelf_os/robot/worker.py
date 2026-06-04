@@ -727,6 +727,12 @@ class RobotWorker:
             self._needs_home_unknown = True
         self._needs_home_reason = reason
 
+    async def _restore_y_brake_output(self) -> None:
+        try:
+            await self._robot.restore_y_brake_output()
+        except Exception as exc:
+            logging.warning("Failed to restore Y-axis brake output: %s", exc)
+
     async def emergency_stop(self, reason: str) -> None:
         self._robot.block_motion_for_safety()
         self.set_emergency_stop_state(reason)
@@ -740,6 +746,10 @@ class RobotWorker:
                     await self._current_task
                 except asyncio.CancelledError:
                     pass
+                except Exception as exc:
+                    logging.warning("Cancelled task failed during emergency stop cleanup: %s", exc)
+
+            await self._restore_y_brake_output()
 
             self._remove_current_operation()
             self._current_task = None

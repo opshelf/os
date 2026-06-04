@@ -178,6 +178,7 @@ except Exception:
 class MockRobot:
     def __init__(self):
         self.safety_paused = False
+        self.restore_y_brake_output_calls = 0
 
     def block_motion_for_safety(self):
         self.safety_paused = True
@@ -187,6 +188,9 @@ class MockRobot:
 
     async def get_status(self):
         return None
+
+    async def restore_y_brake_output(self):
+        self.restore_y_brake_output_calls += 1
 
     def register_light_curtain_listener(self, cb):
         pass
@@ -331,6 +335,45 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
 
         RobotWorker._instance = None
 
+    async def test_emergency_stop_cleanup_restores_y_brake_output(self):
+        from openshelf_os.robot.worker import RobotWorker
+
+        robot = MockRobot()
+        RobotWorker._instance = None
+        worker = RobotWorker(robot)
+
+        await worker.emergency_stop("test")
+        await asyncio.sleep(0.1)
+
+        self.assertEqual(robot.restore_y_brake_output_calls, 1)
+
+        RobotWorker._instance = None
+
+    async def test_emergency_stop_cleanup_restores_y_brake_output_when_cancelled_task_fails(self):
+        from openshelf_os.robot.worker import RobotWorker
+
+        robot = MockRobot()
+        RobotWorker._instance = None
+        worker = RobotWorker(robot)
+        task_cancelled = asyncio.Event()
+
+        async def failing_command():
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                task_cancelled.set()
+                raise RuntimeError("cleanup failed")
+
+        worker._current_task = asyncio.create_task(failing_command())
+
+        await worker.emergency_stop("test")
+        await asyncio.sleep(0.1)
+
+        self.assertTrue(task_cancelled.is_set())
+        self.assertEqual(robot.restore_y_brake_output_calls, 1)
+        self.assertIsNone(worker._current_task)
+
+        RobotWorker._instance = None
 
     async def test_estop_monitor_fails_safe_when_configured_input_setup_fails(self):
         from openshelf_os.robot.worker import RobotWorker
