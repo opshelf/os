@@ -24,6 +24,9 @@ SCALE_OCCUPIED_THRESHOLD_GRAMS = 5.0
 SCALE_POLL_INTERVAL_SECONDS = 1.0
 SCALE_STATUS_FRESH_SECONDS = 3.0
 SCALE_WEIGHT_PUBLISH_DELTA_GRAMS = 1.0
+ESTOP_POLL_INTERVAL_SECONDS = 0.05
+ESTOP_UNAVAILABLE_REASON = "Emergency stop input unavailable"
+PHYSICAL_ESTOP_REASON = "Physical emergency stop triggered"
 
 _MOTOR_ID_RE = re.compile(r"motor\s+(\d+)", re.IGNORECASE)
 
@@ -235,6 +238,7 @@ class RobotWorker:
         self._robot = robot
         self._worker_task: Optional[asyncio.Task] = None
         self._scale_poll_task: Optional[asyncio.Task] = None
+        self._estop_monitor_task: Optional[asyncio.Task] = None
         self._current_task: Optional[asyncio.Task] = None
         self._current_command: Optional[RobotCommands] = None
         self._current_operation: Optional[QueuedOperation] = None
@@ -268,6 +272,7 @@ class RobotWorker:
         self._is_crashed: bool = False
         self._crash_reason: Optional[str] = None
         self._crash_context: Optional[dict[str, Any]] = None
+        self._is_estop_active: bool = False
         self._needs_home_axes: set[str] = set()
         self._needs_home_unknown: bool = False
         self._needs_home_reason: Optional[str] = None
@@ -643,6 +648,12 @@ class RobotWorker:
             return
 
     def clear_crash_state(self) -> None:
+        if self._is_estop_active is True:
+            reason = ESTOP_UNAVAILABLE_REASON if self._crash_reason == ESTOP_UNAVAILABLE_REASON else PHYSICAL_ESTOP_REASON
+            self._robot.block_motion_for_safety()
+            self.set_crash_state(reason)
+            return
+
         self._is_crashed = False
         self._crash_reason = None
         self._crash_context = None
@@ -725,6 +736,76 @@ class RobotWorker:
             await self._publish_status()
 
         asyncio.create_task(_cleanup_after_stop())
+
+    async def _start_estop_monitor(self) -> None:
+        if self._estop_monitor_task is not None and self._estop_monitor_task.done() is False:
+            return
+
+        gpio = getattr(self._robot, "_gpio", None)
+        if gpio is None:
+            logging.info("Emergency stop monitor disabled: GPIO is not configured")
+            return
+
+        try:
+            has_pin = getattr(gpio, "has_pin", None)
+            if callable(has_pin) is True and has_pin("estop") is False:
+                logging.info("Emergency stop monitor disabled: GPIO pin 'estop' is not configured")
+                return
+            estop_input = gpio.input("estop")
+        except Exception as exc:
+            logging.warning("Emergency stop input unavailable: %s", exc)
+            self._is_estop_active = True
+            await self.emergency_stop(ESTOP_UNAVAILABLE_REASON)
+            return
+
+        self._estop_monitor_task = asyncio.create_task(
+            self._monitor_estop(estop_input),
+            name="emergency-stop-monitor",
+        )
+
+    async def _stop_estop_monitor(self) -> None:
+        if self._estop_monitor_task is None:
+            return
+
+        self._estop_monitor_task.cancel()
+        try:
+            await self._estop_monitor_task
+        except asyncio.CancelledError:
+            pass
+        self._estop_monitor_task = None
+        self._is_estop_active = False
+
+    async def _monitor_estop(self, estop_input: Any) -> None:
+        previous_active: Optional[bool] = None
+
+        while self._running is True:
+            try:
+                is_active = estop_input.read() is True
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logging.warning("Emergency stop input read failed: %s", exc)
+                self._is_estop_active = True
+                if previous_active is not True or self._is_crashed is False:
+                    await self.emergency_stop(ESTOP_UNAVAILABLE_REASON)
+                previous_active = True
+                await asyncio.sleep(ESTOP_POLL_INTERVAL_SECONDS)
+                continue
+
+            self._is_estop_active = is_active
+            if is_active is True and (previous_active is not True or self._is_crashed is False):
+                await self.emergency_stop(PHYSICAL_ESTOP_REASON)
+            elif (
+                is_active is False
+                and previous_active is True
+                and self._is_crashed is True
+                and isinstance(self._current_command, HomeCommand)
+                and self._safety_motion_blocked is False
+            ):
+                self._robot.release_motion_safety()
+
+            previous_active = is_active
+            await asyncio.sleep(ESTOP_POLL_INTERVAL_SECONDS)
 
     def _should_enable_barcode(self) -> bool:
         disable_raw: str = os.getenv("OPENSHELF_DISABLE_BARCODE", "false")  # type: ignore[assignment]
@@ -888,9 +969,11 @@ class RobotWorker:
                     await self._publish_status()
 
                     if isinstance(command, HomeCommand) and self._is_crashed:
-                        if self._safety_motion_blocked is False:
+                        if self._is_estop_active is True:
+                            logging.info("Keeping motion safety engaged while emergency stop is active")
+                        elif self._safety_motion_blocked is False:
                             self._robot.release_motion_safety()
-                        logging.info("Released motion safety for homing in crash state")
+                            logging.info("Released motion safety for homing in crash state")
 
                     logging.info("Starting command execution: %s", command.command)
                     self._command_started_at = time.monotonic()
@@ -912,8 +995,11 @@ class RobotWorker:
                                 and isinstance(result, RobotCommandSuccessful)
                             ):
                                 if self._is_crashed:
-                                    self.clear_crash_state()
-                                    logging.info("Crash state cleared after successful %s", self._current_command.command)
+                                    if self._is_estop_active is True:
+                                        logging.info("Crash state retained while emergency stop is active")
+                                    else:
+                                        self.clear_crash_state()
+                                        logging.info("Crash state cleared after successful %s", self._current_command.command)
 
                                 if self.needs_home() and isinstance(self._current_command, HomeCommand):
                                     self.clear_needs_home()
@@ -1000,9 +1086,11 @@ class RobotWorker:
             self._worker_task.cancel()
         if self._scale_poll_task:
             self._scale_poll_task.cancel()
+        await self._stop_estop_monitor()
         logger.info("Creating process_commands task")
         self._worker_task = asyncio.create_task(self.process_commands())
         self._scale_poll_task = asyncio.create_task(self._poll_scale_status())
+        await self._start_estop_monitor()
         logger.info("Task created: %s", self._worker_task)
         await self._publish_status()
         logger.info("RobotWorker.start() complete")
@@ -1019,6 +1107,8 @@ class RobotWorker:
             except asyncio.CancelledError:
                 pass
             self._scale_poll_task = None
+
+        await self._stop_estop_monitor()
 
         if self._barcode_task:
             logging.info("Stopping barcode bridge")
