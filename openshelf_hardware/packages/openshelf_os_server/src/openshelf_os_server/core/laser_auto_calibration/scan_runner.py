@@ -22,10 +22,11 @@ class ScanRunnerMixin:
         should_validate_reference_bounds: bool = True,
         run_scope: dict[str, Any] | None = None,
         reference_apply: dict[str, Any] | None = None,
+        scan_config_override: Any | None = None,
     ) -> Any:
         side_name = _side_to_module_name(side)
         config = get_root_config()
-        scan_config = config.robot.grid.scan
+        scan_config = scan_config_override or config.robot.grid.scan
         settle_ms = int(laser_module.get_laser_sample_settle_ms(scan_config))
         samples_per_point = int(laser_module.get_laser_samples_per_point(scan_config))
         coarse_settle_ms = int(laser_module.get_coarse_settle_ms(settle_ms))

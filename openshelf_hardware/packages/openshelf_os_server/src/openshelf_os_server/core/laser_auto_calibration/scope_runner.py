@@ -2,6 +2,7 @@
 # mypy: disable-error-code=attr-defined
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 from statistics import median
@@ -158,6 +159,24 @@ def _build_single_shelf_scan_bounds(
         y_max=y_max,
     )
 
+
+def _build_single_shelf_scan_config(scan_config: Any) -> Any:
+    probe_offsets = laser_module.get_shelf_hole_probe_y_offsets_mm(scan_config)
+    primary_probe_offset_mm = float(probe_offsets[0])
+    expected_hole_height_mm = float(scan_config.expected_hole_height_mm)
+    opening_center_offset_mm = max(
+        0.0,
+        primary_probe_offset_mm - (expected_hole_height_mm * 2.0 / 3.0),
+    )
+
+    if hasattr(scan_config, "model_copy") is True:
+        return scan_config.model_copy(
+            update={"shelf_hole_probe_y_offsets_mm": [opening_center_offset_mm]}
+        )
+
+    copied_scan_config = copy.copy(scan_config)
+    copied_scan_config.shelf_hole_probe_y_offsets_mm = [opening_center_offset_mm]
+    return copied_scan_config
 
 class ScopeRunnerMixin:
     async def _run_requested_scope(
@@ -442,6 +461,7 @@ class ScopeRunnerMixin:
             shelf_idx=shelf_idx,
             scan_config=scan_config,
         )
+        single_shelf_scan_config = _build_single_shelf_scan_config(scan_config)
         xy_reference_detected_cell, z_reference_wall_depth_mm = await self._run_partial_reference_scans(
             worker,
             side,
@@ -464,6 +484,7 @@ class ScopeRunnerMixin:
                 "shelf_idx": int(shelf_idx),
             },
             reference_apply=reference_apply,
+            scan_config_override=single_shelf_scan_config,
         )
         await self._persist_single_shelf_result(
             worker,

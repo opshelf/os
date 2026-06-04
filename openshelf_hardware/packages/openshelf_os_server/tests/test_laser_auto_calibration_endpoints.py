@@ -1091,6 +1091,8 @@ async def test_run_single_shelf_uses_known_shelf_edge_with_neighbor_clipped_boun
         scan_config=scan_config,
     )
     assert scan_mock.await_args.kwargs['known_shelf_edge_y'] == [30.75]
+    scan_config_override = scan_mock.await_args.kwargs['scan_config_override']
+    assert scan_config_override.shelf_hole_probe_y_offsets_mm == [pytest.approx(12.25)]
     assert scan_mock.await_args.kwargs['should_validate_reference_bounds'] is False
     assert scan_mock.call_args.args[2].y_min == pytest.approx(0.0)
     assert scan_mock.call_args.args[2].y_max == pytest.approx(112.5)
