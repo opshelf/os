@@ -295,6 +295,40 @@ export async function runCalibrationCycleTest(
 	});
 }
 
+export async function storeItem(
+	side: StorageModuleSide,
+	shelfIdx: number,
+	cellIdx: number,
+	item: Record<string, unknown>
+): Promise<{ success: boolean }> {
+	return apiFetch<{ success: boolean }>('/commands', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({
+			command: 'store_item',
+			item: {
+				...item,
+				location: { side, shelf_idx: shelfIdx, cell_idx: cellIdx }
+			}
+		})
+	});
+}
+
+export async function retrieveItem(
+	side: StorageModuleSide,
+	shelfIdx: number,
+	cellIdx: number
+): Promise<{ success: boolean }> {
+	return apiFetch<{ success: boolean }>('/commands', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({
+			command: 'retrieve_item',
+			location: { side, shelf_idx: shelfIdx, cell_idx: cellIdx }
+		})
+	});
+}
+
 export async function saveCalibration(
 	side: StorageModuleSide,
 	shelfIdx: number,
