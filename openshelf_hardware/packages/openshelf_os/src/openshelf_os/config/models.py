@@ -287,8 +287,14 @@ def _default_gpio_expanders() -> List[GpioExpanderConfig]:
     ]
 
 
-def _rpi_input(pin: int, *, inverted: bool = True, debounce_ms: int = 0) -> GpioPinConfig:
-    return GpioPinConfig(board="rpi", pin=pin, direction="input", pull="up", inverted=inverted, debounce_ms=debounce_ms)
+def _rpi_input(
+    pin: int,
+    *,
+    inverted: bool = True,
+    debounce_ms: int = 0,
+    pull: Literal["up", "down", "off"] = "up",
+) -> GpioPinConfig:
+    return GpioPinConfig(board="rpi", pin=pin, direction="input", pull=pull, inverted=inverted, debounce_ms=debounce_ms)
 
 
 def _rpi_output(pin: int, *, initial: Optional[bool] = None, shutdown: Optional[bool] = None) -> GpioPinConfig:
@@ -318,7 +324,7 @@ def _default_gpio_pins() -> dict[str, GpioPinConfig]:
         "tool_limit_z": _rpi_input(25),
         "cabinet_top_closed": _rpi_input(17, inverted=False, debounce_ms=50),
         "cabinet_bot_closed": _rpi_input(27, inverted=False, debounce_ms=50),
-        "estop": _pcf_input(12),
+        "estop": _rpi_input(18, pull="off"),
         "tool_1": _rpi_input(1),
         "tool_2": _rpi_input(15),
         "tool_3": _rpi_input(14),
@@ -337,6 +343,7 @@ def _default_gpio_pins() -> dict[str, GpioPinConfig]:
         "x_2": _pcf_input(7),
         "io_limit_max": _pcf_input(10),
         "io_limit_min": _pcf_input(11),
+        "io_1": _pcf_input(12),
         "io_2": _pcf_input(13),
         "light_curtain": _pcf_input(8),
     }
