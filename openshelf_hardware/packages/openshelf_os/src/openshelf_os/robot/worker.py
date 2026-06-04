@@ -1244,10 +1244,15 @@ class RobotWorker:
         phase = context.get("phase")
         return phase in {"io_place.open_door", "io_pick.open_door"}
 
+    def _should_ignore_light_curtain(self) -> bool:
+        return self._is_crashed is True or self._is_emergency_stopped is True
+
     def _build_safety_sources(self) -> tuple[list[str], dict[str, dict[str, Any]]]:
         io_door_opening = self._is_io_door_opening()
-        light_curtain_active = bool(self._curtain_blocked) and (
-            bool(self._door_open) or io_door_opening is True
+        light_curtain_active = (
+            self._should_ignore_light_curtain() is False
+            and bool(self._curtain_blocked)
+            and (bool(self._door_open) or io_door_opening is True)
         )
         cabinet_doors = dict(self._cabinet_doors or {})
         cabinet_doors_open = cabinet_doors.get("open") is True
@@ -1353,6 +1358,9 @@ class RobotWorker:
 
     def _on_light_curtain_change(self, state: Optional[bool]) -> None:
         async def _handle() -> None:
+            if self._should_ignore_light_curtain() is True:
+                return
+
             self._logger.debug(
                 "Light curtain sensor change received",
                 extra={

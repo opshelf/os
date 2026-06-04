@@ -530,6 +530,84 @@ class CurtainGuardTests(unittest.TestCase):
         self.assertEqual(self.robot.pause_calls, 1)
         self.assertEqual(self.robot.resume_calls, 0)
 
+    def test_light_curtain_does_not_block_when_crashed(self):
+        self.worker.set_crash_state("test crash")
+        self.robot.set_curtain_state(True)
+        self.robot.set_door_state(True)
+
+        asyncio.run(self.worker._evaluate_safety_guard())
+
+        safety = self.worker.get_safety_status()
+        self.assertFalse(safety["active"])
+        self.assertFalse(safety["sources"]["light_curtain"]["active"])
+        self.assertEqual(self.robot.pause_calls, 0)
+
+    def test_light_curtain_does_not_block_when_emergency_stopped(self):
+        self.worker.set_emergency_stop_state("test emergency stop")
+        self.robot.set_curtain_state(True)
+        self.robot.set_door_state(True)
+
+        asyncio.run(self.worker._evaluate_safety_guard())
+
+        safety = self.worker.get_safety_status()
+        self.assertFalse(safety["active"])
+        self.assertFalse(safety["sources"]["light_curtain"]["active"])
+        self.assertEqual(self.robot.pause_calls, 0)
+
+    def test_light_curtain_change_is_ignored_when_crashed(self):
+        async def run_test():
+            evaluate_calls = 0
+            publish_calls = 0
+
+            async def did_evaluate_safety_guard():
+                nonlocal evaluate_calls
+                evaluate_calls += 1
+                return True
+
+            async def did_publish_status():
+                nonlocal publish_calls
+                publish_calls += 1
+
+            self.worker.set_crash_state("test crash")
+            self.worker._evaluate_safety_guard = did_evaluate_safety_guard
+            self.worker._publish_status = did_publish_status
+
+            self.worker._on_light_curtain_change(True)
+            await asyncio.sleep(0)
+
+            self.assertIsNone(self.worker._curtain_blocked)
+            self.assertEqual(evaluate_calls, 0)
+            self.assertEqual(publish_calls, 0)
+
+        asyncio.run(run_test())
+
+    def test_light_curtain_change_is_ignored_when_emergency_stopped(self):
+        async def run_test():
+            evaluate_calls = 0
+            publish_calls = 0
+
+            async def did_evaluate_safety_guard():
+                nonlocal evaluate_calls
+                evaluate_calls += 1
+                return True
+
+            async def did_publish_status():
+                nonlocal publish_calls
+                publish_calls += 1
+
+            self.worker.set_emergency_stop_state("test emergency stop")
+            self.worker._evaluate_safety_guard = did_evaluate_safety_guard
+            self.worker._publish_status = did_publish_status
+
+            self.worker._on_light_curtain_change(True)
+            await asyncio.sleep(0)
+
+            self.assertIsNone(self.worker._curtain_blocked)
+            self.assertEqual(evaluate_calls, 0)
+            self.assertEqual(publish_calls, 0)
+
+        asyncio.run(run_test())
+
     def test_guard_waits_for_ack_after_interruption_clears(self):
         self.robot.set_curtain_state(True)
         self.robot.set_door_state(True)
