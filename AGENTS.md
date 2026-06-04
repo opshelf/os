@@ -9,6 +9,7 @@
 - Full stack: `./scripts/start` and `./scripts/stop` from repo root.
 - `./scripts/start` defaults to `production` mode unless `openshelf_hardware/data/.mode` already exists. Use `./scripts/start --mode development` for hot reload, `./scripts/start --hardware` for USB/device passthrough, and `./scripts/start --build` when switching between development and non-development stacks.
 - Do not restart repo-managed containers with raw `docker compose up/down/restart` when mode matters. Use `./scripts/start` and `./scripts/stop` so `OPERATING_MODE`, build-boundary handling, and `data/.mode` stay in sync.
+- On hardware devices, do not use bare `./scripts/start` for restarts. Use `./scripts/start --hardware` with the appropriate `--mode`/`--build` flags, otherwise the API container can restart without the hardware compose overlay and lose USB/device passthrough.
 - Frontend checks: `cd dev_ui && npm run check` and `cd dev_ui && npm run build`. There is no repo-local frontend lint or test script.
 - Backend setup/checks: `cd openshelf_hardware && uv sync`, `cd openshelf_hardware && uv run pytest`, `cd openshelf_hardware && uv run ruff check packages`, `cd openshelf_hardware && uv run mypy packages/openshelf_os_server/src`.
 - Focused backend tests work directly with package paths, for example `cd openshelf_hardware && uv run pytest packages/openshelf_os_server/tests/test_storage_endpoints.py`.

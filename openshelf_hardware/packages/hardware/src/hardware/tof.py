@@ -5,7 +5,7 @@ import threading
 import time
 from dataclasses import dataclass
 from importlib import import_module
-from typing import Any, Callable, Protocol
+from typing import Any, Callable, Protocol, cast
 
 from hardware.exceptions import ToFConfigError, ToFConnectionError, ToFReadError
 
@@ -25,6 +25,80 @@ class ToFReading:
     sensor_index: int
     channel: int
     distance_mm: float
+
+
+class _FtdiI2CBus:
+    def __init__(self, raw_i2c: Any) -> None:
+        self._i2c = raw_i2c
+        self._lock = threading.Lock()
+
+    def try_lock(self) -> bool:
+        return self._lock.acquire(blocking=False)
+
+    def unlock(self) -> None:
+        if self._lock.locked() is True:
+            self._lock.release()
+
+    def scan(self) -> list[int]:
+        return self._i2c.scan()
+
+    def writeto(
+        self,
+        address: int,
+        buffer: Any,
+        *,
+        start: int = 0,
+        end: int | None = None,
+        stop: bool = True,
+    ) -> None:
+        self._i2c.writeto(address, buffer, start=start, end=end, stop=stop)
+
+    def readfrom_into(
+        self,
+        address: int,
+        buffer: Any,
+        *,
+        start: int = 0,
+        end: int | None = None,
+        stop: bool = True,
+    ) -> None:
+        self._i2c.readfrom_into(address, buffer, start=start, end=end, stop=stop)
+
+    def writeto_then_readfrom(
+        self,
+        address: int,
+        buffer_out: Any,
+        buffer_in: Any,
+        *,
+        out_start: int = 0,
+        out_end: int | None = None,
+        in_start: int = 0,
+        in_end: int | None = None,
+        stop: bool = False,
+    ) -> None:
+        self._i2c.writeto_then_readfrom(
+            address,
+            buffer_out,
+            buffer_in,
+            out_start=out_start,
+            out_end=out_end,
+            in_start=in_start,
+            in_end=in_end,
+            stop=stop,
+        )
+
+    def deinit(self) -> None:
+        controller = getattr(self._i2c, "_i2c", None)
+        if controller is not None:
+            for method_name in ("close", "terminate"):
+                method = cast(Callable[[], None] | None, getattr(controller, method_name, None))
+                if method is not None:
+                    method()
+                    break
+
+        raw_deinit = cast(Callable[[], None] | None, getattr(self._i2c, "deinit", None))
+        if raw_deinit is not None:
+            raw_deinit()
 
 
 class ToFSensorBus:
@@ -96,8 +170,8 @@ class ToFSensorBus:
                 continue
 
             for method_name in ("close", "terminate"):
-                method = getattr(controller_wrapper, method_name, None)
-                if callable(method) is not True:
+                method = cast(Callable[[], None] | None, getattr(controller_wrapper, method_name, None))
+                if method is None:
                     continue
 
                 try:
@@ -107,8 +181,8 @@ class ToFSensorBus:
                         first_error = exc
                 break
 
-        deinit = getattr(i2c, "deinit", None)
-        if callable(deinit) is True:
+        deinit = cast(Callable[[], None] | None, getattr(i2c, "deinit", None))
+        if deinit is not None:
             try:
                 deinit()
             except Exception as exc:
@@ -121,8 +195,8 @@ class ToFSensorBus:
     def _stop_sensors(self, sensors: list[DistanceSensor]) -> Exception | None:
         first_error = None
         for sensor in sensors:
-            stop_ranging = getattr(sensor, "stop_ranging", None)
-            if callable(stop_ranging) is not True:
+            stop_ranging = cast(Callable[[], None] | None, getattr(sensor, "stop_ranging", None))
+            if stop_ranging is None:
                 continue
 
             try:
@@ -170,8 +244,9 @@ class ToFSensorBus:
 
         try:
             try:
-                board = import_module("board")
-                busio = import_module("busio")
+                ftdi_i2c = import_module(
+                    "adafruit_blinka.microcontroller.ftdi_mpsse.mpsse.i2c"
+                )
                 adafruit_tca9548a = import_module("adafruit_tca9548a")
                 adafruit_vl53l1x = import_module("adafruit_vl53l1x")
             except ImportError as exc:
@@ -179,7 +254,7 @@ class ToFSensorBus:
 
             sensors: list[DistanceSensor] = []
             try:
-                self._i2c = busio.I2C(board.SCL, board.SDA)
+                self._i2c = _FtdiI2CBus(ftdi_i2c.I2C())
                 self._mux = adafruit_tca9548a.TCA9548A(self._i2c, address=self.mux_address)
 
                 for channel in self.channels:
