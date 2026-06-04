@@ -2,6 +2,7 @@
 # ruff: noqa: E402, PLC0415
 
 import asyncio
+import json
 import pathlib
 import sys
 import unittest
@@ -223,14 +224,21 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
         RobotWorker._instance = None
         worker = RobotWorker(robot)
 
+        self.assertFalse(worker._is_emergency_stopped)
         self.assertFalse(worker._is_crashed)
         self.assertFalse(robot.safety_paused)
 
         await worker.emergency_stop("test reason")
 
-        self.assertTrue(worker._is_crashed)
-        self.assertEqual(worker._crash_reason, "test reason")
+        self.assertTrue(worker._is_emergency_stopped)
+        self.assertEqual(worker._emergency_stop_reason, "test reason")
+        self.assertFalse(worker._is_crashed)
         self.assertTrue(robot.safety_paused)
+
+        payload = json.loads(await worker.get_status_snapshot(force_refresh=True))
+        self.assertTrue(payload["is_emergency_stopped"])
+        self.assertFalse(payload["is_emergency_stop_active"])
+        self.assertEqual(payload["emergency_stop_reason"], "test reason")
 
         RobotWorker._instance = None
 
@@ -246,7 +254,8 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
         elapsed = asyncio.get_event_loop().time() - start
 
         self.assertLess(elapsed, 0.1)
-        self.assertTrue(worker._is_crashed)
+        self.assertTrue(worker._is_emergency_stopped)
+        self.assertFalse(worker._is_crashed)
         self.assertTrue(robot.safety_paused)
 
         RobotWorker._instance = None
@@ -258,7 +267,8 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
         RobotWorker._instance = None
         worker = RobotWorker(robot)
 
-        await worker.emergency_stop("test")
+        robot.block_motion_for_safety()
+        worker.set_crash_state("test")
         self.assertTrue(robot.safety_paused)
 
         worker.clear_crash_state()
@@ -332,8 +342,9 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
 
         await worker._start_estop_monitor()
 
-        self.assertTrue(worker._is_crashed)
-        self.assertEqual(worker._crash_reason, "Emergency stop input unavailable")
+        self.assertTrue(worker._is_emergency_stopped)
+        self.assertEqual(worker._emergency_stop_reason, "Emergency stop input unavailable")
+        self.assertFalse(worker._is_crashed)
         self.assertTrue(worker._is_estop_active)
         self.assertTrue(robot.safety_paused)
         self.assertIsNone(worker._estop_monitor_task)
@@ -360,16 +371,17 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
         try:
             await asyncio.sleep(0.16)
 
-            self.assertTrue(worker._is_crashed)
-            self.assertEqual(worker._crash_reason, "Emergency stop input unavailable")
+            self.assertTrue(worker._is_emergency_stopped)
+            self.assertEqual(worker._emergency_stop_reason, "Emergency stop input unavailable")
+            self.assertFalse(worker._is_crashed)
             self.assertTrue(worker._is_estop_active)
             self.assertTrue(robot.safety_paused)
             self.assertEqual(emergency_stop_calls, ["Emergency stop input unavailable"])
 
-            worker.clear_crash_state()
+            worker.clear_emergency_stop_state()
 
-            self.assertTrue(worker._is_crashed)
-            self.assertEqual(worker._crash_reason, "Emergency stop input unavailable")
+            self.assertTrue(worker._is_emergency_stopped)
+            self.assertEqual(worker._emergency_stop_reason, "Emergency stop input unavailable")
         finally:
             worker._running = False
             monitor_task.cancel()
@@ -396,15 +408,24 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
             estop_input.value = True
             await asyncio.sleep(0.1)
 
-            self.assertTrue(worker._is_crashed)
-            self.assertEqual(worker._crash_reason, "Physical emergency stop triggered")
+            self.assertTrue(worker._is_emergency_stopped)
+            self.assertEqual(worker._emergency_stop_reason, "Physical emergency stop triggered")
+            self.assertFalse(worker._is_crashed)
+            self.assertTrue(worker._is_estop_active)
             self.assertTrue(robot.safety_paused)
 
-            worker.clear_crash_state()
+            estop_input.value = False
+            await asyncio.sleep(0.1)
 
-            self.assertTrue(worker._is_crashed)
-            self.assertEqual(worker._crash_reason, "Physical emergency stop triggered")
+            self.assertTrue(worker._is_emergency_stopped)
+            self.assertFalse(worker._is_estop_active)
             self.assertTrue(robot.safety_paused)
+
+            worker.clear_emergency_stop_state()
+
+            self.assertFalse(worker._is_emergency_stopped)
+            self.assertIsNone(worker._emergency_stop_reason)
+            self.assertFalse(robot.safety_paused)
         finally:
             worker._running = False
             monitor_task.cancel()

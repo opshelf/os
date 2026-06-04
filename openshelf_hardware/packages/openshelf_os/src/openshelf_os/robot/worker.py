@@ -196,6 +196,9 @@ def _transform_worker_status_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     transformed["is_crashed"] = payload.get("is_crashed", False)
     transformed["crash_reason"] = payload.get("crash_reason")
     transformed["crash_context"] = payload.get("crash_context")
+    transformed["is_emergency_stopped"] = payload.get("is_emergency_stopped", False)
+    transformed["is_emergency_stop_active"] = payload.get("is_emergency_stop_active", False)
+    transformed["emergency_stop_reason"] = payload.get("emergency_stop_reason")
     transformed["needs_home"] = payload.get("needs_home", False)
     transformed["needs_home_reason"] = payload.get("needs_home_reason")
     transformed["needs_home_axes"] = payload.get("needs_home_axes", [])
@@ -272,6 +275,8 @@ class RobotWorker:
         self._is_crashed: bool = False
         self._crash_reason: Optional[str] = None
         self._crash_context: Optional[dict[str, Any]] = None
+        self._is_emergency_stopped: bool = False
+        self._emergency_stop_reason: Optional[str] = None
         self._is_estop_active: bool = False
         self._needs_home_axes: set[str] = set()
         self._needs_home_unknown: bool = False
@@ -648,16 +653,10 @@ class RobotWorker:
             return
 
     def clear_crash_state(self) -> None:
-        if self._is_estop_active is True:
-            reason = ESTOP_UNAVAILABLE_REASON if self._crash_reason == ESTOP_UNAVAILABLE_REASON else PHYSICAL_ESTOP_REASON
-            self._robot.block_motion_for_safety()
-            self.set_crash_state(reason)
-            return
-
         self._is_crashed = False
         self._crash_reason = None
         self._crash_context = None
-        if self._safety_motion_blocked is False:
+        if self._safety_motion_blocked is False and self._is_emergency_stopped is False:
             self._robot.release_motion_safety()
         self.clear_needs_home()
 
@@ -665,6 +664,22 @@ class RobotWorker:
         self._is_crashed = True
         self._crash_reason = reason
         self._crash_context = context
+
+    def clear_emergency_stop_state(self) -> None:
+        if self._is_estop_active is True:
+            reason = ESTOP_UNAVAILABLE_REASON if self._emergency_stop_reason == ESTOP_UNAVAILABLE_REASON else PHYSICAL_ESTOP_REASON
+            self._robot.block_motion_for_safety()
+            self.set_emergency_stop_state(reason)
+            return
+
+        self._is_emergency_stopped = False
+        self._emergency_stop_reason = None
+        if self._safety_motion_blocked is False and self._is_crashed is False:
+            self._robot.release_motion_safety()
+
+    def set_emergency_stop_state(self, reason: str) -> None:
+        self._is_emergency_stopped = True
+        self._emergency_stop_reason = reason
 
     def clear_needs_home(self) -> None:
         self._needs_home_axes.clear()
@@ -714,7 +729,7 @@ class RobotWorker:
 
     async def emergency_stop(self, reason: str) -> None:
         self._robot.block_motion_for_safety()
-        self.set_crash_state(reason)
+        self.set_emergency_stop_state(reason)
         await self._publish_status()
         logging.info("Emergency stop triggered: %s", reason)
 
@@ -786,23 +801,26 @@ class RobotWorker:
             except Exception as exc:
                 logging.warning("Emergency stop input read failed: %s", exc)
                 self._is_estop_active = True
-                if previous_active is not True or self._is_crashed is False:
+                if previous_active is not True or self._is_emergency_stopped is False:
                     await self.emergency_stop(ESTOP_UNAVAILABLE_REASON)
                 previous_active = True
                 await asyncio.sleep(ESTOP_POLL_INTERVAL_SECONDS)
                 continue
 
             self._is_estop_active = is_active
-            if is_active is True and (previous_active is not True or self._is_crashed is False):
+            if is_active is True and (previous_active is not True or self._is_emergency_stopped is False):
                 await self.emergency_stop(PHYSICAL_ESTOP_REASON)
             elif (
                 is_active is False
                 and previous_active is True
-                and self._is_crashed is True
+                and self._is_emergency_stopped is True
                 and isinstance(self._current_command, HomeCommand)
                 and self._safety_motion_blocked is False
             ):
                 self._robot.release_motion_safety()
+
+            if previous_active is True and is_active is False:
+                await self._publish_status()
 
             previous_active = is_active
             await asyncio.sleep(ESTOP_POLL_INTERVAL_SECONDS)
@@ -916,6 +934,9 @@ class RobotWorker:
             is_crashed=self._is_crashed,
             crash_reason=self._crash_reason,
             crash_context=self._crash_context,
+            is_emergency_stopped=self._is_emergency_stopped,
+            is_emergency_stop_active=self._is_estop_active,
+            emergency_stop_reason=self._emergency_stop_reason,
             needs_home=self.needs_home(),
             needs_home_reason=self._needs_home_reason,
             needs_home_axes=self.needs_home_axes(),
@@ -968,12 +989,12 @@ class RobotWorker:
                     self._current_operation = queued_operation
                     await self._publish_status()
 
-                    if isinstance(command, HomeCommand) and self._is_crashed:
+                    if isinstance(command, HomeCommand) and (self._is_crashed is True or self._is_emergency_stopped is True):
                         if self._is_estop_active is True:
                             logging.info("Keeping motion safety engaged while emergency stop is active")
                         elif self._safety_motion_blocked is False:
                             self._robot.release_motion_safety()
-                            logging.info("Released motion safety for homing in crash state")
+                            logging.info("Released motion safety for homing in stopped state")
 
                     logging.info("Starting command execution: %s", command.command)
                     self._command_started_at = time.monotonic()
@@ -995,11 +1016,15 @@ class RobotWorker:
                                 and isinstance(result, RobotCommandSuccessful)
                             ):
                                 if self._is_crashed:
+                                    self.clear_crash_state()
+                                    logging.info("Crash state cleared after successful %s", self._current_command.command)
+
+                                if self._is_emergency_stopped:
                                     if self._is_estop_active is True:
-                                        logging.info("Crash state retained while emergency stop is active")
+                                        logging.info("Emergency stop state retained while button is active")
                                     else:
-                                        self.clear_crash_state()
-                                        logging.info("Crash state cleared after successful %s", self._current_command.command)
+                                        self.clear_emergency_stop_state()
+                                        logging.info("Emergency stop state cleared after successful %s", self._current_command.command)
 
                                 if self.needs_home() and isinstance(self._current_command, HomeCommand):
                                     self.clear_needs_home()
@@ -1309,6 +1334,7 @@ class RobotWorker:
             self._safety_motion_blocked is False
             and previous_motion_blocked is True
             and self._is_crashed is False
+            and self._is_emergency_stopped is False
         ):
             self._robot.release_motion_safety()
 
@@ -1392,7 +1418,7 @@ class RobotWorker:
                 self._awaiting_safety_ack = False
                 if self._safety_motion_blocked is True:
                     self._safety_motion_blocked = False
-                    if self._is_crashed is False:
+                    if self._is_crashed is False and self._is_emergency_stopped is False:
                         self._robot.release_motion_safety()
                 accepted = True
 

@@ -31,6 +31,9 @@ class WorkerStatus(BaseModel):
     is_crashed: bool = False
     crash_reason: Optional[str] = None
     crash_context: Optional[dict[str, Any]] = None
+    is_emergency_stopped: bool = False
+    is_emergency_stop_active: bool = False
+    emergency_stop_reason: Optional[str] = None
     needs_home: bool = False
     needs_home_reason: Optional[str] = None
     needs_home_axes: List[str] = Field(default_factory=list)
