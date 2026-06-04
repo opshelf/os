@@ -5,6 +5,7 @@
 		abortLaserAutoCalibration,
 		buildLaserAutoCalibrationStreamUrl,
 		getLaserAutoCalibrationStatus,
+		getLaserAutoCalibrationStreamError,
 		getStorageGrid,
 		type LaserAutoCalibrationAngleResult,
 		type LaserAutoCalibrationRequest,
@@ -31,6 +32,7 @@
 	let selectedCell = $state<string>('');
 	let activeRequestedScope = $state<LaserAutoCalibrationRequest | null>(null);
 	let stream = $state<ReconnectingEventSource | null>(null);
+	let isStreamSubscribeOnly = false;
 
 	const isSessionActive = $derived.by(() => {
 		if (snapshot === null) {
@@ -366,17 +368,20 @@
 		}
 	}
 
-	function didReceiveStreamError(): void {
+	async function didReceiveStreamError(): Promise<void> {
 		isConnecting = false;
 		isStreamOpen = false;
 
-		if (snapshot === null) {
-			error = 'laser auto calibration stream disconnected';
-			return;
-		}
+		if (snapshot === null || shouldAutoConnect(snapshot) === false) {
+			const request = activeRequestedScope ?? getRequestedScope();
+			const shouldSubscribeOnly = isStreamSubscribeOnly;
 
-		if (shouldAutoConnect(snapshot) === false) {
-			error = 'laser auto calibration stream disconnected';
+			didCloseStream();
+
+			const streamError = await getLaserAutoCalibrationStreamError(request, {
+				subscribeOnly: shouldSubscribeOnly
+			});
+			error = streamError?.message ?? 'laser auto calibration stream disconnected';
 			message = '';
 			return;
 		}
@@ -463,6 +468,7 @@
 		isConnecting = true;
 		error = '';
 		message = '';
+		isStreamSubscribeOnly = shouldSubscribeOnly;
 
 		const nextStream = createReconnectingEventSource({
 			path: () =>
