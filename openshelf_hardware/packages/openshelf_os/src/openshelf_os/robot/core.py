@@ -14,6 +14,9 @@ from openshelf_os.serial_ports import (
     DEFAULT_LASER_PORTS,
     DEFAULT_MOTOR_PORTS,
     DEFAULT_SCALE_PORTS,
+    LEGACY_LASER_PORT,
+    LEGACY_MOTOR_PORT,
+    LEGACY_SCALE_PORT,
 )
 from openshelf_os.exceptions import MotorError, MovementError, ToolError
 from openshelf_os.iobox import IOBox
@@ -214,15 +217,23 @@ class Robot:
             },
         }
 
+        legacy_ports = {
+            "motor": [LEGACY_MOTOR_PORT],
+            "scale": [LEGACY_SCALE_PORT],
+            "laser": [LEGACY_LASER_PORT],
+        }
         bus_cfg = getattr(self._config.robot, "bus", None)
 
         def build(name: str) -> Dict[str, Any]:
             cfg = getattr(bus_cfg, name, None) if bus_cfg else None
             settings = defaults[name].copy()
             if cfg is not None:
+                ports = list(cfg.ports)
+                if ports == legacy_ports[name]:
+                    ports = list(defaults[name]["ports"])
                 settings.update(
                     {
-                        "ports": list(cfg.ports),
+                        "ports": ports,
                         "baudrate": cfg.baudrate,
                         "parity": cfg.parity,
                         "timeout": cfg.timeout,
