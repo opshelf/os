@@ -3,12 +3,14 @@
 # dependencies = ["pymodbus"]
 # ///
 
-import sys
 import asyncio
-from pymodbus.client import AsyncModbusSerialClient
-import pymodbus
+import os
+import sys
 
-PORT = "/dev/ttyUSB0"
+import pymodbus
+from pymodbus.client import AsyncModbusSerialClient
+
+PORT = os.getenv("OPENSHELF_MOTOR_PORT", "/dev/openshelf-rs485-ch1")
 BAUDRATE = 115200
 TRIGGER = 0x6002
 
