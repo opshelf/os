@@ -10,6 +10,11 @@ from hardware.controller import SharedModbusController as Controller
 from hardware.curtain import MotionSafetyInterlock
 from openshelf_os.cabinet import Cabinet
 from openshelf_os.common import AxisCoordinate, ConfigError, load_config_file, CONFIG_PATH, resolve_grid_path
+from openshelf_os.serial_ports import (
+    DEFAULT_LASER_PORTS,
+    DEFAULT_MOTOR_PORTS,
+    DEFAULT_SCALE_PORTS,
+)
 from openshelf_os.exceptions import MotorError, MovementError, ToolError
 from openshelf_os.iobox import IOBox
 from openshelf_os.laser_calibration.scan import (
@@ -187,21 +192,21 @@ class Robot:
     def _prepare_bus_settings(self) -> Dict[str, Dict[str, Any]]:
         defaults = {
             "motor": {
-                "ports": ["/dev/ttyUSB1"],
+                "ports": DEFAULT_MOTOR_PORTS,
                 "baudrate": 115200,
                 "parity": "N",
                 "timeout": 2.0,
                 "retry_delay_s": 0.25,
             },
             "scale": {
-                "ports": ["/dev/ttyUSB0"],
+                "ports": DEFAULT_SCALE_PORTS,
                 "baudrate": 9600,
                 "parity": "N",
                 "timeout": 2.0,
                 "retry_delay_s": 0.25,
             },
             "laser": {
-                "ports": ["/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_B001K430-if00-port0"],
+                "ports": DEFAULT_LASER_PORTS,
                 "baudrate": 9600,
                 "parity": "N",
                 "timeout": 2.0,

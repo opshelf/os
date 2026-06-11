@@ -60,6 +60,27 @@ useful variants:
 
 use `--hardware` on machines with connected robot, camera, scanner, or printer devices.
 
+### waveshare usb to 4ch rs485 (b)
+
+the default modbus bus config prefers stable symlinks for the waveshare ch344l hub:
+
+```text
+/dev/openshelf-rs485-ch1  motor bus, 115200 baud
+/dev/openshelf-rs485-ch2  scale bus, 9600 baud
+/dev/openshelf-rs485-ch3  laser bus, 9600 baud
+/dev/openshelf-rs485-ch4  spare rs485 channel
+```
+
+install the device naming rule on hardware machines:
+
+```bash
+sudo cp scripts/udev/99-openshelf-waveshare-rs485.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+```
+
+without the rule, the app falls back to the kernel cdc-acm names `/dev/ttyACM0` through `/dev/ttyACM2`, then the legacy usb adapter paths.
+
 ### stop
 
 ```bash

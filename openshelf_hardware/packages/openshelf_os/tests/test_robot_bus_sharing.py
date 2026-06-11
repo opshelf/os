@@ -7,6 +7,11 @@ from unittest.mock import AsyncMock, call
 import pytest
 
 import openshelf_os.robot.core as robot_module
+from openshelf_os.serial_ports import (
+	DEFAULT_LASER_PORTS,
+	DEFAULT_MOTOR_PORTS,
+	DEFAULT_SCALE_PORTS,
+)
 
 
 def make_bus_settings() -> dict[str, dict[str, object]]:
@@ -33,6 +38,17 @@ def make_bus_settings() -> dict[str, dict[str, object]]:
 			"retry_delay_s": 0.25,
 		},
 	}
+
+
+def test_prepare_bus_settings_prefers_waveshare_rs485_hub_ports():
+	robot = robot_module.Robot.__new__(robot_module.Robot)
+	robot._config = SimpleNamespace(robot=SimpleNamespace(bus=None))
+
+	settings = robot_module.Robot._prepare_bus_settings(robot)
+
+	assert settings["motor"]["ports"] == DEFAULT_MOTOR_PORTS
+	assert settings["scale"]["ports"] == DEFAULT_SCALE_PORTS
+	assert settings["laser"]["ports"] == DEFAULT_LASER_PORTS
 
 
 def test_create_controller_for_bus_reuses_motor_controller_for_matching_laser(monkeypatch):
