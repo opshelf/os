@@ -71,7 +71,7 @@ the default modbus bus config prefers stable symlinks for the waveshare ch344l h
 /dev/openshelf-rs485-ch4  spare rs485 channel
 ```
 
-install the device naming rule on hardware machines:
+install the required device naming rule on hardware machines:
 
 ```bash
 sudo cp scripts/udev/99-openshelf-waveshare-rs485.rules /etc/udev/rules.d/
@@ -79,7 +79,17 @@ sudo udevadm control --reload-rules
 sudo udevadm trigger
 ```
 
-without the rule, the app falls back to the kernel cdc-acm names `/dev/ttyACM0` through `/dev/ttyACM2`, then the legacy usb adapter paths.
+without the rule, waveshare devices are not selected by generic `/dev/ttyACM*` names because those can belong to scanners or other cdc-acm devices; the app only falls back to the legacy usb adapter paths.
+
+### barcode scanner port
+
+`OPENSHELF_BARCODE_PORT` is passed through to the api container when set in the shell or deployment environment. set it explicitly for scanners that do not appear at the built-in scanner by-id path, for example:
+
+```bash
+OPENSHELF_BARCODE_PORT=/dev/serial/by-id/<scanner-device-id> ./scripts/start --hardware
+```
+
+prefer a scanner by-id path or a scanner-specific udev symlink. do not use `/dev/ttyACM0` as a default on waveshare systems because it can be rs485 channel 1 instead of the scanner.
 
 ### stop
 
