@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import fcntl
-import json
 import os
 import subprocess
 import sys
@@ -34,9 +33,7 @@ from openshelf_os.storage import StorageGrid
 from openshelf_os_server.core.logging_config import configure_logging, get_logger
 from openshelf_os_server.core.robot import get_robot_health, init_robot_worker, set_robot_initialization_error, stop_robot_worker
 from openshelf_os_server.core.storage import StorageService
-from openshelf_os_server.core.camera import init_tool_camera_manager, init_overhead_camera_manager
 from openshelf_os_server.core.iobox_sizer import init_iobox_sizer, stop_iobox_sizer
-from openshelf_os_server.settings import Settings
 from openshelf_os_server.database.base import Base, engine, get_database_url
 from openshelf_os_server.database.session import AsyncSessionLocal
 from openshelf_os_server.database.models import Item, ItemLocation, Role, User
@@ -202,42 +199,6 @@ def _run_migrations() -> None:
 		logger.error("migration_failed", error=str(e), exc_info=True)
 		logger.warning("continuing_without_migrations")
 
-
-def _get_tool_camera_url(settings: Settings) -> str | None:
-	if settings.tool_camera.enabled is False:
-		return None
-
-	if settings.tool_camera.rtsp_url != "":
-		return settings.tool_camera.rtsp_url
-
-	config_paths = [
-		CONFIG_PATH,
-		Path("/app/openshelf_hardware/data/config.json"),
-	]
-
-	for config_path in config_paths:
-		if config_path.exists() is False:
-			continue
-
-		try:
-			with open(config_path) as f:
-				config = json.load(f)
-
-			poe_camera = config.get("robot", {}).get("tool", {}).get("poe_camera", {})
-			url = poe_camera.get("url") or poe_camera.get("stream_uri")
-			if url is not None and url != "":
-				logger.info("tool_camera_url_from_config", config_path=str(config_path), url=url)
-				return str(url)
-		except Exception as e:
-			logger.warning("failed_to_read_config", config_path=str(config_path), error=str(e))
-
-	return None
-
-
-def _get_overhead_camera_url(settings: Settings) -> str | None:
-	if settings.overhead_camera.enabled is True and settings.overhead_camera.rtsp_url != "":
-		return settings.overhead_camera.rtsp_url
-	return None
 
 
 async def _ensure_developer_user() -> None:
@@ -440,21 +401,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 		if sentry_enabled is True and sentry_sdk.is_initialized() is True:
 			sentry_sdk.capture_exception(e)
 
-	tool_camera_url = _get_tool_camera_url(settings)
-	if tool_camera_url is not None and tool_camera_url != "":
-		try:
-			await init_tool_camera_manager(tool_camera_url)
-			logger.info("tool_camera_initialized", rtsp_url=tool_camera_url)
-		except Exception as e:
-			logger.error("tool_camera_initialization_failed", error=str(e), exc_info=True)
-
-	overhead_camera_url = _get_overhead_camera_url(settings)
-	if overhead_camera_url is not None and overhead_camera_url != "":
-		try:
-			await init_overhead_camera_manager(overhead_camera_url)
-			logger.info("overhead_camera_initialized", rtsp_url=overhead_camera_url)
-		except Exception as e:
-			logger.error("overhead_camera_initialization_failed", error=str(e), exc_info=True)
 
 	try:
 		await init_iobox_sizer()
