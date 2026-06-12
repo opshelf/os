@@ -27,6 +27,7 @@ class Servo:
         self._controller = controller
         self._control_reg = int(params.get("control_reg", 0x3E8))
         self._status_reg = int(params.get("status_reg", 0x07D0))
+        self._configured = False
 
     async def configure(self) -> None:
         try:
@@ -65,7 +66,7 @@ class Servo:
             await self._controller.write_single_register(self._motor_id, 0x03EC, 0x80)
             await self._controller.write_single_register(self._motor_id, 0x03EE, 0x80)
             await self._controller.write_single_register(self._motor_id, 0x03F0, 0x80)
-            
+            self._configured = True
         except Exception as e:
             raise MotorError(f"Failed to configure servo: {str(e)}") from e
 
@@ -107,7 +108,13 @@ class Servo:
                 
             await asyncio.sleep(0.01)
 
+
+    async def _ensure_configured(self) -> None:
+        if self._configured is False:
+            await self.configure()
+
     async def open(self):
+        await self._ensure_configured()
         try:
             await self._controller.write_single_register(self._motor_id, self._control_reg, 0x080B)
             await self.wait_for_servo()
@@ -115,6 +122,7 @@ class Servo:
             raise MotorError(f"Failed to open servo: {str(e)}") from e
 
     async def safe_open(self):
+        await self._ensure_configured()
         try:
             await self._controller.write_single_register(self._motor_id, self._control_reg, 0x0A0B)
             await self.wait_for_servo()
@@ -122,5 +130,6 @@ class Servo:
             raise MotorError(f"Failed to safe-open servo: {str(e)}") from e
 
     async def close(self):
+        await self._ensure_configured()
         await self._controller.write_single_register(self._motor_id, self._control_reg, 0x090B) 
         await self.wait_for_servo()
