@@ -99,26 +99,47 @@ def test_assert_config_requires_laser_bus_when_laser_enabled():
         assert_config(config)
 
 
+
+def test_bus_port_serializes_canonical_single_port_config():
+    data = copy.deepcopy(MINIMAL_CONFIG_DICT)
+    data["robot"]["bus"] = {
+        "motor": {
+            "port": "/dev/openshelf-rs485-ch1",
+            "baudrate": 115200,
+        },
+        "scale": {
+            "port": "/dev/openshelf-scale",
+            "baudrate": 9600,
+        },
+    }
+    config = RootConfig.model_validate(data)
+
+    dumped = config.model_dump(mode="json")
+    dumped_motor_bus = dumped["robot"]["bus"]["motor"]
+    assert dumped_motor_bus["port"] == "/dev/openshelf-rs485-ch1"
+    assert "ports" not in dumped_motor_bus
+
+
 def test_assert_config_accepts_enabled_laser_with_bus():
     data = copy.deepcopy(MINIMAL_CONFIG_DICT)
     data["robot"]["tool"]["laser"] = {"enabled": True}
     data["robot"]["bus"] = {
         "motor": {
-            "ports": ["/dev/ttyUSB1"],
+            "port": "/dev/ttyUSB1",
             "baudrate": 115200,
             "parity": "N",
             "timeout": 2.0,
             "retry_delay_s": 0.25,
         },
         "scale": {
-            "ports": ["/dev/ttyUSB0"],
+            "port": "/dev/ttyUSB0",
             "baudrate": 9600,
             "parity": "N",
             "timeout": 2.0,
             "retry_delay_s": 0.25,
         },
         "laser": {
-            "ports": ["/dev/serial/by-id/laser"],
+            "port": "/dev/serial/by-id/laser",
             "baudrate": 9600,
             "parity": "N",
             "timeout": 2.0,

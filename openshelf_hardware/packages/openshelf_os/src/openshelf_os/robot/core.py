@@ -1,4 +1,3 @@
-import asyncio
 import json as _json
 import logging
 import sentry_sdk
@@ -11,12 +10,9 @@ from hardware.curtain import MotionSafetyInterlock
 from openshelf_os.cabinet import Cabinet
 from openshelf_os.common import AxisCoordinate, ConfigError, load_config_file, CONFIG_PATH, resolve_grid_path
 from openshelf_os.serial_ports import (
-    DEFAULT_LASER_PORTS,
-    DEFAULT_MOTOR_PORTS,
-    DEFAULT_SCALE_PORTS,
-    LEGACY_LASER_PORT,
-    LEGACY_MOTOR_PORT,
-    LEGACY_SCALE_PORT,
+    DEFAULT_LASER_PORT,
+    DEFAULT_MOTOR_PORT,
+    DEFAULT_SCALE_PORT,
 )
 from openshelf_os.exceptions import MotorError, MovementError, ToolError
 from openshelf_os.iobox import IOBox
@@ -195,32 +191,26 @@ class Robot:
     def _prepare_bus_settings(self) -> Dict[str, Dict[str, Any]]:
         defaults = {
             "motor": {
-                "ports": DEFAULT_MOTOR_PORTS,
+                "port": DEFAULT_MOTOR_PORT,
                 "baudrate": 115200,
                 "parity": "N",
                 "timeout": 2.0,
                 "retry_delay_s": 0.25,
             },
             "scale": {
-                "ports": DEFAULT_SCALE_PORTS,
+                "port": DEFAULT_SCALE_PORT,
                 "baudrate": 9600,
                 "parity": "N",
                 "timeout": 2.0,
                 "retry_delay_s": 0.25,
             },
             "laser": {
-                "ports": DEFAULT_LASER_PORTS,
+                "port": DEFAULT_LASER_PORT,
                 "baudrate": 9600,
                 "parity": "N",
                 "timeout": 2.0,
                 "retry_delay_s": 0.25,
             },
-        }
-
-        legacy_ports = {
-            "motor": [LEGACY_MOTOR_PORT],
-            "scale": [LEGACY_SCALE_PORT],
-            "laser": [LEGACY_LASER_PORT],
         }
         bus_cfg = getattr(self._config.robot, "bus", None)
 
@@ -228,12 +218,9 @@ class Robot:
             cfg = getattr(bus_cfg, name, None) if bus_cfg else None
             settings = defaults[name].copy()
             if cfg is not None:
-                ports = list(cfg.ports)
-                if ports == legacy_ports[name]:
-                    ports = list(defaults[name]["ports"])
                 settings.update(
                     {
-                        "ports": ports,
+                        "port": cfg.port,
                         "baudrate": cfg.baudrate,
                         "parity": cfg.parity,
                         "timeout": cfg.timeout,
@@ -261,7 +248,7 @@ class Robot:
         settings = self._bus_settings[name]
 
         return Controller(
-            port=settings["ports"][0],
+            port=settings["port"],
             baudrate=settings["baudrate"],
             parity=settings["parity"],
             timeout=settings["timeout"],
@@ -272,36 +259,29 @@ class Robot:
         right_settings = self._bus_settings[right]
 
         return (
-            left_settings["ports"] == right_settings["ports"]
+            left_settings["port"] == right_settings["port"]
             and left_settings["baudrate"] == right_settings["baudrate"]
             and left_settings["parity"] == right_settings["parity"]
             and left_settings["timeout"] == right_settings["timeout"]
         )
 
     async def _connect_controller(self, label: str, controller: Controller, settings: Dict[str, Any]) -> None:
-        errors: List[str] = []
-        for port in settings["ports"]:
-            controller.port = port
-            controller.baudrate = settings["baudrate"]
-            controller.parity = settings["parity"]
-            controller.timeout = settings["timeout"]
-            try:
-                await controller.connect()
-            except Exception as exc:
-                errors.append(f"{port}: {exc}")
-                await controller.close()
-            else:
-                if controller.client and controller.client.connected:
-                    return
-                errors.append(f"{port}: client not connected")
-                await controller.close()
+        controller.port = settings["port"]
+        controller.baudrate = settings["baudrate"]
+        controller.parity = settings["parity"]
+        controller.timeout = settings["timeout"]
 
-            delay = settings.get("retry_delay_s", 0)
-            if delay:
-                await asyncio.sleep(delay)
+        try:
+            await controller.connect()
+        except Exception as exc:
+            await controller.close()
+            raise ConfigError(f"{label.capitalize()} bus connection failed ({settings['port']}: {exc})") from exc
 
-        detail = "; ".join(errors) if errors else "no ports configured"
-        raise ConfigError(f"{label.capitalize()} bus connection failed ({detail})")
+        if controller.client and controller.client.connected:
+            return
+
+        await controller.close()
+        raise ConfigError(f"{label.capitalize()} bus connection failed ({settings['port']}: client not connected)")
 
     # ------------------------------------------------------------------ #
     #  Motor time tracking
