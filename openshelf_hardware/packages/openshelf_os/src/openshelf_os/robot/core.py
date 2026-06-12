@@ -10,6 +10,14 @@ from hardware.controller import SharedModbusController as Controller
 from hardware.curtain import MotionSafetyInterlock
 from openshelf_os.cabinet import Cabinet
 from openshelf_os.common import AxisCoordinate, ConfigError, load_config_file, CONFIG_PATH, resolve_grid_path
+from openshelf_os.serial_ports import (
+    DEFAULT_LASER_PORTS,
+    DEFAULT_MOTOR_PORTS,
+    DEFAULT_SCALE_PORTS,
+    LEGACY_LASER_PORT,
+    LEGACY_MOTOR_PORT,
+    LEGACY_SCALE_PORT,
+)
 from openshelf_os.exceptions import MotorError, MovementError, ToolError
 from openshelf_os.iobox import IOBox
 from openshelf_os.laser_calibration.scan import (
@@ -187,21 +195,21 @@ class Robot:
     def _prepare_bus_settings(self) -> Dict[str, Dict[str, Any]]:
         defaults = {
             "motor": {
-                "ports": ["/dev/ttyUSB1"],
+                "ports": DEFAULT_MOTOR_PORTS,
                 "baudrate": 115200,
                 "parity": "N",
                 "timeout": 2.0,
                 "retry_delay_s": 0.25,
             },
             "scale": {
-                "ports": ["/dev/ttyUSB0"],
+                "ports": DEFAULT_SCALE_PORTS,
                 "baudrate": 9600,
                 "parity": "N",
                 "timeout": 2.0,
                 "retry_delay_s": 0.25,
             },
             "laser": {
-                "ports": ["/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_B001K430-if00-port0"],
+                "ports": DEFAULT_LASER_PORTS,
                 "baudrate": 9600,
                 "parity": "N",
                 "timeout": 2.0,
@@ -209,15 +217,23 @@ class Robot:
             },
         }
 
+        legacy_ports = {
+            "motor": [LEGACY_MOTOR_PORT],
+            "scale": [LEGACY_SCALE_PORT],
+            "laser": [LEGACY_LASER_PORT],
+        }
         bus_cfg = getattr(self._config.robot, "bus", None)
 
         def build(name: str) -> Dict[str, Any]:
             cfg = getattr(bus_cfg, name, None) if bus_cfg else None
             settings = defaults[name].copy()
             if cfg is not None:
+                ports = list(cfg.ports)
+                if ports == legacy_ports[name]:
+                    ports = list(defaults[name]["ports"])
                 settings.update(
                     {
-                        "ports": list(cfg.ports),
+                        "ports": ports,
                         "baudrate": cfg.baudrate,
                         "parity": cfg.parity,
                         "timeout": cfg.timeout,

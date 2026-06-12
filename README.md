@@ -60,6 +60,37 @@ useful variants:
 
 use `--hardware` on machines with connected robot, camera, scanner, or printer devices.
 
+### waveshare usb to 4ch rs485 (b)
+
+the default modbus bus config prefers stable symlinks for the waveshare ch344l hub:
+
+```text
+/dev/openshelf-rs485-ch1  motor bus, 115200 baud
+/dev/openshelf-rs485-ch2  scale bus, 9600 baud
+/dev/openshelf-rs485-ch3  laser bus, 9600 baud
+/dev/openshelf-rs485-ch4  spare rs485 channel
+```
+
+install the required device naming rule on hardware machines:
+
+```bash
+sudo cp scripts/udev/99-openshelf-waveshare-rs485.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+```
+
+without the rule, waveshare devices are not selected by generic `/dev/ttyACM*` names because those can belong to scanners or other cdc-acm devices; the app only falls back to the legacy usb adapter paths.
+
+### barcode scanner port
+
+`OPENSHELF_BARCODE_PORT` is passed through to the api container when set in the shell or deployment environment. set it explicitly for scanners that do not appear at the built-in scanner by-id path, for example:
+
+```bash
+OPENSHELF_BARCODE_PORT=/dev/serial/by-id/<scanner-device-id> ./scripts/start --hardware
+```
+
+prefer a scanner by-id path or a scanner-specific udev symlink. do not use `/dev/ttyACM0` as a default on waveshare systems because it can be rs485 channel 1 instead of the scanner.
+
 ### stop
 
 ```bash

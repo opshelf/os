@@ -24,6 +24,11 @@ from openshelf_os.common import (
     write_json_file_with_backup,
     load_and_validate_config,
 )
+from openshelf_os.serial_ports import (
+    DEFAULT_LASER_PORTS,
+    DEFAULT_MOTOR_PORTS,
+    DEFAULT_SCALE_PORTS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -216,21 +221,21 @@ def _build_minimal_config(data: dict) -> dict:
             },
             "bus": {
                 "motor": {
-                    "ports": ["/dev/ttyUSB1"],
+                    "ports": DEFAULT_MOTOR_PORTS,
                     "baudrate": 115200,
                     "parity": "N",
                     "timeout": 2.0,
                     "retry_delay_s": 0.25,
                 },
                 "scale": {
-                    "ports": ["/dev/ttyUSB0"],
+                    "ports": DEFAULT_SCALE_PORTS,
                     "baudrate": 9600,
                     "parity": "N",
                     "timeout": 2.0,
                     "retry_delay_s": 0.25,
                 },
                 "laser": {
-                    "ports": ["/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_B001K430-if00-port0"],
+                    "ports": DEFAULT_LASER_PORTS,
                     "baudrate": 9600,
                     "parity": "N",
                     "timeout": 2.0,

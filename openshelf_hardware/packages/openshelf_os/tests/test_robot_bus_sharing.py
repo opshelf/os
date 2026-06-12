@@ -7,6 +7,14 @@ from unittest.mock import AsyncMock, call
 import pytest
 
 import openshelf_os.robot.core as robot_module
+from openshelf_os.serial_ports import (
+	DEFAULT_LASER_PORTS,
+	DEFAULT_MOTOR_PORTS,
+	DEFAULT_SCALE_PORTS,
+	LEGACY_LASER_PORT,
+	LEGACY_MOTOR_PORT,
+	LEGACY_SCALE_PORT,
+)
 
 
 def make_bus_settings() -> dict[str, dict[str, object]]:
@@ -33,6 +41,68 @@ def make_bus_settings() -> dict[str, dict[str, object]]:
 			"retry_delay_s": 0.25,
 		},
 	}
+
+
+def test_prepare_bus_settings_prefers_waveshare_rs485_hub_ports():
+	robot = robot_module.Robot.__new__(robot_module.Robot)
+	robot._config = SimpleNamespace(robot=SimpleNamespace(bus=None))
+
+	settings = robot_module.Robot._prepare_bus_settings(robot)
+
+	assert settings["motor"]["ports"] == DEFAULT_MOTOR_PORTS
+	assert settings["scale"]["ports"] == DEFAULT_SCALE_PORTS
+	assert settings["laser"]["ports"] == DEFAULT_LASER_PORTS
+
+
+def make_bus_config(ports: list[str], baudrate: int = 9600) -> SimpleNamespace:
+	return SimpleNamespace(
+		ports=ports,
+		baudrate=baudrate,
+		parity="N",
+		timeout=2.0,
+		retry_delay_s=0.25,
+	)
+
+
+def test_prepare_bus_settings_normalizes_exact_legacy_default_ports():
+	robot = robot_module.Robot.__new__(robot_module.Robot)
+	robot._config = SimpleNamespace(
+		robot=SimpleNamespace(
+			bus=SimpleNamespace(
+				motor=make_bus_config([LEGACY_MOTOR_PORT], 115200),
+				scale=make_bus_config([LEGACY_SCALE_PORT]),
+				laser=make_bus_config([LEGACY_LASER_PORT]),
+			)
+		)
+	)
+
+	settings = robot_module.Robot._prepare_bus_settings(robot)
+
+	assert settings["motor"]["ports"] == DEFAULT_MOTOR_PORTS
+	assert settings["scale"]["ports"] == DEFAULT_SCALE_PORTS
+	assert settings["laser"]["ports"] == DEFAULT_LASER_PORTS
+
+
+def test_prepare_bus_settings_preserves_custom_ports():
+	custom_motor_ports = ["/dev/custom-motor"]
+	custom_scale_ports = ["/dev/custom-scale", LEGACY_SCALE_PORT]
+	custom_laser_ports = [LEGACY_LASER_PORT, "/dev/custom-laser"]
+	robot = robot_module.Robot.__new__(robot_module.Robot)
+	robot._config = SimpleNamespace(
+		robot=SimpleNamespace(
+			bus=SimpleNamespace(
+				motor=make_bus_config(custom_motor_ports, 115200),
+				scale=make_bus_config(custom_scale_ports),
+				laser=make_bus_config(custom_laser_ports),
+			)
+		)
+	)
+
+	settings = robot_module.Robot._prepare_bus_settings(robot)
+
+	assert settings["motor"]["ports"] == custom_motor_ports
+	assert settings["scale"]["ports"] == custom_scale_ports
+	assert settings["laser"]["ports"] == custom_laser_ports
 
 
 def test_create_controller_for_bus_reuses_motor_controller_for_matching_laser(monkeypatch):
