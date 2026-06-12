@@ -371,6 +371,7 @@ hardware_curtain = types.SimpleNamespace(
     CurtainMonitor=_DummyCurtainMonitor,
 )
 hardware_scale = types.SimpleNamespace(Scale=_DummyScale)
+hardware_toolcam = types.SimpleNamespace(ToolCamera=object)
 hardware_laser = types.SimpleNamespace(LaserSensor=object)
 hardware_gpio = types.ModuleType("hardware.gpio")
 hardware_gpio_types = types.SimpleNamespace(
@@ -390,6 +391,7 @@ hardware_module.controller = hardware_controller
 hardware_module.motor = hardware_motor
 hardware_module.curtain = hardware_curtain
 hardware_module.scale = hardware_scale
+hardware_module.toolcam = hardware_toolcam
 hardware_module.laser = hardware_laser
 hardware_module.gpio = hardware_gpio
 sys.modules.setdefault("hardware", hardware_module)
@@ -397,6 +399,7 @@ sys.modules.setdefault("hardware.controller", hardware_controller)
 sys.modules.setdefault("hardware.motor", hardware_motor)
 sys.modules.setdefault("hardware.curtain", hardware_curtain)
 sys.modules.setdefault("hardware.scale", hardware_scale)
+sys.modules.setdefault("hardware.toolcam", hardware_toolcam)
 sys.modules.setdefault("hardware.laser", hardware_laser)
 sys.modules.setdefault("hardware.gpio", hardware_gpio)
 sys.modules.setdefault("hardware.gpio.types", hardware_gpio_types)
@@ -429,6 +432,7 @@ if sys.modules.get("hardware") is hardware_module:
         "hardware.motor",
         "hardware.curtain",
         "hardware.scale",
+        "hardware.toolcam",
         "hardware.laser",
         "hardware.gpio",
         "hardware.gpio.types",

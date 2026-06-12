@@ -12,6 +12,9 @@ controller
 motor
     Motor control interface for servo motors using Modbus protocol
 
+toolcam
+    Tool-mounted camera interface for frame capture
+
 motor_helpers
     Motor register definitions and constants
 """
@@ -20,6 +23,7 @@ from .controller import SharedModbusController
 from .motor import MotorStatus
 from .servo import Servo
 from .laser import LaserSensor
+from .toolcam import ToolCamera
 from .uvc_camera import UvcCamera
 from .tof import ToFReading, ToFSensorBus
 
@@ -28,6 +32,7 @@ __all__ = [
     'Servo',
     'MotorStatus',
     'LaserSensor',
+    'ToolCamera',
     'UvcCamera',
     'ToFReading',
     'ToFSensorBus',

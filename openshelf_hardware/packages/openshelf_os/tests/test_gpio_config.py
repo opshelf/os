@@ -24,6 +24,7 @@ def make_robot_config() -> dict[str, object]:
         "tool": {
             "parameters": parameters,
             "motors": [],
+            "poe_camera": {"url": "rtsp://example.test/camera"},
         },
         "grid": {"path": "storage.json"},
         "io": {"motors": []},
