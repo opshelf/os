@@ -20,6 +20,16 @@ class ScannerSettings(BaseModel):
     enabled: bool = False
 
 
+class ToolCameraSettings(BaseModel):
+    enabled: bool = False
+    rtsp_url: str = ""
+
+
+class OverheadCameraSettings(BaseModel):
+    enabled: bool = False
+    rtsp_url: str = ""
+
+
 class AuthSettings(BaseModel):
     enabled: bool = True
     require_auth: bool = True

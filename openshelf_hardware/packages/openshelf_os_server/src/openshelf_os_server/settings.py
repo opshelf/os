@@ -14,6 +14,8 @@ from openshelf_os.common import (
     StorageSettings,
     PrinterSettings,
     ScannerSettings,
+    ToolCameraSettings,
+    OverheadCameraSettings,
     AuthSettings,
     ScaleAppSettings,
     RobotAppSettings,
@@ -42,6 +44,8 @@ class Settings(BaseModel):
     scanner: ScannerSettings
     robot: RobotAppSettings
     scale: ScaleAppSettings
+    tool_camera: ToolCameraSettings
+    overhead_camera: OverheadCameraSettings
     auth: AuthSettings
 
     @classmethod
@@ -52,6 +56,8 @@ class Settings(BaseModel):
             scanner=config.scanner,
             robot=config.robot_app,
             scale=config.scale,
+            tool_camera=config.tool_camera,
+            overhead_camera=config.overhead_camera,
             auth=config.auth,
         )
 
@@ -136,6 +142,9 @@ def _build_minimal_config(data: dict) -> dict:
                     "ROTATION_BACK": 0,
                 },
                 "motors": [],
+                "poe_camera": {
+                    "url": "",
+                },
                 "laser": {
                     "enabled": False,
                     "device_id": 1,
@@ -145,8 +154,8 @@ def _build_minimal_config(data: dict) -> dict:
                     "distance_register_index": 1,
                     "distance_scale_mm": 0.001,
                 },
-            },
-            "grid": {
+                },
+                "grid": {
                     "path": "storage.json",
                     "scan": {
                         "wall_depth_tolerance_mm": 2.0,

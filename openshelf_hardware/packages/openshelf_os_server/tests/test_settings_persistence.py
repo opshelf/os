@@ -27,6 +27,9 @@ MINIMAL_CONFIG = {
 				"ROTATION_BACK": 0,
 			},
 			"motors": [],
+			"poe_camera": {
+				"url": "",
+			},
 		},
 		"grid": {"path": "storage.json"},
 		"io": {

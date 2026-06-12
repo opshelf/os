@@ -13,9 +13,10 @@ def test_iobox_sizer_defaults_are_observer_safe() -> None:
     assert config.tof.channels == [6, 7]
 
 
-def test_ioblock_uses_sizer_config_without_legacy_camera_config() -> None:
+def test_ioblock_does_not_require_legacy_usb_camera() -> None:
     block = IOBlock(motors=Motors(root=[]))
 
+    assert block.usb_camera is None
     assert block.sizer.enabled is False
 
 
