@@ -23,9 +23,9 @@ from openshelf_os.common import (
     load_and_validate_config,
 )
 from openshelf_os.serial_ports import (
-    DEFAULT_LASER_PORTS,
-    DEFAULT_MOTOR_PORTS,
-    DEFAULT_SCALE_PORTS,
+    DEFAULT_LASER_PORT,
+    DEFAULT_MOTOR_PORT,
+    DEFAULT_SCALE_PORT,
 )
 
 logger = logging.getLogger(__name__)
@@ -212,21 +212,21 @@ def _build_minimal_config(data: dict) -> dict:
             },
             "bus": {
                 "motor": {
-                    "ports": DEFAULT_MOTOR_PORTS,
+                    "port": DEFAULT_MOTOR_PORT,
                     "baudrate": 115200,
                     "parity": "N",
                     "timeout": 2.0,
                     "retry_delay_s": 0.25,
                 },
                 "scale": {
-                    "ports": DEFAULT_SCALE_PORTS,
+                    "port": DEFAULT_SCALE_PORT,
                     "baudrate": 9600,
                     "parity": "N",
                     "timeout": 2.0,
                     "retry_delay_s": 0.25,
                 },
                 "laser": {
-                    "ports": DEFAULT_LASER_PORTS,
+                    "port": DEFAULT_LASER_PORT,
                     "baudrate": 9600,
                     "parity": "N",
                     "timeout": 2.0,
