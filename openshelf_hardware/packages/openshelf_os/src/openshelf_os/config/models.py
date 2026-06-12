@@ -123,7 +123,7 @@ class Motors(RootModel[List[Motor]]):
 
 
 class PoeCamera(BaseModel):
-    url: str
+    url: str = ""
 
 
 class UsbCamera(BaseModel):
@@ -439,7 +439,7 @@ class Gripper(BaseModel):
 class Tool(BaseModel):
     parameters: Parameters
     motors: Motors
-    poe_camera: PoeCamera
+    poe_camera: PoeCamera = Field(default_factory=PoeCamera)
     gripper: Gripper = Field(default_factory=Gripper)
     laser: LaserConfig = Field(default_factory=LaserConfig)  # type: ignore[arg-type]
 
