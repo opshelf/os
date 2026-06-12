@@ -1128,6 +1128,8 @@ class RobotWorker:
         await self._start_estop_monitor()
         logger.info("Task created: %s", self._worker_task)
         await self._publish_status()
+        if self._safety_motion_blocked is False and self._is_crashed is False and self._is_emergency_stopped is False:
+            self._robot.release_motion_safety()
         logger.info("RobotWorker.start() complete")
 
     async def shutdown(self) -> None:
