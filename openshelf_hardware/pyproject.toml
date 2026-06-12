@@ -36,7 +36,5 @@ disallow_untyped_defs = false
 [[tool.mypy.overrides]]
 module = [
     "hardware.camera",
-    "hardware.toolcam",
-    "hardware.toolcam_helpers",
 ]
 disable_error_code = ["arg-type", "call-overload", "attr-defined"]

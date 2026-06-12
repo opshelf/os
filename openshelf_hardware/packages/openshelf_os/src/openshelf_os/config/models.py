@@ -122,16 +122,6 @@ class Motors(RootModel[List[Motor]]):
         raise KeyError(f"Motor with id '{motor_id}' not found")
 
 
-class PoeCamera(BaseModel):
-    url: str
-
-
-class UsbCamera(BaseModel):
-    usb_index: int = Field(..., ge=0)
-    usb_fourcc: str = Field(..., min_length=1)
-    usb_exposure: Union[int, float]
-
-
 class IOBoxSizerCameraConfig(BaseModel):
     device: Union[str, int] = "/dev/video0"
     width: int = Field(1280, gt=0)
@@ -449,14 +439,12 @@ class Gripper(BaseModel):
 class Tool(BaseModel):
     parameters: Parameters
     motors: Motors
-    poe_camera: PoeCamera
     gripper: Gripper = Field(default_factory=Gripper)
     laser: LaserConfig = Field(default_factory=LaserConfig)  # type: ignore[arg-type]
 
 
 class IOBlock(BaseModel):
     motors: Motors
-    usb_camera: Optional[UsbCamera] = None
     curtain: CurtainConfig = Field(default_factory=CurtainConfig)  # type: ignore[arg-type]
     scale: ScaleConfig = Field(default_factory=ScaleConfig)  # type: ignore[arg-type]
     sizer: IOBoxSizerConfig = Field(default_factory=IOBoxSizerConfig)

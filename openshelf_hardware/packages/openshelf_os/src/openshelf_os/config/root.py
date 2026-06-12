@@ -8,14 +8,12 @@ from openshelf_os.config.models import Robot
 from openshelf_os.config.settings import (
     AuthSettings,
     DemoSettings,
-    OverheadCameraSettings,
     PrinterSettings,
     RobotAppSettings,
     ScaleAppSettings,
     ScannerSettings,
     SizesSettings,
     StorageSettings,
-    ToolCameraSettings,
 )
 
 
@@ -30,8 +28,6 @@ class RootConfig(BaseModel):
     sizes: SizesSettings = Field(default_factory=SizesSettings)
     printer: PrinterSettings = Field(default_factory=PrinterSettings)
     scanner: ScannerSettings = Field(default_factory=ScannerSettings)
-    tool_camera: ToolCameraSettings = Field(default_factory=ToolCameraSettings)
-    overhead_camera: OverheadCameraSettings = Field(default_factory=OverheadCameraSettings)
     scale: ScaleAppSettings = Field(default_factory=ScaleAppSettings)
     auth: AuthSettings = Field(default_factory=AuthSettings)  # type: ignore[arg-type]
     robot_app: RobotAppSettings = Field(default_factory=RobotAppSettings)

@@ -1,7 +1,6 @@
 from types import SimpleNamespace
 from typing import Any
 
-import cv2
 import numpy as np
 import pytest
 from unittest.mock import AsyncMock, Mock
@@ -45,13 +44,6 @@ class _FakeVideoCapture:
 
     def release(self) -> None:
         self._opened = False
-
-
-@pytest.fixture(autouse=True)
-def patch_toolcam_time(monkeypatch: pytest.MonkeyPatch) -> None:
-    fake_time = _FakeTime()
-    monkeypatch.setattr("hardware.toolcam.time.time", fake_time.time)
-    monkeypatch.setattr("hardware.toolcam.time.sleep", fake_time.sleep)
 
 
 @pytest.fixture
