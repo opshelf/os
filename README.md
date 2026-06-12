@@ -71,13 +71,7 @@ the default modbus bus config prefers stable symlinks for the waveshare ch344l h
 /dev/openshelf-rs485-ch4  spare rs485 channel
 ```
 
-install the required device naming rule on hardware machines:
-
-```bash
-sudo cp scripts/udev/99-openshelf-waveshare-rs485.rules /etc/udev/rules.d/
-sudo udevadm control --reload-rules
-sudo udevadm trigger
-```
+the required device naming rule is installed by the provisioning toolkit from `../provision/init/assets/etc/udev/rules.d/99-openshelf-waveshare-rs485.rules`.
 
 without the rule, waveshare devices are not selected by generic `/dev/ttyACM*` names because those can belong to scanners or other cdc-acm devices; the app only falls back to the legacy usb adapter paths.
 
