@@ -72,9 +72,12 @@ class SnapshotRunnerMixin:
         if self._should_abort_work() is True:
             raise asyncio.CancelledError()
 
+    def _should_ignore_status_update(self) -> bool:
+        return self._snapshot.state not in ACTIVE_SESSION_STATES
+
     def _build_scan_status_callback(self, side_name: StorageModuleSideName, recorder: Any, bounds: ScanBounds):
         async def did_receive_status(message: str) -> None:
-            if self._should_preserve_cancelling_snapshot() is True:
+            if self._should_preserve_cancelling_snapshot() is True or self._should_ignore_status_update() is True:
                 return
 
             current_stage = self._snapshot.current_stage
@@ -196,7 +199,7 @@ class SnapshotRunnerMixin:
 
     def _build_angle_status_callback(self, side_name: str):
         async def did_receive_status(message: str) -> None:
-            if self._should_preserve_cancelling_snapshot() is True:
+            if self._should_preserve_cancelling_snapshot() is True or self._should_ignore_status_update() is True:
                 return
 
             stage_detail = dict(self._snapshot.stage_detail)
