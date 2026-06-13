@@ -42,6 +42,7 @@ class LaserAutoCalibrationManager(
     ) -> LaserAutoCalibrationSnapshot:
         if requested_scope is None:
             requested_scope = LaserAutoCalibrationScope()
+        self._validate_requested_scope_config(requested_scope)
 
         async with self._lock:
             if self._task is not None and self._task.done() is False:

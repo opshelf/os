@@ -768,6 +768,11 @@ async def stream_laser_auto_calibration(
 				status_code=status.HTTP_409_CONFLICT,
 				detail=str(exc),
 			) from exc
+		except ValueError as exc:
+			raise HTTPException(
+				status_code=status.HTTP_400_BAD_REQUEST,
+				detail=str(exc),
+			) from exc
 	else:
 		snapshot = await manager.get_snapshot()
 

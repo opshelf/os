@@ -178,14 +178,66 @@ def _build_single_shelf_scan_config(scan_config: Any) -> Any:
     copied_scan_config.shelf_hole_probe_y_offsets_mm = [opening_center_offset_mm]
     return copied_scan_config
 
+def _validate_laser_auto_calibration_config(
+    *,
+    scan_config: Any,
+    requested_scope: LaserAutoCalibrationScope,
+    left_bounds: ScanBounds | None = None,
+    right_bounds: ScanBounds | None = None,
+) -> None:
+    laser_module.require_laser_offsets(scan_config)
+
+    if requested_scope.mode == "io_box":
+        _resolve_io_box_laser_offset_x_mm(scan_config)
+        return
+
+    if left_bounds is None:
+        left_bounds = _build_bounds_for_side(scan_config, StorageModuleSide.LEFT)
+
+    if right_bounds is None:
+        right_bounds = _build_bounds_for_side(scan_config, StorageModuleSide.RIGHT)
+
+    if requested_scope.mode == "all":
+        laser_module.validate_scan_bounds(left_bounds, "left scan bounds")
+        laser_module.validate_scan_bounds(right_bounds, "right scan bounds")
+        return
+
+    if requested_scope.side == StorageModuleSide.LEFT:
+        laser_module.validate_scan_bounds(left_bounds, "left scan bounds")
+        return
+
+    if requested_scope.side == StorageModuleSide.RIGHT:
+        laser_module.validate_scan_bounds(right_bounds, "right scan bounds")
+
+
 class ScopeRunnerMixin:
+    def _validate_requested_scope_config(self, requested_scope: LaserAutoCalibrationScope) -> None:
+        scan_config = get_root_config().robot.grid.scan
+        left_bounds = _build_bounds_for_side(scan_config, StorageModuleSide.LEFT)
+        right_bounds = _build_bounds_for_side(scan_config, StorageModuleSide.RIGHT)
+        _validate_laser_auto_calibration_config(
+            scan_config=scan_config,
+            requested_scope=requested_scope,
+            left_bounds=left_bounds,
+            right_bounds=right_bounds,
+        )
+
     async def _run_requested_scope(
         self,
         worker: RobotWorker,
         requested_scope: LaserAutoCalibrationScope,
     ) -> None:
+        scan_config = get_root_config().robot.grid.scan
+        left_bounds = _build_bounds_for_side(scan_config, StorageModuleSide.LEFT)
+        right_bounds = _build_bounds_for_side(scan_config, StorageModuleSide.RIGHT)
+
         if requested_scope.mode == "all":
-            await self._run_all_sides(worker, requested_scope.include_angle_calibration)
+            await self._run_all_sides(
+                worker,
+                requested_scope.include_angle_calibration,
+                left_bounds=left_bounds,
+                right_bounds=right_bounds,
+            )
 
             if requested_scope.include_io_box is True:
                 await self._run_io_box_calibration(worker)
@@ -240,11 +292,20 @@ class ScopeRunnerMixin:
 
         raise ValueError(f"Unsupported auto calibration scope: {requested_scope.mode}")
 
-    async def _run_all_sides(self, worker: RobotWorker, include_angle_calibration: bool = True) -> None:
+    async def _run_all_sides(
+        self,
+        worker: RobotWorker,
+        include_angle_calibration: bool = True,
+        *,
+        left_bounds: ScanBounds | None = None,
+        right_bounds: ScanBounds | None = None,
+    ) -> None:
         completed_results: list[_CompletedSideResult] = []
         scan_config = get_root_config().robot.grid.scan
-        left_bounds = _build_bounds_for_side(scan_config, StorageModuleSide.LEFT)
-        right_bounds = _build_bounds_for_side(scan_config, StorageModuleSide.RIGHT)
+        if left_bounds is None:
+            left_bounds = _build_bounds_for_side(scan_config, StorageModuleSide.LEFT)
+        if right_bounds is None:
+            right_bounds = _build_bounds_for_side(scan_config, StorageModuleSide.RIGHT)
         right_angle_result: LaserAutoCalibrationAngleResult | None = None
         left_angle_result: LaserAutoCalibrationAngleResult | None = None
 
