@@ -314,7 +314,7 @@ def get_scan_z_delta(
 		raise ValueError("reference_wall_depth_mm must be greater than zero")
 
 	return {
-		"delta_mm": float(reference[2]) - validated_reference_wall_depth_mm + (float(reference[3]) - validated_current_stage_extension_mm),
+		"delta_mm": float(reference[2]) - validated_reference_wall_depth_mm,
 		"source": "reference",
 		"reference": reference,
 		"reference_wall_depth_mm": validated_reference_wall_depth_mm,
