@@ -1758,6 +1758,30 @@ async def test_stream_laser_auto_calibration_subscribe_only_does_not_start_when_
     assert payload["state"] == "completed"
     assert manager.ensure_calls == 0
 
+
+@pytest.mark.asyncio
+async def test_stream_laser_auto_calibration_closes_after_terminal_initial_snapshot() -> None:
+    snapshot = _build_snapshot(state="completed")
+    manager = FakeLaserManager(snapshot=snapshot, is_active=False)
+
+    with patch(
+        "openshelf_os_server.routers.calibration.get_laser_auto_calibration_manager",
+        return_value=manager,
+    ):
+        request = SimpleNamespace(is_disconnected=AsyncMock(return_value=False))
+        response = await calibration_router.stream_laser_auto_calibration(
+            request,
+            subscribe_only=True,
+        )
+        chunk = await anext(response.body_iterator)
+
+        with pytest.raises(StopAsyncIteration):
+            await anext(response.body_iterator)
+
+    payload = json.loads(chunk["data"])
+    assert payload["state"] == "completed"
+    assert manager.unsubscribe_calls == 1
+
 @pytest.mark.asyncio
 async def test_stream_laser_auto_calibration_starts_single_shelf_scope() -> None:
     snapshot = _build_snapshot()
