@@ -386,7 +386,7 @@
 		isConnecting = false;
 		isStreamOpen = false;
 
-		if (isTerminalSnapshot(snapshot) === true) {
+		if (isTerminalSnapshot(snapshot) === true && isStreamSubscribeOnly === true) {
 			didCloseStream();
 			return;
 		}
