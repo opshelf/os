@@ -359,6 +359,26 @@ async def test_run_session_cancel_marks_needs_home_without_abort_homing() -> Non
 
 
 @pytest.mark.asyncio
+async def test_scan_status_callback_does_not_overwrite_terminal_state(tmp_path: Path) -> None:
+    manager = LaserAutoCalibrationManager()
+    await manager._set_terminal_state("completed", None)
+    callback = manager._build_scan_status_callback(
+        "left_module",
+        SimpleNamespace(
+            run_id="run-id",
+            metadata_path=tmp_path / "metadata.json",
+            progress_path=tmp_path / "progress.json",
+        ),
+        ScanBounds(x_min=0.0, x_max=1.0, y_min=0.0, y_max=1.0),
+    )
+
+    await callback("z_offset_inference=applied")
+
+    snapshot = await manager.get_snapshot()
+    assert snapshot.state == "completed"
+    assert snapshot.current_stage == "completed"
+
+@pytest.mark.asyncio
 async def test_run_angle_calibration_uses_stage_stall_method_when_configured() -> None:
     manager = LaserAutoCalibrationManager()
     manager._update_snapshot = AsyncMock()
