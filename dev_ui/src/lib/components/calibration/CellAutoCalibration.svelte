@@ -137,6 +137,18 @@
 		);
 	}
 
+	function isTerminalSnapshot(currentSnapshot: LaserAutoCalibrationSnapshot | null): boolean {
+		if (currentSnapshot === null) {
+			return false;
+		}
+
+		return (
+			currentSnapshot.state === 'completed' ||
+			currentSnapshot.state === 'cancelled' ||
+			currentSnapshot.state === 'failed'
+		);
+	}
+
 	function getSnapshotRequestedScope(
 		currentSnapshot: LaserAutoCalibrationSnapshot | null
 	): LaserAutoCalibrationRequest {
@@ -326,6 +338,7 @@
 		isStreamOpen = true;
 		error = '';
 		message = 'auto calibration started';
+		isStreamSubscribeOnly = true;
 	}
 
 	function didReceiveSnapshot(event: Event): void {
@@ -345,6 +358,7 @@
 			}
 
 			error = '';
+			isStreamSubscribeOnly = true;
 
 			if (snapshot.state === 'completed') {
 				message = 'laser auto calibration completed';
@@ -371,6 +385,11 @@
 	async function didReceiveStreamError(): Promise<void> {
 		isConnecting = false;
 		isStreamOpen = false;
+
+		if (isTerminalSnapshot(snapshot) === true) {
+			didCloseStream();
+			return;
+		}
 
 		if (snapshot === null || shouldAutoConnect(snapshot) === false) {
 			const request = activeRequestedScope ?? getRequestedScope();
@@ -473,7 +492,7 @@
 		const nextStream = createReconnectingEventSource({
 			path: () =>
 				buildLaserAutoCalibrationStreamUrl(activeRequestedScope ?? getRequestedScope(), {
-					subscribeOnly: shouldSubscribeOnly
+					subscribeOnly: isStreamSubscribeOnly
 				}),
 			onOpen: didOpenStream,
 			onError: didReceiveStreamError,

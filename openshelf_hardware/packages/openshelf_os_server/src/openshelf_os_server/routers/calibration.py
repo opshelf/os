@@ -716,6 +716,9 @@ async def abort_laser_auto_calibration() -> LaserAutoCalibrationSnapshot:
 		) from exc
 
 
+TERMINAL_LASER_AUTO_CALIBRATION_STATES = {"completed", "failed", "cancelled"}
+
+
 @router.get("/laser/stream")
 async def stream_laser_auto_calibration(
 	request: Request,
@@ -790,6 +793,8 @@ async def stream_laser_auto_calibration(
 				"event": "snapshot",
 				"data": initial_snapshot.model_dump_json(),
 			}
+			if initial_snapshot.state in TERMINAL_LASER_AUTO_CALIBRATION_STATES:
+				return
 
 			while True:
 				if await request.is_disconnected() is True:
@@ -804,6 +809,9 @@ async def stream_laser_auto_calibration(
 					"event": "snapshot",
 					"data": snapshot.model_dump_json(),
 				}
+
+				if snapshot.state in TERMINAL_LASER_AUTO_CALIBRATION_STATES:
+					break
 		finally:
 			await manager.unsubscribe(queue)
 
