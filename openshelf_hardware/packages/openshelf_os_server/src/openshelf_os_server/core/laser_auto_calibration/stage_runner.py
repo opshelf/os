@@ -3,9 +3,44 @@
 from __future__ import annotations
 
 import argparse
+import json
 import math
+from pathlib import Path
 
 from .models import *
+
+
+def _write_stage_extension_shelf_scout_debug_document(
+    *,
+    side_name: str,
+    absolute_rotation_deg: float,
+    debug_document: dict[str, Any],
+    error: Exception,
+    bounds: ScanBounds,
+    probe_x_positions: list[float],
+) -> Path:
+    timestamp = _get_timestamp().replace(":", "").replace("+0000", "Z").replace("+00:00", "Z")
+    output_path = Path(_build_default_scans_dir()) / ANGLE_DEBUG_DIR_NAME / f"{side_name}-stage-extension-shelf-scout-{timestamp}.json"
+    document = dict(debug_document)
+    metadata = dict(document.get("metadata", {}))
+    metadata.update(
+        {
+            "side": side_name,
+            "absolute_rotation_deg": float(absolute_rotation_deg),
+            "probe_x_positions": [float(value) for value in probe_x_positions],
+            "bounds": {
+                "x_min": float(bounds.x_min),
+                "x_max": float(bounds.x_max),
+                "y_min": float(bounds.y_min),
+                "y_max": float(bounds.y_max),
+            },
+            "error": str(error),
+        }
+    )
+    document["metadata"] = metadata
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(document, indent="\t"), encoding="utf-8")
+    return output_path
 
 
 class StageRunnerMixin:
@@ -233,22 +268,38 @@ class StageRunnerMixin:
             )
 
             await tool.retract()
-            top_shelf_y_mm = await angle_module.resolve_capture_y_mm(
-                tool,
-                args=angle_args,
-                scan_config=scan_config,
-                side_name=side_name,
-                side_number=side_number,
-                x_positions=x_positions,
-                rotation_center_deg=absolute_rotation_deg,
-                stage_extension_mm=laser_scan_stage_extension_mm,
-                base_z_mm=base_z_mm,
-                z_move_rpm=float(z_move_rpm),
-                z_move_accel=float(z_move_accel),
-                settle_ms=int(laser_module.get_laser_sample_settle_ms(scan_config)),
-                samples_per_point=int(laser_module.get_laser_samples_per_point(scan_config)),
-                should_abort=self._should_abort_work,
-            )
+            try:
+                top_shelf_y_mm = await angle_module.resolve_capture_y_mm(
+                    tool,
+                    args=angle_args,
+                    scan_config=scan_config,
+                    side_name=side_name,
+                    side_number=side_number,
+                    x_positions=x_positions,
+                    rotation_center_deg=absolute_rotation_deg,
+                    stage_extension_mm=laser_scan_stage_extension_mm,
+                    base_z_mm=base_z_mm,
+                    z_move_rpm=float(z_move_rpm),
+                    z_move_accel=float(z_move_accel),
+                    settle_ms=int(laser_module.get_laser_sample_settle_ms(scan_config)),
+                    samples_per_point=int(laser_module.get_laser_samples_per_point(scan_config)),
+                    should_abort=self._should_abort_work,
+                )
+            except angle_module.ShelfScoutError as exc:
+                try:
+                    debug_path = _write_stage_extension_shelf_scout_debug_document(
+                        side_name=side_module_name,
+                        absolute_rotation_deg=absolute_rotation_deg,
+                        debug_document=exc.debug_document,
+                        error=exc,
+                        bounds=bounds,
+                        probe_x_positions=x_positions,
+                    )
+                    angle_module.print_status(f"shelf_scout=debug path={debug_path}")
+                except Exception as debug_exc:
+                    logger.warning("Failed to write stage-extension shelf-scout debug document: %s", debug_exc)
+
+                raise
 
         probe_y_mm = _build_stage_extension_probe_y_mm(float(top_shelf_y_mm), bounds)
         await self._update_snapshot(
