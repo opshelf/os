@@ -15,6 +15,72 @@ from .robot_ops import move_gantry_direct
 from .status import print_status, raise_if_cancelled
 
 
+class ShelfScoutError(ValueError):
+	def __init__(self, message: str, debug_document: dict[str, Any]) -> None:
+		super().__init__(message)
+		self.debug_document = debug_document
+
+
+def build_shelf_scout_debug_samples(
+	*,
+	y_positions: list[float],
+	depth_values: list[float | None],
+) -> list[dict[str, float | None]]:
+	samples: list[dict[str, float | None]] = []
+
+	for position_idx, y_mm in enumerate(y_positions):
+		depth_mm = depth_values[position_idx] if position_idx < len(depth_values) else None
+		samples.append(
+			{
+				'y_mm': float(y_mm),
+				'depth_mm': None if depth_mm is None else float(depth_mm),
+			}
+		)
+
+	return samples
+
+
+def build_shelf_scout_debug_document(
+	*,
+	side_name: str,
+	y_min_mm: float,
+	y_max_mm: float,
+	scout_x_positions: list[float],
+	scout_y_positions: list[float],
+	rotation_center_deg: float,
+	stage_extension_mm: float,
+	base_z_mm: float,
+	settle_ms: int,
+	samples_per_point: int,
+	lines: list[dict[str, Any]],
+	edges: list[ShelfSurfaceEdge],
+	filtered_edges: list[ShelfSurfaceEdge],
+) -> dict[str, Any]:
+	return {
+		'phase': 'shelf-scout',
+		'side': side_name,
+		'y_range': [float(y_min_mm), float(y_max_mm)],
+		'scout_x_positions': [float(value) for value in scout_x_positions],
+		'scout_y_count': len(scout_y_positions),
+		'scout_y_first_mm': float(scout_y_positions[0]) if len(scout_y_positions) > 0 else None,
+		'scout_y_last_mm': float(scout_y_positions[-1]) if len(scout_y_positions) > 0 else None,
+		'rotation_center_deg': float(rotation_center_deg),
+		'stage_extension_mm': float(stage_extension_mm),
+		'base_z_mm': float(base_z_mm),
+		'settle_ms': int(settle_ms),
+		'samples_per_point': int(samples_per_point),
+		'detected_edges': [
+			{'x_mm': float(edge.x_mm), 'y_mm': float(edge.y_mm)}
+			for edge in edges
+		],
+		'filtered_edges': [
+			{'x_mm': float(edge.x_mm), 'y_mm': float(edge.y_mm)}
+			for edge in filtered_edges
+		],
+		'lines': lines,
+	}
+
+
 def get_default_rotation_center_deg(side_name: str) -> float:
 	if side_name == 'right':
 		return RIGHT_MODULE_ROTATION_CENTER_DEG
@@ -175,6 +241,7 @@ async def resolve_capture_y_mm(
 	)
 	scout_y_positions = list(reversed(angle_module.build_axis_positions(y_min_mm, y_max_mm, SHELF_SCOUT_STEP_MM)))
 	edges: list[ShelfSurfaceEdge] = []
+	scout_lines: list[dict[str, Any]] = []
 	is_y_brake_disabled = False
 
 	if len(scout_y_positions) == 0:
@@ -222,7 +289,7 @@ async def resolve_capture_y_mm(
 			print_status(
 				f'phase=shelf-scout scout={scout_idx}/{len(scout_x_positions)} x={float(scout_x_mm):.2f}'
 			)
-			_, scout_edges = await angle_module.scan_shelf_scout_line(
+			depth_values, scout_edges = await angle_module.scan_shelf_scout_line(
 				tool,
 				x_mm=float(scout_x_mm),
 				y_positions=scout_y_positions,
@@ -231,6 +298,20 @@ async def resolve_capture_y_mm(
 				progress_label=f'shelf_scout_{scout_idx}',
 				stop_after_first_edge=True,
 				should_abort=should_abort,
+			)
+			scout_lines.append(
+				{
+					'scout_idx': scout_idx,
+					'x_mm': float(scout_x_mm),
+					'detected_edges': [
+						{'x_mm': float(edge.x_mm), 'y_mm': float(edge.y_mm)}
+						for edge in scout_edges
+					],
+					'samples': build_shelf_scout_debug_samples(
+						y_positions=scout_y_positions,
+						depth_values=depth_values,
+					),
+				}
 			)
 			edges.extend(scout_edges)
 			raise_if_cancelled(should_abort)
@@ -255,7 +336,22 @@ async def resolve_capture_y_mm(
 	)
 
 	if len(filtered_edges) == 0:
-		raise ValueError('no shelf surface detected during scout')
+		debug_document = build_shelf_scout_debug_document(
+			side_name=side_name,
+			y_min_mm=y_min_mm,
+			y_max_mm=y_max_mm,
+			scout_x_positions=scout_x_positions,
+			scout_y_positions=scout_y_positions,
+			rotation_center_deg=rotation_center_deg,
+			stage_extension_mm=stage_extension_mm,
+			base_z_mm=base_z_mm,
+			settle_ms=settle_ms,
+			samples_per_point=samples_per_point,
+			lines=scout_lines,
+			edges=edges,
+			filtered_edges=filtered_edges,
+		)
+		raise ShelfScoutError('no shelf surface detected during scout', debug_document)
 
 	target_y_mm = float(filtered_edges[0].y_mm)
 	print_status(f'angle_capture_y_mm={target_y_mm:.2f}')
