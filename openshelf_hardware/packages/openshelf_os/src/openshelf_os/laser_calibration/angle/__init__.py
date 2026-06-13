@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 from .capture import (
+	ShelfScoutError,
+	build_shelf_scout_debug_document,
+	build_shelf_scout_debug_samples,
 	enter_capture_mode,
 	get_default_rotation_center_deg,
 	prepare_capture_pose,

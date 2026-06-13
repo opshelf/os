@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 from .models import *
@@ -49,6 +50,33 @@ def _write_stage_stall_angle_debug_document(
         angle_summaries=selected_summaries,
         best_summary=best_summary,
     )
+    return output_path
+
+
+def _write_shelf_scout_angle_debug_document(
+    *,
+    side_name: str,
+    previous_rotation_deg: float,
+    rotation_center_deg: float,
+    probe_x_mm: float,
+    error: Any,
+) -> Path:
+    timestamp = _get_timestamp().replace(":", "").replace("+0000", "Z").replace("+00:00", "Z")
+    output_path = Path(_build_default_scans_dir()) / ANGLE_DEBUG_DIR_NAME / f"{side_name}-shelf-scout-{timestamp}.json"
+    debug_document = dict(error.debug_document)
+    metadata = dict(debug_document.get("metadata", {}))
+    metadata.update(
+        {
+            "side": side_name,
+            "previous_rotation_deg": float(previous_rotation_deg),
+            "rotation_center_deg": float(rotation_center_deg),
+            "probe_x_mm": float(probe_x_mm),
+            "error": str(error),
+        }
+    )
+    debug_document["metadata"] = metadata
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(debug_document, indent="\t"), encoding="utf-8")
     return output_path
 
 
@@ -314,22 +342,37 @@ class AngleRunnerMixin:
             try:
                 self._raise_if_abort_requested()
                 await tool.retract()
-                capture_y_mm = await angle_module.resolve_capture_y_mm(
-                    tool,
-                    args=angle_args,
-                    scan_config=scan_config,
-                    side_name=side_name,
-                    side_number=side_number,
-                    x_positions=[probe_x_mm],
-                    rotation_center_deg=rotation_center_deg,
-                    stage_extension_mm=stage_extension_mm,
-                    base_z_mm=base_z_mm,
-                    z_move_rpm=float(z_move_rpm),
-                    z_move_accel=float(z_move_accel),
-                    settle_ms=settle_ms,
-                    samples_per_point=samples_per_point,
-                    should_abort=self._should_abort_work,
-                )
+                try:
+                    capture_y_mm = await angle_module.resolve_capture_y_mm(
+                        tool,
+                        args=angle_args,
+                        scan_config=scan_config,
+                        side_name=side_name,
+                        side_number=side_number,
+                        x_positions=[probe_x_mm],
+                        rotation_center_deg=rotation_center_deg,
+                        stage_extension_mm=stage_extension_mm,
+                        base_z_mm=base_z_mm,
+                        z_move_rpm=float(z_move_rpm),
+                        z_move_accel=float(z_move_accel),
+                        settle_ms=settle_ms,
+                        samples_per_point=samples_per_point,
+                        should_abort=self._should_abort_work,
+                    )
+                except angle_module.ShelfScoutError as exc:
+                    try:
+                        debug_path = _write_shelf_scout_angle_debug_document(
+                            side_name=side_module_name,
+                            previous_rotation_deg=previous_rotation_deg,
+                            rotation_center_deg=rotation_center_deg,
+                            probe_x_mm=probe_x_mm,
+                            error=exc,
+                        )
+                        angle_module.print_status(f"shelf_scout=debug path={debug_path}")
+                    except Exception as debug_exc:
+                        logger.warning("Failed to write shelf-scout angle debug document: %s", debug_exc)
+
+                    raise
                 current_probe_start_mm = probe_start_mm
 
                 async def did_run_stage_stall_pass(
