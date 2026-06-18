@@ -113,13 +113,13 @@
 <table class="connect-table">
 	<thead>
 		<tr>
-			<th>connect</th>
+			<th colspan="2">connect</th>
 		</tr>
 	</thead>
 	<tbody>
 		<tr>
+			<td>network</td>
 			<td>
-				<span class="field-label">network</span>
 				<input
 					type="text"
 					placeholder="ssid"
@@ -130,8 +130,8 @@
 			</td>
 		</tr>
 		<tr>
+			<td>password</td>
 			<td>
-				<span class="field-label">password</span>
 				<input
 					type="password"
 					placeholder="password"
@@ -141,20 +141,17 @@
 				/>
 			</td>
 		</tr>
-		<tr>
-			<td>
-				<div class="action-buttons">
-					<button type="button" on:click={didClickSave} disabled={isConnecting === true}>
-						{isConnecting === true ? 'connecting...' : 'save'}
-					</button>
-					<button type="button" on:click={didClickRefresh} disabled={isScanning === true}>
-						{isScanning === true ? 'scanning...' : 'refresh'}
-					</button>
-				</div>
-			</td>
-		</tr>
 	</tbody>
 </table>
+
+<div class="action-buttons">
+	<button type="button" on:click={didClickSave} disabled={isConnecting === true}>
+		{isConnecting === true ? 'connecting...' : 'save'}
+	</button>
+	<button type="button" on:click={didClickRefresh} disabled={isScanning === true}>
+		{isScanning === true ? 'scanning...' : 'refresh'}
+	</button>
+</div>
 
 {#if isConnecting === true}
 	<p class="hint">switching networks may briefly drop this connection; networks will refresh shortly.</p>
@@ -184,7 +181,7 @@
 							on:click={() => didClickUse(network)}
 							disabled={network.in_use === true}
 						>
-							use
+							connect
 						</button>
 					</td>
 				</tr>
@@ -203,19 +200,18 @@
 
 <style>
 	.connect-table {
-		margin-bottom: 1.5em;
+		margin-bottom: 1em;
 	}
 
-	.field-label {
-		display: inline-block;
-		min-width: 6em;
-		margin-right: 0.5em;
+	.connect-table input {
+		width: 16em;
 	}
 
 	.action-buttons {
 		display: flex;
 		gap: 1em;
 		align-items: center;
+		margin-bottom: 1.5em;
 	}
 
 	.action-buttons button {
