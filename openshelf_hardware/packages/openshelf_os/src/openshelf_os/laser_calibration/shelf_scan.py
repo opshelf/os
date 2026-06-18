@@ -47,6 +47,7 @@ async def capture_shelf_candidates(
 	scout_y_positions = list(reversed(build_axis_positions(bounds.y_min, bounds.y_max, SHELF_SCOUT_STEP_MM)))
 	hole_sweep_x_positions = build_axis_positions(bounds.x_min, bounds.x_max, SHELF_SWEEP_X_STEP_MM)
 	hole_probe_y_offsets_mm = get_shelf_hole_probe_y_offsets_mm(scan_config)
+	post_edge_skip_mm = get_shelf_scout_post_edge_skip_mm(scan_config)
 	shelf_edges: list[ShelfSurfaceEdge] = []
 	horizontal_wall_depth_values: list[list[float | None]] = []
 	candidates: list[GapCandidateRegion] = []
@@ -94,6 +95,7 @@ async def capture_shelf_candidates(
 					settle_ms=settle_ms,
 					samples_per_point=samples_per_point,
 					progress_label=f"shelf_scout_{scout_idx}",
+					post_edge_skip_mm=post_edge_skip_mm,
 					should_abort=should_abort,
 				)
 				raise_if_cancelled(should_abort)
@@ -1010,6 +1012,7 @@ async def scan_shelf_scout_line(
 	samples_per_point: int,
 	progress_label: str,
 	progress_every: int = 25,
+	post_edge_skip_mm: float = SHELF_SCOUT_POST_EDGE_SKIP_MM,
 	should_abort: Callable[[], bool] | None = None,
 ) -> tuple[list[float | None], list[ShelfSurfaceEdge]]:
 	return await scan_shared_shelf_scout_line(
@@ -1022,6 +1025,7 @@ async def scan_shelf_scout_line(
 		sample_depth=sample_laser_depth,
 		print_status=print_status,
 		progress_every=progress_every,
+		post_edge_skip_mm=post_edge_skip_mm,
 		should_abort=should_abort,
 	)
 

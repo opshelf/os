@@ -142,6 +142,7 @@ async def scan_shelf_scout_line(
 	print_status: StatusPrinter | None = None,
 	stop_after_first_edge: bool = False,
 	progress_every: int = 25,
+	post_edge_skip_mm: float = SHELF_SCOUT_POST_EDGE_SKIP_MM,
 	should_abort: Callable[[], bool] | None = None,
 ) -> tuple[list[float | None], list[ShelfSurfaceEdge]]:
 	if len(y_positions) == 0:
@@ -211,7 +212,7 @@ async def scan_shelf_scout_line(
 			if stop_after_first_edge is True:
 				return depth_values, detected_edges
 
-			skip_target_y_mm = y_positions[run_end_idx] - SHELF_SCOUT_POST_EDGE_SKIP_MM
+			skip_target_y_mm = y_positions[run_end_idx] - post_edge_skip_mm
 
 			while position_idx < len(y_positions) and y_positions[position_idx] > skip_target_y_mm:
 				position_idx += 1

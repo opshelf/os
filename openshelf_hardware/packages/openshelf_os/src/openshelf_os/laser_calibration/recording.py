@@ -45,6 +45,7 @@ def build_run_parameters(
 	laser_scan_stage_extension_mm = get_laser_scan_stage_extension_mm(scan_config)
 	laser_scan_z_offset_from_place_mm = get_laser_scan_z_offset_from_place_mm(scan_config)
 	laser_offset_x_mm, laser_offset_y_mm = require_laser_offsets(scan_config)
+	post_edge_skip_mm = get_shelf_scout_post_edge_skip_mm(scan_config)
 
 	return {
 		"module": side.value,
@@ -81,6 +82,7 @@ def build_run_parameters(
 			"fine_step_mm": step_mm,
 			"coarse_step_mm": COARSE_SCAN_STEP_MM,
 			"shelf_scout_step_mm": SHELF_SCOUT_STEP_MM,
+			"shelf_scout_post_edge_skip_mm": post_edge_skip_mm,
 			"shelf_sweep_x_step_mm": SHELF_SWEEP_X_STEP_MM,
 			"shelf_hole_probe_y_offsets_mm": list(hole_probe_y_offsets_mm),
 			"settle_ms": settle_ms,

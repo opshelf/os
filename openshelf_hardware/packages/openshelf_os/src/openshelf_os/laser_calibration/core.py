@@ -396,6 +396,23 @@ def get_shelf_hole_probe_y_offsets_mm(scan_config: Any) -> list[float]:
 	]
 
 
+def get_shelf_scout_post_edge_skip_mm(scan_config: Any) -> float:
+	configured_skip_mm = getattr(scan_config, "shelf_scout_post_edge_skip_mm", None)
+
+	if configured_skip_mm is None:
+		return SHELF_SCOUT_POST_EDGE_SKIP_MM
+
+	validated_skip_mm = validate_finite_value(
+		configured_skip_mm,
+		"robot.grid.scan.shelf_scout_post_edge_skip_mm",
+	)
+
+	if validated_skip_mm < 0.0:
+		raise ValueError("robot.grid.scan.shelf_scout_post_edge_skip_mm must be zero or greater")
+
+	return validated_skip_mm
+
+
 def get_fine_cell_scan_y_margin_mm(scan_config: Any) -> float:
 	configured_margin_mm = getattr(scan_config, "fine_cell_scan_y_margin_mm", None)
 

@@ -6,6 +6,7 @@ from openshelf_os.laser_calibration.shelf_scout import (
 	build_shelf_scout_x_positions as build_shared_shelf_scout_x_positions,
 	filter_shelf_edges as filter_shared_shelf_edges,
 	scan_shelf_scout_line as scan_shared_shelf_scout_line,
+	SHELF_SCOUT_POST_EDGE_SKIP_MM,
 )
 
 from .models import ShelfSurfaceEdge
@@ -84,6 +85,7 @@ async def scan_shelf_scout_line(
 	progress_label: str,
 	stop_after_first_edge: bool = False,
 	progress_every: int = 25,
+	post_edge_skip_mm: float = SHELF_SCOUT_POST_EDGE_SKIP_MM,
 	should_abort: Callable[[], bool] | None = None,
 ) -> tuple[list[float | None], list[ShelfSurfaceEdge]]:
 	return await scan_shared_shelf_scout_line(
@@ -97,6 +99,7 @@ async def scan_shelf_scout_line(
 		print_status=print_status,
 		stop_after_first_edge=stop_after_first_edge,
 		progress_every=progress_every,
+		post_edge_skip_mm=post_edge_skip_mm,
 		should_abort=should_abort,
 	)
 
