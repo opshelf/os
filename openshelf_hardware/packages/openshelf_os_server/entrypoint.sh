@@ -45,12 +45,11 @@ PY
 fi
 
 QUEUE="${PRINTER_QUEUE:-${PRINTER:-${QUEUE_FROM_CONFIG}}}"
-if [ -z "$QUEUE" ]; then
-	QUEUE="Caysn_T9E-US"
-fi
 URI="${PRINTER_URI:-usb://Caysn/T9E-US?serial=000015753145}"
 
-if [ -n "$QUEUE" ] && command -v lpadmin >/dev/null 2>&1; then
+if [ -z "$QUEUE" ]; then
+	echo "Printer queue not configured; skipping CUPS setup"
+elif command -v lpadmin >/dev/null 2>&1; then
 	# Create queue if missing
 	if ! lpstat -p "$QUEUE" >/dev/null 2>&1; then
 		lpadmin -p "$QUEUE" -E -v "$URI" -m raw || true
@@ -61,7 +60,7 @@ if [ -n "$QUEUE" ] && command -v lpadmin >/dev/null 2>&1; then
 	cupsaccept "$QUEUE" || true
 	lpoptions -d "$QUEUE" || true
 else
-	echo "Printer queue not configured or lpadmin missing; printing may fail"
+	echo "lpadmin missing; printing may fail"
 fi
 
 start_api() {
