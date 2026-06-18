@@ -120,9 +120,11 @@ def test_build_stage_stall_rotation_positions_uses_wide_coarse_defaults() -> Non
     assert rotation_positions[1] == pytest.approx(4.0)
 
 
-def test_build_stage_stall_rotation_center_uses_nominal_side_angles() -> None:
-    assert _build_stage_stall_rotation_center_deg(StorageModuleSide.RIGHT) == pytest.approx(0.0)
-    assert _build_stage_stall_rotation_center_deg(StorageModuleSide.LEFT) == pytest.approx(180.0)
+def test_build_stage_stall_rotation_center_uses_configured_side_angles() -> None:
+    parameters = SimpleNamespace(ROTATION_FRONT=2.7, ROTATION_BACK=183.0)
+
+    assert _build_stage_stall_rotation_center_deg(parameters, StorageModuleSide.RIGHT) == pytest.approx(183.0)
+    assert _build_stage_stall_rotation_center_deg(parameters, StorageModuleSide.LEFT) == pytest.approx(2.7)
 
 
 def test_build_stage_stall_fine_rotation_positions_centers_on_coarse_best() -> None:
@@ -454,7 +456,7 @@ async def test_run_angle_calibration_uses_stage_stall_method_when_configured() -
 
     assert result.method == 'stage_stall'
     assert result.previous_rotation_deg == pytest.approx(184.5)
-    assert result.updated_rotation_deg == pytest.approx(180.0)
+    assert result.updated_rotation_deg == pytest.approx(184.5)
     assert result.alpha_deg == pytest.approx(0.0)
     assert result.stage_position_mm == pytest.approx(61.655)
     assert result.sample_count == 3
@@ -549,7 +551,7 @@ async def test_run_angle_calibration_validates_top_fine_angles_by_median() -> No
                                     ScanBounds(x_min=5.0, x_max=950.0, y_min=1000.0, y_max=1210.0),
                                 )
 
-    assert result.updated_rotation_deg == pytest.approx(0.75)
+    assert result.updated_rotation_deg == pytest.approx(5.25)
     assert result.alpha_deg == pytest.approx(0.75)
     assert result.stage_position_mm == pytest.approx(32.5)
     assert result.sample_count == 9
@@ -645,7 +647,7 @@ async def test_run_angle_calibration_retries_low_validation_contacts() -> None:
                                     ScanBounds(x_min=5.0, x_max=950.0, y_min=1000.0, y_max=1210.0),
                                 )
 
-    assert result.updated_rotation_deg == pytest.approx(1.0)
+    assert result.updated_rotation_deg == pytest.approx(5.5)
     assert result.stage_position_mm == pytest.approx(42.15)
     assert result.sample_count == 13
     assert write_mock.call_args.kwargs['metadata']['selected_pass'] == 'validation'

@@ -257,7 +257,7 @@ class AngleRunnerMixin:
             raise ValueError(f"{rotation_param} is required")
 
         previous_rotation_deg = float(previous_rotation_value)
-        rotation_center_deg = _build_stage_stall_rotation_center_deg(side)
+        rotation_center_deg = previous_rotation_deg
         rotation_limit_deg = float(rotation_motor._params.lim)
         rotation_positions = _build_stage_stall_rotation_positions(
             scan_config,
