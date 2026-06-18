@@ -65,6 +65,16 @@
 		}
 	}
 
+	function didClickReset(): void {
+		const active = networks.find((network) => network.in_use === true);
+		ssid = active?.ssid ?? '';
+		selectedSsid = active?.ssid ?? '';
+		selectedSecurity = active?.security ?? '';
+		password = '';
+		error = '';
+		message = '';
+	}
+
 	function didInputSsid(): void {
 		if (ssid !== selectedSsid) {
 			selectedSsid = '';
@@ -148,6 +158,7 @@
 	<button type="button" on:click={didClickSave} disabled={isConnecting === true}>
 		{isConnecting === true ? 'connecting...' : 'save'}
 	</button>
+	<button type="button" on:click={didClickReset} disabled={isConnecting === true}>reset</button>
 	<button type="button" on:click={didClickRefresh} disabled={isScanning === true}>
 		{isScanning === true ? 'scanning...' : 'refresh'}
 	</button>
