@@ -202,7 +202,7 @@
 					<div class="status-action-cell">
 						<span>{getCabinetStatus()}</span>
 						<button
-							disabled={isUnlockingCabinet === true || getCabinetStatus() === 'opened'}
+							disabled={isUnlockingCabinet === true || getCabinetStatus() !== 'closed'}
 							onclick={didClickCabinetUnlock}>UNLOCK</button
 						>
 					</div>
