@@ -26,11 +26,27 @@
 		try {
 			const result = await scanWifiNetworks();
 			networks = result.networks;
+			prefillFromActiveNetwork();
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'failed to scan networks';
 		} finally {
 			isScanning = false;
 		}
+	}
+
+	function prefillFromActiveNetwork(): void {
+		if (ssid !== '') {
+			return;
+		}
+
+		const active = networks.find((network) => network.in_use === true);
+		if (active === undefined) {
+			return;
+		}
+
+		ssid = active.ssid;
+		selectedSsid = active.ssid;
+		selectedSecurity = active.security;
 	}
 
 	function isSelectedOpenNetwork(): boolean {
@@ -97,7 +113,7 @@
 <table class="connect-table">
 	<thead>
 		<tr>
-			<th colspan="2">connect</th>
+			<th>connect</th>
 		</tr>
 	</thead>
 	<tbody>
@@ -112,6 +128,8 @@
 					on:input={didInputSsid}
 				/>
 			</td>
+		</tr>
+		<tr>
 			<td>
 				<span class="field-label">password</span>
 				<input
@@ -124,7 +142,7 @@
 			</td>
 		</tr>
 		<tr>
-			<td colspan="2">
+			<td>
 				<div class="action-buttons">
 					<button type="button" on:click={didClickSave} disabled={isConnecting === true}>
 						{isConnecting === true ? 'connecting...' : 'save'}
@@ -161,11 +179,13 @@
 					<td class="network-name">{network.ssid}</td>
 					<td>{network.signal}%</td>
 					<td>
-						{#if network.in_use === true}
-							<span class="in-use">in use</span>
-						{:else}
-							<button type="button" on:click={() => didClickUse(network)}>use</button>
-						{/if}
+						<button
+							type="button"
+							on:click={() => didClickUse(network)}
+							disabled={network.in_use === true}
+						>
+							use
+						</button>
 					</td>
 				</tr>
 			{/each}
@@ -187,6 +207,8 @@
 	}
 
 	.field-label {
+		display: inline-block;
+		min-width: 6em;
 		margin-right: 0.5em;
 	}
 
@@ -216,10 +238,5 @@
 
 	.networks-table button {
 		margin-top: 0;
-	}
-
-	.in-use {
-		text-transform: uppercase;
-		color: oklch(0.5318 0.2399 256.98999);
 	}
 </style>
