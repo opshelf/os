@@ -44,6 +44,8 @@ class LaserScanConfig(BaseModel):
     fine_scan_step_mm: float = Field(2.0, gt=0)
     laser_sample_settle_ms: int = Field(50, ge=0)
     laser_samples_per_point: int = Field(3, ge=1)
+    left_shelf_scout_x_mm: Optional[float] = Field(default=None, ge=0)
+    right_shelf_scout_x_mm: Optional[float] = Field(default=None, ge=0)
 
     left_xy_reference: Optional[LaserScanXYReferenceConfig] = None
     right_xy_reference: Optional[LaserScanXYReferenceConfig] = None

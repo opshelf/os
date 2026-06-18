@@ -89,6 +89,21 @@ def test_angle_shelf_scout_uses_configured_scan_bounds_instead_of_probe_x() -> N
 	) == [950.0]
 
 
+def test_angle_shelf_scout_uses_configured_side_override() -> None:
+	scan_config = SimpleNamespace(
+		right_bounds_x_min_mm=0.0,
+		right_bounds_x_max_mm=950.0,
+		right_shelf_scout_x_mm=950.0,
+	)
+
+	assert build_shelf_scout_x_positions(
+		scan_config=scan_config,
+		x_min_mm=475.0,
+		x_max_mm=475.0,
+		side_name='right',
+		scout_x_mm=None,
+	) == [950.0]
+
 def test_angle_shelf_scout_explicit_x_overrides_configured_scan_bounds() -> None:
 	scan_config = SimpleNamespace(
 		left_bounds_x_min_mm=0.0,

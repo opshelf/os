@@ -14,11 +14,19 @@ def build_shelf_scout_x_positions(
 	*,
 	bounds: ScanBounds,
 	side: StorageModuleSide,
+	scan_config: Any | None = None,
 ) -> list[float]:
+	side_name = 'right' if side == StorageModuleSide.RIGHT else 'left'
+	scout_x_mm = None
+
+	if scan_config is not None:
+		scout_x_mm = getattr(scan_config, f'{side_name}_shelf_scout_x_mm', None)
+
 	return build_shared_shelf_scout_x_positions(
 		x_min_mm=bounds.x_min,
 		x_max_mm=bounds.x_max,
 		is_right_side=side == StorageModuleSide.RIGHT,
+		scout_x_mm=scout_x_mm,
 	)
 
 async def capture_shelf_candidates(
@@ -35,7 +43,7 @@ async def capture_shelf_candidates(
 	should_abort: Callable[[], bool] | None = None,
 ) -> tuple[GridScanResult, float, list[GapCandidateRegion], list[ShelfSurfaceEdge]]:
 	coarse_scan = create_sparse_shelf_scan(bounds=bounds)
-	scout_x_positions = build_shelf_scout_x_positions(bounds=bounds, side=side)
+	scout_x_positions = build_shelf_scout_x_positions(bounds=bounds, side=side, scan_config=scan_config)
 	scout_y_positions = list(reversed(build_axis_positions(bounds.y_min, bounds.y_max, SHELF_SCOUT_STEP_MM)))
 	hole_sweep_x_positions = build_axis_positions(bounds.x_min, bounds.x_max, SHELF_SWEEP_X_STEP_MM)
 	hole_probe_y_offsets_mm = get_shelf_hole_probe_y_offsets_mm(scan_config)
