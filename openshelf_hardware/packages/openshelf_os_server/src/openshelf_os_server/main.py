@@ -42,7 +42,7 @@ from openshelf_os_server.database.session import AsyncSessionLocal
 from openshelf_os_server.database.models import Item, ItemLocation, Role, User
 from openshelf_os_server.middleware.audit import AuditMiddleware
 from openshelf_os_server.middleware.correlation import CorrelationIdMiddleware
-from openshelf_os_server.routers import access_levels, audit, auth, cabinet, calibration, camera, demo, iobox_sizer, printer, report, robot, roles, storage, system, telemetry, users
+from openshelf_os_server.routers import access_levels, audit, auth, cabinet, calibration, camera, demo, iobox_sizer, printer, report, robot, roles, storage, system, telemetry, users, wifi
 from openshelf_os_server.settings import get_settings, get_operating_mode
 
 configure_logging()
@@ -574,6 +574,7 @@ app.include_router(printer.router, prefix="/api/print")
 app.include_router(calibration.router)
 app.include_router(demo.router)
 app.include_router(system.router, prefix="/api/system")
+app.include_router(wifi.router, prefix="/api/wifi")
 app.include_router(report.router, prefix="/api")
 app.include_router(telemetry.router, prefix="/api")
 

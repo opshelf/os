@@ -23,7 +23,8 @@
 		{ href: '/scale', label: 'scale' },
 		{ href: '/sizer', label: 'sizer' },
 		{ href: '/scanner', label: 'scanner' },
-		{ href: '/motors', label: 'motors' }
+		{ href: '/motors', label: 'motors' },
+		{ href: '/wifi', label: 'wifi' }
 	];
 
 	let { children } = $props();
