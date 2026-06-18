@@ -32,6 +32,8 @@ HOME_APPROACH_TOLERANCE_MM = 1.0
 DEFAULT_HOME_APPROACH_BACKOFF_MM = 5.0
 DEFAULT_BRAKE_OUTPUT_FUNCTION = 0xA1
 RELEASED_BRAKE_OUTPUT_FUNCTION = 0x24
+DEFAULT_STALL_TIMEOUT_S = 5.0
+SOFTWARE_STALL_CONFIRM_DELAY_S = 0.05
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +123,7 @@ class Motor():
         self._controller = controller
         self._params = params
         self._cur_pos = None
-        self._stall_timeout = 2.0
+        self._stall_timeout = float(getattr(params, "stall_timeout_s", DEFAULT_STALL_TIMEOUT_S))
         self._status = MotorStatus.IDLE
         self._pending_motion: Optional[Callable[[], Awaitable[None]]] = None
         self._target_pos: Optional[float] = None
@@ -814,7 +816,11 @@ class Motor():
                 if self._is_homing_limit_stop(homing, alarm_state, state):
                     return await self._finish_homing_limit_stop(snapshot, alarm_state, state)
 
-                fault_state = self._detect_motion_fault(snapshot, alarm_state, state)
+                fault_state = self._detect_motion_fault(snapshot, alarm_state, state, position_delta)
+
+                if self._is_software_motion_fault_only(snapshot, alarm_state, fault_state) is True:
+                    if await self._did_observe_progress_on_fresh_read(state) is True:
+                        continue
 
                 if fault_state.is_fault:
                     return await self._finish_fault(homing, snapshot, alarm_state, fault_state, state)
@@ -896,7 +902,7 @@ class Motor():
         if state.last_pos is not None and self._cur_pos is not None:
             position_delta = self._cur_pos - state.last_pos
 
-            if position_delta != 0:
+            if self._is_position_progress(position_delta) is True:
                 state.last_movement_time = now
                 state.has_moved = True
 
@@ -1049,18 +1055,27 @@ class Motor():
 
         return MotorStatus.STOPPED
 
+    def _is_position_progress(self, position_delta: float | None) -> bool:
+        return position_delta is not None and position_delta != 0
+
     def _detect_motion_fault(
         self,
         snapshot: MotionSnapshot,
         alarm_state: MotionAlarmState,
         state: MotionWaitState,
+        position_delta: float | None,
     ) -> MotionFaultState:
         now = time.monotonic()
+        did_observe_progress = self._is_position_progress(position_delta)
         no_progress = (
-            not state.has_moved and (now - state.start_time > max(2.0, self._stall_timeout * 6))
+            did_observe_progress is False
+            and not state.has_moved
+            and (now - state.start_time > max(2.0, self._stall_timeout * 6))
         )
         stall_detected = (
-            state.has_moved and (now - state.last_movement_time > self._stall_timeout)
+            did_observe_progress is False
+            and state.has_moved
+            and (now - state.last_movement_time > self._stall_timeout)
         )
         fault = bool(
             snapshot.has_fault_bit
@@ -1075,6 +1090,60 @@ class Motor():
             stall_detected=stall_detected,
             no_progress=no_progress,
         )
+
+    def _is_software_motion_fault_only(
+        self,
+        snapshot: MotionSnapshot,
+        alarm_state: MotionAlarmState,
+        fault_state: MotionFaultState,
+    ) -> bool:
+        if fault_state.is_fault is False:
+            return False
+
+        if snapshot.has_fault_bit is True or alarm_state.is_active is True or self._simulated_fault is True:
+            return False
+
+        return fault_state.stall_detected is True or fault_state.no_progress is True
+
+    async def _did_observe_progress_on_fresh_read(self, state: MotionWaitState) -> bool:
+        previous_pos = state.last_pos
+
+        await asyncio.sleep(SOFTWARE_STALL_CONFIRM_DELAY_S)
+        try:
+            await self.get_position()
+        except Exception as exc:
+            self._logger.warning(
+                "Failed to confirm motor progress with fresh position read",
+                extra={"motor_id": self._motor_id, "error": str(exc)},
+            )
+            return False
+
+        now = time.monotonic()
+        position_delta = None
+
+        if previous_pos is not None and self._cur_pos is not None:
+            position_delta = self._cur_pos - previous_pos
+
+        state.last_pos = self._cur_pos
+
+        if self._is_position_progress(position_delta) is False:
+            return False
+
+        state.last_movement_time = now
+        state.has_moved = True
+        self._record_flight_snapshot(None, None, state, position_delta)
+
+        self._logger.debug(
+            "Software stall avoided after fresh position read",
+            extra={
+                "motor_id": self._motor_id,
+                "position_mm": self._cur_pos,
+                "position_delta_mm": position_delta,
+                "stall_timeout_s": self._stall_timeout,
+            },
+        )
+
+        return True
 
     async def _finish_fault(
         self,
