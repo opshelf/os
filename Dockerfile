@@ -18,6 +18,7 @@ RUN apt-get update && apt-get -y install --no-install-recommends \
 	v4l-utils \
 	cups-bsd \
 	cups-daemon \
+	network-manager \
 	&& rm -rf /var/lib/apt/lists/* \
 	&& apt-get clean
 

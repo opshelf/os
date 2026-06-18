@@ -847,6 +847,46 @@ export async function moveMotor(
 	});
 }
 
+export interface WifiStatus {
+	connected: boolean;
+	ssid: string | null;
+	signal: number | null;
+	ip: string | null;
+}
+
+export interface WifiNetwork {
+	ssid: string;
+	signal: number;
+	security: string;
+	in_use: boolean;
+}
+
+export interface WifiNetworkList {
+	networks: WifiNetwork[];
+}
+
+export interface WifiConnectResponse {
+	success: boolean;
+	ssid: string;
+	message: string;
+}
+
+export async function getWifiStatus(): Promise<WifiStatus> {
+	return apiFetch<WifiStatus>('/wifi/status');
+}
+
+export async function scanWifiNetworks(): Promise<WifiNetworkList> {
+	return apiFetch<WifiNetworkList>('/wifi/networks');
+}
+
+export async function connectWifi(ssid: string, password: string): Promise<WifiConnectResponse> {
+	return apiFetch<WifiConnectResponse>('/wifi/connect', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ ssid, password })
+	});
+}
+
 export type GripperState = 'grip' | 'release';
 
 export async function controlGripper(state: GripperState): Promise<{ success: boolean }> {

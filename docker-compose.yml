@@ -10,6 +10,8 @@ services:
       - /etc/cups:/etc/cups:ro
       - /etc/opshelf:/etc/opshelf:ro
       - ./openshelf_hardware/data:/app/openshelf_hardware/data
+      - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket
+      - /boot/firmware:/boot/firmware
     environment:
       - ENV=${ENV:-dev}
       - OPERATING_MODE=${OPERATING_MODE:-development}
