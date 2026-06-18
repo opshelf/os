@@ -314,11 +314,8 @@ def _get_scan_config_value(scan_config: Any, name: str, default: Any) -> Any:
     return getattr(scan_config, name, default)
 
 
-def _build_stage_stall_rotation_center_deg(side: StorageModuleSide) -> float:
-    if side == StorageModuleSide.LEFT:
-        return 180.0
-
-    return 0.0
+def _build_stage_stall_rotation_center_deg(parameters: Any, side: StorageModuleSide) -> float:
+    return _build_angle_rotation_center_deg(parameters, side)
 
 
 def _build_stage_stall_rotation_positions(
