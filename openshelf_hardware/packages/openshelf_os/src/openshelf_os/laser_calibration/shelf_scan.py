@@ -48,6 +48,7 @@ async def capture_shelf_candidates(
 	hole_sweep_x_positions = build_axis_positions(bounds.x_min, bounds.x_max, SHELF_SWEEP_X_STEP_MM)
 	hole_probe_y_offsets_mm = get_shelf_hole_probe_y_offsets_mm(scan_config)
 	post_edge_skip_mm = get_shelf_scout_post_edge_skip_mm(scan_config)
+	brim_max_height_mm = get_shelf_brim_max_height_mm(scan_config)
 	shelf_edges: list[ShelfSurfaceEdge] = []
 	horizontal_wall_depth_values: list[list[float | None]] = []
 	candidates: list[GapCandidateRegion] = []
@@ -96,6 +97,7 @@ async def capture_shelf_candidates(
 					samples_per_point=samples_per_point,
 					progress_label=f"shelf_scout_{scout_idx}",
 					post_edge_skip_mm=post_edge_skip_mm,
+					brim_max_height_mm=brim_max_height_mm,
 					should_abort=should_abort,
 				)
 				raise_if_cancelled(should_abort)

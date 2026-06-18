@@ -44,6 +44,50 @@ async def test_scan_shelf_scout_line_detects_bounded_shelf_edge() -> None:
 
 
 @pytest.mark.asyncio
+async def test_scan_shelf_scout_line_uses_configured_brim_max_height() -> None:
+	depths = [None] + [5.0 for _ in range(11)] + [None]
+	y_positions = [float(y_mm) for y_mm in range(120, 94, -2)]
+
+	async def didSampleDepth(*args, **kwargs):
+		return depths[y_positions.index(current_y_mm)]
+
+	current_y_mm = y_positions[0]
+
+	async def didMoveY(y_mm):
+		nonlocal current_y_mm
+		current_y_mm = float(y_mm)
+
+	tool = SimpleNamespace(
+		_mx=SimpleNamespace(move_to_position_no_wait=AsyncMock()),
+		_my=SimpleNamespace(move_to_position_no_wait=AsyncMock(side_effect=didMoveY)),
+		gantry_wait=AsyncMock(),
+	)
+
+	_, default_edges = await scan_shelf_scout_line(
+		tool,
+		x_mm=25.0,
+		y_positions=y_positions,
+		settle_ms=0,
+		samples_per_point=1,
+		progress_label='shelf_scout_1',
+		sample_depth=didSampleDepth,
+	)
+
+	_, configured_edges = await scan_shelf_scout_line(
+		tool,
+		x_mm=25.0,
+		y_positions=y_positions,
+		settle_ms=0,
+		samples_per_point=1,
+		progress_label='shelf_scout_1',
+		sample_depth=didSampleDepth,
+		brim_max_height_mm=22.0,
+	)
+
+	assert default_edges == []
+	assert configured_edges == [ShelfSurfaceEdge(x_mm=25.0, y_mm=108.0)]
+
+@pytest.mark.asyncio
 async def test_scan_shelf_scout_line_uses_configured_post_edge_skip() -> None:
 	current_y_mm = 0.0
 

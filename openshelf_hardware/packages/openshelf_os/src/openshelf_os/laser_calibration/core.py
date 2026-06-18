@@ -413,6 +413,23 @@ def get_shelf_scout_post_edge_skip_mm(scan_config: Any) -> float:
 	return validated_skip_mm
 
 
+def get_shelf_brim_max_height_mm(scan_config: Any) -> float:
+	configured_max_height_mm = getattr(scan_config, "shelf_brim_max_height_mm", None)
+
+	if configured_max_height_mm is None:
+		return SHELF_BRIM_MAX_HEIGHT_MM
+
+	validated_max_height_mm = validate_finite_value(
+		configured_max_height_mm,
+		"robot.grid.scan.shelf_brim_max_height_mm",
+	)
+
+	if validated_max_height_mm <= 0.0:
+		raise ValueError("robot.grid.scan.shelf_brim_max_height_mm must be greater than zero")
+
+	return validated_max_height_mm
+
+
 def get_fine_cell_scan_y_margin_mm(scan_config: Any) -> float:
 	configured_margin_mm = getattr(scan_config, "fine_cell_scan_y_margin_mm", None)
 
