@@ -14,7 +14,7 @@ from openshelf_os.serial_ports import (
     DEFAULT_MOTOR_PORT,
     DEFAULT_SCALE_PORT,
 )
-from openshelf_os.exceptions import MotorError, MovementError, ToolError
+from openshelf_os.exceptions import ConfigError as CabinetConfigError, MotorError, MovementError, ToolError
 from openshelf_os.iobox import IOBox
 from openshelf_os.laser_calibration.scan import (
     ScanAnalysisResult, ScanBounds, analyze_scan_capture,
@@ -652,7 +652,7 @@ class Robot:
 
         try:
             return cabinet.get_door_state()
-        except ConfigError:
+        except CabinetConfigError:
             return None
 
     async def refresh_door_state(self) -> Optional[bool]:
