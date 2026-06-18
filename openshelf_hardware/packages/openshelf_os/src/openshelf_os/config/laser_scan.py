@@ -47,6 +47,7 @@ class LaserScanConfig(BaseModel):
     left_shelf_scout_x_mm: Optional[float] = Field(default=None, ge=0)
     right_shelf_scout_x_mm: Optional[float] = Field(default=None, ge=0)
     shelf_scout_post_edge_skip_mm: float = Field(80.0, ge=0)
+    shelf_brim_max_height_mm: float = Field(13.0, gt=0)
 
     left_xy_reference: Optional[LaserScanXYReferenceConfig] = None
     right_xy_reference: Optional[LaserScanXYReferenceConfig] = None
