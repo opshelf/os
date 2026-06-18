@@ -24,6 +24,7 @@
 
 	let cameras: CameraInfo[] = [];
 	let selectedCameraId: string = '';
+	let deviceId = '';
 	let statusError = '';
 	let streamError = false;
 	let loading = true;
@@ -36,14 +37,11 @@
 	let lineStart: Point | null = null;
 	let previewEnd: Point | null = null;
 
-	const cameraFlipStorageKey = 'opshelf.camera.isImageFlipped';
-	const cameraLinesStorageKey = 'opshelf.camera.lines';
-
 	$: streamUrl =
 		selectedCameraId !== '' ? buildAuthenticatedUrl(`/camera/${selectedCameraId}`) : '';
 	$: selectedCamera = cameras.find((c) => c.id === selectedCameraId) ?? null;
-	$: if (browser === true && selectedCameraId !== '') {
-		loadCameraLines(selectedCameraId);
+	$: if (browser === true && selectedCameraId !== '' && deviceId !== '') {
+		loadCameraPreferences(selectedCameraId, deviceId);
 	}
 	$: if (browser === true && canvasEl !== null) {
 		observeCanvas(canvasEl);
@@ -53,13 +51,26 @@
 			return;
 		}
 
-		isImageFlipped = localStorage.getItem(cameraFlipStorageKey) === 'true';
-		loadCameras();
+		loadPageData();
 	});
 
 	onDestroy(() => {
 		resizeObserver?.disconnect();
 	});
+
+	async function loadPageData(): Promise<void> {
+		await loadSystemInfo();
+		await loadCameras();
+	}
+
+	async function loadSystemInfo(): Promise<void> {
+		try {
+			const response = await apiFetch<{ device_id: string }>('/system/info');
+			deviceId = response.device_id;
+		} catch {
+			deviceId = '';
+		}
+	}
 
 	async function loadCameras(): Promise<void> {
 		loading = true;
@@ -68,9 +79,7 @@
 			cameras = response.cameras;
 			statusError = '';
 
-			if (selectedCameraId === '' && cameras.length > 0) {
-				selectedCameraId = cameras[0].id;
-			}
+			selectAvailableCamera();
 		} catch (error) {
 			statusError = error instanceof Error ? error.message : 'unable to load cameras';
 		} finally {
@@ -80,15 +89,19 @@
 
 	function didSelectCamera(event: Event): void {
 		const target = event.target as HTMLSelectElement;
-		selectedCameraId = target.value;
-		streamError = false;
-		lineStart = null;
-		previewEnd = null;
+		selectCamera(target.value, true);
 	}
 
 	function didToggleImageFlip(): void {
 		isImageFlipped = isImageFlipped === false;
-		localStorage.setItem(cameraFlipStorageKey, String(isImageFlipped));
+
+		const storageKey = getCameraFlipStorageKey(deviceId, selectedCameraId);
+
+		if (storageKey === null) {
+			return;
+		}
+
+		localStorage.setItem(storageKey, String(isImageFlipped));
 	}
 
 	function didToggleDrawingMode(): void {
@@ -238,9 +251,50 @@
 		}
 	}
 
-	function loadCameraLines(cameraId: string): void {
-		const allLines = readStoredCameraLines();
-		cameraLines = allLines[cameraId] ?? [];
+	function selectAvailableCamera(): void {
+		if (cameras.length === 0) {
+			selectedCameraId = '';
+			return;
+		}
+
+		if (selectedCameraId !== '' && cameras.some((camera) => camera.id === selectedCameraId)) {
+			return;
+		}
+
+		const storedCameraId = readSelectedCameraId();
+
+		if (storedCameraId !== null && cameras.some((camera) => camera.id === storedCameraId)) {
+			selectCamera(storedCameraId, false);
+			return;
+		}
+
+		selectCamera(cameras[0].id, false);
+	}
+
+	function selectCamera(cameraId: string, shouldPersist: boolean): void {
+		selectedCameraId = cameraId;
+		streamError = false;
+		lineStart = null;
+		previewEnd = null;
+
+		if (shouldPersist === true) {
+			saveSelectedCameraId(cameraId);
+		}
+	}
+
+	function loadCameraPreferences(cameraId: string, currentDeviceId: string): void {
+		const flipStorageKey = getCameraFlipStorageKey(currentDeviceId, cameraId);
+
+		if (flipStorageKey === null) {
+			return;
+		}
+
+		isImageFlipped = localStorage.getItem(flipStorageKey) === 'true';
+		loadCameraLines(cameraId, currentDeviceId);
+	}
+
+	function loadCameraLines(cameraId: string, currentDeviceId: string): void {
+		cameraLines = readStoredCameraLines(cameraId, currentDeviceId);
 		requestAnimationFrame(() => {
 			resizeCanvas();
 			drawLines();
@@ -248,37 +302,95 @@
 	}
 
 	function saveCameraLines(): void {
-		if (browser === false || selectedCameraId === '') {
+		if (browser === false) {
 			return;
 		}
 
-		const allLines = readStoredCameraLines();
-		allLines[selectedCameraId] = cameraLines;
-		localStorage.setItem(cameraLinesStorageKey, JSON.stringify(allLines));
-	}
+		const storageKey = getCameraLinesStorageKey(deviceId, selectedCameraId);
 
-	function readStoredCameraLines(): Record<string, CameraLine[]> {
-		if (browser === false) {
-			return {};
+		if (storageKey === null) {
+			return;
 		}
 
-		const storedLines = localStorage.getItem(cameraLinesStorageKey);
+		localStorage.setItem(storageKey, JSON.stringify(cameraLines));
+	}
+
+	function readStoredCameraLines(cameraId: string, currentDeviceId: string): CameraLine[] {
+		if (browser === false) {
+			return [];
+		}
+
+		const storageKey = getCameraLinesStorageKey(currentDeviceId, cameraId);
+
+		if (storageKey === null) {
+			return [];
+		}
+
+		const storedLines = localStorage.getItem(storageKey);
 
 		if (storedLines === null) {
-			return {};
+			return [];
 		}
 
 		try {
 			const parsed = JSON.parse(storedLines);
 
-			if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-				return {};
+			if (Array.isArray(parsed) === false) {
+				return [];
 			}
 
-			return parsed as Record<string, CameraLine[]>;
+			return parsed as CameraLine[];
 		} catch {
-			return {};
+			return [];
 		}
+	}
+
+	function readSelectedCameraId(): string | null {
+		if (browser === false || deviceId === '') {
+			return null;
+		}
+
+		return localStorage.getItem(getSelectedCameraStorageKey(deviceId));
+	}
+
+	function saveSelectedCameraId(cameraId: string): void {
+		if (browser === false || deviceId === '') {
+			return;
+		}
+
+		localStorage.setItem(getSelectedCameraStorageKey(deviceId), cameraId);
+	}
+
+	function getCameraFlipStorageKey(currentDeviceId: string, cameraId: string): string | null {
+		const prefix = getCameraPreferencePrefix(currentDeviceId, cameraId);
+
+		if (prefix === null) {
+			return null;
+		}
+
+		return `${prefix}.isImageFlipped`;
+	}
+
+	function getCameraLinesStorageKey(currentDeviceId: string, cameraId: string): string | null {
+		const prefix = getCameraPreferencePrefix(currentDeviceId, cameraId);
+
+		if (prefix === null) {
+			return null;
+		}
+
+		return `${prefix}.lines`;
+	}
+
+	function getCameraPreferencePrefix(currentDeviceId: string, cameraId: string): string | null {
+		if (currentDeviceId === '' || cameraId === '') {
+			return null;
+		}
+
+		return `opshelf.${currentDeviceId}.camera.${cameraId}`;
+	}
+
+	function getSelectedCameraStorageKey(currentDeviceId: string): string {
+		return `opshelf.${currentDeviceId}.camera`;
 	}
 </script>
 
