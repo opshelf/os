@@ -9,6 +9,11 @@ from openshelf_os.laser_calibration.shelf_scout import (
 	filter_shelf_edges,
 	scan_shelf_scout_line,
 )
+from openshelf_os.laser_calibration.shelf_scan import (
+	build_shelf_scout_x_positions as build_scan_shelf_scout_x_positions,
+)
+from openshelf_os.laser_calibration.scan import ScanBounds
+from openshelf_os.laser_calibration.core import StorageModuleSide
 
 
 @pytest.mark.asyncio
@@ -97,6 +102,12 @@ def test_build_shelf_scout_x_positions_preserves_right_zero_and_reference_behavi
 	assert build_shelf_scout_x_positions(
 		x_min_mm=0.0,
 		x_max_mm=900.0,
+		is_right_side=True,
+		scout_x_mm=950.0,
+	) == [950.0]
+	assert build_shelf_scout_x_positions(
+		x_min_mm=0.0,
+		x_max_mm=900.0,
 		is_right_side=False,
 		left_reference_x_mm=950.0,
 	) == [950.0]
@@ -106,3 +117,13 @@ def test_build_shelf_scout_x_positions_preserves_right_zero_and_reference_behavi
 		is_right_side=False,
 		scout_x_mm=123.0,
 	) == [123.0]
+
+
+def test_scan_shelf_scout_x_positions_uses_configured_side_override() -> None:
+	bounds = ScanBounds(x_min=5.0, x_max=945.0, y_min=0.0, y_max=1295.0)
+
+	assert build_scan_shelf_scout_x_positions(
+		bounds=bounds,
+		side=StorageModuleSide.RIGHT,
+		scan_config=SimpleNamespace(right_shelf_scout_x_mm=950.0),
+	) == [950.0]
