@@ -46,8 +46,8 @@ class Cabinet:
     async def configure(self) -> None:
         try:
             self._require_door_latches()
-        except ConfigError as exc:
-            self._logger.info("Cabinet door monitor disabled: %s", exc)
+        except ConfigError:
+            self._logger.debug("Cabinet door monitor disabled: GPIO is not configured")
             return
         self._handle_door_state(self.get_door_state())
 

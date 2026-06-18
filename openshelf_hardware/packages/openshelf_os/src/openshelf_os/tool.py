@@ -879,7 +879,12 @@ class Tool:
         if original_x is None or x_motor is None:
             return
 
-        await x_motor.move_to_position(original_x)
+        margin_mm = ROTATION_SAFE_X_MARGIN_MM
+        lower_lim = float(getattr(x_motor._params, "lower_lim", 0.0))
+        upper_lim = float(x_motor._params.lim)
+        target_x = min(max(float(original_x), lower_lim + margin_mm), upper_lim - margin_mm)
+
+        await x_motor.move_to_position(target_x)
 
     # ------------------------------------------------------------------ #
     #  Tool extension and retraction
