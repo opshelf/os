@@ -46,6 +46,7 @@ class Motor(BaseModel):
     status_complete_bit: int = Field(default=5)
     ppr: int = Field(default=10000, ge=200, le=100000)
     max_following_error: int = Field(default=4000, ge=100, le=65535)
+    stall_timeout_s: float = Field(default=5.0, gt=0)
 
     @field_validator("motor_name")
     @classmethod
