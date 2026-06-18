@@ -6,6 +6,7 @@ import argparse
 from pathlib import Path
 
 from .models import *
+from openshelf_os_server.core.logging_config import get_correlation_id
 
 
 class ScanRunnerMixin:
@@ -104,32 +105,59 @@ class ScanRunnerMixin:
             side_name,
             str(recorder.run_dir),
         )
+        await self._update_snapshot(
+            current_side=side_name,
+            current_stage="scan-start",
+            state="running",
+            run_id=recorder.run_id,
+            bounds=bounds,
+            stage_detail={
+                "side": side_name,
+                "phase": "scan-start",
+                "run_id": recorder.run_id,
+                "run_dir": str(recorder.run_dir),
+            },
+        )
 
-        async with self._patch_status_callbacks(
-            scan_callback=self._build_scan_status_callback(side_name, recorder, bounds),
-            angle_callback=None,
-        ):
-            analysis = await laser_module.run_staged_scan(
-                robot=worker._robot,
-                side=side,
-                bounds=bounds,
-                fine_step_mm=float(scan_config.fine_scan_step_mm),
-                settle_ms=settle_ms,
-                samples_per_point=samples_per_point,
-                coarse_settle_ms=coarse_settle_ms,
-                coarse_samples_per_point=coarse_samples_per_point,
-                scan_config=scan_config,
-                scans_dir=self._scans_dir,
-                run_parameters=run_parameters,
-                shelf_scout_only=False,
-                known_shelf_edge_y=known_shelf_edge_y,
-                seeded_candidates=seeded_candidates,
-                seeded_wall_depth_mm=seeded_wall_depth_mm,
-                recorder=recorder,
-                should_validate_reference_bounds=should_validate_reference_bounds,
-                should_abort=self._should_abort_work,
+        scan_correlation_id = get_correlation_id()
+
+        if hasattr(worker._robot._tool, "set_motion_diagnostic_context"):
+            worker._robot._tool.set_motion_diagnostic_context(
+                run_id=recorder.run_id,
+                correlation_id=scan_correlation_id,
             )
 
+        try:
+            async with self._patch_status_callbacks(
+                scan_callback=self._build_scan_status_callback(side_name, recorder, bounds),
+                angle_callback=None,
+            ):
+                analysis = await laser_module.run_staged_scan(
+                    robot=worker._robot,
+                    side=side,
+                    bounds=bounds,
+                    fine_step_mm=float(scan_config.fine_scan_step_mm),
+                    settle_ms=settle_ms,
+                    samples_per_point=samples_per_point,
+                    coarse_settle_ms=coarse_settle_ms,
+                    coarse_samples_per_point=coarse_samples_per_point,
+                    scan_config=scan_config,
+                    scans_dir=self._scans_dir,
+                    run_parameters=run_parameters,
+                    shelf_scout_only=False,
+                    known_shelf_edge_y=known_shelf_edge_y,
+                    seeded_candidates=seeded_candidates,
+                    seeded_wall_depth_mm=seeded_wall_depth_mm,
+                    recorder=recorder,
+                    should_validate_reference_bounds=should_validate_reference_bounds,
+                    should_abort=self._should_abort_work,
+                )
+        finally:
+            if hasattr(worker._robot._tool, "set_motion_diagnostic_context"):
+                worker._robot._tool.set_motion_diagnostic_context(
+                    run_id=getattr(self, "_motion_diagnostic_session_id", self._snapshot.session_id),
+                    correlation_id=getattr(self, "_motion_diagnostic_correlation_id", scan_correlation_id),
+                )
         await self._refresh_scan_side_state(side_name, recorder, bounds)
         await self._refresh_scan_side_state(side_name, recorder, bounds)
         await self._update_snapshot(

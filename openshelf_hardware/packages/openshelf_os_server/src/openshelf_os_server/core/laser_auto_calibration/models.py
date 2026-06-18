@@ -164,6 +164,16 @@ class LaserAutoCalibrationScope(BaseModel):
     include_angle_calibration: bool = True
 
 
+class LaserAutoCalibrationError(BaseModel):
+    error_type: str
+    error: str
+    phase: str | None = None
+    run_id: str | None = None
+    correlation_id: str | None = None
+    fault_context: dict[str, Any] | None = None
+    diagnostic_snapshot: dict[str, Any] | None = None
+
+
 class LaserAutoCalibrationSnapshot(BaseModel):
     state: Literal["idle", "starting", "running", "applying", "completed", "failed", "cancelled"] = "idle"
     session_id: str | None = None
@@ -192,6 +202,7 @@ class LaserAutoCalibrationSnapshot(BaseModel):
     io_box_result: LaserAutoCalibrationIOBoxResult | None = None
     stage_detail: dict[str, Any] = Field(default_factory=dict)
     error: str | None = None
+    error_detail: LaserAutoCalibrationError | None = None
 
 
 @dataclass

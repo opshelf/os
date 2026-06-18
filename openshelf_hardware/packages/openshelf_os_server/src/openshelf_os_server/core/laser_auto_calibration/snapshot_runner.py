@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import *
+from .models import LaserAutoCalibrationError
 
 
 class SnapshotRunnerMixin:
@@ -367,11 +368,18 @@ class SnapshotRunnerMixin:
                 else:
                     await pending_task
 
-    async def _set_terminal_state(self, state: Literal["completed", "failed", "cancelled"], error: str | None) -> None:
+    async def _set_terminal_state(
+        self,
+        state: Literal["completed", "failed", "cancelled"],
+        error: str | None,
+        *,
+        error_detail: LaserAutoCalibrationError | None = None,
+    ) -> None:
         await self._update_snapshot(
             state=state,
             current_stage=state,
             error=error,
+            error_detail=error_detail,
             stage_detail={**self._snapshot.stage_detail, "phase": state},
         )
 

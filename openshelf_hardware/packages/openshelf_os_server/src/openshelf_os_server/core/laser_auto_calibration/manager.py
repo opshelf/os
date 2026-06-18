@@ -3,13 +3,16 @@ from __future__ import annotations
 
 import asyncio
 from uuid import uuid4
+from pathlib import Path
 
 from .models import *
+from .models import LaserAutoCalibrationError
 from .scope_runner import ScopeRunnerMixin
 from .scan_runner import ScanRunnerMixin
 from .angle_runner import AngleRunnerMixin
 from .stage_runner import StageRunnerMixin
 from .apply_runner import ApplyRunnerMixin
+from openshelf_os_server.core.logging_config import get_correlation_id
 from .snapshot_runner import SnapshotRunnerMixin
 
 
@@ -30,6 +33,8 @@ class LaserAutoCalibrationManager(
         self._active_worker: RobotWorker | None = None
         self._abort_requested = False
         self._scans_dir = _build_default_scans_dir()
+        self._motion_diagnostic_session_id: str | None = None
+        self._motion_diagnostic_correlation_id: str | None = None
 
     async def get_snapshot(self) -> LaserAutoCalibrationSnapshot:
         async with self._lock:
@@ -116,6 +121,20 @@ class LaserAutoCalibrationManager(
         async with self._lock:
             return self._task is not None and self._task.done() is False
 
+    def _set_motion_diagnostic_context(
+        self,
+        worker: RobotWorker,
+        *,
+        run_id: str | None = None,
+        correlation_id: str | None = None,
+    ) -> None:
+        robot = getattr(worker, "_robot", None)
+        tool = getattr(robot, "_tool", None)
+        set_context: Any = getattr(tool, "set_motion_diagnostic_context", None)
+
+        if callable(set_context) is True:
+            set_context(run_id=run_id, correlation_id=correlation_id)
+
     async def _run_session(
         self,
         worker: RobotWorker,
@@ -126,6 +145,15 @@ class LaserAutoCalibrationManager(
             requested_scope = LaserAutoCalibrationScope()
 
         original_params = await self._get_current_calibration_params(worker)
+        session_correlation_id = get_correlation_id()
+        self._motion_diagnostic_session_id = session_id
+        self._motion_diagnostic_correlation_id = session_correlation_id
+
+        self._set_motion_diagnostic_context(
+            worker,
+            run_id=session_id,
+            correlation_id=session_correlation_id,
+        )
 
         try:
             await self._run_requested_scope(worker, requested_scope)
@@ -154,15 +182,89 @@ class LaserAutoCalibrationManager(
             if self._abort_requested:
                 raise asyncio.CancelledError() from exc
             self._restore_in_memory_calibration_params(worker, original_params)
-            logger.error("laser_auto_calibration_failed", exc_info=True)
-            await self._set_terminal_state("failed", str(exc))
+            error_detail = await self._build_error_detail(worker, exc)
+            logger.error(
+                "laser_auto_calibration_failed",
+                extra={"error_detail": error_detail.model_dump(mode="json")},
+                exc_info=True,
+            )
+            await self._persist_failure_metadata(error_detail)
+            await self._set_terminal_state("failed", str(exc), error_detail=error_detail)
         finally:
+            self._set_motion_diagnostic_context(worker)
+
+            self._motion_diagnostic_session_id = None
+            self._motion_diagnostic_correlation_id = None
+
             async with self._lock:
                 if self._snapshot.session_id == session_id:
                     self._task = None
                     self._active_worker = None
                     self._abort_requested = False
 
+
+    async def _build_error_detail(
+        self,
+        worker: RobotWorker,
+        exc: Exception,
+    ) -> LaserAutoCalibrationError:
+        diagnostic_snapshot: dict[str, Any] | None = None
+        try:
+            raw_snapshot: Any = await worker.get_status_snapshot(force_refresh=True)
+            if hasattr(raw_snapshot, "model_dump"):
+                diagnostic_snapshot = raw_snapshot.model_dump(mode="json")
+            elif isinstance(raw_snapshot, dict):
+                diagnostic_snapshot = raw_snapshot
+        except Exception as snapshot_exc:
+            diagnostic_snapshot = {"error": f"failed to capture diagnostic snapshot: {snapshot_exc}"}
+
+        fault_context = getattr(exc, "fault_context", None)
+        if isinstance(fault_context, dict) is False:
+            cause = getattr(exc, "__cause__", None)
+            fault_context = getattr(cause, "fault_context", None)
+
+        if isinstance(fault_context, dict) is False:
+            fault_context = None
+
+        return LaserAutoCalibrationError(
+            error_type=type(exc).__name__,
+            error=str(exc),
+            phase=self._snapshot.current_stage,
+            run_id=self._snapshot.run_id,
+            correlation_id=get_correlation_id(),
+            fault_context=fault_context,
+            diagnostic_snapshot=diagnostic_snapshot,
+        )
+
+    async def _persist_failure_metadata(self, error_detail: LaserAutoCalibrationError) -> None:
+        run_dir_value = self._snapshot.stage_detail.get("run_dir")
+
+        if run_dir_value is None:
+            return
+
+        run_dir = Path(str(run_dir_value))
+
+        metadata_path = run_dir / "metadata.json"
+        if metadata_path.exists() is False:
+            return
+
+        try:
+            data = __import__("json").loads(metadata_path.read_text(encoding="utf-8"))
+            data["status"] = "failed"
+            data["failed_at"] = _get_timestamp()
+            data["error"] = error_detail.error
+            data["error_type"] = error_detail.error_type
+            data["error_detail"] = error_detail.model_dump(mode="json")
+            metadata_path.write_text(
+                __import__("json").dumps(data, indent=2, default=str) + "\n",
+                encoding="utf-8",
+            )
+        except Exception:
+            logger.warning(
+                "laser_auto_calibration_failure_metadata_persist_failed",
+                extra={"metadata_path": str(metadata_path)},
+                exc_info=True,
+            )
 
 _manager = LaserAutoCalibrationManager()
 
