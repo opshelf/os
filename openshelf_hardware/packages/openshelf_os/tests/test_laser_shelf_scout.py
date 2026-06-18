@@ -2,6 +2,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+import openshelf_os.laser_calibration.shelf_scan as shelf_scan_module
 
 from openshelf_os.laser_calibration.shelf_scout import (
 	ShelfSurfaceEdge,
@@ -86,6 +87,40 @@ async def test_scan_shelf_scout_line_uses_configured_brim_max_height() -> None:
 
 	assert default_edges == []
 	assert configured_edges == [ShelfSurfaceEdge(x_mm=25.0, y_mm=108.0)]
+
+
+@pytest.mark.asyncio
+async def test_scan_shelf_scout_wrapper_passes_configured_brim_max_height(monkeypatch) -> None:
+	depths = [None] + [5.0 for _ in range(11)] + [None]
+	y_positions = [float(y_mm) for y_mm in range(120, 94, -2)]
+	current_y_mm = y_positions[0]
+
+	async def didMoveY(y_mm):
+		nonlocal current_y_mm
+		current_y_mm = float(y_mm)
+
+	async def didSampleLaserDepth(*args, **kwargs):
+		return depths[y_positions.index(current_y_mm)]
+
+	monkeypatch.setattr(shelf_scan_module, 'sample_laser_depth', didSampleLaserDepth)
+
+	tool = SimpleNamespace(
+		_mx=SimpleNamespace(move_to_position_no_wait=AsyncMock()),
+		_my=SimpleNamespace(move_to_position_no_wait=AsyncMock(side_effect=didMoveY)),
+		gantry_wait=AsyncMock(),
+	)
+
+	_, edges = await shelf_scan_module.scan_shelf_scout_line(
+		tool,
+		x_mm=25.0,
+		y_positions=y_positions,
+		settle_ms=0,
+		samples_per_point=1,
+		progress_label='shelf_scout_1',
+		brim_max_height_mm=22.0,
+	)
+
+	assert edges == [ShelfSurfaceEdge(x_mm=25.0, y_mm=108.0)]
 
 @pytest.mark.asyncio
 async def test_scan_shelf_scout_line_uses_configured_post_edge_skip() -> None:
