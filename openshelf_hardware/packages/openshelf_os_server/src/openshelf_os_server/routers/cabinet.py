@@ -42,9 +42,9 @@ class CabinetReleaseResponse(BaseModel):
 
 
 class CabinetStatusResponse(BaseModel):
-    doors: CabinetDoorState
-    latches: CabinetLatchState
-
+    configured: bool = True
+    doors: CabinetDoorState | None = None
+    latches: CabinetLatchState | None = None
 
 async def check_robot_enabled() -> None:
     settings = get_settings()
@@ -81,9 +81,14 @@ async def ensure_laser_auto_calibration_not_running() -> None:
 async def get_cabinet_status(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
 ) -> CabinetStatusResponse:
+    cabinet = worker._robot._cabinet
+    if cabinet.is_configured() is False:
+        return CabinetStatusResponse(configured=False)
+
     try:
-        cabinet_status = worker._robot._cabinet.get_status()
+        cabinet_status = cabinet.get_status()
         return CabinetStatusResponse(
+            configured=True,
             doors=CabinetDoorState(**cabinet_status["doors"]),
             latches=CabinetLatchState(**cabinet_status["latches"]),
         )
@@ -104,11 +109,21 @@ async def control_cabinet_release(
 ) -> CabinetReleaseResponse:
     try:
         await ensure_laser_auto_calibration_not_running()
+        cabinet = worker._robot._cabinet
+        if cabinet.is_configured() is False:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "message": "Cabinet GPIO is not configured on this device",
+                    "code": "cabinet_not_configured",
+                },
+            )
+
         async with manual_motion_guard(f"cabinet_release:{action}", worker=worker):
             if action == "passive":
-                cabinet_status = await worker._robot._cabinet.set_passive()
+                cabinet_status = await cabinet.set_passive()
             else:
-                cabinet_status = await worker._robot._cabinet.release()
+                cabinet_status = await cabinet.release()
 
             return CabinetReleaseResponse(
                 success=True,

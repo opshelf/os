@@ -891,8 +891,9 @@ export interface CabinetReleaseResponse {
 }
 
 export interface CabinetStatusResponse {
-	doors: CabinetDoorState;
-	latches: CabinetLatchState;
+	configured: boolean;
+	doors: CabinetDoorState | null;
+	latches: CabinetLatchState | null;
 }
 
 export async function getCabinetStatus(): Promise<CabinetStatusResponse> {

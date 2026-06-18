@@ -87,6 +87,14 @@ class Cabinet:
         if self._door_state is not None:
             self._emit_door_state(self._door_state)
 
+    def is_configured(self) -> bool:
+        try:
+            self._require_door_latches()
+        except ConfigError:
+            return False
+
+        return True
+
     def _require_door_latches(self) -> dict[str, CabinetDoorLatch]:
         if self._door_latches:
             return self._door_latches
