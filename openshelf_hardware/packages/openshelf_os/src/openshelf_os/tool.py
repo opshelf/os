@@ -327,10 +327,12 @@ class Tool:
             context["target_position"] = target_position
 
         setattr(exc, "fault_context", context)
-        self._logger.warning(
-            "Tool fault detected - manual intervention required",
-            extra=context,
-        )
+        log_warning = getattr(self._logger, "warning", None)
+        if log_warning is not None:
+            log_warning(
+                "Tool fault detected - manual intervention required",
+                extra=context,
+            )
 
     async def get_param(self, param: str) -> Optional[Any]:
         try:
