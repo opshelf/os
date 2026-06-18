@@ -1015,6 +1015,7 @@ async def scan_shelf_scout_line(
 	progress_label: str,
 	progress_every: int = 25,
 	post_edge_skip_mm: float = SHELF_SCOUT_POST_EDGE_SKIP_MM,
+	brim_max_height_mm: float = SHELF_BRIM_MAX_HEIGHT_MM,
 	should_abort: Callable[[], bool] | None = None,
 ) -> tuple[list[float | None], list[ShelfSurfaceEdge]]:
 	return await scan_shared_shelf_scout_line(
@@ -1028,6 +1029,7 @@ async def scan_shelf_scout_line(
 		print_status=print_status,
 		progress_every=progress_every,
 		post_edge_skip_mm=post_edge_skip_mm,
+		brim_max_height_mm=brim_max_height_mm,
 		should_abort=should_abort,
 	)
 
