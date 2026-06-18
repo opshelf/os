@@ -1,13 +1,19 @@
+from __future__ import annotations
+
 import time
 import asyncio
 import functools
 import logging
-
-from dataclasses import dataclass
-from hardware import motor_helpers
-from hardware.controller import SharedModbusController
+import json
+from collections import deque
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
+from pathlib import Path
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Optional, Callable, Awaitable
+
+from hardware import motor_helpers
+from hardware.controller import SharedModbusController
 
 if TYPE_CHECKING:
     from hardware.curtain import MotionSafetyInterlock
@@ -73,6 +79,34 @@ class MotionFaultState:
     no_progress: bool
 
 
+@dataclass
+class MotionRecordEntry:
+    timestamp: str
+    elapsed_s: float
+    motor_id: int
+    motor_name: str | None
+    status_word: int | None
+    is_complete: bool | None
+    has_fault_bit: bool | None
+    alarm_code: int | None
+    alarm_active: bool | None
+    raw_position: int | None
+    logical_position_mm: float | None
+    position_read_latency_s: float | None
+    position_delta_mm: float | None
+    seconds_since_progress: float
+    command_target_mm: float | None
+    command_start_mm: float | None
+    command_rpm: int | None
+    command_accel: int | None
+    safety_blocked: bool
+    run_id: str | None
+    correlation_id: str | None
+
+
+MOTION_FLIGHT_RECORDER_SIZE = 256
+MOTION_FAULT_DUMP_DIR = Path("data/motion_faults")
+
 class Motor():
     _motor_id: int
     _controller: SharedModbusController
@@ -99,6 +133,16 @@ class Motor():
         self._is_homed = False
         self._hard_stopped = False
         self._should_skip_pre_home_once = False
+        self._flight_recorder: deque[MotionRecordEntry] = deque(maxlen=MOTION_FLIGHT_RECORDER_SIZE)
+        self._diagnostic_run_id: str | None = None
+        self._diagnostic_correlation_id: str | None = None
+        self._move_started_at: float | None = None
+        self._move_start_position: float | None = None
+        self._move_target_position: float | None = None
+        self._move_rpm: int | None = None
+        self._move_accel: int | None = None
+        self._last_raw_position: int | None = None
+        self._last_position_read_latency_s: float | None = None
         self._configured_brake_output_function = int(
             getattr(self._params, "brake_output_function", DEFAULT_BRAKE_OUTPUT_FUNCTION)
         )
@@ -230,8 +274,117 @@ class Motor():
     def is_hard_stopped(self) -> bool:
         return self._hard_stopped
 
+    def set_diagnostic_context(
+        self,
+        *,
+        run_id: str | None = None,
+        correlation_id: str | None = None,
+    ) -> None:
+        self._diagnostic_run_id = run_id
+        self._diagnostic_correlation_id = correlation_id
+
+    def _record_flight_snapshot(
+        self,
+        snapshot: MotionSnapshot | None,
+        alarm_state: MotionAlarmState | None,
+        state: MotionWaitState,
+        position_delta: float | None,
+    ) -> None:
+        now = time.monotonic()
+
+        self._flight_recorder.append(
+            MotionRecordEntry(
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                elapsed_s=now - state.start_time,
+                motor_id=self._motor_id,
+                motor_name=getattr(self._params, "motor_name", None),
+                status_word=None if snapshot is None else snapshot.status_word,
+                is_complete=None if snapshot is None else snapshot.is_complete,
+                has_fault_bit=None if snapshot is None else snapshot.has_fault_bit,
+                alarm_code=None if alarm_state is None else alarm_state.alarm_code,
+                alarm_active=None if alarm_state is None else alarm_state.is_active,
+                raw_position=self._last_raw_position,
+                logical_position_mm=self._cur_pos,
+                position_read_latency_s=self._last_position_read_latency_s,
+                position_delta_mm=position_delta,
+                seconds_since_progress=now - state.last_movement_time,
+                command_target_mm=self._move_target_position,
+                command_start_mm=self._move_start_position,
+                command_rpm=self._move_rpm,
+                command_accel=self._move_accel,
+                safety_blocked=bool(self._safety and self._safety.blocked),
+                run_id=self._diagnostic_run_id,
+                correlation_id=self._diagnostic_correlation_id,
+            )
+        )
+
+    def _dump_flight_recorder(
+        self,
+        *,
+        reason: str,
+        state: MotionWaitState,
+        snapshot: MotionSnapshot | None = None,
+        alarm_state: MotionAlarmState | None = None,
+        fault_state: MotionFaultState | None = None,
+    ) -> str | None:
+        if len(self._flight_recorder) == 0:
+            return None
+
+        try:
+            MOTION_FAULT_DUMP_DIR.mkdir(parents=True, exist_ok=True)
+            now = datetime.now(timezone.utc)
+            motor_name = getattr(self._params, "motor_name", None) or f"motor_{self._motor_id}"
+            run_part = self._diagnostic_run_id or "no_run"
+            filename = f"{now.strftime('%Y%m%dT%H%M%S.%fZ')}-{run_part}-{motor_name}-{reason}.json"
+            path = MOTION_FAULT_DUMP_DIR / filename
+            payload = {
+                "created_at": now.isoformat(),
+                "reason": reason,
+                "motor_id": self._motor_id,
+                "motor_name": motor_name,
+                "run_id": self._diagnostic_run_id,
+                "correlation_id": self._diagnostic_correlation_id,
+                "target_position_mm": self._target_pos,
+                "current_position_mm": self._cur_pos,
+                "move_started_at_elapsed_s": None if self._move_started_at is None else time.monotonic() - self._move_started_at,
+                "move_start_position_mm": self._move_start_position,
+                "move_target_position_mm": self._move_target_position,
+                "move_rpm": self._move_rpm,
+                "move_accel": self._move_accel,
+                "is_homed": self._is_homed,
+                "hard_stopped": self._hard_stopped,
+                "simulated_fault": self._simulated_fault,
+                "stall_timeout_s": self._stall_timeout,
+                "seconds_since_progress": time.monotonic() - state.last_movement_time,
+                "status_word": None if snapshot is None else snapshot.status_word,
+                "alarm_code": None if alarm_state is None else alarm_state.alarm_code,
+                "alarm_active": None if alarm_state is None else alarm_state.is_active,
+                "fault_state": None if fault_state is None else asdict(fault_state),
+                "samples": [asdict(entry) for entry in self._flight_recorder],
+            }
+            path.write_text(json.dumps(payload, indent=2, default=str) + "\n", encoding="utf-8")
+            self._logger.warning(
+                "Motion flight recorder dumped",
+                extra={
+                    "motor_id": self._motor_id,
+                    "motor_name": motor_name,
+                    "reason": reason,
+                    "path": str(path),
+                    "run_id": self._diagnostic_run_id,
+                    "sample_count": len(self._flight_recorder),
+                },
+            )
+            return str(path)
+        except Exception as exc:
+            self._logger.warning(
+                "Failed to dump motion flight recorder",
+                extra={"motor_id": self._motor_id, "reason": reason, "error": str(exc)},
+            )
+            return None
+
     async def get_position(self) -> float:
         try:
+            read_started_at = time.monotonic()
             reg_high = getattr(self._params, "position_reg_high", 0x602C)
             reg_low = getattr(self._params, "position_reg_low", 0x602D)
 
@@ -328,8 +481,12 @@ class Motor():
                             },
                         )
 
+                    self._last_raw_position = None
+                    self._last_position_read_latency_s = time.monotonic() - read_started_at
                     return fallback_pos
 
+            self._last_raw_position = pos
+            self._last_position_read_latency_s = time.monotonic() - read_started_at
             self._cur_pos = logical_pos
 
             return logical_pos
@@ -478,15 +635,26 @@ class Motor():
 
         self._status = MotorStatus.MOVING
         self._pending_motion = functools.partial(self._start_absolute_move, value, rpm, accel)
+        self._move_started_at = time.monotonic()
+        self._move_start_position = self._cur_pos
+        self._move_target_position = value
+        self._move_rpm = int(rpm or self._params.rpm)
+        self._move_accel = int(accel or self._params.accel)
+        self._flight_recorder.clear()
 
-        self._logger.debug(
-            "Started absolute move",
+        self._logger.info(
+            "Motor move started",
             extra={
                 "motor_id": self._motor_id,
+                "motor_name": getattr(self._params, "motor_name", None),
+                "start_position_mm": self._move_start_position,
                 "target_mm": value,
+                "distance_mm": None if self._move_start_position is None else value - self._move_start_position,
                 "limit_mm": self._params.lim,
-                "rpm": rpm or self._params.rpm,
-                "accel": accel or self._params.accel,
+                "rpm": self._move_rpm,
+                "accel": self._move_accel,
+                "run_id": self._diagnostic_run_id,
+                "correlation_id": self._diagnostic_correlation_id,
             }
         )
 
@@ -632,7 +800,7 @@ class Motor():
                     raise asyncio.CancelledError()
 
                 snapshot = await self._read_motion_snapshot()
-                await self._update_motion_progress(state)
+                position_delta = await self._update_motion_progress(state)
 
                 if await self._pause_for_safety_if_needed(state):
                     continue
@@ -641,6 +809,7 @@ class Motor():
                     return await self._finish_completed_move(homing, state)
 
                 alarm_state = await self._read_alarm_state(homing, state)
+                self._record_flight_snapshot(snapshot, alarm_state, state, position_delta)
 
                 if self._is_homing_limit_stop(homing, alarm_state, state):
                     return await self._finish_homing_limit_stop(snapshot, alarm_state, state)
@@ -719,16 +888,21 @@ class Motor():
             has_fault_bit=fault_bit,
         )
 
-    async def _update_motion_progress(self, state: MotionWaitState) -> None:
+    async def _update_motion_progress(self, state: MotionWaitState) -> float | None:
         await self.get_position()
         now = time.monotonic()
+        position_delta = None
 
-        if state.last_pos is not None:
-            if self._cur_pos != state.last_pos:
+        if state.last_pos is not None and self._cur_pos is not None:
+            position_delta = self._cur_pos - state.last_pos
+
+            if position_delta != 0:
                 state.last_movement_time = now
                 state.has_moved = True
 
         state.last_pos = self._cur_pos
+
+        return position_delta
 
     async def _pause_for_safety_if_needed(self, state: MotionWaitState) -> bool:
         if not self._safety or not self._safety.blocked:
@@ -788,6 +962,10 @@ class Motor():
                     self._hard_stopped = True
                     self._is_homed = False
 
+                    self._dump_flight_recorder(
+                        reason="position_error",
+                        state=state,
+                    )
                     return MotorStatus.FAULT
             except Exception as position_exc:
                 self._logger.warning(
@@ -907,6 +1085,13 @@ class Motor():
         state: MotionWaitState,
     ) -> MotorStatus:
         await self.stop()
+        dump_path = self._dump_flight_recorder(
+            reason="fault",
+            state=state,
+            snapshot=snapshot,
+            alarm_state=alarm_state,
+            fault_state=fault_state,
+        )
 
         if homing:
             self._clear_pending_motion()
@@ -920,6 +1105,10 @@ class Motor():
                     "alarm_code": alarm_state.alarm_code,
                     "stall_detected": fault_state.stall_detected,
                     "no_progress": fault_state.no_progress,
+                    "seconds_since_progress": time.monotonic() - state.last_movement_time,
+                    "position_mm": self._cur_pos,
+                    "target_mm": self._target_pos,
+                    "flight_recorder_path": dump_path,
                 },
             )
 
@@ -929,7 +1118,9 @@ class Motor():
             return MotorStatus.FAULT
 
         fault_type = "Simulated fault" if self._simulated_fault else "Fault"
-        self._target_pos = None
+        target_pos = self._target_pos
+        current_pos = self._cur_pos
+        target_error = None if target_pos is None or current_pos is None else target_pos - current_pos
 
         self._logger.warning(
             f"{fault_type} detected - stopping motor, manual intervention required",
@@ -937,14 +1128,21 @@ class Motor():
                 "motor_id": self._motor_id,
                 "homing": homing,
                 "status_word": snapshot.status_word,
-                "position_mm": self._cur_pos,
+                "position_mm": current_pos,
+                "target_mm": target_pos,
+                "target_error_mm": target_error,
                 "alarm_code": alarm_state.alarm_code,
                 "stall_detected": fault_state.stall_detected,
                 "no_progress": fault_state.no_progress,
+                "seconds_since_progress": time.monotonic() - state.last_movement_time,
+                "stall_timeout_s": self._stall_timeout,
                 "simulated": self._simulated_fault,
+                "flight_recorder_path": dump_path,
+                "run_id": self._diagnostic_run_id,
             },
         )
 
+        self._target_pos = None
         self._pending_motion = None
         self._hard_stopped = True
         self._is_homed = False
@@ -957,7 +1155,13 @@ class Motor():
         homing: bool,
         state: MotionWaitState,
     ) -> MotorStatus:
-        await self._stop_and_clear_motion()
+        await self.stop()
+        target_pos = self._target_pos
+        current_pos = self._cur_pos
+        dump_path = self._dump_flight_recorder(
+            reason="timeout",
+            state=state,
+        )
 
         self._logger.error(
             "Motion timeout",
@@ -966,8 +1170,14 @@ class Motor():
                 "timeout": timeout,
                 "homing": homing,
                 "elapsed": time.monotonic() - state.start_time,
+                "position_mm": current_pos,
+                "target_mm": target_pos,
+                "seconds_since_progress": time.monotonic() - state.last_movement_time,
+                "flight_recorder_path": dump_path,
+                "run_id": self._diagnostic_run_id,
             }
         )
+        self._clear_pending_motion()
 
         return MotorStatus.TIMEOUT
 

@@ -158,6 +158,9 @@ def set_correlation_id(correlation_id: str) -> None:
 	"""Set correlation ID for current context."""
 	correlation_id_var.set(correlation_id)
 
+def get_correlation_id() -> str | None:
+    return correlation_id_var.get()
+
 
 def clear_context() -> None:
 	"""Clear all context variables."""
