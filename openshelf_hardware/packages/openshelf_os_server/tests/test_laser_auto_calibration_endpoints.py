@@ -885,6 +885,42 @@ async def test_run_single_side_uses_angle_capture_y_for_stage_probe() -> None:
     assert probe_y_mock.await_args.kwargs['top_shelf_y_mm'] == pytest.approx(angle_result.capture_y_mm)
 
 
+
+@pytest.mark.asyncio
+async def test_run_single_side_skips_extension_calibration_when_disabled() -> None:
+    manager = LaserAutoCalibrationManager()
+    worker = SimpleNamespace(_robot=SimpleNamespace(_tool=SimpleNamespace()))
+    angle_result = LaserAutoCalibrationAngleResult(
+        side='right_module',
+        alpha_deg=5.5,
+        sample_count=45,
+        capture_y_mm=1114.0,
+        rms_residual_mm=0.12,
+        max_abs_residual_mm=0.24,
+        line_angle_deg=90.0,
+        previous_rotation_deg=180.0,
+        updated_rotation_deg=185.5,
+    )
+
+    with patch('openshelf_os_server.core.laser_auto_calibration._build_bounds_for_side', return_value=ScanBounds(x_min=0.0, x_max=950.0, y_min=0.0, y_max=1210.0)):
+        with patch.object(manager, '_run_angle_calibration_for_side', AsyncMock(return_value=angle_result)):
+            with patch.object(manager, '_apply_angle_calibration_in_memory', AsyncMock()):
+                with patch.object(manager, '_resolve_stage_extension_probe_y_mm', AsyncMock()) as probe_y_mock:
+                    with patch.object(manager, '_run_stage_extension_calibration_for_side', AsyncMock()) as stage_mock:
+                        with patch.object(manager, '_apply_stage_extension_calibration_in_memory', AsyncMock()) as apply_stage_mock:
+                            with patch.object(manager, '_run_side', AsyncMock(return_value=SimpleNamespace(side=StorageModuleSide.RIGHT, angle_result=angle_result))):
+                                with patch.object(manager, '_persist_completed_results', AsyncMock()) as persist_mock:
+                                    await manager._run_single_side(
+                                        worker,
+                                        StorageModuleSide.RIGHT,
+                                        include_extension_calibration=False,
+                                    )
+
+    probe_y_mock.assert_not_awaited()
+    stage_mock.assert_not_awaited()
+    apply_stage_mock.assert_not_awaited()
+    persist_mock.assert_awaited_once()
+
 @pytest.mark.asyncio
 async def test_run_angle_calibration_uses_stage_stall_only() -> None:
     manager = LaserAutoCalibrationManager()
