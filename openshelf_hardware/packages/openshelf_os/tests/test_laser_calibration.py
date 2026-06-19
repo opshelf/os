@@ -724,6 +724,32 @@ def test_apply_xy_reference_offsets_rejects_wrong_detected_reference_target() ->
 		)
 
 
+def test_apply_xy_reference_offsets_accepts_cells_without_shelf_idx() -> None:
+	scanned_shelves = [
+		SimpleNamespace(
+			shelf_idx=0,
+			cells=[
+				SimpleNamespace(cell_idx=0, calibration_point=SimpleNamespace(x=100.0, y=200.0)),
+				SimpleNamespace(cell_idx=1, calibration_point=SimpleNamespace(x=200.0, y=200.0)),
+			],
+		)
+	]
+	scan_config = SimpleNamespace(
+		left_xy_reference=SimpleNamespace(shelf_idx=0, cell_idx=0, anchor='bottom_left', x_mm=294.0, y_mm=42.0),
+	)
+
+	apply_xy_reference_offsets(
+		scanned_shelves=scanned_shelves,
+		scan_config=scan_config,
+		side=StorageModuleSide.LEFT,
+	)
+
+	assert scanned_shelves[0].cells[0].calibration_point.x == pytest.approx(294.0)
+	assert scanned_shelves[0].cells[0].calibration_point.y == pytest.approx(42.0)
+	assert scanned_shelves[0].cells[1].calibration_point.x == pytest.approx(394.0)
+	assert scanned_shelves[0].cells[1].calibration_point.y == pytest.approx(42.0)
+
+
 def test_apply_xy_reference_offsets_requires_reference() -> None:
 	with pytest.raises(ValueError, match='robot.grid.scan.left_xy_reference must be configured'):
 		apply_xy_reference_offsets(
