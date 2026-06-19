@@ -83,6 +83,7 @@ class IOBox:
         self._door_candidate_state: Optional[bool] = None
         self._door_candidate_since: Optional[float] = None
         self._door_force_refresh_on_block: bool = False
+        self._safety_guard_bypassed: bool = False
         self._door_bad_reading_count: int = 0
         self._door_max_bad_readings: int = 5
         self._door_max_position_mm: float = 1000.0
@@ -196,13 +197,16 @@ class IOBox:
             )
             sentry_sdk.capture_exception(e)
             return None
-    
+
+    def set_safety_guard_bypassed(self, enabled: bool) -> None:
+        self._safety_guard_bypassed = enabled
+
     async def open_door(self):
         if self._md is None:
             raise IOBoxError("Door motor not configured or disabled")
 
         try:
-            while self._curtain_state:
+            while self._curtain_state and self._safety_guard_bypassed is False:
                 await asyncio.sleep(0.05)
 
             await self._md.move_to_position(self._params.motors.by_name("door").lim)
