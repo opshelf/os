@@ -4,7 +4,7 @@ import asyncio
 from copy import deepcopy
 import json
 import re
-from typing import AsyncGenerator, Callable, List, Literal, Optional, cast
+from typing import Any, AsyncGenerator, Callable, List, Literal, Optional, cast
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -171,6 +171,10 @@ class MotorProbeResponse(BaseModel):
 
 class MotorMoveRequest(BaseModel):
     position_mm: float = Field(..., description="Target position in millimeters")
+
+
+class SafetyGuardOverrideRequest(BaseModel):
+    bypass: bool
 
 
 async def check_robot_enabled() -> None:
@@ -363,6 +367,21 @@ async def acknowledge_safety_guard(
         )
 
     return SuccessResponse()
+
+
+@router.post(
+    "/safety/override",
+    dependencies=[
+        Depends(get_current_user),
+        Depends(require_permissions("robot:control")),
+        Depends(check_robot_enabled),
+    ],
+)
+async def override_safety_guard(
+    request: SafetyGuardOverrideRequest,
+    worker: RobotWorker = Depends(get_robot_worker_or_error),
+) -> dict[str, Any]:
+    return await worker.set_safety_guard_bypassed(request.bypass)
 
 
 @router.get("/debug/scanner/status", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])

@@ -3,6 +3,7 @@
 	import {
 		apiFetch,
 		controlCabinetRelease,
+		setBypassSafetyGuard,
 		getApiBase,
 		isApiConnected,
 		robotStatus,
@@ -17,6 +18,8 @@
 	let lanIp = '';
 	let isUnlockingCabinet = false;
 	let isHomingRobot = false;
+	let isUpdatingSafetyOverride = false;
+	let safetyOverrideError = '';
 
 	function getLightCurtainBlocked(): unknown {
 		const safety = $robotStatus?.robot_status?.safety;
@@ -56,6 +59,15 @@
 		return state.top_closed === true && state.bottom_closed === true ? 'closed' : 'opened';
 	}
 
+	function getBypassSafetyGuard(): boolean {
+		const safety = $robotStatus?.robot_status?.safety;
+		if (!safety || typeof safety !== 'object') {
+			return false;
+		}
+
+		return (safety as Record<string, unknown>).bypassed === true;
+	}
+
 	async function didClickCabinetUnlock(): Promise<void> {
 		isUnlockingCabinet = true;
 
@@ -65,6 +77,26 @@
 			console.error('failed to unlock cabinet:', err);
 		} finally {
 			isUnlockingCabinet = false;
+		}
+	}
+
+	async function didChangeBypassSafetyGuard(event: Event): Promise<void> {
+		const target = event.currentTarget as HTMLInputElement | null;
+		if (target === null) {
+			return;
+		}
+
+		const shouldBypassSafetyGuard = target.checked;
+		isUpdatingSafetyOverride = true;
+		safetyOverrideError = '';
+
+		try {
+			await setBypassSafetyGuard(shouldBypassSafetyGuard);
+		} catch (err) {
+			target.checked = !shouldBypassSafetyGuard;
+			safetyOverrideError = err instanceof Error ? err.message : 'failed to update safety override';
+		} finally {
+			isUpdatingSafetyOverride = false;
 		}
 	}
 
@@ -229,6 +261,31 @@
 			</tr>
 		</tbody>
 
+		<thead>
+			<tr>
+				<th colspan="2">control loop override</th>
+			</tr>
+		</thead>
+		<tbody>
+			<tr>
+				<td>bypass safety guard</td>
+				<td>
+					<label class="checkbox-row">
+						<input
+							type="checkbox"
+							checked={getBypassSafetyGuard()}
+							disabled={isUpdatingSafetyOverride === true}
+							onchange={didChangeBypassSafetyGuard}
+						/>
+						<span>{getBypassSafetyGuard() ? 'on' : 'off'}</span>
+					</label>
+					{#if safetyOverrideError !== ''}
+						<ErrorMessage message={safetyOverrideError} />
+					{/if}
+				</td>
+			</tr>
+		</tbody>
+
 		{#if $robotStatus.current_command}
 			<thead>
 				<tr>
@@ -270,5 +327,11 @@
 		justify-content: space-between;
 		align-items: center;
 		gap: 1em;
+	}
+
+	.checkbox-row {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5em;
 	}
 </style>
