@@ -457,6 +457,7 @@ class FakeRobot:
         self.pause_calls = 0
         self.resume_calls = 0
         self._operation_context = None
+        self.safety_guard_bypassed = False
 
     def set_curtain_state(self, state):
         self._curtain_state = state
@@ -466,6 +467,9 @@ class FakeRobot:
 
     def set_cabinet_door_state(self, state):
         self._cabinet_door_state = state
+
+    def set_safety_guard_bypassed(self, enabled):
+        self.safety_guard_bypassed = enabled
 
     def set_operation_context(self, context):
         self._operation_context = context
@@ -647,6 +651,44 @@ class CurtainGuardTests(unittest.TestCase):
         safety = self.worker.get_safety_status()
         self.assertTrue(safety["active"])
         self.assertEqual(safety["active_sources"], ["cabinet_doors"])
+        self.assertEqual(self.robot.pause_calls, 1)
+
+    def test_safety_guard_bypass_ignores_light_curtain_and_cabinet_doors(self):
+        self.robot.set_curtain_state(True)
+        self.robot.set_door_state(True)
+        self.robot.set_cabinet_door_state(
+            {
+                "top_closed": False,
+                "bottom_closed": True,
+                "closed": False,
+                "top_open": True,
+                "bottom_open": False,
+                "open": True,
+            }
+        )
+
+        safety = asyncio.run(self.worker.set_safety_guard_bypassed(True))
+
+        self.assertTrue(safety["bypassed"])
+        self.assertFalse(safety["active"])
+        self.assertFalse(safety["motion_blocked"])
+        self.assertEqual(safety["active_sources"], [])
+        self.assertTrue(safety["sources"]["light_curtain"]["bypassed"])
+        self.assertTrue(safety["sources"]["cabinet_doors"]["bypassed"])
+        self.assertEqual(self.robot.pause_calls, 0)
+        self.assertTrue(self.robot.safety_guard_bypassed)
+
+    def test_disabling_safety_guard_bypass_restores_active_sources(self):
+        self.robot.set_curtain_state(True)
+        self.robot.set_door_state(True)
+        asyncio.run(self.worker.set_safety_guard_bypassed(True))
+
+        safety = asyncio.run(self.worker.set_safety_guard_bypassed(False))
+
+        self.assertFalse(safety["bypassed"])
+        self.assertTrue(safety["active"])
+        self.assertTrue(safety["motion_blocked"])
+        self.assertEqual(safety["active_sources"], ["light_curtain"])
         self.assertEqual(self.robot.pause_calls, 1)
 
     def test_overlapping_sources_require_all_clear_before_ack(self):

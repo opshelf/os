@@ -64,6 +64,7 @@ class SafetyStatus(BaseModel):
     sources: dict[str, dict[str, Any]] = Field(default_factory=dict)
     interruption_id: int = 0
     last_changed_at: Optional[str] = None
+    bypassed: bool = False
 
 
 class ScaleStatus(BaseModel):
