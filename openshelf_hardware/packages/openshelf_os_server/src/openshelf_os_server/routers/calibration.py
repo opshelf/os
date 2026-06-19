@@ -131,6 +131,7 @@ def _build_laser_auto_calibration_scope(
 	mode: Literal["all", "io_box"] | None,
 	include_io_box: bool | None,
 	include_angle_calibration: bool | None,
+	include_extension_calibration: bool | None,
 ) -> LaserAutoCalibrationScope:
 	if shelf_idx is not None and shelf_idx < 0:
 		raise HTTPException(
@@ -151,7 +152,12 @@ def _build_laser_auto_calibration_scope(
 				detail="side, shelf_idx, and cell_idx cannot be used with io_box mode",
 			)
 
-		return LaserAutoCalibrationScope(mode="io_box", include_io_box=True, include_angle_calibration=False)
+		return LaserAutoCalibrationScope(
+			mode="io_box",
+			include_io_box=True,
+			include_angle_calibration=False,
+			include_extension_calibration=False,
+		)
 
 	if side is None:
 		if shelf_idx is not None or cell_idx is not None:
@@ -164,6 +170,7 @@ def _build_laser_auto_calibration_scope(
 			mode="all",
 			include_io_box=include_io_box is not False,
 			include_angle_calibration=include_angle_calibration is not False,
+			include_extension_calibration=include_extension_calibration is not False,
 		)
 
 	if cell_idx is not None and shelf_idx is None:
@@ -178,6 +185,7 @@ def _build_laser_auto_calibration_scope(
 			side=side,
 			include_io_box=include_io_box is True,
 			include_angle_calibration=include_angle_calibration is not False,
+			include_extension_calibration=include_extension_calibration is not False,
 		)
 
 	if cell_idx is None:
@@ -187,6 +195,7 @@ def _build_laser_auto_calibration_scope(
 			shelf_idx=shelf_idx,
 			include_io_box=include_io_box is True,
 			include_angle_calibration=False,
+			include_extension_calibration=False,
 		)
 
 	return LaserAutoCalibrationScope(
@@ -196,6 +205,7 @@ def _build_laser_auto_calibration_scope(
 		cell_idx=cell_idx,
 		include_io_box=include_io_box is True,
 		include_angle_calibration=False,
+		include_extension_calibration=False,
 	)
 
 
@@ -728,6 +738,7 @@ async def stream_laser_auto_calibration(
 	mode: Literal["all", "io_box"] | None = None,
 	include_io_box: bool | None = None,
 	include_angle_calibration: bool | None = None,
+	include_extension_calibration: bool | None = None,
 	subscribe_only: bool = False,
 ) -> EventSourceResponse:
 	requested_scope = _build_laser_auto_calibration_scope(
@@ -737,6 +748,7 @@ async def stream_laser_auto_calibration(
 		mode,
 		include_io_box,
 		include_angle_calibration,
+		include_extension_calibration,
 	)
 	manager = get_laser_auto_calibration_manager()
 	is_active = await manager.is_active()
