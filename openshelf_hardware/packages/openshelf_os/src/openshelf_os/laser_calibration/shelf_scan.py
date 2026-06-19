@@ -29,6 +29,48 @@ def build_shelf_scout_x_positions(
 		scout_x_mm=scout_x_mm,
 	)
 
+def resolve_lower_boundary_shelf_edge(
+	*,
+	bounds: ScanBounds,
+	side: StorageModuleSide,
+	scan_config: Any,
+	shelf_edges: list[ShelfSurfaceEdge],
+	hole_probe_y_offsets_mm: list[float],
+) -> ShelfSurfaceEdge | None:
+	if len(hole_probe_y_offsets_mm) == 0:
+		return None
+
+	edge_x_mm = bounds.x_max
+
+	if side == StorageModuleSide.RIGHT:
+		edge_x_mm = bounds.x_min
+
+	seed_y_mm = bounds.y_min
+
+	try:
+		xy_reference = get_scan_xy_reference(scan_config=scan_config, side=side)
+		laser_offset_y_mm = require_laser_offsets(scan_config)[1]
+
+		if int(xy_reference.shelf_idx) == 0:
+			seed_y_mm = (
+				float(xy_reference.y_mm) + laser_offset_y_mm - float(hole_probe_y_offsets_mm[0])
+			)
+	except (AttributeError, TypeError):
+		seed_y_mm = bounds.y_min
+
+	if seed_y_mm > bounds.y_min + SHELF_MIN_SPACING_MM:
+		return None
+
+	for shelf_edge in shelf_edges:
+		if abs(shelf_edge.y_mm - seed_y_mm) < SHELF_MIN_SPACING_MM:
+			return None
+
+	return ShelfSurfaceEdge(
+		x_mm=edge_x_mm,
+		y_mm=seed_y_mm,
+	)
+
+
 async def capture_shelf_candidates(
 	tool: Any,
 	*,
@@ -125,6 +167,20 @@ async def capture_shelf_candidates(
 		edges=shelf_edges,
 		y_max_mm=bounds.y_max,
 	)
+
+	if known_shelf_edge_y is None:
+		lower_boundary_edge = resolve_lower_boundary_shelf_edge(
+			bounds=bounds,
+			side=side,
+			scan_config=scan_config,
+			shelf_edges=filtered_shelf_edges,
+			hole_probe_y_offsets_mm=hole_probe_y_offsets_mm,
+		)
+
+		if lower_boundary_edge is not None:
+			filtered_shelf_edges.append(lower_boundary_edge)
+			filtered_shelf_edges = sorted(filtered_shelf_edges, key=lambda edge: -edge.y_mm)
+			print_status(f"lower_boundary_shelf_edge_seeded y={lower_boundary_edge.y_mm:.2f}")
 
 	print_status(
 		"shelf_edges="

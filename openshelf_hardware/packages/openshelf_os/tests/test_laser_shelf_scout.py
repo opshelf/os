@@ -12,6 +12,7 @@ from openshelf_os.laser_calibration.shelf_scout import (
 )
 from openshelf_os.laser_calibration.shelf_scan import (
 	build_shelf_scout_x_positions as build_scan_shelf_scout_x_positions,
+	resolve_lower_boundary_shelf_edge,
 )
 from openshelf_os.laser_calibration.scan import ScanBounds
 from openshelf_os.laser_calibration.core import StorageModuleSide
@@ -237,3 +238,51 @@ def test_scan_shelf_scout_x_positions_uses_configured_side_override() -> None:
 		side=StorageModuleSide.RIGHT,
 		scan_config=SimpleNamespace(right_shelf_scout_x_mm=950.0),
 	) == [950.0]
+
+
+def test_resolve_lower_boundary_shelf_edge_uses_reference_hole_probe_y() -> None:
+	bounds = ScanBounds(x_min=5.0, x_max=950.0, y_min=0.0, y_max=1165.0)
+
+	edge = resolve_lower_boundary_shelf_edge(
+		bounds=bounds,
+		side=StorageModuleSide.LEFT,
+		scan_config=SimpleNamespace(
+			laser_offset_x_mm=51.0,
+			laser_offset_y_mm=0.0,
+			left_xy_reference=SimpleNamespace(
+				shelf_idx=0,
+				cell_idx=0,
+				anchor='bottom_left',
+				x_mm=357.0,
+				y_mm=42.0,
+			),
+		),
+		shelf_edges=[ShelfSurfaceEdge(x_mm=950.0, y_mm=281.0)],
+		hole_probe_y_offsets_mm=[32.25],
+	)
+
+	assert edge == ShelfSurfaceEdge(x_mm=950.0, y_mm=pytest.approx(9.75))
+
+
+def test_resolve_lower_boundary_shelf_edge_skips_nearby_detected_edge() -> None:
+	bounds = ScanBounds(x_min=5.0, x_max=950.0, y_min=0.0, y_max=1165.0)
+
+	edge = resolve_lower_boundary_shelf_edge(
+		bounds=bounds,
+		side=StorageModuleSide.LEFT,
+		scan_config=SimpleNamespace(
+			laser_offset_x_mm=51.0,
+			laser_offset_y_mm=0.0,
+			left_xy_reference=SimpleNamespace(
+				shelf_idx=0,
+				cell_idx=0,
+				anchor='bottom_left',
+				x_mm=357.0,
+				y_mm=42.0,
+			),
+		),
+		shelf_edges=[ShelfSurfaceEdge(x_mm=950.0, y_mm=12.0)],
+		hole_probe_y_offsets_mm=[32.25],
+	)
+
+	assert edge is None
