@@ -954,6 +954,26 @@ export async function acknowledgeSafety(): Promise<{ message: string }> {
 	});
 }
 
+export interface SafetyGuardOverrideResponse {
+	active: boolean;
+	motion_blocked: boolean;
+	awaiting_ack: boolean;
+	can_acknowledge: boolean;
+	active_sources: string[];
+	sources: Record<string, Record<string, unknown>>;
+	interruption_id: number;
+	last_changed_at: string | null;
+	bypassed: boolean;
+}
+
+export async function setBypassSafetyGuard(bypass: boolean): Promise<SafetyGuardOverrideResponse> {
+	return apiFetch<SafetyGuardOverrideResponse>('/robot/safety/override', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ bypass })
+	});
+}
+
 export interface IOBoxPosition {
 	pickup_low_x: number;
 	pickup_low_y: number;

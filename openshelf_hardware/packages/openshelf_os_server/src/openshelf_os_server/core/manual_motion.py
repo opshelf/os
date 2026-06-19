@@ -53,9 +53,12 @@ def ensure_robot_available_for_manual_motion(worker) -> None:
 	is_demo_cycling = worker_state.get("_demo_cycling", False)
 	has_pending_commands = _has_pending_commands(worker_state)
 	is_safety_blocking = (
-		bool(worker_state.get("_safety_motion_blocked"))
-		or bool(worker_state.get("_awaiting_safety_ack"))
-		or bool(worker_state.get("_safety_active_sources"))
+		worker_state.get("_safety_guard_bypassed") is not True
+		and (
+			bool(worker_state.get("_safety_motion_blocked"))
+			or bool(worker_state.get("_awaiting_safety_ack"))
+			or bool(worker_state.get("_safety_active_sources"))
+		)
 	)
 
 	if is_safety_blocking is True:
