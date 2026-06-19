@@ -278,6 +278,74 @@ async def test_move_motor_robot_disabled(client: AsyncClient) -> None:
 
 
 @pytest.mark.anyio
+async def test_clear_motor_alarm_success(client: AsyncClient) -> None:
+	motor = _mock_motor(100.0)
+	motors = {
+		"door": _mock_motor(50.0),
+		"x_axis": motor,
+		"y_axis": _mock_motor(200.0),
+		"z_axis": _mock_motor(150.0),
+		"stage": _mock_motor(75.0),
+		"rotate": _mock_motor(0.0),
+	}
+	mock_worker = _mock_worker(motors)
+	motor._simulated_fault = True
+	motor._motor_id = 1
+	mock_worker._is_crashed = True
+	mock_worker._crash_reason = "Simulated motor fault on x_axis"
+	mock_worker.needs_home = MagicMock(return_value=True)
+	mock_worker.needs_home_reason = MagicMock(return_value="Simulated motor fault on x_axis")
+
+	with patch("openshelf_os_server.routers.robot.get_settings", return_value=_mock_settings()):
+		with patch("openshelf_os_server.routers.robot.get_robot_worker", return_value=mock_worker):
+			response = await client.post("/api/robot/debug/motors/x_axis/clear")
+
+	assert response.status_code == 200
+	assert response.json()["success"] is True
+	motor.clear_alarm.assert_awaited_once()
+	assert motor._simulated_fault is False
+	mock_worker.clear_needs_home_axes.assert_called_once_with(["x_axis"])
+	mock_worker.clear_needs_home.assert_called_once_with()
+	mock_worker.clear_crash_state.assert_called_once_with()
+	mock_worker.get_status_snapshot.assert_awaited_once_with(force_refresh=True)
+
+
+@pytest.mark.anyio
+async def test_clear_motor_alarm_not_found(client: AsyncClient) -> None:
+	mock_worker = _mock_worker()
+
+	with patch("openshelf_os_server.routers.robot.get_settings", return_value=_mock_settings()):
+		with patch("openshelf_os_server.routers.robot.get_robot_worker", return_value=mock_worker):
+			response = await client.post("/api/robot/debug/motors/nonexistent/clear")
+
+	assert response.status_code == 404
+	assert "not found" in response.json()["detail"].lower()
+
+
+@pytest.mark.anyio
+async def test_clear_motor_alarm_failure(client: AsyncClient) -> None:
+	failing_motor = _mock_motor(100.0)
+	failing_motor.clear_alarm = AsyncMock(side_effect=Exception("alarm register busy"))
+	motors = {
+		"door": _mock_motor(50.0),
+		"x_axis": failing_motor,
+		"y_axis": _mock_motor(200.0),
+		"z_axis": _mock_motor(150.0),
+		"stage": _mock_motor(75.0),
+		"rotate": _mock_motor(0.0),
+	}
+	mock_worker = _mock_worker(motors)
+
+	with patch("openshelf_os_server.routers.robot.get_settings", return_value=_mock_settings()):
+		with patch("openshelf_os_server.routers.robot.get_robot_worker", return_value=mock_worker):
+			response = await client.post("/api/robot/debug/motors/x_axis/clear")
+
+	assert response.status_code == 503
+	detail = response.json()["detail"]
+	assert detail["code"] == "motor_alarm_clear_failed"
+	assert "alarm register busy" in detail["message"].lower()
+
+@pytest.mark.anyio
 async def test_move_rotate_motor_extends_stage_before_rotation(client: AsyncClient) -> None:
 	rotate_motor = _mock_motor(0.0)
 	motors = {
