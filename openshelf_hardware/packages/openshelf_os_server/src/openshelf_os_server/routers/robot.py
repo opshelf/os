@@ -527,6 +527,42 @@ async def simulate_motor_crash(
     return {"success": True, "motor": motor_name}
 
 
+@router.post("/debug/motors/{motor_name}/clear", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
+async def clear_motor_alarm(
+    motor_name: str,
+    worker: RobotWorker = Depends(get_robot_worker_or_error),
+) -> dict:
+    motor = worker._robot._get_motor_by_name(motor_name)
+
+    if motor is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Motor '{motor_name}' not found",
+        )
+
+    try:
+        async with manual_motion_guard(f"motor_clear:{motor_name}", worker=worker):
+            was_simulated_fault = bool(getattr(motor, "_simulated_fault", False))
+            await motor.clear_alarm()
+            if was_simulated_fault is True:
+                motor._simulated_fault = False
+                worker.clear_needs_home_axes([motor_name])
+                if worker.needs_home() and worker.needs_home_axes() == []:
+                    if _reason_matches_motor(worker.needs_home_reason(), motor_name, motor):
+                        worker.clear_needs_home()
+                _clear_matching_motor_crash_state(worker, motor_name, motor)
+            await worker.get_status_snapshot(force_refresh=True)
+            return {"success": True, "motor": motor_name}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logging.error("Motor alarm clear failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=_error_detail(f"Motor alarm clear failed: {exc}", "motor_alarm_clear_failed"),
+        ) from exc
+
+
 @router.post("/debug/motors/{motor_name}/home", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
 async def home_motor(
     motor_name: str,
