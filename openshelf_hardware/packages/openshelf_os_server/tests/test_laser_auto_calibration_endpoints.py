@@ -1142,15 +1142,15 @@ async def test_run_single_shelf_uses_known_shelf_edge_with_neighbor_clipped_boun
                                 with patch.object(manager, '_persist_single_shelf_result', AsyncMock()) as persist_mock:
                                     await manager._run_single_shelf(worker, StorageModuleSide.RIGHT, 0)
 
-    known_edge_mock.assert_called_once_with(
-        grid=grid,
-        side=StorageModuleSide.RIGHT,
-        shelf_idx=0,
-        scan_config=scan_config,
-    )
+    known_edge_mock.assert_called_once()
+    assert known_edge_mock.call_args.kwargs['grid'] is grid
+    assert known_edge_mock.call_args.kwargs['side'] == StorageModuleSide.RIGHT
+    assert known_edge_mock.call_args.kwargs['shelf_idx'] == 0
     assert scan_mock.await_args.kwargs['known_shelf_edge_y'] == [30.75]
     scan_config_override = scan_mock.await_args.kwargs['scan_config_override']
+    assert known_edge_mock.call_args.kwargs['scan_config'] is scan_config_override
     assert scan_config_override.shelf_hole_probe_y_offsets_mm == [pytest.approx(12.25)]
+    assert scan_config.shelf_hole_probe_y_offsets_mm == [pytest.approx(32.25)]
     assert scan_mock.await_args.kwargs['should_validate_reference_bounds'] is False
     assert scan_mock.call_args.args[2].y_min == pytest.approx(0.0)
     assert scan_mock.call_args.args[2].y_max == pytest.approx(112.5)
