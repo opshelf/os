@@ -479,7 +479,7 @@ def analyze_scan_capture(
 			current_shelf_cells.append(cell)
 			continue
 
-		current_shelf_cells.sort(key=lambda current_cell: -current_cell.center_x_mm)
+		current_shelf_cells.sort(key=lambda current_cell: current_cell.center_x_mm)
 		for cell_idx, shelf_cell in enumerate(current_shelf_cells):
 			shelf_cell.shelf_idx = current_shelf.shelf_idx
 			shelf_cell.cell_idx = cell_idx
@@ -499,7 +499,7 @@ def analyze_scan_capture(
 		current_shelf_cells = [cell]
 
 	if current_shelf is not None:
-		current_shelf_cells.sort(key=lambda current_cell: -current_cell.center_x_mm)
+		current_shelf_cells.sort(key=lambda current_cell: current_cell.center_x_mm)
 		for cell_idx, shelf_cell in enumerate(current_shelf_cells):
 			shelf_cell.shelf_idx = current_shelf.shelf_idx
 			shelf_cell.cell_idx = cell_idx

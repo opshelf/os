@@ -576,6 +576,14 @@ def apply_xy_reference_offsets(
 		print_status("xy_offset_inference=skipped reason=anchor_unresolved")
 		return
 
+	if int(getattr(anchor_cell, "shelf_idx", -1)) != int(xy_reference.shelf_idx) or int(getattr(anchor_cell, "cell_idx", -1)) != int(xy_reference.cell_idx):
+		raise ValueError(
+			"Detected xy reference anchor "
+			f"{getattr(anchor_cell, 'shelf_idx', None)}:{getattr(anchor_cell, 'cell_idx', None)} "
+			"does not match configured reference target "
+			f"{int(xy_reference.shelf_idx)}:{int(xy_reference.cell_idx)}"
+		)
+
 	delta_x_mm = float(xy_reference.x_mm) - float(anchor_cell.calibration_point.x)
 	delta_y_mm = float(xy_reference.y_mm) - float(anchor_cell.calibration_point.y)
 	updated_cell_count = 0
@@ -786,6 +794,11 @@ def apply_wall_depth_z_offsets(
 		reference_wall_depth_mm = float(z_reference_wall_depth_mm)
 	elif reference_candidate is not None and reference_candidate.wall_depth_mm is not None:
 		reference_wall_depth_mm = float(reference_candidate.wall_depth_mm)
+	elif should_use_analysis_wall_depth_fallback is False and reference_candidate is None:
+		raise ValueError(
+			"Detected cells do not include configured z reference target "
+			f"{reference_key[0]}:{reference_key[1]}"
+		)
 	elif should_use_analysis_wall_depth_fallback is True and getattr(analysis, "wall_depth_mm", 0.0) is not None and float(analysis.wall_depth_mm) > 0.0:
 		reference_wall_depth_mm = float(analysis.wall_depth_mm)
 	if reference_wall_depth_mm is None:
@@ -1285,6 +1298,7 @@ def apply_analysis(
 		scan_config=scan_config,
 		side=side,
 		current_stage_extension_mm=current_stage_extension_mm,
+		should_use_analysis_wall_depth_fallback=False,
 	)
 	left_module = list(grid.left_module)
 	right_module = list(grid.right_module)

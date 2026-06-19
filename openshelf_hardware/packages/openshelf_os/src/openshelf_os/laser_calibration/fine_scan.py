@@ -406,10 +406,7 @@ def build_detected_shelves(
 	side: StorageModuleSide,
 	shelf_threshold_mm: float,
 ) -> list[ScanDetectedShelf]:
-	if side == StorageModuleSide.RIGHT:
-		sorted_cells = sorted(detected_cells, key=lambda cell: (cell.center_y_mm, cell.center_x_mm))
-	else:
-		sorted_cells = sorted(detected_cells, key=lambda cell: (cell.center_y_mm, -cell.center_x_mm))
+	sorted_cells = sorted(detected_cells, key=lambda cell: (cell.center_y_mm, cell.center_x_mm))
 
 	shelves: list[ScanDetectedShelf] = []
 	current_shelf: Optional[ScanDetectedShelf] = None
@@ -430,10 +427,7 @@ def build_detected_shelves(
 			current_cells.append(cell)
 			continue
 
-		if side == StorageModuleSide.RIGHT:
-			current_cells.sort(key=lambda current: current.center_x_mm)
-		else:
-			current_cells.sort(key=lambda current: -current.center_x_mm)
+		current_cells.sort(key=lambda current: current.center_x_mm)
 
 		for cell_idx, current_cell in enumerate(current_cells):
 			current_cell.shelf_idx = current_shelf.shelf_idx
@@ -456,10 +450,7 @@ def build_detected_shelves(
 	if current_shelf is None:
 		return shelves
 
-	if side == StorageModuleSide.RIGHT:
-		current_cells.sort(key=lambda current: current.center_x_mm)
-	else:
-		current_cells.sort(key=lambda current: -current.center_x_mm)
+	current_cells.sort(key=lambda current: current.center_x_mm)
 
 	for cell_idx, current_cell in enumerate(current_cells):
 		current_cell.shelf_idx = current_shelf.shelf_idx
@@ -674,7 +665,7 @@ def dedupe_detected_cells(
 			deduped_cells.remove(existing_cell)
 			deduped_cells.append(cell)
 
-	deduped_cells.sort(key=lambda cell: (cell.center_y_mm, -cell.center_x_mm))
+	deduped_cells.sort(key=lambda cell: (cell.center_y_mm, cell.center_x_mm))
 	return deduped_cells
 
 

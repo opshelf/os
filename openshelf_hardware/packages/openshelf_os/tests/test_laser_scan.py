@@ -68,13 +68,13 @@ def assert_synthetic_analysis(analysis, shelves) -> None:
 	assert analysis.shelves[0].cells[0].cell_idx == 0
 	assert analysis.shelves[0].cells[1].cell_idx == 1
 	assert analysis.shelves[0].cells[2].cell_idx == 2
-	assert analysis.shelves[0].cells[0].center_x_mm == 110.0
+	assert analysis.shelves[0].cells[0].center_x_mm == 20.0
 	assert analysis.shelves[0].cells[1].center_x_mm == 65.0
-	assert analysis.shelves[0].cells[2].center_x_mm == 20.0
+	assert analysis.shelves[0].cells[2].center_x_mm == 110.0
 	assert shelves[0].cells[0].calibration_point is not None
-	assert shelves[0].cells[0].calibration_point.x == analysis.shelves[0].cells[0].tool_x_mm
+	assert shelves[0].cells[0].calibration_point.x == 22.0
 	assert shelves[0].cells[2].calibration_point is not None
-	assert shelves[0].cells[2].calibration_point.x == 22.0
+	assert shelves[0].cells[2].calibration_point.x == analysis.shelves[0].cells[2].tool_x_mm
 
 
 def test_storage_grid_infers_sparse_indices_from_legacy_payload(tmp_path):

@@ -57,6 +57,7 @@ def test_laser_scan_config_uses_clear_field_names() -> None:
 	assert scan_config.laser_scan_z_offset_from_place_mm == pytest.approx(10.0)
 	assert scan_config.shelf_hole_probe_y_offsets_mm == [pytest.approx(32.25)]
 	assert scan_config.fine_cell_scan_y_margin_mm == pytest.approx(12.0)
+	assert LaserScanConfig().shelf_scout_post_edge_skip_mm == pytest.approx(40.0)
 
 
 def test_laser_scan_config_rejects_legacy_field_names() -> None:
@@ -680,13 +681,13 @@ def test_apply_xy_reference_offsets_uses_physical_top_left_for_right_side() -> N
 		SimpleNamespace(
 			shelf_idx=1,
 			cells=[
-				SimpleNamespace(calibration_point=SimpleNamespace(x=-578.0, y=1138.0)),
-				SimpleNamespace(calibration_point=SimpleNamespace(x=51.5, y=1143.0)),
+				SimpleNamespace(shelf_idx=1, cell_idx=0, calibration_point=SimpleNamespace(x=-578.0, y=1138.0)),
+				SimpleNamespace(shelf_idx=1, cell_idx=1, calibration_point=SimpleNamespace(x=51.5, y=1143.0)),
 			],
 		)
 	]
 	scan_config = SimpleNamespace(
-		right_reference=SimpleNamespace(shelf_idx=0, cell_idx=0, anchor='top_left', x_mm=51.5, y_mm=1143.0, z_offset_mm=1.0, wall_depth_mm=1.0),
+		right_reference=SimpleNamespace(shelf_idx=1, cell_idx=0, anchor='top_left', x_mm=51.5, y_mm=1143.0, z_offset_mm=1.0, wall_depth_mm=1.0),
 	)
 
 	apply_xy_reference_offsets(
@@ -699,6 +700,28 @@ def test_apply_xy_reference_offsets_uses_physical_top_left_for_right_side() -> N
 	assert scanned_shelves[0].cells[0].calibration_point.y == pytest.approx(1143.0)
 	assert scanned_shelves[0].cells[1].calibration_point.x == pytest.approx(681.0)
 	assert scanned_shelves[0].cells[1].calibration_point.y == pytest.approx(1148.0)
+
+
+def test_apply_xy_reference_offsets_rejects_wrong_detected_reference_target() -> None:
+	scanned_shelves = [
+		SimpleNamespace(
+			shelf_idx=0,
+			cells=[
+				SimpleNamespace(shelf_idx=0, cell_idx=0, calibration_point=SimpleNamespace(x=500.0, y=500.0)),
+				SimpleNamespace(shelf_idx=0, cell_idx=1, calibration_point=SimpleNamespace(x=100.0, y=500.0)),
+			],
+		)
+	]
+	scan_config = SimpleNamespace(
+		left_xy_reference=SimpleNamespace(shelf_idx=0, cell_idx=0, anchor='bottom_left', x_mm=357.0, y_mm=42.0),
+	)
+
+	with pytest.raises(ValueError, match='does not match configured reference target 0:0'):
+		apply_xy_reference_offsets(
+			scanned_shelves=scanned_shelves,
+			scan_config=scan_config,
+			side=StorageModuleSide.LEFT,
+		)
 
 
 def test_apply_xy_reference_offsets_requires_reference() -> None:
