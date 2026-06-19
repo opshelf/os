@@ -4,6 +4,7 @@
 	import {
 		getMotors,
 		simulateMotorCrash,
+		clearMotorAlarm,
 		homeMotor,
 		controlGripper,
 		controlDoor,
@@ -39,7 +40,7 @@
 
 	const POSITION_POLL_INTERVAL_MS = 1000;
 
-	let activeAction: 'crash' | 'home' | null = null;
+	let activeAction: 'crash' | 'home' | 'clear' | null = null;
 
 	function unitForMotor(motorName: string): string {
 		if (motorName === 'rotate') {
@@ -163,6 +164,28 @@
 			}
 		} catch (err) {
 			error = err instanceof Error ? err.message : `crash failed for ${motorName}`;
+		} finally {
+			activeMotor = null;
+			activeAction = null;
+		}
+	}
+
+	async function didClickClear(motorName: string): Promise<void> {
+		activeMotor = motorName;
+		activeAction = 'clear';
+		error = '';
+		message = '';
+
+		try {
+			const result = await clearMotorAlarm(motorName);
+
+			if (result.success === true) {
+				message = `alarm cleared for ${motorName}`;
+			} else {
+				error = `failed to clear alarm for ${motorName}`;
+			}
+		} catch (err) {
+			error = err instanceof Error ? err.message : `clear alarm failed for ${motorName}`;
 		} finally {
 			activeMotor = null;
 			activeAction = null;
@@ -558,6 +581,17 @@
 						>
 							crash
 						</button>
+						<button
+							type="button"
+							on:click={() => didClickClear(motor.name)}
+							disabled={activeMotor !== null ||
+								gripperAction !== null ||
+								doorAction !== null ||
+								movingMotor !== null ||
+								isTesting === true}
+						>
+							clear
+						</button>
 					</td>
 				</tr>
 			{/each}
@@ -650,6 +684,16 @@
 								isTesting === true}
 						>
 							crash
+						</button>
+						<button
+							type="button"
+							on:click={() => didClickClear(motor.name)}
+							disabled={activeMotor !== null ||
+								gripperAction !== null ||
+								movingMotor !== null ||
+								isTesting === true}
+						>
+							clear
 						</button>
 					</td>
 				</tr>
@@ -786,6 +830,16 @@
 							</button>
 							<button
 								type="button"
+								on:click={() => didClickClear('door')}
+								disabled={activeMotor !== null ||
+									doorAction !== null ||
+									movingMotor !== null ||
+									isTesting === true}
+							>
+								clear
+							</button>
+							<button
+								type="button"
 								on:click={() => didClickDoor('open')}
 								disabled={doorAction !== null ||
 									activeMotor !== null ||
@@ -824,6 +878,16 @@
 									isTesting === true}
 							>
 								crash
+							</button>
+							<button
+								type="button"
+								on:click={() => didClickClear(motor.name)}
+								disabled={activeMotor !== null ||
+									doorAction !== null ||
+									movingMotor !== null ||
+									isTesting === true}
+							>
+								clear
 							</button>
 						{/if}
 					</td>
