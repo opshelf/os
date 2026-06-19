@@ -33,7 +33,6 @@ def resolve_lower_boundary_shelf_edge(
 	*,
 	bounds: ScanBounds,
 	side: StorageModuleSide,
-	scan_config: Any,
 	shelf_edges: list[ShelfSurfaceEdge],
 	hole_probe_y_offsets_mm: list[float],
 ) -> ShelfSurfaceEdge | None:
@@ -46,20 +45,6 @@ def resolve_lower_boundary_shelf_edge(
 		edge_x_mm = bounds.x_min
 
 	seed_y_mm = bounds.y_min
-
-	try:
-		xy_reference = get_scan_xy_reference(scan_config=scan_config, side=side)
-		laser_offset_y_mm = require_laser_offsets(scan_config)[1]
-
-		if int(xy_reference.shelf_idx) == 0:
-			seed_y_mm = (
-				float(xy_reference.y_mm) + laser_offset_y_mm - float(hole_probe_y_offsets_mm[0])
-			)
-	except (AttributeError, TypeError):
-		seed_y_mm = bounds.y_min
-
-	if seed_y_mm > bounds.y_min + SHELF_MIN_SPACING_MM:
-		return None
 
 	for shelf_edge in shelf_edges:
 		if abs(shelf_edge.y_mm - seed_y_mm) < SHELF_MIN_SPACING_MM:
@@ -172,7 +157,6 @@ async def capture_shelf_candidates(
 		lower_boundary_edge = resolve_lower_boundary_shelf_edge(
 			bounds=bounds,
 			side=side,
-			scan_config=scan_config,
 			shelf_edges=filtered_shelf_edges,
 			hole_probe_y_offsets_mm=hole_probe_y_offsets_mm,
 		)
