@@ -18,7 +18,7 @@ from openshelf_os.laser_calibration.core import StorageModuleSide
 
 
 @pytest.mark.asyncio
-async def test_scan_shelf_scout_line_detects_bounded_shelf_edge() -> None:
+async def test_scan_shelf_scout_line_detects_positive_to_zero_shelf_edge() -> None:
 	depth_samples = iter([None, 5.0, 5.1, 5.2, 5.1, None, None])
 
 	async def didSampleDepth(*args, **kwargs):
@@ -41,11 +41,11 @@ async def test_scan_shelf_scout_line_detects_bounded_shelf_edge() -> None:
 	)
 
 	assert depth_values == [None, 5.0, 5.1, 5.2, 5.1, None, None]
-	assert edges == [ShelfSurfaceEdge(x_mm=25.0, y_mm=105.0)]
+	assert edges == [ShelfSurfaceEdge(x_mm=25.0, y_mm=93.0)]
 
 
 @pytest.mark.asyncio
-async def test_scan_shelf_scout_line_uses_configured_brim_max_height() -> None:
+async def test_scan_shelf_scout_line_detects_occupied_shelf_edge_from_tall_positive_run() -> None:
 	depths = [None] + [5.0 for _ in range(11)] + [None]
 	y_positions = [float(y_mm) for y_mm in range(120, 94, -2)]
 
@@ -74,23 +74,11 @@ async def test_scan_shelf_scout_line_uses_configured_brim_max_height() -> None:
 		sample_depth=didSampleDepth,
 	)
 
-	_, configured_edges = await scan_shelf_scout_line(
-		tool,
-		x_mm=25.0,
-		y_positions=y_positions,
-		settle_ms=0,
-		samples_per_point=1,
-		progress_label='shelf_scout_1',
-		sample_depth=didSampleDepth,
-		brim_max_height_mm=22.0,
-	)
-
-	assert default_edges == []
-	assert configured_edges == [ShelfSurfaceEdge(x_mm=25.0, y_mm=108.0)]
+	assert default_edges == [ShelfSurfaceEdge(x_mm=25.0, y_mm=89.0)]
 
 
 @pytest.mark.asyncio
-async def test_scan_shelf_scout_wrapper_passes_configured_brim_max_height(monkeypatch) -> None:
+async def test_scan_shelf_scout_wrapper_detects_occupied_shelf_edge(monkeypatch) -> None:
 	depths = [None] + [5.0 for _ in range(11)] + [None]
 	y_positions = [float(y_mm) for y_mm in range(120, 94, -2)]
 	current_y_mm = y_positions[0]
@@ -120,7 +108,7 @@ async def test_scan_shelf_scout_wrapper_passes_configured_brim_max_height(monkey
 		brim_max_height_mm=22.0,
 	)
 
-	assert edges == [ShelfSurfaceEdge(x_mm=25.0, y_mm=108.0)]
+	assert edges == [ShelfSurfaceEdge(x_mm=25.0, y_mm=89.0)]
 
 @pytest.mark.asyncio
 async def test_scan_shelf_scout_line_uses_configured_post_edge_skip() -> None:
@@ -159,8 +147,8 @@ async def test_scan_shelf_scout_line_uses_configured_post_edge_skip() -> None:
 	)
 
 	assert edges == [
-		ShelfSurfaceEdge(x_mm=25.0, y_mm=106.0),
-		ShelfSurfaceEdge(x_mm=25.0, y_mm=56.0),
+		ShelfSurfaceEdge(x_mm=25.0, y_mm=93.0),
+		ShelfSurfaceEdge(x_mm=25.0, y_mm=43.0),
 	]
 	assert depth_values[y_positions.index(60.0)] == 5.0
 
@@ -195,7 +183,7 @@ async def test_scan_shelf_scout_line_stops_after_first_edge_when_requested() -> 
 
 	assert sampled_count == 6
 	assert depth_values == [None, 5.0, 5.1, 5.2, 5.1, None, None, None, None]
-	assert edges == [ShelfSurfaceEdge(x_mm=25.0, y_mm=105.0)]
+	assert edges == [ShelfSurfaceEdge(x_mm=25.0, y_mm=93.0)]
 
 
 def test_filter_shelf_edges_discards_top_margin_and_close_duplicates() -> None:
