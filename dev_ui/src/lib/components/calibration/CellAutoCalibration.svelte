@@ -27,6 +27,7 @@
 	let isAllSelected = $state<boolean>(true);
 	let isIoBoxSelected = $state<boolean>(true);
 	let isAngleCalibrationSelected = $state<boolean>(true);
+	let isExtensionCalibrationSelected = $state<boolean>(true);
 	let selectedSide = $state<'' | 'left_module' | 'right_module'>('');
 	let selectedShelf = $state<string>('');
 	let selectedCell = $state<string>('');
@@ -69,6 +70,10 @@
 		return selectedShelf !== '' || isSelectionDisabled === true;
 	});
 
+	const isExtensionCalibrationDisabled = $derived.by(() => {
+		return selectedShelf !== '' || isSelectionDisabled === true;
+	});
+
 	const isStartDisabled = $derived.by(() => {
 		if (isConnecting === true || isStreamOpen === true || isStreamReconnecting === true) {
 			return true;
@@ -85,7 +90,8 @@
 	const defaultRequestedScope: LaserAutoCalibrationRequest = {
 		mode: 'all',
 		include_io_box: true,
-		include_angle_calibration: true
+		include_angle_calibration: true,
+		include_extension_calibration: true
 	};
 
 	onMount(function () {
@@ -244,11 +250,13 @@
 	function syncScopeSelection(requestedScope: LaserAutoCalibrationRequest): void {
 		isIoBoxSelected = requestedScope.include_io_box === true || requestedScope.mode === 'io_box';
 		isAngleCalibrationSelected = requestedScope.include_angle_calibration !== false;
+		isExtensionCalibrationSelected = requestedScope.include_extension_calibration !== false;
 
 		if (requestedScope.mode === 'all') {
 			isAllSelected = true;
 			isIoBoxSelected = true;
 			isAngleCalibrationSelected = requestedScope.include_angle_calibration !== false;
+			isExtensionCalibrationSelected = requestedScope.include_extension_calibration !== false;
 			selectedSide = '';
 			selectedShelf = '';
 			selectedCell = '';
@@ -262,6 +270,7 @@
 			selectedShelf = '';
 			selectedCell = '';
 			isAngleCalibrationSelected = false;
+			isExtensionCalibrationSelected = false;
 			return;
 		}
 
@@ -277,6 +286,7 @@
 
 		if (requestedScope.mode === 'shelf' || requestedScope.mode === 'cell') {
 			isAngleCalibrationSelected = false;
+			isExtensionCalibrationSelected = false;
 		}
 	}
 
@@ -285,12 +295,18 @@
 			return {
 				mode: 'all',
 				include_io_box: true,
-				include_angle_calibration: isAngleCalibrationSelected
+				include_angle_calibration: isAngleCalibrationSelected,
+				include_extension_calibration: isExtensionCalibrationSelected
 			};
 		}
 
 		if (selectedSide === '') {
-			return { mode: 'io_box', include_io_box: true, include_angle_calibration: false };
+			return {
+				mode: 'io_box',
+				include_io_box: true,
+				include_angle_calibration: false,
+				include_extension_calibration: false
+			};
 		}
 
 		if (selectedShelf === '') {
@@ -298,7 +314,8 @@
 				mode: 'side',
 				side: selectedSide,
 				include_io_box: isIoBoxSelected,
-				include_angle_calibration: isAngleCalibrationSelected
+				include_angle_calibration: isAngleCalibrationSelected,
+				include_extension_calibration: isExtensionCalibrationSelected
 			};
 		}
 
@@ -308,7 +325,8 @@
 				side: selectedSide,
 				shelf_idx: Number(selectedShelf),
 				include_io_box: isIoBoxSelected,
-				include_angle_calibration: false
+				include_angle_calibration: false,
+				include_extension_calibration: false
 			};
 		}
 
@@ -318,7 +336,8 @@
 			shelf_idx: Number(selectedShelf),
 			cell_idx: Number(selectedCell),
 			include_io_box: isIoBoxSelected,
-			include_angle_calibration: false
+			include_angle_calibration: false,
+			include_extension_calibration: false
 		};
 	}
 
@@ -415,6 +434,7 @@
 		isAllSelected = target.checked;
 		isIoBoxSelected = isAllSelected;
 		isAngleCalibrationSelected = true;
+		isExtensionCalibrationSelected = true;
 
 		if (isAllSelected === true) {
 			selectedSide = '';
@@ -432,6 +452,7 @@
 		selectedSide = target.value as '' | 'left_module' | 'right_module';
 		syncSelection();
 		isAngleCalibrationSelected = selectedShelf === '';
+		isExtensionCalibrationSelected = selectedShelf === '';
 		error = '';
 		message = '';
 	}
@@ -441,6 +462,7 @@
 
 		syncSelection(target.value);
 		isAngleCalibrationSelected = selectedShelf === '';
+		isExtensionCalibrationSelected = selectedShelf === '';
 		error = '';
 		message = '';
 	}
@@ -451,6 +473,7 @@
 		selectedCell = target.value;
 		if (selectedCell !== '') {
 			isAngleCalibrationSelected = false;
+			isExtensionCalibrationSelected = false;
 		}
 		error = '';
 		message = '';
@@ -468,6 +491,14 @@
 		const target = event.target as HTMLInputElement;
 
 		isAngleCalibrationSelected = target.checked;
+		error = '';
+		message = '';
+	}
+
+	function didChangeExtensionCalibration(event: Event): void {
+		const target = event.target as HTMLInputElement;
+
+		isExtensionCalibrationSelected = target.checked;
 		error = '';
 		message = '';
 	}
@@ -679,6 +710,19 @@
 							disabled={isAngleCalibrationDisabled}
 						/>
 						<span>angle calibration</span>
+					</label>
+				</td>
+			</tr>
+			<tr>
+				<td colspan="3">
+					<label class="all-toggle">
+						<input
+							type="checkbox"
+							checked={isExtensionCalibrationSelected}
+							onchange={didChangeExtensionCalibration}
+							disabled={isExtensionCalibrationDisabled}
+						/>
+						<span>extension calibration</span>
 					</label>
 				</td>
 			</tr>

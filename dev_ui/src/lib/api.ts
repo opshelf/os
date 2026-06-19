@@ -424,6 +424,7 @@ export interface LaserAutoCalibrationRequest {
 	cell_idx?: number;
 	include_io_box?: boolean;
 	include_angle_calibration?: boolean;
+	include_extension_calibration?: boolean;
 }
 
 export interface LaserAutoCalibrationSnapshot {
@@ -460,7 +461,8 @@ export function buildLaserAutoCalibrationStreamUrl(
 	request: LaserAutoCalibrationRequest = {
 		mode: 'all',
 		include_io_box: true,
-		include_angle_calibration: true
+		include_angle_calibration: true,
+		include_extension_calibration: true
 	},
 	options: { subscribeOnly?: boolean } = {}
 ): string {
@@ -480,6 +482,10 @@ export function buildLaserAutoCalibrationStreamUrl(
 
 	if (request.include_angle_calibration !== undefined) {
 		url.searchParams.set('include_angle_calibration', String(request.include_angle_calibration));
+	}
+
+	if (request.include_extension_calibration !== undefined) {
+		url.searchParams.set('include_extension_calibration', String(request.include_extension_calibration));
 	}
 
 	if (request.mode === 'all') {
