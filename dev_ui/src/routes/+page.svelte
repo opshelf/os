@@ -80,20 +80,14 @@
 		}
 	}
 
-	async function didChangeBypassSafetyGuard(event: Event): Promise<void> {
-		const target = event.currentTarget as HTMLInputElement | null;
-		if (target === null) {
-			return;
-		}
-
-		const shouldBypassSafetyGuard = target.checked;
+	async function didClickBypassSafetyGuard(): Promise<void> {
+		const shouldBypassSafetyGuard = !getBypassSafetyGuard();
 		isUpdatingSafetyOverride = true;
 		safetyOverrideError = '';
 
 		try {
 			await setBypassSafetyGuard(shouldBypassSafetyGuard);
 		} catch (err) {
-			target.checked = !shouldBypassSafetyGuard;
 			safetyOverrideError = err instanceof Error ? err.message : 'failed to update safety override';
 		} finally {
 			isUpdatingSafetyOverride = false;
@@ -270,15 +264,14 @@
 			<tr>
 				<td>bypass safety guard</td>
 				<td>
-					<label class="checkbox-row">
-						<input
-							type="checkbox"
-							checked={getBypassSafetyGuard()}
-							disabled={isUpdatingSafetyOverride === true}
-							onchange={didChangeBypassSafetyGuard}
-						/>
-						<span>{getBypassSafetyGuard() ? 'on' : 'off'}</span>
-					</label>
+					<div class="status-action-cell">
+						<span class:enabled-danger={getBypassSafetyGuard() === true}>
+							{getBypassSafetyGuard() ? 'enabled' : 'disabled'}
+						</span>
+						<button disabled={isUpdatingSafetyOverride === true} onclick={didClickBypassSafetyGuard}>
+							{getBypassSafetyGuard() ? 'DISABLE' : 'ENABLE'}
+						</button>
+					</div>
 					{#if safetyOverrideError !== ''}
 						<ErrorMessage message={safetyOverrideError} />
 					{/if}
@@ -329,9 +322,7 @@
 		gap: 1em;
 	}
 
-	.checkbox-row {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.5em;
+	.enabled-danger {
+		color: #dc2626;
 	}
 </style>
