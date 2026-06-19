@@ -576,10 +576,16 @@ def apply_xy_reference_offsets(
 		print_status("xy_offset_inference=skipped reason=anchor_unresolved")
 		return
 
-	if int(getattr(anchor_cell, "shelf_idx", -1)) != int(xy_reference.shelf_idx) or int(getattr(anchor_cell, "cell_idx", -1)) != int(xy_reference.cell_idx):
+	anchor_shelf_idx = getattr(anchor_cell, "shelf_idx", None)
+	for shelf in scanned_shelves:
+		if any(cell is anchor_cell for cell in shelf.cells):
+			anchor_shelf_idx = shelf.shelf_idx
+			break
+
+	if int(anchor_shelf_idx) != int(xy_reference.shelf_idx) or int(getattr(anchor_cell, "cell_idx", -1)) != int(xy_reference.cell_idx):
 		raise ValueError(
 			"Detected xy reference anchor "
-			f"{getattr(anchor_cell, 'shelf_idx', None)}:{getattr(anchor_cell, 'cell_idx', None)} "
+			f"{anchor_shelf_idx}:{getattr(anchor_cell, 'cell_idx', None)} "
 			"does not match configured reference target "
 			f"{int(xy_reference.shelf_idx)}:{int(xy_reference.cell_idx)}"
 		)
