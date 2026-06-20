@@ -23,6 +23,7 @@ from openshelf_os.laser_calibration import (
 	find_gap_run_containing_position,
 	GapCandidateRegion,
 	get_scanned_anchor_cell,
+	get_shelf_hole_probe_y_offsets_mm,
 	GridScanResult,
 	load_continue_scan_context,
 	load_staged_scan_analysis,
@@ -58,6 +59,20 @@ def test_laser_scan_config_uses_clear_field_names() -> None:
 	assert scan_config.shelf_hole_probe_y_offsets_mm == [pytest.approx(32.25)]
 	assert scan_config.fine_cell_scan_y_margin_mm == pytest.approx(12.0)
 	assert LaserScanConfig().shelf_scout_post_edge_skip_mm == pytest.approx(40.0)
+
+	assert get_shelf_hole_probe_y_offsets_mm(scan_config) == [pytest.approx(32.25)]
+
+
+def test_shelf_hole_probe_offsets_default_to_multiline_scan() -> None:
+	assert get_shelf_hole_probe_y_offsets_mm(SimpleNamespace(shelf_hole_probe_y_offsets_mm=None)) == [
+		pytest.approx(16.25),
+		pytest.approx(32.25),
+	]
+
+	assert get_shelf_hole_probe_y_offsets_mm(SimpleNamespace(shelf_hole_probe_y_offsets_mm=[])) == [
+		pytest.approx(16.25),
+		pytest.approx(32.25),
+	]
 
 
 def test_laser_scan_config_rejects_legacy_field_names() -> None:

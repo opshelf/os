@@ -50,6 +50,7 @@ RIGHT_MODULE_ROTATION_SAFE_X_MM = 475.0
 SHELF_SWEEP_X_STEP_MM = 4.0
 SHELF_SWEEP_MIN_CANDIDATE_WIDTH_MM = 20.0
 SHELF_HOLE_SWEEP_OFFSET_MM = 32.25
+SHELF_HOLE_SWEEP_OFFSETS_MM = [16.25, SHELF_HOLE_SWEEP_OFFSET_MM]
 FILLED_HOLE_MIN_DEPTH_DELTA_MM = 0.4
 FINE_SCAN_MARGIN_X_MM = 10.0
 FINE_SCAN_MARGIN_Y_MM = 6.0
@@ -385,10 +386,10 @@ def get_shelf_hole_probe_y_offsets_mm(scan_config: Any) -> list[float]:
 	configured_offsets = getattr(scan_config, "shelf_hole_probe_y_offsets_mm", None)
 
 	if configured_offsets is None:
-		return [SHELF_HOLE_SWEEP_OFFSET_MM]
+		return list(SHELF_HOLE_SWEEP_OFFSETS_MM)
 
 	if len(configured_offsets) == 0:
-		return [SHELF_HOLE_SWEEP_OFFSET_MM]
+		return list(SHELF_HOLE_SWEEP_OFFSETS_MM)
 
 	return [
 		float(offset_mm)
