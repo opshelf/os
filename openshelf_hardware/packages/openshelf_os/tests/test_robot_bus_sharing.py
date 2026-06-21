@@ -11,6 +11,7 @@ from openshelf_os.serial_ports import (
 	DEFAULT_LASER_PORT,
 	DEFAULT_MOTOR_PORT,
 	DEFAULT_SCALE_PORT,
+	LEGACY_MOTOR_PORT,
 )
 
 
@@ -49,6 +50,8 @@ def test_prepare_bus_settings_prefers_waveshare_rs485_hub_port():
 	assert settings["motor"]["port"] == DEFAULT_MOTOR_PORT
 	assert settings["scale"]["port"] == DEFAULT_SCALE_PORT
 	assert settings["laser"]["port"] == DEFAULT_LASER_PORT
+	assert DEFAULT_MOTOR_PORT in settings["motor"]["fallback_ports"]
+	assert LEGACY_MOTOR_PORT in settings["motor"]["fallback_ports"]
 
 
 def make_bus_config(port: str, baudrate: int = 9600) -> SimpleNamespace:
@@ -81,6 +84,25 @@ def test_prepare_bus_settings_preserves_custom_port():
 	assert settings["motor"]["port"] == custom_motor_port
 	assert settings["scale"]["port"] == custom_scale_port
 	assert settings["laser"]["port"] == custom_laser_port
+	assert settings["motor"]["fallback_ports"] == [custom_motor_port]
+
+
+def test_prepare_bus_settings_adds_stable_symlink_fallback_for_legacy_port():
+	robot = robot_module.Robot.__new__(robot_module.Robot)
+	robot._config = SimpleNamespace(
+		robot=SimpleNamespace(
+			bus=SimpleNamespace(
+				motor=make_bus_config(LEGACY_MOTOR_PORT, 115200),
+				scale=make_bus_config("/dev/custom-scale"),
+				laser=None,
+			)
+		)
+	)
+
+	settings = robot_module.Robot._prepare_bus_settings(robot)
+
+	assert settings["motor"]["fallback_ports"] == [LEGACY_MOTOR_PORT, DEFAULT_MOTOR_PORT]
+	assert settings["scale"]["fallback_ports"] == ["/dev/custom-scale"]
 
 
 def test_create_controller_for_bus_reuses_motor_controller_for_matching_laser(monkeypatch):
@@ -140,7 +162,7 @@ async def test_configure_skips_duplicate_laser_connect_when_sharing_motor_bus():
 
 
 @pytest.mark.asyncio
-async def test_connect_controller_uses_single_canonical_port_for_new_config():
+async def test_connect_controller_uses_single_custom_port_when_no_fallbacks_configured():
 	class FakeController:
 		def __init__(self) -> None:
 			self.port = ""
@@ -159,14 +181,49 @@ async def test_connect_controller_uses_single_canonical_port_for_new_config():
 
 	controller = FakeController()
 	settings = {
-		"port": "/dev/ttyUSB0",
+		"port": "/dev/custom-scale",
 		"baudrate": 9600,
 		"parity": "N",
 		"timeout": 2.0,
-		"retry_delay_s": 0.25,
+		"retry_delay_s": 0,
 	}
 
-	with pytest.raises(robot_module.ConfigError, match="/dev/ttyUSB0: missing"):
+	with pytest.raises(robot_module.ConfigError, match="/dev/custom-scale: missing"):
 		await robot_module.Robot._connect_controller(object(), "scale", controller, settings)
 
-	assert controller.attempts == ["/dev/ttyUSB0"]
+	assert controller.attempts == ["/dev/custom-scale"]
+
+
+@pytest.mark.asyncio
+async def test_connect_controller_falls_back_from_legacy_motor_port_to_stable_symlink():
+	class FakeController:
+		def __init__(self) -> None:
+			self.port = ""
+			self.baudrate = 0
+			self.parity = ""
+			self.timeout = 0.0
+			self.client = SimpleNamespace(connected=False)
+			self.attempts: list[str] = []
+
+		async def connect(self) -> None:
+			self.attempts.append(self.port)
+			if self.port == LEGACY_MOTOR_PORT:
+				raise OSError("missing")
+			self.client.connected = True
+
+		async def close(self) -> None:
+			pass
+
+	controller = FakeController()
+	settings = {
+		"port": LEGACY_MOTOR_PORT,
+		"fallback_ports": [LEGACY_MOTOR_PORT, DEFAULT_MOTOR_PORT],
+		"baudrate": 115200,
+		"parity": "N",
+		"timeout": 2.0,
+		"retry_delay_s": 0,
+	}
+
+	await robot_module.Robot._connect_controller(object(), "motor", controller, settings)
+
+	assert controller.attempts == [LEGACY_MOTOR_PORT, DEFAULT_MOTOR_PORT]
