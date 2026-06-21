@@ -34,7 +34,7 @@ from openshelf_os.storage import StorageGrid
 from openshelf_os_server.core.logging_config import configure_logging, get_logger
 from openshelf_os_server.core.robot import get_robot_health, init_robot_worker, set_robot_initialization_error, stop_robot_worker
 from openshelf_os_server.core.storage import StorageService
-from openshelf_os_server.core.camera import init_tool_camera_manager, init_overhead_camera_manager
+from openshelf_os_server.core.camera import init_tool_camera_manager, init_overhead_camera_manager, stop_all_camera_streams
 from openshelf_os_server.core.iobox_sizer import init_iobox_sizer, stop_iobox_sizer
 from openshelf_os_server.settings import Settings
 from openshelf_os_server.database.base import Base, engine, get_database_url
@@ -472,6 +472,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 		yield
 	finally:
 		logger.info("application_shutting_down")
+		try:
+			await demo.shutdown_demo_cycle()
+		except Exception as e:
+			logger.warning("demo_cycle_shutdown_failed", error=str(e), error_type=type(e).__name__, exc_info=True)
+		try:
+			await stop_all_camera_streams()
+		except Exception as e:
+			logger.warning("camera_stream_shutdown_failed", error=str(e), error_type=type(e).__name__, exc_info=True)
 		if robot_started is True:
 			await stop_robot_worker()
 			logger.info("robot_worker_stopped")
