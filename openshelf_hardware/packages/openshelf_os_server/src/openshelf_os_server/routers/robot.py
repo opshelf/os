@@ -436,6 +436,8 @@ async def get_scale_reading(
             "status": data["status"],
             "raw_registers": data["raw_registers"],
         }
+    except ConfigError as exc:
+        _raise_scale_not_enabled(exc)
     except Exception as exc:
         if _is_scale_not_enabled(exc):
             raise _scale_not_enabled_exception() from exc
@@ -453,6 +455,8 @@ async def get_scale_calibration_status(
 ) -> dict:
     try:
         return await worker.get_scale_calibration_status()
+    except ConfigError as exc:
+        _raise_scale_not_enabled(exc)
     except Exception as exc:
         if _is_scale_not_enabled(exc):
             raise _scale_not_enabled_exception() from exc
@@ -470,6 +474,8 @@ async def get_scale_calibration_params(
 ) -> dict:
     try:
         return await worker.get_scale_calibration_params()
+    except ConfigError as exc:
+        _raise_scale_not_enabled(exc)
     except Exception as exc:
         if _is_scale_not_enabled(exc):
             raise _scale_not_enabled_exception() from exc
@@ -494,6 +500,8 @@ async def set_scale_calibration_params(
             division=request.division,
         )
         return {"success": ok}
+    except ConfigError as exc:
+        _raise_scale_not_enabled(exc)
     except Exception as exc:
         if _is_scale_not_enabled(exc):
             raise _scale_not_enabled_exception() from exc
@@ -511,6 +519,8 @@ async def calibrate_scale_zero(
 ) -> dict:
     try:
         return await worker.calibrate_scale_zero()
+    except ConfigError as exc:
+        _raise_scale_not_enabled(exc)
     except Exception as exc:
         if _is_scale_not_enabled(exc):
             raise _scale_not_enabled_exception() from exc
@@ -528,6 +538,8 @@ async def calibrate_scale_weight(
 ) -> dict:
     try:
         return await worker.calibrate_scale_weight()
+    except ConfigError as exc:
+        _raise_scale_not_enabled(exc)
     except Exception as exc:
         if _is_scale_not_enabled(exc):
             raise _scale_not_enabled_exception() from exc
@@ -546,6 +558,8 @@ async def scale_tare(
     try:
         ok = await worker.scale_tare()
         return {"success": ok}
+    except ConfigError as exc:
+        _raise_scale_not_enabled(exc)
     except Exception as exc:
         if _is_scale_not_enabled(exc):
             raise _scale_not_enabled_exception() from exc
