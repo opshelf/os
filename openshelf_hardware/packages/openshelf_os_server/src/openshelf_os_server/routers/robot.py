@@ -46,15 +46,11 @@ def _error_detail(message: str, code: str) -> dict[str, str]:
     return {"message": message, "code": code}
 
 
-def _is_scale_not_enabled(exc: Exception) -> bool:
-    return isinstance(exc, ConfigError) and str(exc) == _SCALE_NOT_ENABLED_MESSAGE
-
-
-def _scale_not_enabled_exception() -> HTTPException:
-    return HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail=_error_detail(_SCALE_NOT_ENABLED_MESSAGE, "scale_not_enabled"),
-    )
+def _raise_scale_unavailable(exc: ConfigError) -> NoReturn:
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail=str(exc) or "Scale is not enabled or configured",
+    ) from exc
 
 
 async def _ensure_laser_auto_calibration_not_running() -> None:
@@ -437,7 +433,7 @@ async def get_scale_reading(
             "raw_registers": data["raw_registers"],
         }
     except ConfigError as exc:
-        _raise_scale_not_enabled(exc)
+        _raise_scale_unavailable(exc)
     except Exception as exc:
         if _is_scale_not_enabled(exc):
             raise _scale_not_enabled_exception() from exc
@@ -456,7 +452,7 @@ async def get_scale_calibration_status(
     try:
         return await worker.get_scale_calibration_status()
     except ConfigError as exc:
-        _raise_scale_not_enabled(exc)
+        _raise_scale_unavailable(exc)
     except Exception as exc:
         if _is_scale_not_enabled(exc):
             raise _scale_not_enabled_exception() from exc
@@ -475,7 +471,7 @@ async def get_scale_calibration_params(
     try:
         return await worker.get_scale_calibration_params()
     except ConfigError as exc:
-        _raise_scale_not_enabled(exc)
+        _raise_scale_unavailable(exc)
     except Exception as exc:
         if _is_scale_not_enabled(exc):
             raise _scale_not_enabled_exception() from exc
@@ -501,7 +497,7 @@ async def set_scale_calibration_params(
         )
         return {"success": ok}
     except ConfigError as exc:
-        _raise_scale_not_enabled(exc)
+        _raise_scale_unavailable(exc)
     except Exception as exc:
         if _is_scale_not_enabled(exc):
             raise _scale_not_enabled_exception() from exc
@@ -520,7 +516,7 @@ async def calibrate_scale_zero(
     try:
         return await worker.calibrate_scale_zero()
     except ConfigError as exc:
-        _raise_scale_not_enabled(exc)
+        _raise_scale_unavailable(exc)
     except Exception as exc:
         if _is_scale_not_enabled(exc):
             raise _scale_not_enabled_exception() from exc
@@ -539,7 +535,7 @@ async def calibrate_scale_weight(
     try:
         return await worker.calibrate_scale_weight()
     except ConfigError as exc:
-        _raise_scale_not_enabled(exc)
+        _raise_scale_unavailable(exc)
     except Exception as exc:
         if _is_scale_not_enabled(exc):
             raise _scale_not_enabled_exception() from exc
@@ -559,7 +555,7 @@ async def scale_tare(
         ok = await worker.scale_tare()
         return {"success": ok}
     except ConfigError as exc:
-        _raise_scale_not_enabled(exc)
+        _raise_scale_unavailable(exc)
     except Exception as exc:
         if _is_scale_not_enabled(exc):
             raise _scale_not_enabled_exception() from exc
