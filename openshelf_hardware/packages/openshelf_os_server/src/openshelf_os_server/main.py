@@ -50,6 +50,7 @@ logger = get_logger(__name__)
 
 SENSITIVE_HEADER_NAMES = {"authorization", "cookie"}
 PYMODBUS_REQUEST_ID_MISMATCH_PREFIX = "ERROR: request ask for id="
+ROBOT_INITIALIZATION_FAILED_EVENT = "robot_initialization_failed"
 
 
 def _redact_sensitive_mapping(value: Any) -> Any:
@@ -88,6 +89,19 @@ def _sentry_log_is_pymodbus_request_id_mismatch(log: dict[str, Any]) -> bool:
 	return any(_is_pymodbus_request_id_mismatch(value) is True for value in attributes.values())
 
 
+def _sentry_log_has_message(log: dict[str, Any], target: str) -> bool:
+	for key in ("body", "message"):
+		if log.get(key) == target:
+			return True
+
+	attributes_value = log.get("attributes")
+	if isinstance(attributes_value, dict) is False:
+		return False
+
+	attributes = cast(dict[str, Any], attributes_value)
+	return any(value == target for value in attributes.values())
+
+
 def _before_send_sentry_event(event: dict[str, Any], _hint: dict[str, Any]) -> dict[str, Any] | None:
 	if _is_pymodbus_request_id_mismatch(event.get("message")) is True:
 		return None
@@ -115,6 +129,11 @@ def _before_send_sentry_event(event: dict[str, Any], _hint: dict[str, Any]) -> d
 
 def _before_send_sentry_log(log: dict[str, Any], _hint: dict[str, Any]) -> dict[str, Any] | None:
 	if _sentry_log_is_pymodbus_request_id_mismatch(log) is True:
+		return None
+
+	# The startup path already captures the underlying exception separately with a stacktrace.
+	# Dropping the structured log avoids a duplicate log-only issue grouped by message.
+	if _sentry_log_has_message(log, ROBOT_INITIALIZATION_FAILED_EVENT) is True:
 		return None
 
 	attributes_value = log.get("attributes")

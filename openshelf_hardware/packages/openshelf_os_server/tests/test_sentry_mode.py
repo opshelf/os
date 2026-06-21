@@ -100,6 +100,30 @@ def test_before_send_sentry_log_drops_pymodbus_request_id_mismatch() -> None:
 	assert main._before_send_sentry_log(log, {}) is None
 
 
+def test_before_send_sentry_log_drops_robot_initialization_failed_log() -> None:
+	log = {
+		"body": "robot_initialization_failed",
+		"attributes": {
+			"error": "Motor bus connection failed (/dev/ttyUSB0: [Errno 2] No such file or directory)",
+			"error_type": "ConfigError",
+		},
+	}
+
+	assert main._before_send_sentry_log(log, {}) is None
+
+
+def test_before_send_sentry_log_drops_robot_initialization_failed_attribute() -> None:
+	log = {
+		"body": "",
+		"attributes": {
+			"event": "robot_initialization_failed",
+			"error_type": "ConfigError",
+		},
+	}
+
+	assert main._before_send_sentry_log(log, {}) is None
+
+
 def test_before_send_sentry_event_redacts_headers() -> None:
 	event = {
 		"request": {
