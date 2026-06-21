@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import sentry_sdk
 import pytest
+from fastapi import HTTPException
 
 from openshelf_os_server import main
 from openshelf_os_server.routers import report
@@ -87,6 +88,37 @@ def test_before_send_sentry_event_drops_pymodbus_request_id_mismatch_entry() -> 
 				}
 			}
 		]
+	}
+
+	assert main._before_send_sentry_event(event, {}) is None
+
+
+def test_before_send_sentry_event_drops_http_exception_from_hint() -> None:
+	event = {
+		"exception": {
+			"values": [
+				{
+					"type": "HTTPException",
+					"value": "{'message': 'Motor move failed', 'code': 'motor_move_failed'}",
+				}
+			]
+		}
+	}
+	hint = {"original_exception": HTTPException(status_code=503, detail="Motor move failed")}
+
+	assert main._before_send_sentry_event(event, hint) is None
+
+
+def test_before_send_sentry_event_drops_http_exception_from_event() -> None:
+	event = {
+		"exception": {
+			"values": [
+				{
+					"type": "HTTPException",
+					"value": "{'message': 'Motor move failed', 'code': 'motor_move_failed'}",
+				}
+			]
+		}
 	}
 
 	assert main._before_send_sentry_event(event, {}) is None
