@@ -26,7 +26,6 @@ from sentry_sdk.integrations.logging import LoggingIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 from sentry_sdk.transport import HttpTransport
 from sqlalchemy import delete, select
-from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from openshelf_os.device import get_device_id
 from openshelf_os.common import CONFIG_PATH, OperatingMode, load_config_file, resolve_grid_path
@@ -52,6 +51,7 @@ logger = get_logger(__name__)
 SENSITIVE_HEADER_NAMES = {"authorization", "cookie"}
 PYMODBUS_REQUEST_ID_MISMATCH_PREFIX = "ERROR: request ask for id="
 ROBOT_INITIALIZATION_FAILED_EVENT = "robot_initialization_failed"
+TOOL_FAULT_LOG_EVENT = "Tool fault detected - manual intervention required"
 
 
 def _redact_sensitive_mapping(value: Any) -> Any:
@@ -103,11 +103,122 @@ def _sentry_log_has_message(log: dict[str, Any], target: str) -> bool:
 	return any(value == target for value in attributes.values())
 
 
+def _sentry_event_exception_values(event: dict[str, Any]) -> list[dict[str, Any]]:
+	exception_value = event.get("exception")
+	if isinstance(exception_value, dict) is False:
+		return []
+
+	exception_data = cast(dict[str, Any], exception_value)
+	values = exception_data.get("values")
+	if not isinstance(values, list):
+		return []
+
+	values_list = cast(list[Any], values)
+	return [value for value in values_list if isinstance(value, dict) is True]
+
+
+def _sentry_event_has_message(event: dict[str, Any], target: str) -> bool:
+	if event.get("message") == target:
+		return True
+
+	logentry_value = event.get("logentry")
+	if isinstance(logentry_value, dict) is True:
+		logentry = cast(dict[str, Any], logentry_value)
+		if any(logentry.get(key) == target for key in ("message", "formatted")) is True:
+			return True
+
+	entries_value = event.get("entries", [])
+	entries = cast(list[Any], entries_value) if isinstance(entries_value, list) is True else []
+	for entry in entries:
+		if isinstance(entry, dict) is False:
+			continue
+
+		data = entry.get("data")
+		if isinstance(data, dict) is False:
+			continue
+
+		if any(data.get(key) == target for key in ("message", "formatted")) is True:
+			return True
+
+	return False
+
+
+def _sentry_event_has_pymodbus_request_id_mismatch(event: dict[str, Any]) -> bool:
+	if _is_pymodbus_request_id_mismatch(event.get("message")) is True:
+		return True
+
+	logentry_value = event.get("logentry")
+	if isinstance(logentry_value, dict) is True:
+		logentry = cast(dict[str, Any], logentry_value)
+		if any(_is_pymodbus_request_id_mismatch(logentry.get(key)) is True for key in ("message", "formatted")):
+			return True
+
+	entries_value = event.get("entries", [])
+	entries = cast(list[Any], entries_value) if isinstance(entries_value, list) is True else []
+	for entry in entries:
+		if isinstance(entry, dict) is False:
+			continue
+
+		data = entry.get("data")
+		if isinstance(data, dict) is False:
+			continue
+
+		if any(_is_pymodbus_request_id_mismatch(data.get(key)) is True for key in ("message", "formatted")):
+			return True
+
+	return False
+
+
+def _sentry_event_is_anyio_cancelled_error(event: dict[str, Any]) -> bool:
+	for value in _sentry_event_exception_values(event):
+		exception_type_value = value.get("type")
+		exception_message_value = value.get("value")
+		if not isinstance(exception_type_value, str) or not isinstance(exception_message_value, str):
+			continue
+
+		exception_type = exception_type_value
+		exception_message = exception_message_value
+		if exception_type.endswith("CancelledError") is False:
+			continue
+
+		if "Cancelled via cancel scope" in exception_message and "cancel_on_finish" in exception_message:
+			return True
+
+	return False
+
+
+def _sentry_event_is_robot_unavailable_request(event: dict[str, Any]) -> bool:
+	request_value = event.get("request")
+	request_url = ""
+	if isinstance(request_value, dict) is True:
+		request = cast(dict[str, Any], request_value)
+		url_value = request.get("url")
+		if isinstance(url_value, str) is True:
+			request_url = str(url_value)
+
+	if request_url != "" and "/api/robot" in request_url and _sentry_event_has_message(event, "robot_unavailable") is True:
+		return True
+
+	for value in _sentry_event_exception_values(event):
+		exception_message_value = value.get("value")
+		if not isinstance(exception_message_value, str):
+			continue
+
+		exception_message = exception_message_value
+		if "Robot is not initialized or failed to start" in exception_message:
+			return True
+
+		if "Robot Worker was Not Initialized" in exception_message and "/api/robot" in request_url:
+			return True
+
+	return False
+
+
 def _before_send_sentry_event(event: dict[str, Any], _hint: dict[str, Any]) -> dict[str, Any] | None:
 	if _sentry_event_is_anyio_cancelled_error(event) is True:
 		return None
 
-	if _is_pymodbus_request_id_mismatch(event.get("message")) is True:
+	if _sentry_event_has_pymodbus_request_id_mismatch(event) is True:
 		return None
 
 	if _sentry_event_is_robot_unavailable_request(event) is True:
@@ -141,6 +252,12 @@ def _before_send_sentry_log(log: dict[str, Any], _hint: dict[str, Any]) -> dict[
 	# The startup path already captures the underlying exception separately with a stacktrace.
 	# Dropping the structured log avoids a duplicate log-only issue grouped by message.
 	if _sentry_log_has_message(log, ROBOT_INITIALIZATION_FAILED_EVENT) is True:
+		return None
+
+	# Tool faults are also reported by the robot worker with the original exception,
+	# stacktrace, command context, and motor diagnostics. The warning log is useful
+	# locally, but sending it to Sentry creates a second log-only issue with no stack.
+	if _sentry_log_has_message(log, TOOL_FAULT_LOG_EVENT) is True:
 		return None
 
 	attributes_value = log.get("attributes")
