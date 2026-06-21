@@ -51,8 +51,7 @@ logger = get_logger(__name__)
 
 SENSITIVE_HEADER_NAMES = {"authorization", "cookie"}
 PYMODBUS_REQUEST_ID_MISMATCH_PREFIX = "ERROR: request ask for id="
-ROBOT_UNAVAILABLE_MESSAGE = "Robot is not initialized or failed to start"
-ROBOT_WORKER_NOT_INITIALIZED_MESSAGE = "Robot Worker was Not Initialized"
+ROBOT_INITIALIZATION_FAILED_EVENT = "robot_initialization_failed"
 
 
 def _redact_sensitive_mapping(value: Any) -> Any:
@@ -91,53 +90,17 @@ def _sentry_log_is_pymodbus_request_id_mismatch(log: dict[str, Any]) -> bool:
 	return any(_is_pymodbus_request_id_mismatch(value) is True for value in attributes.values())
 
 
-def _sentry_event_exception_values(event: dict[str, Any]) -> list[dict[str, Any]]:
-	exception_value = event.get("exception")
-	if not isinstance(exception_value, dict):
-		return []
-
-	exception_data = cast(dict[str, Any], exception_value)
-	values = exception_data.get("values")
-	if not isinstance(values, list):
-		return []
-
-	return [cast(dict[str, Any], value) for value in values if isinstance(value, dict) is True]
-
-
-def _sentry_event_request_url(event: dict[str, Any]) -> str | None:
-	request_value = event.get("request")
-	if not isinstance(request_value, dict):
-		return None
-
-	request_data = cast(dict[str, Any], request_value)
-	url = request_data.get("url")
-	if not isinstance(url, str):
-		return None
-
-	return url
-
-
-def _sentry_event_is_robot_unavailable_request(event: dict[str, Any]) -> bool:
-	exception_values = _sentry_event_exception_values(event)
-	if len(exception_values) == 0:
-		return False
-
-	for exception_value in exception_values:
-		exception_type = exception_value.get("type")
-		exception_message = exception_value.get("value")
-
-		if not isinstance(exception_type, str) or not isinstance(exception_message, str):
-			continue
-
-		if exception_type.endswith("HTTPException") is True and ROBOT_UNAVAILABLE_MESSAGE in exception_message:
+def _sentry_log_has_message(log: dict[str, Any], target: str) -> bool:
+	for key in ("body", "message"):
+		if log.get(key) == target:
 			return True
 
-		if exception_type == "ValueError" and exception_message == ROBOT_WORKER_NOT_INITIALIZED_MESSAGE:
-			request_url = _sentry_event_request_url(event)
-			if isinstance(request_url, str) and "/api/robot/" in request_url:
-				return True
+	attributes_value = log.get("attributes")
+	if isinstance(attributes_value, dict) is False:
+		return False
 
-	return False
+	attributes = cast(dict[str, Any], attributes_value)
+	return any(value == target for value in attributes.values())
 
 
 def _before_send_sentry_event(event: dict[str, Any], _hint: dict[str, Any]) -> dict[str, Any] | None:
@@ -173,6 +136,11 @@ def _before_send_sentry_event(event: dict[str, Any], _hint: dict[str, Any]) -> d
 
 def _before_send_sentry_log(log: dict[str, Any], _hint: dict[str, Any]) -> dict[str, Any] | None:
 	if _sentry_log_is_pymodbus_request_id_mismatch(log) is True:
+		return None
+
+	# The startup path already captures the underlying exception separately with a stacktrace.
+	# Dropping the structured log avoids a duplicate log-only issue grouped by message.
+	if _sentry_log_has_message(log, ROBOT_INITIALIZATION_FAILED_EVENT) is True:
 		return None
 
 	attributes_value = log.get("attributes")
