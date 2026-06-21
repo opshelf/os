@@ -26,6 +26,7 @@ from sentry_sdk.integrations.logging import LoggingIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 from sentry_sdk.transport import HttpTransport
 from sqlalchemy import delete, select
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from openshelf_os.device import get_device_id
 from openshelf_os.common import CONFIG_PATH, OperatingMode, load_config_file, resolve_grid_path
@@ -88,7 +89,33 @@ def _sentry_log_is_pymodbus_request_id_mismatch(log: dict[str, Any]) -> bool:
 	return any(_is_pymodbus_request_id_mismatch(value) is True for value in attributes.values())
 
 
+def _sentry_event_is_http_exception(event: dict[str, Any], hint: dict[str, Any]) -> bool:
+	original_exception = hint.get("original_exception")
+	if isinstance(original_exception, StarletteHTTPException) is True:
+		return True
+
+	exception_value = event.get("exception")
+	if not isinstance(exception_value, dict):
+		return False
+
+	exception_values = exception_value.get("values")
+	if not isinstance(exception_values, list):
+		return False
+
+	for value in exception_values:
+		if not isinstance(value, dict):
+			continue
+
+		if value.get("type") == "HTTPException":
+			return True
+
+	return False
+
+
 def _before_send_sentry_event(event: dict[str, Any], _hint: dict[str, Any]) -> dict[str, Any] | None:
+	if _sentry_event_is_http_exception(event, _hint) is True:
+		return None
+
 	if _is_pymodbus_request_id_mismatch(event.get("message")) is True:
 		return None
 
