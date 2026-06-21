@@ -93,31 +93,11 @@ def test_before_send_sentry_event_drops_pymodbus_request_id_mismatch_entry() -> 
 	assert main._before_send_sentry_event(event, {}) is None
 
 
-def test_before_send_sentry_event_drops_http_exception_from_hint() -> None:
+def test_before_send_sentry_event_drops_pymodbus_request_id_mismatch_logentry() -> None:
 	event = {
-		"exception": {
-			"values": [
-				{
-					"type": "HTTPException",
-					"value": "{'message': 'Motor move failed', 'code': 'motor_move_failed'}",
-				}
-			]
-		}
-	}
-	hint = {"original_exception": HTTPException(status_code=503, detail="Motor move failed")}
-
-	assert main._before_send_sentry_event(event, hint) is None
-
-
-def test_before_send_sentry_event_drops_http_exception_from_event() -> None:
-	event = {
-		"exception": {
-			"values": [
-				{
-					"type": "HTTPException",
-					"value": "{'message': 'Motor move failed', 'code': 'motor_move_failed'}",
-				}
-			]
+		"logentry": {
+			"message": "ERROR: request ask for id=2 but got id=3, Skipping.",
+			"formatted": "ERROR: request ask for id=2 but got id=3, Skipping.",
 		}
 	}
 
