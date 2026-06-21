@@ -81,19 +81,18 @@ async def test_get_scale_calibration_status(client: AsyncClient) -> None:
 
 
 @pytest.mark.anyio
-async def test_get_scale_calibration_status_scale_not_enabled(client: AsyncClient) -> None:
+async def test_get_scale_calibration_status_scale_disabled(client: AsyncClient) -> None:
 	mock_worker = _mock_worker()
 	mock_worker.get_scale_calibration_status.side_effect = ConfigError("Scale is not enabled")
 
 	with patch("openshelf_os_server.routers.robot.get_settings", return_value=_mock_settings()):
 		with patch("openshelf_os_server.routers.robot.get_robot_worker", return_value=mock_worker):
-			response = await client.get("/api/robot/debug/scale/calibration/status")
+			with patch("openshelf_os_server.routers.robot.logging.error") as log_error:
+				response = await client.get("/api/robot/debug/scale/calibration/status")
 
-	assert response.status_code == 409
-	assert response.json()["detail"] == {
-		"message": "Scale is not enabled on this device",
-		"code": "scale_not_enabled",
-	}
+	assert response.status_code == 503
+	assert response.json()["detail"] == "Scale is not enabled"
+	log_error.assert_not_called()
 
 
 @pytest.mark.anyio
