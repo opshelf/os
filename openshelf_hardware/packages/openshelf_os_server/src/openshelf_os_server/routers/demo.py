@@ -154,6 +154,23 @@ async def start_demo_cycle() -> SuccessResponse:
 	return SuccessResponse()
 
 
+async def shutdown_demo_cycle() -> None:
+	global _demo_task
+
+	_stop_event.set()
+
+	if _demo_task is None:
+		return
+
+	_demo_task.cancel()
+	try:
+		await _demo_task
+	except asyncio.CancelledError:
+		pass
+	finally:
+		_demo_task = None
+
+
 @router.post("/cycle/stop", response_model=SuccessResponse)
 async def stop_demo_cycle() -> SuccessResponse:
 	if _is_running is False:

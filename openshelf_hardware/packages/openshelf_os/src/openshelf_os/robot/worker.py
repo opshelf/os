@@ -243,6 +243,7 @@ class RobotWorker:
         self._scale_poll_task: Optional[asyncio.Task] = None
         self._estop_monitor_task: Optional[asyncio.Task] = None
         self._current_task: Optional[asyncio.Task] = None
+        self._background_tasks: set[asyncio.Task[Any]] = set()
         self._current_command: Optional[RobotCommands] = None
         self._current_operation: Optional[QueuedOperation] = None
         self._command_started_at: Optional[float] = None
@@ -282,6 +283,54 @@ class RobotWorker:
         self._needs_home_axes: set[str] = set()
         self._needs_home_unknown: bool = False
         self._needs_home_reason: Optional[str] = None
+
+    def _track_background_task(self, coro: Any, *, name: str) -> asyncio.Task[Any]:
+        task = asyncio.create_task(coro, name=name)
+        self._background_tasks.add(task)
+
+        def _discard_task(done_task: asyncio.Task[Any]) -> None:
+            self._background_tasks.discard(done_task)
+            if done_task.cancelled() is True:
+                return
+
+            try:
+                done_task.result()
+            except Exception as exc:
+                logging.warning("Background robot worker task failed: %s", exc, exc_info=True)
+
+        task.add_done_callback(_discard_task)
+        return task
+
+    async def _cancel_background_tasks(self) -> None:
+        tasks = [task for task in self._background_tasks if task.done() is False]
+        if not tasks:
+            return
+
+        for task in tasks:
+            task.cancel()
+
+        await asyncio.gather(*tasks, return_exceptions=True)
+        for task in tasks:
+            self._background_tasks.discard(task)
+
+    async def _cancel_current_command_task(self, reason: str) -> None:
+        task = self._current_task
+        if task is None:
+            return
+
+        if task.done() is False:
+            logging.info("Cancelling current command task during %s", reason)
+            task.cancel()
+
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            logging.warning("Current command task failed during %s: %s", reason, exc)
+
+        if self._current_task is task:
+            self._current_task = None
 
     def drain_motor_time(self) -> float:
         return self._robot.drain_motor_time()
@@ -761,7 +810,7 @@ class RobotWorker:
             await self.clear_commands()
             await self._publish_status()
 
-        asyncio.create_task(_cleanup_after_stop())
+        self._track_background_task(_cleanup_after_stop(), name="emergency-stop-cleanup")
 
     async def _start_estop_monitor(self) -> None:
         if self._estop_monitor_task is not None and self._estop_monitor_task.done() is False:
@@ -1120,8 +1169,18 @@ class RobotWorker:
         self._running = True
         if self._worker_task:
             self._worker_task.cancel()
+            try:
+                await self._worker_task
+            except asyncio.CancelledError:
+                pass
+            self._worker_task = None
         if self._scale_poll_task:
             self._scale_poll_task.cancel()
+            try:
+                await self._scale_poll_task
+            except asyncio.CancelledError:
+                pass
+            self._scale_poll_task = None
         await self._stop_estop_monitor()
         logger.info("Creating process_commands task")
         self._worker_task = asyncio.create_task(self.process_commands())
@@ -1168,6 +1227,15 @@ class RobotWorker:
                 await self._worker_task
             except asyncio.CancelledError:
                 pass
+            self._worker_task = None
+
+        await self._cancel_background_tasks()
+        await self._cancel_current_command_task("shutdown")
+        self._clear_robot_operation_context()
+        self._remove_current_operation()
+        self._current_command = None
+        self._current_operation = None
+        self._command_started_at = None
 
         try:
             await self._robot.handle_command(StopCommand())
@@ -1395,7 +1463,7 @@ class RobotWorker:
             await self._evaluate_safety_guard()
             await self._publish_status()
 
-        asyncio.create_task(_handle())
+        self._track_background_task(_handle(), name="light-curtain-change")
 
     def _on_cabinet_door_change(self, state: dict[str, bool]) -> None:
         async def _handle() -> None:
@@ -1407,7 +1475,7 @@ class RobotWorker:
             await self._evaluate_safety_guard(refresh=False)
             await self._publish_status()
 
-        asyncio.create_task(_handle())
+        self._track_background_task(_handle(), name="cabinet-door-change")
 
     def _on_operation_context_change(self, context: dict[str, Any] | None) -> None:
         async def _handle() -> None:
@@ -1418,7 +1486,7 @@ class RobotWorker:
             await self._evaluate_safety_guard()
             await self._publish_status()
 
-        asyncio.create_task(_handle())
+        self._track_background_task(_handle(), name="operation-context-change")
 
     async def _evaluate_safety_guard(self, *, refresh: bool = True) -> bool:
         async with self._guard_lock:
