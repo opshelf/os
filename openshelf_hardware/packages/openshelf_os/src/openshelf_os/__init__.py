@@ -43,12 +43,12 @@ def _configure_sentry() -> bool:
 		environment=mode.value,
 		server_name=device_id,
 		integrations=integrations if integrations else None,  # type: ignore[arg-type]
-		before_send=_before_send_sentry_event,
-		before_send_log=_before_send_sentry_log,
+		before_send=cast(Any, _before_send_sentry_event),
+		before_send_log=cast(Any, _before_send_sentry_log),
 	)
 	sentry_sdk.set_tag("device_id", device_id)
 	sentry_sdk.set_context("opshelf_device", {"id": device_id})
-	logging.info("Sentry initialized for openshelf_os", mode=mode.value)
+	logging.info("Sentry initialized for openshelf_os", extra={"mode": mode.value})
 	return True
 
 SENSITIVE_HEADER_NAMES = {"authorization", "cookie"}
@@ -83,16 +83,26 @@ def _sentry_log_is_pymodbus_request_id_mismatch(log: dict[str, Any]) -> bool:
 		if _is_pymodbus_request_id_mismatch(log.get(key)) is True:
 			return True
 
-	attributes = log.get("attributes")
-	if isinstance(attributes, dict) is False:
+	attributes_value = log.get("attributes")
+	if isinstance(attributes_value, dict) is False:
 		return False
 
+	attributes = cast(dict[str, Any], attributes_value)
 	return any(_is_pymodbus_request_id_mismatch(value) is True for value in attributes.values())
 
 
 def _before_send_sentry_event(event: dict[str, Any], _hint: dict[str, Any]) -> dict[str, Any] | None:
 	if _is_pymodbus_request_id_mismatch(event.get("message")) is True:
 		return None
+
+	logentry_value = event.get("logentry")
+	if isinstance(logentry_value, dict) is True:
+		logentry = cast(dict[str, Any], logentry_value)
+		if _is_pymodbus_request_id_mismatch(logentry.get("message")) is True:
+			return None
+
+		if _is_pymodbus_request_id_mismatch(logentry.get("formatted")) is True:
+			return None
 
 	for entry in event.get("entries", []):
 		if isinstance(entry, dict) is False:

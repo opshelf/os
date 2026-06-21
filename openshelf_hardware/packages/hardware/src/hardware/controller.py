@@ -165,6 +165,8 @@ class SharedModbusController:
                     f"(baudrate={self.baudrate}, parity={self.parity})"
                 )
                 
+        except ModbusConnectionError:
+            raise
         except ModbusException as e:
             raise ModbusConnectionError(f"Modbus connection error: {str(e)}") from e
         except Exception as e:
