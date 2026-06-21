@@ -8,6 +8,7 @@ from typing import Any, AsyncGenerator, Callable, List, Literal, Optional, cast
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
+from openshelf_os.common import ConfigError
 from openshelf_os.robot.commands import RobotCommands, RetrieveItemCommand, StoreItemCommand
 import logging
 from openshelf_os.robot.worker import RobotWorker
@@ -38,10 +39,22 @@ from .auth_deps import (
 router = APIRouter(tags=["robot"])
 
 _MOTOR_ID_RE = re.compile(r"motor\s+(\d+)", re.IGNORECASE)
+_SCALE_NOT_ENABLED_MESSAGE = "Scale is not enabled"
 
 
 def _error_detail(message: str, code: str) -> dict[str, str]:
     return {"message": message, "code": code}
+
+
+def _is_scale_not_enabled(exc: Exception) -> bool:
+    return isinstance(exc, ConfigError) and str(exc) == _SCALE_NOT_ENABLED_MESSAGE
+
+
+def _scale_not_enabled_exception() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=_error_detail(_SCALE_NOT_ENABLED_MESSAGE, "scale_not_enabled"),
+    )
 
 
 async def _ensure_laser_auto_calibration_not_running() -> None:
@@ -424,6 +437,9 @@ async def get_scale_reading(
             "raw_registers": data["raw_registers"],
         }
     except Exception as exc:
+        if _is_scale_not_enabled(exc):
+            raise _scale_not_enabled_exception() from exc
+
         logging.error("Failed to read scale: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -438,6 +454,9 @@ async def get_scale_calibration_status(
     try:
         return await worker.get_scale_calibration_status()
     except Exception as exc:
+        if _is_scale_not_enabled(exc):
+            raise _scale_not_enabled_exception() from exc
+
         logging.error("Failed to read scale calibration status: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -452,6 +471,9 @@ async def get_scale_calibration_params(
     try:
         return await worker.get_scale_calibration_params()
     except Exception as exc:
+        if _is_scale_not_enabled(exc):
+            raise _scale_not_enabled_exception() from exc
+
         logging.error("Failed to read scale calibration params: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -473,6 +495,9 @@ async def set_scale_calibration_params(
         )
         return {"success": ok}
     except Exception as exc:
+        if _is_scale_not_enabled(exc):
+            raise _scale_not_enabled_exception() from exc
+
         logging.error("Failed to set scale calibration params: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -487,6 +512,9 @@ async def calibrate_scale_zero(
     try:
         return await worker.calibrate_scale_zero()
     except Exception as exc:
+        if _is_scale_not_enabled(exc):
+            raise _scale_not_enabled_exception() from exc
+
         logging.error("Failed to calibrate scale zero: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -501,6 +529,9 @@ async def calibrate_scale_weight(
     try:
         return await worker.calibrate_scale_weight()
     except Exception as exc:
+        if _is_scale_not_enabled(exc):
+            raise _scale_not_enabled_exception() from exc
+
         logging.error("Failed to calibrate scale weight: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -516,6 +547,9 @@ async def scale_tare(
         ok = await worker.scale_tare()
         return {"success": ok}
     except Exception as exc:
+        if _is_scale_not_enabled(exc):
+            raise _scale_not_enabled_exception() from exc
+
         logging.error("Failed to tare scale: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
