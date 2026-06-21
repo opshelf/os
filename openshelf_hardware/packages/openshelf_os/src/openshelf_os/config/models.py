@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Literal, Optional, Tuple, Union
+from typing import Iterator, List, Literal, Optional, Tuple, Union, overload
 
 from pydantic import BaseModel, Field, RootModel, field_validator, model_validator
 
@@ -110,6 +110,21 @@ class Motor(BaseModel):
 
 
 class Motors(RootModel[List[Motor]]):
+    def __iter__(self) -> Iterator[Motor]:  # type: ignore[override]
+        return iter(self.root)
+
+    def __len__(self) -> int:
+        return len(self.root)
+
+    @overload
+    def __getitem__(self, index: int) -> Motor: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> List[Motor]: ...
+
+    def __getitem__(self, index: int | slice) -> Motor | List[Motor]:
+        return self.root[index]
+
     def by_name(self, name: str) -> Motor:
         for m in self.root:
             if m.motor_name == name:

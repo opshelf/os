@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import sentry_sdk
 import pytest
+from fastapi import HTTPException
 
 from openshelf_os_server import main
 from openshelf_os_server.routers import report
@@ -70,6 +71,40 @@ async def test_configure_sentry_enables_demo_and_production(tmp_path) -> None:
 			set_context_mock.assert_called()
 
 
+def test_before_send_sentry_event_drops_anyio_cancelled_error() -> None:
+	event = {
+		"exception": {
+			"values": [
+				{
+					"type": "CancelledError",
+					"value": (
+						"Cancelled via cancel scope 7ffea42fa710 by "
+						"<Task pending name='sse_starlette.sse.EventSourceResponse.__call__."
+						"<locals>.cancel_on_finish'>"
+					),
+				}
+			]
+		}
+	}
+
+	assert main._before_send_sentry_event(event, {}) is None
+
+
+def test_before_send_sentry_event_keeps_plain_cancelled_error() -> None:
+	event = {
+		"exception": {
+			"values": [
+				{
+					"type": "CancelledError",
+					"value": "Worker task was cancelled unexpectedly",
+				}
+			]
+		}
+	}
+
+	assert main._before_send_sentry_event(event, {}) == event
+
+
 def test_before_send_sentry_event_drops_pymodbus_request_id_mismatch() -> None:
 	event = {
 		"message": "ERROR: request ask for id=2 but got id=3, Skipping.",
@@ -92,9 +127,54 @@ def test_before_send_sentry_event_drops_pymodbus_request_id_mismatch_entry() -> 
 	assert main._before_send_sentry_event(event, {}) is None
 
 
+def test_before_send_sentry_event_drops_pymodbus_request_id_mismatch_logentry_message() -> None:
+	event = {
+		"logentry": {
+			"message": "ERROR: request ask for id=2 but got id=3, Skipping.",
+		}
+	}
+
+	assert main._before_send_sentry_event(event, {}) is None
+
+
+def test_before_send_sentry_event_drops_pymodbus_request_id_mismatch_logentry_formatted() -> None:
+	event = {
+		"logentry": {
+			"message": "unformatted message",
+			"formatted": "ERROR: request ask for id=2 but got id=3, Skipping.",
+		}
+	}
+
+	assert main._before_send_sentry_event(event, {}) is None
+
+
 def test_before_send_sentry_log_drops_pymodbus_request_id_mismatch() -> None:
 	log = {
 		"body": "ERROR: request ask for id=2 but got id=3, Skipping.",
+	}
+
+	assert main._before_send_sentry_log(log, {}) is None
+
+
+def test_before_send_sentry_log_drops_robot_initialization_failed_log() -> None:
+	log = {
+		"body": "robot_initialization_failed",
+		"attributes": {
+			"error": "Motor bus connection failed (/dev/ttyUSB0: [Errno 2] No such file or directory)",
+			"error_type": "ConfigError",
+		},
+	}
+
+	assert main._before_send_sentry_log(log, {}) is None
+
+
+def test_before_send_sentry_log_drops_robot_initialization_failed_attribute() -> None:
+	log = {
+		"body": "",
+		"attributes": {
+			"event": "robot_initialization_failed",
+			"error_type": "ConfigError",
+		},
 	}
 
 	assert main._before_send_sentry_log(log, {}) is None
@@ -114,6 +194,71 @@ def test_before_send_sentry_event_redacts_headers() -> None:
 	assert event["request"]["headers"]["authorization"] == "[Filtered]"
 	assert event["request"]["headers"]["x-request-id"] == "request-id"
 
+
+def test_before_send_sentry_event_drops_robot_unavailable_http_exception() -> None:
+	event = {
+		"exception": {
+			"values": [
+				{
+					"type": "HTTPException",
+					"value": "503: Robot is not initialized or failed to start",
+				}
+			]
+		}
+	}
+
+	assert main._before_send_sentry_event(event, {}) is None
+
+
+def test_before_send_sentry_event_drops_robot_worker_not_initialized_request() -> None:
+	event = {
+		"exception": {
+			"values": [
+				{
+					"type": "ValueError",
+					"value": "Robot Worker was Not Initialized",
+				}
+			]
+		},
+		"request": {"url": "http://device.local/api/robot/debug/motors"},
+	}
+
+	assert main._before_send_sentry_event(event, {}) is None
+
+
+def test_before_send_sentry_event_drops_robot_unavailable_exception_chain() -> None:
+	event = {
+		"exception": {
+			"values": [
+				{
+					"type": "ValueError",
+					"value": "Robot Worker was Not Initialized",
+				},
+				{
+					"type": "fastapi.exceptions.HTTPException",
+					"value": "503: Robot is not initialized or failed to start",
+				},
+			]
+		}
+	}
+
+	assert main._before_send_sentry_event(event, {}) is None
+
+
+def test_before_send_sentry_event_keeps_robot_worker_not_initialized_without_robot_request() -> None:
+	event = {
+		"exception": {
+			"values": [
+				{
+					"type": "ValueError",
+					"value": "Robot Worker was Not Initialized",
+				}
+			]
+		},
+		"request": {"url": "http://device.local/api/health"},
+	}
+
+	assert main._before_send_sentry_event(event, {}) == event
 
 
 @pytest.mark.anyio
