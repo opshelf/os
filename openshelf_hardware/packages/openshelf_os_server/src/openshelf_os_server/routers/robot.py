@@ -4,10 +4,11 @@ import asyncio
 from copy import deepcopy
 import json
 import re
-from typing import Any, AsyncGenerator, Callable, List, Literal, Optional, cast
+from typing import Any, AsyncGenerator, Callable, List, Literal, NoReturn, Optional, cast
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
+from openshelf_os.common import ConfigError
 from openshelf_os.robot.commands import RobotCommands, RetrieveItemCommand, StoreItemCommand
 import logging
 from openshelf_os.robot.worker import RobotWorker
@@ -42,6 +43,13 @@ _MOTOR_ID_RE = re.compile(r"motor\s+(\d+)", re.IGNORECASE)
 
 def _error_detail(message: str, code: str) -> dict[str, str]:
     return {"message": message, "code": code}
+
+
+def _raise_scale_unavailable(exc: ConfigError) -> NoReturn:
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail=str(exc) or "Scale is not enabled or configured",
+    ) from exc
 
 
 async def _ensure_laser_auto_calibration_not_running() -> None:
@@ -423,6 +431,8 @@ async def get_scale_reading(
             "status": data["status"],
             "raw_registers": data["raw_registers"],
         }
+    except ConfigError as exc:
+        _raise_scale_unavailable(exc)
     except Exception as exc:
         logging.error("Failed to read scale: %s", exc)
         raise HTTPException(
@@ -437,6 +447,8 @@ async def get_scale_calibration_status(
 ) -> dict:
     try:
         return await worker.get_scale_calibration_status()
+    except ConfigError as exc:
+        _raise_scale_unavailable(exc)
     except Exception as exc:
         logging.error("Failed to read scale calibration status: %s", exc)
         raise HTTPException(
@@ -451,6 +463,8 @@ async def get_scale_calibration_params(
 ) -> dict:
     try:
         return await worker.get_scale_calibration_params()
+    except ConfigError as exc:
+        _raise_scale_unavailable(exc)
     except Exception as exc:
         logging.error("Failed to read scale calibration params: %s", exc)
         raise HTTPException(
@@ -472,6 +486,8 @@ async def set_scale_calibration_params(
             division=request.division,
         )
         return {"success": ok}
+    except ConfigError as exc:
+        _raise_scale_unavailable(exc)
     except Exception as exc:
         logging.error("Failed to set scale calibration params: %s", exc)
         raise HTTPException(
@@ -486,6 +502,8 @@ async def calibrate_scale_zero(
 ) -> dict:
     try:
         return await worker.calibrate_scale_zero()
+    except ConfigError as exc:
+        _raise_scale_unavailable(exc)
     except Exception as exc:
         logging.error("Failed to calibrate scale zero: %s", exc)
         raise HTTPException(
@@ -500,6 +518,8 @@ async def calibrate_scale_weight(
 ) -> dict:
     try:
         return await worker.calibrate_scale_weight()
+    except ConfigError as exc:
+        _raise_scale_unavailable(exc)
     except Exception as exc:
         logging.error("Failed to calibrate scale weight: %s", exc)
         raise HTTPException(
@@ -515,6 +535,8 @@ async def scale_tare(
     try:
         ok = await worker.scale_tare()
         return {"success": ok}
+    except ConfigError as exc:
+        _raise_scale_unavailable(exc)
     except Exception as exc:
         logging.error("Failed to tare scale: %s", exc)
         raise HTTPException(
