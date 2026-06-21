@@ -50,6 +50,8 @@ logger = get_logger(__name__)
 
 SENSITIVE_HEADER_NAMES = {"authorization", "cookie"}
 PYMODBUS_REQUEST_ID_MISMATCH_PREFIX = "ERROR: request ask for id="
+ANYIO_CANCEL_SCOPE_MESSAGE = "Cancelled via cancel scope"
+CANCELLED_ERROR_TYPE = "CancelledError"
 
 
 def _redact_sensitive_mapping(value: Any) -> Any:
@@ -88,7 +90,42 @@ def _sentry_log_is_pymodbus_request_id_mismatch(log: dict[str, Any]) -> bool:
 	return any(_is_pymodbus_request_id_mismatch(value) is True for value in attributes.values())
 
 
+def _is_cancelled_error_type(value: Any) -> bool:
+	return isinstance(value, str) is True and value.split(".")[-1] == CANCELLED_ERROR_TYPE
+
+
+def _is_anyio_cancel_scope_message(value: Any) -> bool:
+	return isinstance(value, str) is True and ANYIO_CANCEL_SCOPE_MESSAGE in value
+
+
+def _sentry_event_is_anyio_cancelled_error(event: dict[str, Any]) -> bool:
+	exception_value = event.get("exception")
+	if isinstance(exception_value, dict) is False:
+		return False
+
+	exception_data = cast(dict[str, Any], exception_value)
+	exception_values = exception_data.get("values")
+	if isinstance(exception_values, list) is False:
+		return False
+
+	items = cast(list[Any], exception_values)
+	for item in items:
+		if isinstance(item, dict) is False:
+			continue
+
+		if (
+			_is_cancelled_error_type(item.get("type")) is True
+			and _is_anyio_cancel_scope_message(item.get("value")) is True
+		):
+			return True
+
+	return False
+
+
 def _before_send_sentry_event(event: dict[str, Any], _hint: dict[str, Any]) -> dict[str, Any] | None:
+	if _sentry_event_is_anyio_cancelled_error(event) is True:
+		return None
+
 	if _is_pymodbus_request_id_mismatch(event.get("message")) is True:
 		return None
 
