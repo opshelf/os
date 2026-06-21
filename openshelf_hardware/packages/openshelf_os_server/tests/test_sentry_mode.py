@@ -71,6 +71,40 @@ async def test_configure_sentry_enables_demo_and_production(tmp_path) -> None:
 			set_context_mock.assert_called()
 
 
+def test_before_send_sentry_event_drops_anyio_cancelled_error() -> None:
+	event = {
+		"exception": {
+			"values": [
+				{
+					"type": "CancelledError",
+					"value": (
+						"Cancelled via cancel scope 7ffea42fa710 by "
+						"<Task pending name='sse_starlette.sse.EventSourceResponse.__call__."
+						"<locals>.cancel_on_finish'>"
+					),
+				}
+			]
+		}
+	}
+
+	assert main._before_send_sentry_event(event, {}) is None
+
+
+def test_before_send_sentry_event_keeps_plain_cancelled_error() -> None:
+	event = {
+		"exception": {
+			"values": [
+				{
+					"type": "CancelledError",
+					"value": "Worker task was cancelled unexpectedly",
+				}
+			]
+		}
+	}
+
+	assert main._before_send_sentry_event(event, {}) == event
+
+
 def test_before_send_sentry_event_drops_pymodbus_request_id_mismatch() -> None:
 	event = {
 		"message": "ERROR: request ask for id=2 but got id=3, Skipping.",
