@@ -22,6 +22,7 @@ def _mock_worker():
 	worker.set_scale_calibration_params = AsyncMock()
 	worker.calibrate_scale_zero = AsyncMock()
 	worker.calibrate_scale_weight = AsyncMock()
+	worker.scale_tare = AsyncMock()
 	worker.get_cached_scale_status = MagicMock(return_value=None)
 	return worker
 
@@ -115,6 +116,48 @@ async def test_get_scale_calibration_params(client: AsyncClient) -> None:
 	assert data["calibration_weight"] == 500
 	assert data["precision"] == 1
 	assert data["division"] == 1
+
+
+@pytest.mark.parametrize(
+	("method", "path", "worker_method", "json_body"),
+	[
+		("get", "/api/robot/debug/scale", "get_scale_data", None),
+		("get", "/api/robot/debug/scale/calibration/status", "get_scale_calibration_status", None),
+		("get", "/api/robot/debug/scale/calibration/params", "get_scale_calibration_params", None),
+		(
+			"post",
+			"/api/robot/debug/scale/calibration/params",
+			"set_scale_calibration_params",
+			{"full_scale": 6000, "calibration_weight": 500},
+		),
+		("post", "/api/robot/debug/scale/calibration/zero", "calibrate_scale_zero", None),
+		("post", "/api/robot/debug/scale/calibration/weight", "calibrate_scale_weight", None),
+		("post", "/api/robot/debug/scale/calibration/tare", "scale_tare", None),
+	],
+)
+@pytest.mark.anyio
+async def test_scale_endpoints_report_disabled_scale_without_service_error(
+	client: AsyncClient,
+	method: str,
+	path: str,
+	worker_method: str,
+	json_body: dict[str, int] | None,
+) -> None:
+	mock_worker = _mock_worker()
+	getattr(mock_worker, worker_method).side_effect = ConfigError("Scale is not enabled")
+	request = getattr(client, method)
+	kwargs = {"json": json_body} if json_body is not None else {}
+
+	with patch("openshelf_os_server.routers.robot.get_settings", return_value=_mock_settings()):
+		with patch("openshelf_os_server.routers.robot.get_robot_worker", return_value=mock_worker):
+			response = await request(path, **kwargs)
+
+	assert response.status_code == 404
+	data = response.json()
+	assert data["detail"] == {
+		"message": "Scale is not enabled",
+		"code": "scale_not_enabled",
+	}
 
 
 @pytest.mark.anyio
