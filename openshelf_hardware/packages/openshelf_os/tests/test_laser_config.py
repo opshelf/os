@@ -93,6 +93,27 @@ def test_root_config_get_motor_supports_name_and_id_lookup():
     assert config.robot.tool.motors.by_id(1).motor_name == "stage"
 
 
+def test_motors_iterates_over_motor_models():
+    data = copy.deepcopy(MINIMAL_CONFIG_DICT)
+    data["robot"]["tool"]["motors"] = [{
+        "motor_name": "stage",
+        "motor_id": 1,
+        "Ip": 1,
+        "rpm": 1,
+        "dr": 0,
+        "mpr": 1,
+        "accel": 1,
+        "ret_rpm": 1,
+        "lim": 10,
+    }]
+    config = RootConfig.model_validate(data)
+
+    assert [motor.motor_name for motor in config.robot.tool.motors] == ["stage"]
+    assert any(motor.motor_name == "stage" for motor in config.robot.tool.motors)
+    assert len(config.robot.tool.motors) == 1
+    assert config.robot.tool.motors[0].motor_name == "stage"
+
+
 def test_assert_config_requires_laser_bus_when_laser_enabled():
     data = copy.deepcopy(MINIMAL_CONFIG_DICT)
     data["robot"]["tool"]["laser"] = {"enabled": True}

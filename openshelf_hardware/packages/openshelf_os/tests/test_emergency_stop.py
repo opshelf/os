@@ -179,6 +179,8 @@ class MockRobot:
     def __init__(self):
         self.safety_paused = False
         self.restore_y_brake_output_calls = 0
+        self.handled_commands = []
+        self.shutdown_calls = 0
 
     def block_motion_for_safety(self):
         self.safety_paused = True
@@ -191,6 +193,16 @@ class MockRobot:
 
     async def restore_y_brake_output(self):
         self.restore_y_brake_output_calls += 1
+
+    async def handle_command(self, command):
+        self.handled_commands.append(command)
+        return None
+
+    async def shutdown(self):
+        self.shutdown_calls += 1
+
+    def clear_operation_context(self):
+        pass
 
     def register_light_curtain_listener(self, cb):
         pass
@@ -372,6 +384,33 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(task_cancelled.is_set())
         self.assertEqual(robot.restore_y_brake_output_calls, 1)
         self.assertIsNone(worker._current_task)
+
+        RobotWorker._instance = None
+
+    async def test_shutdown_cancels_running_command_task(self):
+        from openshelf_os.robot.worker import RobotWorker
+
+        robot = MockRobot()
+        RobotWorker._instance = None
+        worker = RobotWorker(robot)
+        task_cancelled = asyncio.Event()
+
+        async def slow_command():
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                task_cancelled.set()
+                raise
+
+        worker._running = True
+        worker._current_task = asyncio.create_task(slow_command())
+        await asyncio.sleep(0)
+
+        await worker.shutdown()
+
+        self.assertTrue(task_cancelled.is_set())
+        self.assertIsNone(worker._current_task)
+        self.assertEqual(robot.shutdown_calls, 1)
 
         RobotWorker._instance = None
 
