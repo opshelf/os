@@ -4,10 +4,11 @@ import asyncio
 from copy import deepcopy
 import json
 import re
-from typing import Any, AsyncGenerator, Callable, List, Literal, Optional, cast
+from typing import Any, AsyncGenerator, Callable, List, Literal, NoReturn, Optional, cast
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
+from openshelf_os.common import ConfigError
 from openshelf_os.robot.commands import RobotCommands, RetrieveItemCommand, StoreItemCommand
 import logging
 from openshelf_os.robot.worker import RobotWorker
@@ -42,6 +43,31 @@ _MOTOR_ID_RE = re.compile(r"motor\s+(\d+)", re.IGNORECASE)
 
 def _error_detail(message: str, code: str) -> dict[str, str]:
     return {"message": message, "code": code}
+
+
+def _scale_disabled_error(exc: Exception) -> HTTPException | None:
+    if isinstance(exc, ConfigError) is False:
+        return None
+
+    if str(exc) != "Scale is not enabled":
+        return None
+
+    return HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=_error_detail("Scale is not enabled", "scale_disabled"),
+    )
+
+
+def _handle_scale_endpoint_error(exc: Exception, log_message: str) -> NoReturn:
+    scale_disabled_error = _scale_disabled_error(exc)
+    if scale_disabled_error is not None:
+        raise scale_disabled_error from None
+
+    logging.error(log_message, exc)
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail=log_message % exc,
+    ) from exc
 
 
 async def _ensure_laser_auto_calibration_not_running() -> None:
@@ -424,11 +450,7 @@ async def get_scale_reading(
             "raw_registers": data["raw_registers"],
         }
     except Exception as exc:
-        logging.error("Failed to read scale: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Failed to read scale: {exc}",
-        ) from exc
+        _handle_scale_endpoint_error(exc, "Failed to read scale: %s")
 
 
 @router.get("/debug/scale/calibration/status", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
@@ -438,11 +460,7 @@ async def get_scale_calibration_status(
     try:
         return await worker.get_scale_calibration_status()
     except Exception as exc:
-        logging.error("Failed to read scale calibration status: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Failed to read scale calibration status: {exc}",
-        ) from exc
+        _handle_scale_endpoint_error(exc, "Failed to read scale calibration status: %s")
 
 
 @router.get("/debug/scale/calibration/params", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
@@ -452,11 +470,7 @@ async def get_scale_calibration_params(
     try:
         return await worker.get_scale_calibration_params()
     except Exception as exc:
-        logging.error("Failed to read scale calibration params: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Failed to read scale calibration params: {exc}",
-        ) from exc
+        _handle_scale_endpoint_error(exc, "Failed to read scale calibration params: %s")
 
 
 @router.post("/debug/scale/calibration/params", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
@@ -473,11 +487,7 @@ async def set_scale_calibration_params(
         )
         return {"success": ok}
     except Exception as exc:
-        logging.error("Failed to set scale calibration params: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Failed to set scale calibration params: {exc}",
-        ) from exc
+        _handle_scale_endpoint_error(exc, "Failed to set scale calibration params: %s")
 
 
 @router.post("/debug/scale/calibration/zero", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
@@ -487,11 +497,7 @@ async def calibrate_scale_zero(
     try:
         return await worker.calibrate_scale_zero()
     except Exception as exc:
-        logging.error("Failed to calibrate scale zero: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Failed to calibrate scale zero: {exc}",
-        ) from exc
+        _handle_scale_endpoint_error(exc, "Failed to calibrate scale zero: %s")
 
 
 @router.post("/debug/scale/calibration/weight", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
@@ -501,11 +507,7 @@ async def calibrate_scale_weight(
     try:
         return await worker.calibrate_scale_weight()
     except Exception as exc:
-        logging.error("Failed to calibrate scale weight: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Failed to calibrate scale weight: {exc}",
-        ) from exc
+        _handle_scale_endpoint_error(exc, "Failed to calibrate scale weight: %s")
 
 
 @router.post("/debug/scale/calibration/tare", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
@@ -516,11 +518,7 @@ async def scale_tare(
         ok = await worker.scale_tare()
         return {"success": ok}
     except Exception as exc:
-        logging.error("Failed to tare scale: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Failed to tare scale: {exc}",
-        ) from exc
+        _handle_scale_endpoint_error(exc, "Failed to tare scale: %s")
 
 
 @router.get("/debug/motors", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
