@@ -45,18 +45,28 @@ def _error_detail(message: str, code: str) -> dict[str, str]:
     return {"message": message, "code": code}
 
 
-def _raise_scale_endpoint_error(operation: str, exc: Exception) -> NoReturn:
-    if isinstance(exc, ConfigError) is True and str(exc) == "Scale is not enabled":
-        logging.info("Scale endpoint unavailable: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=_error_detail("Scale is not enabled on this device", "scale_not_enabled"),
-        ) from exc
+def _scale_disabled_error(exc: Exception) -> HTTPException | None:
+    if isinstance(exc, ConfigError) is False:
+        return None
 
-    logging.error("Failed to %s: %s", operation, exc)
+    if str(exc) != "Scale is not enabled":
+        return None
+
+    return HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=_error_detail("Scale is not enabled", "scale_disabled"),
+    )
+
+
+def _handle_scale_endpoint_error(exc: Exception, log_message: str) -> NoReturn:
+    scale_disabled_error = _scale_disabled_error(exc)
+    if scale_disabled_error is not None:
+        raise scale_disabled_error from None
+
+    logging.error(log_message, exc)
     raise HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        detail=f"Failed to {operation}: {exc}",
+        detail=log_message % exc,
     ) from exc
 
 
@@ -440,7 +450,7 @@ async def get_scale_reading(
             "raw_registers": data["raw_registers"],
         }
     except Exception as exc:
-        _raise_scale_endpoint_error("read scale", exc)
+        _handle_scale_endpoint_error(exc, "Failed to read scale: %s")
 
 
 @router.get("/debug/scale/calibration/status", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
@@ -450,7 +460,7 @@ async def get_scale_calibration_status(
     try:
         return await worker.get_scale_calibration_status()
     except Exception as exc:
-        _raise_scale_endpoint_error("read scale calibration status", exc)
+        _handle_scale_endpoint_error(exc, "Failed to read scale calibration status: %s")
 
 
 @router.get("/debug/scale/calibration/params", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
@@ -460,7 +470,7 @@ async def get_scale_calibration_params(
     try:
         return await worker.get_scale_calibration_params()
     except Exception as exc:
-        _raise_scale_endpoint_error("read scale calibration params", exc)
+        _handle_scale_endpoint_error(exc, "Failed to read scale calibration params: %s")
 
 
 @router.post("/debug/scale/calibration/params", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
@@ -477,7 +487,7 @@ async def set_scale_calibration_params(
         )
         return {"success": ok}
     except Exception as exc:
-        _raise_scale_endpoint_error("set scale calibration params", exc)
+        _handle_scale_endpoint_error(exc, "Failed to set scale calibration params: %s")
 
 
 @router.post("/debug/scale/calibration/zero", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
@@ -487,7 +497,7 @@ async def calibrate_scale_zero(
     try:
         return await worker.calibrate_scale_zero()
     except Exception as exc:
-        _raise_scale_endpoint_error("calibrate scale zero", exc)
+        _handle_scale_endpoint_error(exc, "Failed to calibrate scale zero: %s")
 
 
 @router.post("/debug/scale/calibration/weight", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
@@ -497,7 +507,7 @@ async def calibrate_scale_weight(
     try:
         return await worker.calibrate_scale_weight()
     except Exception as exc:
-        _raise_scale_endpoint_error("calibrate scale weight", exc)
+        _handle_scale_endpoint_error(exc, "Failed to calibrate scale weight: %s")
 
 
 @router.post("/debug/scale/calibration/tare", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
@@ -508,7 +518,7 @@ async def scale_tare(
         ok = await worker.scale_tare()
         return {"success": ok}
     except Exception as exc:
-        _raise_scale_endpoint_error("tare scale", exc)
+        _handle_scale_endpoint_error(exc, "Failed to tare scale: %s")
 
 
 @router.get("/debug/motors", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
