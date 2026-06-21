@@ -26,7 +26,6 @@ from sentry_sdk.integrations.logging import LoggingIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 from sentry_sdk.transport import HttpTransport
 from sqlalchemy import delete, select
-from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from openshelf_os.device import get_device_id
 from openshelf_os.common import CONFIG_PATH, OperatingMode, load_config_file, resolve_grid_path
@@ -52,6 +51,7 @@ logger = get_logger(__name__)
 SENSITIVE_HEADER_NAMES = {"authorization", "cookie"}
 PYMODBUS_REQUEST_ID_MISMATCH_PREFIX = "ERROR: request ask for id="
 ROBOT_INITIALIZATION_FAILED_EVENT = "robot_initialization_failed"
+DOOR_MOTOR_RECOVERY_EVENT = "Too many bad door readings; attempting door motor recovery"
 
 
 def _redact_sensitive_mapping(value: Any) -> Any:
@@ -103,11 +103,77 @@ def _sentry_log_has_message(log: dict[str, Any], target: str) -> bool:
 	return any(value == target for value in attributes.values())
 
 
+def _sentry_event_has_message(event: dict[str, Any], target: str) -> bool:
+	if event.get("message") == target:
+		return True
+
+	logentry_value = event.get("logentry")
+	if isinstance(logentry_value, dict) is True:
+		logentry = cast(dict[str, Any], logentry_value)
+		if any(logentry.get(key) == target for key in ("message", "formatted")) is True:
+			return True
+
+	for entry in event.get("entries", []):
+		if isinstance(entry, dict) is False:
+			continue
+
+		data = entry.get("data")
+		if isinstance(data, dict) is False:
+			continue
+
+		if any(data.get(key) == target for key in ("message", "formatted")) is True:
+			return True
+
+	return False
+
+
+def _sentry_event_exception_values(event: dict[str, Any]) -> list[dict[str, Any]]:
+	exception_value = event.get("exception")
+	if not isinstance(exception_value, dict):
+		return []
+
+	exception_data = cast(dict[str, Any], exception_value)
+	values = exception_data.get("values")
+	if not isinstance(values, list):
+		return []
+
+	return [value for value in values if isinstance(value, dict) is True]
+
+
+def _sentry_event_is_anyio_cancelled_error(event: dict[str, Any]) -> bool:
+	for value in _sentry_event_exception_values(event):
+		exception_type = value.get("type")
+		exception_module = value.get("module")
+		if exception_type == "CancelledError" and exception_module in {"asyncio.exceptions", "anyio"}:
+			return True
+
+	return False
+
+
+def _sentry_event_is_robot_unavailable_request(event: dict[str, Any]) -> bool:
+	request_value = event.get("request")
+	if isinstance(request_value, dict) is False:
+		return False
+
+	request = cast(dict[str, Any], request_value)
+	url = request.get("url")
+	if not isinstance(url, str):
+		return False
+
+	if "/api/robot" not in url:
+		return False
+
+	return _sentry_event_has_message(event, "robot_unavailable")
+
+
 def _before_send_sentry_event(event: dict[str, Any], _hint: dict[str, Any]) -> dict[str, Any] | None:
 	if _sentry_event_is_anyio_cancelled_error(event) is True:
 		return None
 
 	if _is_pymodbus_request_id_mismatch(event.get("message")) is True:
+		return None
+
+	if _sentry_event_has_message(event, DOOR_MOTOR_RECOVERY_EVENT) is True:
 		return None
 
 	if _sentry_event_is_robot_unavailable_request(event) is True:
@@ -141,6 +207,11 @@ def _before_send_sentry_log(log: dict[str, Any], _hint: dict[str, Any]) -> dict[
 	# The startup path already captures the underlying exception separately with a stacktrace.
 	# Dropping the structured log avoids a duplicate log-only issue grouped by message.
 	if _sentry_log_has_message(log, ROBOT_INITIALIZATION_FAILED_EVENT) is True:
+		return None
+
+	# Door position recovery is an expected hardware self-healing path. Keep it in
+	# local logs without creating a log-only Sentry issue.
+	if _sentry_log_has_message(log, DOOR_MOTOR_RECOVERY_EVENT) is True:
 		return None
 
 	attributes_value = log.get("attributes")

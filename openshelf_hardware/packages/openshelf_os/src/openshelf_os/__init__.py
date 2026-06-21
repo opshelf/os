@@ -53,6 +53,7 @@ def _configure_sentry() -> bool:
 
 SENSITIVE_HEADER_NAMES = {"authorization", "cookie"}
 PYMODBUS_REQUEST_ID_MISMATCH_PREFIX = "ERROR: request ask for id="
+DOOR_MOTOR_RECOVERY_EVENT = "Too many bad door readings; attempting door motor recovery"
 
 
 def _redact_sensitive_mapping(value: Any) -> Any:
@@ -91,8 +92,48 @@ def _sentry_log_is_pymodbus_request_id_mismatch(log: dict[str, Any]) -> bool:
 	return any(_is_pymodbus_request_id_mismatch(value) is True for value in attributes.values())
 
 
+def _sentry_log_has_message(log: dict[str, Any], target: str) -> bool:
+	for key in ("body", "message"):
+		if log.get(key) == target:
+			return True
+
+	attributes_value = log.get("attributes")
+	if isinstance(attributes_value, dict) is False:
+		return False
+
+	attributes = cast(dict[str, Any], attributes_value)
+	return any(value == target for value in attributes.values())
+
+
+def _sentry_event_has_message(event: dict[str, Any], target: str) -> bool:
+	if event.get("message") == target:
+		return True
+
+	logentry_value = event.get("logentry")
+	if isinstance(logentry_value, dict) is True:
+		logentry = cast(dict[str, Any], logentry_value)
+		if any(logentry.get(key) == target for key in ("message", "formatted")) is True:
+			return True
+
+	for entry in event.get("entries", []):
+		if isinstance(entry, dict) is False:
+			continue
+
+		data = entry.get("data")
+		if isinstance(data, dict) is False:
+			continue
+
+		if any(data.get(key) == target for key in ("message", "formatted")) is True:
+			return True
+
+	return False
+
+
 def _before_send_sentry_event(event: dict[str, Any], _hint: dict[str, Any]) -> dict[str, Any] | None:
 	if _is_pymodbus_request_id_mismatch(event.get("message")) is True:
+		return None
+
+	if _sentry_event_has_message(event, DOOR_MOTOR_RECOVERY_EVENT) is True:
 		return None
 
 	logentry_value = event.get("logentry")
@@ -127,6 +168,11 @@ def _before_send_sentry_event(event: dict[str, Any], _hint: dict[str, Any]) -> d
 
 def _before_send_sentry_log(log: dict[str, Any], _hint: dict[str, Any]) -> dict[str, Any] | None:
 	if _sentry_log_is_pymodbus_request_id_mismatch(log) is True:
+		return None
+
+	# Door position recovery is an expected hardware self-healing path. Keep it in
+	# local logs without creating a log-only Sentry issue.
+	if _sentry_log_has_message(log, DOOR_MOTOR_RECOVERY_EVENT) is True:
 		return None
 
 	attributes = log.get("attributes")
