@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import sentry_sdk
 import pytest
+from fastapi import HTTPException
 
 from openshelf_os_server import main
 from openshelf_os_server.routers import report
