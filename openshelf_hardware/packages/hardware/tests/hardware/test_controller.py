@@ -19,6 +19,20 @@ async def test_controller_connect(mock_modbus_client):
     await controller.connect()
     mock_modbus_client.connect.assert_called_once()
 
+
+@pytest.mark.asyncio
+async def test_controller_connect_preserves_connection_failure_message(mock_modbus_client):
+    mock_modbus_client.connect.side_effect = None
+    mock_modbus_client.connect.return_value = False
+    mock_modbus_client.connected = False
+    controller = SharedModbusController("/dev/ttyUSB0", 115200)
+
+    with pytest.raises(ModbusConnectionError, match="Failed to connect to Modbus device on port /dev/ttyUSB0") as exc_info:
+        await controller.connect()
+
+    assert "Unexpected error during connection" not in str(exc_info.value)
+
+
 @pytest.mark.asyncio
 async def test_controller_read_holding_registers(mock_modbus_client):
     controller = SharedModbusController("/dev/ttyUSB0", 115200)
