@@ -51,8 +51,8 @@ logger = get_logger(__name__)
 
 SENSITIVE_HEADER_NAMES = {"authorization", "cookie"}
 PYMODBUS_REQUEST_ID_MISMATCH_PREFIX = "ERROR: request ask for id="
-ANYIO_CANCEL_SCOPE_MESSAGE = "Cancelled via cancel scope"
-CANCELLED_ERROR_TYPE = "CancelledError"
+ROBOT_UNAVAILABLE_MESSAGE = "Robot is not initialized or failed to start"
+ROBOT_WORKER_NOT_INITIALIZED_MESSAGE = "Robot Worker was Not Initialized"
 
 
 def _redact_sensitive_mapping(value: Any) -> Any:
@@ -91,34 +91,51 @@ def _sentry_log_is_pymodbus_request_id_mismatch(log: dict[str, Any]) -> bool:
 	return any(_is_pymodbus_request_id_mismatch(value) is True for value in attributes.values())
 
 
-def _is_cancelled_error_type(value: Any) -> bool:
-	return isinstance(value, str) is True and value.split(".")[-1] == CANCELLED_ERROR_TYPE
-
-
-def _is_anyio_cancel_scope_message(value: Any) -> bool:
-	return isinstance(value, str) is True and ANYIO_CANCEL_SCOPE_MESSAGE in value
-
-
-def _sentry_event_is_anyio_cancelled_error(event: dict[str, Any]) -> bool:
+def _sentry_event_exception_values(event: dict[str, Any]) -> list[dict[str, Any]]:
 	exception_value = event.get("exception")
-	if isinstance(exception_value, dict) is False:
-		return False
+	if not isinstance(exception_value, dict):
+		return []
 
 	exception_data = cast(dict[str, Any], exception_value)
-	exception_values = exception_data.get("values")
-	if isinstance(exception_values, list) is False:
+	values = exception_data.get("values")
+	if not isinstance(values, list):
+		return []
+
+	return [cast(dict[str, Any], value) for value in values if isinstance(value, dict) is True]
+
+
+def _sentry_event_request_url(event: dict[str, Any]) -> str | None:
+	request_value = event.get("request")
+	if not isinstance(request_value, dict):
+		return None
+
+	request_data = cast(dict[str, Any], request_value)
+	url = request_data.get("url")
+	if not isinstance(url, str):
+		return None
+
+	return url
+
+
+def _sentry_event_is_robot_unavailable_request(event: dict[str, Any]) -> bool:
+	exception_values = _sentry_event_exception_values(event)
+	if len(exception_values) == 0:
 		return False
 
-	items = cast(list[Any], exception_values)
-	for item in items:
-		if isinstance(item, dict) is False:
+	for exception_value in exception_values:
+		exception_type = exception_value.get("type")
+		exception_message = exception_value.get("value")
+
+		if not isinstance(exception_type, str) or not isinstance(exception_message, str):
 			continue
 
-		if (
-			_is_cancelled_error_type(item.get("type")) is True
-			and _is_anyio_cancel_scope_message(item.get("value")) is True
-		):
+		if exception_type.endswith("HTTPException") is True and ROBOT_UNAVAILABLE_MESSAGE in exception_message:
 			return True
+
+		if exception_type == "ValueError" and exception_message == ROBOT_WORKER_NOT_INITIALIZED_MESSAGE:
+			request_url = _sentry_event_request_url(event)
+			if isinstance(request_url, str) and "/api/robot/" in request_url:
+				return True
 
 	return False
 
@@ -130,14 +147,8 @@ def _before_send_sentry_event(event: dict[str, Any], _hint: dict[str, Any]) -> d
 	if _is_pymodbus_request_id_mismatch(event.get("message")) is True:
 		return None
 
-	logentry_value = event.get("logentry")
-	if isinstance(logentry_value, dict) is True:
-		logentry = cast(dict[str, Any], logentry_value)
-		if _is_pymodbus_request_id_mismatch(logentry.get("message")) is True:
-			return None
-
-		if _is_pymodbus_request_id_mismatch(logentry.get("formatted")) is True:
-			return None
+	if _sentry_event_is_robot_unavailable_request(event) is True:
+		return None
 
 	for entry in event.get("entries", []):
 		if isinstance(entry, dict) is False:
