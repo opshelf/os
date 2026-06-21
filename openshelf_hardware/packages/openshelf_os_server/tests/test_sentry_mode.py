@@ -115,6 +115,71 @@ def test_before_send_sentry_event_redacts_headers() -> None:
 	assert event["request"]["headers"]["x-request-id"] == "request-id"
 
 
+def test_before_send_sentry_event_drops_robot_unavailable_http_exception() -> None:
+	event = {
+		"exception": {
+			"values": [
+				{
+					"type": "HTTPException",
+					"value": "503: Robot is not initialized or failed to start",
+				}
+			]
+		}
+	}
+
+	assert main._before_send_sentry_event(event, {}) is None
+
+
+def test_before_send_sentry_event_drops_robot_worker_not_initialized_request() -> None:
+	event = {
+		"exception": {
+			"values": [
+				{
+					"type": "ValueError",
+					"value": "Robot Worker was Not Initialized",
+				}
+			]
+		},
+		"request": {"url": "http://device.local/api/robot/debug/motors"},
+	}
+
+	assert main._before_send_sentry_event(event, {}) is None
+
+
+def test_before_send_sentry_event_drops_robot_unavailable_exception_chain() -> None:
+	event = {
+		"exception": {
+			"values": [
+				{
+					"type": "ValueError",
+					"value": "Robot Worker was Not Initialized",
+				},
+				{
+					"type": "fastapi.exceptions.HTTPException",
+					"value": "503: Robot is not initialized or failed to start",
+				},
+			]
+		}
+	}
+
+	assert main._before_send_sentry_event(event, {}) is None
+
+
+def test_before_send_sentry_event_keeps_robot_worker_not_initialized_without_robot_request() -> None:
+	event = {
+		"exception": {
+			"values": [
+				{
+					"type": "ValueError",
+					"value": "Robot Worker was Not Initialized",
+				}
+			]
+		},
+		"request": {"url": "http://device.local/api/health"},
+	}
+
+	assert main._before_send_sentry_event(event, {}) == event
+
 
 @pytest.mark.anyio
 async def test_report_error_skips_sentry_in_development(tmp_path) -> None:
