@@ -32,6 +32,9 @@ from openshelf_os_server.core.laser_auto_calibration.angle_runner import (
     _build_stage_stall_validation_rotation_positions,
     _select_stage_stall_best_summary,
 )
+from openshelf_os_server.core.laser_auto_calibration.scope_runner import (
+    _validate_laser_auto_calibration_config,
+)
 from openshelf_os_server.routers import robot as robot_router
 from openshelf_os_server.core.laser_auto_calibration import LaserAutoCalibrationSnapshot
 from openshelf_os_server.routers import calibration as calibration_router
@@ -270,6 +273,129 @@ def test_build_bounds_for_side_clamps_x_min_away_from_zero() -> None:
     assert left_bounds.x_min == pytest.approx(5.0)
     assert right_bounds.x_min == pytest.approx(5.0)
 
+
+def _build_reference_bounds_scan_config(**overrides) -> SimpleNamespace:
+    values = {
+        "laser_offset_x_mm": 50.0,
+        "laser_offset_y_mm": 0.0,
+        "left_bounds_x_min_mm": 0.0,
+        "left_bounds_x_max_mm": 950.0,
+        "left_bounds_y_min_mm": 0.0,
+        "left_bounds_y_max_mm": 1250.0,
+        "right_bounds_x_min_mm": 0.0,
+        "right_bounds_x_max_mm": 950.0,
+        "right_bounds_y_min_mm": 0.0,
+        "right_bounds_y_max_mm": 1250.0,
+        "left_reference": SimpleNamespace(
+            shelf_idx=0,
+            cell_idx=0,
+            anchor="top_left",
+            x_mm=100.0,
+            y_mm=100.0,
+            z_offset_mm=15.0,
+            wall_depth_mm=9.0,
+        ),
+        "right_reference": SimpleNamespace(
+            shelf_idx=0,
+            cell_idx=0,
+            anchor="top_left",
+            x_mm=100.0,
+            y_mm=100.0,
+            z_offset_mm=15.0,
+            wall_depth_mm=9.0,
+        ),
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+def test_validate_laser_auto_calibration_config_rejects_all_scope_reference_outside_bounds() -> None:
+    scan_config = _build_reference_bounds_scan_config(
+        left_reference=SimpleNamespace(
+            shelf_idx=0,
+            cell_idx=0,
+            anchor="top_left",
+            x_mm=40.0,
+            y_mm=100.0,
+            z_offset_mm=15.0,
+            wall_depth_mm=9.0,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="xy_reference x_mm resolves outside scan X bounds"):
+        _validate_laser_auto_calibration_config(
+            scan_config=scan_config,
+            requested_scope=LaserAutoCalibrationScope(mode="all"),
+        )
+
+
+def test_validate_laser_auto_calibration_config_rejects_side_scope_reference_outside_bounds() -> None:
+    scan_config = _build_reference_bounds_scan_config(
+        right_reference=SimpleNamespace(
+            shelf_idx=0,
+            cell_idx=0,
+            anchor="top_left",
+            x_mm=900.0,
+            y_mm=100.0,
+            z_offset_mm=15.0,
+            wall_depth_mm=9.0,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="xy_reference x_mm resolves outside scan X bounds"):
+        _validate_laser_auto_calibration_config(
+            scan_config=scan_config,
+            requested_scope=LaserAutoCalibrationScope(mode="side", side=StorageModuleSide.RIGHT),
+        )
+
+
+def test_validate_laser_auto_calibration_config_allows_local_shelf_scope_reference_outside_full_bounds() -> None:
+    scan_config = _build_reference_bounds_scan_config(
+        right_reference=SimpleNamespace(
+            shelf_idx=0,
+            cell_idx=0,
+            anchor="top_left",
+            x_mm=900.0,
+            y_mm=100.0,
+            z_offset_mm=15.0,
+            wall_depth_mm=9.0,
+        ),
+    )
+
+    _validate_laser_auto_calibration_config(
+        scan_config=scan_config,
+        requested_scope=LaserAutoCalibrationScope(
+            mode="shelf",
+            side=StorageModuleSide.RIGHT,
+            shelf_idx=0,
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_ensure_session_started_rejects_reference_bounds_before_starting_background_task() -> None:
+    manager = LaserAutoCalibrationManager()
+    scan_config = _build_reference_bounds_scan_config(
+        left_reference=SimpleNamespace(
+            shelf_idx=0,
+            cell_idx=0,
+            anchor="top_left",
+            x_mm=40.0,
+            y_mm=100.0,
+            z_offset_mm=15.0,
+            wall_depth_mm=9.0,
+        ),
+    )
+    config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=scan_config)))
+
+    with patch("openshelf_os_server.core.laser_auto_calibration.get_root_config", return_value=config):
+        with pytest.raises(ValueError, match="xy_reference x_mm resolves outside scan X bounds"):
+            await manager.ensure_session_started(
+                SimpleNamespace(),
+                LaserAutoCalibrationScope(mode="side", side=StorageModuleSide.LEFT),
+            )
+
+    assert manager._task is None
 
 
 @pytest.mark.asyncio
