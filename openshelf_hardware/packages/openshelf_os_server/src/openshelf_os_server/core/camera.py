@@ -415,6 +415,12 @@ async def stop_camera_stream_by_id(camera_id: str) -> None:
 		await manager.stop()
 
 
+async def stop_all_camera_streams() -> None:
+	for manager in list(camera_registry.values()):
+		manager.consumer_count = 0
+		await manager.stop()
+
+
 def get_camera_manager_by_id(camera_id: str) -> Optional[CameraManager]:
 	return camera_registry.get(camera_id)
 

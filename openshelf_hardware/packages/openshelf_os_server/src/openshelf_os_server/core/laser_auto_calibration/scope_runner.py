@@ -200,14 +200,36 @@ def _validate_laser_auto_calibration_config(
     if requested_scope.mode == "all":
         laser_module.validate_scan_bounds(left_bounds, "left scan bounds")
         laser_module.validate_scan_bounds(right_bounds, "right scan bounds")
+        laser_module.validate_laser_structure_parameters(
+            scan_config=scan_config,
+            side=StorageModuleSide.LEFT,
+            bounds=left_bounds,
+        )
+        laser_module.validate_laser_structure_parameters(
+            scan_config=scan_config,
+            side=StorageModuleSide.RIGHT,
+            bounds=right_bounds,
+        )
         return
 
     if requested_scope.side == StorageModuleSide.LEFT:
         laser_module.validate_scan_bounds(left_bounds, "left scan bounds")
+        if requested_scope.mode == "side":
+            laser_module.validate_laser_structure_parameters(
+                scan_config=scan_config,
+                side=StorageModuleSide.LEFT,
+                bounds=left_bounds,
+            )
         return
 
     if requested_scope.side == StorageModuleSide.RIGHT:
         laser_module.validate_scan_bounds(right_bounds, "right scan bounds")
+        if requested_scope.mode == "side":
+            laser_module.validate_laser_structure_parameters(
+                scan_config=scan_config,
+                side=StorageModuleSide.RIGHT,
+                bounds=right_bounds,
+            )
 
 
 class ScopeRunnerMixin:
