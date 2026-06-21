@@ -712,7 +712,7 @@ async def move_motor(
     except HTTPException:
         raise
     except Exception as exc:
-        logging.error("Motor move failed: %s", exc)
+        logging.warning("Motor move failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=_error_detail(f"Motor move failed: {exc}", "motor_move_failed"),
