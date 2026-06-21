@@ -45,29 +45,12 @@ def _error_detail(message: str, code: str) -> dict[str, str]:
     return {"message": message, "code": code}
 
 
-def _scale_disabled_error(exc: Exception) -> HTTPException | None:
-    if isinstance(exc, ConfigError) is False:
-        return None
-
-    if str(exc) != "Scale is not enabled":
-        return None
-
-    return HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail=_error_detail("Scale is not enabled", "scale_disabled"),
-    )
-
-
-def _handle_scale_endpoint_error(exc: Exception, log_message: str) -> NoReturn:
-    scale_disabled_error = _scale_disabled_error(exc)
-    if scale_disabled_error is not None:
-        raise scale_disabled_error from None
-
-    logging.error(log_message, exc)
+def _raise_scale_not_enabled(exc: ConfigError) -> NoReturn:
+    logging.info("Scale endpoint requested while scale is disabled: %s", exc)
     raise HTTPException(
-        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        detail=log_message % exc,
-    ) from exc
+        status_code=status.HTTP_409_CONFLICT,
+        detail=str(exc),
+    ) from None
 
 
 async def _ensure_laser_auto_calibration_not_running() -> None:
@@ -449,6 +432,8 @@ async def get_scale_reading(
             "status": data["status"],
             "raw_registers": data["raw_registers"],
         }
+    except ConfigError as exc:
+        _raise_scale_not_enabled(exc)
     except Exception as exc:
         _handle_scale_endpoint_error(exc, "Failed to read scale: %s")
 
@@ -459,6 +444,8 @@ async def get_scale_calibration_status(
 ) -> dict:
     try:
         return await worker.get_scale_calibration_status()
+    except ConfigError as exc:
+        _raise_scale_not_enabled(exc)
     except Exception as exc:
         _handle_scale_endpoint_error(exc, "Failed to read scale calibration status: %s")
 
@@ -469,6 +456,8 @@ async def get_scale_calibration_params(
 ) -> dict:
     try:
         return await worker.get_scale_calibration_params()
+    except ConfigError as exc:
+        _raise_scale_not_enabled(exc)
     except Exception as exc:
         _handle_scale_endpoint_error(exc, "Failed to read scale calibration params: %s")
 
@@ -486,6 +475,8 @@ async def set_scale_calibration_params(
             division=request.division,
         )
         return {"success": ok}
+    except ConfigError as exc:
+        _raise_scale_not_enabled(exc)
     except Exception as exc:
         _handle_scale_endpoint_error(exc, "Failed to set scale calibration params: %s")
 
@@ -496,6 +487,8 @@ async def calibrate_scale_zero(
 ) -> dict:
     try:
         return await worker.calibrate_scale_zero()
+    except ConfigError as exc:
+        _raise_scale_not_enabled(exc)
     except Exception as exc:
         _handle_scale_endpoint_error(exc, "Failed to calibrate scale zero: %s")
 
@@ -506,6 +499,8 @@ async def calibrate_scale_weight(
 ) -> dict:
     try:
         return await worker.calibrate_scale_weight()
+    except ConfigError as exc:
+        _raise_scale_not_enabled(exc)
     except Exception as exc:
         _handle_scale_endpoint_error(exc, "Failed to calibrate scale weight: %s")
 
@@ -517,6 +512,8 @@ async def scale_tare(
     try:
         ok = await worker.scale_tare()
         return {"success": ok}
+    except ConfigError as exc:
+        _raise_scale_not_enabled(exc)
     except Exception as exc:
         _handle_scale_endpoint_error(exc, "Failed to tare scale: %s")
 
