@@ -39,7 +39,7 @@ from openshelf_os_server.core.camera import init_tool_camera_manager, init_overh
 from openshelf_os_server.core.iobox_sizer import init_iobox_sizer, stop_iobox_sizer
 from openshelf_os_server.settings import Settings
 from openshelf_os_server.database.base import Base, engine, get_database_url
-from openshelf_os_server.database.session import AsyncSessionLocal
+from openshelf_os_server.database.session import AsyncSessionLocal, get_db
 from openshelf_os_server.database.models import Item, ItemLocation, Role, User
 from openshelf_os_server.middleware.audit import AuditMiddleware
 from openshelf_os_server.middleware.correlation import CorrelationIdMiddleware
@@ -498,7 +498,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 		logger.warning("iobox_sizer_startup_failed", error=str(e), error_type=type(e).__name__, exc_info=True)
 
 	async def get_storage_session() -> AsyncGenerator[StorageService, None]:
-		async with AsyncSessionLocal() as session:
+		async for session in get_db():
 			yield StorageService(session)
 
 	app.dependency_overrides[StorageService] = get_storage_session
