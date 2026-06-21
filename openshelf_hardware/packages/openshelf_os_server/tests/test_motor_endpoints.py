@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import pytest
 from httpx import AsyncClient
 from unittest.mock import patch, MagicMock, AsyncMock
@@ -236,7 +237,8 @@ async def test_move_motor_not_found(client: AsyncClient) -> None:
 
 
 @pytest.mark.anyio
-async def test_move_motor_failure(client: AsyncClient) -> None:
+async def test_move_motor_failure(client: AsyncClient, caplog: pytest.LogCaptureFixture) -> None:
+	caplog.set_level(logging.WARNING)
 	failing_motor = AsyncMock()
 	failing_motor.move_to_position = AsyncMock(side_effect=Exception("motor timeout"))
 
@@ -261,6 +263,11 @@ async def test_move_motor_failure(client: AsyncClient) -> None:
 	detail = response.json()["detail"]
 	assert detail["code"] == "motor_move_failed"
 	assert "motor timeout" in detail["message"].lower()
+	assert any(
+		record.levelno == logging.WARNING and "Motor move failed: motor timeout" in record.getMessage()
+		for record in caplog.records
+	)
+	assert not any(record.levelno >= logging.ERROR for record in caplog.records)
 
 
 @pytest.mark.anyio
