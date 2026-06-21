@@ -26,6 +26,7 @@ from sentry_sdk.integrations.logging import LoggingIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 from sentry_sdk.transport import HttpTransport
 from sqlalchemy import delete, select
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from openshelf_os.device import get_device_id
 from openshelf_os.common import CONFIG_PATH, OperatingMode, load_config_file, resolve_grid_path
@@ -34,11 +35,11 @@ from openshelf_os.storage import StorageGrid
 from openshelf_os_server.core.logging_config import configure_logging, get_logger
 from openshelf_os_server.core.robot import get_robot_health, init_robot_worker, set_robot_initialization_error, stop_robot_worker
 from openshelf_os_server.core.storage import StorageService
-from openshelf_os_server.core.camera import init_tool_camera_manager, init_overhead_camera_manager
+from openshelf_os_server.core.camera import init_tool_camera_manager, init_overhead_camera_manager, stop_all_camera_streams
 from openshelf_os_server.core.iobox_sizer import init_iobox_sizer, stop_iobox_sizer
 from openshelf_os_server.settings import Settings
 from openshelf_os_server.database.base import Base, engine, get_database_url
-from openshelf_os_server.database.session import AsyncSessionLocal
+from openshelf_os_server.database.session import AsyncSessionLocal, get_db
 from openshelf_os_server.database.models import Item, ItemLocation, Role, User
 from openshelf_os_server.middleware.audit import AuditMiddleware
 from openshelf_os_server.middleware.correlation import CorrelationIdMiddleware
@@ -50,6 +51,7 @@ logger = get_logger(__name__)
 
 SENSITIVE_HEADER_NAMES = {"authorization", "cookie"}
 PYMODBUS_REQUEST_ID_MISMATCH_PREFIX = "ERROR: request ask for id="
+ROBOT_INITIALIZATION_FAILED_EVENT = "robot_initialization_failed"
 
 
 def _redact_sensitive_mapping(value: Any) -> Any:
@@ -88,8 +90,27 @@ def _sentry_log_is_pymodbus_request_id_mismatch(log: dict[str, Any]) -> bool:
 	return any(_is_pymodbus_request_id_mismatch(value) is True for value in attributes.values())
 
 
+def _sentry_log_has_message(log: dict[str, Any], target: str) -> bool:
+	for key in ("body", "message"):
+		if log.get(key) == target:
+			return True
+
+	attributes_value = log.get("attributes")
+	if isinstance(attributes_value, dict) is False:
+		return False
+
+	attributes = cast(dict[str, Any], attributes_value)
+	return any(value == target for value in attributes.values())
+
+
 def _before_send_sentry_event(event: dict[str, Any], _hint: dict[str, Any]) -> dict[str, Any] | None:
+	if _sentry_event_is_anyio_cancelled_error(event) is True:
+		return None
+
 	if _is_pymodbus_request_id_mismatch(event.get("message")) is True:
+		return None
+
+	if _sentry_event_is_robot_unavailable_request(event) is True:
 		return None
 
 	for entry in event.get("entries", []):
@@ -115,6 +136,11 @@ def _before_send_sentry_event(event: dict[str, Any], _hint: dict[str, Any]) -> d
 
 def _before_send_sentry_log(log: dict[str, Any], _hint: dict[str, Any]) -> dict[str, Any] | None:
 	if _sentry_log_is_pymodbus_request_id_mismatch(log) is True:
+		return None
+
+	# The startup path already captures the underlying exception separately with a stacktrace.
+	# Dropping the structured log avoids a duplicate log-only issue grouped by message.
+	if _sentry_log_has_message(log, ROBOT_INITIALIZATION_FAILED_EVENT) is True:
 		return None
 
 	attributes_value = log.get("attributes")
@@ -462,7 +488,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 		logger.warning("iobox_sizer_startup_failed", error=str(e), error_type=type(e).__name__, exc_info=True)
 
 	async def get_storage_session() -> AsyncGenerator[StorageService, None]:
-		async with AsyncSessionLocal() as session:
+		async for session in get_db():
 			yield StorageService(session)
 
 	app.dependency_overrides[StorageService] = get_storage_session
@@ -472,6 +498,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 		yield
 	finally:
 		logger.info("application_shutting_down")
+		try:
+			await demo.shutdown_demo_cycle()
+		except Exception as e:
+			logger.warning("demo_cycle_shutdown_failed", error=str(e), error_type=type(e).__name__, exc_info=True)
+		try:
+			await stop_all_camera_streams()
+		except Exception as e:
+			logger.warning("camera_stream_shutdown_failed", error=str(e), error_type=type(e).__name__, exc_info=True)
 		if robot_started is True:
 			await stop_robot_worker()
 			logger.info("robot_worker_stopped")
