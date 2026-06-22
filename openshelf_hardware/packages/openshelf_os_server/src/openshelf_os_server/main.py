@@ -221,6 +221,9 @@ def _before_send_sentry_event(event: dict[str, Any], _hint: dict[str, Any]) -> d
 	if _sentry_event_has_pymodbus_request_id_mismatch(event) is True:
 		return None
 
+	if _sentry_event_has_message(event, DOOR_MOTOR_RECOVERY_EVENT) is True:
+		return None
+
 	if _sentry_event_is_robot_unavailable_request(event) is True:
 		return None
 
