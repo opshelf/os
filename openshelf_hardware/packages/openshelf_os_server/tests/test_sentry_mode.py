@@ -6,8 +6,6 @@ from unittest.mock import AsyncMock, patch
 
 import sentry_sdk
 import pytest
-from fastapi import HTTPException
-
 from openshelf_os_server import main
 from openshelf_os_server.routers import report
 from openshelf_os_server.settings import clear_config_cache
@@ -174,6 +172,30 @@ def test_before_send_sentry_log_drops_robot_initialization_failed_attribute() ->
 		"attributes": {
 			"event": "robot_initialization_failed",
 			"error_type": "ConfigError",
+		},
+	}
+
+	assert main._before_send_sentry_log(log, {}) is None
+
+
+def test_before_send_sentry_log_drops_tool_fault_log() -> None:
+	log = {
+		"body": "Tool fault detected - manual intervention required",
+		"attributes": {
+			"exception_type": "MovementError",
+			"exception_message": "Gantry movement failed: x=FAULT, y=STOPPED",
+		},
+	}
+
+	assert main._before_send_sentry_log(log, {}) is None
+
+
+def test_before_send_sentry_log_drops_tool_fault_attribute() -> None:
+	log = {
+		"body": "",
+		"attributes": {
+			"message": "Tool fault detected - manual intervention required",
+			"exception_type": "MovementError",
 		},
 	}
 
