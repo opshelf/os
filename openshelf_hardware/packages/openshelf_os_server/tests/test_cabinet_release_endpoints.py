@@ -61,6 +61,7 @@ def _mock_worker():
 	worker.is_safety_blocking = MagicMock(return_value=False)
 	worker._robot = MagicMock()
 	worker._robot._cabinet = MagicMock()
+	worker._robot._cabinet.is_configured = MagicMock(return_value=True)
 	worker._robot._cabinet.get_status = MagicMock(
 		return_value={"doors": _closed_doors(), "latches": _engaged_latches()}
 	)
@@ -82,7 +83,7 @@ async def test_get_cabinet_status(client: AsyncClient) -> None:
 			response = await client.get("/api/cabinet/status")
 
 	assert response.status_code == 200
-	assert response.json() == {"doors": _closed_doors(), "latches": _engaged_latches()}
+	assert response.json() == {"configured": True, "doors": _closed_doors(), "latches": _engaged_latches()}
 	worker._robot._cabinet.get_status.assert_called_once()
 
 
