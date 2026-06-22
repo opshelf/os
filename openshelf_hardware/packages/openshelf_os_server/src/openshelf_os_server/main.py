@@ -26,6 +26,7 @@ from sentry_sdk.integrations.logging import LoggingIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 from sentry_sdk.transport import HttpTransport
 from sqlalchemy import delete, select
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from openshelf_os.device import get_device_id
 from openshelf_os.common import CONFIG_PATH, OperatingMode, load_config_file, resolve_grid_path
@@ -52,6 +53,7 @@ SENSITIVE_HEADER_NAMES = {"authorization", "cookie"}
 PYMODBUS_REQUEST_ID_MISMATCH_PREFIX = "ERROR: request ask for id="
 ROBOT_INITIALIZATION_FAILED_EVENT = "robot_initialization_failed"
 TOOL_FAULT_LOG_EVENT = "Tool fault detected - manual intervention required"
+DOOR_MOTOR_RECOVERY_EVENT = "Too many bad door readings; attempting door motor recovery"
 
 
 def _redact_sensitive_mapping(value: Any) -> Any:
@@ -187,6 +189,22 @@ def _sentry_event_is_anyio_cancelled_error(event: dict[str, Any]) -> bool:
 	return False
 
 
+def _sentry_event_is_http_exception(event: dict[str, Any], hint: dict[str, Any]) -> bool:
+	original_exception = hint.get("original_exception")
+	if isinstance(original_exception, StarletteHTTPException) is True:
+		return True
+
+	for value in _sentry_event_exception_values(event):
+		exception_type = value.get("type")
+		if not isinstance(exception_type, str):
+			continue
+
+		if exception_type == "HTTPException" or exception_type.endswith(".HTTPException") is True:
+			return True
+
+	return False
+
+
 def _sentry_event_is_robot_unavailable_request(event: dict[str, Any]) -> bool:
 	request_value = event.get("request")
 	request_url = ""
@@ -215,6 +233,9 @@ def _sentry_event_is_robot_unavailable_request(event: dict[str, Any]) -> bool:
 
 
 def _before_send_sentry_event(event: dict[str, Any], _hint: dict[str, Any]) -> dict[str, Any] | None:
+	if _sentry_event_is_http_exception(event, _hint) is True:
+		return None
+
 	if _sentry_event_is_anyio_cancelled_error(event) is True:
 		return None
 
@@ -261,6 +282,9 @@ def _before_send_sentry_log(log: dict[str, Any], _hint: dict[str, Any]) -> dict[
 	# stacktrace, command context, and motor diagnostics. The warning log is useful
 	# locally, but sending it to Sentry creates a second log-only issue with no stack.
 	if _sentry_log_has_message(log, TOOL_FAULT_LOG_EVENT) is True:
+		return None
+
+	if _sentry_log_has_message(log, DOOR_MOTOR_RECOVERY_EVENT) is True:
 		return None
 
 	attributes_value = log.get("attributes")
