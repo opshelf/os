@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import sentry_sdk
 import pytest
+from fastapi import HTTPException
 from openshelf_os_server import main
 from openshelf_os_server.routers import report
 from openshelf_os_server.settings import clear_config_cache
@@ -146,6 +147,47 @@ def test_before_send_sentry_event_drops_pymodbus_request_id_mismatch_logentry_fo
 	assert main._before_send_sentry_event(event, {}) is None
 
 
+def test_before_send_sentry_event_drops_http_exception_from_hint() -> None:
+	event = {
+		"exception": {
+			"values": [
+				{
+					"type": "HTTPException",
+					"value": "{'message': 'Motor move failed', 'code': 'motor_move_failed'}",
+				}
+			]
+		}
+	}
+	hint = {"original_exception": HTTPException(status_code=503, detail="Motor move failed")}
+
+	assert main._before_send_sentry_event(event, hint) is None
+
+
+def test_before_send_sentry_event_drops_http_exception_from_event() -> None:
+	event = {
+		"exception": {
+			"values": [
+				{
+					"type": "fastapi.exceptions.HTTPException",
+					"value": "{'message': 'Motor move failed', 'code': 'motor_move_failed'}",
+				}
+			]
+		}
+	}
+
+	assert main._before_send_sentry_event(event, {}) is None
+
+
+def test_before_send_sentry_event_drops_door_motor_recovery_message() -> None:
+	event = {
+		"logentry": {
+			"message": main.DOOR_MOTOR_RECOVERY_EVENT,
+		}
+	}
+
+	assert main._before_send_sentry_event(event, {}) is None
+
+
 def test_before_send_sentry_log_drops_pymodbus_request_id_mismatch() -> None:
 	log = {
 		"body": "ERROR: request ask for id=2 but got id=3, Skipping.",
@@ -197,6 +239,14 @@ def test_before_send_sentry_log_drops_tool_fault_attribute() -> None:
 			"message": "Tool fault detected - manual intervention required",
 			"exception_type": "MovementError",
 		},
+	}
+
+	assert main._before_send_sentry_log(log, {}) is None
+
+
+def test_before_send_sentry_log_drops_door_motor_recovery_log() -> None:
+	log = {
+		"body": main.DOOR_MOTOR_RECOVERY_EVENT,
 	}
 
 	assert main._before_send_sentry_log(log, {}) is None
