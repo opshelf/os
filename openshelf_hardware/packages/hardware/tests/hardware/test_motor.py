@@ -1,6 +1,6 @@
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, call
 
 import pytest
 
@@ -57,14 +57,38 @@ async def test_servo_configure(mock_controller):
 async def test_servo_open(mock_controller):
     servo = Servo(mock_controller)
     await servo.open()
-    mock_controller.write_single_register.assert_called_once_with(0x9, 0x3E8, 0x080B)
+
+    assert mock_controller.write_single_register.await_args_list == [
+        call(0x9, 0x3E8, 0x0),
+        call(0x9, 0x3E8, 0x1),
+        call(0x9, 0x03EB, 0x8020),
+        call(0x9, 0x03ED, 0x80FE),
+        call(0x9, 0x03EF, 0x80C0),
+        call(0x9, 0x03EC, 0x80),
+        call(0x9, 0x03EE, 0x80),
+        call(0x9, 0x03F0, 0x80),
+        call(0x9, 0x3E8, 0x080B),
+    ]
+    assert servo._configured is True
 
 
 @pytest.mark.asyncio
 async def test_servo_close(mock_controller):
     servo = Servo(mock_controller)
     await servo.close()
-    mock_controller.write_single_register.assert_called_once_with(0x9, 0x3E8, 0x090B)
+
+    assert mock_controller.write_single_register.await_args_list == [
+        call(0x9, 0x3E8, 0x0),
+        call(0x9, 0x3E8, 0x1),
+        call(0x9, 0x03EB, 0x8020),
+        call(0x9, 0x03ED, 0x80FE),
+        call(0x9, 0x03EF, 0x80C0),
+        call(0x9, 0x03EC, 0x80),
+        call(0x9, 0x03EE, 0x80),
+        call(0x9, 0x03F0, 0x80),
+        call(0x9, 0x3E8, 0x090B),
+    ]
+    assert servo._configured is True
 
 
 @pytest.mark.asyncio
