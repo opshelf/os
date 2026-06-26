@@ -207,6 +207,11 @@ class SafetyGuardOverrideRequest(BaseModel):
     bypass: bool
 
 
+class SafetyComponentOverrideRequest(BaseModel):
+    component: Literal["light_curtain", "cabinet_doors"]
+    bypass: bool
+
+
 async def check_robot_enabled() -> None:
     settings = get_settings()
     if not settings.robot.enabled:
@@ -432,6 +437,21 @@ async def override_safety_guard(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
 ) -> dict[str, Any]:
     return await worker.set_safety_guard_bypassed(request.bypass)
+
+
+@router.post(
+    "/safety/override/component",
+    dependencies=[
+        Depends(get_current_user),
+        Depends(require_permissions("robot:control")),
+        Depends(check_robot_enabled),
+    ],
+)
+async def override_safety_component(
+    request: SafetyComponentOverrideRequest,
+    worker: RobotWorker = Depends(get_robot_worker_or_error),
+) -> dict[str, Any]:
+    return await worker.set_safety_component_bypassed(request.component, request.bypass)
 
 
 @router.get("/debug/scanner/status", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])

@@ -976,13 +976,27 @@ export interface SafetyGuardOverrideResponse {
 	interruption_id: number;
 	last_changed_at: string | null;
 	bypassed: boolean;
+	component_bypasses?: Record<string, boolean>;
 }
+
+export type SafetyComponent = 'light_curtain' | 'cabinet_doors';
 
 export async function setBypassSafetyGuard(bypass: boolean): Promise<SafetyGuardOverrideResponse> {
 	return apiFetch<SafetyGuardOverrideResponse>('/robot/safety/override', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ bypass })
+	});
+}
+
+export async function setBypassSafetyComponent(
+	component: SafetyComponent,
+	bypass: boolean
+): Promise<SafetyGuardOverrideResponse> {
+	return apiFetch<SafetyGuardOverrideResponse>('/robot/safety/override/component', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ component, bypass })
 	});
 }
 

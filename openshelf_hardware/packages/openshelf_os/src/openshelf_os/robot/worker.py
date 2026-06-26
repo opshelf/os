@@ -271,6 +271,10 @@ class RobotWorker:
         self._safety_interruption_id: int = 0
         self._safety_last_changed_at: Optional[str] = None
         self._safety_guard_bypassed: bool = False
+        self._component_bypasses: dict[str, bool] = {
+            "light_curtain": False,
+            "cabinet_doors": False,
+        }
         self._demo_cycling: bool = False
         self._guard_lock = asyncio.Lock()
         self._logger = logging.getLogger(__name__).getChild("worker.guard")
@@ -1282,6 +1286,7 @@ class RobotWorker:
             "interruption_id": self._safety_interruption_id,
             "last_changed_at": self._safety_last_changed_at,
             "bypassed": self._safety_guard_bypassed,
+            "component_bypasses": dict(self._component_bypasses),
         }
 
     def is_safety_blocking(self) -> bool:
@@ -1334,15 +1339,17 @@ class RobotWorker:
     def _build_safety_sources(self) -> tuple[list[str], dict[str, dict[str, Any]]]:
         io_door_opening = self._is_io_door_opening()
         is_bypassed = self._safety_guard_bypassed
+        light_curtain_bypassed = is_bypassed or self._component_bypasses["light_curtain"]
+        cabinet_doors_bypassed = is_bypassed or self._component_bypasses["cabinet_doors"]
         light_curtain_blocked = (
             self._should_ignore_light_curtain() is False
             and bool(self._curtain_blocked)
             and (bool(self._door_open) or io_door_opening is True)
         )
-        light_curtain_active = light_curtain_blocked is True and is_bypassed is False
+        light_curtain_active = light_curtain_blocked is True and light_curtain_bypassed is False
         cabinet_doors = dict(self._cabinet_doors or {})
         cabinet_doors_open = cabinet_doors.get("open") is True
-        cabinet_doors_active = cabinet_doors_open is True and is_bypassed is False
+        cabinet_doors_active = cabinet_doors_open is True and cabinet_doors_bypassed is False
 
         sources: dict[str, dict[str, Any]] = {
             "light_curtain": {
@@ -1350,7 +1357,7 @@ class RobotWorker:
                 "blocked": self._curtain_blocked,
                 "io_door_open": self._door_open,
                 "io_door_opening": io_door_opening,
-                "bypassed": is_bypassed,
+                "bypassed": light_curtain_bypassed,
             },
             "cabinet_doors": {
                 "active": cabinet_doors_active,
@@ -1360,7 +1367,7 @@ class RobotWorker:
                 "top_open": cabinet_doors.get("top_open"),
                 "bottom_open": cabinet_doors.get("bottom_open"),
                 "open": cabinet_doors.get("open"),
-                "bypassed": is_bypassed,
+                "bypassed": cabinet_doors_bypassed,
             },
         }
         active_sources = [
@@ -1409,7 +1416,14 @@ class RobotWorker:
         active_sources_changed = active_sources != previous_active_sources
         sources_changed = sources != previous_sources
 
+        previous_active_sources_bypassed = was_interrupted is True and all(
+            sources.get(source_name, {}).get("bypassed") is True
+            for source_name in previous_active_sources
+        )
+
         if self._safety_guard_bypassed is True:
+            self._awaiting_safety_ack = False
+        elif is_interrupted is False and previous_active_sources_bypassed is True:
             self._awaiting_safety_ack = False
         elif is_interrupted is True:
             if was_interrupted is False:
@@ -1505,6 +1519,25 @@ class RobotWorker:
                 self._safety_guard_bypassed = enabled
                 self._safety_last_changed_at = datetime.now(timezone.utc).isoformat()
                 self._robot.set_safety_guard_bypassed(enabled)
+
+            await self._refresh_safety_inputs()
+            active_sources, sources = self._build_safety_sources()
+            self._apply_safety_state(active_sources, sources)
+            safety_status = self.get_safety_status()
+
+        await self._publish_status()
+        return safety_status
+
+    async def set_safety_component_bypassed(self, component: str, enabled: bool) -> dict[str, Any]:
+        if component not in self._component_bypasses:
+            raise ValueError(f"Unknown safety component: {component}")
+
+        async with self._guard_lock:
+            if self._component_bypasses[component] != enabled:
+                self._component_bypasses[component] = enabled
+                self._safety_last_changed_at = datetime.now(timezone.utc).isoformat()
+                if component == "light_curtain":
+                    self._robot.set_light_curtain_bypassed(enabled)
 
             await self._refresh_safety_inputs()
             active_sources, sources = self._build_safety_sources()
