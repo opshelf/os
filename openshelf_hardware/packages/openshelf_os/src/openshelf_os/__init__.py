@@ -53,6 +53,8 @@ def _configure_sentry() -> bool:
 
 SENSITIVE_HEADER_NAMES = {"authorization", "cookie"}
 PYMODBUS_REQUEST_ID_MISMATCH_PREFIX = "ERROR: request ask for id="
+PYMODBUS_NO_RESPONSE_RETRY_PREFIX = "No response received after "
+PYMODBUS_NO_RESPONSE_RETRY_SUFFIX = " retries, continue with next request"
 DOOR_MOTOR_RECOVERY_EVENT = "Too many bad door readings; attempting door motor recovery"
 
 
@@ -79,9 +81,32 @@ def _is_pymodbus_request_id_mismatch(message: Any) -> bool:
 	return isinstance(message, str) is True and message.startswith(PYMODBUS_REQUEST_ID_MISMATCH_PREFIX)
 
 
-def _sentry_log_is_pymodbus_request_id_mismatch(log: dict[str, Any]) -> bool:
+def _is_pymodbus_no_response_retry(message: Any) -> bool:
+	if isinstance(message, str) is False:
+		return False
+
+	if message.startswith(PYMODBUS_NO_RESPONSE_RETRY_PREFIX) is False:
+		return False
+
+	if message.endswith(PYMODBUS_NO_RESPONSE_RETRY_SUFFIX) is False:
+		return False
+
+	retry_count = message[
+		len(PYMODBUS_NO_RESPONSE_RETRY_PREFIX):-len(PYMODBUS_NO_RESPONSE_RETRY_SUFFIX)
+	]
+	return retry_count.isdigit()
+
+
+def _is_suppressed_pymodbus_log_message(message: Any) -> bool:
+	return (
+		_is_pymodbus_request_id_mismatch(message) is True
+		or _is_pymodbus_no_response_retry(message) is True
+	)
+
+
+def _sentry_log_is_suppressed_pymodbus_message(log: dict[str, Any]) -> bool:
 	for key in ("body", "message"):
-		if _is_pymodbus_request_id_mismatch(log.get(key)) is True:
+		if _is_suppressed_pymodbus_log_message(log.get(key)) is True:
 			return True
 
 	attributes_value = log.get("attributes")
@@ -89,7 +114,7 @@ def _sentry_log_is_pymodbus_request_id_mismatch(log: dict[str, Any]) -> bool:
 		return False
 
 	attributes = cast(dict[str, Any], attributes_value)
-	return any(_is_pymodbus_request_id_mismatch(value) is True for value in attributes.values())
+	return any(_is_suppressed_pymodbus_log_message(value) is True for value in attributes.values())
 
 
 def _sentry_log_has_message(log: dict[str, Any], target: str) -> bool:
@@ -129,21 +154,15 @@ def _sentry_event_has_message(event: dict[str, Any], target: str) -> bool:
 	return False
 
 
-def _before_send_sentry_event(event: dict[str, Any], _hint: dict[str, Any]) -> dict[str, Any] | None:
-	if _is_pymodbus_request_id_mismatch(event.get("message")) is True:
-		return None
-
-	if _sentry_event_has_message(event, DOOR_MOTOR_RECOVERY_EVENT) is True:
-		return None
+def _sentry_event_has_suppressed_pymodbus_message(event: dict[str, Any]) -> bool:
+	if _is_suppressed_pymodbus_log_message(event.get("message")) is True:
+		return True
 
 	logentry_value = event.get("logentry")
 	if isinstance(logentry_value, dict) is True:
 		logentry = cast(dict[str, Any], logentry_value)
-		if _is_pymodbus_request_id_mismatch(logentry.get("message")) is True:
-			return None
-
-		if _is_pymodbus_request_id_mismatch(logentry.get("formatted")) is True:
-			return None
+		if any(_is_suppressed_pymodbus_log_message(logentry.get(key)) is True for key in ("message", "formatted")):
+			return True
 
 	for entry in event.get("entries", []):
 		if isinstance(entry, dict) is False:
@@ -153,8 +172,18 @@ def _before_send_sentry_event(event: dict[str, Any], _hint: dict[str, Any]) -> d
 		if isinstance(data, dict) is False:
 			continue
 
-		if _is_pymodbus_request_id_mismatch(data.get("formatted")) is True:
-			return None
+		if any(_is_suppressed_pymodbus_log_message(data.get(key)) is True for key in ("message", "formatted")):
+			return True
+
+	return False
+
+
+def _before_send_sentry_event(event: dict[str, Any], _hint: dict[str, Any]) -> dict[str, Any] | None:
+	if _sentry_event_has_suppressed_pymodbus_message(event) is True:
+		return None
+
+	if _sentry_event_has_message(event, DOOR_MOTOR_RECOVERY_EVENT) is True:
+		return None
 
 	request_value = event.get("request")
 	if isinstance(request_value, dict) is True:
@@ -167,7 +196,7 @@ def _before_send_sentry_event(event: dict[str, Any], _hint: dict[str, Any]) -> d
 
 
 def _before_send_sentry_log(log: dict[str, Any], _hint: dict[str, Any]) -> dict[str, Any] | None:
-	if _sentry_log_is_pymodbus_request_id_mismatch(log) is True:
+	if _sentry_log_is_suppressed_pymodbus_message(log) is True:
 		return None
 
 	# Door position recovery is an expected hardware self-healing path. Keep it in
