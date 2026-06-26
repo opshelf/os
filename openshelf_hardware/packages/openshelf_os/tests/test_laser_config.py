@@ -144,6 +144,30 @@ def test_bus_port_serializes_canonical_single_port_config():
     assert "ports" not in dumped_motor_bus
 
 
+def test_legacy_bus_ports_coerces_to_canonical_port_config():
+    data = copy.deepcopy(MINIMAL_CONFIG_DICT)
+    data["robot"]["bus"] = {
+        "motor": {
+            "ports": ["/dev/openshelf-rs485-ch1", "/dev/ttyUSB1"],
+            "baudrate": 115200,
+        },
+        "scale": {
+            "ports": ["/dev/openshelf-rs485-ch2", "/dev/ttyUSB0"],
+            "baudrate": 9600,
+        },
+    }
+    config = RootConfig.model_validate(data)
+
+    assert config.robot.bus is not None
+    assert config.robot.bus.motor.port == "/dev/openshelf-rs485-ch1"
+    assert config.robot.bus.motor.ports == ["/dev/openshelf-rs485-ch1", "/dev/ttyUSB1"]
+    assert config.robot.bus.scale.port == "/dev/openshelf-rs485-ch2"
+
+    dumped_motor_bus = config.model_dump(mode="json")["robot"]["bus"]["motor"]
+    assert dumped_motor_bus["port"] == "/dev/openshelf-rs485-ch1"
+    assert "ports" not in dumped_motor_bus
+
+
 def test_assert_config_accepts_enabled_laser_with_bus():
     data = copy.deepcopy(MINIMAL_CONFIG_DICT)
     data["robot"]["tool"]["laser"] = {"enabled": True}

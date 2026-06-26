@@ -54,9 +54,10 @@ def test_prepare_bus_settings_prefers_waveshare_rs485_hub_port():
 	assert LEGACY_MOTOR_PORT in settings["motor"]["fallback_ports"]
 
 
-def make_bus_config(port: str, baudrate: int = 9600) -> SimpleNamespace:
+def make_bus_config(port: str, baudrate: int = 9600, ports: list[str] | None = None) -> SimpleNamespace:
 	return SimpleNamespace(
 		port=port,
+		ports=ports,
 		baudrate=baudrate,
 		parity="N",
 		timeout=2.0,
@@ -103,6 +104,31 @@ def test_prepare_bus_settings_adds_stable_symlink_fallback_for_legacy_port():
 
 	assert settings["motor"]["fallback_ports"] == [LEGACY_MOTOR_PORT, DEFAULT_MOTOR_PORT]
 	assert settings["scale"]["fallback_ports"] == ["/dev/custom-scale"]
+
+
+def test_prepare_bus_settings_preserves_legacy_configured_ports():
+	robot = robot_module.Robot.__new__(robot_module.Robot)
+	robot._config = SimpleNamespace(
+		robot=SimpleNamespace(
+			bus=SimpleNamespace(
+				motor=make_bus_config(
+					DEFAULT_MOTOR_PORT,
+					115200,
+					ports=[DEFAULT_MOTOR_PORT, LEGACY_MOTOR_PORT],
+				),
+				scale=make_bus_config(
+					"/dev/openshelf-rs485-ch2",
+					ports=["/dev/openshelf-rs485-ch2", "/dev/ttyUSB0"],
+				),
+				laser=None,
+			)
+		)
+	)
+
+	settings = robot_module.Robot._prepare_bus_settings(robot)
+
+	assert settings["motor"]["fallback_ports"] == [DEFAULT_MOTOR_PORT, LEGACY_MOTOR_PORT]
+	assert settings["scale"]["fallback_ports"] == ["/dev/openshelf-rs485-ch2", "/dev/ttyUSB0"]
 
 
 def test_create_controller_for_bus_reuses_motor_controller_for_matching_laser(monkeypatch):
