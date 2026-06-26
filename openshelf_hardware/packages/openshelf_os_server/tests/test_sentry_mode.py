@@ -337,6 +337,54 @@ def test_before_send_sentry_event_drops_robot_worker_not_initialized_request() -
 	assert main._before_send_sentry_event(event, {}) is None
 
 
+def test_before_send_sentry_event_drops_calibration_robot_worker_not_initialized_request() -> None:
+	event = {
+		"exception": {
+			"values": [
+				{
+					"type": "ValueError",
+					"value": "Robot Worker was Not Initialized",
+				}
+			]
+		},
+		"request": {"url": "http://device.local/api/calibration/status"},
+	}
+
+	assert main._before_send_sentry_event(event, {}) is None
+
+
+def test_before_send_sentry_event_drops_calibration_robot_not_initialized_request() -> None:
+	event = {
+		"exception": {
+			"values": [
+				{
+					"type": "ValueError",
+					"value": "503: Robot is not initialized",
+				}
+			]
+		},
+		"request": {"url": "http://device.local/api/calibration/status"},
+	}
+
+	assert main._before_send_sentry_event(event, {}) is None
+
+
+def test_before_send_sentry_event_keeps_robot_worker_not_initialized_for_unmatched_path() -> None:
+	event = {
+		"exception": {
+			"values": [
+				{
+					"type": "ValueError",
+					"value": "Robot Worker was Not Initialized",
+				}
+			]
+		},
+		"request": {"url": "http://device.local/api/robotics/status"},
+	}
+
+	assert main._before_send_sentry_event(event, {}) == event
+
+
 def test_before_send_sentry_event_drops_robot_unavailable_exception_chain() -> None:
 	event = {
 		"exception": {
