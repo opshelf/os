@@ -49,26 +49,20 @@
 
 	function statusText(component: RobotInitComponent): string {
 		const state = stepState(component.phase);
+
 		if (state === 'done') {
 			return 'done';
 		}
+
 		if (state === 'pending') {
 			return 'pending';
 		}
+
 		if (state === 'failed') {
 			return component.reason ? `failed — ${component.reason}` : 'failed';
 		}
-		return component.phase;
-	}
 
-	function headerLabel(phase: string): string {
-		if (phase === 'degraded') {
-			return 'robot initialization — degraded';
-		}
-		if (phase === 'failed') {
-			return 'robot initialization — failed';
-		}
-		return 'robot initialization';
+		return component.phase;
 	}
 </script>
 
@@ -76,9 +70,7 @@
 	<table class="init-progress">
 		<thead>
 			<tr>
-				<th colspan="3" class:degraded={init.phase === 'degraded'} class:failed={init.phase === 'failed'}>
-					{headerLabel(init.phase)}
-				</th>
+				<th colspan="3"> robot initialization </th>
 			</tr>
 		</thead>
 		<tbody>
@@ -97,15 +89,6 @@
 <style>
 	.init-progress {
 		margin-bottom: 1.5em;
-		width: 100%;
-	}
-
-	.init-progress th.degraded {
-		color: #b36b00;
-	}
-
-	.init-progress th.failed {
-		color: #c40000;
 	}
 
 	.step-marker {
