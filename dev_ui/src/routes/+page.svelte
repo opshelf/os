@@ -8,7 +8,6 @@
 		isApiConnected,
 		robotInit,
 		robotStatus,
-		robotStatusError,
 		robotStatusLastUpdate
 	} from '$lib';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
@@ -192,11 +191,6 @@
 			<td>last update</td>
 			<td>{$robotStatusLastUpdate || 'waiting for first event'}</td>
 		</tr>
-		{#if $robotStatusError}
-			<tr>
-				<td colspan="2"><ErrorMessage message={$robotStatusError} /></td>
-			</tr>
-		{/if}
 	</tbody>
 
 	{#if $robotStatus}
@@ -274,7 +268,10 @@
 						<span class:enabled-danger={getBypassSafetyGuard() === true}>
 							{getBypassSafetyGuard() ? 'enabled' : 'disabled'}
 						</span>
-						<button disabled={isUpdatingSafetyOverride === true} onclick={didClickBypassSafetyGuard}>
+						<button
+							disabled={isUpdatingSafetyOverride === true}
+							onclick={didClickBypassSafetyGuard}
+						>
 							{getBypassSafetyGuard() ? 'DISABLE' : 'ENABLE'}
 						</button>
 					</div>

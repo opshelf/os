@@ -1,4 +1,5 @@
 import logging
+import os
 from typing import Optional
 
 import sentry_sdk
@@ -32,6 +33,47 @@ event_listener: Optional[RobotEventListener] = None
 robot_initialization_error: Optional[str] = None
 robot_initialization_error_type: Optional[str] = None
 CRITICAL_MOTOR_COMPONENTS = {"x_axis", "y_axis", "z_axis", "stage", "rotate", "door"}
+
+
+def _barcode_enabled() -> bool:
+    return os.getenv("OPENSHELF_DISABLE_BARCODE", "false").lower() not in {"1", "true", "yes"}
+
+
+def _printer_enabled() -> bool:
+    try:
+        return bool(get_root_config().printer.enabled)
+    except Exception:
+        return False
+
+
+def _printer_device() -> str:
+    return os.getenv("OPENSHELF_PRINTER_DEVICE", "/dev/usb/lp0")
+
+
+def _report_scanner_status(worker: r_worker.RobotWorker) -> None:
+    if _barcode_enabled() is False:
+        return
+    tracker = get_init_tracker()
+    try:
+        status = worker.get_scanner_status()
+    except Exception as exc:
+        tracker.report("barcode", "failed", reason=str(exc))
+        return
+    if status.get("connected") is True:
+        tracker.report("barcode", "ready")
+    else:
+        tracker.report("barcode", "failed", reason="scanner not detected")
+
+
+def _report_printer_status() -> None:
+    if _printer_enabled() is False:
+        return
+    tracker = get_init_tracker()
+    device = _printer_device()
+    if os.path.exists(device) is True:
+        tracker.report("printer", "ready", detail=device)
+    else:
+        tracker.report("printer", "failed", reason=f"device not found: {device}")
 
 
 def validate_robot_config() -> None:
@@ -69,10 +111,14 @@ async def init_robot_worker() -> None:
     tracker = get_init_tracker()
     tracker.reset()
 
+    tracker.register_components(["config"])
+    tracker.report("config", "configuring")
     try:
         logger.info("Validating robot configuration")
         validate_robot_config()
+        tracker.report("config", "ready")
     except Exception as e:
+        tracker.report("config", "failed", reason=str(e))
         set_robot_initialization_error(e)
         tracker.set_overall(OVERALL_FAILED, error=str(e))
         logger.warning("robot_config_validation_failed: %s", e, exc_info=True)
@@ -85,6 +131,12 @@ async def init_robot_worker() -> None:
         robot_instance = robot
         robot.set_init_progress_reporter(tracker.report)
         tracker.register_components(robot.get_init_component_names())
+        post_steps = ["command_worker"]
+        if _barcode_enabled() is True:
+            post_steps.append("barcode")
+        if _printer_enabled() is True:
+            post_steps.append("printer")
+        tracker.register_components(post_steps)
         tracker.set_overall(OVERALL_INITIALIZING)
     except Exception as e:
         robot_instance = None
@@ -107,6 +159,7 @@ async def init_robot_worker() -> None:
     worker: Optional[r_worker.RobotWorker] = None
     listener: Optional[RobotEventListener] = None
     try:
+        tracker.report("command_worker", "configuring")
         async with AsyncSessionLocal() as session:
             storage_service = StorageService(session)
             occupied = await storage_service.get_all_occupied_cells()
@@ -118,6 +171,7 @@ async def init_robot_worker() -> None:
         logger.info("Got Instance")
         await worker.connect()
         logger.info("Robot worker connected")
+        _report_scanner_status(worker)
         await worker.start()
         logger.info("Worker started")
 
@@ -127,7 +181,10 @@ async def init_robot_worker() -> None:
 
         robot_worker = worker
         event_listener = listener
+        tracker.report("command_worker", "ready")
+        _report_printer_status()
     except Exception as e:
+        tracker.report("command_worker", "failed", reason=str(e))
         if listener is not None:
             try:
                 await listener.stop()

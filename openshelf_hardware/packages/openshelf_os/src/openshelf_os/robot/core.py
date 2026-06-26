@@ -168,10 +168,19 @@ class Robot:
             names.append(str(motor["name"]))
         if getattr(self._io, "_scale_enabled", False) is True:
             names.append("scale")
+        if self._is_curtain_enabled() is True:
+            names.append("light_curtain")
         if getattr(self, "_cabinet", None) is not None:
             names.append("cabinet")
 
         return names
+
+    def _is_curtain_enabled(self) -> bool:
+        io_params = getattr(self._io, "_params", None)
+        curtain_cfg = getattr(io_params, "curtain", None)
+        if curtain_cfg is None:
+            return False
+        return bool(getattr(curtain_cfg, "enabled", False))
 
     async def configure(self, isolate: bool = False):
         self._emit_init("motor_bus", "connecting")
