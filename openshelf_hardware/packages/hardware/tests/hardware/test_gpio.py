@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+from typing import Any
+
 from hardware.exceptions import GpioConfigError
 from hardware.gpio import DoorRelease, GpioManager
 from hardware.gpio.fake import FakeGpioBackend
 from hardware.gpio.pcf8575 import Pcf8575Backend
+import hardware.gpio.rpi as rpi_module
+from hardware.gpio.rpi import RpiGpioBackend
 from hardware.gpio.types import GpioExpanderSpec, GpioInterruptSpec, GpioPinSpec
 
 import pytest
@@ -232,3 +236,135 @@ def test_door_release_uses_unlock_output_and_engaged_sensor() -> None:
     release.set_passive()
 
     assert unlock.read() is False
+
+
+class FakeRpiGpioModule:
+    BCM = "BCM"
+    IN = "IN"
+    OUT = "OUT"
+    HIGH = 1
+    LOW = 0
+    PUD_UP = "PUD_UP"
+    PUD_DOWN = "PUD_DOWN"
+    PUD_OFF = "PUD_OFF"
+    RISING = "RISING"
+    FALLING = "FALLING"
+    BOTH = "BOTH"
+
+    def __init__(self) -> None:
+        self.configured: dict[int, str] = {}
+        self.states: dict[int, int] = {}
+        self.setup_calls: list[tuple[int, str, Any, int | None]] = []
+        self.event_detect_calls: list[tuple[int, str, Any, int | None]] = []
+
+    def setmode(self, mode: str) -> None:
+        self.mode = mode
+
+    def setwarnings(self, enabled: bool) -> None:
+        self.warnings = enabled
+
+    def setup(
+        self,
+        pin: int,
+        direction: str,
+        *,
+        pull_up_down: Any = None,
+        initial: int | None = None,
+    ) -> None:
+        self.configured[pin] = direction
+        self.setup_calls.append((pin, direction, pull_up_down, initial))
+        if initial is not None:
+            self.states[pin] = initial
+        else:
+            self.states.setdefault(pin, self.LOW)
+
+    def input(self, pin: int) -> int:
+        if pin not in self.configured:
+            raise RuntimeError("You must setup() the GPIO channel first")
+
+        return self.states.get(pin, self.LOW)
+
+    def output(self, pin: int, value: int) -> None:
+        if pin not in self.configured:
+            raise RuntimeError("You must setup() the GPIO channel first")
+
+        self.states[pin] = value
+
+    def add_event_detect(self, pin: int, edge: str, *, callback: Any, bouncetime: int | None) -> None:
+        if pin not in self.configured:
+            raise RuntimeError("You must setup() the GPIO channel first")
+
+        self.event_detect_calls.append((pin, edge, callback, bouncetime))
+
+    def remove_event_detect(self, pin: int) -> None:
+        pass
+
+    def cleanup(self, pin: int) -> None:
+        self.configured.pop(pin, None)
+
+
+def test_rpi_gpio_read_recovers_when_input_channel_setup_is_lost(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_gpio = FakeRpiGpioModule()
+    monkeypatch.setattr(rpi_module, "GPIO", fake_gpio)
+    backend = RpiGpioBackend()
+    spec = GpioPinSpec(
+        name="cabinet_top_closed",
+        board="rpi",
+        pin=17,
+        direction="input",
+        pull="up",
+    )
+    backend.setup_input(spec)
+    fake_gpio.states[17] = fake_gpio.HIGH
+    fake_gpio.cleanup(17)
+
+    assert backend.read(spec) is True
+    assert fake_gpio.configured[17] == fake_gpio.IN
+    assert [call[0] for call in fake_gpio.setup_calls].count(17) == 2
+
+
+def test_rpi_gpio_write_recovers_when_output_channel_setup_is_lost(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_gpio = FakeRpiGpioModule()
+    monkeypatch.setattr(rpi_module, "GPIO", fake_gpio)
+    backend = RpiGpioBackend()
+    spec = GpioPinSpec(
+        name="cabinet_top_unlock",
+        board="rpi",
+        pin=5,
+        direction="output",
+        initial=False,
+    )
+    backend.setup_output(spec)
+    fake_gpio.cleanup(5)
+
+    backend.write(spec, True)
+
+    assert fake_gpio.configured[5] == fake_gpio.OUT
+    assert fake_gpio.states[5] == fake_gpio.HIGH
+    assert [call[0] for call in fake_gpio.setup_calls].count(5) == 2
+
+
+def test_rpi_gpio_read_restores_event_detect_when_input_channel_setup_is_lost(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_gpio = FakeRpiGpioModule()
+    monkeypatch.setattr(rpi_module, "GPIO", fake_gpio)
+    backend = RpiGpioBackend()
+    spec = GpioPinSpec(
+        name="cabinet_top_closed",
+        board="rpi",
+        pin=17,
+        direction="input",
+        pull="up",
+        debounce_ms=50,
+    )
+    backend.setup_input(spec)
+    backend.subscribe(spec, lambda _raw: None, edge="both", debounce_ms=spec.debounce_ms)
+    fake_gpio.cleanup(17)
+
+    backend.read(spec)
+
+    assert len(fake_gpio.event_detect_calls) == 2
+    assert fake_gpio.event_detect_calls[-1][0] == 17
+    assert fake_gpio.event_detect_calls[-1][1] == fake_gpio.BOTH
+    assert fake_gpio.event_detect_calls[-1][3] == 50
