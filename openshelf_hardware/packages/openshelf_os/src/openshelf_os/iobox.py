@@ -166,32 +166,38 @@ class IOBox:
             self._logger.info("Curtain sensor disabled via config")
             return
 
-        poll_interval = curtain_cfg.poll_interval_s
+        self._emit_init("light_curtain", "configuring")
+        try:
+            poll_interval = curtain_cfg.poll_interval_s
 
-        if self._gpio is None or self._gpio.has_pin("light_curtain") is False:
-            raise ConfigError("Light curtain requires shared GPIO pin 'light_curtain'")
+            if self._gpio is None or self._gpio.has_pin("light_curtain") is False:
+                raise ConfigError("Light curtain requires shared GPIO pin 'light_curtain'")
 
-        curtain_input = self._gpio.input("light_curtain")
-        curtain_sensor = CurtainSensor(input_device=curtain_input)
-        curtain_monitor = CurtainMonitor(
-            curtain_sensor,
-            poll_interval=poll_interval,
-            on_change=self._handle_curtain_change,
-        )
-        self._curtain_sensors = [curtain_sensor]
-        self._curtain_monitors = [curtain_monitor]
-        await curtain_monitor.start()
+            curtain_input = self._gpio.input("light_curtain")
+            curtain_sensor = CurtainSensor(input_device=curtain_input)
+            curtain_monitor = CurtainMonitor(
+                curtain_sensor,
+                poll_interval=poll_interval,
+                on_change=self._handle_curtain_change,
+            )
+            self._curtain_sensors = [curtain_sensor]
+            self._curtain_monitors = [curtain_monitor]
+            await curtain_monitor.start()
 
-        self._logger.info(
-            "Curtain monitor started",
-            extra={
-                "pin_name": "light_curtain",
-                "pin": curtain_input.pin,
-                "board": getattr(curtain_input, "board", None),
-                "poll_interval_s": poll_interval,
-                "shared_gpio": True,
-            },
-        )
+            self._logger.info(
+                "Curtain monitor started",
+                extra={
+                    "pin_name": "light_curtain",
+                    "pin": curtain_input.pin,
+                    "board": getattr(curtain_input, "board", None),
+                    "poll_interval_s": poll_interval,
+                    "shared_gpio": True,
+                },
+            )
+            self._emit_init("light_curtain", "ready")
+        except Exception as exc:
+            self._emit_init("light_curtain", "failed", reason=str(exc))
+            raise
 
     async def _ensure_scale_ready(self) -> None:
         if self._scale_enabled is False:

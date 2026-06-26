@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { RobotInitState } from '$lib';
+	import type { RobotInitComponent, RobotInitState } from '$lib';
 
 	type Props = {
 		init: RobotInitState | null;
@@ -7,148 +7,130 @@
 
 	let { init }: Props = $props();
 
-	const phaseLabels: Record<string, string> = {
-		pending: 'pending',
-		connecting: 'connecting',
-		configuring: 'configuring',
-		homing: 'homing',
-		ready: 'ready',
-		failed: 'failed'
+	const labels: Record<string, string> = {
+		config: 'configuration',
+		motor_bus: 'motor bus',
+		scale_bus: 'scale bus',
+		laser_bus: 'laser bus',
+		gripper: 'gripper',
+		x_axis: 'x axis',
+		y_axis: 'y axis',
+		z_axis: 'z axis',
+		stage: 'stage',
+		rotate: 'rotate',
+		laser: 'laser',
+		door: 'door',
+		scale: 'scale',
+		light_curtain: 'light curtain',
+		cabinet: 'cabinet',
+		command_worker: 'command worker',
+		barcode: 'barcode scanner',
+		printer: 'printer'
 	};
 
-	function phaseLabel(phase: string): string {
-		return phaseLabels[phase] ?? phase;
+	function label(component: string): string {
+		return labels[component] ?? component.replace(/_/g, ' ');
 	}
 
-	function overallLabel(phase: string): string {
+	type StepState = 'done' | 'current' | 'pending' | 'failed';
+
+	function stepState(phase: string): StepState {
 		if (phase === 'ready') {
-			return 'ROBOT READY';
-		}
-		if (phase === 'degraded') {
-			return 'ROBOT DEGRADED';
+			return 'done';
 		}
 		if (phase === 'failed') {
-			return 'INITIALIZATION FAILED';
+			return 'failed';
 		}
-		return 'INITIALIZING HARDWARE';
+		if (phase === 'pending') {
+			return 'pending';
+		}
+		return 'current';
+	}
+
+	function statusText(component: RobotInitComponent): string {
+		const state = stepState(component.phase);
+		if (state === 'done') {
+			return 'done';
+		}
+		if (state === 'pending') {
+			return 'pending';
+		}
+		if (state === 'failed') {
+			return component.reason ? `failed — ${component.reason}` : 'failed';
+		}
+		return component.phase;
+	}
+
+	function headerLabel(phase: string): string {
+		if (phase === 'degraded') {
+			return 'robot initialization — degraded';
+		}
+		if (phase === 'failed') {
+			return 'robot initialization — failed';
+		}
+		return 'robot initialization';
 	}
 </script>
 
 {#if init !== null}
-	<div class="init-progress" class:degraded={init.phase === 'degraded'} class:failed={init.phase === 'failed'}>
-		<div class="init-header">
-			<span class="init-overall init-{init.phase}">{overallLabel(init.phase)}</span>
-			{#if init.error}
-				<span class="init-error">{init.error}</span>
-			{/if}
-		</div>
-
-		{#if init.components.length > 0}
-			<ul class="init-components">
-				{#each init.components as component (component.component)}
-					<li class="init-component init-phase-{component.phase}">
-						<span class="component-name">{component.component}</span>
-						<span class="component-phase">{phaseLabel(component.phase)}</span>
-						{#if component.reason}
-							<span class="component-reason">{component.reason}</span>
-						{/if}
-					</li>
-				{/each}
-			</ul>
-		{/if}
-	</div>
+	<table class="init-progress">
+		<thead>
+			<tr>
+				<th colspan="3" class:degraded={init.phase === 'degraded'} class:failed={init.phase === 'failed'}>
+					{headerLabel(init.phase)}
+				</th>
+			</tr>
+		</thead>
+		<tbody>
+			{#each init.components as component (component.component)}
+				{@const state = stepState(component.phase)}
+				<tr class="step step-{state}">
+					<td class="step-marker">●</td>
+					<td class="step-name">{label(component.component)}</td>
+					<td class="step-status">{statusText(component)}</td>
+				</tr>
+			{/each}
+		</tbody>
+	</table>
 {/if}
 
 <style>
 	.init-progress {
-		border: 1px solid #2c2c2c;
-		border-radius: 4px;
-		padding: 0.75em 1em;
-		margin: 0.5em 0;
-		background: #0c0c0c;
-		font-family: monospace;
+		margin-bottom: 1.5em;
+		width: 100%;
 	}
 
-	.init-progress.degraded {
-		border-color: #b8860b;
+	.init-progress th.degraded {
+		color: #b36b00;
 	}
 
-	.init-progress.failed {
-		border-color: #a21010;
+	.init-progress th.failed {
+		color: #c40000;
 	}
 
-	.init-header {
-		display: flex;
-		align-items: center;
-		gap: 1em;
-		margin-bottom: 0.5em;
+	.step-marker {
+		text-align: center;
+		width: 2em;
 	}
 
-	.init-overall {
+	.step-status {
+		text-transform: uppercase;
+	}
+
+	.step-done {
+		color: #00a210;
+	}
+
+	.step-current {
+		color: black;
 		font-weight: bold;
-		letter-spacing: 0.05em;
 	}
 
-	.init-ready {
-		color: #00a210;
+	.step-pending {
+		color: #8a8a8a;
 	}
 
-	.init-initializing {
-		color: #d8d8d8;
-	}
-
-	.init-degraded {
-		color: #d8a51b;
-	}
-
-	.init-failed {
-		color: #e25555;
-	}
-
-	.init-error {
-		color: #e25555;
-	}
-
-	.init-components {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-		gap: 0.25em 1em;
-	}
-
-	.init-component {
-		display: flex;
-		align-items: baseline;
-		gap: 0.5em;
-	}
-
-	.component-name {
-		min-width: 6em;
-		color: #d8d8d8;
-	}
-
-	.component-phase {
-		color: #888;
-	}
-
-	.init-phase-ready .component-phase {
-		color: #00a210;
-	}
-
-	.init-phase-homing .component-phase,
-	.init-phase-configuring .component-phase,
-	.init-phase-connecting .component-phase {
-		color: #d8a51b;
-	}
-
-	.init-phase-failed .component-phase {
-		color: #e25555;
-	}
-
-	.component-reason {
-		color: #e25555;
-		font-style: italic;
+	.step-failed {
+		color: #c40000;
 	}
 </style>

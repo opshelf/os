@@ -53,6 +53,7 @@ openshelf_hardware/packages/openshelf_os1_server/data/auth.db-wal
 
 # Agents
 .pi
+CLAUDE.md
 
 # Camera files
 frame.png
