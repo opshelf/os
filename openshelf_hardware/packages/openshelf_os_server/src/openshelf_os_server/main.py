@@ -1,17 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 import fcntl
 import json
 import os
 import subprocess
 import sys
-import traceback
 from contextlib import asynccontextmanager
 import logging
 import socket
 import struct
 from pathlib import Path
-from typing import Any, AsyncGenerator, cast
+from typing import Any, AsyncGenerator, Optional, cast
 
 import sentry_sdk
 import uvicorn
@@ -33,7 +33,8 @@ from openshelf_os.common import CONFIG_PATH, OperatingMode, load_config_file, re
 from openshelf_os.operating_mode import should_enable_sentry
 from openshelf_os.storage import StorageGrid
 from openshelf_os_server.core.logging_config import configure_logging, get_logger
-from openshelf_os_server.core.robot import get_robot_health, init_robot_worker, set_robot_initialization_error, stop_robot_worker
+from openshelf_os_server.core.robot import get_robot_health, init_robot_worker, stop_robot_worker
+from openshelf_os_server.core.init_progress import get_init_tracker
 from openshelf_os_server.core.storage import StorageService
 from openshelf_os_server.core.camera import init_tool_camera_manager, init_overhead_camera_manager, stop_all_camera_streams
 from openshelf_os_server.core.iobox_sizer import init_iobox_sizer, stop_iobox_sizer
@@ -583,32 +584,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 	await _ensure_developer_user()
 	await _apply_mode_transition()
 
-	robot_started = False
+	robot_init_task: Optional[asyncio.Task[None]] = None
 	storage_override_set = False
-	try:
-		if settings.robot.enabled is True:
-			try:
-				logger.info("robot_initialization", status="starting")
-				await init_robot_worker()
-				robot_started = True
-				logger.info("robot_worker_started", status="success")
-			except Exception as e:
-				set_robot_initialization_error(e)
-				logger.warning(
-					"robot_initialization_failed",
-					error=str(e),
-					error_type=type(e).__name__,
-					traceback=traceback.format_exc(),
-					exc_info=True
-				)
-				if sentry_enabled is True and sentry_sdk.is_initialized() is True:
-					sentry_sdk.capture_exception(e)
-		else:
-			logger.info("robot_disabled", reason="settings_configuration")
-	except Exception as e:
-		logger.error("robot_setup_error", error=str(e), exc_info=True)
-		if sentry_enabled is True and sentry_sdk.is_initialized() is True:
-			sentry_sdk.capture_exception(e)
+	if settings.robot.enabled is True:
+		logger.info("robot_initialization", status="starting_background")
+		robot_init_task = asyncio.create_task(init_robot_worker())
+	else:
+		logger.info("robot_disabled", reason="settings_configuration")
+		get_init_tracker().set_overall("disabled")
 
 	tool_camera_url = _get_tool_camera_url(settings)
 	if tool_camera_url is not None and tool_camera_url != "":
@@ -650,9 +633,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 			await stop_all_camera_streams()
 		except Exception as e:
 			logger.warning("camera_stream_shutdown_failed", error=str(e), error_type=type(e).__name__, exc_info=True)
-		if robot_started is True:
-			await stop_robot_worker()
-			logger.info("robot_worker_stopped")
+		if robot_init_task is not None and robot_init_task.done() is False:
+			robot_init_task.cancel()
+			try:
+				await robot_init_task
+			except asyncio.CancelledError:
+				pass
+			except Exception as e:
+				logger.warning("robot_init_task_shutdown_failed", error=str(e), exc_info=True)
+		await stop_robot_worker()
+		logger.info("robot_worker_stopped")
 		await stop_iobox_sizer()
 		if storage_override_set is True:
 			app.dependency_overrides.pop(StorageService, None)
@@ -715,11 +705,12 @@ async def health() -> JSONResponse:
 	if robot_health["status"] == "error":
 		body["status"] = "degraded"
 		body["robot_status"] = "error"
-		body["robot_error"] = robot_health["error"]
-		body["robot_error_type"] = robot_health["error_type"]
+		body["robot_error"] = str(robot_health.get("error", ""))
+		body["robot_error_type"] = str(robot_health.get("error_type", "Error"))
 		return JSONResponse(status_code=503, content=body)
 
-	body["robot_status"] = robot_health["status"]
+	body["robot_status"] = str(robot_health["status"])
+	body["robot_phase"] = str(robot_health.get("phase", ""))
 	return JSONResponse(content=body)
 
 

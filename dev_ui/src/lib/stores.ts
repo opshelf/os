@@ -11,7 +11,22 @@ export type WorkerStatusPayload = {
 	needs_home_reason?: string | null;
 };
 
+export type RobotInitComponent = {
+	component: string;
+	phase: string;
+	detail: string;
+	reason: string | null;
+	updated_at: number | null;
+};
+
+export type RobotInitState = {
+	phase: string;
+	error: string | null;
+	components: RobotInitComponent[];
+};
+
 export const isApiConnected = writable(true);
 export const robotStatus = writable<WorkerStatusPayload | null>(null);
 export const robotStatusError = writable('');
 export const robotStatusLastUpdate = writable('');
+export const robotInit = writable<RobotInitState | null>(null);

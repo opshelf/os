@@ -3,6 +3,7 @@ import logging
 import time
 
 from enum import Enum
+from typing import Callable, Optional
 from hardware.controller import SharedModbusController
 from hardware.exceptions import MotorError, MotorTimeoutError
 
@@ -28,9 +29,20 @@ class Servo:
         self._control_reg = int(params.get("control_reg", 0x3E8))
         self._status_reg = int(params.get("status_reg", 0x07D0))
         self._configured = False
+        self._on_init_progress: Optional[Callable[[str, str, Optional[str]], None]] = None
+
+    def _emit_init(self, phase: str, detail: str = "", reason: Optional[str] = None) -> None:
+        reporter = getattr(self, "_on_init_progress", None)
+        if reporter is None:
+            return
+        try:
+            reporter(phase, detail, reason)
+        except Exception:
+            pass
 
     async def configure(self) -> None:
         try:
+            self._emit_init("configuring")
             await self._controller.write_single_register(
                 self._motor_id, 
                 self._control_reg, 
@@ -67,7 +79,9 @@ class Servo:
             await self._controller.write_single_register(self._motor_id, 0x03EE, 0x80)
             await self._controller.write_single_register(self._motor_id, 0x03F0, 0x80)
             self._configured = True
+            self._emit_init("ready")
         except Exception as e:
+            self._emit_init("failed", detail="configure", reason=str(e))
             raise MotorError(f"Failed to configure servo: {str(e)}") from e
 
     async def wait_for_activate(self):

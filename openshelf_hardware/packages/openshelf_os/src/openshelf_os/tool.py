@@ -95,6 +95,7 @@ class Tool:
         self._params = params
         self._guard_paused = False
         self._logger = logging.getLogger(__name__)
+        self._init_reporter: Optional[Callable[[str, str, str, Optional[str]], None]] = None
 
         motors = self._params.motors
 
@@ -136,33 +137,59 @@ class Tool:
                 distance_scale_mm=laser_cfg.distance_scale_mm,
             )
 
-    async def configure(self):
+    def _emit_init(self, component: str, phase: str, detail: str = "", reason: Optional[str] = None) -> None:
+        reporter = getattr(self, "_init_reporter", None)
+        if reporter is None:
+            return
+        try:
+            reporter(component, phase, detail, reason)
+        except Exception:
+            pass
+
+    async def _configure_axis_isolated(self, motor: Optional[Motor], isolate: bool) -> bool:
+        if motor is None:
+            return True
+        if isolate is False:
+            await motor.configure()
+            return True
+        try:
+            await motor.configure()
+            return True
+        except Exception as e:
+            self._logger.warning("init motor configure failed: %s", e)
+            return False
+
+    async def configure(self, isolate: bool = False):
         try:
             if self._params.gripper.enabled is True:
-                await self._gs.configure()
+                if isolate is True:
+                    try:
+                        await self._gs.configure()
+                    except Exception as e:
+                        self._logger.warning("init gripper configure failed: %s", e)
+                else:
+                    await self._gs.configure()
 
-            if self._my is not None:
-                await self._my.configure()
-
-            if self._mx is not None:
-                await self._mx.configure()
-
-            if self._mg is not None:
-                await self._mg.configure()
-
-            if self._ms is not None:
-                await self._ms.configure()
-
-            if self._mr is not None:
-                await self._mr.configure()
+            failed_config_motors = []
+            for motor in (self._my, self._mx, self._mg, self._ms, self._mr):
+                did_configure = await self._configure_axis_isolated(motor, isolate)
+                if did_configure is False and motor is not None:
+                    failed_config_motors.append(motor)
 
             if self._laser is not None:
-                await self._laser.initialize()
-                self._laser_ready = True
+                self._emit_init("laser", "configuring")
+                try:
+                    await self._laser.initialize()
+                    self._laser_ready = True
+                    self._emit_init("laser", "ready")
+                except Exception as e:
+                    self._emit_init("laser", "failed", reason=str(e))
+                    if isolate is False:
+                        raise
             else:
                 self._logger.info("Laser disabled via config")
 
-            await self.home()
+            await self.home(isolate=isolate, failed_config_motors=failed_config_motors)
         except Exception as e:
             await self._handle_fault(e)
 
@@ -1137,50 +1164,118 @@ class Tool:
     #  Homing
     # ------------------------------------------------------------------ #
 
-    async def home(self) -> None:
+    async def _home_rotate_sequence(self) -> None:
+        if self._mr is None:
+            return
+
+        rotate_motor = self._mr
+        original_x = None
+
+        if self._mx is not None:
+            rotation_front = await self.get_param("ROTATION_FRONT")
+
+            if rotation_front is None:
+                raise ConfigError("Missing ROTATION_FRONT parameter")
+
+            current_rotation = await rotate_motor.get_position()
+
+            if current_rotation > float(rotation_front):
+                await self._mx.move_to_position(ROTATION_HOME_SAFE_X_MM)
+            else:
+                original_x = await self.ensure_safe_rotation_x_position()
+
+        try:
+            did_extend_stage = await self.ensure_safe_rotation_stage_extension()
+            await rotate_motor.home()
+            await self.rotate_to_home_orientation(
+                should_ensure_safe_stage_extension=False,
+            )
+        finally:
+            await self.restore_safe_rotation_x_position(original_x)
+
+        if did_extend_stage is True and self._ms is not None:
+            await self._ms.home()
+
+    async def _home_sequence(self) -> None:
+        if self._ms is not None:
+            await self._ms.home()
+
+        if self._mg is not None:
+            await self._mg.home()
+
+        if self._mr is not None:
+            await self._home_rotate_sequence()
+
+        if self._mx is not None:
+            await self._mx.home()
+
+        if self._my is not None:
+            await self._my.home()
+
+    def _did_motor_configure_fail(self, motor: Optional[Motor], failed_config_motors: List[Motor]) -> bool:
+        if motor is None:
+            return False
+        return any(failed_motor is motor for failed_motor in failed_config_motors)
+
+    async def _home_step_isolated(self, motor: Optional[Motor], failed_config_motors: List[Motor]) -> bool:
+        if motor is None:
+            return True
+        if self._did_motor_configure_fail(motor, failed_config_motors) is True:
+            return True
+        try:
+            await motor.home()
+            return True
+        except Exception as e:
+            self._logger.warning("init home step failed: %s", e)
+            return False
+
+    async def _home_rotate_isolated(
+        self,
+        failed_config_motors: List[Motor],
+        failed_home_motors: Optional[List[Motor]] = None,
+    ) -> None:
+        if self._mr is None:
+            return
+        if self._did_motor_configure_fail(self._mr, failed_config_motors) is True:
+            return
+        failed_home_motors = failed_home_motors or []
+        if any(
+            self._did_motor_configure_fail(motor, failed_config_motors) is True
+            or any(failed_home_motor is motor for failed_home_motor in failed_home_motors)
+            for motor in (self._mx, self._ms)
+        ):
+            self._emit_init("rotate", "failed", "home", "dependency failed")
+            return
+        try:
+            await self._home_rotate_sequence()
+        except Exception as e:
+            self._emit_init("rotate", "failed", "home", str(e))
+            self._logger.warning("init rotate home failed: %s", e)
+
+    async def home(self, isolate: bool = False, failed_config_motors: Optional[List[Motor]] = None) -> None:
+        if isolate is False:
+            try:
+                await self.restore_y_brake_output()
+                await self._home_sequence()
+            except Exception as e:
+                await self._handle_fault(e)
+
+                raise MotorError(f"Failed to home tool: {str(e)}") from e
+            return
+
+        failed_config_motors = failed_config_motors or []
+
         try:
             await self.restore_y_brake_output()
-            if self._ms is not None:
-                await self._ms.home()
-
-            if self._mg is not None:
-                await self._mg.home()
-
-            if self._mr is not None:
-                original_x = None
-
-                if self._mx is not None:
-                    rotation_front = await self.get_param("ROTATION_FRONT")
-
-                    if rotation_front is None:
-                        raise ConfigError("Missing ROTATION_FRONT parameter")
-
-                    current_rotation = await self._mr.get_position()
-
-                    if current_rotation > float(rotation_front):
-                        await self._mx.move_to_position(ROTATION_HOME_SAFE_X_MM)
-                    else:
-                        original_x = await self.ensure_safe_rotation_x_position()
-
-                try:
-                    did_extend_stage = await self.ensure_safe_rotation_stage_extension()
-                    await self._mr.home()
-                    await self.rotate_to_home_orientation(
-                        should_ensure_safe_stage_extension=False,
-                    )
-                finally:
-                    await self.restore_safe_rotation_x_position(original_x)
-
-                if did_extend_stage is True and self._ms is not None:
-                    await self._ms.home()
-
-            if self._mx is not None:
-                await self._mx.home()
-
-            if self._my is not None:
-                await self._my.home()
-
         except Exception as e:
-            await self._handle_fault(e)
+            self._logger.warning("init restore_y_brake_output failed: %s", e)
 
-            raise MotorError(f"Failed to home tool: {str(e)}") from e
+        failed_home_motors = []
+        if await self._home_step_isolated(self._ms, failed_config_motors) is False and self._ms is not None:
+            failed_home_motors.append(self._ms)
+        if await self._home_step_isolated(self._mg, failed_config_motors) is False and self._mg is not None:
+            failed_home_motors.append(self._mg)
+        if await self._home_step_isolated(self._mx, failed_config_motors) is False and self._mx is not None:
+            failed_home_motors.append(self._mx)
+        await self._home_rotate_isolated(failed_config_motors, failed_home_motors)
+        await self._home_step_isolated(self._my, failed_config_motors)

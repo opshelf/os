@@ -7,9 +7,11 @@
 		isApiConnected,
 		isAuthenticated,
 		loginAsDeveloper,
+		robotInit,
 		robotStatus,
 		robotStatusError,
 		robotStatusLastUpdate,
+		type RobotInitState,
 		type WorkerStatusPayload
 	} from '$lib';
 	import '../app.css';
@@ -88,6 +90,23 @@
 					robotStatusError.set('lost connection to robot status stream');
 				},
 				events: {
+					init_progress: (event) => {
+						if (event instanceof MessageEvent === false) {
+							return;
+						}
+
+						try {
+							const init = JSON.parse(event.data) as RobotInitState;
+							robotInit.set(init);
+							if (init.phase !== 'ready' && init.phase !== 'disabled') {
+								robotStatus.set(null);
+								robotStatusLastUpdate.set('');
+							}
+							isApiConnected.set(true);
+						} catch {
+							// ignore malformed init progress payloads
+						}
+					},
 					robot_unavailable: (event) => {
 						if (event instanceof MessageEvent === false) {
 							return;

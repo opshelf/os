@@ -132,6 +132,7 @@ class Motor():
         self._safety = safety
         self._simulated_fault = False
         self._on_move_complete: Optional[Callable[[float], None]] = None
+        self._on_init_progress: Optional[Callable[[str, str, Optional[str]], None]] = None
         self._is_homed = False
         self._hard_stopped = False
         self._should_skip_pre_home_once = False
@@ -154,8 +155,18 @@ class Motor():
     #  Lifecycle
     # ------------------------------------------------------------------ #
 
+    def _emit_init(self, phase: str, detail: str = "", reason: Optional[str] = None) -> None:
+        reporter = getattr(self, "_on_init_progress", None)
+        if reporter is None:
+            return
+        try:
+            reporter(phase, detail, reason)
+        except Exception:
+            pass
+
     async def configure(self):
         try:
+            self._emit_init("configuring")
             self._logger.info(
                 "Configuring motor",
                 extra={"motor_id": self._motor_id, "limit_mm": self._params.lim},
@@ -185,6 +196,7 @@ class Motor():
             # Configure movement parameters
             await self.move_config()
         except Exception as e:
+            self._emit_init("failed", detail="configure", reason=str(e))
             self._logger.error(
                 "Failed to configure motor",
                 extra={"motor_id": self._motor_id, "error": str(e)},
@@ -1337,6 +1349,7 @@ class Motor():
         self._simulated_fault = False
 
         try:
+            self._emit_init("homing")
             await self.clear_alarm()
 
             home_dir = self._get_home_direction()
@@ -1375,6 +1388,7 @@ class Motor():
                 self._is_homed = True
                 self._hard_stopped = False
                 self._should_skip_pre_home_once = False
+                self._emit_init("ready")
             elif stop == MotorStatus.FAULT:
                 self._is_homed = False
                 self._hard_stopped = True
@@ -1388,6 +1402,8 @@ class Motor():
         except Exception as e:
             if isinstance(e, MotorTimeoutError):
                 self._is_homed = False
+            reason = "timeout" if isinstance(e, MotorTimeoutError) else str(e)
+            self._emit_init("failed", detail="home", reason=reason)
             if not isinstance(e, (MotorError, MotorConfigError, MotorTimeoutError)):
                 raise MotorError(f"Unexpected error during homing: {str(e)}") from e
             raise
