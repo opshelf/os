@@ -1,6 +1,8 @@
 import logging
 from typing import Optional
 
+import sentry_sdk
+
 from openshelf_os import robot as r
 import openshelf_os.robot.worker as r_worker
 from openshelf_os.common import (
@@ -10,6 +12,13 @@ from openshelf_os.common import (
     assert_config,
 )
 
+from openshelf_os_server.core.init_progress import (
+    OVERALL_DEGRADED,
+    OVERALL_FAILED,
+    OVERALL_INITIALIZING,
+    OVERALL_READY,
+    get_init_tracker,
+)
 from openshelf_os_server.core.robot_events import RobotEventListener
 from openshelf_os_server.core.storage import StorageService
 from openshelf_os_server.database.session import AsyncSessionLocal
@@ -18,9 +27,11 @@ from openshelf_os_server.settings import get_root_config
 logger = logging.getLogger(__name__)
 
 robot_worker: Optional[r_worker.RobotWorker] = None
+robot_instance: Optional["r.Robot"] = None
 event_listener: Optional[RobotEventListener] = None
 robot_initialization_error: Optional[str] = None
 robot_initialization_error_type: Optional[str] = None
+CRITICAL_MOTOR_COMPONENTS = {"x_axis", "y_axis", "z_axis", "stage", "rotate", "door"}
 
 
 def validate_robot_config() -> None:
@@ -44,39 +55,123 @@ def validate_robot_config() -> None:
 
 
 async def init_robot_worker() -> None:
-    global robot_worker, event_listener, robot_initialization_error, robot_initialization_error_type
+    """Bring up the robot in the background, reporting progress into the init tracker.
+
+    This never raises: any failure is recorded as init state (tracker + error
+    globals) so the background task that runs it cannot die silently and the
+    server stays up regardless of hardware health.
+    """
+    global robot_worker, robot_instance, event_listener
+    global robot_initialization_error, robot_initialization_error_type
 
     robot_initialization_error = None
     robot_initialization_error_type = None
-    logger.info("Validating robot configuration")
-    validate_robot_config()
+    tracker = get_init_tracker()
+    tracker.reset()
 
-    logger.info("Getting Robot")
-    robot = r.Robot()
-    await robot.configure()
-    logger.info("Built Robot")
+    try:
+        logger.info("Validating robot configuration")
+        validate_robot_config()
+    except Exception as e:
+        set_robot_initialization_error(e)
+        tracker.set_overall(OVERALL_FAILED, error=str(e))
+        logger.warning("robot_config_validation_failed: %s", e, exc_info=True)
+        _capture_init_exception(e)
+        return
 
-    async with AsyncSessionLocal() as session:
-        storage_service = StorageService(session)
-        occupied = await storage_service.get_all_occupied_cells()
-        occupied_tuples = [(side, shelf_idx, cell_idx) for side, shelf_idx, cell_idx, _ in occupied]
-        robot.sync_occupied_cells(occupied_tuples)
-        logger.info("Synced %d occupied cells from database", len(occupied_tuples))
+    try:
+        logger.info("Getting Robot")
+        robot = r.Robot()
+        robot_instance = robot
+        robot.set_init_progress_reporter(tracker.report)
+        tracker.register_components(robot.get_init_component_names())
+        tracker.set_overall(OVERALL_INITIALIZING)
+    except Exception as e:
+        robot_instance = None
+        set_robot_initialization_error(e)
+        tracker.set_overall(OVERALL_FAILED, error=str(e))
+        logger.warning("robot_constructor_failed: %s", e, exc_info=True)
+        _capture_init_exception(e)
+        return
 
-    robot_worker = r_worker.RobotWorker(robot)
-    logger.info("Got Instance")
-    await robot_worker.connect()
-    logger.info("Robot worker connected")
-    await robot_worker.start()
-    logger.info("Worker started")
+    try:
+        await robot.configure(isolate=True)
+        logger.info("Built Robot")
+    except Exception as e:
+        set_robot_initialization_error(e)
+        tracker.set_overall(OVERALL_FAILED, error=str(e))
+        logger.warning("robot_configure_failed: %s", e, exc_info=True)
+        _capture_init_exception(e)
+        return
 
-    event_listener = RobotEventListener(robot_worker)
-    await event_listener.start()
-    logger.info("Robot event listener started")
+    worker: Optional[r_worker.RobotWorker] = None
+    listener: Optional[RobotEventListener] = None
+    try:
+        async with AsyncSessionLocal() as session:
+            storage_service = StorageService(session)
+            occupied = await storage_service.get_all_occupied_cells()
+            occupied_tuples = [(side, shelf_idx, cell_idx) for side, shelf_idx, cell_idx, _ in occupied]
+            robot.sync_occupied_cells(occupied_tuples)
+            logger.info("Synced %d occupied cells from database", len(occupied_tuples))
+
+        worker = r_worker.RobotWorker(robot)
+        logger.info("Got Instance")
+        await worker.connect()
+        logger.info("Robot worker connected")
+        await worker.start()
+        logger.info("Worker started")
+
+        listener = RobotEventListener(worker)
+        await listener.start()
+        logger.info("Robot event listener started")
+
+        robot_worker = worker
+        event_listener = listener
+    except Exception as e:
+        if listener is not None:
+            try:
+                await listener.stop()
+            except Exception as stop_error:
+                logger.warning("robot_event_listener_cleanup_failed: %s", stop_error, exc_info=True)
+        if worker is not None:
+            try:
+                await worker.shutdown()
+            except Exception as shutdown_error:
+                logger.warning("robot_worker_cleanup_failed: %s", shutdown_error, exc_info=True)
+        set_robot_initialization_error(e)
+        tracker.set_overall(OVERALL_FAILED, error=str(e))
+        logger.warning("robot_worker_start_failed: %s", e, exc_info=True)
+        _capture_init_exception(e)
+        return
+
+    failed = tracker.failed_components()
+    failed_motor_components = [component for component in failed if component in CRITICAL_MOTOR_COMPONENTS]
+    if failed_motor_components and worker is not None:
+        reason = "Startup failed for motion components: " + ", ".join(failed_motor_components)
+        worker.set_needs_home(reason, axes=failed_motor_components)
+    if failed:
+        tracker.set_overall(OVERALL_DEGRADED)
+        logger.warning("robot_initialized_degraded: failed_components=%s", failed)
+    else:
+        tracker.set_overall(OVERALL_READY)
+        logger.info("robot_initialized_ready")
+
+    try:
+        await robot_worker.get_status_snapshot(force_refresh=True)
+    except Exception as e:
+        logger.warning("initial_status_snapshot_failed: %s", e)
+
+
+def _capture_init_exception(error: Exception) -> None:
+    try:
+        if sentry_sdk.is_initialized() is True:
+            sentry_sdk.capture_exception(error)
+    except Exception:
+        pass
 
 
 async def stop_robot_worker() -> None:
-    global robot_worker, event_listener
+    global robot_worker, robot_instance, event_listener
 
     if event_listener is not None:
         await event_listener.stop()
@@ -84,6 +179,9 @@ async def stop_robot_worker() -> None:
 
     if robot_worker is not None:
         await robot_worker.shutdown()
+
+    robot_worker = None
+    robot_instance = None
 
 
 async def get_robot_worker() -> r_worker.RobotWorker:
@@ -93,6 +191,10 @@ async def get_robot_worker() -> r_worker.RobotWorker:
     raise ValueError("Robot Worker was Not Initialized")
 
 
+def get_robot_instance() -> Optional["r.Robot"]:
+    return robot_instance
+
+
 def set_robot_initialization_error(error: Exception) -> None:
     global robot_initialization_error, robot_initialization_error_type
 
@@ -100,15 +202,35 @@ def set_robot_initialization_error(error: Exception) -> None:
     robot_initialization_error_type = type(error).__name__
 
 
-def get_robot_health() -> dict[str, str]:
+def get_robot_health() -> dict[str, object]:
+    tracker = get_init_tracker()
+    snapshot = tracker.snapshot()
+    overall = snapshot["phase"]
+    failed = tracker.failed_components()
+
     if robot_worker is not None:
-        return {"status": "ok"}
+        status = "degraded" if failed else "ok"
+        return {
+            "status": status,
+            "phase": overall,
+            "failed_components": failed,
+            "components": snapshot["components"],
+        }
 
     if robot_initialization_error is not None:
         return {
             "status": "error",
+            "phase": OVERALL_FAILED,
             "error": robot_initialization_error,
             "error_type": robot_initialization_error_type or "Error",
+            "components": snapshot["components"],
         }
 
-    return {"status": "disabled"}
+    if overall == OVERALL_INITIALIZING:
+        return {
+            "status": "initializing",
+            "phase": overall,
+            "components": snapshot["components"],
+        }
+
+    return {"status": "disabled", "phase": overall}

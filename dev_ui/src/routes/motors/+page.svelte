@@ -18,6 +18,24 @@
 	} from '$lib/api';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import StatusMessage from '$lib/components/StatusMessage.svelte';
+	import InitProgress from '$lib/components/InitProgress.svelte';
+	import { robotInit, type RobotInitComponent } from '$lib';
+
+	$: initComponents = $robotInit?.components ?? [];
+	$: initPhaseByName = new Map<string, RobotInitComponent>(
+		initComponents.map((component) => [component.component, component])
+	);
+
+	function initPhaseLabel(motorName: string): string | null {
+		const entry = initPhaseByName.get(motorName);
+		if (entry === undefined) {
+			return null;
+		}
+		if (entry.phase === 'failed' && entry.reason) {
+			return `failed: ${entry.reason}`;
+		}
+		return entry.phase;
+	}
 
 	let motors: MotorList | null = null;
 	let isLoading = true;
@@ -466,6 +484,10 @@
 	});
 </script>
 
+{#if $robotInit !== null && $robotInit.phase !== 'ready' && $robotInit.phase !== 'disabled'}
+	<InitProgress init={$robotInit} />
+{/if}
+
 {#if isLoading === true}
 	<p>loading motors...</p>
 {:else if motors !== null}
@@ -536,6 +558,11 @@
 							<span class="status-error">ERR</span>
 						{:else}
 							<span class="status-unknown">-</span>
+						{/if}
+						{#if initPhaseLabel(motor.name) !== null}
+							<div class="init-badge init-phase-{initPhaseByName.get(motor.name)?.phase}">
+								{initPhaseLabel(motor.name)}
+							</div>
 						{/if}
 					</td>
 					<td class="position-column"
@@ -642,6 +669,11 @@
 							<span class="status-error">ERR</span>
 						{:else}
 							<span class="status-unknown">-</span>
+						{/if}
+						{#if initPhaseLabel(motor.name) !== null}
+							<div class="init-badge init-phase-{initPhaseByName.get(motor.name)?.phase}">
+								{initPhaseLabel(motor.name)}
+							</div>
 						{/if}
 					</td>
 					<td class="position-column"
@@ -784,6 +816,11 @@
 							<span class="status-error">ERR</span>
 						{:else}
 							<span class="status-unknown">-</span>
+						{/if}
+						{#if initPhaseLabel(motor.name) !== null}
+							<div class="init-badge init-phase-{initPhaseByName.get(motor.name)?.phase}">
+								{initPhaseLabel(motor.name)}
+							</div>
 						{/if}
 					</td>
 					<td class="position-column"
@@ -967,6 +1004,27 @@
 
 	.status-unknown {
 		color: gray;
+	}
+
+	.init-badge {
+		margin-top: 0.2em;
+		font-size: 0.75em;
+		color: #888;
+		text-transform: lowercase;
+	}
+
+	.init-badge.init-phase-ready {
+		color: #00a210;
+	}
+
+	.init-badge.init-phase-homing,
+	.init-badge.init-phase-configuring,
+	.init-badge.init-phase-connecting {
+		color: #d8a51b;
+	}
+
+	.init-badge.init-phase-failed {
+		color: #e25555;
 	}
 
 	.status-testing {

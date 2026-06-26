@@ -6,11 +6,13 @@
 		setBypassSafetyGuard,
 		getApiBase,
 		isApiConnected,
+		robotInit,
 		robotStatus,
 		robotStatusError,
 		robotStatusLastUpdate
 	} from '$lib';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
+	import InitProgress from '$lib/components/InitProgress.svelte';
 
 	const apiBase = getApiBase();
 
@@ -158,6 +160,10 @@
 		loadSystemInfo();
 	});
 </script>
+
+{#if $robotInit !== null && $robotInit.phase !== 'ready' && $robotInit.phase !== 'disabled'}
+	<InitProgress init={$robotInit} />
+{/if}
 
 <table>
 	<thead>

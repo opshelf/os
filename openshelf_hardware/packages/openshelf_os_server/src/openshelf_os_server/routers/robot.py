@@ -4,19 +4,26 @@ import asyncio
 from copy import deepcopy
 import json
 import re
-from typing import Any, AsyncGenerator, Callable, List, Literal, NoReturn, Optional, cast
+from typing import Any, AsyncGenerator, Callable, Iterable, List, Literal, NoReturn, Optional, cast
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from openshelf_os.common import ConfigError
-from openshelf_os.robot.commands import RobotCommands, RetrieveItemCommand, StoreItemCommand
+from openshelf_os.robot.commands import (
+    HomeCommand,
+    InitializeCommand,
+    RetrieveItemCommand,
+    RobotCommands,
+    StoreItemCommand,
+)
 import logging
 from openshelf_os.robot.worker import RobotWorker
 from sse_starlette.sse import EventSourceResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from openshelf_os_server.core.robot import get_robot_health, get_robot_worker
+from openshelf_os_server.core.robot import get_robot_instance, get_robot_worker
+from openshelf_os_server.core.init_progress import get_init_tracker
 from openshelf_os_server.core.iobox_sizer import capture_store_observer_measurement
 from openshelf_os_server.core.logging_config import correlation_id_var
 from openshelf_os_server.core.laser_auto_calibration import is_laser_auto_calibration_running
@@ -219,6 +226,25 @@ async def get_robot_worker_or_error() -> RobotWorker:
         ) from e
 
 
+def _ensure_command_allowed_while_needs_home(command: RobotCommands, worker: RobotWorker) -> None:
+    if worker.needs_home() is False:
+        return
+
+    if isinstance(command, (HomeCommand, InitializeCommand)):
+        return
+
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "message": "Home required before robot commands.",
+            "code": "home_required",
+            "needs_home": True,
+            "needs_home_axes": worker.needs_home_axes(),
+            "reason": worker.needs_home_reason(),
+        },
+    )
+
+
 @router.post("/commands", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
 async def robot_commands(
     command: RobotCommands,
@@ -227,6 +253,7 @@ async def robot_commands(
     db: AsyncSession = Depends(get_db),
 ) -> SuccessResponse:
     await _ensure_laser_auto_calibration_not_running()
+    _ensure_command_allowed_while_needs_home(command, worker)
 
     if isinstance(command, StoreItemCommand):
         logging.info("Processing StoreItemCommand: item=%s", command.item)
@@ -582,10 +609,20 @@ async def scale_tare(
 
 
 @router.get("/debug/motors", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
-async def get_motors(
-    worker: RobotWorker = Depends(get_robot_worker_or_error),
-) -> dict:
-    return worker.get_motor_info()
+async def get_motors() -> dict:
+    tracker = get_init_tracker()
+    try:
+        worker = await get_robot_worker()
+        info = worker.get_motor_info()
+    except ValueError:
+        robot = get_robot_instance()
+        info = robot.get_motor_info() if robot is not None else {"io": [], "tool": []}
+
+    snapshot = tracker.snapshot()
+    response: dict[str, object] = dict(info)
+    response["init_phase"] = snapshot["phase"]
+    response["init_components"] = snapshot["components"]
+    return response
 
 
 @router.post("/debug/motors/{motor_name}/crash", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
@@ -812,36 +849,69 @@ async def get_occupied_cells_from_db() -> set[tuple[str, int, int]]:
 
 @router.get("/status", dependencies=[Depends(get_current_user)])
 async def stream_sse() -> EventSourceResponse:
-    initial_payload: Optional[str] = None
-    status_queue: Optional[asyncio.Queue[str]] = None
-    worker: Optional[RobotWorker]
-
-    try:
-        worker = await get_robot_worker()
-    except ValueError:
-        worker = None
-
-    if worker is not None:
-        status_queue, _ = await worker.subscribe_status()
-        raw_payload = await worker.get_status_snapshot(force_refresh=True)
-
-        if raw_payload is not None:
-            occupied_cells = await get_occupied_cells_from_db()
-            initial_payload = inject_mode_field(overlay_db_occupancy(raw_payload, occupied_cells))
+    tracker = get_init_tracker()
+    tracker_queue = await tracker.subscribe()
 
     async def event_generator() -> AsyncGenerator[dict[str, str], None]:
-        try:
-            if initial_payload is not None:
-                yield {"data": initial_payload}
+        worker: Optional[RobotWorker] = None
+        status_queue: Optional[asyncio.Queue[str]] = None
+        waiters: dict[asyncio.Task[str], str] = {}
 
-            if status_queue is None:
-                yield {"event": "robot_unavailable", "data": json.dumps(get_robot_health())}
-                return
+        async def cancel_waiters(tasks: Iterable[asyncio.Task[str]]) -> None:
+            pending_tasks = [task for task in tasks if not task.done()]
+            for task in pending_tasks:
+                task.cancel()
+            if pending_tasks:
+                await asyncio.gather(*pending_tasks, return_exceptions=True)
+
+        try:
+            yield {"event": "init_progress", "data": tracker.snapshot_json()}
+
             while True:
-                message = await status_queue.get()
-                occupied_cells = await get_occupied_cells_from_db()
-                yield {"data": inject_mode_field(overlay_db_occupancy(message, occupied_cells))}
+                if worker is None:
+                    try:
+                        worker = await get_robot_worker()
+                    except ValueError:
+                        worker = None
+
+                    if worker is not None:
+                        status_queue, _ = await worker.subscribe_status()
+                        raw_payload = await worker.get_status_snapshot(force_refresh=True)
+                        if raw_payload is not None:
+                            occupied_cells = await get_occupied_cells_from_db()
+                            yield {"data": inject_mode_field(overlay_db_occupancy(raw_payload, occupied_cells))}
+
+                waiters = {
+                    asyncio.ensure_future(tracker_queue.get()): "init",
+                }
+                if status_queue is not None:
+                    waiters[asyncio.ensure_future(status_queue.get())] = "status"
+
+                timeout = None if worker is not None else 1.0
+                done, pending = await asyncio.wait(
+                    waiters.keys(),
+                    timeout=timeout,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+
+                await cancel_waiters(pending)
+
+                for task in done:
+                    kind = waiters[task]
+                    try:
+                        data = task.result()
+                    except Exception:
+                        continue
+
+                    if kind == "init":
+                        yield {"event": "init_progress", "data": data}
+                    else:
+                        occupied_cells = await get_occupied_cells_from_db()
+                        yield {"data": inject_mode_field(overlay_db_occupancy(data, occupied_cells))}
+                waiters = {}
         finally:
+            await cancel_waiters(waiters.keys())
+            await tracker.unsubscribe(tracker_queue)
             if worker is not None and status_queue is not None:
                 await worker.unsubscribe_status(status_queue)
 

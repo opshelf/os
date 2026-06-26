@@ -1,5 +1,5 @@
 import asyncio
-from typing import Optional
+from typing import Callable, Optional
 
 from hardware.controller import SharedModbusController as Controller
 from hardware.motor import Motor
@@ -58,6 +58,7 @@ class IOBox:
         self._params = params
         self._logger = logging.getLogger(__name__).getChild("IOBox")
         self._gpio = gpio
+        self._init_reporter: Optional[Callable[[str, str, str, Optional[str]], None]] = None
 
         self._md: Optional[Motor] = _create_motor_if_enabled(
             motorcontroller, self._params.motors, "door", safety, self._logger
@@ -65,6 +66,7 @@ class IOBox:
         scale_cfg = getattr(self._params, "scale", None)
         self._scale_enabled = scale_cfg is None or getattr(scale_cfg, "enabled", True)
         self._scale = Scale(scalecontroller) if self._scale_enabled is True else None
+        self._scale_bus_ready = True
         self._scale_ready = False
         self._printer = None
         self._curtain_sensors: list[CurtainSensor] = []
@@ -98,27 +100,60 @@ class IOBox:
         self._params = io_config
         self._logger.info("IO parameters reloaded from config.json")
 
-    async def configure(self):
+    def _emit_init(self, component: str, phase: str, detail: str = "", reason: Optional[str] = None) -> None:
+        reporter = getattr(self, "_init_reporter", None)
+        if reporter is None:
+            return
         try:
-            if self._md is not None:
+            reporter(component, phase, detail, reason)
+        except Exception:
+            pass
+
+    async def _safe_post_configure(self) -> None:
+        for label, step in (
+            ("home_door", self.home_door),
+            ("refresh_door_state", self.refresh_door_state),
+            ("configure_curtain", self._configure_curtain),
+        ):
+            try:
+                await step()
+            except Exception as e:
+                self._logger.warning("init iobox %s failed: %s", label, e)
+
+    async def configure(self, isolate: bool = False, scale_bus_ready: bool = True):
+        self._scale_bus_ready = scale_bus_ready
+
+        if self._md is not None:
+            try:
                 await self._md.configure()
                 await self._md.home()
-            else:
-                self._logger.info("Door motor disabled via config")
+            except Exception as e:
+                self._status = IOBoxStatus.ERROR
+                if isolate is False:
+                    raise IOBoxError(f"IOBox configuration failed: {str(e)}") from e
+                self._logger.warning("init door config/home failed: %s", e)
+        else:
+            self._logger.info("Door motor disabled via config")
 
-            if self._scale_enabled is True:
+        if self._scale_enabled is True:
+            if self._scale_bus_ready is True:
                 self._scale_ready = True
+                self._emit_init("scale", "ready")
             else:
-                self._logger.info("Scale disabled via config")
+                self._scale_ready = False
+                self._emit_init("scale", "failed", reason="scale bus unavailable")
+        else:
+            self._logger.info("Scale disabled via config")
 
+        if self._status is not IOBoxStatus.ERROR:
             self._status = IOBoxStatus.IDLE
-        except Exception as e:
-            self._status = IOBoxStatus.ERROR
-            raise IOBoxError(f"IOBox configuration failed: {str(e)}") from e
 
-        await self.home_door()
-        await self.refresh_door_state()
-        await self._configure_curtain()
+        if isolate is True:
+            await self._safe_post_configure()
+        else:
+            await self.home_door()
+            await self.refresh_door_state()
+            await self._configure_curtain()
 
     async def _configure_curtain(self) -> None:
         curtain_cfg = getattr(self._params, "curtain", None)
@@ -164,6 +199,9 @@ class IOBox:
 
         if self._scale_ready is True:
             return
+
+        if self._scale_bus_ready is False:
+            raise IOBoxError("Scale bus is not available")
 
         self._scale_ready = True
 

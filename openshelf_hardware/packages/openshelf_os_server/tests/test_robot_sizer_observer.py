@@ -21,6 +21,9 @@ def _robot_enabled_settings() -> SimpleNamespace:
 def _worker() -> AsyncMock:
     worker = AsyncMock()
     worker.enqueue_command = AsyncMock()
+    worker.needs_home = MagicMock(return_value=False)
+    worker.needs_home_axes = MagicMock(return_value=[])
+    worker.needs_home_reason = MagicMock(return_value=None)
     return worker
 
 

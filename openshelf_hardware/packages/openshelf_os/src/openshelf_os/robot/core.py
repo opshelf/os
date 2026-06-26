@@ -50,6 +50,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# (component, phase, detail, reason)
+InitProgressReporter = Callable[[str, str, str, Optional[str]], None]
+
+_INIT_MOTOR_COMPONENTS = ["x_axis", "y_axis", "z_axis", "stage", "rotate", "door"]
+
 
 class Robot:
     # ------------------------------------------------------------------ #
@@ -94,6 +99,8 @@ class Robot:
             self._logger.warning("storage_load_failed: %s - %s", self._grid_path, str(e))
             self._grid = StorageGrid()
 
+        self._init_reporter: Optional[InitProgressReporter] = None
+
         self._state: RobotState = RobotState(current_cell=None)
         self._operation_context: dict[str, Any] = {}
         self._operation_context_listener: Callable[[dict[str, Any] | None], None] | None = None
@@ -105,19 +112,90 @@ class Robot:
         if self._config.demo.enabled is True:
             self._demo_cell_map = self._load_demo_cell_map(self._config.demo.cell_map_path)
 
-    async def configure(self):
-        await self._connect_controller("motor", self._motorbus, self._bus_settings["motor"])
+    def _emit_init(self, component: str, phase: str, detail: str = "", reason: Optional[str] = None) -> None:
+        reporter = getattr(self, "_init_reporter", None)
+        if reporter is None:
+            return
+        try:
+            reporter(component, phase, detail, reason)
+        except Exception:
+            pass
+
+    def set_init_progress_reporter(self, reporter: Optional[InitProgressReporter]) -> None:
+        self._init_reporter = reporter
+        self._tool._init_reporter = reporter
+        self._io._init_reporter = reporter
+
+        def _bind(component: str) -> Callable[[str, str, Optional[str]], None]:
+            def _emit(phase: str, detail: str = "", reason: Optional[str] = None) -> None:
+                self._emit_init(component, phase, detail, reason)
+            return _emit
+
+        for name in _INIT_MOTOR_COMPONENTS:
+            motor = self._get_motor_by_name(name)
+            if motor is not None:
+                motor._on_init_progress = _bind(name)
+
+        gripper = getattr(self._tool, "_gs", None)
+        if gripper is not None:
+            gripper._on_init_progress = _bind("gripper")
+
+    def get_init_component_names(self) -> List[str]:
+        names: List[str] = ["motor_bus"]
+
+        io_scale_config = self._config.get("robot.io.scale", None)
+        scale_enabled = getattr(io_scale_config, "enabled", True) if io_scale_config is not None else True
+        if scale_enabled is True and self._scalebus is not self._motorbus:
+            names.append("scale_bus")
+
+        laser_config = self._config.get("robot.tool.laser", None)
+        laser_enabled = getattr(laser_config, "enabled", False) if laser_config is not None else False
+        if (
+            laser_enabled is True
+            and self._laserbus is not self._motorbus
+            and self._laserbus is not self._scalebus
+        ):
+            names.append("laser_bus")
+
+        info = self.get_motor_info()
+        if self._tool._params.gripper.enabled is True:
+            names.append("gripper")
+        for motor in info.get("tool", []):
+            names.append(str(motor["name"]))
+        if self._tool._laser is not None:
+            names.append("laser")
+        for motor in info.get("io", []):
+            names.append(str(motor["name"]))
+        if getattr(self._io, "_scale_enabled", False) is True:
+            names.append("scale")
+        if getattr(self, "_cabinet", None) is not None:
+            names.append("cabinet")
+
+        return names
+
+    async def configure(self, isolate: bool = False):
+        self._emit_init("motor_bus", "connecting")
+        try:
+            await self._connect_controller("motor", self._motorbus, self._bus_settings["motor"])
+        except Exception as exc:
+            self._emit_init("motor_bus", "failed", reason=str(exc))
+            for name in _INIT_MOTOR_COMPONENTS:
+                if self._get_motor_by_name(name) is not None:
+                    self._emit_init(name, "failed", reason="motor bus down")
+            raise
+        self._emit_init("motor_bus", "ready")
 
         io_scale_config = self._config.get("robot.io.scale", None)
         scale_enabled = getattr(io_scale_config, "enabled", True) if io_scale_config is not None else True
         laser_config = self._config.get("robot.tool.laser", None)
         laser_enabled = getattr(laser_config, "enabled", False) if laser_config is not None else False
 
+        scale_bus_ready = True
         if scale_enabled is True:
             if self._scalebus is self._motorbus:
                 self._logger.info("scale_bus_shared_with_motor")
             else:
-                await self._connect_controller("scale", self._scalebus, self._bus_settings["scale"])
+                scale_bus_ready = await self._connect_optional_bus("scale", self._scalebus, isolate)
         else:
             self._logger.info("scale_bus_skipped: scale is disabled in config")
 
@@ -129,7 +207,7 @@ class Robot:
             elif self._laserbus is self._scalebus:
                 self._logger.info("laser_bus_shared_with_scale")
             else:
-                await self._connect_controller("laser", self._laserbus, self._bus_settings["laser"])
+                await self._connect_optional_bus("laser", self._laserbus, isolate)
         else:
             self._logger.info("laser_bus_skipped: laser is disabled in config")
 
@@ -137,16 +215,35 @@ class Robot:
         if gpio is not None:
             gpio.apply_initial_outputs()
 
-        await self._tool.configure()
-        await self._io.configure()
+        await self._tool.configure(isolate=isolate)
+        await self._io.configure(isolate=isolate, scale_bus_ready=scale_bus_ready)
         cabinet = getattr(self, "_cabinet", None)
         if cabinet is not None:
-            await cabinet.configure()
+            self._emit_init("cabinet", "configuring")
+            try:
+                await cabinet.configure()
+                self._emit_init("cabinet", "ready")
+            except Exception as exc:
+                self._emit_init("cabinet", "failed", reason=str(exc))
+                if isolate is False:
+                    raise
 
-        for name in ["x_axis", "y_axis", "z_axis", "stage", "rotate", "door"]:
+        for name in _INIT_MOTOR_COMPONENTS:
             motor = self._get_motor_by_name(name)
             if motor is not None:
                 motor._on_move_complete = self._did_complete_motor_move
+
+    async def _connect_optional_bus(self, label: str, controller: Controller, isolate: bool) -> bool:
+        self._emit_init(f"{label}_bus", "connecting")
+        try:
+            await self._connect_controller(label, controller, self._bus_settings[label])
+            self._emit_init(f"{label}_bus", "ready")
+            return True
+        except Exception as exc:
+            self._emit_init(f"{label}_bus", "failed", reason=str(exc))
+            if isolate is False:
+                raise
+            return False
 
     async def shutdown(self) -> None:
         await self.stop()
