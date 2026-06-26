@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import logging
 import threading
 from collections import defaultdict
@@ -17,16 +18,41 @@ from hardware.gpio.types import (
 
 try:
     import adafruit_pcf8575  # type: ignore[import]
-    import board  # type: ignore[import]
-    import busio  # type: ignore[import]
 except (ModuleNotFoundError, RuntimeError):
     adafruit_pcf8575 = None  # type: ignore[assignment]
+
+try:
+    import board  # type: ignore[import]
+except (ModuleNotFoundError, RuntimeError):
     board = None  # type: ignore[assignment]
+
+try:
+    import busio  # type: ignore[import]
+except (ModuleNotFoundError, RuntimeError):
     busio = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__).getChild("pcf8575")
 
 PcfDeviceFactory = Callable[[GpioExpanderSpec], Any]
+I2cPort = tuple[Any, Any, Any]
+
+
+def _available_i2c_ports() -> tuple[I2cPort, ...]:
+    try:
+        pin_module = importlib.import_module("microcontroller.pin")
+    except (ModuleNotFoundError, RuntimeError):
+        return ()
+
+    ports = getattr(pin_module, "i2cPorts", ())
+
+    return tuple(ports or ())
+
+
+def _i2c_bus_id(port: I2cPort) -> int | None:
+    try:
+        return int(port[0])
+    except (TypeError, ValueError):
+        return None
 
 
 class Pcf8575Backend:
@@ -160,20 +186,52 @@ class Pcf8575Backend:
             self._port_state = int(self._pcf.read_gpio())
             return self._pcf
 
-        if adafruit_pcf8575 is None or board is None or busio is None:
+        if adafruit_pcf8575 is None or busio is None:
             raise GpioConnectionError("adafruit-circuitpython-pcf8575 is not available")
 
-        if self._expander.bus != 1:
-            logger.warning(
-                "PCF8575 backend uses the default Raspberry Pi I2C bus",
-                extra={"configured_bus": self._expander.bus, "expander": self._expander.name},
-            )
-
-        self._i2c = busio.I2C(board.SCL, board.SDA)
-        self._pcf = adafruit_pcf8575.PCF8575(self._i2c, address=self._expander.address)
-        self._port_state = int(self._pcf.read_gpio())
+        try:
+            self._i2c = self._open_i2c_bus()
+            self._pcf = adafruit_pcf8575.PCF8575(self._i2c, address=self._expander.address)
+            self._port_state = int(self._pcf.read_gpio())
+        except GpioConnectionError:
+            self._i2c = None
+            self._pcf = None
+            self._port_state = None
+            raise
+        except Exception as exc:
+            self._i2c = None
+            self._pcf = None
+            self._port_state = None
+            raise GpioConnectionError(
+                f"Failed to connect PCF8575 expander '{self._expander.name}' "
+                f"on I2C bus {self._expander.bus} at address 0x{self._expander.address:02x}"
+            ) from exc
 
         return self._pcf
+
+    def _open_i2c_bus(self):
+        port = self._configured_i2c_port()
+
+        if port is not None:
+            _, scl, sda = port
+            return busio.I2C(scl, sda)
+
+        if self._expander.bus == 1 and board is not None:
+            return busio.I2C(board.SCL, board.SDA)
+
+        valid_buses = [bus for bus in (_i2c_bus_id(port) for port in _available_i2c_ports()) if bus is not None]
+        valid_detail = ", ".join(str(bus) for bus in valid_buses) if valid_buses else "none detected"
+        raise GpioConnectionError(
+            f"I2C bus {self._expander.bus} is not available for PCF8575 expander "
+            f"'{self._expander.name}' (valid buses: {valid_detail})"
+        )
+
+    def _configured_i2c_port(self) -> I2cPort | None:
+        for port in _available_i2c_ports():
+            if _i2c_bus_id(port) == self._expander.bus:
+                return port
+
+        return None
 
     def _ensure_interrupt_locked(self) -> None:
         if self._interrupt_subscription is not None:
