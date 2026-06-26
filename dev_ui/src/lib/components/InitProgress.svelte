@@ -47,6 +47,16 @@
 		return 'current';
 	}
 
+	const isInitializing = $derived(init !== null && init.phase === 'initializing');
+
+	const visibleComponents = $derived(
+		init === null
+			? []
+			: isInitializing
+				? init.components
+				: init.components.filter((component) => stepState(component.phase) !== 'done')
+	);
+
 	function statusText(component: RobotInitComponent): string {
 		const state = stepState(component.phase);
 
@@ -74,7 +84,7 @@
 			</tr>
 		</thead>
 		<tbody>
-			{#each init.components as component (component.component)}
+			{#each visibleComponents as component (component.component)}
 				{@const state = stepState(component.phase)}
 				<tr class="step step-{state}">
 					<td class="step-marker">●</td>
