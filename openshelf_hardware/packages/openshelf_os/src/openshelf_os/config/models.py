@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Iterator, List, Literal, Optional, Tuple, Union, overload
+from typing import Any, Iterator, List, Literal, Optional, Tuple, Union, overload
 
 from pydantic import BaseModel, Field, RootModel, field_validator, model_validator
 
@@ -407,6 +407,36 @@ class ModbusBusConfig(BaseModel):
     parity: Literal["N", "E", "O"] = "N"
     timeout: float = Field(2.0, gt=0)
     retry_delay_s: float = Field(0.1, ge=0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_legacy_ports(cls, value: Any) -> Any:
+        if isinstance(value, dict) is False:
+            return value
+
+        port = value.get("port")
+        if isinstance(port, str) is True and port.strip() != "":
+            data = dict(value)
+            data["port"] = port.strip()
+            return data
+
+        ports = value.get("ports")
+        if isinstance(ports, list) is False:
+            return value
+
+        for candidate in ports:
+            if isinstance(candidate, str) is False:
+                continue
+
+            cleaned = candidate.strip()
+            if cleaned == "":
+                continue
+
+            data = dict(value)
+            data["port"] = cleaned
+            return data
+
+        return value
 
 
 class RobotBus(BaseModel):
