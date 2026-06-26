@@ -70,3 +70,52 @@ async def test_override_safety_guard(client: AsyncClient) -> None:
 	assert response.status_code == 200
 	assert response.json()["bypassed"] is True
 	worker.set_safety_guard_bypassed.assert_awaited_once_with(True)
+
+
+@pytest.mark.anyio
+async def test_override_safety_component(client: AsyncClient) -> None:
+	worker = MagicMock()
+	worker.set_safety_component_bypassed = AsyncMock(
+		return_value={
+			"active": False,
+			"motion_blocked": False,
+			"awaiting_ack": False,
+			"can_acknowledge": False,
+			"active_sources": [],
+			"sources": {},
+			"interruption_id": 0,
+			"last_changed_at": None,
+			"bypassed": False,
+			"component_bypasses": {"light_curtain": True, "cabinet_doors": False},
+		}
+	)
+
+	with patch("openshelf_os_server.routers.robot.get_settings", return_value=_mock_settings()):
+		with patch("openshelf_os_server.routers.robot.get_robot_worker", return_value=worker):
+			response = await client.post(
+				"/api/robot/safety/override/component",
+				json={"component": "light_curtain", "bypass": True},
+			)
+
+	assert response.status_code == 200
+	assert response.json()["component_bypasses"] == {
+		"light_curtain": True,
+		"cabinet_doors": False,
+	}
+	worker.set_safety_component_bypassed.assert_awaited_once_with("light_curtain", True)
+
+
+@pytest.mark.anyio
+async def test_override_safety_component_rejects_unknown_component(client: AsyncClient) -> None:
+	worker = MagicMock()
+	worker.set_safety_component_bypassed = AsyncMock()
+
+	with patch("openshelf_os_server.routers.robot.get_settings", return_value=_mock_settings()):
+		with patch("openshelf_os_server.routers.robot.get_robot_worker", return_value=worker):
+			response = await client.post(
+				"/api/robot/safety/override/component",
+				json={"component": "scale", "bypass": True},
+			)
+
+	assert response.status_code == 422
+	worker.set_safety_component_bypassed.assert_not_awaited()

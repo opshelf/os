@@ -766,6 +766,10 @@ class Robot:
         if self._io:
             self._io.set_safety_guard_bypassed(enabled)
 
+    def set_light_curtain_bypassed(self, enabled: bool) -> None:
+        if self._io:
+            self._io.set_light_curtain_bypassed(enabled)
+
     def block_motion_for_safety(self) -> None:
         self._motion_safety.block()
         self._logger.info("Safety guard engaged")

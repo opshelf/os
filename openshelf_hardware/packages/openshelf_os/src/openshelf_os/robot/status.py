@@ -65,6 +65,7 @@ class SafetyStatus(BaseModel):
     interruption_id: int = 0
     last_changed_at: Optional[str] = None
     bypassed: bool = False
+    component_bypasses: dict[str, bool] = Field(default_factory=dict)
 
 
 class ScaleStatus(BaseModel):

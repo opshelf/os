@@ -4,11 +4,13 @@
 		apiFetch,
 		controlCabinetRelease,
 		setBypassSafetyGuard,
+		setBypassSafetyComponent,
 		getApiBase,
 		isApiConnected,
 		robotInit,
 		robotStatus,
-		robotStatusLastUpdate
+		robotStatusLastUpdate,
+		type SafetyComponent
 	} from '$lib';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import InitProgress from '$lib/components/InitProgress.svelte';
@@ -21,6 +23,19 @@
 	let isHomingRobot = false;
 	let isUpdatingSafetyOverride = false;
 	let safetyOverrideError = '';
+	let componentUpdating: Record<SafetyComponent, boolean> = {
+		light_curtain: false,
+		cabinet_doors: false
+	};
+	let componentErrors: Record<SafetyComponent, string> = {
+		light_curtain: '',
+		cabinet_doors: ''
+	};
+
+	const safetyComponents: { key: SafetyComponent; label: string }[] = [
+		{ key: 'light_curtain', label: 'bypass light curtain' },
+		{ key: 'cabinet_doors', label: 'bypass cabinet sensors' }
+	];
 
 	function getLightCurtainBlocked(): unknown {
 		const safety = $robotStatus?.robot_status?.safety;
@@ -92,6 +107,33 @@
 			safetyOverrideError = err instanceof Error ? err.message : 'failed to update safety override';
 		} finally {
 			isUpdatingSafetyOverride = false;
+		}
+	}
+
+	function getComponentBypass(component: SafetyComponent): boolean {
+		const safety = $robotStatus?.robot_status?.safety;
+		if (!safety || typeof safety !== 'object') {
+			return false;
+		}
+		const componentBypasses = (safety as Record<string, unknown>).component_bypasses;
+		if (!componentBypasses || typeof componentBypasses !== 'object') {
+			return false;
+		}
+		return (componentBypasses as Record<string, unknown>)[component] === true;
+	}
+
+	async function didClickBypassComponent(component: SafetyComponent): Promise<void> {
+		const shouldBypass = !getComponentBypass(component);
+		componentUpdating = { ...componentUpdating, [component]: true };
+		componentErrors = { ...componentErrors, [component]: '' };
+
+		try {
+			await setBypassSafetyComponent(component, shouldBypass);
+		} catch (err) {
+			const message = err instanceof Error ? err.message : 'failed to update safety override';
+			componentErrors = { ...componentErrors, [component]: message };
+		} finally {
+			componentUpdating = { ...componentUpdating, [component]: false };
 		}
 	}
 
@@ -280,6 +322,27 @@
 					{/if}
 				</td>
 			</tr>
+			{#each safetyComponents as component (component.key)}
+				<tr>
+					<td>{component.label}</td>
+					<td>
+						<div class="status-action-cell">
+							<span class:enabled-danger={getComponentBypass(component.key) === true}>
+								{getComponentBypass(component.key) ? 'enabled' : 'disabled'}
+							</span>
+							<button
+								disabled={componentUpdating[component.key] === true}
+								onclick={() => didClickBypassComponent(component.key)}
+							>
+								{getComponentBypass(component.key) ? 'DISABLE' : 'ENABLE'}
+							</button>
+						</div>
+						{#if componentErrors[component.key] !== ''}
+							<ErrorMessage message={componentErrors[component.key]} />
+						{/if}
+					</td>
+				</tr>
+			{/each}
 		</tbody>
 
 		{#if $robotStatus.current_command}
