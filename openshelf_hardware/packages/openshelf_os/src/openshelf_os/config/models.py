@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Iterator, List, Literal, Optional, Tuple, Union, overload
+from typing import Any, Iterator, List, Literal, Optional, Tuple, Union, overload
 
 from pydantic import BaseModel, Field, RootModel, field_validator, model_validator
 
@@ -403,10 +403,46 @@ class LaserConfig(BaseModel):
 
 class ModbusBusConfig(BaseModel):
     port: str = Field(..., min_length=1)
+    ports: Optional[List[str]] = Field(default=None, exclude=True)
     baudrate: int = Field(..., gt=0)
     parity: Literal["N", "E", "O"] = "N"
     timeout: float = Field(2.0, gt=0)
     retry_delay_s: float = Field(0.1, ge=0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_legacy_ports(cls, value: Any) -> Any:
+        if isinstance(value, dict) is False:
+            return value
+
+        ports = value.get("ports")
+        if "port" in value or ports is None:
+            return value
+
+        if isinstance(ports, list) and len(ports) > 0:
+            cleaned_ports = [port.strip() for port in ports if isinstance(port, str) and port.strip()]
+            if cleaned_ports:
+                data = dict(value)
+                data["ports"] = cleaned_ports
+                data["port"] = cleaned_ports[0]
+                return data
+
+        return value
+
+    @field_validator("ports")
+    @classmethod
+    def _validate_ports(cls, value: Optional[List[str]]) -> Optional[List[str]]:
+        if value is None:
+            return value
+
+        if len(value) == 0:
+            raise ValueError("ports must contain at least one serial port")
+
+        cleaned_ports = [port.strip() for port in value]
+        if any(port == "" for port in cleaned_ports):
+            raise ValueError("ports cannot include empty/whitespace values")
+
+        return cleaned_ports
 
 
 class RobotBus(BaseModel):

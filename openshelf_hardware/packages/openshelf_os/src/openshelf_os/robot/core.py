@@ -332,8 +332,12 @@ class Robot:
             settings = defaults[name].copy()
             if cfg is not None:
                 port = cfg.port
-                default_fallback_ports = list(defaults[name]["fallback_ports"])
-                fallback_candidates = [port, *default_fallback_ports] if port in default_fallback_ports else [port]
+                configured_ports = list(getattr(cfg, "ports", None) or [])
+                if configured_ports:
+                    fallback_candidates = [port, *configured_ports]
+                else:
+                    default_fallback_ports = list(defaults[name]["fallback_ports"])
+                    fallback_candidates = [port, *default_fallback_ports] if port in default_fallback_ports else [port]
                 fallback_ports = list(dict.fromkeys(fallback_candidates))
                 settings.update(
                     {
