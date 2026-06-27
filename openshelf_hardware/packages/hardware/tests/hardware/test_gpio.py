@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import sys
+import types
 from typing import Any
 
-from hardware.exceptions import GpioConfigError
+from hardware.exceptions import GpioConfigError, GpioConnectionError
 from hardware.gpio import DoorRelease, GpioManager
 from hardware.gpio.fake import FakeGpioBackend
 from hardware.gpio.pcf8575 import Pcf8575Backend
+import hardware.gpio.pcf8575 as pcf8575_module
 import hardware.gpio.rpi as rpi_module
 from hardware.gpio.rpi import RpiGpioBackend
 from hardware.gpio.types import GpioExpanderSpec, GpioInterruptSpec, GpioPinSpec
@@ -123,6 +126,90 @@ class FakePcf8575:
         else:
             latch &= ~(1 << pin)
         self.write_gpio(latch)
+
+
+class FakePcfModule:
+    class PCF8575:
+        def __init__(self, i2c: Any, *, address: int) -> None:
+            self.i2c = i2c
+            self.address = address
+
+        def read_gpio(self) -> int:
+            return 0xFFFF
+
+        def write_gpio(self, _value: int) -> None:
+            pass
+
+
+def install_i2c_ports(monkeypatch: pytest.MonkeyPatch, ports: tuple[tuple[int, int, int], ...]) -> None:
+    microcontroller = types.ModuleType("microcontroller")
+    pin = types.ModuleType("microcontroller.pin")
+    pin.i2cPorts = ports  # type: ignore[attr-defined]
+    microcontroller.pin = pin  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "microcontroller", microcontroller)
+    monkeypatch.setitem(sys.modules, "microcontroller.pin", pin)
+
+
+def test_pcf8575_uses_configured_i2c_bus_from_blinka_ports(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[int, int]] = []
+
+    class FakeBusio:
+        class I2C:
+            def __init__(self, scl: int, sda: int) -> None:
+                calls.append((scl, sda))
+
+    install_i2c_ports(monkeypatch, ((1, 3, 2), (10, 45, 44)))
+    monkeypatch.setattr(pcf8575_module, "adafruit_pcf8575", FakePcfModule)
+    monkeypatch.setattr(pcf8575_module, "busio", FakeBusio)
+    monkeypatch.setattr(pcf8575_module, "board", None)
+
+    expander = GpioExpanderSpec(name="main", kind="pcf8575", bus=10, address=0x20)
+    backend = Pcf8575Backend(expander, rpi_backend=FakeGpioBackend())
+    spec = GpioPinSpec(name="limit", board="pcf8575", expander="main", pin=15, direction="input")
+
+    backend.setup_input(spec)
+
+    assert calls == [(45, 44)]
+
+
+def test_pcf8575_reports_missing_configured_i2c_bus(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeBusio:
+        class I2C:
+            def __init__(self, _scl: int, _sda: int) -> None:
+                raise AssertionError("unexpected I2C open")
+
+    install_i2c_ports(monkeypatch, ((1, 3, 2),))
+    monkeypatch.setattr(pcf8575_module, "adafruit_pcf8575", FakePcfModule)
+    monkeypatch.setattr(pcf8575_module, "busio", FakeBusio)
+    monkeypatch.setattr(pcf8575_module, "board", None)
+
+    expander = GpioExpanderSpec(name="main", kind="pcf8575", bus=10, address=0x20)
+    backend = Pcf8575Backend(expander, rpi_backend=FakeGpioBackend())
+    spec = GpioPinSpec(name="limit", board="pcf8575", expander="main", pin=15, direction="input")
+
+    with pytest.raises(GpioConnectionError, match="I2C bus 10.*valid buses: 1"):
+        backend.setup_input(spec)
+
+
+def test_pcf8575_wraps_blinka_i2c_open_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeBusio:
+        class I2C:
+            def __init__(self, _scl: int, _sda: int) -> None:
+                raise ValueError("No Hardware I2C on (scl,sda)=(3, 2)")
+
+    install_i2c_ports(monkeypatch, ((1, 3, 2),))
+    monkeypatch.setattr(pcf8575_module, "adafruit_pcf8575", FakePcfModule)
+    monkeypatch.setattr(pcf8575_module, "busio", FakeBusio)
+    monkeypatch.setattr(pcf8575_module, "board", None)
+
+    expander = GpioExpanderSpec(name="main", kind="pcf8575", bus=1, address=0x20)
+    backend = Pcf8575Backend(expander, rpi_backend=FakeGpioBackend())
+    spec = GpioPinSpec(name="limit", board="pcf8575", expander="main", pin=15, direction="input")
+
+    with pytest.raises(GpioConnectionError, match="Failed to connect PCF8575 expander 'main'") as exc_info:
+        backend.setup_input(spec)
+
+    assert isinstance(exc_info.value.__cause__, ValueError)
 
 
 def test_pcf8575_setup_input_releases_pin_without_clearing_other_pins() -> None:
