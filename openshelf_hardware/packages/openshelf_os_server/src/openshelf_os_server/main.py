@@ -12,6 +12,7 @@ import socket
 import struct
 from pathlib import Path
 from typing import Any, AsyncGenerator, Optional, cast
+from urllib.parse import urlsplit
 
 import sentry_sdk
 import uvicorn
@@ -57,6 +58,12 @@ PYMODBUS_NO_RESPONSE_RETRY_SUFFIX = " retries, continue with next request"
 ROBOT_INITIALIZATION_FAILED_EVENT = "robot_initialization_failed"
 TOOL_FAULT_LOG_EVENT = "Tool fault detected - manual intervention required"
 DOOR_MOTOR_RECOVERY_EVENT = "Too many bad door readings; attempting door motor recovery"
+ROBOT_UNAVAILABLE_REQUEST_PATH_PREFIXES = (
+	"/api/robot",
+	"/api/calibration",
+	"/api/demo",
+	"/api/cabinet",
+)
 
 
 def _redact_sensitive_mapping(value: Any) -> Any:
@@ -231,6 +238,14 @@ def _sentry_event_is_http_exception(event: dict[str, Any], hint: dict[str, Any])
 	return False
 
 
+def _request_path_matches_prefix(request_url: str, prefixes: tuple[str, ...]) -> bool:
+	if request_url == "":
+		return False
+
+	path = urlsplit(request_url).path
+	return any(path == prefix or path.startswith(f"{prefix}/") for prefix in prefixes)
+
+
 def _sentry_event_is_robot_unavailable_request(event: dict[str, Any]) -> bool:
 	request_value = event.get("request")
 	request_url = ""
@@ -240,7 +255,11 @@ def _sentry_event_is_robot_unavailable_request(event: dict[str, Any]) -> bool:
 		if isinstance(url_value, str) is True:
 			request_url = str(url_value)
 
-	if request_url != "" and "/api/robot" in request_url and _sentry_event_has_message(event, "robot_unavailable") is True:
+	is_robot_unavailable_request = _request_path_matches_prefix(
+		request_url,
+		ROBOT_UNAVAILABLE_REQUEST_PATH_PREFIXES,
+	)
+	if is_robot_unavailable_request is True and _sentry_event_has_message(event, "robot_unavailable") is True:
 		return True
 
 	for value in _sentry_event_exception_values(event):
@@ -252,7 +271,13 @@ def _sentry_event_is_robot_unavailable_request(event: dict[str, Any]) -> bool:
 		if "Robot is not initialized or failed to start" in exception_message:
 			return True
 
-		if "Robot Worker was Not Initialized" in exception_message and "/api/robot" in request_url:
+		if is_robot_unavailable_request is False:
+			continue
+
+		if "Robot Worker was Not Initialized" in exception_message:
+			return True
+
+		if "Robot is not initialized" in exception_message:
 			return True
 
 	return False
