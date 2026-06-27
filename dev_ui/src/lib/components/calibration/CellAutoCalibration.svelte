@@ -83,7 +83,10 @@
 			return false;
 		}
 
-		return selectedSide === '' && isIoBoxSelected === false;
+		return selectedSide === '' &&
+		isIoBoxSelected === false &&
+		isAngleCalibrationSelected === false &&
+		isExtensionCalibrationSelected === false;
 	});
 
 	const startButtonLabel = 'calibrate';
@@ -274,6 +277,13 @@
 			return;
 		}
 
+		if (requestedScope.mode === 'both') {
+			selectedSide = '';
+			selectedShelf = '';
+			selectedCell = '';
+			return;
+		}
+
 		if (requestedScope.side !== undefined) {
 			selectedSide = requestedScope.side;
 		}
@@ -302,10 +312,10 @@
 
 		if (selectedSide === '') {
 			return {
-				mode: 'io_box',
-				include_io_box: true,
-				include_angle_calibration: false,
-				include_extension_calibration: false
+				mode: 'both',
+				include_io_box: isIoBoxSelected,
+				include_angle_calibration: isAngleCalibrationSelected,
+				include_extension_calibration: isExtensionCalibrationSelected
 			};
 		}
 

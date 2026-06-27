@@ -418,7 +418,7 @@ export interface LaserAutoCalibrationIOBoxResult {
 }
 
 export interface LaserAutoCalibrationRequest {
-	mode: 'all' | 'side' | 'shelf' | 'cell' | 'io_box';
+	mode: 'all' | 'both' | 'side' | 'shelf' | 'cell' | 'io_box';
 	side?: StorageModuleSide;
 	shelf_idx?: number;
 	cell_idx?: number;
@@ -486,6 +486,11 @@ export function buildLaserAutoCalibrationStreamUrl(
 
 	if (request.include_extension_calibration !== undefined) {
 		url.searchParams.set('include_extension_calibration', String(request.include_extension_calibration));
+	}
+
+	if (request.mode === 'both') {
+		url.searchParams.set('mode', 'both');
+		return url.toString();
 	}
 
 	if (request.mode === 'all') {

@@ -212,6 +212,11 @@ def _validate_laser_auto_calibration_config(
         )
         return
 
+    if requested_scope.mode == "both":
+        laser_module.validate_scan_bounds(left_bounds, "left scan bounds")
+        laser_module.validate_scan_bounds(right_bounds, "right scan bounds")
+        return
+
     if requested_scope.side == StorageModuleSide.LEFT:
         laser_module.validate_scan_bounds(left_bounds, "left scan bounds")
         if requested_scope.mode == "side":
@@ -255,6 +260,20 @@ class ScopeRunnerMixin:
 
         if requested_scope.mode == "all":
             await self._run_all_sides(
+                worker,
+                requested_scope.include_angle_calibration,
+                requested_scope.include_extension_calibration,
+                left_bounds=left_bounds,
+                right_bounds=right_bounds,
+            )
+
+            if requested_scope.include_io_box is True:
+                await self._run_io_box_calibration(worker)
+
+            return
+
+        if requested_scope.mode == "both":
+            await self._run_both_sides(
                 worker,
                 requested_scope.include_angle_calibration,
                 requested_scope.include_extension_calibration,
@@ -385,6 +404,88 @@ class ScopeRunnerMixin:
         completed_results.append(await self._run_side(worker, StorageModuleSide.LEFT, left_angle_result))
 
         await self._persist_completed_results(worker, completed_results)
+
+    async def _run_both_sides(
+        self,
+        worker: RobotWorker,
+        include_angle_calibration: bool = True,
+        include_extension_calibration: bool = True,
+        *,
+        left_bounds: ScanBounds | None = None,
+        right_bounds: ScanBounds | None = None,
+    ) -> None:
+        scan_config = get_root_config().robot.grid.scan
+        if left_bounds is None:
+            left_bounds = _build_bounds_for_side(scan_config, StorageModuleSide.LEFT)
+        if right_bounds is None:
+            right_bounds = _build_bounds_for_side(scan_config, StorageModuleSide.RIGHT)
+        right_angle_result: LaserAutoCalibrationAngleResult | None = None
+        left_angle_result: LaserAutoCalibrationAngleResult | None = None
+
+        if include_angle_calibration is True:
+            right_angle_result = await self._run_angle_calibration_for_side(worker, StorageModuleSide.RIGHT, right_bounds)
+            await self._apply_angle_calibration_in_memory(worker, StorageModuleSide.RIGHT, right_angle_result)
+
+            left_angle_result = await self._run_angle_calibration_for_side(worker, StorageModuleSide.LEFT, left_bounds)
+            await self._apply_angle_calibration_in_memory(worker, StorageModuleSide.LEFT, left_angle_result)
+
+        if include_extension_calibration is True:
+            right_probe_y_mm = await self._resolve_stage_extension_probe_y_mm(
+                worker,
+                StorageModuleSide.RIGHT,
+                right_bounds,
+                top_shelf_y_mm=None if right_angle_result is None else float(right_angle_result.capture_y_mm),
+            )
+            right_stage_extension_mm = await self._run_stage_extension_calibration_for_side(
+                worker,
+                StorageModuleSide.RIGHT,
+                right_bounds,
+                probe_y_mm=right_probe_y_mm,
+            )
+            await self._apply_stage_extension_calibration_in_memory(
+                worker,
+                StorageModuleSide.RIGHT,
+                right_stage_extension_mm,
+            )
+
+            left_probe_y_mm = await self._resolve_stage_extension_probe_y_mm(
+                worker,
+                StorageModuleSide.LEFT,
+                left_bounds,
+                top_shelf_y_mm=None if left_angle_result is None else float(left_angle_result.capture_y_mm),
+            )
+            left_stage_extension_mm = await self._run_stage_extension_calibration_for_side(
+                worker,
+                StorageModuleSide.LEFT,
+                left_bounds,
+                probe_y_mm=left_probe_y_mm,
+            )
+            await self._apply_stage_extension_calibration_in_memory(
+                worker,
+                StorageModuleSide.LEFT,
+                left_stage_extension_mm,
+            )
+
+        config = get_root_config()
+        next_config = config.model_copy(deep=True)
+        params_dict = next_config.robot.tool.parameters.model_dump()
+
+        for side, angle_result, side_name in [
+            (StorageModuleSide.RIGHT, right_angle_result, "right_module"),
+            (StorageModuleSide.LEFT, left_angle_result, "left_module"),
+        ]:
+            rotation_param = _side_to_rotation_param_name(side)
+            stage_extension_param = _side_to_stage_extension_param_name(side)
+            side_state = self._side_states.get(side_name)
+
+            if angle_result is not None:
+                params_dict[rotation_param] = angle_result.updated_rotation_deg
+
+            if side_state is not None and side_state.stage_extension_mm is not None:
+                params_dict[stage_extension_param] = float(side_state.stage_extension_mm)
+
+        next_config.robot.tool.parameters = Parameters.model_validate(params_dict)
+        save_root_config(next_config)
 
     async def _run_single_side(
         self,

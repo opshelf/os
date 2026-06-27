@@ -156,7 +156,7 @@ class LaserAutoCalibrationIOBoxResult(BaseModel):
 
 
 class LaserAutoCalibrationScope(BaseModel):
-    mode: Literal["all", "side", "shelf", "cell", "io_box"] = "all"
+    mode: Literal["all", "both", "side", "shelf", "cell", "io_box"] = "all"
     side: StorageModuleSide | None = None
     shelf_idx: int | None = None
     cell_idx: int | None = None

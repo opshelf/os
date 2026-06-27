@@ -128,7 +128,7 @@ def _build_laser_auto_calibration_scope(
 	side: StorageModuleSide | None,
 	shelf_idx: int | None,
 	cell_idx: int | None,
-	mode: Literal["all", "io_box"] | None,
+	mode: Literal["all", "both", "io_box"] | None,
 	include_io_box: bool | None,
 	include_angle_calibration: bool | None,
 	include_extension_calibration: bool | None,
@@ -157,6 +157,20 @@ def _build_laser_auto_calibration_scope(
 			include_io_box=True,
 			include_angle_calibration=False,
 			include_extension_calibration=False,
+		)
+
+	if mode == "both":
+		if side is not None or shelf_idx is not None or cell_idx is not None:
+			raise HTTPException(
+				status_code=status.HTTP_400_BAD_REQUEST,
+				detail="side, shelf_idx, and cell_idx cannot be used with both mode",
+			)
+
+		return LaserAutoCalibrationScope(
+			mode="both",
+			include_io_box=include_io_box is not False,
+			include_angle_calibration=include_angle_calibration is not False,
+			include_extension_calibration=include_extension_calibration is not False,
 		)
 
 	if side is None:
@@ -735,7 +749,7 @@ async def stream_laser_auto_calibration(
 	side: StorageModuleSide | None = None,
 	shelf_idx: int | None = None,
 	cell_idx: int | None = None,
-	mode: Literal["all", "io_box"] | None = None,
+	mode: Literal["all", "both", "io_box"] | None = None,
 	include_io_box: bool | None = None,
 	include_angle_calibration: bool | None = None,
 	include_extension_calibration: bool | None = None,
