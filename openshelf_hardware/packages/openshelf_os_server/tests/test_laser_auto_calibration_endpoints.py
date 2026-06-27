@@ -329,6 +329,26 @@ def test_validate_laser_auto_calibration_config_rejects_all_scope_reference_outs
         )
 
 
+
+def test_validate_laser_auto_calibration_config_rejects_both_scope_reference_outside_bounds() -> None:
+    scan_config = _build_reference_bounds_scan_config(
+        left_reference=SimpleNamespace(
+            shelf_idx=0,
+            cell_idx=0,
+            anchor="top_left",
+            x_mm=40.0,
+            y_mm=100.0,
+            z_offset_mm=15.0,
+            wall_depth_mm=9.0,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="xy_reference x_mm resolves outside scan X bounds"):
+        _validate_laser_auto_calibration_config(
+            scan_config=scan_config,
+            requested_scope=LaserAutoCalibrationScope(mode="both"),
+        )
+
 def test_validate_laser_auto_calibration_config_rejects_side_scope_reference_outside_bounds() -> None:
     scan_config = _build_reference_bounds_scan_config(
         right_reference=SimpleNamespace(
@@ -980,6 +1000,30 @@ async def test_run_all_sides_processes_right_before_left() -> None:
 
     assert [result.side for result in persisted_results] == [StorageModuleSide.RIGHT, StorageModuleSide.LEFT]
     assert persisted_results[0].angle_result.updated_rotation_deg == pytest.approx(191.25)
+
+
+@pytest.mark.asyncio
+async def test_run_requested_scope_both_runs_full_two_side_scan() -> None:
+    manager = LaserAutoCalibrationManager()
+    worker = SimpleNamespace(_robot=SimpleNamespace(_tool=SimpleNamespace()))
+    requested_scope = LaserAutoCalibrationScope(
+        mode="both",
+        include_io_box=False,
+        include_angle_calibration=False,
+        include_extension_calibration=True,
+    )
+
+    with patch(
+        'openshelf_os_server.core.laser_auto_calibration._build_bounds_for_side',
+        return_value=ScanBounds(x_min=0.0, x_max=950.0, y_min=0.0, y_max=1210.0),
+    ):
+        with patch.object(manager, '_run_all_sides', AsyncMock()) as run_all_mock:
+            with patch.object(manager, '_run_io_box_calibration', AsyncMock()) as io_box_mock:
+                await manager._run_requested_scope(worker, requested_scope)
+
+    run_all_mock.assert_awaited_once()
+    assert run_all_mock.await_args.args[:3] == (worker, False, True)
+    io_box_mock.assert_not_awaited()
 
 
 @pytest.mark.asyncio
