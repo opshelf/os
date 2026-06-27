@@ -83,10 +83,7 @@
 			return false;
 		}
 
-		return selectedSide === '' &&
-		isIoBoxSelected === false &&
-		isAngleCalibrationSelected === false &&
-		isExtensionCalibrationSelected === false;
+		return false;
 	});
 
 	const startButtonLabel = 'calibrate';
