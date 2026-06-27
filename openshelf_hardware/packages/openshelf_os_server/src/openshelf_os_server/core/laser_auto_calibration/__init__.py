@@ -72,10 +72,6 @@ class LaserAutoCalibrationManager(_LaserAutoCalibrationManagerImpl):
         _sync_patch_targets()
         return await super()._run_all_sides(*args, **kwargs)
 
-    async def _run_both_sides(self, *args, **kwargs):
-        _sync_patch_targets()
-        return await super()._run_both_sides(*args, **kwargs)
-
     async def _run_single_side(self, *args, **kwargs):
         _sync_patch_targets()
         return await super()._run_single_side(*args, **kwargs)
