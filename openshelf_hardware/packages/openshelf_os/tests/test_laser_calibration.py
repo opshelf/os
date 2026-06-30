@@ -12,6 +12,7 @@ from openshelf_os.laser_calibration import (
 	apply_single_shelf_analysis,
 	apply_single_cell_rescan,
 	apply_single_cell_shelf_analysis,
+	build_shelves_from_scan,
 	build_single_shelf_known_edge_y,
 	build_single_cell_rescan_candidate,
 	build_run_parameters,
@@ -1377,6 +1378,85 @@ def test_apply_single_cell_rescan_keeps_reference_values_fixed() -> None:
 	assert calibration_point.x == pytest.approx(11.0)
 	assert calibration_point.y == pytest.approx(1162.5)
 	assert calibration_point.z_offset == pytest.approx(11.0)
+
+def _detected_scan_shelf(shelf_idx: int, tool_xs: list[float]) -> SimpleNamespace:
+	return SimpleNamespace(
+		shelf_idx=shelf_idx,
+		shelf_height_mm=30.0,
+		shelf_width_mm=200.0,
+		cells=[
+			SimpleNamespace(
+				shelf_idx=shelf_idx,
+				cell_idx=cell_idx,
+				tool_x_mm=tool_x,
+				tool_y_mm=100.0,
+				width_mm=26.0,
+				height_mm=30.0,
+			)
+			for cell_idx, tool_x in enumerate(tool_xs)
+		],
+	)
+
+
+def _existing_calibrated_shelf(shelf_idx: int, xs: list[float]) -> Shelf:
+	return Shelf(
+		shelf_idx=shelf_idx,
+		shelf_height=30.0,
+		shelf_width=200.0,
+		divider_width=13.0,
+		cells=[
+			Cell(
+				cell_idx=cell_idx,
+				status=CellStatus.AVAILABLE,
+				item=None,
+				calibration_point=CalibrationCoordinate(x=x, y=20.0, z_offset=float(cell_idx), s=0),
+				dimensions=Dimensions(width=26.0, height=30.0, length=400.0),
+			)
+			for cell_idx, x in enumerate(xs)
+		],
+	)
+
+
+def test_build_shelves_from_scan_preserves_dropped_cell_index() -> None:
+	analysis = SimpleNamespace(shelves=[_detected_scan_shelf(0, [493.0, 659.0, 823.0])])
+	existing = [_existing_calibrated_shelf(0, [329.0, 494.0, 660.0, 824.0])]
+
+	result = build_shelves_from_scan(side=StorageModuleSide.LEFT, analysis=analysis, existing_shelves=existing)
+
+	cells = sorted(result[0].cells, key=lambda cell: cell.cell_idx)
+	assert [cell.cell_idx for cell in cells] == [0, 1, 2, 3]
+	assert cells[0].calibration_point.x == pytest.approx(329.0)
+	assert cells[0].calibration_point.z_offset == pytest.approx(0.0)
+	assert cells[1].calibration_point.x == pytest.approx(493.0)
+	assert cells[2].calibration_point.x == pytest.approx(659.0)
+	assert cells[3].calibration_point.x == pytest.approx(823.0)
+
+
+def test_build_shelves_from_scan_matches_across_frame_offset() -> None:
+	analysis = SimpleNamespace(shelves=[_detected_scan_shelf(0, [100.0, 112.0, 120.0])])
+	existing = [_existing_calibrated_shelf(0, [10.0, 20.0, 30.0])]
+
+	result = build_shelves_from_scan(side=StorageModuleSide.LEFT, analysis=analysis, existing_shelves=existing)
+
+	cells = sorted(result[0].cells, key=lambda cell: cell.cell_idx)
+	assert [cell.cell_idx for cell in cells] == [0, 1, 2]
+	assert cells[0].calibration_point.x == pytest.approx(100.0)
+	assert cells[1].calibration_point.x == pytest.approx(112.0)
+	assert cells[2].calibration_point.x == pytest.approx(120.0)
+
+
+def test_build_shelves_from_scan_appends_unmatched_detection() -> None:
+	analysis = SimpleNamespace(shelves=[_detected_scan_shelf(0, [100.0, 200.0, 300.0])])
+	existing = [_existing_calibrated_shelf(0, [100.0, 300.0])]
+
+	result = build_shelves_from_scan(side=StorageModuleSide.LEFT, analysis=analysis, existing_shelves=existing)
+
+	cells = sorted(result[0].cells, key=lambda cell: cell.cell_idx)
+	assert len(cells) == 3
+	assert cells[0].calibration_point.x == pytest.approx(100.0)
+	assert cells[1].calibration_point.x == pytest.approx(300.0)
+	assert cells[2].calibration_point.x == pytest.approx(200.0)
+
 
 def test_apply_single_cell_shelf_analysis_updates_only_target_xy(tmp_path: Path) -> None:
 	target_shelf = Shelf(

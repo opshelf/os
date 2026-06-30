@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import deque
 from datetime import datetime, timezone
 import json
+import logging
 from pathlib import Path
 from typing import Optional
 from uuid import uuid4
@@ -532,6 +533,229 @@ def analyze_scan_capture(
 	)
 
 
+logger = logging.getLogger(__name__)
+
+CELL_MATCH_TOLERANCE_FRACTION = 0.4
+CELL_MATCH_TOLERANCE_FALLBACK_MM = 60.0
+
+
+def _build_scan_cell(
+	*,
+	cell_idx: int,
+	detected_cell: ScanDetectedCell,
+	existing_cell: Optional[Cell],
+	side_number: int,
+	default_length_mm: float,
+) -> Cell:
+	status = CellStatus.AVAILABLE
+	item = None
+	z_offset = 0.0
+	dimensions = Dimensions(
+		width=detected_cell.width_mm,
+		height=detected_cell.height_mm,
+		length=default_length_mm,
+	)
+
+	if existing_cell is not None:
+		status = existing_cell.status
+		item = existing_cell.item
+		dimensions = existing_cell.dimensions
+		if existing_cell.calibration_point is not None:
+			z_offset = existing_cell.calibration_point.z_offset
+
+	return Cell(
+		cell_idx=cell_idx,
+		status=status,
+		item=item,
+		calibration_point=CalibrationCoordinate(
+			x=detected_cell.tool_x_mm,
+			y=detected_cell.tool_y_mm,
+			z_offset=z_offset,
+			s=side_number,
+		),
+		dimensions=dimensions,
+	)
+
+
+def _scan_cell_match_tolerance_mm(existing_xs: list[float]) -> float:
+	if len(existing_xs) < 2:
+		return CELL_MATCH_TOLERANCE_FALLBACK_MM
+
+	ordered = sorted(existing_xs)
+	min_spacing_mm = min(ordered[index + 1] - ordered[index] for index in range(len(ordered) - 1))
+	return min_spacing_mm * CELL_MATCH_TOLERANCE_FRACTION
+
+
+def _count_offset_matches(detected_xs: list[float], existing_xs: list[float], offset_mm: float, tolerance_mm: float) -> tuple[int, float]:
+	is_existing_used = [False] * len(existing_xs)
+	match_count = 0
+	residual_mm = 0.0
+
+	for detected_x in detected_xs:
+		best_index: Optional[int] = None
+		best_distance_mm: Optional[float] = None
+
+		for index, existing_x in enumerate(existing_xs):
+			if is_existing_used[index] is True:
+				continue
+
+			distance_mm = abs(detected_x + offset_mm - existing_x)
+
+			if distance_mm > tolerance_mm:
+				continue
+
+			if best_distance_mm is None or distance_mm < best_distance_mm:
+				best_distance_mm = distance_mm
+				best_index = index
+
+		if best_index is not None:
+			is_existing_used[best_index] = True
+			match_count += 1
+			residual_mm += best_distance_mm or 0.0
+
+	return match_count, residual_mm
+
+
+def _estimate_frame_offset_mm(detected_xs: list[float], existing_xs: list[float], tolerance_mm: float) -> float:
+	if len(detected_xs) == 0 or len(existing_xs) == 0:
+		return 0.0
+
+	best_offset_mm = 0.0
+	best_match_count = -1
+	best_residual_mm: Optional[float] = None
+
+	for detected_x in detected_xs:
+		for existing_x in existing_xs:
+			offset_mm = existing_x - detected_x
+			match_count, residual_mm = _count_offset_matches(detected_xs, existing_xs, offset_mm, tolerance_mm)
+
+			if match_count > best_match_count or (
+				match_count == best_match_count
+				and best_residual_mm is not None
+				and residual_mm < best_residual_mm
+			):
+				best_match_count = match_count
+				best_residual_mm = residual_mm
+				best_offset_mm = offset_mm
+
+	return best_offset_mm
+
+
+def _match_detected_cells_to_existing(
+	*,
+	detected_cells: list[ScanDetectedCell],
+	existing_cells: list[Cell],
+	side_number: int,
+	default_length_mm: float,
+	shelf_idx: int,
+) -> list[Cell]:
+	detected_sorted = sorted(detected_cells, key=lambda cell: float(cell.tool_x_mm))
+	calibrated_existing = [
+		(cell, cell.calibration_point)
+		for cell in existing_cells
+		if cell.calibration_point is not None
+	]
+	uncalibrated_existing = [cell for cell in existing_cells if cell.calibration_point is None]
+	existing_sorted = sorted(calibrated_existing, key=lambda pair: float(pair[1].x))
+
+	if len(uncalibrated_existing) == 0 and len(detected_sorted) == len(existing_sorted):
+		output_cells = [
+			_build_scan_cell(
+				cell_idx=existing_cell.cell_idx,
+				detected_cell=detected_cell,
+				existing_cell=existing_cell,
+				side_number=side_number,
+				default_length_mm=default_length_mm,
+			)
+			for (existing_cell, _existing_point), detected_cell in zip(existing_sorted, detected_sorted)
+		]
+		output_cells.sort(key=lambda cell: int(cell.cell_idx))
+		return output_cells
+
+	existing_xs = [float(point.x) for _, point in existing_sorted]
+	tolerance_mm = _scan_cell_match_tolerance_mm(existing_xs)
+	frame_offset_mm = _estimate_frame_offset_mm(
+		[float(cell.tool_x_mm) for cell in detected_sorted],
+		existing_xs,
+		tolerance_mm,
+	)
+	is_detected_used = [False] * len(detected_sorted)
+	output_cells = []
+	matched_count = 0
+
+	for existing_cell, existing_point in existing_sorted:
+		existing_x = float(existing_point.x)
+		best_index: Optional[int] = None
+		best_distance_mm: Optional[float] = None
+
+		for index, detected_cell in enumerate(detected_sorted):
+			if is_detected_used[index] is True:
+				continue
+
+			distance_mm = abs(float(detected_cell.tool_x_mm) + frame_offset_mm - existing_x)
+
+			if distance_mm > tolerance_mm:
+				continue
+
+			if best_distance_mm is None or distance_mm < best_distance_mm:
+				best_distance_mm = distance_mm
+				best_index = index
+
+		if best_index is None:
+			output_cells.append(existing_cell.model_copy(deep=True))
+			continue
+
+		is_detected_used[best_index] = True
+		matched_count += 1
+		output_cells.append(
+			_build_scan_cell(
+				cell_idx=existing_cell.cell_idx,
+				detected_cell=detected_sorted[best_index],
+				existing_cell=existing_cell,
+				side_number=side_number,
+				default_length_mm=default_length_mm,
+			)
+		)
+
+	for existing_cell in uncalibrated_existing:
+		output_cells.append(existing_cell.model_copy(deep=True))
+
+	next_cell_idx = max((int(cell.cell_idx) for cell in output_cells), default=-1) + 1
+	extra_count = 0
+
+	for index, detected_cell in enumerate(detected_sorted):
+		if is_detected_used[index] is True:
+			continue
+
+		output_cells.append(
+			_build_scan_cell(
+				cell_idx=next_cell_idx,
+				detected_cell=detected_cell,
+				existing_cell=None,
+				side_number=side_number,
+				default_length_mm=default_length_mm,
+			)
+		)
+		next_cell_idx += 1
+		extra_count += 1
+
+	preserved_count = len(calibrated_existing) - matched_count
+
+	if preserved_count > 0 or extra_count > 0:
+		logger.warning(
+			"scan_cell_match_mismatch shelf_idx=%d existing=%d detected=%d matched=%d preserved=%d extra=%d",
+			shelf_idx,
+			len(existing_cells),
+			len(detected_cells),
+			matched_count,
+			preserved_count,
+			extra_count,
+		)
+
+	output_cells.sort(key=lambda cell: int(cell.cell_idx))
+	return output_cells
+
+
 def build_shelves_from_scan(
 	*,
 	side: StorageModuleSide,
@@ -540,9 +764,11 @@ def build_shelves_from_scan(
 	default_length_mm: float = 400.0,
 ) -> list[Shelf]:
 	existing_lookup: dict[tuple[int, int], Cell] = {}
+	existing_by_shelf: dict[int, Shelf] = {}
 
 	if existing_shelves is not None:
 		for shelf in existing_shelves:
+			existing_by_shelf[shelf.shelf_idx] = shelf
 			for cell in shelf.cells:
 				existing_lookup[(shelf.shelf_idx, cell.cell_idx)] = cell
 
@@ -550,40 +776,27 @@ def build_shelves_from_scan(
 	side_number = 0 if side == StorageModuleSide.LEFT else 1
 
 	for detected_shelf in analysis.shelves:
-		cells: list[Cell] = []
+		existing_shelf = existing_by_shelf.get(detected_shelf.shelf_idx)
 
-		for detected_cell in detected_shelf.cells:
-			existing_cell = existing_lookup.get((detected_cell.shelf_idx, detected_cell.cell_idx))
-			status = CellStatus.AVAILABLE
-			item = None
-			z_offset = 0.0
-			dimensions = Dimensions(
-				width=detected_cell.width_mm,
-				height=detected_cell.height_mm,
-				length=default_length_mm,
+		if existing_shelf is not None and len(existing_shelf.cells) > 0:
+			cells = _match_detected_cells_to_existing(
+				detected_cells=detected_shelf.cells,
+				existing_cells=existing_shelf.cells,
+				side_number=side_number,
+				default_length_mm=default_length_mm,
+				shelf_idx=detected_shelf.shelf_idx,
 			)
-
-			if existing_cell is not None:
-				status = existing_cell.status
-				item = existing_cell.item
-				dimensions = existing_cell.dimensions
-				if existing_cell.calibration_point is not None:
-					z_offset = existing_cell.calibration_point.z_offset
-
-			cells.append(
-				Cell(
+		else:
+			cells = [
+				_build_scan_cell(
 					cell_idx=detected_cell.cell_idx,
-					status=status,
-					item=item,
-					calibration_point=CalibrationCoordinate(
-						x=detected_cell.tool_x_mm,
-						y=detected_cell.tool_y_mm,
-						z_offset=z_offset,
-						s=side_number,
-					),
-					dimensions=dimensions,
+					detected_cell=detected_cell,
+					existing_cell=existing_lookup.get((detected_cell.shelf_idx, detected_cell.cell_idx)),
+					side_number=side_number,
+					default_length_mm=default_length_mm,
 				)
-			)
+				for detected_cell in detected_shelf.cells
+			]
 
 		output_shelf_height = detected_shelf.shelf_height_mm
 		output_shelf_width = detected_shelf.shelf_width_mm
