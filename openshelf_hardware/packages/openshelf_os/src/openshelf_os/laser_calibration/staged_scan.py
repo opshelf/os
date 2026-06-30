@@ -564,7 +564,25 @@ def apply_xy_reference_offsets(
 	scan_config: Any,
 	side: StorageModuleSide,
 ) -> None:
-	xy_reference = get_scan_xy_reference(scan_config=scan_config, side=side)
+	xy_reference = get_scan_xy_reference_optional(scan_config=scan_config, side=side)
+
+	if xy_reference is None:
+		xy_offset = get_scan_xy_offset(scan_config=scan_config, side=side)
+
+		if xy_offset is None:
+			require_scan_xy_correction(scan_config=scan_config, side=side)
+			return
+
+		print_status(
+			f"xy_offset_inference=fixed_offset offset_x_mm={xy_offset[0]:.3f} "
+			f"offset_y_mm={xy_offset[1]:.3f}"
+		)
+		apply_xy_reference_delta(
+			scanned_shelves=scanned_shelves,
+			delta_x_mm=xy_offset[0],
+			delta_y_mm=xy_offset[1],
+		)
+		return
 
 	anchor_cell = get_scanned_anchor_cell(
 		scanned_shelves=scanned_shelves,

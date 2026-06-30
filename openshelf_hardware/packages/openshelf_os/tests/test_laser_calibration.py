@@ -766,12 +766,64 @@ def test_apply_xy_reference_offsets_accepts_cells_without_shelf_idx() -> None:
 
 
 def test_apply_xy_reference_offsets_requires_reference() -> None:
-	with pytest.raises(ValueError, match='robot.grid.scan.left_xy_reference must be configured'):
+	with pytest.raises(ValueError, match='left_xy_reference or robot.grid.scan.left_xy_offset must be configured'):
 		apply_xy_reference_offsets(
 			scanned_shelves=[],
-			scan_config=SimpleNamespace(left_reference=None),
+			scan_config=SimpleNamespace(left_reference=None, left_xy_offset=None),
 			side=StorageModuleSide.LEFT,
 		)
+
+
+def test_apply_xy_reference_offsets_uses_fixed_offset_when_reference_absent() -> None:
+	scanned_shelves = [
+		SimpleNamespace(
+			shelf_idx=0,
+			cells=[
+				SimpleNamespace(cell_idx=0, calibration_point=SimpleNamespace(x=100.0, y=200.0)),
+				SimpleNamespace(cell_idx=1, calibration_point=SimpleNamespace(x=200.0, y=200.0)),
+			],
+		)
+	]
+	scan_config = SimpleNamespace(
+		left_xy_reference=None,
+		left_reference=None,
+		left_xy_offset=SimpleNamespace(x_mm=-3.0, y_mm=2.5),
+	)
+
+	apply_xy_reference_offsets(
+		scanned_shelves=scanned_shelves,
+		scan_config=scan_config,
+		side=StorageModuleSide.LEFT,
+	)
+
+	assert scanned_shelves[0].cells[0].calibration_point.x == pytest.approx(97.0)
+	assert scanned_shelves[0].cells[0].calibration_point.y == pytest.approx(202.5)
+	assert scanned_shelves[0].cells[1].calibration_point.x == pytest.approx(197.0)
+	assert scanned_shelves[0].cells[1].calibration_point.y == pytest.approx(202.5)
+
+
+def test_apply_xy_reference_offsets_prefers_reference_over_fixed_offset() -> None:
+	scanned_shelves = [
+		SimpleNamespace(
+			shelf_idx=0,
+			cells=[
+				SimpleNamespace(cell_idx=0, calibration_point=SimpleNamespace(x=100.0, y=200.0)),
+			],
+		)
+	]
+	scan_config = SimpleNamespace(
+		left_xy_reference=SimpleNamespace(shelf_idx=0, cell_idx=0, anchor='bottom_left', x_mm=294.0, y_mm=42.0),
+		left_xy_offset=SimpleNamespace(x_mm=-3.0, y_mm=2.5),
+	)
+
+	apply_xy_reference_offsets(
+		scanned_shelves=scanned_shelves,
+		scan_config=scan_config,
+		side=StorageModuleSide.LEFT,
+	)
+
+	assert scanned_shelves[0].cells[0].calibration_point.x == pytest.approx(294.0)
+	assert scanned_shelves[0].cells[0].calibration_point.y == pytest.approx(42.0)
 
 
 def test_build_single_cell_rescan_candidate_requires_z_reference() -> None:

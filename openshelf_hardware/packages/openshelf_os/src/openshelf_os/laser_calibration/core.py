@@ -345,6 +345,68 @@ def get_scan_xy_reference(
 
 
 
+def has_scan_xy_reference(
+	*,
+	scan_config: Any,
+	side: StorageModuleSide,
+) -> bool:
+	prefix = "left" if side == StorageModuleSide.LEFT else "right"
+
+	if getattr(scan_config, f"{prefix}_xy_reference", None) is not None:
+		return True
+
+	if getattr(scan_config, f"{prefix}_reference", None) is not None:
+		return True
+
+	return False
+
+
+def get_scan_xy_reference_optional(
+	*,
+	scan_config: Any,
+	side: StorageModuleSide,
+) -> Any | None:
+	if has_scan_xy_reference(scan_config=scan_config, side=side) is False:
+		return None
+
+	return get_scan_xy_reference(scan_config=scan_config, side=side)
+
+
+def get_scan_xy_offset(
+	*,
+	scan_config: Any,
+	side: StorageModuleSide,
+) -> tuple[float, float] | None:
+	prefix = "left" if side == StorageModuleSide.LEFT else "right"
+	configured_offset = getattr(scan_config, f"{prefix}_xy_offset", None)
+
+	if configured_offset is None:
+		return None
+
+	offset_x_mm = validate_finite_value(configured_offset.x_mm, f"robot.grid.scan.{prefix}_xy_offset.x_mm")
+	offset_y_mm = validate_finite_value(configured_offset.y_mm, f"robot.grid.scan.{prefix}_xy_offset.y_mm")
+
+	return offset_x_mm, offset_y_mm
+
+
+def require_scan_xy_correction(
+	*,
+	scan_config: Any,
+	side: StorageModuleSide,
+) -> None:
+	if has_scan_xy_reference(scan_config=scan_config, side=side) is True:
+		return
+
+	if get_scan_xy_offset(scan_config=scan_config, side=side) is not None:
+		return
+
+	prefix = "left" if side == StorageModuleSide.LEFT else "right"
+	raise ValueError(
+		f"robot.grid.scan.{prefix}_xy_reference or robot.grid.scan.{prefix}_xy_offset "
+		"must be configured for laser calibration"
+	)
+
+
 def validate_laser_structure_parameters(
 	*,
 	scan_config: Any,
@@ -354,10 +416,14 @@ def validate_laser_structure_parameters(
 ) -> None:
 	laser_offset_x_mm, laser_offset_y_mm = require_laser_offsets(scan_config)
 	z_reference = get_scan_z_reference(scan_config=scan_config, side=side)
-	xy_reference = get_scan_xy_reference(scan_config=scan_config, side=side)
+	require_scan_xy_correction(scan_config=scan_config, side=side)
+	xy_reference = get_scan_xy_reference_optional(scan_config=scan_config, side=side)
 
 	if abs(float(z_reference[2])) > MAX_LASER_OFFSET_ABS_MM:
 		raise ValueError("laser z_reference z_offset_mm is outside the plausible +/-1000 mm range")
+
+	if xy_reference is None:
+		return
 
 	if bounds is None or should_validate_reference_bounds is False:
 		return

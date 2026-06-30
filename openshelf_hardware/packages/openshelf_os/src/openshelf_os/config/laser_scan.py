@@ -13,6 +13,11 @@ class LaserScanXYReferenceConfig(BaseModel):
     y_mm: float
 
 
+class LaserScanXYOffsetConfig(BaseModel):
+    x_mm: float
+    y_mm: float
+
+
 class LaserScanZReferenceConfig(BaseModel):
     shelf_idx: int = Field(ge=0)
     cell_idx: int = Field(ge=0)
@@ -51,6 +56,8 @@ class LaserScanConfig(BaseModel):
 
     left_xy_reference: Optional[LaserScanXYReferenceConfig] = None
     right_xy_reference: Optional[LaserScanXYReferenceConfig] = None
+    left_xy_offset: Optional[LaserScanXYOffsetConfig] = None
+    right_xy_offset: Optional[LaserScanXYOffsetConfig] = None
     left_z_reference: Optional[LaserScanZReferenceConfig] = None
     right_z_reference: Optional[LaserScanZReferenceConfig] = None
     left_reference: Optional[LaserScanReferenceConfig] = None
