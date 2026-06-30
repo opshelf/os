@@ -1037,9 +1037,19 @@ def apply_single_cell_rescan(
 		calibration_x += delta_x_mm
 		calibration_y += delta_y_mm
 	else:
-		print_status("xy_offset_inference=skipped reason=single_cell_preserves_existing_frame")
-		calibration_x = float(calibration_point.x)
-		calibration_y = float(calibration_point.y)
+		xy_offset = get_scan_xy_offset(scan_config=scan_config, side=side)
+
+		if xy_offset is not None:
+			print_status(
+				f"xy_offset_inference=fixed_offset offset_x_mm={xy_offset[0]:.3f} "
+				f"offset_y_mm={xy_offset[1]:.3f}"
+			)
+			calibration_x = float(detected_cell.tool_x_mm) + xy_offset[0]
+			calibration_y = float(detected_cell.tool_y_mm) + xy_offset[1]
+		else:
+			print_status("xy_offset_inference=skipped reason=single_cell_preserves_existing_frame")
+			calibration_x = float(calibration_point.x)
+			calibration_y = float(calibration_point.y)
 
 
 	calibration_point.x = calibration_x
@@ -1118,15 +1128,28 @@ def apply_single_shelf_analysis(
 			delta_y_mm=delta_y_mm,
 		)
 	else:
-		delta_x_mm, delta_y_mm = get_existing_shelf_xy_delta(
-			scanned_shelf=scanned_shelf,
-			target_shelf=target_shelf,
-		)
-		apply_xy_reference_delta(
-			scanned_shelves=[scanned_shelf],
-			delta_x_mm=delta_x_mm,
-			delta_y_mm=delta_y_mm,
-		)
+		xy_offset = get_scan_xy_offset(scan_config=scan_config, side=side)
+
+		if xy_offset is not None:
+			print_status(
+				f"xy_offset_inference=fixed_offset offset_x_mm={xy_offset[0]:.3f} "
+				f"offset_y_mm={xy_offset[1]:.3f}"
+			)
+			apply_xy_reference_delta(
+				scanned_shelves=[scanned_shelf],
+				delta_x_mm=xy_offset[0],
+				delta_y_mm=xy_offset[1],
+			)
+		else:
+			delta_x_mm, delta_y_mm = get_existing_shelf_xy_delta(
+				scanned_shelf=scanned_shelf,
+				target_shelf=target_shelf,
+			)
+			apply_xy_reference_delta(
+				scanned_shelves=[scanned_shelf],
+				delta_x_mm=delta_x_mm,
+				delta_y_mm=delta_y_mm,
+			)
 	if z_reference_wall_depth_mm is not None:
 		apply_wall_depth_z_offsets(
 			analysis=analysis,

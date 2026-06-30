@@ -1291,6 +1291,48 @@ def test_apply_single_cell_rescan_preserves_xy_without_reference_rescan() -> Non
 	grid.save.assert_called_once_with()
 
 
+def test_apply_single_cell_rescan_uses_fixed_offset_without_reference_rescan() -> None:
+	calibration_point = SimpleNamespace(x=1.0, y=2.0, z_offset=3.0)
+	target_cell = SimpleNamespace(cell_idx=1, calibration_point=calibration_point)
+	target_shelf = SimpleNamespace(
+		shelf_idx=0,
+		cells=[target_cell],
+		get_cell=lambda cell_idx: target_cell,
+	)
+	grid = SimpleNamespace(
+		get_shelf=lambda side, shelf_idx: target_shelf,
+		save=Mock(),
+	)
+	scan_config = SimpleNamespace(
+		laser_offset_x_mm=10.0,
+		laser_offset_y_mm=-5.0,
+		left_xy_reference=None,
+		left_reference=None,
+		left_xy_offset=SimpleNamespace(x_mm=-3.0, y_mm=2.5),
+		left_z_reference=SimpleNamespace(
+			shelf_idx=12,
+			cell_idx=0,
+			z_offset_mm=15.0,
+			stage_extension_mm=43.0,
+		),
+	)
+	detected_cell = SimpleNamespace(tool_x_mm=123.0, tool_y_mm=456.0)
+
+	apply_single_cell_rescan(
+		grid=grid,
+		target=SingleCellRescanTarget(shelf_idx=0, cell_idx=1),
+		side=StorageModuleSide.LEFT,
+		detected_cell=detected_cell,
+		wall_depth_mm=8.0,
+		scan_config=scan_config,
+		z_reference_wall_depth_mm=11.0,
+	)
+
+	assert calibration_point.x == pytest.approx(120.0)
+	assert calibration_point.y == pytest.approx(458.5)
+	grid.save.assert_called_once_with()
+
+
 def test_apply_single_cell_rescan_keeps_reference_values_fixed() -> None:
 	calibration_point = SimpleNamespace(x=1.0, y=2.0, z_offset=3.0)
 	target_cell = SimpleNamespace(cell_idx=0, calibration_point=calibration_point)
