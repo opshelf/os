@@ -1,27 +1,37 @@
 #!/usr/bin/env python3
 """One-shot Z/gripper wall-stall measurement for reference-less Z calibration.
 
-Positions the gripper at a single (x, y) facing one module's wall, reads the laser
-wall depth D, then GENTLY creeps the Z axis toward the wall until it stalls on contact
-(`probe_z_until_stall`) and reports the contact Z. `Z_contact - D` is the laser->gripper-tip
-offset along the insertion axis; comparing left vs right yields the per-side K difference.
+The Z/gripper axis is mounted on the stage and cannot reach a tray wall on its own: the
+stage first extends (~45-47mm on the left) to bring the gripper in, then Z extends a long
+way (up to its ~180mm range) until the tip bumps the wall. This positions at a single
+(x, y), rotates to the configured side angle, extends the stage to the grab extension,
+reads the laser wall depth D, then GENTLY creeps Z toward the wall until it stalls on
+contact (`probe_z_until_stall`) and reports the contact Z.
+
+Because the laser and the gripper both ride the stage, the stage extension cancels in
+`Z_contact - D`, which isolates the fixed laser->gripper-tip offset. Run it left and right;
+the per-side difference should match the ~0.9mm we measured in K.
 
 Run it supervised, one cell at a time, watching the machine.
 
 SAFETY
   * Run with the long-running `api` container STOPPED (it holds the serial ports).
-  * `--z-target-mm` is a HARD CAP. Set it just past where you expect contact and below
-    any crash point. If the probe never stalls, it stops at the cap and retracts.
+  * Rotation MUST be at the configured side angle (ROTATION_FRONT/BACK) before Z extends,
+    or the gripper drives into the wrong place. This script sets it; verify on the camera.
+  * The stage must be extended enough that Z can reach the wall within its range. The
+    default stage extension is the side's STAGE_EXTENSION_SHELF_* (the grab value).
+  * `--z-target-mm` is a HARD CAP. The wall is near full Z extension, so set this near the
+    Z motor limit but below it. If the probe never stalls, it stops at the cap and retracts.
   * The probe creeps slowly (small steps, low rpm) and stops + retracts the instant the
     motor alarms or stops making progress. By default there is no fast-approach: it creeps
-    the whole way from `--z-start-mm`. Use `--z-fast-approach-mm` only to skip the known-
-    clear portion before expected contact.
-  * Assumes increasing Z extends the gripper toward the wall (retract is the low end).
-    Confirm that on your machine before running.
+    the whole way from `--z-start-mm`. Use `--z-fast-approach-mm` to skip the known-clear
+    portion (e.g. up to ~150mm) and only creep the final approach.
+  * Increasing Z extends toward the wall (retract is the low end). Confirm before running.
 
 Example (on device, after stopping api and bind-mounting scripts/):
   uv run python /app/scripts/z_wall_probe.py --module left --x 278 --y 44 \
-    --z-start-mm 5 --z-target-mm 40 --config /app/openshelf_hardware/data/config.json
+    --z-start-mm 5 --z-fast-approach-mm 150 --z-target-mm 180 \
+    --config /app/openshelf_hardware/data/config.json
 """
 from __future__ import annotations
 
@@ -37,7 +47,6 @@ from openshelf_os.laser_calibration.angle.capture import (
 from openshelf_os.laser_calibration.angle.config import (
 	get_laser_sample_settle_ms,
 	get_laser_samples_per_point,
-	get_laser_scan_stage_extension_mm,
 )
 from openshelf_os.laser_calibration.angle.robot_ops import (
 	probe_z_until_stall,
@@ -78,9 +87,6 @@ async def run(args: argparse.Namespace) -> int:
 	samples_per_point = int(
 		args.samples_per_point if args.samples_per_point is not None else get_laser_samples_per_point(scan_config)
 	)
-	stage_extension_mm = float(
-		args.stage_extension_mm if args.stage_extension_mm is not None else get_laser_scan_stage_extension_mm(scan_config)
-	)
 
 	async def did_run(robot: object) -> int:
 		tool = robot._tool
@@ -115,6 +121,16 @@ async def run(args: argparse.Namespace) -> int:
 		if z_move_rpm is None or z_move_accel is None:
 			raise ValueError("Z_MOVE_RPM and Z_MOVE_ACCEL are required")
 
+		stage_param = "STAGE_EXTENSION_SHELF_FRONT" if side_name == "left" else "STAGE_EXTENSION_SHELF_BACK"
+		default_stage_extension = await tool.get_param(stage_param)
+
+		if args.stage_extension_mm is None and default_stage_extension is None:
+			raise ValueError(f"{stage_param} is required (or pass --stage-extension-mm)")
+
+		stage_extension_mm = float(
+			args.stage_extension_mm if args.stage_extension_mm is not None else default_stage_extension
+		)
+
 		default_probe_rpm = min(int(tool._mg._params.rpm), 20)
 		probe_rpm = int(args.z_probe_rpm if args.z_probe_rpm is not None else default_probe_rpm)
 		fast_approach_rpm = int(args.z_fast_approach_rpm if args.z_fast_approach_rpm is not None else probe_rpm)
@@ -122,6 +138,7 @@ async def run(args: argparse.Namespace) -> int:
 
 		print_status(
 			f"phase=z-wall-probe module={side_name} x={args.x:.2f} y={args.y:.2f} "
+			f"rotation_deg={rotation_center_deg:.3f} stage_extension_mm={stage_extension_mm:.2f} "
 			f"z_start={z_start_mm:.2f} z_target={z_target_mm:.2f} probe_rpm={probe_rpm} step={args.z_probe_step_mm}"
 		)
 
