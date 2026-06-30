@@ -1602,6 +1602,69 @@ def test_apply_single_shelf_analysis_aligns_to_existing_shelf_without_reference_
 	assert updated_point.y == pytest.approx(20.0)
 
 
+def test_apply_single_shelf_analysis_reference_less_uses_offset_and_analysis_wall_depth(tmp_path: Path) -> None:
+	target_shelf = Shelf(
+		shelf_idx=1,
+		shelf_height=100.0,
+		shelf_width=200.0,
+		divider_width=13.0,
+		cells=[
+			Cell(
+				cell_idx=0,
+				status=CellStatus.AVAILABLE,
+				item=None,
+				calibration_point=CalibrationCoordinate(x=10.0, y=20.0, z_offset=30.0, s=0),
+				dimensions=Dimensions(width=40.0, height=50.0, length=60.0),
+			)
+		],
+	)
+	grid_path = tmp_path / 'grid.json'
+	grid = StorageGrid(
+		left_module=[target_shelf],
+		right_module=[],
+		filename=str(grid_path),
+	)
+	grid.save()
+	scanned_shelf = target_shelf.model_copy(deep=True, update={'shelf_idx': 0})
+	scanned_shelf.cells[0].calibration_point.x = 100.0
+	scanned_shelf.cells[0].calibration_point.y = 200.0
+	analysis = SimpleNamespace(
+		shelves=[SimpleNamespace()],
+		metadata_path=str(tmp_path / 'metadata.json'),
+	)
+	scan_config = SimpleNamespace(
+		laser_offset_x_mm=0.0,
+		laser_offset_y_mm=0.0,
+		left_xy_reference=None,
+		left_reference=None,
+		left_xy_offset=SimpleNamespace(x_mm=1.0, y_mm=2.0),
+	)
+	wall_depth_z_offsets = Mock()
+
+	with patch('openshelf_os.laser_calibration.build_shelves_from_scan', return_value=[scanned_shelf]):
+		with patch(
+			'openshelf_os.laser_calibration.apply_wall_depth_z_offsets',
+			wall_depth_z_offsets,
+		):
+			apply_single_shelf_analysis(
+				analysis=analysis,
+				grid=grid,
+				grid_path=grid_path,
+				scan_config=scan_config,
+				side=StorageModuleSide.LEFT,
+				target_shelf_idx=1,
+				z_reference_wall_depth_mm=None,
+			)
+
+	wall_depth_z_offsets.assert_called_once()
+	assert wall_depth_z_offsets.call_args.kwargs['z_reference_wall_depth_mm'] is None
+	assert wall_depth_z_offsets.call_args.kwargs['should_use_analysis_wall_depth_fallback'] is True
+	updated_grid = StorageGrid.load_from_file(str(grid_path))
+	updated_point = updated_grid.left_module[0].cells[0].calibration_point
+	assert updated_point.x == pytest.approx(101.0)
+	assert updated_point.y == pytest.approx(202.0)
+
+
 @pytest.mark.asyncio
 async def test_run_with_temp_robot_config_skips_stop_when_cancelled(tmp_path: Path) -> None:
 	robot = SimpleNamespace(
