@@ -33,6 +33,7 @@ from openshelf_os_server.core.laser_auto_calibration.angle_runner import (
     _select_stage_stall_best_summary,
 )
 from openshelf_os_server.core.laser_auto_calibration.scope_runner import (
+    _build_reference_apply_metadata,
     _validate_laser_auto_calibration_config,
 )
 from openshelf_os_server.routers import robot as robot_router
@@ -1375,7 +1376,7 @@ async def test_run_single_cell_uses_seeded_cell_rescan_and_reference_offsets() -
                     'openshelf_os_server.core.laser_auto_calibration.scope_runner._persist_reference_apply_metadata'
                 ) as persist_reference_mock:
                     with patch(
-                        'openshelf_os_server.core.laser_auto_calibration.scope_runner._get_xy_reference_target',
+                        'openshelf_os_server.core.laser_auto_calibration.scope_runner._get_xy_reference_target_optional',
                         return_value=laser_module.SingleCellRescanTarget(shelf_idx=0, cell_idx=1),
                     ):
                         with patch(
@@ -1410,6 +1411,29 @@ async def test_run_single_cell_uses_seeded_cell_rescan_and_reference_offsets() -
     assert persist_reference_mock.call_args.args[1]['xy_reference_detected_cell']['tool_x_mm'] == 11.0
     assert persist_reference_mock.call_args.args[1]['xy_reference_target'] == {'shelf_idx': 0, 'cell_idx': 1}
     assert persist_reference_mock.call_args.args[1]['z_reference_target'] == {'shelf_idx': 0, 'cell_idx': 1}
+
+def test_build_reference_apply_metadata_omits_xy_when_reference_absent() -> None:
+    z_reference_target = laser_module.SingleCellRescanTarget(shelf_idx=0, cell_idx=1)
+
+    reference_apply = _build_reference_apply_metadata(
+        None,
+        8.0,
+        None,
+        z_reference_target,
+    )
+
+    assert reference_apply['z_reference_wall_depth_mm'] == 8.0
+    assert reference_apply['z_reference_target'] == {'shelf_idx': 0, 'cell_idx': 1}
+    assert 'xy_reference_detected_cell' not in reference_apply
+    assert 'xy_reference_target' not in reference_apply
+
+
+def test_build_reference_apply_metadata_requires_z_reference() -> None:
+    z_reference_target = laser_module.SingleCellRescanTarget(shelf_idx=0, cell_idx=1)
+
+    with pytest.raises(ValueError, match='Z reference wall depth'):
+        _build_reference_apply_metadata(None, None, None, z_reference_target)
+
 
 @pytest.mark.asyncio
 async def test_run_io_box_calibration_passes_configured_laser_offset_and_persists_axis_values() -> None:

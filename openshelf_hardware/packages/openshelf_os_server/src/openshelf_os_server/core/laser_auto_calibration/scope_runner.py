@@ -19,6 +19,16 @@ def _get_xy_reference_target(scan_config: Any, side: StorageModuleSide) -> laser
     )
 
 
+def _get_xy_reference_target_optional(
+    scan_config: Any,
+    side: StorageModuleSide,
+) -> laser_module.SingleCellRescanTarget | None:
+    if laser_module.has_scan_xy_reference(scan_config=scan_config, side=side) is False:
+        return None
+
+    return _get_xy_reference_target(scan_config, side)
+
+
 def _get_z_reference_target(scan_config: Any, side: StorageModuleSide) -> laser_module.SingleCellRescanTarget:
     z_reference = laser_module.get_scan_z_reference(scan_config=scan_config, side=side)
     return laser_module.SingleCellRescanTarget(
@@ -54,27 +64,28 @@ def _resolve_reference_wall_depth_mm(
 def _build_reference_apply_metadata(
     xy_reference_detected_cell: Any | None,
     z_reference_wall_depth_mm: float | None,
-    xy_reference_target: laser_module.SingleCellRescanTarget,
+    xy_reference_target: laser_module.SingleCellRescanTarget | None,
     z_reference_target: laser_module.SingleCellRescanTarget,
 ) -> dict[str, Any]:
-    if xy_reference_detected_cell is None:
-        raise ValueError("Reference cell scans did not resolve an XY reference cell")
-
     if z_reference_wall_depth_mm is None:
         raise ValueError("Reference cell scans did not resolve a Z reference wall depth")
 
-    return {
-        "xy_reference_detected_cell": xy_reference_detected_cell.model_dump(),
+    reference_apply: dict[str, Any] = {
         "z_reference_wall_depth_mm": float(z_reference_wall_depth_mm),
-        "xy_reference_target": {
-            "shelf_idx": int(xy_reference_target.shelf_idx),
-            "cell_idx": int(xy_reference_target.cell_idx),
-        },
         "z_reference_target": {
             "shelf_idx": int(z_reference_target.shelf_idx),
             "cell_idx": int(z_reference_target.cell_idx),
         },
     }
+
+    if xy_reference_detected_cell is not None and xy_reference_target is not None:
+        reference_apply["xy_reference_detected_cell"] = xy_reference_detected_cell.model_dump()
+        reference_apply["xy_reference_target"] = {
+            "shelf_idx": int(xy_reference_target.shelf_idx),
+            "cell_idx": int(xy_reference_target.cell_idx),
+        }
+
+    return reference_apply
 
 
 def _persist_reference_apply_metadata(analysis: Any, reference_apply: dict[str, Any]) -> None:
@@ -486,7 +497,7 @@ class ScopeRunnerMixin:
         reuse_detected_cell: Any | None = None,
     ) -> tuple[Any | None, float | None]:
         scan_config = get_root_config().robot.grid.scan
-        xy_reference_target = _get_xy_reference_target(scan_config, side)
+        xy_reference_target = _get_xy_reference_target_optional(scan_config, side)
         z_reference_target = _get_z_reference_target(scan_config, side)
         xy_reference_detected_cell: Any | None = None
         z_reference_wall_depth_mm: float | None = None
@@ -504,7 +515,12 @@ class ScopeRunnerMixin:
                 reuse_detected_cell,
             )
 
-        for reference_target in (xy_reference_target, z_reference_target):
+        reference_targets = [z_reference_target]
+
+        if xy_reference_target is not None:
+            reference_targets.insert(0, xy_reference_target)
+
+        for reference_target in reference_targets:
             reference_key = _rescan_target_key(reference_target)
 
             if reference_key not in reference_results:
@@ -516,7 +532,7 @@ class ScopeRunnerMixin:
 
             reference_analysis, reference_candidate, reference_detected_cell = reference_results[reference_key]
 
-            if _rescan_targets_match(reference_target, xy_reference_target) is True:
+            if xy_reference_target is not None and _rescan_targets_match(reference_target, xy_reference_target) is True:
                 xy_reference_detected_cell = reference_detected_cell
 
             if _rescan_targets_match(reference_target, z_reference_target) is True:
@@ -577,7 +593,7 @@ class ScopeRunnerMixin:
         reference_apply = _build_reference_apply_metadata(
             xy_reference_detected_cell,
             z_reference_wall_depth_mm,
-            _get_xy_reference_target(scan_config, side),
+            _get_xy_reference_target_optional(scan_config, side),
             _get_z_reference_target(scan_config, side),
         )
         analysis = await self._run_scan_analysis(
@@ -626,7 +642,7 @@ class ScopeRunnerMixin:
         reference_apply = _build_reference_apply_metadata(
             xy_reference_detected_cell,
             z_reference_wall_depth_mm,
-            _get_xy_reference_target(scan_config, side),
+            _get_xy_reference_target_optional(scan_config, side),
             _get_z_reference_target(scan_config, side),
         )
         _persist_reference_apply_metadata(analysis, reference_apply)
