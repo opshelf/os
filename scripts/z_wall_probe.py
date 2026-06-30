@@ -12,6 +12,14 @@ Because the laser and the gripper both ride the stage, the stage extension cance
 `Z_contact - D`, which isolates the fixed laser->gripper-tip offset. Run it left and right;
 the per-side difference should match the ~0.9mm we measured in K.
 
+Picking (x, y): the easiest guaranteed-safe target is any calibrated cell from
+storage.json with X shifted ~20mm so the gripper lands on the divider next to the hole
+(the divider is the wall we want both the laser and the tip to hit). Pass `--cell SHELF:CELL`
+to do this automatically, or `--x/--y` to target a point directly.
+
+Z range: the gripper tip stays behind the stage edge up to ~130mm, so the meaningful probe
+range is ~130-180mm. Fast-approach to the stage edge (~130) and creep the exposed range.
+
 Run it supervised, one cell at a time, watching the machine.
 
 SAFETY
@@ -22,21 +30,21 @@ SAFETY
     default stage extension is the side's STAGE_EXTENSION_SHELF_* (the grab value).
   * `--z-target-mm` is a HARD CAP. The wall is near full Z extension, so set this near the
     Z motor limit but below it. If the probe never stalls, it stops at the cap and retracts.
-  * The probe creeps slowly (small steps, low rpm) and stops + retracts the instant the
-    motor alarms or stops making progress. By default there is no fast-approach: it creeps
-    the whole way from `--z-start-mm`. Use `--z-fast-approach-mm` to skip the known-clear
-    portion (e.g. up to ~150mm) and only creep the final approach.
+  * Keep `--z-fast-approach-mm` at/below ~130 (behind the stage edge); the probe only
+    creeps slowly above it, stopping + retracting the instant the motor alarms / stops
+    progressing.
   * Increasing Z extends toward the wall (retract is the low end). Confirm before running.
 
 Example (on device, after stopping api and bind-mounting scripts/):
-  uv run python /app/scripts/z_wall_probe.py --module left --x 278 --y 44 \
-    --z-start-mm 5 --z-fast-approach-mm 150 --z-target-mm 180 \
+  uv run python /app/scripts/z_wall_probe.py --module left --cell 2:1 \
+    --z-start-mm 5 --z-fast-approach-mm 130 --z-target-mm 180 \
     --config /app/openshelf_hardware/data/config.json
 """
 from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 from pathlib import Path
 
 from openshelf_os.common import load_config_file
@@ -56,13 +64,44 @@ from openshelf_os.laser_calibration.angle.robot_ops import (
 from openshelf_os.laser_calibration.angle.status import print_status
 
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "openshelf_hardware" / "data" / "config.json"
+STORAGE_PATH = Path(__file__).resolve().parent.parent / "openshelf_hardware" / "data" / "storage.json"
+
+
+def resolve_probe_xy(args: argparse.Namespace) -> tuple[float, float]:
+	if args.x is not None and args.y is not None:
+		return float(args.x), float(args.y)
+
+	if args.cell is None:
+		raise SystemExit("provide either --x and --y, or --cell SHELF:CELL")
+
+	try:
+		shelf_idx, cell_idx = (int(part) for part in str(args.cell).split(":"))
+	except ValueError:
+		raise SystemExit(f"--cell must be SHELF:CELL (got {args.cell!r})")
+
+	module_key = "left_module" if args.module == "left" else "right_module"
+	storage = json.loads(Path(args.storage).read_text())
+
+	for shelf in storage.get(module_key, []):
+		if int(shelf.get("shelf_idx")) != shelf_idx:
+			continue
+		for cell in shelf.get("cells", []):
+			if int(cell.get("cell_idx")) != cell_idx:
+				continue
+			point = cell.get("calibration_point") or {}
+			return float(point["x"]) + float(args.x_shift_mm), float(point["y"])
+
+	raise SystemExit(f"cell {shelf_idx}:{cell_idx} not found in {module_key} of {args.storage}")
 
 
 def build_parser() -> argparse.ArgumentParser:
 	parser = argparse.ArgumentParser(description="Single-cell Z/gripper wall-stall measurement.")
 	parser.add_argument("--module", choices=["left", "right"], required=True)
-	parser.add_argument("--x", type=float, required=True, help="probe X (mm)")
-	parser.add_argument("--y", type=float, required=True, help="probe Y (mm)")
+	parser.add_argument("--cell", type=str, default=None, help="SHELF:CELL from storage.json; X is shifted onto the divider")
+	parser.add_argument("--x-shift-mm", type=float, default=20.0, help="X shift applied to --cell to land on the divider wall")
+	parser.add_argument("--storage", default=str(STORAGE_PATH))
+	parser.add_argument("--x", type=float, default=None, help="probe X (mm); overrides --cell")
+	parser.add_argument("--y", type=float, default=None, help="probe Y (mm); overrides --cell")
 	parser.add_argument("--z-start-mm", type=float, required=True, help="retracted Z to start from / return to")
 	parser.add_argument("--z-target-mm", type=float, required=True, help="HARD CAP: max Z; stop here if no stall")
 	parser.add_argument("--z-fast-approach-mm", type=float, default=None, help="creep from here; default = z-start (no fast approach)")
@@ -81,6 +120,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 async def run(args: argparse.Namespace) -> int:
+	probe_x_mm, probe_y_mm = resolve_probe_xy(args)
 	config = load_config_file(args.config)
 	scan_config = config.robot.grid.scan
 	settle_ms = int(args.settle_ms if args.settle_ms is not None else get_laser_sample_settle_ms(scan_config))
@@ -137,7 +177,7 @@ async def run(args: argparse.Namespace) -> int:
 		fast_approach_mm = float(args.z_fast_approach_mm if args.z_fast_approach_mm is not None else z_start_mm)
 
 		print_status(
-			f"phase=z-wall-probe module={side_name} x={args.x:.2f} y={args.y:.2f} "
+			f"phase=z-wall-probe module={side_name} x={probe_x_mm:.2f} y={probe_y_mm:.2f} "
 			f"rotation_deg={rotation_center_deg:.3f} stage_extension_mm={stage_extension_mm:.2f} "
 			f"z_start={z_start_mm:.2f} z_target={z_target_mm:.2f} probe_rpm={probe_rpm} step={args.z_probe_step_mm}"
 		)
@@ -146,8 +186,8 @@ async def run(args: argparse.Namespace) -> int:
 			tool,
 			side_name=side_name,
 			side_number=side_number,
-			x_mm=float(args.x),
-			y_mm=float(args.y),
+			x_mm=probe_x_mm,
+			y_mm=probe_y_mm,
 			absolute_rotation_deg=rotation_center_deg,
 			stage_extension_mm=stage_extension_mm,
 			z_mm=z_start_mm,
