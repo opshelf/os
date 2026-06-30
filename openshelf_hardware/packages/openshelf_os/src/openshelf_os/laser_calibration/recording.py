@@ -40,7 +40,8 @@ def build_run_parameters(
 		),
 	)
 	z_reference = get_scan_z_reference(scan_config=scan_config, side=side)
-	xy_reference = get_scan_xy_reference(scan_config=scan_config, side=side)
+	xy_reference = get_scan_xy_reference_optional(scan_config=scan_config, side=side)
+	xy_offset = get_scan_xy_offset(scan_config=scan_config, side=side)
 	hole_probe_y_offsets_mm = get_shelf_hole_probe_y_offsets_mm(scan_config)
 	laser_scan_stage_extension_mm = get_laser_scan_stage_extension_mm(scan_config)
 	laser_scan_z_offset_from_place_mm = get_laser_scan_z_offset_from_place_mm(scan_config)
@@ -101,11 +102,23 @@ def build_run_parameters(
 				"z_offset_mm": z_reference[2],
 				"stage_extension_mm": z_reference[3],
 			},
-			"xy_reference": {
-				"anchor": str(xy_reference.anchor),
-				"x_mm": float(xy_reference.x_mm),
-				"y_mm": float(xy_reference.y_mm),
-			},
+			"xy_reference": (
+				{
+					"anchor": str(xy_reference.anchor),
+					"x_mm": float(xy_reference.x_mm),
+					"y_mm": float(xy_reference.y_mm),
+				}
+				if xy_reference is not None
+				else None
+			),
+			"xy_offset": (
+				{
+					"x_mm": float(xy_offset[0]),
+					"y_mm": float(xy_offset[1]),
+				}
+				if xy_offset is not None
+				else None
+			),
 			"laser_scan_y_offset_mm": float(args.y_offset),
 			"shelf_edge_top_margin_mm": SHELF_EDGE_TOP_MARGIN_MM,
 		},
