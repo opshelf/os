@@ -1161,6 +1161,18 @@ def apply_single_shelf_analysis(
 			z_reference_wall_depth_mm=z_reference_wall_depth_mm,
 			should_use_analysis_wall_depth_fallback=False,
 		)
+	elif has_scan_xy_reference(scan_config=scan_config, side=side) is False:
+		print_status("z_offset_inference=analysis_wall_depth reason=reference_less")
+		apply_wall_depth_z_offsets(
+			analysis=analysis,
+			scanned_shelves=[scanned_shelf],
+			metadata_path=str(analysis.metadata_path),
+			scan_config=scan_config,
+			side=side,
+			current_stage_extension_mm=current_stage_extension_mm,
+			z_reference_wall_depth_mm=None,
+			should_use_analysis_wall_depth_fallback=True,
+		)
 	else:
 		print_status("z_offset_inference=skipped reason=partial_rescan_preserves_existing_z_offsets")
 	left_module = list(grid.left_module)

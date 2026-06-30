@@ -1329,6 +1329,26 @@ async def test_run_single_shelf_uses_known_shelf_edge_with_neighbor_clipped_boun
 
 
 @pytest.mark.asyncio
+async def test_run_partial_reference_scans_skips_scans_when_reference_less() -> None:
+    manager = LaserAutoCalibrationManager()
+    worker = SimpleNamespace()
+
+    with patch(
+        'openshelf_os_server.core.laser_auto_calibration.scope_runner._get_xy_reference_target_optional',
+        return_value=None,
+    ):
+        with patch.object(
+            manager,
+            '_run_reference_cell_scan',
+            AsyncMock(),
+        ) as reference_cell_scan_mock:
+            result = await manager._run_partial_reference_scans(worker, StorageModuleSide.LEFT)
+
+    assert result == (None, None)
+    reference_cell_scan_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_run_single_cell_uses_seeded_cell_rescan_and_reference_offsets() -> None:
     manager = LaserAutoCalibrationManager()
     analysis = SimpleNamespace(
@@ -1428,11 +1448,12 @@ def test_build_reference_apply_metadata_omits_xy_when_reference_absent() -> None
     assert 'xy_reference_target' not in reference_apply
 
 
-def test_build_reference_apply_metadata_requires_z_reference() -> None:
+def test_build_reference_apply_metadata_empty_when_reference_less() -> None:
     z_reference_target = laser_module.SingleCellRescanTarget(shelf_idx=0, cell_idx=1)
 
-    with pytest.raises(ValueError, match='Z reference wall depth'):
-        _build_reference_apply_metadata(None, None, None, z_reference_target)
+    reference_apply = _build_reference_apply_metadata(None, None, None, z_reference_target)
+
+    assert reference_apply == {}
 
 
 @pytest.mark.asyncio
