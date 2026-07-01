@@ -789,6 +789,7 @@ def apply_wall_depth_z_offsets(
 	current_stage_extension_mm: float = 43.0,
 	z_reference_wall_depth_mm: float | None = None,
 	should_use_analysis_wall_depth_fallback: bool = True,
+	z_delta_override_mm: float | None = None,
 	) -> None:
 	metadata_file = Path(metadata_path)
 
@@ -807,35 +808,46 @@ def apply_wall_depth_z_offsets(
 		print_status("z_offset_inference=skipped reason=no_candidate_wall_depth")
 		return
 
-	reference_key = resolve_z_reference_cell(
-		scan_config=scan_config,
-		side=side,
-	)
-	reference_candidate = candidate_lookup.get((reference_key[0], reference_key[1]))
-	reference_wall_depth_mm: float | None = None
-
-	if z_reference_wall_depth_mm is not None:
-		reference_wall_depth_mm = float(z_reference_wall_depth_mm)
-	elif reference_candidate is not None and reference_candidate.wall_depth_mm is not None:
-		reference_wall_depth_mm = float(reference_candidate.wall_depth_mm)
-	elif should_use_analysis_wall_depth_fallback is False and reference_candidate is None:
-		raise ValueError(
-			"Detected cells do not include configured z reference target "
-			f"{reference_key[0]}:{reference_key[1]}"
+	if z_delta_override_mm is not None:
+		z_delta_mm = float(z_delta_override_mm)
+		reference_summary = f"source=stall_anchor delta_mm={z_delta_mm:.3f}"
+	else:
+		reference_key = resolve_z_reference_cell(
+			scan_config=scan_config,
+			side=side,
 		)
-	elif should_use_analysis_wall_depth_fallback is True and getattr(analysis, "wall_depth_mm", 0.0) is not None and float(analysis.wall_depth_mm) > 0.0:
-		reference_wall_depth_mm = float(analysis.wall_depth_mm)
-	if reference_wall_depth_mm is None:
-		raise ValueError("Cannot resolve z reference wall depth from scan results")
+		reference_candidate = candidate_lookup.get((reference_key[0], reference_key[1]))
+		reference_wall_depth_mm: float | None = None
 
-	z_delta = get_scan_z_delta(
-		scan_config=scan_config,
-		side=side,
-		reference_wall_depth_mm=reference_wall_depth_mm,
-		current_stage_extension_mm=current_stage_extension_mm,
-	)
+		if z_reference_wall_depth_mm is not None:
+			reference_wall_depth_mm = float(z_reference_wall_depth_mm)
+		elif reference_candidate is not None and reference_candidate.wall_depth_mm is not None:
+			reference_wall_depth_mm = float(reference_candidate.wall_depth_mm)
+		elif should_use_analysis_wall_depth_fallback is False and reference_candidate is None:
+			raise ValueError(
+				"Detected cells do not include configured z reference target "
+				f"{reference_key[0]}:{reference_key[1]}"
+			)
+		elif should_use_analysis_wall_depth_fallback is True and getattr(analysis, "wall_depth_mm", 0.0) is not None and float(analysis.wall_depth_mm) > 0.0:
+			reference_wall_depth_mm = float(analysis.wall_depth_mm)
+		if reference_wall_depth_mm is None:
+			raise ValueError("Cannot resolve z reference wall depth from scan results")
 
-	z_delta_mm = float(z_delta["delta_mm"])
+		z_delta = get_scan_z_delta(
+			scan_config=scan_config,
+			side=side,
+			reference_wall_depth_mm=reference_wall_depth_mm,
+			current_stage_extension_mm=current_stage_extension_mm,
+		)
+		z_delta_mm = float(z_delta["delta_mm"])
+		reference_summary = (
+			f"reference={reference_key[0]}:{reference_key[1]} "
+			f"reference_z_offset_mm={reference_key[2]:.3f} "
+			f"reference_stage_extension_mm={reference_key[3]:.3f} "
+			f"current_stage_extension_mm={float(current_stage_extension_mm):.3f} "
+			f"reference_wall_depth_mm={reference_wall_depth_mm:.3f}"
+		)
+
 	updated_cell_count = 0
 
 	for shelf in scanned_shelves:
@@ -852,11 +864,7 @@ def apply_wall_depth_z_offsets(
 			updated_cell_count += 1
 
 	print_status(
-		f"z_offset_inference=applied reference={reference_key[0]}:{reference_key[1]} "
-		f"reference_z_offset_mm={reference_key[2]:.3f} "
-		f"reference_stage_extension_mm={reference_key[3]:.3f} "
-		f"current_stage_extension_mm={float(current_stage_extension_mm):.3f} "
-		f"reference_wall_depth_mm={reference_wall_depth_mm:.3f} "
+		f"z_offset_inference=applied {reference_summary} "
 		f"delta_mm={z_delta_mm:.3f} updated_cells={updated_cell_count}"
 	)
 
