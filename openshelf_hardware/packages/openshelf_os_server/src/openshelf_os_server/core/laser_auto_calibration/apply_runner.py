@@ -249,6 +249,9 @@ class ApplyRunnerMixin:
         scan_config = config.robot.grid.scan
         grid_path = Path(resolve_grid_path(config))
         grid = laser_module.load_grid(grid_path)
+        z_delta_override_mm: float | None = None
+        if getattr(scan_config, "z_stall_anchor_enabled", False) is True:
+            z_delta_override_mm = await self._run_z_stall_anchor(worker, side, analysis)
         laser_module.apply_single_shelf_analysis(
             analysis=analysis,
             grid=grid,
@@ -261,6 +264,7 @@ class ApplyRunnerMixin:
             ),
             xy_reference_detected_cell=xy_reference_detected_cell,
             z_reference_wall_depth_mm=z_reference_wall_depth_mm,
+            z_delta_override_mm=z_delta_override_mm,
         )
         worker._robot._grid = laser_module.load_grid(grid_path)
 
