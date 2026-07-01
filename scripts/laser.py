@@ -51,7 +51,6 @@ def build_parser() -> argparse.ArgumentParser:
 	parser.add_argument('--rescan-cell', type=str)
 	parser.add_argument('--validate-cell', type=str)
 	parser.add_argument('--validate-cycles', type=int, default=1)
-	parser.add_argument('--calibrate-angle', action='store_true', help=argparse.SUPPRESS)
 	parser.add_argument('--calibrate-io-box', action='store_true')
 	parser.add_argument('--io-box-interior-width-mm', type=float, default=laser_module.IO_BOX_INTERIOR_WIDTH_MM)
 	parser.add_argument('--io-box-x-mm', type=float, default=laser_module.IO_BOX_DEFAULT_START_X_MM)
@@ -61,23 +60,8 @@ def build_parser() -> argparse.ArgumentParser:
 	parser.add_argument('--io-box-coarse-step-mm', type=float, default=laser_module.IO_BOX_COARSE_STEP_MM)
 	parser.add_argument('--io-box-fine-step-mm', type=float, default=laser_module.IO_BOX_FINE_STEP_MM)
 	parser.add_argument('--io-box-fine-margin-mm', type=float, default=laser_module.IO_BOX_FINE_MARGIN_MM)
-	parser.add_argument('--x-range', nargs=3, metavar=('MIN', 'MAX', 'STEP'), type=float, help=argparse.SUPPRESS)
-	parser.add_argument('--y-mm', type=float, help=argparse.SUPPRESS)
-	parser.add_argument('--z-offset-range', nargs=3, metavar=('MIN', 'MAX', 'STEP'), type=float, help=argparse.SUPPRESS)
-	parser.add_argument('--rotation-range', nargs=3, metavar=('MIN', 'MAX', 'STEP'), type=float, help=argparse.SUPPRESS)
-	parser.add_argument('--rotation-center-deg', type=float, help=argparse.SUPPRESS)
-	parser.add_argument('--stage-extension-mm', type=float, help=argparse.SUPPRESS)
-	parser.add_argument('--base-z-mm', type=float, help=argparse.SUPPRESS)
 	parser.add_argument('--shutdown-action', choices=['stop', 'shutdown'], default='shutdown')
 	parser.add_argument('--laser-offset-x-mm', type=float)
-	parser.add_argument('--laser-offset-z-mm', type=float, help=argparse.SUPPRESS)
-	parser.add_argument('--beam-zero-deg', type=float, default=0.0, help=argparse.SUPPRESS)
-	parser.add_argument('--alpha-min-deg', type=float, default=-10.0, help=argparse.SUPPRESS)
-	parser.add_argument('--alpha-max-deg', type=float, default=10.0, help=argparse.SUPPRESS)
-	parser.add_argument('--coarse-step-deg', type=float, default=0.1, help=argparse.SUPPRESS)
-	parser.add_argument('--fine-window-deg', type=float, default=0.3, help=argparse.SUPPRESS)
-	parser.add_argument('--fine-step-deg', type=float, default=0.005, help=argparse.SUPPRESS)
-	parser.add_argument('--output', type=Path, help=argparse.SUPPRESS)
 	return parser
 
 
@@ -172,9 +156,6 @@ def derive_scans_dir(config_path: str) -> str:
 
 
 def validate_io_box_calibration_args(args: argparse.Namespace) -> None:
-	if args.calibrate_angle is True:
-		raise ValueError('--calibrate-angle cannot be used with --calibrate-io-box')
-
 	if args.module is not None and args.module != 'left':
 		raise ValueError('--calibrate-io-box only supports the left module side')
 
@@ -210,15 +191,6 @@ def validate_io_box_calibration_args(args: argparse.Namespace) -> None:
 
 	if args.y_offset != 0.0:
 		raise ValueError('--y-offset cannot be used with --calibrate-io-box')
-
-	if args.x_range is not None or args.y_mm is not None:
-		raise ValueError('--x-range/--y-mm cannot be used with --calibrate-io-box')
-
-	if args.z_offset_range is not None or args.rotation_range is not None:
-		raise ValueError('--z-offset-range/--rotation-range cannot be used with --calibrate-io-box')
-
-	if args.output is not None:
-		raise ValueError('--output cannot be used with --calibrate-io-box')
 
 	if args.io_box_coarse_step_mm <= 0.0:
 		raise ValueError('--io-box-coarse-step-mm must be positive')
@@ -427,9 +399,6 @@ def apply_loaded_run_analysis(
 
 
 async def run_scan(args: argparse.Namespace) -> int:
-	if args.calibrate_angle is True:
-		raise ValueError('--calibrate-angle laser-fit calibration was removed; use API auto calibration for stage-stall angle calibration')
-
 	laser_module.print_status('phase=config')
 	config = load_config_file(args.config)
 	scans_dir = derive_scans_dir(args.config)

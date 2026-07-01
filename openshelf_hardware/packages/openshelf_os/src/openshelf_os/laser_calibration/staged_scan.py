@@ -26,7 +26,6 @@ async def run_staged_scan(
 	seeded_candidates: Optional[list[GapCandidateRegion]] = None,
 	seeded_wall_depth_mm: float | None = None,
 	recorder: Optional[StagedScanRecorder] = None,
-	should_validate_reference_bounds: bool = True,
 	should_abort: Callable[[], bool] | None = None,
 ) -> ScanAnalysisResult:
 	tool = robot._tool
@@ -40,8 +39,6 @@ async def run_staged_scan(
 	validate_laser_structure_parameters(
 		scan_config=scan_config,
 		side=side,
-		bounds=bounds,
-		should_validate_reference_bounds=should_validate_reference_bounds and seeded_candidates is None,
 	)
 	if recorder is None:
 		recorder = create_staged_scan_recorder(

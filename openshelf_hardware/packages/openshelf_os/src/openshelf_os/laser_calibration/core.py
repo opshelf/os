@@ -270,8 +270,6 @@ def validate_laser_structure_parameters(
 	*,
 	scan_config: Any,
 	side: StorageModuleSide,
-	bounds: ScanBounds | None = None,
-	should_validate_reference_bounds: bool = True,
 ) -> None:
 	require_laser_offsets(scan_config)
 	require_scan_xy_correction(scan_config=scan_config, side=side)
