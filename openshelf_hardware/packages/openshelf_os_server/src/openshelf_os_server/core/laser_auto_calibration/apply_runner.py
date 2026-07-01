@@ -4,10 +4,114 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from openshelf_os.laser_calibration.angle.capture import enter_capture_mode, resolve_rotation_center_deg
+from openshelf_os.laser_calibration.angle.robot_ops import probe_z_until_stall
+
 from .models import *
 
 
+def _select_z_stall_probe(analysis: Any, candidate_lookup: dict[tuple[int, int], Any]) -> tuple[Any, float] | None:
+    shelves = [shelf for shelf in analysis.shelves if len(shelf.cells) > 0]
+
+    if len(shelves) == 0:
+        return None
+
+    ordered_shelves = sorted(shelves, key=lambda shelf: float(shelf.center_y_mm))
+    middle_shelf = ordered_shelves[len(ordered_shelves) // 2]
+    ordered_cells = sorted(middle_shelf.cells, key=lambda cell: float(cell.center_x_mm))
+    middle = len(ordered_cells) // 2
+    search_order = ordered_cells[middle:] + ordered_cells[:middle]
+
+    for cell in search_order:
+        candidate = candidate_lookup.get((cell.shelf_idx, cell.cell_idx))
+        if candidate is not None and candidate.wall_depth_mm is not None and float(candidate.wall_depth_mm) > 0.0:
+            return cell, float(candidate.wall_depth_mm)
+
+    return None
+
+
 class ApplyRunnerMixin:
+    async def _run_z_stall_anchor(
+        self,
+        worker: RobotWorker,
+        side: StorageModuleSide,
+        analysis: Any,
+    ) -> float:
+        config = get_root_config()
+        scan_config = config.robot.grid.scan
+        tool = worker._robot._tool
+
+        metadata = laser_module.load_json_file(Path(str(analysis.metadata_path)))
+        candidates = laser_module.load_candidates_from_metadata(metadata)
+        candidate_lookup = laser_module.build_candidate_lookup_by_cell(analysis=analysis, candidates=candidates)
+
+        probe = _select_z_stall_probe(analysis, candidate_lookup)
+        if probe is None:
+            raise ValueError("z stall anchor: no detected cell with a wall depth to probe")
+
+        detected_cell, probe_wall_depth_mm = probe
+        side_name = "left" if side == StorageModuleSide.LEFT else "right"
+        side_number = 0 if side == StorageModuleSide.LEFT else 1
+        rotation_center_deg = resolve_rotation_center_deg(side_name, config.robot.tool.parameters)
+        stage_param = "STAGE_EXTENSION_SHELF_FRONT" if side_name == "left" else "STAGE_EXTENSION_SHELF_BACK"
+        stage_extension_mm = float(getattr(config.robot.tool.parameters, stage_param))
+
+        z_place = await tool.get_param("Z_EXTENSION_PLACE")
+        z_move_rpm = await tool.get_param("Z_MOVE_RPM")
+        z_move_accel = await tool.get_param("Z_MOVE_ACCEL")
+
+        if z_place is None or z_move_rpm is None or z_move_accel is None:
+            raise ValueError("Z_EXTENSION_PLACE, Z_MOVE_RPM, and Z_MOVE_ACCEL are required for z stall anchor")
+
+        probe_x_mm = float(detected_cell.tool_x_mm) + float(scan_config.z_stall_probe_x_shift_mm)
+        probe_y_mm = float(detected_cell.tool_y_mm)
+
+        await enter_capture_mode(
+            tool,
+            side_name=side_name,
+            side_number=side_number,
+            x_mm=probe_x_mm,
+            y_mm=probe_y_mm,
+            absolute_rotation_deg=rotation_center_deg,
+            stage_extension_mm=stage_extension_mm,
+            z_mm=float(scan_config.z_stall_probe_start_mm),
+            z_move_rpm=float(z_move_rpm),
+            z_move_accel=float(z_move_accel),
+            should_abort=self._should_abort_work,
+        )
+
+        probe_rpm = scan_config.z_stall_probe_rpm
+        did_stall, z_contact_mm, reason, alarm_code = await probe_z_until_stall(
+            tool,
+            target_z_mm=float(scan_config.z_stall_probe_target_mm),
+            retract_z_mm=float(scan_config.z_stall_probe_start_mm),
+            settle_ms=laser_module.get_laser_sample_settle_ms(scan_config),
+            timeout_s=float(scan_config.z_stall_probe_timeout_s),
+            probe_rpm=None if probe_rpm is None else int(probe_rpm),
+            no_progress_s=float(scan_config.z_stall_probe_no_progress_s),
+            probe_step_mm=float(scan_config.z_stall_probe_step_mm),
+            fast_approach_mm=float(scan_config.z_stall_probe_fast_approach_mm),
+            fast_approach_rpm=None if probe_rpm is None else int(probe_rpm),
+            auto_retract=True,
+            should_abort=self._should_abort_work,
+        )
+
+        if did_stall is False:
+            raise ValueError(
+                f"z stall anchor: probe did not contact wall (reason={reason}, z={z_contact_mm:.3f})"
+            )
+
+        z_offset_anchor_mm = z_contact_mm - float(z_place) + float(scan_config.z_stall_tray_engagement_mm)
+        z_delta_mm = z_offset_anchor_mm - probe_wall_depth_mm
+        laser_module.print_status(
+            f"z_stall_anchor=applied side={side_name} probe={detected_cell.shelf_idx}:{detected_cell.cell_idx} "
+            f"z_contact_mm={z_contact_mm:.3f} z_place_mm={float(z_place):.3f} "
+            f"tray_mm={float(scan_config.z_stall_tray_engagement_mm):.3f} "
+            f"probe_wall_depth_mm={probe_wall_depth_mm:.3f} anchor_z_offset_mm={z_offset_anchor_mm:.3f} "
+            f"delta_mm={z_delta_mm:.3f}"
+        )
+        return z_delta_mm
+
     async def _persist_completed_results(
         self,
         worker: RobotWorker,
@@ -64,6 +168,13 @@ class ApplyRunnerMixin:
                 scan_config=scan_config,
                 side=completed_result.side,
             )
+            z_delta_override_mm: float | None = None
+            if getattr(scan_config, "z_stall_anchor_enabled", False) is True:
+                z_delta_override_mm = await self._run_z_stall_anchor(
+                    worker,
+                    completed_result.side,
+                    completed_result.analysis,
+                )
             laser_module.apply_wall_depth_z_offsets(
                 analysis=completed_result.analysis,
                 scanned_shelves=scanned_shelves,
@@ -71,6 +182,7 @@ class ApplyRunnerMixin:
                 scan_config=scan_config,
                 side=completed_result.side,
                 current_stage_extension_mm=float(params_dict[_side_to_stage_extension_param_name(completed_result.side)]),
+                z_delta_override_mm=z_delta_override_mm,
             )
 
             if completed_result.side == StorageModuleSide.LEFT:
