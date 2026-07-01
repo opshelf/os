@@ -182,15 +182,13 @@ class ApplyRunnerMixin:
                     completed_result.side,
                     completed_result.analysis,
                 )
-            laser_module.apply_wall_depth_z_offsets(
-                analysis=completed_result.analysis,
-                scanned_shelves=scanned_shelves,
-                metadata_path=str(completed_result.analysis.metadata_path),
-                scan_config=scan_config,
-                side=completed_result.side,
-                current_stage_extension_mm=float(params_dict[_side_to_stage_extension_param_name(completed_result.side)]),
-                z_delta_override_mm=z_delta_override_mm,
-            )
+            if z_delta_override_mm is not None:
+                laser_module.apply_wall_depth_z_offsets(
+                    analysis=completed_result.analysis,
+                    scanned_shelves=scanned_shelves,
+                    metadata_path=str(completed_result.analysis.metadata_path),
+                    z_delta_mm=z_delta_override_mm,
+                )
 
             if completed_result.side == StorageModuleSide.LEFT:
                 left_module = scanned_shelves
