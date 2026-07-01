@@ -57,16 +57,12 @@ def build_shelf_scout_x_positions(
 	x_max_mm: float,
 	is_right_side: bool,
 	scout_x_mm: float | None = None,
-	left_reference_x_mm: float | None = None,
 ) -> list[float]:
 	if scout_x_mm is not None:
 		return [float(scout_x_mm)]
 
 	if is_right_side is True:
 		return [RIGHT_MODULE_SHELF_SCOUT_X_MM]
-
-	if left_reference_x_mm is not None:
-		return [max(float(left_reference_x_mm), x_max_mm)]
 
 	positions: list[float] = []
 

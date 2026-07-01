@@ -5,30 +5,9 @@ from typing import List, Literal, Optional
 from pydantic import BaseModel, Field, model_validator
 
 
-class LaserScanXYReferenceConfig(BaseModel):
-    shelf_idx: int = Field(ge=0)
-    cell_idx: int = Field(ge=0)
-    anchor: Literal["top_right", "top_left", "bottom_right", "bottom_left"] = "top_right"
-    x_mm: float
-    y_mm: float
-
-
 class LaserScanXYOffsetConfig(BaseModel):
     x_mm: float
     y_mm: float
-
-
-class LaserScanZReferenceConfig(BaseModel):
-    shelf_idx: int = Field(ge=0)
-    cell_idx: int = Field(ge=0)
-    z_offset_mm: float
-    stage_extension_mm: float = Field(43.0, ge=0)
-
-
-class LaserScanReferenceConfig(LaserScanXYReferenceConfig):
-    z_offset_mm: float
-    stage_extension_mm: float = Field(43.0, ge=0)
-    wall_depth_mm: Optional[float] = None
 
 
 class LaserScanConfig(BaseModel):
@@ -54,8 +33,6 @@ class LaserScanConfig(BaseModel):
     shelf_scout_post_edge_skip_mm: float = Field(40.0, ge=0)
     shelf_brim_max_height_mm: float = Field(13.0, gt=0)
 
-    left_xy_reference: Optional[LaserScanXYReferenceConfig] = None
-    right_xy_reference: Optional[LaserScanXYReferenceConfig] = None
     left_xy_offset: Optional[LaserScanXYOffsetConfig] = None
     right_xy_offset: Optional[LaserScanXYOffsetConfig] = None
 
@@ -69,10 +46,6 @@ class LaserScanConfig(BaseModel):
     z_stall_probe_rpm: Optional[int] = Field(default=20, gt=0)
     z_stall_probe_no_progress_s: float = Field(0.25, gt=0)
     z_stall_probe_timeout_s: float = Field(60.0, gt=0)
-    left_z_reference: Optional[LaserScanZReferenceConfig] = None
-    right_z_reference: Optional[LaserScanZReferenceConfig] = None
-    left_reference: Optional[LaserScanReferenceConfig] = None
-    right_reference: Optional[LaserScanReferenceConfig] = None
 
     left_bounds_x_min_mm: float = 0.0
     left_bounds_x_max_mm: float = 950.0

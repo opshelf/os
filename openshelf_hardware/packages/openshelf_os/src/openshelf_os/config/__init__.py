@@ -15,9 +15,6 @@ from openshelf_os.config.settings import (
 )
 from openshelf_os.config.laser_scan import (
     LaserScanConfig,
-    LaserScanXYReferenceConfig,
-    LaserScanZReferenceConfig,
-    LaserScanReferenceConfig,
 )
 from openshelf_os.config.models import (
     Motor,
@@ -68,9 +65,6 @@ __all__ = [
     "RobotAppSettings",
     "ScaleAppSettings",
     "LaserScanConfig",
-    "LaserScanXYReferenceConfig",
-    "LaserScanZReferenceConfig",
-    "LaserScanReferenceConfig",
     "Motor",
     "Motors",
     "PoeCamera",

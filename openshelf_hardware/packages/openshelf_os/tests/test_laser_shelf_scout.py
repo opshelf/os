@@ -204,7 +204,7 @@ def test_filter_shelf_edges_discards_top_margin_and_close_duplicates() -> None:
 	]
 
 
-def test_build_shelf_scout_x_positions_preserves_right_zero_and_reference_behavior() -> None:
+def test_build_shelf_scout_x_positions_preserves_right_zero_and_scout_override() -> None:
 	assert build_shelf_scout_x_positions(
 		x_min_mm=0.0,
 		x_max_mm=900.0,
@@ -215,12 +215,6 @@ def test_build_shelf_scout_x_positions_preserves_right_zero_and_reference_behavi
 		x_max_mm=900.0,
 		is_right_side=True,
 		scout_x_mm=950.0,
-	) == [950.0]
-	assert build_shelf_scout_x_positions(
-		x_min_mm=0.0,
-		x_max_mm=900.0,
-		is_right_side=False,
-		left_reference_x_mm=950.0,
 	) == [950.0]
 	assert build_shelf_scout_x_positions(
 		x_min_mm=0.0,

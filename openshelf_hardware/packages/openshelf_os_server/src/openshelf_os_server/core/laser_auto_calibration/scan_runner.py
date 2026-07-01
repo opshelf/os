@@ -20,9 +20,7 @@ class ScanRunnerMixin:
         seeded_candidates: list[laser_module.GapCandidateRegion] | None = None,
         seeded_wall_depth_mm: float | None = None,
         rescan_target: laser_module.SingleCellRescanTarget | None = None,
-        should_validate_reference_bounds: bool = True,
         run_scope: dict[str, Any] | None = None,
-        reference_apply: dict[str, Any] | None = None,
         scan_config_override: Any | None = None,
     ) -> Any:
         side_name = _side_to_module_name(side)
@@ -55,7 +53,6 @@ class ScanRunnerMixin:
             apply=True,
             shelf_scout_only=False,
             rescan_cell=raw_rescan_target,
-            should_validate_reference_bounds=should_validate_reference_bounds and raw_rescan_target is None,
         )
         run_parameters = laser_module.build_run_parameters(
             args=args,
@@ -71,9 +68,6 @@ class ScanRunnerMixin:
 
         if run_scope is not None:
             run_parameters["auto_calibration_scope"] = run_scope
-
-        if reference_apply is not None:
-            run_parameters["reference_apply"] = reference_apply
 
         if rescan_target is not None and seeded_candidates is not None and len(seeded_candidates) == 1:
             candidate = seeded_candidates[0]
@@ -149,7 +143,6 @@ class ScanRunnerMixin:
                     seeded_candidates=seeded_candidates,
                     seeded_wall_depth_mm=seeded_wall_depth_mm,
                     recorder=recorder,
-                    should_validate_reference_bounds=should_validate_reference_bounds,
                     should_abort=self._should_abort_work,
                 )
         finally:
