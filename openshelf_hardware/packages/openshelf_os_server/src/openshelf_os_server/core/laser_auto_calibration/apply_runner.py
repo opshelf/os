@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from openshelf_os.laser_calibration.angle.capture import enter_capture_mode, resolve_rotation_center_deg
+from openshelf_os.laser_calibration.angle.capture import enter_capture_mode
 from openshelf_os.laser_calibration.angle.robot_ops import probe_z_until_stall
 
 from .models import *
@@ -52,16 +52,23 @@ class ApplyRunnerMixin:
         detected_cell, probe_wall_depth_mm = probe
         side_name = "left" if side == StorageModuleSide.LEFT else "right"
         side_number = 0 if side == StorageModuleSide.LEFT else 1
-        rotation_center_deg = resolve_rotation_center_deg(side_name, config.robot.tool.parameters)
+        rotation_param = "ROTATION_FRONT" if side_name == "left" else "ROTATION_BACK"
         stage_param = "STAGE_EXTENSION_SHELF_FRONT" if side_name == "left" else "STAGE_EXTENSION_SHELF_BACK"
-        stage_extension_mm = float(getattr(config.robot.tool.parameters, stage_param))
 
+        rotation_center_value = await tool.get_param(rotation_param)
+        stage_extension_value = await tool.get_param(stage_param)
         z_place = await tool.get_param("Z_EXTENSION_PLACE")
         z_move_rpm = await tool.get_param("Z_MOVE_RPM")
         z_move_accel = await tool.get_param("Z_MOVE_ACCEL")
 
+        if rotation_center_value is None or stage_extension_value is None:
+            raise ValueError(f"{rotation_param} and {stage_param} are required for z stall anchor")
+
         if z_place is None or z_move_rpm is None or z_move_accel is None:
             raise ValueError("Z_EXTENSION_PLACE, Z_MOVE_RPM, and Z_MOVE_ACCEL are required for z stall anchor")
+
+        rotation_center_deg = float(rotation_center_value)
+        stage_extension_mm = float(stage_extension_value)
 
         probe_x_mm = float(detected_cell.tool_x_mm) + float(scan_config.z_stall_probe_x_shift_mm)
         probe_y_mm = float(detected_cell.tool_y_mm)
