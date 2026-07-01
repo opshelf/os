@@ -630,10 +630,6 @@ def build_single_cell_rescan_candidate(
 	candidate_center_y_mm = float(target_cell.calibration_point.y) + laser_offset_y_mm
 	half_width_mm = float(scan_config.expected_hole_width_mm) / 2.0
 	half_height_mm = float(scan_config.expected_hole_height_mm) / 2.0
-	get_scan_z_reference(
-		scan_config=scan_config,
-		side=side,
-	)
 
 	return GapCandidateRegion(
 		x_min=candidate_center_x_mm - half_width_mm,

@@ -77,7 +77,6 @@ def test_angle_shelf_scout_uses_configured_scan_bounds_instead_of_probe_x() -> N
 	scan_config = SimpleNamespace(
 		left_bounds_x_min_mm=0.0,
 		left_bounds_x_max_mm=950.0,
-		left_xy_reference=SimpleNamespace(x_mm=358.5),
 	)
 
 	assert build_shelf_scout_x_positions(

@@ -23,7 +23,6 @@ from openshelf_os.laser_calibration import (
 	find_gap_segments_in_line,
 	find_gap_run_containing_position,
 	GapCandidateRegion,
-	get_scanned_anchor_cell,
 	get_shelf_hole_probe_y_offsets_mm,
 	GridScanResult,
 	load_continue_scan_context,
@@ -260,7 +259,7 @@ async def test_run_staged_scan_skips_retract_when_cancelled(tmp_path: Path) -> N
 							scan_config=SimpleNamespace(
 								laser_offset_x_mm=1.0,
 								laser_offset_y_mm=0.0,
-								left_reference=SimpleNamespace(shelf_idx=0, cell_idx=0, anchor='top_left', x_mm=5.0, y_mm=5.0, z_offset_mm=2.0, wall_depth_mm=1.0),
+								left_xy_offset=SimpleNamespace(x_mm=0.0, y_mm=0.0),
 							),
 							scans_dir=str(tmp_path),
 							run_parameters={},
@@ -316,7 +315,7 @@ async def test_run_staged_scan_raises_when_abort_requested_after_coarse_scan(tmp
 							scan_config=SimpleNamespace(
 								laser_offset_x_mm=1.0,
 								laser_offset_y_mm=0.0,
-								left_reference=SimpleNamespace(shelf_idx=0, cell_idx=0, anchor='top_left', x_mm=5.0, y_mm=5.0, z_offset_mm=2.0, wall_depth_mm=1.0),
+								left_xy_offset=SimpleNamespace(x_mm=0.0, y_mm=0.0),
 							),
 							scans_dir=str(tmp_path),
 							run_parameters={},
@@ -346,7 +345,7 @@ async def test_run_staged_scan_uses_candidate_wall_depth_for_fine_scan(tmp_path:
 		fine_cell_scan_y_margin_mm=None,
 		laser_offset_x_mm=1.0,
 		laser_offset_y_mm=0.0,
-		left_reference=SimpleNamespace(shelf_idx=0, cell_idx=0, anchor='top_left', x_mm=50.0, y_mm=50.0, z_offset_mm=2.0, wall_depth_mm=1.0),
+		left_xy_offset=SimpleNamespace(x_mm=0.0, y_mm=0.0),
 	)
 
 	async def didCaptureCrossScan(*args, **kwargs):
@@ -666,111 +665,11 @@ async def test_run_io_box_scout_stops_x_scan_at_width_limit() -> None:
 	tool.retract.assert_awaited_once()
 
 
-def test_get_scanned_anchor_cell_uses_physical_top_left_for_right_side() -> None:
-	bottom_shelf = SimpleNamespace(
-		shelf_idx=0,
-		cells=[
-			SimpleNamespace(calibration_point=SimpleNamespace(x=-100.0, y=100.0)),
-			SimpleNamespace(calibration_point=SimpleNamespace(x=0.0, y=100.0)),
-		],
-	)
-	top_shelf = SimpleNamespace(
-		shelf_idx=1,
-		cells=[
-			SimpleNamespace(calibration_point=SimpleNamespace(x=-578.0, y=1138.0)),
-			SimpleNamespace(calibration_point=SimpleNamespace(x=51.5, y=1143.0)),
-		],
-	)
-
-	anchor_cell = get_scanned_anchor_cell(
-		scanned_shelves=[bottom_shelf, top_shelf],
-		side=StorageModuleSide.RIGHT,
-		anchor='top_left',
-	)
-
-	assert anchor_cell is not None
-	assert anchor_cell.calibration_point.x == pytest.approx(-578.0)
-
-
-def test_apply_xy_reference_offsets_uses_physical_top_left_for_right_side() -> None:
-	scanned_shelves = [
-		SimpleNamespace(
-			shelf_idx=1,
-			cells=[
-				SimpleNamespace(shelf_idx=1, cell_idx=0, calibration_point=SimpleNamespace(x=-578.0, y=1138.0)),
-				SimpleNamespace(shelf_idx=1, cell_idx=1, calibration_point=SimpleNamespace(x=51.5, y=1143.0)),
-			],
-		)
-	]
-	scan_config = SimpleNamespace(
-		right_reference=SimpleNamespace(shelf_idx=1, cell_idx=0, anchor='top_left', x_mm=51.5, y_mm=1143.0, z_offset_mm=1.0, wall_depth_mm=1.0),
-	)
-
-	apply_xy_reference_offsets(
-		scanned_shelves=scanned_shelves,
-		scan_config=scan_config,
-		side=StorageModuleSide.RIGHT,
-	)
-
-	assert scanned_shelves[0].cells[0].calibration_point.x == pytest.approx(51.5)
-	assert scanned_shelves[0].cells[0].calibration_point.y == pytest.approx(1143.0)
-	assert scanned_shelves[0].cells[1].calibration_point.x == pytest.approx(681.0)
-	assert scanned_shelves[0].cells[1].calibration_point.y == pytest.approx(1148.0)
-
-
-def test_apply_xy_reference_offsets_rejects_wrong_detected_reference_target() -> None:
-	scanned_shelves = [
-		SimpleNamespace(
-			shelf_idx=0,
-			cells=[
-				SimpleNamespace(shelf_idx=0, cell_idx=0, calibration_point=SimpleNamespace(x=500.0, y=500.0)),
-				SimpleNamespace(shelf_idx=0, cell_idx=1, calibration_point=SimpleNamespace(x=100.0, y=500.0)),
-			],
-		)
-	]
-	scan_config = SimpleNamespace(
-		left_xy_reference=SimpleNamespace(shelf_idx=0, cell_idx=0, anchor='bottom_left', x_mm=357.0, y_mm=42.0),
-	)
-
-	with pytest.raises(ValueError, match='does not match configured reference target 0:0'):
-		apply_xy_reference_offsets(
-			scanned_shelves=scanned_shelves,
-			scan_config=scan_config,
-			side=StorageModuleSide.LEFT,
-		)
-
-
-def test_apply_xy_reference_offsets_accepts_cells_without_shelf_idx() -> None:
-	scanned_shelves = [
-		SimpleNamespace(
-			shelf_idx=0,
-			cells=[
-				SimpleNamespace(cell_idx=0, calibration_point=SimpleNamespace(x=100.0, y=200.0)),
-				SimpleNamespace(cell_idx=1, calibration_point=SimpleNamespace(x=200.0, y=200.0)),
-			],
-		)
-	]
-	scan_config = SimpleNamespace(
-		left_xy_reference=SimpleNamespace(shelf_idx=0, cell_idx=0, anchor='bottom_left', x_mm=294.0, y_mm=42.0),
-	)
-
-	apply_xy_reference_offsets(
-		scanned_shelves=scanned_shelves,
-		scan_config=scan_config,
-		side=StorageModuleSide.LEFT,
-	)
-
-	assert scanned_shelves[0].cells[0].calibration_point.x == pytest.approx(294.0)
-	assert scanned_shelves[0].cells[0].calibration_point.y == pytest.approx(42.0)
-	assert scanned_shelves[0].cells[1].calibration_point.x == pytest.approx(394.0)
-	assert scanned_shelves[0].cells[1].calibration_point.y == pytest.approx(42.0)
-
-
 def test_apply_xy_reference_offsets_requires_reference() -> None:
-	with pytest.raises(ValueError, match='left_xy_reference or robot.grid.scan.left_xy_offset must be configured'):
+	with pytest.raises(ValueError, match='robot.grid.scan.left_xy_offset must be configured'):
 		apply_xy_reference_offsets(
 			scanned_shelves=[],
-			scan_config=SimpleNamespace(left_reference=None, left_xy_offset=None),
+			scan_config=SimpleNamespace(left_xy_offset=None),
 			side=StorageModuleSide.LEFT,
 		)
 
@@ -786,8 +685,6 @@ def test_apply_xy_reference_offsets_uses_fixed_offset_when_reference_absent() ->
 		)
 	]
 	scan_config = SimpleNamespace(
-		left_xy_reference=None,
-		left_reference=None,
 		left_xy_offset=SimpleNamespace(x_mm=-3.0, y_mm=2.5),
 	)
 
@@ -803,53 +700,6 @@ def test_apply_xy_reference_offsets_uses_fixed_offset_when_reference_absent() ->
 	assert scanned_shelves[0].cells[1].calibration_point.y == pytest.approx(202.5)
 
 
-def test_apply_xy_reference_offsets_prefers_reference_over_fixed_offset() -> None:
-	scanned_shelves = [
-		SimpleNamespace(
-			shelf_idx=0,
-			cells=[
-				SimpleNamespace(cell_idx=0, calibration_point=SimpleNamespace(x=100.0, y=200.0)),
-			],
-		)
-	]
-	scan_config = SimpleNamespace(
-		left_xy_reference=SimpleNamespace(shelf_idx=0, cell_idx=0, anchor='bottom_left', x_mm=294.0, y_mm=42.0),
-		left_xy_offset=SimpleNamespace(x_mm=-3.0, y_mm=2.5),
-	)
-
-	apply_xy_reference_offsets(
-		scanned_shelves=scanned_shelves,
-		scan_config=scan_config,
-		side=StorageModuleSide.LEFT,
-	)
-
-	assert scanned_shelves[0].cells[0].calibration_point.x == pytest.approx(294.0)
-	assert scanned_shelves[0].cells[0].calibration_point.y == pytest.approx(42.0)
-
-
-def test_build_single_cell_rescan_candidate_requires_z_reference() -> None:
-	target_cell = SimpleNamespace(
-		calibration_point=SimpleNamespace(x=100.0, y=200.0, z_offset=8.5),
-	)
-	target_shelf = SimpleNamespace(get_cell=lambda cell_idx: target_cell)
-	grid = SimpleNamespace(get_shelf=lambda side, shelf_idx: target_shelf)
-	scan_config = SimpleNamespace(
-		laser_offset_x_mm=51.0,
-		laser_offset_y_mm=0.0,
-		expected_hole_width_mm=26.0,
-		expected_hole_height_mm=30.0,
-		left_reference=None,
-	)
-
-	with pytest.raises(ValueError, match='robot.grid.scan.left_z_reference must be configured'):
-		build_single_cell_rescan_candidate(
-			grid=grid,
-			side=StorageModuleSide.LEFT,
-			target=SingleCellRescanTarget(shelf_idx=1, cell_idx=2),
-			scan_config=scan_config,
-		)
-
-
 def test_build_single_cell_rescan_candidate_requires_laser_offsets() -> None:
 	target_cell = SimpleNamespace(
 		calibration_point=SimpleNamespace(x=100.0, y=200.0, z_offset=8.5),
@@ -861,7 +711,6 @@ def test_build_single_cell_rescan_candidate_requires_laser_offsets() -> None:
 		laser_offset_y_mm=None,
 		expected_hole_width_mm=26.0,
 		expected_hole_height_mm=30.0,
-		left_reference=SimpleNamespace(shelf_idx=12, cell_idx=0, anchor='top_right', x_mm=0.0, y_mm=0.0, z_offset_mm=15.0, wall_depth_mm=9.0),
 	)
 
 	with pytest.raises(ValueError, match='robot.grid.scan.laser_offset_y_mm must be configured'):
@@ -884,7 +733,6 @@ def test_build_single_cell_rescan_candidate_rejects_invalid_offset_value() -> No
 		laser_offset_y_mm=0.0,
 		expected_hole_width_mm=26.0,
 		expected_hole_height_mm=30.0,
-		left_reference=SimpleNamespace(shelf_idx=12, cell_idx=0, anchor='top_right', x_mm=0.0, y_mm=0.0, z_offset_mm=15.0, wall_depth_mm=9.0),
 	)
 
 	with pytest.raises(ValueError, match='robot.grid.scan.laser_offset_x_mm must be a finite number'):
@@ -907,7 +755,6 @@ def test_build_single_cell_rescan_candidate_allows_scan_estimated_wall_depth() -
 		laser_offset_y_mm=0.0,
 		expected_hole_width_mm=26.0,
 		expected_hole_height_mm=30.0,
-		left_reference=SimpleNamespace(shelf_idx=12, cell_idx=0, anchor='top_right', x_mm=0.0, y_mm=0.0, z_offset_mm=15.0),
 	)
 
 	candidate = build_single_cell_rescan_candidate(
@@ -939,7 +786,7 @@ def test_build_run_parameters_allows_rescan_bounds_away_from_xy_reference() -> N
 	scan_config = SimpleNamespace(
 		laser_offset_x_mm=50.0,
 		laser_offset_y_mm=0.0,
-		left_reference=SimpleNamespace(shelf_idx=0, cell_idx=0, anchor='top_left', x_mm=900.0, y_mm=900.0, z_offset_mm=15.0, wall_depth_mm=9.0),
+		left_xy_offset=SimpleNamespace(x_mm=-3.0, y_mm=2.5),
 	)
 
 	run_parameters = build_run_parameters(
@@ -954,81 +801,9 @@ def test_build_run_parameters_allows_rescan_bounds_away_from_xy_reference() -> N
 		scan_config=scan_config,
 	)
 
-	assert run_parameters['resolved']['xy_reference']['x_mm'] == pytest.approx(900.0)
+	assert run_parameters['resolved']['xy_offset']['x_mm'] == pytest.approx(-3.0)
+	assert run_parameters['resolved']['xy_offset']['y_mm'] == pytest.approx(2.5)
 
-
-def test_build_run_parameters_rejects_full_scan_bounds_away_from_xy_reference() -> None:
-	args = SimpleNamespace(
-		module='left',
-		x=(40.0, 80.0),
-		y=(40.0, 80.0),
-		y_offset=0.0,
-		settle_ms=None,
-		samples_per_point=None,
-		known_shelf_edge_y=None,
-		npy=None,
-		scans_dir='scans',
-		config='config.json',
-		apply=True,
-		shelf_scout_only=False,
-		rescan_cell=None,
-	)
-	scan_config = SimpleNamespace(
-		laser_offset_x_mm=50.0,
-		laser_offset_y_mm=0.0,
-		left_reference=SimpleNamespace(shelf_idx=0, cell_idx=0, anchor='top_left', x_mm=900.0, y_mm=900.0, z_offset_mm=15.0, wall_depth_mm=9.0),
-	)
-
-	with pytest.raises(ValueError, match='xy_reference x_mm resolves outside scan X bounds'):
-		build_run_parameters(
-			args=args,
-			side=StorageModuleSide.LEFT,
-			bounds=ScanBounds(x_min=40.0, x_max=80.0, y_min=40.0, y_max=80.0),
-			step_mm=2.0,
-			settle_ms=0,
-			samples_per_point=1,
-			coarse_settle_ms=0,
-			coarse_samples_per_point=1,
-			scan_config=scan_config,
-		)
-
-
-
-def test_build_run_parameters_adds_right_laser_offset_for_reference_bounds() -> None:
-	args = SimpleNamespace(
-		module='right',
-		x=(0.0, 950.0),
-		y=(0.0, 1210.0),
-		y_offset=0.0,
-		settle_ms=None,
-		samples_per_point=None,
-		known_shelf_edge_y=None,
-		npy=None,
-		scans_dir='scans',
-		config='config.json',
-		apply=True,
-		shelf_scout_only=False,
-		rescan_cell=None,
-	)
-	scan_config = SimpleNamespace(
-		laser_offset_x_mm=51.0,
-		laser_offset_y_mm=0.0,
-		right_reference=SimpleNamespace(shelf_idx=1, cell_idx=0, anchor='top_left', x_mm=11.0, y_mm=1162.5, z_offset_mm=11.0, wall_depth_mm=9.0),
-	)
-
-	run_parameters = build_run_parameters(
-		args=args,
-		side=StorageModuleSide.RIGHT,
-		bounds=ScanBounds(x_min=0.0, x_max=950.0, y_min=0.0, y_max=1210.0),
-		step_mm=2.0,
-		settle_ms=0,
-		samples_per_point=1,
-		coarse_settle_ms=0,
-		coarse_samples_per_point=1,
-		scan_config=scan_config,
-	)
-
-	assert run_parameters['resolved']['xy_reference']['x_mm'] == pytest.approx(11.0)
 
 def test_load_continue_scan_context_reads_latest_incomplete_run(tmp_path: Path) -> None:
 	completed_run_dir = tmp_path / 'completed-run'
@@ -1102,8 +877,6 @@ def test_build_single_cell_rescan_candidate_uses_target_point_without_z_depth_se
 		laser_offset_y_mm=0.0,
 		expected_hole_width_mm=26.0,
 		expected_hole_height_mm=30.0,
-		left_reference=SimpleNamespace(shelf_idx=12, cell_idx=0, anchor='top_right', x_mm=0.0, y_mm=0.0, z_offset_mm=15.0, wall_depth_mm=9.0),
-		right_reference=None,
 	)
 
 	candidate = build_single_cell_rescan_candidate(
@@ -1131,15 +904,6 @@ def test_build_single_cell_rescan_candidate_adds_x_offset_for_right_side() -> No
 		laser_offset_y_mm=0.0,
 		expected_hole_width_mm=26.0,
 		expected_hole_height_mm=30.0,
-		right_reference=SimpleNamespace(
-			shelf_idx=3,
-			cell_idx=0,
-			anchor='top_left',
-			x_mm=11.0,
-			y_mm=1162.5,
-			z_offset_mm=15.0,
-			wall_depth_mm=9.0,
-		),
 	)
 
 	candidate = build_single_cell_rescan_candidate(
@@ -1225,8 +989,7 @@ def test_apply_single_cell_rescan_updates_target_cell_and_saves_grid() -> None:
 	scan_config = SimpleNamespace(
 		laser_offset_x_mm=0.0,
 		laser_offset_y_mm=0.0,
-		left_reference=SimpleNamespace(shelf_idx=12, cell_idx=0, anchor='top_right', x_mm=0.0, y_mm=0.0, z_offset_mm=15.0, wall_depth_mm=11.0),
-		right_reference=None,
+		left_xy_offset=None,
 	)
 	detected_cell = SimpleNamespace(tool_x_mm=123.0, tool_y_mm=456.0)
 
@@ -1235,60 +998,12 @@ def test_apply_single_cell_rescan_updates_target_cell_and_saves_grid() -> None:
 		target=SingleCellRescanTarget(shelf_idx=0, cell_idx=1),
 		side=StorageModuleSide.LEFT,
 		detected_cell=detected_cell,
-		wall_depth_mm=7.5,
 		scan_config=scan_config,
 	)
 
 	assert calibration_point.x == pytest.approx(1.0)
 	assert calibration_point.y == pytest.approx(2.0)
 	assert calibration_point.z_offset == pytest.approx(3.0)
-	grid.save.assert_called_once_with()
-
-
-def test_apply_single_cell_rescan_preserves_xy_without_reference_rescan() -> None:
-	calibration_point = SimpleNamespace(x=1.0, y=2.0, z_offset=3.0)
-	target_cell = SimpleNamespace(cell_idx=1, calibration_point=calibration_point)
-	target_shelf = SimpleNamespace(
-		shelf_idx=0,
-		cells=[target_cell],
-		get_cell=lambda cell_idx: target_cell,
-	)
-	grid = SimpleNamespace(
-		get_shelf=lambda side, shelf_idx: target_shelf,
-		save=Mock(),
-	)
-	scan_config = SimpleNamespace(
-		laser_offset_x_mm=10.0,
-		laser_offset_y_mm=-5.0,
-		left_xy_reference=SimpleNamespace(
-			shelf_idx=12,
-			cell_idx=0,
-			anchor='top_right',
-			x_mm=130.0,
-			y_mm=440.0,
-		),
-		left_z_reference=SimpleNamespace(
-			shelf_idx=12,
-			cell_idx=0,
-			z_offset_mm=15.0,
-			stage_extension_mm=43.0,
-		),
-	)
-	detected_cell = SimpleNamespace(tool_x_mm=123.0, tool_y_mm=456.0)
-
-	apply_single_cell_rescan(
-		grid=grid,
-		target=SingleCellRescanTarget(shelf_idx=0, cell_idx=1),
-		side=StorageModuleSide.LEFT,
-		detected_cell=detected_cell,
-		wall_depth_mm=8.0,
-		scan_config=scan_config,
-		z_reference_wall_depth_mm=11.0,
-	)
-
-	assert calibration_point.x == pytest.approx(1.0)
-	assert calibration_point.y == pytest.approx(2.0)
-	assert calibration_point.z_offset == pytest.approx(12.0)
 	grid.save.assert_called_once_with()
 
 
@@ -1307,15 +1022,7 @@ def test_apply_single_cell_rescan_uses_fixed_offset_without_reference_rescan() -
 	scan_config = SimpleNamespace(
 		laser_offset_x_mm=10.0,
 		laser_offset_y_mm=-5.0,
-		left_xy_reference=None,
-		left_reference=None,
 		left_xy_offset=SimpleNamespace(x_mm=-3.0, y_mm=2.5),
-		left_z_reference=SimpleNamespace(
-			shelf_idx=12,
-			cell_idx=0,
-			z_offset_mm=15.0,
-			stage_extension_mm=43.0,
-		),
 	)
 	detected_cell = SimpleNamespace(tool_x_mm=123.0, tool_y_mm=456.0)
 
@@ -1324,60 +1031,14 @@ def test_apply_single_cell_rescan_uses_fixed_offset_without_reference_rescan() -
 		target=SingleCellRescanTarget(shelf_idx=0, cell_idx=1),
 		side=StorageModuleSide.LEFT,
 		detected_cell=detected_cell,
-		wall_depth_mm=8.0,
 		scan_config=scan_config,
-		z_reference_wall_depth_mm=11.0,
 	)
 
 	assert calibration_point.x == pytest.approx(120.0)
 	assert calibration_point.y == pytest.approx(458.5)
+	assert calibration_point.z_offset == pytest.approx(3.0)
 	grid.save.assert_called_once_with()
 
-
-def test_apply_single_cell_rescan_keeps_reference_values_fixed() -> None:
-	calibration_point = SimpleNamespace(x=1.0, y=2.0, z_offset=3.0)
-	target_cell = SimpleNamespace(cell_idx=0, calibration_point=calibration_point)
-	target_shelf = SimpleNamespace(
-		shelf_idx=3,
-		cells=[target_cell],
-		get_cell=lambda cell_idx: target_cell,
-	)
-	grid = SimpleNamespace(
-		get_shelf=lambda side, shelf_idx: target_shelf,
-		save=Mock(),
-	)
-	scan_config = SimpleNamespace(
-		right_xy_reference=SimpleNamespace(
-			shelf_idx=3,
-			cell_idx=0,
-			anchor='top_left',
-			x_mm=11.0,
-			y_mm=1162.5,
-		),
-		right_z_reference=SimpleNamespace(
-			shelf_idx=3,
-			cell_idx=0,
-			z_offset_mm=11.0,
-			stage_extension_mm=37.0,
-		),
-	)
-	detected_cell = SimpleNamespace(tool_x_mm=12.0, tool_y_mm=1163.0)
-
-	apply_single_cell_rescan(
-		grid=grid,
-		target=SingleCellRescanTarget(shelf_idx=3, cell_idx=0),
-		side=StorageModuleSide.RIGHT,
-		detected_cell=detected_cell,
-		wall_depth_mm=8.0,
-		scan_config=scan_config,
-		xy_reference_detected_cell=detected_cell,
-		z_reference_wall_depth_mm=8.0,
-		current_stage_extension_mm=37.0,
-	)
-
-	assert calibration_point.x == pytest.approx(11.0)
-	assert calibration_point.y == pytest.approx(1162.5)
-	assert calibration_point.z_offset == pytest.approx(11.0)
 
 def _detected_scan_shelf(shelf_idx: int, tool_xs: list[float]) -> SimpleNamespace:
 	return SimpleNamespace(
@@ -1509,21 +1170,7 @@ def test_apply_single_cell_shelf_analysis_updates_only_target_xy(tmp_path: Path)
 			)
 		],
 	)
-	scan_config = SimpleNamespace(
-		left_xy_reference=SimpleNamespace(
-			shelf_idx=0,
-			cell_idx=0,
-			anchor='top_left',
-			x_mm=999.0,
-			y_mm=888.0,
-		),
-		left_z_reference=SimpleNamespace(
-			shelf_idx=0,
-			cell_idx=0,
-			z_offset_mm=777.0,
-			stage_extension_mm=43.0,
-		),
-	)
+	scan_config = SimpleNamespace()
 
 	apply_single_cell_shelf_analysis(
 		analysis=analysis,
@@ -1601,13 +1248,7 @@ def test_apply_single_shelf_analysis_replaces_only_target_shelf(tmp_path: Path) 
 					scan_config=SimpleNamespace(
 						laser_offset_x_mm=0.0,
 						laser_offset_y_mm=0.0,
-						left_xy_reference=SimpleNamespace(
-							shelf_idx=0,
-							cell_idx=0,
-							anchor='top_left',
-							x_mm=10.0,
-							y_mm=20.0,
-						),
+						left_xy_offset=None,
 					),
 					side=StorageModuleSide.LEFT,
 					target_shelf_idx=1,
@@ -1656,13 +1297,7 @@ def test_apply_single_shelf_analysis_aligns_to_existing_shelf_without_reference_
 	scan_config = SimpleNamespace(
 		laser_offset_x_mm=0.0,
 		laser_offset_y_mm=0.0,
-		left_xy_reference=SimpleNamespace(
-			shelf_idx=0,
-			cell_idx=0,
-			anchor='top_left',
-			x_mm=100.0,
-			y_mm=200.0,
-		),
+		left_xy_offset=None,
 	)
 
 	with patch('openshelf_os.laser_calibration.build_shelves_from_scan', return_value=[scanned_shelf]):
@@ -1673,7 +1308,6 @@ def test_apply_single_shelf_analysis_aligns_to_existing_shelf_without_reference_
 			scan_config=scan_config,
 			side=StorageModuleSide.LEFT,
 			target_shelf_idx=1,
-			z_reference_wall_depth_mm=12.3,
 		)
 
 	updated_grid = StorageGrid.load_from_file(str(grid_path))
@@ -1682,7 +1316,7 @@ def test_apply_single_shelf_analysis_aligns_to_existing_shelf_without_reference_
 	assert updated_point.y == pytest.approx(20.0)
 
 
-def test_apply_single_shelf_analysis_reference_less_uses_offset_and_analysis_wall_depth(tmp_path: Path) -> None:
+def test_apply_single_shelf_analysis_reference_less_uses_offset_and_stall_delta(tmp_path: Path) -> None:
 	target_shelf = Shelf(
 		shelf_idx=1,
 		shelf_height=100.0,
@@ -1715,8 +1349,6 @@ def test_apply_single_shelf_analysis_reference_less_uses_offset_and_analysis_wal
 	scan_config = SimpleNamespace(
 		laser_offset_x_mm=0.0,
 		laser_offset_y_mm=0.0,
-		left_xy_reference=None,
-		left_reference=None,
 		left_xy_offset=SimpleNamespace(x_mm=1.0, y_mm=2.0),
 	)
 	wall_depth_z_offsets = Mock()
@@ -1733,12 +1365,11 @@ def test_apply_single_shelf_analysis_reference_less_uses_offset_and_analysis_wal
 				scan_config=scan_config,
 				side=StorageModuleSide.LEFT,
 				target_shelf_idx=1,
-				z_reference_wall_depth_mm=None,
+				z_delta_override_mm=4.5,
 			)
 
 	wall_depth_z_offsets.assert_called_once()
-	assert wall_depth_z_offsets.call_args.kwargs['z_reference_wall_depth_mm'] is None
-	assert wall_depth_z_offsets.call_args.kwargs['should_use_analysis_wall_depth_fallback'] is True
+	assert wall_depth_z_offsets.call_args.kwargs['z_delta_mm'] == pytest.approx(4.5)
 	updated_grid = StorageGrid.load_from_file(str(grid_path))
 	updated_point = updated_grid.left_module[0].cells[0].calibration_point
 	assert updated_point.x == pytest.approx(101.0)

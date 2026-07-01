@@ -88,15 +88,6 @@ def normalize_module(raw_module: str) -> StorageModuleSide:
 	return StorageModuleSide.RIGHT
 
 
-def get_current_shelf_stage_extension_mm(config: Any, side: StorageModuleSide) -> float:
-	parameters = config.robot.tool.parameters
-
-	if side == StorageModuleSide.LEFT:
-		return float(getattr(parameters, 'STAGE_EXTENSION_SHELF_FRONT', 43.0))
-
-	return float(getattr(parameters, 'STAGE_EXTENSION_SHELF_BACK', 43.0))
-
-
 def parse_single_cell_rescan_target(
 	raw_value: str | None,
 ) -> laser_module.SingleCellRescanTarget | None:
@@ -363,62 +354,6 @@ def load_run_parameters_for_analysis(analysis: Any) -> dict[str, Any]:
 	return dict(document.get('run_parameters', {}))
 
 
-def load_reference_target(reference_apply: dict[str, Any], field_name: str) -> tuple[int, int]:
-	target = reference_apply.get(field_name)
-
-	if isinstance(target, dict) is False:
-		raise ValueError(f'Saved scoped run is missing {field_name} reference apply metadata')
-
-	return int(target['shelf_idx']), int(target['cell_idx'])
-
-
-def validate_reference_apply_targets(
-	*,
-	reference_apply: dict[str, Any],
-	scan_config: Any,
-	side: StorageModuleSide,
-) -> None:
-	saved_xy_target = load_reference_target(reference_apply, 'xy_reference_target')
-	saved_z_target = load_reference_target(reference_apply, 'z_reference_target')
-	current_xy_reference = laser_module.get_scan_xy_reference(scan_config=scan_config, side=side)
-	current_z_reference = laser_module.get_scan_z_reference(scan_config=scan_config, side=side)
-	current_xy_target = (int(current_xy_reference.shelf_idx), int(current_xy_reference.cell_idx))
-	current_z_target = (int(current_z_reference[0]), int(current_z_reference[1]))
-
-	if saved_xy_target != current_xy_target or saved_z_target != current_z_target:
-		raise ValueError(
-			'Saved scoped run used different reference targets and cannot be applied to the current config'
-		)
-
-
-def load_reference_apply_data(
-	*,
-	run_parameters: dict[str, Any],
-	scan_config: Any,
-	side: StorageModuleSide,
-) -> tuple[Any, float]:
-	reference_apply = run_parameters.get('reference_apply')
-
-	if isinstance(reference_apply, dict) is False:
-		raise ValueError('Saved scoped run is missing reference apply metadata')
-
-	validate_reference_apply_targets(
-		reference_apply=reference_apply,
-		scan_config=scan_config,
-		side=side,
-	)
-	xy_reference_detected_cell = reference_apply.get('xy_reference_detected_cell')
-	z_reference_wall_depth_mm = reference_apply.get('z_reference_wall_depth_mm')
-
-	if isinstance(xy_reference_detected_cell, dict) is False:
-		raise ValueError('Saved scoped run is missing XY reference apply metadata')
-
-	if z_reference_wall_depth_mm is None:
-		raise ValueError('Saved scoped run is missing Z reference apply metadata')
-
-	return laser_module.ScanDetectedCell.model_validate(xy_reference_detected_cell), float(z_reference_wall_depth_mm)
-
-
 def apply_loaded_run_analysis(
 	*,
 	analysis: Any,
@@ -434,11 +369,6 @@ def apply_loaded_run_analysis(
 		scope_mode = auto_calibration_scope.get('mode')
 
 		if scope_mode == 'shelf':
-			xy_reference_detected_cell, z_reference_wall_depth_mm = load_reference_apply_data(
-				run_parameters=run_parameters,
-				scan_config=config.robot.grid.scan,
-				side=analysis.side,
-			)
 			laser_module.apply_single_shelf_analysis(
 				analysis=analysis,
 				grid=grid,
@@ -446,9 +376,6 @@ def apply_loaded_run_analysis(
 				scan_config=config.robot.grid.scan,
 				side=analysis.side,
 				target_shelf_idx=int(auto_calibration_scope['shelf_idx']),
-				current_stage_extension_mm=get_current_shelf_stage_extension_mm(config, analysis.side),
-				xy_reference_detected_cell=xy_reference_detected_cell,
-				z_reference_wall_depth_mm=z_reference_wall_depth_mm,
 			)
 			return
 
@@ -481,26 +408,12 @@ def apply_loaded_run_analysis(
 		if matched_cell is None:
 			raise ValueError('No detected cell matched saved --rescan-cell target')
 
-		if isinstance(auto_calibration_scope, dict) is True or 'reference_apply' in run_parameters:
-			xy_reference_detected_cell, z_reference_wall_depth_mm = load_reference_apply_data(
-				run_parameters=run_parameters,
-				scan_config=config.robot.grid.scan,
-				side=analysis.side,
-			)
-		else:
-			xy_reference_detected_cell = None
-			z_reference_wall_depth_mm = None
-
 		laser_module.apply_single_cell_rescan(
 			grid=grid,
 			target=target,
 			side=analysis.side,
 			detected_cell=matched_cell,
-			wall_depth_mm=float(analysis.wall_depth_mm),
 			scan_config=config.robot.grid.scan,
-			current_stage_extension_mm=get_current_shelf_stage_extension_mm(config, analysis.side),
-			xy_reference_detected_cell=xy_reference_detected_cell,
-			z_reference_wall_depth_mm=z_reference_wall_depth_mm,
 		)
 		return
 
@@ -510,7 +423,6 @@ def apply_loaded_run_analysis(
 		grid_path=grid_path,
 		scan_config=config.robot.grid.scan,
 		side=analysis.side,
-		current_stage_extension_mm=get_current_shelf_stage_extension_mm(config, analysis.side),
 	)
 
 
@@ -884,9 +796,7 @@ async def run_scan(args: argparse.Namespace) -> int:
 				target=rescan_target,
 				side=side,
 				detected_cell=matched_cell,
-				wall_depth_mm=float(analysis.wall_depth_mm),
 				scan_config=scan_config,
-				current_stage_extension_mm=get_current_shelf_stage_extension_mm(config, side),
 			)
 		else:
 			laser_module.apply_analysis(
@@ -895,7 +805,6 @@ async def run_scan(args: argparse.Namespace) -> int:
 				grid_path=grid_path,
 				scan_config=scan_config,
 				side=side,
-				current_stage_extension_mm=get_current_shelf_stage_extension_mm(config, side),
 			)
 
 	print_analysis(analysis)

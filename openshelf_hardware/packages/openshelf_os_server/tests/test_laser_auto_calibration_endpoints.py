@@ -11,7 +11,7 @@ from fastapi import HTTPException
 from openshelf_os.laser_calibration import angle as angle_module
 from openshelf_os import laser_calibration as laser_module
 from openshelf_os.common import Parameters
-from openshelf_os.laser_calibration.scan import ScanBounds, ScanDetectedCell
+from openshelf_os.laser_calibration.scan import ScanBounds
 from openshelf_os.storage import StorageModuleSide
 from openshelf_os_server.core.laser_auto_calibration import (
     _build_angle_rotation_center_deg,
@@ -34,7 +34,6 @@ from openshelf_os_server.core.laser_auto_calibration.angle_runner import (
 )
 from openshelf_os_server.core.laser_auto_calibration.apply_runner import _select_z_stall_probe
 from openshelf_os_server.core.laser_auto_calibration.scope_runner import (
-    _build_reference_apply_metadata,
     _validate_laser_auto_calibration_config,
 )
 from openshelf_os_server.routers import robot as robot_router
@@ -288,101 +287,13 @@ def _build_reference_bounds_scan_config(**overrides) -> SimpleNamespace:
         "right_bounds_x_max_mm": 950.0,
         "right_bounds_y_min_mm": 0.0,
         "right_bounds_y_max_mm": 1250.0,
-        "left_reference": SimpleNamespace(
-            shelf_idx=0,
-            cell_idx=0,
-            anchor="top_left",
-            x_mm=100.0,
-            y_mm=100.0,
-            z_offset_mm=15.0,
-            wall_depth_mm=9.0,
-        ),
-        "right_reference": SimpleNamespace(
-            shelf_idx=0,
-            cell_idx=0,
-            anchor="top_left",
-            x_mm=100.0,
-            y_mm=100.0,
-            z_offset_mm=15.0,
-            wall_depth_mm=9.0,
-        ),
     }
     values.update(overrides)
     return SimpleNamespace(**values)
 
 
-def test_validate_laser_auto_calibration_config_rejects_all_scope_reference_outside_bounds() -> None:
-    scan_config = _build_reference_bounds_scan_config(
-        left_reference=SimpleNamespace(
-            shelf_idx=0,
-            cell_idx=0,
-            anchor="top_left",
-            x_mm=40.0,
-            y_mm=100.0,
-            z_offset_mm=15.0,
-            wall_depth_mm=9.0,
-        ),
-    )
-
-    with pytest.raises(ValueError, match="xy_reference x_mm resolves outside scan X bounds"):
-        _validate_laser_auto_calibration_config(
-            scan_config=scan_config,
-            requested_scope=LaserAutoCalibrationScope(mode="all"),
-        )
-
-
-
-def test_validate_laser_auto_calibration_config_rejects_both_scope_reference_outside_bounds() -> None:
-    scan_config = _build_reference_bounds_scan_config(
-        left_reference=SimpleNamespace(
-            shelf_idx=0,
-            cell_idx=0,
-            anchor="top_left",
-            x_mm=40.0,
-            y_mm=100.0,
-            z_offset_mm=15.0,
-            wall_depth_mm=9.0,
-        ),
-    )
-
-    with pytest.raises(ValueError, match="xy_reference x_mm resolves outside scan X bounds"):
-        _validate_laser_auto_calibration_config(
-            scan_config=scan_config,
-            requested_scope=LaserAutoCalibrationScope(mode="both"),
-        )
-
-def test_validate_laser_auto_calibration_config_rejects_side_scope_reference_outside_bounds() -> None:
-    scan_config = _build_reference_bounds_scan_config(
-        right_reference=SimpleNamespace(
-            shelf_idx=0,
-            cell_idx=0,
-            anchor="top_left",
-            x_mm=900.0,
-            y_mm=100.0,
-            z_offset_mm=15.0,
-            wall_depth_mm=9.0,
-        ),
-    )
-
-    with pytest.raises(ValueError, match="xy_reference x_mm resolves outside scan X bounds"):
-        _validate_laser_auto_calibration_config(
-            scan_config=scan_config,
-            requested_scope=LaserAutoCalibrationScope(mode="side", side=StorageModuleSide.RIGHT),
-        )
-
-
-def test_validate_laser_auto_calibration_config_allows_local_shelf_scope_reference_outside_full_bounds() -> None:
-    scan_config = _build_reference_bounds_scan_config(
-        right_reference=SimpleNamespace(
-            shelf_idx=0,
-            cell_idx=0,
-            anchor="top_left",
-            x_mm=900.0,
-            y_mm=100.0,
-            z_offset_mm=15.0,
-            wall_depth_mm=9.0,
-        ),
-    )
+def test_validate_laser_auto_calibration_config_allows_local_shelf_scope_without_xy_offset() -> None:
+    scan_config = _build_reference_bounds_scan_config()
 
     _validate_laser_auto_calibration_config(
         scan_config=scan_config,
@@ -395,23 +306,13 @@ def test_validate_laser_auto_calibration_config_allows_local_shelf_scope_referen
 
 
 @pytest.mark.asyncio
-async def test_ensure_session_started_rejects_reference_bounds_before_starting_background_task() -> None:
+async def test_ensure_session_started_rejects_invalid_config_before_starting_background_task() -> None:
     manager = LaserAutoCalibrationManager()
-    scan_config = _build_reference_bounds_scan_config(
-        left_reference=SimpleNamespace(
-            shelf_idx=0,
-            cell_idx=0,
-            anchor="top_left",
-            x_mm=40.0,
-            y_mm=100.0,
-            z_offset_mm=15.0,
-            wall_depth_mm=9.0,
-        ),
-    )
+    scan_config = _build_reference_bounds_scan_config()
     config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=scan_config)))
 
     with patch("openshelf_os_server.core.laser_auto_calibration.get_root_config", return_value=config):
-        with pytest.raises(ValueError, match="xy_reference x_mm resolves outside scan X bounds"):
+        with pytest.raises(ValueError, match="left_xy_offset must be configured"):
             await manager.ensure_session_started(
                 SimpleNamespace(),
                 LaserAutoCalibrationScope(mode="side", side=StorageModuleSide.LEFT),
@@ -1243,19 +1144,6 @@ async def test_run_single_shelf_uses_known_shelf_edge_with_neighbor_clipped_boun
         expected_hole_height_mm=30.0,
         laser_offset_y_mm=0.0,
         shelf_hole_probe_y_offsets_mm=[32.25],
-        right_xy_reference=SimpleNamespace(
-            shelf_idx=6,
-            cell_idx=0,
-            anchor='top_left',
-            x_mm=8.0,
-            y_mm=1162.5,
-        ),
-        right_z_reference=SimpleNamespace(
-            shelf_idx=6,
-            cell_idx=0,
-            z_offset_mm=9.0,
-            stage_extension_mm=47.0,
-        ),
     )
     config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=scan_config)))
     target_shelf = SimpleNamespace(
@@ -1277,21 +1165,6 @@ async def test_run_single_shelf_uses_known_shelf_edge_with_neighbor_clipped_boun
         get_side=lambda side: [target_shelf, next_shelf],
     )
     analysis = SimpleNamespace(shelves=[SimpleNamespace(cells=[])])
-    xy_reference_detected_cell = ScanDetectedCell(
-        shelf_idx=0,
-        cell_idx=1,
-        center_x_mm=10.0,
-        center_y_mm=20.0,
-        tool_x_mm=11.0,
-        tool_y_mm=21.0,
-        width_mm=30.0,
-        height_mm=40.0,
-        point_count=5,
-        bbox_x_min=1.0,
-        bbox_x_max=2.0,
-        bbox_y_min=3.0,
-        bbox_y_max=4.0,
-    )
     worker = SimpleNamespace()
 
     with patch('openshelf_os_server.core.laser_auto_calibration.get_root_config', return_value=config):
@@ -1301,18 +1174,9 @@ async def test_run_single_shelf_uses_known_shelf_edge_with_neighbor_clipped_boun
                     'openshelf_os_server.core.laser_auto_calibration.laser_module.build_single_shelf_known_edge_y',
                     return_value=[30.75],
                 ) as known_edge_mock:
-                    with patch.object(
-                        manager,
-                        '_run_partial_reference_scans',
-                        AsyncMock(return_value=(xy_reference_detected_cell, 8.0)),
-                    ):
-                        with patch(
-                            'openshelf_os_server.core.laser_auto_calibration.scope_runner._build_reference_apply_metadata',
-                            return_value={'reference_apply': True},
-                        ):
-                            with patch.object(manager, '_run_scan_analysis', AsyncMock(return_value=analysis)) as scan_mock:
-                                with patch.object(manager, '_persist_single_shelf_result', AsyncMock()) as persist_mock:
-                                    await manager._run_single_shelf(worker, StorageModuleSide.RIGHT, 0)
+                    with patch.object(manager, '_run_scan_analysis', AsyncMock(return_value=analysis)) as scan_mock:
+                        with patch.object(manager, '_persist_single_shelf_result', AsyncMock()) as persist_mock:
+                            await manager._run_single_shelf(worker, StorageModuleSide.RIGHT, 0)
 
     known_edge_mock.assert_called_once()
     assert known_edge_mock.call_args.kwargs['grid'] is grid
@@ -1323,34 +1187,13 @@ async def test_run_single_shelf_uses_known_shelf_edge_with_neighbor_clipped_boun
     assert known_edge_mock.call_args.kwargs['scan_config'] is scan_config_override
     assert scan_config_override.shelf_hole_probe_y_offsets_mm == [pytest.approx(12.25)]
     assert scan_config.shelf_hole_probe_y_offsets_mm == [pytest.approx(32.25)]
-    assert scan_mock.await_args.kwargs['should_validate_reference_bounds'] is False
     assert scan_mock.call_args.args[2].y_min == pytest.approx(0.0)
     assert scan_mock.call_args.args[2].y_max == pytest.approx(112.5)
     persist_mock.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_run_partial_reference_scans_skips_scans_when_reference_less() -> None:
-    manager = LaserAutoCalibrationManager()
-    worker = SimpleNamespace()
-
-    with patch(
-        'openshelf_os_server.core.laser_auto_calibration.scope_runner._get_xy_reference_target_optional',
-        return_value=None,
-    ):
-        with patch.object(
-            manager,
-            '_run_reference_cell_scan',
-            AsyncMock(),
-        ) as reference_cell_scan_mock:
-            result = await manager._run_partial_reference_scans(worker, StorageModuleSide.LEFT)
-
-    assert result == (None, None)
-    reference_cell_scan_mock.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_run_single_cell_uses_seeded_cell_rescan_and_reference_offsets() -> None:
+async def test_run_single_cell_uses_seeded_cell_rescan() -> None:
     manager = LaserAutoCalibrationManager()
     analysis = SimpleNamespace(
         shelves=[SimpleNamespace(cells=[])],
@@ -1364,74 +1207,29 @@ async def test_run_single_cell_uses_seeded_cell_rescan_and_reference_offsets() -
         wall_depth_mm=8.0,
     )
     detected_cell = SimpleNamespace(tool_x_mm=10.0, tool_y_mm=20.0)
-    xy_reference_detected_cell = ScanDetectedCell(
-        shelf_idx=0,
-        cell_idx=1,
-        center_x_mm=10.0,
-        center_y_mm=20.0,
-        tool_x_mm=11.0,
-        tool_y_mm=21.0,
-        width_mm=30.0,
-        height_mm=40.0,
-        point_count=5,
-        bbox_x_min=1.0,
-        bbox_x_max=2.0,
-        bbox_y_min=3.0,
-        bbox_y_max=4.0,
-    )
     target = laser_module.SingleCellRescanTarget(shelf_idx=1, cell_idx=2)
     worker = SimpleNamespace()
 
     with patch.object(
         manager,
-        '_run_reference_cell_scan',
+        '_run_single_cell_scan',
         AsyncMock(return_value=(analysis, candidate, detected_cell)),
     ) as target_scan_mock:
-        with patch.object(
-            manager,
-            '_run_partial_reference_scans',
-            AsyncMock(return_value=(xy_reference_detected_cell, 8.0)),
-        ) as reference_scan_mock:
-            with patch.object(manager, '_persist_single_cell_result', AsyncMock()) as persist_mock:
-                with patch(
-                    'openshelf_os_server.core.laser_auto_calibration.scope_runner._persist_reference_apply_metadata'
-                ) as persist_reference_mock:
-                    with patch(
-                        'openshelf_os_server.core.laser_auto_calibration.scope_runner._get_xy_reference_target_optional',
-                        return_value=laser_module.SingleCellRescanTarget(shelf_idx=0, cell_idx=1),
-                    ):
-                        with patch(
-                            'openshelf_os_server.core.laser_auto_calibration.scope_runner._get_z_reference_target',
-                            return_value=laser_module.SingleCellRescanTarget(shelf_idx=0, cell_idx=1),
-                        ):
-                            await manager._run_single_cell(
-                                worker,
-                                StorageModuleSide.LEFT,
-                                target,
-                            )
+        with patch.object(manager, '_persist_single_cell_result', AsyncMock()) as persist_mock:
+            await manager._run_single_cell(
+                worker,
+                StorageModuleSide.LEFT,
+                target,
+            )
 
     target_scan_mock.assert_awaited_once_with(worker, StorageModuleSide.LEFT, target)
-    reference_scan_mock.assert_awaited_once_with(
-        worker,
-        StorageModuleSide.LEFT,
-        reuse_target=target,
-        reuse_analysis=analysis,
-        reuse_candidate=candidate,
-        reuse_detected_cell=detected_cell,
-    )
     persist_mock.assert_awaited_once_with(
         worker,
         StorageModuleSide.LEFT,
         analysis,
         target,
         candidate,
-        xy_reference_detected_cell=xy_reference_detected_cell,
-        z_reference_wall_depth_mm=8.0,
     )
-    persist_reference_mock.assert_called_once()
-    assert persist_reference_mock.call_args.args[1]['xy_reference_detected_cell']['tool_x_mm'] == 11.0
-    assert persist_reference_mock.call_args.args[1]['xy_reference_target'] == {'shelf_idx': 0, 'cell_idx': 1}
-    assert persist_reference_mock.call_args.args[1]['z_reference_target'] == {'shelf_idx': 0, 'cell_idx': 1}
 
 
 def test_select_z_stall_probe_picks_middle_cell_with_wall_depth() -> None:
@@ -1480,30 +1278,6 @@ def test_select_z_stall_probe_returns_none_without_wall_depths() -> None:
     )
 
     assert _select_z_stall_probe(analysis, {}) is None
-
-
-def test_build_reference_apply_metadata_omits_xy_when_reference_absent() -> None:
-    z_reference_target = laser_module.SingleCellRescanTarget(shelf_idx=0, cell_idx=1)
-
-    reference_apply = _build_reference_apply_metadata(
-        None,
-        8.0,
-        None,
-        z_reference_target,
-    )
-
-    assert reference_apply['z_reference_wall_depth_mm'] == 8.0
-    assert reference_apply['z_reference_target'] == {'shelf_idx': 0, 'cell_idx': 1}
-    assert 'xy_reference_detected_cell' not in reference_apply
-    assert 'xy_reference_target' not in reference_apply
-
-
-def test_build_reference_apply_metadata_empty_when_reference_less() -> None:
-    z_reference_target = laser_module.SingleCellRescanTarget(shelf_idx=0, cell_idx=1)
-
-    reference_apply = _build_reference_apply_metadata(None, None, None, z_reference_target)
-
-    assert reference_apply == {}
 
 
 @pytest.mark.asyncio

@@ -231,8 +231,6 @@ class ApplyRunnerMixin:
         side: StorageModuleSide,
         analysis: Any,
         shelf_idx: int,
-        xy_reference_detected_cell: Any | None = None,
-        z_reference_wall_depth_mm: float | None = None,
     ) -> None:
         await self._update_snapshot(
             state="applying",
@@ -259,11 +257,6 @@ class ApplyRunnerMixin:
             scan_config=scan_config,
             side=side,
             target_shelf_idx=shelf_idx,
-            current_stage_extension_mm=float(
-                getattr(config.robot.tool.parameters, _side_to_stage_extension_param_name(side))
-            ),
-            xy_reference_detected_cell=xy_reference_detected_cell,
-            z_reference_wall_depth_mm=z_reference_wall_depth_mm,
             z_delta_override_mm=z_delta_override_mm,
         )
         worker._robot._grid = laser_module.load_grid(grid_path)
@@ -275,8 +268,6 @@ class ApplyRunnerMixin:
         analysis: Any,
         target: laser_module.SingleCellRescanTarget,
         candidate: laser_module.GapCandidateRegion,
-        xy_reference_detected_cell: Any | None = None,
-        z_reference_wall_depth_mm: float | None = None,
     ) -> None:
         await self._update_snapshot(
             state="applying",
@@ -307,13 +298,7 @@ class ApplyRunnerMixin:
             target=target,
             side=side,
             detected_cell=detected_cell,
-            wall_depth_mm=float(analysis.wall_depth_mm),
             scan_config=scan_config,
-            current_stage_extension_mm=float(
-                getattr(config.robot.tool.parameters, _side_to_stage_extension_param_name(side))
-            ),
-            xy_reference_detected_cell=xy_reference_detected_cell,
-            z_reference_wall_depth_mm=z_reference_wall_depth_mm,
         )
         worker._robot._grid = laser_module.load_grid(grid_path)
 
