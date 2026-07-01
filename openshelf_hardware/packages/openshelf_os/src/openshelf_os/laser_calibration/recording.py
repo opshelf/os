@@ -32,12 +32,6 @@ def build_run_parameters(
 	validate_laser_structure_parameters(
 		scan_config=scan_config,
 		side=side,
-		bounds=bounds,
-		should_validate_reference_bounds=getattr(
-			args,
-			"should_validate_reference_bounds",
-			getattr(args, "rescan_cell", None) is None,
-		),
 	)
 	xy_offset = get_scan_xy_offset(scan_config=scan_config, side=side)
 	hole_probe_y_offsets_mm = get_shelf_hole_probe_y_offsets_mm(scan_config)

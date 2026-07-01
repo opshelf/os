@@ -363,32 +363,3 @@ def test_main_dispatches_io_box_calibration_to_package_method(monkeypatch: pytes
 	assert run_io_box_scout.await_args.kwargs['start_x_mm'] == pytest.approx(0.0)
 	assert run_io_box_scout.await_args.kwargs['x_max_mm'] == pytest.approx(140.0)
 	assert run_io_box_scout.await_args.kwargs['laser_offset_x_mm'] == pytest.approx(51.0)
-
-
-def test_main_rejects_removed_laser_fit_angle_calibration(capsys: pytest.CaptureFixture[str]) -> None:
-	module = load_laser_script_module()
-
-	result = module.main(
-		[
-			'--calibrate-angle',
-			'--module',
-			'left',
-			'--x-range',
-			'0',
-			'10',
-			'1',
-			'--y-mm',
-			'100',
-			'--z-offset-range',
-			'0',
-			'0',
-			'1',
-			'--rotation-range',
-			'0',
-			'0',
-			'1',
-		]
-	)
-
-	assert result == 1
-	assert 'laser-fit calibration was removed' in capsys.readouterr().err

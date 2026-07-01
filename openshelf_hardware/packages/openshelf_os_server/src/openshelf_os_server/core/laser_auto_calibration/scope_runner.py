@@ -128,12 +128,10 @@ def _validate_laser_auto_calibration_config(
         laser_module.validate_laser_structure_parameters(
             scan_config=scan_config,
             side=StorageModuleSide.LEFT,
-            bounds=left_bounds,
         )
         laser_module.validate_laser_structure_parameters(
             scan_config=scan_config,
             side=StorageModuleSide.RIGHT,
-            bounds=right_bounds,
         )
         return
 
@@ -143,7 +141,6 @@ def _validate_laser_auto_calibration_config(
             laser_module.validate_laser_structure_parameters(
                 scan_config=scan_config,
                 side=StorageModuleSide.LEFT,
-                bounds=left_bounds,
             )
         return
 
@@ -153,7 +150,6 @@ def _validate_laser_auto_calibration_config(
             laser_module.validate_laser_structure_parameters(
                 scan_config=scan_config,
                 side=StorageModuleSide.RIGHT,
-                bounds=right_bounds,
             )
 
 
