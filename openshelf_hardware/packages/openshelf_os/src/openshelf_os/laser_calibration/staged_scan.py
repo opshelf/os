@@ -1095,6 +1095,7 @@ def apply_single_shelf_analysis(
 	current_stage_extension_mm: float = 43.0,
 	xy_reference_detected_cell: ScanDetectedCell | None = None,
 	z_reference_wall_depth_mm: float | None = None,
+	z_delta_override_mm: float | None = None,
 	) -> None:
 	if len(analysis.shelves) == 0:
 		raise ValueError("No tray openings detected from scan")
@@ -1158,7 +1159,17 @@ def apply_single_shelf_analysis(
 				delta_x_mm=delta_x_mm,
 				delta_y_mm=delta_y_mm,
 			)
-	if z_reference_wall_depth_mm is not None:
+	if z_delta_override_mm is not None:
+		apply_wall_depth_z_offsets(
+			analysis=analysis,
+			scanned_shelves=[scanned_shelf],
+			metadata_path=str(analysis.metadata_path),
+			scan_config=scan_config,
+			side=side,
+			current_stage_extension_mm=current_stage_extension_mm,
+			z_delta_override_mm=z_delta_override_mm,
+		)
+	elif z_reference_wall_depth_mm is not None:
 		apply_wall_depth_z_offsets(
 			analysis=analysis,
 			scanned_shelves=[scanned_shelf],
