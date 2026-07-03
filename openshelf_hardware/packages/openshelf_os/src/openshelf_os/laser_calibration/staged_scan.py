@@ -1129,11 +1129,10 @@ def apply_analysis(
 	if len(analysis.shelves) == 0:
 		raise ValueError("No tray openings detected from scan")
 
-	existing_shelves = grid.get_side(side)
 	scanned_shelves = build_shelves_from_scan(
 		side=side,
 		analysis=analysis,
-		existing_shelves=existing_shelves,
+		existing_shelves=None,
 	)
 	apply_xy_reference_offsets(
 		scanned_shelves=scanned_shelves,

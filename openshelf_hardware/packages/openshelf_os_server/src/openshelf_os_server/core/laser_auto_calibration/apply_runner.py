@@ -182,15 +182,10 @@ class ApplyRunnerMixin:
             if len(completed_result.analysis.shelves) == 0:
                 raise ValueError("No tray openings detected from scan")
 
-            existing_shelves = left_module
-
-            if completed_result.side == StorageModuleSide.RIGHT:
-                existing_shelves = right_module
-
             scanned_shelves = laser_module.build_shelves_from_scan(
                 side=completed_result.side,
                 analysis=completed_result.analysis,
-                existing_shelves=existing_shelves,
+                existing_shelves=None,
             )
             laser_module.apply_xy_reference_offsets(
                 scanned_shelves=scanned_shelves,
