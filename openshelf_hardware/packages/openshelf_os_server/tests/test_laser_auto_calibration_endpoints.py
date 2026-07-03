@@ -32,7 +32,7 @@ from openshelf_os_server.core.laser_auto_calibration.angle_runner import (
     _build_stage_stall_validation_rotation_positions,
     _select_stage_stall_best_summary,
 )
-from openshelf_os_server.core.laser_auto_calibration.apply_runner import _select_z_stall_probe
+from openshelf_os_server.core.laser_auto_calibration.apply_runner import _select_z_stall_probes
 from openshelf_os_server.core.laser_auto_calibration.scope_runner import (
     _validate_laser_auto_calibration_config,
 )
@@ -1254,19 +1254,20 @@ def test_select_z_stall_probe_picks_middle_cell_with_wall_depth() -> None:
         ]
     )
     candidate_lookup = {
+        (0, 0): SimpleNamespace(wall_depth_mm=10.5),
         (1, 0): SimpleNamespace(wall_depth_mm=10.0),
         (1, 1): SimpleNamespace(wall_depth_mm=9.9),
     }
 
-    result = _select_z_stall_probe(analysis, candidate_lookup)
+    result = _select_z_stall_probes(analysis, candidate_lookup)
 
-    assert result is not None
-    cell, wall_depth_mm = result
-    assert (cell.shelf_idx, cell.cell_idx) == (1, 1)
-    assert wall_depth_mm == 9.9
+    assert [(cell.shelf_idx, cell.cell_idx, wall_depth_mm) for cell, wall_depth_mm in result] == [
+        (1, 1, 9.9),
+        (0, 0, 10.5),
+    ]
 
 
-def test_select_z_stall_probe_returns_none_without_wall_depths() -> None:
+def test_select_z_stall_probes_returns_empty_without_wall_depths() -> None:
 
     analysis = SimpleNamespace(
         shelves=[
@@ -1277,7 +1278,7 @@ def test_select_z_stall_probe_returns_none_without_wall_depths() -> None:
         ]
     )
 
-    assert _select_z_stall_probe(analysis, {}) is None
+    assert _select_z_stall_probes(analysis, {}) == []
 
 
 @pytest.mark.asyncio
