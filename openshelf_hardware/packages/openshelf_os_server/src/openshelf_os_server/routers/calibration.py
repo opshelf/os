@@ -255,6 +255,7 @@ class SaveRequest(BaseModel):
 	y: float
 	z_offset: float
 	status: Optional[str] = None
+	is_manual: Optional[bool] = None
 
 
 class CalibrationStatusResponse(BaseModel):
@@ -1112,6 +1113,9 @@ async def save_calibration(request: SaveRequest):
 	)
 
 	cell.calibration_point = new_cal
+
+	if request.is_manual is not None:
+		cell.is_manual = request.is_manual
 
 	if request.status is not None:
 		try:

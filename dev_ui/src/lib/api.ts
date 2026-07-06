@@ -189,6 +189,7 @@ export interface Cell {
 	item: unknown | null;
 	calibration_point: CalibrationPoint | null;
 	dimensions: Dimensions;
+	is_manual?: boolean;
 	empty: boolean;
 }
 
@@ -336,7 +337,8 @@ export async function saveCalibration(
 	x: number,
 	y: number,
 	zOffset: number,
-	status?: string
+	status?: string,
+	isManual?: boolean
 ): Promise<void> {
 	const payload: Record<string, unknown> = {
 		side,
@@ -349,6 +351,10 @@ export async function saveCalibration(
 
 	if (status !== undefined) {
 		payload.status = status;
+	}
+
+	if (isManual !== undefined) {
+		payload.is_manual = isManual;
 	}
 
 	await apiFetch('/calibration/save', {

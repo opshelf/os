@@ -32,7 +32,11 @@ from openshelf_os_server.core.laser_auto_calibration.angle_runner import (
     _build_stage_stall_validation_rotation_positions,
     _select_stage_stall_best_summary,
 )
-from openshelf_os_server.core.laser_auto_calibration.apply_runner import _select_z_stall_probes
+from openshelf_os_server.core.laser_auto_calibration.apply_runner import (
+    _preserve_manual_cells,
+    _select_z_stall_probes,
+)
+from openshelf_os.storage import Cell, CalibrationCoordinate, CellStatus, Dimensions, Shelf
 from openshelf_os_server.core.laser_auto_calibration.scope_runner import (
     _validate_laser_auto_calibration_config,
 )
@@ -1279,6 +1283,43 @@ def test_select_z_stall_probes_returns_empty_without_wall_depths() -> None:
     )
 
     assert _select_z_stall_probes(analysis, {}) == []
+
+
+def _manual_cell(cell_idx: int, x: float, y: float, is_manual: bool = False) -> Cell:
+    return Cell(
+        cell_idx=cell_idx,
+        status=CellStatus.AVAILABLE,
+        item=None,
+        calibration_point=CalibrationCoordinate(x=x, y=y, z_offset=10.0, s=0),
+        dimensions=Dimensions(width=40.0, height=50.0, length=60.0),
+        is_manual=is_manual,
+    )
+
+
+def _manual_shelf(shelf_idx: int, cells: list[Cell]) -> Shelf:
+    return Shelf(shelf_idx=shelf_idx, shelf_height=100.0, shelf_width=200.0, cells=cells)
+
+
+def test_preserve_manual_cells_reinserts_manual_and_renumbers() -> None:
+    scanned = [_manual_shelf(0, [_manual_cell(0, 100.0, 300.0), _manual_cell(1, 200.0, 300.0), _manual_cell(2, 300.0, 300.0)])]
+    existing = [_manual_shelf(0, [_manual_cell(0, 100.0, 300.0), _manual_cell(9, 400.0, 302.0, is_manual=True)])]
+
+    result = _preserve_manual_cells(scanned, existing)
+
+    cells = sorted(result[0].cells, key=lambda cell: cell.cell_idx)
+    assert [(c.cell_idx, round(c.calibration_point.x, 1), c.is_manual) for c in cells] == [
+        (0, 100.0, False),
+        (1, 200.0, False),
+        (2, 300.0, False),
+        (3, 400.0, True),
+    ]
+
+
+def test_preserve_manual_cells_noop_without_manual_cells() -> None:
+    scanned = [_manual_shelf(0, [_manual_cell(0, 100.0, 300.0)])]
+    existing = [_manual_shelf(0, [_manual_cell(0, 100.0, 300.0)])]
+
+    assert _preserve_manual_cells(scanned, existing) is scanned
 
 
 @pytest.mark.asyncio
