@@ -52,6 +52,17 @@ class BarcodeService:
         self._protocol = None
         self._runner_task: asyncio.Task | None = None
         self._stop_evt = asyncio.Event()
+        self._connected_evt = asyncio.Event()
+
+    async def wait_connected(self, timeout: float) -> bool:
+        if self._connected_evt.is_set():
+            return True
+
+        try:
+            await asyncio.wait_for(self._connected_evt.wait(), timeout=timeout)
+            return True
+        except asyncio.TimeoutError:
+            return False
 
     async def start(self):
         if self._runner_task is not None:
@@ -129,6 +140,7 @@ class BarcodeService:
 
                 self._transport, self._protocol = await coro
                 backoff = 0.5
+                self._connected_evt.set()
 
                 logger.info("Barcode scanner connected", extra={"port": port})
 
@@ -145,6 +157,7 @@ class BarcodeService:
 
                 backoff = min(max_backoff, backoff * 2)
             finally:
+                self._connected_evt.clear()
                 if self._transport:
                     self._transport.close()
                     self._transport = None
