@@ -70,6 +70,7 @@ class Cell(BaseModel):
 	item: Optional[CellItem]
 	calibration_point: Optional[CalibrationCoordinate]
 	dimensions: Dimensions
+	is_manual: bool = False
 
 	def clear(self) -> None:
 		if self.status == CellStatus.OCCUPIED:

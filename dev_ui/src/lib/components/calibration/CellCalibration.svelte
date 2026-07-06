@@ -71,6 +71,7 @@
 	let editX = $state<number>(0);
 	let editY = $state<number>(0);
 	let editZ = $state<number>(0);
+	let isManual = $state<boolean>(false);
 	let isExtending = $state<boolean>(false);
 	let stageExtensionValue = $state<number>(0);
 
@@ -318,6 +319,7 @@
 			matchingShelf.cells.find((cell) => cell.cell_idx === nextCell) ?? matchingShelf.cells[0];
 
 		selectedCell = matchingCell.cell_idx;
+		isManual = matchingCell.is_manual ?? false;
 	}
 
 	function didChangeSide(event: Event): void {
@@ -564,7 +566,9 @@
 				selectedCell,
 				currentPosition.x,
 				currentPosition.y,
-				currentPosition.z_offset
+				currentPosition.z_offset,
+				undefined,
+				isManual
 			);
 
 			storageGrid = await getStorageGrid();
@@ -635,7 +639,9 @@
 				selectedCell,
 				currentPosition.x,
 				currentPosition.y,
-				currentPosition.z_offset
+				currentPosition.z_offset,
+				undefined,
+				isManual
 			);
 
 			storageGrid = await getStorageGrid();
@@ -1013,6 +1019,15 @@
 				</select>
 			</div>
 		</div>
+
+		<label class="manual-toggle">
+			<input
+				type="checkbox"
+				bind:checked={isManual}
+				disabled={isSaving === true || isTesting === true}
+			/>
+			keep manual (exclude from auto-calibration)
+		</label>
 
 		<div class="action-buttons">
 			<button

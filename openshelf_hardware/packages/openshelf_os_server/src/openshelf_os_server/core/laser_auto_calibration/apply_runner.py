@@ -10,6 +10,81 @@ from openshelf_os.laser_calibration.angle.robot_ops import probe_z_until_stall
 from .models import *
 
 
+_MANUAL_SHELF_MATCH_TOLERANCE_MM = 60.0
+_MANUAL_CELL_MATCH_TOLERANCE_MM = 40.0
+
+
+def _shelf_center_y(shelf: Any) -> float | None:
+    ys = [float(cell.calibration_point.y) for cell in shelf.cells if cell.calibration_point is not None]
+
+    if len(ys) == 0:
+        return None
+
+    return sum(ys) / len(ys)
+
+
+def _preserve_manual_cells(scanned_shelves: list[Any], existing_shelves: list[Any]) -> list[Any]:
+    manual_groups: list[tuple[Any, list[Any]]] = []
+    for shelf in existing_shelves:
+        manual_cells = [
+            cell for cell in shelf.cells
+            if getattr(cell, "is_manual", False) is True and cell.calibration_point is not None
+        ]
+        if len(manual_cells) > 0:
+            manual_groups.append((shelf, manual_cells))
+
+    if len(manual_groups) == 0:
+        return scanned_shelves
+
+    result = list(scanned_shelves)
+    modified_shelf_ids: set[int] = set()
+
+    for source_shelf, manual_cells in manual_groups:
+        source_y = _shelf_center_y(source_shelf)
+        target = None
+
+        if source_y is not None:
+            within = [
+                (abs((_shelf_center_y(shelf) or 1e9) - source_y), shelf)
+                for shelf in result
+                if _shelf_center_y(shelf) is not None
+            ]
+            within = [pair for pair in within if pair[0] <= _MANUAL_SHELF_MATCH_TOLERANCE_MM]
+            if len(within) > 0:
+                target = min(within, key=lambda pair: pair[0])[1]
+
+        if target is None:
+            preserved = source_shelf.model_copy(deep=True)
+            preserved.cells = [cell.model_copy(deep=True) for cell in manual_cells]
+            result.append(preserved)
+            modified_shelf_ids.add(id(preserved))
+            continue
+
+        for manual_cell in manual_cells:
+            manual_x = float(manual_cell.calibration_point.x)
+            target.cells = [
+                cell for cell in target.cells
+                if cell.calibration_point is None
+                or abs(float(cell.calibration_point.x) - manual_x) > _MANUAL_CELL_MATCH_TOLERANCE_MM
+            ]
+            target.cells.append(manual_cell.model_copy(deep=True))
+        modified_shelf_ids.add(id(target))
+
+    for shelf in result:
+        if id(shelf) not in modified_shelf_ids:
+            continue
+        calibrated = sorted(
+            [cell for cell in shelf.cells if cell.calibration_point is not None],
+            key=lambda cell: float(cell.calibration_point.x),
+        )
+        uncalibrated = [cell for cell in shelf.cells if cell.calibration_point is None]
+        for idx, cell in enumerate(calibrated):
+            cell.cell_idx = idx
+        shelf.cells = calibrated + uncalibrated
+
+    return result
+
+
 def _select_z_stall_probes(analysis: Any, candidate_lookup: dict[tuple[int, int], Any]) -> list[tuple[Any, float]]:
     shelves = [shelf for shelf in analysis.shelves if len(shelf.cells) > 0]
 
@@ -206,6 +281,13 @@ class ApplyRunnerMixin:
                     metadata_path=str(completed_result.analysis.metadata_path),
                     z_delta_mm=z_delta_override_mm,
                 )
+
+            existing_side_shelves = (
+                list(source_grid.left_module)
+                if completed_result.side == StorageModuleSide.LEFT
+                else list(source_grid.right_module)
+            )
+            scanned_shelves = _preserve_manual_cells(scanned_shelves, existing_side_shelves)
 
             if completed_result.side == StorageModuleSide.LEFT:
                 left_module = scanned_shelves
