@@ -33,6 +33,7 @@ event_listener: Optional[RobotEventListener] = None
 robot_initialization_error: Optional[str] = None
 robot_initialization_error_type: Optional[str] = None
 CRITICAL_MOTOR_COMPONENTS = {"x_axis", "y_axis", "z_axis", "stage", "rotate", "door"}
+BARCODE_CONNECT_TIMEOUT_S = 5.0
 
 
 def _barcode_enabled() -> bool:
@@ -50,16 +51,16 @@ def _printer_device() -> str:
     return os.getenv("OPENSHELF_PRINTER_DEVICE", "/dev/usb/lp0")
 
 
-def _report_scanner_status(worker: r_worker.RobotWorker) -> None:
+async def _report_scanner_status(worker: r_worker.RobotWorker) -> None:
     if _barcode_enabled() is False:
         return
     tracker = get_init_tracker()
     try:
-        status = worker.get_scanner_status()
+        connected = await worker.wait_scanner_connected(BARCODE_CONNECT_TIMEOUT_S)
     except Exception as exc:
         tracker.report("barcode", "failed", reason=str(exc))
         return
-    if status.get("connected") is True:
+    if connected is True:
         tracker.report("barcode", "ready")
     else:
         tracker.report("barcode", "failed", reason="scanner not detected")
@@ -171,7 +172,7 @@ async def init_robot_worker() -> None:
         logger.info("Got Instance")
         await worker.connect()
         logger.info("Robot worker connected")
-        _report_scanner_status(worker)
+        await _report_scanner_status(worker)
         await worker.start()
         logger.info("Worker started")
 

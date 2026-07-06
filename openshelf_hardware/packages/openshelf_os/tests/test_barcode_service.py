@@ -61,6 +61,34 @@ async def test_reconnects_after_transport_connection_lost(monkeypatch: pytest.Mo
 
 
 @pytest.mark.asyncio
+async def test_wait_connected_resolves_after_transport_opens(monkeypatch: pytest.MonkeyPatch) -> None:
+    protocols: list[Any] = []
+
+    async def create_serial_connection(loop, protocol_factory, port, baudrate):
+        protocol = protocol_factory()
+        protocols.append(protocol)
+        return FakeTransport(), protocol
+
+    monkeypatch.setattr(
+        barcode_service.serial_asyncio,
+        "create_serial_connection",
+        create_serial_connection,
+        raising=False,
+    )
+
+    service = BarcodeService(port="/dev/scanner")
+    assert await service.wait_connected(timeout=0) is False
+
+    await service.start()
+
+    try:
+        assert await service.wait_connected(timeout=1) is True
+        assert len(protocols) == 1
+    finally:
+        await service.stop()
+
+
+@pytest.mark.asyncio
 async def test_anext_propagates_cancelled_error() -> None:
     service = BarcodeService(port="/dev/scanner")
     task = asyncio.create_task(service.__anext__())

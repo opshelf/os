@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import openshelf_os_server.core.robot as robot_module
 from openshelf_os_server.core.init_progress import get_init_tracker
@@ -20,37 +20,38 @@ def test_barcode_enabled_honors_env(monkeypatch):
     assert robot_module._barcode_enabled() is False
 
 
-def test_report_scanner_status_ready_when_connected(monkeypatch):
+async def test_report_scanner_status_ready_when_connected(monkeypatch):
     monkeypatch.delenv("OPENSHELF_DISABLE_BARCODE", raising=False)
     get_init_tracker().reset()
     worker = MagicMock()
-    worker.get_scanner_status.return_value = {"connected": True, "enabled": True}
+    worker.wait_scanner_connected = AsyncMock(return_value=True)
 
-    robot_module._report_scanner_status(worker)
+    await robot_module._report_scanner_status(worker)
 
     assert _phase_for("barcode") == "ready"
 
 
-def test_report_scanner_status_failed_when_not_detected(monkeypatch):
+async def test_report_scanner_status_failed_when_not_detected(monkeypatch):
     monkeypatch.delenv("OPENSHELF_DISABLE_BARCODE", raising=False)
     get_init_tracker().reset()
     worker = MagicMock()
-    worker.get_scanner_status.return_value = {"connected": False, "enabled": True}
+    worker.wait_scanner_connected = AsyncMock(return_value=False)
 
-    robot_module._report_scanner_status(worker)
+    await robot_module._report_scanner_status(worker)
 
     assert _phase_for("barcode") == "failed"
 
 
-def test_report_scanner_status_skipped_when_disabled(monkeypatch):
+async def test_report_scanner_status_skipped_when_disabled(monkeypatch):
     monkeypatch.setenv("OPENSHELF_DISABLE_BARCODE", "true")
     get_init_tracker().reset()
     worker = MagicMock()
+    worker.wait_scanner_connected = AsyncMock(return_value=True)
 
-    robot_module._report_scanner_status(worker)
+    await robot_module._report_scanner_status(worker)
 
     assert _phase_for("barcode") is None
-    worker.get_scanner_status.assert_not_called()
+    worker.wait_scanner_connected.assert_not_called()
 
 
 def test_report_printer_status_failed_when_device_missing(monkeypatch):

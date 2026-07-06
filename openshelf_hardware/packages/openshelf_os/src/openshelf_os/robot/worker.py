@@ -491,6 +491,12 @@ class RobotWorker:
             "enabled": self._should_enable_barcode(),
         }
 
+    async def wait_scanner_connected(self, timeout: float = 2.0) -> bool:
+        if self._barcode is None:
+            return False
+
+        return await self._barcode.wait_connected(timeout)
+
     def get_motor_names(self) -> Dict[str, List[str]]:
         return self._robot.get_motor_names()
 
