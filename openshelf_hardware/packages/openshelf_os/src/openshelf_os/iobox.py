@@ -132,15 +132,13 @@ class IOBox:
         if self._md is not None:
             try:
                 await self._md.configure()
-                if home_on_init is True:
-                    await self._md.home()
-                else:
+                if home_on_init is False:
                     self._emit_init("door", "ready")
             except Exception as e:
                 self._status = IOBoxStatus.ERROR
                 if isolate is False:
                     raise IOBoxError(f"IOBox configuration failed: {str(e)}") from e
-                self._logger.warning("init door config/home failed: %s", e)
+                self._logger.warning("init door config failed: %s", e)
         else:
             self._logger.info("Door motor disabled via config")
 

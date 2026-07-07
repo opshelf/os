@@ -140,6 +140,18 @@ async def test_home_isolate_does_not_report_rotate_dependency_when_rotate_failed
 
 
 @pytest.mark.asyncio
+async def test_iobox_configure_homes_door_once_via_home_door():
+    iobox = _make_iobox()
+    iobox._md = AsyncMock()
+
+    await iobox.configure(isolate=True, home_on_init=True)
+
+    iobox._md.configure.assert_awaited_once()
+    iobox._md.home.assert_not_awaited()
+    iobox.home_door.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_iobox_configure_keeps_scale_down_when_bus_unavailable():
     iobox = _make_iobox()
     events = []
