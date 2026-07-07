@@ -361,7 +361,7 @@ class StorageGrid(BaseModel):
 		return items
 
 	def find_best_slot_for_item(self, item: CellItem) -> Optional[StorageModuleCellLocation]:
-		possible_slots: List[Tuple[StorageModuleCellLocation, float]] = []
+		possible_slots: List[Tuple[StorageModuleCellLocation, Tuple[float, float, float, float, float]]] = []
 
 		for shelf in self.left_module:
 			for cell in shelf.cells:
@@ -370,9 +370,17 @@ class StorageGrid(BaseModel):
 					and cell.dimensions.length >= item.dimensions.length
 					and cell.dimensions.height >= item.dimensions.height
 				):
-					unused_space = (
-						cell.dimensions.width * cell.dimensions.height
-						- item.dimensions.width * item.dimensions.height
+					unused_volume = (
+						cell.dimensions.width * cell.dimensions.length * cell.dimensions.height
+						- item.dimensions.width * item.dimensions.length * item.dimensions.height
+					)
+					footprint_area = cell.dimensions.width * cell.dimensions.length
+					fit_score = (
+						footprint_area,
+						cell.dimensions.height,
+						cell.dimensions.width,
+						cell.dimensions.length,
+						unused_volume,
 					)
 
 					possible_slots.append(
@@ -382,7 +390,7 @@ class StorageGrid(BaseModel):
 								shelf_idx=shelf.shelf_idx,
 								cell_idx=cell.cell_idx,
 							),
-							unused_space,
+							fit_score,
 						)
 					)
 
@@ -393,9 +401,17 @@ class StorageGrid(BaseModel):
 					and cell.dimensions.length >= item.dimensions.length
 					and cell.dimensions.height >= item.dimensions.height
 				):
-					unused_space = (
-						cell.dimensions.width * cell.dimensions.height
-						- item.dimensions.width * item.dimensions.height
+					unused_volume = (
+						cell.dimensions.width * cell.dimensions.length * cell.dimensions.height
+						- item.dimensions.width * item.dimensions.length * item.dimensions.height
+					)
+					footprint_area = cell.dimensions.width * cell.dimensions.length
+					fit_score = (
+						footprint_area,
+						cell.dimensions.height,
+						cell.dimensions.width,
+						cell.dimensions.length,
+						unused_volume,
 					)
 
 					possible_slots.append(
@@ -405,7 +421,7 @@ class StorageGrid(BaseModel):
 								shelf_idx=shelf.shelf_idx,
 								cell_idx=cell.cell_idx,
 							),
-							unused_space,
+							fit_score,
 						)
 					)
 
