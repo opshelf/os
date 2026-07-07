@@ -23,6 +23,7 @@ from openshelf_os.laser_calibration import (
 	find_gap_segments_in_line,
 	find_gap_run_containing_position,
 	fit_z_delta_line,
+	resolve_z_delta_model,
 	GapCandidateRegion,
 	get_shelf_hole_probe_y_offsets_mm,
 	GridScanResult,
@@ -1508,6 +1509,37 @@ def test_fit_z_delta_line_implausible_tilt_collapses_to_constant() -> None:
 def test_fit_z_delta_line_empty_raises() -> None:
 	with pytest.raises(ValueError):
 		fit_z_delta_line([])
+
+
+def test_resolve_z_delta_model_corroborated_tilt_is_kept() -> None:
+	# Extremes imply a +2mm/824mm tilt; the mid probe lands on the line -> tilt kept.
+	intercept_mm, slope_per_mm = resolve_z_delta_model([(36.0, 4.0), (860.0, 6.0), (450.0, 5.0)])
+
+	assert slope_per_mm == pytest.approx(2.0 / 824.0)
+	assert intercept_mm + slope_per_mm * 36.0 == pytest.approx(4.0)
+
+
+def test_resolve_z_delta_model_uncorroborated_tilt_collapses_to_median_constant() -> None:
+	# The x=850 extreme stalled shallow (0.32) implying a steep tilt, but the mid probe
+	# (1.70) disagrees with that line by >0.5mm -> reject tilt, use the median delta.
+	intercept_mm, slope_per_mm = resolve_z_delta_model([(310.0, 1.77), (850.0, 0.32), (580.0, 1.70)])
+
+	assert slope_per_mm == 0.0
+	assert intercept_mm == pytest.approx(1.70)
+
+
+def test_resolve_z_delta_model_two_samples_without_interior_is_constant() -> None:
+	intercept_mm, slope_per_mm = resolve_z_delta_model([(36.0, 4.0), (860.0, 6.0)])
+
+	assert slope_per_mm == 0.0
+	assert intercept_mm == pytest.approx(5.0)
+
+
+def test_resolve_z_delta_model_single_sample_is_constant() -> None:
+	intercept_mm, slope_per_mm = resolve_z_delta_model([(400.0, 2.4)])
+
+	assert slope_per_mm == 0.0
+	assert intercept_mm == pytest.approx(2.4)
 
 
 def test_snap_shelf_cells_to_y_line_snaps_only_outliers() -> None:
