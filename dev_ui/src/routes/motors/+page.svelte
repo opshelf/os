@@ -901,38 +901,40 @@
 				</tr>
 				{#if motor.name === 'door'}
 					<tr>
-						<td colspan="5" class="door-actions">
-							<button type="button" on:click={() => didClickTestMotor('door')} disabled={isActionDisabled()}>TEST</button>
-							<button
-								type="button"
-								on:click={() => didClickHome('door')}
-								disabled={activeMotor !== null || doorAction !== null || movingMotor !== null || isTesting === true}
-							>home</button
-							>
-							<button
-								type="button"
-								on:click={() => didClickCrash('door')}
-								disabled={activeMotor !== null || doorAction !== null || movingMotor !== null || isTesting === true}
-							>crash</button
-							>
-							<button
-								type="button"
-								on:click={() => didClickClear('door')}
-								disabled={activeMotor !== null || doorAction !== null || movingMotor !== null || isTesting === true}
-							>clear</button
-							>
-							<button
-								type="button"
-								on:click={() => didClickDoor('open')}
-								disabled={doorAction !== null || activeMotor !== null || movingMotor !== null || isTesting === true}
-							>open</button
-							>
-							<button
-								type="button"
-								on:click={() => didClickDoor('close')}
-								disabled={doorAction !== null || activeMotor !== null || movingMotor !== null || isTesting === true}
-							>close</button
-							>
+						<td colspan="5">
+							<div class="door-actions">
+								<button type="button" on:click={() => didClickTestMotor('door')} disabled={isActionDisabled()}>TEST</button>
+								<button
+									type="button"
+									on:click={() => didClickHome('door')}
+									disabled={activeMotor !== null || doorAction !== null || movingMotor !== null || isTesting === true}
+								>home</button
+								>
+								<button
+									type="button"
+									on:click={() => didClickCrash('door')}
+									disabled={activeMotor !== null || doorAction !== null || movingMotor !== null || isTesting === true}
+								>crash</button
+								>
+								<button
+									type="button"
+									on:click={() => didClickClear('door')}
+									disabled={activeMotor !== null || doorAction !== null || movingMotor !== null || isTesting === true}
+								>clear</button
+								>
+								<button
+									type="button"
+									on:click={() => didClickDoor('open')}
+									disabled={doorAction !== null || activeMotor !== null || movingMotor !== null || isTesting === true}
+								>open</button
+								>
+								<button
+									type="button"
+									on:click={() => didClickDoor('close')}
+									disabled={doorAction !== null || activeMotor !== null || movingMotor !== null || isTesting === true}
+								>close</button
+								>
+							</div>
 						</td>
 					</tr>
 				{/if}
