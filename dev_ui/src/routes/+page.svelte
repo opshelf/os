@@ -16,6 +16,7 @@
 	import InitProgress from '$lib/components/InitProgress.svelte';
 
 	const apiBase = getApiBase();
+	const RESTART_BUTTON_RESET_MS = 15000;
 
 	let deviceId = '';
 	let lanIp = '';
@@ -23,6 +24,12 @@
 	let isHomingRobot = false;
 	let isUpdatingSafetyOverride = false;
 	let safetyOverrideError = '';
+	let homeOnInit = true;
+	let isLoadingHomeOnInit = true;
+	let isUpdatingHomeOnInit = false;
+	let homeOnInitError = '';
+	let isRestartingApi = false;
+	let restartApiError = '';
 	let componentUpdating: Record<SafetyComponent, boolean> = {
 		light_curtain: false,
 		cabinet_doors: false
@@ -153,6 +160,56 @@
 		}
 	}
 
+	async function loadHomeOnInit(): Promise<void> {
+		isLoadingHomeOnInit = true;
+		homeOnInitError = '';
+
+		try {
+			const data = await apiFetch<{ home_on_init: boolean }>('/system/home-on-init');
+			homeOnInit = data.home_on_init;
+		} catch (err) {
+			homeOnInitError = err instanceof Error ? err.message : 'failed to load homing setting';
+		} finally {
+			isLoadingHomeOnInit = false;
+		}
+	}
+
+	async function didClickHomeOnInit(): Promise<void> {
+		const shouldHomeOnInit = !homeOnInit;
+		isUpdatingHomeOnInit = true;
+		homeOnInitError = '';
+
+		try {
+			const data = await apiFetch<{ home_on_init: boolean }>('/system/home-on-init', {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ home_on_init: shouldHomeOnInit })
+			});
+			homeOnInit = data.home_on_init;
+		} catch (err) {
+			homeOnInitError = err instanceof Error ? err.message : 'failed to update homing setting';
+		} finally {
+			isUpdatingHomeOnInit = false;
+		}
+	}
+
+	async function didClickRestartApi(): Promise<void> {
+		isRestartingApi = true;
+		restartApiError = '';
+
+		try {
+			await apiFetch('/system/restart', {
+				method: 'POST'
+			});
+			setTimeout(() => {
+				isRestartingApi = false;
+			}, RESTART_BUTTON_RESET_MS);
+		} catch (err) {
+			restartApiError = err instanceof Error ? err.message : 'failed to restart api';
+			isRestartingApi = false;
+		}
+	}
+
 	function formatCommand(
 		command: Record<string, unknown> | null | undefined
 	): Array<{ field: string; value: string }> {
@@ -199,6 +256,7 @@
 
 	onMount(() => {
 		loadSystemInfo();
+		loadHomeOnInit();
 	});
 </script>
 
@@ -244,7 +302,15 @@
 		<tbody>
 			<tr>
 				<td>worker running</td>
-				<td>{$robotStatus.running ? 'yes' : 'no'}</td>
+				<td>
+					<div class="status-action-cell">
+						<span>{$robotStatus.running ? 'yes' : 'no'}</span>
+						<button disabled={isRestartingApi === true} onclick={didClickRestartApi}>RESTART</button>
+					</div>
+					{#if restartApiError !== ''}
+						<ErrorMessage message={restartApiError} />
+					{/if}
+				</td>
 			</tr>
 			<tr>
 				<td>io box</td>
@@ -296,13 +362,32 @@
 				</td>
 			</tr>
 		</tbody>
+	{/if}
 
-		<thead>
-			<tr>
-				<th colspan="2">control loop override</th>
-			</tr>
-		</thead>
-		<tbody>
+	<thead>
+		<tr>
+			<th colspan="2">control loop override</th>
+		</tr>
+	</thead>
+	<tbody>
+		<tr>
+			<td>automatic homing on initialization</td>
+			<td>
+				<div class="status-action-cell">
+					<span>{isLoadingHomeOnInit === true ? 'loading...' : homeOnInit ? 'enabled' : 'disabled'}</span>
+					<button
+						disabled={isLoadingHomeOnInit === true || isUpdatingHomeOnInit === true}
+						onclick={didClickHomeOnInit}
+					>
+						{homeOnInit ? 'DISABLE' : 'ENABLE'}
+					</button>
+				</div>
+				{#if homeOnInitError !== ''}
+					<ErrorMessage message={homeOnInitError} />
+				{/if}
+			</td>
+		</tr>
+		{#if $robotStatus}
 			<tr>
 				<td>bypass safety guard</td>
 				<td>
@@ -343,7 +428,10 @@
 					</td>
 				</tr>
 			{/each}
-		</tbody>
+		{/if}
+	</tbody>
+
+	{#if $robotStatus}
 
 		{#if $robotStatus.current_command}
 			<thead>

@@ -281,6 +281,42 @@
 		}
 	}
 
+	function clearTestResult(motorName: string): void {
+		const nextResults = { ...testResults };
+		delete nextResults[motorName];
+		testResults = nextResults;
+	}
+
+	async function didClickTestMotor(motorName: string): Promise<void> {
+		isTesting = true;
+		clearTestResult(motorName);
+		error = '';
+		message = '';
+
+		try {
+			await testSingleMotor(motorName);
+			message = `${motorName} test complete`;
+		} finally {
+			testingMotor = null;
+			isTesting = false;
+		}
+	}
+
+	async function didClickTestGripper(): Promise<void> {
+		isTesting = true;
+		clearTestResult('gripper');
+		error = '';
+		message = '';
+
+		try {
+			await testGripper();
+			message = 'gripper test complete';
+		} finally {
+			testingMotor = null;
+			isTesting = false;
+		}
+	}
+
 	async function didClickTestAll(): Promise<void> {
 		if (motors === null) {
 			return;
@@ -561,6 +597,13 @@
 					<td>
 						<button
 							type="button"
+							on:click={() => didClickTestMotor(motor.name)}
+							disabled={isActionDisabled()}
+						>
+							TEST
+						</button>
+						<button
+							type="button"
 							on:click={() => didClickHome(motor.name)}
 							disabled={activeMotor !== null ||
 								gripperAction !== null ||
@@ -667,6 +710,13 @@
 					<td>
 						<button
 							type="button"
+							on:click={() => didClickTestMotor(motor.name)}
+							disabled={isActionDisabled()}
+						>
+							TEST
+						</button>
+						<button
+							type="button"
 							on:click={() => didClickHome(motor.name)}
 							disabled={activeMotor !== null ||
 								gripperAction !== null ||
@@ -715,6 +765,13 @@
 				<td class="position-column">-</td>
 				<td>-</td>
 				<td>
+					<button
+						type="button"
+						on:click={didClickTestGripper}
+						disabled={isActionDisabled()}
+					>
+						TEST
+						</button>
 					<button
 						type="button"
 						on:click={() => didClickGripper('grip')}
@@ -806,59 +863,9 @@
 							go
 						</button>
 					</td>
-					<td>
-						{#if motor.name === 'door'}
-							<button
-								type="button"
-								on:click={() => didClickHome('door')}
-								disabled={activeMotor !== null ||
-									doorAction !== null ||
-									movingMotor !== null ||
-									isTesting === true}
-							>
-								home
-							</button>
-							<button
-								type="button"
-								on:click={() => didClickCrash('door')}
-								disabled={activeMotor !== null ||
-									doorAction !== null ||
-									movingMotor !== null ||
-									isTesting === true}
-							>
-								crash
-							</button>
-							<button
-								type="button"
-								on:click={() => didClickClear('door')}
-								disabled={activeMotor !== null ||
-									doorAction !== null ||
-									movingMotor !== null ||
-									isTesting === true}
-							>
-								clear
-							</button>
-							<button
-								type="button"
-								on:click={() => didClickDoor('open')}
-								disabled={doorAction !== null ||
-									activeMotor !== null ||
-									movingMotor !== null ||
-									isTesting === true}
-							>
-								open
-							</button>
-							<button
-								type="button"
-								on:click={() => didClickDoor('close')}
-								disabled={doorAction !== null ||
-									activeMotor !== null ||
-									movingMotor !== null ||
-									isTesting === true}
-							>
-								close
-							</button>
-						{:else}
+					{#if motor.name !== 'door'}
+						<td>
+							<button type="button" on:click={() => didClickTestMotor(motor.name)} disabled={isActionDisabled()}>TEST</button>
 							<button
 								type="button"
 								on:click={() => didClickHome(motor.name)}
@@ -889,9 +896,46 @@
 							>
 								clear
 							</button>
-						{/if}
-					</td>
+						</td>
+					{/if}
 				</tr>
+				{#if motor.name === 'door'}
+					<tr>
+						<td colspan="5" class="door-actions">
+							<button type="button" on:click={() => didClickTestMotor('door')} disabled={isActionDisabled()}>TEST</button>
+							<button
+								type="button"
+								on:click={() => didClickHome('door')}
+								disabled={activeMotor !== null || doorAction !== null || movingMotor !== null || isTesting === true}
+							>home</button
+							>
+							<button
+								type="button"
+								on:click={() => didClickCrash('door')}
+								disabled={activeMotor !== null || doorAction !== null || movingMotor !== null || isTesting === true}
+							>crash</button
+							>
+							<button
+								type="button"
+								on:click={() => didClickClear('door')}
+								disabled={activeMotor !== null || doorAction !== null || movingMotor !== null || isTesting === true}
+							>clear</button
+							>
+							<button
+								type="button"
+								on:click={() => didClickDoor('open')}
+								disabled={doorAction !== null || activeMotor !== null || movingMotor !== null || isTesting === true}
+							>open</button
+							>
+							<button
+								type="button"
+								on:click={() => didClickDoor('close')}
+								disabled={doorAction !== null || activeMotor !== null || movingMotor !== null || isTesting === true}
+							>close</button
+							>
+						</td>
+					</tr>
+				{/if}
 			{/each}
 		</tbody>
 	</table>
@@ -937,6 +981,11 @@
 	}
 
 	.section-heading span:last-child {
+		display: flex;
+		gap: 0.5rem;
+	}
+
+	.door-actions {
 		display: flex;
 		gap: 0.5rem;
 	}
