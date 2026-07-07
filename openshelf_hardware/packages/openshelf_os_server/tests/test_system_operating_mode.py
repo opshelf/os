@@ -9,6 +9,7 @@ import pytest
 
 from openshelf_os.common import OperatingMode
 from openshelf_os_server.routers.robot import inject_mode_field
+from openshelf_os_server.routers.system import _restart_process_id
 from openshelf_os_server.settings import get_operating_mode, clear_config_cache
 
 
@@ -163,6 +164,16 @@ class TestInjectModeField:
 		assert result["robot_status"] == {"storage": {}}
 		assert result["current_command"] is None
 		assert result["queue_length"] == 3
+
+
+class TestSystemRestartHelpers:
+	def test_restart_process_id_targets_container_init_in_docker(self) -> None:
+		with patch("openshelf_os_server.routers.system.os.path.exists", return_value=True):
+			assert _restart_process_id() == 1
+
+	def test_restart_process_id_targets_current_process_outside_docker(self) -> None:
+		with patch("openshelf_os_server.routers.system.os.path.exists", return_value=False):
+			assert _restart_process_id() == os.getpid()
 
 
 class TestSystemModeEndpoints:

@@ -42,6 +42,15 @@ class RestartResponse(BaseModel):
 	message: str
 
 
+def _restart_process_id() -> int:
+	if os.path.exists("/.dockerenv") is True:
+		return 1
+	return os.getpid()
+
+
+def _schedule_api_restart() -> None:
+	asyncio.get_running_loop().call_later(1.0, os.kill, _restart_process_id(), signal.SIGTERM)
+
 @router.get("/mode", response_model=ModeResponse, dependencies=[Depends(get_current_user)])
 async def get_mode() -> ModeResponse:
 	mode = get_operating_mode()
@@ -70,7 +79,7 @@ async def set_mode(request: ModeUpdateRequest) -> ModeUpdateResponse:
 	MODE_FILE.write_text(raw, encoding="utf-8")
 
 	logger.info("operating_mode_changed", previous=current.value, new=raw)
-	asyncio.get_running_loop().call_later(1.0, os.kill, os.getpid(), signal.SIGTERM)
+	_schedule_api_restart()
 
 	return ModeUpdateResponse(
 		mode=raw,
@@ -96,5 +105,5 @@ async def set_home_on_init(request: HomeOnInitUpdateRequest) -> HomeOnInitRespon
 @router.post("/restart", response_model=RestartResponse, dependencies=[Depends(get_current_user)])
 async def restart_api() -> RestartResponse:
 	logger.info("api_restart_requested")
-	asyncio.get_running_loop().call_later(1.0, os.kill, os.getpid(), signal.SIGTERM)
+	_schedule_api_restart()
 	return RestartResponse(message="Restarting API container...")
