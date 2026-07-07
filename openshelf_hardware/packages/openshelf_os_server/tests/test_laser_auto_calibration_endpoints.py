@@ -1236,7 +1236,7 @@ async def test_run_single_cell_uses_seeded_cell_rescan() -> None:
     )
 
 
-def test_select_z_stall_probe_picks_middle_cell_with_wall_depth() -> None:
+def test_select_z_stall_probes_returns_x_extremes_middle_shelf_first() -> None:
 
     analysis = SimpleNamespace(
         shelves=[
@@ -1265,7 +1265,10 @@ def test_select_z_stall_probe_picks_middle_cell_with_wall_depth() -> None:
 
     result = _select_z_stall_probes(analysis, candidate_lookup)
 
+    # Middle shelf (idx 1) first, then its lowest-X and highest-X cells that have a
+    # wall depth (cell_idx 2 is skipped as it has none), then shelf 0's single valid cell.
     assert [(cell.shelf_idx, cell.cell_idx, wall_depth_mm) for cell, wall_depth_mm in result] == [
+        (1, 0, 10.0),
         (1, 1, 9.9),
         (0, 0, 10.5),
     ]

@@ -101,15 +101,27 @@ def _select_z_stall_probes(analysis: Any, candidate_lookup: dict[tuple[int, int]
             shelf_sequence.append(ordered_shelves[middle - step])
 
     probes: list[tuple[Any, float]] = []
+    seen_cells: set[tuple[int, int]] = set()
     for shelf in shelf_sequence:
-        ordered_cells = sorted(shelf.cells, key=lambda cell: float(cell.center_x_mm))
-        cell_middle = len(ordered_cells) // 2
-        cell_order = ordered_cells[cell_middle:] + ordered_cells[:cell_middle]
-        for cell in cell_order:
-            candidate = candidate_lookup.get((cell.shelf_idx, cell.cell_idx))
-            if candidate is not None and candidate.wall_depth_mm is not None and float(candidate.wall_depth_mm) > 0.0:
-                probes.append((cell, float(candidate.wall_depth_mm)))
-                break
+        valid_cells = [
+            (cell, float(candidate_lookup[(cell.shelf_idx, cell.cell_idx)].wall_depth_mm))
+            for cell in sorted(shelf.cells, key=lambda cell: float(cell.center_x_mm))
+            if candidate_lookup.get((cell.shelf_idx, cell.cell_idx)) is not None
+            and candidate_lookup[(cell.shelf_idx, cell.cell_idx)].wall_depth_mm is not None
+            and float(candidate_lookup[(cell.shelf_idx, cell.cell_idx)].wall_depth_mm) > 0.0
+        ]
+
+        if len(valid_cells) == 0:
+            continue
+
+        # Probe both X extremes of each shelf so a left/right rack tilt can be fitted;
+        # the middle shelf comes first, so the two ends of the best shelf are tried first.
+        for cell, wall_depth_mm in (valid_cells[0], valid_cells[-1]):
+            cell_key = (cell.shelf_idx, cell.cell_idx)
+            if cell_key in seen_cells:
+                continue
+            seen_cells.add(cell_key)
+            probes.append((cell, wall_depth_mm))
 
     return probes
 
@@ -120,10 +132,13 @@ class ApplyRunnerMixin:
         worker: RobotWorker,
         side: StorageModuleSide,
         analysis: Any,
-    ) -> float:
+    ) -> tuple[float, float]:
         config = get_root_config()
         scan_config = config.robot.grid.scan
         tool = worker._robot._tool
+
+        xy_offset = laser_module.get_scan_xy_offset(scan_config=scan_config, side=side)
+        offset_x_mm = 0.0 if xy_offset is None else float(xy_offset[0])
 
         metadata = laser_module.load_json_file(Path(str(analysis.metadata_path)))
         candidates = laser_module.load_candidates_from_metadata(metadata)
@@ -158,6 +173,7 @@ class ApplyRunnerMixin:
             f"stage_extension_mm={stage_extension_mm:.2f} candidate_cells={len(probes)}"
         )
 
+        samples: list[tuple[int, float, float]] = []
         last_reason = "none"
         for detected_cell, probe_wall_depth_mm in probes:
             probe_x_mm = float(detected_cell.tool_x_mm) + float(scan_config.z_stall_probe_x_shift_mm)
@@ -202,19 +218,56 @@ class ApplyRunnerMixin:
 
             z_offset_anchor_mm = z_contact_mm - float(z_place) + float(scan_config.z_stall_tray_engagement_mm)
             z_delta_mm = z_offset_anchor_mm - probe_wall_depth_mm
+            sample_x_mm = float(detected_cell.tool_x_mm) + offset_x_mm
+            samples.append((detected_cell.shelf_idx, sample_x_mm, z_delta_mm))
             laser_module.print_status(
-                f"z_stall_anchor=applied side={side_name} probe={detected_cell.shelf_idx}:{detected_cell.cell_idx} "
-                f"z_contact_mm={z_contact_mm:.3f} z_place_mm={float(z_place):.3f} "
+                f"z_stall_anchor=sample side={side_name} probe={detected_cell.shelf_idx}:{detected_cell.cell_idx} "
+                f"grab_x_mm={sample_x_mm:.3f} z_contact_mm={z_contact_mm:.3f} z_place_mm={float(z_place):.3f} "
                 f"tray_mm={float(scan_config.z_stall_tray_engagement_mm):.3f} "
                 f"probe_wall_depth_mm={probe_wall_depth_mm:.3f} anchor_z_offset_mm={z_offset_anchor_mm:.3f} "
                 f"delta_mm={z_delta_mm:.3f}"
             )
-            return z_delta_mm
 
-        raise ValueError(
-            f"z stall anchor: no probe cell contacted a wall across {len(probes)} shelves "
-            f"(last reason={last_reason}, stage_extension_mm={stage_extension_mm:.2f})"
+            # A trustworthy X slope must come from a single shelf (same Y); break as soon
+            # as one shelf yields a wide enough X pair, so we do not over-probe.
+            shelf_sample_xs = [x for shelf_idx, x, _ in samples if shelf_idx == detected_cell.shelf_idx]
+            if len(shelf_sample_xs) >= 2 and (max(shelf_sample_xs) - min(shelf_sample_xs)) >= laser_module.Z_DELTA_TILT_MIN_X_SPAN_MM:
+                break
+
+        if len(samples) == 0:
+            raise ValueError(
+                f"z stall anchor: no probe cell contacted a wall across {len(probes)} shelves "
+                f"(last reason={last_reason}, stage_extension_mm={stage_extension_mm:.2f})"
+            )
+
+        # Fit the X slope only from the single shelf that gives the widest X pair, so
+        # vertical/inter-shelf Z differences never leak into the tilt; otherwise fall
+        # back to a constant delta averaged over every successful probe.
+        samples_by_shelf: dict[int, list[tuple[float, float]]] = {}
+        for shelf_idx, sample_x_mm, sample_delta_mm in samples:
+            samples_by_shelf.setdefault(shelf_idx, []).append((sample_x_mm, sample_delta_mm))
+
+        def _sample_x_span(shelf_samples: list[tuple[float, float]]) -> float:
+            shelf_xs = [x for x, _ in shelf_samples]
+            return max(shelf_xs) - min(shelf_xs)
+
+        best_shelf_samples = max(samples_by_shelf.values(), key=_sample_x_span)
+        fit_x_span_mm = _sample_x_span(best_shelf_samples)
+
+        if len(best_shelf_samples) >= 2 and fit_x_span_mm >= laser_module.Z_DELTA_TILT_MIN_X_SPAN_MM:
+            intercept_mm, slope_per_mm = laser_module.fit_z_delta_line(best_shelf_samples)
+            fit_source = "single_shelf"
+        else:
+            all_deltas = [sample_delta_mm for _, _, sample_delta_mm in samples]
+            intercept_mm, slope_per_mm = sum(all_deltas) / len(all_deltas), 0.0
+            fit_source = "constant"
+
+        laser_module.print_status(
+            f"z_stall_anchor=fit side={side_name} source={fit_source} samples={len(samples)} "
+            f"shelves={len(samples_by_shelf)} x_span_mm={fit_x_span_mm:.1f} "
+            f"intercept_mm={intercept_mm:.3f} slope_per_mm={slope_per_mm:.5f}"
         )
+        return intercept_mm, slope_per_mm
 
     async def _persist_completed_results(
         self,
@@ -267,19 +320,21 @@ class ApplyRunnerMixin:
                 scan_config=scan_config,
                 side=completed_result.side,
             )
-            z_delta_override_mm: float | None = None
+            z_delta_model: tuple[float, float] | None = None
             if getattr(scan_config, "z_stall_anchor_enabled", False) is True:
-                z_delta_override_mm = await self._run_z_stall_anchor(
+                z_delta_model = await self._run_z_stall_anchor(
                     worker,
                     completed_result.side,
                     completed_result.analysis,
                 )
-            if z_delta_override_mm is not None:
+            if z_delta_model is not None:
+                z_delta_intercept_mm, z_delta_slope_per_mm = z_delta_model
                 laser_module.apply_wall_depth_z_offsets(
                     analysis=completed_result.analysis,
                     scanned_shelves=scanned_shelves,
                     metadata_path=str(completed_result.analysis.metadata_path),
-                    z_delta_mm=z_delta_override_mm,
+                    z_delta_mm=z_delta_intercept_mm,
+                    z_delta_slope_per_mm=z_delta_slope_per_mm,
                 )
 
             existing_side_shelves = (
@@ -344,9 +399,9 @@ class ApplyRunnerMixin:
         scan_config = config.robot.grid.scan
         grid_path = Path(resolve_grid_path(config))
         grid = laser_module.load_grid(grid_path)
-        z_delta_override_mm: float | None = None
+        z_delta_model: tuple[float, float] | None = None
         if getattr(scan_config, "z_stall_anchor_enabled", False) is True:
-            z_delta_override_mm = await self._run_z_stall_anchor(worker, side, analysis)
+            z_delta_model = await self._run_z_stall_anchor(worker, side, analysis)
         laser_module.apply_single_shelf_analysis(
             analysis=analysis,
             grid=grid,
@@ -354,7 +409,8 @@ class ApplyRunnerMixin:
             scan_config=scan_config,
             side=side,
             target_shelf_idx=shelf_idx,
-            z_delta_override_mm=z_delta_override_mm,
+            z_delta_override_mm=None if z_delta_model is None else z_delta_model[0],
+            z_delta_slope_per_mm=0.0 if z_delta_model is None else z_delta_model[1],
         )
         worker._robot._grid = laser_module.load_grid(grid_path)
 

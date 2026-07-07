@@ -22,6 +22,7 @@ from openshelf_os.laser_calibration import (
 	find_first_positive_run_segment,
 	find_gap_segments_in_line,
 	find_gap_run_containing_position,
+	fit_z_delta_line,
 	GapCandidateRegion,
 	get_shelf_hole_probe_y_offsets_mm,
 	GridScanResult,
@@ -1409,3 +1410,46 @@ async def test_run_with_temp_robot_config_skips_stop_when_cancelled(tmp_path: Pa
 
 	robot.stop.assert_not_awaited()
 	robot.shutdown.assert_not_awaited()
+
+
+def test_fit_z_delta_line_single_sample_is_constant() -> None:
+	intercept_mm, slope_per_mm = fit_z_delta_line([(400.0, 2.384)])
+	assert slope_per_mm == 0.0
+	assert intercept_mm == pytest.approx(2.384)
+
+
+def test_fit_z_delta_line_two_points_reproduces_validated_ramp() -> None:
+	# Right-side hand-validated ramp: +2 mm of extra Z across an 824 mm X span.
+	intercept_mm, slope_per_mm = fit_z_delta_line([(36.0, 4.0), (860.0, 6.0)])
+
+	assert slope_per_mm == pytest.approx(2.0 / 824.0)
+	assert intercept_mm + slope_per_mm * 36.0 == pytest.approx(4.0)
+	assert intercept_mm + slope_per_mm * 860.0 == pytest.approx(6.0)
+	assert intercept_mm + slope_per_mm * 448.0 == pytest.approx(5.0)
+
+
+def test_fit_z_delta_line_short_x_span_collapses_to_constant() -> None:
+	intercept_mm, slope_per_mm = fit_z_delta_line([(400.0, 3.0), (500.0, 5.0)])
+
+	assert slope_per_mm == 0.0
+	assert intercept_mm == pytest.approx(4.0)
+
+
+def test_fit_z_delta_line_negligible_tilt_collapses_to_constant() -> None:
+	intercept_mm, slope_per_mm = fit_z_delta_line([(20.0, 3.0), (920.0, 3.3)])
+
+	assert slope_per_mm == 0.0
+	assert intercept_mm == pytest.approx(3.15)
+
+
+def test_fit_z_delta_line_implausible_tilt_collapses_to_constant() -> None:
+	# 5 mm of tilt across an 824 mm span exceeds the max plausible rack tilt.
+	intercept_mm, slope_per_mm = fit_z_delta_line([(36.0, 3.0), (860.0, 8.0)])
+
+	assert slope_per_mm == 0.0
+	assert intercept_mm == pytest.approx(5.5)
+
+
+def test_fit_z_delta_line_empty_raises() -> None:
+	with pytest.raises(ValueError):
+		fit_z_delta_line([])
