@@ -671,12 +671,60 @@ async def estimate_seeded_candidate_wall_depths(
 		)
 
 
+Z_DELTA_TILT_MIN_X_SPAN_MM = 300.0
+Z_DELTA_TILT_MIN_TOTAL_MM = 0.75
+Z_DELTA_TILT_MAX_TOTAL_MM = 4.0
+
+
+def fit_z_delta_line(samples: list[tuple[float, float]]) -> tuple[float, float]:
+	"""Fit z-delta as a first-order line delta(x) = intercept + slope * x.
+
+	Returns (intercept_mm, slope_per_mm). Collapses to a constant (slope 0) when
+	there is a single sample, when the probed X span is too short to trust a
+	slope, or when the fitted tilt is negligible across that span.
+	"""
+	if len(samples) == 0:
+		raise ValueError("z delta fit requires at least one sample")
+
+	xs = [float(x) for x, _ in samples]
+	deltas = [float(delta) for _, delta in samples]
+	count = len(deltas)
+	mean_delta = sum(deltas) / count
+
+	if count == 1:
+		return mean_delta, 0.0
+
+	x_span = max(xs) - min(xs)
+
+	if x_span < Z_DELTA_TILT_MIN_X_SPAN_MM:
+		return mean_delta, 0.0
+
+	mean_x = sum(xs) / count
+	sxx = sum((x - mean_x) ** 2 for x in xs)
+
+	if sxx <= 0.0:
+		return mean_delta, 0.0
+
+	sxy = sum((x - mean_x) * (delta - mean_delta) for x, delta in zip(xs, deltas))
+	slope = sxy / sxx
+	fitted_tilt_mm = abs(slope) * x_span
+
+	# Below the floor the tilt is noise; above the ceiling it is implausible for a
+	# rack (a bad stall on debris/tray-lip) -- collapse to a safe constant either way.
+	if fitted_tilt_mm < Z_DELTA_TILT_MIN_TOTAL_MM or fitted_tilt_mm > Z_DELTA_TILT_MAX_TOTAL_MM:
+		return mean_delta, 0.0
+
+	intercept = mean_delta - slope * mean_x
+	return intercept, slope
+
+
 def apply_wall_depth_z_offsets(
 	*,
 	analysis: Any,
 	scanned_shelves: list[Any],
 	metadata_path: str,
 	z_delta_mm: float,
+	z_delta_slope_per_mm: float = 0.0,
 	) -> None:
 	metadata_file = Path(metadata_path)
 
@@ -707,12 +755,13 @@ def apply_wall_depth_z_offsets(
 			if candidate is None or candidate.wall_depth_mm is None:
 				continue
 
-			cell.calibration_point.z_offset = float(candidate.wall_depth_mm) + float(z_delta_mm)
+			cell_delta_mm = float(z_delta_mm) + float(z_delta_slope_per_mm) * float(cell.calibration_point.x)
+			cell.calibration_point.z_offset = float(candidate.wall_depth_mm) + cell_delta_mm
 			updated_cell_count += 1
 
 	print_status(
-		f"z_offset_inference=applied source=stall_anchor delta_mm={float(z_delta_mm):.3f} "
-		f"updated_cells={updated_cell_count}"
+		f"z_offset_inference=applied source=stall_anchor intercept_mm={float(z_delta_mm):.3f} "
+		f"slope_per_mm={float(z_delta_slope_per_mm):.5f} updated_cells={updated_cell_count}"
 	)
 
 
@@ -906,6 +955,7 @@ def apply_single_shelf_analysis(
 	side: StorageModuleSide,
 	target_shelf_idx: int,
 	z_delta_override_mm: float | None = None,
+	z_delta_slope_per_mm: float = 0.0,
 	) -> None:
 	if len(analysis.shelves) == 0:
 		raise ValueError("No tray openings detected from scan")
@@ -963,6 +1013,7 @@ def apply_single_shelf_analysis(
 			scanned_shelves=[scanned_shelf],
 			metadata_path=str(analysis.metadata_path),
 			z_delta_mm=z_delta_override_mm,
+			z_delta_slope_per_mm=z_delta_slope_per_mm,
 		)
 	else:
 		print_status("z_offset_inference=skipped reason=partial_rescan_preserves_existing_z_offsets")
