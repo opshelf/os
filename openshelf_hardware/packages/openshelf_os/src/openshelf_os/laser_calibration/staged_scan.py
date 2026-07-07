@@ -718,6 +718,57 @@ def fit_z_delta_line(samples: list[tuple[float, float]]) -> tuple[float, float]:
 	return intercept, slope
 
 
+Z_DELTA_TILT_CORROBORATION_MM = 0.5
+
+
+def _median(values: list[float]) -> float:
+	ordered = sorted(values)
+	count = len(ordered)
+	mid = count // 2
+
+	if count % 2 == 1:
+		return ordered[mid]
+
+	return (ordered[mid - 1] + ordered[mid]) / 2.0
+
+
+def resolve_z_delta_model(samples: list[tuple[float, float]]) -> tuple[float, float]:
+	"""Resolve delta(x) = intercept + slope*x, requiring an interior probe to trust a tilt.
+
+	A tilt fit from only the two X extremes is unfalsifiable: a single shallow stall on
+	an end cell (caught on a rail/post) fabricates a slope. So a slope is accepted only
+	when at least one interior sample lies within Z_DELTA_TILT_CORROBORATION_MM of the
+	line through the two X extremes; otherwise we fall back to a constant (the median of
+	every sample), which one bad stall cannot drag.
+	"""
+	if len(samples) == 0:
+		raise ValueError("z delta resolve requires at least one sample")
+
+	deltas = [float(delta) for _, delta in samples]
+
+	if len(samples) == 1:
+		return deltas[0], 0.0
+
+	ordered = sorted(((float(x), float(delta)) for x, delta in samples), key=lambda pair: pair[0])
+	lo_x, lo_delta = ordered[0]
+	hi_x, hi_delta = ordered[-1]
+	intercept, slope = fit_z_delta_line([(lo_x, lo_delta), (hi_x, hi_delta)])
+
+	if slope == 0.0:
+		return _median(deltas), 0.0
+
+	interior = ordered[1:-1]
+	corroborated = any(
+		abs(delta - (intercept + slope * x)) <= Z_DELTA_TILT_CORROBORATION_MM
+		for x, delta in interior
+	)
+
+	if corroborated is False:
+		return _median(deltas), 0.0
+
+	return intercept, slope
+
+
 def apply_wall_depth_z_offsets(
 	*,
 	analysis: Any,

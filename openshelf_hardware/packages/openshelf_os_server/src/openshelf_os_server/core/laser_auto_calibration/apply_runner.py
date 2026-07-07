@@ -114,9 +114,15 @@ def _select_z_stall_probes(analysis: Any, candidate_lookup: dict[tuple[int, int]
         if len(valid_cells) == 0:
             continue
 
-        # Probe both X extremes of each shelf so a left/right rack tilt can be fitted;
-        # the middle shelf comes first, so the two ends of the best shelf are tried first.
-        for cell, wall_depth_mm in (valid_cells[0], valid_cells[-1]):
+        # Probe each shelf's two X extremes plus a middle cell: the extremes give the
+        # tilt span, the middle corroborates it (an end cell can stall shallow on a rail
+        # and fabricate a slope). Ordered lo -> mid -> hi so the mid is captured before
+        # the anchor breaks on the extremes.
+        picks = [valid_cells[0]]
+        if len(valid_cells) >= 3:
+            picks.append(valid_cells[len(valid_cells) // 2])
+        picks.append(valid_cells[-1])
+        for cell, wall_depth_mm in picks:
             cell_key = (cell.shelf_idx, cell.cell_idx)
             if cell_key in seen_cells:
                 continue
@@ -228,10 +234,10 @@ class ApplyRunnerMixin:
                 f"delta_mm={z_delta_mm:.3f}"
             )
 
-            # A trustworthy X slope must come from a single shelf (same Y); break as soon
-            # as one shelf yields a wide enough X pair, so we do not over-probe.
+            # A trustworthy X slope must come from one shelf (same Y) with an interior
+            # corroboration probe; break once a shelf yields >=3 wide-enough samples.
             shelf_sample_xs = [x for shelf_idx, x, _ in samples if shelf_idx == detected_cell.shelf_idx]
-            if len(shelf_sample_xs) >= 2 and (max(shelf_sample_xs) - min(shelf_sample_xs)) >= laser_module.Z_DELTA_TILT_MIN_X_SPAN_MM:
+            if len(shelf_sample_xs) >= 3 and (max(shelf_sample_xs) - min(shelf_sample_xs)) >= laser_module.Z_DELTA_TILT_MIN_X_SPAN_MM:
                 break
 
         if len(samples) == 0:
@@ -240,9 +246,10 @@ class ApplyRunnerMixin:
                 f"(last reason={last_reason}, stage_extension_mm={stage_extension_mm:.2f})"
             )
 
-        # Fit the X slope only from the single shelf that gives the widest X pair, so
-        # vertical/inter-shelf Z differences never leak into the tilt; otherwise fall
-        # back to a constant delta averaged over every successful probe.
+        # Resolve the tilt from the single shelf that best supports it (>=3 samples over a
+        # wide-enough X span, so an interior probe can corroborate the extremes). If no
+        # shelf qualifies, fall back to a constant. resolve_z_delta_model itself collapses
+        # to a median constant whenever the interior probe does not corroborate the tilt.
         samples_by_shelf: dict[int, list[tuple[float, float]]] = {}
         for shelf_idx, sample_x_mm, sample_delta_mm in samples:
             samples_by_shelf.setdefault(shelf_idx, []).append((sample_x_mm, sample_delta_mm))
@@ -251,15 +258,26 @@ class ApplyRunnerMixin:
             shelf_xs = [x for x, _ in shelf_samples]
             return max(shelf_xs) - min(shelf_xs)
 
-        best_shelf_samples = max(samples_by_shelf.values(), key=_sample_x_span)
-        fit_x_span_mm = _sample_x_span(best_shelf_samples)
+        tilt_capable = [
+            shelf_samples
+            for shelf_samples in samples_by_shelf.values()
+            if len(shelf_samples) >= 3 and _sample_x_span(shelf_samples) >= laser_module.Z_DELTA_TILT_MIN_X_SPAN_MM
+        ]
 
-        if len(best_shelf_samples) >= 2 and fit_x_span_mm >= laser_module.Z_DELTA_TILT_MIN_X_SPAN_MM:
-            intercept_mm, slope_per_mm = laser_module.fit_z_delta_line(best_shelf_samples)
-            fit_source = "single_shelf"
+        if len(tilt_capable) > 0:
+            best_shelf_samples = max(tilt_capable, key=_sample_x_span)
+            fit_x_span_mm = _sample_x_span(best_shelf_samples)
+            intercept_mm, slope_per_mm = laser_module.resolve_z_delta_model(best_shelf_samples)
+            fit_source = "single_shelf_tilt" if slope_per_mm != 0.0 else "single_shelf_constant"
         else:
-            all_deltas = [sample_delta_mm for _, _, sample_delta_mm in samples]
-            intercept_mm, slope_per_mm = sum(all_deltas) / len(all_deltas), 0.0
+            fit_x_span_mm = _sample_x_span(max(samples_by_shelf.values(), key=_sample_x_span))
+            sorted_deltas = sorted(sample_delta_mm for _, _, sample_delta_mm in samples)
+            median_idx = len(sorted_deltas) // 2
+            if len(sorted_deltas) % 2 == 1:
+                intercept_mm = sorted_deltas[median_idx]
+            else:
+                intercept_mm = (sorted_deltas[median_idx - 1] + sorted_deltas[median_idx]) / 2.0
+            slope_per_mm = 0.0
             fit_source = "constant"
 
         laser_module.print_status(
