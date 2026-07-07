@@ -982,7 +982,6 @@ def apply_single_shelf_analysis(
 		raise ValueError("Expected exactly one scanned shelf for single-shelf calibration")
 
 	scanned_shelf = scanned_shelves[0]
-	scanned_shelf.shelf_idx = target_shelf_idx
 	scanned_shelf.divider_width = float(target_shelf.divider_width)
 
 	xy_offset = get_scan_xy_offset(scan_config=scan_config, side=side)
@@ -1017,6 +1016,13 @@ def apply_single_shelf_analysis(
 		)
 	else:
 		print_status("z_offset_inference=skipped reason=partial_rescan_preserves_existing_z_offsets")
+
+	# Re-stamp to the target index only after the Z apply. apply_wall_depth_z_offsets keys
+	# its candidate lookup by the analysis shelf_idx (single-shelf analysis is re-indexed to
+	# 0), so the scanned shelf must still be shelf 0 while z_offsets are written; it then
+	# moves to its real slot for the merge.
+	scanned_shelf.shelf_idx = target_shelf_idx
+
 	left_module = list(grid.left_module)
 	right_module = list(grid.right_module)
 	merged_shelves = merge_scanned_shelf(

@@ -1377,6 +1377,66 @@ def test_apply_single_shelf_analysis_reference_less_uses_offset_and_stall_delta(
 	assert updated_point.y == pytest.approx(202.0)
 
 
+def test_apply_single_shelf_analysis_keeps_analysis_frame_during_z_apply(tmp_path: Path) -> None:
+	def make_shelf(idx: int) -> Shelf:
+		return Shelf(
+			shelf_idx=idx,
+			shelf_height=100.0,
+			shelf_width=200.0,
+			divider_width=13.0,
+			cells=[
+				Cell(
+					cell_idx=0,
+					status=CellStatus.AVAILABLE,
+					item=None,
+					calibration_point=CalibrationCoordinate(x=10.0, y=20.0, z_offset=30.0, s=0),
+					dimensions=Dimensions(width=40.0, height=50.0, length=60.0),
+				)
+			],
+		)
+
+	grid_path = tmp_path / 'grid.json'
+	grid = StorageGrid(
+		left_module=[make_shelf(0), make_shelf(1), make_shelf(2)],
+		right_module=[],
+		filename=str(grid_path),
+	)
+	grid.save()
+	scanned_shelf = make_shelf(2).model_copy(deep=True, update={'shelf_idx': 0})
+	analysis = SimpleNamespace(
+		shelves=[SimpleNamespace()],
+		metadata_path=str(tmp_path / 'metadata.json'),
+	)
+	scan_config = SimpleNamespace(
+		laser_offset_x_mm=0.0,
+		laser_offset_y_mm=0.0,
+		left_xy_offset=SimpleNamespace(x_mm=0.0, y_mm=0.0),
+	)
+	recorded: dict[str, int] = {}
+
+	def record_apply(*, analysis, scanned_shelves, metadata_path, z_delta_mm, z_delta_slope_per_mm=0.0) -> None:
+		recorded['shelf_idx'] = int(scanned_shelves[0].shelf_idx)
+
+	with patch('openshelf_os.laser_calibration.build_shelves_from_scan', return_value=[scanned_shelf]):
+		with patch('openshelf_os.laser_calibration.apply_wall_depth_z_offsets', side_effect=record_apply):
+			apply_single_shelf_analysis(
+				analysis=analysis,
+				grid=grid,
+				grid_path=grid_path,
+				scan_config=scan_config,
+				side=StorageModuleSide.LEFT,
+				target_shelf_idx=2,
+				z_delta_override_mm=4.5,
+			)
+
+	# The candidate lookup is keyed by the analysis shelf_idx (0); the scanned shelf must
+	# still be shelf 0 while z_offsets are written, otherwise the lookup misses and z is
+	# silently left unchanged for any target shelf != 0.
+	assert recorded['shelf_idx'] == 0
+	updated_grid = StorageGrid.load_from_file(str(grid_path))
+	assert updated_grid.left_module[2].shelf_idx == 2
+
+
 @pytest.mark.asyncio
 async def test_run_with_temp_robot_config_skips_stop_when_cancelled(tmp_path: Path) -> None:
 	robot = SimpleNamespace(
