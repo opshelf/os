@@ -1,5 +1,5 @@
 import asyncio
-from typing import Callable, Optional
+from typing import Awaitable, Callable, Optional
 
 from hardware.controller import SharedModbusController as Controller
 from hardware.motor import Motor
@@ -110,24 +110,32 @@ class IOBox:
         except Exception:
             pass
 
-    async def _safe_post_configure(self) -> None:
-        for label, step in (
-            ("home_door", self.home_door),
-            ("refresh_door_state", self.refresh_door_state),
-            ("configure_curtain", self._configure_curtain),
-        ):
+    async def _safe_post_configure(self, home_on_init: bool = True) -> None:
+        steps: list[tuple[str, Callable[[], Awaitable[object]]]] = []
+        if home_on_init is True:
+            steps.append(("home_door", self.home_door))
+        steps.extend(
+            (
+                ("refresh_door_state", self.refresh_door_state),
+                ("configure_curtain", self._configure_curtain),
+            )
+        )
+        for label, step in steps:
             try:
                 await step()
             except Exception as e:
                 self._logger.warning("init iobox %s failed: %s", label, e)
 
-    async def configure(self, isolate: bool = False, scale_bus_ready: bool = True):
+    async def configure(self, isolate: bool = False, scale_bus_ready: bool = True, home_on_init: bool = True):
         self._scale_bus_ready = scale_bus_ready
 
         if self._md is not None:
             try:
                 await self._md.configure()
-                await self._md.home()
+                if home_on_init is True:
+                    await self._md.home()
+                else:
+                    self._emit_init("door", "ready")
             except Exception as e:
                 self._status = IOBoxStatus.ERROR
                 if isolate is False:
@@ -150,9 +158,10 @@ class IOBox:
             self._status = IOBoxStatus.IDLE
 
         if isolate is True:
-            await self._safe_post_configure()
+            await self._safe_post_configure(home_on_init=home_on_init)
         else:
-            await self.home_door()
+            if home_on_init is True:
+                await self.home_door()
             await self.refresh_door_state()
             await self._configure_curtain()
 

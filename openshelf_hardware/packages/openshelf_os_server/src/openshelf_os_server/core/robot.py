@@ -97,6 +97,13 @@ def validate_robot_config() -> None:
         raise
 
 
+def _home_on_init_enabled() -> bool:
+    try:
+        return bool(get_root_config().robot_app.home_on_init)
+    except Exception:
+        return True
+
+
 async def init_robot_worker() -> None:
     """Bring up the robot in the background, reporting progress into the init tracker.
 
@@ -147,8 +154,9 @@ async def init_robot_worker() -> None:
         _capture_init_exception(e)
         return
 
+    home_on_init = _home_on_init_enabled()
     try:
-        await robot.configure(isolate=True)
+        await robot.configure(isolate=True, home_on_init=home_on_init)
         logger.info("Built Robot")
     except Exception as e:
         set_robot_initialization_error(e)
@@ -204,7 +212,13 @@ async def init_robot_worker() -> None:
 
     failed = tracker.failed_components()
     failed_motor_components = [component for component in failed if component in CRITICAL_MOTOR_COMPONENTS]
-    if failed_motor_components and worker is not None:
+    if home_on_init is False and worker is not None:
+        if failed_motor_components:
+            reason = "Startup failed for motion components: " + ", ".join(failed_motor_components)
+        else:
+            reason = "Automatic homing disabled on initialization"
+        worker.set_needs_home(reason, axes=sorted(CRITICAL_MOTOR_COMPONENTS))
+    elif failed_motor_components and worker is not None:
         reason = "Startup failed for motion components: " + ", ".join(failed_motor_components)
         worker.set_needs_home(reason, axes=failed_motor_components)
     if failed:

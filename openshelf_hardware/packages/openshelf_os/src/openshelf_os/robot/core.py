@@ -182,7 +182,7 @@ class Robot:
             return False
         return bool(getattr(curtain_cfg, "enabled", False))
 
-    async def configure(self, isolate: bool = False):
+    async def configure(self, isolate: bool = False, home_on_init: bool = True):
         self._emit_init("motor_bus", "connecting")
         try:
             await self._connect_controller("motor", self._motorbus, self._bus_settings["motor"])
@@ -224,8 +224,8 @@ class Robot:
         if gpio is not None:
             gpio.apply_initial_outputs()
 
-        await self._tool.configure(isolate=isolate)
-        await self._io.configure(isolate=isolate, scale_bus_ready=scale_bus_ready)
+        await self._tool.configure(isolate=isolate, home_on_init=home_on_init)
+        await self._io.configure(isolate=isolate, scale_bus_ready=scale_bus_ready, home_on_init=home_on_init)
         cabinet = getattr(self, "_cabinet", None)
         if cabinet is not None:
             self._emit_init("cabinet", "configuring")
