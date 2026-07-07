@@ -371,7 +371,7 @@
 	</thead>
 	<tbody>
 		<tr>
-			<td>automatic homing on initialization</td>
+			<td>homing on startup</td>
 			<td>
 				<div class="status-action-cell">
 					<span>{isLoadingHomeOnInit === true ? 'loading...' : homeOnInit ? 'enabled' : 'disabled'}</span>
