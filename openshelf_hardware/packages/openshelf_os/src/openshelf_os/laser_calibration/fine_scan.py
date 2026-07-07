@@ -400,6 +400,66 @@ def get_shelf_grouping_threshold_mm(
 	)
 
 
+Y_LINE_SNAP_RESIDUAL_MM = 1.5
+Y_LINE_SNAP_MIN_CELLS = 5
+
+
+def _fit_y_line_theil_sen(points: list[tuple[float, float]]) -> tuple[float, float]:
+	slopes: list[float] = []
+
+	for first_idx in range(len(points)):
+		for second_idx in range(first_idx + 1, len(points)):
+			delta_x = points[second_idx][0] - points[first_idx][0]
+
+			if abs(delta_x) < 1e-6:
+				continue
+
+			slopes.append((points[second_idx][1] - points[first_idx][1]) / delta_x)
+
+	median_y = float(np.median([y for _, y in points]))
+
+	if len(slopes) == 0:
+		return 0.0, median_y
+
+	slope = float(np.median(slopes))
+	intercept = float(np.median([y - slope * x for x, y in points]))
+	return slope, intercept
+
+
+def snap_shelf_cells_to_y_line(
+	cells: list[ScanDetectedCell],
+	*,
+	residual_mm: float = Y_LINE_SNAP_RESIDUAL_MM,
+	min_cells: int = Y_LINE_SNAP_MIN_CELLS,
+) -> None:
+	"""Snap per-cell Y outliers to the shelf's robust tilt line.
+
+	The vertical hole probe is a single, noisy Y measurement per cell. Fitting a
+	robust (Theil-Sen) line y(x) across the shelf preserves a real cross-shelf tilt
+	while pulling detection spikes that deviate by more than residual_mm back onto it.
+	"""
+	if len(cells) < min_cells:
+		return
+
+	points = [(float(cell.center_x_mm), float(cell.center_y_mm)) for cell in cells]
+	slope, intercept = _fit_y_line_theil_sen(points)
+
+	for cell in cells:
+		fitted_y_mm = intercept + slope * float(cell.center_x_mm)
+		residual_offset_mm = float(cell.center_y_mm) - fitted_y_mm
+
+		if abs(residual_offset_mm) <= residual_mm:
+			continue
+
+		print_status(
+			f"y_line_snap=applied center_x_mm={float(cell.center_x_mm):.1f} "
+			f"detected_y_mm={float(cell.center_y_mm):.2f} fitted_y_mm={fitted_y_mm:.2f} "
+			f"residual_mm={residual_offset_mm:.2f}"
+		)
+		cell.tool_y_mm = float(cell.tool_y_mm) - residual_offset_mm
+		cell.center_y_mm = fitted_y_mm
+
+
 def build_detected_shelves(
 	detected_cells: list[ScanDetectedCell],
 	*,
@@ -428,6 +488,7 @@ def build_detected_shelves(
 			continue
 
 		current_cells.sort(key=lambda current: current.center_x_mm)
+		snap_shelf_cells_to_y_line(current_cells)
 
 		for cell_idx, current_cell in enumerate(current_cells):
 			current_cell.shelf_idx = current_shelf.shelf_idx
@@ -451,6 +512,7 @@ def build_detected_shelves(
 		return shelves
 
 	current_cells.sort(key=lambda current: current.center_x_mm)
+	snap_shelf_cells_to_y_line(current_cells)
 
 	for cell_idx, current_cell in enumerate(current_cells):
 		current_cell.shelf_idx = current_shelf.shelf_idx

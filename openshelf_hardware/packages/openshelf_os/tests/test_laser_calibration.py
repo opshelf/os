@@ -32,6 +32,7 @@ from openshelf_os.laser_calibration import (
 	run_staged_scan,
 	run_with_temp_robot_config,
 	scan_shelf_scout_line,
+	snap_shelf_cells_to_y_line,
 	RIGHT_MODULE_ROTATION_SAFE_X_MM,
 	SingleCellRescanTarget,
 )
@@ -82,12 +83,6 @@ def test_laser_scan_config_rejects_legacy_field_names() -> None:
 			{
 				"step_mm": 0.5,
 				"settle_ms": 40,
-				"left_z_reference": {
-					"shelf_idx": 12,
-					"cell_idx": 0,
-					"z_offset_mm": 15.0,
-					"wall_depth_mm": 6.5,
-				},
 			}
 		)
 
@@ -1513,3 +1508,51 @@ def test_fit_z_delta_line_implausible_tilt_collapses_to_constant() -> None:
 def test_fit_z_delta_line_empty_raises() -> None:
 	with pytest.raises(ValueError):
 		fit_z_delta_line([])
+
+
+def test_snap_shelf_cells_to_y_line_snaps_only_outliers() -> None:
+	# Clean cells lie on y = 100 + 0.01*x; one cell (x=300) is a +7 mm detection spike.
+	cells = [
+		SimpleNamespace(center_x_mm=0.0, center_y_mm=100.0, tool_y_mm=50.0),
+		SimpleNamespace(center_x_mm=100.0, center_y_mm=101.0, tool_y_mm=51.0),
+		SimpleNamespace(center_x_mm=200.0, center_y_mm=102.0, tool_y_mm=52.0),
+		SimpleNamespace(center_x_mm=300.0, center_y_mm=110.0, tool_y_mm=60.0),
+		SimpleNamespace(center_x_mm=400.0, center_y_mm=104.0, tool_y_mm=54.0),
+	]
+
+	snap_shelf_cells_to_y_line(cells)
+
+	assert cells[0].center_y_mm == pytest.approx(100.0)
+	assert cells[1].center_y_mm == pytest.approx(101.0)
+	assert cells[4].center_y_mm == pytest.approx(104.0)
+	assert cells[3].center_y_mm == pytest.approx(103.0, abs=0.5)
+	# tool_y shifts by the same correction that moved center_y (110 -> 103 => -7).
+	assert cells[3].tool_y_mm == pytest.approx(53.0, abs=0.5)
+
+
+def test_snap_shelf_cells_to_y_line_skips_small_shelves() -> None:
+	cells = [
+		SimpleNamespace(center_x_mm=0.0, center_y_mm=100.0, tool_y_mm=100.0),
+		SimpleNamespace(center_x_mm=100.0, center_y_mm=120.0, tool_y_mm=120.0),
+		SimpleNamespace(center_x_mm=200.0, center_y_mm=102.0, tool_y_mm=102.0),
+	]
+
+	snap_shelf_cells_to_y_line(cells)
+
+	assert cells[1].center_y_mm == pytest.approx(120.0)
+
+
+def test_snap_shelf_cells_to_y_line_skips_four_cell_shelves() -> None:
+	cells = [
+		SimpleNamespace(center_x_mm=0.0, center_y_mm=100.0, tool_y_mm=100.0),
+		SimpleNamespace(center_x_mm=100.0, center_y_mm=101.0, tool_y_mm=101.0),
+		SimpleNamespace(center_x_mm=200.0, center_y_mm=102.0, tool_y_mm=102.0),
+		SimpleNamespace(center_x_mm=300.0, center_y_mm=112.0, tool_y_mm=112.0),
+	]
+
+	snap_shelf_cells_to_y_line(cells)
+
+	assert cells[0].center_y_mm == pytest.approx(100.0)
+	assert cells[1].center_y_mm == pytest.approx(101.0)
+	assert cells[2].center_y_mm == pytest.approx(102.0)
+	assert cells[3].center_y_mm == pytest.approx(112.0)
