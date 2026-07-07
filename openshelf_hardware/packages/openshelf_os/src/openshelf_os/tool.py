@@ -159,7 +159,19 @@ class Tool:
             self._logger.warning("init motor configure failed: %s", e)
             return False
 
-    async def configure(self, isolate: bool = False):
+    def _mark_configured_motors_ready(self, failed_config_motors: List[Motor]) -> None:
+        for component, motor in (
+            ("x_axis", self._mx),
+            ("y_axis", self._my),
+            ("z_axis", self._mg),
+            ("stage", self._ms),
+            ("rotate", self._mr),
+        ):
+            if motor is None or self._did_motor_configure_fail(motor, failed_config_motors) is True:
+                continue
+            self._emit_init(component, "ready")
+
+    async def configure(self, isolate: bool = False, home_on_init: bool = True):
         try:
             if self._params.gripper.enabled is True:
                 if isolate is True:
@@ -189,7 +201,10 @@ class Tool:
             else:
                 self._logger.info("Laser disabled via config")
 
-            await self.home(isolate=isolate, failed_config_motors=failed_config_motors)
+            if home_on_init is True:
+                await self.home(isolate=isolate, failed_config_motors=failed_config_motors)
+            else:
+                self._mark_configured_motors_ready(failed_config_motors)
         except Exception as e:
             await self._handle_fault(e)
 

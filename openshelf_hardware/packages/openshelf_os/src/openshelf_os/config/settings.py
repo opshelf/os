@@ -48,6 +48,7 @@ class DemoSettings(BaseModel):
 
 class RobotAppSettings(BaseModel):
     enabled: bool = False
+    home_on_init: bool = True
 
 
 class ScaleAppSettings(BaseModel):
