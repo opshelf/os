@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from openshelf_os.common import OperatingMode
 from openshelf_os_server.core.logging_config import get_logger
-from openshelf_os_server.settings import get_operating_mode, MODE_FILE
+from openshelf_os_server.settings import get_operating_mode, get_root_config, MODE_FILE, save_root_config
 from openshelf_os_server.routers.auth_deps import get_current_user
 
 logger = get_logger(__name__)
@@ -27,6 +27,18 @@ class ModeUpdateRequest(BaseModel):
 
 class ModeUpdateResponse(BaseModel):
 	mode: str
+	message: str
+
+
+class HomeOnInitResponse(BaseModel):
+	home_on_init: bool
+
+
+class HomeOnInitUpdateRequest(BaseModel):
+	home_on_init: bool
+
+
+class RestartResponse(BaseModel):
 	message: str
 
 
@@ -64,3 +76,25 @@ async def set_mode(request: ModeUpdateRequest) -> ModeUpdateResponse:
 		mode=raw,
 		message="Mode set. Restarting...",
 	)
+
+
+@router.get("/home-on-init", response_model=HomeOnInitResponse, dependencies=[Depends(get_current_user)])
+async def get_home_on_init() -> HomeOnInitResponse:
+	config = get_root_config()
+	return HomeOnInitResponse(home_on_init=config.robot_app.home_on_init)
+
+
+@router.put("/home-on-init", response_model=HomeOnInitResponse, dependencies=[Depends(get_current_user)])
+async def set_home_on_init(request: HomeOnInitUpdateRequest) -> HomeOnInitResponse:
+	config = get_root_config()
+	config.robot_app.home_on_init = request.home_on_init
+	save_root_config(config)
+	logger.info("home_on_init_changed", home_on_init=request.home_on_init)
+	return HomeOnInitResponse(home_on_init=config.robot_app.home_on_init)
+
+
+@router.post("/restart", response_model=RestartResponse, dependencies=[Depends(get_current_user)])
+async def restart_api() -> RestartResponse:
+	logger.info("api_restart_requested")
+	asyncio.get_running_loop().call_later(1.0, os.kill, os.getpid(), signal.SIGTERM)
+	return RestartResponse(message="Restarting API container...")
