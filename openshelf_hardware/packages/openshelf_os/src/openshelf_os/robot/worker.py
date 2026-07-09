@@ -822,7 +822,30 @@ class RobotWorker:
 
         self._track_background_task(_cleanup_after_stop(), name="emergency-stop-cleanup")
 
+    def _is_estop_monitor_enabled(self) -> bool:
+        config = getattr(self._robot, "_config", None)
+        if config is None:
+            return True
+
+        try:
+            emergency_stop_config = config.get("robot.emergency_stop", None)
+        except Exception:
+            emergency_stop_config = None
+
+        if emergency_stop_config is None:
+            return True
+
+        if isinstance(emergency_stop_config, dict):
+            return bool(emergency_stop_config.get("enabled", True))
+
+        return bool(getattr(emergency_stop_config, "enabled", True))
+
     async def _start_estop_monitor(self) -> None:
+        if self._is_estop_monitor_enabled() is False:
+            logging.info("Emergency stop monitor disabled: emergency_stop.enabled is false")
+            self._is_estop_active = False
+            return
+
         if self._estop_monitor_task is not None and self._estop_monitor_task.done() is False:
             return
 

@@ -370,6 +370,10 @@ class GpioConfig(BaseModel):
     pins: dict[str, GpioPinConfig] = Field(default_factory=_default_gpio_pins)
 
 
+class EmergencyStopConfig(BaseModel):
+    enabled: bool = True
+
+
 class CurtainConfig(BaseModel):
     enabled: bool = True
     poll_interval_s: float = Field(0.01, gt=0)
@@ -507,3 +511,4 @@ class Robot(BaseModel):
     io: IOBlock
     bus: Optional[RobotBus] = None
     gpio: Optional[GpioConfig] = None
+    emergency_stop: EmergencyStopConfig = Field(default_factory=EmergencyStopConfig)

@@ -232,6 +232,16 @@ class FailingGpio:
         raise RuntimeError(f"{name} unavailable")
 
 
+class EmergencyStopConfigWrapper:
+    def __init__(self, enabled):
+        self._enabled = enabled
+
+    def get(self, path, default=None):
+        if path == "robot.emergency_stop":
+            return {"enabled": self._enabled}
+        return default
+
+
 class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
     async def test_emergency_stop_sets_crash_state_and_pauses_curtain(self):
         from openshelf_os.robot.worker import RobotWorker
@@ -411,6 +421,24 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(task_cancelled.is_set())
         self.assertIsNone(worker._current_task)
         self.assertEqual(robot.shutdown_calls, 1)
+
+        RobotWorker._instance = None
+
+    async def test_estop_monitor_skips_when_disabled_in_config(self):
+        from openshelf_os.robot.worker import RobotWorker
+
+        robot = MockRobot()
+        robot._gpio = FailingGpio()
+        robot._config = EmergencyStopConfigWrapper(False)
+        RobotWorker._instance = None
+        worker = RobotWorker(robot)
+
+        await worker._start_estop_monitor()
+
+        self.assertFalse(worker._is_emergency_stopped)
+        self.assertFalse(worker._is_estop_active)
+        self.assertFalse(robot.safety_paused)
+        self.assertIsNone(worker._estop_monitor_task)
 
         RobotWorker._instance = None
 
