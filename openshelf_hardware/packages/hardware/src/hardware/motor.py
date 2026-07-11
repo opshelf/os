@@ -29,10 +29,6 @@ MOTOR_JOG_TIMEOUT = 10.0
 MOTOR_WAIT_TIMEOUT = 60.0
 POSITION_TOLERANCE_MM = 1.0
 HOME_APPROACH_TOLERANCE_MM = 1.0
-# Opt-in fast completion (laser scan sampling only). Must stay well below the smallest
-# scan step (1mm) so a stale is_complete -- where the encoder still reads the previous
-# position -- can never be mistaken for having reached the new target.
-FAST_COMPLETE_TOLERANCE_MM = 0.25
 DEFAULT_HOME_APPROACH_BACKOFF_MM = 5.0
 DEFAULT_BRAKE_OUTPUT_FUNCTION = 0xA1
 RELEASED_BRAKE_OUTPUT_FUNCTION = 0x24
@@ -796,7 +792,6 @@ class Motor():
         timeout: float = MOTOR_WAIT_TIMEOUT,
         homing: bool = False,
         should_abort: Callable[[], bool] | None = None,
-        fast_complete_at_target: bool = False,
     ) -> MotorStatus:
         start_time = time.monotonic()
         state = MotionWaitState(
@@ -824,7 +819,7 @@ class Motor():
                 if await self._pause_for_safety_if_needed(state):
                     continue
 
-                if snapshot.is_complete and self._is_completion_stable(state, fast_complete_at_target):
+                if snapshot.is_complete and self._is_completion_stable(state):
                     return await self._finish_completed_move(homing, state)
 
                 alarm_state = await self._read_alarm_state(homing, state)
@@ -851,26 +846,8 @@ class Motor():
                 await self._cancel_motion(homing=True)
             raise
 
-    def _is_completion_stable(self, state: MotionWaitState, fast_complete_at_target: bool = False) -> bool:
-        if state.has_moved is True:
-            return True
-
-        # Opt-in (laser scan sampling): a short scan step often finishes inside the
-        # post-trigger sleep, so no position delta is ever observed and has_moved stays
-        # False -- forcing every sample to eat the 0.5s fallback. A fresh position that
-        # already matches the commanded target proves the move is done: a stale
-        # is_complete would still read the previous position, which is >= one scan step
-        # (1mm) away and so cannot fall inside FAST_COMPLETE_TOLERANCE_MM.
-        if fast_complete_at_target is True and self._is_at_commanded_target() is True:
-            return True
-
-        return time.monotonic() - state.start_time > 0.5
-
-    def _is_at_commanded_target(self) -> bool:
-        if self._target_pos is None or self._cur_pos is None:
-            return False
-
-        return abs(self._cur_pos - self._target_pos) <= FAST_COMPLETE_TOLERANCE_MM
+    def _is_completion_stable(self, state: MotionWaitState) -> bool:
+        return state.has_moved or time.monotonic() - state.start_time > 0.5
 
     def _clear_pending_motion(self) -> None:
         self._pending_motion = None

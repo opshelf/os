@@ -598,7 +598,6 @@ class Tool:
         self,
         timeout_seconds: float = GANTRY_OUTER_TIMEOUT,
         should_abort: Callable[[], bool] | None = None,
-        fast_complete_at_target: bool = False,
     ) -> None:
         if self._mx is None or self._my is None:
             raise MotorError("Gantry motors (x_axis, y_axis) required for gantry wait")
@@ -610,18 +609,10 @@ class Tool:
         try:
             remaining_timeout = max(0.1, min(GANTRY_WAIT_TIMEOUT, timeout_seconds))
             x_task = asyncio.create_task(
-                self._mx.wait_for_move(
-                    timeout=remaining_timeout,
-                    should_abort=should_abort,
-                    fast_complete_at_target=fast_complete_at_target,
-                )
+                self._mx.wait_for_move(timeout=remaining_timeout, should_abort=should_abort)
             )
             y_task = asyncio.create_task(
-                self._my.wait_for_move(
-                    timeout=remaining_timeout,
-                    should_abort=should_abort,
-                    fast_complete_at_target=fast_complete_at_target,
-                )
+                self._my.wait_for_move(timeout=remaining_timeout, should_abort=should_abort)
             )
             tasks = {x_task: ("x_axis", self._mx), y_task: ("y_axis", self._my)}
             statuses: dict[str, MotorStatus] = {}
