@@ -21,6 +21,7 @@ from openshelf_os.laser_calibration import (
 	estimate_seeded_candidate_wall_depths,
 	find_first_positive_run_segment,
 	find_gap_segments_in_line,
+	disable_unreachable_cells,
 	find_gap_run_containing_position,
 	fit_z_delta_line,
 	resolve_z_delta_model,
@@ -1540,6 +1541,54 @@ def test_resolve_z_delta_model_single_sample_is_constant() -> None:
 
 	assert slope_per_mm == 0.0
 	assert intercept_mm == pytest.approx(2.4)
+
+
+def _reachability_cell(cell_idx: int, x: float) -> Cell:
+	return Cell(
+		cell_idx=cell_idx,
+		status=CellStatus.AVAILABLE,
+		item=None,
+		calibration_point=CalibrationCoordinate(x=x, y=995.25, z_offset=13.3, s=0),
+		dimensions=Dimensions(width=40.0, height=50.0, length=60.0),
+	)
+
+
+def test_disable_unreachable_cells_disables_only_cells_past_the_x_axis_limit() -> None:
+	# Real lb4-3 shelf: the laser sits ahead of the tool, so the last cell's grab X (956)
+	# lands past the 950mm X-axis travel limit and the tool can never reach it.
+	shelf = Shelf(
+		shelf_idx=3,
+		shelf_height=100.0,
+		shelf_width=200.0,
+		divider_width=13.0,
+		cells=[
+			_reachability_cell(4, 746.0),
+			_reachability_cell(5, 851.0),
+			_reachability_cell(6, 956.0),
+		],
+	)
+
+	disabled_count = disable_unreachable_cells(scanned_shelves=[shelf], x_axis_limit_mm=950.0)
+
+	assert disabled_count == 1
+	assert shelf.cells[0].status == CellStatus.AVAILABLE
+	assert shelf.cells[1].status == CellStatus.AVAILABLE
+	assert shelf.cells[2].status == CellStatus.DISABLED
+
+
+def test_disable_unreachable_cells_noop_when_all_reachable() -> None:
+	shelf = Shelf(
+		shelf_idx=0,
+		shelf_height=100.0,
+		shelf_width=200.0,
+		divider_width=13.0,
+		cells=[_reachability_cell(0, 340.0), _reachability_cell(1, 880.0)],
+	)
+
+	disabled_count = disable_unreachable_cells(scanned_shelves=[shelf], x_axis_limit_mm=950.0)
+
+	assert disabled_count == 0
+	assert all(cell.status == CellStatus.AVAILABLE for cell in shelf.cells)
 
 
 def test_snap_shelf_cells_to_y_line_snaps_only_outliers() -> None:
