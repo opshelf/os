@@ -263,7 +263,10 @@ async def probe_z_until_stall(
 			if auto_retract is True:
 				await tool._mg.move_to_position(retract_z_mm, rpm=probe_rpm)
 
-			return True, float(z_position_mm), 'fast_approach_fault', alarm_code
+			# A fault during the RAPID approach is an obstruction, not a wall: the fast
+			# segment stops short of any wall by design, so nothing should be in the way.
+			# Reporting it as a stall records the collision itself as a contact point.
+			return False, float(z_position_mm), 'fast_approach_fault', alarm_code
 
 		current_target_mm = fast_target_mm
 
@@ -328,7 +331,7 @@ async def probe_z_until_stall(
 				if auto_retract is True:
 					await tool._mg.move_to_position(retract_z_mm, rpm=probe_rpm)
 
-				return True, float(z_position_mm), 'timeout', alarm_code
+				return False, float(z_position_mm), 'timeout', alarm_code
 
 	z_position_mm = await tool._mg.get_position()
 
