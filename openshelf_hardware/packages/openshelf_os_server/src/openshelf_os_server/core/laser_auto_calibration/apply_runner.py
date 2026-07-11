@@ -97,7 +97,33 @@ def _get_x_axis_limit_mm(worker: RobotWorker) -> float | None:
     return float(limit)
 
 
-def _select_z_stall_probes(analysis: Any, candidate_lookup: dict[tuple[int, int], Any]) -> list[tuple[Any, float]]:
+def _is_probe_reachable(cell: Any, max_probe_tool_x_mm: float | None) -> bool:
+    if max_probe_tool_x_mm is None:
+        return True
+
+    if float(cell.tool_x_mm) <= float(max_probe_tool_x_mm):
+        return True
+
+    laser_module.print_status(
+        f"z_stall_anchor=skip_unreachable probe={cell.shelf_idx}:{cell.cell_idx} "
+        f"tool_x_mm={float(cell.tool_x_mm):.1f} max_probe_tool_x_mm={float(max_probe_tool_x_mm):.1f}"
+    )
+    return False
+
+
+def _select_z_stall_probes(
+    analysis: Any,
+    candidate_lookup: dict[tuple[int, int], Any],
+    max_probe_tool_x_mm: float | None = None,
+) -> list[tuple[Any, float]]:
+    """Pick z stall probe cells, skipping any the tool cannot actually reach.
+
+    The probe drives to tool_x + z_stall_probe_x_shift_mm, so a cell needs MORE X travel
+    to probe than to grab. If that lands past the axis limit the axis silently clamps, the
+    tool ends up over the cell's tray hole instead of the divider, and the gripper drives
+    down into the hole and jams the tray onto itself. The grid-level reachability guard
+    cannot help here: it runs at the end of apply, long after this probing happens.
+    """
     shelves = [shelf for shelf in analysis.shelves if len(shelf.cells) > 0]
 
     if len(shelves) == 0:
@@ -121,6 +147,7 @@ def _select_z_stall_probes(analysis: Any, candidate_lookup: dict[tuple[int, int]
             if candidate_lookup.get((cell.shelf_idx, cell.cell_idx)) is not None
             and candidate_lookup[(cell.shelf_idx, cell.cell_idx)].wall_depth_mm is not None
             and float(candidate_lookup[(cell.shelf_idx, cell.cell_idx)].wall_depth_mm) > 0.0
+            and _is_probe_reachable(cell, max_probe_tool_x_mm)
         ]
 
         if len(valid_cells) == 0:
@@ -162,7 +189,16 @@ class ApplyRunnerMixin:
         candidates = laser_module.load_candidates_from_metadata(metadata)
         candidate_lookup = laser_module.build_candidate_lookup_by_cell(analysis=analysis, candidates=candidates)
 
-        probes = _select_z_stall_probes(analysis, candidate_lookup)
+        # The probe drives to tool_x + z_stall_probe_x_shift_mm, so cap tool_x by the axis
+        # limit MINUS that shift. Without this the axis clamps, the tool lands over the
+        # cell's tray hole instead of the divider, and the gripper jams the tray onto itself.
+        x_axis_limit_mm = _get_x_axis_limit_mm(worker)
+        max_probe_tool_x_mm: float | None = None
+
+        if x_axis_limit_mm is not None:
+            max_probe_tool_x_mm = x_axis_limit_mm - float(scan_config.z_stall_probe_x_shift_mm)
+
+        probes = _select_z_stall_probes(analysis, candidate_lookup, max_probe_tool_x_mm)
         if len(probes) == 0:
             raise ValueError("z stall anchor: no detected cell with a wall depth to probe")
 
