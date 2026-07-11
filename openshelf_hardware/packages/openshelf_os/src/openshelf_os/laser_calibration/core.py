@@ -48,7 +48,11 @@ LASER_SCAN_Z_OFFSET_MM = 10.0
 COARSE_SCAN_STEP_MM = 4.0
 RIGHT_MODULE_ROTATION_SAFE_X_MM = 475.0
 SHELF_SWEEP_X_STEP_MM = 4.0
-SHELF_SWEEP_MIN_CANDIDATE_WIDTH_MM = 20.0
+# Coarse sweep widths quantize to the 4mm step. Across two full hardware runs (43 confirmed
+# cells) real holes never measured below 24mm, while false gaps bottomed out at 20mm -- so 22
+# sits in the gap and rejects the false ones without costing a real cell. Each rejected
+# candidate saves a ~1.8min fine scan.
+SHELF_SWEEP_MIN_CANDIDATE_WIDTH_MM = 22.0
 SHELF_HOLE_SWEEP_OFFSET_MM = 32.25
 SHELF_HOLE_SWEEP_OFFSETS_MM = [16.25, SHELF_HOLE_SWEEP_OFFSET_MM]
 FILLED_HOLE_MIN_DEPTH_DELTA_MM = 0.4
