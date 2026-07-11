@@ -85,6 +85,18 @@ def _preserve_manual_cells(scanned_shelves: list[Any], existing_shelves: list[An
     return result
 
 
+def _get_x_axis_limit_mm(worker: RobotWorker) -> float | None:
+    """Max reachable X for the tool carriage, or None when the motor does not expose it."""
+    motor = getattr(getattr(worker._robot, "_tool", None), "_mx", None)
+    limit = getattr(getattr(motor, "_params", None), "lim", None)
+
+    if limit is None:
+        laser_module.print_status("cell_unreachable=skipped reason=no_x_axis_limit")
+        return None
+
+    return float(limit)
+
+
 def _select_z_stall_probes(analysis: Any, candidate_lookup: dict[tuple[int, int], Any]) -> list[tuple[Any, float]]:
     shelves = [shelf for shelf in analysis.shelves if len(shelf.cells) > 0]
 
@@ -361,6 +373,15 @@ class ApplyRunnerMixin:
                 else list(source_grid.right_module)
             )
             scanned_shelves = _preserve_manual_cells(scanned_shelves, existing_side_shelves)
+
+            # Reachability is a hard physical constraint, so this runs last and covers
+            # manual cells too: the laser can see holes past the tool's X travel.
+            x_axis_limit_mm = _get_x_axis_limit_mm(worker)
+            if x_axis_limit_mm is not None:
+                laser_module.disable_unreachable_cells(
+                    scanned_shelves=scanned_shelves,
+                    x_axis_limit_mm=x_axis_limit_mm,
+                )
 
             if completed_result.side == StorageModuleSide.LEFT:
                 left_module = scanned_shelves

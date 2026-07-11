@@ -1,6 +1,8 @@
 # ruff: noqa: F401, F403, F405
 from __future__ import annotations
 
+from openshelf_os.storage import CellStatus
+
 from . import core as core_module
 from .core import *
 from .recording import *
@@ -767,6 +769,41 @@ def resolve_z_delta_model(samples: list[tuple[float, float]]) -> tuple[float, fl
 		return _median(deltas), 0.0
 
 	return intercept, slope
+
+
+def disable_unreachable_cells(
+	*,
+	scanned_shelves: list[Any],
+	x_axis_limit_mm: float,
+) -> int:
+	"""Disable cells whose grab X lies beyond the X-axis travel limit.
+
+	The laser sits ahead of the tool on the same carriage (by laser_offset_x), so the scan
+	can detect holes the tool can never reach: grabbing one requires the carriage to travel
+	that offset further than the laser did. Without this guard the axis silently clamps at
+	its limit, the tool ends up misaligned by the overshoot, and the pick drives into the
+	divider. Returns the number of cells disabled.
+	"""
+	disabled_count = 0
+
+	for shelf in scanned_shelves:
+		for cell in shelf.cells:
+			if cell.calibration_point is None:
+				continue
+
+			grab_x_mm = float(cell.calibration_point.x)
+
+			if grab_x_mm <= float(x_axis_limit_mm):
+				continue
+
+			cell.status = CellStatus.DISABLED
+			disabled_count += 1
+			print_status(
+				f"cell_unreachable=disabled shelf={shelf.shelf_idx} cell={cell.cell_idx} "
+				f"grab_x_mm={grab_x_mm:.1f} x_axis_limit_mm={float(x_axis_limit_mm):.1f}"
+			)
+
+	return disabled_count
 
 
 def apply_wall_depth_z_offsets(
