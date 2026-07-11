@@ -24,6 +24,7 @@ from openshelf_os.laser_calibration import (
 	disable_unreachable_cells,
 	find_gap_run_containing_position,
 	fit_z_delta_line,
+	is_row_refinement_settled,
 	resolve_z_delta_model,
 	GapCandidateRegion,
 	get_shelf_hole_probe_y_offsets_mm,
@@ -1637,3 +1638,25 @@ def test_snap_shelf_cells_to_y_line_skips_four_cell_shelves() -> None:
 	assert cells[1].center_y_mm == pytest.approx(101.0)
 	assert cells[2].center_y_mm == pytest.approx(102.0)
 	assert cells[3].center_y_mm == pytest.approx(112.0)
+
+
+def _row_segment(center_mm: float) -> object:
+	return SimpleNamespace(center_mm=center_mm, width_mm=26.0, start_mm=center_mm - 13.0, end_mm=center_mm + 13.0)
+
+
+def test_row_refinement_settles_when_three_rows_agree() -> None:
+	segments = [_row_segment(500.0), _row_segment(500.2), _row_segment(500.4)]
+
+	assert is_row_refinement_settled(segments) is True
+
+
+def test_row_refinement_not_settled_below_three_rows() -> None:
+	assert is_row_refinement_settled([_row_segment(500.0), _row_segment(500.1)]) is False
+
+
+def test_row_refinement_not_settled_when_rows_disagree() -> None:
+	# A row corrupted by a tray edge -- keep probing the remaining rows so the median can
+	# still outvote it.
+	segments = [_row_segment(500.0), _row_segment(500.1), _row_segment(502.5)]
+
+	assert is_row_refinement_settled(segments) is False
