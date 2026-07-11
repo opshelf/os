@@ -97,24 +97,50 @@ def _get_x_axis_limit_mm(worker: RobotWorker) -> float | None:
     return float(limit)
 
 
-def _is_probe_reachable(cell: Any, max_probe_tool_x_mm: float | None) -> bool:
-    if max_probe_tool_x_mm is None:
+def _get_x_axis_lower_limit_mm(worker: RobotWorker) -> float | None:
+    """Min reachable X for the tool carriage, or None when the motor does not expose it."""
+    motor = getattr(getattr(worker._robot, "_tool", None), "_mx", None)
+    limit = getattr(getattr(motor, "_params", None), "lower_lim", None)
+
+    if limit is None:
+        return None
+
+    return float(limit)
+
+
+def _is_probe_reachable(
+    cell: Any,
+    max_probe_tool_x_mm: float | None,
+    min_probe_tool_x_mm: float | None = None,
+) -> bool:
+    """The axis clamps silently, so a probe past either limit lands somewhere it was never aimed."""
+    if max_probe_tool_x_mm is None and min_probe_tool_x_mm is None:
         return True
 
-    if float(cell.tool_x_mm) <= float(max_probe_tool_x_mm):
-        return True
+    tool_x_mm = float(cell.tool_x_mm)
 
-    laser_module.print_status(
-        f"z_stall_anchor=skip_unreachable probe={cell.shelf_idx}:{cell.cell_idx} "
-        f"tool_x_mm={float(cell.tool_x_mm):.1f} max_probe_tool_x_mm={float(max_probe_tool_x_mm):.1f}"
-    )
-    return False
+    if max_probe_tool_x_mm is not None and tool_x_mm > float(max_probe_tool_x_mm):
+        laser_module.print_status(
+            f"z_stall_anchor=skip_unreachable probe={cell.shelf_idx}:{cell.cell_idx} "
+            f"tool_x_mm={tool_x_mm:.1f} max_probe_tool_x_mm={float(max_probe_tool_x_mm):.1f}"
+        )
+        return False
+
+    if min_probe_tool_x_mm is not None and tool_x_mm < float(min_probe_tool_x_mm):
+        laser_module.print_status(
+            f"z_stall_anchor=skip_unreachable probe={cell.shelf_idx}:{cell.cell_idx} "
+            f"tool_x_mm={tool_x_mm:.1f} min_probe_tool_x_mm={float(min_probe_tool_x_mm):.1f}"
+        )
+        return False
+
+    return True
 
 
 def _select_z_stall_probes(
     analysis: Any,
     candidate_lookup: dict[tuple[int, int], Any],
     max_probe_tool_x_mm: float | None = None,
+    min_probe_tool_x_mm: float | None = None,
 ) -> list[tuple[Any, float]]:
     """Pick z stall probe cells, skipping any the tool cannot actually reach.
 
@@ -147,7 +173,7 @@ def _select_z_stall_probes(
             if candidate_lookup.get((cell.shelf_idx, cell.cell_idx)) is not None
             and candidate_lookup[(cell.shelf_idx, cell.cell_idx)].wall_depth_mm is not None
             and float(candidate_lookup[(cell.shelf_idx, cell.cell_idx)].wall_depth_mm) > 0.0
-            and _is_probe_reachable(cell, max_probe_tool_x_mm)
+            and _is_probe_reachable(cell, max_probe_tool_x_mm, min_probe_tool_x_mm)
         ]
 
         if len(valid_cells) == 0:
@@ -184,6 +210,7 @@ class ApplyRunnerMixin:
 
         xy_offset = laser_module.get_scan_xy_offset(scan_config=scan_config, side=side)
         offset_x_mm = 0.0 if xy_offset is None else float(xy_offset[0])
+        offset_y_mm = 0.0 if xy_offset is None else float(xy_offset[1])
 
         metadata = laser_module.load_json_file(Path(str(analysis.metadata_path)))
         candidates = laser_module.load_candidates_from_metadata(metadata)
@@ -193,14 +220,26 @@ class ApplyRunnerMixin:
         # the axis limit minus BOTH terms. Without this the axis clamps, the tool lands over
         # the cell's tray hole instead of the divider, and the gripper jams the tray onto itself.
         x_axis_limit_mm = _get_x_axis_limit_mm(worker)
+        x_axis_lower_limit_mm = _get_x_axis_lower_limit_mm(worker)
         max_probe_tool_x_mm: float | None = None
+        min_probe_tool_x_mm: float | None = None
 
         if x_axis_limit_mm is not None:
             max_probe_tool_x_mm = (
                 x_axis_limit_mm - offset_x_mm - float(scan_config.z_stall_probe_x_shift_mm)
             )
 
-        probes = _select_z_stall_probes(analysis, candidate_lookup, max_probe_tool_x_mm)
+        if x_axis_lower_limit_mm is not None:
+            min_probe_tool_x_mm = (
+                x_axis_lower_limit_mm - offset_x_mm - float(scan_config.z_stall_probe_x_shift_mm)
+            )
+
+        probes = _select_z_stall_probes(
+            analysis,
+            candidate_lookup,
+            max_probe_tool_x_mm,
+            min_probe_tool_x_mm,
+        )
         if len(probes) == 0:
             raise ValueError("z stall anchor: no detected cell with a wall depth to probe")
 
@@ -239,7 +278,7 @@ class ApplyRunnerMixin:
             probe_x_mm = (
                 float(detected_cell.tool_x_mm) + offset_x_mm + float(scan_config.z_stall_probe_x_shift_mm)
             )
-            probe_y_mm = float(detected_cell.tool_y_mm)
+            probe_y_mm = float(detected_cell.tool_y_mm) + offset_y_mm
 
             await enter_capture_mode(
                 tool,
@@ -271,10 +310,28 @@ class ApplyRunnerMixin:
             )
             last_reason = reason
 
+            if reason == "fast_approach_fault":
+                raise ValueError(
+                    f"z stall anchor: the tool faulted during the rapid approach at "
+                    f"z={z_contact_mm:.1f}mm on probe {detected_cell.shelf_idx}:{detected_cell.cell_idx}. "
+                    "Nothing should obstruct the tool before the wall; refusing to continue."
+                )
+
             if did_stall is False:
                 laser_module.print_status(
                     f"z_stall_anchor=miss side={side_name} probe={detected_cell.shelf_idx}:{detected_cell.cell_idx} "
                     f"reason={reason} z_mm={z_contact_mm:.3f}"
+                )
+                continue
+
+            # The rapid approach already traversed to fast_approach_mm unobstructed, so a wall
+            # cannot sit closer than that. Anything shallower is the tool hitting something else.
+            if z_contact_mm < float(scan_config.z_stall_probe_fast_approach_mm):
+                laser_module.print_status(
+                    f"z_stall_anchor=reject_shallow side={side_name} "
+                    f"probe={detected_cell.shelf_idx}:{detected_cell.cell_idx} "
+                    f"reason={reason} z_mm={z_contact_mm:.3f} "
+                    f"fast_approach_mm={float(scan_config.z_stall_probe_fast_approach_mm):.3f}"
                 )
                 continue
 
@@ -341,6 +398,13 @@ class ApplyRunnerMixin:
             f"shelves={len(samples_by_shelf)} x_span_mm={fit_x_span_mm:.1f} "
             f"intercept_mm={intercept_mm:.3f} slope_per_mm={slope_per_mm:.5f}"
         )
+
+        if abs(intercept_mm) > laser_module.Z_DELTA_MAX_ABS_MM:
+            raise ValueError(
+                f"z stall anchor: implausible z delta {intercept_mm:.1f}mm "
+                f"(limit +/-{laser_module.Z_DELTA_MAX_ABS_MM:.0f}mm); refusing to apply it to every cell"
+            )
+
         return intercept_mm, slope_per_mm
 
     async def _persist_completed_results(
