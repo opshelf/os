@@ -189,14 +189,16 @@ class ApplyRunnerMixin:
         candidates = laser_module.load_candidates_from_metadata(metadata)
         candidate_lookup = laser_module.build_candidate_lookup_by_cell(analysis=analysis, candidates=candidates)
 
-        # The probe drives to tool_x + z_stall_probe_x_shift_mm, so cap tool_x by the axis
-        # limit MINUS that shift. Without this the axis clamps, the tool lands over the
-        # cell's tray hole instead of the divider, and the gripper jams the tray onto itself.
+        # The probe drives to (tool_x + offset_x) + z_stall_probe_x_shift_mm, so cap tool_x by
+        # the axis limit minus BOTH terms. Without this the axis clamps, the tool lands over
+        # the cell's tray hole instead of the divider, and the gripper jams the tray onto itself.
         x_axis_limit_mm = _get_x_axis_limit_mm(worker)
         max_probe_tool_x_mm: float | None = None
 
         if x_axis_limit_mm is not None:
-            max_probe_tool_x_mm = x_axis_limit_mm - float(scan_config.z_stall_probe_x_shift_mm)
+            max_probe_tool_x_mm = (
+                x_axis_limit_mm - offset_x_mm - float(scan_config.z_stall_probe_x_shift_mm)
+            )
 
         probes = _select_z_stall_probes(analysis, candidate_lookup, max_probe_tool_x_mm)
         if len(probes) == 0:
@@ -230,7 +232,13 @@ class ApplyRunnerMixin:
         samples: list[tuple[int, float, float]] = []
         last_reason = "none"
         for detected_cell, probe_wall_depth_mm in probes:
-            probe_x_mm = float(detected_cell.tool_x_mm) + float(scan_config.z_stall_probe_x_shift_mm)
+            # Aim from the CORRECTED tool position (tool_x + xy_offset), not the raw detection
+            # frame: xy_offset is what actually puts the tool on the cell. Ignoring it offsets
+            # every probe by -xy_offset (-4mm left, but -97mm right), which can drop the probe
+            # into a neighbouring tray hole instead of onto the divider.
+            probe_x_mm = (
+                float(detected_cell.tool_x_mm) + offset_x_mm + float(scan_config.z_stall_probe_x_shift_mm)
+            )
             probe_y_mm = float(detected_cell.tool_y_mm)
 
             await enter_capture_mode(
