@@ -26,10 +26,15 @@ class ScanRunnerMixin:
         side_name = _side_to_module_name(side)
         config = get_root_config()
         scan_config = scan_config_override or config.robot.grid.scan
-        settle_ms = int(laser_module.get_laser_sample_settle_ms(scan_config))
-        samples_per_point = int(laser_module.get_laser_samples_per_point(scan_config))
-        coarse_settle_ms = int(laser_module.get_coarse_settle_ms(settle_ms))
-        coarse_samples_per_point = int(laser_module.get_coarse_samples_per_point(samples_per_point))
+        config_settle_ms = int(laser_module.get_laser_sample_settle_ms(scan_config))
+        config_samples_per_point = int(laser_module.get_laser_samples_per_point(scan_config))
+        # Use the intended fine values, as the CLI does. The server was passing the RAW config
+        # (50ms / 3 samples) as the fine params while deriving coarse from them, so every fine
+        # sample paid 3 laser reads at double the settle for no benefit.
+        settle_ms = int(laser_module.get_fine_settle_ms(config_settle_ms))
+        samples_per_point = int(laser_module.get_fine_samples_per_point(config_samples_per_point))
+        coarse_settle_ms = int(laser_module.get_coarse_settle_ms(config_settle_ms))
+        coarse_samples_per_point = int(laser_module.get_coarse_samples_per_point(config_samples_per_point))
         raw_rescan_target: str | None = None
         raw_x_bounds: tuple[float, float] | None = (bounds.x_min, bounds.x_max)
         raw_y_bounds: tuple[float, float] | None = (bounds.y_min, bounds.y_max)

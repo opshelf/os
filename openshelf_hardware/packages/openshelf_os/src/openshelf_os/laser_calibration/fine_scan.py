@@ -233,6 +233,25 @@ async def refine_horizontal_segment(
 	return refined_segment
 
 
+X_REFINEMENT_EARLY_EXIT_ROWS = 3
+X_REFINEMENT_EARLY_EXIT_SPREAD_MM = 0.75
+
+
+def is_row_refinement_settled(valid_segments: list[LineGapSegment]) -> bool:
+	"""True once enough accepted rows agree tightly enough that more rows cannot help.
+
+	The median across rows exists to survive rows corrupted by tray edges or contents. Once
+	X_REFINEMENT_EARLY_EXIT_ROWS rows agree within X_REFINEMENT_EARLY_EXIT_SPREAD_MM, the
+	median is already pinned -- a further row could only shift it by less than the tolerance.
+	"""
+	if len(valid_segments) < X_REFINEMENT_EARLY_EXIT_ROWS:
+		return False
+
+	centers = [float(segment.center_mm) for segment in valid_segments]
+
+	return (max(centers) - min(centers)) <= X_REFINEMENT_EARLY_EXIT_SPREAD_MM
+
+
 async def refine_horizontal_segment_across_rows(
 	tool: Any,
 	*,
@@ -251,6 +270,16 @@ async def refine_horizontal_segment_across_rows(
 	valid_segments: list[LineGapSegment] = []
 
 	for row_idx, row_offset_mm in enumerate(row_offsets_mm, start=1):
+		# Early exit: this block is ~70% of all fine-scan samples. Once enough rows agree
+		# tightly on the centre, the remaining rows cannot move the median meaningfully, so
+		# probing them is pure cost. Rows that disagree keep us going through all five.
+		if is_row_refinement_settled(valid_segments) is True:
+			print_status(
+				f"x_refinement=early_exit rows={len(valid_segments)} "
+				f"probed={row_idx - 1}/{len(row_offsets_mm)}"
+			)
+			break
+
 		refined_segment = await refine_horizontal_segment(
 			tool,
 			segment=segment,
