@@ -864,23 +864,6 @@ def is_line_segment_bounded(
 	return segment.start_idx > 0 and segment.end_idx < len(positions) - 1
 
 
-SCAN_AXIS_SKIP_TOLERANCE_MM = 0.05
-
-
-async def move_scan_axis_if_needed(motor: Any, target_mm: float) -> None:
-	"""Command a scan axis only when it is not already at the requested position.
-
-	Line probes hold one axis fixed across every sample of the line, so re-issuing that
-	same move each time buys nothing and costs a 100ms post-trigger sleep per sample.
-	"""
-	current_mm = getattr(motor, "_cur_pos", None)
-
-	if current_mm is not None and abs(float(current_mm) - float(target_mm)) <= SCAN_AXIS_SKIP_TOLERANCE_MM:
-		return
-
-	await motor.move_to_position_no_wait(target_mm)
-
-
 async def sample_scan_point(
 	tool: Any,
 	*,
@@ -891,12 +874,9 @@ async def sample_scan_point(
 	should_abort: Callable[[], bool] | None = None,
 ) -> float | None:
 	raise_if_cancelled(should_abort)
-	await move_scan_axis_if_needed(tool._my, y_mm)
-	await move_scan_axis_if_needed(tool._mx, x_mm)
-	# Laser sampling only: a scan step finishes inside the post-trigger sleep, so the
-	# motor never observes a position delta and every sample would otherwise pay the
-	# 0.5s completion fallback. Pick/place/homing keep the conservative default.
-	await tool.gantry_wait(should_abort=should_abort, fast_complete_at_target=True)
+	await tool._my.move_to_position_no_wait(y_mm)
+	await tool._mx.move_to_position_no_wait(x_mm)
+	await tool.gantry_wait(should_abort=should_abort)
 	raise_if_cancelled(should_abort)
 	return await sample_laser_depth(
 		tool,
@@ -1020,7 +1000,7 @@ async def scan_line_positions(
 		await tool._mx.move_to_position_no_wait(fixed_mm)
 		await tool._my.move_to_position_no_wait(first_position_mm)
 
-	await tool.gantry_wait(should_abort=should_abort, fast_complete_at_target=True)
+	await tool.gantry_wait(should_abort=should_abort)
 
 	depth_values: list[float | None] = []
 
@@ -1032,7 +1012,7 @@ async def scan_line_positions(
 			else:
 				await tool._my.move_to_position_no_wait(position_mm)
 
-			await tool.gantry_wait(should_abort=should_abort, fast_complete_at_target=True)
+			await tool.gantry_wait(should_abort=should_abort)
 		raise_if_cancelled(should_abort)
 		depth_mm = await sample_laser_depth(
 			tool,
