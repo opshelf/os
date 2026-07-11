@@ -2055,3 +2055,56 @@ async def test_robot_commands_are_blocked_while_laser_auto_calibration_is_runnin
 
     assert exc_info.value.status_code == 409
     assert exc_info.value.detail == "laser auto calibration is running"
+
+
+def test_select_z_stall_probes_skips_cells_whose_probe_x_exceeds_the_axis_limit() -> None:
+    """Real lb4-3 jam: L:3:6 sits at tool_x=960; the probe adds a +20mm shift -> 980, past
+    the 950mm axis limit. The axis clamped, putting the gripper over the cell's tray hole
+    (947-973) instead of the divider; it drove down into the hole and jammed the tray."""
+
+    analysis = SimpleNamespace(
+        shelves=[
+            SimpleNamespace(
+                center_y_mm=995.0,
+                cells=[
+                    SimpleNamespace(shelf_idx=3, cell_idx=0, center_x_mm=279.0, tool_x_mm=330.0),
+                    SimpleNamespace(shelf_idx=3, cell_idx=3, center_x_mm=593.0, tool_x_mm=644.0),
+                    SimpleNamespace(shelf_idx=3, cell_idx=6, center_x_mm=909.0, tool_x_mm=960.0),
+                ],
+            )
+        ]
+    )
+    candidate_lookup = {
+        (3, 0): SimpleNamespace(wall_depth_mm=9.9),
+        (3, 3): SimpleNamespace(wall_depth_mm=9.9),
+        (3, 6): SimpleNamespace(wall_depth_mm=9.9),
+    }
+
+    # x axis limit 950, probe shift 20 -> a probe cell must satisfy tool_x <= 930
+    result = _select_z_stall_probes(analysis, candidate_lookup, 930.0)
+    probed = [(cell.shelf_idx, cell.cell_idx) for cell, _ in result]
+
+    assert (3, 6) not in probed
+    assert probed == [(3, 0), (3, 3)]
+
+
+def test_select_z_stall_probes_without_a_limit_keeps_every_cell() -> None:
+    analysis = SimpleNamespace(
+        shelves=[
+            SimpleNamespace(
+                center_y_mm=995.0,
+                cells=[
+                    SimpleNamespace(shelf_idx=0, cell_idx=0, center_x_mm=279.0, tool_x_mm=330.0),
+                    SimpleNamespace(shelf_idx=0, cell_idx=1, center_x_mm=909.0, tool_x_mm=960.0),
+                ],
+            )
+        ]
+    )
+    candidate_lookup = {
+        (0, 0): SimpleNamespace(wall_depth_mm=9.9),
+        (0, 1): SimpleNamespace(wall_depth_mm=9.9),
+    }
+
+    result = _select_z_stall_probes(analysis, candidate_lookup, None)
+
+    assert [(cell.shelf_idx, cell.cell_idx) for cell, _ in result] == [(0, 0), (0, 1)]
