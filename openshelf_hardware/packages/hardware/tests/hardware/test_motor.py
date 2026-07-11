@@ -1,10 +1,11 @@
 import asyncio
+import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, call
 
 import pytest
 
-from hardware.motor import Motor, MotorStatus
+from hardware.motor import MotionWaitState, Motor, MotorStatus
 from hardware.exceptions import MotorError
 from hardware.servo import Servo
 
@@ -578,3 +579,49 @@ async def test_motor_throttles_repeated_garbage_position_logs(mock_controller):
     assert first == 7.5
     assert second == 7.5
     motor._logger.warning.assert_called_once()
+
+
+def _completion_state(elapsed_s: float = 0.0):
+    now = time.monotonic()
+
+    return MotionWaitState(
+        start_time=now - elapsed_s,
+        last_movement_time=now - elapsed_s,
+    )
+
+
+def test_completion_stable_default_still_waits_for_movement_or_half_second(mock_controller):
+    """Default (pick/place/homing) behaviour must be unchanged: no fast path."""
+    motor = Motor(mock_controller, make_motor_params())
+    motor._target_pos = 500.0
+    motor._cur_pos = 500.0
+
+    assert motor._is_completion_stable(_completion_state(elapsed_s=0.0)) is False
+    assert motor._is_completion_stable(_completion_state(elapsed_s=0.6)) is True
+
+
+def test_completion_stable_fast_path_accepts_position_at_target(mock_controller):
+    """Scan sampling: a fresh position matching the target proves the move finished."""
+    motor = Motor(mock_controller, make_motor_params())
+    motor._target_pos = 500.0
+    motor._cur_pos = 500.0
+
+    assert motor._is_completion_stable(_completion_state(), fast_complete_at_target=True) is True
+
+
+def test_completion_stable_fast_path_rejects_stale_complete_at_previous_position(mock_controller):
+    """The safety property: a stale is_complete still reads the OLD position (>= one 1mm
+    scan step away), so it must NOT be mistaken for having reached the new target."""
+    motor = Motor(mock_controller, make_motor_params())
+    motor._target_pos = 500.0
+    motor._cur_pos = 498.0  # still at the previous point of a 2mm scan step
+
+    assert motor._is_completion_stable(_completion_state(), fast_complete_at_target=True) is False
+
+
+def test_completion_stable_fast_path_needs_a_known_target(mock_controller):
+    motor = Motor(mock_controller, make_motor_params())
+    motor._target_pos = None
+    motor._cur_pos = 500.0
+
+    assert motor._is_completion_stable(_completion_state(), fast_complete_at_target=True) is False
