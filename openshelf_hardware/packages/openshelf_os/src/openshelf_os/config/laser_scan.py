@@ -40,7 +40,7 @@ class LaserScanConfig(BaseModel):
     z_stall_tray_engagement_mm: float = 0.0
     z_stall_probe_x_shift_mm: float = 40.0
     z_stall_probe_start_mm: float = 5.0
-    z_stall_probe_fast_approach_mm: float = 5.0
+    z_stall_probe_fast_approach_mm: float = 130.0
     z_stall_probe_target_mm: float = 180.0
     z_stall_probe_step_mm: float = Field(0.5, gt=0)
     z_stall_probe_rpm: Optional[int] = Field(default=20, gt=0)
