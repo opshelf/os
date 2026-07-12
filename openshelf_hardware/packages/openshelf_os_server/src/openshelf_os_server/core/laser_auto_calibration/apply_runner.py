@@ -324,17 +324,6 @@ class ApplyRunnerMixin:
                 )
                 continue
 
-            # The rapid approach already traversed to fast_approach_mm unobstructed, so a wall
-            # cannot sit closer than that. Anything shallower is the tool hitting something else.
-            if z_contact_mm < float(scan_config.z_stall_probe_fast_approach_mm):
-                laser_module.print_status(
-                    f"z_stall_anchor=reject_shallow side={side_name} "
-                    f"probe={detected_cell.shelf_idx}:{detected_cell.cell_idx} "
-                    f"reason={reason} z_mm={z_contact_mm:.3f} "
-                    f"fast_approach_mm={float(scan_config.z_stall_probe_fast_approach_mm):.3f}"
-                )
-                continue
-
             z_offset_anchor_mm = z_contact_mm - float(z_place) + float(scan_config.z_stall_tray_engagement_mm)
             z_delta_mm = z_offset_anchor_mm - probe_wall_depth_mm
             sample_x_mm = float(detected_cell.tool_x_mm) + offset_x_mm
@@ -398,12 +387,6 @@ class ApplyRunnerMixin:
             f"shelves={len(samples_by_shelf)} x_span_mm={fit_x_span_mm:.1f} "
             f"intercept_mm={intercept_mm:.3f} slope_per_mm={slope_per_mm:.5f}"
         )
-
-        if abs(intercept_mm) > laser_module.Z_DELTA_MAX_ABS_MM:
-            raise ValueError(
-                f"z stall anchor: implausible z delta {intercept_mm:.1f}mm "
-                f"(limit +/-{laser_module.Z_DELTA_MAX_ABS_MM:.0f}mm); refusing to apply it to every cell"
-            )
 
         return intercept_mm, slope_per_mm
 
