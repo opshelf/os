@@ -676,6 +676,7 @@ async def estimate_seeded_candidate_wall_depths(
 Z_DELTA_TILT_MIN_X_SPAN_MM = 300.0
 Z_DELTA_TILT_MIN_TOTAL_MM = 0.75
 Z_DELTA_TILT_MAX_TOTAL_MM = 4.0
+Z_DELTA_MAX_ABS_MM = 25.0
 
 
 def fit_z_delta_line(samples: list[tuple[float, float]]) -> tuple[float, float]:
