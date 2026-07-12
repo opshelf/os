@@ -108,6 +108,17 @@ def _get_x_axis_lower_limit_mm(worker: RobotWorker) -> float | None:
     return float(limit)
 
 
+def _get_z_axis_limit_mm(worker: RobotWorker) -> float | None:
+    """Max reachable Z for the gripper, or None when the motor does not expose it."""
+    motor = getattr(getattr(worker._robot, "_tool", None), "_mg", None)
+    limit = getattr(getattr(motor, "_params", None), "lim", None)
+
+    if limit is None:
+        return None
+
+    return float(limit)
+
+
 def _is_probe_reachable(
     cell: Any,
     max_probe_tool_x_mm: float | None,
@@ -263,13 +274,31 @@ class ApplyRunnerMixin:
         rotation_center_deg = float(rotation_center_value)
         stage_extension_mm = float(stage_extension_value)
         probe_rpm = scan_config.z_stall_probe_rpm
+        probe_target_mm = float(scan_config.z_stall_probe_target_mm)
+        z_axis_limit_mm = _get_z_axis_limit_mm(worker)
         laser_module.print_status(
             f"z_stall_anchor=start side={side_name} rotation_deg={rotation_center_deg:.3f} "
-            f"stage_extension_mm={stage_extension_mm:.2f} candidate_cells={len(probes)}"
+            f"stage_extension_mm={stage_extension_mm:.2f} candidate_cells={len(probes)} "
+            f"probe_target_mm={probe_target_mm:.1f} z_axis_limit_mm="
+            f"{'unknown' if z_axis_limit_mm is None else f'{z_axis_limit_mm:.1f}'}"
         )
+
+        # When the probe target IS the axis ceiling there is no travel to spare, so a probe that
+        # runs out of travel is indistinguishable from one that found no wall: both come back
+        # reason=limit. Say so up front, otherwise a rack that has drifted out of reach reads as
+        # a rack with no walls.
+        has_no_z_headroom = z_axis_limit_mm is not None and probe_target_mm >= z_axis_limit_mm
+
+        if has_no_z_headroom is True:
+            laser_module.print_status(
+                f"z_stall_anchor=no_z_headroom probe_target_mm={probe_target_mm:.1f} "
+                f"z_axis_limit_mm={z_axis_limit_mm:.1f} "
+                "reason=limit cannot distinguish 'no wall' from 'wall beyond Z travel'"
+            )
 
         samples: list[tuple[int, float, float]] = []
         last_reason = "none"
+        limit_miss_count = 0
         for detected_cell, probe_wall_depth_mm in probes:
             # Aim from the CORRECTED tool position (tool_x + xy_offset), not the raw detection
             # frame: xy_offset is what actually puts the tool on the cell. Ignoring it offsets
@@ -318,6 +347,9 @@ class ApplyRunnerMixin:
                 )
 
             if did_stall is False:
+                if reason == "limit":
+                    limit_miss_count += 1
+
                 laser_module.print_status(
                     f"z_stall_anchor=miss side={side_name} probe={detected_cell.shelf_idx}:{detected_cell.cell_idx} "
                     f"reason={reason} z_mm={z_contact_mm:.3f}"
@@ -354,6 +386,15 @@ class ApplyRunnerMixin:
                 break
 
         if len(samples) == 0:
+            if limit_miss_count == len(probes) and has_no_z_headroom is True:
+                raise ValueError(
+                    f"z stall anchor: all {len(probes)} probes ran the Z axis to its travel limit "
+                    f"({z_axis_limit_mm:.1f}mm) without contact. The probe target equals that limit, "
+                    "so the wall is not necessarily absent - it may simply be beyond the tool's "
+                    f"reach (stage_extension_mm={stage_extension_mm:.2f}). Check that the rack is "
+                    "within reach before trusting this as 'no wall found'."
+                )
+
             raise ValueError(
                 f"z stall anchor: no probe cell contacted a wall across {len(probes)} shelves "
                 f"(last reason={last_reason}, stage_extension_mm={stage_extension_mm:.2f})"
