@@ -124,6 +124,27 @@ def _build_test_location(request: TestRequest) -> StorageModuleCellLocation:
 	)
 
 
+UNTESTABLE_CELL_STATUSES = (CellStatus.DISABLED, CellStatus.MAINTENANCE)
+
+
+def _ensure_cell_is_testable(grid, location: StorageModuleCellLocation) -> Cell:
+	try:
+		cell = grid.get_cell(location)
+	except (IndexError, ValueError) as exc:
+		raise HTTPException(
+			status_code=status.HTTP_400_BAD_REQUEST,
+			detail=str(exc),
+		) from exc
+
+	if cell.status in UNTESTABLE_CELL_STATUSES:
+		raise HTTPException(
+			status_code=status.HTTP_400_BAD_REQUEST,
+			detail=f"cell is {cell.status.value} and cannot be used for calibration tests",
+		)
+
+	return cell
+
+
 def _build_laser_auto_calibration_scope(
 	side: StorageModuleSide | None,
 	shelf_idx: int | None,
@@ -1005,6 +1026,8 @@ async def test_gripper(request: TestRequest):
 	location = _build_test_location(request)
 	grid = worker._robot._grid
 
+	_ensure_cell_is_testable(grid, location)
+
 	try:
 		coordinate = _build_coordinate_for_location(grid, location)
 	except (IndexError, ValueError, Exception) as exc:
@@ -1054,8 +1077,9 @@ async def test_cycle(request: TestRequest):
 	grid = robot._grid
 	location = _build_test_location(request)
 
+	cell = _ensure_cell_is_testable(grid, location)
+
 	try:
-		cell = grid.get_cell(location)
 		coordinate = _build_coordinate_for_location(grid, location)
 	except (IndexError, ValueError, Exception) as exc:
 		raise HTTPException(
