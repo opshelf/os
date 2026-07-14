@@ -37,8 +37,8 @@ from openshelf_os_server.core.logging_config import configure_logging, get_logge
 from openshelf_os_server.core.robot import get_robot_health, init_robot_worker, stop_robot_worker
 from openshelf_os_server.core.init_progress import get_init_tracker
 from openshelf_os_server.core.storage import StorageService
-from openshelf_os_server.core.camera import init_tool_camera_manager, init_overhead_camera_manager, stop_all_camera_streams
-from openshelf_os_server.core.iobox_sizer import init_iobox_sizer, stop_iobox_sizer
+from openshelf_os_server.core.camera import init_camera_progress, init_tool_camera_manager, init_overhead_camera_manager, stop_all_camera_streams
+from openshelf_os_server.core.iobox_sizer import get_iobox_sizer_status, init_iobox_sizer, stop_iobox_sizer
 from openshelf_os_server.settings import Settings
 from openshelf_os_server.database.base import Base, engine, get_database_url
 from openshelf_os_server.database.session import AsyncSessionLocal, get_db
@@ -624,7 +624,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 	await _apply_mode_transition()
 
 	robot_init_task: Optional[asyncio.Task[None]] = None
+	camera_init_task: Optional[asyncio.Task[None]] = None
 	storage_override_set = False
+	get_init_tracker().reset()
 	if settings.robot.enabled is True:
 		logger.info("robot_initialization", status="starting_background")
 		robot_init_task = asyncio.create_task(init_robot_worker())
@@ -632,10 +634,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 		logger.info("robot_disabled", reason="settings_configuration")
 		get_init_tracker().set_overall("disabled")
 
+	camera_ids: list[str] = []
+
 	tool_camera_url = _get_tool_camera_url(settings)
 	if tool_camera_url is not None and tool_camera_url != "":
 		try:
 			await init_tool_camera_manager(tool_camera_url)
+			camera_ids.append("tool")
 			logger.info("tool_camera_initialized", rtsp_url=tool_camera_url)
 		except Exception as e:
 			logger.error("tool_camera_initialization_failed", error=str(e), exc_info=True)
@@ -644,14 +649,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 	if overhead_camera_url is not None and overhead_camera_url != "":
 		try:
 			await init_overhead_camera_manager(overhead_camera_url)
+			camera_ids.append("overhead")
 			logger.info("overhead_camera_initialized", rtsp_url=overhead_camera_url)
 		except Exception as e:
 			logger.error("overhead_camera_initialization_failed", error=str(e), exc_info=True)
 
 	try:
 		await init_iobox_sizer()
+		if get_iobox_sizer_status()["enabled"] is True:
+			camera_ids.append("iobox_sizer")
 	except Exception as e:
 		logger.warning("iobox_sizer_startup_failed", error=str(e), error_type=type(e).__name__, exc_info=True)
+
+	if len(camera_ids) > 0:
+		camera_init_task = asyncio.create_task(init_camera_progress(camera_ids))
 
 	async def get_storage_session() -> AsyncGenerator[StorageService, None]:
 		async for session in get_db():
@@ -668,6 +679,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 			await demo.shutdown_demo_cycle()
 		except Exception as e:
 			logger.warning("demo_cycle_shutdown_failed", error=str(e), error_type=type(e).__name__, exc_info=True)
+		if camera_init_task is not None and camera_init_task.done() is False:
+			camera_init_task.cancel()
+			try:
+				await camera_init_task
+			except asyncio.CancelledError:
+				pass
+			except Exception as e:
+				logger.warning("camera_init_task_shutdown_failed", error=str(e), exc_info=True)
 		try:
 			await stop_all_camera_streams()
 		except Exception as e:

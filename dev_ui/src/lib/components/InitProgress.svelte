@@ -25,7 +25,10 @@
 		cabinet: 'cabinet',
 		command_worker: 'command worker',
 		barcode: 'barcode scanner',
-		printer: 'printer'
+		printer: 'printer',
+		tool_camera: 'tool camera',
+		overhead_camera: 'overhead camera',
+		iobox_sizer_camera: 'sizer camera'
 	};
 
 	function label(component: string): string {
