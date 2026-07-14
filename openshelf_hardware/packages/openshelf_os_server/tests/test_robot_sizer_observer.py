@@ -1,8 +1,10 @@
 from datetime import datetime, timezone
 from types import SimpleNamespace
+from typing import AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy import delete, select
 
@@ -12,6 +14,22 @@ from openshelf_os_server.core.iobox_sizer import record_store_sizer_measurement
 from openshelf_os_server.database.models import Item, ItemSizerMeasurement
 from openshelf_os_server.database.session import AsyncSessionLocal
 from openshelf_os_server.routers import robot as robot_router
+
+_TEST_UPCA = "123456789012"
+
+
+async def _clear_sizer_rows() -> None:
+    async with AsyncSessionLocal() as session:
+        await session.execute(delete(ItemSizerMeasurement))
+        await session.execute(delete(Item).where(Item.upca == _TEST_UPCA))
+        await session.commit()
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def reset_sizer_rows() -> AsyncGenerator[None, None]:
+    await _clear_sizer_rows()
+    yield
+    await _clear_sizer_rows()
 
 
 def _robot_enabled_settings() -> SimpleNamespace:
@@ -101,10 +119,8 @@ async def test_store_item_continues_when_observer_capture_raises(client: AsyncCl
 @pytest.mark.anyio
 async def test_record_store_sizer_measurement_persists_manual_and_auto_dimensions() -> None:
     async with AsyncSessionLocal() as session:
-        await session.execute(delete(ItemSizerMeasurement))
-        await session.execute(delete(Item).where(Item.upca == "123456789012"))
         item = Item(
-            upca="123456789012",
+            upca=_TEST_UPCA,
             name="Test item",
             dimensions={"width": 10, "height": 20, "length": 30},
         )
