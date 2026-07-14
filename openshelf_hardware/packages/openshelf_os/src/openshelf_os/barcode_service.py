@@ -1,9 +1,57 @@
 import asyncio
 import logging
+from pathlib import Path
+
 import serial_asyncio
 import serial.tools.list_ports
 
 logger = logging.getLogger(__name__).getChild("barcode")
+
+HIDRAW_ROOT = Path("/sys/class/hidraw")
+DEFAULT_BARCODE_PORT = "/dev/serial/by-id/usb-Linux_4.9.84_Barcode_Scanner-if00"
+SCANNER_NOT_DETECTED_REASON = "scanner not detected"
+SCANNER_HID_MODE_REASON = "scanner is in usb hid keyboard mode; switch it to usb-com (serial) mode"
+
+
+def find_hid_scanner_names(root: Path = HIDRAW_ROOT) -> list[str]:
+    try:
+        entries = sorted(root.iterdir())
+    except OSError:
+        return []
+
+    names: list[str] = []
+
+    for entry in entries:
+        try:
+            uevent = (entry / "device" / "uevent").read_text()
+        except OSError:
+            continue
+
+        for line in uevent.splitlines():
+            if line.startswith("HID_NAME=") is False:
+                continue
+
+            name = line.split("=", 1)[1].strip()
+
+            if "barcode" in name.lower() and name not in names:
+                names.append(name)
+
+    return names
+
+
+def describe_missing_scanner(root: Path = HIDRAW_ROOT) -> str:
+    hid_names = find_hid_scanner_names(root)
+
+    if not hid_names:
+        return SCANNER_NOT_DETECTED_REASON
+
+    logger.warning(
+        "Barcode scanner enumerated as USB HID keyboard instead of a serial device",
+        extra={"hid_names": hid_names},
+    )
+
+    return SCANNER_HID_MODE_REASON
+
 
 class _BarcodeProtocol(asyncio.Protocol):
     def __init__(self, on_line, on_connection_lost):

@@ -15,7 +15,11 @@ from openshelf_os.robot.status import (
     CabinetDoorState, RobotCommandSuccessful, RobotResponse, SafetyStatus, ScaleStatus,
 )
 from openshelf_os.robot.models import WorkerError, QueuedOperation, WorkerStatusWithQueue
-from openshelf_os.barcode_service import BarcodeService
+from openshelf_os.barcode_service import (
+    DEFAULT_BARCODE_PORT,
+    BarcodeService,
+    describe_missing_scanner,
+)
 from openshelf_os.exceptions import MotorError, MovementError, ToolError
 
 logger = logging.getLogger(__name__)
@@ -497,6 +501,9 @@ class RobotWorker:
 
         return await self._barcode.wait_connected(timeout)
 
+    def describe_scanner_failure(self) -> str:
+        return describe_missing_scanner()
+
     def get_motor_names(self) -> Dict[str, List[str]]:
         return self._robot.get_motor_names()
 
@@ -647,7 +654,7 @@ class RobotWorker:
 
     async def connect(self) -> None:
         if self._should_enable_barcode() and self._barcode is None:
-            port: str = os.getenv("OPENSHELF_BARCODE_PORT", "/dev/serial/by-id/usb-Linux_4.9.84_Barcode_Scanner-if00")  # type: ignore[assignment]
+            port: str = os.getenv("OPENSHELF_BARCODE_PORT", DEFAULT_BARCODE_PORT)  # type: ignore[assignment]
             baudrate_raw: str = os.getenv("OPENSHELF_BARCODE_BAUDRATE", "115200")  # type: ignore[assignment]
             baudrate = int(baudrate_raw)
 

@@ -63,7 +63,7 @@ async def _report_scanner_status(worker: r_worker.RobotWorker) -> None:
     if connected is True:
         tracker.report("barcode", "ready")
     else:
-        tracker.report("barcode", "failed", reason="scanner not detected")
+        tracker.report("barcode", "failed", reason=worker.describe_scanner_failure())
 
 
 def _report_printer_status() -> None:
@@ -117,7 +117,6 @@ async def init_robot_worker() -> None:
     robot_initialization_error = None
     robot_initialization_error_type = None
     tracker = get_init_tracker()
-    tracker.reset()
 
     tracker.register_components(["config"])
     tracker.report("config", "configuring")

@@ -1,6 +1,7 @@
 import asyncio
 import sys
 import types
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -103,3 +104,36 @@ async def test_anext_propagates_cancelled_error() -> None:
 async def _wait_for_protocol_count(protocols: list[Any], expected: int) -> None:
     while len(protocols) < expected:
         await asyncio.sleep(0)
+
+
+def _write_hid_device(root: Path, name: str, hid_name: str) -> None:
+    device = root / name / "device"
+    device.mkdir(parents=True)
+    (device / "uevent").write_text(
+        "DRIVER=hid-generic\n"
+        "HID_ID=0003:000028E9:00000383\n"
+        f"HID_NAME={hid_name}\n"
+    )
+
+
+def test_find_hid_scanner_names_ignores_other_hid_devices(tmp_path: Path) -> None:
+    _write_hid_device(tmp_path, "hidraw0", "USB Keyboard")
+    _write_hid_device(tmp_path, "hidraw2", "USB HID Barcode Scanner")
+
+    assert barcode_service.find_hid_scanner_names(tmp_path) == ["USB HID Barcode Scanner"]
+
+
+def test_find_hid_scanner_names_when_sysfs_missing(tmp_path: Path) -> None:
+    assert barcode_service.find_hid_scanner_names(tmp_path / "absent") == []
+
+
+def test_describe_missing_scanner_reports_hid_mode(tmp_path: Path) -> None:
+    _write_hid_device(tmp_path, "hidraw2", "USB HID Barcode Scanner")
+
+    assert barcode_service.describe_missing_scanner(tmp_path) == barcode_service.SCANNER_HID_MODE_REASON
+
+
+def test_describe_missing_scanner_reports_absent_scanner(tmp_path: Path) -> None:
+    _write_hid_device(tmp_path, "hidraw0", "USB Keyboard")
+
+    assert barcode_service.describe_missing_scanner(tmp_path) == barcode_service.SCANNER_NOT_DETECTED_REASON
