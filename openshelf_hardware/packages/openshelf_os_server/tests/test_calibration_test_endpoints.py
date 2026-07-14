@@ -8,8 +8,12 @@ import pytest
 from openshelf_os.storage import CalibrationCoordinate, Cell, CellItem, CellStatus, Dimensions, Shelf, StorageGrid
 
 
-def build_grid(*, is_occupied: bool) -> StorageGrid:
+def build_grid(*, is_occupied: bool, cell_status: CellStatus | None = None) -> StorageGrid:
 	status = CellStatus.OCCUPIED if is_occupied is True else CellStatus.AVAILABLE
+
+	if cell_status is not None:
+		status = cell_status
+
 	item = None
 
 	if is_occupied is True:
@@ -165,6 +169,31 @@ async def test_cycle_test_rejects_when_home_is_required(client) -> None:
 
 	assert response.status_code == 409
 	assert response.json()['detail']['needs_home'] is True
+
+
+@pytest.mark.parametrize('cell_status', [CellStatus.DISABLED, CellStatus.MAINTENANCE])
+@pytest.mark.parametrize('endpoint', ['/api/calibration/test', '/api/calibration/test/cycle'])
+@pytest.mark.asyncio
+async def test_tests_reject_cells_that_are_not_testable(client, endpoint: str, cell_status: CellStatus) -> None:
+	grid = build_grid(is_occupied=False, cell_status=cell_status)
+	worker = build_worker(grid)
+
+	with patch('openshelf_os_server.routers.calibration.get_robot_worker', AsyncMock(return_value=worker)):
+		with patch('openshelf_os_server.routers.calibration._clear_motors_for_move', AsyncMock()):
+			response = await client.post(
+				endpoint,
+				json={'side': 'left_module', 'shelf_idx': 0, 'cell_idx': 0},
+			)
+
+	assert response.status_code == 400
+	assert cell_status.value in response.json()['detail']
+
+	assert worker._robot._tool.pick.await_count == 0
+	assert worker._robot._tool.place.await_count == 0
+	assert worker._robot.io_pick.await_count == 0
+	assert worker._robot.io_place.await_count == 0
+
+	assert grid.left_module[0].cells[0].status == cell_status
 
 
 @pytest.mark.asyncio
