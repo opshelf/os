@@ -7,6 +7,7 @@
 	type CameraInfo = {
 		id: string;
 		type: string;
+		online: boolean;
 		running: boolean;
 		consumers: number;
 		has_frame: boolean;
@@ -15,6 +16,8 @@
 	type CamerasResponse = {
 		cameras: CameraInfo[];
 	};
+
+	const STATUS_POLL_INTERVAL_MS = 5000;
 
 	type CameraLine = [number, number, number, number];
 	type Point = {
@@ -36,10 +39,14 @@
 	let cameraLines: CameraLine[] = [];
 	let lineStart: Point | null = null;
 	let previewEnd: Point | null = null;
+	let statusTimer: ReturnType<typeof setInterval> | null = null;
 
-	$: streamUrl =
-		selectedCameraId !== '' ? buildAuthenticatedUrl(`/camera/${selectedCameraId}`) : '';
 	$: selectedCamera = cameras.find((c) => c.id === selectedCameraId) ?? null;
+	$: isCameraOnline = selectedCamera !== null && selectedCamera.online === true;
+	$: streamUrl =
+		selectedCameraId !== '' && isCameraOnline === true
+			? buildAuthenticatedUrl(`/camera/${selectedCameraId}`)
+			: '';
 	$: if (browser === true && selectedCameraId !== '' && deviceId !== '') {
 		loadCameraPreferences(selectedCameraId, deviceId);
 	}
@@ -52,10 +59,15 @@
 		}
 
 		loadPageData();
+		statusTimer = setInterval(refreshCameraStatus, STATUS_POLL_INTERVAL_MS);
 	});
 
 	onDestroy(() => {
 		resizeObserver?.disconnect();
+
+		if (statusTimer !== null) {
+			clearInterval(statusTimer);
+		}
 	});
 
 	async function loadPageData(): Promise<void> {
@@ -78,12 +90,22 @@
 			const response = await apiFetch<CamerasResponse>('/camera');
 			cameras = response.cameras;
 			statusError = '';
+			streamError = false;
 
 			selectAvailableCamera();
 		} catch (error) {
 			statusError = error instanceof Error ? error.message : 'unable to load cameras';
 		} finally {
 			loading = false;
+		}
+	}
+
+	async function refreshCameraStatus(): Promise<void> {
+		try {
+			const response = await apiFetch<CamerasResponse>('/camera');
+			cameras = response.cameras;
+		} catch {
+			return;
 		}
 	}
 
@@ -268,7 +290,9 @@
 			return;
 		}
 
-		selectCamera(cameras[0].id, false);
+		const onlineCamera = cameras.find((camera) => camera.online === true);
+
+		selectCamera(onlineCamera?.id ?? cameras[0].id, false);
 	}
 
 	function selectCamera(cameraId: string, shouldPersist: boolean): void {
@@ -416,7 +440,9 @@
 					<td>
 						<select value={selectedCameraId} on:change={didSelectCamera}>
 							{#each cameras as camera}
-								<option value={camera.id}>{camera.id} ({camera.type})</option>
+								<option value={camera.id}
+									>{camera.id} ({camera.type}){camera.online === false ? ' - offline' : ''}</option
+								>
 							{/each}
 						</select>
 					</td>
@@ -425,6 +451,10 @@
 					<tr>
 						<td>type</td>
 						<td>{selectedCamera.type}</td>
+					</tr>
+					<tr>
+						<td>status</td>
+						<td>{selectedCamera.online === true ? 'online' : 'offline'}</td>
 					</tr>
 					<tr>
 						<td>consumers</td>
@@ -458,7 +488,11 @@
 
 	<div style="height: 1.5em"></div>
 
-	{#if streamUrl !== '' && streamError === false}
+	{#if selectedCamera !== null && isCameraOnline === false}
+		<ErrorMessage
+			message={`camera '${selectedCamera.id}' is offline. verify it is powered and reachable, then refresh.`}
+		/>
+	{:else if streamUrl !== '' && streamError === false}
 		<div class="stream-container">
 			<img
 				class:flipped={isImageFlipped}
@@ -476,9 +510,7 @@
 				aria-label="camera drawing overlay"
 			></canvas>
 		</div>
-	{/if}
-
-	{#if streamError === true}
+	{:else if streamError === true}
 		<ErrorMessage message="unable to display the camera stream. verify the camera is running." />
 	{/if}
 {/if}

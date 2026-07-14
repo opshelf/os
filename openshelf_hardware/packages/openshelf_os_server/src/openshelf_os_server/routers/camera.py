@@ -3,8 +3,6 @@ from __future__ import annotations
 import asyncio
 from typing import AsyncGenerator
 
-import cv2
-import numpy as np
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 
@@ -15,7 +13,10 @@ from openshelf_os_server.core.camera import (
 	start_camera_stream_by_id,
 	stop_camera_stream_by_id,
 )
+from openshelf_os_server.core.logging_config import get_logger
 from .auth_deps import get_current_user
+
+logger = get_logger(__name__)
 
 router = APIRouter(tags=["camera"])
 
@@ -24,8 +25,6 @@ async def mjpeg_stream_generator_for_camera(
 	manager: CameraManager,
 	request: Request
 ) -> AsyncGenerator[bytes, None]:
-	black_frame_cache = None
-
 	try:
 		while True:
 			if await request.is_disconnected() is True:
@@ -34,33 +33,13 @@ async def mjpeg_stream_generator_for_camera(
 			if manager.unregistered.is_set() is True:
 				break
 
-			if manager.calibration_complete.is_set() is False:
-				if black_frame_cache is None:
-					black = np.zeros((480, 640, 3), dtype=np.uint8)
-					_, buffer = cv2.imencode('.jpg', black, [cv2.IMWRITE_JPEG_QUALITY, 85])
-					black_frame_cache = buffer.tobytes()
-
-				yield (
-					b"--frame\r\n"
-					b"Content-Type: image/jpeg\r\n\r\n" + black_frame_cache + b"\r\n"
-				)
-
-				await asyncio.sleep(0.05)
-				continue
+			if manager.is_frame_stale() is True:
+				logger.warning("camera_stream_stalled", stale_after_s=manager.stale_frame_timeout)
+				break
 
 			frame_bytes = await manager.get_latest_frame()
 
 			if frame_bytes is None:
-				if black_frame_cache is None:
-					black = np.zeros((480, 640, 3), dtype=np.uint8)
-					_, buffer = cv2.imencode('.jpg', black, [cv2.IMWRITE_JPEG_QUALITY, 85])
-					black_frame_cache = buffer.tobytes()
-
-				yield (
-					b"--frame\r\n"
-					b"Content-Type: image/jpeg\r\n\r\n" + black_frame_cache + b"\r\n"
-				)
-
 				await asyncio.sleep(0.05)
 				continue
 
@@ -77,7 +56,7 @@ async def mjpeg_stream_generator_for_camera(
 
 @router.get("", dependencies=[Depends(get_current_user)])
 async def list_cameras() -> dict:
-	cameras = get_all_cameras_status()
+	cameras = await get_all_cameras_status()
 
 	return {"cameras": cameras}
 
@@ -101,6 +80,24 @@ async def stream_camera(
 		raise HTTPException(
 			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
 			detail=str(e),
+		)
+
+	try:
+		is_delivering_frames = await manager.wait_for_fresh_frame(manager.first_frame_timeout)
+	except BaseException:
+		await stop_camera_stream_by_id(camera_id)
+		raise
+
+	if is_delivering_frames is False:
+		await stop_camera_stream_by_id(camera_id)
+		logger.warning(
+			"camera_unreachable",
+			camera_id=camera_id,
+			timeout_s=manager.first_frame_timeout,
+		)
+		raise HTTPException(
+			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+			detail=f"Camera '{camera_id}' is not delivering frames",
 		)
 
 	async def stream_with_cleanup() -> AsyncGenerator[bytes, None]:
