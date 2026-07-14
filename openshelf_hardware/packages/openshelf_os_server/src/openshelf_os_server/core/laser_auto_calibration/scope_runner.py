@@ -273,10 +273,10 @@ class ScopeRunnerMixin:
 
         if include_angle_calibration is True:
             right_angle_result = await self._run_angle_calibration_for_side(worker, StorageModuleSide.RIGHT, right_bounds)
-            await self._apply_angle_calibration_in_memory(worker, StorageModuleSide.RIGHT, right_angle_result)
+            await self._apply_angle_calibration(worker, StorageModuleSide.RIGHT, right_angle_result)
 
             left_angle_result = await self._run_angle_calibration_for_side(worker, StorageModuleSide.LEFT, left_bounds)
-            await self._apply_angle_calibration_in_memory(worker, StorageModuleSide.LEFT, left_angle_result)
+            await self._apply_angle_calibration(worker, StorageModuleSide.LEFT, left_angle_result)
 
         if include_extension_calibration is True:
             right_probe_y_mm = await self._resolve_stage_extension_probe_y_mm(
@@ -291,7 +291,7 @@ class ScopeRunnerMixin:
                 right_bounds,
                 probe_y_mm=right_probe_y_mm,
             )
-            await self._apply_stage_extension_calibration_in_memory(
+            await self._apply_stage_extension_calibration(
                 worker,
                 StorageModuleSide.RIGHT,
                 right_stage_extension_mm,
@@ -309,7 +309,7 @@ class ScopeRunnerMixin:
                 left_bounds,
                 probe_y_mm=left_probe_y_mm,
             )
-            await self._apply_stage_extension_calibration_in_memory(
+            await self._apply_stage_extension_calibration(
                 worker,
                 StorageModuleSide.LEFT,
                 left_stage_extension_mm,
@@ -335,7 +335,7 @@ class ScopeRunnerMixin:
 
         if include_angle_calibration is True:
             angle_result = await self._run_angle_calibration_for_side(worker, side, bounds)
-            await self._apply_angle_calibration_in_memory(worker, side, angle_result)
+            await self._apply_angle_calibration(worker, side, angle_result)
 
         if include_extension_calibration is True:
             probe_y_mm = await self._resolve_stage_extension_probe_y_mm(
@@ -350,7 +350,7 @@ class ScopeRunnerMixin:
                 bounds,
                 probe_y_mm=probe_y_mm,
             )
-            await self._apply_stage_extension_calibration_in_memory(worker, side, stage_extension_mm)
+            await self._apply_stage_extension_calibration(worker, side, stage_extension_mm)
 
         completed_results.append(await self._run_side(worker, side, angle_result))
         await self._persist_completed_results(worker, completed_results)
@@ -500,7 +500,7 @@ class ScopeRunnerMixin:
         bounds = _build_bounds_for_side(scan_config, side)
 
         if angle_result is not None:
-            await self._apply_angle_calibration_in_memory(worker, side, angle_result)
+            await self._apply_angle_calibration(worker, side, angle_result)
         analysis = await self._run_scan_analysis(worker, side, bounds)
 
         return _CompletedSideResult(

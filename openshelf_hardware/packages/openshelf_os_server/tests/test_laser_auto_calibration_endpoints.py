@@ -876,10 +876,10 @@ async def test_run_all_sides_processes_right_before_left() -> None:
 
     with patch('openshelf_os_server.core.laser_auto_calibration._build_bounds_for_side', return_value=ScanBounds(x_min=0.0, x_max=1.0, y_min=0.0, y_max=1.0)):
         with patch.object(manager, '_run_angle_calibration_for_side', AsyncMock(side_effect=[right_angle_result, left_angle_result])) as run_angle_mock:
-            with patch.object(manager, '_apply_angle_calibration_in_memory', AsyncMock()) as apply_mock:
+            with patch.object(manager, '_apply_angle_calibration', AsyncMock()) as apply_mock:
                 with patch.object(manager, '_resolve_stage_extension_probe_y_mm', AsyncMock(side_effect=[1148.0, 1120.0])) as probe_y_mock:
                     with patch.object(manager, '_run_stage_extension_calibration_for_side', AsyncMock(side_effect=[44.0, 41.0])) as stage_mock:
-                        with patch.object(manager, '_apply_stage_extension_calibration_in_memory', AsyncMock()) as apply_stage_mock:
+                        with patch.object(manager, '_apply_stage_extension_calibration', AsyncMock()) as apply_stage_mock:
                             with patch.object(manager, '_run_side', side_effect=did_run_side):
                                 with patch.object(manager, '_persist_completed_results', AsyncMock()) as persist_mock:
                                     await manager._run_all_sides(worker)
@@ -951,10 +951,10 @@ async def test_run_single_side_uses_angle_capture_y_for_stage_probe() -> None:
 
     with patch('openshelf_os_server.core.laser_auto_calibration._build_bounds_for_side', return_value=ScanBounds(x_min=0.0, x_max=950.0, y_min=0.0, y_max=1210.0)):
         with patch.object(manager, '_run_angle_calibration_for_side', AsyncMock(return_value=angle_result)):
-            with patch.object(manager, '_apply_angle_calibration_in_memory', AsyncMock()):
+            with patch.object(manager, '_apply_angle_calibration', AsyncMock()):
                 with patch.object(manager, '_resolve_stage_extension_probe_y_mm', AsyncMock(return_value=1139.0)) as probe_y_mock:
                     with patch.object(manager, '_run_stage_extension_calibration_for_side', AsyncMock(return_value=37.0)):
-                        with patch.object(manager, '_apply_stage_extension_calibration_in_memory', AsyncMock()):
+                        with patch.object(manager, '_apply_stage_extension_calibration', AsyncMock()):
                             with patch.object(manager, '_run_side', AsyncMock(return_value=SimpleNamespace(side=StorageModuleSide.RIGHT, angle_result=angle_result))):
                                 with patch.object(manager, '_persist_completed_results', AsyncMock()):
                                     await manager._run_single_side(worker, StorageModuleSide.RIGHT)
@@ -981,10 +981,10 @@ async def test_run_single_side_skips_extension_calibration_when_disabled() -> No
 
     with patch('openshelf_os_server.core.laser_auto_calibration._build_bounds_for_side', return_value=ScanBounds(x_min=0.0, x_max=950.0, y_min=0.0, y_max=1210.0)):
         with patch.object(manager, '_run_angle_calibration_for_side', AsyncMock(return_value=angle_result)):
-            with patch.object(manager, '_apply_angle_calibration_in_memory', AsyncMock()):
+            with patch.object(manager, '_apply_angle_calibration', AsyncMock()):
                 with patch.object(manager, '_resolve_stage_extension_probe_y_mm', AsyncMock()) as probe_y_mock:
                     with patch.object(manager, '_run_stage_extension_calibration_for_side', AsyncMock()) as stage_mock:
-                        with patch.object(manager, '_apply_stage_extension_calibration_in_memory', AsyncMock()) as apply_stage_mock:
+                        with patch.object(manager, '_apply_stage_extension_calibration', AsyncMock()) as apply_stage_mock:
                             with patch.object(manager, '_run_side', AsyncMock(return_value=SimpleNamespace(side=StorageModuleSide.RIGHT, angle_result=angle_result))):
                                 with patch.object(manager, '_persist_completed_results', AsyncMock()) as persist_mock:
                                     await manager._run_single_side(
@@ -2108,3 +2108,48 @@ def test_select_z_stall_probes_without_a_limit_keeps_every_cell() -> None:
     result = _select_z_stall_probes(analysis, candidate_lookup, None)
 
     assert [(cell.shelf_idx, cell.cell_idx) for cell, _ in result] == [(0, 0), (0, 1)]
+
+
+@pytest.mark.asyncio
+async def test_apply_angle_calibration_persists_rotation_to_disk() -> None:
+    manager = LaserAutoCalibrationManager()
+    worker = SimpleNamespace(_robot=SimpleNamespace(reload_parameters=MagicMock()))
+    angle_result = LaserAutoCalibrationAngleResult(
+        side=StorageModuleSide.LEFT,
+        alpha_deg=0.25,
+        rotation_deg=182.25,
+        capture_y_mm=1120.0,
+        sample_count=8,
+        rms_residual_mm=0.1,
+        max_abs_residual_mm=0.24,
+        line_angle_deg=90.0,
+        previous_rotation_deg=182.0,
+        updated_rotation_deg=182.25,
+    )
+
+    with patch.object(manager, '_persist_tool_parameter') as persist_mock:
+        with patch.object(manager, '_update_snapshot', AsyncMock()):
+            await manager._apply_angle_calibration(worker, StorageModuleSide.LEFT, angle_result)
+
+    persist_mock.assert_called_once_with(worker, 'ROTATION_FRONT', 182.25)
+
+
+def test_restore_calibration_params_keeps_persisted_values() -> None:
+    manager = LaserAutoCalibrationManager()
+    reload_mock = MagicMock()
+    worker = SimpleNamespace(_robot=SimpleNamespace(reload_parameters=reload_mock))
+
+    # A run that failed after the angle stage must not roll rotation back to the pre-run value:
+    # the calibration is already committed to disk, so reloading from disk is the correct restore.
+    with patch('openshelf_os_server.core.laser_auto_calibration.apply_runner.clear_config_cache'):
+        manager._restore_in_memory_calibration_params(
+            worker,
+            {
+                'ROTATION_FRONT': 182.0,
+                'ROTATION_BACK': 2.0,
+                'STAGE_EXTENSION_SHELF_FRONT': 46.0,
+                'STAGE_EXTENSION_SHELF_BACK': 47.0,
+            },
+        )
+
+    reload_mock.assert_called_once()

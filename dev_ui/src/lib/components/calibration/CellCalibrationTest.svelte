@@ -50,6 +50,7 @@
 	let needsHomeAxes = $state<string[]>([]);
 
 	const TOOL_AXES = new Set(['z_axis', 'stage']);
+	const UNTESTABLE_CELL_STATUSES = new Set(['disabled', 'maintenance']);
 	const TEST_SELECTION_STORAGE_KEY = 'opshelf.calibration.test.selection';
 
 	const needsToolHome = $derived(needsHomeAxes.some((axis) => TOOL_AXES.has(axis)));
@@ -65,6 +66,18 @@
 		loading === true
 	);
 	const homingDisabled = $derived(isBusy === true || needsToolHome === false);
+	const selectedCellData = $derived(getSelectedCell());
+	const isSelectedCellTestable = $derived(
+		selectedCellData !== null && isCellTestable(selectedCellData) === true
+	);
+	const blockedCellMessage = $derived(
+		selectedCellData !== null && isSelectedCellTestable === false
+			? `cell ${selectedCellData.cell_idx} is ${selectedCellData.status}; select another cell to run tests`
+			: ''
+	);
+	const actionsDisabled = $derived(
+		isBusy === true || needsHome === true || isSelectedCellTestable === false
+	);
 
 	onMount(function () {
 		if (browser === false) {
@@ -227,6 +240,20 @@
 		return cells.find((cell) => cell.cell_idx === selectedCell) ?? null;
 	}
 
+	function isCellTestable(cell: Cell): boolean {
+		return UNTESTABLE_CELL_STATUSES.has(cell.status.toLowerCase()) === false;
+	}
+
+	function findCellSelection(cells: Cell[], preferredCellIdx: number): Cell {
+		const preferredCell = cells.find((cell) => cell.cell_idx === preferredCellIdx);
+
+		if (preferredCell !== undefined && isCellTestable(preferredCell) === true) {
+			return preferredCell;
+		}
+
+		return cells.find((cell) => isCellTestable(cell) === true) ?? preferredCell ?? cells[0];
+	}
+
 	function buildMockStoreItem(cell: Cell): Record<string, unknown> {
 		const suffix = `${Date.now()}-${Math.floor(Math.random() * 1000000)}`;
 
@@ -261,10 +288,8 @@
 		}
 
 		const nextCell = preferredCell ?? selectedCell;
-		const matchingCell =
-			matchingShelf.cells.find((cell) => cell.cell_idx === nextCell) ?? matchingShelf.cells[0];
 
-		selectedCell = matchingCell.cell_idx;
+		selectedCell = findCellSelection(matchingShelf.cells, nextCell).cell_idx;
 	}
 
 	function didChangeSide(event: Event): void {
@@ -332,8 +357,6 @@
 	}
 
 	async function didClickStore(): Promise<void> {
-		const selectedCellData = getSelectedCell();
-
 		if (selectedCellData === null) {
 			error = 'selected cell not found';
 			return;
@@ -424,7 +447,9 @@
 					<span class="field-label">cell</span>
 					<select value={selectedCell} onchange={didChangeCell}>
 						{#each getCells() as cell}
-							<option value={cell.cell_idx}>{cell.cell_idx}</option>
+							<option value={cell.cell_idx} disabled={isCellTestable(cell) === false}>
+								{cell.cell_idx}{isCellTestable(cell) === false ? ` (${cell.status})` : ''}
+							</option>
 						{/each}
 					</select>
 				</td>
@@ -432,16 +457,10 @@
 			<tr>
 				<td colspan="3">
 					<div class="action-row">
-						<button type="button" onclick={didClickQuick} disabled={isBusy === true || needsHome === true}>
-							quick
-						</button>
-						<button type="button" onclick={didClickCycle} disabled={isBusy === true || needsHome === true}>
-							cycle
-						</button>
-						<button type="button" onclick={didClickStore} disabled={isBusy === true || needsHome === true}>
-							STORE
-						</button>
-						<button type="button" onclick={didClickRetrieve} disabled={isBusy === true || needsHome === true}>
+						<button type="button" onclick={didClickQuick} disabled={actionsDisabled}>quick</button>
+						<button type="button" onclick={didClickCycle} disabled={actionsDisabled}>cycle</button>
+						<button type="button" onclick={didClickStore} disabled={actionsDisabled}>STORE</button>
+						<button type="button" onclick={didClickRetrieve} disabled={actionsDisabled}>
 							RETRIEVE
 						</button>
 					</div>
@@ -449,6 +468,10 @@
 			</tr>
 		</tbody>
 	</table>
+{/if}
+
+{#if blockedCellMessage !== ''}
+	<StatusMessage message={blockedCellMessage} />
 {/if}
 
 {#if message !== ''}
