@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from importlib import import_module
-from typing import Any
+from typing import Any, Iterator
 
 _MODULE_NAMES = (
     "core",
@@ -30,6 +31,7 @@ _PATCH_TARGET_NAMES = (
 
 _ORIGINAL_EXPORTS: dict[str, Any] = {}
 _WRAPPER_EXPORTS: dict[str, Any] = {}
+_SYNC_DEPTH = 0
 
 
 def _load_module(name: str) -> Any:
@@ -73,6 +75,42 @@ def _sync_patch_targets() -> None:
             if value is not None:
                 setattr(module, name, value)
 
+
+def _restore_patch_targets() -> None:
+    modules = [_load_module(name) for name in _MODULE_NAMES]
+
+    for module in modules:
+        for name in _PATCH_TARGET_NAMES:
+            value = _get_original_export(name)
+
+            if value is not None:
+                setattr(module, name, value)
+
+
+@contextmanager
+def _synced_patch_targets() -> Iterator[None]:
+    """Propagated patches must not outlive the call that needed them.
+
+    Callers patch package-level names, so the current values are pushed into the
+    submodules for the duration of the call and reverted afterwards. Without the
+    revert, a mock removed by its own context manager stays bound inside the
+    submodules for the rest of the process. Entry points nest (a staged scan runs
+    inside run_with_temp_robot_config), so only the outermost call reverts.
+    """
+    global _SYNC_DEPTH
+
+    _sync_patch_targets()
+    _SYNC_DEPTH += 1
+
+    try:
+        yield
+    finally:
+        _SYNC_DEPTH -= 1
+
+        if _SYNC_DEPTH == 0:
+            _restore_patch_targets()
+
+
 def _find_export(name: str) -> Any:
     if name in _ORIGINAL_EXPORTS:
         value = _ORIGINAL_EXPORTS[name]
@@ -91,29 +129,30 @@ def _find_export(name: str) -> Any:
 
 
 async def run_with_temp_robot_config(*args: Any, **kwargs: Any) -> Any:
-    _sync_patch_targets()
-    return await _load_module("core").run_with_temp_robot_config(*args, **kwargs)
+    with _synced_patch_targets():
+        return await _load_module("core").run_with_temp_robot_config(*args, **kwargs)
 
 
 async def capture_shelf_candidates(*args: Any, **kwargs: Any) -> Any:
     implementation = _get_original_export("capture_shelf_candidates")
-    _sync_patch_targets()
-    return await implementation(*args, **kwargs)
+
+    with _synced_patch_targets():
+        return await implementation(*args, **kwargs)
 
 
 async def run_io_box_scout(*args: Any, **kwargs: Any) -> Any:
-    _sync_patch_targets()
-    return await _load_module("io_box").run_io_box_scout(*args, **kwargs)
+    with _synced_patch_targets():
+        return await _load_module("io_box").run_io_box_scout(*args, **kwargs)
 
 
 async def run_staged_scan(*args: Any, **kwargs: Any) -> Any:
-    _sync_patch_targets()
-    return await _load_module("staged_scan").run_staged_scan(*args, **kwargs)
+    with _synced_patch_targets():
+        return await _load_module("staged_scan").run_staged_scan(*args, **kwargs)
 
 
 def apply_single_shelf_analysis(*args: Any, **kwargs: Any) -> Any:
-    _sync_patch_targets()
-    return _load_module("staged_scan").apply_single_shelf_analysis(*args, **kwargs)
+    with _synced_patch_targets():
+        return _load_module("staged_scan").apply_single_shelf_analysis(*args, **kwargs)
 
 
 _WRAPPER_EXPORTS["capture_shelf_candidates"] = capture_shelf_candidates
