@@ -747,16 +747,14 @@ class AngleRunnerMixin:
         )
 
 
-    async def _apply_angle_calibration_in_memory(
+    async def _apply_angle_calibration(
         self,
         worker: RobotWorker,
         side: StorageModuleSide,
         result: LaserAutoCalibrationAngleResult,
     ) -> None:
         rotation_param = _side_to_rotation_param_name(side)
-        params_dict = worker._robot._tool._params.parameters.model_dump()
-        params_dict[rotation_param] = result.updated_rotation_deg
-        worker._robot._tool._params.parameters = Parameters.model_validate(params_dict)
+        self._persist_tool_parameter(worker, rotation_param, result.updated_rotation_deg)
         side_name = _side_to_module_name(side)
         self._side_states.setdefault(side_name, _SideState()).angle_result = result
 

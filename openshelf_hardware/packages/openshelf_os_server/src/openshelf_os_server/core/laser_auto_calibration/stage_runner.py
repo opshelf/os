@@ -388,16 +388,14 @@ class StageRunnerMixin:
         clear_config_cache()
         worker._robot.reload_parameters()
 
-    async def _apply_stage_extension_calibration_in_memory(
+    async def _apply_stage_extension_calibration(
         self,
         worker: RobotWorker,
         side: StorageModuleSide,
         stage_extension_mm: float,
     ) -> None:
         stage_extension_param = _side_to_stage_extension_param_name(side)
-        params_dict = worker._robot._tool._params.parameters.model_dump()
-        params_dict[stage_extension_param] = stage_extension_mm
-        worker._robot._tool._params.parameters = Parameters.model_validate(params_dict)
+        self._persist_tool_parameter(worker, stage_extension_param, stage_extension_mm)
         side_name = _side_to_module_name(side)
         self._side_states.setdefault(side_name, _SideState()).stage_extension_mm = stage_extension_mm
 

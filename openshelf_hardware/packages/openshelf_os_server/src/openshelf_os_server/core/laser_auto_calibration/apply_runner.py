@@ -694,7 +694,38 @@ class ApplyRunnerMixin:
         }
 
 
+    def _persist_tool_parameter(self, worker: RobotWorker, param_name: str, value: Any) -> None:
+        """Commit one calibrated tool parameter to disk as soon as it is measured.
+
+        Angle and stage extension are self-contained results. Keeping them in memory until the
+        whole run succeeds means any later failure (a scan, or the z stall anchor) discards them
+        and silently leaves the tool on a stale value.
+        """
+        config = get_root_config()
+        next_config = config.model_copy(deep=True)
+        params_dict = next_config.robot.tool.parameters.model_dump()
+        params_dict[param_name] = value
+        next_config.robot.tool.parameters = Parameters.model_validate(params_dict)
+
+        save_root_config(next_config)
+        clear_config_cache()
+        worker._robot.reload_parameters()
+
+
     def _restore_in_memory_calibration_params(self, worker: RobotWorker, params: dict[str, float]) -> None:
+        """Drop uncommitted in-memory parameter edits by reloading what is on disk.
+
+        Calibrated parameters are persisted the moment they are measured, so disk already holds
+        everything this run legitimately produced. Re-applying the pre-run snapshot would throw
+        those away; only fall back to it if the reload itself fails.
+        """
+        try:
+            clear_config_cache()
+            worker._robot.reload_parameters()
+            return
+        except Exception:
+            logger.error("laser_auto_calibration_param_reload_failed", exc_info=True)
+
         params_dict = worker._robot._tool._params.parameters.model_dump()
         params_dict["ROTATION_FRONT"] = float(params["ROTATION_FRONT"])
         params_dict["ROTATION_BACK"] = float(params["ROTATION_BACK"])
