@@ -13,6 +13,15 @@ from .models import *
 _MANUAL_SHELF_MATCH_TOLERANCE_MM = 60.0
 _MANUAL_CELL_MATCH_TOLERANCE_MM = 40.0
 
+# The z probe presses the tray face, and the z axis can out-push the stage it is mounted on
+# (z lead 16.1mm/rev vs stage 50mm/rev). If the contact does not stop the gripper, the load
+# back-drives the stage instead: z never registers a stall, the probe runs to its limit, and
+# the stage fault is swallowed by the next retract()'s recovery homing. Catch it here.
+_STAGE_BACKDRIVE_TOLERANCE_MM = 1.5
+
+# One probe cannot separate the z intercept from the x tilt: it silently yields a tilt-free model.
+_MIN_Z_STALL_SAMPLES = 2
+
 
 def _shelf_center_y(shelf: Any) -> float | None:
     ys = [float(cell.calibration_point.y) for cell in shelf.cells if cell.calibration_point is not None]
@@ -339,6 +348,22 @@ class ApplyRunnerMixin:
             )
             last_reason = reason
 
+            stage_motor = tool._ms
+            achieved_stage_mm = (
+                stage_extension_mm
+                if stage_motor is None
+                else float(await stage_motor.get_position())
+            )
+
+            if abs(achieved_stage_mm - stage_extension_mm) > _STAGE_BACKDRIVE_TOLERANCE_MM:
+                raise ValueError(
+                    f"z stall anchor: the stage was pushed back from {stage_extension_mm:.1f}mm to "
+                    f"{achieved_stage_mm:.1f}mm during probe "
+                    f"{detected_cell.shelf_idx}:{detected_cell.cell_idx} (z reached {z_contact_mm:.1f}mm, "
+                    f"reason={reason}). The gripper is loading the rack harder than the stage can hold, "
+                    "so this contact is not a wall and the rack is being displaced. Refusing to continue."
+                )
+
             if reason == "fast_approach_fault":
                 raise ValueError(
                     f"z stall anchor: the tool faulted during the rapid approach at "
@@ -400,6 +425,16 @@ class ApplyRunnerMixin:
                 f"(last reason={last_reason}, stage_extension_mm={stage_extension_mm:.2f})"
             )
 
+        # A lone sample cannot separate the intercept from the tilt, so it collapses to a
+        # tilt-free constant applied to every cell. The tilt is worth ~2mm across a shelf and a
+        # wrong one drives the gripper into the trays, so refuse rather than guess.
+        if len(samples) < _MIN_Z_STALL_SAMPLES:
+            raise ValueError(
+                f"z stall anchor: only {len(samples)} of {len(probes)} probes contacted a wall "
+                f"(need at least {_MIN_Z_STALL_SAMPLES}). Too few to separate the z intercept from "
+                "the x tilt, and a tilt-free model would mis-place every cell."
+            )
+
         # Resolve the tilt from the single shelf that best supports it (>=3 samples over a
         # wide-enough X span, so an interior probe can corroborate the extremes). If no
         # shelf qualifies, fall back to a constant. resolve_z_delta_model itself collapses
@@ -447,6 +482,65 @@ class ApplyRunnerMixin:
             )
 
         return intercept_mm, slope_per_mm
+
+    async def _resolve_z_delta_model(
+        self,
+        worker: RobotWorker,
+        side: StorageModuleSide,
+        analysis: Any,
+        scan_config: Any,
+        *,
+        allow_missing: bool = False,
+    ) -> tuple[float, float] | None:
+        """Resolve (intercept, slope) for z_offset = wall_depth + intercept + slope * grab_x.
+
+        Prefer the configured model: the laser reads each cell's own wall depth without touching
+        the rack, whereas the stall probe presses it and measures the compliance of everything in
+        between. Fall back to the probe only when no model is configured.
+        """
+        configured_model = laser_module.get_scan_z_offset_model(scan_config=scan_config, side=side)
+
+        if configured_model is not None:
+            tool = worker._robot._tool
+            stage_param = (
+                "STAGE_EXTENSION_SHELF_FRONT" if side == StorageModuleSide.LEFT else "STAGE_EXTENSION_SHELF_BACK"
+            )
+            stage_extension_value = await tool.get_param(stage_param)
+            z_place_value = await tool.get_param("Z_EXTENSION_PLACE")
+
+            if stage_extension_value is None or z_place_value is None:
+                raise ValueError(f"{stage_param} and Z_EXTENSION_PLACE are required to apply the z offset model")
+
+            laser_module.require_z_offset_model_matches_tool(
+                model=configured_model,
+                side=side,
+                stage_extension_mm=float(stage_extension_value),
+                z_place_mm=float(z_place_value),
+                tolerance_mm=float(scan_config.z_offset_model_param_tolerance_mm),
+            )
+
+            intercept_mm = float(configured_model.intercept_mm)
+            slope_per_mm = float(configured_model.slope_per_mm)
+            laser_module.print_status(
+                f"z_offset_model=config side={'left' if side == StorageModuleSide.LEFT else 'right'} "
+                f"intercept_mm={intercept_mm:.3f} slope_per_mm={slope_per_mm:.6f} "
+                f"stage_extension_mm={float(stage_extension_value):.2f} z_place_mm={float(z_place_value):.2f}"
+            )
+            return intercept_mm, slope_per_mm
+
+        if getattr(scan_config, "z_stall_anchor_enabled", False) is True:
+            return await self._run_z_stall_anchor(worker, side, analysis)
+
+        if allow_missing is True:
+            return None
+
+        side_name = "left" if side == StorageModuleSide.LEFT else "right"
+        raise ValueError(
+            f"no z offset source for the {side_name} module: configure "
+            f"robot.grid.scan.{side_name}_z_offset_model, or enable robot.grid.scan.z_stall_anchor_enabled. "
+            "Persisting without one would write z_offset=0 to every cell."
+        )
+
 
     async def _persist_completed_results(
         self,
@@ -499,22 +593,24 @@ class ApplyRunnerMixin:
                 scan_config=scan_config,
                 side=completed_result.side,
             )
-            z_delta_model: tuple[float, float] | None = None
-            if getattr(scan_config, "z_stall_anchor_enabled", False) is True:
-                z_delta_model = await self._run_z_stall_anchor(
-                    worker,
-                    completed_result.side,
-                    completed_result.analysis,
-                )
-            if z_delta_model is not None:
-                z_delta_intercept_mm, z_delta_slope_per_mm = z_delta_model
-                laser_module.apply_wall_depth_z_offsets(
-                    analysis=completed_result.analysis,
-                    scanned_shelves=scanned_shelves,
-                    metadata_path=str(completed_result.analysis.metadata_path),
-                    z_delta_mm=z_delta_intercept_mm,
-                    z_delta_slope_per_mm=z_delta_slope_per_mm,
-                )
+            z_delta_model = await self._resolve_z_delta_model(
+                worker,
+                completed_result.side,
+                completed_result.analysis,
+                scan_config,
+            )
+
+            if z_delta_model is None:
+                raise ValueError("z offset model could not be resolved for a full side rebuild")
+
+            z_delta_intercept_mm, z_delta_slope_per_mm = z_delta_model
+            laser_module.apply_wall_depth_z_offsets(
+                analysis=completed_result.analysis,
+                scanned_shelves=scanned_shelves,
+                metadata_path=str(completed_result.analysis.metadata_path),
+                z_delta_mm=z_delta_intercept_mm,
+                z_delta_slope_per_mm=z_delta_slope_per_mm,
+            )
 
             existing_side_shelves = (
                 list(source_grid.left_module)
@@ -587,9 +683,15 @@ class ApplyRunnerMixin:
         scan_config = config.robot.grid.scan
         grid_path = Path(resolve_grid_path(config))
         grid = laser_module.load_grid(grid_path)
-        z_delta_model: tuple[float, float] | None = None
-        if getattr(scan_config, "z_stall_anchor_enabled", False) is True:
-            z_delta_model = await self._run_z_stall_anchor(worker, side, analysis)
+        # A single-shelf rescan may legitimately run with no z source at all: apply_single_shelf_analysis
+        # then leaves the shelf's existing z offsets alone rather than rebuilding them.
+        z_delta_model = await self._resolve_z_delta_model(
+            worker,
+            side,
+            analysis,
+            scan_config,
+            allow_missing=True,
+        )
         laser_module.apply_single_shelf_analysis(
             analysis=analysis,
             grid=grid,
