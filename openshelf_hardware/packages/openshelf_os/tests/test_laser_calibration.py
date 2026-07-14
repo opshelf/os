@@ -8,6 +8,9 @@ import pytest
 
 from openshelf_os.common import LaserScanConfig
 from openshelf_os.laser_calibration import (
+	get_scan_z_offset_model,
+	require_z_offset_model_matches_tool,
+	apply_wall_depth_z_offsets,
 	apply_xy_reference_offsets,
 	apply_single_shelf_analysis,
 	apply_single_cell_rescan,
@@ -1709,3 +1712,86 @@ def test_probe_z_until_stall_does_not_report_fast_approach_fault_as_wall_contact
 	assert reason == 'fast_approach_fault'
 	assert did_stall is False
 	assert z_contact_mm == pytest.approx(56.2)
+
+
+def test_get_scan_z_offset_model_returns_configured_model() -> None:
+	model = SimpleNamespace(intercept_mm=4.85, slope_per_mm=-0.00285, stage_extension_mm=46.0, z_place_mm=160.5)
+	scan_config = SimpleNamespace(left_z_offset_model=model, right_z_offset_model=None)
+
+	assert get_scan_z_offset_model(scan_config=scan_config, side=StorageModuleSide.LEFT) is model
+	assert get_scan_z_offset_model(scan_config=scan_config, side=StorageModuleSide.RIGHT) is None
+
+
+def test_require_z_offset_model_matches_tool_rejects_drifted_stage_extension() -> None:
+	model = SimpleNamespace(intercept_mm=4.85, slope_per_mm=-0.00285, stage_extension_mm=46.0, z_place_mm=160.5)
+
+	with pytest.raises(ValueError, match='derived at a different tool geometry'):
+		require_z_offset_model_matches_tool(
+			model=model,
+			side=StorageModuleSide.LEFT,
+			stage_extension_mm=48.0,
+			z_place_mm=160.5,
+			tolerance_mm=0.2,
+		)
+
+
+def test_require_z_offset_model_matches_tool_accepts_unchanged_params() -> None:
+	model = SimpleNamespace(intercept_mm=4.85, slope_per_mm=-0.00285, stage_extension_mm=46.0, z_place_mm=160.5)
+
+	require_z_offset_model_matches_tool(
+		model=model,
+		side=StorageModuleSide.LEFT,
+		stage_extension_mm=46.05,
+		z_place_mm=160.5,
+		tolerance_mm=0.2,
+	)
+
+
+def test_apply_wall_depth_z_offsets_refuses_cells_without_wall_depth(tmp_path: Path) -> None:
+	# A cell with no laser wall depth used to be skipped silently, leaving it at the
+	# z_offset=0.0 default -- a blank cell in an otherwise applied grid.
+	metadata_path = tmp_path / 'metadata.json'
+	metadata_path.write_text(
+		json.dumps(
+			{
+				'candidates': [
+					{'x_min': 279.0, 'x_max': 307.0, 'y_min': 476.0, 'y_max': 504.0, 'wall_depth_mm': 9.9},
+				],
+				'fine_scans': [
+					{
+						'candidate_index': 0,
+						'status': 'completed',
+						'detected_cells': [
+							{'shelf_idx': 0, 'cell_idx': 0, 'center_x_mm': 293.0, 'center_y_mm': 490.0},
+						],
+					}
+				],
+			}
+		),
+		encoding='utf-8',
+	)
+	analysis = SimpleNamespace(metadata_path=str(metadata_path), shelves=[])
+	scanned_shelves = [
+		SimpleNamespace(
+			shelf_idx=0,
+			cells=[
+				SimpleNamespace(cell_idx=0, calibration_point=SimpleNamespace(x=340.0, y=493.0, z_offset=0.0)),
+				SimpleNamespace(cell_idx=1, calibration_point=SimpleNamespace(x=474.0, y=493.0, z_offset=0.0)),
+			],
+		)
+	]
+	# cell 0 has a wall depth, cell 1 does not
+	partial_lookup = {(0, 0): SimpleNamespace(wall_depth_mm=9.9)}
+
+	with patch('openshelf_os.laser_calibration.staged_scan.build_candidate_lookup_by_cell', return_value=partial_lookup):
+		with pytest.raises(ValueError, match='no laser wall depth'):
+			apply_wall_depth_z_offsets(
+				analysis=analysis,
+				scanned_shelves=scanned_shelves,
+				metadata_path=str(metadata_path),
+				z_delta_mm=4.85,
+				z_delta_slope_per_mm=-0.00285,
+			)
+
+	# the cell that did have a wall depth was still computed, not left blank
+	assert scanned_shelves[0].cells[0].calibration_point.z_offset == pytest.approx(9.9 + 4.85 - 0.00285 * 340.0)

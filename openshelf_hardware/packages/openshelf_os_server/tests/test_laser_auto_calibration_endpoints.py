@@ -1114,16 +1114,17 @@ async def test_persist_completed_results_saves_stage_extensions() -> None:
         ),
     ]
 
-    with patch('openshelf_os_server.core.laser_auto_calibration.get_root_config', return_value=config):
-        with patch('openshelf_os_server.core.laser_auto_calibration.resolve_grid_path', return_value='storage.json'):
-            with patch('openshelf_os_server.core.laser_auto_calibration.laser_module.load_grid', side_effect=[source_grid, reloaded_grid]):
-                with patch('openshelf_os_server.core.laser_auto_calibration.laser_module.build_shelves_from_scan', side_effect=[[object()], [object()]]):
-                    with patch('openshelf_os_server.core.laser_auto_calibration.laser_module.apply_xy_reference_offsets'):
-                        with patch('openshelf_os_server.core.laser_auto_calibration.laser_module.apply_wall_depth_z_offsets'):
-                            with patch('openshelf_os_server.core.laser_auto_calibration.laser_module.StorageGrid', FakeStorageGrid):
-                                with patch('openshelf_os_server.core.laser_auto_calibration.save_root_config', side_effect=lambda next_config: saved_configs.append(next_config)):
-                                    with patch('openshelf_os_server.core.laser_auto_calibration.clear_config_cache'):
-                                        await manager._persist_completed_results(worker, completed_results)
+    with patch.object(manager, '_resolve_z_delta_model', AsyncMock(return_value=(4.85, -0.00285))):
+        with patch('openshelf_os_server.core.laser_auto_calibration.get_root_config', return_value=config):
+            with patch('openshelf_os_server.core.laser_auto_calibration.resolve_grid_path', return_value='storage.json'):
+                with patch('openshelf_os_server.core.laser_auto_calibration.laser_module.load_grid', side_effect=[source_grid, reloaded_grid]):
+                    with patch('openshelf_os_server.core.laser_auto_calibration.laser_module.build_shelves_from_scan', side_effect=[[object()], [object()]]):
+                        with patch('openshelf_os_server.core.laser_auto_calibration.laser_module.apply_xy_reference_offsets'):
+                            with patch('openshelf_os_server.core.laser_auto_calibration.laser_module.apply_wall_depth_z_offsets'):
+                                with patch('openshelf_os_server.core.laser_auto_calibration.laser_module.StorageGrid', FakeStorageGrid):
+                                    with patch('openshelf_os_server.core.laser_auto_calibration.save_root_config', side_effect=lambda next_config: saved_configs.append(next_config)):
+                                        with patch('openshelf_os_server.core.laser_auto_calibration.clear_config_cache'):
+                                            await manager._persist_completed_results(worker, completed_results)
 
     assert len(saved_storage_grids) == 1
     assert len(saved_configs) == 1

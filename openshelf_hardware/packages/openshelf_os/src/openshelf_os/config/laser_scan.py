@@ -10,6 +10,26 @@ class LaserScanXYOffsetConfig(BaseModel):
     y_mm: float
 
 
+class LaserScanZOffsetModelConfig(BaseModel):
+    """Turns a laser wall depth reading into a gripper z offset, without touching the rack.
+
+    z_offset = wall_depth + intercept_mm + slope_per_mm * grab_x
+
+    The laser and the gripper ride the same carriage, so the carriage-to-rack distance cancels
+    out of this model: what is left is the fixed laser-to-gripper geometry (intercept) and the
+    tool's pitch across the x travel (slope). Both are per side and per install.
+
+    z_offset is expressed relative to Z_EXTENSION_PLACE and is measured with the stage extended,
+    so the model only holds for the stage extension and z place it was derived at. Both are
+    pinned here and re-checked before the model is applied.
+    """
+
+    intercept_mm: float
+    slope_per_mm: float = 0.0
+    stage_extension_mm: float
+    z_place_mm: float
+
+
 class LaserScanConfig(BaseModel):
     wall_depth_tolerance_mm: float = Field(2.0, gt=0)
     expected_hole_width_mm: float = Field(26.0, gt=0)
@@ -35,6 +55,10 @@ class LaserScanConfig(BaseModel):
 
     left_xy_offset: Optional[LaserScanXYOffsetConfig] = None
     right_xy_offset: Optional[LaserScanXYOffsetConfig] = None
+
+    left_z_offset_model: Optional[LaserScanZOffsetModelConfig] = None
+    right_z_offset_model: Optional[LaserScanZOffsetModelConfig] = None
+    z_offset_model_param_tolerance_mm: float = Field(0.2, gt=0)
 
     z_stall_anchor_enabled: bool = False
     z_stall_tray_engagement_mm: float = 0.0

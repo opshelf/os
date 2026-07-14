@@ -255,6 +255,62 @@ def get_scan_xy_offset(
 	return offset_x_mm, offset_y_mm
 
 
+def get_scan_z_offset_model(
+	*,
+	scan_config: Any,
+	side: StorageModuleSide,
+) -> Any | None:
+	prefix = "left" if side == StorageModuleSide.LEFT else "right"
+	configured_model = getattr(scan_config, f"{prefix}_z_offset_model", None)
+
+	if configured_model is None:
+		return None
+
+	validate_finite_value(configured_model.intercept_mm, f"robot.grid.scan.{prefix}_z_offset_model.intercept_mm")
+	validate_finite_value(configured_model.slope_per_mm, f"robot.grid.scan.{prefix}_z_offset_model.slope_per_mm")
+	validate_finite_value(
+		configured_model.stage_extension_mm,
+		f"robot.grid.scan.{prefix}_z_offset_model.stage_extension_mm",
+	)
+	validate_finite_value(configured_model.z_place_mm, f"robot.grid.scan.{prefix}_z_offset_model.z_place_mm")
+
+	return configured_model
+
+
+def require_z_offset_model_matches_tool(
+	*,
+	model: Any,
+	side: StorageModuleSide,
+	stage_extension_mm: float,
+	z_place_mm: float,
+	tolerance_mm: float,
+) -> None:
+	"""A z offset is relative to Z_EXTENSION_PLACE and measured at a given stage extension.
+
+	Either drifting shifts every cell's z offset one-for-one, and the auto calibration itself
+	re-derives stage extension each run, so a stale model would silently mis-place every cell.
+	"""
+	prefix = "left" if side == StorageModuleSide.LEFT else "right"
+	drifted: list[str] = []
+
+	if abs(float(model.stage_extension_mm) - float(stage_extension_mm)) > tolerance_mm:
+		drifted.append(
+			f"stage extension {float(model.stage_extension_mm):.2f}mm -> {float(stage_extension_mm):.2f}mm"
+		)
+
+	if abs(float(model.z_place_mm) - float(z_place_mm)) > tolerance_mm:
+		drifted.append(f"Z_EXTENSION_PLACE {float(model.z_place_mm):.2f}mm -> {float(z_place_mm):.2f}mm")
+
+	if len(drifted) == 0:
+		return
+
+	raise ValueError(
+		f"robot.grid.scan.{prefix}_z_offset_model was derived at a different tool geometry "
+		f"({', '.join(drifted)}). Every cell's z offset would be wrong by that difference. "
+		"Re-derive the model or restore the tool parameters."
+	)
+
+
 def require_scan_xy_correction(
 	*,
 	scan_config: Any,

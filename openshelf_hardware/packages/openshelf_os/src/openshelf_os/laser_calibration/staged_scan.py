@@ -829,10 +829,15 @@ def apply_wall_depth_z_offsets(
 	)
 
 	if len(candidate_lookup) == 0:
-		print_status("z_offset_inference=skipped reason=no_candidate_wall_depth")
-		return
+		raise ValueError(
+			"z offset inference: no scanned cell has a laser wall depth, so every cell would be "
+			"written with z_offset=0 and the gripper would not reach any tray"
+		)
 
 	updated_cell_count = 0
+	# wall_depth is the sole per-cell z source. A cell without one used to be skipped silently,
+	# which left it at the z_offset=0 default from build_shelves_from_scan.
+	missing_cells: list[str] = []
 
 	for shelf in scanned_shelves:
 		for cell in shelf.cells:
@@ -842,14 +847,22 @@ def apply_wall_depth_z_offsets(
 			candidate = candidate_lookup.get((shelf.shelf_idx, cell.cell_idx))
 
 			if candidate is None or candidate.wall_depth_mm is None:
+				missing_cells.append(f"{shelf.shelf_idx}:{cell.cell_idx}")
 				continue
 
 			cell_delta_mm = float(z_delta_mm) + float(z_delta_slope_per_mm) * float(cell.calibration_point.x)
 			cell.calibration_point.z_offset = float(candidate.wall_depth_mm) + cell_delta_mm
 			updated_cell_count += 1
 
+	if len(missing_cells) > 0:
+		raise ValueError(
+			f"z offset inference: no laser wall depth for {len(missing_cells)} scanned cell(s) "
+			f"({', '.join(missing_cells[:8])}{'...' if len(missing_cells) > 8 else ''}). "
+			"Those cells would keep z_offset=0; refusing to persist a partially blank grid."
+		)
+
 	print_status(
-		f"z_offset_inference=applied source=stall_anchor intercept_mm={float(z_delta_mm):.3f} "
+		f"z_offset_inference=applied intercept_mm={float(z_delta_mm):.3f} "
 		f"slope_per_mm={float(z_delta_slope_per_mm):.5f} updated_cells={updated_cell_count}"
 	)
 
