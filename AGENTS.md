@@ -12,8 +12,10 @@
 - On hardware devices, do not use bare `./scripts/start` for restarts. Use `./scripts/start --hardware` with the appropriate `--mode`/`--build` flags, otherwise the API container can restart without the hardware compose overlay and lose USB/device passthrough.
 - For hardware-device restarts, stop first and start detached with hardware passthrough from the device checkout: `./scripts/stop` then `./scripts/start -d -h`. Do not use `docker restart` for the API container; it can come back without the hardware compose overlay.
 - Frontend checks: `cd dev_ui && npm run check` and `cd dev_ui && npm run build`. There is no repo-local frontend lint or test script.
-- Backend setup/checks: `cd openshelf_hardware && uv sync`, `cd openshelf_hardware && uv run pytest`, `cd openshelf_hardware && uv run ruff check packages`, `cd openshelf_hardware && uv run mypy packages/openshelf_os_server/src`.
+- Backend setup/checks: `cd openshelf_hardware && uv sync --all-packages`, `cd openshelf_hardware && uv run pytest`, `cd openshelf_hardware && uv run ruff check packages`, `cd openshelf_hardware && uv run mypy packages/openshelf_os_server/src`.
+- Always sync the backend with `uv sync --all-packages`. Bare `uv sync` only syncs the workspace root project and prunes every dependency the members need, which leaves the venv unable to import `sqlalchemy`, `fastapi`, and the rest until you re-sync with `--all-packages`.
 - Focused backend tests work directly with package paths, for example `cd openshelf_hardware && uv run pytest packages/openshelf_os_server/tests/test_storage_endpoints.py`.
+- The backend suite is order-dependent by default only because collection order is stable. Before landing test changes, run it shuffled at least once: `cd openshelf_hardware && uv run pytest --random-order`. Use `--random-order-bucket=global` to interleave modules and `--random-order-seed=<seed>` to replay a failing order.
 
 ## Runtime gotchas
 - `openshelf_hardware/data/` is the live source of truth for local state: SQLite lives at `data/base.db`, config is read from `data/config.json` / `data/settings.json`, `scripts/start` tracks the requested mode in `data/.mode` and `data/.last_start_mode`, and the API records runtime mode transitions in `data/.last_mode`.
