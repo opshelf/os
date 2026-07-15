@@ -1,12 +1,30 @@
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import func, select
+from starlette.requests import Request
 
 from openshelf_os_server.database.models import AuditLog
 from openshelf_os_server.database.session import AsyncSessionLocal
 from openshelf_os_server.main import app
+from openshelf_os_server.middleware.audit import (
+	should_skip_after_response,
+	should_skip_before_request,
+)
+from openshelf_os_server.utils.audit_constants import AUDIT_RETENTION_DAYS
+
+
+def _make_request(method: str, path: str) -> Request:
+	scope = {
+		"type": "http",
+		"method": method,
+		"path": path,
+		"headers": [],
+		"query_string": b"",
+	}
+	return Request(scope)
 
 
 async def audit_count(endpoint: str | None = None, method: str | None = None) -> int:
@@ -205,6 +223,82 @@ async def test_health_requests_are_not_audited(unauthenticated_client: AsyncClie
 
 	assert response.status_code == 200
 	assert await audit_count(endpoint="/api/health") == before_count
+
+
+@pytest.mark.anyio
+async def test_audit_write_prunes_unprotected_entries_older_than_retention(client: AsyncClient) -> None:
+	stale_endpoint = f"/api/stale/{uuid.uuid4().hex}"
+	async with AsyncSessionLocal() as db:
+		db.add(
+			AuditLog(
+				timestamp=datetime.now(timezone.utc) - timedelta(days=AUDIT_RETENTION_DAYS + 1),
+				method="GET",
+				endpoint=stale_endpoint,
+				response_status=200,
+			)
+		)
+		await db.commit()
+
+	assert await audit_count(endpoint=stale_endpoint) == 1
+
+	response = await client.get("/api/users")
+	assert response.status_code == 200
+
+	assert await audit_count(endpoint=stale_endpoint) == 0
+
+
+@pytest.mark.anyio
+async def test_retention_prune_keeps_clock_skewed_chain_entry(client: AsyncClient) -> None:
+	response = await client.get("/api/users")
+	assert response.status_code == 200
+
+	async with AsyncSessionLocal() as db:
+		anchor_seq = await db.scalar(select(func.max(AuditLog.seq_no)))
+		assert anchor_seq is not None
+		skewed_seq = int(anchor_seq) + 1
+		db.add(
+			AuditLog(
+				timestamp=datetime.now(timezone.utc) - timedelta(days=AUDIT_RETENTION_DAYS + 30),
+				method="GET",
+				endpoint="/api/skewed",
+				response_status=200,
+				seq_no=skewed_seq,
+				prev_hash="0" * 64,
+				entry_hash="1" * 64,
+				hmac="2" * 64,
+				hmac_key_id="test",
+			)
+		)
+		await db.commit()
+
+	response = await client.get("/api/users")
+	assert response.status_code == 200
+
+	async with AsyncSessionLocal() as db:
+		still_present = await db.scalar(
+			select(func.count()).select_from(AuditLog).where(AuditLog.seq_no == skewed_seq)
+		)
+	assert still_present == 1
+
+
+@pytest.mark.parametrize(
+	"method, path",
+	[
+		("POST", "/api/robot/debug/motors/probe"),
+		("GET", "/api/calibration/laser/stream"),
+		("DELETE", "/api/robot/debug/motors/probe"),
+	],
+)
+def test_diagnostic_endpoints_skipped_before_request(method: str, path: str) -> None:
+	request = _make_request(method, path)
+	assert should_skip_before_request(request) is True
+
+
+def test_laser_status_successful_read_is_excluded() -> None:
+	request = _make_request("GET", "/api/calibration/laser/status")
+	assert should_skip_before_request(request) is False
+	assert should_skip_after_response(request, 200) is True
+	assert should_skip_after_response(request, 500) is False
 
 
 @pytest.mark.anyio

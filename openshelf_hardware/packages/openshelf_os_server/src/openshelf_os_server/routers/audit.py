@@ -222,9 +222,10 @@ async def verify_audit_chain(
 			error_message = "Entry hash mismatch"
 			break
 
-		# Check linkage with previous
-		expected_prev = prev_hash if prev_hash is not None else ("0" * 64)
-		if log.prev_hash != expected_prev:
+		# Check linkage with previous. The earliest retained entry anchors the
+		# chain (older entries may have been pruned by the retention policy), so
+		# only enforce linkage between consecutive retained entries.
+		if prev_hash is not None and log.prev_hash != prev_hash:
 			first_error_seq = log.seq_no
 			error_message = "Prev hash mismatch (chain break)"
 			break
