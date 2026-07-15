@@ -2,7 +2,7 @@
 import json
 import time
 import traceback
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, List, Callable
 from contextvars import ContextVar
 
@@ -12,7 +12,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from ..database.session import AsyncSessionLocal
 from ..database.models import AuditLog
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
 from ..utils.audit_integrity import (
     canonicalize_payload,
     sha256_hex,
@@ -20,7 +20,7 @@ from ..utils.audit_integrity import (
     build_binding_message,
     get_hmac_key_id,
 )
-from ..utils.audit_constants import LEGACY_COMMAND_RECORDS_FIELD
+from ..utils.audit_constants import AUDIT_RETENTION_DAYS, LEGACY_COMMAND_RECORDS_FIELD
 from ..routers.auth_deps import get_current_user_optional
 
 command_records_context: ContextVar[List[Dict[str, Any]]] = ContextVar("command_records", default=[])
@@ -28,6 +28,8 @@ command_records_context: ContextVar[List[Dict[str, Any]]] = ContextVar("command_
 IGNORED_METHODS = frozenset(["OPTIONS"])
 ALWAYS_EXCLUDED_ENDPOINTS = frozenset([
     "/api/health",
+    "/api/robot/debug/motors/probe",
+    "/api/calibration/laser/stream",
 ])
 SUCCESSFUL_READ_METHODS = frozenset(["GET", "HEAD"])
 SUCCESSFUL_READ_EXCLUDED_ENDPOINTS = frozenset([
@@ -48,6 +50,7 @@ SUCCESSFUL_READ_EXCLUDED_ENDPOINTS = frozenset([
     "/api/robot/debug/scale/calibration/status",
     "/api/robot/debug/scale/calibration/params",
     "/api/calibration/status",
+    "/api/calibration/laser/status",
 ])
 SUCCESSFUL_READ_EXCLUDED_PREFIXES = (
     "/api/storage/items/",
@@ -200,11 +203,8 @@ class AuditMiddleware(BaseHTTPMiddleware):
 					last_seq_no = int(row[0])
 					last_entry_hash = str(row[1])
 				else:
-					res2 = await db.execute(
-						select(AuditLog.id).order_by(AuditLog.id.desc()).limit(1)
-					)
-					row2 = res2.first()
-					last_seq_no = int(row2[0]) if row2 is not None else 0
+					max_seq = await db.scalar(select(func.max(AuditLog.seq_no)))
+					last_seq_no = int(max_seq) if max_seq is not None else 0
 					last_entry_hash = None
 
 				seq_no = (last_seq_no or 0) + 1
@@ -250,6 +250,27 @@ class AuditMiddleware(BaseHTTPMiddleware):
 					entry_hash=entry_hash,
 					hmac=hmac_hex,
 					hmac_key_id=key_id,
+				)
+
+				cutoff = now - timedelta(days=AUDIT_RETENTION_DAYS)
+				oldest_kept_seq = await db.scalar(
+					select(func.min(AuditLog.seq_no)).where(
+						AuditLog.seq_no.isnot(None),
+						AuditLog.timestamp >= cutoff,
+					)
+				)
+				prune_boundary = int(oldest_kept_seq) if oldest_kept_seq is not None else seq_no
+				await db.execute(
+					delete(AuditLog).where(
+						AuditLog.seq_no.isnot(None),
+						AuditLog.seq_no < prune_boundary,
+					)
+				)
+				await db.execute(
+					delete(AuditLog).where(
+						AuditLog.seq_no.is_(None),
+						AuditLog.timestamp < cutoff,
+					)
 				)
 
 				db.add(audit_log)
