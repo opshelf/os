@@ -302,6 +302,68 @@ async def test_item_location_operations(client: AsyncClient) -> None:
 
 
 @pytest.mark.anyio
+async def test_add_item_location_occupied_returns_conflict(client: AsyncClient) -> None:
+    """Assigning an already-occupied cell returns 409 instead of 500."""
+    login_response = await client.post("/api/auth/login/json", json={
+        "email": "admin@opshelf.com",
+        "pin": "1234"
+    })
+    assert login_response.status_code == 200
+    headers = {"Authorization": f"Bearer {login_response.json()['access_token']}"}
+
+    first_item = {
+        "upca": "111111111111",
+        "name": "First Item",
+        "dimensions": {"width": 10.0, "height": 20.0, "length": 30.0}
+    }
+    second_item = {
+        "upca": "222222222222",
+        "name": "Second Item",
+        "dimensions": {"width": 10.0, "height": 20.0, "length": 30.0}
+    }
+    await client.post("/api/storage/items", json=first_item, headers=headers)
+    await client.post("/api/storage/items", json=second_item, headers=headers)
+
+    location_data = {"shelf_idx": 3, "cell_idx": 4, "side": "left"}
+
+    first_response = await client.post(
+        f"/api/storage/items/{first_item['upca']}/locations",
+        json=location_data, headers=headers
+    )
+    assert first_response.status_code == 200
+
+    conflict_response = await client.post(
+        f"/api/storage/items/{second_item['upca']}/locations",
+        json=location_data, headers=headers
+    )
+    assert conflict_response.status_code == 409
+
+
+@pytest.mark.anyio
+async def test_add_item_location_invalid_index_returns_unprocessable(client: AsyncClient) -> None:
+    """A negative cell index is rejected as 422 instead of 500."""
+    login_response = await client.post("/api/auth/login/json", json={
+        "email": "admin@opshelf.com",
+        "pin": "1234"
+    })
+    assert login_response.status_code == 200
+    headers = {"Authorization": f"Bearer {login_response.json()['access_token']}"}
+
+    item_data = {
+        "upca": "333333333333",
+        "name": "Third Item",
+        "dimensions": {"width": 10.0, "height": 20.0, "length": 30.0}
+    }
+    await client.post("/api/storage/items", json=item_data, headers=headers)
+
+    response = await client.post(
+        f"/api/storage/items/{item_data['upca']}/locations",
+        json={"shelf_idx": -1, "cell_idx": 2, "side": "left"}, headers=headers
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.anyio
 async def test_storage_cells_endpoint(client: AsyncClient) -> None:
     """Test storage cells endpoint."""
     # Login as admin

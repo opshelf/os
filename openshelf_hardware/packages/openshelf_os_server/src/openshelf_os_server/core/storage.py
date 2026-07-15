@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional
 from weakref import WeakKeyDictionary
 
 from sqlalchemy import delete, func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -11,7 +12,7 @@ from openshelf_os.storage import StorageModuleSide
 from openshelf_os_server.core.storage_module import StorageModuleSideName, module_name_to_side
 
 from ..database.models import Item, ItemLocation, StorageCell
-from .validation import LocationValidator, StorageCellValidator, StorageValidator, ValidationError
+from .validation import CellOccupiedError, LocationValidator, StorageCellValidator, StorageValidator, ValidationError
 
 
 _session_locks: "WeakKeyDictionary[AsyncSession, asyncio.Lock]" = WeakKeyDictionary()
@@ -203,7 +204,7 @@ class StorageService:
             existing_location = existing.scalar_one_or_none()
 
             if existing_location is not None:
-                raise ValidationError(
+                raise CellOccupiedError(
                     f"Cell ({side_enum.value}, shelf={shelf_idx}, cell={cell_idx}) is already occupied by item_id={existing_location.item_id}"
                 )
 
@@ -218,6 +219,11 @@ class StorageService:
                 await self.session.commit()
                 await self.session.refresh(location)
                 return location
+            except IntegrityError as exc:
+                await self.session.rollback()
+                raise CellOccupiedError(
+                    f"Cell ({side_enum.value}, shelf={shelf_idx}, cell={cell_idx}) is already occupied"
+                ) from exc
             except Exception:
                 await self.session.rollback()
                 raise
