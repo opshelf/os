@@ -7,6 +7,11 @@ class ValidationError(Exception):
     pass
 
 
+class CellOccupiedError(ValidationError):
+    """Raised when a storage cell is already occupied by another item."""
+    pass
+
+
 class ItemValidator:
     """Validator for item data."""
 

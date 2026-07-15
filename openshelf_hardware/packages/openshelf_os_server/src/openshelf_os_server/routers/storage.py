@@ -17,7 +17,7 @@ import openshelf_os_server.core.robot as robot_core
 
 from ..database.models import Item, ItemLocation, User
 from ..core.storage import StorageService
-from ..core.validation import ValidationError
+from ..core.validation import CellOccupiedError, ValidationError
 from .auth_deps import can_user_retrieve_item, get_current_user, require_permissions
 from ..database.session import get_db
 from openshelf_os.storage import StorageGrid
@@ -393,12 +393,17 @@ async def add_item_location(
     if db_item is None:
         raise HTTPException(status_code=404, detail="Item not found")
 
-    storage_location = await storage_service.add_item_location(
-        upca=upca,
-        side=location.side,
-        shelf_idx=location.shelf_idx,
-        cell_idx=location.cell_idx,
-    )
+    try:
+        storage_location = await storage_service.add_item_location(
+            upca=upca,
+            side=location.side,
+            shelf_idx=location.shelf_idx,
+            cell_idx=location.cell_idx,
+        )
+    except CellOccupiedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (ValidationError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     if not storage_location:
         raise HTTPException(status_code=400, detail="Failed to add location")
