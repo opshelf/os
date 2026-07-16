@@ -869,7 +869,7 @@ def test_load_continue_scan_context_reads_latest_incomplete_run(tmp_path: Path) 
 	assert coarse_samples_per_point == 2
 
 
-def test_build_single_cell_rescan_candidate_uses_target_point_without_z_depth_seed() -> None:
+def test_build_single_cell_rescan_candidate_without_xy_offset_falls_back_to_side_flip() -> None:
 	target_cell = SimpleNamespace(
 		calibration_point=SimpleNamespace(x=100.0, y=200.0, z_offset=8.5),
 	)
@@ -880,6 +880,8 @@ def test_build_single_cell_rescan_candidate_uses_target_point_without_z_depth_se
 		laser_offset_y_mm=0.0,
 		expected_hole_width_mm=26.0,
 		expected_hole_height_mm=30.0,
+		left_xy_offset=None,
+		right_xy_offset=None,
 	)
 
 	candidate = build_single_cell_rescan_candidate(
@@ -896,7 +898,7 @@ def test_build_single_cell_rescan_candidate_uses_target_point_without_z_depth_se
 	assert candidate.wall_depth_mm is None
 
 
-def test_build_single_cell_rescan_candidate_adds_x_offset_for_right_side() -> None:
+def test_build_single_cell_rescan_candidate_without_xy_offset_adds_x_offset_for_right_side() -> None:
 	target_cell = SimpleNamespace(
 		calibration_point=SimpleNamespace(x=11.0, y=1162.5, z_offset=8.5),
 	)
@@ -907,6 +909,8 @@ def test_build_single_cell_rescan_candidate_adds_x_offset_for_right_side() -> No
 		laser_offset_y_mm=0.0,
 		expected_hole_width_mm=26.0,
 		expected_hole_height_mm=30.0,
+		left_xy_offset=None,
+		right_xy_offset=None,
 	)
 
 	candidate = build_single_cell_rescan_candidate(
@@ -920,6 +924,56 @@ def test_build_single_cell_rescan_candidate_adds_x_offset_for_right_side() -> No
 	assert candidate.x_max == pytest.approx(75.0)
 	assert candidate.y_min == pytest.approx(1147.5)
 	assert candidate.y_max == pytest.approx(1177.5)
+
+
+@pytest.mark.parametrize(
+	"side,xy_offset_x_mm,xy_offset_y_mm",
+	[
+		(StorageModuleSide.LEFT, -4.0, 3.0),
+		(StorageModuleSide.RIGHT, -97.0, 0.0),
+	],
+)
+def test_build_single_cell_rescan_candidate_round_trips_forward_mapping(
+	side: StorageModuleSide,
+	xy_offset_x_mm: float,
+	xy_offset_y_mm: float,
+) -> None:
+	laser_offset_x_mm = 51.0
+	laser_offset_y_mm = 0.0
+	center_x_mm = 100.0
+	center_y_mm = 200.0
+
+	tool_x_mm = center_x_mm + laser_offset_x_mm
+	tool_y_mm = center_y_mm - laser_offset_y_mm
+	grab_x_mm = tool_x_mm + xy_offset_x_mm
+	grab_y_mm = tool_y_mm + xy_offset_y_mm
+
+	target_cell = SimpleNamespace(
+		calibration_point=SimpleNamespace(x=grab_x_mm, y=grab_y_mm, z_offset=8.5),
+	)
+	target_shelf = SimpleNamespace(get_cell=lambda cell_idx: target_cell)
+	grid = SimpleNamespace(get_shelf=lambda side, shelf_idx: target_shelf)
+	scan_config = SimpleNamespace(
+		laser_offset_x_mm=laser_offset_x_mm,
+		laser_offset_y_mm=laser_offset_y_mm,
+		expected_hole_width_mm=26.0,
+		expected_hole_height_mm=30.0,
+		left_xy_offset=SimpleNamespace(x_mm=-4.0, y_mm=3.0),
+		right_xy_offset=SimpleNamespace(x_mm=-97.0, y_mm=0.0),
+	)
+
+	candidate = build_single_cell_rescan_candidate(
+		grid=grid,
+		side=side,
+		target=SingleCellRescanTarget(shelf_idx=1, cell_idx=2),
+		scan_config=scan_config,
+	)
+
+	candidate_center_x_mm = (candidate.x_min + candidate.x_max) / 2.0
+	candidate_center_y_mm = (candidate.y_min + candidate.y_max) / 2.0
+
+	assert candidate_center_x_mm == pytest.approx(center_x_mm)
+	assert candidate_center_y_mm == pytest.approx(center_y_mm)
 
 
 @pytest.mark.asyncio
