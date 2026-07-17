@@ -1,9 +1,10 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import SizerStatusTab from '$lib/components/sizer/SizerStatusTab.svelte';
+	import { devicePath } from '$lib/nav';
 
 	function tabHref(path: string): string {
-		return `${path}${page.url.search}`;
+		return `${devicePath(path)}${page.url.search}`;
 	}
 </script>
 
