@@ -2,6 +2,7 @@
 	import { error } from '@sveltejs/kit';
 	import { page } from '$app/state';
 	import ScaleTab from '$lib/components/scale/ScaleTab.svelte';
+	import { devicePath } from '$lib/nav';
 
 	type ScaleView = 'status' | 'calibration';
 
@@ -22,7 +23,7 @@
 	});
 
 	function tabHref(path: string): string {
-		return `${path}${page.url.search}`;
+		return `${devicePath(path)}${page.url.search}`;
 	}
 </script>
 

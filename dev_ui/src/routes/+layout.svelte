@@ -14,6 +14,7 @@
 		type RobotInitState,
 		type WorkerStatusPayload
 	} from '$lib';
+	import { devicePath, stripDeviceId } from '$lib/nav';
 	import '../app.css';
 
 	const version = import.meta.env.PUBLIC_VERSION;
@@ -35,10 +36,12 @@
 	let didReceiveRobotUnavailable = false;
 
 	function isActiveLink(href: string, currentPath: string): boolean {
+		const path = stripDeviceId(currentPath);
+
 		if (href === '/') {
-			return currentPath === '/';
+			return path === '/';
 		}
-		return currentPath.startsWith(href);
+		return path.startsWith(href);
 	}
 
 	function didReceiveRobotStatus(raw: string): void {
@@ -141,7 +144,7 @@
 	<ul>
 		{#each links as link}
 			<li>
-				<a href={link.href} class:active={isActiveLink(link.href, $page.url.pathname)}>
+				<a href={devicePath(link.href)} class:active={isActiveLink(link.href, $page.url.pathname)}>
 					{link.label}
 				</a>
 			</li>

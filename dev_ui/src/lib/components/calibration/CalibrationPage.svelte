@@ -5,6 +5,7 @@
 	import CellCalibrationTest from '$lib/components/calibration/CellCalibrationTest.svelte';
 	import IOBoxCalibration from '$lib/components/calibration/IOBoxCalibration.svelte';
 	import RotationCalibration from '$lib/components/calibration/RotationCalibration.svelte';
+	import { devicePath } from '$lib/nav';
 
 	type CalibrationView = 'cell_auto' | 'cell_manual' | 'io' | 'rotation' | 'test';
 
@@ -24,7 +25,7 @@
 		: undefined;
 
 	function tabHref(path: string): string {
-		return `${path}${page.url.search}`;
+		return `${devicePath(path)}${page.url.search}`;
 	}
 </script>
 

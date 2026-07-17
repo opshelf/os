@@ -4,6 +4,7 @@
 	import SizerCalibrationTab from '$lib/components/sizer/SizerCalibrationTab.svelte';
 	import SizerMeasurementTab from '$lib/components/sizer/SizerMeasurementTab.svelte';
 	import SizerStatusTab from '$lib/components/sizer/SizerStatusTab.svelte';
+	import { devicePath } from '$lib/nav';
 
 	type SizerView = 'status' | 'measurement' | 'calibration';
 
@@ -25,7 +26,7 @@
 	});
 
 	function tabHref(path: string): string {
-		return `${path}${page.url.search}`;
+		return `${devicePath(path)}${page.url.search}`;
 	}
 </script>
 
