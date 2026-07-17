@@ -22,6 +22,8 @@
 - In development mode, `docker-compose.dev.yml` only bind-mounts Python source directories plus `dev_ui/src`. Dependency changes still need a rebuild.
 - The app seeds a developer login on startup: `developer@opshelf.com` with PIN `1111`. The UI auto-attempts this login in `dev_ui/src/routes/+layout.svelte`.
 - `README.md` still references `scripts/debug/*`, but that directory is not in this repo anymore.
+- Per-register Modbus reads log at DEBUG on the `hardware.controller.controller` logger and are silenced by default, otherwise they bury every other log line. Set `MODBUS_TRACE=true` to restore them for bus debugging.
+- Container logs are capped at `10m` x 5 files. `docker logs` stops at the first truncated JSON line, so after an unclean shutdown it can silently show a stale tail; read `/var/lib/docker/containers/<id>/<id>-json.log` directly to see past that point.
 
 ## Remote device inspection
 - If a user asks to inspect or debug something "on device", use the sibling `../provision/remote` helper instead of guessing SSH details or inspecting only local files.

@@ -14,6 +14,7 @@ services:
       - /boot/firmware:/boot/firmware
     environment:
       - ENV=${ENV:-dev}
+      - MODBUS_TRACE=${MODBUS_TRACE:-false}
       - OPERATING_MODE=${OPERATING_MODE:-development}
       - DEPLOYMENT_ENVIRONMENT=${DEPLOYMENT_ENVIRONMENT:-development}
       - DEVICE_ID=${DEVICE_ID:-}
@@ -44,6 +45,11 @@ services:
       timeout: 5s
       retries: 2
       start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     restart: unless-stopped
 
   dev_ui:
@@ -58,4 +64,9 @@ services:
       - NODE_ENV=development
     depends_on:
       - api
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     restart: unless-stopped

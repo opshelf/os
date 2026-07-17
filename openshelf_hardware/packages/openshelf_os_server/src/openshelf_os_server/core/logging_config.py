@@ -143,6 +143,10 @@ def configure_logging() -> None:
 	for name in third_party_warning:
 		logging.getLogger(name).setLevel(logging.WARNING)
 
+	is_modbus_trace_enabled = os.getenv('MODBUS_TRACE', 'false').lower() == 'true'
+	modbus_level = logging.DEBUG if is_modbus_trace_enabled is True else logging.INFO
+	logging.getLogger("hardware.controller.controller").setLevel(modbus_level)
+
 	logging.getLogger("uvicorn.access").setLevel(logging.ERROR)
 	logging.getLogger("uvicorn.error").setLevel(logging.WARNING)
 	logging.getLogger("watchfiles.main").setLevel(logging.ERROR)
