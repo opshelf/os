@@ -26,6 +26,8 @@ export function createReconnectingEventSource(
 	let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 	let shouldReconnect = true;
 	let shouldRefreshAuthentication = false;
+	let isProbingLoginRedirect = false;
+	let didTriggerReload = false;
 	const reconnectDelayMs = options.reconnectDelayMs ?? 2000;
 
 	function clearReconnectTimer(): void {
@@ -74,6 +76,57 @@ export function createReconnectingEventSource(
 			reconnectTimer = null;
 			void reconnect();
 		}, reconnectDelayMs);
+	}
+
+	async function reloadIfLoginRedirect(): Promise<void> {
+		if (isProbingLoginRedirect === true || didTriggerReload === true) {
+			return;
+		}
+
+		isProbingLoginRedirect = true;
+
+		try {
+			let probeUrl: string;
+			try {
+				probeUrl = resolveUrl();
+			} catch {
+				return;
+			}
+
+			let response: Response;
+			try {
+				response = await fetch(probeUrl, {
+					headers: { Accept: 'text/event-stream' },
+					redirect: 'manual'
+				});
+			} catch {
+				return;
+			}
+
+			const isRedirectStatus =
+				response.type === 'opaqueredirect' ||
+				response.status === 0 ||
+				(response.status >= 300 && response.status < 400);
+
+			const contentType = response.headers.get('content-type') ?? '';
+			const isEventStream = contentType.includes('text/event-stream') === true;
+
+			if (isEventStream === true) {
+				await response.body?.cancel();
+				return;
+			}
+
+			if (isRedirectStatus === false) {
+				await response.body?.cancel();
+				return;
+			}
+
+			await response.body?.cancel();
+			didTriggerReload = true;
+			location.reload();
+		} finally {
+			isProbingLoginRedirect = false;
+		}
 	}
 
 	function shouldRefreshAuthenticationAfterError(): boolean {
@@ -154,6 +207,7 @@ export function createReconnectingEventSource(
 			}
 			closeSource();
 			options.onError?.();
+			void reloadIfLoginRedirect();
 			scheduleReconnect();
 		};
 	}

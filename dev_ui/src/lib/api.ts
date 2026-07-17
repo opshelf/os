@@ -1,8 +1,20 @@
 import { getAccessToken, loginAsDeveloper, refreshAccessToken } from './auth';
 
 export function getApiBase(): string {
-	const raw = import.meta.env.VITE_API_BASE_URL ?? `http://${location.hostname}:8000/api`;
-	return raw.endsWith('/') ? raw.slice(0, -1) : raw;
+	const override = import.meta.env.VITE_API_BASE_URL;
+
+	if (override !== undefined && override !== '') {
+		return override.endsWith('/') ? override.slice(0, -1) : override;
+	}
+
+	const fromPath = location.pathname.match(/^\/([0-9a-f]{8})(\/|$)/);
+	const id = fromPath?.[1] ?? sessionStorage.getItem('deviceId') ?? '';
+
+	if (/^[0-9a-f]{8}$/.test(id) === true) {
+		return `${location.origin}/${id}/api`;
+	}
+
+	return `http://${location.hostname}:8000/api`;
 }
 
 export function getApiOrigin(): string {
