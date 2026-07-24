@@ -8,6 +8,7 @@ import httpx
 import pytest
 
 from openshelf_os.common import OperatingMode
+from openshelf_os_server import settings as settings_module
 from openshelf_os_server.routers.robot import inject_mode_field
 from openshelf_os_server.routers.system import _restart_process_id
 from openshelf_os_server.settings import get_operating_mode, clear_config_cache
@@ -121,6 +122,51 @@ class TestGetOperatingMode:
 		with patch.dict(os.environ, {"OPERATING_MODE": "production"}), self._no_mode_file():
 			clear_config_cache()
 			assert get_operating_mode() == OperatingMode.production
+
+
+class TestOperatingModeEnvironmentDefaults:
+	@pytest.mark.parametrize("mode", [OperatingMode.demo, OperatingMode.production])
+	def test_production_like_modes_override_stale_development_env(
+		self,
+		monkeypatch,
+		mode: OperatingMode,
+	) -> None:
+		monkeypatch.setenv("ENV", "dev")
+		monkeypatch.setattr(settings_module, "get_operating_mode", lambda: mode)
+		data = {"auth": {"dev_mode": False, "require_auth": True}}
+
+		result = settings_module._apply_env_overrides(data)
+
+		assert result["auth"]["dev_mode"] is False
+		assert result["auth"]["require_auth"] is True
+
+	def test_development_mode_overrides_stale_production_env(self, monkeypatch) -> None:
+		monkeypatch.setenv("ENV", "production")
+		monkeypatch.setattr(
+			settings_module,
+			"get_operating_mode",
+			lambda: OperatingMode.development,
+		)
+		data = {"auth": {"dev_mode": False, "require_auth": True}}
+
+		result = settings_module._apply_env_overrides(data)
+
+		assert result["auth"]["dev_mode"] is True
+		assert result["auth"]["require_auth"] is False
+
+	def test_test_env_keeps_test_auth_defaults(self, monkeypatch) -> None:
+		monkeypatch.setenv("ENV", "test")
+		monkeypatch.setattr(
+			settings_module,
+			"get_operating_mode",
+			lambda: OperatingMode.development,
+		)
+		data = {"auth": {"dev_mode": True, "require_auth": False}}
+
+		result = settings_module._apply_env_overrides(data)
+
+		assert result["auth"]["dev_mode"] is False
+		assert result["auth"]["require_auth"] is True
 
 
 class TestInjectModeField:

@@ -48,6 +48,8 @@ normal local development start:
 
 plain `./scripts/start` reuses `openshelf_hardware/data/.mode` when present. if no mode file exists, it starts in `production` mode.
 
+`production` and `demo` use the same production runtime defaults. `demo` additionally seeds demo inventory and restricts robot storage to the barcode-to-cell mappings in `openshelf_hardware/data/demo.json`. the operating mode is the source of truth for enabling these demo features; `config.json` only configures the demo mapping path.
+
 useful variants:
 
 ```bash

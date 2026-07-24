@@ -36,4 +36,16 @@ def get_operating_mode(mode_file: Path | None = None) -> OperatingMode:
 def should_enable_sentry(mode: OperatingMode | None = None) -> bool:
     current_mode = mode if mode is not None else get_operating_mode()
 
+    return has_production_traits(current_mode)
+
+
+def has_production_traits(mode: OperatingMode | None = None) -> bool:
+    current_mode = mode if mode is not None else get_operating_mode()
+
     return current_mode in {OperatingMode.demo, OperatingMode.production}
+
+
+def should_enable_demo_features(mode: OperatingMode | None = None) -> bool:
+    current_mode = mode if mode is not None else get_operating_mode()
+
+    return current_mode == OperatingMode.demo

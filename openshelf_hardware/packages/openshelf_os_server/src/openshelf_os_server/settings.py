@@ -24,6 +24,7 @@ from openshelf_os.common import (
     write_json_file_with_backup,
     load_and_validate_config,
 )
+from openshelf_os.operating_mode import has_production_traits
 from openshelf_os.serial_ports import (
     DEFAULT_LASER_PORT,
     DEFAULT_MOTOR_PORT,
@@ -253,9 +254,9 @@ def _apply_env_overrides(data: dict) -> dict:
 
     env = os.getenv("ENV", "").lower()
 
-    if env == "":
+    if env != "test":
         mode = get_operating_mode()
-        if mode == OperatingMode.production:
+        if has_production_traits(mode) is True:
             env = "production"
         else:
             env = "dev"
