@@ -146,21 +146,16 @@ if ! write_mode_file "$MODE_FILE" "$MODE"; then
 	exit 1
 fi
 
+export OPERATING_MODE="$MODE"
+export DEPLOYMENT_ENVIRONMENT="$MODE"
+export SENTRY_ENVIRONMENT="$MODE"
+
 case "$MODE" in
-	demo)
-		export ENV=dev
-		export OPERATING_MODE=demo
-		export SENTRY_ENVIRONMENT=demo
-		;;
 	development)
 		export ENV=dev
-		export OPERATING_MODE=development
-		export SENTRY_ENVIRONMENT=development
 		;;
-	production)
+	demo|production)
 		export ENV=production
-		export OPERATING_MODE=production
-		export SENTRY_ENVIRONMENT=production
 		;;
 esac
 

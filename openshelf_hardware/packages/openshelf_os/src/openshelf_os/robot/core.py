@@ -24,6 +24,7 @@ from openshelf_os.laser_calibration.scan import (
     ScanAnalysisResult, ScanBounds, analyze_scan_capture,
     build_axis_positions, build_shelves_from_scan, create_scan_capture,
 )
+from openshelf_os.operating_mode import should_enable_demo_features
 from openshelf_os.robot.commands import (
     RobotCommands, StopCommand, InitializeCommand, IdleCommand, HomeCommand,
     MoveCommand, RetrieveItemCommand, StoreItemCommand,
@@ -109,7 +110,7 @@ class Robot:
 
         self._demo_cell_map: dict[str, StorageModuleCellLocation] | None = None
         self._demo_nudge_map: dict[tuple[str, int, int], float] = {}
-        if self._config.demo.enabled is True:
+        if should_enable_demo_features() is True:
             self._demo_cell_map = self._load_demo_cell_map(self._config.demo.cell_map_path)
 
     def _emit_init(self, component: str, phase: str, detail: str = "", reason: Optional[str] = None) -> None:

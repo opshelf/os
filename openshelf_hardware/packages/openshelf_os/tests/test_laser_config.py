@@ -53,6 +53,18 @@ def test_laser_defaults_to_disabled():
     assert config.robot.tool.laser.distance_scale_mm == pytest.approx(0.001)
 
 
+def test_demo_config_only_sets_mapping_path():
+    data = copy.deepcopy(MINIMAL_CONFIG_DICT)
+    data["demo"] = {
+        "enabled": False,
+        "cell_map_path": "data/custom-demo.json",
+    }
+
+    config = RootConfig.model_validate(data)
+
+    assert config.demo.model_dump() == {"cell_map_path": "data/custom-demo.json"}
+
+
 def test_motor_rotation_safety_flag_defaults_to_disabled():
     data = copy.deepcopy(MINIMAL_CONFIG_DICT)
     data["robot"]["tool"]["motors"] = [{

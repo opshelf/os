@@ -42,3 +42,19 @@ def test_should_enable_sentry_only_for_demo_and_production(monkeypatch) -> None:
 	assert module.should_enable_sentry(module.OperatingMode.development) is False
 	assert module.should_enable_sentry(module.OperatingMode.demo) is True
 	assert module.should_enable_sentry(module.OperatingMode.production) is True
+
+
+def test_demo_and_production_share_production_traits(monkeypatch) -> None:
+	module = _import_operating_mode_module(monkeypatch)
+
+	assert module.has_production_traits(module.OperatingMode.development) is False
+	assert module.has_production_traits(module.OperatingMode.demo) is True
+	assert module.has_production_traits(module.OperatingMode.production) is True
+
+
+def test_demo_features_are_enabled_only_in_demo_mode(monkeypatch) -> None:
+	module = _import_operating_mode_module(monkeypatch)
+
+	assert module.should_enable_demo_features(module.OperatingMode.development) is False
+	assert module.should_enable_demo_features(module.OperatingMode.demo) is True
+	assert module.should_enable_demo_features(module.OperatingMode.production) is False

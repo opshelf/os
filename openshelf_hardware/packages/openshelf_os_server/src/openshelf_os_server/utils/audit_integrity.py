@@ -10,7 +10,7 @@ import logging
 import os
 from typing import Any, Dict, Optional
 
-from openshelf_os.common import OperatingMode
+from openshelf_os.operating_mode import has_production_traits
 from openshelf_os_server.settings import get_operating_mode
 
 
@@ -30,8 +30,8 @@ def _load_hmac_key() -> bytes:
             _HMAC_KEY_CACHE = bytes.fromhex(key)
         except ValueError:
             _HMAC_KEY_CACHE = key.encode("utf-8")
-    elif get_operating_mode() == OperatingMode.production:
-        raise RuntimeError("AUDIT_HMAC_KEY must be set in production")
+    elif has_production_traits(get_operating_mode()) is True:
+        raise RuntimeError("AUDIT_HMAC_KEY must be set in demo and production modes")
     else:
         _HMAC_KEY_CACHE = b"development-audit-hmac-key-not-for-production"
         logger.warning("AUDIT_HMAC_KEY is not set; using deterministic development key")

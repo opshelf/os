@@ -42,7 +42,6 @@ class AuthSettings(BaseModel):
 
 
 class DemoSettings(BaseModel):
-    enabled: bool = True
     cell_map_path: str = "data/demo.json"
 
 
