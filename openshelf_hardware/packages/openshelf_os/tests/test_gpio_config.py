@@ -45,14 +45,14 @@ def test_robot_gpio_empty_object_expands_to_defaults() -> None:
 
     assert isinstance(robot.gpio, GpioConfig)
     assert "light_curtain" in robot.gpio.pins
-    assert robot.gpio.pins["light_curtain"].pin == 8
-    assert robot.gpio.pins["estop"].board == "rpi"
-    assert robot.gpio.pins["estop"].pin == 18
+    assert robot.gpio.pins["light_curtain"].pin == 1
+    assert robot.gpio.pins["estop"].board == "pca9535"
+    assert robot.gpio.pins["estop"].pin == 10
     assert robot.gpio.pins["estop"].pull == "off"
     assert robot.gpio.pins["estop"].inverted is True
-    assert robot.gpio.pins["io_limit_max"].pin == 10
-    assert robot.gpio.pins["io_limit_min"].pin == 11
-    assert robot.gpio.pins["io_1"].pin == 12
+    assert robot.gpio.pins["io_limit_max"].pin == 0
+    assert robot.gpio.pins["io_limit_min"].pin == 15
+    assert robot.gpio.pins["io_1"].pin == 3
     physical_keys = [(pin.board, pin.expander, pin.pin) for pin in robot.gpio.pins.values()]
     assert len(physical_keys) == len(set(physical_keys))
     assert "cabinet_top_closed" in robot.gpio.pins

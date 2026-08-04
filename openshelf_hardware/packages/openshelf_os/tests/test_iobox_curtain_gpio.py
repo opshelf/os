@@ -34,9 +34,9 @@ def make_gpio() -> GpioManager:
         {
             "light_curtain": GpioPinSpec(
                 name="light_curtain",
-                board="pcf8575",
-                expander="main",
-                pin=8,
+                board="pca9535",
+                expander="pca9535_1",
+                pin=1,
                 direction="input",
                 inverted=True,
             )

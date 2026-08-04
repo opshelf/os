@@ -15,9 +15,9 @@ async def test_curtain_monitor_uses_gpio_subscription() -> None:
         {
             "light_curtain": GpioPinSpec(
                 name="light_curtain",
-                board="pcf8575",
-                expander="main",
-                pin=15,
+                board="pca9535",
+                expander="pca9535_1",
+                pin=1,
                 direction="input",
                 inverted=True,
             )
