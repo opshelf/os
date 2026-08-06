@@ -224,6 +224,7 @@ class Robot:
         gpio = getattr(self, "_gpio", None)
         if gpio is not None:
             gpio.apply_initial_outputs()
+            gpio.observe_all_inputs()
 
         await self._tool.configure(isolate=isolate, home_on_init=home_on_init)
         await self._io.configure(isolate=isolate, scale_bus_ready=scale_bus_ready, home_on_init=home_on_init)

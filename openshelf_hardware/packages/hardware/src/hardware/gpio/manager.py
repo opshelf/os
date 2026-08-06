@@ -105,6 +105,13 @@ class GpioManager:
 
             self.output(name)
 
+    def observe_all_inputs(self) -> None:
+        for name, spec in self._pins.items():
+            if spec.direction != "input":
+                continue
+
+            self.input(name)
+
     def set_fake_input(self, name: str, value: bool, *, raw: bool = False) -> None:
         spec = self._require_pin(name)
 

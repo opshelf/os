@@ -93,6 +93,41 @@ def test_gpio_manager_logs_input_changes_after_initialization(caplog: pytest.Log
     assert "sensor: HIGH" not in caplog.text
 
 
+def test_gpio_manager_observe_all_inputs_opens_every_input_pin() -> None:
+    manager = GpioManager(
+        {
+            "sensor_a": GpioPinSpec(name="sensor_a", board="rpi", pin=1, direction="input"),
+            "sensor_b": GpioPinSpec(name="sensor_b", board="rpi", pin=2, direction="input"),
+            "actuator": GpioPinSpec(name="actuator", board="rpi", pin=3, direction="output"),
+        },
+        fake=True,
+    )
+
+    manager.observe_all_inputs()
+
+    assert "sensor_a" in manager._inputs
+    assert "sensor_b" in manager._inputs
+    assert "actuator" not in manager._outputs
+
+
+def test_gpio_manager_observe_all_inputs_logs_changes_without_manual_input_call(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    manager = GpioManager(
+        {
+            "sensor": GpioPinSpec(name="sensor", board="rpi", pin=1, direction="input"),
+        },
+        fake=True,
+    )
+
+    manager.observe_all_inputs()
+
+    with caplog.at_level("INFO", logger="hardware.gpio.manager"):
+        manager.set_fake_input("sensor", False)
+
+    assert "sensor: LOW" in caplog.text
+
+
 def test_gpio_manager_applies_only_declared_initial_outputs() -> None:
     manager = GpioManager(
         {
