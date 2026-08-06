@@ -6,6 +6,8 @@ services:
       - ./openshelf_hardware/packages/openshelf_os_server/src/openshelf_os_server:/app/openshelf_hardware/packages/openshelf_os_server/src/openshelf_os_server
     environment:
       - UVICORN_RELOAD=true
+    command: python -m debugpy --listen 0.0.0.0:5678 -m uvicorn main:app --host 0.0.0.0 --port 8000
+
 
   dev_ui:
     build:

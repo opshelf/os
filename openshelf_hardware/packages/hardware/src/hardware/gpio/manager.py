@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from typing import Any, Callable, cast
 
@@ -11,10 +12,14 @@ from hardware.gpio.types import (
     DigitalInput,
     DigitalOutput,
     GpioBackend,
+    GpioEvent,
     GpioExpanderSpec,
     GpioInterruptSpec,
     GpioPinSpec,
+    GpioSubscription,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class GpioManager:
@@ -33,6 +38,7 @@ class GpioManager:
         self._created_backends: dict[str, GpioBackend] = {}
         self._inputs: dict[str, DigitalInput] = {}
         self._outputs: dict[str, DigitalOutput] = {}
+        self._input_log_subscriptions: list[GpioSubscription] = []
         self._closed = False
         self._validate_unique_physical_pins()
 
@@ -70,7 +76,9 @@ class GpioManager:
         if name not in self._inputs:
             backend = self._backend_for(spec)
             backend.setup_input(spec)
-            self._inputs[name] = DigitalInput(spec, backend)
+            digital_input = DigitalInput(spec, backend)
+            self._inputs[name] = digital_input
+            self._input_log_subscriptions.append(digital_input.subscribe(_log_input_change))
 
         return self._inputs[name]
 
@@ -120,6 +128,10 @@ class GpioManager:
                 output.shutdown()
             except Exception as exc:
                 errors.append(exc)
+
+        for subscription in self._input_log_subscriptions:
+            subscription.close()
+        self._input_log_subscriptions.clear()
 
         for backend in self._unique_backends():
             try:
@@ -220,6 +232,10 @@ class GpioManager:
                 raise GpioConfigError(
                     f"GPIO expander '{expander.name}' interrupt shares physical pin with '{previous}'"
                 )
+
+
+def _log_input_change(event: GpioEvent) -> None:
+    logger.info("%s: %s", event.name, "HIGH" if event.value else "LOW")
 
 
 def _to_dict(value: Any | None) -> dict[str, Any] | None:

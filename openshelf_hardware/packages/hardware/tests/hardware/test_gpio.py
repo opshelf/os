@@ -72,6 +72,27 @@ def test_fake_gpio_output_initial_write_and_shutdown() -> None:
     assert unlock.read() is False
 
 
+def test_gpio_manager_logs_input_changes_after_initialization(caplog: pytest.LogCaptureFixture) -> None:
+    manager = GpioManager(
+        {
+            "sensor": GpioPinSpec(
+                name="sensor",
+                board="rpi",
+                pin=1,
+                direction="input",
+            )
+        },
+        fake=True,
+    )
+
+    with caplog.at_level("INFO", logger="hardware.gpio.manager"):
+        manager.input("sensor")
+        manager.set_fake_input("sensor", False)
+
+    assert "sensor: LOW" in caplog.text
+    assert "sensor: HIGH" not in caplog.text
+
+
 def test_gpio_manager_applies_only_declared_initial_outputs() -> None:
     manager = GpioManager(
         {
