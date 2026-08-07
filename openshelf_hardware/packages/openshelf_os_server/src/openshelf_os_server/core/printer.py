@@ -1,9 +1,14 @@
+import logging
 import random
+
 import barcode  # type: ignore
 from barcode.writer import ImageWriter  # type: ignore
 from pydantic import BaseModel
 from typing import List, Tuple, Optional
 from PIL import Image, ImageDraw, ImageFont
+
+logger = logging.getLogger(__name__)
+
 
 def create_barcode_upca(filename: str, upca: str) -> Tuple[str, str]:
     upc = barcode.get("upc", upca, writer=ImageWriter())
@@ -45,6 +50,35 @@ class LabelConfiguration(BaseModel):
     upca: Optional[str] = None
     label_size: Tuple[int, int] = (500, 350)
 
+
+def _create_placeholder_logo(size: Tuple[int, int] = (200, 200)) -> Image.Image:
+    logo = Image.new("RGB", size, "white")
+    draw = ImageDraw.Draw(logo)
+    try:
+        font: ImageFont.FreeTypeFont | ImageFont.ImageFont = ImageFont.truetype("arial.ttf", 32)
+    except IOError:
+        font = ImageFont.load_default()
+
+    text = "OpenShelf"
+    text_bbox = draw.textbbox((0, 0), text, font=font)
+    text_width = text_bbox[2] - text_bbox[0]
+    text_height = text_bbox[3] - text_bbox[1]
+    text_x = max((size[0] - text_width) // 2, 0)
+    text_y = max((size[1] - text_height) // 2, 0)
+    draw.text((text_x, text_y), text, font=font, fill="black")
+    return logo
+
+
+def _load_logo(path: str) -> Image.Image:
+    try:
+        return Image.open(path).convert("RGB")
+    except FileNotFoundError:
+        logger.warning("Company logo not found at %s; using placeholder logo", path)
+        return _create_placeholder_logo()
+    except IOError as exc:
+        raise Exception("Error: Company logo could not be loaded.") from exc
+
+
 def create_label(configuration: LabelConfiguration) -> str:
     label = Image.new("RGB", configuration.label_size, "white")
     draw = ImageDraw.Draw(label)
@@ -52,10 +86,7 @@ def create_label(configuration: LabelConfiguration) -> str:
         upc, _ = create_barcode_upca(configuration.barcode_path, configuration.upca)
     else:
         upc, _ = create_barcode(configuration.barcode_path)
-    try:
-        logo: Image.Image = Image.open(configuration.logo_path)
-    except IOError:
-        raise Exception("Error: Company logo not found.")
+    logo = _load_logo(configuration.logo_path)
     try:
         barcode_image: Image.Image = Image.open(configuration.barcode_path)
     except IOError:
