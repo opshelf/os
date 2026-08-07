@@ -367,7 +367,7 @@ def _default_gpio_pins() -> dict[str, GpioPinConfig]:
         "io_limit_min": _pca9535_input("pca9535_0", 15),
         # PCA9535_1 (0x21) - IO box, cabinet locks, estop, power
         "io_limit_max": _pca9535_input("pca9535_1", 0),
-        "light_curtain": _pca9535_input("pca9535_1", 1, inverted=True, debounce_ms=50),
+        "light_curtain": _pca9535_input("pca9535_1", 1, inverted=False, debounce_ms=50),
         "io_in0": _pca9535_input("pca9535_1", 2),
         "io_1": _pca9535_input("pca9535_1", 3),
         # PCB comparison sheet marks IO2 as an output; kept as input here to
@@ -378,7 +378,7 @@ def _default_gpio_pins() -> dict[str, GpioPinConfig]:
         "cabinet_top_unlock": _pca9535_output("pca9535_1", 7, initial=False, shutdown=False),
         "cabinet_bot_closed": _pca9535_input("pca9535_1", 8, inverted=True, debounce_ms=50),
         "cabinet_bot_unlock": _pca9535_output("pca9535_1", 9, initial=False, shutdown=False),
-        "estop": _pca9535_input("pca9535_1", 10, pull="off"),
+        "estop": _pca9535_input("pca9535_1", 10, inverted=False, pull="off"),
         "sw_estop": _pca9535_output("pca9535_1", 11),
         "power_control": _pca9535_output("pca9535_1", 12),
         "pwr_out1": _pca9535_output("pca9535_1", 13),
