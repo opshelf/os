@@ -127,7 +127,13 @@ class Pca9535Backend:
             return self._device
 
         try:
-            self._device = PCA9535(bus_num=self._expander.bus, address=self._expander.address)
+            device = PCA9535(bus_num=self._expander.bus, address=self._expander.address)
+            # The Polarity Inversion registers are chip state that persists across
+            # process restarts (and possibly across firmware/test tooling that ran
+            # before this driver ever touched the chip). Force them to non-inverting
+            # here so GpioPinSpec.inverted is the single source of truth for polarity,
+            # rather than trusting whatever REG_INVERSION happened to be left at.
+            device.port_invert_write(0x00, 0x00)
         except Exception as exc:
             self._device = None
             raise GpioConnectionError(
@@ -135,6 +141,7 @@ class Pca9535Backend:
                 f"on I2C bus {self._expander.bus} at address 0x{self._expander.address:02x}"
             ) from exc
 
+        self._device = device
         return self._device
 
     def _ensure_interrupt_locked(self) -> None:

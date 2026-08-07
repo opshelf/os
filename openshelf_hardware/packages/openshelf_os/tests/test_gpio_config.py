@@ -49,7 +49,7 @@ def test_robot_gpio_empty_object_expands_to_defaults() -> None:
     assert robot.gpio.pins["estop"].board == "pca9535"
     assert robot.gpio.pins["estop"].pin == 10
     assert robot.gpio.pins["estop"].pull == "off"
-    assert robot.gpio.pins["estop"].inverted is True
+    assert robot.gpio.pins["estop"].inverted is False
     assert robot.gpio.pins["io_limit_max"].pin == 0
     assert robot.gpio.pins["io_limit_min"].pin == 15
     assert robot.gpio.pins["io_1"].pin == 3
@@ -57,7 +57,7 @@ def test_robot_gpio_empty_object_expands_to_defaults() -> None:
     assert len(physical_keys) == len(set(physical_keys))
     assert "cabinet_top_closed" in robot.gpio.pins
     assert "cabinet_bot_closed" in robot.gpio.pins
-    assert robot.gpio.pins["cabinet_top_closed"].inverted is False
-    assert robot.gpio.pins["cabinet_bot_closed"].inverted is False
+    assert robot.gpio.pins["cabinet_top_closed"].inverted is True
+    assert robot.gpio.pins["cabinet_bot_closed"].inverted is True
     assert robot.gpio.pins["cabinet_top_closed"].debounce_ms == 50
     assert robot.gpio.pins["cabinet_bot_closed"].debounce_ms == 50
