@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import AsyncClient
-from openshelf_os.exceptions import MotorError
+from openshelf_os.exceptions import MotorError, MovementError
 
 
 def _mock_worker_for_move(stage_position: float = 0.0):
@@ -42,9 +42,11 @@ def _mock_worker_for_move(stage_position: float = 0.0):
 
 	calibration_point = SimpleNamespace(x=120.0, y=340.0, z_offset=2.0)
 	cell = SimpleNamespace(calibration_point=calibration_point)
-	shelf = SimpleNamespace(cells=[cell])
+	shelf = MagicMock(cells=[cell])
+	shelf.get_cell.return_value = cell
 	grid = MagicMock()
-	grid.get_side = MagicMock(return_value=[shelf])
+	grid.get_shelf.return_value = shelf
+	grid.get_side.return_value = [shelf]
 
 	robot = MagicMock()
 	robot._grid = grid
@@ -52,6 +54,9 @@ def _mock_worker_for_move(stage_position: float = 0.0):
 
 	worker = AsyncMock()
 	worker._robot = robot
+	worker.set_needs_home = MagicMock()
+	worker.needs_home_axes = MagicMock(return_value=[])
+	worker.get_status_snapshot = AsyncMock(return_value={})
 
 	return worker, tool, order
 
@@ -89,6 +94,35 @@ async def test_move_to_cell_rotates_before_z_extension(
 		rotation=True,
 	)
 	tool.rotate_to_position.assert_awaited_once_with(expected_rotation)
+
+
+@pytest.mark.anyio
+async def test_move_to_cell_returns_conflict_for_tool_rotation_fault(client: AsyncClient) -> None:
+	worker, tool, _order = _mock_worker_for_move()
+	tool._ms._motor_id = 3
+	tool.rotate_to_position.side_effect = MovementError(
+		"Tool rotation failed: Movement failed for motor 3 (status=FAULT)"
+	)
+	worker.needs_home_axes.return_value = ["stage"]
+
+	with patch("openshelf_os_server.routers.calibration.get_robot_worker", return_value=worker):
+		with patch("openshelf_os_server.routers.calibration._clear_motors_for_move", new=AsyncMock()):
+			response = await client.post(
+				"/api/calibration/move",
+				json={"side": "left_module", "shelf_idx": 0, "cell_idx": 0},
+			)
+
+	assert response.status_code == 409
+	assert response.json()["detail"] == {
+		"message": "Failed to move to cell: Tool rotation failed: Movement failed for motor 3 (status=FAULT)",
+		"code": "motor_fault",
+		"needs_home": True,
+		"needs_home_axes": ["stage"],
+	}
+	worker.set_needs_home.assert_called_once_with(
+		"Failed to move to cell: Tool rotation failed: Movement failed for motor 3 (status=FAULT)",
+		axes=["stage"],
+	)
 
 
 def _mock_worker_for_rotation() -> tuple[MagicMock, MagicMock]:
