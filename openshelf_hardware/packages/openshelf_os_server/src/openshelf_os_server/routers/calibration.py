@@ -633,7 +633,7 @@ async def _move_tool_to_coordinate(
 					grip_accel = await tool.get_param("Z_MOVE_ACCEL")
 					target_z = grip_ext + coord.z_offset
 					await tool._mg.move_to_position(target_z, rpm=grip_rpm, accel=grip_accel)
-	except (MotorError, HardwareMotorError) as e:
+	except (MotorError, HardwareMotorError, ToolError) as e:
 		await _raise_motor_error(worker, f"Failed to move to cell: {str(e)}", e)
 
 	slide_extension = await _get_current_stage_extension(tool)
