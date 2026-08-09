@@ -481,6 +481,36 @@ def test_rpi_gpio_read_recovers_when_input_channel_setup_is_lost(monkeypatch: py
     assert [call[0] for call in fake_gpio.setup_calls].count(17) == 2
 
 
+def test_rpi_gpio_reuses_shared_input_without_disabling_event_detect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_gpio = FakeRpiGpioModule()
+    monkeypatch.setattr(rpi_module, "GPIO", fake_gpio)
+    backend = RpiGpioBackend()
+    first = GpioPinSpec(
+        name="pca9535_0_interrupt",
+        board="rpi",
+        pin=4,
+        direction="input",
+        pull="up",
+    )
+    second = GpioPinSpec(
+        name="pca9535_1_interrupt",
+        board="rpi",
+        pin=4,
+        direction="input",
+        pull="up",
+    )
+
+    backend.setup_input(first)
+    backend.subscribe(first, lambda _raw: None, edge="falling")
+    backend.setup_input(second)
+    backend.subscribe(second, lambda _raw: None, edge="falling")
+
+    assert [call[0] for call in fake_gpio.setup_calls].count(4) == 1
+    assert [call[0] for call in fake_gpio.event_detect_calls].count(4) == 1
+
+
 def test_rpi_gpio_write_recovers_when_output_channel_setup_is_lost(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_gpio = FakeRpiGpioModule()
     monkeypatch.setattr(rpi_module, "GPIO", fake_gpio)

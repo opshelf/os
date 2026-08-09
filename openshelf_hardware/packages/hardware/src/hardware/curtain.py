@@ -71,14 +71,19 @@ class CurtainMonitor:
         self._on_change(self._last)
 
         try:
-            self._subscription = self._sensor.subscribe(self._handle_change)
+            self._subscription = self._sensor.subscribe(self._handle_interrupt_change)
         except Exception:
             logger.warning(
-                "Curtain interrupt subscription failed, falling back to polling",
+                "Curtain interrupt subscription failed; continuing with polling",
                 extra={"pin": getattr(self._sensor, "pin", None)},
                 exc_info=True,
             )
-            self._task = asyncio.create_task(self._run(), name="curtain-monitor")
+
+        # Keep polling even when interrupt subscription succeeds. GPIO expander
+        # interrupts are an optimization for low-latency updates, not a reliable
+        # source of truth: a missed/shared INT edge must not leave the safety
+        # state frozen at its startup value.
+        self._task = asyncio.create_task(self._run(), name="curtain-monitor")
 
         logger.info(
             "Curtain monitor started",
@@ -87,6 +92,7 @@ class CurtainMonitor:
                 "poll_interval_s": self._poll_interval,
                 "initial_blocked": self._last,
                 "subscription_enabled": self._subscription is not None,
+                "polling_enabled": self._task is not None,
             },
         )
 
@@ -110,26 +116,49 @@ class CurtainMonitor:
             extra={"pin": getattr(self._sensor, "pin", None)},
         )
 
-    def _handle_change(self, state: bool) -> None:
+    def _handle_interrupt_change(self, state: bool) -> None:
+        self._handle_change(state, source="interrupt")
+
+    def _handle_change(self, state: bool, *, source: str) -> None:
         if state == self._last:
             return
 
+        previous = self._last
         self._last = state
+        logger.info(
+            "Curtain state changed",
+            extra={
+                "blocked": state,
+                "previous": previous,
+                "source": source,
+                "pin": getattr(self._sensor, "pin", None),
+            },
+        )
         self._on_change(state)
 
     async def _run(self) -> None:
-        try:
-            while True:
+        poll_failed = False
+
+        while True:
+            await asyncio.sleep(self._poll_interval)
+
+            try:
                 state = self._sensor.read()
-                self._handle_change(state)
-                await asyncio.sleep(self._poll_interval)
-
-        except asyncio.CancelledError:
-            raise
-
-        except Exception as exc:  # pragma: no cover - hardware dependent
-            logger.warning(
-                "Curtain monitor crashed",
-                extra={"error": str(exc), "pin": getattr(self._sensor, "pin", None)},
-                exc_info=True,
-            )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # pragma: no cover - hardware dependent
+                if poll_failed is False:
+                    logger.warning(
+                        "Curtain poll failed; will retry",
+                        extra={"error": str(exc), "pin": getattr(self._sensor, "pin", None)},
+                        exc_info=True,
+                    )
+                poll_failed = True
+            else:
+                if poll_failed is True:
+                    logger.info(
+                        "Curtain polling recovered",
+                        extra={"pin": getattr(self._sensor, "pin", None)},
+                    )
+                poll_failed = False
+                self._handle_change(state, source="poll")
