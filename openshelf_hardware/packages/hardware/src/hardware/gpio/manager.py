@@ -78,7 +78,16 @@ class GpioManager:
             backend.setup_input(spec)
             digital_input = DigitalInput(spec, backend)
             self._inputs[name] = digital_input
-            self._input_log_subscriptions.append(digital_input.subscribe(_log_input_change))
+            try:
+                subscription = digital_input.subscribe(_log_input_change)
+            except Exception:
+                logger.warning(
+                    "Failed to subscribe to GPIO input '%s' for diagnostic logging",
+                    name,
+                    exc_info=True,
+                )
+            else:
+                self._input_log_subscriptions.append(subscription)
 
         return self._inputs[name]
 

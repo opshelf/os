@@ -51,6 +51,7 @@ class PCA9535:
         self.address = address
         self.interrupt_pin = interrupt_pin
         self._interrupt_registered = False
+        self._bus_closed = False
 
         # Lock to ensure mutual exclusion across threads and ISR contexts during I2C operations
         self._lock = threading.Lock()
@@ -58,43 +59,50 @@ class PCA9535:
         # Instance variable to store the latest raw input register values
         self.latest_input = [0x00, 0x00]
 
-        # Writing output/inversion values without also setting direction leaves the
-        # pins in whatever direction they already were (inputs, on power-up), so the
-        # writes have no electrical effect until port_direction is set separately.
-        if (port_output_value is not None or port_inversion is not None) and port_direction is None:
-            self.logger.warning(
-                "port_output_value/port_inversion provided without port_direction; "
-                "pins will not actually change direction until config_write() is called."
-            )
-
-        # Apply initial hardware states if provided
-        if port_output_value is not None:
-            self.port_output_write(port_output_value[0], port_output_value[1])
-        if port_inversion is not None:
-            self.port_invert_write(port_inversion[0], port_inversion[1])
-        if port_direction is not None:
-            self.config_write(port_direction[0], port_direction[1])
-
-        # Configure interrupt pin if provided
-        if self.interrupt_pin is not None:
-            if GPIO is None:
-                raise RuntimeError("RPi.GPIO is not available; cannot register an interrupt pin")
-            current_mode = GPIO.getmode()
-            if current_mode is None:
-                GPIO.setmode(GPIO.BCM)
-            elif current_mode != GPIO.BCM:
-                raise RuntimeError(
-                    "RPi.GPIO mode already set to something other than BCM; "
-                    "PCA9535 interrupt handling requires BCM pin numbering."
+        try:
+            # Writing output/inversion values without also setting direction leaves the
+            # pins in whatever direction they already were (inputs, on power-up), so the
+            # writes have no electrical effect until port_direction is set separately.
+            if (port_output_value is not None or port_inversion is not None) and port_direction is None:
+                self.logger.warning(
+                    "port_output_value/port_inversion provided without port_direction; "
+                    "pins will not actually change direction until config_write() is called."
                 )
-            GPIO.setup(self.interrupt_pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-            # RPi.GPIO callbacks run on a separate background thread.
-            # The PCA9535's INT line is active-low and open-drain; it deasserts
-            # (rises) as a side effect of reading the input port, including the
-            # read this same handler performs. Watching only the falling edge
-            # avoids re-triggering the callback on that self-inflicted rising edge.
-            GPIO.add_event_detect(self.interrupt_pin, GPIO.FALLING, callback=self.service_interrupt)
-            self._interrupt_registered = True
+
+            # Apply initial hardware states if provided
+            if port_output_value is not None:
+                self.port_output_write(port_output_value[0], port_output_value[1])
+            if port_inversion is not None:
+                self.port_invert_write(port_inversion[0], port_inversion[1])
+            if port_direction is not None:
+                self.config_write(port_direction[0], port_direction[1])
+
+            # Configure interrupt pin if provided
+            if self.interrupt_pin is not None:
+                if GPIO is None:
+                    raise RuntimeError("RPi.GPIO is not available; cannot register an interrupt pin")
+                current_mode = GPIO.getmode()
+                if current_mode is None:
+                    GPIO.setmode(GPIO.BCM)
+                elif current_mode != GPIO.BCM:
+                    raise RuntimeError(
+                        "RPi.GPIO mode already set to something other than BCM; "
+                        "PCA9535 interrupt handling requires BCM pin numbering."
+                    )
+                GPIO.setup(self.interrupt_pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+                # RPi.GPIO callbacks run on a separate background thread.
+                # The PCA9535's INT line is active-low and open-drain; it deasserts
+                # (rises) as a side effect of reading the input port, including the
+                # read this same handler performs. Watching only the falling edge
+                # avoids re-triggering the callback on that self-inflicted rising edge.
+                GPIO.add_event_detect(self.interrupt_pin, GPIO.FALLING, callback=self.service_interrupt)
+                self._interrupt_registered = True
+        except Exception:
+            try:
+                self.close()
+            except Exception:
+                pass
+            raise
 
     def service_interrupt(self, pin):
         """
@@ -124,10 +132,27 @@ class PCA9535:
             return tuple(self.latest_input)
 
     def close(self):
-        """Tears down the interrupt handler registered on the RPi GPIO pin, if any."""
-        if self._interrupt_registered:
-            GPIO.remove_event_detect(self.interrupt_pin)
-            self._interrupt_registered = False
+        """Tears down owned GPIO and I2C resources."""
+        with self._lock:
+            cleanup_error = None
+
+            if self._interrupt_registered:
+                self._interrupt_registered = False
+                try:
+                    GPIO.remove_event_detect(self.interrupt_pin)
+                except Exception as exc:
+                    cleanup_error = exc
+
+            if self._bus_closed is False:
+                self._bus_closed = True
+                try:
+                    self.bus.close()
+                except Exception as exc:
+                    if cleanup_error is None:
+                        cleanup_error = exc
+
+            if cleanup_error is not None:
+                raise cleanup_error
 
     def __del__(self):
         try:
