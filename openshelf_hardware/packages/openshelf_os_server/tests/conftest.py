@@ -27,6 +27,7 @@ from openshelf_os_server.database.session import AsyncSessionLocal
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from openshelf_os_server.core.auth import AuthService
+from openshelf_os_server.core.login_backoff import login_backoff
 from openshelf_os_server.settings import get_settings
 
 
@@ -51,7 +52,7 @@ async def seeded_db() -> AsyncGenerator[None, None]:
                 "roles:read", "roles:write", "roles:delete",
                 "robot:control",
                 "storage:read", "storage:write", "storage:delete", "storage:access",
-                "audit:read"
+                "audit:read", "printer:print", "system:admin"
             ],
             "operator": [
                 "users:read",
@@ -88,6 +89,13 @@ async def seeded_db() -> AsyncGenerator[None, None]:
             db.add(admin_user)
             await db.commit()
         yield
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def reset_login_attempt_backoff() -> AsyncGenerator[None, None]:
+    await login_backoff.clear()
+    yield
+    await login_backoff.clear()
 
 
 @pytest_asyncio.fixture(autouse=True)

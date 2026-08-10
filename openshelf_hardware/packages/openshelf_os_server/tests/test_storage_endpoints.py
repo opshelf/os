@@ -75,7 +75,7 @@ async def test_create_storage_item(client: AsyncClient) -> None:
     }
 
     response = await client.post("/api/storage/items", json=item_data, headers=headers)
-    assert response.status_code == 200
+    assert response.status_code == 201
     data = response.json()
 
     # Validate response structure
@@ -88,6 +88,27 @@ async def test_create_storage_item(client: AsyncClient) -> None:
     assert data["locations"] == []
     assert "created_at" in data
     assert "updated_at" in data
+
+    updated_item_data = {
+        **item_data,
+        "name": "Updated Test Item",
+        "dimensions": {"width": 11.0, "height": 22.0, "length": 33.0},
+        "weight": 750.0,
+        "metadata": {"category": "updated", "priority": 2},
+    }
+    update_response = await client.post(
+        "/api/storage/items",
+        json=updated_item_data,
+        headers=headers,
+    )
+    assert update_response.status_code == 200
+    updated_data = update_response.json()
+    assert updated_data["id"] == data["id"]
+    assert updated_data["upca"] == item_data["upca"]
+    assert updated_data["name"] == "Updated Test Item"
+    assert updated_data["dimensions"] == {"width": 11.0, "height": 22.0, "length": 33.0}
+    assert updated_data["weight"] == 750.0
+    assert updated_data["metadata"] == {"category": "updated", "priority": 2}
 
 
 @pytest.mark.anyio
@@ -188,14 +209,46 @@ async def test_update_storage_item(client: AsyncClient) -> None:
         "weight": 1000.0
     }
 
-    response = await client.put(f"/api/storage/items/{created_item['upca']}",
-                               json=update_data, headers=headers)
+    response = await client.patch(f"/api/storage/items/{created_item['upca']}",
+                                 json=update_data, headers=headers)
     assert response.status_code == 200
     data = response.json()
 
     assert data["name"] == "Updated Name"
     assert data["weight"] == 1000.0
     assert data["dimensions"] == item_data["dimensions"]  # unchanged
+
+    metadata_response = await client.patch(
+        f"/api/storage/items/{created_item['upca']}",
+        json={"item_metadata": {"category": "test"}},
+        headers=headers,
+    )
+    assert metadata_response.status_code == 200
+    assert metadata_response.json()["metadata"] == {"category": "test"}
+
+    preserve_metadata_response = await client.patch(
+        f"/api/storage/items/{created_item['upca']}",
+        json={"name": "Metadata Preserved"},
+        headers=headers,
+    )
+    assert preserve_metadata_response.status_code == 200
+    assert preserve_metadata_response.json()["metadata"] == {"category": "test"}
+
+    clear_metadata_response = await client.patch(
+        f"/api/storage/items/{created_item['upca']}",
+        json={"metadata": None},
+        headers=headers,
+    )
+    assert clear_metadata_response.status_code == 200
+    assert clear_metadata_response.json()["metadata"] == {}
+
+    clear_weight_response = await client.patch(
+        f"/api/storage/items/{created_item['upca']}",
+        json={"weight": None},
+        headers=headers,
+    )
+    assert clear_weight_response.status_code == 200
+    assert clear_weight_response.json()["weight"] is None
 
 
 @pytest.mark.anyio
@@ -222,9 +275,8 @@ async def test_delete_storage_item(client: AsyncClient) -> None:
     # Delete item
     response = await client.delete(f"/api/storage/items/{created_item['upca']}",
                                    headers=headers)
-    assert response.status_code == 200
-    data = response.json()
-    assert "message" in data
+    assert response.status_code == 204
+    assert response.content == b""
 
     # Verify item is deleted
     get_response = await client.get(f"/api/storage/items/{created_item['upca']}",
@@ -262,7 +314,7 @@ async def test_item_location_operations(client: AsyncClient) -> None:
 
     response = await client.post(f"/api/storage/items/{created_item['upca']}/locations",
                                json=location_data, headers=headers)
-    assert response.status_code == 200
+    assert response.status_code == 201
     data = response.json()
 
     assert data["upca"] == created_item["upca"]
@@ -330,7 +382,7 @@ async def test_add_item_location_occupied_returns_conflict(client: AsyncClient) 
         f"/api/storage/items/{first_item['upca']}/locations",
         json=location_data, headers=headers
     )
-    assert first_response.status_code == 200
+    assert first_response.status_code == 201
 
     conflict_response = await client.post(
         f"/api/storage/items/{second_item['upca']}/locations",
@@ -391,8 +443,8 @@ async def test_storage_cells_endpoint(client: AsyncClient) -> None:
         "status": "occupied"
     }
 
-    response = await client.put("/api/storage/locations/1/1",
-                               json=update_data, headers=headers)
+    response = await client.patch("/api/storage/locations/1/1",
+                                 json=update_data, headers=headers)
     # This might fail if the cell doesn't exist, which is expected
     if response.status_code == 200:
         data = response.json()
@@ -424,7 +476,7 @@ async def test_storage_permissions_enforcement(client: AsyncClient) -> None:
     # These tests assume the current role (admin) has permissions
     # In real tests, we'd create a specific viewer role and test permission denial
     response = await client.post("/api/storage/items", json=item_data, headers=headers)
-    assert response.status_code in [200, 403]  # 200 if admin, 403 if viewer
+    assert response.status_code in [201, 403]  # 201 if admin, 403 if viewer
 
 
 @pytest.mark.anyio
@@ -493,4 +545,3 @@ async def test_storage_endpoint_filtering(client: AsyncClient) -> None:
     # All returned cells should have cell_idx = 1 (if any exist)
     for cell in data:
         assert cell["cell_idx"] == 1
-

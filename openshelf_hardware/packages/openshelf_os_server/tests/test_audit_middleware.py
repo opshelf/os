@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -10,6 +11,7 @@ from openshelf_os_server.database.models import AuditLog
 from openshelf_os_server.database.session import AsyncSessionLocal
 from openshelf_os_server.main import app
 from openshelf_os_server.middleware.audit import (
+	AuditMiddleware,
 	should_skip_after_response,
 	should_skip_before_request,
 )
@@ -90,12 +92,12 @@ async def test_audit_logs_request_with_body(unauthenticated_client: AsyncClient)
 	test_payload = {"name": f"test_role_audit_{uuid.uuid4().hex}", "permissions": ["test:read"]}
 
 	response = await unauthenticated_client.post("/api/roles", headers=headers, json=test_payload)
-	assert response.status_code == 200
+	assert response.status_code == 201
 
 	log = await latest_audit_log("/api/roles", "POST")
 	assert log is not None
 	assert log.request_body == test_payload
-	assert log.response_status == 200
+	assert log.response_status == 201
 
 
 @pytest.mark.anyio
@@ -107,7 +109,7 @@ async def test_audit_logs_different_methods(unauthenticated_client: AsyncClient)
 	post_response = await unauthenticated_client.post("/api/roles", headers=headers, json=role_payload)
 
 	assert get_response.status_code == 200
-	assert post_response.status_code == 200
+	assert post_response.status_code == 201
 	assert await latest_audit_log("/api/users", "GET") is not None
 	assert await latest_audit_log("/api/roles", "POST") is not None
 
@@ -142,6 +144,76 @@ async def test_audit_integrity_fields_populated(client: AsyncClient) -> None:
 	assert log.hmac is not None
 	assert len(log.hmac) == 64
 	assert log.hmac_key_id is not None
+
+
+@pytest.mark.anyio
+async def test_audit_integrity_verifies_entries_without_client_metadata(
+	unauthenticated_client: AsyncClient,
+) -> None:
+	endpoint = f"/api/audit-no-client-metadata/{uuid.uuid4().hex}"
+	await AuditMiddleware(app)._log_request(
+		request=_make_request("POST", endpoint),
+		request_body={"source": "test"},
+		response_status=200,
+		response_body={"ok": True},
+		error_message="",
+		duration_ms=1,
+	)
+
+	log = await latest_audit_log(endpoint, "POST")
+	assert log is not None
+	assert log.ip_address is None
+	assert log.user_agent is None
+
+	headers = await admin_headers(unauthenticated_client)
+	verify = await unauthenticated_client.get("/api/audit/verify", headers=headers)
+	assert verify.status_code == 200
+	assert verify.json()["checked"] == 2
+	assert verify.json()["ok"] is True
+
+
+def test_concurrent_audit_writes_across_event_loops_form_one_linear_chain() -> None:
+	prefix = f"/api/concurrent-audit/{uuid.uuid4().hex}"
+	middleware = AuditMiddleware(app)
+	wave_size = 12
+
+	async def write_wave(wave: int) -> None:
+		start = asyncio.Event()
+
+		async def write(index: int) -> None:
+			await start.wait()
+			await middleware._log_request(
+				request=_make_request("POST", f"{prefix}/{wave}/{index}"),
+				request_body={"wave": wave, "index": index},
+				response_status=200,
+				response_body={"ok": True},
+				error_message="",
+				duration_ms=1,
+			)
+
+		tasks = [asyncio.create_task(write(index)) for index in range(wave_size)]
+		await asyncio.sleep(0)
+		start.set()
+		await asyncio.gather(*tasks)
+
+	async def fetch_logs() -> list[AuditLog]:
+		async with AsyncSessionLocal() as db:
+			result = await db.execute(
+				select(AuditLog)
+				.where(AuditLog.endpoint.like(f"{prefix}/%"))
+				.order_by(AuditLog.seq_no.asc())
+			)
+			return list(result.scalars().all())
+
+	asyncio.run(write_wave(1))
+	asyncio.run(write_wave(2))
+	logs = asyncio.run(fetch_logs())
+
+	assert len(logs) == wave_size * 2
+	assert len({log.seq_no for log in logs}) == len(logs)
+	for previous, current in zip(logs, logs[1:]):
+		assert current.seq_no == previous.seq_no + 1
+		assert current.prev_hash == previous.entry_hash
 
 
 @pytest.mark.anyio
@@ -329,11 +401,11 @@ async def test_successful_storage_mutation_is_audited(client: AsyncClient) -> No
 		"weight": 4.0,
 	}
 	response = await client.post("/api/storage/items", json=payload)
-	assert response.status_code == 200
+	assert response.status_code == 201
 
 	log = await latest_audit_log("/api/storage/items", "POST")
 	assert log is not None
-	assert log.response_status == 200
+	assert log.response_status == 201
 	assert log.request_body == payload
 
 
@@ -370,7 +442,7 @@ async def test_sensitive_request_fields_are_redacted(unauthenticated_client: Asy
 		"items": [{"api_key": "secret-key", "hmac_key": "secret-hmac"}],
 	}
 	role_response = await unauthenticated_client.post("/api/roles", headers=headers, json=payload)
-	assert role_response.status_code == 200
+	assert role_response.status_code == 201
 
 	role_log = await latest_audit_log("/api/roles", "POST")
 	assert role_log is not None

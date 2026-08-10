@@ -1,7 +1,7 @@
 """User management API endpoints."""
 from typing import Optional, List
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
@@ -130,7 +130,12 @@ async def list_users(
 		limit=limit
 	)
 
-@router.post("", response_model=UserResponse, dependencies=[Depends(require_permissions("users:write"))])
+@router.post(
+	"",
+	response_model=UserResponse,
+	status_code=status.HTTP_201_CREATED,
+	dependencies=[Depends(require_permissions("users:write"))],
+)
 async def create_user(
 	request: UserCreate,
 	db: AsyncSession = Depends(get_db),
@@ -205,7 +210,17 @@ async def get_user(
 	
 	return _build_user_response(user)
 
-@router.put("/{user_id}", response_model=UserResponse, dependencies=[Depends(require_permissions("users:write"))])
+@router.put(
+	"/{user_id}",
+	response_model=UserResponse,
+	dependencies=[Depends(require_permissions("users:write"))],
+	include_in_schema=False,
+)
+@router.patch(
+	"/{user_id}",
+	response_model=UserResponse,
+	dependencies=[Depends(require_permissions("users:write"))],
+)
 async def update_user(
 	user_id: int,
 	request: UserUpdate,
@@ -260,15 +275,18 @@ async def update_user(
 			)
 		user.role_id = int(request.role_id)
 
-	if request.access_level_id is not None:
-		access_level_result = await db.execute(select(AccessLevel).filter(AccessLevel.id == request.access_level_id))
-		access_level = access_level_result.scalar_one_or_none()
-		if access_level is None:
-			raise HTTPException(
-				status_code=status.HTTP_400_BAD_REQUEST,
-				detail="Access level not found"
-			)
-		user.access_level_id = int(request.access_level_id)
+	if "access_level_id" in request.model_fields_set:
+		if request.access_level_id is None:
+			user.access_level_id = None
+		else:
+			access_level_result = await db.execute(select(AccessLevel).filter(AccessLevel.id == request.access_level_id))
+			access_level = access_level_result.scalar_one_or_none()
+			if access_level is None:
+				raise HTTPException(
+					status_code=status.HTTP_400_BAD_REQUEST,
+					detail="Access level not found"
+				)
+			user.access_level_id = int(request.access_level_id)
 
 	if request.is_active is not None:
 		user.is_active = bool(request.is_active)
@@ -282,12 +300,16 @@ async def update_user(
 	
 	return _build_user_response(user)
 
-@router.delete("/{user_id}", dependencies=[Depends(require_permissions("users:delete"))])
+@router.delete(
+	"/{user_id}",
+	status_code=status.HTTP_204_NO_CONTENT,
+	dependencies=[Depends(require_permissions("users:delete"))],
+)
 async def delete_user(
 	user_id: int,
 	db: AsyncSession = Depends(get_db),
 	current_user: User = Depends(get_current_user)
-) -> dict:
+) -> Response:
 	"""Soft delete a user by setting inactive."""
 	user_result = await db.execute(select(User).options(selectinload(User.role), selectinload(User.access_level)).filter(User.id == user_id, ~User.is_system))
 	user = user_result.scalar_one_or_none()
@@ -306,4 +328,4 @@ async def delete_user(
 	user.is_active = False
 	await db.commit()
 	
-	return {"message": "User deactivated successfully"}
+	return Response(status_code=status.HTTP_204_NO_CONTENT)

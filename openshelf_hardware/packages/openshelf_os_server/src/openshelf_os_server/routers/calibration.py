@@ -32,11 +32,15 @@ from openshelf_os_server.core.laser_auto_calibration import (
 	get_laser_auto_calibration_manager,
 )
 from openshelf_os_server.core.manual_motion import manual_motion_guard
-from openshelf_os_server.routers.auth_deps import get_current_user
+from openshelf_os_server.routers.auth_deps import require_permissions
 from openshelf_os_server.core.storage_module import side_to_s
 from openshelf_os_server.settings import get_root_config, save_root_config
 
-router = APIRouter(prefix="/api/calibration", tags=["calibration"], dependencies=[Depends(get_current_user)])
+router = APIRouter(
+	prefix="/api/calibration",
+	tags=["calibration"],
+	dependencies=[Depends(require_permissions("robot:control"))],
+)
 
 _MOTOR_ID_RE = re.compile(r"motor\s+(\d+)", re.IGNORECASE)
 P = ParamSpec("P")
@@ -1156,7 +1160,8 @@ async def save_calibration(request: SaveRequest):
 	return {"success": True}
 
 
-@router.post("/home_tool_motors", response_model=CalibrationStatusResponse)
+@router.post("/home_tool_motors", response_model=CalibrationStatusResponse, include_in_schema=False)
+@router.post("/home-tool-motors", response_model=CalibrationStatusResponse)
 async def home_tool_motors() -> CalibrationStatusResponse:
 	await ensure_laser_auto_calibration_not_running()
 

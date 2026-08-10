@@ -12,7 +12,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from ..database.session import AsyncSessionLocal
 from ..database.models import AuditLog
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, text
 from ..utils.audit_integrity import (
     canonicalize_payload,
     sha256_hex,
@@ -175,6 +175,12 @@ class AuditMiddleware(BaseHTTPMiddleware):
 		"""Log request to database."""
 		async with AsyncSessionLocal() as db:
 			try:
+				bind = db.get_bind()
+				if bind.dialect.name == "sqlite":
+					# Reserve the SQLite writer before reading the chain head. This
+					# also serializes chain construction across server processes.
+					await db.execute(text("BEGIN IMMEDIATE"))
+
 				token = None
 				auth_header = request.headers.get("Authorization")
 				if auth_header and auth_header.startswith("Bearer "):
@@ -242,8 +248,8 @@ class AuditMiddleware(BaseHTTPMiddleware):
 					response_body=response_body,
 					command_records=command_records,
 					error_message=error_message or "",
-					ip_address=ip_address or "",
-					user_agent=user_agent or "",
+					ip_address=ip_address,
+					user_agent=user_agent,
 					request_duration_ms=duration_ms,
 					seq_no=seq_no,
 					prev_hash=prev_hash,

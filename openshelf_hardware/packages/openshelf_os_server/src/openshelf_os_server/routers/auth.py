@@ -11,6 +11,7 @@ from ..settings import get_settings
 from ..database.session import get_db
 from ..database.models import User
 from ..core.auth import AuthService
+from ..core.login_backoff import login_backoff
 from .auth_deps import get_current_user
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -89,21 +90,44 @@ async def login_json(
 		settings.auth.jwt_algorithm
 	)
 	
-	result = await db.execute(
-		select(User)
-		.options(selectinload(User.role), selectinload(User.access_level))
-		.filter_by(
-			email=request.email,
-			is_active=True
+	backoff_key = str(request.email).strip().lower()
+	async with login_backoff.attempt(backoff_key):
+		backoff = await login_backoff.check(backoff_key)
+		if backoff is not None:
+			retry_after = str(backoff.retry_after_seconds)
+			raise HTTPException(
+				status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+				detail={
+					"message": "Too many failed login attempts",
+					"code": "login_backoff",
+					"retry_after_seconds": backoff.retry_after_seconds,
+				},
+				headers={"Retry-After": retry_after},
+			)
+
+		result = await db.execute(
+			select(User)
+			.options(selectinload(User.role), selectinload(User.access_level))
+			.filter_by(
+				email=request.email,
+				is_active=True
+			)
 		)
-	)
-	user = result.scalar_one_or_none()
+		user = result.scalar_one_or_none()
 	
-	if user is None or not auth_service.verify_pin(request.pin, user.pin_hash):
-		raise HTTPException(
-			status_code=status.HTTP_401_UNAUTHORIZED,
-			detail="Invalid email or PIN"
-		)
+		if user is None or not auth_service.verify_pin(request.pin, user.pin_hash):
+			backoff = await login_backoff.record_failure(backoff_key)
+			raise HTTPException(
+				status_code=status.HTTP_401_UNAUTHORIZED,
+				detail={
+					"message": "Invalid email or PIN",
+					"code": "invalid_credentials",
+					"retry_after_seconds": backoff.retry_after_seconds,
+				},
+				headers={"Retry-After": str(backoff.retry_after_seconds)},
+			)
+
+		await login_backoff.record_success(backoff_key)
 	
 	access_token = auth_service.create_access_token(
 		user_id=user.id,

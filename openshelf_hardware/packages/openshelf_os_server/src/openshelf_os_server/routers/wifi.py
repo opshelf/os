@@ -15,7 +15,10 @@ from openshelf_os_server.routers.auth_deps import get_current_user, require_perm
 
 logger = get_logger(__name__)
 
-router = APIRouter(tags=["wifi"])
+router = APIRouter(
+	tags=["wifi"],
+	dependencies=[Depends(require_permissions("robot:control"))],
+)
 
 WIFI_INTERFACE = "wlan0"
 CONNECTION_NAME = "opshelf-wifi"

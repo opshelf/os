@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from openshelf_os.common import OperatingMode
 from openshelf_os_server.core.logging_config import get_logger
 from openshelf_os_server.settings import get_operating_mode, get_root_config, MODE_FILE, save_root_config
-from openshelf_os_server.routers.auth_deps import get_current_user
+from openshelf_os_server.routers.auth_deps import get_current_user, require_permissions
 
 logger = get_logger(__name__)
 
@@ -57,7 +57,11 @@ async def get_mode() -> ModeResponse:
 	return ModeResponse(mode=mode.value)
 
 
-@router.put("/mode", response_model=ModeUpdateResponse, dependencies=[Depends(get_current_user)])
+@router.put(
+	"/mode",
+	response_model=ModeUpdateResponse,
+	dependencies=[Depends(require_permissions("system:admin"))],
+)
 async def set_mode(request: ModeUpdateRequest) -> ModeUpdateResponse:
 	raw = request.mode.strip().lower()
 
@@ -87,13 +91,21 @@ async def set_mode(request: ModeUpdateRequest) -> ModeUpdateResponse:
 	)
 
 
-@router.get("/home-on-init", response_model=HomeOnInitResponse, dependencies=[Depends(get_current_user)])
+@router.get(
+	"/home-on-init",
+	response_model=HomeOnInitResponse,
+	dependencies=[Depends(require_permissions("robot:control"))],
+)
 async def get_home_on_init() -> HomeOnInitResponse:
 	config = get_root_config()
 	return HomeOnInitResponse(home_on_init=config.robot_app.home_on_init)
 
 
-@router.put("/home-on-init", response_model=HomeOnInitResponse, dependencies=[Depends(get_current_user)])
+@router.put(
+	"/home-on-init",
+	response_model=HomeOnInitResponse,
+	dependencies=[Depends(require_permissions("robot:control"))],
+)
 async def set_home_on_init(request: HomeOnInitUpdateRequest) -> HomeOnInitResponse:
 	config = get_root_config()
 	config.robot_app.home_on_init = request.home_on_init
@@ -102,7 +114,11 @@ async def set_home_on_init(request: HomeOnInitUpdateRequest) -> HomeOnInitRespon
 	return HomeOnInitResponse(home_on_init=config.robot_app.home_on_init)
 
 
-@router.post("/restart", response_model=RestartResponse, dependencies=[Depends(get_current_user)])
+@router.post(
+	"/restart",
+	response_model=RestartResponse,
+	dependencies=[Depends(get_current_user)],
+)
 async def restart_api() -> RestartResponse:
 	logger.info("api_restart_requested")
 	_schedule_api_restart()

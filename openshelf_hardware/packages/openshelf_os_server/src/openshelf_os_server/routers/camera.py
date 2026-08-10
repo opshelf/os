@@ -14,11 +14,14 @@ from openshelf_os_server.core.camera import (
 	stop_camera_stream_by_id,
 )
 from openshelf_os_server.core.logging_config import get_logger
-from .auth_deps import get_current_user
+from .auth_deps import get_current_user, require_permissions
 
 logger = get_logger(__name__)
 
-router = APIRouter(tags=["camera"])
+router = APIRouter(
+	tags=["camera"],
+	dependencies=[Depends(require_permissions("robot:control"))],
+)
 
 
 async def mjpeg_stream_generator_for_camera(

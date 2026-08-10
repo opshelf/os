@@ -223,16 +223,16 @@ export async function getStorageGrid(): Promise<StorageGrid> {
 	return apiFetch<StorageGrid>(`/storage/grid?_t=${timestamp}`);
 }
 
-export async function deleteShelf(side: StorageModuleSide, shelfIdx: number): Promise<{ success: boolean }> {
+export async function deleteShelf(side: StorageModuleSide, shelfIdx: number): Promise<void> {
 	const params = new URLSearchParams({ side, shelf_idx: String(shelfIdx) });
-	return apiFetch<{ success: boolean }>(`/storage/grid/shelf?${params}`, {
+	return apiFetch<void>(`/storage/grid/shelf?${params}`, {
 		method: 'DELETE'
 	});
 }
 
-export async function deleteCell(side: StorageModuleSide, shelfIdx: number, cellIdx: number): Promise<{ success: boolean }> {
+export async function deleteCell(side: StorageModuleSide, shelfIdx: number, cellIdx: number): Promise<void> {
 	const params = new URLSearchParams({ side, shelf_idx: String(shelfIdx), cell_idx: String(cellIdx) });
-	return apiFetch<{ success: boolean }>(`/storage/grid/cell?${params}`, {
+	return apiFetch<void>(`/storage/grid/cell?${params}`, {
 		method: 'DELETE'
 	});
 }
@@ -242,7 +242,7 @@ export async function getCalibrationStatus(): Promise<CalibrationStatus> {
 }
 
 export async function homeToolMotors(): Promise<CalibrationStatus> {
-	return apiFetch<CalibrationStatus>('/calibration/home_tool_motors', {
+	return apiFetch<CalibrationStatus>('/calibration/home-tool-motors', {
 		method: 'POST'
 	});
 }
@@ -1135,4 +1135,3 @@ export async function moveStage(
 		body: JSON.stringify({ position })
 	});
 }
-

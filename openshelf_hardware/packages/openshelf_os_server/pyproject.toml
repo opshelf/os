@@ -44,6 +44,7 @@ dev-dependencies = [
 
 [project.scripts]
 start = "openshelf_os_server.main:start"
+openapi = "openshelf_os_server.openapi:main"
 
 
 [tool.pytest.ini_options]

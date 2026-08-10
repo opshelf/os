@@ -29,7 +29,8 @@ DEFAULT_ROLES = [
 			"robot:control",
 			"storage:read", "storage:write", "storage:delete", "storage:access",
 			"printer:print",
-			"audit:read"
+			"audit:read",
+			"system:admin"
 		]
 	},
 	{

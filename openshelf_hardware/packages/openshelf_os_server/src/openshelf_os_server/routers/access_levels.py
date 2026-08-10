@@ -11,7 +11,6 @@ from ..database.models import AccessLevel, User
 from .auth_deps import get_current_user
 
 router = APIRouter(
-	prefix="/api/access_levels",
 	tags=["access_levels"]
 )
 

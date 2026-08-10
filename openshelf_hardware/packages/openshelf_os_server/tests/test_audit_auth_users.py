@@ -94,7 +94,7 @@ async def test_users_crud_as_admin(client: AsyncClient) -> None:
         headers=headers,
         json={"name": role_name, "permissions": ["users:read"]},
     )
-    assert role_resp.status_code == 200, role_resp.text
+    assert role_resp.status_code == 201, role_resp.text
     role_id = role_resp.json()["id"]
 
     # Create user
@@ -109,7 +109,7 @@ async def test_users_crud_as_admin(client: AsyncClient) -> None:
             "role_id": role_id,
         },
     )
-    assert create.status_code == 200, create.text
+    assert create.status_code == 201, create.text
     user_id = create.json()["id"]
 
     # Get user
@@ -118,7 +118,7 @@ async def test_users_crud_as_admin(client: AsyncClient) -> None:
     assert read.json()["email"] == "testuser@opshelf.com"
 
     # Update user
-    upd = await client.put(
+    upd = await client.patch(
         f"/api/users/{user_id}",
         headers=headers,
         json={"first_name": "Tester"},
@@ -128,7 +128,7 @@ async def test_users_crud_as_admin(client: AsyncClient) -> None:
 
     # Deactivate user
     delete = await client.delete(f"/api/users/{user_id}", headers=headers)
-    assert delete.status_code == 200
+    assert delete.status_code == 204
 
     # List users
     lst = await client.get("/api/users", headers=headers)

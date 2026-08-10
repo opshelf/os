@@ -45,7 +45,21 @@ class StorageService:
     async def create_item(self, upca: str, name: str, dimensions: Optional[Dict[str, float]],
                         weight: Optional[float] = None, metadata: Optional[Dict[str, Any]] = None,
                         access_level_id: Optional[int] = None) -> Item:
-        """Create or upsert an item in the database."""
+        """Create or upsert an item, returning the persisted item."""
+        item, _ = await self.upsert_item(
+            upca=upca,
+            name=name,
+            dimensions=dimensions,
+            weight=weight,
+            metadata=metadata,
+            access_level_id=access_level_id,
+        )
+        return item
+
+    async def upsert_item(self, upca: str, name: str, dimensions: Optional[Dict[str, float]],
+                          weight: Optional[float] = None, metadata: Optional[Dict[str, Any]] = None,
+                          access_level_id: Optional[int] = None) -> tuple[Item, bool]:
+        """Create or update an item, returning it and whether it was created."""
         resolved_dimensions = dimensions or {"length": 1.0, "width": 1.0, "height": 1.0}
 
         StorageValidator.validate_item_creation(upca, name, resolved_dimensions, weight, metadata)
@@ -61,6 +75,7 @@ class StorageService:
                 item = result.scalar_one_or_none()
 
                 if item is None:
+                    created = True
                     item = Item(
                         upca=upca,
                         name=name,
@@ -71,6 +86,7 @@ class StorageService:
                     )
                     self.session.add(item)
                 else:
+                    created = False
                     item.name = name
                     item.dimensions = resolved_dimensions
                     item.weight = normalized_weight
@@ -84,7 +100,7 @@ class StorageService:
                 await self.session.rollback()
                 raise
 
-        return item
+        return item, created
 
     async def get_item(self, upca: str) -> Optional[Item]:
         """Get an item by UPCA."""
@@ -115,7 +131,10 @@ class StorageService:
                         dimensions: Optional[Dict[str, float]] = None,
                         weight: Optional[float] = None,
                         metadata: Optional[Dict[str, Any]] = None,
-                        access_level_id: Optional[int] = None) -> Optional[Item]:
+                        access_level_id: Optional[int] = None,
+                        update_weight: bool = False,
+                        update_metadata: bool = False,
+                        update_access_level: bool = False) -> Optional[Item]:
         """Update an existing item."""
         result = await self.session.execute(
             select(Item).where(Item.upca == upca)
@@ -134,11 +153,11 @@ class StorageService:
                     item.name = name
                 if dimensions is not None:
                     item.dimensions = dimensions
-                if weight is not None:
+                if update_weight is True or weight is not None:
                     item.weight = normalized_weight
-                if metadata is not None:
+                if update_metadata is True or metadata is not None:
                     item.item_metadata = metadata
-                if access_level_id is not None:
+                if update_access_level is True or access_level_id is not None:
                     item.access_level_id = access_level_id
 
                 await self.session.commit()

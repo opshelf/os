@@ -495,13 +495,20 @@ async def _ensure_default_role_permissions() -> None:
 			return
 
 		permissions = list(admin_role.permissions or [])
-		if "*" in permissions or "storage:access" in permissions:
+		if "*" in permissions:
 			return
 
-		permissions.append("storage:access")
+		required_permissions = ("storage:access", "system:admin")
+		missing_permissions = [
+			permission for permission in required_permissions if permission not in permissions
+		]
+		if missing_permissions == []:
+			return
+
+		permissions.extend(missing_permissions)
 		admin_role.permissions = permissions
 		await db.commit()
-		logger.info("admin_role_permission_added", permission="storage:access")
+		logger.info("admin_role_permissions_added", permissions=missing_permissions)
 
 
 async def _seed_auth_if_requested() -> None:
@@ -706,6 +713,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 			app.dependency_overrides.pop(StorageService, None)
 
 
+OPENAPI_TAGS = [
+	{"name": "auth", "description": "Authentication and user management"},
+	{"name": "robot", "description": "Robot control and configuration"},
+	{"name": "gantry", "description": "Gantry movement and positioning"},
+	{"name": "storage", "description": "Storage grid and inventory management"},
+	{"name": "scanner", "description": "Barcode scanning operations"},
+	{"name": "scale", "description": "Scale and weight measurements"},
+	{"name": "printer", "description": "Label printing operations"},
+	{"name": "users", "description": "User management"},
+	{"name": "roles", "description": "Role and permission management"},
+	{"name": "audit", "description": "Audit logging"},
+]
+
+
 app = FastAPI(
     lifespan=lifespan,
     title="OpenShelf OS Server API",
@@ -714,14 +735,16 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",
+    openapi_tags=OPENAPI_TAGS,
 )
 
 app.add_middleware(
-	CORSMiddleware,
-	allow_origins=["*"],
-	allow_credentials=True,
-	allow_methods=["*"],
-	allow_headers=["*"],
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["Retry-After"],
 )
 app.add_middleware(CorrelationIdMiddleware)
 app.add_middleware(AuditMiddleware)
@@ -790,7 +813,8 @@ async def system_info() -> dict[str, str | None]:
 app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(roles.router)
-app.include_router(access_levels.router)
+app.include_router(access_levels.router, prefix="/api/access-levels")
+app.include_router(access_levels.router, prefix="/api/access_levels", include_in_schema=False)
 app.include_router(audit.router)
 app.include_router(camera.router, prefix="/api/camera")
 app.include_router(iobox_sizer.router, prefix="/api/iobox/sizer")

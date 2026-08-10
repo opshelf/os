@@ -17,7 +17,10 @@ from openshelf_os_server.core.iobox_sizer import (
 from openshelf_os_server.settings import get_root_config, save_root_config
 from .auth_deps import get_current_user, require_permissions
 
-router = APIRouter(tags=["iobox-sizer"])
+router = APIRouter(
+	tags=["iobox-sizer"],
+	dependencies=[Depends(require_permissions("robot:control"))],
+)
 
 
 class TofBlankCalibrationRequest(BaseModel):

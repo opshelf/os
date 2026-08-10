@@ -297,17 +297,29 @@ async def get_item(
     return _build_item_payload(item, locations, current_user)
 
 
-@router.post("/items", dependencies=[Depends(require_permissions("storage:write"))])
+@router.post(
+    "/items",
+    status_code=201,
+    response_model=ItemWithLocations,
+    responses={
+        200: {
+            "model": ItemWithLocations,
+            "description": "Existing item updated.",
+        },
+    },
+    dependencies=[Depends(require_permissions("storage:write"))],
+)
 async def create_item(
     item: ItemCreate,
+    response: Response,
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> ItemWithLocations:
-    """Create a new item."""
+    """Create an item or update the existing item with the same UPCA."""
     storage_service = StorageService(session)
 
     try:
-        db_item = await storage_service.create_item(
+        db_item, created = await storage_service.upsert_item(
             upca=item.upca,
             name=item.name,
             dimensions=item.dimensions,
@@ -315,6 +327,9 @@ async def create_item(
             metadata=item.item_metadata or {},
             access_level_id=item.access_level_id,
         )
+
+        if created is False:
+            response.status_code = 200
 
         locations = await storage_service.get_item_locations(item.upca)
 
@@ -326,7 +341,12 @@ async def create_item(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@router.put("/items/{upca}", dependencies=[Depends(require_permissions("storage:write"))])
+@router.put(
+    "/items/{upca}",
+    dependencies=[Depends(require_permissions("storage:write"))],
+    include_in_schema=False,
+)
+@router.patch("/items/{upca}", dependencies=[Depends(require_permissions("storage:write"))])
 async def update_item(
     upca: str,
     item: ItemUpdate,
@@ -343,6 +363,9 @@ async def update_item(
         weight=item.weight,
         metadata=item.item_metadata,
         access_level_id=item.access_level_id,
+        update_weight="weight" in item.model_fields_set,
+        update_metadata="item_metadata" in item.model_fields_set,
+        update_access_level="access_level_id" in item.model_fields_set,
     )
 
     if not updated_item:
@@ -357,12 +380,16 @@ async def update_item(
     return _build_item_payload(fresh_item, locations, current_user)
 
 
-@router.delete("/items/{upca}", dependencies=[Depends(require_permissions("storage:delete"))])
+@router.delete(
+    "/items/{upca}",
+    status_code=204,
+    dependencies=[Depends(require_permissions("storage:delete"))],
+)
 @monitor_performance
 async def delete_item(
     upca: str,
     session: AsyncSession = Depends(get_db),
-) -> Dict[str, str]:
+) -> Response:
     """Delete an item."""
     storage_service = StorageService(session)
 
@@ -371,7 +398,7 @@ async def delete_item(
     if deleted is False:
         raise HTTPException(status_code=404, detail="Item not found")
 
-    return {"message": "Item deleted successfully"}
+    return Response(status_code=204)
 
 
 # ---------------------------------------------------------------------------
@@ -379,7 +406,11 @@ async def delete_item(
 # ---------------------------------------------------------------------------
 
 
-@router.post("/items/{upca}/locations", dependencies=[Depends(require_permissions("storage:write"))])
+@router.post(
+    "/items/{upca}/locations",
+    status_code=201,
+    dependencies=[Depends(require_permissions("storage:write"))],
+)
 async def add_item_location(
     upca: str,
     location: ItemLocationCreate,
@@ -494,7 +525,15 @@ async def get_storage_cells(
     ]
 
 
-@router.put("/locations/{shelf_idx}/{cell_idx}", dependencies=[Depends(require_permissions("storage:write"))])
+@router.put(
+    "/locations/{shelf_idx}/{cell_idx}",
+    dependencies=[Depends(require_permissions("storage:write"))],
+    include_in_schema=False,
+)
+@router.patch(
+    "/locations/{shelf_idx}/{cell_idx}",
+    dependencies=[Depends(require_permissions("storage:write"))],
+)
 async def update_storage_cell(
     shelf_idx: int,
     cell_idx: int,
@@ -556,15 +595,19 @@ async def get_storage_grid() -> Dict[str, Any]:
 
 
 
-@router.delete("/grid/shelf", dependencies=[Depends(require_permissions("storage:write"))])
+@router.delete(
+	"/grid/shelf",
+	status_code=204,
+	dependencies=[Depends(require_permissions("storage:write"))],
+)
 async def delete_shelf(
 	side: StorageModuleSideDto = Query(...), shelf_idx: int = Query(...)
-) -> Dict[str, Any]:
+) -> Response:
 	"""Delete a shelf and all its cells from the grid."""
 	try:
 		grid = _get_robot_grid()
 		grid.remove_shelf(side, shelf_idx)
-		return {"success": True}
+		return Response(status_code=204)
 	except IndexError as exc:
 		raise HTTPException(status_code=404, detail=str(exc))
 	except Exception as exc:
@@ -574,15 +617,19 @@ async def delete_shelf(
 		) from exc
 
 
-@router.delete("/grid/cell", dependencies=[Depends(require_permissions("storage:write"))])
+@router.delete(
+	"/grid/cell",
+	status_code=204,
+	dependencies=[Depends(require_permissions("storage:write"))],
+)
 async def delete_cell(
 	side: StorageModuleSideDto = Query(...), shelf_idx: int = Query(...), cell_idx: int = Query(...)
-) -> Dict[str, Any]:
+) -> Response:
 	"""Delete a single cell from the given shelf."""
 	try:
 		grid = _get_robot_grid()
 		grid.remove_cell(side, shelf_idx, cell_idx)
-		return {"success": True}
+		return Response(status_code=204)
 	except IndexError as exc:
 		raise HTTPException(status_code=404, detail=str(exc))
 	except Exception as exc:

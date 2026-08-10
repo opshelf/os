@@ -93,6 +93,38 @@ async def test_item_update() -> None:
 
 
 @pytest.mark.anyio
+async def test_item_update_metadata_presence_controls_persistence() -> None:
+    """Omitted metadata is preserved while an explicit null clears it."""
+    async with AsyncSessionLocal() as db:
+        service = StorageService(db)
+        await service.create_item(
+            upca="123456789012",
+            name="Original Name",
+            dimensions={"width": 10.0, "height": 20.0, "length": 30.0},
+            metadata={"category": "test"},
+        )
+
+        preserved_item = await service.update_item(
+            upca="123456789012",
+            name="Renamed Item",
+        )
+        assert preserved_item is not None
+        assert preserved_item.item_metadata == {"category": "test"}
+
+        cleared_item = await service.update_item(
+            upca="123456789012",
+            metadata=None,
+            update_metadata=True,
+        )
+        assert cleared_item is not None
+        assert cleared_item.item_metadata is None
+
+        persisted_item = await service.get_item("123456789012")
+        assert persisted_item is not None
+        assert persisted_item.item_metadata is None
+
+
+@pytest.mark.anyio
 async def test_item_update_nonexistent() -> None:
     """Test updating a non-existent item."""
     async with AsyncSessionLocal() as db:

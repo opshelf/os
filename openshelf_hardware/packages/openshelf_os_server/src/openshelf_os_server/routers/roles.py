@@ -1,7 +1,7 @@
 """Role management API endpoints."""
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from pydantic import BaseModel
@@ -62,7 +62,12 @@ async def list_roles(
 
 	return [await _build_role_response(db, role, user_count=user_counts.get(role.id, 0)) for role in roles]
 
-@router.post("", response_model=RoleResponse, dependencies=[Depends(require_permissions("roles:write"))])
+@router.post(
+	"",
+	response_model=RoleResponse,
+	status_code=status.HTTP_201_CREATED,
+	dependencies=[Depends(require_permissions("roles:write"))],
+)
 async def create_role(
 	request: RoleCreate,
 	db: AsyncSession = Depends(get_db),
@@ -105,7 +110,17 @@ async def get_role(
 	
 	return await _build_role_response(db, role)
 
-@router.put("/{role_id}", response_model=RoleResponse, dependencies=[Depends(require_permissions("roles:write"))])
+@router.put(
+	"/{role_id}",
+	response_model=RoleResponse,
+	dependencies=[Depends(require_permissions("roles:write"))],
+	include_in_schema=False,
+)
+@router.patch(
+	"/{role_id}",
+	response_model=RoleResponse,
+	dependencies=[Depends(require_permissions("roles:write"))],
+)
 async def update_role(
 	role_id: int,
 	request: RoleUpdate,
@@ -144,12 +159,16 @@ async def update_role(
 	
 	return await _build_role_response(db, role)
 
-@router.delete("/{role_id}", dependencies=[Depends(require_permissions("roles:delete"))])
+@router.delete(
+	"/{role_id}",
+	status_code=status.HTTP_204_NO_CONTENT,
+	dependencies=[Depends(require_permissions("roles:delete"))],
+)
 async def delete_role(
 	role_id: int,
 	db: AsyncSession = Depends(get_db),
 	current_user: User = Depends(get_current_user)
-) -> dict:
+) -> Response:
 	"""Delete a role."""
 	role_result = await db.execute(select(Role).filter(Role.id == role_id))
 	role = role_result.scalar_one_or_none()
@@ -169,4 +188,4 @@ async def delete_role(
 	await db.delete(role)
 	await db.commit()
 	
-	return {"message": "Role deleted successfully"}
+	return Response(status_code=status.HTTP_204_NO_CONTENT)

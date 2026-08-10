@@ -89,7 +89,8 @@ async def _capture_camera_images() -> dict[str, bytes]:
     return images
 
 
-@router.post("/report_error", response_model=ReportErrorResponse)
+@router.post("/report_error", response_model=ReportErrorResponse, include_in_schema=False)
+@router.post("/report-error", response_model=ReportErrorResponse)
 async def submit_error_report(
     request: ReportErrorRequest,
     current_user: User = Depends(get_current_user),
