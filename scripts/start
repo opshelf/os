@@ -10,6 +10,8 @@ HARDWARE=false
 BUILD=false
 DETACHED=false
 MODE=""
+CONFIG_OVERRIDE_HOST_PATH=""
+CONTAINER_DATA_DIR="/app/openshelf_hardware/data"
 
 read_group_id() {
 	group_name="$1"
@@ -73,8 +75,54 @@ write_mode_file() {
 	fi
 }
 
+prepare_config_path_override() {
+	local configured_path="${OPENSHELF_CONFIG_PATH:-}"
+	local resolved_path=""
+	local resolved_data_dir=""
+
+	CONFIG_OVERRIDE_HOST_PATH=""
+	[[ -n "$configured_path" ]] || return 0
+
+	if [[ "$configured_path" == "$CONTAINER_DATA_DIR" || "$configured_path" == "$CONTAINER_DATA_DIR/"* ]]; then
+		configured_path="$DATA_DIR${configured_path#$CONTAINER_DATA_DIR}"
+	fi
+
+	resolved_path="$(python3 - "$configured_path" "$PWD" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+if path.is_absolute() is False:
+    path = Path(sys.argv[2]) / path
+print(path.resolve())
+PY
+)"
+	resolved_data_dir="$(python3 - "$DATA_DIR" <<'PY'
+from pathlib import Path
+import sys
+
+print(Path(sys.argv[1]).resolve())
+PY
+)"
+	CONFIG_OVERRIDE_HOST_PATH="$resolved_path"
+
+	if [[ "$resolved_path" == "$resolved_data_dir" || "$resolved_path" == "$resolved_data_dir/"* ]]; then
+		OPENSHELF_CONFIG_PATH="$CONTAINER_DATA_DIR${resolved_path#$resolved_data_dir}"
+		export OPENSHELF_CONFIG_PATH
+		return 0
+	fi
+
+	echo "OPENSHELF_CONFIG_PATH must be inside $resolved_data_dir; external host paths are not supported" >&2
+	return 1
+}
+
 is_hardware_expected() {
-	python3 - "$DATA_DIR/config.json" "$DATA_DIR/settings.json" <<'PY'
+	local mode_config="$DATA_DIR/config.json"
+	if [[ "$MODE" != "production" ]]; then
+		mode_config="$DATA_DIR/config.$MODE.json"
+	fi
+
+	python3 - "$CONFIG_OVERRIDE_HOST_PATH" "$mode_config" "$DATA_DIR/config.json" "$DATA_DIR/settings.json" <<'PY'
 import json
 import sys
 
@@ -82,8 +130,11 @@ for path in sys.argv[1:]:
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-    except FileNotFoundError:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         continue
+
+    if not isinstance(data, dict):
+        sys.exit(1)
 
     robot_app = data.get("robot_app")
     if isinstance(robot_app, dict) and robot_app.get("enabled") is True:
@@ -92,6 +143,10 @@ for path in sys.argv[1:]:
     robot = data.get("robot")
     if isinstance(robot, dict) and robot.get("enabled") is True:
         sys.exit(0)
+
+    # The selected mode's first valid config is authoritative, including when
+    # it explicitly disables hardware.
+    sys.exit(1)
 
 sys.exit(1)
 PY
@@ -140,6 +195,10 @@ case "$MODE" in
 		exit 1
 		;;
 esac
+
+if ! prepare_config_path_override; then
+	exit 1
+fi
 
 if ! write_mode_file "$MODE_FILE" "$MODE"; then
 	echo "Failed to write mode file: $MODE_FILE"

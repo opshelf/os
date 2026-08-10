@@ -5,6 +5,7 @@ import os
 import pytest
 
 from openshelf_os.common import RootConfig, resolve_grid_path, CONFIG_PATH, write_json_file_with_backup
+from openshelf_os.runtime_state import infer_mode_from_path
 from openshelf_os.storage import StorageGrid, StorageValidationError
 
 
@@ -99,7 +100,8 @@ class TestResolveGridPath:
 		config = _make_config("storage.json")
 		result = resolve_grid_path(config)
 
-		expected = str((CONFIG_PATH.parent / "storage.json").resolve())
+		mode = infer_mode_from_path(CONFIG_PATH)
+		expected = str((CONFIG_PATH.parent / f"storage{'.' + mode.value if mode.value != 'production' else ''}.json").resolve())
 
 		assert result == expected
 
@@ -113,7 +115,8 @@ class TestResolveGridPath:
 		config = _make_config("grids/main.json")
 		result = resolve_grid_path(config)
 
-		expected = str((CONFIG_PATH.parent / "grids/main.json").resolve())
+		mode = infer_mode_from_path(CONFIG_PATH)
+		expected = str((CONFIG_PATH.parent / f"grids/main{'.' + mode.value if mode.value != 'production' else ''}.json").resolve())
 
 		assert result == expected
 
@@ -242,7 +245,18 @@ class TestSaveToFile:
 		backups = list(backup_dir.glob("*.json"))
 
 		assert len(backups) == 1
+		assert backups[0].name.endswith(".production.json")
 		assert json.loads(backups[0].read_text()) == EMPTY_GRID
+
+	def test_backup_name_includes_mode_and_shared_version_id(self, tmp_path):
+		out = tmp_path / "storage.development.json"
+		out.write_text(json.dumps(EMPTY_GRID))
+
+		grid = StorageGrid.model_validate(GRID_WITH_SHELVES)
+		grid.save_to_file(str(out), version_id="version-1")
+
+		backup = tmp_path / "storage" / "version-1.development.json"
+		assert json.loads(backup.read_text()) == EMPTY_GRID
 
 	def test_creates_backup_in_data_storage_directory(self, tmp_path):
 		out = tmp_path / "data" / "storage.json"

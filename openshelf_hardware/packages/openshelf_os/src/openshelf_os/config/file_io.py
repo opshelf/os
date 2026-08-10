@@ -23,6 +23,8 @@ def create_timestamped_json_backup(
     target_path: str | Path,
     *,
     backup_group_name: str | None = None,
+    backup_mode: str | None = None,
+    version_id: str | None = None,
 ) -> Path | None:
     resolved_path = Path(target_path).resolve()
 
@@ -33,8 +35,9 @@ def create_timestamped_json_backup(
     backup_dir = backup_root / (backup_group_name or resolved_path.stem)
     backup_dir.mkdir(parents=True, exist_ok=True)
 
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
-    backup_path = backup_dir / f"{timestamp}{resolved_path.suffix}"
+    timestamp = version_id or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
+    mode_suffix = f".{backup_mode}" if backup_mode else ""
+    backup_path = backup_dir / f"{timestamp}{mode_suffix}{resolved_path.suffix}"
     shutil.copy2(resolved_path, backup_path)
 
     return backup_path
@@ -105,6 +108,8 @@ def write_json_file_with_backup(
     *,
     indent: int | str | None = None,
     backup_group_name: str | None = None,
+    backup_mode: str | None = None,
+    version_id: str | None = None,
 ) -> Path:
     resolved_path = Path(target_path).resolve()
 
@@ -113,6 +118,8 @@ def write_json_file_with_backup(
     create_timestamped_json_backup(
         resolved_path,
         backup_group_name=backup_group_name,
+        backup_mode=backup_mode,
+        version_id=version_id,
     )
 
     _write_json_file_atomically(resolved_path, data, indent=indent)

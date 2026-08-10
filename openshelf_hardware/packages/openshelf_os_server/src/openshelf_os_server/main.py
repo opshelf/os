@@ -26,13 +26,13 @@ from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.logging import LoggingIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 from sentry_sdk.transport import HttpTransport
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from openshelf_os.device import get_device_id
-from openshelf_os.common import CONFIG_PATH, OperatingMode, load_config_file, resolve_grid_path
+from openshelf_os.common import CONFIG_PATH, OperatingMode
 from openshelf_os.operating_mode import should_enable_sentry
-from openshelf_os.storage import StorageGrid
+from openshelf_os.runtime_state import RuntimeStatePaths
 from openshelf_os_server.core.logging_config import configure_logging, get_logger
 from openshelf_os_server.core.robot import get_robot_health, init_robot_worker, stop_robot_worker
 from openshelf_os_server.core.init_progress import get_init_tracker
@@ -42,7 +42,7 @@ from openshelf_os_server.core.iobox_sizer import get_iobox_sizer_status, init_io
 from openshelf_os_server.settings import Settings
 from openshelf_os_server.database.base import Base, engine, get_database_url
 from openshelf_os_server.database.session import AsyncSessionLocal, get_db
-from openshelf_os_server.database.models import Item, ItemLocation, Role, User
+from openshelf_os_server.database.models import Role, User
 from openshelf_os_server.middleware.audit import AuditMiddleware
 from openshelf_os_server.middleware.correlation import CorrelationIdMiddleware
 from openshelf_os_server.routers import access_levels, audit, auth, cabinet, calibration, camera, demo, iobox_sizer, printer, report, robot, roles, storage, system, telemetry, users, wifi
@@ -420,10 +420,7 @@ def _get_tool_camera_url(settings: Settings) -> str | None:
 	if settings.tool_camera.rtsp_url != "":
 		return settings.tool_camera.rtsp_url
 
-	config_paths = [
-		CONFIG_PATH,
-		Path("/app/openshelf_hardware/data/config.json"),
-	]
+	config_paths = [CONFIG_PATH]
 
 	for config_path in config_paths:
 		if config_path.exists() is False:
@@ -524,37 +521,8 @@ async def _seed_auth_if_requested() -> None:
 			logger.info("skipping_seed_script", user_count=user_count, reason="users_exist")
 
 
-LAST_MODE_FILE = Path("data/.last_mode")
-
-
-async def _wipe_inventory() -> None:
-	async with AsyncSessionLocal() as session:
-		await session.execute(delete(ItemLocation))
-		await session.execute(delete(Item))
-		await session.commit()
-
-
-def _reset_storage_grid() -> None:
-	if CONFIG_PATH.exists() is False:
-		return
-
-	try:
-		config = load_config_file(CONFIG_PATH)
-		grid_path = resolve_grid_path(config)
-	except Exception as e:
-		logger.warning("storage_grid_reset_skipped", reason="config_load_failed", error=str(e))
-		return
-
-	if Path(grid_path).exists() is False:
-		return
-
-	try:
-		grid = StorageGrid.load_from_file(grid_path)
-		grid.clear_all_items()
-		grid.save_to_file(grid_path)
-		logger.info("storage_grid_reset", path=grid_path)
-	except Exception as e:
-		logger.warning("storage_grid_reset_failed", error=str(e))
+LAST_MODE_FILE = RuntimeStatePaths.current().data_dir / ".last_mode"
+DEMO_SEEDED_FILE = RuntimeStatePaths.current().data_dir / ".demo_workspace_seeded"
 
 
 def _run_demo_seed() -> bool:
@@ -590,26 +558,32 @@ async def _apply_mode_transition() -> None:
 		if raw in {m.value for m in OperatingMode}:
 			last_mode = raw
 
-	LAST_MODE_FILE.parent.mkdir(parents=True, exist_ok=True)
-	LAST_MODE_FILE.write_text(mode.value, encoding="utf-8")
-
-	if last_mode == mode.value:
+	if last_mode == mode.value and not (mode == OperatingMode.demo and DEMO_SEEDED_FILE.exists() is False):
 		return
 
 	logger.info("mode_transition", previous=last_mode, current=mode.value)
 
-	if mode == OperatingMode.demo:
-		_run_demo_seed()
-	else:
-		logger.info("wiping_inventory", reason="mode_switch")
-		await _wipe_inventory()
-		_reset_storage_grid()
-		logger.info("inventory_wiped")
+	if mode == OperatingMode.demo and DEMO_SEEDED_FILE.exists() is False:
+		if _run_demo_seed() is False:
+			return
+		DEMO_SEEDED_FILE.write_text("seeded\n", encoding="utf-8")
+
+	LAST_MODE_FILE.parent.mkdir(parents=True, exist_ok=True)
+	LAST_MODE_FILE.write_text(mode.value, encoding="utf-8")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-	logger.info("application_starting", app_title=app.title)
+	runtime_paths = RuntimeStatePaths.current()
+	logger.info(
+		"application_starting",
+		app_title=app.title,
+		mode=runtime_paths.mode.value,
+		config_path=str(runtime_paths.config_path),
+		database_path=str(runtime_paths.database_path) if os.getenv("DATABASE_URL") is None else None,
+		database_url_override=os.getenv("DATABASE_URL") is not None,
+		calibration_dir=str(runtime_paths.calibration_dir),
+	)
 	settings = get_settings()
 
 	_run_migrations()

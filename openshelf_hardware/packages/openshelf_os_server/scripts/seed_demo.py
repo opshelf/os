@@ -14,14 +14,16 @@ sys.path.append(str(Path(__file__).parent.parent / "src"))
 from sqlalchemy import delete
 
 from openshelf_os.common import CONFIG_PATH, load_config_file, resolve_grid_path
+from openshelf_os.runtime_state import RuntimeStatePaths, ensure_mode_workspace
 from openshelf_os.storage import CellItem, CellStatus, Dimensions, StorageGrid, StorageModuleSide
 from openshelf_os_server.database.base import Base, engine
 from openshelf_os_server.database.models import Item, ItemLocation
 from openshelf_os_server.database.session import AsyncSessionLocal
 
 
-DEFAULT_DEMO_PATH = Path("data/demo.json")
-DEFAULT_STORAGE_PATH = Path("storage.json")
+RUNTIME_PATHS = RuntimeStatePaths.current()
+DEFAULT_DEMO_PATH = RUNTIME_PATHS.data_dir / "demo.json"
+DEFAULT_STORAGE_PATH = RUNTIME_PATHS.resolve_mode_owned_path("storage.json")
 
 
 @dataclass(frozen=True)
@@ -664,6 +666,7 @@ def parse_args() -> argparse.Namespace:
 
 
 async def main() -> None:
+	ensure_mode_workspace()
 	args = parse_args()
 	demo_path = args.demo_json
 	storage_path = args.storage_json

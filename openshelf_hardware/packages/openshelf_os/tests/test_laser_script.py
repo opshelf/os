@@ -1,3 +1,4 @@
+import asyncio
 import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
@@ -24,6 +25,7 @@ def build_config():
 	return SimpleNamespace(
 		robot=SimpleNamespace(
 			grid=SimpleNamespace(
+				path='storage.json',
 				scan=SimpleNamespace(
 					laser_sample_settle_ms=40,
 					laser_samples_per_point=3,
@@ -86,6 +88,69 @@ def test_derive_scans_dir_uses_config_directory(tmp_path: Path) -> None:
 	assert module.derive_scans_dir(str(config_path)) == str((config_path.parent / 'calibration').resolve())
 
 
+def test_selected_config_paths_preserve_current_config_override_workspace(
+	monkeypatch: pytest.MonkeyPatch,
+	tmp_path: Path,
+) -> None:
+	data_dir = tmp_path / 'data'
+	config_path = tmp_path / 'custom' / 'config.json'
+	monkeypatch.setenv('OPENSHELF_DATA_DIR', str(data_dir))
+	monkeypatch.setenv('OPENSHELF_CONFIG_PATH', str(config_path))
+	monkeypatch.setenv('OPERATING_MODE', 'development')
+	module = load_laser_script_module()
+
+	paths = module.paths_for_selected_config(str(config_path))
+
+	assert paths.config_path == config_path.resolve()
+	assert paths.database_path == (data_dir / 'base.development.db').resolve()
+	assert paths.calibration_dir == (data_dir / 'calibration/development').resolve()
+	assert paths.mode.value == 'development'
+
+
+def test_run_scan_explicit_config_uses_active_mode_workspace_and_selected_storage(
+	monkeypatch: pytest.MonkeyPatch,
+	tmp_path: Path,
+) -> None:
+	data_dir = tmp_path / 'data'
+	active_config_path = data_dir / 'config.development.json'
+	selected_config_path = tmp_path / 'custom' / 'config.json'
+	monkeypatch.setenv('OPENSHELF_DATA_DIR', str(data_dir))
+	monkeypatch.setenv('OPENSHELF_CONFIG_PATH', str(active_config_path))
+	monkeypatch.setenv('OPERATING_MODE', 'development')
+	module = load_laser_script_module()
+	config = build_config()
+	config.robot.grid.path = 'grids/storage.json'
+	workspace = Mock()
+	load_grid = Mock(return_value=SimpleNamespace())
+	analysis = build_analysis()
+	analysis.metadata_path = str(tmp_path / 'run' / 'metadata.json')
+
+	monkeypatch.setattr(module, 'ensure_mode_workspace', workspace)
+	monkeypatch.setattr(module, 'load_config_file', lambda path: config)
+	monkeypatch.setattr(module.laser_module, 'load_grid', load_grid)
+	monkeypatch.setattr(module.laser_module, 'load_staged_scan_analysis', lambda *args, **kwargs: analysis)
+	monkeypatch.setattr(module, 'load_run_parameters_for_analysis', lambda analysis: {})
+	monkeypatch.setattr(module, 'print_analysis', lambda analysis: None)
+
+	args = module.build_parser().parse_args([
+		'--from-run',
+		str(tmp_path / 'run'),
+		'--config',
+		str(selected_config_path),
+	])
+
+	assert asyncio.run(module.run_scan(args)) == 0
+
+	workspace.assert_called_once()
+	workspace_paths = workspace.call_args.args[0]
+	assert workspace_paths.config_path == selected_config_path.resolve()
+	assert workspace_paths.database_path == (data_dir / 'base.development.db').resolve()
+	assert workspace_paths.calibration_dir == (data_dir / 'calibration/development').resolve()
+	assert workspace_paths.mode.value == 'development'
+	assert args.scans_dir == str((data_dir / 'calibration/development').resolve())
+	load_grid.assert_called_once_with((selected_config_path.parent / 'grids/storage.development.json').resolve())
+
+
 def test_main_rejects_scans_dir_option() -> None:
 	module = load_laser_script_module()
 
@@ -99,13 +164,12 @@ def test_main_dispatches_full_scan_to_package_methods(monkeypatch: pytest.Monkey
 	analysis = build_analysis()
 	run_staged_scan = AsyncMock(return_value=analysis)
 	config_path = tmp_path / 'data' / 'config.json'
-	expected_scans_dir = str((config_path.parent / 'calibration').resolve())
+	expected_scans_dir = str(module.paths_for_selected_config(str(config_path)).calibration_dir)
 
 	async def didRunWithTempRobotConfig(*, config, config_path, didRun, shutdown_action):
 		return await didRun(SimpleNamespace(_tool=SimpleNamespace()))
 
 	monkeypatch.setattr(module, 'load_config_file', lambda path: config)
-	monkeypatch.setattr(module, 'resolve_grid_path', lambda config: 'storage.json')
 	monkeypatch.setattr(module.laser_module, 'load_grid', lambda path: SimpleNamespace())
 	monkeypatch.setattr(module.laser_module, 'build_run_parameters', lambda **kwargs: {'module': 'left'})
 	monkeypatch.setattr(module.laser_module, 'run_staged_scan', run_staged_scan)
@@ -157,7 +221,6 @@ def test_main_dispatches_rescan_apply_to_package_methods(monkeypatch: pytest.Mon
 		return await didRun(SimpleNamespace(_tool=SimpleNamespace()))
 
 	monkeypatch.setattr(module, 'load_config_file', lambda path: config)
-	monkeypatch.setattr(module, 'resolve_grid_path', lambda config: 'storage.json')
 	monkeypatch.setattr(module.laser_module, 'load_grid', lambda path: SimpleNamespace())
 	monkeypatch.setattr(module.laser_module, 'build_single_cell_rescan_candidate', lambda **kwargs: candidate)
 	monkeypatch.setattr(
@@ -199,7 +262,6 @@ def test_from_run_apply_uses_single_shelf_scope(monkeypatch: pytest.MonkeyPatch,
 	apply_analysis = Mock()
 
 	monkeypatch.setattr(module, 'load_config_file', lambda path: config)
-	monkeypatch.setattr(module, 'resolve_grid_path', lambda config: 'storage.json')
 	monkeypatch.setattr(module.laser_module, 'load_grid', lambda path: SimpleNamespace())
 	monkeypatch.setattr(module.laser_module, 'load_staged_scan_analysis', lambda *args, **kwargs: analysis)
 	monkeypatch.setattr(
@@ -238,7 +300,6 @@ def test_from_run_apply_uses_legacy_single_cell_without_reference_apply(
 	apply_single_cell_rescan = Mock()
 
 	monkeypatch.setattr(module, 'load_config_file', lambda path: config)
-	monkeypatch.setattr(module, 'resolve_grid_path', lambda config: 'storage.json')
 	monkeypatch.setattr(module.laser_module, 'load_grid', lambda path: SimpleNamespace())
 	monkeypatch.setattr(module.laser_module, 'load_staged_scan_analysis', lambda *args, **kwargs: analysis)
 	monkeypatch.setattr(
@@ -339,7 +400,6 @@ def test_main_dispatches_io_box_calibration_to_package_method(monkeypatch: pytes
 		return await didRun(SimpleNamespace(_tool=SimpleNamespace(), _io=SimpleNamespace()))
 
 	monkeypatch.setattr(module, 'load_config_file', lambda path: config)
-	monkeypatch.setattr(module, 'resolve_grid_path', lambda config: 'storage.json')
 	monkeypatch.setattr(module.laser_module, 'load_grid', lambda path: SimpleNamespace())
 	monkeypatch.setattr(module.laser_module, 'run_io_box_scout', run_io_box_scout)
 	monkeypatch.setattr(

@@ -93,9 +93,6 @@ async def capture_camera_blank_endpoint() -> dict[str, Any]:
 	except Exception as exc:
 		raise _unavailable_error(exc) from exc
 
-	root_config = get_root_config()
-	root_config.robot.io.sizer.detection.blank_frame_path = path
-	save_root_config(root_config)
 	return {"success": True, "blank_frame_path": path}
 
 

@@ -207,7 +207,7 @@ def test_get_tool_camera_url_uses_config_url_when_enabled(tmp_path, monkeypatch)
 		'{"robot":{"tool":{"poe_camera":{"url":"rtsp://camera"}}}}',
 		encoding="utf-8",
 	)
-	monkeypatch.chdir(tmp_path)
+	monkeypatch.setattr("openshelf_os_server.main.CONFIG_PATH", data_path / "config.json")
 
 	settings = SimpleNamespace(tool_camera=SimpleNamespace(enabled=True, rtsp_url=""))
 

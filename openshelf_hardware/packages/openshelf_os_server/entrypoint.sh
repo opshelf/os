@@ -22,24 +22,33 @@ if command -v uv >/dev/null 2>&1; then
 	fi
 fi
 
-# Resolve printer queue/URI from config.json
+# Resolve printer queue/URI from the configured runtime config.
 QUEUE_FROM_CONFIG=""
 if [ -z "${PRINTER_QUEUE:-}" ] && [ -z "${PRINTER:-}" ] && [ -n "$PYTHON_BIN" ]; then
-	for config_path in "/app/openshelf_hardware/data/config.json" "/app/openshelf_hardware/data/settings.json"; do
+	MODE="$(cat /app/openshelf_hardware/data/.mode 2>/dev/null || printf '%s' "${OPERATING_MODE:-development}")"
+	case "$MODE" in
+		development|demo) ACTIVE_CONFIG="/app/openshelf_hardware/data/config.$MODE.json" ;;
+		*) ACTIVE_CONFIG="/app/openshelf_hardware/data/config.json" ;;
+	esac
+	for config_path in "${OPENSHELF_CONFIG_PATH:-}" "$ACTIVE_CONFIG" "/app/openshelf_hardware/data/config.json" "/app/openshelf_hardware/data/settings.json"; do
 		if [ -f "$config_path" ]; then
-			QUEUE_FROM_CONFIG=$("$PYTHON_BIN" - "$config_path" <<'PY'
+			if QUEUE_FROM_CONFIG=$("$PYTHON_BIN" - "$config_path" <<'PY'
 import json, pathlib, sys
 path = pathlib.Path(sys.argv[1])
 try:
     data = json.loads(path.read_text())
-    queue = data.get("printer", {}).get("queue")
-    if queue:
+    if not isinstance(data, dict):
+        raise ValueError("config must be an object")
+    printer = data.get("printer")
+    queue = printer.get("queue") if isinstance(printer, dict) else None
+    if isinstance(queue, str) and queue:
         print(queue)
 except Exception:
-    pass
+    sys.exit(1)
 PY
-)
-			break
+	); then
+				break
+			fi
 		fi
 	done
 fi

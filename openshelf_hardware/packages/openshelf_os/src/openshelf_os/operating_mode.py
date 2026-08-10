@@ -11,7 +11,7 @@ class OperatingMode(str, Enum):
     production = "production"
 
 
-MODE_FILE = Path("data/.mode")
+MODE_FILE = Path(os.getenv("OPENSHELF_DATA_DIR", "data")) / ".mode"
 
 
 def get_operating_mode(mode_file: Path | None = None) -> OperatingMode:

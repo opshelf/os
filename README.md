@@ -48,7 +48,9 @@ normal local development start:
 
 plain `./scripts/start` reuses `openshelf_hardware/data/.mode` when present. if no mode file exists, it starts in `production` mode.
 
-`production` and `demo` use the same production runtime defaults. `demo` additionally seeds demo inventory and restricts robot storage to the barcode-to-cell mappings in `openshelf_hardware/data/demo.json`. the operating mode is the source of truth for enabling these demo features; `config.json` only configures the demo mapping path.
+production keeps the legacy `base.db`, `config.json`, and `storage.json` filenames. development and demo use persistent mode-specific variants such as `base.development.db`, `config.development.json`, and `storage.development.json`. the first start in a non-production mode copies the existing production state without modifying it, so returning to production restores the original workspace. modes are selected only through `scripts/start`; the api exposes the current mode read-only.
+
+demo additionally seeds only its demo database/storage workspace and restricts robot storage to the barcode-to-cell mappings in `openshelf_hardware/data/demo.json`.
 
 useful variants:
 
@@ -184,5 +186,5 @@ example one-off laser command on a development pi:
 
 ```bash
 cd /opt/opshelf/repos/openshelf_os
-docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.hardware.yml run --rm --entrypoint sh -v /opt/opshelf/repos/openshelf_os/scripts:/app/scripts:ro api -lc 'cd /app/openshelf_hardware && uv run python /app/scripts/laser.py --config /app/openshelf_hardware/data/config.json'
+docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.hardware.yml run --rm --entrypoint sh -v /opt/opshelf/repos/openshelf_os/scripts:/app/scripts:ro api -lc 'cd /app/openshelf_hardware && uv run python /app/scripts/laser.py --config /app/openshelf_hardware/data/config.development.json'
 ```
