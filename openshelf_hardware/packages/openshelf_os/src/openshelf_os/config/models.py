@@ -263,14 +263,14 @@ class GpioInterruptConfig(BaseModel):
 
 class GpioExpanderConfig(BaseModel):
     name: str = Field(..., min_length=1)
-    type: Literal["pcf8575"] = "pcf8575"
+    type: Literal["pca9535"] = "pca9535"
     bus: int = Field(1, ge=0)
     address: int = Field(0x20, ge=0, le=0x7F)
     interrupt: Optional[GpioInterruptConfig] = None
 
 
 class GpioPinConfig(BaseModel):
-    board: Literal["rpi", "pcf8575"]
+    board: Literal["rpi", "pca9535"]
     pin: int = Field(..., ge=0)
     direction: Literal["input", "output"]
     expander: Optional[str] = None
@@ -283,8 +283,8 @@ class GpioPinConfig(BaseModel):
 
     @model_validator(mode="after")
     def _validate_pin(self) -> "GpioPinConfig":
-        if self.board == "pcf8575" and self.expander is None:
-            raise ValueError("PCF8575 GPIO pins require expander")
+        if self.board == "pca9535" and self.expander is None:
+            raise ValueError("PCA9535 GPIO pins require expander")
         if self.board == "rpi" and self.expander is not None:
             raise ValueError("Raspberry Pi GPIO pins cannot set expander")
         if self.direction == "input" and (self.initial is not None or self.shutdown is not None):
@@ -293,13 +293,10 @@ class GpioPinConfig(BaseModel):
 
 
 def _default_gpio_expanders() -> List[GpioExpanderConfig]:
+    shared_interrupt = GpioInterruptConfig(pin=4, pull="up", edge="falling")
     return [
-        GpioExpanderConfig(
-            name="main",
-            bus=1,
-            address=0x20,
-            interrupt=GpioInterruptConfig(pin=4, pull="up", edge="falling"),
-        )
+        GpioExpanderConfig(name="pca9535_0", bus=1, address=0x20, interrupt=shared_interrupt),
+        GpioExpanderConfig(name="pca9535_1", bus=1, address=0x21, interrupt=shared_interrupt),
     ]
 
 
@@ -313,9 +310,35 @@ def _rpi_input(
     return GpioPinConfig(board="rpi", pin=pin, direction="input", pull=pull, inverted=inverted, debounce_ms=debounce_ms)
 
 
-def _rpi_output(pin: int, *, initial: Optional[bool] = None, shutdown: Optional[bool] = None) -> GpioPinConfig:
+def _pca9535_input(
+    expander: str,
+    pin: int,
+    *,
+    inverted: bool = True,
+    debounce_ms: int = 0,
+    pull: Literal["up", "down", "off"] = "off",
+) -> GpioPinConfig:
     return GpioPinConfig(
-        board="rpi",
+        board="pca9535",
+        expander=expander,
+        pin=pin,
+        direction="input",
+        inverted=inverted,
+        debounce_ms=debounce_ms,
+        pull=pull,
+    )
+
+
+def _pca9535_output(
+    expander: str,
+    pin: int,
+    *,
+    initial: Optional[bool] = None,
+    shutdown: Optional[bool] = None,
+) -> GpioPinConfig:
+    return GpioPinConfig(
+        board="pca9535",
+        expander=expander,
         pin=pin,
         direction="output",
         initial=initial,
@@ -323,45 +346,47 @@ def _rpi_output(pin: int, *, initial: Optional[bool] = None, shutdown: Optional[
     )
 
 
-def _pcf_input(pin: int) -> GpioPinConfig:
-    return GpioPinConfig(
-        board="pcf8575",
-        expander="main",
-        pin=pin,
-        direction="input",
-        inverted=True,
-    )
-
-
 def _default_gpio_pins() -> dict[str, GpioPinConfig]:
     return {
-        "tool_limit_r": _rpi_input(8),
-        "tool_limit_s": _rpi_input(7),
-        "tool_limit_z": _rpi_input(25),
-        "cabinet_top_closed": _rpi_input(17, inverted=False, debounce_ms=50),
-        "cabinet_bot_closed": _rpi_input(27, inverted=False, debounce_ms=50),
-        "estop": _rpi_input(18, pull="off"),
-        "tool_1": _rpi_input(1),
+        # PCA9535_0 (0x20) - X/Y axis limits and tool limits
+        "x_limit_min": _pca9535_input("pca9535_0", 0),
+        "x_limit_max": _pca9535_input("pca9535_0", 1),
+        "x_1": _pca9535_input("pca9535_0", 2),
+        "x_2": _pca9535_input("pca9535_0", 3),
+        "y_limit_min": _pca9535_input("pca9535_0", 4),
+        "y_limit_max": _pca9535_input("pca9535_0", 5),
+        "y_1": _pca9535_input("pca9535_0", 6),
+        "y_2": _pca9535_input("pca9535_0", 7),
+        "tool_limit_r": _pca9535_input("pca9535_0", 8),
+        "tool_limit_s": _pca9535_input("pca9535_0", 9),
+        "tool_limit_z": _pca9535_input("pca9535_0", 10),
+        "tool_1": _pca9535_input("pca9535_0", 11),
+        "tool_in1": _pca9535_input("pca9535_0", 12),
+        "tool_out0": _pca9535_output("pca9535_0", 13),
+        "tool_standby": _pca9535_output("pca9535_0", 14),
+        "io_limit_min": _pca9535_input("pca9535_0", 15),
+        # PCA9535_1 (0x21) - IO box, cabinet locks, estop, power
+        "io_limit_max": _pca9535_input("pca9535_1", 0),
+        "light_curtain": _pca9535_input("pca9535_1", 1, inverted=False, debounce_ms=50),
+        "io_in0": _pca9535_input("pca9535_1", 2),
+        "io_1": _pca9535_input("pca9535_1", 3),
+        # PCB comparison sheet marks IO2 as an output; kept as input here to
+        # preserve existing behavior. Tracked separately, not fixed here.
+        "io_2": _pca9535_input("pca9535_1", 4),
+        "io_standby": _pca9535_output("pca9535_1", 5),
+        "cabinet_top_closed": _pca9535_input("pca9535_1", 6, inverted=True, debounce_ms=50),
+        "cabinet_top_unlock": _pca9535_output("pca9535_1", 7, initial=False, shutdown=False),
+        "cabinet_bot_closed": _pca9535_input("pca9535_1", 8, inverted=True, debounce_ms=50),
+        "cabinet_bot_unlock": _pca9535_output("pca9535_1", 9, initial=False, shutdown=False),
+        "estop": _pca9535_input("pca9535_1", 10, inverted=False, pull="off"),
+        "sw_estop": _pca9535_output("pca9535_1", 11),
+        "power_control": _pca9535_output("pca9535_1", 12),
+        "pwr_out1": _pca9535_output("pca9535_1", 13),
+        "pwr_out2": _pca9535_output("pca9535_1", 14),
+        "pwr_out3": _pca9535_output("pca9535_1", 15),
+        # Unrelated to the PCA9535 expanders - direct RPi GPIO, unchanged.
         "tool_2": _rpi_input(15),
         "tool_3": _rpi_input(14),
-        "io_standby": _rpi_output(23),
-        "tool_standby": _rpi_output(24),
-        "power_control": _rpi_output(16),
-        "cabinet_top_unlock": _rpi_output(5, initial=False, shutdown=False),
-        "cabinet_bot_unlock": _rpi_output(6, initial=False, shutdown=False),
-        "y_limit_min": _pcf_input(0),
-        "y_limit_max": _pcf_input(1),
-        "y_1": _pcf_input(2),
-        "y_2": _pcf_input(3),
-        "x_limit_min": _pcf_input(4),
-        "x_limit_max": _pcf_input(5),
-        "x_1": _pcf_input(6),
-        "x_2": _pcf_input(7),
-        "io_limit_max": _pcf_input(10),
-        "io_limit_min": _pcf_input(11),
-        "io_1": _pcf_input(12),
-        "io_2": _pcf_input(13),
-        "light_curtain": _pcf_input(8),
     }
 
 

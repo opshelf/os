@@ -246,6 +246,8 @@ class RobotWorker:
         self._worker_task: Optional[asyncio.Task] = None
         self._scale_poll_task: Optional[asyncio.Task] = None
         self._estop_monitor_task: Optional[asyncio.Task] = None
+        self._estop_subscription: Any = None
+        self._estop_poll_wakeup: Optional[asyncio.Event] = None
         self._current_task: Optional[asyncio.Task] = None
         self._background_tasks: set[asyncio.Task[Any]] = set()
         self._current_command: Optional[RobotCommands] = None
@@ -873,22 +875,68 @@ class RobotWorker:
             await self.emergency_stop(ESTOP_UNAVAILABLE_REASON)
             return
 
+        loop = asyncio.get_running_loop()
+        self._estop_poll_wakeup = asyncio.Event()
+
+        try:
+            self._estop_subscription = estop_input.subscribe(
+                lambda _event: loop.call_soon_threadsafe(self._wake_estop_monitor)
+            )
+        except Exception:
+            self._estop_subscription = None
+            logging.warning(
+                "Emergency stop interrupt subscription failed; continuing with polling",
+                exc_info=True,
+            )
+
         self._estop_monitor_task = asyncio.create_task(
             self._monitor_estop(estop_input),
             name="emergency-stop-monitor",
         )
+        logging.info(
+            "Emergency stop monitor started",
+            extra={
+                "poll_interval_s": ESTOP_POLL_INTERVAL_SECONDS,
+                "subscription_enabled": self._estop_subscription is not None,
+                "polling_enabled": True,
+            },
+        )
 
     async def _stop_estop_monitor(self) -> None:
-        if self._estop_monitor_task is None:
+        if self._estop_subscription is not None:
+            try:
+                self._estop_subscription.close()
+            except Exception:
+                logging.warning("Emergency stop subscription cleanup failed", exc_info=True)
+            self._estop_subscription = None
+
+        if self._estop_monitor_task is not None:
+            self._estop_monitor_task.cancel()
+            try:
+                await self._estop_monitor_task
+            except asyncio.CancelledError:
+                pass
+            self._estop_monitor_task = None
+
+        self._estop_poll_wakeup = None
+        self._is_estop_active = False
+
+    def _wake_estop_monitor(self) -> None:
+        if self._estop_poll_wakeup is not None:
+            self._estop_poll_wakeup.set()
+
+    async def _wait_for_estop_poll(self) -> None:
+        wakeup = self._estop_poll_wakeup
+        if wakeup is None:
+            await asyncio.sleep(ESTOP_POLL_INTERVAL_SECONDS)
             return
 
-        self._estop_monitor_task.cancel()
         try:
-            await self._estop_monitor_task
-        except asyncio.CancelledError:
+            await asyncio.wait_for(wakeup.wait(), timeout=ESTOP_POLL_INTERVAL_SECONDS)
+        except TimeoutError:
             pass
-        self._estop_monitor_task = None
-        self._is_estop_active = False
+        finally:
+            wakeup.clear()
 
     async def _monitor_estop(self, estop_input: Any) -> None:
         previous_active: Optional[bool] = None
@@ -904,7 +952,7 @@ class RobotWorker:
                 if previous_active is not True or self._is_emergency_stopped is False:
                     await self.emergency_stop(ESTOP_UNAVAILABLE_REASON)
                 previous_active = True
-                await asyncio.sleep(ESTOP_POLL_INTERVAL_SECONDS)
+                await self._wait_for_estop_poll()
                 continue
 
             self._is_estop_active = is_active
@@ -923,7 +971,7 @@ class RobotWorker:
                 await self._publish_status()
 
             previous_active = is_active
-            await asyncio.sleep(ESTOP_POLL_INTERVAL_SECONDS)
+            await self._wait_for_estop_poll()
 
     def _should_enable_barcode(self) -> bool:
         disable_raw: str = os.getenv("OPENSHELF_DISABLE_BARCODE", "false")  # type: ignore[assignment]

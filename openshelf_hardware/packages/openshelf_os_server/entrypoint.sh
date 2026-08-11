@@ -76,4 +76,9 @@ start_api() {
 	cd /app/openshelf_hardware && exec uv run start
 }
 
+if [ "$#" -gt 0 ]; then
+	cd /app/openshelf_hardware
+	exec "$@"
+fi
+
 start_api

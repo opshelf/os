@@ -51,21 +51,31 @@ class Cabinet:
             return
         self._handle_door_state(self.get_door_state())
 
+        self._door_subscriptions = []
         try:
-            self._door_subscriptions = [
-                door_latch.closed_input.subscribe(self._did_change_door_input)
-                for door_latch in self._door_latches.values()
-            ]
+            for door_latch in self._door_latches.values():
+                self._door_subscriptions.append(
+                    door_latch.closed_input.subscribe(self._did_change_door_input)
+                )
         except Exception:
             self._close_door_subscriptions()
             self._logger.warning(
-                "Cabinet door subscription failed, falling back to polling",
+                "Cabinet door subscription failed; continuing with polling",
                 exc_info=True,
             )
-            self._door_monitor_task = asyncio.create_task(
-                self._monitor_doors(),
-                name="cabinet-door-monitor",
-            )
+
+        self._door_monitor_task = asyncio.create_task(
+            self._monitor_doors(),
+            name="cabinet-door-monitor",
+        )
+        self._logger.info(
+            "Cabinet door monitor started",
+            extra={
+                "subscription_count": len(self._door_subscriptions),
+                "poll_interval_s": self._door_poll_interval_s,
+                "polling_enabled": True,
+            },
+        )
 
     async def stop(self) -> None:
         self._close_door_subscriptions()
@@ -258,14 +268,27 @@ class Cabinet:
             self._logger.warning("Cabinet door listener failed: %s", exc)
 
     async def _monitor_doors(self) -> None:
-        try:
-            while True:
+        poll_failed = False
+
+        while True:
+            await asyncio.sleep(self._door_poll_interval_s)
+
+            try:
                 self._handle_door_state(self.get_door_state(), debounce=True)
-                await asyncio.sleep(self._door_poll_interval_s)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # pragma: no cover - hardware dependent
-            self._logger.warning("Cabinet door monitor crashed: %s", exc, exc_info=True)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # pragma: no cover - hardware dependent
+                if poll_failed is False:
+                    self._logger.warning(
+                        "Cabinet door poll failed; will retry: %s",
+                        exc,
+                        exc_info=True,
+                    )
+                poll_failed = True
+            else:
+                if poll_failed is True:
+                    self._logger.info("Cabinet door polling recovered")
+                poll_failed = False
 
     def _close_door_subscriptions(self) -> None:
         for subscription in self._door_subscriptions:

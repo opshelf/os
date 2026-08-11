@@ -40,6 +40,8 @@ RUN uv sync && uv pip install -e packages/hardware -e packages/openshelf_os -e p
 
 WORKDIR /app/openshelf_hardware
 
+RUN uv pip install debugpy
+
 EXPOSE 8000
 RUN chmod +x /app/openshelf_hardware/packages/openshelf_os_server/entrypoint.sh
 

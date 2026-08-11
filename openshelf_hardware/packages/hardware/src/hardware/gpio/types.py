@@ -10,7 +10,7 @@ from hardware.exceptions import GpioConfigError
 
 logger = logging.getLogger(__name__).getChild("gpio")
 
-GpioBoard = Literal["rpi", "pcf8575"]
+GpioBoard = Literal["rpi", "pca9535"]
 GpioDirection = Literal["input", "output"]
 GpioEdge = Literal["rising", "falling", "both"]
 GpioPull = Literal["up", "down", "off"]
@@ -49,7 +49,7 @@ class GpioInterruptSpec:
 
     def __post_init__(self) -> None:
         if self.board != "rpi":
-            raise GpioConfigError("PCF8575 interrupt pins must use the rpi board")
+            raise GpioConfigError("GPIO expander interrupt pins must use the rpi board")
 
         if self.pin < 0:
             raise GpioConfigError("GPIO interrupt pin must be >= 0")
@@ -61,7 +61,7 @@ class GpioInterruptSpec:
 @dataclass(frozen=True)
 class GpioExpanderSpec:
     name: str
-    kind: Literal["pcf8575"]
+    kind: Literal["pca9535"]
     bus: int
     address: int
     interrupt: Optional[GpioInterruptSpec] = None
@@ -101,7 +101,7 @@ class GpioPinSpec:
         if self.debounce_ms < 0:
             raise GpioConfigError(f"GPIO pin '{self.name}' debounce_ms must be >= 0")
 
-        if self.board == "pcf8575" and not self.expander:
+        if self.board == "pca9535" and not self.expander:
             raise GpioConfigError(f"GPIO pin '{self.name}' requires an expander")
 
         if self.board == "rpi" and self.expander is not None:
