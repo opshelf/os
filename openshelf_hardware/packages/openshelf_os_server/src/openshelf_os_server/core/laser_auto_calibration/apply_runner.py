@@ -2,6 +2,7 @@
 # mypy: disable-error-code=attr-defined
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 from openshelf_os.laser_calibration.angle.capture import enter_capture_mode
@@ -639,9 +640,10 @@ class ApplyRunnerMixin:
             filename=source_grid.filename if source_grid.filename != "" else str(grid_path),
         )
 
+        version_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
         try:
-            storage_grid.save()
-            save_root_config(next_config)
+            storage_grid.save(version_id=version_id)
+            save_root_config(next_config, version_id=version_id)
             clear_config_cache()
             worker._robot.reload_parameters()
         except Exception:
@@ -834,4 +836,3 @@ class ApplyRunnerMixin:
         params_dict["STAGE_EXTENSION_SHELF_FRONT"] = float(params["STAGE_EXTENSION_SHELF_FRONT"])
         params_dict["STAGE_EXTENSION_SHELF_BACK"] = float(params["STAGE_EXTENSION_SHELF_BACK"])
         worker._robot._tool._params.parameters = Parameters.model_validate(params_dict)
-

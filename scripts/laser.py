@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import sys
 import traceback
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -22,13 +23,10 @@ import openshelf_os.laser_calibration as laser_module
 from openshelf_os.common import (
 	CONFIG_PATH,
 	load_config_file,
-	resolve_grid_path,
 )
 from openshelf_os.laser_calibration.scan import ScanBounds, build_axis_positions
+from openshelf_os.runtime_state import RuntimeStatePaths, ensure_mode_workspace, paths_for_config_file
 from openshelf_os.storage import StorageModuleSide
-
-DEFAULT_SCANS_DIR_NAME = 'calibration'
-
 
 def build_parser() -> argparse.ArgumentParser:
 	parser = argparse.ArgumentParser(
@@ -149,9 +147,22 @@ def print_analysis(analysis: Any) -> None:
 			)
 
 
-def derive_scans_dir(config_path: str) -> str:
-	config_file = Path(config_path).resolve()
-	return str((config_file.parent / DEFAULT_SCANS_DIR_NAME).resolve())
+def derive_scans_dir(
+	config_path: str,
+	runtime_paths: RuntimeStatePaths | None = None,
+) -> str:
+	paths = runtime_paths if runtime_paths is not None else paths_for_config_file(config_path)
+	return str(paths.calibration_dir)
+
+
+def paths_for_selected_config(config_path: str) -> RuntimeStatePaths:
+	selected_config_path = Path(config_path).resolve()
+	active_paths = RuntimeStatePaths.current()
+
+	if selected_config_path == active_paths.config_path:
+		return active_paths
+
+	return replace(active_paths, config_path=selected_config_path)
 
 
 
@@ -399,16 +410,18 @@ def apply_loaded_run_analysis(
 
 
 async def run_scan(args: argparse.Namespace) -> int:
+	runtime_paths = paths_for_selected_config(args.config)
+	ensure_mode_workspace(runtime_paths)
 	laser_module.print_status('phase=config')
 	config = load_config_file(args.config)
-	scans_dir = derive_scans_dir(args.config)
+	scans_dir = derive_scans_dir(args.config, runtime_paths)
 	args.scans_dir = scans_dir
 	scan_config = config.robot.grid.scan
 	recorder: laser_module.StagedScanRecorder | None = None
 	rescan_target = parse_single_cell_rescan_target(args.rescan_cell)
 	validation_target = parse_single_cell_rescan_target(args.validate_cell)
 	rescan_candidate: laser_module.GapCandidateRegion | None = None
-	grid_path = Path(resolve_grid_path(config))
+	grid_path = runtime_paths.resolve_storage_path(config, config_path=args.config)
 	grid = laser_module.load_grid(grid_path)
 
 	if args.from_run is not None:

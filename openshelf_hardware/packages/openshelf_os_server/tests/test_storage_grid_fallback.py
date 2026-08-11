@@ -84,6 +84,32 @@ class TestGetRobotGrid:
 		assert result.left_module == []
 		assert result.right_module == []
 
+	def test_fallback_uses_development_grid_for_development_config(self, tmp_path):
+		config_path = tmp_path / "config.development.json"
+		config_path.write_text(json.dumps(MINIMAL_CONFIG))
+		(tmp_path / "storage.json").write_text(
+			json.dumps({"left_module": [], "right_module": []})
+		)
+		(tmp_path / "storage.development.json").write_text(
+			json.dumps(
+				{
+					"left_module": [
+						{"shelf_idx": 7, "shelf_height": 1, "shelf_width": 1, "cells": []}
+					],
+					"right_module": [],
+				}
+			)
+		)
+
+		with (
+			patch("openshelf_os_server.core.robot.robot_worker", None),
+			patch("openshelf_os.common.CONFIG_PATH", config_path),
+		):
+			result = _get_robot_grid()
+
+		assert [shelf.shelf_idx for shelf in result.left_module] == [7]
+		assert result.filename == str(tmp_path / "storage.development.json")
+
 	def test_fallback_raises_on_missing_storage_file(self, tmp_path):
 		config_path = _write_config_and_grid(tmp_path, grid_data=None)
 

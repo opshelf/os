@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 
 from .models import *
+from openshelf_os.common import CONFIG_PATH
 from openshelf_os_server.core.logging_config import get_correlation_id
 
 
@@ -54,7 +54,7 @@ class ScanRunnerMixin:
             known_shelf_edge_y=known_shelf_edge_y,
             npy=None,
             scans_dir=self._scans_dir,
-            config=str(get_config_path() or Path("data/config.json")),
+            config=str(get_config_path() or CONFIG_PATH),
             apply=True,
             shelf_scout_only=False,
             rescan_cell=raw_rescan_target,
@@ -167,4 +167,3 @@ class ScanRunnerMixin:
             stage_detail={"side": side_name, "phase": "completed", "run_id": analysis.run_id},
         )
         return analysis
-

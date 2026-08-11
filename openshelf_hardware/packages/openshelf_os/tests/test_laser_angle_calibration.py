@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+import openshelf_os.laser_calibration.angle.cli as angle_cli
 from openshelf_os.laser_calibration.angle import (
 	RIGHT_MODULE_ROTATION_SAFE_X_MM,
 	ShelfSurfaceEdge,
@@ -20,6 +21,32 @@ from openshelf_os.laser_calibration.angle.stage_stall import (
 	resolve_stage_retract_target,
 	retract_stage_after_stall,
 )
+
+
+def test_angle_cli_initializes_mode_workspace_before_parsing_args() -> None:
+	args = SimpleNamespace()
+	call_order: list[str] = []
+
+	def parse_args() -> SimpleNamespace:
+		call_order.append('parse_args')
+		return args
+
+	def validate_args(actual_args: SimpleNamespace) -> None:
+		assert actual_args is args
+		call_order.append('validate_args')
+
+	async def run_capture(actual_args: SimpleNamespace) -> int:
+		assert actual_args is args
+		call_order.append('capture')
+		return 0
+
+	with patch.object(angle_cli, 'ensure_mode_workspace', side_effect=lambda: call_order.append('workspace')):
+		with patch.object(angle_cli, 'parse_args', side_effect=parse_args):
+			with patch.object(angle_cli, 'validate_args', side_effect=validate_args):
+				with patch.object(angle_cli, 'run_stage_stall_async', side_effect=run_capture):
+					assert angle_cli.main() == 0
+
+	assert call_order == ['workspace', 'parse_args', 'validate_args', 'capture']
 
 
 def test_get_default_rotation_center_deg_uses_front_for_left() -> None:

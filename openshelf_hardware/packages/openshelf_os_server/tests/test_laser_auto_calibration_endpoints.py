@@ -1067,7 +1067,7 @@ async def test_persist_completed_results_saves_stage_extensions() -> None:
 
     source_grid = SimpleNamespace(left_module=[], right_module=[], filename='storage.json', save=MagicMock())
     reloaded_grid = SimpleNamespace()
-    saved_configs: list[object] = []
+    saved_configs: list[tuple[object, str | None]] = []
     saved_storage_grids: list[object] = []
 
     class FakeStorageGrid:
@@ -1076,7 +1076,8 @@ async def test_persist_completed_results_saves_stage_extensions() -> None:
             self.right_module = right_module
             self.filename = filename
 
-        def save(self) -> None:
+        def save(self, *, version_id: str | None = None) -> None:
+            self.version_id = version_id
             saved_storage_grids.append(self)
 
     worker = SimpleNamespace(_robot=SimpleNamespace(reload_parameters=MagicMock(), _grid=None))
@@ -1122,16 +1123,22 @@ async def test_persist_completed_results_saves_stage_extensions() -> None:
                         with patch('openshelf_os_server.core.laser_auto_calibration.laser_module.apply_xy_reference_offsets'):
                             with patch('openshelf_os_server.core.laser_auto_calibration.laser_module.apply_wall_depth_z_offsets'):
                                 with patch('openshelf_os_server.core.laser_auto_calibration.laser_module.StorageGrid', FakeStorageGrid):
-                                    with patch('openshelf_os_server.core.laser_auto_calibration.save_root_config', side_effect=lambda next_config: saved_configs.append(next_config)):
+                                    with patch(
+                                        'openshelf_os_server.core.laser_auto_calibration.save_root_config',
+                                        side_effect=lambda next_config, *, version_id=None: saved_configs.append((next_config, version_id)),
+                                    ):
                                         with patch('openshelf_os_server.core.laser_auto_calibration.clear_config_cache'):
                                             await manager._persist_completed_results(worker, completed_results)
 
     assert len(saved_storage_grids) == 1
     assert len(saved_configs) == 1
-    assert saved_configs[0].robot.tool.parameters.ROTATION_FRONT == pytest.approx(4.0)
-    assert saved_configs[0].robot.tool.parameters.ROTATION_BACK == pytest.approx(184.0)
-    assert saved_configs[0].robot.tool.parameters.STAGE_EXTENSION_SHELF_FRONT == pytest.approx(41.0)
-    assert saved_configs[0].robot.tool.parameters.STAGE_EXTENSION_SHELF_BACK == pytest.approx(44.0)
+    saved_config, config_version_id = saved_configs[0]
+    assert saved_config.robot.tool.parameters.ROTATION_FRONT == pytest.approx(4.0)
+    assert saved_config.robot.tool.parameters.ROTATION_BACK == pytest.approx(184.0)
+    assert saved_config.robot.tool.parameters.STAGE_EXTENSION_SHELF_FRONT == pytest.approx(41.0)
+    assert saved_config.robot.tool.parameters.STAGE_EXTENSION_SHELF_BACK == pytest.approx(44.0)
+    assert saved_storage_grids[0].version_id == config_version_id
+    assert config_version_id is not None
     worker._robot.reload_parameters.assert_called_once_with()
     assert worker._robot._grid is reloaded_grid
 

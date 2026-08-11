@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select
@@ -10,6 +12,7 @@ from hardware.uvc_camera import UvcCamera
 from openshelf_os.config.models import IOBoxSizerConfig
 from openshelf_os.iobox_sizer.models import IOBoxSizerMeasurement
 from openshelf_os.iobox_sizer.service import IOBoxSizerService
+from openshelf_os.runtime_state import RuntimeStatePaths
 from openshelf_os_server.core.camera import init_sizer_camera_manager, unregister_camera_manager
 from openshelf_os_server.database.models import Item, ItemSizerMeasurement
 from openshelf_os_server.database.session import AsyncSessionLocal
@@ -61,7 +64,14 @@ def _make_service(config: IOBoxSizerConfig) -> IOBoxSizerService:
 async def init_iobox_sizer() -> None:
 	global _runtime
 
-	config = get_root_config().robot.io.sizer
+	root_config = get_root_config().robot.io.sizer
+	config = root_config.model_copy(deep=True) if hasattr(root_config, "model_copy") else deepcopy(root_config)
+	config.detection.blank_frame_path = str(
+		RuntimeStatePaths.current().resolve_mode_owned_path(
+			config.detection.blank_frame_path,
+			relative_to=Path.cwd(),
+		)
+	)
 	_runtime = IOBoxSizerRuntime(config=config)
 
 	if config.enabled is False:

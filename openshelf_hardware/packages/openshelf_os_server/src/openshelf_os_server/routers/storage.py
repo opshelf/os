@@ -5,7 +5,6 @@ import functools
 import json
 import logging
 import time
-from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -537,9 +536,9 @@ def _get_robot_grid():
 
     config_path = common.CONFIG_PATH
     config = common.load_config_file(config_path)
-    grid_path = Path(config_path).parent / config.robot.grid.path
+    grid_path = common.resolve_grid_path(config, config_path)
 
-    return StorageGrid.load_from_file(str(grid_path))
+    return StorageGrid.load_from_file(grid_path)
 
 
 @router.get("/grid", dependencies=[Depends(require_permissions("storage:read"))])
