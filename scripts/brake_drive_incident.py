@@ -49,6 +49,10 @@ SAVE_STATUS_REGISTER = 0x1901
 SAVE_SUCCEEDED = 0x5555
 SAVE_FAILED = 0xAAAA
 MOTION_RUNNING_BIT = 2
+TEST_Y_MIN_MM = 0.0
+TEST_Y_MAX_MM = 100.0
+TEST_Y_MM_PER_REVOLUTION = 40.0
+TEST_Y_COMMAND_PULSES_PER_REVOLUTION = 10000
 PERSISTED_Y_PROFILE = {
 	"control_mode": 2,
 	"command_pulses_per_revolution": 10000,
@@ -271,6 +275,44 @@ async def read_register(
 	return await controller.read_holding_register_block(unit, address, count=count)
 
 
+def decode_y_position_mm(position: tuple[int, ...], command_ppr: int) -> float:
+	if len(position) != 2:
+		raise RuntimeError(f"expected two Y position registers, received {len(position)}")
+	if command_ppr != TEST_Y_COMMAND_PULSES_PER_REVOLUTION:
+		raise RuntimeError(
+			"refusing Y test-window conversion with unexpected command pulses/revolution: "
+			f"expected={TEST_Y_COMMAND_PULSES_PER_REVOLUTION}, actual={command_ppr}"
+		)
+
+	raw_position = ((position[0] & 0xFFFF) << 16) | (position[1] & 0xFFFF)
+	if raw_position & 0x8000_0000:
+		raw_position -= 0x1_0000_0000
+
+	return (
+		float(raw_position)
+		/ float(command_ppr)
+		* TEST_Y_MM_PER_REVOLUTION
+	)
+
+
+async def require_y_in_test_window(
+	controller: SharedModbusController,
+) -> tuple[tuple[int, ...], float]:
+	position = await read_register(controller, Y_AXIS_UNIT, "position_block")
+	command_ppr = (
+		await read_register(controller, Y_AXIS_UNIT, "command_pulses_per_revolution")
+	)[0]
+	position_mm = decode_y_position_mm(position, command_ppr)
+
+	if not TEST_Y_MIN_MM <= position_mm <= TEST_Y_MAX_MM:
+		raise RuntimeError(
+			"refusing Y test outside the supervised 0-100 mm window: "
+			f"position_mm={position_mm:.6f}"
+		)
+
+	return position, position_mm
+
+
 async def run_matrix(args: argparse.Namespace, controller: SharedModbusController) -> int:
 	counts: Counter[tuple[int, str, str]] = Counter()
 	latencies: dict[tuple[int, str], list[float]] = {}
@@ -368,7 +410,9 @@ async def run_same_position_trigger(
 	args: argparse.Namespace,
 	controller: SharedModbusController,
 ) -> int:
-	status_before, alarm_before = await require_stationary_healthy_y(controller)
+	status_before, alarm_before, initial_position, initial_position_mm = (
+		await require_stationary_healthy_y(controller)
+	)
 	so2_function = (await read_register(controller, args.unit, "so2_function"))[0]
 	if so2_function != args.expect_output_function:
 		raise RuntimeError(
@@ -376,13 +420,13 @@ async def run_same_position_trigger(
 			f"0x{args.expect_output_function:02X}; refusing to trigger"
 		)
 
-	initial_position = await read_register(controller, args.unit, "position_block")
 	initial_output = (await read_register(controller, args.unit, "output_state"))[0]
 	emit(
 		"trigger_preflight",
 		unit=args.unit,
 		so2_function=so2_function,
 		position=list(initial_position),
+		position_mm=initial_position_mm,
 		output_state=initial_output,
 		status=status_before,
 		alarm=alarm_before,
@@ -391,11 +435,22 @@ async def run_same_position_trigger(
 	all_output_states = [initial_output]
 	try:
 		for cycle in range(args.cycles):
-			position = await read_register(controller, args.unit, "position_block")
+			position, position_mm = await require_y_in_test_window(controller)
+			if position != initial_position:
+				raise RuntimeError(
+					"Y encoder position changed before same-position reproduction: "
+					f"initial={list(initial_position)}, actual={list(position)}"
+				)
 			await controller.write_single_register(args.unit, 0x6201, position[0])
 			await controller.write_single_register(args.unit, 0x6202, position[1])
 			await controller.write_single_register(args.unit, 0x6002, 0x10)
-			emit("same_position_triggered", cycle=cycle, unit=args.unit, position=list(position))
+			emit(
+				"same_position_triggered",
+				cycle=cycle,
+				unit=args.unit,
+				position=list(position),
+				position_mm=position_mm,
+			)
 			all_output_states.extend(
 				await sample_trigger_state(
 					args,
@@ -518,24 +573,24 @@ def require_exact_y_profile(profile: dict[str, int]) -> None:
 
 async def require_stationary_healthy_y(
 	controller: SharedModbusController,
-) -> tuple[int, int]:
+) -> tuple[int, int, tuple[int, ...], float]:
 	status = (await read_register(controller, Y_AXIS_UNIT, "status"))[0]
 	alarm = (await read_register(controller, Y_AXIS_UNIT, "alarm"))[0]
-	position_before = await read_register(controller, Y_AXIS_UNIT, "position_block")
+	position_before, position_before_mm = await require_y_in_test_window(controller)
 	await asyncio.sleep(0.1)
-	position_after = await read_register(controller, Y_AXIS_UNIT, "position_block")
+	position_after, position_after_mm = await require_y_in_test_window(controller)
 
 	if status & (1 << MOTION_RUNNING_BIT):
-		raise RuntimeError(f"refusing to persist while Y status is running: 0x{status:04X}")
+		raise RuntimeError(f"refusing Y test while status is running: 0x{status:04X}")
 	if alarm != 0:
-		raise RuntimeError(f"refusing to persist with Y alarm: 0x{alarm:04X}")
+		raise RuntimeError(f"refusing Y test with alarm: 0x{alarm:04X}")
 	if position_before != position_after:
 		raise RuntimeError(
-			"refusing to persist while Y position is changing: "
+			"refusing Y test while position is changing: "
 			f"before={list(position_before)}, after={list(position_after)}"
 		)
 
-	return status, alarm
+	return status, alarm, position_after, position_after_mm
 
 
 async def wait_for_save_status(
@@ -566,13 +621,17 @@ async def run_persist_profile(
 ) -> int:
 	profile_before = await read_y_profile(controller)
 	require_exact_y_profile(profile_before)
-	status_before, alarm_before = await require_stationary_healthy_y(controller)
+	status_before, alarm_before, position_before, position_before_mm = (
+		await require_stationary_healthy_y(controller)
+	)
 	emit(
 		"persist_profile_preflight",
 		unit=Y_AXIS_UNIT,
 		profile=profile_before,
 		status=status_before,
 		alarm=alarm_before,
+		position=list(position_before),
+		position_mm=position_before_mm,
 	)
 
 	await controller.write_single_register(
@@ -584,7 +643,9 @@ async def run_persist_profile(
 
 	profile_after = await read_y_profile(controller)
 	require_exact_y_profile(profile_after)
-	status_after, alarm_after = await require_stationary_healthy_y(controller)
+	status_after, alarm_after, position_after, position_after_mm = (
+		await require_stationary_healthy_y(controller)
+	)
 	emit(
 		"persist_profile_summary",
 		unit=Y_AXIS_UNIT,
@@ -593,6 +654,8 @@ async def run_persist_profile(
 		save_status=save_status,
 		status=status_after,
 		alarm=alarm_after,
+		position=list(position_after),
+		position_mm=position_after_mm,
 	)
 	return 0
 
@@ -681,6 +744,11 @@ def validate_application_noop_position(
 	):
 		raise RuntimeError(
 			"application no-op preflight rejected position outside configured motor limits"
+		)
+	if not TEST_Y_MIN_MM <= float(position) <= TEST_Y_MAX_MM:
+		raise RuntimeError(
+			"application no-op preflight rejected position outside the supervised "
+			"0-100 mm Y test window"
 		)
 
 

@@ -159,6 +159,71 @@ def test_application_noop_is_restricted_to_y_axis() -> None:
 		module.validate_args(args)
 
 
+@pytest.mark.parametrize(
+	("registers", "expected_mm"),
+	[
+		((0x0000, 0x0000), 0.0),
+		((0x0000, 0x61A8), 100.0),
+		((0xFFFF, 0xF63C), -10.0),
+	],
+)
+def test_decode_y_position_mm_uses_incident_machine_scaling(
+	registers: tuple[int, int],
+	expected_mm: float,
+) -> None:
+	module = load_brake_drive_incident_module()
+
+	assert module.decode_y_position_mm(registers, 10000) == pytest.approx(expected_mm)
+
+
+@pytest.mark.asyncio
+async def test_y_test_window_rejects_position_above_100_mm(
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	module = load_brake_drive_incident_module()
+	values = {
+		"position_block": (0x0000, 0x61A9),
+		"command_pulses_per_revolution": (10000,),
+	}
+	monkeypatch.setattr(
+		module,
+		"read_register",
+		AsyncMock(side_effect=lambda _controller, _unit, name: values[name]),
+	)
+
+	with pytest.raises(RuntimeError, match="outside the supervised 0-100 mm window"):
+		await module.require_y_in_test_window(SimpleNamespace())
+
+
+@pytest.mark.asyncio
+async def test_same_position_reproduction_rejects_out_of_window_before_writes(
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	module = load_brake_drive_incident_module()
+	values = {
+		"status": (0,),
+		"alarm": (0,),
+		"position_block": (0x0000, 0x61A9),
+		"command_pulses_per_revolution": (10000,),
+	}
+	monkeypatch.setattr(
+		module,
+		"read_register",
+		AsyncMock(side_effect=lambda _controller, _unit, name: values[name]),
+	)
+	controller = SimpleNamespace(write_single_register=AsyncMock())
+	args = SimpleNamespace(
+		unit=module.Y_AXIS_UNIT,
+		expect_output_function=module.RAW_TRIGGER_OUTPUT_FUNCTION,
+		cycles=1,
+	)
+
+	with pytest.raises(RuntimeError, match="outside the supervised 0-100 mm window"):
+		await module.run_same_position_trigger(args, controller)
+
+	controller.write_single_register.assert_not_awaited()
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
 	("alarm", "position", "message"),
@@ -218,7 +283,7 @@ def profile_read_side_effect(module, *, overrides=None, save_status=None):
 	}
 	values[module.REGISTERS["status"][0]] = (0,)
 	values[module.REGISTERS["alarm"][0]] = (0,)
-	values[module.REGISTERS["position_block"][0]] = (0x0001, 0x0002)
+	values[module.REGISTERS["position_block"][0]] = (0x0000, 0x03E8)
 	if overrides:
 		values.update(overrides)
 
@@ -426,6 +491,42 @@ async def test_application_noop_rejects_out_of_bounds_position_before_movement(
 
 	args = SimpleNamespace(config=Path("test-config.json"), motor_name="y_axis")
 	with pytest.raises(RuntimeError, match="outside configured motor limits"):
+		await module.run_application_noop(args, controller)
+
+	FakeMotor.instance.move_to_position_no_wait.assert_not_awaited()
+	controller.write_single_register.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_application_noop_rejects_position_outside_incident_test_window(
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	module = load_brake_drive_incident_module()
+	motor_params = SimpleNamespace(
+		motor_name="y_axis", enabled=True, motor_id=2, lower_lim=0, lim=1165
+	)
+	controller = SimpleNamespace(write_single_register=AsyncMock())
+
+	class FakeMotor:
+		instance: "FakeMotor"
+
+		def __init__(self, _controller, _motor_params) -> None:
+			self._cur_pos = 100.004
+			self._last_raw_position = 25001
+			self.move_to_position_no_wait = AsyncMock(return_value=False)
+			FakeMotor.instance = self
+
+		async def get_brake_output_diagnostics(self):
+			return {"register_function": 0x24}
+
+		async def get_position(self) -> float:
+			return 100.004
+
+	monkeypatch.setattr(module, "load_config_file", lambda _path: application_noop_config(motor_params))
+	monkeypatch.setattr(module, "Motor", FakeMotor)
+
+	args = SimpleNamespace(config=Path("test-config.json"), motor_name="y_axis")
+	with pytest.raises(RuntimeError, match="supervised 0-100 mm Y test window"):
 		await module.run_application_noop(args, controller)
 
 	FakeMotor.instance.move_to_position_no_wait.assert_not_awaited()
