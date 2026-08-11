@@ -38,16 +38,20 @@ SAFETY
 Example (on device, after stopping api and bind-mounting scripts/):
   uv run python /app/scripts/z_wall_probe.py --module left --cell 2:1 \
     --z-start-mm 5 --z-fast-approach-mm 130 --z-target-mm 180 \
-    --config /app/openshelf_hardware/data/config.json
+    --config /app/openshelf_hardware/data/config.development.json
 """
 from __future__ import annotations
 
 import argparse
 import asyncio
 import json
+import os
+from dataclasses import replace
 from pathlib import Path
 
 from openshelf_os.common import load_config_file
+from openshelf_os.operating_mode import get_operating_mode
+from openshelf_os.runtime_state import RuntimeStatePaths, ensure_mode_workspace
 from openshelf_os.laser_calibration.angle.capture import (
 	enter_capture_mode,
 	resolve_rotation_center_deg,
@@ -63,8 +67,40 @@ from openshelf_os.laser_calibration.angle.robot_ops import (
 )
 from openshelf_os.laser_calibration.angle.status import print_status
 
-CONFIG_PATH = Path(__file__).resolve().parent.parent / "openshelf_hardware" / "data" / "config.json"
-STORAGE_PATH = Path(__file__).resolve().parent.parent / "openshelf_hardware" / "data" / "storage.json"
+DATA_DIR = Path(__file__).resolve().parent.parent / "openshelf_hardware" / "data"
+
+
+def active_runtime_paths() -> RuntimeStatePaths:
+	"""Resolve paths the same way the API does, while retaining this script's data root."""
+	paths = RuntimeStatePaths.for_mode(get_operating_mode(DATA_DIR / ".mode"), DATA_DIR)
+	config_override = os.getenv("OPENSHELF_CONFIG_PATH")
+	if config_override:
+		return replace(paths, config_path=Path(config_override).resolve())
+	return paths
+
+
+def runtime_paths_for_config(config_path: str | Path) -> RuntimeStatePaths:
+	selected_config = Path(config_path).resolve()
+	active_paths = active_runtime_paths()
+	if selected_config == active_paths.config_path:
+		return active_paths
+
+	return replace(active_paths, config_path=selected_config)
+
+
+def resolve_probe_runtime(args: argparse.Namespace) -> tuple[object, Path]:
+	config_path = Path(args.config).resolve()
+	paths = runtime_paths_for_config(config_path)
+	ensure_mode_workspace(paths)
+	config = load_config_file(config_path)
+	storage_path = (
+		Path(args.storage).resolve()
+		if args.storage is not None
+		else paths.resolve_storage_path(config, config_path=config_path)
+	)
+	args.config = str(config_path)
+	args.storage = str(storage_path)
+	return config, config_path
 
 
 def resolve_probe_xy(args: argparse.Namespace) -> tuple[float, float]:
@@ -95,11 +131,12 @@ def resolve_probe_xy(args: argparse.Namespace) -> tuple[float, float]:
 
 
 def build_parser() -> argparse.ArgumentParser:
+	paths = active_runtime_paths()
 	parser = argparse.ArgumentParser(description="Single-cell Z/gripper wall-stall measurement.")
 	parser.add_argument("--module", choices=["left", "right"], required=True)
 	parser.add_argument("--cell", type=str, default=None, help="SHELF:CELL from storage.json; X is shifted onto the divider")
 	parser.add_argument("--x-shift-mm", type=float, default=20.0, help="X shift applied to --cell to land on the divider wall")
-	parser.add_argument("--storage", default=str(STORAGE_PATH))
+	parser.add_argument("--storage", default=None, help="defaults to robot.grid.path from the selected config")
 	parser.add_argument("--x", type=float, default=None, help="probe X (mm); overrides --cell")
 	parser.add_argument("--y", type=float, default=None, help="probe Y (mm); overrides --cell")
 	parser.add_argument("--z-start-mm", type=float, required=True, help="retracted Z to start from / return to")
@@ -114,14 +151,14 @@ def build_parser() -> argparse.ArgumentParser:
 	parser.add_argument("--rotation-center-deg", type=float, default=None)
 	parser.add_argument("--settle-ms", type=int, default=None)
 	parser.add_argument("--samples-per-point", type=int, default=None)
-	parser.add_argument("--config", default=str(CONFIG_PATH))
+	parser.add_argument("--config", default=str(paths.config_path))
 	parser.add_argument("--shutdown-action", default="stop")
 	return parser
 
 
 async def run(args: argparse.Namespace) -> int:
+	config, _ = resolve_probe_runtime(args)
 	probe_x_mm, probe_y_mm = resolve_probe_xy(args)
-	config = load_config_file(args.config)
 	scan_config = config.robot.grid.scan
 	settle_ms = int(args.settle_ms if args.settle_ms is not None else get_laser_sample_settle_ms(scan_config))
 	samples_per_point = int(

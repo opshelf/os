@@ -20,11 +20,13 @@ from openshelf_os.common import (
     ScaleAppSettings,
     RobotAppSettings,
     ConfigValidationError,
+    CONFIG_PATH,
     OperatingMode,
     write_json_file_with_backup,
     load_and_validate_config,
 )
-from openshelf_os.operating_mode import has_production_traits
+from openshelf_os.operating_mode import get_operating_mode as get_shared_operating_mode, has_production_traits
+from openshelf_os.runtime_state import DATA_DIR_ENV, paths_for_config_file
 from openshelf_os.serial_ports import (
     DEFAULT_LASER_PORT,
     DEFAULT_MOTOR_PORT,
@@ -33,10 +35,15 @@ from openshelf_os.serial_ports import (
 
 logger = logging.getLogger(__name__)
 
-CONFIG_PATHS = [
-    "data/config.json",
-    "data/settings.json",
-]
+MODE_FILE = Path(os.getenv(DATA_DIR_ENV, "data")) / ".mode"
+LEGACY_SETTINGS_PATH = Path(os.getenv(DATA_DIR_ENV, "data")) / "settings.json"
+
+
+def _config_paths() -> list[Path]:
+    paths = [CONFIG_PATH]
+    if get_operating_mode() == OperatingMode.production:
+        paths.append(LEGACY_SETTINGS_PATH)
+    return paths
 
 
 class Settings(BaseModel):
@@ -63,40 +70,17 @@ class Settings(BaseModel):
         )
 
 
-MODE_FILE = Path("data/.mode")
-
 _cached_config: Optional[RootConfig] = None
 _cached_settings: Optional[Settings] = None
 _cached_config_path: Optional[Path] = None
-_cached_operating_mode: Optional[OperatingMode] = None
 
 
 def get_operating_mode() -> OperatingMode:
-    global _cached_operating_mode
-
-    if _cached_operating_mode is not None:
-        return _cached_operating_mode
-
-    mode_map = {
-        "demo": OperatingMode.demo,
-        "development": OperatingMode.development,
-        "production": OperatingMode.production,
-    }
-
-    if MODE_FILE.exists() is True:
-        raw = MODE_FILE.read_text(encoding="utf-8").strip().lower()
-        if raw in mode_map:
-            _cached_operating_mode = mode_map[raw]
-            return _cached_operating_mode
-
-    raw = os.getenv("OPERATING_MODE", "").strip().lower()
-    _cached_operating_mode = mode_map.get(raw, OperatingMode.development)
-    return _cached_operating_mode
+    return get_shared_operating_mode(MODE_FILE)
 
 
 def _find_config_path() -> Optional[Path]:
-    for path_str in CONFIG_PATHS:
-        path = Path(path_str)
+    for path in _config_paths():
         if path.exists() is True:
             return path
     return None
@@ -305,20 +289,20 @@ def get_root_config() -> RootConfig:
     if _cached_config is not None:
         return _cached_config
 
-    config_path = Path("data/config.json")
-    settings_path = Path("data/settings.json")
+    config_path = CONFIG_PATH
+    settings_path = LEGACY_SETTINGS_PATH
 
-    if config_path.exists() is False and settings_path.exists() is True:
+    if get_operating_mode() == OperatingMode.production and config_path.exists() is False and settings_path.exists() is True:
         _migrate_legacy_settings(settings_path, config_path)
 
     found_path = _find_config_path()
 
     if found_path is None:
-        logger.warning("No config file found in %s, using defaults", CONFIG_PATHS)
+        logger.warning("No config file found in %s, using defaults", _config_paths())
         data = _build_minimal_config({})
         data = _apply_env_overrides(data)
         _cached_config = load_and_validate_config(data)
-        _cached_config_path = Path("data/config.json")
+        _cached_config_path = CONFIG_PATH
         return _cached_config
 
     logger.info("Loading config from %s", found_path)
@@ -357,21 +341,20 @@ def get_settings() -> Settings:
 
 
 def clear_config_cache() -> None:
-    global _cached_config, _cached_settings, _cached_operating_mode
+    global _cached_config, _cached_settings
     _cached_config = None
     _cached_settings = None
-    _cached_operating_mode = None
 
 
 def get_config_path() -> Optional[Path]:
     return _cached_config_path
 
 
-def save_root_config(config: RootConfig) -> None:
+def save_root_config(config: RootConfig, *, version_id: str | None = None) -> None:
     global _cached_config, _cached_settings, _cached_config_path
 
     if _cached_config_path is None:
-        _cached_config_path = Path("data/config.json")
+        _cached_config_path = CONFIG_PATH
 
     _cached_config_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -381,6 +364,8 @@ def save_root_config(config: RootConfig) -> None:
         data,
         indent="\t",
         backup_group_name="config",
+        backup_mode=paths_for_config_file(_cached_config_path).mode.value,
+        version_id=version_id,
     )
 
     _cached_config = config

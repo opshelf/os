@@ -22,6 +22,7 @@ from openshelf_os.common import Parameters, resolve_grid_path
 from openshelf_os.laser_calibration.scan import ScanBounds
 from openshelf_os.storage import StorageModuleSide
 from openshelf_os.robot.worker import RobotWorker
+from openshelf_os.runtime_state import RuntimeStatePaths, paths_for_config_file
 
 from openshelf_os_server.settings import clear_config_cache, get_config_path, get_root_config, save_root_config
 from openshelf_os_server.core.storage_module import StorageModuleSideName
@@ -233,11 +234,9 @@ def _get_timestamp() -> str:
 
 def _build_default_scans_dir() -> str:
     config_path = get_config_path()
-
-    if config_path is not None:
-        return str((Path(config_path).resolve().parent / DEFAULT_SCANS_DIR_NAME).resolve())
-
-    return str((Path("data") / DEFAULT_SCANS_DIR_NAME).resolve())
+    if config_path is None:
+        return str(RuntimeStatePaths.current().calibration_dir)
+    return str(paths_for_config_file(config_path).calibration_dir)
 
 
 def _side_to_module_name(side: StorageModuleSide) -> StorageModuleSideName:

@@ -4,6 +4,9 @@ import argparse
 import asyncio
 from pathlib import Path
 
+from openshelf_os.config.loader import CONFIG_PATH
+from openshelf_os.runtime_state import ensure_mode_workspace
+
 from .reporting import write_stage_stall_output_document
 from .stage_stall import run_stage_stall_capture
 from .status import print_status
@@ -59,7 +62,7 @@ def parse_args() -> argparse.Namespace:
 	stage_stall_parser.add_argument('--scout-x-mm', type=float)
 	stage_stall_parser.add_argument('--probe-x-mm', type=float)
 	stage_stall_parser.add_argument('--rotation-range', nargs=3, metavar=('MIN', 'MAX', 'STEP'), type=float, required=True)
-	stage_stall_parser.add_argument('--config', type=str, default='data/config.json')
+	stage_stall_parser.add_argument('--config', type=str, default=str(CONFIG_PATH))
 	stage_stall_parser.add_argument('--settle-ms', type=int)
 	stage_stall_parser.add_argument('--samples-per-point', type=int)
 	stage_stall_parser.add_argument('--stage-extension-mm', type=float)
@@ -124,6 +127,7 @@ def validate_args(args: argparse.Namespace) -> None:
 
 
 def main() -> int:
+	ensure_mode_workspace()
 	args = parse_args()
 	validate_args(args)
 	return asyncio.run(run_stage_stall_async(args))

@@ -8,9 +8,10 @@ from typing import Any, Dict, List, Optional, Union
 from pydantic import ValidationError
 from openshelf_os.config.exceptions import ConfigError, ConfigMissingError, ConfigValidationError
 from openshelf_os.config.root import RootConfig
+from openshelf_os.runtime_state import RuntimeStatePaths, paths_for_config_file
 
 
-CONFIG_PATH = Path("data/config.json")
+CONFIG_PATH = RuntimeStatePaths.current().config_path
 
 
 def load_and_validate_config(cfg: Union[Dict[str, Any], str], source_path: Optional[str] = None) -> RootConfig:
@@ -45,8 +46,8 @@ def load_config_file(path: Union[str, Any]) -> RootConfig:
 
 def resolve_grid_path(config: RootConfig, config_path: Union[str, Any] = CONFIG_PATH) -> str:
     path_obj = Path(config_path) if isinstance(config_path, str) else config_path
-
-    return str((path_obj.parent / config.robot.grid.path).resolve())
+    runtime_paths = paths_for_config_file(path_obj)
+    return str(runtime_paths.resolve_storage_path(config, config_path=path_obj))
 
 
 def assert_config(config: RootConfig, requirements: Optional[List[str]] = None) -> None:

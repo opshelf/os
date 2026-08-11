@@ -6,6 +6,7 @@ from enum import Enum
 from typing import Dict, Iterable, List, Mapping, Optional, Self, Tuple, Union
 from pydantic import BaseModel, Field, ValidationError, model_validator
 from openshelf_os.common import AxisCoordinate, write_json_file_with_backup
+from openshelf_os.runtime_state import infer_mode_from_path
 
 type Json = Dict[str, Union[str, int, float, Mapping, Iterable]]
 
@@ -221,7 +222,7 @@ class StorageGrid(BaseModel):
 		grid.filename = target_path
 		return grid
 
-	def save_to_file(self, filename: str) -> None:
+	def save_to_file(self, filename: str, *, version_id: str | None = None) -> None:
 		target_path = os.path.abspath(filename)
 		self.filename = target_path
 
@@ -229,10 +230,12 @@ class StorageGrid(BaseModel):
 			target_path,
 			self.model_dump(mode="json"),
 			backup_group_name="storage",
+			backup_mode=infer_mode_from_path(target_path).value,
+			version_id=version_id,
 		)
 
-	def save(self) -> None:
-		self.save_to_file(self.filename)
+	def save(self, *, version_id: str | None = None) -> None:
+		self.save_to_file(self.filename, version_id=version_id)
 
 	def get_side(self, side: StorageModuleSide) -> List[Shelf]:
 		if side == StorageModuleSide.RIGHT:
@@ -431,6 +434,4 @@ class StorageGrid(BaseModel):
 			return possible_slots[0][0]
 
 		return None
-
-
 
