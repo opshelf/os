@@ -740,12 +740,16 @@ def validate_application_noop_position(
 		not math.isfinite(lower_lim)
 		or not math.isfinite(upper_lim)
 		or lower_lim > upper_lim
-		or not lower_lim <= float(position) <= upper_lim
 	):
+		raise RuntimeError("application no-op preflight rejected invalid motor limits")
+
+	position_value = float(position)
+	clamped_position = min(max(position_value, lower_lim), upper_lim)
+	if abs(clamped_position - position_value) > NOOP_POSITION_TOLERANCE_MM:
 		raise RuntimeError(
 			"application no-op preflight rejected position outside configured motor limits"
 		)
-	if not TEST_Y_MIN_MM <= float(position) <= TEST_Y_MAX_MM:
+	if not TEST_Y_MIN_MM <= position_value <= TEST_Y_MAX_MM:
 		raise RuntimeError(
 			"application no-op preflight rejected position outside the supervised "
 			"-1-to-100 mm home-tolerant Y test window"

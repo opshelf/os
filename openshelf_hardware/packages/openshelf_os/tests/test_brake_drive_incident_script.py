@@ -433,6 +433,25 @@ def application_noop_config(motor_params: SimpleNamespace) -> SimpleNamespace:
 	return SimpleNamespace(robot=SimpleNamespace(tool=SimpleNamespace(motors=[motor_params])))
 
 
+def test_application_noop_accepts_home_offset_within_motor_noop_tolerance() -> None:
+	module = load_brake_drive_incident_module()
+	position = -0.008
+	motor = SimpleNamespace(_cur_pos=position, _last_raw_position=-2)
+	motor_params = SimpleNamespace(lower_lim=0, lim=1165)
+
+	module.validate_application_noop_position(motor, motor_params, position)
+
+
+def test_application_noop_rejects_limit_offset_beyond_motor_noop_tolerance() -> None:
+	module = load_brake_drive_incident_module()
+	position = -(module.NOOP_POSITION_TOLERANCE_MM + 0.001)
+	motor = SimpleNamespace(_cur_pos=position, _last_raw_position=-3)
+	motor_params = SimpleNamespace(lower_lim=0, lim=1165)
+
+	with pytest.raises(RuntimeError, match="outside configured motor limits"):
+		module.validate_application_noop_position(motor, motor_params, position)
+
+
 @pytest.mark.asyncio
 async def test_application_noop_rejects_fallback_position_before_movement(
 	monkeypatch: pytest.MonkeyPatch,
