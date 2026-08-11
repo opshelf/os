@@ -1,17 +1,17 @@
 from __future__ import annotations
 
-import sys
-import types
+import threading
 from typing import Any
 
 from hardware.exceptions import GpioConfigError, GpioConnectionError
 from hardware.gpio import DoorRelease, GpioManager
 from hardware.gpio.fake import FakeGpioBackend
-from hardware.gpio.pcf8575 import Pcf8575Backend
-import hardware.gpio.pcf8575 as pcf8575_module
+from hardware.gpio.pca9535 import Pca9535Backend
+import hardware.gpio.pca9535 as pca9535_module
+import hardware.gpio.pca9535_mod as pca9535_mod
 import hardware.gpio.rpi as rpi_module
 from hardware.gpio.rpi import RpiGpioBackend
-from hardware.gpio.types import GpioExpanderSpec, GpioInterruptSpec, GpioPinSpec
+from hardware.gpio.types import GpioExpanderSpec, GpioInterruptSpec, GpioPinSpec, GpioSubscription
 
 import pytest
 
@@ -74,6 +74,93 @@ def test_fake_gpio_output_initial_write_and_shutdown() -> None:
     assert unlock.read() is False
 
 
+def test_gpio_manager_logs_input_changes_after_initialization(caplog: pytest.LogCaptureFixture) -> None:
+    manager = GpioManager(
+        {
+            "sensor": GpioPinSpec(
+                name="sensor",
+                board="rpi",
+                pin=1,
+                direction="input",
+            )
+        },
+        fake=True,
+    )
+
+    with caplog.at_level("INFO", logger="hardware.gpio.manager"):
+        manager.input("sensor")
+        manager.set_fake_input("sensor", False)
+
+    assert "sensor: LOW" in caplog.text
+    assert "sensor: HIGH" not in caplog.text
+
+
+def test_gpio_manager_observe_all_inputs_opens_every_input_pin() -> None:
+    manager = GpioManager(
+        {
+            "sensor_a": GpioPinSpec(name="sensor_a", board="rpi", pin=1, direction="input"),
+            "sensor_b": GpioPinSpec(name="sensor_b", board="rpi", pin=2, direction="input"),
+            "actuator": GpioPinSpec(name="actuator", board="rpi", pin=3, direction="output"),
+        },
+        fake=True,
+    )
+
+    manager.observe_all_inputs()
+
+    assert "sensor_a" in manager._inputs
+    assert "sensor_b" in manager._inputs
+    assert "actuator" not in manager._outputs
+
+
+def test_gpio_manager_observe_all_inputs_logs_changes_without_manual_input_call(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    manager = GpioManager(
+        {
+            "sensor": GpioPinSpec(name="sensor", board="rpi", pin=1, direction="input"),
+        },
+        fake=True,
+    )
+
+    manager.observe_all_inputs()
+
+    with caplog.at_level("INFO", logger="hardware.gpio.manager"):
+        manager.set_fake_input("sensor", False)
+
+    assert "sensor: LOW" in caplog.text
+
+
+def test_gpio_manager_observe_all_inputs_allows_polling_only_pca9535(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    device = FakePca9535()
+    expander = GpioExpanderSpec(name="pca9535_0", kind="pca9535", bus=1, address=0x20)
+    backend = Pca9535Backend(
+        expander,
+        rpi_backend=FakeGpioBackend(),
+        device_factory=lambda _spec: device,
+    )
+    manager = GpioManager(
+        {
+            "limit": GpioPinSpec(
+                name="limit",
+                board="pca9535",
+                expander="pca9535_0",
+                pin=15,
+                direction="input",
+            )
+        },
+        {"pca9535_0": expander},
+        backends={"pca9535:pca9535_0": backend},
+    )
+
+    with caplog.at_level("WARNING", logger="hardware.gpio.manager"):
+        manager.observe_all_inputs()
+
+    assert manager.input("limit").read() is True
+    assert "Failed to subscribe to GPIO input 'limit' for diagnostic logging" in caplog.text
+
+
 def test_gpio_manager_applies_only_declared_initial_outputs() -> None:
     manager = GpioManager(
         {
@@ -106,145 +193,462 @@ def test_gpio_manager_rejects_duplicate_physical_pins() -> None:
         )
 
 
-class FakePcf8575:
+def test_gpio_manager_allows_expanders_to_share_one_interrupt_pin() -> None:
+    GpioManager(
+        {},
+        {
+            "pca9535_0": GpioExpanderSpec(
+                name="pca9535_0",
+                kind="pca9535",
+                bus=1,
+                address=0x20,
+                interrupt=GpioInterruptSpec(board="rpi", pin=4),
+            ),
+            "pca9535_1": GpioExpanderSpec(
+                name="pca9535_1",
+                kind="pca9535",
+                bus=1,
+                address=0x21,
+                interrupt=GpioInterruptSpec(board="rpi", pin=4),
+            ),
+        },
+        fake=True,
+    )
+
+
+def test_gpio_manager_rejects_interrupt_pin_colliding_with_direct_rpi_pin() -> None:
+    with pytest.raises(GpioConfigError):
+        GpioManager(
+            {"a": GpioPinSpec(name="a", board="rpi", pin=4, direction="input")},
+            {
+                "pca9535_0": GpioExpanderSpec(
+                    name="pca9535_0",
+                    kind="pca9535",
+                    bus=1,
+                    address=0x20,
+                    interrupt=GpioInterruptSpec(board="rpi", pin=4),
+                ),
+            },
+            fake=True,
+        )
+
+
+class FakePca9535:
     def __init__(self) -> None:
         self.state = 0xFFFF
-        self._writebuf = bytearray([0, 0])
+        self.directions = [1] * 16
 
-    def read_gpio(self) -> int:
-        return self.state
+    def pin_config_write(self, pin: int, direction: int) -> None:
+        self.directions[pin] = direction
 
-    def write_gpio(self, value: int) -> None:
-        self._writebuf[0] = value & 0xFF
-        self._writebuf[1] = (value >> 8) & 0xFF
-        self.state = value & 0xFFFF
+    def pin_output_write(self, pin: int, level: int) -> None:
+        self.set_raw(pin, bool(level))
 
-    def write_pin(self, pin: int, value: bool) -> None:
-        latch = self._writebuf[0] | (self._writebuf[1] << 8)
+    def pin_input_read(self, pin: int) -> int:
+        return (self.state >> pin) & 1
+
+    def port_input_read(self) -> tuple[int, int]:
+        return self.state & 0xFF, (self.state >> 8) & 0xFF
+
+    def set_raw(self, pin: int, value: bool) -> None:
         if value is True:
-            latch |= 1 << pin
+            self.state |= 1 << pin
         else:
-            latch &= ~(1 << pin)
-        self.write_gpio(latch)
+            self.state &= ~(1 << pin)
 
 
-class FakePcfModule:
-    class PCF8575:
-        def __init__(self, i2c: Any, *, address: int) -> None:
-            self.i2c = i2c
-            self.address = address
+class ClosableFakePca9535(FakePca9535):
+    def __init__(self) -> None:
+        super().__init__()
+        self.close_calls = 0
 
-        def read_gpio(self) -> int:
-            return 0xFFFF
+    def close(self) -> None:
+        self.close_calls += 1
 
-        def write_gpio(self, _value: int) -> None:
+
+class FailingSetupFakePca9535(ClosableFakePca9535):
+    def __init__(self) -> None:
+        super().__init__()
+        self.config_error: Exception | None = None
+        self.close_error: Exception | None = None
+        self.output_write_calls = 0
+
+    def pin_config_write(self, pin: int, direction: int) -> None:
+        if self.config_error is not None:
+            raise self.config_error
+        super().pin_config_write(pin, direction)
+
+    def pin_output_write(self, pin: int, level: int) -> None:
+        self.output_write_calls += 1
+        super().pin_output_write(pin, level)
+
+    def close(self) -> None:
+        super().close()
+        if self.close_error is not None:
+            raise self.close_error
+
+
+class FakePca9535Bus:
+    def __init__(self, *, write_error: Exception | None = None, close_error: Exception | None = None) -> None:
+        self.write_error = write_error
+        self.close_error = close_error
+        self.close_calls = 0
+
+    def write_i2c_block_data(self, *_args: Any) -> None:
+        if self.write_error is not None:
+            raise self.write_error
+
+    def close(self) -> None:
+        self.close_calls += 1
+        if self.close_error is not None:
+            raise self.close_error
+
+
+class FakeSmbusModule:
+    def __init__(self, bus: FakePca9535Bus) -> None:
+        self.bus = bus
+
+    def SMBus(self, _bus_num: int) -> FakePca9535Bus:
+        return self.bus
+
+
+def test_pca9535_closes_owned_bus_idempotently(monkeypatch: pytest.MonkeyPatch) -> None:
+    bus = FakePca9535Bus()
+    monkeypatch.setattr(pca9535_mod, "smbus", FakeSmbusModule(bus))
+
+    device = pca9535_mod.PCA9535()
+
+    device.close()
+    device.close()
+
+    assert bus.close_calls == 1
+
+
+def test_pca9535_close_still_closes_bus_after_interrupt_cleanup_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FailingInterruptGpio:
+        def remove_event_detect(self, _pin: int) -> None:
+            raise RuntimeError("interrupt cleanup failed")
+
+    bus = FakePca9535Bus()
+    monkeypatch.setattr(pca9535_mod, "smbus", FakeSmbusModule(bus))
+    monkeypatch.setattr(pca9535_mod, "GPIO", FailingInterruptGpio())
+    device = pca9535_mod.PCA9535()
+    device.interrupt_pin = 4
+    device._interrupt_registered = True
+
+    with pytest.raises(RuntimeError, match="interrupt cleanup failed"):
+        device.close()
+
+    assert bus.close_calls == 1
+
+
+def test_pca9535_constructor_closes_bus_when_initialization_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    write_error = OSError("initialization write failed")
+    bus = FakePca9535Bus(write_error=write_error, close_error=RuntimeError("close failed"))
+    monkeypatch.setattr(pca9535_mod, "smbus", FakeSmbusModule(bus))
+
+    with pytest.raises(OSError, match="initialization write failed"):
+        pca9535_mod.PCA9535(port_output_value=[0x00, 0x00])
+
+    assert bus.close_calls == 1
+
+
+def test_pca9535_backend_close_closes_device_idempotently() -> None:
+    device = ClosableFakePca9535()
+    expander = GpioExpanderSpec(name="pca9535_0", kind="pca9535", bus=1, address=0x20)
+    backend = Pca9535Backend(
+        expander,
+        rpi_backend=FakeGpioBackend(),
+        device_factory=lambda _spec: device,
+    )
+    spec = GpioPinSpec(name="limit", board="pca9535", expander="pca9535_0", pin=15, direction="input")
+
+    backend.setup_input(spec)
+    backend.close()
+    backend.close()
+
+    assert device.close_calls == 1
+
+
+@pytest.mark.parametrize("direction", ["input", "output"])
+def test_pca9535_setup_write_failure_closes_terminal_backend(direction: str) -> None:
+    device = FailingSetupFakePca9535()
+    rpi = FakeGpioBackend()
+    expander = GpioExpanderSpec(
+        name="pca9535_0",
+        kind="pca9535",
+        bus=1,
+        address=0x20,
+        interrupt=GpioInterruptSpec(board="rpi", pin=4),
+    )
+    backend = Pca9535Backend(
+        expander,
+        rpi_backend=rpi,
+        device_factory=lambda _spec: device,
+    )
+    input_spec = GpioPinSpec(
+        name="limit",
+        board="pca9535",
+        expander="pca9535_0",
+        pin=15,
+        direction="input",
+    )
+    output_spec = GpioPinSpec(
+        name="tool",
+        board="pca9535",
+        expander="pca9535_0",
+        pin=3,
+        direction="output",
+        initial=True,
+    )
+
+    backend.setup_input(input_spec)
+    backend.subscribe(input_spec, lambda _raw: None)
+    setup_spec = input_spec if direction == "input" else output_spec
+    write_error = OSError(f"{direction} setup write failed")
+    device.config_error = write_error
+
+    with pytest.raises(GpioConnectionError) as exc_info:
+        if direction == "input":
+            backend.setup_input(setup_spec)
+        else:
+            backend.setup_output(setup_spec)
+
+    assert exc_info.value.__cause__ is write_error
+    assert device.close_calls == 1
+    assert backend._closed is True
+    assert backend._device is None
+    assert backend._port_state is None
+    assert backend._interrupt_subscription is None
+    assert backend._callbacks == {}
+    assert rpi._callbacks[("rpi", None, 4)] == []
+    if direction == "output":
+        assert device.output_write_calls == 1
+
+
+def test_pca9535_setup_failure_preserves_write_error_when_cleanup_fails(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    device = FailingSetupFakePca9535()
+    expander = GpioExpanderSpec(name="pca9535_0", kind="pca9535", bus=1, address=0x20)
+    backend = Pca9535Backend(
+        expander,
+        rpi_backend=FakeGpioBackend(),
+        device_factory=lambda _spec: device,
+    )
+    spec = GpioPinSpec(name="limit", board="pca9535", expander="pca9535_0", pin=15, direction="input")
+    write_error = OSError("input setup write failed")
+    device.config_error = write_error
+    device.close_error = RuntimeError("device cleanup failed")
+
+    with caplog.at_level("WARNING", logger="hardware.gpio.pca9535.pca9535"):
+        with pytest.raises(GpioConnectionError) as exc_info:
+            backend.setup_input(spec)
+
+    assert exc_info.value.__cause__ is write_error
+    assert device.close_calls == 1
+    cleanup_record = next(
+        record for record in caplog.records if record.message == "Failed to clean up PCA9535 after pin setup failure"
+    )
+    assert cleanup_record.expander == "pca9535_0"
+    assert cleanup_record.pin == "limit"
+    assert cleanup_record.pin_number == 15
+
+
+def test_pca9535_backend_ignores_copied_interrupt_callback_after_close(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class CapturingRpiBackend:
+        def __init__(self) -> None:
+            self.callback = None
+
+        def setup_input(self, _spec: GpioPinSpec) -> None:
             pass
 
+        def subscribe(self, _spec: GpioPinSpec, callback, **_kwargs: Any) -> GpioSubscription:
+            self.callback = callback
+            return GpioSubscription(lambda: None)
 
-def install_i2c_ports(monkeypatch: pytest.MonkeyPatch, ports: tuple[tuple[int, int, int], ...]) -> None:
-    microcontroller = types.ModuleType("microcontroller")
-    pin = types.ModuleType("microcontroller.pin")
-    pin.i2cPorts = ports  # type: ignore[attr-defined]
-    microcontroller.pin = pin  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "microcontroller", microcontroller)
-    monkeypatch.setitem(sys.modules, "microcontroller.pin", pin)
+    devices: list[ClosableFakePca9535] = []
+
+    def create_device(_spec: GpioExpanderSpec) -> ClosableFakePca9535:
+        device = ClosableFakePca9535()
+        devices.append(device)
+        return device
+
+    rpi = CapturingRpiBackend()
+    expander = GpioExpanderSpec(
+        name="pca9535_0",
+        kind="pca9535",
+        bus=1,
+        address=0x20,
+        interrupt=GpioInterruptSpec(board="rpi", pin=4),
+    )
+    backend = Pca9535Backend(expander, rpi_backend=rpi, device_factory=create_device)
+    spec = GpioPinSpec(name="limit", board="pca9535", expander="pca9535_0", pin=15, direction="input")
+
+    backend.setup_input(spec)
+    backend.subscribe(spec, lambda _value: None)
+    callback = rpi.callback
+    assert callback is not None
+
+    backend.close()
+
+    with caplog.at_level("WARNING"):
+        callback(False)
+
+    with pytest.raises(GpioConfigError, match="PCA9535 backend 'pca9535_0' is closed"):
+        backend.read(spec)
+
+    assert len(devices) == 1
+    assert devices[0].close_calls == 1
+    assert backend._device is None
+    assert caplog.records == []
 
 
-def test_pcf8575_uses_configured_i2c_bus_from_blinka_ports(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[tuple[int, int]] = []
-
-    class FakeBusio:
-        class I2C:
-            def __init__(self, scl: int, sda: int) -> None:
-                calls.append((scl, sda))
-
-    install_i2c_ports(monkeypatch, ((1, 3, 2), (10, 45, 44)))
-    monkeypatch.setattr(pcf8575_module, "adafruit_pcf8575", FakePcfModule)
-    monkeypatch.setattr(pcf8575_module, "busio", FakeBusio)
-    monkeypatch.setattr(pcf8575_module, "board", None)
-
-    expander = GpioExpanderSpec(name="main", kind="pcf8575", bus=10, address=0x20)
-    backend = Pcf8575Backend(expander, rpi_backend=FakeGpioBackend())
-    spec = GpioPinSpec(name="limit", board="pcf8575", expander="main", pin=15, direction="input")
+def test_pca9535_backend_close_attempts_device_cleanup_after_interrupt_failure() -> None:
+    device = ClosableFakePca9535()
+    expander = GpioExpanderSpec(name="pca9535_0", kind="pca9535", bus=1, address=0x20)
+    backend = Pca9535Backend(
+        expander,
+        rpi_backend=FakeGpioBackend(),
+        device_factory=lambda _spec: device,
+    )
+    spec = GpioPinSpec(name="limit", board="pca9535", expander="pca9535_0", pin=15, direction="input")
 
     backend.setup_input(spec)
 
-    assert calls == [(45, 44)]
+    def fail_to_unsubscribe() -> None:
+        raise RuntimeError("interrupt cleanup failed")
+
+    backend._interrupt_subscription = GpioSubscription(fail_to_unsubscribe)
+
+    with pytest.raises(RuntimeError, match="interrupt cleanup failed"):
+        backend.close()
+
+    assert device.close_calls == 1
+    assert backend._interrupt_subscription is None
+    assert backend._device is None
+    assert backend._port_state is None
 
 
-def test_pcf8575_reports_missing_configured_i2c_bus(monkeypatch: pytest.MonkeyPatch) -> None:
-    class FakeBusio:
-        class I2C:
-            def __init__(self, _scl: int, _sda: int) -> None:
-                raise AssertionError("unexpected I2C open")
+def test_gpio_manager_propagates_pca9535_close_failure() -> None:
+    class FailingCloseDevice(FakePca9535):
+        def close(self) -> None:
+            raise RuntimeError("device cleanup failed")
 
-    install_i2c_ports(monkeypatch, ((1, 3, 2),))
-    monkeypatch.setattr(pcf8575_module, "adafruit_pcf8575", FakePcfModule)
-    monkeypatch.setattr(pcf8575_module, "busio", FakeBusio)
-    monkeypatch.setattr(pcf8575_module, "board", None)
+    device = FailingCloseDevice()
+    expander = GpioExpanderSpec(name="pca9535_0", kind="pca9535", bus=1, address=0x20)
+    backend = Pca9535Backend(
+        expander,
+        rpi_backend=FakeGpioBackend(),
+        device_factory=lambda _spec: device,
+    )
+    manager = GpioManager(
+        {
+            "limit": GpioPinSpec(
+                name="limit",
+                board="pca9535",
+                expander="pca9535_0",
+                pin=15,
+                direction="input",
+            )
+        },
+        {"pca9535_0": expander},
+        backends={"pca9535:pca9535_0": backend},
+    )
 
-    expander = GpioExpanderSpec(name="main", kind="pcf8575", bus=10, address=0x20)
-    backend = Pcf8575Backend(expander, rpi_backend=FakeGpioBackend())
-    spec = GpioPinSpec(name="limit", board="pcf8575", expander="main", pin=15, direction="input")
+    manager.input("limit")
 
-    with pytest.raises(GpioConnectionError, match="I2C bus 10.*valid buses: 1"):
+    with pytest.raises(GpioConfigError) as exc_info:
+        manager.close()
+
+    assert isinstance(exc_info.value.__cause__, RuntimeError)
+    assert manager._closed is True
+
+
+def test_pca9535_backend_closes_device_when_polarity_reset_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FailingPolarityDevice:
+        def __init__(self) -> None:
+            self.close_calls = 0
+
+        def port_invert_write(self, _port0: int, _port1: int) -> None:
+            raise OSError("polarity reset failed")
+
+        def close(self) -> None:
+            self.close_calls += 1
+            raise RuntimeError("device close failed")
+
+    device = FailingPolarityDevice()
+    monkeypatch.setattr(pca9535_module, "PCA9535", lambda **_kwargs: device)
+
+    expander = GpioExpanderSpec(name="pca9535_0", kind="pca9535", bus=1, address=0x20)
+    backend = Pca9535Backend(expander, rpi_backend=FakeGpioBackend())
+    spec = GpioPinSpec(name="limit", board="pca9535", expander="pca9535_0", pin=15, direction="input")
+
+    with pytest.raises(GpioConnectionError) as exc_info:
         backend.setup_input(spec)
 
+    assert isinstance(exc_info.value.__cause__, OSError)
+    assert device.close_calls == 1
 
-def test_pcf8575_wraps_blinka_i2c_open_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    class FakeBusio:
-        class I2C:
-            def __init__(self, _scl: int, _sda: int) -> None:
-                raise ValueError("No Hardware I2C on (scl,sda)=(3, 2)")
 
-    install_i2c_ports(monkeypatch, ((1, 3, 2),))
-    monkeypatch.setattr(pcf8575_module, "adafruit_pcf8575", FakePcfModule)
-    monkeypatch.setattr(pcf8575_module, "busio", FakeBusio)
-    monkeypatch.setattr(pcf8575_module, "board", None)
+def test_pca9535_wraps_device_construction_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    def raising_device(*_args: Any, **_kwargs: Any) -> None:
+        raise OSError("No such device")
 
-    expander = GpioExpanderSpec(name="main", kind="pcf8575", bus=1, address=0x20)
-    backend = Pcf8575Backend(expander, rpi_backend=FakeGpioBackend())
-    spec = GpioPinSpec(name="limit", board="pcf8575", expander="main", pin=15, direction="input")
+    monkeypatch.setattr(pca9535_module, "PCA9535", raising_device)
 
-    with pytest.raises(GpioConnectionError, match="Failed to connect PCF8575 expander 'main'") as exc_info:
+    expander = GpioExpanderSpec(name="pca9535_0", kind="pca9535", bus=1, address=0x20)
+    backend = Pca9535Backend(expander, rpi_backend=FakeGpioBackend())
+    spec = GpioPinSpec(name="limit", board="pca9535", expander="pca9535_0", pin=15, direction="input")
+
+    with pytest.raises(GpioConnectionError, match="Failed to connect PCA9535 expander 'pca9535_0'") as exc_info:
         backend.setup_input(spec)
 
-    assert isinstance(exc_info.value.__cause__, ValueError)
+    assert isinstance(exc_info.value.__cause__, OSError)
 
 
-def test_pcf8575_setup_input_releases_pin_without_clearing_other_pins() -> None:
-    pcf = FakePcf8575()
-    expander = GpioExpanderSpec(name="main", kind="pcf8575", bus=1, address=0x20)
-    backend = Pcf8575Backend(expander, rpi_backend=FakeGpioBackend(), device_factory=lambda _spec: pcf)
+def test_pca9535_setup_input_does_not_disturb_other_pins() -> None:
+    device = FakePca9535()
+    expander = GpioExpanderSpec(name="pca9535_0", kind="pca9535", bus=1, address=0x20)
+    backend = Pca9535Backend(expander, rpi_backend=FakeGpioBackend(), device_factory=lambda _spec: device)
     spec = GpioPinSpec(
         name="limit",
-        board="pcf8575",
-        expander="main",
+        board="pca9535",
+        expander="pca9535_0",
         pin=15,
         direction="input",
     )
 
     backend.setup_input(spec)
 
-    assert pcf.state == 0xFFFF
+    assert device.directions[15] == 1
+    assert device.state == 0xFFFF
 
 
-def test_pcf8575_output_writes_preserve_other_released_pins() -> None:
-    pcf = FakePcf8575()
-    expander = GpioExpanderSpec(name="main", kind="pcf8575", bus=1, address=0x20)
-    backend = Pcf8575Backend(expander, rpi_backend=FakeGpioBackend(), device_factory=lambda _spec: pcf)
+def test_pca9535_output_writes_preserve_other_pins() -> None:
+    device = FakePca9535()
+    expander = GpioExpanderSpec(name="pca9535_0", kind="pca9535", bus=1, address=0x20)
+    backend = Pca9535Backend(expander, rpi_backend=FakeGpioBackend(), device_factory=lambda _spec: device)
     output = GpioPinSpec(
         name="tool",
-        board="pcf8575",
-        expander="main",
+        board="pca9535",
+        expander="pca9535_0",
         pin=3,
         direction="output",
         initial=False,
     )
     limit = GpioPinSpec(
         name="limit",
-        board="pcf8575",
-        expander="main",
+        board="pca9535",
+        expander="pca9535_0",
         pin=15,
         direction="input",
     )
@@ -253,25 +657,28 @@ def test_pcf8575_output_writes_preserve_other_released_pins() -> None:
     backend.setup_input(limit)
     backend.write(output, True)
 
-    assert pcf.state == 0xFFFF
+    assert device.directions[3] == 0
+    assert device.directions[15] == 1
+    assert device.pin_input_read(15) == 1
+    assert device.pin_input_read(3) == 1
 
 
-def test_pcf8575_interrupt_diffs_changed_pin() -> None:
-    pcf = FakePcf8575()
+def test_pca9535_interrupt_diffs_changed_pin() -> None:
+    device = FakePca9535()
     rpi = FakeGpioBackend()
     expander = GpioExpanderSpec(
-        name="main",
-        kind="pcf8575",
+        name="pca9535_1",
+        kind="pca9535",
         bus=1,
-        address=0x20,
+        address=0x21,
         interrupt=GpioInterruptSpec(board="rpi", pin=4),
     )
-    backend = Pcf8575Backend(expander, rpi_backend=rpi, device_factory=lambda _spec: pcf)
+    backend = Pca9535Backend(expander, rpi_backend=rpi, device_factory=lambda _spec: device)
     spec = GpioPinSpec(
         name="light_curtain",
-        board="pcf8575",
-        expander="main",
-        pin=15,
+        board="pca9535",
+        expander="pca9535_1",
+        pin=1,
         direction="input",
         inverted=True,
     )
@@ -280,10 +687,307 @@ def test_pcf8575_interrupt_diffs_changed_pin() -> None:
 
     backend.setup_input(spec)
     backend.subscribe(spec, events.append)
-    pcf.write_pin(15, False)
+    device.set_raw(1, False)
     rpi.set_raw(interrupt_spec, False)
 
     assert events == [False]
+
+
+def test_pca9535_poll_read_updates_interrupt_baseline() -> None:
+    device = FakePca9535()
+    rpi = FakeGpioBackend()
+    expander = GpioExpanderSpec(
+        name="pca9535_1",
+        kind="pca9535",
+        bus=1,
+        address=0x21,
+        interrupt=GpioInterruptSpec(board="rpi", pin=4),
+    )
+    backend = Pca9535Backend(expander, rpi_backend=rpi, device_factory=lambda _spec: device)
+    spec = GpioPinSpec(
+        name="light_curtain",
+        board="pca9535",
+        expander="pca9535_1",
+        pin=1,
+        direction="input",
+    )
+    interrupt_spec = GpioPinSpec(name="interrupt", board="rpi", pin=4, direction="input")
+    events: list[bool] = []
+
+    backend.setup_input(spec)
+    backend.subscribe(spec, events.append)
+    device.set_raw(1, False)
+
+    assert backend.read(spec) is False
+
+    device.set_raw(1, True)
+    rpi.set_raw(interrupt_spec, False)
+
+    assert events == [False, True]
+
+
+def test_pca9535_poll_read_dispatches_changed_subscribed_sibling() -> None:
+    device = FakePca9535()
+    rpi = FakeGpioBackend()
+    expander = GpioExpanderSpec(
+        name="pca9535_1",
+        kind="pca9535",
+        bus=1,
+        address=0x21,
+        interrupt=GpioInterruptSpec(board="rpi", pin=4),
+    )
+    backend = Pca9535Backend(expander, rpi_backend=rpi, device_factory=lambda _spec: device)
+    polled_spec = GpioPinSpec(
+        name="polled",
+        board="pca9535",
+        expander="pca9535_1",
+        pin=1,
+        direction="input",
+    )
+    subscribed_spec = GpioPinSpec(
+        name="subscribed",
+        board="pca9535",
+        expander="pca9535_1",
+        pin=2,
+        direction="input",
+    )
+    events: list[bool] = []
+
+    backend.setup_input(polled_spec)
+    backend.setup_input(subscribed_spec)
+    backend.subscribe(subscribed_spec, events.append)
+    device.set_raw(2, False)
+
+    assert backend.read(polled_spec) is True
+    assert events == [False]
+
+
+def test_pca9535_serializes_overlapping_poll_and_interrupt_callback_delivery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device = FakePca9535()
+    rpi = FakeGpioBackend()
+    expander = GpioExpanderSpec(
+        name="pca9535_1",
+        kind="pca9535",
+        bus=1,
+        address=0x21,
+        interrupt=GpioInterruptSpec(board="rpi", pin=4),
+    )
+    backend = Pca9535Backend(expander, rpi_backend=rpi, device_factory=lambda _spec: device)
+    spec = GpioPinSpec(
+        name="light_curtain",
+        board="pca9535",
+        expander="pca9535_1",
+        pin=1,
+        direction="input",
+    )
+    interrupt_spec = GpioPinSpec(name="interrupt", board="rpi", pin=4, direction="input")
+    events: list[bool] = []
+    first_dispatch_started = threading.Event()
+    release_first_dispatch = threading.Event()
+    original_dispatch = backend._dispatch_callbacks
+
+    def pause_first_dispatch(pending: list[tuple[list[Any], bool]]) -> None:
+        if not first_dispatch_started.is_set():
+            first_dispatch_started.set()
+            assert release_first_dispatch.wait(timeout=1)
+        original_dispatch(pending)
+
+    monkeypatch.setattr(backend, "_dispatch_callbacks", pause_first_dispatch)
+    device.set_raw(1, False)
+    backend.setup_input(spec)
+    backend.subscribe(spec, events.append)
+
+    device.set_raw(1, True)
+    poll_thread = threading.Thread(target=backend.read, args=(spec,))
+    poll_thread.start()
+    assert first_dispatch_started.wait(timeout=1)
+
+    device.set_raw(1, False)
+    rpi.set_raw(interrupt_spec, False)
+    release_first_dispatch.set()
+    poll_thread.join(timeout=1)
+
+    assert not poll_thread.is_alive()
+    assert events == [True, False]
+
+
+def test_pca9535_callback_failure_drains_overlapping_callback_batch() -> None:
+    device = FakePca9535()
+    rpi = FakeGpioBackend()
+    expander = GpioExpanderSpec(
+        name="pca9535_1",
+        kind="pca9535",
+        bus=1,
+        address=0x21,
+        interrupt=GpioInterruptSpec(board="rpi", pin=4),
+    )
+    backend = Pca9535Backend(expander, rpi_backend=rpi, device_factory=lambda _spec: device)
+    spec = GpioPinSpec(
+        name="light_curtain",
+        board="pca9535",
+        expander="pca9535_1",
+        pin=1,
+        direction="input",
+    )
+    interrupt_spec = GpioPinSpec(name="interrupt", board="rpi", pin=4, direction="input")
+    events: list[bool] = []
+    errors: list[BaseException] = []
+    first_callback_started = threading.Event()
+    later_observation_queued = threading.Event()
+    callback_error = RuntimeError("callback failed")
+
+    def fail_after_later_observation(raw_value: bool) -> None:
+        if raw_value:
+            first_callback_started.set()
+            assert later_observation_queued.wait(timeout=1)
+            raise callback_error
+
+    def poll() -> None:
+        try:
+            backend.read(spec)
+        except BaseException as exc:
+            errors.append(exc)
+
+    device.set_raw(1, False)
+    backend.setup_input(spec)
+    backend.subscribe(spec, events.append)
+    backend.subscribe(spec, fail_after_later_observation)
+
+    device.set_raw(1, True)
+    poll_thread = threading.Thread(target=poll)
+    poll_thread.start()
+    assert first_callback_started.wait(timeout=1)
+
+    device.set_raw(1, False)
+    rpi.set_raw(interrupt_spec, False)
+    later_observation_queued.set()
+    poll_thread.join(timeout=1)
+
+    assert not poll_thread.is_alive()
+    assert errors == [callback_error]
+    assert events == [True, False]
+    assert not backend._pending_callback_batches
+    assert backend._dispatching_callbacks is False
+
+
+def test_pca9535_close_during_callback_dispatch_drains_preclose_batches_fifo() -> None:
+    device = ClosableFakePca9535()
+    rpi = FakeGpioBackend()
+    expander = GpioExpanderSpec(
+        name="pca9535_1",
+        kind="pca9535",
+        bus=1,
+        address=0x21,
+        interrupt=GpioInterruptSpec(board="rpi", pin=4),
+    )
+    device_factory_calls = 0
+
+    def create_device(_spec: GpioExpanderSpec) -> ClosableFakePca9535:
+        nonlocal device_factory_calls
+        device_factory_calls += 1
+        return device
+
+    backend = Pca9535Backend(expander, rpi_backend=rpi, device_factory=create_device)
+    spec = GpioPinSpec(
+        name="light_curtain",
+        board="pca9535",
+        expander="pca9535_1",
+        pin=1,
+        direction="input",
+    )
+    interrupt_spec = GpioPinSpec(name="interrupt", board="rpi", pin=4, direction="input")
+    events: list[bool] = []
+    errors: list[BaseException] = []
+    first_callback_started = threading.Event()
+    later_observation_queued = threading.Event()
+    callback_error = RuntimeError("callback failed")
+    later_callback_error = RuntimeError("later callback failed")
+
+    def close_and_fail_after_later_observation(raw_value: bool) -> None:
+        if raw_value:
+            first_callback_started.set()
+            assert later_observation_queued.wait(timeout=1)
+            backend.close()
+            raise callback_error
+        raise later_callback_error
+
+    def poll() -> None:
+        try:
+            backend.read(spec)
+        except BaseException as exc:
+            errors.append(exc)
+
+    device.set_raw(1, False)
+    backend.setup_input(spec)
+    backend.subscribe(spec, events.append)
+    backend.subscribe(spec, close_and_fail_after_later_observation)
+
+    device.set_raw(1, True)
+    poll_thread = threading.Thread(target=poll)
+    poll_thread.start()
+    assert first_callback_started.wait(timeout=1)
+
+    device.set_raw(1, False)
+    rpi.set_raw(interrupt_spec, False)
+    later_observation_queued.set()
+    poll_thread.join(timeout=1)
+
+    assert not poll_thread.is_alive()
+    assert errors == [callback_error]
+    assert events == [True, False]
+    assert not backend._pending_callback_batches
+    assert backend._dispatching_callbacks is False
+    assert backend._closed is True
+    assert backend._callbacks == {}
+    assert backend._device is None
+    assert device.close_calls == 1
+
+    backend._did_interrupt()
+    with pytest.raises(GpioConfigError, match="PCA9535 backend 'pca9535_1' is closed"):
+        backend.read(spec)
+
+    assert device_factory_calls == 1
+
+
+def test_pca9535_shared_interrupt_line_dispatches_both_expanders() -> None:
+    device0 = FakePca9535()
+    device1 = FakePca9535()
+    rpi = FakeGpioBackend()
+    expander0 = GpioExpanderSpec(
+        name="pca9535_0",
+        kind="pca9535",
+        bus=1,
+        address=0x20,
+        interrupt=GpioInterruptSpec(board="rpi", pin=4),
+    )
+    expander1 = GpioExpanderSpec(
+        name="pca9535_1",
+        kind="pca9535",
+        bus=1,
+        address=0x21,
+        interrupt=GpioInterruptSpec(board="rpi", pin=4),
+    )
+    backend0 = Pca9535Backend(expander0, rpi_backend=rpi, device_factory=lambda _spec: device0)
+    backend1 = Pca9535Backend(expander1, rpi_backend=rpi, device_factory=lambda _spec: device1)
+    spec0 = GpioPinSpec(name="a", board="pca9535", expander="pca9535_0", pin=1, direction="input", inverted=True)
+    spec1 = GpioPinSpec(name="b", board="pca9535", expander="pca9535_1", pin=2, direction="input", inverted=True)
+    interrupt_spec = GpioPinSpec(name="interrupt", board="rpi", pin=4, direction="input")
+    events0: list[bool] = []
+    events1: list[bool] = []
+
+    backend0.setup_input(spec0)
+    backend0.subscribe(spec0, events0.append)
+    backend1.setup_input(spec1)
+    backend1.subscribe(spec1, events1.append)
+
+    device0.set_raw(1, False)
+    device1.set_raw(2, False)
+    rpi.set_raw(interrupt_spec, False)
+
+    assert events0 == [False]
+    assert events1 == [False]
 
 
 def test_door_release_uses_unlock_output_and_engaged_sensor() -> None:
@@ -408,6 +1112,36 @@ def test_rpi_gpio_read_recovers_when_input_channel_setup_is_lost(monkeypatch: py
     assert backend.read(spec) is True
     assert fake_gpio.configured[17] == fake_gpio.IN
     assert [call[0] for call in fake_gpio.setup_calls].count(17) == 2
+
+
+def test_rpi_gpio_reuses_shared_input_without_disabling_event_detect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_gpio = FakeRpiGpioModule()
+    monkeypatch.setattr(rpi_module, "GPIO", fake_gpio)
+    backend = RpiGpioBackend()
+    first = GpioPinSpec(
+        name="pca9535_0_interrupt",
+        board="rpi",
+        pin=4,
+        direction="input",
+        pull="up",
+    )
+    second = GpioPinSpec(
+        name="pca9535_1_interrupt",
+        board="rpi",
+        pin=4,
+        direction="input",
+        pull="up",
+    )
+
+    backend.setup_input(first)
+    backend.subscribe(first, lambda _raw: None, edge="falling")
+    backend.setup_input(second)
+    backend.subscribe(second, lambda _raw: None, edge="falling")
+
+    assert [call[0] for call in fake_gpio.setup_calls].count(4) == 1
+    assert [call[0] for call in fake_gpio.event_detect_calls].count(4) == 1
 
 
 def test_rpi_gpio_write_recovers_when_output_channel_setup_is_lost(monkeypatch: pytest.MonkeyPatch) -> None:

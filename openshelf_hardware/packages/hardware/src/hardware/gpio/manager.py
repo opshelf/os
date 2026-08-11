@@ -1,20 +1,25 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from typing import Any, Callable, cast
 
 from hardware.exceptions import GpioConfigError
 from hardware.gpio.fake import FakeGpioBackend
-from hardware.gpio.pcf8575 import Pcf8575Backend
+from hardware.gpio.pca9535 import Pca9535Backend
 from hardware.gpio.rpi import RpiGpioBackend
 from hardware.gpio.types import (
     DigitalInput,
     DigitalOutput,
     GpioBackend,
+    GpioEvent,
     GpioExpanderSpec,
     GpioInterruptSpec,
     GpioPinSpec,
+    GpioSubscription,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class GpioManager:
@@ -33,6 +38,7 @@ class GpioManager:
         self._created_backends: dict[str, GpioBackend] = {}
         self._inputs: dict[str, DigitalInput] = {}
         self._outputs: dict[str, DigitalOutput] = {}
+        self._input_log_subscriptions: list[GpioSubscription] = []
         self._closed = False
         self._validate_unique_physical_pins()
 
@@ -70,7 +76,18 @@ class GpioManager:
         if name not in self._inputs:
             backend = self._backend_for(spec)
             backend.setup_input(spec)
-            self._inputs[name] = DigitalInput(spec, backend)
+            digital_input = DigitalInput(spec, backend)
+            self._inputs[name] = digital_input
+            try:
+                subscription = digital_input.subscribe(_log_input_change)
+            except Exception:
+                logger.warning(
+                    "Failed to subscribe to GPIO input '%s' for diagnostic logging",
+                    name,
+                    exc_info=True,
+                )
+            else:
+                self._input_log_subscriptions.append(subscription)
 
         return self._inputs[name]
 
@@ -97,6 +114,13 @@ class GpioManager:
 
             self.output(name)
 
+    def observe_all_inputs(self) -> None:
+        for name, spec in self._pins.items():
+            if spec.direction != "input":
+                continue
+
+            self.input(name)
+
     def set_fake_input(self, name: str, value: bool, *, raw: bool = False) -> None:
         spec = self._require_pin(name)
 
@@ -120,6 +144,10 @@ class GpioManager:
                 output.shutdown()
             except Exception as exc:
                 errors.append(exc)
+
+        for subscription in self._input_log_subscriptions:
+            subscription.close()
+        self._input_log_subscriptions.clear()
 
         for backend in self._unique_backends():
             try:
@@ -145,7 +173,7 @@ class GpioManager:
         if spec.board == "rpi":
             return self._get_or_create_backend("rpi", lambda: RpiGpioBackend())
 
-        if spec.board == "pcf8575":
+        if spec.board == "pca9535":
             if spec.expander is None:
                 raise GpioConfigError(f"GPIO pin '{spec.name}' requires an expander")
 
@@ -157,8 +185,8 @@ class GpioManager:
                 )
 
             return self._get_or_create_backend(
-                f"pcf8575:{spec.expander}",
-                lambda: Pcf8575Backend(expander, rpi_backend=self._rpi_backend()),
+                f"pca9535:{spec.expander}",
+                lambda: Pca9535Backend(expander, rpi_backend=self._rpi_backend()),
             )
 
         raise GpioConfigError(f"Unsupported GPIO board '{spec.board}'")
@@ -212,12 +240,18 @@ class GpioManager:
             key = (interrupt.board, None, interrupt.pin)
             previous = claimed.get(key)
 
+            # Multiple expanders may legitimately share one interrupt pin (a
+            # wired-AND INT line tied to several chips), so only a collision
+            # with a directly-claimed rpi pin is treated as an error - other
+            # expanders' interrupts are deliberately not recorded in `claimed`.
             if previous is not None:
                 raise GpioConfigError(
                     f"GPIO expander '{expander.name}' interrupt shares physical pin with '{previous}'"
                 )
 
-            claimed[key] = f"{expander.name}_interrupt"
+
+def _log_input_change(event: GpioEvent) -> None:
+    logger.info("%s: %s", event.name, "HIGH" if event.value else "LOW")
 
 
 def _to_dict(value: Any | None) -> dict[str, Any] | None:
@@ -247,7 +281,7 @@ def _parse_expander(value: Any) -> GpioExpanderSpec:
 
     return GpioExpanderSpec(
         name=str(data["name"]),
-        kind=data.get("type", data.get("kind", "pcf8575")),
+        kind=data.get("type", data.get("kind", "pca9535")),
         bus=int(data.get("bus", 1)),
         address=int(data.get("address", 0x20)),
         interrupt=interrupt,

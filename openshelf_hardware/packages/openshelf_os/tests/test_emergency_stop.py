@@ -7,6 +7,7 @@ import pathlib
 import sys
 import unittest
 import types
+from unittest.mock import patch
 
 BASE = pathlib.Path(__file__).resolve()
 sys.path.insert(0, str(BASE.parents[1] / "src"))
@@ -217,6 +218,42 @@ class FakeEstopInput:
 
     def read(self):
         return self.value
+
+
+class FakeEstopSubscription:
+    def __init__(self):
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+
+
+class SubscribableEstopInput(FakeEstopInput):
+    def __init__(self):
+        super().__init__()
+        self.callback = None
+        self.subscription = FakeEstopSubscription()
+
+    def subscribe(self, callback):
+        self.callback = callback
+        return self.subscription
+
+    def set_value(self, value, *, notify=True):
+        self.value = value
+        if notify and self.callback is not None:
+            self.callback(types.SimpleNamespace(value=value))
+
+
+class EstopGpio:
+    def __init__(self, estop_input):
+        self.estop_input = estop_input
+
+    def has_pin(self, name):
+        return name == "estop"
+
+    def input(self, name):
+        assert name == "estop"
+        return self.estop_input
 
 
 class FailingEstopInput:
@@ -499,6 +536,67 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
                 await monitor_task
             except asyncio.CancelledError:
                 pass
+            RobotWorker._instance = None
+
+    async def test_estop_interrupt_wakes_continuous_monitor_immediately(self):
+        import openshelf_os.robot.worker as worker_module
+
+        estop_input = SubscribableEstopInput()
+        robot = MockRobot()
+        robot._gpio = EstopGpio(estop_input)
+        RobotWorker = worker_module.RobotWorker
+        RobotWorker._instance = None
+        worker = RobotWorker(robot)
+        worker._running = True
+
+        try:
+            with patch.object(worker_module, "ESTOP_POLL_INTERVAL_SECONDS", 10.0):
+                await worker._start_estop_monitor()
+                await asyncio.sleep(0)
+
+                self.assertIsNotNone(worker._estop_subscription)
+                self.assertIsNotNone(worker._estop_monitor_task)
+
+                estop_input.set_value(True)
+                for _ in range(20):
+                    if worker._is_estop_active is True:
+                        break
+                    await asyncio.sleep(0.005)
+
+                self.assertTrue(worker._is_estop_active)
+                self.assertTrue(worker._is_emergency_stopped)
+                self.assertEqual(worker._emergency_stop_reason, "Physical emergency stop triggered")
+        finally:
+            worker._running = False
+            await worker._stop_estop_monitor()
+            self.assertTrue(estop_input.subscription.closed)
+            RobotWorker._instance = None
+
+    async def test_estop_polling_detects_change_when_subscription_is_silent(self):
+        import openshelf_os.robot.worker as worker_module
+
+        estop_input = SubscribableEstopInput()
+        robot = MockRobot()
+        robot._gpio = EstopGpio(estop_input)
+        RobotWorker = worker_module.RobotWorker
+        RobotWorker._instance = None
+        worker = RobotWorker(robot)
+        worker._running = True
+
+        try:
+            with patch.object(worker_module, "ESTOP_POLL_INTERVAL_SECONDS", 0.005):
+                await worker._start_estop_monitor()
+                await asyncio.sleep(0)
+
+                estop_input.set_value(True, notify=False)
+                await asyncio.sleep(0.02)
+
+                self.assertTrue(worker._is_estop_active)
+                self.assertTrue(worker._is_emergency_stopped)
+                self.assertEqual(worker._emergency_stop_reason, "Physical emergency stop triggered")
+        finally:
+            worker._running = False
+            await worker._stop_estop_monitor()
             RobotWorker._instance = None
 
     async def test_estop_monitor_crashes_on_active_input(self):

@@ -38,6 +38,24 @@ class RpiGpioBackend:
 
     def setup_input(self, spec: GpioPinSpec) -> None:
         with self._lock:
+            previous = self._configured_specs.get(spec.pin)
+            if spec.pin in self._event_pins:
+                if (
+                    previous is not None
+                    and previous.direction == "input"
+                    and previous.pull == spec.pull
+                ):
+                    # Shared expander interrupt lines legitimately request the
+                    # same physical input more than once. In rpi-lgpio,
+                    # GPIO.setup() frees and reclaims an existing line, which
+                    # silently removes its kernel alert. Preserve the active
+                    # edge detector when the electrical setup is unchanged.
+                    return
+
+                raise GpioConfigError(
+                    f"RPi GPIO pin {spec.pin} cannot be reconfigured while edge detection is active"
+                )
+
             self._setup_input_locked(spec)
 
     def setup_output(self, spec: GpioPinSpec) -> None:

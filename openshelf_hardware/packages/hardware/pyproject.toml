@@ -6,7 +6,7 @@ requires-python = ">=3.12"
 dependencies = [
     "adafruit-blinka>=8.0.0",
     "adafruit-circuitpython-busdevice>=5.0.0",
-    "adafruit-circuitpython-pcf8575>=1.0.14",
+    "smbus2>=0.4.0",
     "adafruit-circuitpython-tca9548a>=0.8.0",
     "adafruit-circuitpython-vl53l1x>=1.2.9",
     "opencv-python",
