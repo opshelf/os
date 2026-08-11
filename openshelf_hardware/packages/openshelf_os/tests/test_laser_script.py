@@ -225,7 +225,7 @@ def test_from_run_apply_uses_single_shelf_scope(monkeypatch: pytest.MonkeyPatch,
 	apply_analysis.assert_not_called()
 
 
-def test_from_run_apply_uses_legacy_single_cell_without_reference_apply(
+def test_from_run_apply_uses_single_cell_rescan(
 	monkeypatch: pytest.MonkeyPatch,
 	tmp_path: Path,
 ) -> None:
@@ -266,8 +266,11 @@ def test_from_run_apply_uses_legacy_single_cell_without_reference_apply(
 
 	assert result == 0
 	apply_single_cell_rescan.assert_called_once()
-	assert 'xy_reference_detected_cell' not in apply_single_cell_rescan.call_args.kwargs
-	assert 'z_reference_wall_depth_mm' not in apply_single_cell_rescan.call_args.kwargs
+	call_kwargs = apply_single_cell_rescan.call_args.kwargs
+	assert call_kwargs['target'].shelf_idx == 1
+	assert call_kwargs['target'].cell_idx == 2
+	assert call_kwargs['side'] == StorageModuleSide.LEFT
+	assert call_kwargs['detected_cell'] is detected_cell
 
 
 def test_print_io_box_scout_result_includes_calibration_points(capsys: pytest.CaptureFixture[str]) -> None:

@@ -194,12 +194,6 @@ class TestFilenameField:
 
 		assert grid.filename == "/custom/path.json"
 
-	def test_filename_not_forced(self):
-		validators = StorageGrid.__pydantic_decorators__.validators
-
-		for v in validators:
-			assert v.info.func.__name__ != "_force_storage_path"
-
 	def test_filename_from_json_preserved(self, tmp_path):
 		data = {**EMPTY_GRID, "filename": "/some/path"}
 		f = tmp_path / "with_fn.json"

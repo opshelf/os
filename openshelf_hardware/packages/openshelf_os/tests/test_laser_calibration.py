@@ -668,7 +668,7 @@ async def test_run_io_box_scout_stops_x_scan_at_width_limit() -> None:
 	tool.retract.assert_awaited_once()
 
 
-def test_apply_xy_reference_offsets_requires_reference() -> None:
+def test_apply_xy_reference_offsets_requires_fixed_offset() -> None:
 	with pytest.raises(ValueError, match='robot.grid.scan.left_xy_offset must be configured'):
 		apply_xy_reference_offsets(
 			scanned_shelves=[],

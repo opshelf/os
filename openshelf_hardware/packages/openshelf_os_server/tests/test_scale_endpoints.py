@@ -15,7 +15,10 @@ def _mock_settings():
 
 
 def _mock_worker():
-	worker = AsyncMock()
+	worker = MagicMock()
+	worker.needs_home = MagicMock(return_value=False)
+	worker.needs_home_axes = MagicMock(return_value=[])
+	worker.needs_home_reason = MagicMock(return_value="")
 	worker.get_scale_data = AsyncMock()
 	worker.get_scale_calibration_status = AsyncMock()
 	worker.get_scale_calibration_params = AsyncMock()
@@ -23,6 +26,7 @@ def _mock_worker():
 	worker.calibrate_scale_zero = AsyncMock()
 	worker.calibrate_scale_weight = AsyncMock()
 	worker.scale_tare = AsyncMock()
+	worker.enqueue_command = AsyncMock()
 	worker.get_cached_scale_status = MagicMock(return_value=None)
 	return worker
 
