@@ -28,12 +28,25 @@ MOTOR_HOME_TIMEOUT = 180.0
 MOTOR_JOG_TIMEOUT = 10.0
 MOTOR_WAIT_TIMEOUT = 60.0
 POSITION_TOLERANCE_MM = 1.0
+NOOP_POSITION_TOLERANCE_MM = 0.01
 HOME_APPROACH_TOLERANCE_MM = 1.0
 DEFAULT_HOME_APPROACH_BACKOFF_MM = 5.0
-DEFAULT_BRAKE_OUTPUT_FUNCTION = 0xA1
-RELEASED_BRAKE_OUTPUT_FUNCTION = 0x24
+BRAKE_OUTPUT_FUNCTIONS = frozenset({0x24, 0xA4})
+DEFAULT_BRAKE_RELEASE_DELAY_MS = 250
+DEFAULT_BRAKE_ENGAGEMENT_DELAY_MS = 250
+DEFAULT_BRAKE_ENGAGEMENT_SPEED_THRESHOLD = 10
 DEFAULT_STALL_TIMEOUT_S = 5.0
 SOFTWARE_STALL_CONFIRM_DELAY_S = 0.05
+Y_AXIS_RUNTIME_PROFILE = {
+    "Ip": 60,
+    "control_mode": 2,
+    "ppr": 10000,
+    "encoder_resolution_cpr": 4000,
+    "brake_output_function": 0x24,
+    "brake_release_delay_ms": 250,
+    "brake_engagement_delay_ms": 250,
+    "brake_engagement_speed_threshold": 10,
+}
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +58,13 @@ class MotorStatus(Enum):
     ERROR = 3
     FAULT = 4
     TIMEOUT = 5
+
+
+TERMINAL_MOTOR_STATUSES = frozenset({
+    MotorStatus.ERROR,
+    MotorStatus.FAULT,
+    MotorStatus.TIMEOUT,
+})
 
 
 @dataclass
@@ -146,10 +166,32 @@ class Motor():
         self._move_accel: int | None = None
         self._last_raw_position: int | None = None
         self._last_position_read_latency_s: float | None = None
-        self._configured_brake_output_function = int(
-            getattr(self._params, "brake_output_function", DEFAULT_BRAKE_OUTPUT_FUNCTION)
+        configured_brake_output = getattr(self._params, "brake_output_function", None)
+        self._configured_brake_output_function = (
+            None if configured_brake_output is None else int(configured_brake_output)
         )
-        self._active_brake_output_function = self._configured_brake_output_function
+        self._brake_release_delay_ms = int(
+            getattr(
+                self._params,
+                "brake_release_delay_ms",
+                DEFAULT_BRAKE_RELEASE_DELAY_MS,
+            )
+        )
+        self._brake_engagement_delay_ms = int(
+            getattr(
+                self._params,
+                "brake_engagement_delay_ms",
+                DEFAULT_BRAKE_ENGAGEMENT_DELAY_MS,
+            )
+        )
+        self._brake_engagement_speed_threshold = int(
+            getattr(
+                self._params,
+                "brake_engagement_speed_threshold",
+                DEFAULT_BRAKE_ENGAGEMENT_SPEED_THRESHOLD,
+            )
+        )
+        self._active_brake_output_function: int | None = None
 
     # ------------------------------------------------------------------ #
     #  Lifecycle
@@ -180,18 +222,22 @@ class Motor():
             await self._controller.write_single_register(self._motor_id, 0x6000, 0x0000)
 
             # Configure motor parameters
-            await self.set_param("SO2 output function", self._configured_brake_output_function)
-            self._active_brake_output_function = self._configured_brake_output_function
-            await self._controller.write_single_register(self._motor_id, 0x0167, 100)
-            await self._controller.write_single_register(self._motor_id, 0x0169, 100)
-            await self._controller.write_single_register(self._motor_id, 0x016B, 10)
+            if getattr(self._params, "motor_name", None) == "y_axis":
+                await self._configure_motor_electrical_parameters()
+            else:
+                # Preserve the existing configuration behavior for motors whose
+                # model-specific encoder and electronic-gearing data was not part
+                # of the Y-axis incident review.
+                await self.set_param("Peak current", self._params.Ip)
+
+            if self._configured_brake_output_function is not None:
+                await self._configure_brake_control()
             max_following_error = getattr(self._params, "max_following_error", 4000)
             await self.set_param("Allowed max position following error", max_following_error)
             await self.set_param("Position loop Kp", 50)
             await self.set_param("Max stop time", 100)
             await self.set_param("Acceleration", self._params.accel)
             await self.set_param("Deceleration", self._params.accel)
-            await self.set_param("Peak current", self._params.Ip)
 
             # Configure movement parameters
             await self.move_config()
@@ -241,7 +287,7 @@ class Motor():
                 raise MotorError(f"Failed to set parameter {register}: {str(e)}") from e
             raise
 
-    async def get_param(self, register: str) -> Optional[int]:
+    async def get_param(self, register: str) -> int:
         try:
             reg_addr = motor_helpers.get_register_by_name(register)
 
@@ -514,20 +560,185 @@ class Motor():
     #  Brake management
     # ------------------------------------------------------------------ #
 
+    def _expected_motor_electrical_settings(self) -> dict[str, int]:
+        return {
+            "Control Mode": int(getattr(self._params, "control_mode", 2)),
+            "Pulse/revolution": int(getattr(self._params, "ppr", 10000)),
+            "Encoder resolution": int(
+                getattr(self._params, "encoder_resolution_cpr", 4000)
+            ),
+            "Peak current": int(self._params.Ip),
+        }
+
+    def _validate_y_axis_runtime_profile(self) -> None:
+        if getattr(self._params, "motor_name", None) != "y_axis":
+            return
+
+        configured_profile = {
+            "Ip": int(self._params.Ip),
+            "control_mode": int(getattr(self._params, "control_mode", 2)),
+            "ppr": int(getattr(self._params, "ppr", 10000)),
+            "encoder_resolution_cpr": int(
+                getattr(self._params, "encoder_resolution_cpr", 4000)
+            ),
+            "brake_output_function": self._configured_brake_output_function,
+            "brake_release_delay_ms": self._brake_release_delay_ms,
+            "brake_engagement_delay_ms": self._brake_engagement_delay_ms,
+            "brake_engagement_speed_threshold": self._brake_engagement_speed_threshold,
+        }
+        mismatches = [
+            f"{field}={configured_profile[field]} (expected {expected})"
+            for field, expected in Y_AXIS_RUNTIME_PROFILE.items()
+            if configured_profile[field] != expected
+        ]
+        if mismatches:
+            raise MotorConfigError(
+                "Y-axis runtime profile does not match the installed-machine profile: "
+                + ", ".join(mismatches)
+            )
+
+    async def _configure_motor_electrical_parameters(self) -> None:
+        self._validate_y_axis_runtime_profile()
+        settings = self._expected_motor_electrical_settings()
+
+        for parameter_name, value in settings.items():
+            await self.set_param(parameter_name, value)
+
+        await self._read_and_verify_motor_electrical_parameters()
+
+    async def _read_and_verify_motor_electrical_parameters(self) -> dict[str, int]:
+        settings = self._expected_motor_electrical_settings()
+        actual_settings: dict[str, int] = {}
+
+        for parameter_name, expected_value in settings.items():
+            actual_value = await self.get_param(parameter_name)
+            actual_settings[parameter_name] = actual_value
+            if actual_value != expected_value:
+                raise MotorConfigError(
+                    f"Motor {self._motor_id} {parameter_name} readback mismatch: "
+                    f"configured={expected_value}, read={actual_value}"
+                )
+
+        return actual_settings
+
+    def require_brake_output_configuration(self) -> int:
+        brake_output_function = self._configured_brake_output_function
+
+        if brake_output_function not in BRAKE_OUTPUT_FUNCTIONS:
+            raise MotorConfigError(
+                f"Motor {self._motor_id} has no verified brake output configuration; "
+                "set brake_output_function to 0x24 or 0xA4"
+            )
+
+        return brake_output_function
+
+    def _expected_brake_control_settings(self) -> dict[str, int]:
+        return {
+            "Brake release delay": self._brake_release_delay_ms,
+            "Brake engagement delay": self._brake_engagement_delay_ms,
+            "Brake engagement speed threshold": self._brake_engagement_speed_threshold,
+        }
+
+    async def _read_and_verify_brake_control(self) -> dict[str, int]:
+        configured_function = self.require_brake_output_configuration()
+        expected_settings = {
+            "SO2 output function": configured_function,
+            **self._expected_brake_control_settings(),
+        }
+        actual_settings: dict[str, int] = {}
+
+        for parameter_name, expected_value in expected_settings.items():
+            actual_value = await self.get_param(parameter_name)
+            actual_settings[parameter_name] = actual_value
+            if actual_value != expected_value:
+                raise MotorConfigError(
+                    f"Motor {self._motor_id} {parameter_name} readback mismatch: "
+                    f"configured={expected_value}, read={actual_value}"
+                )
+
+        return actual_settings
+
+    async def _configure_brake_control(self) -> None:
+        # Establish and verify the manufacturer's sequencing parameters before
+        # assigning BRK to the output, which can immediately change relay state.
+        for parameter_name, value in self._expected_brake_control_settings().items():
+            await self.set_param(parameter_name, value)
+
+        for parameter_name, expected_value in self._expected_brake_control_settings().items():
+            actual_value = await self.get_param(parameter_name)
+            if actual_value != expected_value:
+                raise MotorConfigError(
+                    f"Motor {self._motor_id} {parameter_name} readback mismatch: "
+                    f"configured={expected_value}, read={actual_value}"
+                )
+
+        await self.set_brake_output_function(
+            self.require_brake_output_configuration(),
+            force=True,
+        )
+
+    async def _verify_brake_output_before_motion_trigger(self) -> None:
+        if getattr(self._params, "motor_name", None) != "y_axis":
+            return
+
+        configured_function = self.require_brake_output_configuration()
+        register_function = await self.get_param("SO2 output function")
+
+        if register_function != configured_function:
+            raise MotorConfigError(
+                f"Motor {self._motor_id} SO2 readback mismatch: "
+                f"configured=0x{configured_function:02X}, read=0x{register_function:02X}"
+            )
+
+        self._active_brake_output_function = configured_function
+
+    async def get_brake_output_diagnostics(self) -> dict[str, int]:
+        configured_function = self.require_brake_output_configuration()
+        motor_settings = await self._read_and_verify_motor_electrical_parameters()
+        settings = await self._read_and_verify_brake_control()
+        output_state = await self.get_param("Digital output state")
+
+        return {
+            "control_mode": motor_settings["Control Mode"],
+            "command_pulses_per_revolution": motor_settings["Pulse/revolution"],
+            "encoder_resolution_cpr": motor_settings["Encoder resolution"],
+            "peak_current_setting": motor_settings["Peak current"],
+            "configured_function": configured_function,
+            "register_function": settings["SO2 output function"],
+            "release_delay_ms": settings["Brake release delay"],
+            "engagement_delay_ms": settings["Brake engagement delay"],
+            "engagement_speed_threshold": settings[
+                "Brake engagement speed threshold"
+            ],
+            "output_state": output_state,
+        }
+
     async def set_brake_output_function(self, value: int, *, force: bool = False) -> None:
         brake_output_function = int(value)
+
+        if brake_output_function not in BRAKE_OUTPUT_FUNCTIONS:
+            raise MotorConfigError(
+                f"Refusing non-brake SO2 function 0x{brake_output_function:02X}; "
+                "expected 0x24 or 0xA4"
+            )
 
         if force is False and self._active_brake_output_function == brake_output_function:
             return
 
         await self.set_param("SO2 output function", brake_output_function)
+        register_function = await self.get_param("SO2 output function")
+
+        if register_function != brake_output_function:
+            raise MotorConfigError(
+                f"Motor {self._motor_id} rejected SO2 output function: "
+                f"wrote=0x{brake_output_function:02X}, read=0x{register_function:02X}"
+            )
+
         self._active_brake_output_function = brake_output_function
 
-    async def disable_brake_output(self) -> None:
-        await self.set_brake_output_function(RELEASED_BRAKE_OUTPUT_FUNCTION)
-
     async def restore_brake_output(self) -> None:
-        await self.set_brake_output_function(self._configured_brake_output_function, force=True)
+        brake_output_function = self.require_brake_output_configuration()
+        await self.set_brake_output_function(brake_output_function, force=True)
 
     # ------------------------------------------------------------------ #
     #  Alarm / fault management
@@ -591,7 +802,12 @@ class Motor():
         pm = self._params.phys_at_max if self._params.phys_at_max is not None else self._params.lim
         return p0 > pm
 
-    async def _start_absolute_move(self, value: float, rpm: Optional[int] = None, accel: Optional[int] = None) -> None:
+    async def _start_absolute_move(
+        self,
+        value: float,
+        rpm: Optional[int] = None,
+        accel: Optional[int] = None,
+    ) -> bool:
         original_value = value
 
         lower_lim = getattr(self._params, "lower_lim", 0)
@@ -611,6 +827,22 @@ class Motor():
                     "limit_mm": self._params.lim,
                 },
             )
+
+        if (
+            self._cur_pos is not None
+            and abs(value - self._cur_pos) <= NOOP_POSITION_TOLERANCE_MM
+        ):
+            self._logger.info(
+                "Motor move skipped because target matches current position",
+                extra={
+                    "motor_id": self._motor_id,
+                    "motor_name": getattr(self._params, "motor_name", None),
+                    "position_mm": self._cur_pos,
+                    "target_mm": value,
+                    "tolerance_mm": NOOP_POSITION_TOLERANCE_MM,
+                },
+            )
+            return False
 
         self._target_pos = value
         physical_pos = self._params.logical_to_physical(value)
@@ -639,6 +871,7 @@ class Motor():
             }
         )
 
+        await self._verify_brake_output_before_motion_trigger()
         await self._controller.write_single_register(
             self._motor_id,
             motor_helpers.TRIGGER,
@@ -672,6 +905,8 @@ class Motor():
             }
         )
 
+        return True
+
     # ------------------------------------------------------------------ #
     #  Public movement API
     # ------------------------------------------------------------------ #
@@ -694,7 +929,9 @@ class Motor():
                 await self._safety.wait_clear()
 
             t0 = time.monotonic()
-            await self._start_absolute_move(value, rpm, accel)
+            did_start = await self._start_absolute_move(value, rpm, accel)
+            if did_start is False:
+                return
             status = await self.wait_for_move(timeout=MOTOR_MOVE_TIMEOUT, homing=homing)
             elapsed = time.monotonic() - t0
 
@@ -713,7 +950,12 @@ class Motor():
                 raise MotorError(f"Failed to move motor {self._motor_id} to position {value}mm: {str(e)}") from e
             raise
 
-    async def move_to_position_no_wait(self, value: float, rpm: Optional[int] = None, accel: Optional[int] = None) -> None:
+    async def move_to_position_no_wait(
+        self,
+        value: float,
+        rpm: Optional[int] = None,
+        accel: Optional[int] = None,
+    ) -> bool:
         try:
             if self._safety:
                 if self._safety.blocked:
@@ -723,7 +965,7 @@ class Motor():
                     )
                 await self._safety.wait_clear()
 
-            await self._start_absolute_move(value, rpm, accel)
+            return await self._start_absolute_move(value, rpm, accel)
 
         except Exception as e:
             if not isinstance(e, (MotorError, MotorLimitError)):
@@ -746,6 +988,7 @@ class Motor():
             await self.set_param("Position High", pulse[0])
             await self.set_param("Position Low", pulse[1])
 
+            await self._verify_brake_output_before_motion_trigger()
             await self._controller.write_single_register(
                 self._motor_id,
                 motor_helpers.TRIGGER,
@@ -778,6 +1021,10 @@ class Motor():
                 motor_helpers.TRIGGER,
                 0x40
             )
+            if self._status in TERMINAL_MOTOR_STATUSES:
+                return self._status
+
+            self._status = MotorStatus.STOPPED
             return MotorStatus.STOPPED
 
         except Exception as e:
@@ -805,6 +1052,8 @@ class Motor():
         )
 
         did_cancel_motion = False
+        snapshot: MotionSnapshot | None = None
+        alarm_state: MotionAlarmState | None = None
 
         try:
             while True:
@@ -842,8 +1091,52 @@ class Motor():
 
                 await asyncio.sleep(0.01)
         except asyncio.CancelledError:
-            if homing is True and did_cancel_motion is False:
-                await self._cancel_motion(homing=True)
+            if did_cancel_motion is False:
+                await asyncio.shield(self._cancel_motion(homing=homing))
+            raise
+        except Exception as exc:
+            alarm_read_error: str | None = None
+            try:
+                alarm_state = await self._read_alarm_state(homing, state)
+            except Exception as alarm_exc:
+                alarm_state = None
+                alarm_read_error = str(alarm_exc)
+
+            self._record_flight_snapshot(snapshot, alarm_state, state, None)
+
+            stop_error: str | None = None
+            try:
+                await self.stop()
+            except Exception as stop_exc:
+                stop_error = str(stop_exc)
+                self._logger.error(
+                    "Failed to stop motor after motion monitoring exception",
+                    extra={"motor_id": self._motor_id, "error": stop_error},
+                )
+
+            if self._status not in TERMINAL_MOTOR_STATUSES:
+                self._status = MotorStatus.ERROR
+            self._hard_stopped = True
+            self._is_homed = False
+            self._cur_pos = None
+            self._clear_pending_motion()
+            dump_path = self._dump_flight_recorder(
+                reason="motion_exception",
+                state=state,
+                snapshot=snapshot,
+                alarm_state=alarm_state,
+            )
+            fault_context = {
+                "motor_id": self._motor_id,
+                "status_word": None if snapshot is None else snapshot.status_word,
+                "alarm_code": None if alarm_state is None else alarm_state.alarm_code,
+                "stop_error": stop_error,
+                "flight_recorder_path": dump_path,
+                "position_known": False,
+            }
+            if alarm_read_error is not None:
+                fault_context["alarm_read_error"] = alarm_read_error
+            setattr(exc, "fault_context", fault_context)
             raise
 
     def _is_completion_stable(self, state: MotionWaitState) -> bool:
@@ -854,8 +1147,10 @@ class Motor():
         self._target_pos = None
 
     async def _stop_and_clear_motion(self) -> None:
-        await self.stop()
-        self._clear_pending_motion()
+        try:
+            await self.stop()
+        finally:
+            self._clear_pending_motion()
 
     def _is_move_cancelled(self, should_abort: Callable[[], bool] | None) -> bool:
         current_task = asyncio.current_task()
@@ -934,7 +1229,25 @@ class Motor():
         )
 
         await self.stop()
+        if self._status in TERMINAL_MOTOR_STATUSES:
+            self._clear_pending_motion()
+            self._hard_stopped = True
+            self._is_homed = False
+            raise MotorError(
+                f"Motor {self._motor_id} entered terminal state while paused for safety: "
+                f"{self._status.name}"
+            )
+
         await self._safety.wait_clear()
+
+        if self._status in TERMINAL_MOTOR_STATUSES:
+            self._clear_pending_motion()
+            self._hard_stopped = True
+            self._is_homed = False
+            raise MotorError(
+                f"Motor {self._motor_id} entered terminal state while waiting for safety to clear: "
+                f"{self._status.name}"
+            )
 
         if self._pending_motion:
             self._logger.info(
@@ -960,38 +1273,45 @@ class Motor():
         await self.stop()
         self._pending_motion = None
 
+        if self._status in TERMINAL_MOTOR_STATUSES:
+            self._target_pos = None
+            return self._status
+
         if self._target_pos is not None:
-            try:
-                current_pos = await self.get_position()
-                position_error = abs(current_pos - self._target_pos)
+            current_pos = await self.get_position()
 
-                if position_error > POSITION_TOLERANCE_MM:
-                    self._logger.warning(
-                        "Motor stopped away from target",
-                        extra={
-                            "motor_id": self._motor_id,
-                            "target_mm": self._target_pos,
-                            "position_mm": current_pos,
-                            "position_error_mm": position_error,
-                            "tolerance_mm": POSITION_TOLERANCE_MM,
-                        },
-                    )
-                    self._target_pos = None
-                    self._hard_stopped = True
-                    self._is_homed = False
+            if self._status in TERMINAL_MOTOR_STATUSES:
+                self._target_pos = None
+                return self._status
 
-                    self._dump_flight_recorder(
-                        reason="position_error",
-                        state=state,
-                    )
-                    return MotorStatus.FAULT
-            except Exception as position_exc:
+            position_error = abs(current_pos - self._target_pos)
+
+            if position_error > POSITION_TOLERANCE_MM:
                 self._logger.warning(
-                    "Failed to verify motor position after move",
-                    extra={"motor_id": self._motor_id, "error": str(position_exc)},
+                    "Motor stopped away from target",
+                    extra={
+                        "motor_id": self._motor_id,
+                        "target_mm": self._target_pos,
+                        "position_mm": current_pos,
+                        "position_error_mm": position_error,
+                        "tolerance_mm": POSITION_TOLERANCE_MM,
+                    },
                 )
+                self._target_pos = None
+                self._status = MotorStatus.FAULT
+                self._hard_stopped = True
+                self._is_homed = False
+                self._dump_flight_recorder(
+                    reason="position_error",
+                    state=state,
+                )
+                return MotorStatus.FAULT
 
         self._target_pos = None
+        if self._status in TERMINAL_MOTOR_STATUSES:
+            return self._status
+
+        self._status = MotorStatus.STOPPED
         self._hard_stopped = False
 
         self._logger.debug(
@@ -1054,6 +1374,7 @@ class Motor():
         state: MotionWaitState,
     ) -> MotorStatus:
         await self._stop_and_clear_motion()
+        status = self._status if self._status in TERMINAL_MOTOR_STATUSES else MotorStatus.STOPPED
 
         self._logger.warning(
             "Limit stop detected during homing",
@@ -1065,7 +1386,7 @@ class Motor():
             },
         )
 
-        return MotorStatus.STOPPED
+        return status
 
     def _is_position_progress(self, position_delta: float | None) -> bool:
         return position_delta is not None and position_delta != 0
@@ -1121,14 +1442,7 @@ class Motor():
         previous_pos = state.last_pos
 
         await asyncio.sleep(SOFTWARE_STALL_CONFIRM_DELAY_S)
-        try:
-            await self.get_position()
-        except Exception as exc:
-            self._logger.warning(
-                "Failed to confirm motor progress with fresh position read",
-                extra={"motor_id": self._motor_id, "error": str(exc)},
-            )
-            return False
+        await self.get_position()
 
         now = time.monotonic()
         position_delta = None
@@ -1166,6 +1480,7 @@ class Motor():
         state: MotionWaitState,
     ) -> MotorStatus:
         await self.stop()
+        terminal_status = self._status if self._status in TERMINAL_MOTOR_STATUSES else MotorStatus.FAULT
         dump_path = self._dump_flight_recorder(
             reason="fault",
             state=state,
@@ -1193,10 +1508,11 @@ class Motor():
                 },
             )
 
+            self._status = terminal_status
             self._hard_stopped = True
             self._is_homed = False
 
-            return MotorStatus.FAULT
+            return terminal_status
 
         fault_type = "Simulated fault" if self._simulated_fault else "Fault"
         target_pos = self._target_pos
@@ -1225,10 +1541,11 @@ class Motor():
 
         self._target_pos = None
         self._pending_motion = None
+        self._status = terminal_status
         self._hard_stopped = True
         self._is_homed = False
 
-        return MotorStatus.FAULT
+        return terminal_status
 
     async def _finish_timeout(
         self,
@@ -1237,6 +1554,7 @@ class Motor():
         state: MotionWaitState,
     ) -> MotorStatus:
         await self.stop()
+        terminal_status = self._status if self._status in TERMINAL_MOTOR_STATUSES else MotorStatus.TIMEOUT
         target_pos = self._target_pos
         current_pos = self._cur_pos
         dump_path = self._dump_flight_recorder(
@@ -1259,8 +1577,11 @@ class Motor():
             }
         )
         self._clear_pending_motion()
+        self._status = terminal_status
+        self._hard_stopped = True
+        self._is_homed = False
 
-        return MotorStatus.TIMEOUT
+        return terminal_status
 
     # ------------------------------------------------------------------ #
     #  Homing internals
@@ -1279,6 +1600,7 @@ class Motor():
         await self.set_param("Velocity", rpm)
 
     async def _start_path_zero(self) -> None:
+        await self._verify_brake_output_before_motion_trigger()
         await self._controller.write_single_register(
             self._motor_id,
             motor_helpers.TRIGGER,

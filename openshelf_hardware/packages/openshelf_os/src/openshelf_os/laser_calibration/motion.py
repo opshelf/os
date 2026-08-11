@@ -42,13 +42,13 @@ async def set_y_brake_for_scan_motion(
 	if y_motor is None:
 		raise ValueError("Y-axis motor is required for scan motion")
 
-	if is_enabled is True:
-		await y_motor.restore_brake_output()
-		print_status("y_brake=enabled")
-		return
-
-	await y_motor.disable_brake_output()
-	print_status("y_brake=disabled")
+	diagnostics = await y_motor.get_brake_output_diagnostics()
+	phase = "scan_end" if is_enabled is True else "scan_start"
+	print_status(
+		f"y_brake=drive_controlled phase:{phase} "
+		f"function:0x{diagnostics['register_function']:02X} "
+		f"output_state:0x{diagnostics['output_state']:04X}"
+	)
 
 
 async def enter_scan_mode(tool: Any, side: StorageModuleSide, scan_config: Any) -> None:

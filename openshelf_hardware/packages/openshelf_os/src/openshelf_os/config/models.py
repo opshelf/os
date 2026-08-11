@@ -44,7 +44,13 @@ class Motor(BaseModel):
     status_reg: int = Field(default=0x1003)
     status_fault_bit: Optional[int] = Field(default=0)
     status_complete_bit: int = Field(default=5)
+    brake_output_function: Optional[Literal[0x24, 0xA4]] = Field(default=None)
+    brake_release_delay_ms: int = Field(default=250, ge=0, le=1500)
+    brake_engagement_delay_ms: int = Field(default=250, ge=0, le=1500)
+    brake_engagement_speed_threshold: int = Field(default=10, ge=0, le=500)
+    control_mode: Literal[0, 2] = Field(default=2)
     ppr: int = Field(default=10000, ge=200, le=100000)
+    encoder_resolution_cpr: int = Field(default=4000, ge=200, le=20000)
     max_following_error: int = Field(default=4000, ge=100, le=65535)
     stall_timeout_s: float = Field(default=5.0, gt=0)
 
@@ -85,6 +91,34 @@ class Motor(BaseModel):
             raise ValueError(
                 f"Motor '{self.motor_name}': physical endpoints must be <= lim ({self.lim}), "
                 f"got phys_at_zero={p0}, phys_at_max={pm}"
+            )
+
+        return self
+
+    @model_validator(mode="after")
+    def _validate_y_axis_controller_profile(self) -> "Motor":
+        if self.motor_name != "y_axis":
+            return self
+
+        required_profile = {
+            "Ip": 60,
+            "control_mode": 2,
+            "ppr": 10000,
+            "encoder_resolution_cpr": 4000,
+            "brake_output_function": 0x24,
+            "brake_release_delay_ms": 250,
+            "brake_engagement_delay_ms": 250,
+            "brake_engagement_speed_threshold": 10,
+        }
+        mismatches = [
+            f"{field}={getattr(self, field)} (expected {expected})"
+            for field, expected in required_profile.items()
+            if getattr(self, field) != expected
+        ]
+        if mismatches:
+            raise ValueError(
+                "Y-axis controller profile does not match the supplied 6.0 A, "
+                "1000-PPR motor data and application gearing: " + ", ".join(mismatches)
             )
 
         return self
