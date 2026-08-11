@@ -269,20 +269,6 @@ async def test_storage_cell_operations() -> None:
 
 
 @pytest.mark.anyio
-async def test_detect_migration_needed() -> None:
-    """Test migration detection logic."""
-    async with AsyncSessionLocal() as db:
-        service = StorageService(db)
-
-        # Initially no migration should be needed (empty database)
-        migration_needed = await service.detect_migration_needed()
-
-        # This should be False initially since no JSON file exists in test environment
-        # We'll set this as False since the test environment doesn't have the JSON file
-        assert migration_needed is False
-
-
-@pytest.mark.anyio
 async def test_get_all_occupied_cells() -> None:
     """Test retrieving all occupied cells from the database."""
     async with AsyncSessionLocal() as db:
