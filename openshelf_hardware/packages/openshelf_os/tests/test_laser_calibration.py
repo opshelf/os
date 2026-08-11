@@ -507,8 +507,9 @@ def test_find_gap_run_containing_position_returns_gap_bounds() -> None:
 @pytest.mark.asyncio
 async def test_run_io_box_scout_derives_center_from_measured_right_edge() -> None:
 	y_motor = SimpleNamespace(
-		disable_brake_output=AsyncMock(),
-		restore_brake_output=AsyncMock(),
+		get_brake_output_diagnostics=AsyncMock(
+			return_value={"register_function": 0xA4, "output_state": 0x2}
+		),
 	)
 	tool = SimpleNamespace(
 		retract=AsyncMock(),
@@ -568,15 +569,15 @@ async def test_run_io_box_scout_derives_center_from_measured_right_edge() -> Non
 	io_box.open_door.assert_awaited_once()
 	io_box.home_door.assert_awaited_once()
 	tool.retract.assert_awaited_once()
-	assert y_motor.disable_brake_output.await_count == 3
-	assert y_motor.restore_brake_output.await_count == 3
+	assert y_motor.get_brake_output_diagnostics.await_count == 6
 
 
 @pytest.mark.asyncio
 async def test_run_io_box_scout_derives_stage_and_z_extension() -> None:
 	y_motor = SimpleNamespace(
-		disable_brake_output=AsyncMock(),
-		restore_brake_output=AsyncMock(),
+		get_brake_output_diagnostics=AsyncMock(
+			return_value={"register_function": 0xA4, "output_state": 0x2}
+		),
 	)
 	tool = SimpleNamespace(
 		retract=AsyncMock(),
@@ -625,8 +626,9 @@ async def test_run_io_box_scout_derives_stage_and_z_extension() -> None:
 @pytest.mark.asyncio
 async def test_run_io_box_scout_stops_x_scan_at_width_limit() -> None:
 	y_motor = SimpleNamespace(
-		disable_brake_output=AsyncMock(),
-		restore_brake_output=AsyncMock(),
+		get_brake_output_diagnostics=AsyncMock(
+			return_value={"register_function": 0xA4, "output_state": 0x2}
+		),
 	)
 	tool = SimpleNamespace(retract=AsyncMock(), _my=y_motor)
 	io_box = SimpleNamespace(open_door=AsyncMock(), home_door=AsyncMock())

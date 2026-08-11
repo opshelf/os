@@ -581,13 +581,72 @@ class Tool:
         if self._mx is None or self._my is None:
             raise MotorError("Gantry motors (x_axis, y_axis) required for movement")
 
+        async def stop_gantry_axes() -> list[str]:
+            async def stop_motor(motor: Motor) -> None:
+                cleanup_method = getattr(motor, "_stop_and_clear_motion", None)
+                if cleanup_method is not None:
+                    await cleanup_method()
+                    return
+
+                stop_method = getattr(motor, "stop", None)
+                if stop_method is not None:
+                    await stop_method()
+
+            stop_results = await asyncio.gather(
+                stop_motor(self._mx),
+                stop_motor(self._my),
+                return_exceptions=True,
+            )
+            return [
+                f"{axis}={result}"
+                for axis, result in zip(("x_axis", "y_axis"), stop_results)
+                if isinstance(result, Exception)
+            ]
+
+        async def complete_gantry_cleanup() -> tuple[list[str], asyncio.CancelledError | None]:
+            cleanup_task = asyncio.create_task(stop_gantry_axes())
+            cancellation: asyncio.CancelledError | None = None
+
+            while not cleanup_task.done():
+                try:
+                    await asyncio.shield(cleanup_task)
+                except asyncio.CancelledError as exc:
+                    cancellation = exc
+
+            return cleanup_task.result(), cancellation
+
+        def attach_stop_errors(error: BaseException, stop_errors: list[str]) -> None:
+            if not stop_errors:
+                return
+
+            fault_context = getattr(error, "fault_context", {})
+            if not isinstance(fault_context, dict):
+                fault_context = {}
+            fault_context["gantry_stop_errors"] = stop_errors
+            setattr(error, "fault_context", fault_context)
+
         try:
             await self._ensure_retracted()
             await self._my.move_to_position_no_wait(coordinate.y)
             await self._mx.move_to_position_no_wait(coordinate.x)
             await self.gantry_wait()
 
+        except asyncio.CancelledError as e:
+            stop_errors, cancellation = await complete_gantry_cleanup()
+            attach_stop_errors(e, stop_errors)
+            if cancellation is not None:
+                attach_stop_errors(cancellation, stop_errors)
+                raise cancellation
+            raise
         except Exception as e:
+            stop_errors, cancellation = await complete_gantry_cleanup()
+            attach_stop_errors(e, stop_errors)
+            if cancellation is not None:
+                if hasattr(cancellation, "add_note"):
+                    cancellation.add_note(f"Gantry movement error interrupted by cancellation: {e!r}")
+                if hasattr(e, "fault_context"):
+                    setattr(cancellation, "fault_context", getattr(e, "fault_context"))
+                raise cancellation from e
             await self._handle_fault(e, phase="gantry.move", coordinate=coordinate)
             err = MovementError(f"Gantry movement failed: {str(e)}")
             if hasattr(e, "fault_context"):
@@ -608,31 +667,43 @@ class Tool:
 
         try:
             remaining_timeout = max(0.1, min(GANTRY_WAIT_TIMEOUT, timeout_seconds))
-            x_task = asyncio.create_task(
-                self._mx.wait_for_move(timeout=remaining_timeout, should_abort=should_abort)
-            )
-            y_task = asyncio.create_task(
-                self._my.wait_for_move(timeout=remaining_timeout, should_abort=should_abort)
-            )
-            tasks = {x_task: ("x_axis", self._mx), y_task: ("y_axis", self._my)}
+            missing_pending_marker = object()
+            commanded_motors = {
+                axis: motor
+                for axis, motor in (("x_axis", self._mx), ("y_axis", self._my))
+                if getattr(motor, "_pending_motion", missing_pending_marker) is not None
+            }
+
+            if commanded_motors == {}:
+                self._logger.info(
+                    "Gantry wait skipped because no axes were commanded",
+                    extra={"elapsed_s": time.monotonic() - start_time},
+                )
+                return
+
+            tasks = {
+                asyncio.create_task(
+                    motor.wait_for_move(timeout=remaining_timeout, should_abort=should_abort)
+                ): (axis, motor)
+                for axis, motor in commanded_motors.items()
+            }
             statuses: dict[str, MotorStatus] = {}
 
             def build_axis_statuses() -> dict[str, str]:
                 return {name: item.name for name, item in statuses.items()}
 
-            async def stop_pending(
-                pending_tasks: set[asyncio.Task[MotorStatus]],
-            ) -> list[str]:
+            async def stop_commanded() -> list[str]:
                 cleanup_tasks = []
                 cleanup_axes = []
 
-                for pending_task in pending_tasks:
-                    axis, motor = tasks[pending_task]
+                for axis, motor in commanded_motors.items():
                     cleanup_method = getattr(motor, "_stop_and_clear_motion", None)
 
                     if cleanup_method is None:
                         async def cleanup_motor(item: Motor) -> None:
-                            await item.stop()
+                            stop_method = getattr(item, "stop", None)
+                            if stop_method is not None:
+                                await stop_method()
                             clear_motion = getattr(item, "_clear_pending_motion", None)
                             if clear_motion is not None:
                                 clear_motion()
@@ -650,7 +721,7 @@ class Tool:
 
                 for axis, result in zip(cleanup_axes, results):
                     if isinstance(result, Exception):
-                        statuses[axis] = MotorStatus.ERROR
+                        statuses.setdefault(axis, MotorStatus.ERROR)
                         stop_errors.append(f"{axis}={str(result)}")
                         continue
 
@@ -658,29 +729,26 @@ class Tool:
 
                 return stop_errors
 
-            async def stop_and_drain_pending(
+            async def stop_all_and_drain(
                 pending_tasks: set[asyncio.Task[MotorStatus]],
-            ) -> None:
+            ) -> list[str]:
                 nonlocal axis_statuses
 
-                stop_errors = await stop_pending(pending_tasks)
+                stop_errors = await stop_commanded()
                 for pending_task in pending_tasks:
                     pending_task.cancel()
                 await asyncio.gather(*pending_tasks, return_exceptions=True)
-
-                if stop_errors:
-                    axis_statuses = build_axis_statuses()
-                    raise MovementError(
-                        "Failed to stop pending gantry motors: "
-                        + ", ".join(stop_errors)
-                    )
+                axis_statuses = build_axis_statuses()
+                return stop_errors
 
             try:
                 while tasks:
                     remaining_timeout = timeout_seconds - (time.monotonic() - start_time)
 
                     if remaining_timeout <= 0:
-                        await stop_and_drain_pending(set(tasks))
+                        stop_errors = await stop_all_and_drain(set(tasks))
+                        if stop_errors:
+                            self._logger.error("Failed to stop gantry after timeout: %s", ", ".join(stop_errors))
                         raise MotorWaitTimeoutError(f"Gantry wait exceeded {timeout_seconds}s timeout")
 
                     done, pending = await asyncio.wait(
@@ -690,44 +758,57 @@ class Tool:
                     )
 
                     if not done:
-                        await stop_and_drain_pending(pending)
+                        stop_errors = await stop_all_and_drain(pending)
+                        if stop_errors:
+                            self._logger.error("Failed to stop gantry after timeout: %s", ", ".join(stop_errors))
                         raise MotorWaitTimeoutError(f"Gantry wait exceeded {timeout_seconds}s timeout")
 
                     for task in done:
                         axis, _motor = tasks.pop(task)
 
                         if task.cancelled() is True:
-                            await stop_and_drain_pending(pending)
+                            await stop_all_and_drain(pending)
                             raise asyncio.CancelledError()
 
                         exc = task.exception()
                         if exc is not None:
-                            await stop_and_drain_pending(pending)
+                            statuses[axis] = MotorStatus.ERROR
+                            stop_errors = await stop_all_and_drain(pending)
+                            if stop_errors:
+                                fault_context = getattr(exc, "fault_context", {})
+                                if not isinstance(fault_context, dict):
+                                    fault_context = {}
+                                fault_context["gantry_stop_errors"] = stop_errors
+                                setattr(exc, "fault_context", fault_context)
                             raise exc
 
                         statuses[axis] = task.result()
 
                     if any(status in terminal_error_states for status in statuses.values()):
-                        await stop_and_drain_pending(pending)
+                        stop_errors = await stop_all_and_drain(pending)
                         axis_statuses = build_axis_statuses()
-                        raise MovementError(
+                        error = MovementError(
                             "Gantry motor error during wait: "
                             f"x={axis_statuses.get('x_axis', 'UNKNOWN')}, "
                             f"y={axis_statuses.get('y_axis', 'UNKNOWN')}"
                         )
+                        if stop_errors:
+                            setattr(error, "fault_context", {"gantry_stop_errors": stop_errors})
+                        raise error
 
                     if any(status != MotorStatus.STOPPED for status in statuses.values()):
-                        await stop_and_drain_pending(pending)
+                        stop_errors = await stop_all_and_drain(pending)
                         axis_statuses = build_axis_statuses()
-                        raise MovementError(
+                        error = MovementError(
                             "Gantry movement ended unexpectedly: "
                             f"x={axis_statuses.get('x_axis', 'UNKNOWN')}, "
                             f"y={axis_statuses.get('y_axis', 'UNKNOWN')}"
                         )
+                        if stop_errors:
+                            setattr(error, "fault_context", {"gantry_stop_errors": stop_errors})
+                        raise error
             except asyncio.CancelledError:
-                for task in tasks:
-                    task.cancel()
-                await asyncio.gather(*tasks, return_exceptions=True)
+                await asyncio.shield(stop_all_and_drain(set(tasks)))
                 raise
 
             axis_statuses = build_axis_statuses()
