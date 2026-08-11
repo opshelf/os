@@ -111,6 +111,7 @@ async def test_rotate_to_home_orientation_marks_error_when_move_fails() -> None:
     tool._ms = None
     tool._mr = rotate_motor
     tool._logger = SimpleNamespace(warning=lambda *args, **kwargs: None)
+    tool._handle_fault = AsyncMock()
     tool.get_param = AsyncMock(side_effect=lambda name: {
         'ROTATION_FRONT': 4.0,
         'ROTATION_BACK': 184.0,
