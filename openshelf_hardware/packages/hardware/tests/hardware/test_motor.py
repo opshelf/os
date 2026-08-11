@@ -4,8 +4,9 @@ from unittest.mock import AsyncMock, Mock, call
 
 import pytest
 
+from hardware import motor_helpers
 from hardware.motor import Motor, MotorStatus
-from hardware.exceptions import MotorError
+from hardware.exceptions import MotorConfigError, MotorError
 from hardware.servo import Servo
 
 def make_motor_params(**overrides):
@@ -29,6 +30,20 @@ def make_motor_params(**overrides):
     }
     params.update(overrides)
     return SimpleNamespace(**params)
+
+
+def configure_readback_registers(
+    overrides: dict[int, int] | None = None,
+) -> dict[int, int]:
+    registers = {
+        0x0003: 2,
+        0x0001: 10000,
+        0x0233: 4000,
+        0x0191: 10,
+    }
+    if overrides is not None:
+        registers.update(overrides)
+    return registers
 
 
 
@@ -106,32 +121,229 @@ async def test_motor_configure(mock_controller):
     motor = Motor(mock_controller, params)
     await motor.configure()
 
-    mock_controller.write_single_register.assert_any_call(1, 0x0159, 0xA1)
-    mock_controller.write_single_register.assert_any_call(1, 0x0167, 100)
-    mock_controller.write_single_register.assert_any_call(1, 0x0169, 100)
-    mock_controller.write_single_register.assert_any_call(1, 0x016B, 10)
+    mock_controller.write_single_register.assert_any_call(1, 0x0191, 10)
+    assert call(1, 0x0003, 2) not in mock_controller.write_single_register.await_args_list
+    assert call(1, 0x0001, 10000) not in mock_controller.write_single_register.await_args_list
+    assert call(1, 0x0233, 4000) not in mock_controller.write_single_register.await_args_list
+    assert call(1, 0x0159, 0xA1) not in mock_controller.write_single_register.await_args_list
+    assert call(1, 0x0167, 250) not in mock_controller.write_single_register.await_args_list
+    assert call(1, 0x0169, 250) not in mock_controller.write_single_register.await_args_list
+    assert call(1, 0x016B, 10) not in mock_controller.write_single_register.await_args_list
 
 
 @pytest.mark.asyncio
-async def test_motor_disable_and_restore_brake_output(mock_controller):
-    params = make_motor_params()
+async def test_motor_configure_uses_and_verifies_explicit_motor_electrical_settings(
+    mock_controller,
+):
+    params = make_motor_params(
+        motor_name="y_axis",
+        brake_output_function=0x24,
+        control_mode=2,
+        ppr=10000,
+        encoder_resolution_cpr=4000,
+        Ip=60,
+    )
+    motor = Motor(mock_controller, params)
+    expected_registers = configure_readback_registers(
+        {
+            0x0003: 2,
+            0x0001: 10000,
+            0x0233: 4000,
+            0x0191: 60,
+            0x0167: 250,
+            0x0169: 250,
+            0x016B: 10,
+            0x0159: 0x24,
+        }
+    )
+    mock_controller.read_holding_registers.side_effect = (
+        lambda _unit, address: expected_registers[address]
+    )
+
+    await motor.configure()
+
+    mock_controller.write_single_register.assert_any_call(1, 0x0003, 2)
+    mock_controller.write_single_register.assert_any_call(1, 0x0001, 10000)
+    mock_controller.write_single_register.assert_any_call(1, 0x0233, 4000)
+    mock_controller.write_single_register.assert_any_call(1, 0x0191, 60)
+
+
+@pytest.mark.asyncio
+async def test_motor_configure_fails_before_brake_assignment_on_encoder_mismatch(
+    mock_controller,
+):
+    params = make_motor_params(
+        motor_name="y_axis", brake_output_function=0x24, Ip=60
+    )
+    motor = Motor(mock_controller, params)
+    expected_registers = configure_readback_registers({0x0233: 1000, 0x0191: 60})
+    mock_controller.read_holding_registers.side_effect = (
+        lambda _unit, address: expected_registers[address]
+    )
+
+    with pytest.raises(MotorError, match="Encoder resolution readback mismatch"):
+        await motor.configure()
+
+    assert call(1, 0x0159, 0x24) not in mock_controller.write_single_register.await_args_list
+
+
+@pytest.mark.asyncio
+async def test_motor_configure_writes_and_verifies_explicit_brake_output(mock_controller):
+    params = make_motor_params(
+        motor_name="y_axis", brake_output_function=0x24, Ip=60
+    )
+    motor = Motor(mock_controller, params)
+    expected_registers = configure_readback_registers(
+        {
+            0x0191: 60,
+            0x0167: 250,
+            0x0169: 250,
+            0x016B: 10,
+            0x0159: 0x24,
+        }
+    )
+    mock_controller.read_holding_registers.side_effect = (
+        lambda _unit, address: expected_registers[address]
+    )
+
+    await motor.configure()
+
+    calls = mock_controller.write_single_register.await_args_list
+    assert call(1, 0x0167, 250) in calls
+    assert call(1, 0x0169, 250) in calls
+    assert call(1, 0x016B, 10) in calls
+    assert call(1, 0x0159, 0x24) in calls
+    assert calls.index(call(1, 0x0167, 250)) < calls.index(call(1, 0x0159, 0x24))
+    assert calls.index(call(1, 0x0169, 250)) < calls.index(call(1, 0x0159, 0x24))
+    assert calls.index(call(1, 0x016B, 10)) < calls.index(call(1, 0x0159, 0x24))
+    mock_controller.read_holding_registers.assert_any_call(1, 0x0159)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("Ip", 59),
+        ("control_mode", 0),
+        ("ppr", 8000),
+        ("encoder_resolution_cpr", 1000),
+        ("brake_output_function", 0xA4),
+        ("brake_release_delay_ms", 300),
+        ("brake_engagement_delay_ms", 400),
+        ("brake_engagement_speed_threshold", 12),
+    ],
+)
+async def test_y_axis_rejects_noncanonical_runtime_profile_before_profile_writes(
+    mock_controller,
+    field,
+    value,
+):
+    params_kwargs = {
+        "motor_name": "y_axis",
+        "brake_output_function": 0x24,
+        "control_mode": 2,
+        "ppr": 10000,
+        "encoder_resolution_cpr": 4000,
+        "Ip": 60,
+    }
+    params_kwargs[field] = value
+    params = make_motor_params(**params_kwargs)
     motor = Motor(mock_controller, params)
 
-    await motor.disable_brake_output()
-    await motor.restore_brake_output()
+    with pytest.raises(MotorConfigError, match=field):
+        await motor._configure_motor_electrical_parameters()
 
-    mock_controller.write_single_register.assert_any_call(1, 0x0159, 0x24)
-    mock_controller.write_single_register.assert_any_call(1, 0x0159, 0xA1)
+    mock_controller.write_single_register.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_motor_configure_rejects_brake_timing_readback_mismatch(mock_controller):
+    params = make_motor_params(
+        motor_name="y_axis", brake_output_function=0x24, Ip=60
+    )
+    motor = Motor(mock_controller, params)
+    expected_registers = configure_readback_registers(
+        {0x0191: 60, 0x0167: 0, 0x0169: 250, 0x016B: 10, 0x0159: 0x24}
+    )
+    mock_controller.read_holding_registers.side_effect = (
+        lambda _unit, address: expected_registers[address]
+    )
+
+    with pytest.raises(MotorError, match="Brake release delay readback mismatch"):
+        await motor.configure()
+
+    assert call(1, 0x0159, 0x24) not in mock_controller.write_single_register.await_args_list
+
+
+@pytest.mark.asyncio
+async def test_y_axis_configure_requires_explicit_brake_output(mock_controller):
+    params = make_motor_params(motor_name="y_axis")
+    motor = Motor(mock_controller, params)
+
+    with pytest.raises(MotorError, match="brake_output_function=None"):
+        await motor._configure_motor_electrical_parameters()
+
+    mock_controller.write_single_register.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_motor_restore_brake_output_writes_even_when_cached(mock_controller):
-    params = make_motor_params()
+    params = make_motor_params(brake_output_function=0x24)
     motor = Motor(mock_controller, params)
+    mock_controller.read_holding_registers.return_value = 0x24
 
     await motor.restore_brake_output()
 
-    mock_controller.write_single_register.assert_called_once_with(1, 0x0159, 0xA1)
+    mock_controller.write_single_register.assert_called_once_with(1, 0x0159, 0x24)
+
+
+@pytest.mark.asyncio
+async def test_brake_diagnostics_include_verified_sequencing_parameters(mock_controller):
+    motor = Motor(
+        mock_controller,
+        make_motor_params(motor_name="y_axis", brake_output_function=0x24),
+    )
+    expected_registers = {
+        0x0003: 2,
+        0x0001: 10000,
+        0x0233: 4000,
+        0x0191: 10,
+        0x0159: 0x24,
+        0x0167: 250,
+        0x0169: 250,
+        0x016B: 10,
+        0x017B: 0x02,
+    }
+    mock_controller.read_holding_registers.side_effect = (
+        lambda _unit, address: expected_registers[address]
+    )
+
+    assert await motor.get_brake_output_diagnostics() == {
+        "control_mode": 2,
+        "command_pulses_per_revolution": 10000,
+        "encoder_resolution_cpr": 4000,
+        "peak_current_setting": 10,
+        "configured_function": 0x24,
+        "register_function": 0x24,
+        "release_delay_ms": 250,
+        "engagement_delay_ms": 250,
+        "engagement_speed_threshold": 10,
+        "output_state": 0x02,
+    }
+
+
+def test_cs2b_reference_map_keeps_clrs_communication_bit_delay_address() -> None:
+    assert motor_helpers.get_register_by_name("Comm bit delay") == 0x01C4
+
+
+@pytest.mark.asyncio
+async def test_motor_rejects_path_completed_as_brake_output(mock_controller):
+    motor = Motor(mock_controller, make_motor_params())
+
+    with pytest.raises(MotorError, match="Refusing non-brake SO2 function 0xA1"):
+        await motor.set_brake_output_function(0xA1)
+
+    mock_controller.write_single_register.assert_not_called()
 
 @pytest.mark.asyncio
 async def test_clear_alarm_rejects_persistent_alarm_32(mock_controller):
@@ -156,6 +368,96 @@ async def test_motor_status_reading(mock_controller):
     status = await motor._read_status()
     assert status == MotorStatus.IDLE
     mock_controller.read_holding_registers.assert_called_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("initial_status", "expected_status"),
+    [
+        (MotorStatus.MOVING, MotorStatus.STOPPED),
+        (MotorStatus.IDLE, MotorStatus.STOPPED),
+        (MotorStatus.ERROR, MotorStatus.ERROR),
+        (MotorStatus.FAULT, MotorStatus.FAULT),
+        (MotorStatus.TIMEOUT, MotorStatus.TIMEOUT),
+    ],
+)
+async def test_stop_preserves_terminal_status(mock_controller, initial_status, expected_status):
+    motor = Motor(mock_controller, make_motor_params())
+    motor._status = initial_status
+
+    status = await motor.stop()
+
+    mock_controller.write_single_register.assert_awaited_once_with(1, 0x6002, 0x40)
+    assert status is expected_status
+    assert motor._status is expected_status
+
+
+@pytest.mark.asyncio
+async def test_stop_preserves_fault_raised_during_stop_write(mock_controller):
+    motor = Motor(mock_controller, make_motor_params())
+    motor._is_homed = True
+
+    async def set_fault_during_write(*_args):
+        motor.set_fault()
+
+    mock_controller.write_single_register.side_effect = set_fault_during_write
+
+    status = await motor.stop()
+
+    mock_controller.write_single_register.assert_awaited_once_with(1, 0x6002, 0x40)
+    assert status is MotorStatus.FAULT
+    assert motor._status is MotorStatus.FAULT
+    assert motor.is_hard_stopped() is True
+    assert motor.is_homed() is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("initial_status", "expected_status"),
+    [
+        (MotorStatus.MOVING, MotorStatus.STOPPED),
+        (MotorStatus.ERROR, MotorStatus.ERROR),
+        (MotorStatus.FAULT, MotorStatus.FAULT),
+        (MotorStatus.TIMEOUT, MotorStatus.TIMEOUT),
+    ],
+)
+async def test_stop_and_clear_motion_preserves_terminal_status(
+    mock_controller,
+    initial_status,
+    expected_status,
+):
+    motor = Motor(mock_controller, make_motor_params())
+    motor._status = initial_status
+    motor._pending_motion = AsyncMock()
+    motor._target_pos = 50.0
+
+    await motor._stop_and_clear_motion()
+
+    mock_controller.write_single_register.assert_awaited_once_with(1, 0x6002, 0x40)
+    assert motor._pending_motion is None
+    assert motor._target_pos is None
+    assert motor._status is expected_status
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("initial_status", [MotorStatus.MOVING, MotorStatus.FAULT])
+async def test_stop_and_clear_motion_clears_motion_when_stop_write_fails(
+    mock_controller,
+    initial_status,
+):
+    motor = Motor(mock_controller, make_motor_params())
+    motor._status = initial_status
+    motor._pending_motion = AsyncMock()
+    motor._target_pos = 50.0
+    mock_controller.write_single_register.side_effect = RuntimeError("Modbus unavailable")
+
+    with pytest.raises(MotorError, match="Failed to stop motor 1: Modbus unavailable"):
+        await motor._stop_and_clear_motion()
+
+    mock_controller.write_single_register.assert_awaited_once_with(1, 0x6002, 0x40)
+    assert motor._pending_motion is None
+    assert motor._target_pos is None
+    assert motor._status is initial_status
 
 
 @pytest.mark.asyncio
@@ -462,6 +764,152 @@ async def test_motor_absolute_move_uses_logical_to_physical_mapping(mock_control
 
     mock_controller.write_single_register.assert_any_call(1, 0x6201, 0)
     mock_controller.write_single_register.assert_any_call(1, 0x6202, 180)
+
+
+@pytest.mark.asyncio
+async def test_motor_absolute_move_skips_same_position_path_trigger(mock_controller):
+    motor = Motor(mock_controller, make_motor_params(motor_name="y_axis"))
+    motor._cur_pos = 42.0
+
+    did_start = await motor.move_to_position_no_wait(42.005)
+
+    assert did_start is False
+    assert motor._status is MotorStatus.IDLE
+    assert motor._pending_motion is None
+    assert motor._target_pos is None
+    assert call(1, 0x6002, 0x10) not in mock_controller.write_single_register.await_args_list
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("initial_status", "hard_stopped", "is_homed", "has_active_motion"),
+    [
+        (MotorStatus.MOVING, False, True, True),
+        (MotorStatus.ERROR, True, False, False),
+        (MotorStatus.FAULT, True, False, False),
+        (MotorStatus.TIMEOUT, True, False, False),
+    ],
+)
+async def test_motor_absolute_move_noop_preserves_existing_motion_and_safety_state(
+    mock_controller,
+    initial_status,
+    hard_stopped,
+    is_homed,
+    has_active_motion,
+):
+    motor = Motor(mock_controller, make_motor_params(motor_name="y_axis"))
+    motor._cur_pos = 42.0
+    motor._status = initial_status
+    motor._hard_stopped = hard_stopped
+    motor._is_homed = is_homed
+    pending_motion = AsyncMock() if has_active_motion else None
+    target_pos = 50.0 if has_active_motion else None
+    motor._pending_motion = pending_motion
+    motor._target_pos = target_pos
+
+    await motor.move_to_position(42.005)
+
+    assert motor._status is initial_status
+    assert motor._hard_stopped is hard_stopped
+    assert motor._is_homed is is_homed
+    assert motor._pending_motion is pending_motion
+    assert motor._target_pos == target_pos
+    assert call(1, 0x6002, 0x10) not in mock_controller.write_single_register.await_args_list
+
+
+@pytest.mark.asyncio
+async def test_motor_absolute_move_triggers_outside_noop_tolerance(mock_controller):
+    motor = Motor(
+        mock_controller,
+        make_motor_params(
+            motor_name="y_axis",
+            brake_output_function=0xA4,
+            logical_to_physical=lambda value: value,
+        ),
+    )
+    motor._cur_pos = 42.0
+    mock_controller.read_holding_registers.return_value = 0xA4
+
+    did_start = await motor.move_to_position_no_wait(42.02)
+
+    assert did_start is True
+    mock_controller.read_holding_registers.assert_awaited_once_with(1, 0x0159)
+    mock_controller.write_single_register.assert_any_call(1, 0x6002, 0x10)
+    assert motor._active_brake_output_function == 0xA4
+
+
+@pytest.mark.asyncio
+async def test_y_axis_absolute_move_requires_explicit_brake_configuration(mock_controller):
+    motor = Motor(
+        mock_controller,
+        make_motor_params(motor_name="y_axis", logical_to_physical=lambda value: value),
+    )
+
+    with pytest.raises(MotorConfigError, match="no verified brake output configuration"):
+        await motor.move_to_position_no_wait(42.02)
+
+    mock_controller.read_holding_registers.assert_not_awaited()
+    assert call(1, 0x6002, 0x10) not in mock_controller.write_single_register.await_args_list
+
+
+@pytest.mark.asyncio
+async def test_y_axis_motion_rejects_mismatched_brake_readback_without_trigger(mock_controller):
+    motor = Motor(
+        mock_controller,
+        make_motor_params(
+            motor_name="y_axis",
+            brake_output_function=0x24,
+            logical_to_physical=lambda value: value,
+        ),
+    )
+    mock_controller.read_holding_registers.return_value = 0xA4
+
+    with pytest.raises(MotorConfigError, match="SO2 readback mismatch"):
+        await motor.move_to_position_no_wait(42.02)
+
+    mock_controller.read_holding_registers.assert_awaited_once_with(1, 0x0159)
+    assert call(1, 0x6002, 0x10) not in mock_controller.write_single_register.await_args_list
+    assert motor._active_brake_output_function is None
+
+
+@pytest.mark.asyncio
+async def test_y_axis_jog_triggers_after_fresh_brake_readback(mock_controller):
+    motor = Motor(
+        mock_controller,
+        make_motor_params(
+            motor_name="y_axis",
+            brake_output_function=0x24,
+            logical_to_physical_delta=lambda value: value,
+        ),
+    )
+    motor.wait_for_move = AsyncMock(return_value=MotorStatus.STOPPED)
+    motor.move_config = AsyncMock()
+    mock_controller.read_holding_registers.return_value = 0x24
+
+    status = await motor.jog(1.0)
+
+    assert status is MotorStatus.STOPPED
+    mock_controller.read_holding_registers.assert_awaited_once_with(1, 0x0159)
+    mock_controller.write_single_register.assert_any_call(1, 0x6002, 0x10)
+    assert motor._active_brake_output_function == 0x24
+
+
+@pytest.mark.asyncio
+async def test_y_axis_home_triggers_after_fresh_brake_readback(mock_controller):
+    params = make_motor_params(motor_name="y_axis", brake_output_function=0xA4)
+    motor = Motor(mock_controller, params)
+    motor.clear_alarm = AsyncMock()
+    motor._move_near_home = AsyncMock()
+    motor._prepare_home_motion = AsyncMock()
+    motor.wait_for_move = AsyncMock(return_value=MotorStatus.STOPPED)
+    motor.move_config = AsyncMock()
+    mock_controller.read_holding_registers.return_value = 0xA4
+
+    await motor.home()
+
+    mock_controller.read_holding_registers.assert_awaited_once_with(1, 0x0159)
+    mock_controller.write_single_register.assert_any_call(1, 0x6002, 0x10)
+    assert motor._active_brake_output_function == 0xA4
 
 
 @pytest.mark.asyncio
