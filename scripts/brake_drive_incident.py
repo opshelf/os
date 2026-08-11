@@ -49,7 +49,7 @@ SAVE_STATUS_REGISTER = 0x1901
 SAVE_SUCCEEDED = 0x5555
 SAVE_FAILED = 0xAAAA
 MOTION_RUNNING_BIT = 2
-TEST_Y_MIN_MM = 0.0
+TEST_Y_MIN_MM = -1.0
 TEST_Y_MAX_MM = 100.0
 TEST_Y_MM_PER_REVOLUTION = 40.0
 TEST_Y_COMMAND_PULSES_PER_REVOLUTION = 10000
@@ -306,7 +306,7 @@ async def require_y_in_test_window(
 
 	if not TEST_Y_MIN_MM <= position_mm <= TEST_Y_MAX_MM:
 		raise RuntimeError(
-			"refusing Y test outside the supervised 0-100 mm window: "
+			"refusing Y test outside the supervised -1-to-100 mm home-tolerant window: "
 			f"position_mm={position_mm:.6f}"
 		)
 
@@ -748,7 +748,7 @@ def validate_application_noop_position(
 	if not TEST_Y_MIN_MM <= float(position) <= TEST_Y_MAX_MM:
 		raise RuntimeError(
 			"application no-op preflight rejected position outside the supervised "
-			"0-100 mm Y test window"
+			"-1-to-100 mm home-tolerant Y test window"
 		)
 
 

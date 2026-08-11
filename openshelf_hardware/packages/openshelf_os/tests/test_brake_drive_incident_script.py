@@ -177,12 +177,20 @@ def test_decode_y_position_mm_uses_incident_machine_scaling(
 
 
 @pytest.mark.asyncio
-async def test_y_test_window_rejects_position_above_100_mm(
+@pytest.mark.parametrize(
+	"position_block",
+	[
+		(0x0000, 0x61A9),
+		(0xFFFF, 0xFF05),
+	],
+)
+async def test_y_test_window_rejects_position_outside_home_tolerant_window(
 	monkeypatch: pytest.MonkeyPatch,
+	position_block: tuple[int, int],
 ) -> None:
 	module = load_brake_drive_incident_module()
 	values = {
-		"position_block": (0x0000, 0x61A9),
+		"position_block": position_block,
 		"command_pulses_per_revolution": (10000,),
 	}
 	monkeypatch.setattr(
@@ -191,7 +199,7 @@ async def test_y_test_window_rejects_position_above_100_mm(
 		AsyncMock(side_effect=lambda _controller, _unit, name: values[name]),
 	)
 
-	with pytest.raises(RuntimeError, match="outside the supervised 0-100 mm window"):
+	with pytest.raises(RuntimeError, match="outside the supervised -1-to-100 mm"):
 		await module.require_y_in_test_window(SimpleNamespace())
 
 
@@ -218,7 +226,7 @@ async def test_same_position_reproduction_rejects_out_of_window_before_writes(
 		cycles=1,
 	)
 
-	with pytest.raises(RuntimeError, match="outside the supervised 0-100 mm window"):
+	with pytest.raises(RuntimeError, match="outside the supervised -1-to-100 mm"):
 		await module.run_same_position_trigger(args, controller)
 
 	controller.write_single_register.assert_not_awaited()
@@ -526,7 +534,7 @@ async def test_application_noop_rejects_position_outside_incident_test_window(
 	monkeypatch.setattr(module, "Motor", FakeMotor)
 
 	args = SimpleNamespace(config=Path("test-config.json"), motor_name="y_axis")
-	with pytest.raises(RuntimeError, match="supervised 0-100 mm Y test window"):
+	with pytest.raises(RuntimeError, match="supervised -1-to-100 mm home-tolerant Y test window"):
 		await module.run_application_noop(args, controller)
 
 	FakeMotor.instance.move_to_position_no_wait.assert_not_awaited()
