@@ -20,7 +20,7 @@
 ## Runtime gotchas
 - `openshelf_hardware/data/` is the live source of truth for local state. Production keeps `base.db`, `config.json`, and `storage.json`; development/demo use persistent `*.development.*` / `*.demo.*` variants forked from production on first use. `scripts/start` tracks the requested mode in `data/.mode` and `data/.last_start_mode`; the API reports mode but cannot change it.
 - In development mode, `docker-compose.dev.yml` only bind-mounts Python source directories plus `dev_ui/src`. Dependency changes still need a rebuild.
-- The app seeds a developer login on startup: `developer@opshelf.com` with PIN `1111`. The UI auto-attempts this login in `dev_ui/src/routes/+layout.svelte`.
+- The app does not seed regular users. Startup seeds the default roles and access levels plus the `developer@opshelf.com`/`1111` system user (recreated automatically on every startup, including after a database wipe, as a lockout safeguard; `dev_ui/src/routes/+layout.svelte` auto-attempts this login). System users do not count as provisioning: the first regular admin user is created through the unauthenticated first-run endpoints under `/api/onboarding` (used by the main UI's onboarding wizard).
 - `README.md` still references `scripts/debug/*`, but that directory is not in this repo anymore.
 - Per-register Modbus reads log at DEBUG on the `hardware.controller.controller` logger and are silenced by default, otherwise they bury every other log line. Set `MODBUS_TRACE=true` to restore them for bus debugging.
 - Container logs are capped at `10m` x 5 files. `docker logs` stops at the first truncated JSON line, so after an unclean shutdown it can silently show a stale tail; read `/var/lib/docker/containers/<id>/<id>-json.log` directly to see past that point.

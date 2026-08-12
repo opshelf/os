@@ -42,11 +42,11 @@ from openshelf_os_server.core.iobox_sizer import get_iobox_sizer_status, init_io
 from openshelf_os_server.settings import Settings
 from openshelf_os_server.database.base import Base, engine, get_database_url
 from openshelf_os_server.database.session import AsyncSessionLocal, get_db
-from openshelf_os_server.database.models import Role, User
+from openshelf_os_server.database.models import AccessLevel, Role, User
 from openshelf_os_server.launcher import bootstrap_runtime_state
 from openshelf_os_server.middleware.audit import AuditMiddleware
 from openshelf_os_server.middleware.correlation import CorrelationIdMiddleware
-from openshelf_os_server.routers import access_levels, audit, auth, cabinet, calibration, camera, demo, iobox_sizer, printer, report, robot, roles, storage, system, telemetry, users, wifi
+from openshelf_os_server.routers import access_levels, audit, auth, cabinet, calibration, camera, demo, iobox_sizer, onboarding, printer, report, robot, roles, storage, system, telemetry, users, wifi
 from openshelf_os_server.settings import get_settings, get_operating_mode
 
 configure_logging()
@@ -448,7 +448,30 @@ def _get_overhead_camera_url(settings: Settings) -> str | None:
 	return None
 
 
+DEFAULT_ACCESS_LEVELS = ["Level 1", "Level 2", "Level 3"]
+
+DEFAULT_ROLES: dict[str, list[str]] = {
+	"admin": [
+		"users:read", "users:write", "users:delete",
+		"roles:read", "roles:write", "roles:delete",
+		"robot:control",
+		"storage:read", "storage:write", "storage:delete", "storage:access",
+		"printer:print",
+		"audit:read",
+	],
+	"operator": [
+		"robot:control",
+		"storage:read",
+	],
+	"viewer": [
+		"storage:read",
+	],
+}
+
+
 async def _ensure_developer_user() -> None:
+	"""Recreate the developer system user on every startup, including after a
+	database wipe, so the device can never end up fully locked out."""
 	async with AsyncSessionLocal() as db:
 		result = await db.execute(
 			select(User).filter(User.email == "developer@opshelf.com")
@@ -484,6 +507,23 @@ async def _ensure_developer_user() -> None:
 		logger.info("developer_user_created", email="developer@opshelf.com")
 
 
+async def _ensure_default_roles_and_access_levels() -> None:
+	async with AsyncSessionLocal() as db:
+		for role_name, permissions in DEFAULT_ROLES.items():
+			result = await db.execute(select(Role).filter(Role.name == role_name))
+			if result.scalar_one_or_none() is None:
+				db.add(Role(name=role_name, permissions=permissions))
+				logger.info("default_role_created", role=role_name)
+
+		for level_name in DEFAULT_ACCESS_LEVELS:
+			level_result = await db.execute(select(AccessLevel).filter(AccessLevel.name == level_name))
+			if level_result.scalar_one_or_none() is None:
+				db.add(AccessLevel(name=level_name))
+				logger.info("default_access_level_created", access_level=level_name)
+
+		await db.commit()
+
+
 async def _ensure_default_role_permissions() -> None:
 	async with AsyncSessionLocal() as db:
 		result = await db.execute(select(Role).filter(Role.name == "admin"))
@@ -500,26 +540,6 @@ async def _ensure_default_role_permissions() -> None:
 		admin_role.permissions = permissions
 		await db.commit()
 		logger.info("admin_role_permission_added", permission="storage:access")
-
-
-async def _seed_auth_if_requested() -> None:
-	if os.getenv("RUN_SEED_SCRIPT", "false").lower() not in {"1", "true", "yes"}:
-		return
-
-	script_path = Path(__file__).parent.parent.parent / "scripts" / "seed_auth.py"
-	if not script_path.exists():
-		logger.warning("seed_script_not_found", script_path=str(script_path))
-		return
-
-	async with AsyncSessionLocal() as db:
-		result = await db.execute(select(User))
-		user_count = len(result.scalars().all())
-
-		if user_count == 0:
-			logger.info("running_seed_script", script_path=str(script_path), reason="no_users_found")
-			subprocess.run([sys.executable, str(script_path)], env={**os.environ, "ENV": "dev"}, check=False)
-		else:
-			logger.info("skipping_seed_script", user_count=user_count, reason="users_exist")
 
 
 LAST_MODE_FILE = RuntimeStatePaths.current().data_dir / ".last_mode"
@@ -593,7 +613,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 	async with engine.begin() as conn:
 		await conn.run_sync(Base.metadata.create_all)
 
-	await _seed_auth_if_requested()
+	await _ensure_default_roles_and_access_levels()
 	await _ensure_default_role_permissions()
 	await _ensure_developer_user()
 	await _apply_mode_transition()
@@ -777,6 +797,7 @@ app.include_router(calibration.router)
 app.include_router(demo.router)
 app.include_router(system.router, prefix="/api/system")
 app.include_router(wifi.router, prefix="/api/wifi")
+app.include_router(onboarding.router, prefix="/api/onboarding")
 app.include_router(report.router, prefix="/api")
 app.include_router(telemetry.router, prefix="/api")
 

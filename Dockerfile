@@ -1,7 +1,6 @@
 FROM ghcr.io/astral-sh/uv:debian-slim as base
 
 ENV PATH=/root/.local/bin:$PATH
-ENV RUN_SEED_SCRIPT=true
 ENV UV_PYTHON=3.13
 
 RUN apt-get update && apt-get -y install --no-install-recommends \
