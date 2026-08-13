@@ -53,6 +53,19 @@ wheels = [
 ]
 
 [[package]]
+name = "adafruit-circuitpython-pcf8575"
+version = "1.0.14"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "adafruit-blinka" },
+    { name = "adafruit-circuitpython-busdevice" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5d/c5/7db82f79465813ab38004ce7b9e5777772fd682fac71513f222e290bdcb5/adafruit_circuitpython_pcf8575-1.0.14.tar.gz", hash = "sha256:a9b3b0a401b1bacbe2e84100e299c72fa69663adee497175aac8474396079769", size = 24529, upload-time = "2026-04-23T21:04:29.975Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f6/c9/408c817bc2904fd6609f9547d1f6d6faee8c73ab4f943ce57e5d14d535ae/adafruit_circuitpython_pcf8575-1.0.14-py3-none-any.whl", hash = "sha256:3c53c8ca21a9d8c7b4e6154f1bda0f5308cd4d6c8c7ca3f0d2e93506b6c62bb5", size = 5981, upload-time = "2026-04-23T21:04:29.119Z" },
+]
+
+[[package]]
 name = "adafruit-circuitpython-requests"
 version = "4.1.17"
 source = { registry = "https://pypi.org/simple" }
@@ -542,6 +555,7 @@ source = { editable = "packages/hardware" }
 dependencies = [
     { name = "adafruit-blinka" },
     { name = "adafruit-circuitpython-busdevice" },
+    { name = "adafruit-circuitpython-pcf8575" },
     { name = "adafruit-circuitpython-tca9548a" },
     { name = "adafruit-circuitpython-vl53l1x" },
     { name = "opencv-python" },
@@ -556,6 +570,7 @@ dependencies = [
 requires-dist = [
     { name = "adafruit-blinka", specifier = ">=8.0.0" },
     { name = "adafruit-circuitpython-busdevice", specifier = ">=5.0.0" },
+    { name = "adafruit-circuitpython-pcf8575", specifier = ">=1.0.14" },
     { name = "adafruit-circuitpython-tca9548a", specifier = ">=0.8.0" },
     { name = "adafruit-circuitpython-vl53l1x", specifier = ">=1.2.9" },
     { name = "opencv-python" },

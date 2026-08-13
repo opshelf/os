@@ -7,6 +7,7 @@ from typing import Any, Callable, cast
 from hardware.exceptions import GpioConfigError
 from hardware.gpio.fake import FakeGpioBackend
 from hardware.gpio.pca9535 import Pca9535Backend
+from hardware.gpio.pcf8575 import Pcf8575Backend
 from hardware.gpio.rpi import RpiGpioBackend
 from hardware.gpio.types import (
     DigitalInput,
@@ -167,21 +168,17 @@ class GpioManager:
             raise GpioConfigError(f"GPIO pin '{name}' is not configured") from exc
 
     def _backend_for(self, spec: GpioPinSpec) -> GpioBackend:
-        if self._fake is True:
-            return self._get_or_create_backend("fake", lambda: FakeGpioBackend())
+        if spec.board in ("pca9535", "pcf8575"):
+            if self._fake is True:
+                self._validate_fake_expander(spec)
+                return self._get_or_create_backend("fake", lambda: FakeGpioBackend())
 
-        if spec.board == "rpi":
-            return self._get_or_create_backend("rpi", lambda: RpiGpioBackend())
+            expander = self._expander_for(spec)
 
-        if spec.board == "pca9535":
-            if spec.expander is None:
-                raise GpioConfigError(f"GPIO pin '{spec.name}' requires an expander")
-
-            expander = self._expanders.get(spec.expander)
-
-            if expander is None:
-                raise GpioConfigError(
-                    f"GPIO pin '{spec.name}' references unknown expander '{spec.expander}'"
+            if expander.kind == "pcf8575":
+                return self._get_or_create_backend(
+                    f"pcf8575:{spec.expander}",
+                    lambda: Pcf8575Backend(expander, rpi_backend=self._rpi_backend()),
                 )
 
             return self._get_or_create_backend(
@@ -189,7 +186,44 @@ class GpioManager:
                 lambda: Pca9535Backend(expander, rpi_backend=self._rpi_backend()),
             )
 
+        if self._fake is True:
+            return self._get_or_create_backend("fake", lambda: FakeGpioBackend())
+
+        if spec.board == "rpi":
+            return self._get_or_create_backend("rpi", lambda: RpiGpioBackend())
+
         raise GpioConfigError(f"Unsupported GPIO board '{spec.board}'")
+
+    def _validate_fake_expander(self, spec: GpioPinSpec) -> None:
+        if spec.expander is None:
+            raise GpioConfigError(f"GPIO pin '{spec.name}' requires an expander")
+
+        expander = self._expanders.get(spec.expander)
+
+        if expander is not None and expander.kind != spec.board:
+            raise GpioConfigError(
+                f"GPIO pin '{spec.name}' uses board '{spec.board}' but expander "
+                f"'{spec.expander}' has type '{expander.kind}'"
+            )
+
+    def _expander_for(self, spec: GpioPinSpec) -> GpioExpanderSpec:
+        if spec.expander is None:
+            raise GpioConfigError(f"GPIO pin '{spec.name}' requires an expander")
+
+        expander = self._expanders.get(spec.expander)
+
+        if expander is None:
+            raise GpioConfigError(
+                f"GPIO pin '{spec.name}' references unknown expander '{spec.expander}'"
+            )
+
+        if expander.kind != spec.board:
+            raise GpioConfigError(
+                f"GPIO pin '{spec.name}' uses board '{spec.board}' but expander "
+                f"'{spec.expander}' has type '{expander.kind}'"
+            )
+
+        return expander
 
     def _rpi_backend(self) -> GpioBackend:
         return self._get_or_create_backend("rpi", lambda: RpiGpioBackend())
