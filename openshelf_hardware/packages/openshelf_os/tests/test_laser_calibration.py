@@ -43,6 +43,7 @@ from openshelf_os.laser_calibration import (
 	SingleCellRescanTarget,
 )
 from openshelf_os.laser_calibration.angle.robot_ops import probe_z_until_stall
+from openshelf_os.laser_calibration.fine_scan import probe_line_from_center
 from openshelf_os.laser_calibration.scan import ScanBounds
 from openshelf_os.storage import CalibrationCoordinate, Cell, CellStatus, Dimensions, Shelf, StorageGrid, StorageModuleSide
 
@@ -1851,3 +1852,67 @@ def test_apply_wall_depth_z_offsets_refuses_cells_without_wall_depth(tmp_path: P
 
 	# the cell that did have a wall depth was still computed, not left blank
 	assert scanned_shelves[0].cells[0].calibration_point.z_offset == pytest.approx(9.9 + 4.85 - 0.00285 * 340.0)
+
+
+def _run_probe_line(depth_for, *, positions, center_idx, expected_span_mm=30.0, wall_depth_mm=9.9):
+	async def fake_sample(tool, *, x_mm, y_mm, settle_ms, samples_per_point, should_abort=None):
+		return depth_for(y_mm)
+
+	with patch('openshelf_os.laser_calibration.fine_scan.sample_scan_point', new=fake_sample), \
+		patch('openshelf_os.laser_calibration.fine_scan.set_scan_point', new=Mock()):
+		return asyncio.run(
+			probe_line_from_center(
+				SimpleNamespace(),
+				base_scan=SimpleNamespace(),
+				axis='y',
+				positions=positions,
+				fixed_mm=500.0,
+				center_idx=center_idx,
+				step_mm=2.0,
+				progress_prefix='test_v',
+				settle_ms=0,
+				samples_per_point=1,
+				wall_depth_mm=wall_depth_mm,
+				expected_span_mm=expected_span_mm,
+				should_infer_far_edge=True,
+			)
+		)
+
+
+_TOP_SHELF_POSITIONS = [1113.25 + index * 2.0 for index in range(43)]
+
+
+def test_probe_line_infers_far_edge_when_topmost_shelf_has_no_wall_above() -> None:
+	# lb4-3 right top shelf: wall below the holes, then open space that reads as hole
+	# interior all the way to the end of the scan window.
+	def depth_for(y_mm: float) -> float:
+		return 9.9 if y_mm <= 1145.25 else 0.0
+
+	segment = _run_probe_line(depth_for, positions=_TOP_SHELF_POSITIONS, center_idx=21)
+
+	assert segment is not None
+	assert segment.width_mm == pytest.approx(30.0)
+	assert segment.center_mm == pytest.approx(1161.25)
+
+
+def test_probe_line_inferred_far_edge_matches_a_real_wall_above() -> None:
+	def depth_for(y_mm: float) -> float:
+		if y_mm <= 1145.25:
+			return 9.9
+		if y_mm >= 1177.25:
+			return 9.9
+		return 0.0
+
+	segment = _run_probe_line(depth_for, positions=_TOP_SHELF_POSITIONS, center_idx=21)
+
+	assert segment is not None
+	assert segment.center_mm == pytest.approx(1161.25)
+
+
+def test_probe_line_rejects_unbounded_gap_that_is_not_hole_sized() -> None:
+	def depth_for(y_mm: float) -> float:
+		return 9.9 if y_mm <= 1191.25 else 0.0
+
+	segment = _run_probe_line(depth_for, positions=_TOP_SHELF_POSITIONS, center_idx=41)
+
+	assert segment is None
