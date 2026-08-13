@@ -17,9 +17,13 @@ def _migrate_legacy_production_config() -> None:
     _migrate_legacy_settings(legacy_settings, production.config_path)
 
 
-def start() -> None:
+def bootstrap_runtime_state() -> None:
     _migrate_legacy_production_config()
     ensure_mode_workspace()
+
+
+def start() -> None:
+    bootstrap_runtime_state()
 
     from openshelf_os_server.main import start as start_server  # noqa: PLC0415
 

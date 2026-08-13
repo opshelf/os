@@ -43,6 +43,7 @@ from openshelf_os_server.settings import Settings
 from openshelf_os_server.database.base import Base, engine, get_database_url
 from openshelf_os_server.database.session import AsyncSessionLocal, get_db
 from openshelf_os_server.database.models import Role, User
+from openshelf_os_server.launcher import bootstrap_runtime_state
 from openshelf_os_server.middleware.audit import AuditMiddleware
 from openshelf_os_server.middleware.correlation import CorrelationIdMiddleware
 from openshelf_os_server.routers import access_levels, audit, auth, cabinet, calibration, camera, demo, iobox_sizer, printer, report, robot, roles, storage, system, telemetry, users, wifi
@@ -781,6 +782,10 @@ app.include_router(telemetry.router, prefix="/api")
 
 
 def start() -> None:
+	# Entry paths that call this directly, such as the development compose
+	# command, must still fork the production runtime state before serving.
+	bootstrap_runtime_state()
+
 	log_config = uvicorn.config.LOGGING_CONFIG
 	log_config["loggers"]["uvicorn.access"]["level"] = "ERROR"
 	log_config["loggers"]["watchfiles"] = {"level": "ERROR"}
