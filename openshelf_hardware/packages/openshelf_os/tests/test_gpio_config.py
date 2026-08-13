@@ -37,6 +37,43 @@ def test_robot_gpio_is_optional_when_not_configured() -> None:
     assert robot.gpio is None
 
 
+def test_robot_gpio_accepts_legacy_pcf8575_config() -> None:
+    config = make_robot_config()
+    config["gpio"] = {
+        "expanders": [
+            {
+                "name": "main",
+                "type": "pcf8575",
+                "bus": 1,
+                "address": 0x20,
+                "interrupt": {
+                    "board": "rpi",
+                    "pin": 4,
+                    "pull": "up",
+                    "edge": "falling",
+                },
+            }
+        ],
+        "pins": {
+            "light_curtain": {
+                "board": "pcf8575",
+                "expander": "main",
+                "pin": 8,
+                "direction": "input",
+                "pull": "up",
+                "inverted": True,
+            }
+        },
+    }
+
+    robot = Robot.model_validate(config)
+
+    assert robot.gpio is not None
+    assert robot.gpio.expanders[0].type == "pcf8575"
+    assert robot.gpio.pins["light_curtain"].board == "pcf8575"
+    assert robot.gpio.pins["light_curtain"].expander == "main"
+
+
 def test_robot_gpio_empty_object_expands_to_defaults() -> None:
     config = make_robot_config()
     config["gpio"] = {}

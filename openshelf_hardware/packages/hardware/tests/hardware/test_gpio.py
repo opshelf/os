@@ -11,7 +11,14 @@ import hardware.gpio.pca9535 as pca9535_module
 import hardware.gpio.pca9535_mod as pca9535_mod
 import hardware.gpio.rpi as rpi_module
 from hardware.gpio.rpi import RpiGpioBackend
-from hardware.gpio.types import GpioExpanderSpec, GpioInterruptSpec, GpioPinSpec, GpioSubscription
+from hardware.gpio.types import (
+    DigitalInput,
+    GpioBoard,
+    GpioExpanderSpec,
+    GpioInterruptSpec,
+    GpioPinSpec,
+    GpioSubscription,
+)
 
 import pytest
 
@@ -47,6 +54,63 @@ def test_fake_gpio_input_inversion_and_subscription() -> None:
     assert events[-1].value is True
 
 
+@pytest.mark.parametrize(
+    ("emit_initial", "debounce_ms", "expected"),
+    [
+        (True, 50, [(False, True), (True, False)]),
+        (False, 50, [(True, False)]),
+    ],
+)
+def test_digital_input_buffers_synchronous_subscribe_changes_until_after_initial(
+    emit_initial: bool,
+    debounce_ms: int,
+    expected: list[tuple[bool, bool]],
+) -> None:
+    class SynchronouslyChangingBackend(FakeGpioBackend):
+        def subscribe(self, spec: GpioPinSpec, callback, **kwargs: Any) -> GpioSubscription:
+            subscription = super().subscribe(spec, callback, **kwargs)
+            self.set_raw(spec, False)
+            return subscription
+
+    spec = GpioPinSpec(
+        name="sensor",
+        board="rpi",
+        pin=1,
+        direction="input",
+        inverted=True,
+        debounce_ms=debounce_ms,
+    )
+    backend = SynchronouslyChangingBackend()
+    backend.setup_input(spec)
+    events = []
+
+    DigitalInput(spec, backend).subscribe(events.append, emit_initial=emit_initial)
+
+    assert [(event.value, event.raw_value) for event in events] == expected
+
+
+def test_digital_input_closes_backend_subscription_if_post_subscription_read_fails() -> None:
+    class FailingPostSubscriptionReadBackend(FakeGpioBackend):
+        def __init__(self) -> None:
+            super().__init__()
+            self.read_calls = 0
+
+        def read(self, spec: GpioPinSpec) -> bool:
+            self.read_calls += 1
+            if self.read_calls == 2:
+                raise RuntimeError("post-subscription read failed")
+            return super().read(spec)
+
+    spec = GpioPinSpec(name="sensor", board="rpi", pin=1, direction="input")
+    backend = FailingPostSubscriptionReadBackend()
+    backend.setup_input(spec)
+
+    with pytest.raises(RuntimeError, match="post-subscription read failed"):
+        DigitalInput(spec, backend).subscribe(lambda _event: None)
+
+    assert backend._callbacks[spec.physical_key] == []
+
+
 def test_fake_gpio_output_initial_write_and_shutdown() -> None:
     manager = GpioManager(
         {
@@ -72,6 +136,83 @@ def test_fake_gpio_output_initial_write_and_shutdown() -> None:
     manager.close()
 
     assert unlock.read() is False
+
+
+@pytest.mark.parametrize(
+    ("board", "expander", "expanders", "error"),
+    [
+        (
+            "pca9535",
+            "main",
+            {
+                "main": GpioExpanderSpec(
+                    name="main", kind="pcf8575", bus=1, address=0x20
+                )
+            },
+            "uses board 'pca9535'.*expander 'main' has type 'pcf8575'",
+        ),
+        (
+            "pcf8575",
+            "main",
+            {
+                "main": GpioExpanderSpec(
+                    name="main", kind="pca9535", bus=1, address=0x20
+                )
+            },
+            "uses board 'pcf8575'.*expander 'main' has type 'pca9535'",
+        ),
+    ],
+)
+def test_fake_gpio_validates_expander_assignments(
+    board: GpioBoard,
+    expander: str | None,
+    expanders: dict[str, GpioExpanderSpec],
+    error: str,
+) -> None:
+    manager = GpioManager(
+        {
+            "sensor": GpioPinSpec(
+                name="sensor",
+                board=board,
+                expander=expander,
+                pin=1,
+                direction="input",
+            )
+        },
+        expanders,
+        fake=True,
+    )
+
+    with pytest.raises(GpioConfigError, match=error):
+        manager.input("sensor")
+
+
+def test_fake_gpio_allows_omitted_expander_topology_on_one_shared_backend() -> None:
+    manager = GpioManager(
+        {
+            "pca_sensor": GpioPinSpec(
+                name="pca_sensor",
+                board="pca9535",
+                expander="pca",
+                pin=1,
+                direction="input",
+            ),
+            "pcf_sensor": GpioPinSpec(
+                name="pcf_sensor",
+                board="pcf8575",
+                expander="pcf",
+                pin=2,
+                direction="input",
+            ),
+        },
+        fake=True,
+    )
+
+    pca_sensor = manager.input("pca_sensor")
+    pcf_sensor = manager.input("pcf_sensor")
+
+    assert isinstance(pca_sensor._backend, FakeGpioBackend)
+    assert pca_sensor._backend is pcf_sensor._backend
 
 
 def test_gpio_manager_logs_input_changes_after_initialization(caplog: pytest.LogCaptureFixture) -> None:

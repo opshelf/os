@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import time
 from dataclasses import dataclass
 from typing import Callable, Literal, Optional, Protocol
@@ -10,7 +11,7 @@ from hardware.exceptions import GpioConfigError
 
 logger = logging.getLogger(__name__).getChild("gpio")
 
-GpioBoard = Literal["rpi", "pca9535"]
+GpioBoard = Literal["rpi", "pca9535", "pcf8575"]
 GpioDirection = Literal["input", "output"]
 GpioEdge = Literal["rising", "falling", "both"]
 GpioPull = Literal["up", "down", "off"]
@@ -61,7 +62,7 @@ class GpioInterruptSpec:
 @dataclass(frozen=True)
 class GpioExpanderSpec:
     name: str
-    kind: Literal["pca9535"]
+    kind: Literal["pca9535", "pcf8575"]
     bus: int
     address: int
     interrupt: Optional[GpioInterruptSpec] = None
@@ -101,7 +102,7 @@ class GpioPinSpec:
         if self.debounce_ms < 0:
             raise GpioConfigError(f"GPIO pin '{self.name}' debounce_ms must be >= 0")
 
-        if self.board == "pca9535" and not self.expander:
+        if self.board in ("pca9535", "pcf8575") and not self.expander:
             raise GpioConfigError(f"GPIO pin '{self.name}' requires an expander")
 
         if self.board == "rpi" and self.expander is not None:
@@ -169,6 +170,9 @@ class DigitalInput:
         last_value = self._spec.to_logical(raw_initial)
         last_emit_at = 0.0
         is_closed = False
+        is_buffering = True
+        pending_raw_values: list[bool] = []
+        state_lock = threading.Lock()
 
         def did_call(event: GpioEvent) -> None:
             try:
@@ -187,33 +191,42 @@ class DigitalInput:
 
             did_call(event)
 
-        def did_change(raw_value: bool) -> None:
+        def event_for_change_locked(raw_value: bool) -> GpioEvent | None:
             nonlocal last_emit_at, last_value
-
-            if is_closed is True:
-                return
 
             value = self._spec.to_logical(raw_value)
             if value == last_value:
-                return
+                return None
 
             now = time.monotonic()
             if self._spec.debounce_ms > 0:
                 debounce_s = self._spec.debounce_ms / 1000
                 if last_emit_at > 0 and now - last_emit_at < debounce_s:
-                    return
+                    return None
 
             last_value = value
             last_emit_at = now
 
-            did_dispatch(
-                GpioEvent(
-                    name=self._spec.name,
-                    value=value,
-                    raw_value=raw_value,
-                    timestamp=now,
-                )
+            return GpioEvent(
+                name=self._spec.name,
+                value=value,
+                raw_value=raw_value,
+                timestamp=now,
             )
+
+        def did_change(raw_value: bool) -> None:
+            with state_lock:
+                if is_closed is True:
+                    return
+
+                if is_buffering is True:
+                    pending_raw_values.append(raw_value)
+                    return
+
+                event = event_for_change_locked(raw_value)
+
+            if event is not None:
+                did_dispatch(event)
 
         subscription = self._backend.subscribe(
             self._spec,
@@ -222,21 +235,45 @@ class DigitalInput:
             debounce_ms=self._spec.debounce_ms,
         )
 
-        if emit_initial is True:
-            last_emit_at = time.monotonic()
+        try:
+            raw_after_subscription = self._backend.read(self._spec)
+        except BaseException:
+            with state_lock:
+                is_closed = True
+            subscription.close()
+            raise
 
-            did_dispatch(
-                GpioEvent(
+        did_change(raw_after_subscription)
+
+        with state_lock:
+            initial_event = None
+            if emit_initial is True:
+                initial_timestamp = time.monotonic()
+                initial_event = GpioEvent(
                     name=self._spec.name,
-                    value=last_value,
+                    value=self._spec.to_logical(raw_initial),
                     raw_value=raw_initial,
-                    timestamp=last_emit_at,
+                    timestamp=initial_timestamp,
                 )
-            )
+
+        if initial_event is not None:
+            did_dispatch(initial_event)
+
+        while True:
+            with state_lock:
+                if pending_raw_values:
+                    event = event_for_change_locked(pending_raw_values.pop(0))
+                else:
+                    is_buffering = False
+                    break
+
+            if event is not None:
+                did_dispatch(event)
 
         def did_unsubscribe() -> None:
             nonlocal is_closed
-            is_closed = True
+            with state_lock:
+                is_closed = True
             subscription.close()
 
         return GpioSubscription(did_unsubscribe)

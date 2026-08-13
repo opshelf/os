@@ -297,14 +297,14 @@ class GpioInterruptConfig(BaseModel):
 
 class GpioExpanderConfig(BaseModel):
     name: str = Field(..., min_length=1)
-    type: Literal["pca9535"] = "pca9535"
+    type: Literal["pca9535", "pcf8575"] = "pca9535"
     bus: int = Field(1, ge=0)
     address: int = Field(0x20, ge=0, le=0x7F)
     interrupt: Optional[GpioInterruptConfig] = None
 
 
 class GpioPinConfig(BaseModel):
-    board: Literal["rpi", "pca9535"]
+    board: Literal["rpi", "pca9535", "pcf8575"]
     pin: int = Field(..., ge=0)
     direction: Literal["input", "output"]
     expander: Optional[str] = None
@@ -319,6 +319,8 @@ class GpioPinConfig(BaseModel):
     def _validate_pin(self) -> "GpioPinConfig":
         if self.board == "pca9535" and self.expander is None:
             raise ValueError("PCA9535 GPIO pins require expander")
+        if self.board == "pcf8575" and self.expander is None:
+            raise ValueError("PCF8575 GPIO pins require expander")
         if self.board == "rpi" and self.expander is not None:
             raise ValueError("Raspberry Pi GPIO pins cannot set expander")
         if self.direction == "input" and (self.initial is not None or self.shutdown is not None):
