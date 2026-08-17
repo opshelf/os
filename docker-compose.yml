@@ -5,6 +5,8 @@ services:
     build:
       context: .
       dockerfile: ./Dockerfile
+    image: ${OPSHELF_REGISTRY:-fleet.opshelf.com}/opshelf/openshelf_os_api:latest
+    pull_policy: build
     network_mode: "host"
     volumes:
       - /etc/cups:/etc/cups:ro
@@ -57,6 +59,8 @@ services:
     build:
       context: ./dev_ui
       dockerfile: Dockerfile
+    image: ${OPSHELF_REGISTRY:-fleet.opshelf.com}/opshelf/openshelf_os_dev_ui:latest
+    pull_policy: build
     network_mode: "host"
     dns:
       - 8.8.8.8

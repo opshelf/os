@@ -8,6 +8,8 @@ LAST_MODE_FILE="$DATA_DIR/.last_start_mode"
 
 HARDWARE=false
 BUILD=false
+PULL=false
+PULL_NEEDED=false
 DETACHED=false
 MODE=""
 CONFIG_OVERRIDE_HOST_PATH=""
@@ -162,6 +164,10 @@ while [[ $# -gt 0 ]]; do
 			BUILD=true
 			shift
 			;;
+		-p|--pull)
+			PULL=true
+			shift
+			;;
 		-d|--detached)
 			DETACHED=true
 			shift
@@ -172,7 +178,7 @@ while [[ $# -gt 0 ]]; do
 			;;
 		*)
 			echo "Unknown option: $1"
-			echo "Usage: $0 [-h|--hardware] [-b|--build] [-d|--detached] [-m|--mode demo|development|production]"
+			echo "Usage: $0 [-h|--hardware] [-b|--build] [-p|--pull] [-d|--detached] [-m|--mode demo|development|production]"
 			exit 1
 			;;
 	esac
@@ -228,8 +234,13 @@ if [[ -n "$LAST_MODE" && "$LAST_MODE" != "$MODE" && "$BUILD" == false ]]; then
 	CURR_IS_DEV=$([[ "$MODE" == "development" ]] && echo true || echo false)
 
 	if [[ "$LAST_IS_DEV" != "$CURR_IS_DEV" ]]; then
-		echo "mode switch ($LAST_MODE -> $MODE) crosses build boundary, forcing rebuild"
-		BUILD=true
+		if [[ "$PULL" == true ]]; then
+			echo "mode switch ($LAST_MODE -> $MODE) crosses build boundary, pulling prebuilt images"
+			PULL_NEEDED=true
+		else
+			echo "mode switch ($LAST_MODE -> $MODE) crosses build boundary, forcing rebuild"
+			BUILD=true
+		fi
 	fi
 fi
 
@@ -265,5 +276,9 @@ fi
 if ! write_mode_file "$LAST_MODE_FILE" "$MODE"; then
 	echo "Failed to write mode tracking file: $LAST_MODE_FILE"
 	exit 1
+fi
+
+if [[ "$PULL_NEEDED" == true ]]; then
+	cd "$SCRIPT_DIR" && eval "$COMPOSE_CMD pull"
 fi
 cd "$SCRIPT_DIR" && eval $COMPOSE_CMD

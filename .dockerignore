@@ -1,0 +1,14 @@
+.git
+.DS_Store
+.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/.uv-cache
+openshelf_hardware/data
+dev_ui/node_modules
+dev_ui/build
+dev_ui/.svelte-kit
+scripts/__pycache__
