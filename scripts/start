@@ -279,6 +279,9 @@ if ! write_mode_file "$LAST_MODE_FILE" "$MODE"; then
 fi
 
 if [[ "$PULL_NEEDED" == true ]]; then
-	cd "$SCRIPT_DIR" && eval "$COMPOSE_CMD pull"
+	images="$(cd "$SCRIPT_DIR" && eval "$COMPOSE_CMD config --images" 2>/dev/null || true)"
+	for image in $images; do
+		docker pull "$image"
+	done
 fi
 cd "$SCRIPT_DIR" && eval $COMPOSE_CMD
