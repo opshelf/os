@@ -5,6 +5,9 @@ from pydantic import BaseModel, Field
 from openshelf_os.storage import StorageGrid, StorageModuleCellLocation
 
 
+SCALE_OCCUPIED_THRESHOLD_GRAMS = 5.0
+
+
 class StatusFlags(BaseModel):
     value: int = 0
     stall_guard2_status: bool = False
@@ -77,7 +80,7 @@ class ScaleStatus(BaseModel):
     overload: bool = False
     zero: bool = False
     occupied: bool = False
-    threshold_grams: float = 5.0
+    threshold_grams: float = SCALE_OCCUPIED_THRESHOLD_GRAMS
     decimal_position: Optional[int] = None
     updated_at: Optional[str] = None
     error: Optional[str] = None

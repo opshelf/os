@@ -30,8 +30,16 @@ from openshelf_os.robot.commands import (
     MoveCommand, RetrieveItemCommand, StoreItemCommand,
 )
 from openshelf_os.robot.status import (
-    RobotResponse, RobotCommandSuccessful, RobotCommandError,
-    RobotStatus, GantryStatus, ToolAxisStatus, RobotState, AxisTelemetry, CabinetDoorState,
+    SCALE_OCCUPIED_THRESHOLD_GRAMS,
+    AxisTelemetry,
+    CabinetDoorState,
+    GantryStatus,
+    RobotCommandError,
+    RobotCommandSuccessful,
+    RobotResponse,
+    RobotState,
+    RobotStatus,
+    ToolAxisStatus,
 )
 from openshelf_os.storage import (
     StorageGrid, Dimensions, StorageModuleSide, CellItem, StorageModuleCellLocation,
@@ -922,6 +930,16 @@ class Robot:
             return RobotCommandError(command=command_name, error="Invalid dimensions provided")
 
         weight = await self._io.get_weight()
+        if weight is not None and abs(weight) <= SCALE_OCCUPIED_THRESHOLD_GRAMS:
+            self._logger.warning(
+                "Store rejected because the IO box scale did not detect an item: weight=%s threshold=%s",
+                weight,
+                SCALE_OCCUPIED_THRESHOLD_GRAMS,
+            )
+            return RobotCommandError(
+                command=command_name,
+                error="Place an item in the IO box before storing",
+            )
 
         item = CellItem(
             dimensions=Dimensions(

@@ -12,7 +12,12 @@ from typing import Optional, List, Any, Dict
 from openshelf_os.robot.core import Robot
 from openshelf_os.robot.commands import RobotCommands, StopCommand, HomeCommand, InitializeCommand
 from openshelf_os.robot.status import (
-    CabinetDoorState, RobotCommandSuccessful, RobotResponse, SafetyStatus, ScaleStatus,
+    SCALE_OCCUPIED_THRESHOLD_GRAMS,
+    CabinetDoorState,
+    RobotCommandSuccessful,
+    RobotResponse,
+    SafetyStatus,
+    ScaleStatus,
 )
 from openshelf_os.robot.models import WorkerError, QueuedOperation, WorkerStatusWithQueue
 from openshelf_os.barcode_service import (
@@ -24,7 +29,6 @@ from openshelf_os.exceptions import MotorError, MovementError, ToolError
 
 logger = logging.getLogger(__name__)
 
-SCALE_OCCUPIED_THRESHOLD_GRAMS = 5.0
 SCALE_POLL_INTERVAL_SECONDS = 1.0
 SCALE_STATUS_FRESH_SECONDS = 3.0
 SCALE_WEIGHT_PUBLISH_DELTA_GRAMS = 1.0
