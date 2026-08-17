@@ -112,11 +112,13 @@ docker compose -f docker-compose.yml logs -f dev_ui
 
 in development mode, api source under `openshelf_hardware/packages/*/src` and ui source under `dev_ui/src` are bind-mounted into the containers.
 
-dependency changes, dockerfile changes, or mode switches across the development/non-development boundary need a rebuild:
+dependency changes, dockerfile changes, or mode switches across the development/non-development boundary need a rebuild on laptops:
 
 ```bash
 ./scripts/start --mode development --build
 ```
+
+on deployed devices the stack runs prebuilt images pulled from the team registry (`fleet.opshelf.com/opshelf/*`) and never builds on device. `./scripts/start --pull` pulls prebuilt images instead of building on a boundary-crossing mode switch, and `../provision/remote <device> -c sync:dev` pulls the images matching the checkout sha before starting. the `--build` flag remains the escape hatch for on-device source builds when dependencies change before a release exists.
 
 runtime state lives in `openshelf_hardware/data`. delete or edit this directory carefully because it contains the local sqlite database and mode files.
 
@@ -173,8 +175,10 @@ for feature work on a development pi, inspect the branch and worktree before pul
 cd /opt/opshelf/repos/openshelf_os
 git status --short --branch
 git pull
-./scripts/start --mode development --hardware
+./scripts/start --mode development --hardware --pull
 ```
+
+source-only changes are picked up by the bind mounts immediately; `--pull` fetches the prebuilt images matching the checkout (see `../provision/remote <device> -c sync:dev` for the one-command variant). when the change touches dependencies, publish a release from the provision repo (`../provision/release`) and sync the device, or rebuild on the device with `./scripts/start --mode development --hardware --build`.
 
 if the worktree is dirty, stop and reconcile it before pulling.
 
