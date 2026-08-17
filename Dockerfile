@@ -23,7 +23,8 @@ RUN apt-get update && apt-get -y install --no-install-recommends \
 	&& apt-get clean
 
 RUN git clone --depth 1 https://github.com/joan2937/lg /tmp/lg && \
-	cd /tmp/lg && make && make install && \
+	cd /tmp/lg && git fetch --depth 1 origin bcccd782eceedc5b278b3056ea81d5fbbb89c489 && \
+	git checkout FETCH_HEAD && make && make install && \
 	rm -rf /tmp/lg
 
 	

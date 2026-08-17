@@ -6,7 +6,7 @@ COPY package*.json ./
 RUN npm config set fetch-retries 5 && \
     npm config set fetch-retry-mintimeout 60000 && \
     npm config set fetch-retry-maxtimeout 300000 && \
-    npm install --prefer-offline --no-audit
+    npm ci --prefer-offline --no-audit
 
 COPY . .
 RUN npm run build
