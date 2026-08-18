@@ -118,7 +118,7 @@ dependency changes, dockerfile changes, or mode switches across the development/
 ./scripts/start --mode development --build
 ```
 
-on deployed devices the stack runs prebuilt images pulled from the team registry (`fleet.opshelf.com/opshelf/*`) and never builds on device. `./scripts/start --pull` pulls prebuilt images instead of building on a boundary-crossing mode switch, and `../provision/remote <device> -c sync:dev` pulls the images matching the checkout sha before starting. the `--build` flag remains the escape hatch for on-device source builds when dependencies change before a release exists.
+on deployed devices the stack runs prebuilt images pulled from the team registry (`fleet.opshelf.com/opshelf/*`) and never builds on device. plain starts never build implicitly (`--no-build` is always passed); `./scripts/start --pull` pulls prebuilt images instead of building on a boundary-crossing mode switch, and `../provision/remote <device> -c sync:dev` pulls the images matching the checkout sha before starting. the `--build` flag remains the escape hatch for on-device source builds when dependencies change before a release exists.
 
 runtime state lives in `openshelf_hardware/data`. delete or edit this directory carefully because it contains the local sqlite database and mode files.
 
