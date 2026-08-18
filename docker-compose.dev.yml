@@ -20,6 +20,6 @@ services:
     build:
       context: ./dev_ui
       dockerfile: Dockerfile.dev
-    image: ${OPSHELF_REGISTRY:-fleet.opshelf.com}/opshelf/openshelf_os_dev_ui_dev:latest
+    image: ${OPSHELF_REGISTRY:-registry.opshelf.com}/opshelf/openshelf_os_dev_ui_dev:latest
     volumes:
       - ./dev_ui/src:/app/src
