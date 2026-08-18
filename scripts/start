@@ -290,7 +290,10 @@ fi
 if [[ "$PULL_NEEDED" == true ]]; then
 	images="$(cd "$SCRIPT_DIR" && eval "$COMPOSE_CMD config --images" 2>/dev/null || true)"
 	for image in $images; do
-		docker pull "$image"
+		if ! docker pull "$image"; then
+			echo "failed to pull $image; start aborted (check network and rerun)" >&2
+			exit 1
+		fi
 	done
 fi
 cd "$SCRIPT_DIR" && eval $COMPOSE_CMD
