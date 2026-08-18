@@ -258,15 +258,17 @@ echo "starting in $MODE mode"
 
 export_container_runtime_env
 
-COMPOSE_CMD="docker compose -f docker-compose.yml"
+COMPOSE_FILES="-f docker-compose.yml"
 
 if [[ "$MODE" == "development" ]]; then
-	COMPOSE_CMD="$COMPOSE_CMD -f docker-compose.dev.yml"
+	COMPOSE_FILES="$COMPOSE_FILES -f docker-compose.dev.yml"
 fi
 
 if [[ "$HARDWARE" == true ]]; then
-	COMPOSE_CMD="$COMPOSE_CMD -f docker-compose.hardware.yml"
+	COMPOSE_FILES="$COMPOSE_FILES -f docker-compose.hardware.yml"
 fi
+
+COMPOSE_CMD="docker compose $COMPOSE_FILES"
 
 if [[ "$BUILD" == true ]]; then
 	COMPOSE_CMD="$COMPOSE_CMD up --build --remove-orphans"
