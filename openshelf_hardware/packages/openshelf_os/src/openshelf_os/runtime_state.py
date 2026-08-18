@@ -38,7 +38,7 @@ def add_mode_suffix(path: str | Path, mode: OperatingMode) -> Path:
 
 def infer_mode_from_path(path: str | Path) -> OperatingMode:
     stem = Path(path).stem
-    for mode in (OperatingMode.development, OperatingMode.demo):
+    for mode in (OperatingMode.development, OperatingMode.demo, OperatingMode.mock):
         if stem.endswith(f".{mode.value}"):
             return mode
     return OperatingMode.production
@@ -259,14 +259,21 @@ def ensure_mode_workspace(paths: RuntimeStatePaths | None = None) -> dict[str, A
         relative_to=active.config_path.parent,
     )
 
-    if active_storage.exists():
+    if active.mode == OperatingMode.mock:
+        # Mock inventory is exclusively database-backed and must never inherit
+        # a production storage snapshot.
+        pass
+    elif active_storage.exists():
         adopted.append(_manifest_path_label(active_storage, active.data_dir))
     elif _atomic_copy(production_storage, active_storage):
         copied.append(_manifest_path_label(active_storage, active.data_dir))
     elif active_storage.exists():
         adopted.append(_manifest_path_label(active_storage, active.data_dir))
 
-    if active.database_path.exists():
+    if active.mode == OperatingMode.mock and active.database_path.exists() is False:
+        # Alembic creates a fresh database containing only seeded auth state.
+        pass
+    elif active.database_path.exists():
         adopted.append(active.database_path.name)
     elif _sqlite_backup(production.database_path, active.database_path):
         copied.append(active.database_path.name)

@@ -3,13 +3,14 @@ set -eu
 
 PYTHON_BIN=""
 ENV_PATH="/app/openshelf_hardware/.venv"
+RUNTIME_MODE="$(cat /app/openshelf_hardware/data/.mode 2>/dev/null || printf '%s' "${OPERATING_MODE:-development}")"
 
 if [ -x "${ENV_PATH}/bin/python" ]; then
 	PYTHON_BIN="${ENV_PATH}/bin/python"
 fi
 
 # Start cupsd if available
-if command -v cupsd >/dev/null 2>&1; then
+if [ "$RUNTIME_MODE" != "mock" ] && command -v cupsd >/dev/null 2>&1; then
 	cupsd || true
 fi
 
@@ -24,10 +25,9 @@ fi
 
 # Resolve printer queue/URI from the configured runtime config.
 QUEUE_FROM_CONFIG=""
-if [ -z "${PRINTER_QUEUE:-}" ] && [ -z "${PRINTER:-}" ] && [ -n "$PYTHON_BIN" ]; then
-	MODE="$(cat /app/openshelf_hardware/data/.mode 2>/dev/null || printf '%s' "${OPERATING_MODE:-development}")"
-	case "$MODE" in
-		development|demo) ACTIVE_CONFIG="/app/openshelf_hardware/data/config.$MODE.json" ;;
+if [ "$RUNTIME_MODE" != "mock" ] && [ -z "${PRINTER_QUEUE:-}" ] && [ -z "${PRINTER:-}" ] && [ -n "$PYTHON_BIN" ]; then
+	case "$RUNTIME_MODE" in
+		development|demo|mock) ACTIVE_CONFIG="/app/openshelf_hardware/data/config.$RUNTIME_MODE.json" ;;
 		*) ACTIVE_CONFIG="/app/openshelf_hardware/data/config.json" ;;
 	esac
 	for config_path in "${OPENSHELF_CONFIG_PATH:-}" "$ACTIVE_CONFIG" "/app/openshelf_hardware/data/config.json" "/app/openshelf_hardware/data/settings.json"; do
@@ -56,7 +56,9 @@ fi
 QUEUE="${PRINTER_QUEUE:-${PRINTER:-${QUEUE_FROM_CONFIG}}}"
 URI="${PRINTER_URI:-usb://Caysn/T9E-US?serial=000015753145}"
 
-if [ -z "$QUEUE" ]; then
+if [ "$RUNTIME_MODE" = "mock" ]; then
+	echo "Mock mode; skipping CUPS setup"
+elif [ -z "$QUEUE" ]; then
 	echo "Printer queue not configured; skipping CUPS setup"
 elif command -v lpadmin >/dev/null 2>&1; then
 	# Create queue if missing

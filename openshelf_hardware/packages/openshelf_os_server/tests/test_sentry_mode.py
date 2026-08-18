@@ -33,6 +33,20 @@ async def test_configure_sentry_skips_development(tmp_path) -> None:
 		init_mock.assert_not_called()
 
 
+@pytest.mark.anyio
+async def test_configure_sentry_skips_mock(tmp_path) -> None:
+	mode_file = _set_mode_file(tmp_path, "mock")
+
+	with (
+		patch("openshelf_os_server.settings.MODE_FILE", mode_file),
+		patch.dict(os.environ, {"SENTRY_DSN_API": "https://example.invalid/1"}, clear=False),
+		patch.object(sentry_sdk, "init") as init_mock,
+	):
+		clear_config_cache()
+		assert main._configure_sentry() is False
+		init_mock.assert_not_called()
+
+
 
 @pytest.mark.anyio
 async def test_configure_sentry_skips_when_dsn_missing(tmp_path) -> None:

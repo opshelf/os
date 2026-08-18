@@ -183,7 +183,7 @@ while [[ $# -gt 0 ]]; do
 			;;
 		*)
 			echo "Unknown option: $1"
-			echo "Usage: $0 [-h|--hardware] [-b|--build] [-p|--pull] [--force-recreate] [-d|--detached] [-m|--mode demo|development|production]"
+			echo "Usage: $0 [-h|--hardware] [-b|--build] [-p|--pull] [--force-recreate] [-d|--detached] [-m|--mode demo|development|mock|production]"
 			exit 1
 			;;
 	esac
@@ -200,9 +200,9 @@ if [[ -z "$MODE" ]]; then
 fi
 
 case "$MODE" in
-	demo|development|production) ;;
+	demo|development|mock|production) ;;
 	*)
-		echo "Invalid mode: $MODE (must be demo, development, or production)"
+		echo "Invalid mode: $MODE (must be demo, development, mock, or production)"
 		exit 1
 		;;
 esac
@@ -224,7 +224,7 @@ case "$MODE" in
 	development)
 		export ENV=dev
 		;;
-	demo|production)
+	demo|mock|production)
 		export ENV=production
 		;;
 esac
@@ -249,7 +249,7 @@ if [[ -n "$LAST_MODE" && "$LAST_MODE" != "$MODE" && "$BUILD" == false ]]; then
 	fi
 fi
 
-if [[ "$HARDWARE" == false ]] && is_hardware_expected; then
+if [[ "$MODE" != "mock" && "$HARDWARE" == false ]] && is_hardware_expected; then
 	HARDWARE=true
 	echo "hardware config detected; enabling docker-compose.hardware.yml"
 fi

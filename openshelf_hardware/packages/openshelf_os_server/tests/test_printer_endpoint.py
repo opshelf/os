@@ -3,6 +3,8 @@ from unittest.mock import patch
 
 import pytest
 
+from openshelf_os.operating_mode import OperatingMode
+
 from openshelf_os_server.routers import printer as printer_router
 
 
@@ -44,3 +46,15 @@ async def test_print_label_writes_barcode_when_printer_is_enabled() -> None:
     }
     print_barcode.assert_called_once_with(sym="UPC-A", payload="036000291452")
     close_printer.assert_called_once_with()
+
+
+@pytest.mark.anyio
+async def test_print_label_simulates_hardware_in_mock_mode() -> None:
+    with (
+        patch.object(printer_router, "get_operating_mode", return_value=OperatingMode.mock),
+        patch.object(printer_router.printer, "print_barcode") as print_barcode,
+    ):
+        result = await printer_router.print_label("036000291452")
+
+    assert result == {"message": "success", "upca": "036000291452", "printed": True}
+    print_barcode.assert_not_called()
