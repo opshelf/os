@@ -10,6 +10,7 @@ HARDWARE=false
 BUILD=false
 PULL=false
 PULL_NEEDED=false
+FORCE_RECREATE=false
 DETACHED=false
 MODE=""
 CONFIG_OVERRIDE_HOST_PATH=""
@@ -168,6 +169,10 @@ while [[ $# -gt 0 ]]; do
 			PULL=true
 			shift
 			;;
+		--force-recreate)
+			FORCE_RECREATE=true
+			shift
+			;;
 		-d|--detached)
 			DETACHED=true
 			shift
@@ -178,7 +183,7 @@ while [[ $# -gt 0 ]]; do
 			;;
 		*)
 			echo "Unknown option: $1"
-			echo "Usage: $0 [-h|--hardware] [-b|--build] [-p|--pull] [-d|--detached] [-m|--mode demo|development|production]"
+			echo "Usage: $0 [-h|--hardware] [-b|--build] [-p|--pull] [--force-recreate] [-d|--detached] [-m|--mode demo|development|production]"
 			exit 1
 			;;
 	esac
@@ -266,7 +271,11 @@ fi
 if [[ "$BUILD" == true ]]; then
 	COMPOSE_CMD="$COMPOSE_CMD up --build --remove-orphans"
 else
-	COMPOSE_CMD="$COMPOSE_CMD up --remove-orphans"
+	COMPOSE_CMD="$COMPOSE_CMD up --no-build --remove-orphans"
+fi
+
+if [[ "$FORCE_RECREATE" == true ]]; then
+	COMPOSE_CMD="$COMPOSE_CMD --force-recreate"
 fi
 
 if [[ "$DETACHED" == true ]]; then
