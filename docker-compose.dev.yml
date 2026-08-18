@@ -1,5 +1,9 @@
 services:
   api:
+    build:
+      context: .
+      dockerfile: ./Dockerfile.dev
+    image: ${OPSHELF_REGISTRY:-registry.opshelf.com}/opshelf/openshelf_os_api_dev:latest
     volumes:
       - ./openshelf_hardware/packages/hardware/src/hardware:/app/openshelf_hardware/packages/hardware/src/hardware
       - ./openshelf_hardware/packages/openshelf_os/src/openshelf_os:/app/openshelf_hardware/packages/openshelf_os/src/openshelf_os
