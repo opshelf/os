@@ -19,7 +19,7 @@
 
 ## Runtime gotchas
 - `openshelf_hardware/data/` is the live source of truth for local state. Production keeps `base.db`, `config.json`, and `storage.json`; development/demo use persistent `*.development.*` / `*.demo.*` variants forked from production on first use. `scripts/start` tracks the requested mode in `data/.mode` and `data/.last_start_mode`; the API reports mode but cannot change it.
-- In development mode, `docker-compose.dev.yml` only bind-mounts Python source directories plus `dev_ui/src`. Devices run prebuilt images (`fleet.opshelf.com/opshelf/*`) whose venv/node_modules the bind mounts overlay, so source-only changes need no rebuild; dependency or dockerfile changes need a new release (`../provision/release` plus a device sync) or an explicit `--build`.
+- In development mode, `docker-compose.dev.yml` only bind-mounts Python source directories plus `dev_ui/src`. Devices run prebuilt images (`registry.opshelf.com/opshelf/*`) whose venv/node_modules the bind mounts overlay, so source-only changes need no rebuild; dependency or dockerfile changes need a new release (`../provision/release` plus a device sync) or an explicit `--build`.
 - The app seeds a developer login on startup: `developer@opshelf.com` with PIN `1111`. The UI auto-attempts this login in `dev_ui/src/routes/+layout.svelte`.
 - `README.md` still references `scripts/debug/*`, but that directory is not in this repo anymore.
 - Per-register Modbus reads log at DEBUG on the `hardware.controller.controller` logger and are silenced by default, otherwise they bury every other log line. Set `MODBUS_TRACE=true` to restore them for bus debugging.
