@@ -4,12 +4,11 @@ import asyncio
 import os
 import signal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from openshelf_os.common import OperatingMode
 from openshelf_os_server.core.logging_config import get_logger
-from openshelf_os_server.settings import get_operating_mode, get_root_config, MODE_FILE, save_root_config
+from openshelf_os_server.settings import get_operating_mode, get_root_config, save_root_config
 from openshelf_os_server.routers.auth_deps import get_current_user, require_permissions
 
 logger = get_logger(__name__)
@@ -19,15 +18,6 @@ router = APIRouter(tags=["system"])
 
 class ModeResponse(BaseModel):
 	mode: str
-
-
-class ModeUpdateRequest(BaseModel):
-	mode: str
-
-
-class ModeUpdateResponse(BaseModel):
-	mode: str
-	message: str
 
 
 class HomeOnInitResponse(BaseModel):
@@ -55,40 +45,6 @@ def _schedule_api_restart() -> None:
 async def get_mode() -> ModeResponse:
 	mode = get_operating_mode()
 	return ModeResponse(mode=mode.value)
-
-
-@router.put(
-	"/mode",
-	response_model=ModeUpdateResponse,
-	dependencies=[Depends(require_permissions("system:admin"))],
-)
-async def set_mode(request: ModeUpdateRequest) -> ModeUpdateResponse:
-	raw = request.mode.strip().lower()
-
-	valid_modes = {m.value for m in OperatingMode}
-	if raw not in valid_modes:
-		raise HTTPException(
-			status_code=status.HTTP_400_BAD_REQUEST,
-			detail=f"Invalid mode: {raw!r}. Must be one of: {', '.join(sorted(valid_modes))}",
-		)
-
-	current = get_operating_mode()
-	if raw == current.value:
-		raise HTTPException(
-			status_code=status.HTTP_409_CONFLICT,
-			detail=f"Already in {raw} mode",
-		)
-
-	MODE_FILE.parent.mkdir(parents=True, exist_ok=True)
-	MODE_FILE.write_text(raw, encoding="utf-8")
-
-	logger.info("operating_mode_changed", previous=current.value, new=raw)
-	_schedule_api_restart()
-
-	return ModeUpdateResponse(
-		mode=raw,
-		message="Mode set. Restarting...",
-	)
 
 
 @router.get(

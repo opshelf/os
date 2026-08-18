@@ -39,6 +39,11 @@ from openshelf_os_server.core.init_progress import get_init_tracker
 from openshelf_os_server.core.storage import StorageService
 from openshelf_os_server.core.camera import init_camera_progress, init_tool_camera_manager, init_overhead_camera_manager, stop_all_camera_streams
 from openshelf_os_server.core.iobox_sizer import get_iobox_sizer_status, init_iobox_sizer, stop_iobox_sizer
+from openshelf_os_server.core.mock_robot import (
+	get_mock_robot_runtime,
+	start_mock_robot_runtime,
+	stop_mock_robot_runtime,
+)
 from openshelf_os_server.settings import Settings
 from openshelf_os_server.database.base import Base, engine, get_database_url
 from openshelf_os_server.database.session import AsyncSessionLocal, get_db
@@ -503,7 +508,8 @@ async def _ensure_default_role_permissions() -> None:
 
 
 async def _seed_auth_if_requested() -> None:
-	if os.getenv("RUN_SEED_SCRIPT", "false").lower() not in {"1", "true", "yes"}:
+	seed_requested = os.getenv("RUN_SEED_SCRIPT", "false").lower() in {"1", "true", "yes"}
+	if seed_requested is False and get_operating_mode() != OperatingMode.mock:
 		return
 
 	script_path = Path(__file__).parent.parent.parent / "scripts" / "seed_auth.py"
@@ -586,6 +592,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 		calibration_dir=str(runtime_paths.calibration_dir),
 	)
 	settings = get_settings()
+	is_mock = runtime_paths.mode == OperatingMode.mock
 
 	_run_migrations()
 
@@ -602,7 +609,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 	camera_init_task: Optional[asyncio.Task[None]] = None
 	storage_override_set = False
 	get_init_tracker().reset()
-	if settings.robot.enabled is True:
+	if is_mock:
+		await start_mock_robot_runtime()
+		get_init_tracker().register_components(["mock_robot"])
+		get_init_tracker().report("mock_robot", "ready")
+		get_init_tracker().set_overall("ready")
+		logger.info("mock_robot_initialized")
+	elif settings.robot.enabled is True:
 		logger.info("robot_initialization", status="starting_background")
 		robot_init_task = asyncio.create_task(init_robot_worker())
 	else:
@@ -611,7 +624,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 	camera_ids: list[str] = []
 
-	tool_camera_url = _get_tool_camera_url(settings)
+	tool_camera_url = None if is_mock else _get_tool_camera_url(settings)
 	if tool_camera_url is not None and tool_camera_url != "":
 		try:
 			await init_tool_camera_manager(tool_camera_url)
@@ -620,7 +633,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 		except Exception as e:
 			logger.error("tool_camera_initialization_failed", error=str(e), exc_info=True)
 
-	overhead_camera_url = _get_overhead_camera_url(settings)
+	overhead_camera_url = None if is_mock else _get_overhead_camera_url(settings)
 	if overhead_camera_url is not None and overhead_camera_url != "":
 		try:
 			await init_overhead_camera_manager(overhead_camera_url)
@@ -629,12 +642,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 		except Exception as e:
 			logger.error("overhead_camera_initialization_failed", error=str(e), exc_info=True)
 
-	try:
-		await init_iobox_sizer()
-		if get_iobox_sizer_status()["enabled"] is True:
-			camera_ids.append("iobox_sizer")
-	except Exception as e:
-		logger.warning("iobox_sizer_startup_failed", error=str(e), error_type=type(e).__name__, exc_info=True)
+	if is_mock is False:
+		try:
+			await init_iobox_sizer()
+			if get_iobox_sizer_status()["enabled"] is True:
+				camera_ids.append("iobox_sizer")
+		except Exception as e:
+			logger.warning("iobox_sizer_startup_failed", error=str(e), error_type=type(e).__name__, exc_info=True)
 
 	if len(camera_ids) > 0:
 		camera_init_task = asyncio.create_task(init_camera_progress(camera_ids))
@@ -674,9 +688,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 				pass
 			except Exception as e:
 				logger.warning("robot_init_task_shutdown_failed", error=str(e), exc_info=True)
-		await stop_robot_worker()
-		logger.info("robot_worker_stopped")
-		await stop_iobox_sizer()
+		if is_mock:
+			await stop_mock_robot_runtime()
+			logger.info("mock_robot_stopped")
+		else:
+			await stop_robot_worker()
+			logger.info("robot_worker_stopped")
+			await stop_iobox_sizer()
 		if storage_override_set is True:
 			app.dependency_overrides.pop(StorageService, None)
 
@@ -733,6 +751,17 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
 @app.get("/api/health")
 async def health() -> JSONResponse:
 	body: dict[str, str] = {"status": "ok", "mode": get_operating_mode().value}
+	if get_operating_mode() == OperatingMode.mock:
+		try:
+			get_mock_robot_runtime()
+		except ValueError:
+			body["status"] = "degraded"
+			body["robot_status"] = "error"
+			body["robot_phase"] = "failed"
+			return JSONResponse(status_code=503, content=body)
+		body["robot_status"] = "ok"
+		body["robot_phase"] = "ready"
+		return JSONResponse(content=body)
 	robot_health = get_robot_health()
 
 	if robot_health["status"] == "error":

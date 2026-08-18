@@ -4,11 +4,13 @@ import asyncio
 from copy import deepcopy
 import json
 import re
+from datetime import datetime
 from typing import Any, AsyncGenerator, Callable, Iterable, List, Literal, NoReturn, Optional, cast
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from openshelf_os.common import ConfigError
+from openshelf_os.operating_mode import OperatingMode
 from openshelf_os.robot.commands import (
     HomeCommand,
     InitializeCommand,
@@ -32,11 +34,20 @@ from openshelf_os_server.core.manual_motion import (
     manual_motion_guard,
     robot_command_enqueue_guard,
 )
+from openshelf_os_server.core.mock_robot import (
+    MOCK_CELLS_PER_SHELF,
+    MOCK_SHELVES_PER_SIDE,
+    MOCK_SIDES,
+    MockQueueFullError,
+    MockRequestConflictError,
+    get_mock_robot_runtime,
+    serialize_mock_command,
+)
 from openshelf_os_server.core.storage import StorageService
 from openshelf_os_server.routers.common import SuccessResponse
 from openshelf_os_server.settings import get_settings, get_operating_mode
 from openshelf_os_server.database.session import get_db, AsyncSessionLocal
-from openshelf_os_server.database.models import Item, ItemLocation, User
+from openshelf_os_server.database.models import AccessLevel, Item, ItemLocation, User
 from .auth_deps import (
     get_current_user,
     require_permissions,
@@ -212,6 +223,23 @@ class SafetyComponentOverrideRequest(BaseModel):
     bypass: bool
 
 
+class MockCommandAcceptedResponse(BaseModel):
+    message: Literal["success"]
+    command_id: str
+    status: Literal["queued", "running", "succeeded", "failed"]
+
+
+class MockCommandLifecycleResponse(BaseModel):
+    command_id: str
+    request_id: Optional[str]
+    command: Literal["store_item", "retrieve_item"]
+    status: Literal["queued", "running", "succeeded", "failed"]
+    result: Optional[dict[str, Any]]
+    created_at: datetime
+    started_at: Optional[datetime]
+    completed_at: Optional[datetime]
+
+
 async def check_robot_enabled() -> None:
     settings = get_settings()
     if not settings.robot.enabled:
@@ -229,6 +257,13 @@ async def get_robot_worker_or_error() -> RobotWorker:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Robot is not initialized or failed to start",
         ) from e
+
+
+async def get_command_worker_for_mode() -> RobotWorker | None:
+    if get_operating_mode() == OperatingMode.mock:
+        return None
+    await check_robot_enabled()
+    return await get_robot_worker_or_error()
 
 
 def _ensure_command_allowed_while_needs_home(command: RobotCommands, worker: RobotWorker) -> None:
@@ -250,13 +285,154 @@ def _ensure_command_allowed_while_needs_home(command: RobotCommands, worker: Rob
     )
 
 
-@router.post("/commands", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
+async def _validate_mock_store(command: StoreItemCommand, db: AsyncSession) -> None:
+    item_data = command.item or {}
+    upca = item_data.get("upca")
+    if not isinstance(upca, str) or upca.strip() == "" or len(upca) > 50:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="item.upca is required")
+
+    item = (await db.execute(select(Item).where(Item.upca == upca))).scalar_one_or_none()
+    if item is not None:
+        existing = (
+            await db.execute(select(ItemLocation).where(ItemLocation.item_id == item.id))
+        ).scalars().first()
+        if existing is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Item is already stored; retrieve it before storing again",
+            )
+        return
+
+    name = item_data.get("name")
+    dimensions = item_data.get("dimensions")
+    if not isinstance(name, str) or name.strip() == "" or not isinstance(dimensions, dict):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="A new item requires upca, name, and complete dimensions",
+        )
+    try:
+        if any(float(dimensions[key]) <= 0 for key in ("width", "height", "length")):
+            raise ValueError
+        if item_data.get("weight") is not None and float(item_data["weight"]) <= 0:
+            raise ValueError
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Item dimensions and weight must be positive numbers",
+        ) from exc
+
+    access_level_id = item_data.get("access_level_id")
+    if access_level_id is not None and await db.get(AccessLevel, access_level_id) is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid access level")
+
+
+async def _validate_mock_retrieve(
+    command: RetrieveItemCommand,
+    current_user: User,
+    db: AsyncSession,
+) -> None:
+    location = command.location or {}
+    side = location.get("side")
+    shelf_idx = location.get("shelf_idx")
+    cell_idx = location.get("cell_idx")
+    if (
+        side not in MOCK_SIDES
+        or not isinstance(shelf_idx, int)
+        or isinstance(shelf_idx, bool)
+        or not isinstance(cell_idx, int)
+        or isinstance(cell_idx, bool)
+        or not 0 <= shelf_idx < MOCK_SHELVES_PER_SIDE
+        or not 0 <= cell_idx < MOCK_CELLS_PER_SHELF
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid location: side, shelf_idx and cell_idx are required",
+        )
+
+    item = (
+        await db.execute(
+            select(Item)
+            .join(ItemLocation)
+            .where(
+                ItemLocation.side == side,
+                ItemLocation.shelf_idx == shelf_idx,
+                ItemLocation.cell_idx == cell_idx,
+            )
+        )
+    ).scalar_one_or_none()
+    if item is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No item found at location (side: {side}, shelf: {shelf_idx}, cell: {cell_idx})",
+        )
+    if can_user_retrieve_item(current_user, item) is False:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to retrieve this item",
+        )
+
+
+@router.post("/commands", dependencies=[Depends(get_current_user)])
 async def robot_commands(
     command: RobotCommands,
-    worker: RobotWorker = Depends(get_robot_worker_or_error),
+    worker: RobotWorker | None = Depends(get_command_worker_for_mode),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> SuccessResponse:
+) -> SuccessResponse | MockCommandAcceptedResponse:
+    if get_operating_mode() == OperatingMode.mock:
+        if not isinstance(command, (StoreItemCommand, RetrieveItemCommand)):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Mock mode supports only store_item and retrieve_item",
+            )
+        runtime = get_mock_robot_runtime()
+        payload = command.model_dump(mode="json", exclude_none=True)
+        request_id = command.request_id
+        try:
+            replay = await runtime.replay(payload, request_id)
+        except MockRequestConflictError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="request_id was already used with a different payload",
+            ) from exc
+        if replay is not None:
+            return MockCommandAcceptedResponse.model_validate(
+                {"message": "success", "command_id": replay.command_id, "status": replay.status}
+            )
+
+        if isinstance(command, StoreItemCommand):
+            await _validate_mock_store(command, db)
+        else:
+            await _validate_mock_retrieve(command, current_user, db)
+
+        try:
+            row, _ = await runtime.enqueue(
+                payload,
+                request_id=request_id,
+                correlation_id=correlation_id_var.get(),
+            )
+        except MockRequestConflictError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="request_id was already used with a different payload",
+            ) from exc
+        except MockQueueFullError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Mock robot command queue is full",
+                headers={"Retry-After": "1"},
+            ) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        return MockCommandAcceptedResponse.model_validate(
+            {"message": "success", "command_id": row.command_id, "status": row.status}
+        )
+
+    if worker is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Robot is not initialized or failed to start",
+        )
     await _ensure_laser_auto_calibration_not_running()
     _ensure_command_allowed_while_needs_home(command, worker)
 
@@ -366,6 +542,19 @@ async def robot_commands(
     async with robot_command_enqueue_guard():
         await worker.enqueue_command(command)
     return SuccessResponse()
+
+
+@router.get("/commands/{command_id}", dependencies=[Depends(get_current_user)])
+async def get_robot_command(command_id: str) -> MockCommandLifecycleResponse:
+    if get_operating_mode() != OperatingMode.mock:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Robot command lifecycle polling is unavailable in this mode",
+        )
+    row = await get_mock_robot_runtime().get_command(command_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Robot command not found")
+    return MockCommandLifecycleResponse.model_validate(serialize_mock_command(row))
 
 
 @router.post("/start", dependencies=[Depends(get_current_user), Depends(require_permissions("robot:control")), Depends(check_robot_enabled)])
@@ -869,6 +1058,25 @@ async def get_occupied_cells_from_db() -> set[tuple[str, int, int]]:
 
 @router.get("/status", dependencies=[Depends(get_current_user)])
 async def stream_sse() -> EventSourceResponse:
+    if get_operating_mode() == OperatingMode.mock:
+        runtime = get_mock_robot_runtime()
+        status_queue, snapshot = await runtime.subscribe_status()
+
+        async def mock_status_generator() -> AsyncGenerator[dict[str, str], None]:
+            try:
+                yield {"data": snapshot}
+                while True:
+                    yield {"data": await status_queue.get()}
+            finally:
+                await runtime.unsubscribe_status(status_queue)
+
+        return EventSourceResponse(
+            mock_status_generator(),
+            ping=15,
+            send_timeout=30,
+            headers={"Cache-Control": "no-cache"},
+        )
+
     tracker = get_init_tracker()
     tracker_queue = await tracker.subscribe()
 
@@ -945,6 +1153,19 @@ async def stream_sse() -> EventSourceResponse:
 
 @router.get("/events", dependencies=[Depends(get_current_user)])
 async def stream_events() -> EventSourceResponse:
+    if get_operating_mode() == OperatingMode.mock:
+        runtime = get_mock_robot_runtime()
+        mock_event_queue = await runtime.subscribe_events()
+
+        async def mock_event_generator() -> AsyncGenerator[dict[str, str], None]:
+            try:
+                while True:
+                    yield {"data": await mock_event_queue.get()}
+            finally:
+                await runtime.unsubscribe_events(mock_event_queue)
+
+        return EventSourceResponse(mock_event_generator())
+
     event_queue: Optional[asyncio.Queue[str]] = None
     worker: Optional[RobotWorker]
 

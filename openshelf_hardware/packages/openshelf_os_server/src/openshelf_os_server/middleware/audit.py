@@ -189,6 +189,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
 				command_records = command_records_context.get()
 				ip_address = request.client.host if request.client else None
 				user_agent = request.headers.get("user-agent")
+				correlation_id = request.headers.get("X-Correlation-ID")
 
 				last_seq_no = None
 				last_entry_hash = None
@@ -226,6 +227,8 @@ class AuditMiddleware(BaseHTTPMiddleware):
 					"seq_no": seq_no,
 					"prev_hash": prev_hash,
 				}
+				if correlation_id is not None:
+					payload["correlation_id"] = correlation_id
 				payload_bytes = canonicalize_payload(payload)
 				entry_hash = sha256_hex(payload_bytes)
 				binding = build_binding_message(seq_no, prev_hash, entry_hash)
@@ -245,6 +248,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
 					ip_address=ip_address or "",
 					user_agent=user_agent or "",
 					request_duration_ms=duration_ms,
+					correlation_id=correlation_id,
 					seq_no=seq_no,
 					prev_hash=prev_hash,
 					entry_hash=entry_hash,

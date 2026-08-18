@@ -95,6 +95,7 @@ class AuditLog(Base):
 	ip_address: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
 	user_agent: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 	request_duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+	correlation_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
 
 	seq_no: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
 	prev_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
@@ -103,6 +104,27 @@ class AuditLog(Base):
 	hmac_key_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
 
 	user: Mapped[Optional["User"]] = relationship("User", back_populates="audit_logs")
+
+
+class MockRobotCommand(Base):
+	"""Durable command lifecycle used only by the mock robot runtime."""
+	__tablename__ = "mock_robot_commands"
+	__table_args__ = (
+		Index("ix_mock_robot_commands_status_created", "status", "created_at"),
+		Index("ix_mock_robot_commands_completed_at", "completed_at"),
+	)
+
+	command_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+	request_id: Mapped[Optional[str]] = mapped_column(String(255), unique=True, nullable=True)
+	payload: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False)
+	status: Mapped[str] = mapped_column(String(20), nullable=False)
+	result: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+	correlation_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+	created_at: Mapped[datetime] = mapped_column(
+		UTCDateTime(), nullable=False, default=lambda: datetime.now(timezone.utc)
+	)
+	started_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime(), nullable=True)
+	completed_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime(), nullable=True)
 
 class Item(Base):
 	"""Item model for storing inventory items."""

@@ -31,7 +31,7 @@ def _load_hmac_key() -> bytes:
         except ValueError:
             _HMAC_KEY_CACHE = key.encode("utf-8")
     elif has_production_traits(get_operating_mode()) is True:
-        raise RuntimeError("AUDIT_HMAC_KEY must be set in demo and production modes")
+        raise RuntimeError("AUDIT_HMAC_KEY must be set in demo, mock, and production modes")
     else:
         _HMAC_KEY_CACHE = b"development-audit-hmac-key-not-for-production"
         logger.warning("AUDIT_HMAC_KEY is not set; using deterministic development key")

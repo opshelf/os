@@ -48,7 +48,7 @@ normal local development start:
 
 plain `./scripts/start` reuses `openshelf_hardware/data/.mode` when present. if no mode file exists, it starts in `production` mode.
 
-production keeps the legacy `base.db`, `config.json`, and `storage.json` filenames. development and demo use persistent mode-specific variants such as `base.development.db`, `config.development.json`, and `storage.development.json`. the first start in a non-production mode copies the existing production state without modifying it, so returning to production restores the original workspace. modes are selected only through `scripts/start`; the api exposes the current mode read-only.
+production keeps the legacy `base.db`, `config.json`, and `storage.json` filenames. development and demo use persistent mode-specific variants such as `base.development.db`, `config.development.json`, and `storage.development.json`. the first start in either mode copies the existing production state without modifying it, so returning to production restores the original workspace. mock uses an isolated `base.mock.db`, starts with empty inventory, and never copies production inventory. modes are selected only through `scripts/start`; the api exposes the current mode read-only.
 
 demo additionally seeds only its demo database/storage workspace and restricts robot storage to the barcode-to-cell mappings in `openshelf_hardware/data/demo.json`.
 
@@ -58,6 +58,7 @@ useful variants:
 ./scripts/start --mode development --detached
 ./scripts/start --mode development --hardware
 ./scripts/start --mode demo
+./scripts/start --mode mock
 ./scripts/start --mode production
 ./scripts/start --build
 ```

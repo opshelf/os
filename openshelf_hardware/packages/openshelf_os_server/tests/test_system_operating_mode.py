@@ -19,6 +19,7 @@ class TestOperatingModeEnum:
 	def test_values(self) -> None:
 		assert OperatingMode.demo.value == "demo"
 		assert OperatingMode.development.value == "development"
+		assert OperatingMode.mock.value == "mock"
 		assert OperatingMode.production.value == "production"
 
 	def test_is_str_enum(self) -> None:
@@ -29,6 +30,7 @@ class TestOperatingModeEnum:
 		assert set(OperatingMode) == {
 			OperatingMode.demo,
 			OperatingMode.development,
+			OperatingMode.mock,
 			OperatingMode.production,
 		}
 
@@ -59,6 +61,11 @@ class TestGetOperatingMode:
 		with patch.dict(os.environ, {"OPERATING_MODE": "production"}), self._no_mode_file():
 			clear_config_cache()
 			assert get_operating_mode() == OperatingMode.production
+
+	def test_reads_mock_from_env(self) -> None:
+		with patch.dict(os.environ, {"OPERATING_MODE": "mock"}), self._no_mode_file():
+			clear_config_cache()
+			assert get_operating_mode() == OperatingMode.mock
 
 	def test_reads_development_from_env(self) -> None:
 		with patch.dict(os.environ, {"OPERATING_MODE": "development"}), self._no_mode_file():
@@ -125,7 +132,7 @@ class TestGetOperatingMode:
 
 
 class TestOperatingModeEnvironmentDefaults:
-	@pytest.mark.parametrize("mode", [OperatingMode.demo, OperatingMode.production])
+	@pytest.mark.parametrize("mode", [OperatingMode.demo, OperatingMode.mock, OperatingMode.production])
 	def test_production_like_modes_override_stale_development_env(
 		self,
 		monkeypatch,

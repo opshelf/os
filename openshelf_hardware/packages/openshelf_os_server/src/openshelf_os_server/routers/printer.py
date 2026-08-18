@@ -6,10 +6,12 @@ import os
 from types import TracebackType
 from typing import Optional, Type
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
+
+from openshelf_os.operating_mode import OperatingMode
 
 from openshelf_os_server.routers.auth_deps import require_permissions
-from openshelf_os_server.settings import get_settings
+from openshelf_os_server.settings import get_operating_mode, get_settings
 
 ESC = b"\x1b"
 GS  = b"\x1d"
@@ -186,6 +188,14 @@ printer = USBPrinter()
     dependencies=[Depends(require_permissions("printer:print"))],
 )
 async def print_label(upca: str) -> dict[str, str | bool]:
+    if get_operating_mode() == OperatingMode.mock:
+        if len(upca) not in {11, 12} or upca.isascii() is False or upca.isdecimal() is False:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="UPCA must contain 11 or 12 decimal digits",
+            )
+        return {"message": "success", "upca": upca, "printed": True}
+
     settings = get_settings()
     if settings.printer.enabled is False:
         logging.info("Printer disabled; skipping label print for %s", upca)

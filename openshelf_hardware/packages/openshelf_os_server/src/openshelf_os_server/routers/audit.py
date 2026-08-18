@@ -36,6 +36,7 @@ class AuditLogResponse(BaseModel):
 	ip_address: Optional[str]
 	user_agent: Optional[str]
 	request_duration_ms: Optional[int]
+	correlation_id: Optional[str]
 
 class AuditLogListResponse(BaseModel):
 	"""Audit log list response."""
@@ -59,6 +60,7 @@ async def list_audit_logs(
 	endpoint: Optional[str] = Query(None, description="Filter by API endpoint"),
 	method: Optional[str] = Query(None, description="Filter by HTTP method"),
 	status_code: Optional[int] = Query(None, description="Filter by response status"),
+	correlation_id: Optional[str] = Query(None, description="Filter by exact correlation ID"),
 	limit: int = Query(100, ge=1, le=1000, description="Max results"),
 	offset: int = Query(0, ge=0, description="Pagination offset"),
 	db: AsyncSession = Depends(get_db),
@@ -86,6 +88,9 @@ async def list_audit_logs(
 	
 	if status_code is not None:
 		filters.append(AuditLog.response_status == status_code)
+
+	if correlation_id is not None:
+		filters.append(AuditLog.correlation_id == correlation_id)
 	
 	if filters:
 		query = query.filter(and_(*filters))
@@ -121,7 +126,8 @@ async def list_audit_logs(
 				error_message=str(log.error_message) if log.error_message is not None else None,
 				ip_address=str(log.ip_address) if log.ip_address is not None else None,
 				user_agent=str(log.user_agent) if log.user_agent is not None else None,
-				request_duration_ms=int(log.request_duration_ms) if log.request_duration_ms is not None else None
+				request_duration_ms=int(log.request_duration_ms) if log.request_duration_ms is not None else None,
+				correlation_id=str(log.correlation_id) if log.correlation_id is not None else None,
 			)
 			for log in logs
 		],
@@ -164,7 +170,8 @@ async def get_audit_log(
 		error_message=str(log.error_message) if log.error_message is not None else None,
 		ip_address=str(log.ip_address) if log.ip_address is not None else None,
 		user_agent=str(log.user_agent) if log.user_agent is not None else None,
-		request_duration_ms=int(log.request_duration_ms) if log.request_duration_ms is not None else None
+		request_duration_ms=int(log.request_duration_ms) if log.request_duration_ms is not None else None,
+		correlation_id=str(log.correlation_id) if log.correlation_id is not None else None,
 	)
 
 
@@ -213,6 +220,9 @@ async def verify_audit_chain(
 			"seq_no": log.seq_no,
 			"prev_hash": log.prev_hash,
 		}
+		# Historical protected entries were hashed before correlation_id existed.
+		if log.correlation_id is not None:
+			payload["correlation_id"] = log.correlation_id
 		payload_bytes = canonicalize_payload(payload)
 		recomputed_hash = sha256_hex(payload_bytes)
 

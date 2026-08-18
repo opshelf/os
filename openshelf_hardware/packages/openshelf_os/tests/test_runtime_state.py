@@ -22,6 +22,7 @@ def test_mode_variant_names_preserve_production_convention(tmp_path: Path) -> No
     production = RuntimeStatePaths.for_mode(OperatingMode.production, data_dir)
     development = RuntimeStatePaths.for_mode(OperatingMode.development, data_dir)
     demo = RuntimeStatePaths.for_mode(OperatingMode.demo, data_dir)
+    mock = RuntimeStatePaths.for_mode(OperatingMode.mock, data_dir)
 
     assert production.config_path.name == "config.json"
     assert production.database_path.name == "base.db"
@@ -31,6 +32,28 @@ def test_mode_variant_names_preserve_production_convention(tmp_path: Path) -> No
     assert development.calibration_dir == (data_dir / "calibration/development").resolve()
     assert demo.config_path.name == "config.demo.json"
     assert demo.database_path.name == "base.demo.db"
+    assert mock.config_path.name == "config.mock.json"
+    assert mock.database_path.name == "base.mock.db"
+
+
+def test_mock_workspace_never_copies_production_inventory(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "config.json").write_text(
+        '{"robot": {"grid": {"path": "storage.json"}}}', encoding="utf-8"
+    )
+    (data_dir / "storage.json").write_text('{"production": true}', encoding="utf-8")
+    with sqlite3.connect(data_dir / "base.db") as connection:
+        connection.execute("CREATE TABLE items (upca TEXT)")
+        connection.execute("INSERT INTO items VALUES ('production-item')")
+
+    mock = RuntimeStatePaths.for_mode(OperatingMode.mock, data_dir)
+    manifest = ensure_mode_workspace(mock)
+
+    assert mock.config_path.exists()
+    assert mock.database_path.exists() is False
+    assert (data_dir / "storage.mock.json").exists() is False
+    assert manifest is not None
 
 
 def test_add_mode_suffix_is_idempotent() -> None:

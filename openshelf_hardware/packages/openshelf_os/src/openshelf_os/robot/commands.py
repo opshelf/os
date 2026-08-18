@@ -28,12 +28,14 @@ class MoveCommand(BaseModel):
 
 class RetrieveItemCommand(BaseModel):
     command: Literal["retrieve_item"] = "retrieve_item"
+    request_id: Optional[str] = None
     upca: Optional[str] = None
     location: Optional[Dict[str, Any]] = None
 
 
 class StoreItemCommand(BaseModel):
     command: Literal["store_item"] = "store_item"
+    request_id: Optional[str] = None
     item: Optional[Dict[str, Any]] = None
 
     @model_validator(mode="after")

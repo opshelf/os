@@ -8,6 +8,7 @@ from pathlib import Path
 class OperatingMode(str, Enum):
     demo = "demo"
     development = "development"
+    mock = "mock"
     production = "production"
 
 
@@ -20,6 +21,7 @@ def get_operating_mode(mode_file: Path | None = None) -> OperatingMode:
     mode_map = {
         "demo": OperatingMode.demo,
         "development": OperatingMode.development,
+        "mock": OperatingMode.mock,
         "production": OperatingMode.production,
     }
 
@@ -36,13 +38,13 @@ def get_operating_mode(mode_file: Path | None = None) -> OperatingMode:
 def should_enable_sentry(mode: OperatingMode | None = None) -> bool:
     current_mode = mode if mode is not None else get_operating_mode()
 
-    return has_production_traits(current_mode)
+    return has_production_traits(current_mode) and current_mode != OperatingMode.mock
 
 
 def has_production_traits(mode: OperatingMode | None = None) -> bool:
     current_mode = mode if mode is not None else get_operating_mode()
 
-    return current_mode in {OperatingMode.demo, OperatingMode.production}
+    return current_mode in {OperatingMode.demo, OperatingMode.mock, OperatingMode.production}
 
 
 def should_enable_demo_features(mode: OperatingMode | None = None) -> bool:

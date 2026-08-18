@@ -49,7 +49,9 @@ def test_demo_and_production_share_production_traits(monkeypatch) -> None:
 
 	assert module.has_production_traits(module.OperatingMode.development) is False
 	assert module.has_production_traits(module.OperatingMode.demo) is True
+	assert module.has_production_traits(module.OperatingMode.mock) is True
 	assert module.has_production_traits(module.OperatingMode.production) is True
+	assert module.should_enable_sentry(module.OperatingMode.mock) is False
 
 
 def test_demo_features_are_enabled_only_in_demo_mode(monkeypatch) -> None:
