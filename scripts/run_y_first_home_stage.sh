@@ -3,10 +3,10 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 onsite_confirmation="ONSITE-RESTRAINT-AND-ESTOP-READY"
-cabinet_bypass_confirmation="CABINET-DOORS-NOT-INSTALLED-BYPASS-ENABLED"
+cabinet_bypass_confirmation="CABINET-DOORS-NOT-INSTALLED-AUTHORIZE-BYPASS"
 
 usage() {
-  echo "usage: $0 check | <home-immediate|home-after-5s> <position-trace> ONSITE-RESTRAINT-AND-ESTOP-READY [CABINET-DOORS-NOT-INSTALLED-BYPASS-ENABLED]" >&2
+  echo "usage: $0 check | <home-immediate|home-after-5s> <position-trace> ONSITE-RESTRAINT-AND-ESTOP-READY [CABINET-DOORS-NOT-INSTALLED-AUTHORIZE-BYPASS]" >&2
 }
 
 if [[ $# -eq 1 && "$1" == check ]]; then
@@ -29,7 +29,7 @@ elif [[ ( $# -eq 3 || $# -eq 4 ) && ( "$1" == home-immediate || "$1" == home-aft
       echo "refusing Y home: cabinet-door bypass confirmation mismatch" >&2
       exit 2
     fi
-    python_args+=(--allow-cabinet-doors-bypass)
+    python_args+=(--enable-absent-cabinet-doors-bypass)
   fi
 else
   usage

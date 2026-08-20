@@ -149,16 +149,19 @@ be audible, but there must be no axis motion, harsh vibration, or chatter.
 
 As soon as startup is launched, run the following with the actual trace path.
 The client waits for development/ready, rechecks `home_on_init=false`, verifies
-Y is unit 2, reads the live status stream to verify Y remains under 50 mm and
-all safety guards are clear and unbypassed, repeats the checks immediately
-before motion, then requests only the existing Y-axis home endpoint:
+Y is unit 2, and reads live status to verify Y remains under 50 mm. Because
+lb4a-1 has no cabinet doors or door sensors, the final confirmation authorizes
+the client to enable only the `cabinet_doors` component bypass. It first requires
+that cabinet doors are the only active source and that the light curtain, global
+bypass, E-stop, crash state, and command queue are safe. It then repeats the
+full gate immediately before requesting only the existing Y-axis home endpoint:
 
 ```sh
 OPENSHELF_DIAGNOSTIC_PIN=1111 ./scripts/run_y_first_home_stage.sh \
   home-immediate \
   openshelf_hardware/data/y-brake-timing/REPLACE-WITH-TRACE.jsonl \
   ONSITE-RESTRAINT-AND-ESTOP-READY \
-  CABINET-DOORS-NOT-INSTALLED-BYPASS-ENABLED
+  CABINET-DOORS-NOT-INSTALLED-AUTHORIZE-BYPASS
 ```
 
 Expected physical motion: Y moves downward from at most 20 mm to its home
@@ -185,7 +188,7 @@ OPENSHELF_DIAGNOSTIC_PIN=1111 ./scripts/run_y_first_home_stage.sh \
   home-after-5s \
   openshelf_hardware/data/y-brake-timing/REPLACE-WITH-NEW-TRACE.jsonl \
   ONSITE-RESTRAINT-AND-ESTOP-READY \
-  CABINET-DOORS-NOT-INSTALLED-BYPASS-ENABLED
+  CABINET-DOORS-NOT-INSTALLED-AUTHORIZE-BYPASS
 ```
 
 This follows the same ready gate, then waits exactly five additional seconds
