@@ -4,7 +4,6 @@ import asyncio
 import json
 
 import pytest
-import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy import delete, select
 
@@ -16,7 +15,7 @@ from openshelf_os_server.database.session import AsyncSessionLocal
 from openshelf_os_server.routers import robot as robot_router
 
 
-@pytest_asyncio.fixture
+@pytest.fixture
 async def mock_runtime(monkeypatch: pytest.MonkeyPatch) -> MockRobotRuntime:
 	async with AsyncSessionLocal() as session:
 		await session.execute(delete(MockRobotCommand))
