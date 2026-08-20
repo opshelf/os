@@ -157,7 +157,8 @@ before motion, then requests only the existing Y-axis home endpoint:
 OPENSHELF_DIAGNOSTIC_PIN=1111 ./scripts/run_y_first_home_stage.sh \
   home-immediate \
   openshelf_hardware/data/y-brake-timing/REPLACE-WITH-TRACE.jsonl \
-  ONSITE-RESTRAINT-AND-ESTOP-READY
+  ONSITE-RESTRAINT-AND-ESTOP-READY \
+  CABINET-DOORS-NOT-INSTALLED-BYPASS-ENABLED
 ```
 
 Expected physical motion: Y moves downward from at most 20 mm to its home
@@ -183,7 +184,8 @@ Start again, then invoke the settled variant with the new trace path:
 OPENSHELF_DIAGNOSTIC_PIN=1111 ./scripts/run_y_first_home_stage.sh \
   home-after-5s \
   openshelf_hardware/data/y-brake-timing/REPLACE-WITH-NEW-TRACE.jsonl \
-  ONSITE-RESTRAINT-AND-ESTOP-READY
+  ONSITE-RESTRAINT-AND-ESTOP-READY \
+  CABINET-DOORS-NOT-INSTALLED-BYPASS-ENABLED
 ```
 
 This follows the same ready gate, then waits exactly five additional seconds

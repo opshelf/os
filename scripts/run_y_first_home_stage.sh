@@ -3,15 +3,16 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 onsite_confirmation="ONSITE-RESTRAINT-AND-ESTOP-READY"
+cabinet_bypass_confirmation="CABINET-DOORS-NOT-INSTALLED-BYPASS-ENABLED"
 
 usage() {
-  echo "usage: $0 check | <home-immediate|home-after-5s> <position-trace> ONSITE-RESTRAINT-AND-ESTOP-READY" >&2
+  echo "usage: $0 check | <home-immediate|home-after-5s> <position-trace> ONSITE-RESTRAINT-AND-ESTOP-READY [CABINET-DOORS-NOT-INSTALLED-BYPASS-ENABLED]" >&2
 }
 
 if [[ $# -eq 1 && "$1" == check ]]; then
   python_args=(check)
   stage=check
-elif [[ $# -eq 3 && ( "$1" == home-immediate || "$1" == home-after-5s ) ]]; then
+elif [[ ( $# -eq 3 || $# -eq 4 ) && ( "$1" == home-immediate || "$1" == home-after-5s ) ]]; then
   stage="$1"
   position_trace="$2"
   if [[ "$3" != "$onsite_confirmation" ]]; then
@@ -23,6 +24,13 @@ elif [[ $# -eq 3 && ( "$1" == home-immediate || "$1" == home-after-5s ) ]]; then
     --position-trace "$position_trace"
     --confirm SUPERVISED-Y-HOME-RECENTLY-VERIFIED-UNDER-50MM
   )
+  if [[ $# -eq 4 ]]; then
+    if [[ "$4" != "$cabinet_bypass_confirmation" ]]; then
+      echo "refusing Y home: cabinet-door bypass confirmation mismatch" >&2
+      exit 2
+    fi
+    python_args+=(--allow-cabinet-doors-bypass)
+  fi
 else
   usage
   exit 2
