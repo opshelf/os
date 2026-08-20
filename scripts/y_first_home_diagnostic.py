@@ -34,6 +34,7 @@ Y_MAX_MM = 50.0
 MOTION_RUNNING_BIT = 2
 HOME_CONFIRMATION = "SUPERVISED-Y-HOME-RECENTLY-VERIFIED-UNDER-50MM"
 CABINET_BYPASS_NAME = "cabinet_doors"
+EXPECTED_FAILED_COMPONENTS = {"tool_camera": "no frames within 15s"}
 HOME_SETTLE_SECONDS = {
     "home-immediate": 0.0,
     "home-after-5s": 5.0,
@@ -160,6 +161,44 @@ def request_robot_status(token: str) -> dict[str, Any]:
     raise RuntimeError("robot status stream did not provide safety and Y-axis state")
 
 
+def request_init_progress(token: str) -> dict[str, Any]:
+    request = Request(
+        API_BASE + "/api/robot/status",
+        headers={
+            "Accept": "text/event-stream",
+            "Authorization": f"Bearer {token}",
+        },
+        method="GET",
+    )
+    try:
+        with urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
+            if response.status != 200:
+                raise RuntimeError(f"robot status stream returned HTTP {response.status}")
+            event_name: str | None = None
+            for _ in range(512):
+                raw_line = response.readline()
+                if not raw_line:
+                    break
+                line = raw_line.decode(errors="replace").strip()
+                if line.startswith("event:"):
+                    event_name = line.removeprefix("event:").strip()
+                    continue
+                if event_name != "init_progress" or not line.startswith("data:"):
+                    continue
+                try:
+                    payload = json.loads(line.removeprefix("data:").strip())
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(payload, dict):
+                    return payload
+    except HTTPError as exc:
+        raw = exc.read().decode(errors="replace")
+        raise RuntimeError(f"robot status stream returned HTTP {exc.code}: {raw}") from exc
+    except (URLError, TimeoutError, OSError) as exc:
+        raise RuntimeError(f"robot status stream failed: {exc}") from exc
+    raise RuntimeError("robot status stream did not provide initialization progress")
+
+
 def get_pin() -> str:
     pin = os.getenv("OPENSHELF_DIAGNOSTIC_PIN")
     if pin is None and sys.stdin.isatty():
@@ -183,26 +222,69 @@ def authenticate(email: str) -> str:
     return token
 
 
-def api_preflight(
-    token: str, *, allow_cabinet_doors_bypass: bool = False
-) -> dict[str, Any]:
-    health = request_json("GET", "/api/health")
-    expected_health = {
+def validate_api_health(token: str, health: dict[str, Any]) -> list[str]:
+    ready_health = {
         "status": "ok",
         "mode": "development",
         "robot_status": "ok",
         "robot_phase": "ready",
     }
-    mismatches = {
-        field: {"expected": expected, "actual": health.get(field)}
-        for field, expected in expected_health.items()
-        if health.get(field) != expected
+    if all(health.get(field) == expected for field, expected in ready_health.items()):
+        return []
+
+    degraded_health = {
+        "status": "ok",
+        "mode": "development",
+        "robot_status": "degraded",
+        "robot_phase": "degraded",
     }
-    if mismatches:
+    if not all(
+        health.get(field) == expected for field, expected in degraded_health.items()
+    ):
         raise RuntimeError(
             "API is not ready for the first-home diagnostic: "
-            + json.dumps(mismatches, sort_keys=True)
+            + json.dumps(health, sort_keys=True)
         )
+
+    progress = request_init_progress(token)
+    components = progress.get("components")
+    if progress.get("phase") != "degraded" or not isinstance(components, list):
+        raise RuntimeError(
+            "degraded API did not provide valid initialization state: "
+            + json.dumps(progress, sort_keys=True)
+        )
+    failed: dict[str, str | None] = {}
+    unexpected_non_ready: list[dict[str, Any]] = []
+    for component in components:
+        if not isinstance(component, dict) or not isinstance(component.get("component"), str):
+            unexpected_non_ready.append({"invalid_component": component})
+            continue
+        name = component["component"]
+        phase = component.get("phase")
+        if phase == "failed":
+            failed[name] = component.get("reason")
+        elif phase != "ready":
+            unexpected_non_ready.append(component)
+    if failed != EXPECTED_FAILED_COMPONENTS or unexpected_non_ready:
+        raise RuntimeError(
+            "API degradation is not limited to the expected unconfigured tool camera: "
+            + json.dumps(
+                {"failed": failed, "non_ready": unexpected_non_ready}, sort_keys=True
+            )
+        )
+    emit(
+        "expected_api_degradation_accepted",
+        failed_components=sorted(failed),
+        reason=failed["tool_camera"],
+    )
+    return sorted(failed)
+
+
+def api_preflight(
+    token: str, *, allow_cabinet_doors_bypass: bool = False
+) -> dict[str, Any]:
+    health = request_json("GET", "/api/health")
+    accepted_degraded_components = validate_api_health(token, health)
 
     home_setting = request_json("GET", "/api/system/home-on-init", token=token)
     if home_setting.get("home_on_init") is not False:
@@ -278,6 +360,7 @@ def api_preflight(
         live_y_position_mm=float(y_position),
         safety=safety,
         allowed_component_bypasses=sorted(expected_component_bypasses),
+        accepted_degraded_components=accepted_degraded_components,
     )
     return health
 

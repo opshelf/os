@@ -96,6 +96,80 @@ def test_status_stream_requires_and_returns_safety_plus_y_state(monkeypatch) -> 
     assert module.request_robot_status("token") == payload
 
 
+def test_init_progress_stream_returns_structured_snapshot(monkeypatch) -> None:
+    module = load_module()
+    payload = {
+        "phase": "degraded",
+        "components": [
+            {"component": "y_axis", "phase": "ready", "reason": None},
+            {"component": "tool_camera", "phase": "failed", "reason": "no frames within 15s"},
+        ],
+    }
+    lines = iter(
+        [
+            b"event: init_progress\n",
+            ("data: " + json.dumps(payload) + "\n").encode(),
+        ]
+    )
+
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def readline(self):
+            return next(lines, b"")
+
+    monkeypatch.setattr(module, "urlopen", Mock(return_value=Response()))
+    assert module.request_init_progress("token") == payload
+
+
+def test_health_allows_only_expected_unconfigured_tool_camera(monkeypatch) -> None:
+    module = load_module()
+    progress = {
+        "phase": "degraded",
+        "components": [
+            {"component": "y_axis", "phase": "ready", "reason": None},
+            {"component": "tool_camera", "phase": "failed", "reason": "no frames within 15s"},
+        ],
+    }
+    monkeypatch.setattr(module, "request_init_progress", Mock(return_value=progress))
+    accepted = module.validate_api_health(
+        "token",
+        {"status": "ok", "mode": "development", "robot_status": "degraded", "robot_phase": "degraded"},
+    )
+    assert accepted == ["tool_camera"]
+
+
+@pytest.mark.parametrize(
+    "components",
+    [
+        [{"component": "y_axis", "phase": "failed", "reason": "timeout"}],
+        [{"component": "tool_camera", "phase": "failed", "reason": "wrong reason"}],
+        [
+            {"component": "tool_camera", "phase": "failed", "reason": "no frames within 15s"},
+            {"component": "motor_bus", "phase": "connecting", "reason": None},
+        ],
+    ],
+)
+def test_health_rejects_any_other_degradation(monkeypatch, components) -> None:
+    module = load_module()
+    monkeypatch.setattr(
+        module,
+        "request_init_progress",
+        Mock(return_value={"phase": "degraded", "components": components}),
+    )
+    with pytest.raises(RuntimeError, match="not limited"):
+        module.validate_api_health(
+            "token",
+            {"status": "ok", "mode": "development", "robot_status": "degraded", "robot_phase": "degraded"},
+        )
+
+
 def test_script_contains_no_restart_config_write_ack_or_global_bypass_endpoint() -> None:
     module = load_module()
     source = Path(module.__file__).read_text()
