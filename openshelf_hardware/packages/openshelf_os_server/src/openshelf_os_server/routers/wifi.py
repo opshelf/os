@@ -135,7 +135,7 @@ def _wlan_ip() -> str | None:
 		return None
 
 
-async def _active_status() -> WifiStatus:
+async def active_status() -> WifiStatus:
 	result = await _run_nmcli("-t", "-f", "ACTIVE,SSID,SIGNAL", "dev", "wifi")
 	if result.ok:
 		for line in result.stdout.splitlines():
@@ -214,11 +214,10 @@ async def _rollback(previous_connection: str | None) -> None:
 
 @router.get("/status", response_model=WifiStatus, dependencies=[Depends(get_current_user)])
 async def get_wifi_status() -> WifiStatus:
-	return await _active_status()
+	return await active_status()
 
 
-@router.get("/networks", response_model=WifiNetworkList, dependencies=[Depends(get_current_user)])
-async def list_wifi_networks() -> WifiNetworkList:
+async def scan_networks() -> WifiNetworkList:
 	await _run_nmcli("dev", "wifi", "rescan")
 	result = await _run_nmcli("-t", "-f", "IN-USE,SSID,SIGNAL,SECURITY", "dev", "wifi", "list")
 	if not result.ok:
@@ -250,14 +249,8 @@ async def list_wifi_networks() -> WifiNetworkList:
 	return WifiNetworkList(networks=networks)
 
 
-@router.post(
-	"/connect",
-	response_model=WifiConnectResponse,
-	dependencies=[Depends(get_current_user), Depends(require_permissions("robot:control"))],
-)
-async def connect_wifi(request: WifiConnectRequest) -> WifiConnectResponse:
-	ssid = request.ssid.strip()
-	password = request.password
+async def perform_connect(requested_ssid: str, password: str) -> WifiConnectResponse:
+	ssid = requested_ssid.strip()
 
 	if ssid == "":
 		raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="ssid is required")
@@ -265,7 +258,7 @@ async def connect_wifi(request: WifiConnectRequest) -> WifiConnectResponse:
 	logger.info("wifi_connect_requested", ssid=ssid, previous=previous_connection)
 
 	result = await _bring_up_pending(ssid, password)
-	current = await _active_status()
+	current = await active_status()
 
 	if result.ok and current.connected and current.ssid == ssid:
 		await _run_nmcli("connection", "delete", CONNECTION_NAME)
@@ -287,3 +280,17 @@ async def connect_wifi(request: WifiConnectRequest) -> WifiConnectResponse:
 		status_code=status.HTTP_502_BAD_GATEWAY,
 		detail=f"failed to connect to {ssid}: {detail}{restored}",
 	)
+
+
+@router.get("/networks", response_model=WifiNetworkList, dependencies=[Depends(get_current_user)])
+async def list_wifi_networks() -> WifiNetworkList:
+	return await scan_networks()
+
+
+@router.post(
+	"/connect",
+	response_model=WifiConnectResponse,
+	dependencies=[Depends(get_current_user), Depends(require_permissions("robot:control"))],
+)
+async def connect_wifi(request: WifiConnectRequest) -> WifiConnectResponse:
+	return await perform_connect(request.ssid, request.password)
