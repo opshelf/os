@@ -98,7 +98,11 @@ async def test_mock_store_retrieve_persists_inventory_and_replays_request(
 		},
 	)
 	assert retrieve.status_code == 200
-	await _wait_for_status(client, retrieve.json()["command_id"], "succeeded")
+	retrieved = await _wait_for_status(client, retrieve.json()["command_id"], "succeeded")
+	assert retrieved["result"]["weight"] == completed["result"]["weight"]
+	retrieve_event = json.loads(await asyncio.wait_for(event_queue.get(), timeout=1))
+	assert retrieve_event["command_id"] == retrieve.json()["command_id"]
+	assert retrieve_event["weight"] == completed["result"]["weight"]
 
 	async with AsyncSessionLocal() as session:
 		assert (await session.execute(select(ItemLocation))).scalars().all() == []

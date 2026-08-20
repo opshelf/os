@@ -361,6 +361,13 @@ class MockRobotRuntime:
 			if row is None:
 				raise MockCommandExecutionError("No item found at requested location")
 			item_location, item = row
+			weight = (
+				float(item.weight)
+				if item.weight is not None
+				else _deterministic_weight(str(item.upca))
+			)
+			if item.weight is None:
+				item.weight = weight
 			await session.delete(item_location)
 			await session.commit()
 
@@ -370,6 +377,7 @@ class MockRobotRuntime:
 			"command_id": command_id,
 			"upca": item.upca,
 			"location": {"side": side, "shelf_idx": shelf_idx, "cell_idx": cell_idx},
+			"weight": weight,
 		}
 
 	async def status_payload(self) -> str:
