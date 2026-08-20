@@ -48,7 +48,9 @@ normal local development start:
 
 plain `./scripts/start` reuses `openshelf_hardware/data/.mode` when present. if no mode file exists, it starts in `production` mode.
 
-production keeps the legacy `base.db`, `config.json`, and `storage.json` filenames. development and demo use persistent mode-specific variants such as `base.development.db`, `config.development.json`, and `storage.development.json`. the first start in either mode copies the existing production state without modifying it, so returning to production restores the original workspace. mock uses an isolated `base.mock.db`, starts with empty inventory, and never copies production inventory. modes are selected only through `scripts/start`; the api exposes the current mode read-only.
+production keeps the legacy `base.db`, `config.json`, and `storage.json` filenames. development and demo use persistent mode-specific variants such as `base.development.db`, `config.development.json`, and `storage.development.json`. the first start in either mode copies the existing production state without modifying it, so returning to production restores the original workspace. modes are selected only through `scripts/start`; the api exposes the current mode read-only.
+
+mock may copy the production configuration to `config.mock.json`, but it creates a fresh `base.mock.db` and never copies `base.db`, `storage.json`, items, or item locations. its first workspace therefore has empty inventory while retaining the seeded users, roles, and three access levels. later starts reuse `base.mock.db`, so item, command, and audit state survives container restarts without affecting production.
 
 demo additionally seeds only its demo database/storage workspace and restricts robot storage to the barcode-to-cell mappings in `openshelf_hardware/data/demo.json`.
 
@@ -64,6 +66,36 @@ useful variants:
 ```
 
 use `--hardware` on machines with connected robot, camera, scanner, or printer devices.
+
+### mock mode
+
+mock mode runs the real authenticated fastapi service and sqlite persistence without initializing robot, camera, scanner, sizer, printer, cups, or sentry integrations. it does not automatically add the hardware compose overlay, even when `config.mock.json` was copied from a hardware-enabled production config.
+
+mock is production-like for authentication and audit integrity. provide stable, non-default secrets when the workspace is not disposable:
+
+```bash
+export JWT_SECRET='replace-with-a-stable-jwt-secret'
+export AUDIT_HMAC_KEY='replace-with-a-stable-audit-hmac-key'
+./scripts/start --mode mock --detached
+```
+
+the normal developer account (`developer@opshelf.com`, pin `1111`) is seeded, but authentication remains required. existing item CRUD, users, roles, access levels, permissions, audit logging, correlation-id propagation, and response schemas continue to use sqlite.
+
+the virtual cabinet has 80 deterministic cells: left module then right module, four shelves per side, and ten cells per shelf. `items` and `item_locations` in `base.mock.db` are the occupancy source of truth. the runtime exposes:
+
+- `GET /api/health`: reports `mode=mock`, a ready mock robot, and no hardware dependency
+- `POST /api/robot/commands`: queues `store_item` or `retrieve_item` and returns a command uuid
+- `GET /api/robot/commands/{command_id}`: returns the persisted lifecycle and result
+- `GET /api/robot/status` and `GET /api/robot/events`: stream status snapshots and results over sse
+- `POST /api/print/{upca}`: accepts 11 or 12 decimal digits and returns `printed=true` without producing a label
+
+commands run through one deterministic fifo worker with a one-second simulated execution time and a limit of 32 queued/running commands. an optional top-level `request_id` makes a request idempotent for seven days: an exact replay returns the original command, while reuse with a different payload returns `409`. a full queue returns `429` with `Retry-After: 1`. commands interrupted by a service restart are persisted as failed rather than replayed.
+
+store allocation selects the first fitting free cell in stable layout order and persists a deterministic weight when none is supplied. retrieve validates the requested location and the caller's access before queueing, then removes the item location on completion. invalid input and permissions retain normal `4xx` responses; deterministic execution-time conflicts become failed commands and error events.
+
+send `X-Correlation-ID` to associate API activity with audit records. audit entries can be filtered by exact `correlation_id` through `GET /api/audit/logs`; historical entries created before correlation IDs remain verifiable.
+
+hardware-only routes outside this integration surface may still report disabled or unavailable in mock mode. command polling is intentionally mock-only until the production robot runtime gains a durable lifecycle store.
 
 ### waveshare usb to 4ch rs485 (b)
 
