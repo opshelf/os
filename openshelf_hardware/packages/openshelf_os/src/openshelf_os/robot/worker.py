@@ -1339,6 +1339,19 @@ class RobotWorker:
             )
 
         try:
+            await self._publish_status()
+        except Exception as err:
+            self._report_error(
+                WorkerError(
+                    error_type="ShutdownError",
+                    message=str(err),
+                    context={"phase": "final_status"},
+                    stack_trace=traceback.format_exc(),
+                ),
+                exc=err,
+            )
+
+        try:
             await self._robot.shutdown()
         except Exception as err:
             self._report_error(
@@ -1350,8 +1363,6 @@ class RobotWorker:
                 ),
                 exc=err,
             )
-
-        await self._publish_status()
 
         try:
             sentry_sdk.flush(timeout=2.0)
