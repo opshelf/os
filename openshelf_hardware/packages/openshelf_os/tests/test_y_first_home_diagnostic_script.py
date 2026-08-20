@@ -96,13 +96,14 @@ def test_status_stream_requires_and_returns_safety_plus_y_state(monkeypatch) -> 
     assert module.request_robot_status("token") == payload
 
 
-def test_script_contains_no_restart_config_write_ack_or_bypass_endpoint() -> None:
+def test_script_contains_no_restart_config_write_ack_or_global_bypass_endpoint() -> None:
     module = load_module()
     source = Path(module.__file__).read_text()
     assert '"PUT"' not in source
     assert "/api/system/restart" not in source
     assert "/safety/acknowledge" not in source
-    assert "/safety/override" not in source
+    assert '"/api/robot/safety/override",' not in source
+    assert source.count('"/api/robot/safety/override/component"') == 1
     assert "docker" not in source
 
 
@@ -302,6 +303,80 @@ def test_explicit_cabinet_bypass_mode_fails_closed_for_any_other_state(
         module.api_preflight("token", allow_cabinet_doors_bypass=True)
 
 
+def test_enable_absent_cabinet_doors_bypass_has_strict_gate(monkeypatch) -> None:
+    module = load_module()
+    status = safe_status()
+    safety = status["robot_status"]["safety"]
+    safety.update(
+        {
+            "active": True,
+            "motion_blocked": True,
+            "awaiting_ack": True,
+            "active_sources": ["cabinet_doors"],
+            "sources": {
+                "cabinet_doors": {"active": True, "open": True, "bypassed": False},
+                "light_curtain": {"active": False, "bypassed": False},
+            },
+        }
+    )
+    response = {
+        "active": False,
+        "motion_blocked": False,
+        "awaiting_ack": False,
+        "active_sources": [],
+        "bypassed": False,
+        "component_bypasses": {"cabinet_doors": True, "light_curtain": False},
+    }
+    request = Mock(
+        side_effect=[
+            {"home_on_init": False},
+            {"tool": [{"name": "y_axis", "motor_id": 2}]},
+            response,
+        ]
+    )
+    monkeypatch.setattr(module, "request_robot_status", Mock(return_value=status))
+    monkeypatch.setattr(module, "request_json", request)
+    module.enable_absent_cabinet_doors_bypass("token")
+    assert request.call_args_list[-1].args == (
+        "POST",
+        "/api/robot/safety/override/component",
+    )
+    assert request.call_args_list[-1].kwargs == {
+        "token": "token",
+        "payload": {"component": "cabinet_doors", "bypass": True},
+    }
+
+
+def test_enable_absent_cabinet_doors_bypass_rejects_curtain_activity(
+    monkeypatch,
+) -> None:
+    module = load_module()
+    status = safe_status()
+    safety = status["robot_status"]["safety"]
+    safety.update(
+        {
+            "active": True,
+            "motion_blocked": True,
+            "active_sources": ["cabinet_doors"],
+            "sources": {
+                "cabinet_doors": {"active": True, "open": True, "bypassed": False},
+                "light_curtain": {"active": True, "bypassed": False},
+            },
+        }
+    )
+    request = Mock(
+        side_effect=[
+            {"home_on_init": False},
+            {"tool": [{"name": "y_axis", "motor_id": 2}]},
+        ]
+    )
+    monkeypatch.setattr(module, "request_robot_status", Mock(return_value=status))
+    monkeypatch.setattr(module, "request_json", request)
+    with pytest.raises(RuntimeError, match="doorless-machine condition"):
+        module.enable_absent_cabinet_doors_bypass("token")
+    assert request.call_count == 2
+
+
 def test_home_repeats_preflight_then_calls_only_y_home(monkeypatch, tmp_path: Path) -> None:
     module = load_module()
     trace = tmp_path / "trace.jsonl"
@@ -311,6 +386,7 @@ def test_home_repeats_preflight_then_calls_only_y_home(monkeypatch, tmp_path: Pa
         email="developer@opshelf.com",
         position_trace=trace,
         confirm=module.HOME_CONFIRMATION,
+        enable_absent_cabinet_doors_bypass=False,
     )
     authenticate = Mock(return_value="token")
     preflight = Mock(return_value={})

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Supervised API-side Y first-home timing diagnostic for lb4a-1.
 
-This client never starts/restarts the application, changes configuration,
-acknowledges safety, or enables a safety bypass. It only verifies a deliberately
-started development API and, with a recent stopped-machine position trace,
-requests the existing single-axis Y home endpoint.
+This client never starts/restarts the application, changes configuration, or
+acknowledges safety. For a machine explicitly confirmed to have no cabinet doors,
+it can enable only that component bypass after a strict live-state gate. It then
+uses a recent stopped-machine position trace and requests the existing single-axis
+Y home endpoint.
 """
 
 from __future__ import annotations
@@ -65,11 +66,11 @@ def build_parser() -> argparse.ArgumentParser:
         home.add_argument("--position-trace", type=Path, required=True)
         home.add_argument("--confirm", required=True)
         home.add_argument(
-            "--allow-cabinet-doors-bypass",
+            "--enable-absent-cabinet-doors-bypass",
             action="store_true",
             help=(
-                "Require the cabinet_doors component bypass to be enabled. Use only "
-                "on a machine where cabinet doors and their sensors are not installed."
+                "After proving cabinet_doors is the only active safety source, enable "
+                "only that component bypass. Use only where doors are not installed."
             ),
         )
     return parser
@@ -281,6 +282,94 @@ def api_preflight(
     return health
 
 
+def enable_absent_cabinet_doors_bypass(token: str) -> None:
+    """Enable only the physically absent cabinet-door input after a strict live gate."""
+    home_setting = request_json("GET", "/api/system/home-on-init", token=token)
+    if home_setting.get("home_on_init") is not False:
+        raise RuntimeError("home_on_init must be false before enabling the door bypass")
+    motors = request_json("GET", "/api/robot/debug/motors", token=token)
+    tool_motors = motors.get("tool")
+    if not isinstance(tool_motors, list) or not any(
+        isinstance(motor, dict)
+        and motor.get("name") == "y_axis"
+        and motor.get("motor_id") == 2
+        for motor in tool_motors
+    ):
+        raise RuntimeError("confirmed y_axis at Modbus unit 2 is not present")
+
+    status_payload = request_robot_status(token)
+    robot_status = status_payload["robot_status"]
+    safety = robot_status["safety"]
+    component_bypasses = safety.get("component_bypasses")
+    sources = safety.get("sources")
+    cabinet_source = sources.get(CABINET_BYPASS_NAME) if isinstance(sources, dict) else None
+    curtain_source = sources.get("light_curtain") if isinstance(sources, dict) else None
+    y_axis = robot_status.get("gantry", {}).get("y_axis", {})
+    y_position = y_axis.get("position")
+
+    unsafe = (
+        status_payload.get("current_command") is not None
+        or status_payload.get("queue_length") != 0
+        or status_payload.get("is_crashed") is not False
+        or status_payload.get("is_emergency_stop_active") is not False
+        or safety.get("active") is not True
+        or safety.get("motion_blocked") is not True
+        or safety.get("bypassed") is not False
+        or safety.get("active_sources") != [CABINET_BYPASS_NAME]
+        or not isinstance(component_bypasses, dict)
+        or any(value is not False for value in component_bypasses.values())
+        or not isinstance(cabinet_source, dict)
+        or cabinet_source.get("active") is not True
+        or cabinet_source.get("open") is not True
+        or cabinet_source.get("bypassed") is not False
+        or not isinstance(curtain_source, dict)
+        or curtain_source.get("active") is not False
+        or curtain_source.get("bypassed") is not False
+        or not isinstance(y_position, (int, float))
+        or not math.isfinite(float(y_position))
+        or not Y_MIN_MM <= float(y_position) <= Y_MAX_MM
+    )
+    if unsafe:
+        raise RuntimeError(
+            "refusing cabinet-door bypass: live state is not the exact expected "
+            "doorless-machine condition: " + json.dumps(status_payload, sort_keys=True)
+        )
+
+    emit(
+        "cabinet_doors_bypass_request_imminent",
+        reason="cabinet doors and sensors are not installed on this machine",
+        live_y_position_mm=float(y_position),
+        safety=safety,
+    )
+    response = request_json(
+        "POST",
+        "/api/robot/safety/override/component",
+        token=token,
+        payload={"component": CABINET_BYPASS_NAME, "bypass": True},
+    )
+    response_components = response.get("component_bypasses")
+    enabled_components = (
+        {name for name, enabled in response_components.items() if enabled is True}
+        if isinstance(response_components, dict)
+        else set()
+    )
+    if (
+        response.get("active") is not False
+        or response.get("motion_blocked") is not False
+        or response.get("awaiting_ack") is not False
+        or response.get("bypassed") is not False
+        or response.get("active_sources") != []
+        or enabled_components != {CABINET_BYPASS_NAME}
+        or not isinstance(response_components, dict)
+        or any(type(value) is not bool for value in response_components.values())
+    ):
+        raise RuntimeError(
+            "cabinet-door bypass response was not the exact safe scoped state: "
+            + json.dumps(response, sort_keys=True)
+        )
+    emit("cabinet_doors_bypass_enabled", safety=response)
+
+
 def wait_for_ready_api() -> None:
     deadline = time.monotonic() + READY_WAIT_SECONDS
     last_error = "API has not responded"
@@ -402,9 +491,12 @@ def run(args: argparse.Namespace) -> int:
     evidence = load_recent_position_evidence(args.position_trace)
     wait_for_ready_api()
     token = authenticate(args.email)
-    allow_cabinet_doors_bypass = getattr(
-        args, "allow_cabinet_doors_bypass", False
+    enable_cabinet_doors_bypass = getattr(
+        args, "enable_absent_cabinet_doors_bypass", False
     )
+    if enable_cabinet_doors_bypass:
+        enable_absent_cabinet_doors_bypass(token)
+    allow_cabinet_doors_bypass = enable_cabinet_doors_bypass
     api_preflight(
         token, allow_cabinet_doors_bypass=allow_cabinet_doors_bypass
     )
