@@ -156,6 +156,11 @@ that cabinet doors are the only active source and that the light curtain, global
 bypass, E-stop, crash state, and command queue are safe. It then repeats the
 full gate immediately before requesting only the existing Y-axis home endpoint:
 
+The tool camera is not configured on lb4a-1 and is expected to report
+`no frames within 15s`. If that timeout changes overall API readiness to
+`degraded` during the settled test, the client accepts it only when `tool_camera` is the sole
+failed component with that exact reason and every other component is ready.
+
 ```sh
 OPENSHELF_DIAGNOSTIC_PIN=1111 ./scripts/run_y_first_home_stage.sh \
   home-immediate \
