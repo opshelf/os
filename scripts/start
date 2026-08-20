@@ -8,6 +8,9 @@ LAST_MODE_FILE="$DATA_DIR/.last_start_mode"
 
 HARDWARE=false
 BUILD=false
+PULL=false
+PULL_NEEDED=false
+FORCE_RECREATE=false
 DETACHED=false
 MODE=""
 CONFIG_OVERRIDE_HOST_PATH=""
@@ -162,6 +165,14 @@ while [[ $# -gt 0 ]]; do
 			BUILD=true
 			shift
 			;;
+		-p|--pull)
+			PULL=true
+			shift
+			;;
+		--force-recreate)
+			FORCE_RECREATE=true
+			shift
+			;;
 		-d|--detached)
 			DETACHED=true
 			shift
@@ -172,7 +183,7 @@ while [[ $# -gt 0 ]]; do
 			;;
 		*)
 			echo "Unknown option: $1"
-			echo "Usage: $0 [-h|--hardware] [-b|--build] [-d|--detached] [-m|--mode demo|development|production]"
+			echo "Usage: $0 [-h|--hardware] [-b|--build] [-p|--pull] [--force-recreate] [-d|--detached] [-m|--mode demo|development|production]"
 			exit 1
 			;;
 	esac
@@ -228,8 +239,13 @@ if [[ -n "$LAST_MODE" && "$LAST_MODE" != "$MODE" && "$BUILD" == false ]]; then
 	CURR_IS_DEV=$([[ "$MODE" == "development" ]] && echo true || echo false)
 
 	if [[ "$LAST_IS_DEV" != "$CURR_IS_DEV" ]]; then
-		echo "mode switch ($LAST_MODE -> $MODE) crosses build boundary, forcing rebuild"
-		BUILD=true
+		if [[ "$PULL" == true ]]; then
+			echo "mode switch ($LAST_MODE -> $MODE) crosses build boundary, pulling prebuilt images"
+			PULL_NEEDED=true
+		else
+			echo "mode switch ($LAST_MODE -> $MODE) crosses build boundary, forcing rebuild"
+			BUILD=true
+		fi
 	fi
 fi
 
@@ -242,20 +258,36 @@ echo "starting in $MODE mode"
 
 export_container_runtime_env
 
-COMPOSE_CMD="docker compose -f docker-compose.yml"
+COMPOSE_FILES="-f docker-compose.yml"
 
 if [[ "$MODE" == "development" ]]; then
-	COMPOSE_CMD="$COMPOSE_CMD -f docker-compose.dev.yml"
+	COMPOSE_FILES="$COMPOSE_FILES -f docker-compose.dev.yml"
 fi
 
 if [[ "$HARDWARE" == true ]]; then
-	COMPOSE_CMD="$COMPOSE_CMD -f docker-compose.hardware.yml"
+	COMPOSE_FILES="$COMPOSE_FILES -f docker-compose.hardware.yml"
+fi
+
+COMPOSE_CMD="docker compose $COMPOSE_FILES"
+
+if [[ "$PULL_NEEDED" == true ]]; then
+	images="$(cd "$SCRIPT_DIR" && eval "$COMPOSE_CMD config --images" 2>/dev/null || true)"
+	for image in $images; do
+		if ! docker pull "$image"; then
+			echo "failed to pull $image; start aborted (check network and rerun)" >&2
+			exit 1
+		fi
+	done
 fi
 
 if [[ "$BUILD" == true ]]; then
 	COMPOSE_CMD="$COMPOSE_CMD up --build --remove-orphans"
 else
-	COMPOSE_CMD="$COMPOSE_CMD up --remove-orphans"
+	COMPOSE_CMD="$COMPOSE_CMD up --no-build --remove-orphans"
+fi
+
+if [[ "$FORCE_RECREATE" == true ]]; then
+	COMPOSE_CMD="$COMPOSE_CMD --force-recreate"
 fi
 
 if [[ "$DETACHED" == true ]]; then

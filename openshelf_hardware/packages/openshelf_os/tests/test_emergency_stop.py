@@ -182,6 +182,7 @@ class MockRobot:
         self.restore_y_brake_output_calls = 0
         self.handled_commands = []
         self.shutdown_calls = 0
+        self.lifecycle_events = []
 
     def block_motion_for_safety(self):
         self.safety_paused = True
@@ -190,6 +191,9 @@ class MockRobot:
         self.safety_paused = False
 
     async def get_status(self):
+        self.lifecycle_events.append("status")
+        if self.shutdown_calls > 0:
+            raise RuntimeError("GPIO is closed")
         return None
 
     async def restore_y_brake_output(self):
@@ -200,6 +204,7 @@ class MockRobot:
         return None
 
     async def shutdown(self):
+        self.lifecycle_events.append("shutdown")
         self.shutdown_calls += 1
 
     def clear_operation_context(self):
@@ -458,6 +463,8 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(task_cancelled.is_set())
         self.assertIsNone(worker._current_task)
         self.assertEqual(robot.shutdown_calls, 1)
+        self.assertEqual(robot.lifecycle_events[-2:], ["status", "shutdown"])
+        self.assertFalse(any(error.error_type == "StatusRetrievalError" for error in worker._error_queue))
 
         RobotWorker._instance = None
 
