@@ -44,6 +44,10 @@ async def _wait_for_status(client: AsyncClient, command_id: str, expected: str) 
 	raise AssertionError(f"command {command_id} did not reach {expected}")
 
 
+def test_mock_runtime_defaults_to_hardware_execution_delay() -> None:
+	assert MockRobotRuntime().execution_seconds == 30.0
+
+
 @pytest.mark.anyio
 async def test_mock_store_retrieve_persists_inventory_and_replays_request(
 	client: AsyncClient,

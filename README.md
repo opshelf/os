@@ -89,7 +89,7 @@ the virtual cabinet has 80 deterministic cells: left module then right module, f
 - `GET /api/robot/status` and `GET /api/robot/events`: stream status snapshots and results over sse
 - `POST /api/print/{upca}`: accepts 11 or 12 decimal digits and returns `printed=true` without producing a label
 
-commands run through one deterministic fifo worker with a one-second simulated execution time and a limit of 32 queued/running commands. an optional top-level `request_id` makes a request idempotent for seven days: an exact replay returns the original command, while reuse with a different payload returns `409`. a full queue returns `429` with `Retry-After: 1`. commands interrupted by a service restart are persisted as failed rather than replayed.
+commands run through one deterministic fifo worker with a 30-second simulated execution time and a limit of 32 queued/running commands. an optional top-level `request_id` makes a request idempotent for seven days: an exact replay returns the original command, while reuse with a different payload returns `409`. a full queue returns `429` with `Retry-After: 1`. commands interrupted by a service restart are persisted as failed rather than replayed.
 
 store allocation selects the first fitting free cell in stable layout order and persists a deterministic weight when none is supplied. retrieve validates the requested location and the caller's access before queueing, then removes the item location on completion. invalid input and permissions retain normal `4xx` responses; deterministic execution-time conflicts become failed commands and error events.
 
