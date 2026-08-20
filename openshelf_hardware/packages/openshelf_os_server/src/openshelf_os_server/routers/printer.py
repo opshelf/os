@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from openshelf_os.operating_mode import OperatingMode
 
-from openshelf_os_server.routers.auth_deps import require_permissions
+from openshelf_os_server.routers.auth_deps import require_relay_or_permissions
 from openshelf_os_server.settings import get_operating_mode, get_settings
 
 ESC = b"\x1b"
@@ -185,7 +185,7 @@ printer = USBPrinter()
 
 @router.post(
     "/{upca}",
-    dependencies=[Depends(require_permissions("printer:print"))],
+    dependencies=[Depends(require_relay_or_permissions("printer:print"))],
 )
 async def print_label(upca: str) -> dict[str, str | bool]:
     if get_operating_mode() == OperatingMode.mock:

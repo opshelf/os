@@ -17,7 +17,13 @@ import openshelf_os_server.core.robot as robot_core
 from ..database.models import Item, ItemLocation, User
 from ..core.storage import StorageService
 from ..core.validation import CellOccupiedError, ValidationError
-from .auth_deps import can_user_retrieve_item, get_current_user, require_permissions
+from .auth_deps import (
+    can_user_retrieve_item,
+    get_current_user,
+    get_relay_or_current_user,
+    require_permissions,
+    require_relay_or_permissions,
+)
 from ..database.session import get_db
 from openshelf_os.storage import StorageGrid
 from openshelf_os_server.core.storage_module import StorageModuleSideDto
@@ -246,14 +252,14 @@ def monitor_performance(func: Callable) -> Callable:
 # ---------------------------------------------------------------------------
 
 
-@router.get("/items", dependencies=[Depends(require_permissions("storage:read"))])
+@router.get("/items", dependencies=[Depends(require_relay_or_permissions("storage:read"))])
 @monitor_performance
 async def get_items(
     response: Response,
     skip: int = 0,
     limit: int = 50,
     session: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_relay_or_current_user),
 ) -> Dict[str, Any]:
     """Get all items with pagination."""
     storage_service = StorageService(session)
@@ -279,11 +285,11 @@ async def get_items(
     }
 
 
-@router.get("/items/{upca}", dependencies=[Depends(require_permissions("storage:read"))])
+@router.get("/items/{upca}", dependencies=[Depends(require_relay_or_permissions("storage:read"))])
 async def get_item(
     upca: str,
     session: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_relay_or_current_user),
 ) -> ItemWithLocations:
     """Get a specific item by UPCA."""
     storage_service = StorageService(session)
@@ -296,11 +302,11 @@ async def get_item(
     return _build_item_payload(item, locations, current_user)
 
 
-@router.post("/items", dependencies=[Depends(require_permissions("storage:write"))])
+@router.post("/items", dependencies=[Depends(require_relay_or_permissions("storage:write"))])
 async def create_item(
     item: ItemCreate,
     session: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_relay_or_current_user),
 ) -> ItemWithLocations:
     """Create a new item."""
     storage_service = StorageService(session)
@@ -325,12 +331,12 @@ async def create_item(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@router.put("/items/{upca}", dependencies=[Depends(require_permissions("storage:write"))])
+@router.put("/items/{upca}", dependencies=[Depends(require_relay_or_permissions("storage:write"))])
 async def update_item(
     upca: str,
     item: ItemUpdate,
     session: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_relay_or_current_user),
 ) -> ItemWithLocations:
     """Update an existing item."""
     storage_service = StorageService(session)
@@ -356,7 +362,7 @@ async def update_item(
     return _build_item_payload(fresh_item, locations, current_user)
 
 
-@router.delete("/items/{upca}", dependencies=[Depends(require_permissions("storage:delete"))])
+@router.delete("/items/{upca}", dependencies=[Depends(require_relay_or_permissions("storage:delete"))])
 @monitor_performance
 async def delete_item(
     upca: str,

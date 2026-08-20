@@ -461,6 +461,10 @@ async def _ensure_developer_user() -> None:
 		existing_user = result.scalar_one_or_none()
 
 		if existing_user is not None:
+			if existing_user.is_system is False:
+				existing_user.is_system = True
+				await db.commit()
+				logger.info("developer_user_marked_system", email="developer@opshelf.com")
 			logger.info("developer_user_exists", email="developer@opshelf.com")
 			return
 

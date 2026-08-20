@@ -1,6 +1,9 @@
 """Authentication dependencies for FastAPI routes."""
+import hashlib
+import hmac
+import os
 from typing import Optional, List, Callable
-from fastapi import Depends, HTTPException, status, Query
+from fastapi import Depends, HTTPException, status, Query, Request
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -8,11 +11,12 @@ from sqlalchemy.orm import selectinload
 
 from ..settings import get_settings
 from ..database.session import get_db
-from ..database.models import User, Item
+from ..database.models import User, Item, Role
 from ..core.auth import AuthService
 from ..core.permissions import has_permission
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
+RELAY_SERVICE_TOKEN_SHA256_ENV = "OPSHELF_RELAY_SERVICE_TOKEN_SHA256"
 
 
 def get_token_from_request(
@@ -127,6 +131,55 @@ async def get_current_user(
 	return user
 
 
+def _is_relay_service_token(request: Request, token: str) -> bool:
+	"""Validate a relay service bearer token without accepting it from query parameters."""
+	authorization = request.headers.get("Authorization", "")
+	scheme, separator, header_token = authorization.partition(" ")
+	if separator == "" or scheme.lower() != "bearer" or header_token != token:
+		return False
+
+	expected_digest = os.getenv(RELAY_SERVICE_TOKEN_SHA256_ENV, "")
+	if len(expected_digest) != 64 or any(char not in "0123456789abcdef" for char in expected_digest):
+		return False
+
+	actual_digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+	return hmac.compare_digest(actual_digest, expected_digest)
+
+
+async def _get_relay_system_user(db: AsyncSession) -> User:
+	result = await db.execute(
+		select(User)
+		.join(Role, User.role_id == Role.id)
+		.options(selectinload(User.role), selectinload(User.access_level))
+		.where(
+			User.is_system.is_(True),
+			User.is_active.is_(True),
+			Role.name == "admin",
+		)
+		.order_by(User.id)
+	)
+	user = result.scalars().first()
+	if user is None:
+		raise HTTPException(
+			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+			detail="Relay service identity is unavailable",
+		)
+	return user
+
+
+async def get_relay_or_current_user(
+	request: Request,
+	token: Optional[str] = Depends(get_token_from_request),
+	db: AsyncSession = Depends(get_db),
+) -> User:
+	"""Authenticate either the scoped relay service credential or a normal user JWT."""
+	request.state.relay_service_authenticated = False
+	if token is not None and _is_relay_service_token(request, token):
+		request.state.relay_service_authenticated = True
+		return await _get_relay_system_user(db)
+	return await get_current_user(token, db)
+
+
 def require_permissions(permissions: str | List[str]) -> Callable:
 	"""Dependency to require specific permissions."""
 	if isinstance(permissions, str):
@@ -145,6 +198,30 @@ def require_permissions(permissions: str | List[str]) -> Callable:
 					detail=f"Missing required permission: {permission}"
 				)
 
+		return current_user
+
+	return permission_checker
+
+
+def require_relay_or_permissions(permissions: str | List[str]) -> Callable:
+	"""Allow the relay service on explicitly opted-in routes, otherwise enforce user permissions."""
+	if isinstance(permissions, str):
+		permissions = [permissions]
+
+	async def permission_checker(
+		request: Request,
+		current_user: User = Depends(get_relay_or_current_user),
+	) -> User:
+		if getattr(request.state, "relay_service_authenticated", False):
+			return current_user
+
+		user_permissions = current_user.role.permissions or []
+		for permission in permissions:
+			if not has_permission(user_permissions, permission):
+				raise HTTPException(
+					status_code=status.HTTP_403_FORBIDDEN,
+					detail=f"Missing required permission: {permission}",
+				)
 		return current_user
 
 	return permission_checker

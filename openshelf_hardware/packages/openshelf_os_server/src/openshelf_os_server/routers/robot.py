@@ -50,6 +50,7 @@ from openshelf_os_server.database.session import get_db, AsyncSessionLocal
 from openshelf_os_server.database.models import AccessLevel, Item, ItemLocation, User
 from .auth_deps import (
     get_current_user,
+    get_relay_or_current_user,
     require_permissions,
     can_user_retrieve_item,
 )
@@ -372,11 +373,11 @@ async def _validate_mock_retrieve(
         )
 
 
-@router.post("/commands", dependencies=[Depends(get_current_user)])
+@router.post("/commands", dependencies=[Depends(get_relay_or_current_user)])
 async def robot_commands(
     command: RobotCommands,
     worker: RobotWorker | None = Depends(get_command_worker_for_mode),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_relay_or_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> SuccessResponse | MockCommandAcceptedResponse:
     if get_operating_mode() == OperatingMode.mock:
@@ -544,7 +545,7 @@ async def robot_commands(
     return SuccessResponse()
 
 
-@router.get("/commands/{command_id}", dependencies=[Depends(get_current_user)])
+@router.get("/commands/{command_id}", dependencies=[Depends(get_relay_or_current_user)])
 async def get_robot_command(command_id: str) -> MockCommandLifecycleResponse:
     if get_operating_mode() != OperatingMode.mock:
         raise HTTPException(
@@ -1056,7 +1057,7 @@ async def get_occupied_cells_from_db() -> set[tuple[str, int, int]]:
         return {(row[0], row[1], row[2]) for row in rows}
 
 
-@router.get("/status", dependencies=[Depends(get_current_user)])
+@router.get("/status", dependencies=[Depends(get_relay_or_current_user)])
 async def stream_sse() -> EventSourceResponse:
     if get_operating_mode() == OperatingMode.mock:
         runtime = get_mock_robot_runtime()
@@ -1151,7 +1152,7 @@ async def stream_sse() -> EventSourceResponse:
     )
 
 
-@router.get("/events", dependencies=[Depends(get_current_user)])
+@router.get("/events", dependencies=[Depends(get_relay_or_current_user)])
 async def stream_events() -> EventSourceResponse:
     if get_operating_mode() == OperatingMode.mock:
         runtime = get_mock_robot_runtime()

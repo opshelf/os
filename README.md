@@ -102,6 +102,16 @@ prefer a scanner by-id path or a scanner-specific udev symlink. do not use `/dev
 - api health: `http://localhost:8000/api/health`
 - developer login: `developer@opshelf.com` with pin `1111`
 
+### relay service authentication
+
+The integration relay authenticates to a device with a unique opaque bearer token instead of a
+user email and PIN. Give the raw token only to the relay and start the OS container with its
+lowercase SHA-256 digest in `OPSHELF_RELAY_SERVICE_TOKEN_SHA256`.
+
+The credential is accepted only by the relay-facing inventory item endpoints, command
+submission and polling, robot status/events streams, and printing. It is not valid for users,
+roles, access levels, audit, calibration, system configuration, or other authenticated APIs.
+
 ## debugging
 
 show service logs:
