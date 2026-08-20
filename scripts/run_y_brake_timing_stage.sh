@@ -85,7 +85,7 @@ docker compose \
   -f "$repo_root/docker-compose.yml" \
   -f "$repo_root/docker-compose.dev.yml" \
   -f "$repo_root/docker-compose.hardware.yml" \
-  run --rm --entrypoint sh \
+  run --pull never --rm --entrypoint sh \
   -v "$repo_root/scripts:/app/scripts:ro" \
   api -lc "cd /app/openshelf_hardware && uv run python /app/scripts/y_brake_timing_diagnostic.py${quoted_args} --register-map $register_map --config $config_path" \
   | tee "$trace_path"

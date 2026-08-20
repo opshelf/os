@@ -83,6 +83,12 @@ def test_harness_has_no_homing_so2_write_or_persistence_command() -> None:
     assert "transition-to-brk" not in source
 
 
+def test_device_wrapper_forces_the_preloaded_image() -> None:
+    module = load_module()
+    wrapper = (module.REPO_ROOT / "scripts/run_y_brake_timing_stage.sh").read_text()
+    assert "run --pull never --rm" in wrapper
+
+
 def test_every_delay_transition_changes_exactly_one_delay_between_100_and_250() -> None:
     module = load_module()
     for transition in module.DELAY_TRANSITIONS.values():

@@ -32,6 +32,7 @@ Y_MIN_MM = -1.0
 Y_MAX_MM = 50.0
 MOTION_RUNNING_BIT = 2
 HOME_CONFIRMATION = "SUPERVISED-Y-HOME-RECENTLY-VERIFIED-UNDER-50MM"
+CABINET_BYPASS_NAME = "cabinet_doors"
 HOME_SETTLE_SECONDS = {
     "home-immediate": 0.0,
     "home-after-5s": 5.0,
@@ -63,6 +64,14 @@ def build_parser() -> argparse.ArgumentParser:
         )
         home.add_argument("--position-trace", type=Path, required=True)
         home.add_argument("--confirm", required=True)
+        home.add_argument(
+            "--allow-cabinet-doors-bypass",
+            action="store_true",
+            help=(
+                "Require the cabinet_doors component bypass to be enabled. Use only "
+                "on a machine where cabinet doors and their sensors are not installed."
+            ),
+        )
     return parser
 
 
@@ -173,7 +182,9 @@ def authenticate(email: str) -> str:
     return token
 
 
-def api_preflight(token: str) -> dict[str, Any]:
+def api_preflight(
+    token: str, *, allow_cabinet_doors_bypass: bool = False
+) -> dict[str, Any]:
     health = request_json("GET", "/api/health")
     expected_health = {
         "status": "ok",
@@ -210,6 +221,21 @@ def api_preflight(token: str) -> dict[str, Any]:
     robot_status = status_payload["robot_status"]
     safety = robot_status["safety"]
     component_bypasses = safety.get("component_bypasses")
+    expected_component_bypasses = (
+        {CABINET_BYPASS_NAME} if allow_cabinet_doors_bypass else set()
+    )
+    enabled_component_bypasses = (
+        {
+            name
+            for name, enabled in component_bypasses.items()
+            if enabled is True
+        }
+        if isinstance(component_bypasses, dict)
+        else set()
+    )
+    invalid_component_bypass_value = isinstance(component_bypasses, dict) and any(
+        type(enabled) is not bool for enabled in component_bypasses.values()
+    )
     unsafe_safety = (
         safety.get("active") is not False
         or safety.get("motion_blocked") is not False
@@ -217,11 +243,13 @@ def api_preflight(token: str) -> dict[str, Any]:
         or safety.get("bypassed") is not False
         or safety.get("active_sources") != []
         or not isinstance(component_bypasses, dict)
-        or any(value is not False for value in component_bypasses.values())
+        or invalid_component_bypass_value
+        or enabled_component_bypasses != expected_component_bypasses
     )
     if unsafe_safety:
         raise RuntimeError(
-            "safety guard must be clear, acknowledged, and entirely unbypassed: "
+            "safety guard must be clear and acknowledged, with exactly the explicitly "
+            "allowed component bypasses: "
             + json.dumps(safety, sort_keys=True)
         )
     if (
@@ -248,6 +276,7 @@ def api_preflight(token: str) -> dict[str, Any]:
         y_unit=2,
         live_y_position_mm=float(y_position),
         safety=safety,
+        allowed_component_bypasses=sorted(expected_component_bypasses),
     )
     return health
 
@@ -373,11 +402,18 @@ def run(args: argparse.Namespace) -> int:
     evidence = load_recent_position_evidence(args.position_trace)
     wait_for_ready_api()
     token = authenticate(args.email)
-    api_preflight(token)
+    allow_cabinet_doors_bypass = getattr(
+        args, "allow_cabinet_doors_bypass", False
+    )
+    api_preflight(
+        token, allow_cabinet_doors_bypass=allow_cabinet_doors_bypass
+    )
     settle_seconds = HOME_SETTLE_SECONDS[args.command]
     countdown(args.command, settle_seconds)
     # Repeat the software gate immediately before the only motion request.
-    api_preflight(token)
+    api_preflight(
+        token, allow_cabinet_doors_bypass=allow_cabinet_doors_bypass
+    )
     emit(
         "y_home_request_imminent",
         endpoint="/api/robot/debug/motors/y_axis/home",

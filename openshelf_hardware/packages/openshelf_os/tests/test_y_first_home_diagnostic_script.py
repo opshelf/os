@@ -254,6 +254,54 @@ def test_api_preflight_rejects_unsafe_live_robot_status(monkeypatch, mutate) -> 
         module.api_preflight("token")
 
 
+def test_api_preflight_allows_only_explicit_absent_cabinet_door_bypass(
+    monkeypatch,
+) -> None:
+    module = load_module()
+    responses = iter(
+        [
+            {"status": "ok", "mode": "development", "robot_status": "ok", "robot_phase": "ready"},
+            {"home_on_init": False},
+            {"tool": [{"name": "y_axis", "motor_id": 2}]},
+        ]
+    )
+    status = safe_status()
+    status["robot_status"]["safety"]["component_bypasses"] = {
+        "cabinet_doors": True,
+        "light_curtain": False,
+    }
+    monkeypatch.setattr(module, "request_json", Mock(side_effect=lambda *_a, **_k: next(responses)))
+    monkeypatch.setattr(module, "request_robot_status", Mock(return_value=status))
+    module.api_preflight("token", allow_cabinet_doors_bypass=True)
+
+
+@pytest.mark.parametrize(
+    "component_bypasses",
+    [
+        {"cabinet_doors": False, "light_curtain": False},
+        {"cabinet_doors": True, "light_curtain": True},
+        {"cabinet_doors": True, "light_curtain": 0},
+    ],
+)
+def test_explicit_cabinet_bypass_mode_fails_closed_for_any_other_state(
+    monkeypatch, component_bypasses
+) -> None:
+    module = load_module()
+    responses = iter(
+        [
+            {"status": "ok", "mode": "development", "robot_status": "ok", "robot_phase": "ready"},
+            {"home_on_init": False},
+            {"tool": [{"name": "y_axis", "motor_id": 2}]},
+        ]
+    )
+    status = safe_status()
+    status["robot_status"]["safety"]["component_bypasses"] = component_bypasses
+    monkeypatch.setattr(module, "request_json", Mock(side_effect=lambda *_a, **_k: next(responses)))
+    monkeypatch.setattr(module, "request_robot_status", Mock(return_value=status))
+    with pytest.raises(RuntimeError, match="explicitly allowed"):
+        module.api_preflight("token", allow_cabinet_doors_bypass=True)
+
+
 def test_home_repeats_preflight_then_calls_only_y_home(monkeypatch, tmp_path: Path) -> None:
     module = load_module()
     trace = tmp_path / "trace.jsonl"
@@ -277,6 +325,10 @@ def test_home_repeats_preflight_then_calls_only_y_home(monkeypatch, tmp_path: Pa
 
     assert module.run(args) == 0
     assert preflight.call_count == 2
+    assert all(
+        call.kwargs == {"allow_cabinet_doors_bypass": False}
+        for call in preflight.call_args_list
+    )
     wait_for_ready.assert_called_once()
     countdown.assert_called_once_with("home-after-5s", 5.0)
     request.assert_called_once_with(
