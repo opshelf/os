@@ -42,6 +42,12 @@ EXPECTED_DELAYS = (250, 250)
 START_Y_MIN_MM = -1.0
 START_Y_MAX_MM = 1.0
 MAX_Y_MM = 10.0
+EXTENDED_AWAY_TARGET_MM = 100.0
+EXTENDED_AWAY_START_MIN_MM = 9.0
+EXTENDED_AWAY_START_MAX_MM = 11.0
+EXTENDED_Y_MIN_MM = -1.0
+EXTENDED_Y_MAX_MM = 101.0
+SECONDARY_EXPANDER_ADDRESS = 0x21
 AWAY_STEP_MM = 1.0
 RETURN_STEP_MM = 0.5
 MIN_MOVE_MM = 0.2
@@ -52,6 +58,7 @@ GPIO_STABLE_SAMPLES = 5
 GPIO_SAMPLE_INTERVAL_SECONDS = 0.02
 
 SCAN_CONFIRMATION = "SUPERVISED-RESTRAINED-Y-HOME-ZONE-SCAN"
+EXTENDED_MOVE_CONFIRMATION = "SUPERVISED-RESTRAINED-Y-HOME-ZONE-100MM-MOVE"
 
 
 @dataclass(frozen=True)
@@ -98,6 +105,14 @@ def build_parser() -> argparse.ArgumentParser:
     timing.add_common_command_arguments(scan)
     scan.add_argument("--arm-delay-s", type=float, default=5.0)
     scan.add_argument("--confirm", required=True)
+
+    extended = subparsers.add_parser(
+        "move-away-100",
+        help="Fixed low-speed move from approximately 10 mm to exactly 100 mm.",
+    )
+    timing.add_common_command_arguments(extended)
+    extended.add_argument("--arm-delay-s", type=float, default=5.0)
+    extended.add_argument("--confirm", required=True)
     return parser
 
 
@@ -114,6 +129,13 @@ def validate_args(args: argparse.Namespace) -> None:
             raise ValueError(
                 "scan confirmation mismatch; this command requires independent load "
                 "restraint and onsite E-stop supervision"
+            )
+        timing.validate_arm_delay(args.arm_delay_s)
+    if args.command == "move-away-100":
+        if args.confirm != EXTENDED_MOVE_CONFIRMATION:
+            raise ValueError(
+                "100 mm move confirmation mismatch; this command requires independent "
+                "load restraint and onsite E-stop supervision"
             )
         timing.validate_arm_delay(args.arm_delay_s)
 
@@ -206,6 +228,54 @@ def require_scan_start(position_mm: float) -> None:
         )
 
 
+def require_extended_move_start(position_mm: float) -> None:
+    if (
+        not math.isfinite(position_mm)
+        or not EXTENDED_AWAY_START_MIN_MM
+        <= position_mm
+        <= EXTENDED_AWAY_START_MAX_MM
+    ):
+        raise RuntimeError(
+            "100 mm move must start at the completed 10 mm scan bound: "
+            f"position={position_mm:.6f} mm, "
+            f"allowed={EXTENDED_AWAY_START_MIN_MM:g}..{EXTENDED_AWAY_START_MAX_MM:g} mm"
+        )
+
+
+async def capture_other_expander(bus: int, address: int) -> GpioSnapshot:
+    device = PCA9535(bus_num=bus, address=address)
+    try:
+        return await capture_stable_gpio(device)
+    finally:
+        device.close()
+
+
+def require_extended_safe_snapshot(snapshot: timing.DriveSnapshot) -> None:
+    if snapshot.status & (1 << timing.MOTION_RUNNING_BIT):
+        raise RuntimeError(f"Y reports motion running: status=0x{snapshot.status:04X}")
+    if snapshot.alarm != 0:
+        raise RuntimeError(f"Y alarm is active: 0x{snapshot.alarm:04X}")
+    if not EXTENDED_Y_MIN_MM <= snapshot.position_mm <= EXTENDED_Y_MAX_MM:
+        raise RuntimeError(
+            "Y is outside the fixed 100 mm diagnostic window: "
+            f"position={snapshot.position_mm:.6f} mm, "
+            f"allowed={EXTENDED_Y_MIN_MM:.1f}..{EXTENDED_Y_MAX_MM:.1f} mm"
+        )
+
+
+async def require_extended_stationary_healthy_y(
+    controller: timing.SharedModbusController,
+    motor_params: Any,
+) -> timing.DriveSnapshot:
+    first = await timing.capture_snapshot(controller, motor_params)
+    require_extended_safe_snapshot(first)
+    await asyncio.sleep(0.25)
+    second = await timing.capture_snapshot(controller, motor_params)
+    require_extended_safe_snapshot(second)
+    timing.require_no_position_change(first, second, context="stationary preflight")
+    return second
+
+
 def away_targets(start_mm: float) -> list[float]:
     targets: list[float] = []
     target = AWAY_STEP_MM
@@ -246,6 +316,36 @@ async def move_and_capture(
         "zone_move_sample",
         phase=phase,
         target_mm=target_mm,
+        drive=asdict(drive),
+        gpio=asdict(gpio),
+    )
+    return drive, gpio
+
+
+async def move_extended_and_capture(
+    motor: Motor,
+    controller: timing.SharedModbusController,
+    motor_params: Any,
+    gpio_device: PCA9535,
+) -> tuple[timing.DriveSnapshot, GpioSnapshot]:
+    emit(
+        "zone_move_trigger_imminent",
+        phase="extended-away",
+        target_mm=EXTENDED_AWAY_TARGET_MM,
+    )
+    async with asyncio.timeout(MOVE_TIMEOUT_SECONDS):
+        await motor.move_to_position(
+            EXTENDED_AWAY_TARGET_MM,
+            rpm=MOVE_RPM,
+            accel=MOVE_ACCEL,
+        )
+    drive = await require_extended_stationary_healthy_y(controller, motor_params)
+    timing.require_live_profile(drive, expected_delays=EXPECTED_DELAYS)
+    gpio = await capture_stable_gpio(gpio_device)
+    emit(
+        "zone_move_sample",
+        phase="extended-away",
+        target_mm=EXTENDED_AWAY_TARGET_MM,
         drive=asdict(drive),
         gpio=asdict(gpio),
     )
@@ -393,6 +493,91 @@ async def run_scan(
     return 0
 
 
+async def run_extended_move(
+    args: argparse.Namespace,
+    controller: timing.SharedModbusController,
+    motor_params: Any,
+    gpio_device: PCA9535,
+    target: ExpanderTarget,
+) -> int:
+    baseline_drive = await require_extended_stationary_healthy_y(controller, motor_params)
+    timing.require_live_profile(baseline_drive, expected_delays=EXPECTED_DELAYS)
+    require_extended_move_start(baseline_drive.position_mm)
+    baseline_primary = await capture_stable_gpio(gpio_device)
+    baseline_secondary = await capture_other_expander(
+        target.bus, SECONDARY_EXPANDER_ADDRESS
+    )
+    emit(
+        "extended_move_preflight",
+        drive=asdict(baseline_drive),
+        primary_gpio=asdict(baseline_primary),
+        secondary_gpio=asdict(baseline_secondary),
+        target_mm=EXTENDED_AWAY_TARGET_MM,
+        rpm=MOVE_RPM,
+        accel=MOVE_ACCEL,
+    )
+    await timing.arm_countdown(args.command, args.arm_delay_s)
+
+    final_preflight = await require_extended_stationary_healthy_y(
+        controller, motor_params
+    )
+    timing.require_live_profile(final_preflight, expected_delays=EXPECTED_DELAYS)
+    require_extended_move_start(final_preflight.position_mm)
+    timing.require_no_position_change(
+        baseline_drive,
+        final_preflight,
+        context="100 mm move arm delay",
+    )
+
+    motor = Motor(controller, motor_params)
+    motor._cur_pos = final_preflight.position_mm
+    motor._last_raw_position = final_preflight.raw_position
+    try:
+        await motor.move_config()
+        configured_drive = await require_extended_stationary_healthy_y(
+            controller, motor_params
+        )
+        timing.require_live_profile(configured_drive, expected_delays=EXPECTED_DELAYS)
+        timing.require_no_position_change(
+            final_preflight,
+            configured_drive,
+            context="100 mm motion configuration",
+        )
+        final_drive, final_primary = await move_extended_and_capture(
+            motor,
+            controller,
+            motor_params,
+            gpio_device,
+        )
+        final_secondary = await capture_other_expander(
+            target.bus, SECONDARY_EXPANDER_ADDRESS
+        )
+        if abs(final_drive.position_mm - EXTENDED_AWAY_TARGET_MM) > 1.0:
+            raise RuntimeError(
+                "100 mm move ended outside target tolerance: "
+                f"target={EXTENDED_AWAY_TARGET_MM:.6f}, "
+                f"actual={final_drive.position_mm:.6f}"
+            )
+    except BaseException as exc:
+        await timing.stop_after_motion_error(motor, exc)
+        raise
+    emit(
+        "extended_move_complete",
+        initial_position_mm=baseline_drive.position_mm,
+        final_position_mm=final_drive.position_mm,
+        target_mm=EXTENDED_AWAY_TARGET_MM,
+        primary_initial=asdict(baseline_primary),
+        primary_final=asdict(final_primary),
+        primary_changed_pins=changed_pins(baseline_primary, final_primary),
+        secondary_initial=asdict(baseline_secondary),
+        secondary_final=asdict(final_secondary),
+        secondary_changed_pins=changed_pins(baseline_secondary, final_secondary),
+        persisted=False,
+        homes=0,
+    )
+    return 0
+
+
 async def async_main(args: argparse.Namespace) -> int:
     validate_args(args)
     with timing.acquire_ownership_lock(OWNERSHIP_LOCK_PATH):
@@ -409,6 +594,14 @@ async def async_main(args: argparse.Namespace) -> int:
             )
             if args.command == "inspect":
                 return await run_inspect(
+                    controller,
+                    motor_params,
+                    gpio_device,
+                    expander_target,
+                )
+            if args.command == "move-away-100":
+                return await run_extended_move(
+                    args,
                     controller,
                     motor_params,
                     gpio_device,
