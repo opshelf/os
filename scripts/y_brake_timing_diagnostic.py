@@ -69,7 +69,10 @@ MOVE_CONFIRMATION = "SUPERVISED-RESTRAINED-Y-TIMING-MOVE"
 
 REGISTERS = {
     "command_pulses_per_revolution": (0x0001, 1),
-    "control_mode": (0x0003, 1),
+    # lb4a-2 intermittently returned a malformed two-word payload when this
+    # address was requested as a one-word read. A two-word request was stable
+    # on both lb4a machines; only the first word is the control-mode value.
+    "control_mode": (0x0003, 2),
     "status": (0x1003, 1),
     "alarm": (0x2203, 1),
     "position_block": (0x602C, 2),
