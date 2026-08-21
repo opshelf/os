@@ -78,16 +78,22 @@ def test_commands_and_motion_envelope_are_fixed() -> None:
     parser = module.build_parser()
     commands = set(parser._subparsers._group_actions[0].choices)
 
-    assert commands == {"inspect", "scan-zone"}
+    assert commands == {"inspect", "scan-zone", "move-away-100"}
     assert module.START_Y_MIN_MM == -1.0
     assert module.START_Y_MAX_MM == 1.0
     assert module.MAX_Y_MM == 10.0
+    assert module.EXTENDED_AWAY_TARGET_MM == 100.0
+    assert module.EXTENDED_AWAY_START_MIN_MM == 9.0
+    assert module.EXTENDED_AWAY_START_MAX_MM == 11.0
     assert module.MOVE_RPM == 10
     assert module.MOVE_ACCEL == 100
     assert module.timing.REGISTERS["control_mode"] == (0x0003, 2)
     scan_parser = parser._subparsers._group_actions[0].choices["scan-zone"]
     for option in ("--pin", "--target-mm", "--max-y-mm", "--rpm", "--accel"):
         assert option not in scan_parser._option_string_actions
+        assert option not in parser._subparsers._group_actions[0].choices[
+            "move-away-100"
+        ]._option_string_actions
 
 
 def test_harness_has_no_homing_so2_write_or_persistence_command() -> None:
@@ -119,12 +125,77 @@ def test_scan_requires_exact_confirmation() -> None:
         module.validate_args(args)
 
 
+def test_extended_move_requires_exact_confirmation() -> None:
+    module = load_module()
+    args = parse(module, "move-away-100", "--confirm", "wrong")
+
+    with pytest.raises(ValueError, match="100 mm move confirmation mismatch"):
+        module.validate_args(args)
+
+
 @pytest.mark.parametrize("position_mm", [-1.001, 1.001, float("nan")])
 def test_scan_start_rejects_position_outside_near_home_window(position_mm: float) -> None:
     module = load_module()
 
     with pytest.raises(RuntimeError, match="must start close"):
         module.require_scan_start(position_mm)
+
+
+@pytest.mark.parametrize("position_mm", [8.999, 11.001, float("nan")])
+def test_extended_move_rejects_position_outside_10mm_window(
+    position_mm: float,
+) -> None:
+    module = load_module()
+
+    with pytest.raises(RuntimeError, match="must start at the completed 10 mm"):
+        module.require_extended_move_start(position_mm)
+
+
+@pytest.mark.asyncio
+async def test_extended_move_is_fixed_to_100mm_and_reads_both_expanders(
+    monkeypatch,
+) -> None:
+    module = load_module()
+    start_drive = drive(module, 10.0)
+    final_drive = drive(module, 100.0)
+    initial_primary = gpio(module, pin0_high=False, port1=6)
+    final_primary = gpio(module, pin0_high=True, port1=6)
+    initial_secondary = gpio(module, pin0_high=False, port1=1)
+    final_secondary = gpio(module, pin0_high=False, port1=3)
+    motor = Mock(move_config=AsyncMock(), stop=AsyncMock())
+    monkeypatch.setattr(
+        module,
+        "require_extended_stationary_healthy_y",
+        AsyncMock(side_effect=[start_drive, start_drive, start_drive]),
+    )
+    monkeypatch.setattr(module.timing, "require_live_profile", Mock())
+    monkeypatch.setattr(module.timing, "require_no_position_change", Mock())
+    monkeypatch.setattr(module.timing, "arm_countdown", AsyncMock())
+    monkeypatch.setattr(
+        module, "capture_stable_gpio", AsyncMock(return_value=initial_primary)
+    )
+    other = AsyncMock(side_effect=[initial_secondary, final_secondary])
+    monkeypatch.setattr(module, "capture_other_expander", other)
+    move = AsyncMock(return_value=(final_drive, final_primary))
+    monkeypatch.setattr(module, "move_extended_and_capture", move)
+    monkeypatch.setattr(module, "Motor", Mock(return_value=motor))
+
+    result = await module.run_extended_move(
+        SimpleNamespace(command="move-away-100", arm_delay_s=5.0),
+        SimpleNamespace(),
+        SimpleNamespace(),
+        SimpleNamespace(),
+        expander(module),
+    )
+
+    assert result == 0
+    motor.move_config.assert_awaited_once()
+    motor.stop.assert_not_awaited()
+    move.assert_awaited_once_with(motor, ANY, ANY, ANY)
+    assert other.await_args_list == [
+        call(1, module.SECONDARY_EXPANDER_ADDRESS),
+        call(1, module.SECONDARY_EXPANDER_ADDRESS),
+    ]
 
 
 def test_target_generators_never_exceed_ceiling_or_go_below_start() -> None:
