@@ -45,6 +45,9 @@ MAX_Y_MM = 10.0
 EXTENDED_AWAY_TARGET_MM = 100.0
 EXTENDED_AWAY_START_MIN_MM = 9.0
 EXTENDED_AWAY_START_MAX_MM = 11.0
+HOMEWARD_START_MIN_MM = 99.0
+HOMEWARD_START_MAX_MM = 101.0
+HOMEWARD_TARGETS_MM = (50.0, 20.0, 10.0, 5.0, 2.0, 1.0, 0.5, 0.25, 0.0)
 EXTENDED_Y_MIN_MM = -1.0
 EXTENDED_Y_MAX_MM = 101.0
 SECONDARY_EXPANDER_ADDRESS = 0x21
@@ -59,6 +62,7 @@ GPIO_SAMPLE_INTERVAL_SECONDS = 0.02
 
 SCAN_CONFIRMATION = "SUPERVISED-RESTRAINED-Y-HOME-ZONE-SCAN"
 EXTENDED_MOVE_CONFIRMATION = "SUPERVISED-RESTRAINED-Y-HOME-ZONE-100MM-MOVE"
+HOMEWARD_SCAN_CONFIRMATION = "SUPERVISED-RESTRAINED-Y-HOMEWARD-LIMIT-SCAN"
 
 
 @dataclass(frozen=True)
@@ -113,6 +117,14 @@ def build_parser() -> argparse.ArgumentParser:
     timing.add_common_command_arguments(extended)
     extended.add_argument("--arm-delay-s", type=float, default=5.0)
     extended.add_argument("--confirm", required=True)
+
+    homeward = subparsers.add_parser(
+        "scan-toward-home",
+        help="Fixed low-speed scan from approximately 100 mm toward 0 mm.",
+    )
+    timing.add_common_command_arguments(homeward)
+    homeward.add_argument("--arm-delay-s", type=float, default=5.0)
+    homeward.add_argument("--confirm", required=True)
     return parser
 
 
@@ -135,6 +147,13 @@ def validate_args(args: argparse.Namespace) -> None:
         if args.confirm != EXTENDED_MOVE_CONFIRMATION:
             raise ValueError(
                 "100 mm move confirmation mismatch; this command requires independent "
+                "load restraint and onsite E-stop supervision"
+            )
+        timing.validate_arm_delay(args.arm_delay_s)
+    if args.command == "scan-toward-home":
+        if args.confirm != HOMEWARD_SCAN_CONFIRMATION:
+            raise ValueError(
+                "homeward scan confirmation mismatch; this command requires independent "
                 "load restraint and onsite E-stop supervision"
             )
         timing.validate_arm_delay(args.arm_delay_s)
@@ -242,6 +261,18 @@ def require_extended_move_start(position_mm: float) -> None:
         )
 
 
+def require_homeward_scan_start(position_mm: float) -> None:
+    if (
+        not math.isfinite(position_mm)
+        or not HOMEWARD_START_MIN_MM <= position_mm <= HOMEWARD_START_MAX_MM
+    ):
+        raise RuntimeError(
+            "homeward scan must start at the completed 100 mm move: "
+            f"position={position_mm:.6f} mm, "
+            f"allowed={HOMEWARD_START_MIN_MM:g}..{HOMEWARD_START_MAX_MM:g} mm"
+        )
+
+
 async def capture_other_expander(bus: int, address: int) -> GpioSnapshot:
     device = PCA9535(bus_num=bus, address=address)
     try:
@@ -346,6 +377,37 @@ async def move_extended_and_capture(
         "zone_move_sample",
         phase="extended-away",
         target_mm=EXTENDED_AWAY_TARGET_MM,
+        drive=asdict(drive),
+        gpio=asdict(gpio),
+    )
+    return drive, gpio
+
+
+async def move_homeward_and_capture(
+    motor: Motor,
+    controller: timing.SharedModbusController,
+    motor_params: Any,
+    gpio_device: PCA9535,
+    *,
+    target_mm: float,
+) -> tuple[timing.DriveSnapshot, GpioSnapshot]:
+    if target_mm not in HOMEWARD_TARGETS_MM:
+        raise RuntimeError(f"target is not in the fixed homeward scan: {target_mm}")
+    emit("zone_move_trigger_imminent", phase="toward-home", target_mm=target_mm)
+    async with asyncio.timeout(MOVE_TIMEOUT_SECONDS):
+        await motor.move_to_position(target_mm, rpm=MOVE_RPM, accel=MOVE_ACCEL)
+    drive = await require_extended_stationary_healthy_y(controller, motor_params)
+    timing.require_live_profile(drive, expected_delays=EXPECTED_DELAYS)
+    if abs(drive.position_mm - target_mm) > 0.2:
+        raise RuntimeError(
+            "homeward scan move ended outside target tolerance: "
+            f"target={target_mm:.6f}, actual={drive.position_mm:.6f}"
+        )
+    gpio = await capture_stable_gpio(gpio_device)
+    emit(
+        "zone_move_sample",
+        phase="toward-home",
+        target_mm=target_mm,
         drive=asdict(drive),
         gpio=asdict(gpio),
     )
@@ -578,6 +640,111 @@ async def run_extended_move(
     return 0
 
 
+async def run_homeward_scan(
+    args: argparse.Namespace,
+    controller: timing.SharedModbusController,
+    motor_params: Any,
+    gpio_device: PCA9535,
+    target: ExpanderTarget,
+) -> int:
+    baseline_drive = await require_extended_stationary_healthy_y(controller, motor_params)
+    timing.require_live_profile(baseline_drive, expected_delays=EXPECTED_DELAYS)
+    require_homeward_scan_start(baseline_drive.position_mm)
+    baseline_primary = await capture_stable_gpio(gpio_device)
+    baseline_secondary = await capture_other_expander(
+        target.bus, SECONDARY_EXPANDER_ADDRESS
+    )
+    emit(
+        "homeward_scan_preflight",
+        drive=asdict(baseline_drive),
+        primary_gpio=asdict(baseline_primary),
+        secondary_gpio=asdict(baseline_secondary),
+        targets_mm=HOMEWARD_TARGETS_MM,
+        rpm=MOVE_RPM,
+        accel=MOVE_ACCEL,
+    )
+    await timing.arm_countdown(args.command, args.arm_delay_s)
+
+    final_preflight = await require_extended_stationary_healthy_y(
+        controller, motor_params
+    )
+    timing.require_live_profile(final_preflight, expected_delays=EXPECTED_DELAYS)
+    require_homeward_scan_start(final_preflight.position_mm)
+    timing.require_no_position_change(
+        baseline_drive,
+        final_preflight,
+        context="homeward scan arm delay",
+    )
+
+    motor = Motor(controller, motor_params)
+    motor._cur_pos = final_preflight.position_mm
+    motor._last_raw_position = final_preflight.raw_position
+    transition_drive: timing.DriveSnapshot | None = None
+    transition_primary: GpioSnapshot | None = None
+    transition_secondary: GpioSnapshot | None = None
+    final_drive = final_preflight
+    final_primary = baseline_primary
+    final_secondary = baseline_secondary
+    try:
+        await motor.move_config()
+        configured_drive = await require_extended_stationary_healthy_y(
+            controller, motor_params
+        )
+        timing.require_live_profile(configured_drive, expected_delays=EXPECTED_DELAYS)
+        timing.require_no_position_change(
+            final_preflight,
+            configured_drive,
+            context="homeward scan motion configuration",
+        )
+        for target_mm in HOMEWARD_TARGETS_MM:
+            final_drive, final_primary = await move_homeward_and_capture(
+                motor,
+                controller,
+                motor_params,
+                gpio_device,
+                target_mm=target_mm,
+            )
+            final_secondary = await capture_other_expander(
+                target.bus, SECONDARY_EXPANDER_ADDRESS
+            )
+            emit(
+                "homeward_scan_sample",
+                target_mm=target_mm,
+                primary_gpio=asdict(final_primary),
+                secondary_gpio=asdict(final_secondary),
+                primary_changed_pins=changed_pins(baseline_primary, final_primary),
+                secondary_changed_pins=changed_pins(
+                    baseline_secondary, final_secondary
+                ),
+            )
+            if final_primary.pin0_high != baseline_primary.pin0_high:
+                transition_drive = final_drive
+                transition_primary = final_primary
+                transition_secondary = final_secondary
+                break
+    except BaseException as exc:
+        await timing.stop_after_motion_error(motor, exc)
+        raise
+
+    emit(
+        "homeward_scan_complete",
+        initial_position_mm=baseline_drive.position_mm,
+        final_position_mm=final_drive.position_mm,
+        transition_detected=transition_drive is not None,
+        transition_position_mm=(
+            transition_drive.position_mm if transition_drive is not None else None
+        ),
+        primary_initial=asdict(baseline_primary),
+        primary_final=asdict(transition_primary or final_primary),
+        secondary_initial=asdict(baseline_secondary),
+        secondary_final=asdict(transition_secondary or final_secondary),
+        commanded_below_zero=False,
+        persisted=False,
+        homes=0,
+    )
+    return 0
+
+
 async def async_main(args: argparse.Namespace) -> int:
     validate_args(args)
     with timing.acquire_ownership_lock(OWNERSHIP_LOCK_PATH):
@@ -601,6 +768,14 @@ async def async_main(args: argparse.Namespace) -> int:
                 )
             if args.command == "move-away-100":
                 return await run_extended_move(
+                    args,
+                    controller,
+                    motor_params,
+                    gpio_device,
+                    expander_target,
+                )
+            if args.command == "scan-toward-home":
+                return await run_homeward_scan(
                     args,
                     controller,
                     motor_params,

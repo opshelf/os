@@ -78,13 +78,22 @@ def test_commands_and_motion_envelope_are_fixed() -> None:
     parser = module.build_parser()
     commands = set(parser._subparsers._group_actions[0].choices)
 
-    assert commands == {"inspect", "scan-zone", "move-away-100"}
+    assert commands == {
+        "inspect",
+        "scan-zone",
+        "move-away-100",
+        "scan-toward-home",
+    }
     assert module.START_Y_MIN_MM == -1.0
     assert module.START_Y_MAX_MM == 1.0
     assert module.MAX_Y_MM == 10.0
     assert module.EXTENDED_AWAY_TARGET_MM == 100.0
     assert module.EXTENDED_AWAY_START_MIN_MM == 9.0
     assert module.EXTENDED_AWAY_START_MAX_MM == 11.0
+    assert module.HOMEWARD_START_MIN_MM == 99.0
+    assert module.HOMEWARD_START_MAX_MM == 101.0
+    assert module.HOMEWARD_TARGETS_MM[-1] == 0.0
+    assert min(module.HOMEWARD_TARGETS_MM) == 0.0
     assert module.MOVE_RPM == 10
     assert module.MOVE_ACCEL == 100
     assert module.timing.REGISTERS["control_mode"] == (0x0003, 2)
@@ -93,6 +102,9 @@ def test_commands_and_motion_envelope_are_fixed() -> None:
         assert option not in scan_parser._option_string_actions
         assert option not in parser._subparsers._group_actions[0].choices[
             "move-away-100"
+        ]._option_string_actions
+        assert option not in parser._subparsers._group_actions[0].choices[
+            "scan-toward-home"
         ]._option_string_actions
 
 
@@ -133,6 +145,14 @@ def test_extended_move_requires_exact_confirmation() -> None:
         module.validate_args(args)
 
 
+def test_homeward_scan_requires_exact_confirmation() -> None:
+    module = load_module()
+    args = parse(module, "scan-toward-home", "--confirm", "wrong")
+
+    with pytest.raises(ValueError, match="homeward scan confirmation mismatch"):
+        module.validate_args(args)
+
+
 @pytest.mark.parametrize("position_mm", [-1.001, 1.001, float("nan")])
 def test_scan_start_rejects_position_outside_near_home_window(position_mm: float) -> None:
     module = load_module()
@@ -149,6 +169,16 @@ def test_extended_move_rejects_position_outside_10mm_window(
 
     with pytest.raises(RuntimeError, match="must start at the completed 10 mm"):
         module.require_extended_move_start(position_mm)
+
+
+@pytest.mark.parametrize("position_mm", [98.999, 101.001, float("nan")])
+def test_homeward_scan_rejects_position_outside_100mm_window(
+    position_mm: float,
+) -> None:
+    module = load_module()
+
+    with pytest.raises(RuntimeError, match="must start at the completed 100 mm"):
+        module.require_homeward_scan_start(position_mm)
 
 
 @pytest.mark.asyncio
@@ -196,6 +226,61 @@ async def test_extended_move_is_fixed_to_100mm_and_reads_both_expanders(
         call(1, module.SECONDARY_EXPANDER_ADDRESS),
         call(1, module.SECONDARY_EXPANDER_ADDRESS),
     ]
+
+
+@pytest.mark.asyncio
+async def test_homeward_scan_stops_at_first_pin_zero_transition(monkeypatch) -> None:
+    module = load_module()
+    start_drive = drive(module, 100.0)
+    baseline_primary = gpio(module, pin0_high=False, port1=6)
+    baseline_secondary = gpio(module, pin0_high=False, port1=1)
+    motor = Mock(move_config=AsyncMock(), stop=AsyncMock())
+    monkeypatch.setattr(
+        module,
+        "require_extended_stationary_healthy_y",
+        AsyncMock(side_effect=[start_drive, start_drive, start_drive]),
+    )
+    monkeypatch.setattr(module.timing, "require_live_profile", Mock())
+    monkeypatch.setattr(module.timing, "require_no_position_change", Mock())
+    monkeypatch.setattr(module.timing, "arm_countdown", AsyncMock())
+    monkeypatch.setattr(
+        module, "capture_stable_gpio", AsyncMock(return_value=baseline_primary)
+    )
+    other = AsyncMock(return_value=baseline_secondary)
+    monkeypatch.setattr(module, "capture_other_expander", other)
+    monkeypatch.setattr(module, "Motor", Mock(return_value=motor))
+
+    async def fake_move(*_args, target_mm: float, **_kwargs):
+        return drive(module, target_mm), gpio(
+            module,
+            pin0_high=target_mm <= 0.5,
+            port1=6,
+        )
+
+    move = AsyncMock(side_effect=fake_move)
+    monkeypatch.setattr(module, "move_homeward_and_capture", move)
+
+    result = await module.run_homeward_scan(
+        SimpleNamespace(command="scan-toward-home", arm_delay_s=5.0),
+        SimpleNamespace(),
+        SimpleNamespace(),
+        SimpleNamespace(),
+        expander(module),
+    )
+
+    assert result == 0
+    motor.move_config.assert_awaited_once()
+    motor.stop.assert_not_awaited()
+    assert [item.kwargs["target_mm"] for item in move.await_args_list] == [
+        50.0,
+        20.0,
+        10.0,
+        5.0,
+        2.0,
+        1.0,
+        0.5,
+    ]
+    assert other.await_count == 8
 
 
 def test_target_generators_never_exceed_ceiling_or_go_below_start() -> None:

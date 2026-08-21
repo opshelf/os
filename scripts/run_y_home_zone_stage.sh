@@ -5,7 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 onsite_confirmation="ONSITE-RESTRAINT-AND-ESTOP-READY"
 
 usage() {
-  echo "usage: $0 inspect | <scan-zone|move-away-100> ONSITE-RESTRAINT-AND-ESTOP-READY" >&2
+  echo "usage: $0 inspect | <scan-zone|move-away-100|scan-toward-home> ONSITE-RESTRAINT-AND-ESTOP-READY" >&2
 }
 
 if [[ $# -eq 1 && "$1" == inspect ]]; then
@@ -17,6 +17,9 @@ elif [[ $# -eq 2 && "$1" == scan-zone && "$2" == "$onsite_confirmation" ]]; then
 elif [[ $# -eq 2 && "$1" == move-away-100 && "$2" == "$onsite_confirmation" ]]; then
   stage=move-away-100
   python_args=(move-away-100 --confirm SUPERVISED-RESTRAINED-Y-HOME-ZONE-100MM-MOVE)
+elif [[ $# -eq 2 && "$1" == scan-toward-home && "$2" == "$onsite_confirmation" ]]; then
+  stage=scan-toward-home
+  python_args=(scan-toward-home --confirm SUPERVISED-RESTRAINED-Y-HOMEWARD-LIMIT-SCAN)
 else
   usage
   exit 2
