@@ -24,22 +24,19 @@ if [[ ! -f "$repo_root/openshelf_hardware/data/.mode" ]]; then
   exit 1
 fi
 
+compose_files=(
+  -f "$repo_root/docker-compose.yml"
+  -f "$repo_root/docker-compose.dev.yml"
+  -f "$repo_root/docker-compose.hardware.yml"
+)
+
 mode="$(tr -d '[:space:]' < "$repo_root/openshelf_hardware/data/.mode")"
 case "$mode" in
   development)
     config_name=config.development.json
-    compose_files=(
-      -f "$repo_root/docker-compose.yml"
-      -f "$repo_root/docker-compose.dev.yml"
-      -f "$repo_root/docker-compose.hardware.yml"
-    )
     ;;
   production)
     config_name=config.json
-    compose_files=(
-      -f "$repo_root/docker-compose.yml"
-      -f "$repo_root/docker-compose.hardware.yml"
-    )
     ;;
   *)
     echo "refusing: home-zone diagnostic supports only development or production mode" >&2
