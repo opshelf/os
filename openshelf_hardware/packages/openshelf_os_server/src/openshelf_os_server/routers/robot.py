@@ -215,6 +215,11 @@ class MotorMoveRequest(BaseModel):
     position_mm: float = Field(..., description="Target position in millimeters")
 
 
+class YAxisLimitStateResponse(BaseModel):
+    minimum_triggered: bool
+    maximum_triggered: bool
+
+
 class SafetyGuardOverrideRequest(BaseModel):
     bypass: bool
 
@@ -649,6 +654,29 @@ async def get_scanner_status(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
 ) -> dict:
     return worker.get_scanner_status()
+
+
+@router.get(
+    "/debug/y-axis-limits",
+    response_model=YAxisLimitStateResponse,
+    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+)
+async def get_y_axis_limits(
+    worker: RobotWorker = Depends(get_robot_worker_or_error),
+) -> YAxisLimitStateResponse:
+    try:
+        return YAxisLimitStateResponse(**worker.get_y_axis_limit_state())
+    except ConfigError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+    except Exception as exc:
+        logging.error("Failed to read Y-axis limit inputs: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Failed to read Y-axis limit inputs: {exc}",
+        ) from exc
 
 
 @router.post(

@@ -751,6 +751,21 @@ class Robot:
         )
         return status
 
+    def get_y_axis_limit_state(self) -> dict[str, bool]:
+        gpio = getattr(self, "_gpio", None)
+        if gpio is None:
+            raise ConfigError("GPIO manager is unavailable")
+
+        required_pins = ("y_limit_min", "y_limit_max")
+        missing = [name for name in required_pins if gpio.has_pin(name) is False]
+        if missing:
+            raise ConfigError(f"Y limit inputs are not configured: {', '.join(missing)}")
+
+        return {
+            "minimum_triggered": gpio.input("y_limit_min").read(),
+            "maximum_triggered": gpio.input("y_limit_max").read(),
+        }
+
     # ------------------------------------------------------------------ #
     #  Safety / door
     # ------------------------------------------------------------------ #
