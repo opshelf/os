@@ -1292,21 +1292,31 @@ class Tool:
         if did_extend_stage is True and self._ms is not None:
             await self._ms.home()
 
-    async def _home_sequence(self) -> None:
-        if self._ms is not None:
-            await self._ms.home()
+    async def _home_sequence(
+        self,
+        isolate: bool = False,
+        failed_config_motors: Optional[List[Motor]] = None,
+    ) -> None:
+        failed_config_motors = failed_config_motors or []
+        failed_home_motors: List[Motor] = []
 
-        if self._mg is not None:
-            await self._mg.home()
+        for motor in (self._mg, self._ms):
+            if isolate is True:
+                if await self._home_step_isolated(motor, failed_config_motors) is False and motor is not None:
+                    failed_home_motors.append(motor)
+            elif motor is not None:
+                await motor.home()
 
-        if self._mr is not None:
+        if isolate is True:
+            await self._home_rotate_isolated(failed_config_motors, failed_home_motors)
+        elif self._mr is not None:
             await self._home_rotate_sequence()
 
-        if self._mx is not None:
-            await self._mx.home()
-
-        if self._my is not None:
-            await self._my.home()
+        for motor in (self._mx, self._my):
+            if isolate is True:
+                await self._home_step_isolated(motor, failed_config_motors)
+            elif motor is not None:
+                await motor.home()
 
     def _did_motor_configure_fail(self, motor: Optional[Motor], failed_config_motors: List[Motor]) -> bool:
         if motor is None:
@@ -1366,12 +1376,4 @@ class Tool:
         except Exception as e:
             self._logger.warning("init restore_y_brake_output failed: %s", e)
 
-        failed_home_motors = []
-        if await self._home_step_isolated(self._ms, failed_config_motors) is False and self._ms is not None:
-            failed_home_motors.append(self._ms)
-        if await self._home_step_isolated(self._mg, failed_config_motors) is False and self._mg is not None:
-            failed_home_motors.append(self._mg)
-        if await self._home_step_isolated(self._mx, failed_config_motors) is False and self._mx is not None:
-            failed_home_motors.append(self._mx)
-        await self._home_rotate_isolated(failed_config_motors, failed_home_motors)
-        await self._home_step_isolated(self._my, failed_config_motors)
+        await self._home_sequence(isolate=True, failed_config_motors=failed_config_motors)

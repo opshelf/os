@@ -22,6 +22,16 @@ def _make_tool() -> Tool:
     return tool
 
 
+def _record_home_order(tool: Tool) -> list[str]:
+    events: list[str] = []
+    tool._mg.home.side_effect = lambda: events.append("z_axis")
+    tool._ms.home.side_effect = lambda: events.append("stage")
+    tool._mx.home.side_effect = lambda: events.append("x_axis")
+    tool._my.home.side_effect = lambda: events.append("y_axis")
+    tool._home_rotate_sequence = AsyncMock(side_effect=lambda: events.append("rotate"))
+    return events
+
+
 def _make_iobox() -> IOBox:
     iobox = IOBox.__new__(IOBox)
     iobox._logger = logging.getLogger("test_init_isolation")
@@ -49,6 +59,19 @@ async def test_home_isolate_continues_past_failing_axis():
     tool._mg.home.assert_awaited_once()
     tool._mx.home.assert_awaited_once()
     tool._my.home.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("isolate", [False, True])
+async def test_home_uses_same_motor_order_for_startup_and_manual_homing(isolate: bool):
+    tool = _make_tool()
+    tool._mr = AsyncMock()
+    tool._handle_fault = AsyncMock()
+    events = _record_home_order(tool)
+
+    await tool.home(isolate=isolate)
+
+    assert events == ["z_axis", "stage", "rotate", "x_axis", "y_axis"]
 
 
 @pytest.mark.asyncio
