@@ -17,12 +17,6 @@
 
 	const apiBase = getApiBase();
 	const RESTART_BUTTON_RESET_MS = 15000;
-	const Y_AXIS_LIMIT_POLL_INTERVAL_MS = 250;
-
-	type YAxisLimitState = {
-		minimum_triggered: boolean;
-		maximum_triggered: boolean;
-	};
 
 	let deviceId = '';
 	let lanIp = '';
@@ -36,9 +30,6 @@
 	let homeOnInitError = '';
 	let isRestartingApi = false;
 	let restartApiError = '';
-	let yAxisLimitState: YAxisLimitState | null = null;
-	let yAxisLimitError = '';
-	let isLoadingYAxisLimits = false;
 	let componentUpdating: Record<SafetyComponent, boolean> = {
 		light_curtain: false,
 		cabinet_doors: false
@@ -98,33 +89,6 @@
 		}
 
 		return (safety as Record<string, unknown>).bypassed === true;
-	}
-
-	function formatLimitState(value: boolean | undefined): string {
-		if (value === true) {
-			return 'triggered';
-		}
-		if (value === false) {
-			return 'clear';
-		}
-		return 'unknown';
-	}
-
-	async function loadYAxisLimits(): Promise<void> {
-		if (isLoadingYAxisLimits === true) {
-			return;
-		}
-
-		isLoadingYAxisLimits = true;
-		try {
-			yAxisLimitState = await apiFetch<YAxisLimitState>('/robot/debug/y-axis-limits');
-			yAxisLimitError = '';
-		} catch (err) {
-			yAxisLimitState = null;
-			yAxisLimitError = err instanceof Error ? err.message : 'failed to read Y-axis limits';
-		} finally {
-			isLoadingYAxisLimits = false;
-		}
 	}
 
 	async function didClickCabinetUnlock(): Promise<void> {
@@ -293,12 +257,6 @@
 	onMount(() => {
 		loadSystemInfo();
 		loadHomeOnInit();
-		void loadYAxisLimits();
-		const yAxisLimitPoll = window.setInterval(() => {
-			void loadYAxisLimits();
-		}, Y_AXIS_LIMIT_POLL_INTERVAL_MS);
-
-		return () => window.clearInterval(yAxisLimitPoll);
 	});
 </script>
 
@@ -382,18 +340,6 @@
 							onclick={didClickCabinetUnlock}>UNLOCK</button
 						>
 					</div>
-				</td>
-			</tr>
-			<tr>
-				<td>Y minimum limit (P04)</td>
-				<td title={yAxisLimitError}>
-					{formatLimitState(yAxisLimitState?.minimum_triggered)}
-				</td>
-			</tr>
-			<tr>
-				<td>Y maximum limit (P05)</td>
-				<td title={yAxisLimitError}>
-					{formatLimitState(yAxisLimitState?.maximum_triggered)}
 				</td>
 			</tr>
 			<tr>
