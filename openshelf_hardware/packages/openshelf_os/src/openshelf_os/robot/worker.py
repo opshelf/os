@@ -497,6 +497,9 @@ class RobotWorker:
             "enabled": self._should_enable_barcode(),
         }
 
+    def get_y_axis_limit_state(self) -> Dict[str, bool]:
+        return self._robot.get_y_axis_limit_state()
+
     async def wait_scanner_connected(self, timeout: float = 2.0) -> bool:
         if self._barcode is None:
             return False
