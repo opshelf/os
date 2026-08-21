@@ -440,8 +440,8 @@ async def test_home_moves_x_before_rotate_home_when_rotation_is_past_front() -> 
     await tool.home()
 
     assert events == [
-        'stage_home',
         'z_home',
+        'stage_home',
         f'x_move:{ROTATION_HOME_SAFE_X_MM}',
         'rotate_home',
         'x_home',
@@ -490,8 +490,8 @@ async def test_home_does_not_move_x_before_rotate_home_when_rotation_is_at_front
     await tool.home()
 
     assert events == [
-        'stage_home',
         'z_home',
+        'stage_home',
         'rotate_home',
         'x_home',
         'y_home',
@@ -539,8 +539,8 @@ async def test_home_moves_x_from_edge_before_rotate_home_when_rotation_is_at_fro
     await tool.home()
 
     assert events == [
-        'stage_home',
         'z_home',
+        'stage_home',
         'x_move:60.0',
         'rotate_home',
         'x_move:25.0',
