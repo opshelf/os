@@ -5,16 +5,11 @@ onsite restraint and E-stop supervision.
 
 ## Purpose
 
-Determine whether PCA9535_0 raw P00 is the Y-minimum home-zone switch on both
-lb4a-1 and lb4a-2, and measure its raw polarity and approximate assertion/clear
-positions. This is a prerequisite to using the switch as an independent guard
-around the sensorless hard-stop homing sequence.
-
-The engineer's table identifies P00 as `YMIN` and P01 as `YMAX`. The current
-software defaults instead name PCA9535_0 pin 0 `x_limit_min`, pin 1
-`x_limit_max`, pin 4 `y_limit_min`, and pin 5 `y_limit_max`. This runbook reads
-raw P00 directly and records the configured names; it does not change that
-mapping.
+Verify the electrically confirmed PCA9535_0 inputs P04 (`YMIN`) and P05
+(`YMAX`), and measure YMIN's raw polarity and approximate assertion/clear
+position. The electrical mapping is PCF8575_0 P00/P01 to PCA9535_0 P04/P05.
+This is a prerequisite to using YMIN as an independent guard around the
+sensorless hard-stop homing sequence.
 
 ## Fixed safety envelope
 
@@ -26,15 +21,15 @@ The active harness:
   `60`, control mode `2`, command PPR `10000`, and encoder CPR `4000`;
 - requires Y to start within `-1..1 mm`;
 - moves at 10 RPM and acceleration 100;
-- moves away from home in fixed 1 mm steps, never above 10 mm;
-- returns in fixed 0.5 mm steps, stopping as soon as raw P00 returns to its
-  initial state;
-- never targets below the initial Y position;
+- moves once from near zero to exactly 100 mm;
+- returns through fixed targets `50, 20, 10, 5, 2, 1, 0.5, 0.25, 0 mm`,
+  stopping as soon as raw P04 returns to its initial state;
+- never targets below zero or above 100 mm;
 - never homes, changes SO2, saves EEPROM, or accepts arbitrary motion values.
 
-If P00 does not change by 10 mm, the harness stops and leaves Y at 10 mm. If it
-changes while moving away but does not return before the initial position, the
-harness stops without commanding motion below the initial position.
+If P04 does not clear at 100 mm or does not return by zero, the harness records
+that result and stops without commanding motion below zero. P05 and all raw
+input bytes are captured at every stopped position.
 
 ## Immediate stop conditions
 
@@ -88,24 +83,25 @@ First take a read-only snapshot. Expected physical motion: none.
 Review the trace before arming the scan. It must show stationary Y in
 `-1..1 mm`, alarm 0, SO2 `0x24`, and `250/250 ms` delays.
 
-Run the bounded scan only after the onsite engineer reconfirms readiness:
+Run the confirmed limit scan only after the onsite engineer reconfirms readiness:
 
 ```sh
 ./scripts/run_y_home_zone_stage.sh \
-  scan-zone \
+  scan-confirmed-limits \
   ONSITE-RESTRAINT-AND-ESTOP-READY
 ```
 
-Expected physical behavior: several very small, slow upward moves totaling no
-more than 10 mm, followed by small downward moves that stop at the switch-zone
-edge. The brake may make a subtle normal engagement sound between steps. There
-must be no hard-stop homing impact, violent vibration, or load drop.
+Expected physical behavior: one slow upward move to 100 mm, followed by fixed
+downward moves that stop when P04 returns to its near-zero state or at zero.
+The brake may make a subtle normal engagement sound between steps. There must
+be no hard-stop homing impact, violent vibration, or load drop.
 
-Record from `home_zone_scan_complete`:
+Record from `confirmed_limit_scan_complete`:
 
-- `initial_pin0_high`, `clear_pin0_high`, and `reassert_pin0_high`;
-- `clear_position_mm` and `reassert_position_mm`;
-- `changed_pins` (it must contain pin 0);
+- `y_min_cleared_at_100` and `y_min_reasserted`;
+- `y_min_reassert_position_mm`;
+- `y_max_changed_at_100` (normally false);
+- `gpio_at_home`, `gpio_at_100`, and `gpio_final`;
 - onsite sound, vibration, and motion observations.
 
 ## Test order and comparison
@@ -113,13 +109,13 @@ Record from `home_zone_scan_complete`:
 Run lb4a-2 first because it has not shown the violent burst. Then repeat the
 same sequence on lb4a-1. Do not assume equivalence unless both traces show:
 
-- raw pin 0 changes away from the lower stop and returns on approach;
+- raw pin 4 changes away from the lower stop and returns on approach;
 - the same raw polarity;
 - reasonably similar clear/reassert positions and hysteresis;
 - no unrelated raw input changes correlated with Y motion.
 
 A mapping/polarity/position difference supports a machine-specific wiring,
-switch, or mechanical cause. Matching traces support using P00 as a common
+switch, or mechanical cause. Matching traces support using P04 as a common
 software homing-zone guard but do not rule out a machine-specific brake,
 coupling, hard-stop, or driver-current issue.
 
