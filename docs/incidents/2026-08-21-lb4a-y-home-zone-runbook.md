@@ -11,6 +11,11 @@ position. The electrical mapping is PCF8575_0 P00/P01 to PCA9535_0 P04/P05.
 This is a prerequisite to using YMIN as an independent guard around the
 sensorless hard-stop homing sequence.
 
+The confirmed scan records each limit twice: once as the raw PCA9535 port bit
+and once through the same `GpioManager`/`DigitalInput` application path used by
+the light curtain and cabinet-door sensors. The application value includes the
+configured logical inversion; the raw value does not.
+
 ## Fixed safety envelope
 
 The active harness:
@@ -102,6 +107,8 @@ Record from `confirmed_limit_scan_complete`:
 - `y_min_reassert_position_mm`;
 - `y_max_changed_at_100` (normally false);
 - `gpio_at_home`, `gpio_at_100`, and `gpio_final`;
+- `application_gpio_at_home`, `application_gpio_at_100`, and
+  `application_gpio_final`;
 - onsite sound, vibration, and motion observations.
 
 ## Test order and comparison

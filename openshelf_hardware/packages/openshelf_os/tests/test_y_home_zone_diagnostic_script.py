@@ -313,6 +313,11 @@ async def test_confirmed_limit_scan_moves_to_100_and_stops_when_p04_reasserts(
     away_drive = drive(module, 100.0)
     home_gpio = gpio(module, y_min_high=True, y_max_high=False, port1=6)
     away_gpio = gpio(module, y_min_high=False, y_max_high=False, port1=6)
+    state = {"position_mm": 0.0}
+    logical_y_min = SimpleNamespace(
+        read=lambda: state["position_mm"] <= 0.5,
+    )
+    logical_y_max = SimpleNamespace(read=lambda: False)
     motor = Mock(move_config=AsyncMock(), stop=AsyncMock())
     monkeypatch.setattr(
         module,
@@ -327,11 +332,17 @@ async def test_confirmed_limit_scan_moves_to_100_and_stops_when_p04_reasserts(
         "capture_stable_gpio",
         AsyncMock(side_effect=[home_gpio, home_gpio]),
     )
-    move_away = AsyncMock(return_value=(away_drive, away_gpio))
+
+    async def fake_away(*_args, **_kwargs):
+        state["position_mm"] = 100.0
+        return away_drive, away_gpio
+
+    move_away = AsyncMock(side_effect=fake_away)
     monkeypatch.setattr(module, "move_extended_and_capture", move_away)
     monkeypatch.setattr(module, "Motor", Mock(return_value=motor))
 
     async def fake_return(*_args, target_mm: float, **_kwargs):
+        state["position_mm"] = target_mm
         return drive(module, target_mm), gpio(
             module,
             y_min_high=target_mm <= 0.5,
@@ -348,6 +359,8 @@ async def test_confirmed_limit_scan_moves_to_100_and_stops_when_p04_reasserts(
         SimpleNamespace(),
         SimpleNamespace(),
         expander(module),
+        logical_y_min,
+        logical_y_max,
     )
 
     assert result == 0

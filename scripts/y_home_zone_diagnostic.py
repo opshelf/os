@@ -25,6 +25,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 import y_brake_timing_diagnostic as timing  # noqa: E402
+from hardware.gpio import GpioManager  # noqa: E402
 from hardware.gpio.pca9535_mod import PCA9535  # noqa: E402
 from hardware.motor import Motor  # noqa: E402
 from openshelf_os.common import load_and_validate_config  # noqa: E402
@@ -86,6 +87,13 @@ class GpioSnapshot:
     port1: int
     y_min_high: bool
     y_max_high: bool
+
+
+@dataclass(frozen=True)
+class LogicalLimitSnapshot:
+    monotonic_s: float
+    y_min: bool
+    y_max: bool
 
 
 def emit(event: str, **fields: Any) -> None:
@@ -267,6 +275,40 @@ async def capture_stable_gpio(device: PCA9535) -> GpioSnapshot:
             + json.dumps([asdict(sample) for sample in samples], sort_keys=True)
         )
     return samples[-1]
+
+
+async def capture_stable_logical_limits(
+    y_min_input: Any,
+    y_max_input: Any,
+) -> LogicalLimitSnapshot:
+    samples: list[LogicalLimitSnapshot] = []
+    for sample_index in range(GPIO_STABLE_SAMPLES):
+        samples.append(
+            LogicalLimitSnapshot(
+                monotonic_s=time.monotonic(),
+                y_min=bool(y_min_input.read()),
+                y_max=bool(y_max_input.read()),
+            )
+        )
+        if sample_index + 1 < GPIO_STABLE_SAMPLES:
+            await asyncio.sleep(GPIO_SAMPLE_INTERVAL_SECONDS)
+
+    states = {(sample.y_min, sample.y_max) for sample in samples}
+    if len(states) != 1:
+        raise RuntimeError(
+            "application GPIO limit inputs were not stable while Y was stopped: "
+            + json.dumps([asdict(sample) for sample in samples], sort_keys=True)
+        )
+    return samples[-1]
+
+
+def load_application_gpio_manager(config_path: Path) -> GpioManager:
+    try:
+        raw_config = json.loads(config_path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"cannot read configuration {config_path}: {exc}") from exc
+    config = load_and_validate_config(raw_config, str(config_path))
+    return GpioManager.from_config(config.robot.gpio)
 
 
 def changed_pins(before: GpioSnapshot, after: GpioSnapshot) -> list[int]:
@@ -788,15 +830,21 @@ async def run_confirmed_limit_scan(
     motor_params: Any,
     gpio_device: PCA9535,
     target: ExpanderTarget,
+    logical_y_min_input: Any,
+    logical_y_max_input: Any,
 ) -> int:
     baseline_drive = await require_extended_stationary_healthy_y(controller, motor_params)
     timing.require_live_profile(baseline_drive, expected_delays=EXPECTED_DELAYS)
     require_scan_start(baseline_drive.position_mm)
     baseline_gpio = await capture_stable_gpio(gpio_device)
+    baseline_logical = await capture_stable_logical_limits(
+        logical_y_min_input, logical_y_max_input
+    )
     emit(
         "confirmed_limit_scan_preflight",
         drive=asdict(baseline_drive),
         gpio=asdict(baseline_gpio),
+        application_gpio=asdict(baseline_logical),
         expander=asdict(target),
         away_target_mm=EXTENDED_AWAY_TARGET_MM,
         return_targets_mm=HOMEWARD_TARGETS_MM,
@@ -816,19 +864,31 @@ async def run_confirmed_limit_scan(
         context="confirmed limit scan arm delay",
     )
     final_preflight_gpio = await capture_stable_gpio(gpio_device)
+    final_preflight_logical = await capture_stable_logical_limits(
+        logical_y_min_input, logical_y_max_input
+    )
     if (
         final_preflight_gpio.port0 != baseline_gpio.port0
         or final_preflight_gpio.port1 != baseline_gpio.port1
     ):
         raise RuntimeError("GPIO inputs changed during the arm delay; refusing motion")
+    if (
+        final_preflight_logical.y_min != baseline_logical.y_min
+        or final_preflight_logical.y_max != baseline_logical.y_max
+    ):
+        raise RuntimeError(
+            "application GPIO limits changed during the arm delay; refusing motion"
+        )
 
     motor = Motor(controller, motor_params)
     motor._cur_pos = final_preflight.position_mm
     motor._last_raw_position = final_preflight.raw_position
     transition_drive: timing.DriveSnapshot | None = None
     transition_gpio: GpioSnapshot | None = None
+    transition_logical: LogicalLimitSnapshot | None = None
     final_drive = final_preflight
     final_gpio = baseline_gpio
+    final_logical = baseline_logical
     try:
         await motor.move_config()
         configured_drive = await require_extended_stationary_healthy_y(
@@ -846,13 +906,18 @@ async def run_confirmed_limit_scan(
             motor_params,
             gpio_device,
         )
+        away_logical = await capture_stable_logical_limits(
+            logical_y_min_input, logical_y_max_input
+        )
         emit(
             "confirmed_limit_away_sample",
             drive=asdict(away_drive),
             gpio=asdict(away_gpio),
+            application_gpio=asdict(away_logical),
             changed_pins=changed_pins(baseline_gpio, away_gpio),
         )
-        min_cleared = away_gpio.y_min_high != baseline_gpio.y_min_high
+        raw_min_cleared = away_gpio.y_min_high != baseline_gpio.y_min_high
+        logical_min_cleared = away_logical.y_min != baseline_logical.y_min
 
         for target_mm in HOMEWARD_TARGETS_MM:
             final_drive, final_gpio = await move_homeward_and_capture(
@@ -862,16 +927,28 @@ async def run_confirmed_limit_scan(
                 gpio_device,
                 target_mm=target_mm,
             )
+            final_logical = await capture_stable_logical_limits(
+                logical_y_min_input, logical_y_max_input
+            )
             emit(
                 "confirmed_limit_return_sample",
                 target_mm=target_mm,
                 gpio=asdict(final_gpio),
+                application_gpio=asdict(final_logical),
                 changed_from_home_pins=changed_pins(baseline_gpio, final_gpio),
                 changed_from_away_pins=changed_pins(away_gpio, final_gpio),
             )
-            if min_cleared and final_gpio.y_min_high == baseline_gpio.y_min_high:
+            raw_reasserted = (
+                raw_min_cleared
+                and final_gpio.y_min_high == baseline_gpio.y_min_high
+            )
+            logical_reasserted = (
+                logical_min_cleared and final_logical.y_min == baseline_logical.y_min
+            )
+            if raw_reasserted or logical_reasserted:
                 transition_drive = final_drive
                 transition_gpio = final_gpio
+                transition_logical = final_logical
                 break
     except BaseException as exc:
         await timing.stop_after_motion_error(motor, exc)
@@ -882,15 +959,22 @@ async def run_confirmed_limit_scan(
         initial_position_mm=baseline_drive.position_mm,
         away_position_mm=away_drive.position_mm,
         final_position_mm=final_drive.position_mm,
-        y_min_cleared_at_100=min_cleared,
+        y_min_cleared_at_100=raw_min_cleared,
+        application_y_min_cleared_at_100=logical_min_cleared,
         y_min_reasserted=transition_drive is not None,
         y_min_reassert_position_mm=(
             transition_drive.position_mm if transition_drive is not None else None
         ),
         y_max_changed_at_100=(away_gpio.y_max_high != baseline_gpio.y_max_high),
+        application_y_max_changed_at_100=(
+            away_logical.y_max != baseline_logical.y_max
+        ),
         gpio_at_home=asdict(baseline_gpio),
         gpio_at_100=asdict(away_gpio),
         gpio_final=asdict(transition_gpio or final_gpio),
+        application_gpio_at_home=asdict(baseline_logical),
+        application_gpio_at_100=asdict(away_logical),
+        application_gpio_final=asdict(transition_logical or final_logical),
         commanded_below_zero=False,
         persisted=False,
         homes=0,
@@ -907,11 +991,18 @@ async def async_main(args: argparse.Namespace) -> int:
         controller = timing.make_controller(args)
         await controller.connect()
         gpio_device: PCA9535 | None = None
+        application_gpio_manager: GpioManager | None = None
         try:
             gpio_device = PCA9535(
                 bus_num=expander_target.bus,
                 address=expander_target.address,
             )
+            logical_y_min_input = None
+            logical_y_max_input = None
+            if args.command == "scan-confirmed-limits":
+                application_gpio_manager = load_application_gpio_manager(args.config)
+                logical_y_min_input = application_gpio_manager.input("y_limit_min")
+                logical_y_max_input = application_gpio_manager.input("y_limit_max")
             if args.command == "inspect":
                 return await run_inspect(
                     controller,
@@ -942,6 +1033,8 @@ async def async_main(args: argparse.Namespace) -> int:
                     motor_params,
                     gpio_device,
                     expander_target,
+                    logical_y_min_input,
+                    logical_y_max_input,
                 )
             return await run_scan(
                 args,
@@ -954,8 +1047,12 @@ async def async_main(args: argparse.Namespace) -> int:
             try:
                 await controller.close()
             finally:
-                if gpio_device is not None:
-                    gpio_device.close()
+                try:
+                    if application_gpio_manager is not None:
+                        application_gpio_manager.close()
+                finally:
+                    if gpio_device is not None:
+                        gpio_device.close()
 
 
 def main() -> int:
