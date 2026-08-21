@@ -84,6 +84,7 @@ def test_commands_and_motion_envelope_are_fixed() -> None:
     assert module.MAX_Y_MM == 10.0
     assert module.MOVE_RPM == 10
     assert module.MOVE_ACCEL == 100
+    assert module.timing.REGISTERS["control_mode"] == (0x0003, 2)
     scan_parser = parser._subparsers._group_actions[0].choices["scan-zone"]
     for option in ("--pin", "--target-mm", "--max-y-mm", "--rpm", "--accel"):
         assert option not in scan_parser._option_string_actions
