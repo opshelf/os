@@ -54,12 +54,18 @@ def drive(module, position_mm: float):
     )
 
 
-def gpio(module, *, pin0_high: bool, port1: int = 0):
+def gpio(module, *, y_min_high: bool, y_max_high: bool = False, port1: int = 0):
+    port0 = 0
+    if y_min_high:
+        port0 |= 1 << module.EXPECTED_RAW_YMIN_PIN
+    if y_max_high:
+        port0 |= 1 << module.EXPECTED_RAW_YMAX_PIN
     return module.GpioSnapshot(
         monotonic_s=1.0,
-        port0=1 if pin0_high else 0,
+        port0=port0,
         port1=port1,
-        pin0_high=pin0_high,
+        y_min_high=y_min_high,
+        y_max_high=y_max_high,
     )
 
 
@@ -67,9 +73,10 @@ def expander(module):
     return module.ExpanderTarget(
         bus=1,
         address=0x20,
-        configured_pin_zero_name="x_limit_min",
         configured_y_min_name="y_limit_min",
         configured_y_min_pin=4,
+        configured_y_max_name="y_limit_max",
+        configured_y_max_pin=5,
     )
 
 
@@ -83,6 +90,7 @@ def test_commands_and_motion_envelope_are_fixed() -> None:
         "scan-zone",
         "move-away-100",
         "scan-toward-home",
+        "scan-confirmed-limits",
     }
     assert module.START_Y_MIN_MM == -1.0
     assert module.START_Y_MAX_MM == 1.0
@@ -94,6 +102,8 @@ def test_commands_and_motion_envelope_are_fixed() -> None:
     assert module.HOMEWARD_START_MAX_MM == 101.0
     assert module.HOMEWARD_TARGETS_MM[-1] == 0.0
     assert min(module.HOMEWARD_TARGETS_MM) == 0.0
+    assert module.EXPECTED_RAW_YMIN_PIN == 4
+    assert module.EXPECTED_RAW_YMAX_PIN == 5
     assert module.MOVE_RPM == 10
     assert module.MOVE_ACCEL == 100
     assert module.timing.REGISTERS["control_mode"] == (0x0003, 2)
@@ -105,6 +115,9 @@ def test_commands_and_motion_envelope_are_fixed() -> None:
         ]._option_string_actions
         assert option not in parser._subparsers._group_actions[0].choices[
             "scan-toward-home"
+        ]._option_string_actions
+        assert option not in parser._subparsers._group_actions[0].choices[
+            "scan-confirmed-limits"
         ]._option_string_actions
 
 
@@ -153,6 +166,14 @@ def test_homeward_scan_requires_exact_confirmation() -> None:
         module.validate_args(args)
 
 
+def test_confirmed_limit_scan_requires_exact_confirmation() -> None:
+    module = load_module()
+    args = parse(module, "scan-confirmed-limits", "--confirm", "wrong")
+
+    with pytest.raises(ValueError, match="confirmed limit scan confirmation mismatch"):
+        module.validate_args(args)
+
+
 @pytest.mark.parametrize("position_mm", [-1.001, 1.001, float("nan")])
 def test_scan_start_rejects_position_outside_near_home_window(position_mm: float) -> None:
     module = load_module()
@@ -188,10 +209,10 @@ async def test_extended_move_is_fixed_to_100mm_and_reads_both_expanders(
     module = load_module()
     start_drive = drive(module, 10.0)
     final_drive = drive(module, 100.0)
-    initial_primary = gpio(module, pin0_high=False, port1=6)
-    final_primary = gpio(module, pin0_high=True, port1=6)
-    initial_secondary = gpio(module, pin0_high=False, port1=1)
-    final_secondary = gpio(module, pin0_high=False, port1=3)
+    initial_primary = gpio(module, y_min_high=False, port1=6)
+    final_primary = gpio(module, y_min_high=True, port1=6)
+    initial_secondary = gpio(module, y_min_high=False, port1=1)
+    final_secondary = gpio(module, y_min_high=False, port1=3)
     motor = Mock(move_config=AsyncMock(), stop=AsyncMock())
     monkeypatch.setattr(
         module,
@@ -232,8 +253,8 @@ async def test_extended_move_is_fixed_to_100mm_and_reads_both_expanders(
 async def test_homeward_scan_stops_at_first_pin_zero_transition(monkeypatch) -> None:
     module = load_module()
     start_drive = drive(module, 100.0)
-    baseline_primary = gpio(module, pin0_high=False, port1=6)
-    baseline_secondary = gpio(module, pin0_high=False, port1=1)
+    baseline_primary = gpio(module, y_min_high=False, port1=6)
+    baseline_secondary = gpio(module, y_min_high=False, port1=1)
     motor = Mock(move_config=AsyncMock(), stop=AsyncMock())
     monkeypatch.setattr(
         module,
@@ -253,7 +274,7 @@ async def test_homeward_scan_stops_at_first_pin_zero_transition(monkeypatch) -> 
     async def fake_move(*_args, target_mm: float, **_kwargs):
         return drive(module, target_mm), gpio(
             module,
-            pin0_high=target_mm <= 0.5,
+            y_min_high=target_mm <= 0.5,
             port1=6,
         )
 
@@ -283,6 +304,67 @@ async def test_homeward_scan_stops_at_first_pin_zero_transition(monkeypatch) -> 
     assert other.await_count == 8
 
 
+@pytest.mark.asyncio
+async def test_confirmed_limit_scan_moves_to_100_and_stops_when_p04_reasserts(
+    monkeypatch,
+) -> None:
+    module = load_module()
+    home_drive = drive(module, 0.0)
+    away_drive = drive(module, 100.0)
+    home_gpio = gpio(module, y_min_high=True, y_max_high=False, port1=6)
+    away_gpio = gpio(module, y_min_high=False, y_max_high=False, port1=6)
+    motor = Mock(move_config=AsyncMock(), stop=AsyncMock())
+    monkeypatch.setattr(
+        module,
+        "require_extended_stationary_healthy_y",
+        AsyncMock(side_effect=[home_drive, home_drive, home_drive]),
+    )
+    monkeypatch.setattr(module.timing, "require_live_profile", Mock())
+    monkeypatch.setattr(module.timing, "require_no_position_change", Mock())
+    monkeypatch.setattr(module.timing, "arm_countdown", AsyncMock())
+    monkeypatch.setattr(
+        module,
+        "capture_stable_gpio",
+        AsyncMock(side_effect=[home_gpio, home_gpio]),
+    )
+    move_away = AsyncMock(return_value=(away_drive, away_gpio))
+    monkeypatch.setattr(module, "move_extended_and_capture", move_away)
+    monkeypatch.setattr(module, "Motor", Mock(return_value=motor))
+
+    async def fake_return(*_args, target_mm: float, **_kwargs):
+        return drive(module, target_mm), gpio(
+            module,
+            y_min_high=target_mm <= 0.5,
+            y_max_high=False,
+            port1=6,
+        )
+
+    move_homeward = AsyncMock(side_effect=fake_return)
+    monkeypatch.setattr(module, "move_homeward_and_capture", move_homeward)
+
+    result = await module.run_confirmed_limit_scan(
+        SimpleNamespace(command="scan-confirmed-limits", arm_delay_s=5.0),
+        SimpleNamespace(),
+        SimpleNamespace(),
+        SimpleNamespace(),
+        expander(module),
+    )
+
+    assert result == 0
+    motor.move_config.assert_awaited_once()
+    motor.stop.assert_not_awaited()
+    move_away.assert_awaited_once_with(motor, ANY, ANY, ANY)
+    assert [item.kwargs["target_mm"] for item in move_homeward.await_args_list] == [
+        50.0,
+        20.0,
+        10.0,
+        5.0,
+        2.0,
+        1.0,
+        0.5,
+    ]
+
+
 def test_target_generators_never_exceed_ceiling_or_go_below_start() -> None:
     module = load_module()
 
@@ -301,7 +383,7 @@ def test_target_generators_never_exceed_ceiling_or_go_below_start() -> None:
 async def test_scan_stops_return_when_pin_zero_reasserts(monkeypatch) -> None:
     module = load_module()
     baseline_drive = drive(module, 0.0)
-    baseline_gpio = gpio(module, pin0_high=False)
+    baseline_gpio = gpio(module, y_min_high=False)
     controller = SimpleNamespace()
     motor = Mock(move_config=AsyncMock(), stop=AsyncMock())
     monkeypatch.setattr(
@@ -321,8 +403,12 @@ async def test_scan_stops_return_when_pin_zero_reasserts(monkeypatch) -> None:
 
     async def fake_move_and_capture(*_args, target_mm: float, phase: str, **_kwargs):
         if phase == "away":
-            return drive(module, target_mm), gpio(module, pin0_high=target_mm >= 2.0)
-        return drive(module, target_mm), gpio(module, pin0_high=target_mm > 0.5)
+            return drive(module, target_mm), gpio(
+                module, y_min_high=target_mm >= 2.0
+            )
+        return drive(module, target_mm), gpio(
+            module, y_min_high=target_mm > 0.5
+        )
 
     move = AsyncMock(side_effect=fake_move_and_capture)
     monkeypatch.setattr(module, "move_and_capture", move)
@@ -360,7 +446,7 @@ async def test_scan_stops_return_when_pin_zero_reasserts(monkeypatch) -> None:
 async def test_scan_leaves_y_at_upper_bound_when_pin_never_clears(monkeypatch) -> None:
     module = load_module()
     baseline_drive = drive(module, 0.0)
-    baseline_gpio = gpio(module, pin0_high=False)
+    baseline_gpio = gpio(module, y_min_high=False)
     motor = Mock(move_config=AsyncMock(), stop=AsyncMock())
     monkeypatch.setattr(
         module.timing,

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Supervised, bounded mapping of the lb4a Y home-zone GPIO input.
+"""Supervised, bounded mapping of the lb4a Y limit GPIO inputs.
 
-The normal API must be stopped.  The only active command starts with Y within
-1 mm of its lower stop, moves away in fixed 1 mm increments (at most 10 mm),
-then approaches in fixed 0.5 mm increments and stops when PCA9535_0 P00 returns
-to its initial raw state.  It never homes, changes SO2, or saves driver EEPROM.
+The confirmed scan starts near the lower stop, moves to 100 mm, then approaches
+zero through fixed targets and stops when PCA9535_0 P04 returns to its starting
+state. P05 is sampled alongside it. The tool never homes, changes SO2, or saves
+driver EEPROM.
 """
 
 from __future__ import annotations
@@ -36,7 +36,8 @@ OWNERSHIP_LOCK_PATH = (
 EXPECTED_EXPANDER_NAME = "pca9535_0"
 EXPECTED_EXPANDER_BUS = 1
 EXPECTED_EXPANDER_ADDRESS = 0x20
-EXPECTED_RAW_YMIN_PIN = 0
+EXPECTED_RAW_YMIN_PIN = 4
+EXPECTED_RAW_YMAX_PIN = 5
 EXPECTED_DELAYS = (250, 250)
 
 START_Y_MIN_MM = -1.0
@@ -63,15 +64,19 @@ GPIO_SAMPLE_INTERVAL_SECONDS = 0.02
 SCAN_CONFIRMATION = "SUPERVISED-RESTRAINED-Y-HOME-ZONE-SCAN"
 EXTENDED_MOVE_CONFIRMATION = "SUPERVISED-RESTRAINED-Y-HOME-ZONE-100MM-MOVE"
 HOMEWARD_SCAN_CONFIRMATION = "SUPERVISED-RESTRAINED-Y-HOMEWARD-LIMIT-SCAN"
+CONFIRMED_LIMIT_SCAN_CONFIRMATION = (
+    "SUPERVISED-RESTRAINED-Y-CONFIRMED-LIMIT-SCAN"
+)
 
 
 @dataclass(frozen=True)
 class ExpanderTarget:
     bus: int
     address: int
-    configured_pin_zero_name: str
     configured_y_min_name: str
     configured_y_min_pin: int
+    configured_y_max_name: str
+    configured_y_max_pin: int
 
 
 @dataclass(frozen=True)
@@ -79,7 +84,8 @@ class GpioSnapshot:
     monotonic_s: float
     port0: int
     port1: int
-    pin0_high: bool
+    y_min_high: bool
+    y_max_high: bool
 
 
 def emit(event: str, **fields: Any) -> None:
@@ -89,7 +95,7 @@ def emit(event: str, **fields: Any) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Read or safely map PCA9535_0 P00 as the lb4a Y home-zone input. "
+            "Read or safely map PCA9535_0 P04/P05 as the lb4a Y limit inputs. "
             "The normal API must be stopped."
         )
     )
@@ -104,7 +110,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     scan = subparsers.add_parser(
         "scan-zone",
-        help="Bounded 0..10 mm away/return scan of raw P00.",
+        help="Bounded 0..10 mm away/return scan of raw P04.",
     )
     timing.add_common_command_arguments(scan)
     scan.add_argument("--arm-delay-s", type=float, default=5.0)
@@ -125,6 +131,14 @@ def build_parser() -> argparse.ArgumentParser:
     timing.add_common_command_arguments(homeward)
     homeward.add_argument("--arm-delay-s", type=float, default=5.0)
     homeward.add_argument("--confirm", required=True)
+
+    confirmed_limits = subparsers.add_parser(
+        "scan-confirmed-limits",
+        help="Fixed low-speed P04/P05 scan from 0 to 100 mm and back toward 0.",
+    )
+    timing.add_common_command_arguments(confirmed_limits)
+    confirmed_limits.add_argument("--arm-delay-s", type=float, default=5.0)
+    confirmed_limits.add_argument("--confirm", required=True)
     return parser
 
 
@@ -157,6 +171,13 @@ def validate_args(args: argparse.Namespace) -> None:
                 "load restraint and onsite E-stop supervision"
             )
         timing.validate_arm_delay(args.arm_delay_s)
+    if args.command == "scan-confirmed-limits":
+        if args.confirm != CONFIRMED_LIMIT_SCAN_CONFIRMATION:
+            raise ValueError(
+                "confirmed limit scan confirmation mismatch; this command requires "
+                "independent load restraint and onsite E-stop supervision"
+            )
+        timing.validate_arm_delay(args.arm_delay_s)
 
 
 def load_expander_target(config_path: Path) -> ExpanderTarget:
@@ -183,26 +204,41 @@ def load_expander_target(config_path: Path) -> ExpanderTarget:
         )
 
     pins = config.robot.gpio.pins
-    pin_zero_names = sorted(
+    y_min_names = sorted(
         name
         for name, spec in pins.items()
         if spec.board == "pca9535"
         and spec.expander == EXPECTED_EXPANDER_NAME
         and spec.pin == EXPECTED_RAW_YMIN_PIN
     )
-    if len(pin_zero_names) != 1:
-        raise RuntimeError(f"expected exactly one configured name for raw P00: {pin_zero_names}")
+    y_max_names = sorted(
+        name
+        for name, spec in pins.items()
+        if spec.board == "pca9535"
+        and spec.expander == EXPECTED_EXPANDER_NAME
+        and spec.pin == EXPECTED_RAW_YMAX_PIN
+    )
+    if y_min_names != ["y_limit_min"]:
+        raise RuntimeError(
+            f"expected y_limit_min on raw P04, found configured names: {y_min_names}"
+        )
+    if y_max_names != ["y_limit_max"]:
+        raise RuntimeError(
+            f"expected y_limit_max on raw P05, found configured names: {y_max_names}"
+        )
     try:
         y_min = pins["y_limit_min"]
+        y_max = pins["y_limit_max"]
     except KeyError as exc:
-        raise RuntimeError("software configuration has no y_limit_min input") from exc
+        raise RuntimeError("software configuration is missing a Y limit input") from exc
 
     return ExpanderTarget(
         bus=expander.bus,
         address=expander.address,
-        configured_pin_zero_name=pin_zero_names[0],
         configured_y_min_name="y_limit_min",
         configured_y_min_pin=y_min.pin,
+        configured_y_max_name="y_limit_max",
+        configured_y_max_pin=y_max.pin,
     )
 
 
@@ -212,7 +248,8 @@ def capture_gpio(device: PCA9535) -> GpioSnapshot:
         monotonic_s=time.monotonic(),
         port0=port0,
         port1=port1,
-        pin0_high=bool(port0 & (1 << EXPECTED_RAW_YMIN_PIN)),
+        y_min_high=bool(port0 & (1 << EXPECTED_RAW_YMIN_PIN)),
+        y_max_high=bool(port0 & (1 << EXPECTED_RAW_YMAX_PIN)),
     )
 
 
@@ -465,8 +502,8 @@ async def run_scan(
         context="home-zone scan arm delay",
     )
     final_preflight_gpio = await capture_stable_gpio(gpio_device)
-    if final_preflight_gpio.pin0_high != baseline_gpio.pin0_high:
-        raise RuntimeError("raw P00 changed during the arm delay; refusing motion")
+    if final_preflight_gpio.y_min_high != baseline_gpio.y_min_high:
+        raise RuntimeError("raw P04 changed during the arm delay; refusing motion")
 
     motor = Motor(controller, motor_params)
     motor._cur_pos = final_preflight.position_mm
@@ -492,7 +529,7 @@ async def run_scan(
                 target_mm=target_mm,
                 phase="away",
             )
-            if gpio.pin0_high != baseline_gpio.pin0_high:
+            if gpio.y_min_high != baseline_gpio.y_min_high:
                 clear_drive = drive
                 clear_gpio = gpio
                 break
@@ -504,7 +541,7 @@ async def run_scan(
                 ceiling_mm=MAX_Y_MM,
             )
             raise RuntimeError(
-                f"raw P00 did not change by {MAX_Y_MM:g} mm; Y was left at the safe upper scan bound"
+                f"raw P04 did not change by {MAX_Y_MM:g} mm; Y was left at the safe upper scan bound"
             )
 
         emit(
@@ -525,14 +562,14 @@ async def run_scan(
                 target_mm=target_mm,
                 phase="return",
             )
-            if gpio.pin0_high == baseline_gpio.pin0_high:
+            if gpio.y_min_high == baseline_gpio.y_min_high:
                 asserted_drive = drive
                 asserted_gpio = gpio
                 break
 
         if asserted_drive is None or asserted_gpio is None:
             raise RuntimeError(
-                "raw P00 did not return to its initial state before the initial Y position; "
+                "raw P04 did not return to its initial state before the initial Y position; "
                 "no motion below the starting position was attempted"
             )
     except BaseException as exc:
@@ -544,9 +581,9 @@ async def run_scan(
         initial_position_mm=baseline_drive.position_mm,
         clear_position_mm=clear_drive.position_mm,
         reassert_position_mm=asserted_drive.position_mm,
-        initial_pin0_high=baseline_gpio.pin0_high,
-        clear_pin0_high=clear_gpio.pin0_high,
-        reassert_pin0_high=asserted_gpio.pin0_high,
+        initial_y_min_high=baseline_gpio.y_min_high,
+        clear_y_min_high=clear_gpio.y_min_high,
+        reassert_y_min_high=asserted_gpio.y_min_high,
         changed_pins=changed_pins(baseline_gpio, clear_gpio),
         ceiling_mm=MAX_Y_MM,
         persisted=False,
@@ -717,7 +754,7 @@ async def run_homeward_scan(
                     baseline_secondary, final_secondary
                 ),
             )
-            if final_primary.pin0_high != baseline_primary.pin0_high:
+            if final_primary.y_min_high != baseline_primary.y_min_high:
                 transition_drive = final_drive
                 transition_primary = final_primary
                 transition_secondary = final_secondary
@@ -738,6 +775,122 @@ async def run_homeward_scan(
         primary_final=asdict(transition_primary or final_primary),
         secondary_initial=asdict(baseline_secondary),
         secondary_final=asdict(transition_secondary or final_secondary),
+        commanded_below_zero=False,
+        persisted=False,
+        homes=0,
+    )
+    return 0
+
+
+async def run_confirmed_limit_scan(
+    args: argparse.Namespace,
+    controller: timing.SharedModbusController,
+    motor_params: Any,
+    gpio_device: PCA9535,
+    target: ExpanderTarget,
+) -> int:
+    baseline_drive = await require_extended_stationary_healthy_y(controller, motor_params)
+    timing.require_live_profile(baseline_drive, expected_delays=EXPECTED_DELAYS)
+    require_scan_start(baseline_drive.position_mm)
+    baseline_gpio = await capture_stable_gpio(gpio_device)
+    emit(
+        "confirmed_limit_scan_preflight",
+        drive=asdict(baseline_drive),
+        gpio=asdict(baseline_gpio),
+        expander=asdict(target),
+        away_target_mm=EXTENDED_AWAY_TARGET_MM,
+        return_targets_mm=HOMEWARD_TARGETS_MM,
+        rpm=MOVE_RPM,
+        accel=MOVE_ACCEL,
+    )
+    await timing.arm_countdown(args.command, args.arm_delay_s)
+
+    final_preflight = await require_extended_stationary_healthy_y(
+        controller, motor_params
+    )
+    timing.require_live_profile(final_preflight, expected_delays=EXPECTED_DELAYS)
+    require_scan_start(final_preflight.position_mm)
+    timing.require_no_position_change(
+        baseline_drive,
+        final_preflight,
+        context="confirmed limit scan arm delay",
+    )
+    final_preflight_gpio = await capture_stable_gpio(gpio_device)
+    if (
+        final_preflight_gpio.port0 != baseline_gpio.port0
+        or final_preflight_gpio.port1 != baseline_gpio.port1
+    ):
+        raise RuntimeError("GPIO inputs changed during the arm delay; refusing motion")
+
+    motor = Motor(controller, motor_params)
+    motor._cur_pos = final_preflight.position_mm
+    motor._last_raw_position = final_preflight.raw_position
+    transition_drive: timing.DriveSnapshot | None = None
+    transition_gpio: GpioSnapshot | None = None
+    final_drive = final_preflight
+    final_gpio = baseline_gpio
+    try:
+        await motor.move_config()
+        configured_drive = await require_extended_stationary_healthy_y(
+            controller, motor_params
+        )
+        timing.require_live_profile(configured_drive, expected_delays=EXPECTED_DELAYS)
+        timing.require_no_position_change(
+            final_preflight,
+            configured_drive,
+            context="confirmed limit scan motion configuration",
+        )
+        away_drive, away_gpio = await move_extended_and_capture(
+            motor,
+            controller,
+            motor_params,
+            gpio_device,
+        )
+        emit(
+            "confirmed_limit_away_sample",
+            drive=asdict(away_drive),
+            gpio=asdict(away_gpio),
+            changed_pins=changed_pins(baseline_gpio, away_gpio),
+        )
+        min_cleared = away_gpio.y_min_high != baseline_gpio.y_min_high
+
+        for target_mm in HOMEWARD_TARGETS_MM:
+            final_drive, final_gpio = await move_homeward_and_capture(
+                motor,
+                controller,
+                motor_params,
+                gpio_device,
+                target_mm=target_mm,
+            )
+            emit(
+                "confirmed_limit_return_sample",
+                target_mm=target_mm,
+                gpio=asdict(final_gpio),
+                changed_from_home_pins=changed_pins(baseline_gpio, final_gpio),
+                changed_from_away_pins=changed_pins(away_gpio, final_gpio),
+            )
+            if min_cleared and final_gpio.y_min_high == baseline_gpio.y_min_high:
+                transition_drive = final_drive
+                transition_gpio = final_gpio
+                break
+    except BaseException as exc:
+        await timing.stop_after_motion_error(motor, exc)
+        raise
+
+    emit(
+        "confirmed_limit_scan_complete",
+        initial_position_mm=baseline_drive.position_mm,
+        away_position_mm=away_drive.position_mm,
+        final_position_mm=final_drive.position_mm,
+        y_min_cleared_at_100=min_cleared,
+        y_min_reasserted=transition_drive is not None,
+        y_min_reassert_position_mm=(
+            transition_drive.position_mm if transition_drive is not None else None
+        ),
+        y_max_changed_at_100=(away_gpio.y_max_high != baseline_gpio.y_max_high),
+        gpio_at_home=asdict(baseline_gpio),
+        gpio_at_100=asdict(away_gpio),
+        gpio_final=asdict(transition_gpio or final_gpio),
         commanded_below_zero=False,
         persisted=False,
         homes=0,
@@ -776,6 +929,14 @@ async def async_main(args: argparse.Namespace) -> int:
                 )
             if args.command == "scan-toward-home":
                 return await run_homeward_scan(
+                    args,
+                    controller,
+                    motor_params,
+                    gpio_device,
+                    expander_target,
+                )
+            if args.command == "scan-confirmed-limits":
+                return await run_confirmed_limit_scan(
                     args,
                     controller,
                     motor_params,
