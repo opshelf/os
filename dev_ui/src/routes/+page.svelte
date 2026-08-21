@@ -305,7 +305,8 @@
 				<td>
 					<div class="status-action-cell">
 						<span>{$robotStatus.running ? 'yes' : 'no'}</span>
-						<button disabled={isRestartingApi === true} onclick={didClickRestartApi}>RESTART</button>
+						<button disabled={isRestartingApi === true} onclick={didClickRestartApi}>RESTART</button
+						>
 					</div>
 					{#if restartApiError !== ''}
 						<ErrorMessage message={restartApiError} />
@@ -348,8 +349,7 @@
 					<div class="status-action-cell">
 						<span>
 							{#if $robotStatus.needs_home}
-								yes{#if $robotStatus.needs_home_reason}
-									({$robotStatus.needs_home_reason}){/if}
+								yes
 							{:else}
 								no
 							{/if}
@@ -374,7 +374,13 @@
 			<td>homing on startup</td>
 			<td>
 				<div class="status-action-cell">
-					<span>{isLoadingHomeOnInit === true ? 'loading...' : homeOnInit ? 'enabled' : 'disabled'}</span>
+					<span
+						>{isLoadingHomeOnInit === true
+							? 'loading...'
+							: homeOnInit
+								? 'enabled'
+								: 'disabled'}</span
+					>
 					<button
 						disabled={isLoadingHomeOnInit === true || isUpdatingHomeOnInit === true}
 						onclick={didClickHomeOnInit}
@@ -432,7 +438,6 @@
 	</tbody>
 
 	{#if $robotStatus}
-
 		{#if $robotStatus.current_command}
 			<thead>
 				<tr>
