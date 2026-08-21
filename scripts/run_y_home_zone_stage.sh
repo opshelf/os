@@ -28,9 +28,18 @@ mode="$(tr -d '[:space:]' < "$repo_root/openshelf_hardware/data/.mode")"
 case "$mode" in
   development)
     config_name=config.development.json
+    compose_files=(
+      -f "$repo_root/docker-compose.yml"
+      -f "$repo_root/docker-compose.dev.yml"
+      -f "$repo_root/docker-compose.hardware.yml"
+    )
     ;;
   production)
     config_name=config.json
+    compose_files=(
+      -f "$repo_root/docker-compose.yml"
+      -f "$repo_root/docker-compose.hardware.yml"
+    )
     ;;
   *)
     echo "refusing: home-zone diagnostic supports only development or production mode" >&2
@@ -49,6 +58,15 @@ if curl -sS -o /dev/null --max-time 1 http://127.0.0.1:8000/api/health; then
   exit 1
 fi
 
+api_image="$(
+  docker compose "${compose_files[@]}" config --format json \
+    | python3 -c 'import json, sys; print(json.load(sys.stdin)["services"]["api"]["image"])'
+)"
+if [[ -z "$api_image" ]] || ! docker image inspect "$api_image" >/dev/null 2>&1; then
+  echo "refusing: required preloaded API image is unavailable: ${api_image:-unknown}" >&2
+  exit 1
+fi
+
 trace_dir="$repo_root/openshelf_hardware/data/y-home-zone"
 mkdir -p "$trace_dir"
 trace_path="$trace_dir/$(date -u +%Y%m%dT%H%M%SZ)-${stage}.jsonl"
@@ -61,9 +79,7 @@ for arg in "${python_args[@]}"; do
 done
 
 docker compose \
-  -f "$repo_root/docker-compose.yml" \
-  -f "$repo_root/docker-compose.dev.yml" \
-  -f "$repo_root/docker-compose.hardware.yml" \
+  "${compose_files[@]}" \
   run --pull never --no-deps --rm --entrypoint sh \
   -v "$repo_root/scripts:/app/scripts:ro" \
   api -lc "cd /app/openshelf_hardware && uv run python /app/scripts/y_home_zone_diagnostic.py${quoted_args} --register-map cl2b-rs507-pr --config $config_container_path" \

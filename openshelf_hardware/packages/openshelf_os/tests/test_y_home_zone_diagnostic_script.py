@@ -106,6 +106,9 @@ def test_device_wrapper_forces_preloaded_image_and_no_dependencies() -> None:
     assert "run --pull never --no-deps --rm" in wrapper
     assert "config.development.json" in wrapper
     assert "config.json" in wrapper
+    assert 'docker image inspect "$api_image"' in wrapper
+    production_case = wrapper.split("production)", 1)[1].split(";;", 1)[0]
+    assert "docker-compose.dev.yml" not in production_case
 
 
 def test_scan_requires_exact_confirmation() -> None:
