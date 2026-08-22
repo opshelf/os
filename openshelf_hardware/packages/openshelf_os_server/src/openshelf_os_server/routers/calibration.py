@@ -5,8 +5,8 @@ import functools
 import logging
 import re
 from collections.abc import Awaitable, Callable
-from typing import Literal, Optional, ParamSpec, TypeVar
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from typing import Annotated, Literal, Optional, ParamSpec, TypeVar
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
@@ -43,7 +43,6 @@ P = ParamSpec("P")
 T = TypeVar("T")
 
 _calibration_state_lock = asyncio.Lock()
-QUICK_LIFT_DISTANCE_MM = 10.0
 QUICK_LIFT_HOLD_SECONDS = 1.0
 
 
@@ -1016,7 +1015,7 @@ async def jog_axis(request: JogRequest) -> PositionResponse:
 
 @router.post("/test")
 @serialize_calibration_state
-async def test_gripper(request: TestRequest, lift: bool = False):
+async def test_gripper(request: TestRequest, lift: Annotated[float | None, Query(gt=0)] = None):
 	global _current_position, _current_side
 
 	await ensure_laser_auto_calibration_not_running()
@@ -1057,14 +1056,11 @@ async def test_gripper(request: TestRequest, lift: bool = False):
 		_current_side = coord.s
 
 		try:
-			await tool.pick(coord)
-			if lift is True:
-				if tool._my is None:
-					raise MotorError("Y motor not configured")
-				await tool._my.move_to_position(coord.y + QUICK_LIFT_DISTANCE_MM)
-				await asyncio.sleep(QUICK_LIFT_HOLD_SECONDS)
-				await tool._my.move_to_position(coord.y)
-			await tool.place(coord)
+			if lift is None:
+				await tool.pick(coord)
+				await tool.place(coord)
+			else:
+				await tool.pick_lift_place(coord, lift, QUICK_LIFT_HOLD_SECONDS)
 		except (MotorError, HardwareMotorError, ToolError) as e:
 			await _raise_motor_error(worker, f"Test failed: {str(e)}", e)
 	return {"success": True}

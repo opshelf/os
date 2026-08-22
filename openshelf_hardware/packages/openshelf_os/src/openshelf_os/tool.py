@@ -417,6 +417,35 @@ class Tool:
                 raise
             raise GripperError(f"Pick operation failed: {str(e)}") from e
 
+    async def pick_lift_place(
+        self,
+        coordinate: c.AxisCoordinate,
+        lift_mm: float,
+        hold_seconds: float,
+    ) -> None:
+        try:
+            if self._my is None:
+                raise MotorError("Y motor not configured")
+
+            target_position: Literal["front", "back"] = "front" if coordinate.s == 0 else "back"
+
+            await self._gs.safe_open()
+            await self.move(coordinate)
+            await self.rotate_to_position(target_position)
+            await self.extend_empty(coordinate)
+            await self._gs.open()
+            await self._my.move_to_position(coordinate.y + lift_mm)
+            await asyncio.sleep(hold_seconds)
+            await self._my.move_to_position(coordinate.y)
+            await self._gs.close()
+            await self.retract_empty()
+
+        except Exception as e:
+            await self._handle_fault(e)
+            if isinstance(e, MovementError):
+                raise
+            raise GripperError(f"Pick lift/place operation failed: {str(e)}") from e
+
     async def place(self, coordinate: c.AxisCoordinate):
         try:
             target_position: Literal["front", "back"] = "front" if coordinate.s == 0 else "back"
