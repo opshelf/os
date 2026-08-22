@@ -5423,6 +5423,7 @@
               "anyOf": [
                 {
                   "type": "number",
+                  "maximum": 30.0,
                   "exclusiveMinimum": 0
                 },
                 {

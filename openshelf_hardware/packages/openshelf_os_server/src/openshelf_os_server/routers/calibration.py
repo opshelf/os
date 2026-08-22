@@ -12,6 +12,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from openshelf_os.common import AxisCoordinate
 from openshelf_os.common import Parameters
+from openshelf_os.tool import MAX_PICK_LIFT_MM
 from openshelf_os.storage import (
 	CalibrationCoordinate,
 	Cell,
@@ -1015,7 +1016,10 @@ async def jog_axis(request: JogRequest) -> PositionResponse:
 
 @router.post("/test")
 @serialize_calibration_state
-async def test_gripper(request: TestRequest, lift: Annotated[float | None, Query(gt=0)] = None):
+async def test_gripper(
+	request: TestRequest,
+	lift: Annotated[float | None, Query(gt=0, le=MAX_PICK_LIFT_MM)] = None,
+):
 	global _current_position, _current_side
 
 	await ensure_laser_auto_calibration_not_running()
