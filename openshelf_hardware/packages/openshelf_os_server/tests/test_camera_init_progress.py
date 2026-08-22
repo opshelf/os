@@ -7,7 +7,7 @@ from openshelf_os_server.core.camera import (
 	init_camera_progress,
 	ToolCameraStreamManager,
 )
-from openshelf_os_server.core.init_progress import RobotInitTracker
+from openshelf_os_server.core.init_progress import OVERALL_READY, RobotInitTracker
 
 
 def _make_manager_mock(is_delivering_frames: bool) -> MagicMock:
@@ -75,6 +75,22 @@ async def test_init_camera_progress_reports_failed_when_camera_is_not_registered
 	component = _components(tracker)["iobox_sizer_camera"]
 	assert component["phase"] == "failed"
 	assert component["reason"] == "camera not registered"
+
+
+@pytest.mark.anyio
+async def test_init_camera_progress_failure_does_not_degrade_overall_state() -> None:
+	tracker = RobotInitTracker()
+	manager = _make_manager_mock(is_delivering_frames=False)
+
+	with patch.dict(camera_registry, {"tool": manager}, clear=True):
+		with patch("openshelf_os_server.core.camera.get_init_tracker", return_value=tracker):
+			tracker.set_overall(OVERALL_READY)
+			await init_camera_progress(["tool"])
+
+	assert _components(tracker)["tool_camera"]["phase"] == "failed"
+	assert tracker.failed_components() == ["tool_camera"]
+	assert tracker.failed_components(degrading_only=True) == []
+	assert tracker.snapshot()["phase"] == OVERALL_READY
 
 
 @pytest.mark.anyio
