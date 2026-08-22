@@ -5416,6 +5416,16 @@
         ],
         "parameters": [
           {
+            "name": "lift",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Lift"
+            }
+          },
+          {
             "name": "token",
             "in": "query",
             "required": false,
