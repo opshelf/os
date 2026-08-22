@@ -43,6 +43,8 @@ P = ParamSpec("P")
 T = TypeVar("T")
 
 _calibration_state_lock = asyncio.Lock()
+QUICK_LIFT_DISTANCE_MM = 10.0
+QUICK_LIFT_HOLD_SECONDS = 1.0
 
 
 def serialize_calibration_state(function: Callable[P, Awaitable[T]]) -> Callable[P, Awaitable[T]]:
@@ -1014,7 +1016,7 @@ async def jog_axis(request: JogRequest) -> PositionResponse:
 
 @router.post("/test")
 @serialize_calibration_state
-async def test_gripper(request: TestRequest):
+async def test_gripper(request: TestRequest, lift: bool = False):
 	global _current_position, _current_side
 
 	await ensure_laser_auto_calibration_not_running()
@@ -1056,6 +1058,12 @@ async def test_gripper(request: TestRequest):
 
 		try:
 			await tool.pick(coord)
+			if lift is True:
+				if tool._my is None:
+					raise MotorError("Y motor not configured")
+				await tool._my.move_to_position(coord.y + QUICK_LIFT_DISTANCE_MM)
+				await asyncio.sleep(QUICK_LIFT_HOLD_SECONDS)
+				await tool._my.move_to_position(coord.y)
 			await tool.place(coord)
 		except (MotorError, HardwareMotorError, ToolError) as e:
 			await _raise_motor_error(worker, f"Test failed: {str(e)}", e)

@@ -50,6 +50,7 @@ def build_worker(grid: StorageGrid):
 		pick=AsyncMock(),
 		place=AsyncMock(),
 		retract=AsyncMock(),
+		_my=SimpleNamespace(move_to_position=AsyncMock()),
 		_ms=SimpleNamespace(get_position=AsyncMock(return_value=0.0)),
 	)
 
@@ -103,6 +104,30 @@ async def test_quick_test_picks_and_places_selected_cell(client) -> None:
 	assert pick_coordinate.z_offset == pytest.approx(7.5)
 	assert pick_coordinate.s == 0
 	assert place_coordinate == pick_coordinate
+	worker._robot._tool._my.move_to_position.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_quick_lift_raises_and_lowers_y_between_pick_and_place(client) -> None:
+	grid = build_grid(is_occupied=False)
+	worker = build_worker(grid)
+	call_order: list[str] = []
+	worker._robot._tool.pick.side_effect = lambda *_: call_order.append('pick')
+	worker._robot._tool._my.move_to_position.side_effect = lambda y: call_order.append(f'y:{y}')
+	worker._robot._tool.place.side_effect = lambda *_: call_order.append('place')
+	sleep = AsyncMock(side_effect=lambda seconds: call_order.append(f'hold:{seconds}'))
+
+	with patch('openshelf_os_server.routers.calibration.get_robot_worker', AsyncMock(return_value=worker)):
+		with patch('openshelf_os_server.routers.calibration._clear_motors_for_move', AsyncMock()):
+			with patch('openshelf_os_server.routers.calibration.asyncio.sleep', sleep):
+				response = await client.post(
+					'/api/calibration/test?lift=true',
+					json={'side': 'left_module', 'shelf_idx': 0, 'cell_idx': 0},
+				)
+
+	assert response.status_code == 200
+	assert call_order == ['pick', 'y:466.0', 'hold:1.0', 'y:456.0', 'place']
+	sleep.assert_awaited_once_with(1.0)
 
 
 
