@@ -147,6 +147,7 @@ class Motor():
         self._status = MotorStatus.IDLE
         self._pending_motion: Optional[Callable[[], Awaitable[None]]] = None
         self._target_pos: Optional[float] = None
+        self._last_fault_context: dict[str, Any] | None = None
         self._last_bad_position_log_at = None
         self._logger = logger.getChild(f"motor.{self._motor_id}")
         self._safety = safety
@@ -929,6 +930,7 @@ class Motor():
                 await self._safety.wait_clear()
 
             t0 = time.monotonic()
+            self._last_fault_context = None
             did_start = await self._start_absolute_move(value, rpm, accel)
             if did_start is False:
                 return
@@ -939,15 +941,24 @@ class Motor():
                 self._on_move_complete(elapsed)
 
             if status != MotorStatus.STOPPED:
-                raise MotorError(
+                error = MotorError(
                     f"Movement failed for motor {self._motor_id} (status={status.name})"
                 )
+                if self._last_fault_context is not None:
+                    setattr(error, "fault_context", self._last_fault_context)
+                raise error
 
             self._hard_stopped = False
 
         except Exception as e:
             if not isinstance(e, MotorError):
-                raise MotorError(f"Failed to move motor {self._motor_id} to position {value}mm: {str(e)}") from e
+                error = MotorError(
+                    f"Failed to move motor {self._motor_id} to position {value}mm: {str(e)}"
+                )
+                fault_context = getattr(e, "fault_context", None)
+                if isinstance(fault_context, dict):
+                    setattr(error, "fault_context", fault_context)
+                raise error from e
             raise
 
     async def move_to_position_no_wait(
@@ -1130,6 +1141,9 @@ class Motor():
                 "motor_id": self._motor_id,
                 "status_word": None if snapshot is None else snapshot.status_word,
                 "alarm_code": None if alarm_state is None else alarm_state.alarm_code,
+                "stall_detected": None,
+                "no_progress": None,
+                "safety_blocked": bool(self._safety and self._safety.blocked),
                 "stop_error": stop_error,
                 "flight_recorder_path": dump_path,
                 "position_known": False,
@@ -1488,6 +1502,15 @@ class Motor():
             alarm_state=alarm_state,
             fault_state=fault_state,
         )
+        self._last_fault_context = {
+            "motor_id": self._motor_id,
+            "status_word": snapshot.status_word,
+            "alarm_code": alarm_state.alarm_code,
+            "stall_detected": fault_state.stall_detected,
+            "no_progress": fault_state.no_progress,
+            "safety_blocked": bool(self._safety and self._safety.blocked),
+            "flight_recorder_path": dump_path,
+        }
 
         if homing:
             self._clear_pending_motion()

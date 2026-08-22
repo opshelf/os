@@ -530,6 +530,67 @@ async def test_wait_for_move_does_not_retry_pending_motion_after_alarm_32(mock_c
 
 
 @pytest.mark.asyncio
+async def test_move_to_position_propagates_fault_context_from_wait_fault(mock_controller):
+    motor = Motor(
+        mock_controller,
+        make_motor_params(logical_to_physical=lambda value: value),
+    )
+    motor.stop = AsyncMock(return_value=MotorStatus.STOPPED)
+    motor._dump_flight_recorder = Mock(return_value="fault.json")
+
+    positions = iter([0.0, 1.0])
+
+    async def get_position() -> float:
+        motor._cur_pos = next(positions)
+        return motor._cur_pos
+
+    motor.get_position = AsyncMock(side_effect=get_position)
+    motor.get_param = AsyncMock(return_value=32)
+    mock_controller.read_holding_registers.return_value = 0
+
+    with pytest.raises(MotorError, match="status=FAULT") as exc_info:
+        await motor.move_to_position(50.0)
+
+    assert exc_info.value.fault_context == {
+        "motor_id": 1,
+        "status_word": 0,
+        "alarm_code": 32,
+        "stall_detected": False,
+        "no_progress": False,
+        "safety_blocked": False,
+        "flight_recorder_path": "fault.json",
+    }
+
+
+@pytest.mark.asyncio
+async def test_wait_for_move_generic_exception_marks_fault_mode_unknown_and_safety_blocked(
+    mock_controller,
+):
+    safety = SimpleNamespace(blocked=True, wait_clear=AsyncMock())
+    motor = Motor(mock_controller, make_motor_params(), safety=safety)
+    motor.stop = AsyncMock(return_value=MotorStatus.STOPPED)
+    motor._start_absolute_move = AsyncMock(return_value=True)
+    motor._read_motion_snapshot = AsyncMock(side_effect=RuntimeError("read failed"))
+    motor.get_param = AsyncMock(return_value=32)
+    motor._dump_flight_recorder = Mock(return_value="exception.json")
+
+    with pytest.raises(MotorError, match="read failed") as exc_info:
+        await motor.move_to_position(50.0)
+
+    assert exc_info.value.fault_context == {
+        "motor_id": 1,
+        "status_word": None,
+        "alarm_code": 32,
+        "stall_detected": None,
+        "no_progress": None,
+        "safety_blocked": True,
+        "stop_error": None,
+        "flight_recorder_path": "exception.json",
+        "position_known": False,
+    }
+
+
+@pytest.mark.asyncio
 async def test_wait_for_move_allows_alarm_32_as_homing_limit_stop(mock_controller):
     params = make_motor_params()
     motor = Motor(mock_controller, params)
