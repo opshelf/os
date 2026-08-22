@@ -43,17 +43,24 @@ async def _add_system_user() -> None:
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(Role).filter(Role.name == "admin"))
         admin_role = result.scalar_one()
-        db.add(
-            User(
-                email="developer@opshelf.com",
-                first_name="Developer",
-                last_name="System",
-                pin_hash="not-a-real-hash",
-                role_id=admin_role.id,
-                is_active=True,
-                is_system=True,
-            )
+        user_result = await db.execute(
+            select(User).filter(User.email == "developer@opshelf.com")
         )
+        user = user_result.scalar_one_or_none()
+        if user is None:
+            db.add(
+                User(
+                    email="developer@opshelf.com",
+                    first_name="Developer",
+                    last_name="System",
+                    pin_hash="not-a-real-hash",
+                    role_id=admin_role.id,
+                    is_active=True,
+                    is_system=True,
+                )
+            )
+        else:
+            user.is_system = True
         await db.commit()
 
 
