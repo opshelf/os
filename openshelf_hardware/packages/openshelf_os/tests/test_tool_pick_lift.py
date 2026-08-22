@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from openshelf_os.common import AxisCoordinate
+from openshelf_os.exceptions import GripperError
 from openshelf_os.tool import Tool
 
 
@@ -19,6 +20,10 @@ async def test_pick_lift_place_keeps_z_extended_until_after_release() -> None:
     )
     tool._my = SimpleNamespace(
         move_to_position=AsyncMock(side_effect=lambda y: events.append(f"y:{y}")),
+    )
+    tool._ms = SimpleNamespace(
+        get_position=AsyncMock(return_value=42.0),
+        move_to_position=AsyncMock(side_effect=lambda mm: events.append(f"stage:{mm}")),
     )
     tool.move = AsyncMock(side_effect=lambda _: events.append("move"))
     tool.rotate_to_position = AsyncMock(side_effect=lambda _: events.append("rotate"))
@@ -36,10 +41,25 @@ async def test_pick_lift_place_keeps_z_extended_until_after_release() -> None:
         "rotate",
         "extend",
         "grip",
+        "stage:0.0",
         "y:468.5",
         "hold:1.0",
         "y:456.0",
+        "stage:42.0",
         "release",
         "retract",
     ]
     tool._handle_fault.assert_not_awaited()
+
+
+@pytest.mark.parametrize("lift_mm", [0.0, -1.0, 30.1])
+@pytest.mark.asyncio
+async def test_pick_lift_place_rejects_lift_outside_hard_limit(lift_mm: float) -> None:
+    tool = Tool.__new__(Tool)
+
+    with pytest.raises(GripperError, match="at most 30 mm"):
+        await tool.pick_lift_place(
+            AxisCoordinate(x=123.0, y=456.0),
+            lift_mm=lift_mm,
+            hold_seconds=1.0,
+        )

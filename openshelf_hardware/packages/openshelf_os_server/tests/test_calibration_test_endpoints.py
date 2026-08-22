@@ -128,9 +128,9 @@ async def test_quick_lift_raises_and_lowers_y_between_pick_and_place(client) -> 
 	worker._robot._tool.place.assert_not_awaited()
 
 
-@pytest.mark.parametrize('lift', ['0', '-1'])
+@pytest.mark.parametrize('lift', ['0', '-1', '30.1'])
 @pytest.mark.asyncio
-async def test_quick_lift_rejects_non_positive_distance(client, lift: str) -> None:
+async def test_quick_lift_rejects_out_of_range_distance(client, lift: str) -> None:
 	response = await client.post(
 		f'/api/calibration/test?lift={lift}',
 		json={'side': 'left_module', 'shelf_idx': 0, 'cell_idx': 0},

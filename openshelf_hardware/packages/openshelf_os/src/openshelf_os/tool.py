@@ -30,6 +30,7 @@ ROTATION_HOME_ORIENTATION_EPSILON_DEG = 1e-6
 ROTATION_POSITION_EPSILON_DEG = 0.05
 STAGE_RETRACT_TARGET_MM = 3.0
 STAGE_RETRACT_SAFE_THRESHOLD_MM = 5.0
+MAX_PICK_LIFT_MM = 30.0
 
 
 class RotationHomeOrientation(Enum):
@@ -423,9 +424,12 @@ class Tool:
         lift_mm: float,
         hold_seconds: float,
     ) -> None:
+        if not 0 < lift_mm <= MAX_PICK_LIFT_MM:
+            raise GripperError(f"Lift must be greater than zero and at most {MAX_PICK_LIFT_MM:g} mm")
+
         try:
-            if self._my is None:
-                raise MotorError("Y motor not configured")
+            if self._my is None or self._ms is None:
+                raise MotorError("Y and stage motors required for pick lift/place")
 
             target_position: Literal["front", "back"] = "front" if coordinate.s == 0 else "back"
 
@@ -434,9 +438,12 @@ class Tool:
             await self.rotate_to_position(target_position)
             await self.extend_empty(coordinate)
             await self._gs.open()
+            original_stage_mm = await self._ms.get_position()
+            await self._ms.move_to_position(0.0)
             await self._my.move_to_position(coordinate.y + lift_mm)
             await asyncio.sleep(hold_seconds)
             await self._my.move_to_position(coordinate.y)
+            await self._ms.move_to_position(original_stage_mm)
             await self._gs.close()
             await self.retract_empty()
 
