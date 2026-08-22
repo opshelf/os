@@ -1,0 +1,53 @@
+import logging
+from types import SimpleNamespace
+
+import pytest
+
+from openshelf_os.common import AxisCoordinate
+from openshelf_os.robot import Robot, RobotCommandSuccessful
+from openshelf_os.storage import CellItem, Dimensions, StorageModuleCellLocation, StorageModuleSide
+
+
+@pytest.mark.asyncio
+async def test_retrieve_preserves_upca_hint_for_cached_placeholder_item() -> None:
+    location = StorageModuleCellLocation(
+        side=StorageModuleSide.LEFT,
+        shelf_idx=0,
+        cell_idx=1,
+    )
+    placeholder_item = CellItem(
+        dimensions=Dimensions(width=20, height=30, length=400),
+        data={"name": "calibration test left_module:0:1"},
+    )
+    cell = SimpleNamespace(item=placeholder_item)
+    cleared_locations: list[StorageModuleCellLocation] = []
+
+    robot = Robot.__new__(Robot)
+    robot._logger = logging.getLogger("test_robot_retrieve")
+    robot._state = SimpleNamespace(current_cell=None)
+    robot._operation_context = {}
+    robot._last_fault_context = None
+    robot._demo_cell_map = None
+    robot._grid = SimpleNamespace(
+        get_cell=lambda resolved_location: cell,
+        get_cell_coordinate=lambda resolved_location: SimpleNamespace(
+            to_axis_coordinate=lambda: AxisCoordinate(x=10, y=20, s=0, z_offset=1),
+        ),
+        clear_item=lambda resolved_location: cleared_locations.append(resolved_location),
+    )
+
+    async def io_place(coordinate: AxisCoordinate, nudge_override=None) -> None:
+        assert coordinate == AxisCoordinate(x=10, y=20, s=0, z_offset=1)
+        assert nudge_override is None
+
+    robot.io_place = io_place
+
+    result = await robot.retrieve_by_location(
+        location.model_dump(),
+        upca_hint="999900000001",
+    )
+
+    assert isinstance(result, RobotCommandSuccessful)
+    assert result.upca == "999900000001"
+    assert result.location == location
+    assert cleared_locations == [location]
