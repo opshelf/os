@@ -152,7 +152,7 @@ def _build_minimal_config(data: dict) -> dict:
                         "min_horizontal_wall_coverage_mm": 30.0,
                         "laser_offset_x_mm": None,
                         "laser_offset_y_mm": None,
-                        "fine_scan_step_mm": 2.0,
+                        "fine_scan_step_mm": 1.0,
                         "laser_sample_settle_ms": 50,
                         "laser_samples_per_point": 3,
                         "left_bounds_x_min_mm": 0.0,

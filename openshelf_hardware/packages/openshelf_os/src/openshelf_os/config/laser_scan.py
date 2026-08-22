@@ -45,7 +45,7 @@ class LaserScanConfig(BaseModel):
     laser_scan_z_offset_from_place_mm: Optional[float] = None
     shelf_hole_probe_y_offsets_mm: Optional[List[float]] = None
     fine_cell_scan_y_margin_mm: Optional[float] = Field(default=None, gt=0)
-    fine_scan_step_mm: float = Field(2.0, gt=0)
+    fine_scan_step_mm: float = Field(1.0, gt=0)
     laser_sample_settle_ms: int = Field(50, ge=0)
     laser_samples_per_point: int = Field(3, ge=1)
     left_shelf_scout_x_mm: Optional[float] = Field(default=None, ge=0)

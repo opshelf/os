@@ -27,6 +27,10 @@ from openshelf_os.laser_calibration import (
 	disable_unreachable_cells,
 	find_gap_run_containing_position,
 	fit_z_delta_line,
+	get_coarse_samples_per_point,
+	get_coarse_settle_ms,
+	get_fine_samples_per_point,
+	get_fine_settle_ms,
 	is_row_refinement_settled,
 	resolve_z_delta_model,
 	GapCandidateRegion,
@@ -68,9 +72,17 @@ def test_laser_scan_config_uses_clear_field_names() -> None:
 	assert scan_config.laser_scan_z_offset_from_place_mm == pytest.approx(10.0)
 	assert scan_config.shelf_hole_probe_y_offsets_mm == [pytest.approx(32.25)]
 	assert scan_config.fine_cell_scan_y_margin_mm == pytest.approx(12.0)
+	assert LaserScanConfig().fine_scan_step_mm == pytest.approx(1.0)
 	assert LaserScanConfig().shelf_scout_post_edge_skip_mm == pytest.approx(40.0)
 
 	assert get_shelf_hole_probe_y_offsets_mm(scan_config) == [pytest.approx(32.25)]
+
+
+def test_scan_sampling_preserves_configured_noise_filtering() -> None:
+	assert get_fine_settle_ms(50) == 50
+	assert get_fine_samples_per_point(3) == 3
+	assert get_coarse_settle_ms(50) == 50
+	assert get_coarse_samples_per_point(3) == 3
 
 
 def test_shelf_hole_probe_offsets_default_to_multiline_scan() -> None:
@@ -1038,6 +1050,32 @@ def test_build_single_shelf_known_edge_y_uses_calibrated_cells() -> None:
 	assert known_shelf_edge_y == [pytest.approx(174.75)]
 
 
+def test_build_single_shelf_known_edge_y_converts_fixed_offset_back_to_laser_frame() -> None:
+	target_shelf = SimpleNamespace(
+		cells=[
+			SimpleNamespace(calibration_point=SimpleNamespace(y=688.0)),
+			SimpleNamespace(calibration_point=SimpleNamespace(y=689.0)),
+		],
+	)
+	grid = SimpleNamespace(get_shelf=lambda side, shelf_idx: target_shelf)
+	scan_config = SimpleNamespace(
+		laser_offset_y_mm=0.0,
+		shelf_hole_probe_y_offsets_mm=[12.25],
+		left_xy_offset=SimpleNamespace(x_mm=-0.8, y_mm=-4.25),
+	)
+
+	known_shelf_edge_y = build_single_shelf_known_edge_y(
+		grid=grid,
+		side=StorageModuleSide.LEFT,
+		shelf_idx=3,
+		scan_config=scan_config,
+	)
+
+	# The shelf sweep adds the 12.25mm probe offset back, placing the laser at
+	# 692.75mm rather than at the already corrected 688.5mm gripper coordinate.
+	assert known_shelf_edge_y == [pytest.approx(680.5)]
+
+
 def test_apply_single_cell_rescan_updates_target_cell_and_saves_grid() -> None:
 	calibration_point = SimpleNamespace(x=1.0, y=2.0, z_offset=3.0)
 	target_cell = SimpleNamespace(calibration_point=calibration_point)
@@ -1141,16 +1179,81 @@ def _existing_calibrated_shelf(shelf_idx: int, xs: list[float]) -> Shelf:
 def test_build_shelves_from_scan_preserves_dropped_cell_index() -> None:
 	analysis = SimpleNamespace(shelves=[_detected_scan_shelf(0, [493.0, 659.0, 823.0])])
 	existing = [_existing_calibrated_shelf(0, [329.0, 494.0, 660.0, 824.0])]
+	detected_cell_key_map: dict[tuple[int, int], tuple[int, int]] = {}
 
-	result = build_shelves_from_scan(side=StorageModuleSide.LEFT, analysis=analysis, existing_shelves=existing)
+	result = build_shelves_from_scan(
+		side=StorageModuleSide.LEFT,
+		analysis=analysis,
+		existing_shelves=existing,
+		detected_cell_key_map=detected_cell_key_map,
+	)
 
 	cells = sorted(result[0].cells, key=lambda cell: cell.cell_idx)
 	assert [cell.cell_idx for cell in cells] == [0, 1, 2, 3]
+	assert detected_cell_key_map == {
+		(0, 0): (0, 1),
+		(0, 1): (0, 2),
+		(0, 2): (0, 3),
+	}
 	assert cells[0].calibration_point.x == pytest.approx(329.0)
 	assert cells[0].calibration_point.z_offset == pytest.approx(0.0)
 	assert cells[1].calibration_point.x == pytest.approx(493.0)
 	assert cells[2].calibration_point.x == pytest.approx(659.0)
 	assert cells[3].calibration_point.x == pytest.approx(823.0)
+
+
+def test_apply_single_shelf_analysis_maps_depths_around_preserved_dropped_cell(tmp_path: Path) -> None:
+	target_shelf = _existing_calibrated_shelf(3, [100.0, 201.0, 303.0, 406.0, 510.0])
+	for cell in target_shelf.cells:
+		cell.calibration_point.z_offset = 10.0 + float(cell.cell_idx)
+
+	grid_path = tmp_path / 'grid.json'
+	grid = StorageGrid(
+		left_module=[target_shelf],
+		right_module=[],
+		filename=str(grid_path),
+	)
+	grid.save()
+	metadata_path = tmp_path / 'metadata.json'
+	metadata_path.write_text('{}', encoding='utf-8')
+	analysis = SimpleNamespace(
+		shelves=[_detected_scan_shelf(0, [190.0, 292.0, 395.0, 499.0])],
+		metadata_path=str(metadata_path),
+	)
+	candidate_lookup = {
+		(0, cell_idx): SimpleNamespace(wall_depth_mm=50.0 + cell_idx)
+		for cell_idx in range(4)
+	}
+
+	with patch(
+		'openshelf_os.laser_calibration.staged_scan.build_candidate_lookup_by_cell',
+		return_value=candidate_lookup,
+	):
+		apply_single_shelf_analysis(
+			analysis=analysis,
+			grid=grid,
+			grid_path=grid_path,
+			scan_config=SimpleNamespace(
+				left_xy_offset=SimpleNamespace(x_mm=11.0, y_mm=-80.0),
+			),
+			side=StorageModuleSide.LEFT,
+			target_shelf_idx=3,
+			z_delta_override_mm=4.0,
+		)
+
+	updated_cells = StorageGrid.load_from_file(str(grid_path)).left_module[0].cells
+	assert [cell.cell_idx for cell in updated_cells] == [0, 1, 2, 3, 4]
+	# The physically absent cell keeps its prior calibration, while the four observed
+	# cells receive the detected XY and wall depth associated with their remapped IDs.
+	assert updated_cells[0].calibration_point.x == pytest.approx(100.0)
+	assert updated_cells[0].calibration_point.y == pytest.approx(20.0)
+	assert updated_cells[0].calibration_point.z_offset == pytest.approx(10.0)
+	for cell_idx in range(1, 5):
+		assert updated_cells[cell_idx].calibration_point.x == pytest.approx(
+			[201.0, 303.0, 406.0, 510.0][cell_idx - 1]
+		)
+		assert updated_cells[cell_idx].calibration_point.y == pytest.approx(20.0)
+		assert updated_cells[cell_idx].calibration_point.z_offset == pytest.approx(53.0 + cell_idx)
 
 
 def test_build_shelves_from_scan_matches_across_frame_offset() -> None:
