@@ -461,8 +461,8 @@ def _get_overhead_camera_url(settings: Settings) -> str | None:
 
 def _get_overview_camera_urls(settings: Settings) -> dict[str, str]:
 	cameras = {
-		"overview_left": settings.overview_left_camera,
-		"overview_right": settings.overview_right_camera,
+		"overview_one": settings.overview_one_camera,
+		"overview_two": settings.overview_two_camera,
 	}
 	return {
 		camera_id: camera.rtsp_url

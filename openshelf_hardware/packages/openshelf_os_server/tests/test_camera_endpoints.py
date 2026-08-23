@@ -91,20 +91,20 @@ async def test_list_cameras_with_tool_camera(client: AsyncClient) -> None:
 
 @pytest.mark.anyio
 async def test_list_cameras_with_overview_cameras(client: AsyncClient) -> None:
-	left_manager = _make_tool_manager_mock()
-	right_manager = _make_tool_manager_mock()
+	one_manager = _make_tool_manager_mock()
+	two_manager = _make_tool_manager_mock()
 
 	with patch.dict(
 		camera_registry,
-		{"overview_left": left_manager, "overview_right": right_manager},
+		{"overview_one": one_manager, "overview_two": two_manager},
 		clear=True,
 	):
 		response = await client.get("/api/camera")
 
 	assert response.status_code == 200
 	assert [(camera["id"], camera["type"]) for camera in response.json()["cameras"]] == [
-		("overview_left", "OverviewCamera"),
-		("overview_right", "OverviewCamera"),
+		("overview_one", "OverviewCamera"),
+		("overview_two", "OverviewCamera"),
 	]
 
 
@@ -236,21 +236,21 @@ def test_get_tool_camera_url_uses_config_url_when_enabled(tmp_path, monkeypatch)
 
 def test_get_overview_camera_urls_returns_only_enabled_configured_cameras() -> None:
 	settings = SimpleNamespace(
-		overview_left_camera=SimpleNamespace(enabled=True, rtsp_url="rtsp://left"),
-		overview_right_camera=SimpleNamespace(enabled=False, rtsp_url="rtsp://right"),
+		overview_one_camera=SimpleNamespace(enabled=True, rtsp_url="rtsp://one"),
+		overview_two_camera=SimpleNamespace(enabled=False, rtsp_url="rtsp://two"),
 	)
 
-	assert _get_overview_camera_urls(settings) == {"overview_left": "rtsp://left"}
+	assert _get_overview_camera_urls(settings) == {"overview_one": "rtsp://one"}
 
 
 @pytest.mark.anyio
 async def test_init_overview_camera_manager_registers_named_camera() -> None:
 	with patch.dict(camera_registry, {}, clear=True):
-		await init_overview_camera_manager("overview_left", "rtsp://left")
+		await init_overview_camera_manager("overview_one", "rtsp://one")
 
-		manager = camera_registry["overview_left"]
+		manager = camera_registry["overview_one"]
 		assert isinstance(manager, ToolCameraStreamManager)
-		assert manager.rtsp_url == "rtsp://left"
+		assert manager.rtsp_url == "rtsp://one"
 
 
 @pytest.mark.anyio
