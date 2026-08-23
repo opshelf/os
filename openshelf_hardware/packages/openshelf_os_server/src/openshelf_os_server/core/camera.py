@@ -484,7 +484,7 @@ async def init_overhead_camera_manager(rtsp_url: str) -> None:
 
 
 async def init_overview_camera_manager(camera_id: str, rtsp_url: str) -> None:
-	if camera_id not in {"overview_left", "overview_right"}:
+	if camera_id not in {"overview_one", "overview_two"}:
 		raise ValueError(f"Unsupported overview camera id: {camera_id}")
 	if rtsp_url is None or rtsp_url == "":
 		logger.warning("overview_camera_not_configured", camera_id=camera_id, reason="no_rtsp_url")
@@ -595,7 +595,7 @@ async def get_all_cameras_status() -> list[dict]:
 			camera_type = getattr(manager, "camera_type", "OpenCvCamera")
 		elif camera_id == "overhead":
 			camera_type = "OverheadCamera"
-		elif camera_id in {"overview_left", "overview_right"}:
+		elif camera_id in {"overview_one", "overview_two"}:
 			camera_type = "OverviewCamera"
 		else:
 			camera_type = "ToolCamera"

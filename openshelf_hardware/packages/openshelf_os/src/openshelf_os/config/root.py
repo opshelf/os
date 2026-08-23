@@ -33,8 +33,8 @@ class RootConfig(BaseModel):
     scanner: ScannerSettings = Field(default_factory=ScannerSettings)
     tool_camera: ToolCameraSettings = Field(default_factory=ToolCameraSettings)
     overhead_camera: OverheadCameraSettings = Field(default_factory=OverheadCameraSettings)
-    overview_left_camera: OverviewCameraSettings = Field(default_factory=OverviewCameraSettings)
-    overview_right_camera: OverviewCameraSettings = Field(default_factory=OverviewCameraSettings)
+    overview_one_camera: OverviewCameraSettings = Field(default_factory=OverviewCameraSettings)
+    overview_two_camera: OverviewCameraSettings = Field(default_factory=OverviewCameraSettings)
     scale: ScaleAppSettings = Field(default_factory=ScaleAppSettings)
     auth: AuthSettings = Field(default_factory=AuthSettings)  # type: ignore[arg-type]
     robot_app: RobotAppSettings = Field(default_factory=RobotAppSettings)
