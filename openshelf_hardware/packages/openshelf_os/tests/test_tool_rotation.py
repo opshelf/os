@@ -151,7 +151,7 @@ async def test_ensure_safe_rotation_x_position_moves_from_lower_edge() -> None:
     original_x = await tool.ensure_safe_rotation_x_position()
 
     assert original_x == pytest.approx(25.0)
-    tool._mx.move_to_position.assert_awaited_once_with(180.0)
+    tool._mx.move_to_position.assert_awaited_once_with(200.0)
 
 
 @pytest.mark.asyncio
@@ -162,7 +162,7 @@ async def test_ensure_safe_rotation_x_position_moves_from_upper_edge() -> None:
     original_x = await tool.ensure_safe_rotation_x_position()
 
     assert original_x == pytest.approx(575.0)
-    tool._mx.move_to_position.assert_awaited_once_with(420.0)
+    tool._mx.move_to_position.assert_awaited_once_with(400.0)
 
 
 @pytest.mark.asyncio
@@ -209,7 +209,7 @@ async def test_rotate_to_position_restores_original_x_after_safe_edge_move() -> 
     await tool.rotate_to_position("front")
 
     assert events == [
-        "x_move:180.0",
+        "x_move:200.0",
         "rotate:4.0",
         "x_move:25.0",
     ]
@@ -624,7 +624,7 @@ async def test_home_moves_x_from_edge_when_rotation_is_at_front() -> None:
     assert events == [
         'z_home',
         'stage_home',
-        'x_move:180.0',
+        'x_move:200.0',
         'rotate_home',
         'x_move:100.0',
         'x_home',
@@ -651,7 +651,7 @@ async def test_home_moves_x_from_edge_before_rotate_home_when_rotation_is_at_fro
     x_motor.move_to_position = AsyncMock(side_effect=lambda position: events.append(f'x_move:{position}'))
     x_motor.home = AsyncMock(side_effect=lambda: events.append('x_home'))
     x_motor._params = SimpleNamespace(lim=600.0, lower_lim=0.0)
-    x_motor.get_position = AsyncMock(side_effect=[25.0, 180.0])
+    x_motor.get_position = AsyncMock(side_effect=[25.0, 200.0])
 
     y_motor = AsyncMock()
     y_motor.home = AsyncMock(side_effect=lambda: events.append('y_home'))
@@ -674,7 +674,7 @@ async def test_home_moves_x_from_edge_before_rotate_home_when_rotation_is_at_fro
     assert events == [
         'z_home',
         'stage_home',
-        'x_move:180.0',
+        'x_move:200.0',
         'rotate_home',
         'x_move:25.0',
         'x_home',
