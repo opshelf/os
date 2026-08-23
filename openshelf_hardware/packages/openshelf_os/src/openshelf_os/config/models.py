@@ -494,8 +494,25 @@ class Parameters(BaseModel):
     Z_EXTENSION_IO: float
     Z_MOVE_RPM: int = Field(..., gt=0)
     Z_MOVE_ACCEL: int = Field(..., gt=0)
+    STAGE_RETRACT_POSITION_MM: float = Field(default=3.0, ge=0)
+    Z_RETRACT_POSITION_MM: float = Field(default=1.0, ge=0)
+    ROTATION_STAGE_MAX_EXTENSION_MM: float = Field(default=5.0, ge=0)
+    ROTATION_Z_MAX_EXTENSION_MM: float = Field(default=5.0, ge=0)
     ROTATION_FRONT: float
     ROTATION_BACK: float
+
+    @model_validator(mode="after")
+    def _validate_retract_clearance(self) -> "Parameters":
+        if self.STAGE_RETRACT_POSITION_MM > self.ROTATION_STAGE_MAX_EXTENSION_MM:
+            raise ValueError(
+                "STAGE_RETRACT_POSITION_MM cannot exceed "
+                "ROTATION_STAGE_MAX_EXTENSION_MM"
+            )
+        if self.Z_RETRACT_POSITION_MM > self.ROTATION_Z_MAX_EXTENSION_MM:
+            raise ValueError(
+                "Z_RETRACT_POSITION_MM cannot exceed ROTATION_Z_MAX_EXTENSION_MM"
+            )
+        return self
 
     @field_validator(
         "IDLE_POSITION",
