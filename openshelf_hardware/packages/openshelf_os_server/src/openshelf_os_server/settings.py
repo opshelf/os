@@ -16,6 +16,7 @@ from openshelf_os.common import (
     ScannerSettings,
     ToolCameraSettings,
     OverheadCameraSettings,
+    OverviewCameraSettings,
     AuthSettings,
     ScaleAppSettings,
     RobotAppSettings,
@@ -54,6 +55,8 @@ class Settings(BaseModel):
     scale: ScaleAppSettings
     tool_camera: ToolCameraSettings
     overhead_camera: OverheadCameraSettings
+    overview_left_camera: OverviewCameraSettings
+    overview_right_camera: OverviewCameraSettings
     auth: AuthSettings
 
     @classmethod
@@ -66,6 +69,8 @@ class Settings(BaseModel):
             scale=config.scale,
             tool_camera=config.tool_camera,
             overhead_camera=config.overhead_camera,
+            overview_left_camera=config.overview_left_camera,
+            overview_right_camera=config.overview_right_camera,
             auth=config.auth,
         )
 

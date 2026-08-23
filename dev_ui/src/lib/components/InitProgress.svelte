@@ -28,6 +28,8 @@
 		printer: 'printer',
 		tool_camera: 'tool camera',
 		overhead_camera: 'overhead camera',
+		overview_left_camera: 'overview left camera',
+		overview_right_camera: 'overview right camera',
 		iobox_sizer_camera: 'sizer camera'
 	};
 
