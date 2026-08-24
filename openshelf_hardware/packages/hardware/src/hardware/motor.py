@@ -31,7 +31,7 @@ POSITION_TOLERANCE_MM = 1.0
 NOOP_POSITION_TOLERANCE_MM = 0.01
 HOME_APPROACH_TOLERANCE_MM = 1.0
 DEFAULT_HOME_APPROACH_BACKOFF_MM = 5.0
-BRAKE_OUTPUT_FUNCTIONS = frozenset({0x24, 0xA4})
+BRAKE_SIGNAL_OUTPUT_FUNCTIONS = frozenset({0x24, 0xA4, 0xA1})
 DEFAULT_BRAKE_RELEASE_DELAY_MS = 250
 DEFAULT_BRAKE_ENGAGEMENT_DELAY_MS = 250
 DEFAULT_BRAKE_ENGAGEMENT_SPEED_THRESHOLD = 10
@@ -42,7 +42,7 @@ Y_AXIS_RUNTIME_PROFILE = {
     "control_mode": 2,
     "ppr": 10000,
     "encoder_resolution_cpr": 4000,
-    "brake_output_function": 0x24,
+    "brake_output_function": 0xA1,
     "brake_release_delay_ms": 250,
     "brake_engagement_delay_ms": 250,
     "brake_engagement_speed_threshold": 10,
@@ -624,10 +624,10 @@ class Motor():
     def require_brake_output_configuration(self) -> int:
         brake_output_function = self._configured_brake_output_function
 
-        if brake_output_function not in BRAKE_OUTPUT_FUNCTIONS:
+        if brake_output_function not in BRAKE_SIGNAL_OUTPUT_FUNCTIONS:
             raise MotorConfigError(
                 f"Motor {self._motor_id} has no verified brake output configuration; "
-                "set brake_output_function to 0x24 or 0xA4"
+                "set brake_output_function to 0x24, 0xA4, or 0xA1"
             )
 
         return brake_output_function
@@ -660,7 +660,7 @@ class Motor():
 
     async def _configure_brake_control(self) -> None:
         # Establish and verify the manufacturer's sequencing parameters before
-        # assigning BRK to the output, which can immediately change relay state.
+        # assigning SO2, which can immediately change the physical brake state.
         for parameter_name, value in self._expected_brake_control_settings().items():
             await self.set_param(parameter_name, value)
 
@@ -716,10 +716,10 @@ class Motor():
     async def set_brake_output_function(self, value: int, *, force: bool = False) -> None:
         brake_output_function = int(value)
 
-        if brake_output_function not in BRAKE_OUTPUT_FUNCTIONS:
+        if brake_output_function not in BRAKE_SIGNAL_OUTPUT_FUNCTIONS:
             raise MotorConfigError(
-                f"Refusing non-brake SO2 function 0x{brake_output_function:02X}; "
-                "expected 0x24 or 0xA4"
+                f"Refusing unsupported brake-signal SO2 function 0x{brake_output_function:02X}; "
+                "expected 0x24, 0xA4, or 0xA1"
             )
 
         if force is False and self._active_brake_output_function == brake_output_function:
