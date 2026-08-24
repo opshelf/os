@@ -665,12 +665,93 @@ async def test_diagnostic_startup_home_sequence_is_clearance_then_direct_seek(mo
     motor.wait_for_move = AsyncMock(return_value=MotorStatus.STOPPED)
     motor._set_zero_position = AsyncMock()
     motor.move_config = AsyncMock()
+    active_peak_current = params.Ip
 
-    await motor.home(pre_home_clearance_mm=50.0, skip_pre_home_approach=True)
+    async def set_param(name: str, value: int) -> None:
+        nonlocal active_peak_current
+        if name == "Peak current":
+            active_peak_current = value
+            events.append(f"current:{value}")
 
-    assert events == ["jog:50.0", "seek"]
+    async def get_param(name: str) -> int:
+        assert name == "Peak current"
+        return active_peak_current
+
+    motor.set_param = AsyncMock(side_effect=set_param)
+    motor.get_param = AsyncMock(side_effect=get_param)
+
+    await motor.home(
+        pre_home_clearance_mm=50.0,
+        skip_pre_home_approach=True,
+        homing_peak_current=30,
+    )
+
+    assert events == ["jog:50.0", "current:30", "seek", f"current:{params.Ip}"]
     motor.get_position.assert_not_awaited()
     motor.move_to_position.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_diagnostic_homing_restores_peak_current_after_start_failure(mock_controller):
+    params = make_motor_params()
+    motor = Motor(mock_controller, params)
+    active_peak_current = params.Ip
+    motor.clear_alarm = AsyncMock()
+    motor._prepare_home_motion = AsyncMock()
+    motor._start_path_zero = AsyncMock(side_effect=MotorError("start failed"))
+
+    async def set_param(name: str, value: int) -> None:
+        nonlocal active_peak_current
+        assert name == "Peak current"
+        active_peak_current = value
+
+    async def get_param(name: str) -> int:
+        assert name == "Peak current"
+        return active_peak_current
+
+    motor.set_param = AsyncMock(side_effect=set_param)
+    motor.get_param = AsyncMock(side_effect=get_param)
+
+    with pytest.raises(MotorError, match="Failed to start homing movement"):
+        await motor.home(skip_pre_home_approach=True, homing_peak_current=30)
+
+    assert active_peak_current == params.Ip
+    assert [call.args for call in motor.set_param.await_args_list] == [
+        ("Peak current", 30),
+        ("Peak current", params.Ip),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_diagnostic_homing_restores_peak_current_after_cancellation(mock_controller):
+    params = make_motor_params()
+    motor = Motor(mock_controller, params)
+    active_peak_current = params.Ip
+    motor.clear_alarm = AsyncMock()
+    motor._prepare_home_motion = AsyncMock()
+    motor._start_path_zero = AsyncMock()
+    motor.wait_for_move = AsyncMock(side_effect=asyncio.CancelledError())
+
+    async def set_param(name: str, value: int) -> None:
+        nonlocal active_peak_current
+        assert name == "Peak current"
+        active_peak_current = value
+
+    async def get_param(name: str) -> int:
+        assert name == "Peak current"
+        return active_peak_current
+
+    motor.set_param = AsyncMock(side_effect=set_param)
+    motor.get_param = AsyncMock(side_effect=get_param)
+
+    with pytest.raises(asyncio.CancelledError):
+        await motor.home(skip_pre_home_approach=True, homing_peak_current=30)
+
+    assert active_peak_current == params.Ip
+    assert [call.args for call in motor.set_param.await_args_list] == [
+        ("Peak current", 30),
+        ("Peak current", params.Ip),
+    ]
 
 
 @pytest.mark.asyncio

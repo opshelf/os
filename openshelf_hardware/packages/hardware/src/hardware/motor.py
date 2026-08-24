@@ -1615,6 +1615,19 @@ class Motor():
             0x21,
         )
 
+    async def _set_and_verify_peak_current(self, value: int) -> None:
+        peak_current = int(value)
+        if peak_current <= 0:
+            raise MotorConfigError("Peak current must be greater than zero")
+
+        await self.set_param("Peak current", peak_current)
+        actual_peak_current = await self.get_param("Peak current")
+        if actual_peak_current != peak_current:
+            raise MotorConfigError(
+                f"Motor {self._motor_id} peak current readback mismatch: "
+                f"configured={peak_current}, read={actual_peak_current}"
+            )
+
     def _get_home_approach_target_mm(self) -> float:
         backoff_mm = DEFAULT_HOME_APPROACH_BACKOFF_MM
         lower_lim = float(getattr(self._params, "lower_lim", 0.0))
@@ -1688,8 +1701,10 @@ class Motor():
         pre_home_clearance_mm: Optional[float] = None,
         *,
         skip_pre_home_approach: bool = False,
+        homing_peak_current: Optional[int] = None,
     ) -> None:
         self._simulated_fault = False
+        restore_peak_current: int | None = None
 
         try:
             self._emit_init("homing")
@@ -1718,6 +1733,19 @@ class Motor():
                 await self._prepare_home_motion(home_rpm, home_dir)
             except Exception as e:
                 raise MotorConfigError(f"Failed to configure homing parameters: {str(e)}") from e
+
+            if homing_peak_current is not None:
+                restore_peak_current = int(self._params.Ip)
+                self._logger.warning(
+                    "Applying temporary homing peak current",
+                    extra={
+                        "motor_id": self._motor_id,
+                        "motor_name": getattr(self._params, "motor_name", None),
+                        "homing_peak_current": int(homing_peak_current),
+                        "restore_peak_current": restore_peak_current,
+                    },
+                )
+                await self._set_and_verify_peak_current(int(homing_peak_current))
 
             try:
                 await self._start_path_zero()
@@ -1761,3 +1789,23 @@ class Motor():
             if not isinstance(e, (MotorError, MotorConfigError, MotorTimeoutError)):
                 raise MotorError(f"Unexpected error during homing: {str(e)}") from e
             raise
+        finally:
+            if restore_peak_current is not None:
+                try:
+                    await self._set_and_verify_peak_current(restore_peak_current)
+                    self._logger.warning(
+                        "Restored peak current after temporary homing override",
+                        extra={
+                            "motor_id": self._motor_id,
+                            "motor_name": getattr(self._params, "motor_name", None),
+                            "peak_current": restore_peak_current,
+                        },
+                    )
+                except Exception as restore_error:
+                    self._is_homed = False
+                    self._hard_stopped = True
+                    self._emit_init("failed", detail="home", reason="peak current restore failed")
+                    raise MotorConfigError(
+                        f"Failed to restore motor {self._motor_id} peak current "
+                        f"to {restore_peak_current}: {restore_error}"
+                    ) from restore_error

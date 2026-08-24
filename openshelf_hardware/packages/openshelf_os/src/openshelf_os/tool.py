@@ -31,6 +31,7 @@ ROTATION_POSITION_EPSILON_DEG = 0.05
 STAGE_RETRACT_TARGET_MM = 3.0
 STAGE_RETRACT_SAFE_THRESHOLD_MM = 5.0
 Y_STARTUP_HOME_CLEARANCE_MM = 50.0
+Y_STARTUP_HOME_PEAK_CURRENT = 30
 
 
 class RotationHomeOrientation(Enum):
@@ -1333,6 +1334,7 @@ class Tool:
                     await motor.home(
                         pre_home_clearance_mm=pre_home_clearance_mm,
                         skip_pre_home_approach=True,
+                        homing_peak_current=Y_STARTUP_HOME_PEAK_CURRENT,
                     )
 
     def _did_motor_configure_fail(self, motor: Optional[Motor], failed_config_motors: List[Motor]) -> bool:
@@ -1357,6 +1359,7 @@ class Tool:
                 await motor.home(
                     pre_home_clearance_mm=pre_home_clearance_mm,
                     skip_pre_home_approach=True,
+                    homing_peak_current=Y_STARTUP_HOME_PEAK_CURRENT,
                 )
             return True
         except Exception as e:

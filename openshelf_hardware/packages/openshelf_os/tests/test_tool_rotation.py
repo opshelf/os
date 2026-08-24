@@ -9,6 +9,7 @@ from openshelf_os.tool import (
     RotationHomeOrientation,
     Tool,
     Y_STARTUP_HOME_CLEARANCE_MM,
+    Y_STARTUP_HOME_PEAK_CURRENT,
     derive_rotation_home_orientation,
 )
 
@@ -117,8 +118,12 @@ async def test_startup_home_moves_y_away_before_direct_home() -> None:
             pre_home_clearance_mm: float | None = None,
             *,
             skip_pre_home_approach: bool = False,
+            homing_peak_current: int | None = None,
         ) -> None:
-            events.append(f"home:{pre_home_clearance_mm}:skip={skip_pre_home_approach}")
+            events.append(
+                f"home:{pre_home_clearance_mm}:skip={skip_pre_home_approach}:"
+                f"current={homing_peak_current}"
+            )
 
     tool = Tool.__new__(Tool)
     tool._ms = None
@@ -130,7 +135,8 @@ async def test_startup_home_moves_y_away_before_direct_home() -> None:
 
     await tool.home(y_pre_home_clearance_mm=Y_STARTUP_HOME_CLEARANCE_MM)
 
-    assert events == ["restore", "home:50.0:skip=True"]
+    assert events == ["restore", "home:50.0:skip=True:current=30"]
+    assert Y_STARTUP_HOME_PEAK_CURRENT == 30
 
 
 @pytest.mark.asyncio
