@@ -30,6 +30,7 @@ ROTATION_HOME_ORIENTATION_EPSILON_DEG = 1e-6
 ROTATION_POSITION_EPSILON_DEG = 0.05
 STAGE_RETRACT_TARGET_MM = 3.0
 STAGE_RETRACT_SAFE_THRESHOLD_MM = 5.0
+Y_STARTUP_HOME_CLEARANCE_MM = 10.0
 
 
 class RotationHomeOrientation(Enum):
@@ -202,7 +203,11 @@ class Tool:
                 self._logger.info("Laser disabled via config")
 
             if home_on_init is True:
-                await self.home(isolate=isolate, failed_config_motors=failed_config_motors)
+                await self.home(
+                    isolate=isolate,
+                    failed_config_motors=failed_config_motors,
+                    y_pre_home_clearance_mm=Y_STARTUP_HOME_CLEARANCE_MM,
+                )
             else:
                 self._mark_configured_motors_ready(failed_config_motors)
         except Exception as e:
@@ -1296,6 +1301,7 @@ class Tool:
         self,
         isolate: bool = False,
         failed_config_motors: Optional[List[Motor]] = None,
+        y_pre_home_clearance_mm: Optional[float] = None,
     ) -> None:
         failed_config_motors = failed_config_motors or []
         failed_home_motors: List[Motor] = []
@@ -1313,23 +1319,39 @@ class Tool:
             await self._home_rotate_sequence()
 
         for motor in (self._mx, self._my):
+            pre_home_clearance_mm = y_pre_home_clearance_mm if motor is self._my else None
             if isolate is True:
-                await self._home_step_isolated(motor, failed_config_motors)
+                await self._home_step_isolated(
+                    motor,
+                    failed_config_motors,
+                    pre_home_clearance_mm=pre_home_clearance_mm,
+                )
             elif motor is not None:
-                await motor.home()
+                if pre_home_clearance_mm is None:
+                    await motor.home()
+                else:
+                    await motor.home(pre_home_clearance_mm=pre_home_clearance_mm)
 
     def _did_motor_configure_fail(self, motor: Optional[Motor], failed_config_motors: List[Motor]) -> bool:
         if motor is None:
             return False
         return any(failed_motor is motor for failed_motor in failed_config_motors)
 
-    async def _home_step_isolated(self, motor: Optional[Motor], failed_config_motors: List[Motor]) -> bool:
+    async def _home_step_isolated(
+        self,
+        motor: Optional[Motor],
+        failed_config_motors: List[Motor],
+        pre_home_clearance_mm: Optional[float] = None,
+    ) -> bool:
         if motor is None:
             return True
         if self._did_motor_configure_fail(motor, failed_config_motors) is True:
             return True
         try:
-            await motor.home()
+            if pre_home_clearance_mm is None:
+                await motor.home()
+            else:
+                await motor.home(pre_home_clearance_mm=pre_home_clearance_mm)
             return True
         except Exception as e:
             self._logger.warning("init home step failed: %s", e)
@@ -1358,11 +1380,16 @@ class Tool:
             self._emit_init("rotate", "failed", "home", str(e))
             self._logger.warning("init rotate home failed: %s", e)
 
-    async def home(self, isolate: bool = False, failed_config_motors: Optional[List[Motor]] = None) -> None:
+    async def home(
+        self,
+        isolate: bool = False,
+        failed_config_motors: Optional[List[Motor]] = None,
+        y_pre_home_clearance_mm: Optional[float] = None,
+    ) -> None:
         if isolate is False:
             try:
                 await self.restore_y_brake_output()
-                await self._home_sequence()
+                await self._home_sequence(y_pre_home_clearance_mm=y_pre_home_clearance_mm)
             except Exception as e:
                 await self._handle_fault(e)
 
@@ -1376,4 +1403,8 @@ class Tool:
         except Exception as e:
             self._logger.warning("init restore_y_brake_output failed: %s", e)
 
-        await self._home_sequence(isolate=True, failed_config_motors=failed_config_motors)
+        await self._home_sequence(
+            isolate=True,
+            failed_config_motors=failed_config_motors,
+            y_pre_home_clearance_mm=y_pre_home_clearance_mm,
+        )

@@ -8,6 +8,7 @@ from openshelf_os.tool import (
     ROTATION_HOME_SAFE_X_MM,
     RotationHomeOrientation,
     Tool,
+    Y_STARTUP_HOME_CLEARANCE_MM,
     derive_rotation_home_orientation,
 )
 
@@ -101,6 +102,53 @@ async def test_home_restores_y_brake_before_homing_y_axis() -> None:
     await tool.home()
 
     assert events == ["restore", "home"]
+
+
+@pytest.mark.asyncio
+async def test_startup_home_moves_y_away_before_normal_pre_home_approach() -> None:
+    events: list[str] = []
+
+    class FakeYMotor:
+        async def restore_brake_output(self) -> None:
+            events.append("restore")
+
+        async def home(self, pre_home_clearance_mm: float | None = None) -> None:
+            events.append(f"home:{pre_home_clearance_mm}")
+
+    tool = Tool.__new__(Tool)
+    tool._ms = None
+    tool._mg = None
+    tool._mr = None
+    tool._mx = None
+    tool._my = FakeYMotor()
+    tool._handle_fault = AsyncMock()
+
+    await tool.home(y_pre_home_clearance_mm=Y_STARTUP_HOME_CLEARANCE_MM)
+
+    assert events == ["restore", "home:10.0"]
+
+
+@pytest.mark.asyncio
+async def test_configure_requests_y_clearance_only_for_startup_home() -> None:
+    tool = Tool.__new__(Tool)
+    tool._params = SimpleNamespace(gripper=SimpleNamespace(enabled=False))
+    tool._ms = None
+    tool._mg = None
+    tool._mr = None
+    tool._mx = None
+    tool._my = None
+    tool._laser = None
+    tool._logger = Mock()
+    tool._handle_fault = AsyncMock()
+    tool.home = AsyncMock()
+
+    await tool.configure(isolate=True, home_on_init=True)
+
+    tool.home.assert_awaited_once_with(
+        isolate=True,
+        failed_config_motors=[],
+        y_pre_home_clearance_mm=Y_STARTUP_HOME_CLEARANCE_MM,
+    )
 
 @pytest.mark.asyncio
 async def test_rotate_to_home_orientation_marks_error_when_move_fails() -> None:
