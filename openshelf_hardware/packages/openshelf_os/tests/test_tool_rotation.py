@@ -105,15 +105,20 @@ async def test_home_restores_y_brake_before_homing_y_axis() -> None:
 
 
 @pytest.mark.asyncio
-async def test_startup_home_moves_y_away_before_normal_pre_home_approach() -> None:
+async def test_startup_home_moves_y_away_before_direct_home() -> None:
     events: list[str] = []
 
     class FakeYMotor:
         async def restore_brake_output(self) -> None:
             events.append("restore")
 
-        async def home(self, pre_home_clearance_mm: float | None = None) -> None:
-            events.append(f"home:{pre_home_clearance_mm}")
+        async def home(
+            self,
+            pre_home_clearance_mm: float | None = None,
+            *,
+            skip_pre_home_approach: bool = False,
+        ) -> None:
+            events.append(f"home:{pre_home_clearance_mm}:skip={skip_pre_home_approach}")
 
     tool = Tool.__new__(Tool)
     tool._ms = None
@@ -125,7 +130,7 @@ async def test_startup_home_moves_y_away_before_normal_pre_home_approach() -> No
 
     await tool.home(y_pre_home_clearance_mm=Y_STARTUP_HOME_CLEARANCE_MM)
 
-    assert events == ["restore", "home:10.0"]
+    assert events == ["restore", "home:50.0:skip=True"]
 
 
 @pytest.mark.asyncio
