@@ -652,6 +652,28 @@ async def test_startup_home_sequence_is_clearance_then_approach_then_seek(mock_c
 
 
 @pytest.mark.asyncio
+async def test_diagnostic_startup_home_sequence_is_clearance_then_direct_seek(mock_controller):
+    params = make_motor_params()
+    motor = Motor(mock_controller, params)
+    events: list[str] = []
+    motor.clear_alarm = AsyncMock()
+    motor.jog = AsyncMock(side_effect=lambda distance, **_: events.append(f"jog:{distance}"))
+    motor.get_position = AsyncMock(return_value=50.0)
+    motor.move_to_position = AsyncMock(side_effect=lambda target, **_: events.append(f"move:{target}"))
+    motor._prepare_home_motion = AsyncMock()
+    motor._start_path_zero = AsyncMock(side_effect=lambda: events.append("seek"))
+    motor.wait_for_move = AsyncMock(return_value=MotorStatus.STOPPED)
+    motor._set_zero_position = AsyncMock()
+    motor.move_config = AsyncMock()
+
+    await motor.home(pre_home_clearance_mm=50.0, skip_pre_home_approach=True)
+
+    assert events == ["jog:50.0", "seek"]
+    motor.get_position.assert_not_awaited()
+    motor.move_to_position.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_diagnostic_home_can_skip_pre_home_approach(mock_controller):
     params = make_motor_params()
     motor = Motor(mock_controller, params)

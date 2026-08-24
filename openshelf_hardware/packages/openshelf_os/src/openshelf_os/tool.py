@@ -30,7 +30,7 @@ ROTATION_HOME_ORIENTATION_EPSILON_DEG = 1e-6
 ROTATION_POSITION_EPSILON_DEG = 0.05
 STAGE_RETRACT_TARGET_MM = 3.0
 STAGE_RETRACT_SAFE_THRESHOLD_MM = 5.0
-Y_STARTUP_HOME_CLEARANCE_MM = 10.0
+Y_STARTUP_HOME_CLEARANCE_MM = 50.0
 
 
 class RotationHomeOrientation(Enum):
@@ -1330,7 +1330,10 @@ class Tool:
                 if pre_home_clearance_mm is None:
                     await motor.home()
                 else:
-                    await motor.home(pre_home_clearance_mm=pre_home_clearance_mm)
+                    await motor.home(
+                        pre_home_clearance_mm=pre_home_clearance_mm,
+                        skip_pre_home_approach=True,
+                    )
 
     def _did_motor_configure_fail(self, motor: Optional[Motor], failed_config_motors: List[Motor]) -> bool:
         if motor is None:
@@ -1351,7 +1354,10 @@ class Tool:
             if pre_home_clearance_mm is None:
                 await motor.home()
             else:
-                await motor.home(pre_home_clearance_mm=pre_home_clearance_mm)
+                await motor.home(
+                    pre_home_clearance_mm=pre_home_clearance_mm,
+                    skip_pre_home_approach=True,
+                )
             return True
         except Exception as e:
             self._logger.warning("init home step failed: %s", e)
