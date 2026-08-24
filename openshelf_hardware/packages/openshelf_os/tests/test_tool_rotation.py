@@ -135,7 +135,7 @@ async def test_startup_home_moves_y_away_before_direct_home() -> None:
 
     await tool.home(y_pre_home_clearance_mm=Y_STARTUP_HOME_CLEARANCE_MM)
 
-    assert events == ["restore", "home:50.0:skip=True:current=30"]
+    assert events == ["restore", "home:10.0:skip=True:current=30"]
     assert Y_STARTUP_HOME_PEAK_CURRENT == 30
 
 
