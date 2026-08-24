@@ -1663,11 +1663,27 @@ class Motor():
 
         await self.move_to_position(target_mm, rpm=rpm, homing=False)
 
+    async def _move_away_from_home(self, distance_mm: float, rpm: int) -> None:
+        if distance_mm <= 0:
+            raise MotorConfigError("Pre-home clearance distance must be positive")
+
+        logical_distance_mm = -distance_mm if self._is_physical_mapping_inverted() is True else distance_mm
+        self._logger.info(
+            "Starting pre-home clearance move",
+            extra={
+                "motor_id": self._motor_id,
+                "motor_name": getattr(self._params, "motor_name", None),
+                "distance_mm": logical_distance_mm,
+                "rpm": rpm,
+            },
+        )
+        await self.jog(logical_distance_mm, rpm=rpm, homing=False)
+
     # ------------------------------------------------------------------ #
     #  Public homing API
     # ------------------------------------------------------------------ #
 
-    async def home(self) -> None:
+    async def home(self, pre_home_clearance_mm: Optional[float] = None) -> None:
         self._simulated_fault = False
 
         try:
@@ -1678,6 +1694,8 @@ class Motor():
             home_rpm = self._params.home_rpm or self._params.ret_rpm
 
             try:
+                if pre_home_clearance_mm is not None:
+                    await self._move_away_from_home(pre_home_clearance_mm, self._params.ret_rpm)
                 await self._move_near_home(self._params.ret_rpm)
             except Exception as e:
                 raise MotorConfigError(f"Failed during pre-home approach: {str(e)}") from e

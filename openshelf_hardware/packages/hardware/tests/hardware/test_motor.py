@@ -604,6 +604,54 @@ async def test_motor_home_moves_near_home_before_sensorless_seek(mock_controller
 
 
 @pytest.mark.asyncio
+async def test_motor_home_runs_clearance_move_before_pre_home_approach(mock_controller):
+    params = make_motor_params()
+    motor = Motor(mock_controller, params)
+    events: list[str] = []
+    motor.clear_alarm = AsyncMock()
+    motor._move_away_from_home = AsyncMock(side_effect=lambda *_: events.append("clearance"))
+    motor._move_near_home = AsyncMock(side_effect=lambda *_: events.append("approach"))
+    motor.wait_for_move = AsyncMock(return_value=MotorStatus.STOPPED)
+    motor.move_config = AsyncMock()
+
+    await motor.home(pre_home_clearance_mm=10.0)
+
+    assert events == ["clearance", "approach"]
+    motor._move_away_from_home.assert_awaited_once_with(10.0, params.ret_rpm)
+
+
+@pytest.mark.asyncio
+async def test_move_away_from_home_uses_positive_logical_direction_for_normal_mapping(mock_controller):
+    params = make_motor_params()
+    motor = Motor(mock_controller, params)
+    motor.jog = AsyncMock()
+
+    await motor._move_away_from_home(10.0, params.ret_rpm)
+
+    motor.jog.assert_awaited_once_with(10.0, rpm=params.ret_rpm, homing=False)
+
+
+@pytest.mark.asyncio
+async def test_startup_home_sequence_is_clearance_then_approach_then_seek(mock_controller):
+    params = make_motor_params()
+    motor = Motor(mock_controller, params)
+    events: list[str] = []
+    motor.clear_alarm = AsyncMock()
+    motor.jog = AsyncMock(side_effect=lambda distance, **_: events.append(f"jog:{distance}"))
+    motor.get_position = AsyncMock(return_value=10.0)
+    motor.move_to_position = AsyncMock(side_effect=lambda target, **_: events.append(f"move:{target}"))
+    motor._prepare_home_motion = AsyncMock()
+    motor._start_path_zero = AsyncMock(side_effect=lambda: events.append("seek"))
+    motor.wait_for_move = AsyncMock(return_value=MotorStatus.STOPPED)
+    motor._set_zero_position = AsyncMock()
+    motor.move_config = AsyncMock()
+
+    await motor.home(pre_home_clearance_mm=10.0)
+
+    assert events == ["jog:10.0", "move:5.0", "seek"]
+
+
+@pytest.mark.asyncio
 async def test_cancelled_homing_marks_next_home_to_skip_pre_home(mock_controller):
     params = make_motor_params()
     motor = Motor(mock_controller, params)
