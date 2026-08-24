@@ -681,12 +681,12 @@ async def test_diagnostic_startup_home_sequence_is_clearance_then_direct_seek(mo
     motor.get_param = AsyncMock(side_effect=get_param)
 
     await motor.home(
-        pre_home_clearance_mm=50.0,
+        pre_home_clearance_mm=10.0,
         skip_pre_home_approach=True,
         homing_peak_current=30,
     )
 
-    assert events == ["jog:50.0", "current:30", "seek", f"current:{params.Ip}"]
+    assert events == ["jog:10.0", "current:30", "seek", f"current:{params.Ip}"]
     motor.get_position.assert_not_awaited()
     motor.move_to_position.assert_not_awaited()
 
