@@ -1683,7 +1683,12 @@ class Motor():
     #  Public homing API
     # ------------------------------------------------------------------ #
 
-    async def home(self, pre_home_clearance_mm: Optional[float] = None) -> None:
+    async def home(
+        self,
+        pre_home_clearance_mm: Optional[float] = None,
+        *,
+        skip_pre_home_approach: bool = False,
+    ) -> None:
         self._simulated_fault = False
 
         try:
@@ -1696,7 +1701,16 @@ class Motor():
             try:
                 if pre_home_clearance_mm is not None:
                     await self._move_away_from_home(pre_home_clearance_mm, self._params.ret_rpm)
-                await self._move_near_home(self._params.ret_rpm)
+                if skip_pre_home_approach is True:
+                    self._logger.warning(
+                        "Skipping pre-home approach for diagnostic homing",
+                        extra={
+                            "motor_id": self._motor_id,
+                            "motor_name": getattr(self._params, "motor_name", None),
+                        },
+                    )
+                else:
+                    await self._move_near_home(self._params.ret_rpm)
             except Exception as e:
                 raise MotorConfigError(f"Failed during pre-home approach: {str(e)}") from e
 
