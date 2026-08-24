@@ -98,13 +98,13 @@ def test_y_axis_accepts_exact_brake_profile():
         "accel": 1,
         "ret_rpm": 1,
         "lim": 10,
-        "brake_output_function": 0x24,
+        "brake_output_function": 0xA1,
     }]
 
     config = RootConfig.model_validate(data)
 
     y_axis = config.robot.tool.motors.by_name("y_axis")
-    assert y_axis.brake_output_function == 0x24
+    assert y_axis.brake_output_function == 0xA1
     assert y_axis.brake_release_delay_ms == 250
     assert y_axis.brake_engagement_delay_ms == 250
     assert y_axis.brake_engagement_speed_threshold == 10
@@ -155,7 +155,7 @@ def test_motor_rejects_out_of_range_brake_sequencing(field: str, value: int):
         "accel": 1,
         "ret_rpm": 1,
         "lim": 10,
-        "brake_output_function": 0x24,
+        "brake_output_function": 0xA1,
         field: value,
     }
     data["robot"]["tool"]["motors"] = [motor]
@@ -164,7 +164,7 @@ def test_motor_rejects_out_of_range_brake_sequencing(field: str, value: int):
         RootConfig.model_validate(data)
 
 
-def test_motor_rejects_path_completed_as_brake_output_function():
+def test_motor_rejects_unsupported_brake_output_function():
     data = copy.deepcopy(MINIMAL_CONFIG_DICT)
     data["robot"]["tool"]["motors"] = [{
         "motor_name": "y_axis",
@@ -176,7 +176,7 @@ def test_motor_rejects_path_completed_as_brake_output_function():
         "accel": 1,
         "ret_rpm": 1,
         "lim": 10,
-        "brake_output_function": 0xA1,
+        "brake_output_function": 0xA0,
     }]
 
     with pytest.raises(ValueError, match="brake_output_function"):
@@ -190,7 +190,7 @@ def test_motor_rejects_path_completed_as_brake_output_function():
         ("ppr", 4000),
         ("encoder_resolution_cpr", 1000),
         ("control_mode", 0),
-        ("brake_output_function", 0xA4),
+        ("brake_output_function", 0x24),
         ("brake_release_delay_ms", 249),
         ("brake_engagement_delay_ms", 249),
         ("brake_engagement_speed_threshold", 9),
@@ -208,7 +208,7 @@ def test_y_axis_rejects_controller_profile_mismatch(field: str, value: int):
         "accel": 1,
         "ret_rpm": 1,
         "lim": 10,
-        "brake_output_function": 0x24,
+        "brake_output_function": 0xA1,
         field: value,
     }
     data["robot"]["tool"]["motors"] = [motor]
