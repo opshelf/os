@@ -17,6 +17,7 @@ from hardware.controller import SharedModbusController
 
 if TYPE_CHECKING:
     from hardware.curtain import MotionSafetyInterlock
+    from hardware.gpio.types import DigitalInput
 
 from hardware.exceptions import (
     MotorError, MotorTimeoutError, MotorLimitError,
@@ -31,6 +32,8 @@ POSITION_TOLERANCE_MM = 1.0
 NOOP_POSITION_TOLERANCE_MM = 0.01
 HOME_APPROACH_TOLERANCE_MM = 1.0
 DEFAULT_HOME_APPROACH_BACKOFF_MM = 5.0
+HOME_LIMIT_VERIFY_TIMEOUT_S = 0.5
+HOME_LIMIT_VERIFY_POLL_INTERVAL_S = 0.02
 BRAKE_OUTPUT_FUNCTIONS = frozenset({0x24, 0xA4})
 DEFAULT_BRAKE_RELEASE_DELAY_MS = 250
 DEFAULT_BRAKE_ENGAGEMENT_DELAY_MS = 250
@@ -138,10 +141,17 @@ class Motor():
     _status: MotorStatus
     _last_bad_position_log_at: Optional[float]
 
-    def __init__(self, controller: SharedModbusController, params: Any, safety: Optional["MotionSafetyInterlock"] = None) -> None:
+    def __init__(
+        self,
+        controller: SharedModbusController,
+        params: Any,
+        safety: Optional["MotionSafetyInterlock"] = None,
+        home_limit_input: Optional["DigitalInput"] = None,
+    ) -> None:
         self._motor_id = params.motor_id
         self._controller = controller
         self._params = params
+        self._home_limit_input = home_limit_input
         self._cur_pos = None
         self._stall_timeout = float(getattr(params, "stall_timeout_s", DEFAULT_STALL_TIMEOUT_S))
         self._status = MotorStatus.IDLE
@@ -1686,6 +1696,27 @@ class Motor():
 
         await self.move_to_position(target_mm, rpm=rpm, homing=False)
 
+    async def _verify_home_limit_engaged(self) -> None:
+        if self._home_limit_input is None:
+            return
+
+        deadline = time.monotonic() + HOME_LIMIT_VERIFY_TIMEOUT_S
+        while True:
+            if self._home_limit_input.read() is True:
+                return
+
+            if time.monotonic() >= deadline:
+                break
+
+            await asyncio.sleep(HOME_LIMIT_VERIFY_POLL_INTERVAL_S)
+
+        self._is_homed = False
+        self._hard_stopped = True
+        raise MotorLimitError(
+            f"Motor {self._motor_id} completed homing but limit switch "
+            f"'{self._home_limit_input.name}' is not engaged"
+        )
+
     # ------------------------------------------------------------------ #
     #  Public homing API
     # ------------------------------------------------------------------ #
@@ -1729,6 +1760,8 @@ class Motor():
                     raise MotorError(f"Failed to set home position as zero: {str(e)}") from e
 
                 await self.move_config()
+
+                await self._verify_home_limit_engaged()
 
                 self._is_homed = True
                 self._hard_stopped = False
