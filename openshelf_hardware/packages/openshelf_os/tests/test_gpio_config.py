@@ -87,8 +87,8 @@ def test_robot_gpio_empty_object_expands_to_defaults() -> None:
     assert robot.gpio.pins["estop"].pin == 10
     assert robot.gpio.pins["estop"].pull == "off"
     assert robot.gpio.pins["estop"].inverted is False
-    assert robot.gpio.pins["io_limit_max"].pin == 0
-    assert robot.gpio.pins["io_limit_min"].pin == 15
+    assert robot.gpio.pins["io_lim_max"].pin == 0
+    assert robot.gpio.pins["io_lim_min"].pin == 15
     assert robot.gpio.pins["io_1"].pin == 3
     physical_keys = [(pin.board, pin.expander, pin.pin) for pin in robot.gpio.pins.values()]
     assert len(physical_keys) == len(set(physical_keys))
