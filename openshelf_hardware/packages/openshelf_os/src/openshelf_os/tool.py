@@ -129,6 +129,14 @@ class Tool:
             motorcontroller, motors, "rotate", safety, self._logger, gpio, home_limit_pin="r_lim_min"
         )
 
+        self._gpio = gpio
+        self._x_lim_minunsafe_input = (
+            gpio.input("x_lim_minunsafe") if gpio is not None and gpio.has_pin("x_lim_minunsafe") else None
+        )
+        self._x_lim_maxunsafe_input = (
+            gpio.input("x_lim_maxunsafe") if gpio is not None and gpio.has_pin("x_lim_maxunsafe") else None
+        )
+
         self._gs = Servo(self._motorcontroller, self._params.gripper.model_dump())
 
         self._laser_enabled = self._params.laser.enabled
@@ -1078,6 +1086,14 @@ class Tool:
                 unsafe.append(
                     f"z_axis={z_position:.3f}mm exceeds maximum {maximum_z_mm:.3f}mm"
                 )
+
+        x_lim_minunsafe_input = getattr(self, "_x_lim_minunsafe_input", None)
+        if x_lim_minunsafe_input is not None and x_lim_minunsafe_input.read() is not True:
+            unsafe.append("x_lim_minunsafe is not HIGH")
+
+        x_lim_maxunsafe_input = getattr(self, "_x_lim_maxunsafe_input", None)
+        if x_lim_maxunsafe_input is not None and x_lim_maxunsafe_input.read() is not True:
+            unsafe.append("x_lim_maxunsafe is not HIGH")
 
         if unsafe:
             raise MovementError("Unsafe tool clearance for rotation: " + "; ".join(unsafe))
