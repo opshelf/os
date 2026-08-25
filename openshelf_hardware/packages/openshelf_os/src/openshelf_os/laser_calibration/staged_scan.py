@@ -557,6 +557,7 @@ def get_existing_shelf_xy_delta(
 	*,
 	scanned_shelf: Any,
 	target_shelf: Any,
+	included_cell_keys: set[tuple[int, int]] | None = None,
 	) -> tuple[float, float]:
 	existing_lookup = {
 		int(cell.cell_idx): cell
@@ -568,6 +569,10 @@ def get_existing_shelf_xy_delta(
 
 	for scanned_cell in getattr(scanned_shelf, "cells", []):
 		if scanned_cell.calibration_point is None:
+			continue
+
+		cell_key = (int(scanned_shelf.shelf_idx), int(scanned_cell.cell_idx))
+		if included_cell_keys is not None and cell_key not in included_cell_keys:
 			continue
 
 		existing_cell = existing_lookup.get(int(scanned_cell.cell_idx))
@@ -594,12 +599,17 @@ def apply_xy_reference_delta(
 	scanned_shelves: list[Any],
 	delta_x_mm: float,
 	delta_y_mm: float,
+	included_cell_keys: set[tuple[int, int]] | None = None,
 	) -> None:
 	updated_cell_count = 0
 
 	for shelf in scanned_shelves:
 		for cell in shelf.cells:
 			if cell.calibration_point is None:
+				continue
+
+			cell_key = (int(shelf.shelf_idx), int(cell.cell_idx))
+			if included_cell_keys is not None and cell_key not in included_cell_keys:
 				continue
 
 			cell.calibration_point.x = float(cell.calibration_point.x) + float(delta_x_mm)
@@ -814,6 +824,7 @@ def apply_wall_depth_z_offsets(
 	metadata_path: str,
 	z_delta_mm: float,
 	z_delta_slope_per_mm: float = 0.0,
+	detected_cell_key_map: dict[tuple[int, int], tuple[int, int]] | None = None,
 	) -> None:
 	metadata_file = Path(metadata_path)
 
@@ -835,6 +846,15 @@ def apply_wall_depth_z_offsets(
 		)
 
 	updated_cell_count = 0
+	preserved_cell_count = 0
+	output_to_analysis_key: dict[tuple[int, int], tuple[int, int]] | None = None
+	if detected_cell_key_map is not None:
+		output_to_analysis_key = {}
+		for analysis_key, output_key in detected_cell_key_map.items():
+			if output_key in output_to_analysis_key:
+				raise ValueError(f"Multiple detected cells mapped to scanned cell {output_key[0]}:{output_key[1]}")
+			output_to_analysis_key[output_key] = analysis_key
+
 	# wall_depth is the sole per-cell z source. A cell without one used to be skipped silently,
 	# which left it at the z_offset=0 default from build_shelves_from_scan.
 	missing_cells: list[str] = []
@@ -844,10 +864,21 @@ def apply_wall_depth_z_offsets(
 			if cell.calibration_point is None:
 				continue
 
-			candidate = candidate_lookup.get((shelf.shelf_idx, cell.cell_idx))
+			output_key = (int(shelf.shelf_idx), int(cell.cell_idx))
+			analysis_key = output_key
+			if output_to_analysis_key is not None:
+				mapped_analysis_key = output_to_analysis_key.get(output_key)
+				if mapped_analysis_key is None:
+					# This is an existing cell preserved because it was physically absent from
+					# the partial scan. Its existing z_offset is intentional, not a blank scan.
+					preserved_cell_count += 1
+					continue
+				analysis_key = mapped_analysis_key
+
+			candidate = candidate_lookup.get(analysis_key)
 
 			if candidate is None or candidate.wall_depth_mm is None:
-				missing_cells.append(f"{shelf.shelf_idx}:{cell.cell_idx}")
+				missing_cells.append(f"{output_key[0]}:{output_key[1]}")
 				continue
 
 			cell_delta_mm = float(z_delta_mm) + float(z_delta_slope_per_mm) * float(cell.calibration_point.x)
@@ -863,7 +894,8 @@ def apply_wall_depth_z_offsets(
 
 	print_status(
 		f"z_offset_inference=applied intercept_mm={float(z_delta_mm):.3f} "
-		f"slope_per_mm={float(z_delta_slope_per_mm):.5f} updated_cells={updated_cell_count}"
+		f"slope_per_mm={float(z_delta_slope_per_mm):.5f} updated_cells={updated_cell_count} "
+		f"preserved_cells={preserved_cell_count}"
 	)
 
 
@@ -962,15 +994,22 @@ def build_single_shelf_known_edge_y(
 		shelf_idx=shelf_idx,
 	)
 	laser_offset_y_mm = require_scan_config_parameter(scan_config, "laser_offset_y_mm")
+	xy_offset = get_scan_xy_offset(scan_config=scan_config, side=side)
 	candidate_center_y_values: list[float] = []
 
 	for cell in target_shelf.cells:
 		if cell.calibration_point is None:
 			continue
 
-		candidate_center_y_values.append(
-			float(cell.calibration_point.y) + laser_offset_y_mm
-		)
+		candidate_center_y_mm = float(cell.calibration_point.y) + laser_offset_y_mm
+
+		# Stored calibration points already include the fixed laser-to-gripper reference
+		# correction. Convert them back into the laser frame before seeding a shelf scan,
+		# just as build_single_cell_rescan_candidate does for a cell-scoped scan.
+		if xy_offset is not None:
+			candidate_center_y_mm -= float(xy_offset[1])
+
+		candidate_center_y_values.append(candidate_center_y_mm)
 
 	if len(candidate_center_y_values) == 0:
 		raise ValueError(f"Shelf {shelf_idx} has no calibration points on {side.value}")
@@ -1074,10 +1113,12 @@ def apply_single_shelf_analysis(
 		deep=True,
 		update={"shelf_idx": 0},
 	)
+	detected_cell_key_map: dict[tuple[int, int], tuple[int, int]] = {}
 	scanned_shelves = build_shelves_from_scan(
 		side=side,
 		analysis=analysis,
 		existing_shelves=[remapped_existing_shelf],
+		detected_cell_key_map=detected_cell_key_map,
 	)
 
 	if len(scanned_shelves) != 1:
@@ -1085,6 +1126,7 @@ def apply_single_shelf_analysis(
 
 	scanned_shelf = scanned_shelves[0]
 	scanned_shelf.divider_width = float(target_shelf.divider_width)
+	detected_output_keys = set(detected_cell_key_map.values()) if len(detected_cell_key_map) > 0 else None
 
 	xy_offset = get_scan_xy_offset(scan_config=scan_config, side=side)
 
@@ -1097,24 +1139,32 @@ def apply_single_shelf_analysis(
 			scanned_shelves=[scanned_shelf],
 			delta_x_mm=xy_offset[0],
 			delta_y_mm=xy_offset[1],
+			included_cell_keys=detected_output_keys,
 		)
 	else:
 		delta_x_mm, delta_y_mm = get_existing_shelf_xy_delta(
 			scanned_shelf=scanned_shelf,
 			target_shelf=target_shelf,
+			included_cell_keys=detected_output_keys,
 		)
 		apply_xy_reference_delta(
 			scanned_shelves=[scanned_shelf],
 			delta_x_mm=delta_x_mm,
 			delta_y_mm=delta_y_mm,
+			included_cell_keys=detected_output_keys,
 		)
 	if z_delta_override_mm is not None:
+		z_apply_kwargs: dict[str, Any] = {}
+		if len(detected_cell_key_map) > 0:
+			z_apply_kwargs["detected_cell_key_map"] = detected_cell_key_map
+
 		apply_wall_depth_z_offsets(
 			analysis=analysis,
 			scanned_shelves=[scanned_shelf],
 			metadata_path=str(analysis.metadata_path),
 			z_delta_mm=z_delta_override_mm,
 			z_delta_slope_per_mm=z_delta_slope_per_mm,
+			**z_apply_kwargs,
 		)
 	else:
 		print_status("z_offset_inference=skipped reason=partial_rescan_preserves_existing_z_offsets")

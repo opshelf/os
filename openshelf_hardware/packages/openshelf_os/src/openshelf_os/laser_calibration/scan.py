@@ -648,6 +648,7 @@ def _match_detected_cells_to_existing(
 	side_number: int,
 	default_length_mm: float,
 	shelf_idx: int,
+	detected_cell_key_map: Optional[dict[tuple[int, int], tuple[int, int]]] = None,
 ) -> list[Cell]:
 	detected_sorted = sorted(detected_cells, key=lambda cell: float(cell.tool_x_mm))
 	calibrated_existing = [
@@ -659,6 +660,13 @@ def _match_detected_cells_to_existing(
 	existing_sorted = sorted(calibrated_existing, key=lambda pair: float(pair[1].x))
 
 	if len(uncalibrated_existing) == 0 and len(detected_sorted) == len(existing_sorted):
+		if detected_cell_key_map is not None:
+			for (existing_cell, _existing_point), detected_cell in zip(existing_sorted, detected_sorted):
+				detected_cell_key_map[(int(detected_cell.shelf_idx), int(detected_cell.cell_idx))] = (
+					shelf_idx,
+					int(existing_cell.cell_idx),
+				)
+
 		output_cells = [
 			_build_scan_cell(
 				cell_idx=existing_cell.cell_idx,
@@ -707,6 +715,12 @@ def _match_detected_cells_to_existing(
 
 		is_detected_used[best_index] = True
 		matched_count += 1
+		if detected_cell_key_map is not None:
+			matched_detected_cell = detected_sorted[best_index]
+			detected_cell_key_map[(int(matched_detected_cell.shelf_idx), int(matched_detected_cell.cell_idx))] = (
+				shelf_idx,
+				int(existing_cell.cell_idx),
+			)
 		output_cells.append(
 			_build_scan_cell(
 				cell_idx=existing_cell.cell_idx,
@@ -726,6 +740,12 @@ def _match_detected_cells_to_existing(
 	for index, detected_cell in enumerate(detected_sorted):
 		if is_detected_used[index] is True:
 			continue
+
+		if detected_cell_key_map is not None:
+			detected_cell_key_map[(int(detected_cell.shelf_idx), int(detected_cell.cell_idx))] = (
+				shelf_idx,
+				next_cell_idx,
+			)
 
 		output_cells.append(
 			_build_scan_cell(
@@ -762,6 +782,7 @@ def build_shelves_from_scan(
 	analysis: ScanAnalysisResult,
 	existing_shelves: Optional[list[Shelf]] = None,
 	default_length_mm: float = 400.0,
+	detected_cell_key_map: Optional[dict[tuple[int, int], tuple[int, int]]] = None,
 ) -> list[Shelf]:
 	existing_lookup: dict[tuple[int, int], Cell] = {}
 	existing_by_shelf: dict[int, Shelf] = {}
@@ -785,8 +806,16 @@ def build_shelves_from_scan(
 				side_number=side_number,
 				default_length_mm=default_length_mm,
 				shelf_idx=detected_shelf.shelf_idx,
+				detected_cell_key_map=detected_cell_key_map,
 			)
 		else:
+			if detected_cell_key_map is not None:
+				for detected_cell in detected_shelf.cells:
+					detected_cell_key_map[(int(detected_cell.shelf_idx), int(detected_cell.cell_idx))] = (
+						int(detected_shelf.shelf_idx),
+						int(detected_cell.cell_idx),
+					)
+
 			cells = [
 				_build_scan_cell(
 					cell_idx=detected_cell.cell_idx,

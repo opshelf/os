@@ -362,6 +362,7 @@ async def test_scale_endpoint_disabled_returns_not_found(client: AsyncClient) ->
 @pytest.mark.anyio
 async def test_retrieve_command_uses_cached_occupied_scale_status() -> None:
 	worker = _mock_worker()
+	worker.get_safety_status.return_value = {"bypassed": False}
 	worker.get_cached_scale_status.return_value = SimpleNamespace(occupied=True)
 	db = AsyncMock()
 
@@ -376,6 +377,29 @@ async def test_retrieve_command_uses_cached_occupied_scale_status() -> None:
 
 	assert exc_info.value.status_code == 409
 	worker.get_scale_data.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_retrieve_command_bypasses_occupied_scale_with_global_safety_override() -> None:
+	worker = _mock_worker()
+	worker.get_safety_status.return_value = {"bypassed": True}
+	worker.get_cached_scale_status.return_value = SimpleNamespace(occupied=True)
+	item_result = MagicMock()
+	item_result.scalar_one_or_none.return_value = SimpleNamespace(access_level_id=None)
+	db = AsyncMock()
+	db.execute.return_value = item_result
+
+	with patch("openshelf_os_server.routers.robot.is_laser_auto_calibration_running", AsyncMock(return_value=False)):
+		await robot_router.robot_commands(
+			command=RetrieveItemCommand(location={"side": "left_module", "shelf_idx": 0, "cell_idx": 0}),
+			worker=worker,
+			current_user=SimpleNamespace(id=1, role=SimpleNamespace(name="admin")),
+			db=db,
+		)
+
+	worker.get_cached_scale_status.assert_not_called()
+	worker.get_scale_data.assert_not_awaited()
+	worker.enqueue_command.assert_awaited_once()
 
 
 @pytest.mark.anyio

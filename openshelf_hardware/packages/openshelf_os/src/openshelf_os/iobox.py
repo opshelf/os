@@ -2,6 +2,7 @@ import asyncio
 from typing import Awaitable, Callable, Optional
 
 from hardware.controller import SharedModbusController as Controller
+from hardware.exceptions import MotorError as HardwareMotorError
 from hardware.motor import Motor
 from hardware.curtain import CurtainSensor, CurtainMonitor
 from openshelf_os.exceptions import (
@@ -15,6 +16,11 @@ from enum import Enum
 import logging
 import sentry_sdk
 import time
+
+
+DOOR_LIMIT_ALARM_CODE = 32
+DOOR_HOME_VERIFY_TOLERANCE_MM = 1.0
+DOOR_ZERO_POSITION_TOLERANCE_MM = 0.01
 
 
 def _create_motor_if_enabled(
@@ -90,6 +96,9 @@ class IOBox:
         self._door_bad_reading_count: int = 0
         self._door_max_bad_readings: int = 5
         self._door_max_position_mm: float = 1000.0
+        self._door_home_verify_tolerance_mm: float = DOOR_HOME_VERIFY_TOLERANCE_MM
+        self._door_zero_position_tolerance_mm: float = DOOR_ZERO_POSITION_TOLERANCE_MM
+        self._door_motion_lock = asyncio.Lock()
 
     def reload_parameters(self) -> None:
         config = load_config_file(c.CONFIG_PATH)
@@ -256,20 +265,127 @@ class IOBox:
     def set_light_curtain_bypassed(self, enabled: bool) -> None:
         self._light_curtain_bypassed = enabled
 
+    def _is_door_motion_safety_explicitly_clear(self) -> bool:
+        if self._curtain_state is not False or self._md is None:
+            return False
+
+        safety = getattr(self._md, "_safety", None)
+        if safety is None:
+            return False
+
+        try:
+            return safety.blocked is False
+        except Exception:
+            return False
+
+    async def _is_recoverable_door_move_fault(self, exc: HardwareMotorError) -> bool:
+        if self._is_door_motion_safety_explicitly_clear() is False:
+            return False
+
+        fault_context = getattr(exc, "fault_context", None)
+
+        if not isinstance(fault_context, dict):
+            return False
+
+        if not all(
+            fault_context.get(field) is False
+            for field in ("stall_detected", "no_progress", "safety_blocked")
+        ):
+            return False
+
+        if "alarm_code" not in fault_context:
+            return False
+
+        alarm_code = fault_context["alarm_code"]
+        if alarm_code is not None:
+            return alarm_code == DOOR_LIMIT_ALARM_CODE
+
+        if self._md is None:
+            return False
+
+        try:
+            alarm_code = await self._md.get_param("Current alarm")
+        except Exception as alarm_exc:
+            self._logger.warning(
+                "Could not classify door movement fault for retry: %s",
+                alarm_exc,
+            )
+            return False
+
+        return (
+            alarm_code == DOOR_LIMIT_ALARM_CODE
+            and self._is_door_motion_safety_explicitly_clear()
+        )
+
+    async def _verify_door_homed(self) -> None:
+        if self._md is None:
+            raise IOBoxError("Door motor not configured or disabled")
+
+        position_mm = await self._md.get_position()
+        tolerance_mm = self._door_home_verify_tolerance_mm
+
+        if position_mm is None or abs(position_mm) > tolerance_mm:
+            raise HardwareMotorError(
+                "Door recovery homing did not establish a valid zero position "
+                f"(position={position_mm}, tolerance={tolerance_mm})"
+            )
+
+    async def _move_door_with_retry(
+        self,
+        target_mm: float,
+        *,
+        operation: str,
+        rpm: Optional[int] = None,
+    ) -> None:
+        if self._md is None:
+            raise IOBoxError("Door motor not configured or disabled")
+
+        try:
+            await self._md.move_to_position(target_mm, rpm=rpm)
+            return
+        except HardwareMotorError as exc:
+            if await self._is_recoverable_door_move_fault(exc) is False:
+                raise
+
+            self._logger.warning(
+                "Recoverable door limit alarm; homing before one movement retry",
+                extra={
+                    "operation": operation,
+                    "target_mm": target_mm,
+                    "alarm_code": DOOR_LIMIT_ALARM_CODE,
+                },
+            )
+
+            if self._is_door_motion_safety_explicitly_clear() is False:
+                raise exc
+
+            await self._home_door_and_cache_closed()
+            await self._verify_door_homed()
+
+            self._logger.info(
+                "Retrying door movement after successful recovery home",
+                extra={"operation": operation, "target_mm": target_mm},
+            )
+            await self._md.move_to_position(target_mm, rpm=rpm)
+
     async def open_door(self):
         if self._md is None:
             raise IOBoxError("Door motor not configured or disabled")
 
         try:
-            while (
-                self._curtain_state
-                and self._safety_guard_bypassed is False
-                and self._light_curtain_bypassed is False
-            ):
-                await asyncio.sleep(0.05)
+            async with self._door_motion_lock:
+                while (
+                    self._curtain_state
+                    and self._safety_guard_bypassed is False
+                    and self._light_curtain_bypassed is False
+                ):
+                    await asyncio.sleep(0.05)
 
-            await self._md.move_to_position(self._params.motors.by_name("door").lim)
-            await self.refresh_door_state(force=True)
+                await self._move_door_with_retry(
+                    self._params.motors.by_name("door").lim,
+                    operation="open",
+                )
+                await self.refresh_door_state(force=True)
         except Exception as e:
             self._status = IOBoxStatus.ERROR
 
@@ -283,9 +399,14 @@ class IOBox:
             raise IOBoxError("Door motor not configured or disabled")
 
         try:
-            door_cfg = self._params.motors.by_name("door")
-            await self._md.move_to_position(door_cfg.lower_lim, rpm=door_cfg.ret_rpm)
-            await self.refresh_door_state(force=True)
+            async with self._door_motion_lock:
+                door_cfg = self._params.motors.by_name("door")
+                await self._move_door_with_retry(
+                    door_cfg.lower_lim,
+                    operation="close",
+                    rpm=door_cfg.ret_rpm,
+                )
+                await self.refresh_door_state(force=True)
         except Exception as e:
             self._status = IOBoxStatus.ERROR
 
@@ -300,9 +421,19 @@ class IOBox:
             return
 
         try:
-            if not self._curtain_state:
-                await self.close_door()
-            await self._md.home()
+            async with self._door_motion_lock:
+                if not self._curtain_state:
+                    door_cfg = self._params.motors.by_name("door")
+                    await self._move_door_with_retry(
+                        door_cfg.lower_lim,
+                        operation="pre_home_close",
+                        rpm=door_cfg.ret_rpm,
+                    )
+                await self._home_door_and_cache_closed()
+                await self.refresh_door_state(force=True)
+                # The forced refresh is diagnostic only: a completed home is
+                # authoritative even if the immediately following read is stale.
+                self._cache_door_closed_after_home()
 
         except Exception as e:
             self._status = IOBoxStatus.ERROR
@@ -311,6 +442,21 @@ class IOBox:
                 raise
 
             raise MotorError(f"Failed to home door: {str(e)}") from e
+
+    def _cache_door_closed_after_home(self) -> None:
+        """Record the known physical door position after a successful home."""
+        self._door_open = False
+        self._door_candidate_state = None
+        self._door_candidate_since = None
+        self._door_bad_reading_count = 0
+
+    async def _home_door_and_cache_closed(self) -> None:
+        """Home the door and record its authoritative closed state on success."""
+        if self._md is None:
+            raise IOBoxError("Door motor not configured or disabled")
+
+        await self._md.home()
+        self._cache_door_closed_after_home()
 
 
     def _handle_curtain_change(self, state: Optional[bool]) -> None:
@@ -341,6 +487,26 @@ class IOBox:
     def get_door_state(self) -> Optional[bool]:
         return self._door_open
 
+    def _normalize_door_position(self, position_mm: float) -> float:
+        if -self._door_zero_position_tolerance_mm <= position_mm < 0:
+            self._logger.debug(
+                "Clamping near-zero door position",
+                extra={
+                    "position_mm": position_mm,
+                    "tolerance_mm": self._door_zero_position_tolerance_mm,
+                },
+            )
+            return 0.0
+
+        return position_mm
+
+    def _is_door_position_out_of_range(self, position_mm: float, door_limit: float) -> bool:
+        return (
+            position_mm < 0
+            or position_mm > door_limit * 1.5
+            or position_mm > self._door_max_position_mm
+        )
+
     async def refresh_door_state(self, *, force: bool = False) -> Optional[bool]:
         if self._md is None:
             return self._door_open
@@ -359,11 +525,13 @@ class IOBox:
         try:
             position_mm = await self._md.get_position()
         except Exception as exc:
+            self._door_last_read_at = now
             self._logger.debug("Door position read failed: %s", exc)
 
             return self._door_open
 
         if position_mm is None:
+            self._door_last_read_at = now
             self._logger.debug(
                 "Door position read returned None; using cached state",
                 extra={"cached_open": self._door_open},
@@ -373,13 +541,13 @@ class IOBox:
 
         door_limit = self._params.motors.by_name("door").lim
 
-        is_out_of_range = (
-            position_mm < 0
-            or position_mm > door_limit * 1.5
-            or position_mm > self._door_max_position_mm
-        )
+        while True:
+            position_mm = self._normalize_door_position(position_mm)
 
-        if is_out_of_range:
+            if self._is_door_position_out_of_range(position_mm, door_limit) is False:
+                break
+
+            self._door_last_read_at = now
             self._door_bad_reading_count += 1
 
             self._logger.warning(
@@ -393,18 +561,44 @@ class IOBox:
             )
 
             if self._door_bad_reading_count >= self._door_max_bad_readings:
-                self._logger.warning(
-                    "Too many bad door readings; attempting door motor recovery",
-                    extra={"bad_reading_count": self._door_bad_reading_count},
-                )
+                if self._door_motion_lock.locked():
+                    self._logger.warning(
+                        "Deferring bad-reading door recovery while a door motion is active",
+                        extra={"bad_reading_count": self._door_bad_reading_count},
+                    )
+                else:
+                    self._logger.warning(
+                        "Too many bad door readings; attempting door motor recovery",
+                        extra={"bad_reading_count": self._door_bad_reading_count},
+                    )
 
-                self._door_bad_reading_count = 0
+                    await self._door_motion_lock.acquire()
+                    try:
+                        recovery_position_mm = await self._md.get_position()
+                        recovery_position_valid = recovery_position_mm is not None
 
-                try:
-                    await self._md.home()
-                    self._logger.info("Door motor homed successfully after bad readings")
-                except Exception as home_exc:
-                    self._logger.error("Door motor recovery failed: %s", home_exc)
+                        if recovery_position_valid:
+                            position_mm = recovery_position_mm
+                            position_mm = self._normalize_door_position(position_mm)
+                            recovery_position_valid = not self._is_door_position_out_of_range(
+                                position_mm,
+                                door_limit,
+                            )
+
+                        if recovery_position_valid:
+                            self._door_bad_reading_count = 0
+                            self._logger.info(
+                                "Door position recovered before homing; skipping recovery home",
+                                extra={"position_mm": position_mm},
+                            )
+                            break
+                        else:
+                            await self._home_door_and_cache_closed()
+                            self._logger.info("Door motor homed successfully after bad readings")
+                    except Exception as home_exc:
+                        self._logger.error("Door motor recovery failed: %s", home_exc)
+                    finally:
+                        self._door_motion_lock.release()
 
             return self._door_open
 

@@ -31,6 +31,7 @@ class RobotInitTracker:
     def __init__(self) -> None:
         self._components: dict[str, dict[str, object]] = {}
         self._order: list[str] = []
+        self._degrading: set[str] = set()
         self._overall: str = OVERALL_INITIALIZING
         self._error: Optional[str] = None
         self._subscribers: list[asyncio.Queue[str]] = []
@@ -38,11 +39,12 @@ class RobotInitTracker:
     def reset(self) -> None:
         self._components = {}
         self._order = []
+        self._degrading = set()
         self._overall = OVERALL_INITIALIZING
         self._error = None
         self._broadcast()
 
-    def register_components(self, names: list[str]) -> None:
+    def register_components(self, names: list[str], *, degrade: bool = True) -> None:
         for name in names:
             if name not in self._components:
                 self._components[name] = {
@@ -53,6 +55,8 @@ class RobotInitTracker:
                     "updated_at": time.time(),
                 }
                 self._order.append(name)
+            if degrade is True:
+                self._degrading.add(name)
         self._broadcast()
 
     def report(
@@ -67,6 +71,7 @@ class RobotInitTracker:
             entry = {"component": component}
             self._components[component] = entry
             self._order.append(component)
+            self._degrading.add(component)
 
         entry["phase"] = phase
         entry["detail"] = detail or ""
@@ -77,7 +82,7 @@ class RobotInitTracker:
             "init_progress",
             extra={"component": component, "phase": phase, "reason": reason},
         )
-        if self._overall == OVERALL_READY and phase == FAILED:
+        if self._overall == OVERALL_READY and phase == FAILED and component in self._degrading:
             self._overall = OVERALL_DEGRADED
             self._error = reason
         elif self._overall == OVERALL_DEGRADED and self._all_components_ready():
@@ -90,11 +95,21 @@ class RobotInitTracker:
         self._error = error
         self._broadcast()
 
-    def failed_components(self) -> list[str]:
+    def failed_components(self, *, degrading_only: bool = False) -> list[str]:
+        if degrading_only is True:
+            return [
+                name
+                for name in self._order
+                if name in self._degrading and self._components[name].get("phase") == FAILED
+            ]
         return [name for name in self._order if self._components[name].get("phase") == FAILED]
 
     def _all_components_ready(self) -> bool:
-        return all(self._components[name].get("phase") == READY for name in self._order)
+        return all(
+            self._components[name].get("phase") == READY
+            for name in self._order
+            if name in self._degrading
+        )
 
     def snapshot(self) -> dict[str, object]:
         return {

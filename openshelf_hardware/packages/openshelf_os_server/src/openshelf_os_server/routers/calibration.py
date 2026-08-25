@@ -5,13 +5,14 @@ import functools
 import logging
 import re
 from collections.abc import Awaitable, Callable
-from typing import Literal, Optional, ParamSpec, TypeVar
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from typing import Annotated, Literal, Optional, ParamSpec, TypeVar
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from openshelf_os.common import AxisCoordinate
 from openshelf_os.common import Parameters
+from openshelf_os.tool import MAX_PICK_LIFT_MM
 from openshelf_os.storage import (
 	CalibrationCoordinate,
 	Cell,
@@ -43,6 +44,7 @@ P = ParamSpec("P")
 T = TypeVar("T")
 
 _calibration_state_lock = asyncio.Lock()
+QUICK_LIFT_HOLD_SECONDS = 1.0
 
 
 def serialize_calibration_state(function: Callable[P, Awaitable[T]]) -> Callable[P, Awaitable[T]]:
@@ -1014,7 +1016,10 @@ async def jog_axis(request: JogRequest) -> PositionResponse:
 
 @router.post("/test")
 @serialize_calibration_state
-async def test_gripper(request: TestRequest):
+async def test_gripper(
+	request: TestRequest,
+	lift: Annotated[float | None, Query(gt=0, le=MAX_PICK_LIFT_MM)] = None,
+):
 	global _current_position, _current_side
 
 	await ensure_laser_auto_calibration_not_running()
@@ -1055,8 +1060,11 @@ async def test_gripper(request: TestRequest):
 		_current_side = coord.s
 
 		try:
-			await tool.pick(coord)
-			await tool.place(coord)
+			if lift is None:
+				await tool.pick(coord)
+				await tool.place(coord)
+			else:
+				await tool.pick_lift_place(coord, lift, QUICK_LIFT_HOLD_SECONDS)
 		except (MotorError, HardwareMotorError, ToolError) as e:
 			await _raise_motor_error(worker, f"Test failed: {str(e)}", e)
 	return {"success": True}

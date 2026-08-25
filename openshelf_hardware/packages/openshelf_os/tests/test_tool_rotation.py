@@ -210,7 +210,7 @@ async def test_ensure_safe_rotation_x_position_moves_from_lower_edge() -> None:
     original_x = await tool.ensure_safe_rotation_x_position()
 
     assert original_x == pytest.approx(25.0)
-    tool._mx.move_to_position.assert_awaited_once_with(60.0)
+    tool._mx.move_to_position.assert_awaited_once_with(200.0)
 
 
 @pytest.mark.asyncio
@@ -221,13 +221,13 @@ async def test_ensure_safe_rotation_x_position_moves_from_upper_edge() -> None:
     original_x = await tool.ensure_safe_rotation_x_position()
 
     assert original_x == pytest.approx(575.0)
-    tool._mx.move_to_position.assert_awaited_once_with(540.0)
+    tool._mx.move_to_position.assert_awaited_once_with(400.0)
 
 
 @pytest.mark.asyncio
 async def test_ensure_safe_rotation_x_position_skips_when_position_is_safe() -> None:
     tool = Tool.__new__(Tool)
-    tool._mx = _mock_x_motor(position=100.0)
+    tool._mx = _mock_x_motor(position=200.0)
 
     original_x = await tool.ensure_safe_rotation_x_position()
 
@@ -268,7 +268,7 @@ async def test_rotate_to_position_restores_original_x_after_safe_edge_move() -> 
     await tool.rotate_to_position("front")
 
     assert events == [
-        "x_move:60.0",
+        "x_move:200.0",
         "rotate:4.0",
         "x_move:25.0",
     ]
@@ -338,7 +338,7 @@ async def test_ensure_safe_rotation_stage_extension_skips_when_disabled() -> Non
     did_extend = await tool.ensure_safe_rotation_stage_extension()
 
     assert did_extend is False
-    tool._ms.get_position.assert_not_awaited()
+    tool._ms.get_position.assert_awaited_once()
     tool._ms.move_to_position.assert_not_awaited()
 
 
@@ -347,11 +347,72 @@ async def test_ensure_safe_rotation_stage_extension_moves_when_enabled() -> None
     tool = Tool.__new__(Tool)
     tool._ms = _mock_stage_motor(position=0.0)
     tool._ms._params.rotation_safe_stage_extension_enabled = True
+    tool._ms.get_position = AsyncMock(side_effect=[0.0, 8.5])
 
     did_extend = await tool.ensure_safe_rotation_stage_extension()
 
     assert did_extend is True
     tool._ms.move_to_position.assert_awaited_once_with(8.5)
+
+
+@pytest.mark.asyncio
+async def test_rotate_to_position_refuses_unsafe_stage_clearance() -> None:
+    stage_motor = _mock_stage_motor(position=3.0)
+    rotate_motor = AsyncMock()
+    rotate_motor.get_position = AsyncMock(return_value=2.0)
+    rotate_motor.move_to_position = AsyncMock()
+
+    tool = Tool.__new__(Tool)
+    tool._params = SimpleNamespace(parameters=SimpleNamespace(
+        ROTATION_STAGE_MAX_EXTENSION_MM=0.5,
+        ROTATION_Z_MAX_EXTENSION_MM=0.5,
+    ))
+    tool._ms = stage_motor
+    tool._mg = None
+    tool._mr = rotate_motor
+    tool._mx = None
+    tool._handle_fault = AsyncMock()
+    tool.get_param = AsyncMock(side_effect=lambda name: {
+        'ROTATION_FRONT': 182.25,
+        'ROTATION_BACK': 2.0,
+    }[name])
+
+    with pytest.raises(MovementError, match="stage=3.000mm exceeds maximum 0.500mm"):
+        await tool.rotate_to_position("front")
+
+    rotate_motor.move_to_position.assert_not_awaited()
+    tool._handle_fault.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_rotate_to_position_refuses_unsafe_z_clearance() -> None:
+    stage_motor = _mock_stage_motor(position=0.0)
+    z_motor = AsyncMock()
+    z_motor.get_position = AsyncMock(return_value=1.0)
+    rotate_motor = AsyncMock()
+    rotate_motor.get_position = AsyncMock(return_value=2.0)
+    rotate_motor.move_to_position = AsyncMock()
+
+    tool = Tool.__new__(Tool)
+    tool._params = SimpleNamespace(parameters=SimpleNamespace(
+        ROTATION_STAGE_MAX_EXTENSION_MM=0.5,
+        ROTATION_Z_MAX_EXTENSION_MM=0.5,
+    ))
+    tool._ms = stage_motor
+    tool._mg = z_motor
+    tool._mr = rotate_motor
+    tool._mx = None
+    tool._handle_fault = AsyncMock()
+    tool.get_param = AsyncMock(side_effect=lambda name: {
+        'ROTATION_FRONT': 182.25,
+        'ROTATION_BACK': 2.0,
+    }[name])
+
+    with pytest.raises(MovementError, match="z_axis=1.000mm exceeds maximum 0.500mm"):
+        await tool.rotate_to_position("front")
+
+    rotate_motor.move_to_position.assert_not_awaited()
+    tool._handle_fault.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -374,6 +435,7 @@ async def test_retract_homes_stage_when_stage_retract_faults() -> None:
 
     z_motor = AsyncMock()
     z_motor.move_to_position = AsyncMock()
+    z_motor.get_position = AsyncMock(return_value=0.0)
 
     tool = Tool.__new__(Tool)
     tool._ms = stage_motor
@@ -406,6 +468,7 @@ async def test_retract_fails_when_stage_home_recovery_leaves_stage_unsafe() -> N
 
     z_motor = AsyncMock()
     z_motor.move_to_position = AsyncMock()
+    z_motor.get_position = AsyncMock(return_value=0.0)
 
     tool = Tool.__new__(Tool)
     tool._ms = stage_motor
@@ -424,12 +487,81 @@ async def test_retract_fails_when_stage_home_recovery_leaves_stage_unsafe() -> N
     stage_motor.idle.assert_not_awaited()
     tool._handle_fault.assert_awaited_once()
 
+
+@pytest.mark.parametrize("method_name", ["retract", "retract_empty"])
+@pytest.mark.asyncio
+async def test_retract_uses_configured_zero_targets(method_name: str) -> None:
+    stage_motor = _mock_stage_motor(position=0.0)
+    stage_motor.idle = AsyncMock()
+    z_motor = AsyncMock()
+    z_motor.move_to_position = AsyncMock()
+    z_motor.get_position = AsyncMock(return_value=0.0)
+
+    tool = Tool.__new__(Tool)
+    tool._params = SimpleNamespace(parameters=SimpleNamespace(
+        STAGE_RETRACT_POSITION_MM=0.0,
+        Z_RETRACT_POSITION_MM=0.0,
+        ROTATION_STAGE_MAX_EXTENSION_MM=0.5,
+        ROTATION_Z_MAX_EXTENSION_MM=0.5,
+    ))
+    tool._ms = stage_motor
+    tool._mg = z_motor
+    tool._handle_fault = AsyncMock()
+    tool._logger = Mock()
+    tool.get_param = AsyncMock(side_effect=lambda name: {
+        'Z_MOVE_RPM': 100,
+        'Z_MOVE_ACCEL': 200,
+    }[name])
+
+    await getattr(tool, method_name)()
+
+    z_motor.move_to_position.assert_awaited_once_with(0.0, rpm=100, accel=200)
+    stage_motor.move_to_position.assert_awaited_once_with(0.0)
+    z_motor.home.assert_not_awaited()
+    stage_motor.home.assert_not_awaited()
+    stage_motor.idle.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_retract_homes_stage_when_zero_move_stops_outside_clearance() -> None:
+    stage_motor = _mock_stage_motor(position=0.0)
+    stage_motor.get_position = AsyncMock(side_effect=[0.75, 0.0])
+    stage_motor.clear_alarm = AsyncMock()
+    stage_motor.home = AsyncMock()
+    stage_motor.idle = AsyncMock()
+    z_motor = AsyncMock()
+    z_motor.move_to_position = AsyncMock()
+    z_motor.get_position = AsyncMock(return_value=0.0)
+
+    tool = Tool.__new__(Tool)
+    tool._params = SimpleNamespace(parameters=SimpleNamespace(
+        STAGE_RETRACT_POSITION_MM=0.0,
+        Z_RETRACT_POSITION_MM=0.0,
+        ROTATION_STAGE_MAX_EXTENSION_MM=0.5,
+        ROTATION_Z_MAX_EXTENSION_MM=0.5,
+    ))
+    tool._ms = stage_motor
+    tool._mg = z_motor
+    tool._handle_fault = AsyncMock()
+    tool._logger = Mock()
+    tool.get_param = AsyncMock(side_effect=lambda name: {
+        'Z_MOVE_RPM': 100,
+        'Z_MOVE_ACCEL': 200,
+    }[name])
+
+    await tool.retract()
+
+    stage_motor.clear_alarm.assert_awaited_once()
+    stage_motor.home.assert_awaited_once()
+    stage_motor.idle.assert_awaited_once()
+
 @pytest.mark.asyncio
 async def test_home_retracts_stage_after_safe_rotation_extension() -> None:
     events: list[str] = []
 
     stage_motor = _mock_stage_motor(position=0.0)
     stage_motor._params.rotation_safe_stage_extension_enabled = True
+    stage_motor.get_position = AsyncMock(side_effect=[0.0, 8.5])
     stage_motor.home = AsyncMock(side_effect=lambda: events.append('stage_home'))
     stage_motor.move_to_position = AsyncMock(side_effect=lambda position: events.append(f'stage_move:{position}'))
 
@@ -477,8 +609,8 @@ async def test_home_moves_x_before_rotate_home_when_rotation_is_past_front() -> 
     x_motor = AsyncMock()
     x_motor.move_to_position = AsyncMock(side_effect=lambda position: events.append(f'x_move:{position}'))
     x_motor.home = AsyncMock(side_effect=lambda: events.append('x_home'))
-    x_motor._params = SimpleNamespace(lim=600.0, lower_lim=0.0)
-    x_motor.get_position = AsyncMock(return_value=100.0)
+    x_motor._params = SimpleNamespace(lim=950.0, lower_lim=0.0)
+    x_motor.get_position = AsyncMock(return_value=ROTATION_HOME_SAFE_X_MM)
 
     y_motor = AsyncMock()
     y_motor.home = AsyncMock(side_effect=lambda: events.append('y_home'))
@@ -511,7 +643,7 @@ async def test_home_moves_x_before_rotate_home_when_rotation_is_past_front() -> 
 
 
 @pytest.mark.asyncio
-async def test_home_does_not_move_x_before_rotate_home_when_rotation_is_at_front() -> None:
+async def test_home_moves_x_from_edge_when_rotation_is_at_front() -> None:
     events: list[str] = []
 
     stage_motor = _mock_stage_motor(position=0.0)
@@ -551,11 +683,12 @@ async def test_home_does_not_move_x_before_rotate_home_when_rotation_is_at_front
     assert events == [
         'z_home',
         'stage_home',
+        'x_move:200.0',
         'rotate_home',
+        'x_move:100.0',
         'x_home',
         'y_home',
     ]
-    x_motor.move_to_position.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -577,7 +710,7 @@ async def test_home_moves_x_from_edge_before_rotate_home_when_rotation_is_at_fro
     x_motor.move_to_position = AsyncMock(side_effect=lambda position: events.append(f'x_move:{position}'))
     x_motor.home = AsyncMock(side_effect=lambda: events.append('x_home'))
     x_motor._params = SimpleNamespace(lim=600.0, lower_lim=0.0)
-    x_motor.get_position = AsyncMock(side_effect=[25.0, 60.0])
+    x_motor.get_position = AsyncMock(side_effect=[25.0, 200.0])
 
     y_motor = AsyncMock()
     y_motor.home = AsyncMock(side_effect=lambda: events.append('y_home'))
@@ -600,7 +733,7 @@ async def test_home_moves_x_from_edge_before_rotate_home_when_rotation_is_at_fro
     assert events == [
         'z_home',
         'stage_home',
-        'x_move:60.0',
+        'x_move:200.0',
         'rotate_home',
         'x_move:25.0',
         'x_home',

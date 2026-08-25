@@ -209,7 +209,7 @@ async def init_robot_worker() -> None:
         _capture_init_exception(e)
         return
 
-    failed = tracker.failed_components()
+    failed = tracker.failed_components(degrading_only=True)
     failed_motor_components = [component for component in failed if component in CRITICAL_MOTOR_COMPONENTS]
     if home_on_init is False and worker is not None:
         if failed_motor_components:
@@ -277,7 +277,7 @@ def get_robot_health() -> dict[str, object]:
     tracker = get_init_tracker()
     snapshot = tracker.snapshot()
     overall = snapshot["phase"]
-    failed = tracker.failed_components()
+    failed = tracker.failed_components(degrading_only=True)
 
     if robot_worker is not None:
         status = "degraded" if failed else "ok"

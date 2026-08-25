@@ -25,11 +25,14 @@ TOOL_WAIT_TIMEOUT = MOTOR_WAIT_TIMEOUT * 2
 GANTRY_OUTER_TIMEOUT = 120.0
 TOOL_OUTER_TIMEOUT = 60.0
 ROTATION_HOME_SAFE_X_MM = 475.0
-ROTATION_SAFE_X_MARGIN_MM = 60.0
+ROTATION_SAFE_X_MARGIN_MM = 200.0
 ROTATION_HOME_ORIENTATION_EPSILON_DEG = 1e-6
 ROTATION_POSITION_EPSILON_DEG = 0.05
-STAGE_RETRACT_TARGET_MM = 3.0
-STAGE_RETRACT_SAFE_THRESHOLD_MM = 5.0
+DEFAULT_STAGE_RETRACT_TARGET_MM = 3.0
+DEFAULT_Z_RETRACT_TARGET_MM = 1.0
+DEFAULT_ROTATION_STAGE_MAX_EXTENSION_MM = 5.0
+DEFAULT_ROTATION_Z_MAX_EXTENSION_MM = 5.0
+MAX_PICK_LIFT_MM = 30.0
 Y_STARTUP_HOME_CLEARANCE_MM = 10.0
 Y_STARTUP_HOME_PEAK_CURRENT = 30
 
@@ -391,6 +394,11 @@ class Tool:
         except Exception as e:
             raise ConfigError(f"Failed to get parameter {param}: {str(e)}") from e
 
+    def _get_float_param(self, param: str, default: float) -> float:
+        """Read a validated tool parameter while supporting lightweight test doubles."""
+        tool_params = getattr(getattr(self, "_params", None), "parameters", None)
+        return float(getattr(tool_params, param, default))
+
     def reload_parameters(self) -> None:
         config = load_config_file(c.CONFIG_PATH)
         tool_config = config.get("robot.tool", None)
@@ -422,6 +430,41 @@ class Tool:
             if isinstance(e, MovementError):
                 raise
             raise GripperError(f"Pick operation failed: {str(e)}") from e
+
+    async def pick_lift_place(
+        self,
+        coordinate: c.AxisCoordinate,
+        lift_mm: float,
+        hold_seconds: float,
+    ) -> None:
+        if not 0 < lift_mm <= MAX_PICK_LIFT_MM:
+            raise GripperError(f"Lift must be greater than zero and at most {MAX_PICK_LIFT_MM:g} mm")
+
+        try:
+            if self._my is None or self._ms is None:
+                raise MotorError("Y and stage motors required for pick lift/place")
+
+            target_position: Literal["front", "back"] = "front" if coordinate.s == 0 else "back"
+
+            await self._gs.safe_open()
+            await self.move(coordinate)
+            await self.rotate_to_position(target_position)
+            await self.extend_empty(coordinate)
+            await self._gs.open()
+            original_stage_mm = await self._ms.get_position()
+            await self._ms.move_to_position(0.0)
+            await self._my.move_to_position(coordinate.y + lift_mm)
+            await asyncio.sleep(hold_seconds)
+            await self._my.move_to_position(coordinate.y)
+            await self._ms.move_to_position(original_stage_mm)
+            await self._gs.close()
+            await self.retract_empty()
+
+        except Exception as e:
+            await self._handle_fault(e)
+            if isinstance(e, MovementError):
+                raise
+            raise GripperError(f"Pick lift/place operation failed: {str(e)}") from e
 
     async def place(self, coordinate: c.AxisCoordinate):
         try:
@@ -948,31 +991,95 @@ class Tool:
         return abs(float(current_angle) - float(target_angle)) <= ROTATION_POSITION_EPSILON_DEG
 
     async def ensure_safe_rotation_stage_extension(self) -> bool:
-        if self._ms is None:
-            return False
+        """Prepare the stage and verify both tool axes are safe for rotation.
 
-        is_enabled = getattr(self._ms._params, "rotation_safe_stage_extension_enabled", False)
+        Some machines require a minimum stage extension while rotating. All
+        others use the configured maximum stage and Z extensions as a
+        retract-before-rotate interlock.
+        """
+        did_extend = False
+        stage_position: float | None = None
+        stage_extension_enabled = False
 
-        if is_enabled is not True:
-            return False
-
-        safe_extension_mm = self._ms._params.rotation_safe_stage_extension_mm
-        stage_limit = self._ms._params.lim
-
-        if safe_extension_mm > stage_limit:
-            raise ConfigError(
-                "rotation_safe_stage_extension_mm exceeds stage limit "
-                f"({safe_extension_mm} > {stage_limit})"
+        if self._ms is not None:
+            stage_extension_enabled = getattr(
+                self._ms._params,
+                "rotation_safe_stage_extension_enabled",
+                False,
             )
+            stage_position = float(await self._ms.get_position())
 
-        position = await self._ms.get_position()
+            if stage_extension_enabled is True:
+                safe_extension_mm = float(self._ms._params.rotation_safe_stage_extension_mm)
+                stage_limit = float(self._ms._params.lim)
 
-        if position >= safe_extension_mm:
-            return False
+                if safe_extension_mm > stage_limit:
+                    raise ConfigError(
+                        "rotation_safe_stage_extension_mm exceeds stage limit "
+                        f"({safe_extension_mm} > {stage_limit})"
+                    )
 
-        await self._ms.move_to_position(safe_extension_mm)
+                if stage_position < safe_extension_mm:
+                    await self._ms.move_to_position(safe_extension_mm)
+                    did_extend = True
+                    stage_position = float(await self._ms.get_position())
 
-        return True
+        await self._assert_rotation_clearance(
+            stage_position=stage_position,
+            stage_extension_enabled=stage_extension_enabled,
+        )
+        return did_extend
+
+    async def _assert_rotation_clearance(
+        self,
+        *,
+        stage_position: float | None = None,
+        stage_extension_enabled: bool | None = None,
+    ) -> None:
+        unsafe: list[str] = []
+
+        if self._ms is not None:
+            if stage_position is None:
+                stage_position = float(await self._ms.get_position())
+            if stage_extension_enabled is None:
+                stage_extension_enabled = getattr(
+                    self._ms._params,
+                    "rotation_safe_stage_extension_enabled",
+                    False,
+                )
+
+            if stage_extension_enabled is True:
+                minimum_stage_mm = float(self._ms._params.rotation_safe_stage_extension_mm)
+                if stage_position < minimum_stage_mm:
+                    unsafe.append(
+                        f"stage={stage_position:.3f}mm is below required "
+                        f"{minimum_stage_mm:.3f}mm"
+                    )
+            else:
+                maximum_stage_mm = self._get_float_param(
+                    "ROTATION_STAGE_MAX_EXTENSION_MM",
+                    DEFAULT_ROTATION_STAGE_MAX_EXTENSION_MM,
+                )
+                if stage_position > maximum_stage_mm:
+                    unsafe.append(
+                        f"stage={stage_position:.3f}mm exceeds maximum "
+                        f"{maximum_stage_mm:.3f}mm"
+                    )
+
+        z_motor = getattr(self, "_mg", None)
+        if z_motor is not None:
+            z_position = float(await z_motor.get_position())
+            maximum_z_mm = self._get_float_param(
+                "ROTATION_Z_MAX_EXTENSION_MM",
+                DEFAULT_ROTATION_Z_MAX_EXTENSION_MM,
+            )
+            if z_position > maximum_z_mm:
+                unsafe.append(
+                    f"z_axis={z_position:.3f}mm exceeds maximum {maximum_z_mm:.3f}mm"
+                )
+
+        if unsafe:
+            raise MovementError("Unsafe tool clearance for rotation: " + "; ".join(unsafe))
 
     async def ensure_safe_rotation_x_position(self) -> Optional[float]:
         x_motor = getattr(self, "_mx", None)
@@ -1103,20 +1210,7 @@ class Tool:
             raise MotorError("Tool motors (z_axis, stage) required for retraction")
 
         try:
-            grip_rpm = await self.get_param("Z_MOVE_RPM")
-            grip_accel = await self.get_param("Z_MOVE_ACCEL")
-
-            if grip_rpm is None or grip_accel is None:
-                raise ConfigError("Missing gripper move speed")
-
-            await self._mg.move_to_position(1, rpm=grip_rpm, accel=grip_accel)
-
-            try:
-                await self._ms.move_to_position(STAGE_RETRACT_TARGET_MM)
-            except Exception as stage_error:
-                await self._home_stage_after_retract_fault(stage_error)
-
-            await self._ms.idle()
+            await self._retract_to_configured_positions()
 
         except Exception as e:
             await self._handle_fault(e)
@@ -1128,20 +1222,49 @@ class Tool:
             raise MotorError("Tool motors (z_axis, stage) required for empty retraction")
 
         try:
-            await self._ms.move_to_position_no_wait(3.0)
-            grip_rpm = await self.get_param("Z_MOVE_RPM")
-            grip_accel = await self.get_param("Z_MOVE_ACCEL")
-
-            if grip_rpm is None or grip_accel is None:
-                raise ConfigError("Missing gripper move speed")
-
-            await self._mg.move_to_position_no_wait(1, rpm=grip_rpm, accel=grip_accel)
-            await self.tool_wait(homing=True)
-            await self._ms.idle()
+            await self._retract_to_configured_positions()
 
         except Exception as e:
             await self._handle_fault(e)
             raise MovementError(f"Tool empty retraction failed: {str(e)}") from e
+
+    async def _retract_to_configured_positions(self) -> None:
+        if self._mg is None or self._ms is None:
+            raise MotorError("Tool motors (z_axis, stage) required for retraction")
+
+        grip_rpm = await self.get_param("Z_MOVE_RPM")
+        grip_accel = await self.get_param("Z_MOVE_ACCEL")
+
+        if grip_rpm is None or grip_accel is None:
+            raise ConfigError("Missing gripper move speed")
+
+        await self._move_axis_to_retracted_position(
+            self._mg,
+            axis_name="z_axis",
+            target_mm=self._get_float_param(
+                "Z_RETRACT_POSITION_MM",
+                DEFAULT_Z_RETRACT_TARGET_MM,
+            ),
+            maximum_mm=self._get_float_param(
+                "ROTATION_Z_MAX_EXTENSION_MM",
+                DEFAULT_ROTATION_Z_MAX_EXTENSION_MM,
+            ),
+            rpm=grip_rpm,
+            accel=grip_accel,
+        )
+        await self._move_axis_to_retracted_position(
+            self._ms,
+            axis_name="stage",
+            target_mm=self._get_float_param(
+                "STAGE_RETRACT_POSITION_MM",
+                DEFAULT_STAGE_RETRACT_TARGET_MM,
+            ),
+            maximum_mm=self._get_float_param(
+                "ROTATION_STAGE_MAX_EXTENSION_MM",
+                DEFAULT_ROTATION_STAGE_MAX_EXTENSION_MM,
+            ),
+        )
+        await self._ms.idle()
 
     async def tool_wait(
         self,
@@ -1236,31 +1359,57 @@ class Tool:
 
         return front_ext if coordinate.s == 0 else back_ext
 
-    async def _home_stage_after_retract_fault(self, error: BaseException) -> None:
-        if self._ms is None:
-            raise MotorError("Stage motor required for retract recovery") from error
+    async def _move_axis_to_retracted_position(
+        self,
+        motor: Motor,
+        *,
+        axis_name: str,
+        target_mm: float,
+        maximum_mm: float,
+        rpm: int | None = None,
+        accel: int | None = None,
+    ) -> None:
+        move_error: BaseException | None = None
+        try:
+            if rpm is None and accel is None:
+                await motor.move_to_position(target_mm)
+            else:
+                await motor.move_to_position(target_mm, rpm=rpm, accel=accel)
+        except Exception as error:
+            move_error = error
+
+        if move_error is None:
+            position_mm = float(await motor.get_position())
+            if position_mm <= maximum_mm:
+                return
+            move_error = MovementError(
+                f"{axis_name} retract stopped outside rotation clearance "
+                f"({position_mm:.3f} > {maximum_mm:.3f})"
+            )
 
         self._logger.warning(
-            "Stage retract failed; homing stage as recovery",
-            extra={"error": str(error)},
+            "%s retract failed clearance verification; homing as recovery",
+            axis_name,
+            extra={"error": str(move_error)},
         )
 
         try:
-            await self._ms.clear_alarm()
+            await motor.clear_alarm()
         except Exception as clear_error:
             self._logger.warning(
-                "Failed to clear stage alarm before retract recovery home",
+                "Failed to clear %s alarm before retract recovery home",
+                axis_name,
                 extra={"error": str(clear_error)},
             )
 
-        await self._ms.home()
-        stage_position = await self._ms.get_position()
+        await motor.home()
+        position_mm = float(await motor.get_position())
 
-        if stage_position > STAGE_RETRACT_SAFE_THRESHOLD_MM:
+        if position_mm > maximum_mm:
             raise MovementError(
-                "Stage retract recovery home left stage outside safe threshold "
-                f"({stage_position:.3f} > {STAGE_RETRACT_SAFE_THRESHOLD_MM:.3f})"
-            ) from error
+                f"{axis_name} retract recovery home left axis outside rotation clearance "
+                f"({position_mm:.3f} > {maximum_mm:.3f})"
+            ) from move_error
 
     # ------------------------------------------------------------------ #
     #  Homing
