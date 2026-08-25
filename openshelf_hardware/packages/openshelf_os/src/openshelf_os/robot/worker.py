@@ -605,7 +605,7 @@ class RobotWorker:
     def _report_error(self, error: WorkerError, exc: Optional[Exception] = None) -> None:
         sentry_event_id: Optional[str] = None
         try:
-            with sentry_sdk.push_scope() as scope:
+            with sentry_sdk.new_scope() as scope:
                 scope.set_tag("error_type", error.error_type)
                 scope.set_tag("hardware_fault", str(error.error_type == "HardwareFault").lower())
                 context = error.context or {}

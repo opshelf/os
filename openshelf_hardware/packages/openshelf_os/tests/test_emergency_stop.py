@@ -17,7 +17,7 @@ sys.modules.setdefault("sentry_sdk", types.SimpleNamespace(
     init=lambda **kwargs: None,
     capture_exception=lambda e: None,
     capture_message=lambda m, **kw: None,
-    push_scope=lambda: types.SimpleNamespace(__enter__=lambda s: types.SimpleNamespace(set_tag=lambda *a: None, set_context=lambda *a: None, set_extra=lambda *a: None), __exit__=lambda *a: None),
+    new_scope=lambda: types.SimpleNamespace(__enter__=lambda s: types.SimpleNamespace(set_tag=lambda *a: None, set_context=lambda *a: None, set_extra=lambda *a: None), __exit__=lambda *a: None),
     flush=lambda **kw: None,
 ))
 
