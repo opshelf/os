@@ -46,6 +46,7 @@ def _create_motor_if_enabled(
     name: str,
     safety,
     logger: logging.Logger,
+    gpio=None,
 ) -> Optional[Motor]:
     try:
         cfg: MotorConfig = motors.by_name(name)
@@ -57,7 +58,13 @@ def _create_motor_if_enabled(
         logger.info("Motor '%s' disabled via config; skipping", name)
         return None
 
-    return Motor(controller, cfg, safety)
+    home_limit_input = None
+    if gpio is not None:
+        pin_name = f"{name}_lim_min"
+        if gpio.has_pin(pin_name):
+            home_limit_input = gpio.input(pin_name)
+
+    return Motor(controller, cfg, safety, home_limit_input=home_limit_input)
 
 
 def derive_rotation_home_orientation(
@@ -92,6 +99,7 @@ class Tool:
         lasercontroller: Controller,
         params: c.Tool,
         safety=None,
+        gpio=None,
     ):
         self._motorcontroller = motorcontroller
         self._lasercontroller = lasercontroller
@@ -103,23 +111,23 @@ class Tool:
         motors = self._params.motors
 
         self._mx: Optional[Motor] = _create_motor_if_enabled(
-            motorcontroller, motors, "x_axis", safety, self._logger
+            motorcontroller, motors, "x_axis", safety, self._logger, gpio
         )
 
         self._my: Optional[Motor] = _create_motor_if_enabled(
-            motorcontroller, motors, "y_axis", safety, self._logger
+            motorcontroller, motors, "y_axis", safety, self._logger, gpio
         )
 
         self._mg: Optional[Motor] = _create_motor_if_enabled(
-            motorcontroller, motors, "z_axis", safety, self._logger
+            motorcontroller, motors, "z_axis", safety, self._logger, gpio
         )
 
         self._ms: Optional[Motor] = _create_motor_if_enabled(
-            motorcontroller, motors, "stage", safety, self._logger
+            motorcontroller, motors, "stage", safety, self._logger, gpio
         )
 
         self._mr: Optional[Motor] = _create_motor_if_enabled(
-            motorcontroller, motors, "rotate", safety, self._logger
+            motorcontroller, motors, "rotate", safety, self._logger, gpio
         )
 
         self._gs = Servo(self._motorcontroller, self._params.gripper.model_dump())
