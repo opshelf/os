@@ -19,7 +19,7 @@ except Exception:
             init=lambda **kwargs: None,
             capture_exception=lambda *args, **kwargs: None,
             capture_message=lambda *args, **kwargs: None,
-            push_scope=lambda: types.SimpleNamespace(
+            new_scope=lambda: types.SimpleNamespace(
                 __enter__=lambda s: types.SimpleNamespace(
                     set_tag=lambda *a, **k: None,
                     set_context=lambda *a, **k: None,
