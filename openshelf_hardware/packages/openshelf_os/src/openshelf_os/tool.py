@@ -40,6 +40,19 @@ class RotationHomeOrientation(Enum):
     RIGHT_MODULE = "right_module"
 
 
+# Home-limit GPIO pin per motor, matching the default wiring in
+# openshelf_os.config.models._default_gpio_pins (x/y have a dedicated home-end
+# input; the tool-side axes share one limit input each on pca9535_0).
+_HOME_LIMIT_GPIO_PIN_NAMES = {
+    "x_axis": "x_limit_min",
+    "y_axis": "y_limit_min",
+    "z_axis": "tool_limit_z",
+    "stage": "tool_limit_s",
+    "rotate": "tool_limit_r",
+    "door": "io_limit_min",
+}
+
+
 def _create_motor_if_enabled(
     controller: Controller,
     motors: c.Motors,
@@ -60,8 +73,8 @@ def _create_motor_if_enabled(
 
     home_limit_input = None
     if gpio is not None:
-        pin_name = f"{name}_lim_min"
-        if gpio.has_pin(pin_name):
+        pin_name = _HOME_LIMIT_GPIO_PIN_NAMES.get(name)
+        if pin_name is not None and gpio.has_pin(pin_name):
             home_limit_input = gpio.input(pin_name)
 
     return Motor(controller, cfg, safety, home_limit_input=home_limit_input)
