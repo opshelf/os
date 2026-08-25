@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 import openshelf_os_server.core.robot as robot_module
-from openshelf_os_server.core.init_progress import get_init_tracker
+from openshelf_os_server.core.init_progress import OVERALL_READY, get_init_tracker
 
 
 def _phase_for(component: str) -> str | None:
@@ -85,6 +85,40 @@ async def test_report_scanner_status_skipped_when_disabled(monkeypatch):
 
     assert _phase_for("barcode") is None
     worker.wait_scanner_connected.assert_not_called()
+
+
+def test_robot_health_is_ok_when_only_camera_component_failed(monkeypatch):
+    tracker = get_init_tracker()
+    tracker.reset()
+    tracker.register_components(["command_worker"])
+    tracker.report("command_worker", "ready")
+    tracker.register_components(["tool_camera"], degrade=False)
+    tracker.set_overall(OVERALL_READY)
+    tracker.report("tool_camera", "failed", reason="no frames within 15s")
+
+    monkeypatch.setattr(robot_module, "robot_worker", MagicMock())
+
+    health = robot_module.get_robot_health()
+
+    assert health["status"] == "ok"
+    assert health["phase"] == OVERALL_READY
+    assert health["failed_components"] == []
+
+
+def test_robot_health_is_degraded_when_motor_component_failed(monkeypatch):
+    tracker = get_init_tracker()
+    tracker.reset()
+    tracker.register_components(["command_worker", "y_axis"])
+    tracker.report("command_worker", "ready")
+    tracker.report("y_axis", "failed", reason="fault")
+    tracker.set_overall("degraded")
+
+    monkeypatch.setattr(robot_module, "robot_worker", MagicMock())
+
+    health = robot_module.get_robot_health()
+
+    assert health["status"] == "degraded"
+    assert health["failed_components"] == ["y_axis"]
 
 
 def test_report_printer_status_failed_when_device_missing(monkeypatch):

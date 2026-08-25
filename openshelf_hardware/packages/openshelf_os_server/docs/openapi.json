@@ -5416,6 +5416,24 @@
         ],
         "parameters": [
           {
+            "name": "lift",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "maximum": 30.0,
+                  "exclusiveMinimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Lift"
+            }
+          },
+          {
             "name": "token",
             "in": "query",
             "required": false,

@@ -1084,7 +1084,9 @@ class Robot:
         retrieved_upca: str | None = upca_hint
         if cached_item is not None:
             upca_from_data = cached_item.data.get("upca") if cached_item.data else None
-            retrieved_upca = cached_item.upca or (str(upca_from_data) if upca_from_data is not None else None)
+            cached_upca = cached_item.upca or (str(upca_from_data) if upca_from_data is not None else None)
+            if cached_upca is not None:
+                retrieved_upca = cached_upca
 
         self.set_operation_context(command=command_name, phase="retrieve.moving_from_io_to_shelf", target_cell=location)
         try:

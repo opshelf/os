@@ -28,9 +28,9 @@ class ScanRunnerMixin:
         scan_config = scan_config_override or config.robot.grid.scan
         config_settle_ms = int(laser_module.get_laser_sample_settle_ms(scan_config))
         config_samples_per_point = int(laser_module.get_laser_samples_per_point(scan_config))
-        # Use the intended fine values, as the CLI does. The server was passing the RAW config
-        # (50ms / 3 samples) as the fine params while deriving coarse from them, so every fine
-        # sample paid 3 laser reads at double the settle for no benefit.
+        # Fine and coarse scans both honor the configured settling and sample count. Reducing
+        # either pass to one read defeats the median filter and lets a transient laser reading
+        # erase a narrow wall or move a detected edge by one scan step.
         settle_ms = int(laser_module.get_fine_settle_ms(config_settle_ms))
         samples_per_point = int(laser_module.get_fine_samples_per_point(config_samples_per_point))
         coarse_settle_ms = int(laser_module.get_coarse_settle_ms(config_settle_ms))

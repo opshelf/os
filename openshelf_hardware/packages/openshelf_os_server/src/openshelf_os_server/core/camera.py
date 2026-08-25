@@ -576,7 +576,10 @@ async def init_camera_progress(camera_ids: list[str]) -> None:
 		return
 
 	tracker = get_init_tracker()
-	tracker.register_components([camera_component_name(camera_id) for camera_id in camera_ids])
+	tracker.register_components(
+		[camera_component_name(camera_id) for camera_id in camera_ids],
+		degrade=False,
+	)
 
 	await asyncio.gather(*[_probe_camera_for_init(camera_id) for camera_id in camera_ids])
 

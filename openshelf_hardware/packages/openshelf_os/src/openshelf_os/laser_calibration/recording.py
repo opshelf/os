@@ -4,11 +4,11 @@ from __future__ import annotations
 from .core import *
 
 def get_coarse_settle_ms(fine_settle_ms: int) -> int:
-    return max(0, fine_settle_ms // 2)
+    return max(0, fine_settle_ms)
 
 
 def get_coarse_samples_per_point(fine_samples_per_point: int) -> int:
-    return 1
+    return max(1, fine_samples_per_point)
 
 def build_run_parameters(
 	*,

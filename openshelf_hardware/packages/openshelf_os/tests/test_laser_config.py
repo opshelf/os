@@ -51,6 +51,30 @@ def test_laser_defaults_to_disabled():
     assert config.robot.tool.laser.register_count == 2
     assert config.robot.tool.laser.distance_register_index == 1
     assert config.robot.tool.laser.distance_scale_mm == pytest.approx(0.001)
+    assert config.robot.tool.parameters.STAGE_RETRACT_POSITION_MM == pytest.approx(3.0)
+    assert config.robot.tool.parameters.Z_RETRACT_POSITION_MM == pytest.approx(1.0)
+    assert config.robot.tool.parameters.ROTATION_STAGE_MAX_EXTENSION_MM == pytest.approx(5.0)
+    assert config.robot.tool.parameters.ROTATION_Z_MAX_EXTENSION_MM == pytest.approx(5.0)
+
+
+@pytest.mark.parametrize(
+    ("target_name", "maximum_name"),
+    [
+        ("STAGE_RETRACT_POSITION_MM", "ROTATION_STAGE_MAX_EXTENSION_MM"),
+        ("Z_RETRACT_POSITION_MM", "ROTATION_Z_MAX_EXTENSION_MM"),
+    ],
+)
+def test_retract_target_cannot_exceed_rotation_clearance(
+    target_name: str,
+    maximum_name: str,
+) -> None:
+    data = copy.deepcopy(MINIMAL_CONFIG_DICT)
+    parameters = data["robot"]["tool"]["parameters"]
+    parameters[target_name] = 1.0
+    parameters[maximum_name] = 0.5
+
+    with pytest.raises(ValueError, match=f"{target_name} cannot exceed {maximum_name}"):
+        RootConfig.model_validate(data)
 
 
 def test_demo_config_only_sets_mapping_path():

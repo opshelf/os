@@ -26,6 +26,8 @@ def make_iobox(*, gpio: GpioManager | None) -> IOBox:
     iobox._curtain_listener = None
     iobox._door_force_refresh_on_block = False
     iobox._safety_guard_bypassed = False
+    iobox._light_curtain_bypassed = False
+    iobox._door_motion_lock = asyncio.Lock()
     return iobox
 
 
@@ -81,5 +83,5 @@ async def test_open_door_ignores_curtain_when_safety_guard_bypassed() -> None:
 
     await iobox.open_door()
 
-    iobox._md.move_to_position.assert_awaited_once_with(42.0)
+    iobox._md.move_to_position.assert_awaited_once_with(42.0, rpm=None)
     iobox.refresh_door_state.assert_awaited_once_with(force=True)
