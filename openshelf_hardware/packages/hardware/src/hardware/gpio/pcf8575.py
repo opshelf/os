@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import logging
 import threading
+import warnings
 from collections import defaultdict, deque
 from typing import Any, Callable, DefaultDict, cast
 
@@ -22,7 +23,11 @@ except (ModuleNotFoundError, RuntimeError):
     adafruit_pcf8575 = None  # type: ignore[assignment]
 
 try:
-    import board  # type: ignore[import]
+    # board's own import triggers a pkg_resources deprecation warning on
+    # non-Pi platforms; that's adafruit-blinka's concern, not ours.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        import board  # type: ignore[import]
 except (ModuleNotFoundError, RuntimeError):
     board = None  # type: ignore[assignment]
 
