@@ -224,6 +224,7 @@ class StorageBin(Base):
 	shelf_idx: Mapped[int] = mapped_column(Integer, nullable=False)
 	cell_idx: Mapped[int] = mapped_column(Integer, nullable=False)
 	inner_dimensions: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False)
+	max_item_dimensions: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
 	max_items: Mapped[int] = mapped_column(Integer, nullable=False)
 	status: Mapped[str] = mapped_column(String(24), nullable=False, default="at_home")
 	gross_weight: Mapped[Optional[float]] = mapped_column(Float, nullable=True)

@@ -242,11 +242,20 @@ class BinStorageService:
                     "is occupied by a direct item"
                 )
             row = existing.get(entry.barcode)
+            inner_dimensions = entry.inner_dimensions.model_dump(mode="json")
             values = {
                 "side": entry.home_location.side,
                 "shelf_idx": entry.home_location.shelf_idx,
                 "cell_idx": entry.home_location.cell_idx,
-                "inner_dimensions": entry.inner_dimensions.model_dump(mode="json"),
+                "inner_dimensions": inner_dimensions,
+                "max_item_dimensions": (
+                    entry.max_item_dimensions.model_dump(mode="json")
+                    if getattr(entry, "max_item_dimensions", None) is not None
+                    else {
+                        "width": inner_dimensions["width"],
+                        "length": inner_dimensions["length"],
+                    }
+                ),
                 "max_items": entry.max_items,
                 "active": True,
             }
@@ -327,13 +336,23 @@ class BinStorageService:
             .scalars()
             .all()
         )
+        capacity_volume = self._volume(row.inner_dimensions) or 0.0
+        member_volumes = [self._volume(item.dimensions) for item in members]
+        used_volume = (
+            sum(volume for volume in member_volumes if volume is not None)
+            if all(volume is not None for volume in member_volumes)
+            else capacity_volume
+        )
         return {
             "id": row.id,
             "barcode": row.barcode,
             "home_location": _location(row),
             "inner_dimensions": row.inner_dimensions,
+            "max_item_dimensions": self._max_item_dimensions(row),
             "max_items": row.max_items,
             "item_count": len(members),
+            "used_volume": used_volume,
+            "available_volume": max(0.0, capacity_volume - used_volume),
             "status": row.status,
             "gross_weight": row.gross_weight,
             "active": row.active,
@@ -553,20 +572,76 @@ class BinStorageService:
         await self.transition(workflow, "reconciled", "operator closed unavailable bin return")
 
     @staticmethod
-    def _fits(item: Item, bin_row: StorageBin) -> bool:
-        dims = item.dimensions or {}
-        inside = bin_row.inner_dimensions or {}
+    def _dimensions(
+        value: dict[str, Any] | None, keys: tuple[str, ...]
+    ) -> Optional[tuple[float, ...]]:
         try:
-            width, height, length = (float(dims[key]) for key in ("width", "height", "length"))
-            inner_width, inner_height, inner_length = (
-                float(inside[key]) for key in ("width", "height", "length")
-            )
+            dimensions = tuple(float((value or {})[key]) for key in keys)
         except (KeyError, TypeError, ValueError):
+            return None
+        return dimensions if all(dimension > 0 for dimension in dimensions) else None
+
+    @classmethod
+    def _volume(cls, value: dict[str, Any] | None) -> Optional[float]:
+        dimensions = cls._dimensions(value, ("width", "height", "length"))
+        if dimensions is None:
+            return None
+        width, height, length = dimensions
+        return width * height * length
+
+    @classmethod
+    def _max_item_dimensions(cls, bin_row: StorageBin) -> dict[str, float]:
+        configured = cls._dimensions(bin_row.max_item_dimensions, ("width", "length"))
+        if configured is not None:
+            return {"width": configured[0], "length": configured[1]}
+        inside = cls._dimensions(bin_row.inner_dimensions, ("width", "length"))
+        if inside is None:
+            return {"width": 0.0, "length": 0.0}
+        return {"width": inside[0], "length": inside[1]}
+
+    @classmethod
+    def _fits(cls, item: Item, bin_row: StorageBin) -> bool:
+        dimensions = cls._dimensions(item.dimensions, ("width", "height", "length"))
+        inside = cls._dimensions(bin_row.inner_dimensions, ("width", "height", "length"))
+        maximum = cls._dimensions(cls._max_item_dimensions(bin_row), ("width", "length"))
+        if dimensions is None or inside is None or maximum is None:
             return False
+        width, height, length = dimensions
+        inner_width, inner_height, inner_length = inside
+        max_width, max_length = maximum
         return height <= inner_height and (
-            (width <= inner_width and length <= inner_length)
-            or (length <= inner_width and width <= inner_length)
+            (
+                width <= inner_width
+                and length <= inner_length
+                and width <= max_width
+                and length <= max_length
+            )
+            or (
+                length <= inner_width
+                and width <= inner_length
+                and length <= max_width
+                and width <= max_length
+            )
         )
+
+    @classmethod
+    def _has_volume_for(cls, item: Item, members: list[Item], bin_row: StorageBin) -> bool:
+        capacity = cls._volume(bin_row.inner_dimensions)
+        item_volume = cls._volume(item.dimensions)
+        member_volumes = [cls._volume(member.dimensions) for member in members]
+        if capacity is None or item_volume is None or any(
+            volume is None for volume in member_volumes
+        ):
+            return False
+        return sum(volume for volume in member_volumes if volume is not None) + item_volume <= capacity
+
+    @classmethod
+    def _contents_have_volume(cls, items: list[Item], bin_row: StorageBin) -> bool:
+        capacity = cls._volume(bin_row.inner_dimensions)
+        item_volumes = [cls._volume(item.dimensions) for item in items]
+        if capacity is None or any(volume is None for volume in item_volumes):
+            return False
+        return sum(volume for volume in item_volumes if volume is not None) <= capacity
 
     async def allocate_bin(self, item: Item) -> Optional[StorageBin]:
         bins = (
@@ -593,14 +668,29 @@ class BinStorageService:
                 .scalars()
                 .all()
             )
-            if len(members) >= row.max_items or not self._fits(item, row):
+            if (
+                len(members) >= row.max_items
+                or not self._fits(item, row)
+                or not self._has_volume_for(item, members, row)
+            ):
                 continue
             if any(member.access_level_id != item.access_level_id for member in members):
                 continue
-            inside = row.inner_dimensions
-            volume = float(inside["width"]) * float(inside["height"]) * float(inside["length"])
+            capacity = self._volume(row.inner_dimensions)
+            item_volume = self._volume(item.dimensions)
+            used_volume = sum(self._volume(member.dimensions) or 0.0 for member in members)
+            if capacity is None or item_volume is None:
+                continue
+            remaining_volume = capacity - used_volume - item_volume
             candidates.append(
-                (len(members) == 0, volume, row.side, row.shelf_idx, row.cell_idx, row)
+                (
+                    len(members) == 0,
+                    remaining_volume,
+                    row.side,
+                    row.shelf_idx,
+                    row.cell_idx,
+                    row,
+                )
             )
         if not candidates:
             return None
@@ -939,6 +1029,8 @@ class BinStorageService:
             return "Storage bin has reached its item limit"
         if any(not self._fits(item, bin_row) for item in items):
             return "A confirmed item no longer fits the configured storage bin"
+        if not self._contents_have_volume(items, bin_row):
+            return "Confirmed bin contents exceed the configured storage capacity"
         if len({item.access_level_id for item in items}) > 1:
             return "Confirmed items do not share the same access level"
         direct_item = (
@@ -998,6 +1090,8 @@ class BinStorageService:
         )
         if len(members) >= bin_row.max_items:
             return "Storage bin has reached its item limit"
+        if not self._has_volume_for(item, members, bin_row):
+            return "Storage bin does not have enough available space"
         if any(member.access_level_id != item.access_level_id for member in members):
             return "Item access level no longer matches the storage bin"
         return None
