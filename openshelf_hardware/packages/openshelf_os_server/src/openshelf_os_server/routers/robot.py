@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from openshelf_os_server.core.robot import get_robot_instance, get_robot_worker
+from openshelf_os_server.core.robot_events import process_robot_event
 from openshelf_os_server.core.init_progress import get_init_tracker
 from openshelf_os_server.core.iobox_sizer import capture_store_observer_measurement
 from openshelf_os_server.core.logging_config import correlation_id_var
@@ -762,14 +763,23 @@ async def get_scanner_status(
 
 @router.post(
     "/debug/scanner/scan",
-    dependencies=[Depends(require_permissions("robot:control")), Depends(check_robot_enabled)],
+    dependencies=[Depends(require_permissions("robot:control"))],
 )
 async def emit_scanner_scan_event(
     request: LabelScanRequest,
-    worker: RobotWorker = Depends(get_robot_worker_or_error),
+    worker: RobotWorker | None = Depends(get_command_worker_for_mode),
 ) -> SuccessResponse:
+    payload = {"kind": "label_scanned", "payload": request.code}
     try:
-        await worker.publish_event({"kind": "label_scanned", "payload": request.code})
+        if get_operating_mode() == OperatingMode.mock:
+            # Mock mode does not run a RobotEventListener. Route the scan through
+            # the same handler directly so bin workflow events still use the mock
+            # runtime's SSE publisher.
+            await process_robot_event(payload, get_mock_robot_runtime())
+        else:
+            if worker is None:
+                raise RuntimeError("Robot worker is unavailable")
+            await worker.publish_event(payload)
     except Exception as exc:
         logging.error("Failed to publish label_scanned event: %s", exc)
         raise HTTPException(
