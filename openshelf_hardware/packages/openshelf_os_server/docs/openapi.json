@@ -3359,6 +3359,16 @@
             }
           },
           {
+            "name": "skip_pre_home_approach",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Skip Pre Home Approach"
+            }
+          },
+          {
             "name": "token",
             "in": "query",
             "required": false,
@@ -5660,6 +5670,184 @@
         }
       }
     },
+    "/api/calibration/iobox/door": {
+      "get": {
+        "tags": [
+          "calibration"
+        ],
+        "summary": "Get Iobox Door Position",
+        "operationId": "get_iobox_door_position_api_calibration_iobox_door_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IOBoxDoorPositionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/calibration/iobox/door/move": {
+      "post": {
+        "tags": [
+          "calibration"
+        ],
+        "summary": "Move Iobox Door",
+        "operationId": "move_iobox_door_api_calibration_iobox_door_move_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IOBoxDoorMoveRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/calibration/iobox/door/save": {
+      "post": {
+        "tags": [
+          "calibration"
+        ],
+        "summary": "Save Iobox Door Position",
+        "operationId": "save_iobox_door_position_api_calibration_iobox_door_save_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IOBoxDoorPositionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/calibration/iobox": {
       "get": {
         "tags": [
@@ -6935,6 +7123,205 @@
         }
       }
     },
+    "/api/onboarding/status": {
+      "get": {
+        "tags": [
+          "onboarding"
+        ],
+        "summary": "Get Onboarding Status",
+        "operationId": "get_onboarding_status_api_onboarding_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OnboardingStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/onboarding/wifi/status": {
+      "get": {
+        "tags": [
+          "onboarding"
+        ],
+        "summary": "Get Wifi Status",
+        "operationId": "get_wifi_status_api_onboarding_wifi_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WifiStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/onboarding/wifi/networks": {
+      "get": {
+        "tags": [
+          "onboarding"
+        ],
+        "summary": "List Wifi Networks",
+        "operationId": "list_wifi_networks_api_onboarding_wifi_networks_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WifiNetworkList"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/onboarding/wifi/connect": {
+      "post": {
+        "tags": [
+          "onboarding"
+        ],
+        "summary": "Connect Wifi",
+        "operationId": "connect_wifi_api_onboarding_wifi_connect_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WifiConnectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WifiConnectResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/onboarding/admin-user": {
+      "post": {
+        "tags": [
+          "onboarding"
+        ],
+        "summary": "Create Admin User",
+        "operationId": "create_admin_user_api_onboarding_admin_user_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminUserCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/openshelf_os_server__routers__users__UserResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/onboarding/complete": {
+      "post": {
+        "tags": [
+          "onboarding"
+        ],
+        "summary": "Complete Onboarding",
+        "operationId": "complete_onboarding_api_onboarding_complete_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OnboardingStatus"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/report_error": {
       "post": {
         "tags": [
@@ -7051,6 +7438,35 @@
         ],
         "title": "AccessLevelResponse",
         "description": "Access level response model."
+      },
+      "AdminUserCreate": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "title": "Email"
+          },
+          "pin": {
+            "type": "string",
+            "title": "Pin"
+          },
+          "first_name": {
+            "type": "string",
+            "title": "First Name",
+            "default": "Admin"
+          },
+          "last_name": {
+            "type": "string",
+            "title": "Last Name",
+            "default": "User"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email",
+          "pin"
+        ],
+        "title": "AdminUserCreate"
       },
       "AuditLogListResponse": {
         "properties": {
@@ -7591,6 +8007,77 @@
           "home_on_init"
         ],
         "title": "HomeOnInitUpdateRequest"
+      },
+      "IOBoxDoorMoveRequest": {
+        "properties": {
+          "close": {
+            "type": "number",
+            "maximum": 1000.0,
+            "minimum": 0.0,
+            "title": "Close"
+          },
+          "open": {
+            "type": "number",
+            "maximum": 1000.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Open"
+          },
+          "position": {
+            "type": "string",
+            "enum": [
+              "close",
+              "open"
+            ],
+            "title": "Position"
+          }
+        },
+        "type": "object",
+        "required": [
+          "close",
+          "open",
+          "position"
+        ],
+        "title": "IOBoxDoorMoveRequest"
+      },
+      "IOBoxDoorPositionRequest": {
+        "properties": {
+          "close": {
+            "type": "number",
+            "maximum": 1000.0,
+            "minimum": 0.0,
+            "title": "Close"
+          },
+          "open": {
+            "type": "number",
+            "maximum": 1000.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Open"
+          }
+        },
+        "type": "object",
+        "required": [
+          "close",
+          "open"
+        ],
+        "title": "IOBoxDoorPositionRequest"
+      },
+      "IOBoxDoorPositionResponse": {
+        "properties": {
+          "close": {
+            "type": "number",
+            "title": "Close"
+          },
+          "open": {
+            "type": "number",
+            "title": "Open"
+          }
+        },
+        "type": "object",
+        "required": [
+          "close",
+          "open"
+        ],
+        "title": "IOBoxDoorPositionResponse"
       },
       "IOBoxJogRequest": {
         "properties": {
@@ -9361,6 +9848,19 @@
           "cell_idx"
         ],
         "title": "MoveRequest"
+      },
+      "OnboardingStatus": {
+        "properties": {
+          "needs_onboarding": {
+            "type": "boolean",
+            "title": "Needs Onboarding"
+          }
+        },
+        "type": "object",
+        "required": [
+          "needs_onboarding"
+        ],
+        "title": "OnboardingStatus"
       },
       "PositionResponse": {
         "properties": {

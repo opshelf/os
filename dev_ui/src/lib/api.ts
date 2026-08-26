@@ -1080,6 +1080,41 @@ export async function saveIOBoxCalibration(params: IOBoxPosition): Promise<{ suc
 	});
 }
 
+export interface IOBoxDoorPosition {
+	close: number;
+	open: number;
+}
+
+export async function getIOBoxDoorPosition(): Promise<IOBoxDoorPosition> {
+	return apiFetch<IOBoxDoorPosition>('/calibration/iobox/door');
+}
+
+export async function moveIOBoxDoor(
+	position: 'close' | 'open',
+	close: number,
+	open: number
+): Promise<{ success: boolean; position: 'close' | 'open'; position_mm: number }> {
+	return apiFetch<{ success: boolean; position: 'close' | 'open'; position_mm: number }>(
+		'/calibration/iobox/door/move',
+		{
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ position, close, open })
+		}
+	);
+}
+
+export async function saveIOBoxDoorPosition(
+	close: number,
+	open: number
+): Promise<{ success: boolean }> {
+	return apiFetch<{ success: boolean }>('/calibration/iobox/door/save', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ close, open })
+	});
+}
+
 export interface RotationAngles {
 	front: number;
 	back: number;
@@ -1135,4 +1170,3 @@ export async function moveStage(
 		body: JSON.stringify({ position })
 	});
 }
-
