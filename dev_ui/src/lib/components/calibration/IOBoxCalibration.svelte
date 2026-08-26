@@ -6,16 +6,20 @@
 		controlGripper,
 		getCalibrationStatus,
 		getIOBoxCalibration,
+		getIOBoxDoorPosition,
 		homeMotor,
 		homeToolMotors,
+		moveIOBoxDoor,
 		moveMotor,
 		moveStage,
 		moveToIOBoxPosition,
 		jogIOBoxAxis,
 		testIOBoxSequence,
 		saveIOBoxCalibration,
+		saveIOBoxDoorPosition,
 		type ApiErrorDetail,
 		type CalibrationStatus,
+		type IOBoxDoorPosition,
 		type IOBoxPosition
 	} from '$lib/api';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
@@ -33,7 +37,9 @@
 	}
 
 	let ioboxPosition = $state<IOBoxPosition | null>(null);
+	let doorPosition = $state<IOBoxDoorPosition | null>(null);
 	let loading = $state<boolean>(false);
+	let doorLoading = $state<boolean>(false);
 	let error = $state<string>('');
 	let message = $state<string>('');
 	let warning = $state<string>('');
@@ -54,6 +60,8 @@
 	let editHighY = $state<number>(0);
 	let editZ = $state<number>(0);
 	let editStage = $state<number>(0);
+	let editDoorClose = $state<number>(0);
+	let editDoorOpen = $state<number>(0);
 
 	const JOG_STEPS = [
 		{ value: 0.1, label: '0.1mm' },
@@ -119,12 +127,20 @@
 	const editInputsDisabled = $derived(
 		isMoving === true || needsHome === true || isHoming === true || isPositioned === false
 	);
+	const doorControlsDisabled = $derived(
+		isMoving === true ||
+			isTesting === true ||
+			isSaving === true ||
+			needsHome === true ||
+			isHoming === true
+	);
 
 	onMount(function () {
 		if (browser === false) {
 			return;
 		}
 		loadCalibration();
+		loadDoorPosition();
 		loadCalibrationStatus();
 	});
 
@@ -140,6 +156,67 @@
 			error = err instanceof Error ? err.message : 'failed to load io box calibration';
 		} finally {
 			loading = false;
+		}
+	}
+
+	async function loadDoorPosition(): Promise<void> {
+		doorLoading = true;
+		error = '';
+
+		try {
+			doorPosition = await getIOBoxDoorPosition();
+			editDoorClose = doorPosition.close;
+			editDoorOpen = doorPosition.open;
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'failed to load io door position';
+		} finally {
+			doorLoading = false;
+		}
+	}
+
+	async function didClickMoveDoor(position: 'close' | 'open'): Promise<void> {
+		isMoving = true;
+		error = '';
+		message = '';
+		warning = '';
+
+		try {
+			await moveIOBoxDoor(position, editDoorClose, editDoorOpen);
+			message = `door moved to ${position} position`;
+		} catch (err) {
+			handleNeedsHomeError(err);
+			error = err instanceof Error ? err.message : `failed to move door to ${position} position`;
+		} finally {
+			isMoving = false;
+		}
+	}
+
+	function didClickResetDoor(): void {
+		error = '';
+		message = '';
+		warning = '';
+
+		if (doorPosition !== null) {
+			editDoorClose = doorPosition.close;
+			editDoorOpen = doorPosition.open;
+			message = 'io door position values reset';
+		}
+	}
+
+	async function didClickSaveDoor(): Promise<void> {
+		isSaving = true;
+		error = '';
+		message = '';
+		warning = '';
+
+		try {
+			await saveIOBoxDoorPosition(editDoorClose, editDoorOpen);
+			doorPosition = { close: editDoorClose, open: editDoorOpen };
+			message = 'io door positions saved';
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'failed to save io door positions';
+		} finally {
+			isSaving = false;
 		}
 	}
 
@@ -963,6 +1040,72 @@
 	</div>
 {/if}
 
+<div class="section-divider" style="margin: 1.5em 0;"></div>
+
+<table>
+	<thead>
+		<tr>
+			<th colspan="2">io door position</th>
+		</tr>
+	</thead>
+	<tbody>
+		{#if doorLoading === true}
+			<tr>
+				<td colspan="2">loading io door position...</td>
+			</tr>
+		{:else if doorPosition !== null}
+			<tr>
+				<td>
+					<span class="field-label">close</span>
+					<input
+						type="number"
+						min="0"
+						step="0.5"
+						bind:value={editDoorClose}
+						disabled={doorControlsDisabled}
+					/>
+					<button
+						type="button"
+						onclick={() => didClickMoveDoor('close')}
+						disabled={doorControlsDisabled}
+					>
+						move
+					</button>
+				</td>
+				<td>
+					<span class="field-label">open</span>
+					<input
+						type="number"
+						min="0"
+						step="0.5"
+						bind:value={editDoorOpen}
+						disabled={doorControlsDisabled}
+					/>
+					<button
+						type="button"
+						onclick={() => didClickMoveDoor('open')}
+						disabled={doorControlsDisabled}
+					>
+						move
+					</button>
+				</td>
+			</tr>
+			<tr>
+				<td colspan="2">
+					<div class="door-action-buttons">
+						<button type="button" onclick={didClickResetDoor} disabled={doorControlsDisabled}>
+							reset
+						</button>
+						<button type="button" onclick={didClickSaveDoor} disabled={doorControlsDisabled}>
+							save
+						</button>
+					</div>
+				</td>
+			</tr>
+		{/if}
+	</tbody>
+</table>
+
 {#if message !== ''}
 	<StatusMessage {message} />
 {/if}
@@ -1026,6 +1169,12 @@
 		display: flex;
 		gap: 1em;
 		margin-top: 1.5em;
+	}
+
+	.door-action-buttons {
+		display: flex;
+		gap: 1em;
+		align-items: center;
 	}
 
 	.section-divider {

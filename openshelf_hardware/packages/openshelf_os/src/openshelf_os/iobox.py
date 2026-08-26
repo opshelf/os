@@ -115,6 +115,13 @@ class IOBox:
             raise ConfigError("robot.io not found in config")
 
         self._params = io_config
+
+        if self._md is not None:
+            try:
+                self._md._params = self._params.motors.by_name("door")
+            except KeyError:
+                self._logger.warning("Door motor missing while reloading IO parameters")
+
         self._logger.info("IO parameters reloaded from config.json")
 
     def _emit_init(self, component: str, phase: str, detail: str = "", reason: Optional[str] = None) -> None:
