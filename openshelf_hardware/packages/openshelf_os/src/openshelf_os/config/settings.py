@@ -15,11 +15,33 @@ class StorageBinDimensionsSettings(BaseModel):
     length: float = Field(gt=0)
 
 
+class StorageBinItemDimensionsSettings(BaseModel):
+    width: float = Field(gt=0)
+    length: float = Field(gt=0)
+
+
 class StorageBinSettings(BaseModel):
     barcode: str = Field(pattern=r"^\d{12}$")
     home_location: StorageBinLocationSettings
     inner_dimensions: StorageBinDimensionsSettings
+    max_item_dimensions: Optional[StorageBinItemDimensionsSettings] = None
     max_items: int = Field(ge=1)
+
+    @model_validator(mode="after")
+    def validate_max_item_footprint(self) -> "StorageBinSettings":
+        maximum = self.max_item_dimensions
+        if maximum is None:
+            return self
+        fits = (
+            maximum.width <= self.inner_dimensions.width
+            and maximum.length <= self.inner_dimensions.length
+        ) or (
+            maximum.length <= self.inner_dimensions.width
+            and maximum.width <= self.inner_dimensions.length
+        )
+        if not fits:
+            raise ValueError("max_item_dimensions must fit inside inner_dimensions")
+        return self
 
 
 class StorageSettings(BaseModel):

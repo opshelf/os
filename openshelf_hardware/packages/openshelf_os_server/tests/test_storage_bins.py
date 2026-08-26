@@ -568,6 +568,77 @@ async def test_allocator_prefers_partially_filled_compatible_bin() -> None:
 
 
 @pytest.mark.anyio
+async def test_allocator_enforces_configured_item_footprint_and_bin_height() -> None:
+    async with AsyncSessionLocal() as db:
+        storage = StorageService(db)
+        too_wide = await storage.create_item(
+            "222222222223",
+            "Too wide",
+            {"width": 21, "height": 10, "length": 20},
+        )
+        too_tall = await storage.create_item(
+            "222222222224",
+            "Too tall",
+            {"width": 20, "height": 21, "length": 20},
+        )
+        bin_row = StorageBin(
+            barcode="900000000063",
+            side="left_module",
+            shelf_idx=0,
+            cell_idx=0,
+            inner_dimensions={"width": 100, "height": 20, "length": 100},
+            max_item_dimensions={"width": 20, "length": 20},
+            max_items=10,
+            status="at_home",
+            active=True,
+        )
+        db.add(bin_row)
+        await db.commit()
+
+        service = BinStorageService(db)
+        assert await service.allocate_bin(too_wide) is None
+        assert await service.allocate_bin(too_tall) is None
+
+
+@pytest.mark.anyio
+async def test_allocator_rejects_bin_without_remaining_volume() -> None:
+    async with AsyncSessionLocal() as db:
+        storage = StorageService(db)
+        existing = await storage.create_item(
+            "222222222225",
+            "Existing",
+            {"width": 10, "height": 10, "length": 9},
+        )
+        target = await storage.create_item(
+            "222222222226",
+            "Target",
+            {"width": 10, "height": 2, "length": 10},
+        )
+        full_bin = StorageBin(
+            barcode="900000000064",
+            side="left_module",
+            shelf_idx=0,
+            cell_idx=0,
+            inner_dimensions={"width": 10, "height": 10, "length": 10},
+            max_item_dimensions={"width": 10, "length": 10},
+            max_items=10,
+            status="at_home",
+            active=True,
+        )
+        db.add(full_bin)
+        await db.flush()
+        db.add(StorageBinItem(bin_id=full_bin.id, item_id=existing.id))
+        await db.commit()
+
+        service = BinStorageService(db)
+        assert await service.allocate_bin(target) is None
+        summary = await service.serialize_bin(full_bin)
+        assert summary["max_item_dimensions"] == {"width": 10.0, "length": 10.0}
+        assert summary["used_volume"] == 900
+        assert summary["available_volume"] == 100
+
+
+@pytest.mark.anyio
 async def test_store_workflow_changes_membership_only_after_bin_returns() -> None:
     worker = FakeWorker()
     async with AsyncSessionLocal() as db:
@@ -1655,6 +1726,46 @@ async def test_store_completion_revalidates_target_before_membership() -> None:
         assert workflow.error == "Item no longer fits the configured storage bin"
         assert bin_row.status == "checked_out"
         assert (await db.execute(select(StorageBinItem))).scalar_one_or_none() is None
+
+
+@pytest.mark.anyio
+async def test_store_completion_rejects_capacity_consumed_after_allocation() -> None:
+    async with AsyncSessionLocal() as db:
+        storage = StorageService(db)
+        target = await storage.create_item(
+            "123456789065", "Target", {"width": 10, "height": 2, "length": 10}
+        )
+        existing = await storage.create_item(
+            "123456789066", "Existing", {"width": 10, "height": 10, "length": 9}
+        )
+        bin_row = StorageBin(
+            barcode="900000000065",
+            side="right_module",
+            shelf_idx=1,
+            cell_idx=2,
+            inner_dimensions={"width": 10, "height": 10, "length": 10},
+            max_item_dimensions={"width": 10, "length": 10},
+            max_items=3,
+            status="at_home",
+            active=True,
+        )
+        db.add(bin_row)
+        await db.commit()
+        service = BinStorageService(db)
+        workflow = await service.begin("store", target, None)
+        assert workflow is not None
+
+        db.add(StorageBinItem(bin_id=bin_row.id, item_id=existing.id))
+        await db.commit()
+        await service.transition(workflow, "returning_bin")
+        await service.complete_return(workflow)
+
+        assert workflow.state == "recovery_required"
+        assert workflow.error == "Storage bin does not have enough available space"
+        target_membership = (
+            await db.execute(select(StorageBinItem).where(StorageBinItem.item_id == target.id))
+        ).scalar_one_or_none()
+        assert target_membership is None
 
 
 @pytest.mark.anyio
