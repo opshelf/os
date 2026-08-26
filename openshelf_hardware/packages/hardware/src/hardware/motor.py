@@ -31,7 +31,7 @@ POSITION_TOLERANCE_MM = 1.0
 NOOP_POSITION_TOLERANCE_MM = 0.01
 HOME_APPROACH_TOLERANCE_MM = 1.0
 DEFAULT_HOME_APPROACH_BACKOFF_MM = 5.0
-BRAKE_OUTPUT_FUNCTIONS = frozenset({0x24, 0xA4})
+BRAKE_SIGNAL_OUTPUT_FUNCTIONS = frozenset({0x24, 0xA4, 0xA1})
 DEFAULT_BRAKE_RELEASE_DELAY_MS = 250
 DEFAULT_BRAKE_ENGAGEMENT_DELAY_MS = 250
 DEFAULT_BRAKE_ENGAGEMENT_SPEED_THRESHOLD = 10
@@ -42,7 +42,7 @@ Y_AXIS_RUNTIME_PROFILE = {
     "control_mode": 2,
     "ppr": 10000,
     "encoder_resolution_cpr": 4000,
-    "brake_output_function": 0x24,
+    "brake_output_function": 0xA1,
     "brake_release_delay_ms": 250,
     "brake_engagement_delay_ms": 250,
     "brake_engagement_speed_threshold": 10,
@@ -625,10 +625,10 @@ class Motor():
     def require_brake_output_configuration(self) -> int:
         brake_output_function = self._configured_brake_output_function
 
-        if brake_output_function not in BRAKE_OUTPUT_FUNCTIONS:
+        if brake_output_function not in BRAKE_SIGNAL_OUTPUT_FUNCTIONS:
             raise MotorConfigError(
                 f"Motor {self._motor_id} has no verified brake output configuration; "
-                "set brake_output_function to 0x24 or 0xA4"
+                "set brake_output_function to 0x24, 0xA4, or 0xA1"
             )
 
         return brake_output_function
@@ -661,7 +661,7 @@ class Motor():
 
     async def _configure_brake_control(self) -> None:
         # Establish and verify the manufacturer's sequencing parameters before
-        # assigning BRK to the output, which can immediately change relay state.
+        # assigning SO2, which can immediately change the physical brake state.
         for parameter_name, value in self._expected_brake_control_settings().items():
             await self.set_param(parameter_name, value)
 
@@ -717,10 +717,10 @@ class Motor():
     async def set_brake_output_function(self, value: int, *, force: bool = False) -> None:
         brake_output_function = int(value)
 
-        if brake_output_function not in BRAKE_OUTPUT_FUNCTIONS:
+        if brake_output_function not in BRAKE_SIGNAL_OUTPUT_FUNCTIONS:
             raise MotorConfigError(
-                f"Refusing non-brake SO2 function 0x{brake_output_function:02X}; "
-                "expected 0x24 or 0xA4"
+                f"Refusing unsupported brake-signal SO2 function 0x{brake_output_function:02X}; "
+                "expected 0x24, 0xA4, or 0xA1"
             )
 
         if force is False and self._active_brake_output_function == brake_output_function:
@@ -1638,6 +1638,19 @@ class Motor():
             0x21,
         )
 
+    async def _set_and_verify_peak_current(self, value: int) -> None:
+        peak_current = int(value)
+        if peak_current <= 0:
+            raise MotorConfigError("Peak current must be greater than zero")
+
+        await self.set_param("Peak current", peak_current)
+        actual_peak_current = await self.get_param("Peak current")
+        if actual_peak_current != peak_current:
+            raise MotorConfigError(
+                f"Motor {self._motor_id} peak current readback mismatch: "
+                f"configured={peak_current}, read={actual_peak_current}"
+            )
+
     def _get_home_approach_target_mm(self) -> float:
         backoff_mm = DEFAULT_HOME_APPROACH_BACKOFF_MM
         lower_lim = float(getattr(self._params, "lower_lim", 0.0))
@@ -1686,12 +1699,35 @@ class Motor():
 
         await self.move_to_position(target_mm, rpm=rpm, homing=False)
 
+    async def _move_away_from_home(self, distance_mm: float, rpm: int) -> None:
+        if distance_mm <= 0:
+            raise MotorConfigError("Pre-home clearance distance must be positive")
+
+        logical_distance_mm = -distance_mm if self._is_physical_mapping_inverted() is True else distance_mm
+        self._logger.info(
+            "Starting pre-home clearance move",
+            extra={
+                "motor_id": self._motor_id,
+                "motor_name": getattr(self._params, "motor_name", None),
+                "distance_mm": logical_distance_mm,
+                "rpm": rpm,
+            },
+        )
+        await self.jog(logical_distance_mm, rpm=rpm, homing=False)
+
     # ------------------------------------------------------------------ #
     #  Public homing API
     # ------------------------------------------------------------------ #
 
-    async def home(self) -> None:
+    async def home(
+        self,
+        pre_home_clearance_mm: Optional[float] = None,
+        *,
+        skip_pre_home_approach: bool = False,
+        homing_peak_current: Optional[int] = None,
+    ) -> None:
         self._simulated_fault = False
+        restore_peak_current: int | None = None
 
         try:
             self._emit_init("homing")
@@ -1701,7 +1737,18 @@ class Motor():
             home_rpm = self._params.home_rpm or self._params.ret_rpm
 
             try:
-                await self._move_near_home(self._params.ret_rpm)
+                if pre_home_clearance_mm is not None:
+                    await self._move_away_from_home(pre_home_clearance_mm, self._params.ret_rpm)
+                if skip_pre_home_approach is True:
+                    self._logger.warning(
+                        "Skipping pre-home approach for diagnostic homing",
+                        extra={
+                            "motor_id": self._motor_id,
+                            "motor_name": getattr(self._params, "motor_name", None),
+                        },
+                    )
+                else:
+                    await self._move_near_home(self._params.ret_rpm)
             except Exception as e:
                 raise MotorConfigError(f"Failed during pre-home approach: {str(e)}") from e
 
@@ -1709,6 +1756,19 @@ class Motor():
                 await self._prepare_home_motion(home_rpm, home_dir)
             except Exception as e:
                 raise MotorConfigError(f"Failed to configure homing parameters: {str(e)}") from e
+
+            if homing_peak_current is not None:
+                restore_peak_current = int(self._params.Ip)
+                self._logger.warning(
+                    "Applying temporary homing peak current",
+                    extra={
+                        "motor_id": self._motor_id,
+                        "motor_name": getattr(self._params, "motor_name", None),
+                        "homing_peak_current": int(homing_peak_current),
+                        "restore_peak_current": restore_peak_current,
+                    },
+                )
+                await self._set_and_verify_peak_current(int(homing_peak_current))
 
             try:
                 await self._start_path_zero()
@@ -1752,3 +1812,23 @@ class Motor():
             if not isinstance(e, (MotorError, MotorConfigError, MotorTimeoutError)):
                 raise MotorError(f"Unexpected error during homing: {str(e)}") from e
             raise
+        finally:
+            if restore_peak_current is not None:
+                try:
+                    await self._set_and_verify_peak_current(restore_peak_current)
+                    self._logger.warning(
+                        "Restored peak current after temporary homing override",
+                        extra={
+                            "motor_id": self._motor_id,
+                            "motor_name": getattr(self._params, "motor_name", None),
+                            "peak_current": restore_peak_current,
+                        },
+                    )
+                except Exception as restore_error:
+                    self._is_homed = False
+                    self._hard_stopped = True
+                    self._emit_init("failed", detail="home", reason="peak current restore failed")
+                    raise MotorConfigError(
+                        f"Failed to restore motor {self._motor_id} peak current "
+                        f"to {restore_peak_current}: {restore_error}"
+                    ) from restore_error
