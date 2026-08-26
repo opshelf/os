@@ -10,6 +10,7 @@ from typing import Any
 
 from sqlalchemy import delete, func, select
 
+from openshelf_os_server.core.bin_storage import reserved_bin_locations
 from openshelf_os_server.database.models import Item, ItemLocation, MockRobotCommand
 from openshelf_os_server.database.session import AsyncSessionLocal
 
@@ -174,6 +175,15 @@ class MockRobotRuntime:
 		async with AsyncSessionLocal() as session:
 			return await session.get(MockRobotCommand, command_id)
 
+	async def has_active_commands(self) -> bool:
+		async with AsyncSessionLocal() as session:
+			count = await session.scalar(
+				select(func.count())
+				.select_from(MockRobotCommand)
+				.where(MockRobotCommand.status.in_(ACTIVE_STATUSES))
+			)
+			return bool(count)
+
 	async def replay(self, payload: dict[str, Any], request_id: str | None) -> MockRobotCommand | None:
 		if request_id is None:
 			return None
@@ -288,6 +298,7 @@ class MockRobotRuntime:
 				select(ItemLocation.side, ItemLocation.shelf_idx, ItemLocation.cell_idx)
 			)
 			occupied = {(row.side, row.shelf_idx, row.cell_idx) for row in occupied_result}
+			occupied.update(await reserved_bin_locations(session))
 			location: tuple[str, int, int] | None = None
 			for side in MOCK_SIDES:
 				for shelf_idx in range(MOCK_SHELVES_PER_SIDE):

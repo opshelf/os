@@ -1,0 +1,113 @@
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+import pytest
+
+from openshelf_os.common import AxisCoordinate
+from openshelf_os.robot.core import Robot
+from openshelf_os.robot.status import RobotCommandError, RobotCommandSuccessful
+from openshelf_os.storage import StorageModuleCellLocation, StorageModuleSide
+
+
+class StoreGrid:
+    def __init__(self) -> None:
+        self.stored_locations: list[StorageModuleCellLocation] = []
+
+    def get_cell_coordinate(self, location: StorageModuleCellLocation) -> SimpleNamespace:
+        return SimpleNamespace(
+            to_axis_coordinate=lambda: AxisCoordinate(x=10.0, y=20.0, s=0, z_offset=0.0)
+        )
+
+    def store_item(self, location: StorageModuleCellLocation, item: object) -> None:
+        self.stored_locations.append(location)
+
+
+def build_demo_store_robot(
+    demo_cell_map: dict[str, StorageModuleCellLocation],
+    reserved_locations: set[tuple[str, int, int]],
+) -> tuple[Robot, StoreGrid]:
+    robot = Robot.__new__(Robot)
+    robot._logger = SimpleNamespace(info=lambda *args, **kwargs: None, exception=lambda *args, **kwargs: None)
+    robot._state = SimpleNamespace(current_cell=None)
+    robot._operation_context = {}
+    robot._demo_cell_map = demo_cell_map
+    robot._reserved_cell_locations = reserved_locations
+    robot._io = SimpleNamespace(get_weight=AsyncMock(return_value=42.0))
+    robot.io_pick = AsyncMock()
+    grid = StoreGrid()
+    robot._grid = grid
+    return robot, grid
+
+
+def item_payload(upca: str, location: StorageModuleCellLocation | None = None) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "upca": upca,
+        "name": f"Storage bin {upca}",
+        "dimensions": {"width": 1, "height": 2, "length": 3},
+    }
+    if location is not None:
+        payload["location"] = location.model_dump()
+    return payload
+
+
+@pytest.mark.asyncio
+async def test_demo_store_allows_trusted_explicit_home() -> None:
+    home = StorageModuleCellLocation(side=StorageModuleSide.LEFT, shelf_idx=1, cell_idx=2)
+    robot, grid = build_demo_store_robot(
+        {},
+        {(home.side.value, home.shelf_idx, home.cell_idx)},
+    )
+
+    result = await robot.store(item_payload("bin-123", home))
+
+    assert isinstance(result, RobotCommandSuccessful)
+    assert result.location == home
+    assert grid.stored_locations == [home]
+
+
+@pytest.mark.asyncio
+async def test_demo_store_uses_explicit_home_over_conflicting_demo_mapping() -> None:
+    home = StorageModuleCellLocation(side=StorageModuleSide.LEFT, shelf_idx=1, cell_idx=2)
+    mapped_location = StorageModuleCellLocation(side=StorageModuleSide.RIGHT, shelf_idx=3, cell_idx=4)
+    robot, grid = build_demo_store_robot(
+        {"bin-123": mapped_location},
+        {(home.side.value, home.shelf_idx, home.cell_idx)},
+    )
+
+    result = await robot.store(item_payload("bin-123", home))
+
+    assert isinstance(result, RobotCommandSuccessful)
+    assert result.location == home
+    assert grid.stored_locations == [home]
+    robot.io_pick.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_demo_store_allows_explicit_home_for_unmapped_bin_barcode() -> None:
+    home = StorageModuleCellLocation(side=StorageModuleSide.LEFT, shelf_idx=1, cell_idx=2)
+    robot, grid = build_demo_store_robot(
+        {"ordinary-item": StorageModuleCellLocation(side=StorageModuleSide.RIGHT, shelf_idx=0, cell_idx=0)},
+        {(home.side.value, home.shelf_idx, home.cell_idx)},
+    )
+
+    result = await robot.store(item_payload("bin-456", home))
+
+    assert isinstance(result, RobotCommandSuccessful)
+    assert result.location == home
+    assert grid.stored_locations == [home]
+
+
+@pytest.mark.asyncio
+async def test_demo_store_rejects_mapped_reserved_location_without_explicit_location() -> None:
+    home = StorageModuleCellLocation(side=StorageModuleSide.LEFT, shelf_idx=1, cell_idx=2)
+    robot, grid = build_demo_store_robot(
+        {"ordinary-item": home},
+        {(home.side.value, home.shelf_idx, home.cell_idx)},
+    )
+
+    result = await robot.store(item_payload("ordinary-item"))
+
+    assert isinstance(result, RobotCommandError)
+    assert result.error == "Demo storage location is reserved"
+    assert grid.stored_locations == []
+    robot.io_pick.assert_not_awaited()

@@ -84,3 +84,29 @@ def test_find_best_slot_prefers_smaller_footprint_area_over_narrower_width() -> 
 	assert location.side == StorageModuleSide.RIGHT
 	assert location.shelf_idx == 0
 	assert location.cell_idx == 1
+
+
+def test_find_best_slot_excludes_server_reserved_home_even_when_available() -> None:
+	grid = StorageGrid(
+		left_module=[
+			Shelf(
+				shelf_idx=0,
+				shelf_height=200.0,
+				shelf_width=400.0,
+				cells=[
+					build_cell(0, width=85.0, length=145.0, height=135.0),
+					build_cell(1, width=90.0, length=150.0, height=140.0),
+				],
+			)
+		],
+		right_module=[],
+	)
+	item = CellItem(dimensions=Dimensions(width=85.0, length=145.0, height=135.0))
+
+	location = grid.find_best_slot_for_item(
+		item,
+		excluded_locations={("left_module", 0, 0)},
+	)
+
+	assert location is not None
+	assert location.cell_idx == 1
