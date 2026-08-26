@@ -37,7 +37,13 @@ from openshelf_os_server.core.logging_config import configure_logging, get_logge
 from openshelf_os_server.core.robot import get_robot_health, init_robot_worker, stop_robot_worker
 from openshelf_os_server.core.init_progress import get_init_tracker
 from openshelf_os_server.core.storage import StorageService
-from openshelf_os_server.core.camera import init_camera_progress, init_tool_camera_manager, init_overhead_camera_manager, stop_all_camera_streams
+from openshelf_os_server.core.camera import (
+	init_camera_progress,
+	init_overhead_camera_manager,
+	init_overview_camera_manager,
+	init_tool_camera_manager,
+	stop_all_camera_streams,
+)
 from openshelf_os_server.core.iobox_sizer import get_iobox_sizer_status, init_iobox_sizer, stop_iobox_sizer
 from openshelf_os_server.core.mock_robot import (
 	get_mock_robot_runtime,
@@ -453,6 +459,18 @@ def _get_overhead_camera_url(settings: Settings) -> str | None:
 	return None
 
 
+def _get_overview_camera_urls(settings: Settings) -> dict[str, str]:
+	cameras = {
+		"overview_one": settings.overview_one_camera,
+		"overview_two": settings.overview_two_camera,
+	}
+	return {
+		camera_id: camera.rtsp_url
+		for camera_id, camera in cameras.items()
+		if camera.enabled is True and camera.rtsp_url != ""
+	}
+
+
 DEFAULT_ACCESS_LEVELS = ["Level 1", "Level 2", "Level 3"]
 
 DEFAULT_ROLES: dict[str, list[str]] = {
@@ -666,6 +684,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 			logger.info("overhead_camera_initialized", rtsp_url=overhead_camera_url)
 		except Exception as e:
 			logger.error("overhead_camera_initialization_failed", error=str(e), exc_info=True)
+
+	overview_camera_urls = {} if is_mock else _get_overview_camera_urls(settings)
+	for camera_id, rtsp_url in overview_camera_urls.items():
+		try:
+			await init_overview_camera_manager(camera_id, rtsp_url)
+			camera_ids.append(camera_id)
+			logger.info("overview_camera_initialized", camera_id=camera_id, rtsp_url=rtsp_url)
+		except Exception as e:
+			logger.error("overview_camera_initialization_failed", camera_id=camera_id, error=str(e), exc_info=True)
 
 	if is_mock is False:
 		try:

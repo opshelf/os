@@ -11,11 +11,12 @@ from openshelf_os_server.core.camera import (
 	camera_registry,
 	CameraStreamManager,
 	ToolCameraStreamManager,
+	init_overview_camera_manager,
 	is_rtsp_url_reachable,
 	stop_camera_stream_by_id,
 )
 
-from openshelf_os_server.main import _get_tool_camera_url
+from openshelf_os_server.main import _get_overview_camera_urls, _get_tool_camera_url
 
 
 def _make_sizer_manager_mock(is_available: bool = True) -> MagicMock:
@@ -86,6 +87,25 @@ async def test_list_cameras_with_tool_camera(client: AsyncClient) -> None:
 	assert camera["running"] is False
 	assert camera["consumers"] == 0
 	assert camera["has_frame"] is False
+
+
+@pytest.mark.anyio
+async def test_list_cameras_with_overview_cameras(client: AsyncClient) -> None:
+	one_manager = _make_tool_manager_mock()
+	two_manager = _make_tool_manager_mock()
+
+	with patch.dict(
+		camera_registry,
+		{"overview_one": one_manager, "overview_two": two_manager},
+		clear=True,
+	):
+		response = await client.get("/api/camera")
+
+	assert response.status_code == 200
+	assert [(camera["id"], camera["type"]) for camera in response.json()["cameras"]] == [
+		("overview_one", "OverviewCamera"),
+		("overview_two", "OverviewCamera"),
+	]
 
 
 @pytest.mark.anyio
@@ -212,6 +232,31 @@ def test_get_tool_camera_url_uses_config_url_when_enabled(tmp_path, monkeypatch)
 	settings = SimpleNamespace(tool_camera=SimpleNamespace(enabled=True, rtsp_url=""))
 
 	assert _get_tool_camera_url(settings) == "rtsp://camera"
+
+
+def test_get_overview_camera_urls_returns_only_enabled_configured_cameras() -> None:
+	settings = SimpleNamespace(
+		overview_one_camera=SimpleNamespace(enabled=True, rtsp_url="rtsp://one"),
+		overview_two_camera=SimpleNamespace(enabled=False, rtsp_url="rtsp://two"),
+	)
+
+	assert _get_overview_camera_urls(settings) == {"overview_one": "rtsp://one"}
+
+
+@pytest.mark.anyio
+async def test_init_overview_camera_manager_registers_named_camera() -> None:
+	with patch.dict(camera_registry, {}, clear=True):
+		await init_overview_camera_manager("overview_one", "rtsp://one")
+
+		manager = camera_registry["overview_one"]
+		assert isinstance(manager, ToolCameraStreamManager)
+		assert manager.rtsp_url == "rtsp://one"
+
+
+@pytest.mark.anyio
+async def test_init_overview_camera_manager_rejects_unknown_id() -> None:
+	with pytest.raises(ValueError, match="Unsupported overview camera id"):
+		await init_overview_camera_manager("overview_center", "rtsp://center")
 
 @pytest.mark.anyio
 async def test_opencv_stream_manager_always_calls_capture_raw() -> None:

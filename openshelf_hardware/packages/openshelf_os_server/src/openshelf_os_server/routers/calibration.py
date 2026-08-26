@@ -1238,8 +1238,133 @@ class IOBoxSaveRequest(BaseModel):
 	stage_extension: float
 
 
+class IOBoxDoorPositionResponse(BaseModel):
+	close: float
+	open: float
+
+
+class IOBoxDoorPositionRequest(BaseModel):
+	close: float = Field(ge=0, le=1000)
+	open: float = Field(gt=0, le=1000)
+
+
+class IOBoxDoorMoveRequest(IOBoxDoorPositionRequest):
+	position: Literal["close", "open"]
+
+
 _iobox_position: Literal["low", "high"] = "low"
 _iobox_current: Optional[IOBoxPositionResponse] = None
+
+
+def _get_iobox_door_config(config):
+	try:
+		return config.robot.io.motors.by_name("door")
+	except KeyError as exc:
+		raise HTTPException(
+			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+			detail="IO door motor is not configured",
+		) from exc
+
+
+def _validate_iobox_door_positions(close: float, open: float) -> None:
+	if close >= open:
+		raise HTTPException(
+			status_code=status.HTTP_400_BAD_REQUEST,
+			detail="IO door close position must be less than open position",
+		)
+
+
+def _with_iobox_door_positions(door_config, close: float, open: float):
+	config_dict = door_config.model_dump()
+	config_dict["lower_lim"] = close
+	config_dict["lim"] = open
+
+	try:
+		return type(door_config).model_validate(config_dict)
+	except ValueError as exc:
+		raise HTTPException(
+			status_code=status.HTTP_400_BAD_REQUEST,
+			detail=f"Invalid IO door positions: {exc}",
+		) from exc
+
+
+@router.get("/iobox/door", response_model=IOBoxDoorPositionResponse)
+async def get_iobox_door_position() -> IOBoxDoorPositionResponse:
+	config = get_root_config()
+	door_config = _get_iobox_door_config(config)
+
+	return IOBoxDoorPositionResponse(
+		close=float(door_config.lower_lim),
+		open=float(door_config.lim),
+	)
+
+
+@router.post("/iobox/door/move")
+async def move_iobox_door(request: IOBoxDoorMoveRequest):
+	await ensure_laser_auto_calibration_not_running()
+	_validate_iobox_door_positions(request.close, request.open)
+
+	worker = await get_robot_worker_or_503()
+	_ensure_ready(worker)
+
+	io = worker._robot._io
+	motor = io._md
+	if motor is None:
+		raise HTTPException(
+			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+			detail="IO door motor is not configured",
+		)
+
+	temporary_config = _with_iobox_door_positions(motor._params, request.close, request.open)
+	target = request.close if request.position == "close" else request.open
+	original_config = motor._params
+
+	try:
+		async with manual_motion_guard("calibration_iobox_door_move", worker=worker):
+			async with io._door_motion_lock:
+				motor._params = temporary_config
+				try:
+					await motor.move_to_position(target)
+				finally:
+					motor._params = original_config
+			await io.refresh_door_state(force=True)
+	except (IOBoxError, MotorError, HardwareMotorError) as exc:
+		raise HTTPException(
+			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+			detail=f"Failed to move IO door: {exc}",
+		) from exc
+
+	return {"success": True, "position": request.position, "position_mm": target}
+
+
+@router.post("/iobox/door/save")
+async def save_iobox_door_position(request: IOBoxDoorPositionRequest):
+	await ensure_laser_auto_calibration_not_running()
+	_validate_iobox_door_positions(request.close, request.open)
+
+	config = get_root_config()
+	door_config = _get_iobox_door_config(config)
+	updated_door_config = _with_iobox_door_positions(
+		door_config,
+		request.close,
+		request.open,
+	)
+
+	motors = config.robot.io.motors.root
+	for index, motor_config in enumerate(motors):
+		if motor_config.motor_name == "door":
+			motors[index] = updated_door_config
+			break
+
+	save_root_config(config)
+
+	try:
+		worker = await get_robot_worker()
+		worker._robot.reload_parameters()
+	except ValueError:
+		pass
+
+	return {"success": True}
 
 
 def _load_iobox_calibration() -> IOBoxPositionResponse:

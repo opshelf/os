@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from hardware.exceptions import MotorError as HardwareMotorError
@@ -49,6 +49,21 @@ def make_iobox() -> IOBox:
     iobox._door_zero_position_tolerance_mm = 0.01
     iobox._door_motion_lock = asyncio.Lock()
     return iobox
+
+
+def test_reload_parameters_updates_live_door_motor_limits() -> None:
+    iobox = make_iobox()
+    door_config = SimpleNamespace(lim=57.0, lower_lim=0.5)
+    io_config = SimpleNamespace(
+        motors=SimpleNamespace(by_name=lambda name: door_config)
+    )
+    config = SimpleNamespace(get=lambda path, default=None: io_config)
+
+    with patch("openshelf_os.iobox.load_config_file", return_value=config):
+        iobox.reload_parameters()
+
+    assert iobox._params is io_config
+    assert iobox._md._params is door_config
 
 
 @pytest.mark.asyncio
