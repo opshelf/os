@@ -16,6 +16,7 @@ os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_db_path}"
 os.environ["JWT_SECRET"] = "test-jwt-secret"
 os.environ["AUDIT_HMAC_KEY"] = "test-hmac-key"
 os.environ["ENV"] = "test"
+os.environ["OPENSHELF_ONBOARDING_STATE_PATH"] = str(_tmpdir / "onboarding_state")
 
 from sqlalchemy import delete
 

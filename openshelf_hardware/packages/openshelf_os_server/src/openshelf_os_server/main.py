@@ -626,6 +626,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 	await _ensure_default_roles_and_access_levels()
 	await _ensure_default_role_permissions()
 	await _ensure_developer_user()
+	async with AsyncSessionLocal() as db:
+		await onboarding.ensure_onboarding_state(db)
 	await _apply_mode_transition()
 
 	robot_init_task: Optional[asyncio.Task[None]] = None
