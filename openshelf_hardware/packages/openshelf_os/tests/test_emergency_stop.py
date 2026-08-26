@@ -132,10 +132,12 @@ hardware_toolcam = types.SimpleNamespace(ToolCamera=object)
 hardware_laser = types.SimpleNamespace(LaserSensor=object)
 hardware_gpio = types.ModuleType("hardware.gpio")
 hardware_gpio_types = types.ModuleType("hardware.gpio.types")
+hardware_exceptions = types.ModuleType("hardware.exceptions")
 hardware_gpio_types.DigitalInput = object
 hardware_gpio_types.DigitalOutput = object
 hardware_gpio_types.GpioEvent = object
 hardware_gpio_types.GpioSubscription = object
+hardware_exceptions.MotorError = Exception
 hardware_gpio.types = hardware_gpio_types
 
 hardware_module.controller = hardware_controller
@@ -146,6 +148,7 @@ hardware_module.scale = hardware_scale
 hardware_module.toolcam = hardware_toolcam
 hardware_module.laser = hardware_laser
 hardware_module.gpio = hardware_gpio
+hardware_module.exceptions = hardware_exceptions
 
 sys.modules.setdefault("hardware", hardware_module)
 sys.modules.setdefault("hardware.controller", hardware_controller)
@@ -157,6 +160,7 @@ sys.modules.setdefault("hardware.toolcam", hardware_toolcam)
 sys.modules.setdefault("hardware.laser", hardware_laser)
 sys.modules.setdefault("hardware.gpio", hardware_gpio)
 sys.modules.setdefault("hardware.gpio.types", hardware_gpio_types)
+sys.modules.setdefault("hardware.exceptions", hardware_exceptions)
 
 
 try:
@@ -301,12 +305,39 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(worker._is_emergency_stopped)
         self.assertEqual(worker._emergency_stop_reason, "test reason")
         self.assertFalse(worker._is_crashed)
+        self.assertTrue(worker.needs_home())
+        self.assertEqual(worker.needs_home_reason(), "test reason")
         self.assertTrue(robot.safety_paused)
 
         payload = json.loads(await worker.get_status_snapshot(force_refresh=True))
         self.assertTrue(payload["is_emergency_stopped"])
         self.assertFalse(payload["is_emergency_stop_active"])
         self.assertEqual(payload["emergency_stop_reason"], "test reason")
+        self.assertTrue(payload["needs_home"])
+        self.assertEqual(payload["needs_home_reason"], "test reason")
+
+        RobotWorker._instance = None
+
+    async def test_successful_home_clears_emergency_stop_home_requirement(self):
+        from openshelf_os.robot.commands import HomeCommand
+        from openshelf_os.robot.status import RobotCommandSuccessful
+        from openshelf_os.robot.worker import RobotWorker
+
+        robot = MockRobot()
+        RobotWorker._instance = None
+        worker = RobotWorker(robot)
+        await worker.emergency_stop("test reason")
+
+        async def successful_home():
+            return RobotCommandSuccessful(command="home")
+
+        task = asyncio.create_task(successful_home())
+        await task
+        await worker._publish_completed_command_result(task, HomeCommand())
+
+        self.assertFalse(worker._is_emergency_stopped)
+        self.assertFalse(worker.needs_home())
+        self.assertFalse(robot.safety_paused)
 
         RobotWorker._instance = None
 
@@ -418,6 +449,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
 
         robot = MockRobot()
         RobotWorker._instance = None
+
         worker = RobotWorker(robot)
         task_cancelled = asyncio.Event()
 
@@ -439,13 +471,442 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
 
         RobotWorker._instance = None
 
+    async def test_emergency_stop_preserves_completed_retrieve_success_once(self):
+        from openshelf_os.robot.commands import RetrieveItemCommand
+        from openshelf_os.robot.status import RobotCommandSuccessful
+        from openshelf_os.robot.worker import RobotWorker
+
+        robot = MockRobot()
+        RobotWorker._instance = None
+        worker = RobotWorker(robot)
+        events = await worker.subscribe_events()
+
+        async def completed_command():
+            return RobotCommandSuccessful(
+                command="retrieve_item",
+                upca="900000000005",
+                weight=123.0,
+            )
+
+        worker._current_command = RetrieveItemCommand(
+            request_id="bin-workflow-completed-stop",
+            upca="900000000005",
+            location={"side": "left_module", "shelf_idx": 1, "cell_idx": 2},
+        )
+        worker._current_operation = worker._snapshot_command(worker._current_command)
+        worker._queued_commands.append(worker._current_operation)
+        worker._current_task = asyncio.create_task(completed_command())
+        await asyncio.sleep(0)
+
+        async def no_status_publish():
+            return None
+
+        async def no_safety_change(*, refresh=True):
+            return False
+
+        worker._publish_status = no_status_publish
+        worker._evaluate_safety_guard = no_safety_change
+        worker._running = True
+        process_task = asyncio.create_task(worker.process_commands())
+
+        try:
+            await worker.emergency_stop("test")
+
+            event = json.loads(await asyncio.wait_for(events.get(), timeout=1))
+            self.assertEqual(event, {
+                "command": "retrieve_item",
+                "message": "success",
+                "location": None,
+                "upca": "900000000005",
+                "weight": 123.0,
+                "request_id": "bin-workflow-completed-stop",
+            })
+            await asyncio.sleep(0.05)
+            self.assertTrue(events.empty())
+            self.assertIsNone(worker._current_task)
+            self.assertEqual(worker._queued_commands, [])
+        finally:
+            worker._running = False
+            process_task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await process_task
+            RobotWorker._instance = None
+
+    async def test_emergency_stop_fails_each_queued_storage_command(self):
+        from openshelf_os.robot.commands import RetrieveItemCommand, StoreItemCommand
+        from openshelf_os.robot.worker import RobotWorker
+
+        robot = MockRobot()
+        RobotWorker._instance = None
+        worker = RobotWorker(robot)
+        events = await worker.subscribe_events()
+        retrieve = RetrieveItemCommand(
+            request_id="bin-workflow-queued-retrieve",
+            upca="900000000006",
+            location={"side": "right_module", "shelf_idx": 2, "cell_idx": 3},
+        )
+        store = StoreItemCommand(
+            request_id="bin-workflow-queued-store",
+            item={
+                "upca": "900000000007",
+                "location": {"side": "left_module", "shelf_idx": 4, "cell_idx": 5},
+            },
+        )
+        await worker.enqueue_command(retrieve)
+        await worker.enqueue_command(store)
+
+        await worker.emergency_stop("test")
+
+        failures = {}
+        for _ in range(4):
+            event = json.loads(await asyncio.wait_for(events.get(), timeout=1))
+            if event.get("command") in {"retrieve_item", "store_item"}:
+                failures[event["request_id"]] = event
+            if len(failures) == 2:
+                break
+        self.assertEqual(failures, {
+            "bin-workflow-queued-retrieve": {
+                "command": "retrieve_item",
+                "message": "error",
+                "error": "Emergency stop: test",
+                "request_id": "bin-workflow-queued-retrieve",
+                "upca": "900000000006",
+                "location": {"side": "right_module", "shelf_idx": 2, "cell_idx": 3},
+            },
+            "bin-workflow-queued-store": {
+                "command": "store_item",
+                "message": "error",
+                "error": "Emergency stop: test",
+                "request_id": "bin-workflow-queued-store",
+                "upca": "900000000007",
+                "location": {"side": "left_module", "shelf_idx": 4, "cell_idx": 5},
+            },
+        })
+        self.assertEqual(worker._queued_commands, [])
+        self.assertTrue(worker._command_queue.empty())
+
+        RobotWorker._instance = None
+
+    async def test_emergency_stop_publishes_correlated_failure_for_cancelled_retrieve(self):
+        from openshelf_os.robot.commands import RetrieveItemCommand
+        from openshelf_os.robot.worker import RobotWorker
+
+        robot = MockRobot()
+        RobotWorker._instance = None
+        worker = RobotWorker(robot)
+        events = await worker.subscribe_events()
+
+        async def slow_command():
+            await asyncio.sleep(10)
+
+        worker._current_command = RetrieveItemCommand(
+            request_id="bin-workflow-1",
+            upca="900000000001",
+            location={"side": "left_module", "shelf_idx": 1, "cell_idx": 2},
+        )
+        worker._current_task = asyncio.create_task(slow_command())
+
+        await worker.emergency_stop("test")
+
+        event = {}
+        for _ in range(2):
+            event = json.loads(await asyncio.wait_for(events.get(), timeout=1))
+            if event.get("command") == "retrieve_item":
+                break
+        self.assertEqual(event, {
+            "command": "retrieve_item",
+            "message": "error",
+            "error": "Emergency stop: test",
+            "request_id": "bin-workflow-1",
+            "upca": "900000000001",
+            "location": {"side": "left_module", "shelf_idx": 1, "cell_idx": 2},
+        })
+
+        RobotWorker._instance = None
+
+    async def test_worker_publishes_correlated_failure_when_retrieve_faults(self):
+        from openshelf_os.exceptions import MotorError
+        from openshelf_os.robot.commands import RetrieveItemCommand
+        from openshelf_os.robot.worker import RobotWorker
+
+        robot = MockRobot()
+        RobotWorker._instance = None
+        worker = RobotWorker(robot)
+        events = await worker.subscribe_events()
+
+        async def faulting_command():
+            raise MotorError("motor fault")
+
+        async def no_status_publish():
+            return None
+
+        async def no_safety_change(*, refresh=True):
+            return False
+
+        worker._current_command = RetrieveItemCommand(
+            request_id="bin-workflow-2",
+            upca="900000000002",
+            location={"side": "right_module", "shelf_idx": 3, "cell_idx": 4},
+        )
+        worker._current_operation = worker._snapshot_command(worker._current_command)
+        worker._current_task = asyncio.create_task(faulting_command())
+        worker._publish_status = no_status_publish
+        worker._evaluate_safety_guard = no_safety_change
+        worker._running = True
+        process_task = asyncio.create_task(worker.process_commands())
+
+        try:
+            event = json.loads(await asyncio.wait_for(events.get(), timeout=1))
+            self.assertEqual(event, {
+                "command": "retrieve_item",
+                "message": "error",
+                "error": "motor fault",
+                "request_id": "bin-workflow-2",
+                "upca": "900000000002",
+                "location": {"side": "right_module", "shelf_idx": 3, "cell_idx": 4},
+            })
+        finally:
+            worker._running = False
+            process_task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await process_task
+            RobotWorker._instance = None
+
+    async def test_worker_publishes_correlated_success_for_retrieve(self):
+        from openshelf_os.robot.commands import RetrieveItemCommand
+        from openshelf_os.robot.status import RobotCommandSuccessful
+        from openshelf_os.robot.worker import RobotWorker
+
+        robot = MockRobot()
+        RobotWorker._instance = None
+        worker = RobotWorker(robot)
+        events = await worker.subscribe_events()
+
+        async def successful_command():
+            return RobotCommandSuccessful(
+                command="retrieve_item",
+                upca="900000000003",
+                weight=123.0,
+            )
+
+        async def no_status_publish():
+            return None
+
+        async def no_safety_change(*, refresh=True):
+            return False
+
+        worker._current_command = RetrieveItemCommand(
+            request_id="bin-workflow-3",
+            upca="900000000003",
+            location={"side": "left_module", "shelf_idx": 1, "cell_idx": 2},
+        )
+        worker._current_operation = worker._snapshot_command(worker._current_command)
+        worker._current_task = asyncio.create_task(successful_command())
+        worker._publish_status = no_status_publish
+        worker._evaluate_safety_guard = no_safety_change
+        worker._running = True
+        process_task = asyncio.create_task(worker.process_commands())
+
+        try:
+            event = json.loads(await asyncio.wait_for(events.get(), timeout=1))
+            self.assertEqual(event, {
+                "command": "retrieve_item",
+                "message": "success",
+                "location": None,
+                "upca": "900000000003",
+                "weight": 123.0,
+                "request_id": "bin-workflow-3",
+            })
+        finally:
+            worker._running = False
+            process_task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await process_task
+            RobotWorker._instance = None
+
+    async def test_worker_preserves_non_storage_error_event_publication(self):
+        from openshelf_os.robot.commands import HomeCommand
+        from openshelf_os.robot.status import RobotCommandError
+        from openshelf_os.robot.worker import RobotWorker
+
+        robot = MockRobot()
+        RobotWorker._instance = None
+        worker = RobotWorker(robot)
+        events = await worker.subscribe_events()
+
+        async def failed_home_command():
+            return RobotCommandError(command="home", error="home failed")
+
+        async def no_status_publish():
+            return None
+
+        async def no_safety_change(*, refresh=True):
+            return False
+
+        worker._current_command = HomeCommand()
+        worker._current_operation = worker._snapshot_command(worker._current_command)
+        worker._current_task = asyncio.create_task(failed_home_command())
+        worker._publish_status = no_status_publish
+        worker._evaluate_safety_guard = no_safety_change
+        worker._running = True
+        process_task = asyncio.create_task(worker.process_commands())
+
+        try:
+            event = json.loads(await asyncio.wait_for(events.get(), timeout=1))
+            self.assertEqual(event, {"command": "home", "error": "home failed"})
+        finally:
+            worker._running = False
+            process_task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await process_task
+            RobotWorker._instance = None
+
+    async def test_emergency_stop_fails_dequeued_storage_command_before_task_creation(self):
+        from openshelf_os.robot.commands import RetrieveItemCommand
+        from openshelf_os.robot.worker import RobotWorker
+
+        robot = MockRobot()
+        RobotWorker._instance = None
+        worker = RobotWorker(robot)
+        events = await worker.subscribe_events()
+        status_blocked = asyncio.Event()
+        release_status = asyncio.Event()
+        process_task = None
+
+        async def block_dequeue_status():
+            if asyncio.current_task() is process_task:
+                status_blocked.set()
+                await release_status.wait()
+
+        async def no_safety_change(*, refresh=True):
+            return False
+
+        command = RetrieveItemCommand(
+            request_id="bin-workflow-dequeued-estop",
+            upca="900000000009",
+            location={"side": "right_module", "shelf_idx": 2, "cell_idx": 4},
+        )
+        await worker.enqueue_command(command)
+        worker._publish_status = block_dequeue_status
+        worker._evaluate_safety_guard = no_safety_change
+        worker._running = True
+        process_task = asyncio.create_task(worker.process_commands())
+
+        try:
+            await asyncio.wait_for(status_blocked.wait(), timeout=1)
+            await worker.emergency_stop("dequeue window")
+
+            event = {}
+            for _ in range(3):
+                event = json.loads(await asyncio.wait_for(events.get(), timeout=1))
+                if event.get("request_id") == command.request_id:
+                    break
+            self.assertEqual(event, {
+                "command": "retrieve_item",
+                "message": "error",
+                "error": "Emergency stop: dequeue window",
+                "request_id": "bin-workflow-dequeued-estop",
+                "upca": "900000000009",
+                "location": {"side": "right_module", "shelf_idx": 2, "cell_idx": 4},
+            })
+            await asyncio.sleep(0)
+            remaining_events = []
+            while events.empty() is False:
+                remaining_events.append(json.loads(events.get_nowait()))
+            self.assertFalse(any(
+                queued_event.get("request_id") == command.request_id
+                for queued_event in remaining_events
+            ))
+            self.assertIsNone(worker._current_command)
+            self.assertIsNone(worker._current_task)
+
+            release_status.set()
+            await asyncio.sleep(0.05)
+            self.assertEqual(robot.handled_commands, [])
+        finally:
+            worker._running = False
+            release_status.set()
+            process_task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await process_task
+            RobotWorker._instance = None
+
+    async def test_shutdown_fails_dequeued_storage_command_before_task_creation(self):
+        from openshelf_os.robot.commands import RetrieveItemCommand
+        from openshelf_os.robot.worker import RobotWorker
+
+        robot = MockRobot()
+        RobotWorker._instance = None
+        worker = RobotWorker(robot)
+        events = await worker.subscribe_events()
+        status_blocked = asyncio.Event()
+        release_status = asyncio.Event()
+        process_task = None
+
+        async def block_dequeue_status():
+            if asyncio.current_task() is process_task:
+                status_blocked.set()
+                await release_status.wait()
+
+        async def no_safety_change(*, refresh=True):
+            return False
+
+        command = RetrieveItemCommand(
+            request_id="bin-workflow-dequeued-shutdown",
+            upca="900000000010",
+            location={"side": "left_module", "shelf_idx": 3, "cell_idx": 1},
+        )
+        await worker.enqueue_command(command)
+        worker._publish_status = block_dequeue_status
+        worker._evaluate_safety_guard = no_safety_change
+        worker._running = True
+        process_task = asyncio.create_task(worker.process_commands())
+        worker._worker_task = process_task
+
+        try:
+            await asyncio.wait_for(status_blocked.wait(), timeout=1)
+            await worker.shutdown()
+
+            event = {}
+            for _ in range(3):
+                event = json.loads(await asyncio.wait_for(events.get(), timeout=1))
+                if event.get("request_id") == command.request_id:
+                    break
+            self.assertEqual(event, {
+                "command": "retrieve_item",
+                "message": "error",
+                "error": "Robot stopped during shutdown",
+                "request_id": "bin-workflow-dequeued-shutdown",
+                "upca": "900000000010",
+                "location": {"side": "left_module", "shelf_idx": 3, "cell_idx": 1},
+            })
+            remaining_events = []
+            while events.empty() is False:
+                remaining_events.append(json.loads(events.get_nowait()))
+            self.assertFalse(any(
+                queued_event.get("request_id") == command.request_id
+                for queued_event in remaining_events
+            ))
+            self.assertIsNone(worker._current_command)
+            self.assertIsNone(worker._current_task)
+            self.assertEqual([command.command for command in robot.handled_commands], ["stop"])
+        finally:
+            release_status.set()
+            if process_task.done() is False:
+                process_task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await process_task
+            RobotWorker._instance = None
+
     async def test_shutdown_cancels_running_command_task(self):
+        from openshelf_os.robot.commands import RetrieveItemCommand
         from openshelf_os.robot.worker import RobotWorker
 
         robot = MockRobot()
         RobotWorker._instance = None
         worker = RobotWorker(robot)
         task_cancelled = asyncio.Event()
+        events = await worker.subscribe_events()
 
         async def slow_command():
             try:
@@ -455,16 +916,74 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
                 raise
 
         worker._running = True
+        worker._current_command = RetrieveItemCommand(
+            request_id="bin-workflow-shutdown",
+            upca="900000000004",
+            location={"side": "left_module", "shelf_idx": 1, "cell_idx": 2},
+        )
+        worker._current_operation = worker._snapshot_command(worker._current_command)
         worker._current_task = asyncio.create_task(slow_command())
         await asyncio.sleep(0)
 
         await worker.shutdown()
 
+        event = json.loads(await asyncio.wait_for(events.get(), timeout=1))
         self.assertTrue(task_cancelled.is_set())
         self.assertIsNone(worker._current_task)
+        self.assertEqual(event, {
+            "command": "retrieve_item",
+            "message": "error",
+            "error": "Robot stopped during shutdown",
+            "request_id": "bin-workflow-shutdown",
+            "upca": "900000000004",
+            "location": {"side": "left_module", "shelf_idx": 1, "cell_idx": 2},
+        })
         self.assertEqual(robot.shutdown_calls, 1)
         self.assertEqual(robot.lifecycle_events[-2:], ["status", "shutdown"])
         self.assertFalse(any(error.error_type == "StatusRetrievalError" for error in worker._error_queue))
+
+        RobotWorker._instance = None
+
+    async def test_shutdown_preserves_completed_retrieve_success(self):
+        from openshelf_os.robot.commands import RetrieveItemCommand
+        from openshelf_os.robot.status import RobotCommandSuccessful
+        from openshelf_os.robot.worker import RobotWorker
+
+        robot = MockRobot()
+        RobotWorker._instance = None
+        worker = RobotWorker(robot)
+        events = await worker.subscribe_events()
+
+        async def completed_command():
+            return RobotCommandSuccessful(
+                command="retrieve_item",
+                upca="900000000008",
+                weight=456.0,
+            )
+
+        worker._current_command = RetrieveItemCommand(
+            request_id="bin-workflow-completed-shutdown",
+            upca="900000000008",
+            location={"side": "left_module", "shelf_idx": 1, "cell_idx": 2},
+        )
+        worker._current_operation = worker._snapshot_command(worker._current_command)
+        worker._queued_commands.append(worker._current_operation)
+        worker._current_task = asyncio.create_task(completed_command())
+        await asyncio.sleep(0)
+
+        await worker.shutdown()
+
+        event = json.loads(await asyncio.wait_for(events.get(), timeout=1))
+        self.assertEqual(event, {
+            "command": "retrieve_item",
+            "message": "success",
+            "location": None,
+            "upca": "900000000008",
+            "weight": 456.0,
+            "request_id": "bin-workflow-completed-shutdown",
+        })
+        self.assertIsNone(worker._current_task)
+        self.assertEqual(worker._queued_commands, [])
 
         RobotWorker._instance = None
 

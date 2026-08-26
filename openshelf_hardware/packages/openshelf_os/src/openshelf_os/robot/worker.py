@@ -10,7 +10,14 @@ import sentry_sdk
 from datetime import datetime, timezone
 from typing import Optional, List, Any, Dict
 from openshelf_os.robot.core import Robot
-from openshelf_os.robot.commands import RobotCommands, StopCommand, HomeCommand, InitializeCommand
+from openshelf_os.robot.commands import (
+    RobotCommands,
+    StopCommand,
+    HomeCommand,
+    InitializeCommand,
+    RetrieveItemCommand,
+    StoreItemCommand,
+)
 from openshelf_os.robot.status import (
     CabinetDoorState, RobotCommandSuccessful, RobotResponse, SafetyStatus, ScaleStatus,
 )
@@ -250,6 +257,9 @@ class RobotWorker:
         self._estop_poll_wakeup: Optional[asyncio.Event] = None
         self._current_task: Optional[asyncio.Task] = None
         self._background_tasks: set[asyncio.Task[Any]] = set()
+        self._terminalization_lock = asyncio.Lock()
+        self._interruption_generation = 0
+        self._latest_interruption_reason: Optional[str] = None
         self._current_command: Optional[RobotCommands] = None
         self._current_operation: Optional[QueuedOperation] = None
         self._command_started_at: Optional[float] = None
@@ -323,25 +333,6 @@ class RobotWorker:
         for task in tasks:
             self._background_tasks.discard(task)
 
-    async def _cancel_current_command_task(self, reason: str) -> None:
-        task = self._current_task
-        if task is None:
-            return
-
-        if task.done() is False:
-            logging.info("Cancelling current command task during %s", reason)
-            task.cancel()
-
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-        except Exception as exc:
-            logging.warning("Current command task failed during %s: %s", reason, exc)
-
-        if self._current_task is task:
-            self._current_task = None
-
     def drain_motor_time(self) -> float:
         return self._robot.drain_motor_time()
 
@@ -382,24 +373,41 @@ class RobotWorker:
         division: int = 1,
     ) -> bool:
         async with self._scale_lock:
-            return await self._robot.set_scale_calibration_params(
+            result = await self._robot.set_scale_calibration_params(
                 full_scale=full_scale,
                 calibration_weight=calibration_weight,
                 precision=precision,
                 division=division,
             )
+        if result is True:
+            self.invalidate_cached_scale_status()
+        return result
 
     async def calibrate_scale_zero(self, timeout: float = 5.0) -> Dict[str, Any]:
         async with self._scale_lock:
-            return await self._robot.calibrate_scale_zero(timeout=timeout)
+            result = await self._robot.calibrate_scale_zero(timeout=timeout)
+        if result.get("success") is True:
+            self.invalidate_cached_scale_status()
+        return result
 
     async def calibrate_scale_weight(self, timeout: float = 5.0) -> Dict[str, Any]:
         async with self._scale_lock:
-            return await self._robot.calibrate_scale_weight(timeout=timeout)
+            result = await self._robot.calibrate_scale_weight(timeout=timeout)
+        if result.get("success") is True:
+            self.invalidate_cached_scale_status()
+        return result
 
     async def scale_tare(self) -> bool:
         async with self._scale_lock:
-            return await self._robot.scale_tare()
+            result = await self._robot.scale_tare()
+        if result is True:
+            self.invalidate_cached_scale_status()
+        return result
+
+    def invalidate_cached_scale_status(self) -> None:
+        """Force the next bin admission to sample the scale after calibration changes."""
+        self._latest_scale_status = None
+        self._latest_scale_status_monotonic = None
 
     def _build_scale_status_from_data(self, data: Dict[str, Any]) -> ScaleStatus:
         status_payload = data.get("status") if isinstance(data.get("status"), dict) else {}
@@ -461,15 +469,15 @@ class RobotWorker:
         try:
             async with self._scale_lock:
                 data = await self._robot.get_scale_data()
-            scale_status = self._build_scale_status_from_data(data)
+                scale_status = self._build_scale_status_from_data(data)
+                if scale_status.stable is False:
+                    return False
+                self._latest_scale_status = scale_status
+                self._latest_scale_status_monotonic = time.monotonic()
         except Exception as err:
             scale_status = self._build_scale_error_status(err)
-        else:
-            if scale_status.stable is False:
-                return False
-
-        self._latest_scale_status = scale_status
-        self._latest_scale_status_monotonic = time.monotonic()
+            self._latest_scale_status = scale_status
+            self._latest_scale_status_monotonic = time.monotonic()
         scale_key = self._scale_publish_key(scale_status)
 
         if scale_key == self._last_published_scale_key:
@@ -805,28 +813,20 @@ class RobotWorker:
     async def emergency_stop(self, reason: str) -> None:
         self._robot.block_motion_for_safety()
         self.set_emergency_stop_state(reason)
+        # An interrupted move leaves position unknown until the operator homes.
+        # Set this before publishing so recovery clients cannot resume bin motion
+        # during the stop cleanup window.
+        self.set_needs_home(reason)
         await self._publish_status()
         logging.info("Emergency stop triggered: %s", reason)
 
         async def _cleanup_after_stop() -> None:
-            if self._current_task is not None and not self._current_task.done():
-                self._current_task.cancel()
-                try:
-                    await self._current_task
-                except asyncio.CancelledError:
-                    pass
-                except Exception as exc:
-                    logging.warning("Cancelled task failed during emergency stop cleanup: %s", exc)
+            await self._terminalize_current_command(
+                interruption_reason=f"Emergency stop: {reason}",
+            )
 
             await self._restore_y_brake_output()
-
-            self._remove_current_operation()
-            self._current_task = None
-            self._current_command = None
-            self._current_operation = None
-            self._command_started_at = None
-
-            await self.clear_commands()
+            await self._discard_queued_commands(f"Emergency stop: {reason}")
             await self._publish_status()
 
         self._track_background_task(_cleanup_after_stop(), name="emergency-stop-cleanup")
@@ -1046,6 +1046,183 @@ class RobotWorker:
         for queue in list(self._event_subscribers):
             await queue.put(payload_json)
 
+    async def _publish_command_failure(
+        self,
+        command: Optional[RobotCommands],
+        error: str,
+    ) -> None:
+        """Publish a terminal, correlated failure for storage commands."""
+        if not isinstance(command, (RetrieveItemCommand, StoreItemCommand)):
+            return
+
+        upca: Optional[str] = command.upca if isinstance(command, RetrieveItemCommand) else None
+        location = command.location if isinstance(command, RetrieveItemCommand) else None
+        if isinstance(command, StoreItemCommand) and isinstance(command.item, dict):
+            item_upca = command.item.get("upca")
+            if item_upca is not None:
+                upca = str(item_upca)
+            location = command.item.get("location")
+
+        await self.publish_event(
+            {
+                "command": command.command,
+                "message": "error",
+                "error": error,
+                "request_id": command.request_id,
+                "upca": upca,
+                "location": location,
+            }
+        )
+
+    async def _publish_completed_command_result(
+        self,
+        task: asyncio.Task[Any],
+        command: Optional[RobotCommands],
+    ) -> None:
+        """Publish a completed command using the normal worker-loop semantics."""
+        try:
+            result: RobotResponse = task.result()
+            logging.info("Command result: %s", type(result).__name__)
+
+            if (
+                isinstance(command, (HomeCommand, InitializeCommand))
+                and isinstance(result, RobotCommandSuccessful)
+            ):
+                if self._is_crashed:
+                    self.clear_crash_state()
+                    logging.info("Crash state cleared after successful %s", command.command)
+
+                if self._is_emergency_stopped:
+                    if self._is_estop_active is True:
+                        logging.info("Emergency stop state retained while button is active")
+                    else:
+                        self.clear_emergency_stop_state()
+                        logging.info("Emergency stop state cleared after successful %s", command.command)
+
+                if self.needs_home() and isinstance(command, HomeCommand):
+                    self.clear_needs_home()
+                    logging.info("Needs-home flag cleared after successful homing")
+
+            if isinstance(result, RobotCommandSuccessful):
+                if isinstance(command, (RetrieveItemCommand, StoreItemCommand)):
+                    payload = result.model_dump(mode="json")
+                    payload["request_id"] = command.request_id
+                    await self.publish_event(payload)
+                else:
+                    await self.publish_event(result.model_dump_json())
+            elif isinstance(command, (RetrieveItemCommand, StoreItemCommand)):
+                await self._publish_command_failure(command, result.error)
+            else:
+                await self.publish_event(result.model_dump_json())
+            logging.info("Published command result to event queue")
+        except Exception as err:
+            logging.warning("Command execution error: %s", err)
+
+            try:
+                await self._publish_command_failure(command, str(err))
+            except Exception as publish_error:
+                logging.warning("Failed to publish command failure: %s", publish_error)
+
+            is_hardware_fault = isinstance(err, (MotorError, MovementError, ToolError))
+
+            if is_hardware_fault:
+                self.set_needs_home(str(err))
+                logging.warning("Hardware fault detected - robot in crash state: %s", type(err).__name__)
+
+            error_context = await self._build_error_context(err, is_hardware_fault=is_hardware_fault)
+
+            if is_hardware_fault:
+                self.set_crash_state(str(err), context=error_context)
+
+            self._report_error(
+                WorkerError(
+                    error_type="HardwareFault" if is_hardware_fault else "CommandExecutionError",
+                    message=str(err),
+                    context=error_context,
+                    stack_trace=traceback.format_exc(),
+                ),
+                exc=err,
+            )
+
+    def _clear_current_command_state(
+        self,
+        task: Optional[asyncio.Task[Any]],
+        command: Optional[RobotCommands],
+        operation: Optional[QueuedOperation],
+    ) -> None:
+        if self._current_task is not task or self._current_command is not command:
+            return
+
+        if self._current_operation is operation:
+            self._remove_current_operation()
+            self._current_operation = None
+        self._clear_robot_operation_context()
+        self._current_task = None
+        self._current_command = None
+        self._command_started_at = None
+
+    async def _terminalize_current_command(self, *, interruption_reason: Optional[str] = None) -> bool:
+        """Publish one terminal outcome and clear the matching in-flight command state."""
+        async with self._terminalization_lock:
+            if interruption_reason is not None:
+                self._interruption_generation += 1
+                self._latest_interruption_reason = interruption_reason
+
+            task = self._current_task
+            command = self._current_command
+            operation = self._current_operation
+
+            if task is None:
+                if interruption_reason is not None:
+                    await self._publish_command_failure(command, interruption_reason)
+                self._clear_current_command_state(task, command, operation)
+                return command is not None
+
+            if task.done() is True:
+                if task.cancelled() is True:
+                    if interruption_reason is not None:
+                        await self._publish_command_failure(command, interruption_reason)
+                else:
+                    await self._publish_completed_command_result(task, command)
+            elif interruption_reason is None:
+                return False
+            else:
+                logging.info("Cancelling current command task during %s", interruption_reason)
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+                except Exception as exc:
+                    logging.warning("Cancelled task failed during cleanup: %s", exc)
+                await self._publish_command_failure(command, interruption_reason)
+
+            self._clear_current_command_state(task, command, operation)
+            return True
+
+    async def _discard_queued_commands(self, reason: str) -> None:
+        """Fail queued storage commands before removing them from the worker queue."""
+        async with self._terminalization_lock:
+            queued_operations: list[QueuedOperation] = []
+            while self._command_queue.empty() is False:
+                try:
+                    queued_operation = self._command_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                queued_operations.append(queued_operation)
+
+            for queued_operation in self._queued_commands:
+                if (
+                    queued_operation is not self._current_operation
+                    and all(queued_operation is not operation for operation in queued_operations)
+                ):
+                    queued_operations.append(queued_operation)
+
+            for queued_operation in queued_operations:
+                await self._publish_command_failure(queued_operation.command, reason)
+
+            self._queued_commands = [self._current_operation] if self._current_operation is not None else []
+
     async def _publish_status(self) -> None:
         try:
             robot_status = await self._robot.get_status()
@@ -1119,6 +1296,7 @@ class RobotWorker:
             try:
                 if self._current_task is None:
                     loop_count += 1
+                    dequeue_interruption_generation = self._interruption_generation
 
                     if loop_count % 30 == 1:
                         logger.debug("process_commands polling, loop=%d", loop_count)
@@ -1133,20 +1311,37 @@ class RobotWorker:
                         continue
 
                     command = queued_operation.command
-                    self._current_command = command
-                    self._current_operation = queued_operation
+                    async with self._terminalization_lock:
+                        if self._interruption_generation != dequeue_interruption_generation:
+                            if any(operation is queued_operation for operation in self._queued_commands):
+                                await self._publish_command_failure(
+                                    command,
+                                    self._latest_interruption_reason or "Command interrupted",
+                                )
+                                self._queued_commands = [
+                                    operation
+                                    for operation in self._queued_commands
+                                    if operation is not queued_operation
+                                ]
+                            continue
+                        self._current_command = command
+                        self._current_operation = queued_operation
                     await self._publish_status()
 
-                    if isinstance(command, HomeCommand) and (self._is_crashed is True or self._is_emergency_stopped is True):
-                        if self._is_estop_active is True:
-                            logging.info("Keeping motion safety engaged while emergency stop is active")
-                        elif self._safety_motion_blocked is False:
-                            self._robot.release_motion_safety()
-                            logging.info("Released motion safety for homing in stopped state")
+                    async with self._terminalization_lock:
+                        if self._current_command is not command or self._current_operation is not queued_operation:
+                            continue
 
-                    logging.info("Starting command execution: %s", command.command)
-                    self._command_started_at = time.monotonic()
-                    self._current_task = asyncio.create_task(self._robot.handle_command(command))
+                        if isinstance(command, HomeCommand) and (self._is_crashed is True or self._is_emergency_stopped is True):
+                            if self._is_estop_active is True:
+                                logging.info("Keeping motion safety engaged while emergency stop is active")
+                            elif self._safety_motion_blocked is False:
+                                self._robot.release_motion_safety()
+                                logging.info("Released motion safety for homing in stopped state")
+
+                        logging.info("Starting command execution: %s", command.command)
+                        self._command_started_at = time.monotonic()
+                        self._current_task = asyncio.create_task(self._robot.handle_command(command))
                 else:
                     safety_changed = await self._evaluate_safety_guard()
                     if safety_changed is True:
@@ -1154,62 +1349,7 @@ class RobotWorker:
 
                     if self._current_task.done():
                         logging.info("Command task completed, processing result")
-
-                        try:
-                            result: RobotResponse = self._current_task.result()
-                            logging.info("Command result: %s", type(result).__name__)
-
-                            if (
-                                isinstance(self._current_command, (HomeCommand, InitializeCommand))
-                                and isinstance(result, RobotCommandSuccessful)
-                            ):
-                                if self._is_crashed:
-                                    self.clear_crash_state()
-                                    logging.info("Crash state cleared after successful %s", self._current_command.command)
-
-                                if self._is_emergency_stopped:
-                                    if self._is_estop_active is True:
-                                        logging.info("Emergency stop state retained while button is active")
-                                    else:
-                                        self.clear_emergency_stop_state()
-                                        logging.info("Emergency stop state cleared after successful %s", self._current_command.command)
-
-                                if self.needs_home() and isinstance(self._current_command, HomeCommand):
-                                    self.clear_needs_home()
-                                    logging.info("Needs-home flag cleared after successful homing")
-
-                            await self.publish_event(result.model_dump_json())
-                            logging.info("Published command result to event queue")
-                        except Exception as err:
-                            logging.warning("Command execution error: %s", err)
-
-                            is_hardware_fault = isinstance(err, (MotorError, MovementError, ToolError))
-
-                            if is_hardware_fault:
-                                self.set_needs_home(str(err))
-                                logging.warning("Hardware fault detected - robot in crash state: %s", type(err).__name__)
-
-                            error_context = await self._build_error_context(err, is_hardware_fault=is_hardware_fault)
-
-                            if is_hardware_fault:
-                                self.set_crash_state(str(err), context=error_context)
-
-                            self._report_error(
-                                WorkerError(
-                                    error_type="HardwareFault" if is_hardware_fault else "CommandExecutionError",
-                                    message=str(err),
-                                    context=error_context,
-                                    stack_trace=traceback.format_exc(),
-                                ),
-                                exc=err,
-                            )
-
-                        self._clear_robot_operation_context()
-                        self._remove_current_operation()
-                        self._current_task = None
-                        self._current_command = None
-                        self._current_operation = None
-                        self._command_started_at = None
+                        await self._terminalize_current_command()
                         await self._publish_status()
 
                 await asyncio.sleep(0.1)
@@ -1318,12 +1458,10 @@ class RobotWorker:
             self._worker_task = None
 
         await self._cancel_background_tasks()
-        await self._cancel_current_command_task("shutdown")
-        self._clear_robot_operation_context()
-        self._remove_current_operation()
-        self._current_command = None
-        self._current_operation = None
-        self._command_started_at = None
+        await self._terminalize_current_command(
+            interruption_reason="Robot stopped during shutdown",
+        )
+        await self._discard_queued_commands("Robot stopped during shutdown")
 
         try:
             await self._robot.handle_command(StopCommand())

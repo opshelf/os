@@ -4,7 +4,7 @@ import logging
 import sentry_sdk
 
 from pathlib import Path as _Path
-from typing import Any, Callable, Dict, Optional, List, TYPE_CHECKING
+from typing import Any, Callable, Dict, Iterable, Optional, List, TYPE_CHECKING
 
 from hardware.controller import SharedModbusController as Controller
 from hardware.curtain import MotionSafetyInterlock
@@ -34,7 +34,7 @@ from openshelf_os.robot.status import (
     RobotStatus, GantryStatus, ToolAxisStatus, RobotState, AxisTelemetry, CabinetDoorState,
 )
 from openshelf_os.storage import (
-    StorageGrid, Dimensions, StorageModuleSide, CellItem, StorageModuleCellLocation,
+    StorageGrid, Dimensions, StorageModuleSide, CellItem, StorageModuleCellLocation, CellStatus,
     StorageValidationError,
 )
 from openshelf_os.tool import Tool
@@ -93,6 +93,10 @@ class Robot:
         self._cabinet = Cabinet(gpio=self._gpio)
 
         self._grid_path = resolve_grid_path(self._config, CONFIG_PATH)
+        self._reserved_cell_locations: set[tuple[str, int, int]] = {
+            (entry.home_location.side, entry.home_location.shelf_idx, entry.home_location.cell_idx)
+            for entry in self._config.storage.bins
+        }
 
         try:
             self._grid = StorageGrid.load_from_file(self._grid_path)
@@ -697,6 +701,26 @@ class Robot:
                     side, shelf_idx, cell_idx, str(e)
                 )
 
+    def set_cell_status(self, side: str, shelf_idx: int, cell_idx: int, status: CellStatus) -> None:
+        """Apply a server-owned reservation without presenting it as physical inventory."""
+        if self._grid is None:
+            return
+        location = StorageModuleCellLocation(
+            side=StorageModuleSide(side), shelf_idx=shelf_idx, cell_idx=cell_idx
+        )
+        cell = self._grid.get_cell(location)
+        cell.status = status
+        if status != CellStatus.OCCUPIED:
+            cell.item = None
+
+    def set_reserved_cell_locations(self, locations: Iterable[tuple[str, int, int]]) -> None:
+        """Set server-owned homes that automatic storage allocation must avoid."""
+        configured_locations: set[tuple[str, int, int]] = {
+            (entry.home_location.side, entry.home_location.shelf_idx, entry.home_location.cell_idx)
+            for entry in self._config.storage.bins
+        }
+        self._reserved_cell_locations = configured_locations | set(locations)
+
 
     # ------------------------------------------------------------------ #
     #  Status
@@ -934,27 +958,39 @@ class Robot:
             upca=resolved_upca
         )
 
-        if self._demo_cell_map is not None:
+        provided_location = None
+        if isinstance(item_payload, dict):
+            provided_location = item_payload.get("location")
+
+        location: StorageModuleCellLocation | None
+        if provided_location is not None:
+            location = StorageModuleCellLocation(
+                side=provided_location.get("side", "L"),
+                shelf_idx=int(provided_location.get("shelf_idx", 0)),
+                cell_idx=int(provided_location.get("cell_idx", 0)),
+            )
+        elif self._demo_cell_map is not None:
             demo_location = self._demo_cell_map.get(resolved_upca)
             if demo_location is None:
                 return RobotCommandError(
                     command=command_name,
                     error=f"barcode {resolved_upca} not in demo mapping",
                 )
+            if (
+                demo_location.side.value,
+                demo_location.shelf_idx,
+                demo_location.cell_idx,
+            ) in getattr(self, "_reserved_cell_locations", set()):
+                return RobotCommandError(
+                    command=command_name,
+                    error="Demo storage location is reserved",
+                )
             location = demo_location
         else:
-            provided_location = None
-            if isinstance(item_payload, dict):
-                provided_location = item_payload.get("location")
-
-            if provided_location is not None:
-                location = StorageModuleCellLocation(
-                    side=provided_location.get("side", "L"),
-                    shelf_idx=int(provided_location.get("shelf_idx", 0)),
-                    cell_idx=int(provided_location.get("cell_idx", 0)),
-                )
-            else:
-                location = self._grid.find_best_slot_for_item(item)
+            location = self._grid.find_best_slot_for_item(
+                item,
+                excluded_locations=getattr(self, "_reserved_cell_locations", set()),
+            )
 
         if not location:
             return RobotCommandError(command=command_name, error="No suitable storage location found")

@@ -3,6 +3,9 @@ from openshelf_os.config.exceptions import ConfigError, ConfigValidationError, C
 from openshelf_os.config.file_io import write_json_file_with_backup, create_timestamped_json_backup
 from openshelf_os.config.settings import (
     StorageSettings,
+    StorageBinSettings,
+    StorageBinLocationSettings,
+    StorageBinDimensionsSettings,
     SizesSettings,
     PrinterSettings,
     ScannerSettings,
@@ -56,6 +59,9 @@ __all__ = [
     "write_json_file_with_backup",
     "create_timestamped_json_backup",
     "StorageSettings",
+    "StorageBinSettings",
+    "StorageBinLocationSettings",
+    "StorageBinDimensionsSettings",
     "SizesSettings",
     "PrinterSettings",
     "ScannerSettings",

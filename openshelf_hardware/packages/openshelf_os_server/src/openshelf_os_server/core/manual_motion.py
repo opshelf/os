@@ -99,7 +99,12 @@ def ensure_robot_available_for_manual_motion(worker) -> None:
 
 
 @asynccontextmanager
-async def manual_motion_guard(operation: str, worker=None) -> AsyncIterator[None]:
+async def manual_motion_guard(
+	operation: str,
+	worker=None,
+	*,
+	check_bin_workflow: bool = False,
+) -> AsyncIterator[None]:
 	global _current_operation
 
 	if worker is not None:
@@ -119,6 +124,16 @@ async def manual_motion_guard(operation: str, worker=None) -> AsyncIterator[None
 	try:
 		if worker is not None:
 			ensure_robot_available_for_manual_motion(worker)
+		if check_bin_workflow is True:
+			# Keep the workflow check and this motion admission in the same
+			# process-local gate, but release it before the long-running movement.
+			from openshelf_os_server.core.bin_storage import (  # noqa: PLC0415
+				bin_workflow_command_admission_guard,
+				ensure_no_active_bin_workflow_for_motion,
+			)
+
+			async with bin_workflow_command_admission_guard():
+				await ensure_no_active_bin_workflow_for_motion()
 
 		_current_operation = operation
 		yield

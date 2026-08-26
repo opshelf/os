@@ -1,10 +1,43 @@
 from __future__ import annotations
-from typing import Optional
-from pydantic import BaseModel, Field
+from typing import Literal, Optional
+from pydantic import BaseModel, Field, model_validator
+
+
+class StorageBinLocationSettings(BaseModel):
+    side: Literal["left_module", "right_module"]
+    shelf_idx: int = Field(ge=0)
+    cell_idx: int = Field(ge=0)
+
+
+class StorageBinDimensionsSettings(BaseModel):
+    width: float = Field(gt=0)
+    height: float = Field(gt=0)
+    length: float = Field(gt=0)
+
+
+class StorageBinSettings(BaseModel):
+    barcode: str = Field(pattern=r"^\d{12}$")
+    home_location: StorageBinLocationSettings
+    inner_dimensions: StorageBinDimensionsSettings
+    max_items: int = Field(ge=1)
 
 
 class StorageSettings(BaseModel):
     filename: str = "data/storage.json"
+    bins: list[StorageBinSettings] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_unique_bins(self) -> "StorageSettings":
+        barcodes = [entry.barcode for entry in self.bins]
+        locations = [
+            (entry.home_location.side, entry.home_location.shelf_idx, entry.home_location.cell_idx)
+            for entry in self.bins
+        ]
+        if len(barcodes) != len(set(barcodes)):
+            raise ValueError("storage.bins barcodes must be unique")
+        if len(locations) != len(set(locations)):
+            raise ValueError("storage.bins home locations must be unique")
+        return self
 
 
 class SizesSettings(BaseModel):
