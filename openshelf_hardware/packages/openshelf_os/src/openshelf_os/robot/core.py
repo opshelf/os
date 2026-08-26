@@ -962,14 +962,21 @@ class Robot:
         if isinstance(item_payload, dict):
             provided_location = item_payload.get("location")
 
-        location: StorageModuleCellLocation | None
+        location: StorageModuleCellLocation | None = None
         if provided_location is not None:
-            location = StorageModuleCellLocation(
+            parsed_location = StorageModuleCellLocation(
                 side=provided_location.get("side", "L"),
                 shelf_idx=int(provided_location.get("shelf_idx", 0)),
                 cell_idx=int(provided_location.get("cell_idx", 0)),
             )
-        elif self._demo_cell_map is not None:
+            if self._demo_cell_map is None or (
+                parsed_location.side.value,
+                parsed_location.shelf_idx,
+                parsed_location.cell_idx,
+            ) in getattr(self, "_reserved_cell_locations", set()):
+                location = parsed_location
+
+        if location is None and self._demo_cell_map is not None:
             demo_location = self._demo_cell_map.get(resolved_upca)
             if demo_location is None:
                 return RobotCommandError(
@@ -986,7 +993,7 @@ class Robot:
                     error="Demo storage location is reserved",
                 )
             location = demo_location
-        else:
+        elif location is None:
             location = self._grid.find_best_slot_for_item(
                 item,
                 excluded_locations=getattr(self, "_reserved_cell_locations", set()),

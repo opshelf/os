@@ -102,6 +102,17 @@ async def ensure_worker_queue_empty_for_bin_start(worker: RobotWorker) -> None:
             pass
 
 
+async def is_io_box_occupied(worker: RobotWorker) -> bool:
+    """Read IO-box occupancy using the cached scale status when available."""
+    cached = worker.get_cached_scale_status()
+    if cached is not None:
+        return cached.occupied is True
+    try:
+        return abs(float((await worker.get_scale_data())["weight"])) > 5.0
+    except Exception:
+        return False
+
+
 def ensure_worker_homed_for_bin_motion(worker: RobotWorker) -> None:
     """Reject bin motion until an explicitly requested home has completed."""
     if worker.needs_home():
@@ -1066,6 +1077,12 @@ class BinStorageService:
             return "Bin workflow is no longer the active workflow"
         if workflow.state != "returning_bin" or bin_row.status != "checked_out":
             return "Bin workflow is not returning its checked-out bin"
+        return await self._store_invariant_error(bin_row, item)
+
+    async def _store_invariant_error(
+        self, bin_row: StorageBin, item: Item
+    ) -> Optional[str]:
+        """Validate durable bin/item invariants without requiring live motion state."""
         if not bin_row.active or not self._fits(item, bin_row):
             return "Item no longer fits the configured storage bin"
 
@@ -1094,6 +1111,56 @@ class BinStorageService:
             return "Storage bin does not have enough available space"
         if any(member.access_level_id != item.access_level_id for member in members):
             return "Item access level no longer matches the storage bin"
+        return None
+
+    async def _fail_reconciliation(
+        self,
+        workflow: StorageBinWorkflow,
+        *,
+        error: str,
+        recovery_claim: Optional[str],
+    ) -> None:
+        """Return a claimed workflow to recovery with its reconciliation error."""
+        workflow.error = error
+        if recovery_claim is not None:
+            if not await self.transition_recovery_claim(
+                workflow,
+                expected_state=RECOVERY_RECONCILE_CLAIMED,
+                claim=recovery_claim,
+                state="recovery_required",
+                detail=error,
+            ):
+                raise BinWorkflowConflict("Recovery workflow is already being handled")
+        else:
+            await self.transition(workflow, "recovery_required", error)
+        raise BinWorkflowConflict(error)
+
+    async def _returned_reconciliation_error(
+        self,
+        workflow: StorageBinWorkflow,
+        bin_row: Optional[StorageBin],
+        target_item_in_bin: Optional[bool],
+    ) -> Optional[str]:
+        """Validate the returned state before reconciliation mutates durable contents."""
+        if bin_row is None:
+            return "Workflow bin no longer exists"
+        if workflow.operation == "restore":
+            return await self._restore_completion_error(workflow, bin_row)
+        if target_item_in_bin is None:
+            return "Target item state is required for a returned bin"
+
+        item = await self.session.get(Item, workflow.item_id)
+        if item is None:
+            return "Workflow item no longer exists"
+        membership = (
+            await self.session.execute(
+                select(StorageBinItem).where(StorageBinItem.item_id == item.id)
+            )
+        ).scalar_one_or_none()
+        if membership is not None and membership.bin_id != bin_row.id:
+            return "Item is already associated with another storage bin"
+        if target_item_in_bin and membership is None:
+            return await self._store_invariant_error(bin_row, item)
         return None
 
     async def handle_mock_scan(self, workflow: StorageBinWorkflow, code: str) -> bool:
@@ -1157,16 +1224,7 @@ class BinStorageService:
         if workflow.state != "awaiting_bin_scan":
             raise BinWorkflowConflict("Bin workflow is not ready to return")
 
-        occupied = False
-        cached = worker.get_cached_scale_status()
-        if cached is not None:
-            occupied = cached.occupied is True
-        else:
-            try:
-                occupied = abs(float((await worker.get_scale_data())["weight"])) > 5.0
-            except Exception:
-                occupied = False
-        if not occupied:
+        if not await is_io_box_occupied(worker):
             raise BinWorkflowConflict("Place the bin in the IO box before storing it")
 
         ensure_worker_homed_for_bin_motion(worker)
@@ -1214,6 +1272,16 @@ class BinStorageService:
             raise ValueError("resolution must be returned or quarantined")
         bin_row = await self.session.get(StorageBin, workflow.bin_id)
         if resolution == "returned":
+            reconciliation_error = await self._returned_reconciliation_error(
+                workflow, bin_row, target_item_in_bin
+            )
+            if reconciliation_error is not None:
+                await self._fail_reconciliation(
+                    workflow,
+                    error=reconciliation_error,
+                    recovery_claim=recovery_claim,
+                )
+
             membership = (
                 await self.session.execute(
                     select(StorageBinItem).where(StorageBinItem.item_id == workflow.item_id)

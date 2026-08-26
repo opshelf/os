@@ -23,7 +23,7 @@ class StoreGrid:
 
 
 def build_demo_store_robot(
-    demo_cell_map: dict[str, StorageModuleCellLocation],
+    demo_cell_map: dict[str, StorageModuleCellLocation] | None,
     reserved_locations: set[tuple[str, int, int]],
 ) -> tuple[Robot, StoreGrid]:
     robot = Robot.__new__(Robot)
@@ -95,6 +95,55 @@ async def test_demo_store_allows_explicit_home_for_unmapped_bin_barcode() -> Non
     assert isinstance(result, RobotCommandSuccessful)
     assert result.location == home
     assert grid.stored_locations == [home]
+
+
+@pytest.mark.asyncio
+async def test_demo_store_uses_mapping_over_ordinary_explicit_location() -> None:
+    mapped_location = StorageModuleCellLocation(
+        side=StorageModuleSide.LEFT, shelf_idx=1, cell_idx=2
+    )
+    ordinary_location = StorageModuleCellLocation(
+        side=StorageModuleSide.RIGHT, shelf_idx=3, cell_idx=4
+    )
+    robot, grid = build_demo_store_robot(
+        {"ordinary-item": mapped_location},
+        set(),
+    )
+
+    result = await robot.store(item_payload("ordinary-item", ordinary_location))
+
+    assert isinstance(result, RobotCommandSuccessful)
+    assert result.location == mapped_location
+    assert grid.stored_locations == [mapped_location]
+
+
+@pytest.mark.asyncio
+async def test_demo_store_rejects_unmapped_barcode_with_ordinary_explicit_location() -> None:
+    ordinary_location = StorageModuleCellLocation(
+        side=StorageModuleSide.RIGHT, shelf_idx=3, cell_idx=4
+    )
+    robot, grid = build_demo_store_robot({}, set())
+
+    result = await robot.store(item_payload("ordinary-item", ordinary_location))
+
+    assert isinstance(result, RobotCommandError)
+    assert result.error == "barcode ordinary-item not in demo mapping"
+    assert grid.stored_locations == []
+    robot.io_pick.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_non_demo_store_allows_explicit_location() -> None:
+    explicit_location = StorageModuleCellLocation(
+        side=StorageModuleSide.RIGHT, shelf_idx=3, cell_idx=4
+    )
+    robot, grid = build_demo_store_robot(None, set())
+
+    result = await robot.store(item_payload("ordinary-item", explicit_location))
+
+    assert isinstance(result, RobotCommandSuccessful)
+    assert result.location == explicit_location
+    assert grid.stored_locations == [explicit_location]
 
 
 @pytest.mark.asyncio

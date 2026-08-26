@@ -32,6 +32,7 @@ from ..core.bin_storage import (
     bin_workflow_command_admission_guard,
     ensure_worker_homed_for_bin_motion,
     ensure_worker_queue_empty_for_bin_start,
+    is_io_box_occupied,
     is_reserved_bin_barcode,
     is_reserved_bin_location,
 )
@@ -440,16 +441,7 @@ async def create_bin_workflow(
         await service.transition(workflow, "recovery_required", workflow.error)
     else:
         try:
-            io_occupied = False
-            cached_scale = worker.get_cached_scale_status()
-            if cached_scale is not None:
-                io_occupied = cached_scale.occupied is True
-            else:
-                try:
-                    io_occupied = abs(float((await worker.get_scale_data())["weight"])) > 5.0
-                except Exception:
-                    io_occupied = False
-            if io_occupied:
+            if await is_io_box_occupied(worker):
                 raise HTTPException(
                     status_code=409,
                     detail="Remove the item from the IO box before retrieving the storage bin",
@@ -635,13 +627,6 @@ async def retry_bin_workflow(
                 workflow, expected_state=RECOVERY_RETRY_CLAIMED, claim=claim
             )
             raise HTTPException(status_code=503, detail="Robot worker is unavailable")
-        try:
-            ensure_worker_homed_for_bin_motion(worker)
-        except BinWorkflowConflict as exc:
-            await service.release_recovery_claim(
-                workflow, expected_state=RECOVERY_RETRY_CLAIMED, claim=claim
-            )
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
         previous_state = next(
             (
                 entry.get("state")
@@ -651,6 +636,30 @@ async def retry_bin_workflow(
             "retrieving_bin",
         )
         target_state = "returning_bin" if previous_state == "returning_bin" else "retrieving_bin"
+        io_occupied = await is_io_box_occupied(worker)
+        if target_state == "retrieving_bin" and io_occupied:
+            await service.release_recovery_claim(
+                workflow, expected_state=RECOVERY_RETRY_CLAIMED, claim=claim
+            )
+            raise HTTPException(
+                status_code=409,
+                detail="Remove the item from the IO box before retrieving the storage bin",
+            )
+        if target_state == "returning_bin" and not io_occupied:
+            await service.release_recovery_claim(
+                workflow, expected_state=RECOVERY_RETRY_CLAIMED, claim=claim
+            )
+            raise HTTPException(
+                status_code=409,
+                detail="Place the bin in the IO box before storing it",
+            )
+        try:
+            ensure_worker_homed_for_bin_motion(worker)
+        except BinWorkflowConflict as exc:
+            await service.release_recovery_claim(
+                workflow, expected_state=RECOVERY_RETRY_CLAIMED, claim=claim
+            )
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         if target_state == "returning_bin" and target_item_in_bin is not None:
             workflow.resolution = {
                 **(workflow.resolution or {}),
@@ -747,12 +756,16 @@ async def reconcile_bin_workflow(
                 **(workflow.resolution or {}),
                 "confirmed_item_ids": sorted(confirmed_ids),
             }
-        if not await service.reconcile(
-            workflow,
-            resolution=request.resolution,
-            target_item_in_bin=request.target_item_in_bin,
-            recovery_claim=claim,
-        ):
+        try:
+            reconciled = await service.reconcile(
+                workflow,
+                resolution=request.resolution,
+                target_item_in_bin=request.target_item_in_bin,
+                recovery_claim=claim,
+            )
+        except BinWorkflowConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if not reconciled:
             raise HTTPException(
                 status_code=409, detail="Recovery workflow is already being handled"
             )

@@ -4,16 +4,27 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from httpx import AsyncClient
 from sqlalchemy import select
 
 import openshelf_os_server.core.robot as robot_core
 from openshelf_os_server.core import bin_storage
+from openshelf_os_server.core import mock_robot as mock_core
 from openshelf_os_server.core.bin_storage import BinStorageService
+from openshelf_os_server.core.mock_robot import MockRobotRuntime
 from openshelf_os_server.core.robot_events import RobotEventListener, process_robot_event
 from openshelf_os_server.core.storage import StorageService
 from openshelf_os_server.core.validation import ValidationError
-from openshelf_os_server.database.models import Item, ItemLocation, StorageBin
+from openshelf_os_server.database.models import (
+    Item,
+    ItemLocation,
+    MockRobotCommand,
+    StorageBin,
+    StorageBinItem,
+)
 from openshelf_os_server.database.session import AsyncSessionLocal
+from openshelf_os_server.routers import robot as robot_router
+from openshelf_os.operating_mode import OperatingMode
 
 
 async def _seed_item_with_location(upca: str, side: str, shelf_idx: int, cell_idx: int) -> None:
@@ -161,6 +172,174 @@ async def test_process_robot_event_updates_weight_from_scale() -> None:
 
         assert item is not None
         assert item.weight == 152.0
+
+
+@pytest.mark.anyio
+async def test_mock_debug_scanner_restores_unavailable_bin_without_motion(
+    monkeypatch: pytest.MonkeyPatch,
+    client: AsyncClient,
+) -> None:
+    runtime = MockRobotRuntime()
+    events = await runtime.subscribe_events()
+    monkeypatch.setattr(mock_core, "mock_robot_runtime", runtime)
+    monkeypatch.setattr(robot_router, "get_operating_mode", lambda: OperatingMode.mock)
+    monkeypatch.setattr(
+        robot_router,
+        "get_settings",
+        lambda: SimpleNamespace(robot=SimpleNamespace(enabled=False)),
+    )
+
+    async with AsyncSessionLocal() as session:
+        item = await StorageService(session).create_item(
+            upca="scanner-restore-item",
+            name="Scanner restore item",
+            dimensions={"width": 1.0, "height": 1.0, "length": 1.0},
+        )
+        bin_row = StorageBin(
+            barcode="scanner-restore-bin",
+            side="left_module",
+            shelf_idx=1,
+            cell_idx=1,
+            inner_dimensions={"width": 30.0, "height": 30.0, "length": 30.0},
+            max_items=2,
+            status="at_home",
+            active=True,
+        )
+        session.add(bin_row)
+        await session.flush()
+        session.add(StorageBinItem(bin_id=bin_row.id, item_id=item.id))
+        await session.commit()
+
+        service = BinStorageService(session)
+        unavailable = await service.begin("retrieve", item, None)
+        assert unavailable is not None
+        await service.transition(unavailable, "recovery_required", "bin unavailable")
+        await service.reconcile(
+            unavailable,
+            resolution="quarantined",
+            target_item_in_bin=True,
+        )
+
+    async with AsyncSessionLocal() as session:
+        commands_before_scan = len((await session.execute(select(MockRobotCommand))).scalars().all())
+
+    response = await client.post(
+        "/api/robot/debug/scanner/scan",
+        json={"code": "scanner-restore-bin"},
+    )
+    assert response.status_code == 200
+    assert response.json() == {"message": "success"}
+
+    event = json.loads(await asyncio.wait_for(events.get(), timeout=1))
+    assert event["kind"] == "bin_workflow_updated"
+    assert event["payload"]["operation"] == "restore"
+    assert event["payload"]["state"] == "awaiting_bin_scan"
+
+    async with AsyncSessionLocal() as session:
+        workflow = await BinStorageService(session).active_workflow()
+        assert workflow is not None
+        assert workflow.operation == "restore"
+        assert workflow.state == "awaiting_bin_scan"
+        assert len((await session.execute(select(MockRobotCommand))).scalars().all()) == commands_before_scan
+
+
+@pytest.mark.anyio
+async def test_mock_debug_scanner_handles_active_item_and_bin_scans(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = MockRobotRuntime()
+    monkeypatch.setattr(mock_core, "mock_robot_runtime", runtime)
+    monkeypatch.setattr(robot_router, "get_operating_mode", lambda: OperatingMode.mock)
+
+    async with AsyncSessionLocal() as session:
+        item = await StorageService(session).create_item(
+            upca="scanner-active-item",
+            name="Scanner active item",
+            dimensions={"width": 1.0, "height": 1.0, "length": 1.0},
+        )
+        bin_row = StorageBin(
+            barcode="scanner-active-bin",
+            side="left_module",
+            shelf_idx=1,
+            cell_idx=1,
+            inner_dimensions={"width": 30.0, "height": 30.0, "length": 30.0},
+            max_items=2,
+            status="at_home",
+            active=True,
+        )
+        session.add(bin_row)
+        await session.flush()
+        session.add(StorageBinItem(bin_id=bin_row.id, item_id=item.id))
+        await session.commit()
+
+        workflow = await BinStorageService(session).begin("retrieve", item, None)
+        assert workflow is not None
+        await BinStorageService(session).transition(workflow, "awaiting_item_scan")
+
+    async with AsyncSessionLocal() as session:
+        commands_before_scans = len((await session.execute(select(MockRobotCommand))).scalars().all())
+
+    await robot_router.emit_scanner_scan_event(
+        robot_router.LabelScanRequest(code="scanner-active-item"),
+        None,
+    )
+    async with AsyncSessionLocal() as session:
+        workflow = await BinStorageService(session).active_workflow()
+        assert workflow is not None
+        assert workflow.state == "awaiting_bin_scan"
+
+    await robot_router.emit_scanner_scan_event(
+        robot_router.LabelScanRequest(code="scanner-active-bin"),
+        None,
+    )
+    async with AsyncSessionLocal() as session:
+        workflow = await BinStorageService(session).active_workflow()
+        assert workflow is not None
+        assert workflow.state == "awaiting_bin_scan"
+        assert len((await session.execute(select(MockRobotCommand))).scalars().all()) == commands_before_scans
+
+
+@pytest.mark.anyio
+async def test_debug_scanner_uses_worker_publish_outside_mock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Worker:
+        def __init__(self) -> None:
+            self.events: list[dict[str, str]] = []
+
+        async def publish_event(self, payload: dict[str, str]) -> None:
+            self.events.append(payload)
+
+    worker = Worker()
+    monkeypatch.setattr(robot_router, "get_operating_mode", lambda: OperatingMode.production)
+
+    await robot_router.emit_scanner_scan_event(
+        robot_router.LabelScanRequest(code="production-scan"),
+        worker,  # type: ignore[arg-type]
+    )
+
+    assert worker.events == [{"kind": "label_scanned", "payload": "production-scan"}]
+
+
+@pytest.mark.anyio
+async def test_debug_scanner_requires_hardware_enabled_outside_mock(
+    monkeypatch: pytest.MonkeyPatch,
+    client: AsyncClient,
+) -> None:
+    monkeypatch.setattr(robot_router, "get_operating_mode", lambda: OperatingMode.production)
+    monkeypatch.setattr(
+        robot_router,
+        "get_settings",
+        lambda: SimpleNamespace(robot=SimpleNamespace(enabled=False)),
+    )
+
+    response = await client.post(
+        "/api/robot/debug/scanner/scan",
+        json={"code": "production-scan"},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Robot is not enabled or configured"
 
 
 async def _seed_active_bin_workflow(state: str) -> tuple[str, str]:
