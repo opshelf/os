@@ -8047,6 +8047,21 @@
           "upca": {
             "type": "string",
             "title": "Upca"
+          },
+          "storage_mode": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "bin",
+                  "direct"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Storage Mode"
           }
         },
         "type": "object",
