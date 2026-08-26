@@ -1,10 +1,14 @@
 """First-run onboarding endpoints.
 
-These endpoints are intentionally unauthenticated: they bootstrap a fresh
-device that has no users yet. Every endpoint except /status refuses to work
-once a regular (non-system) user exists.
+The backend-owned state file is the source of truth for whether onboarding is
+pending. Wi-Fi bootstrap routes are intentionally unauthenticated while that
+state is pending. Completing onboarding requires the newly created admin to
+authenticate.
 """
 import asyncio
+import os
+import uuid
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr, field_validator
@@ -12,11 +16,14 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from openshelf_os.runtime_state import RuntimeStatePaths
+
 from ..core.auth import AuthService
 from ..database.models import User, Role
 from ..database.session import get_db
 from ..settings import get_settings
 from . import wifi
+from .auth_deps import require_permissions
 from .users import UserResponse, _build_user_response
 
 router = APIRouter(tags=["onboarding"])
@@ -25,6 +32,11 @@ router = APIRouter(tags=["onboarding"])
 # re-count inside it is enough to serialize concurrent admin-user requests;
 # the unique email constraint is the backstop.
 _admin_user_lock = asyncio.Lock()
+_onboarding_state_lock = asyncio.Lock()
+
+ONBOARDING_STATE_PATH_ENV = "OPENSHELF_ONBOARDING_STATE_PATH"
+ONBOARDING_PENDING = "pending"
+ONBOARDING_COMPLETED = "completed"
 
 
 class OnboardingStatus(BaseModel):
@@ -52,17 +64,68 @@ async def _count_regular_users(db: AsyncSession) -> int:
 	return int(result.scalar() or 0)
 
 
+def _onboarding_state_path() -> Path:
+	override = os.getenv(ONBOARDING_STATE_PATH_ENV)
+	if override:
+		return Path(override).resolve()
+	return RuntimeStatePaths.current().data_dir / ".onboarding_state"
+
+
+def _read_onboarding_state() -> str | None:
+	path = _onboarding_state_path()
+	try:
+		value = path.read_text(encoding="utf-8").strip().lower()
+	except FileNotFoundError:
+		return None
+	except OSError as exc:
+		raise RuntimeError(f"Could not read onboarding state from {path}") from exc
+
+	if value not in {ONBOARDING_PENDING, ONBOARDING_COMPLETED}:
+		raise RuntimeError(f"Invalid onboarding state in {path}: {value!r}")
+	return value
+
+
+def _write_onboarding_state(value: str) -> None:
+	if value not in {ONBOARDING_PENDING, ONBOARDING_COMPLETED}:
+		raise ValueError(f"Unsupported onboarding state: {value}")
+
+	path = _onboarding_state_path()
+	path.parent.mkdir(parents=True, exist_ok=True)
+	temp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+	try:
+		temp_path.write_text(f"{value}\n", encoding="utf-8")
+		os.replace(temp_path, path)
+	finally:
+		temp_path.unlink(missing_ok=True)
+
+
+async def ensure_onboarding_state(db: AsyncSession) -> str:
+	"""Create explicit state once, migrating already-provisioned installations."""
+	state = _read_onboarding_state()
+	if state is not None:
+		return state
+
+	async with _onboarding_state_lock:
+		state = _read_onboarding_state()
+		if state is not None:
+			return state
+
+		state = ONBOARDING_COMPLETED if await _count_regular_users(db) > 0 else ONBOARDING_PENDING
+		_write_onboarding_state(state)
+		return state
+
+
 async def require_first_run(db: AsyncSession = Depends(get_db)) -> None:
-	if await _count_regular_users(db) > 0:
+	if await ensure_onboarding_state(db) == ONBOARDING_COMPLETED:
 		raise HTTPException(
 			status_code=status.HTTP_403_FORBIDDEN,
-			detail="Device is already provisioned"
+			detail="Onboarding is already completed"
 		)
 
 
 @router.get("/status", response_model=OnboardingStatus)
 async def get_onboarding_status(db: AsyncSession = Depends(get_db)) -> OnboardingStatus:
-	return OnboardingStatus(needs_onboarding=await _count_regular_users(db) == 0)
+	return OnboardingStatus(needs_onboarding=await ensure_onboarding_state(db) == ONBOARDING_PENDING)
 
 
 @router.get("/wifi/status", response_model=wifi.WifiStatus, dependencies=[Depends(require_first_run)])
@@ -86,10 +149,16 @@ async def create_admin_user(
 	db: AsyncSession = Depends(get_db)
 ) -> UserResponse:
 	async with _admin_user_lock:
-		if await _count_regular_users(db) > 0:
+		if await ensure_onboarding_state(db) == ONBOARDING_COMPLETED:
 			raise HTTPException(
 				status_code=status.HTTP_403_FORBIDDEN,
-				detail="Device is already provisioned"
+				detail="Onboarding is already completed"
+			)
+
+		if await _count_regular_users(db) > 0:
+			raise HTTPException(
+				status_code=status.HTTP_409_CONFLICT,
+				detail="Administrator account is already created"
 			)
 
 		role_result = await db.execute(select(Role).filter(Role.name == "admin"))
@@ -123,3 +192,13 @@ async def create_admin_user(
 			select(User).options(selectinload(User.role), selectinload(User.access_level)).filter(User.id == user.id)
 		)
 		return _build_user_response(user_result.scalar_one())
+
+
+@router.post(
+	"/complete",
+	response_model=OnboardingStatus,
+	dependencies=[Depends(require_permissions("users:write"))],
+)
+async def complete_onboarding() -> OnboardingStatus:
+	_write_onboarding_state(ONBOARDING_COMPLETED)
+	return OnboardingStatus(needs_onboarding=False)
