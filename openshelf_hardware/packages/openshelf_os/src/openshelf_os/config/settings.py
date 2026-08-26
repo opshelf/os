@@ -30,6 +30,11 @@ class OverheadCameraSettings(BaseModel):
     rtsp_url: str = ""
 
 
+class OverviewCameraSettings(BaseModel):
+    enabled: bool = False
+    rtsp_url: str = ""
+
+
 class AuthSettings(BaseModel):
     enabled: bool = True
     require_auth: bool = True
