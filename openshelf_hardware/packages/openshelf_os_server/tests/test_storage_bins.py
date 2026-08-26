@@ -381,6 +381,85 @@ async def test_mock_allocation_keeps_empty_bin_config_backward_compatible(
 
 
 @pytest.mark.anyio
+async def test_explicit_storage_mode_controls_new_item_flow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(BinStorageService, "sync_config", AsyncMock())
+    monkeypatch.setattr(storage_router.robot_core, "robot_worker", None)
+    current_user = SimpleNamespace(id=1)
+
+    async with AsyncSessionLocal() as db:
+        storage = StorageService(db)
+        direct_item = await storage.create_item(
+            "123456789060", "Direct", {"width": 10, "height": 10, "length": 10}
+        )
+        bin_item = await storage.create_item(
+            "123456789061", "Bin-sized", {"width": 1, "height": 1, "length": 1}
+        )
+        bin_row = StorageBin(
+            barcode="900000000060",
+            side="left_module",
+            shelf_idx=0,
+            cell_idx=0,
+            inner_dimensions={"width": 30, "height": 30, "length": 30},
+            max_items=2,
+            status="at_home",
+            active=True,
+        )
+        db.add(bin_row)
+        await db.commit()
+
+        direct = await storage_router.create_bin_workflow(
+            storage_router.BinWorkflowCreate(
+                operation="store", upca=direct_item.upca, storage_mode="direct"
+            ),
+            session=db,
+            current_user=current_user,
+        )
+        assert direct == {"storage_mode": "direct", "workflow": None}
+        assert bin_row.status == "at_home"
+        assert await BinStorageService(db).active_workflow() is None
+
+        selected_bin = await storage_router.create_bin_workflow(
+            storage_router.BinWorkflowCreate(
+                operation="store", upca=bin_item.upca, storage_mode="bin"
+            ),
+            session=db,
+            current_user=current_user,
+        )
+        assert selected_bin["storage_mode"] == "bin"
+        assert selected_bin["workflow"]["item"]["id"] == bin_item.id
+        assert selected_bin["workflow"]["state"] == "recovery_required"
+        assert bin_row.status == "checked_out"
+
+
+@pytest.mark.anyio
+async def test_explicit_bin_mode_rejects_when_no_compatible_bin_exists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(BinStorageService, "sync_config", AsyncMock())
+    monkeypatch.setattr(storage_router.robot_core, "robot_worker", None)
+
+    async with AsyncSessionLocal() as db:
+        item = await StorageService(db).create_item(
+            "123456789062", "Bin-sized", {"width": 1, "height": 1, "length": 1}
+        )
+
+        with pytest.raises(HTTPException) as error:
+            await storage_router.create_bin_workflow(
+                storage_router.BinWorkflowCreate(
+                    operation="store", upca=item.upca, storage_mode="bin"
+                ),
+                session=db,
+                current_user=SimpleNamespace(id=1),
+            )
+
+        assert error.value.status_code == 409
+        assert error.value.detail == "No compatible storage bin is available"
+        assert await BinStorageService(db).active_workflow() is None
+
+
+@pytest.mark.anyio
 async def test_bin_start_waits_for_direct_enqueue_then_rejects_queued_work(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -6,7 +6,7 @@ import functools
 import json
 import logging
 import time
-from typing import Any, Callable, Dict, List, Optional, Union, cast
+from typing import Any, Callable, Dict, List, Literal, Optional, Union, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import select
@@ -151,6 +151,7 @@ class ItemWithLocations(BaseModel):
 class BinWorkflowCreate(BaseModel):
     operation: str = Field(pattern=r"^(store|retrieve)$")
     upca: str
+    storage_mode: Optional[Literal["bin", "direct"]] = None
 
 
 class BinWorkflowReconcile(BaseModel):
@@ -379,6 +380,8 @@ async def create_bin_workflow(
     direct_locations = await storage.get_item_locations(item.upca)
     if request.operation == "store" and direct_locations:
         raise HTTPException(status_code=409, detail="Item is already stored")
+    if request.operation == "store" and request.storage_mode == "direct":
+        return {"storage_mode": "direct", "workflow": None}
     if request.operation == "retrieve" and await service.item_bin(item.id) is None:
         return {"storage_mode": "direct", "workflow": None}
 
@@ -415,6 +418,8 @@ async def create_bin_workflow(
         except BinWorkflowConflict as exc:
             raise HTTPException(status_code=423, detail=str(exc)) from exc
         if workflow is None:
+            if request.operation == "store" and request.storage_mode == "bin":
+                raise HTTPException(status_code=409, detail="No compatible storage bin is available")
             return {"storage_mode": "direct", "workflow": None}
         mock_runtime = get_mock_robot_runtime()
         mock_runtime.set_bin_io_box_occupied(True)
@@ -428,6 +433,8 @@ async def create_bin_workflow(
         except BinWorkflowConflict as exc:
             raise HTTPException(status_code=423, detail=str(exc)) from exc
         if workflow is None:
+            if request.operation == "store" and request.storage_mode == "bin":
+                raise HTTPException(status_code=409, detail="No compatible storage bin is available")
             return {"storage_mode": "direct", "workflow": None}
         workflow.error = "Robot worker is unavailable"
         await service.transition(workflow, "recovery_required", workflow.error)
@@ -454,6 +461,10 @@ async def create_bin_workflow(
                 if workflow is not None:
                     await service.start_retrieval(workflow, worker)
             if workflow is None:
+                if request.operation == "store" and request.storage_mode == "bin":
+                    raise HTTPException(
+                        status_code=409, detail="No compatible storage bin is available"
+                    )
                 return {"storage_mode": "direct", "workflow": None}
             try:
                 await service.publish_workflow(worker, workflow)
