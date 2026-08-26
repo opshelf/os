@@ -3704,6 +3704,555 @@
         }
       }
     },
+    "/api/storage/bins": {
+      "get": {
+        "tags": [
+          "storage"
+        ],
+        "summary": "Get Bins",
+        "operationId": "get_bins_api_storage_bins_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Bins Api Storage Bins Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/storage/bin-workflows/active": {
+      "get": {
+        "tags": [
+          "storage"
+        ],
+        "summary": "Get Active Bin Workflow",
+        "operationId": "get_active_bin_workflow_api_storage_bin_workflows_active_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Active Bin Workflow Api Storage Bin Workflows Active Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/storage/bin-workflows": {
+      "post": {
+        "tags": [
+          "storage"
+        ],
+        "summary": "Create Bin Workflow",
+        "operationId": "create_bin_workflow_api_storage_bin_workflows_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BinWorkflowCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Create Bin Workflow Api Storage Bin Workflows Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/storage/bin-workflows/{workflow_id}/scan": {
+      "post": {
+        "tags": [
+          "storage"
+        ],
+        "summary": "Scan Mock Bin Workflow",
+        "operationId": "scan_mock_bin_workflow_api_storage_bin_workflows__workflow_id__scan_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workflow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workflow Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BinWorkflowScan"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Scan Mock Bin Workflow Api Storage Bin Workflows  Workflow Id  Scan Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/storage/bin-workflows/{workflow_id}/return": {
+      "post": {
+        "tags": [
+          "storage"
+        ],
+        "summary": "Return Bin Workflow",
+        "operationId": "return_bin_workflow_api_storage_bin_workflows__workflow_id__return_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workflow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workflow Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BinWorkflowReturn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Return Bin Workflow Api Storage Bin Workflows  Workflow Id  Return Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/storage/bin-workflows/{workflow_id}/cancel-return": {
+      "post": {
+        "tags": [
+          "storage"
+        ],
+        "summary": "Cancel Unavailable Bin Return",
+        "operationId": "cancel_unavailable_bin_return_api_storage_bin_workflows__workflow_id__cancel_return_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workflow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workflow Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Cancel Unavailable Bin Return Api Storage Bin Workflows  Workflow Id  Cancel Return Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/storage/bin-workflows/{workflow_id}/retry": {
+      "post": {
+        "tags": [
+          "storage"
+        ],
+        "summary": "Retry Bin Workflow",
+        "operationId": "retry_bin_workflow_api_storage_bin_workflows__workflow_id__retry_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workflow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workflow Id"
+            }
+          },
+          {
+            "name": "target_item_in_bin",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Target Item In Bin"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Retry Bin Workflow Api Storage Bin Workflows  Workflow Id  Retry Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/storage/bin-workflows/{workflow_id}/reconcile": {
+      "post": {
+        "tags": [
+          "storage"
+        ],
+        "summary": "Reconcile Bin Workflow",
+        "operationId": "reconcile_bin_workflow_api_storage_bin_workflows__workflow_id__reconcile_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workflow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workflow Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BinWorkflowReconcile"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Reconcile Bin Workflow Api Storage Bin Workflows  Workflow Id  Reconcile Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/storage/items": {
       "get": {
         "tags": [
@@ -6935,6 +7484,151 @@
         }
       }
     },
+    "/api/onboarding/status": {
+      "get": {
+        "tags": [
+          "onboarding"
+        ],
+        "summary": "Get Onboarding Status",
+        "operationId": "get_onboarding_status_api_onboarding_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OnboardingStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/onboarding/wifi/status": {
+      "get": {
+        "tags": [
+          "onboarding"
+        ],
+        "summary": "Get Wifi Status",
+        "operationId": "get_wifi_status_api_onboarding_wifi_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WifiStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/onboarding/wifi/networks": {
+      "get": {
+        "tags": [
+          "onboarding"
+        ],
+        "summary": "List Wifi Networks",
+        "operationId": "list_wifi_networks_api_onboarding_wifi_networks_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WifiNetworkList"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/onboarding/wifi/connect": {
+      "post": {
+        "tags": [
+          "onboarding"
+        ],
+        "summary": "Connect Wifi",
+        "operationId": "connect_wifi_api_onboarding_wifi_connect_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WifiConnectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WifiConnectResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/onboarding/admin-user": {
+      "post": {
+        "tags": [
+          "onboarding"
+        ],
+        "summary": "Create Admin User",
+        "operationId": "create_admin_user_api_onboarding_admin_user_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminUserCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/openshelf_os_server__routers__users__UserResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/report_error": {
       "post": {
         "tags": [
@@ -7051,6 +7745,35 @@
         ],
         "title": "AccessLevelResponse",
         "description": "Access level response model."
+      },
+      "AdminUserCreate": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "title": "Email"
+          },
+          "pin": {
+            "type": "string",
+            "title": "Pin"
+          },
+          "first_name": {
+            "type": "string",
+            "title": "First Name",
+            "default": "Admin"
+          },
+          "last_name": {
+            "type": "string",
+            "title": "Last Name",
+            "default": "User"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email",
+          "pin"
+        ],
+        "title": "AdminUserCreate"
       },
       "AuditLogListResponse": {
         "properties": {
@@ -7313,6 +8036,111 @@
           "y"
         ],
         "title": "AxisCoordinate"
+      },
+      "BinWorkflowCreate": {
+        "properties": {
+          "operation": {
+            "type": "string",
+            "pattern": "^(store|retrieve)$",
+            "title": "Operation"
+          },
+          "upca": {
+            "type": "string",
+            "title": "Upca"
+          }
+        },
+        "type": "object",
+        "required": [
+          "operation",
+          "upca"
+        ],
+        "title": "BinWorkflowCreate"
+      },
+      "BinWorkflowReconcile": {
+        "properties": {
+          "resolution": {
+            "type": "string",
+            "pattern": "^(returned|quarantined)$",
+            "title": "Resolution"
+          },
+          "target_item_in_bin": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Item In Bin"
+          },
+          "confirmed_item_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirmed Item Ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "resolution"
+        ],
+        "title": "BinWorkflowReconcile"
+      },
+      "BinWorkflowReturn": {
+        "properties": {
+          "target_item_in_bin": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Item In Bin"
+          },
+          "confirmed_item_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirmed Item Ids"
+          }
+        },
+        "type": "object",
+        "title": "BinWorkflowReturn"
+      },
+      "BinWorkflowScan": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "maxLength": 50,
+            "minLength": 1,
+            "pattern": ".*\\S.*",
+            "title": "Code"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code"
+        ],
+        "title": "BinWorkflowScan"
       },
       "CabinetDoorState": {
         "properties": {
@@ -8364,6 +9192,18 @@
           "can_retrieve": {
             "type": "boolean",
             "title": "Can Retrieve"
+          },
+          "bin": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bin"
           }
         },
         "type": "object",
@@ -9361,6 +10201,19 @@
           "cell_idx"
         ],
         "title": "MoveRequest"
+      },
+      "OnboardingStatus": {
+        "properties": {
+          "needs_onboarding": {
+            "type": "boolean",
+            "title": "Needs Onboarding"
+          }
+        },
+        "type": "object",
+        "required": [
+          "needs_onboarding"
+        ],
+        "title": "OnboardingStatus"
       },
       "PositionResponse": {
         "properties": {

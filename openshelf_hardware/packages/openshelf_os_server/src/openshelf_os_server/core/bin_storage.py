@@ -396,15 +396,19 @@ class BinStorageService:
 
     async def item_has_active_workflow(self, item_id: int) -> bool:
         """Whether an item is the protected target of an unfinished bin workflow."""
-        workflow = (
+        workflows = (
             await self.session.execute(
-                select(StorageBinWorkflow.id).where(
-                    StorageBinWorkflow.item_id == item_id,
-                    StorageBinWorkflow.state.in_(ACTIVE_STATES),
-                )
+                select(StorageBinWorkflow).where(StorageBinWorkflow.state.in_(ACTIVE_STATES))
             )
-        ).scalar_one_or_none()
-        return workflow is not None
+        ).scalars()
+        return any(
+            workflow.item_id == item_id
+            or (
+                workflow.operation == "restore"
+                and item_id in set((workflow.resolution or {}).get("candidate_item_ids", []))
+            )
+            for workflow in workflows
+        )
 
     async def item_has_workflow_history(self, item_id: int) -> bool:
         """Whether an item is referenced by a durable bin workflow record."""
@@ -420,7 +424,7 @@ class BinStorageService:
         item = await self.session.get(Item, row.item_id)
         if bin_row is None or item is None:
             raise RuntimeError("Bin workflow references missing data")
-        return {
+        payload = {
             "id": row.id,
             "operation": row.operation,
             "state": row.state,
@@ -432,6 +436,121 @@ class BinStorageService:
             "created_at": row.created_at.isoformat(),
             "updated_at": row.updated_at.isoformat(),
         }
+        if row.operation == "restore":
+            candidate_ids = (row.resolution or {}).get("candidate_item_ids", [])
+            confirmed_ids = set((row.resolution or {}).get("confirmed_item_ids", []))
+            candidates = (
+                (
+                    await self.session.execute(
+                        select(Item).where(Item.id.in_(candidate_ids)).order_by(Item.name, Item.upca)
+                    )
+                )
+                .scalars()
+                .all()
+                if candidate_ids
+                else []
+            )
+            payload["contents"] = [
+                {
+                    "id": item.id,
+                    "upca": item.upca,
+                    "name": item.name,
+                    "confirmed": item.id in confirmed_ids,
+                }
+                for item in candidates
+            ]
+        return payload
+
+    async def begin_unavailable_return(
+        self, barcode: str, user_id: Optional[int] = None
+    ) -> Optional[StorageBinWorkflow]:
+        """Start a bin-centric return after scanning an unavailable bin."""
+        if await self.active_workflow(for_update=True):
+            raise BinWorkflowConflict("Another bin workflow is already active")
+        bin_row = (
+            await self.session.execute(
+                select(StorageBin).where(
+                    StorageBin.barcode == barcode,
+                    StorageBin.active.is_(True),
+                    StorageBin.status == "quarantined",
+                )
+            )
+        ).scalar_one_or_none()
+        if bin_row is None:
+            return None
+        previous_workflows = list(
+            (
+                await self.session.execute(
+                    select(StorageBinWorkflow)
+                    .where(StorageBinWorkflow.bin_id == bin_row.id)
+                    .order_by(StorageBinWorkflow.created_at.asc())
+                )
+            ).scalars()
+        )
+        if not previous_workflows:
+            raise BinWorkflowConflict("Unavailable bin has no workflow history to reconcile")
+        previous = previous_workflows[-1]
+
+        member_ids = set(
+            (
+                await self.session.execute(
+                    select(StorageBinItem.item_id).where(StorageBinItem.bin_id == bin_row.id)
+                )
+            ).scalars()
+        )
+        candidate_ids = set(member_ids)
+        for prior_workflow in previous_workflows:
+            if prior_workflow.operation == "restore":
+                candidate_ids.update((prior_workflow.resolution or {}).get("candidate_item_ids", []))
+            elif (prior_workflow.resolution or {}).get("resolution") == "quarantined":
+                candidate_ids.add(prior_workflow.item_id)
+        workflow = StorageBinWorkflow(
+            id=str(uuid4()),
+            operation="restore",
+            state="awaiting_bin_scan",
+            lock_key="global",
+            bin_id=bin_row.id,
+            item_id=previous.item_id,
+            user_id=user_id,
+            history=[_history_entry("awaiting_bin_scan", "unavailable bin scanned")],
+            resolution={
+                "candidate_item_ids": sorted(candidate_ids),
+                "confirmed_item_ids": sorted(member_ids),
+            },
+        )
+        self.session.add(workflow)
+        try:
+            await self.session.commit()
+        except IntegrityError as exc:
+            await self.session.rollback()
+            raise BinWorkflowConflict("Another bin workflow is already active") from exc
+        return workflow
+
+    async def confirm_restore_item(self, workflow: StorageBinWorkflow, code: str) -> bool:
+        if workflow.operation != "restore" or workflow.state != "awaiting_bin_scan":
+            return False
+        candidate_ids = list((workflow.resolution or {}).get("candidate_item_ids", []))
+        item = (
+            await self.session.execute(
+                select(Item).where(Item.upca == code, Item.id.in_(candidate_ids))
+            )
+        ).scalar_one_or_none()
+        if item is None:
+            return False
+        confirmed_ids = set((workflow.resolution or {}).get("confirmed_item_ids", []))
+        confirmed_ids.add(item.id)
+        workflow.resolution = {
+            **(workflow.resolution or {}),
+            "confirmed_item_ids": sorted(confirmed_ids),
+        }
+        await self.transition(workflow, "awaiting_bin_scan", f"confirmed item {item.upca}")
+        return True
+
+    async def cancel_unavailable_return(self, workflow: StorageBinWorkflow) -> None:
+        if workflow.operation != "restore" or workflow.state != "awaiting_bin_scan":
+            raise BinWorkflowConflict("Unavailable bin return cannot be closed now")
+        workflow.resolution = {**(workflow.resolution or {}), "resolution": "cancelled"}
+        await self.transition(workflow, "reconciled", "operator closed unavailable bin return")
 
     @staticmethod
     def _fits(item: Item, bin_row: StorageBin) -> bool:
@@ -542,9 +661,13 @@ class BinStorageService:
         await self.session.commit()
 
     async def claim_recovery_workflow(
-        self, workflow_id: str, claim_state: str
+        self,
+        workflow_id: str,
+        claim_state: str,
+        *,
+        source_states: tuple[str, ...] = ("recovery_required",),
     ) -> Optional[StorageBinWorkflow]:
-        """Atomically claim a recovery workflow for one retry or reconciliation."""
+        """Atomically claim an eligible workflow for one retry or reconciliation."""
         if claim_state not in RECOVERY_CLAIMED_STATES:
             raise ValueError("claim_state must be a recovery claim state")
         claim = str(uuid4())
@@ -552,7 +675,7 @@ class BinStorageService:
             update(StorageBinWorkflow)
             .where(
                 StorageBinWorkflow.id == workflow_id,
-                StorageBinWorkflow.state == "recovery_required",
+                StorageBinWorkflow.state.in_(source_states),
                 StorageBinWorkflow.recovery_claim.is_(None),
             )
             .values(state=claim_state, recovery_claim=claim, updated_at=_utc_now())
@@ -734,24 +857,38 @@ class BinStorageService:
             raise RuntimeError("Workflow bin no longer exists")
         if item is None:
             raise RuntimeError("Workflow item no longer exists")
-        membership = (
-            await self.session.execute(
-                select(StorageBinItem).where(StorageBinItem.item_id == item.id)
-            )
-        ).scalar_one_or_none()
-        if workflow.operation == "store":
-            completion_error: Optional[str]
-            if membership is not None:
-                completion_error = "Item is already associated with a storage bin"
-            else:
-                completion_error = await self._store_completion_error(workflow, bin_row, item)
+        if workflow.operation == "restore":
+            completion_error = await self._restore_completion_error(workflow, bin_row)
             if completion_error is not None:
                 workflow.error = completion_error
                 await self.transition(workflow, "recovery_required", completion_error)
                 return
-            self.session.add(StorageBinItem(bin_id=bin_row.id, item_id=item.id))
-        elif workflow.operation == "retrieve" and membership is not None:
-            await self.session.delete(membership)
+            await self._apply_restore_contents(workflow, bin_row)
+        else:
+            membership = (
+                await self.session.execute(
+                    select(StorageBinItem).where(StorageBinItem.item_id == item.id)
+                )
+            ).scalar_one_or_none()
+            target_item_in_bin = (workflow.resolution or {}).get("target_item_in_bin")
+            if not isinstance(target_item_in_bin, bool):
+                # Compatibility for workflows started before the return confirmation was introduced.
+                target_item_in_bin = workflow.operation == "store"
+
+            if target_item_in_bin:
+                completion_error = None
+                if membership is not None and membership.bin_id != bin_row.id:
+                    completion_error = "Item is already associated with another storage bin"
+                elif membership is None:
+                    completion_error = await self._store_completion_error(workflow, bin_row, item)
+                if completion_error is not None:
+                    workflow.error = completion_error
+                    await self.transition(workflow, "recovery_required", completion_error)
+                    return
+                if membership is None:
+                    self.session.add(StorageBinItem(bin_id=bin_row.id, item_id=item.id))
+            elif membership is not None:
+                await self.session.delete(membership)
         bin_row.status = "at_home"
         if gross_weight is not None:
             try:
@@ -759,6 +896,71 @@ class BinStorageService:
             except (TypeError, ValueError):
                 pass
         await self.transition(workflow, "completed")
+
+    async def _apply_restore_contents(
+        self, workflow: StorageBinWorkflow, bin_row: StorageBin
+    ) -> None:
+        confirmed_ids = set((workflow.resolution or {}).get("confirmed_item_ids", []))
+        memberships = (
+            (
+                await self.session.execute(
+                    select(StorageBinItem).where(StorageBinItem.bin_id == bin_row.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        current_ids = {membership.item_id for membership in memberships}
+        for membership in memberships:
+            if membership.item_id not in confirmed_ids:
+                await self.session.delete(membership)
+        for item_id in confirmed_ids - current_ids:
+            self.session.add(StorageBinItem(bin_id=bin_row.id, item_id=item_id))
+
+    async def _restore_completion_error(
+        self, workflow: StorageBinWorkflow, bin_row: StorageBin
+    ) -> Optional[str]:
+        candidate_ids = set((workflow.resolution or {}).get("candidate_item_ids", []))
+        confirmed_ids = set((workflow.resolution or {}).get("confirmed_item_ids", []))
+        if not confirmed_ids.issubset(candidate_ids):
+            return "Confirmed bin contents include an unexpected item"
+        items = (
+            (
+                await self.session.execute(select(Item).where(Item.id.in_(confirmed_ids)))
+            )
+            .scalars()
+            .all()
+            if confirmed_ids
+            else []
+        )
+        if len(items) != len(confirmed_ids):
+            return "A confirmed bin item no longer exists"
+        if len(items) > bin_row.max_items:
+            return "Storage bin has reached its item limit"
+        if any(not self._fits(item, bin_row) for item in items):
+            return "A confirmed item no longer fits the configured storage bin"
+        if len({item.access_level_id for item in items}) > 1:
+            return "Confirmed items do not share the same access level"
+        direct_item = (
+            await self.session.execute(
+                select(ItemLocation.item_id).where(ItemLocation.item_id.in_(confirmed_ids)).limit(1)
+            )
+        ).scalar_one_or_none()
+        if direct_item is not None:
+            return "A confirmed item has a direct storage location"
+        other_membership = (
+            await self.session.execute(
+                select(StorageBinItem.item_id)
+                .where(
+                    StorageBinItem.item_id.in_(confirmed_ids),
+                    StorageBinItem.bin_id != bin_row.id,
+                )
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if other_membership is not None:
+            return "A confirmed item is associated with another storage bin"
+        return None
 
     async def _store_completion_error(
         self,
@@ -802,6 +1004,8 @@ class BinStorageService:
 
     async def handle_mock_scan(self, workflow: StorageBinWorkflow, code: str) -> bool:
         """Deterministic scanner/scale behavior for the database-backed mock runtime."""
+        if workflow.operation == "restore":
+            return await self.confirm_restore_item(workflow, code)
         item = await self.session.get(Item, workflow.item_id)
         bin_row = await self.session.get(StorageBin, workflow.bin_id)
         if item is None or bin_row is None:
@@ -813,14 +1017,22 @@ class BinStorageService:
             await self.transition(workflow, "awaiting_bin_scan")
             return True
         if workflow.state == "awaiting_bin_scan":
-            await self.transition(workflow, "returning_bin")
-            await self.complete_return(workflow)
             return True
         return False
 
     async def handle_scan(self, code: str, worker: RobotWorker) -> bool:
         workflow = await self.active_workflow()
-        if workflow is None or workflow.state not in {"awaiting_item_scan", "awaiting_bin_scan"}:
+        if workflow is None:
+            workflow = await self.begin_unavailable_return(code)
+            if workflow is None:
+                return False
+            await self._publish(worker, workflow)
+            return True
+        if workflow.operation == "restore":
+            accepted = await self.confirm_restore_item(workflow, code)
+            await self._publish(worker, workflow, rejected_scan=None if accepted else code)
+            return True
+        if workflow.state not in {"awaiting_item_scan", "awaiting_bin_scan"}:
             return False
         item = await self.session.get(Item, workflow.item_id)
         bin_row = await self.session.get(StorageBin, workflow.bin_id)
@@ -835,6 +1047,22 @@ class BinStorageService:
             await self._publish(worker, workflow)
             return True
 
+        # A bin scan identifies the expected container but must never start
+        # physical motion. Returning the bin requires an explicit Store action.
+        await self._publish(worker, workflow)
+        return True
+
+    async def start_return(
+        self,
+        workflow: StorageBinWorkflow,
+        worker: RobotWorker,
+        *,
+        command_admitted: bool = False,
+    ) -> None:
+        """Start the physical bin return after explicit operator confirmation."""
+        if workflow.state != "awaiting_bin_scan":
+            raise BinWorkflowConflict("Bin workflow is not ready to return")
+
         occupied = False
         cached = worker.get_cached_scale_status()
         if cached is not None:
@@ -845,26 +1073,18 @@ class BinStorageService:
             except Exception:
                 occupied = False
         if not occupied:
-            await self._publish(worker, workflow, rejected_scan=code)
-            return True
+            raise BinWorkflowConflict("Place the bin in the IO box before storing it")
 
-        try:
-            ensure_worker_homed_for_bin_motion(worker)
-        except BinWorkflowConflict:
-            # The workflow remains resumable after a restart. The operator must
-            # explicitly home before scanning again can schedule the return.
-            await self._publish(worker, workflow, rejected_scan=code)
-            return True
+        ensure_worker_homed_for_bin_motion(worker)
 
         await self.transition(workflow, "returning_bin")
         await self._publish(worker, workflow)
         try:
-            await self.enqueue_return(workflow, worker)
+            await self.enqueue_return(workflow, worker, command_admitted=command_admitted)
         except Exception as exc:
             workflow.error = str(exc)
             await self.transition(workflow, "recovery_required", workflow.error)
             await self._publish(worker, workflow)
-        return True
 
     async def enqueue_return(
         self, workflow: StorageBinWorkflow, worker: RobotWorker, *, command_admitted: bool = False
@@ -893,24 +1113,38 @@ class BinStorageService:
         workflow: StorageBinWorkflow,
         *,
         resolution: str,
-        target_item_in_bin: bool,
+        target_item_in_bin: Optional[bool],
         recovery_claim: Optional[str] = None,
     ) -> bool:
         if resolution not in {"returned", "quarantined"}:
             raise ValueError("resolution must be returned or quarantined")
         bin_row = await self.session.get(StorageBin, workflow.bin_id)
-        membership = (
-            await self.session.execute(
-                select(StorageBinItem).where(StorageBinItem.item_id == workflow.item_id)
-            )
-        ).scalar_one_or_none()
-        if target_item_in_bin and membership is None:
-            self.session.add(StorageBinItem(bin_id=workflow.bin_id, item_id=workflow.item_id))
-        if not target_item_in_bin and membership is not None:
-            await self.session.delete(membership)
+        if resolution == "returned":
+            membership = (
+                await self.session.execute(
+                    select(StorageBinItem).where(StorageBinItem.item_id == workflow.item_id)
+                )
+            ).scalar_one_or_none()
+            if workflow.operation == "restore" and bin_row is not None:
+                await self._apply_restore_contents(workflow, bin_row)
+            else:
+                if target_item_in_bin is None:
+                    raise ValueError("target item state is required for a returned bin")
+                if target_item_in_bin and membership is None:
+                    self.session.add(StorageBinItem(bin_id=workflow.bin_id, item_id=workflow.item_id))
+                if not target_item_in_bin and membership is not None:
+                    await self.session.delete(membership)
         if bin_row:
             bin_row.status = "at_home" if resolution == "returned" else "quarantined"
-        workflow.resolution = {"resolution": resolution, "target_item_in_bin": target_item_in_bin}
+        if workflow.operation == "restore":
+            workflow.resolution = {**(workflow.resolution or {}), "resolution": resolution}
+        elif resolution == "returned":
+            workflow.resolution = {
+                "resolution": resolution,
+                "target_item_in_bin": target_item_in_bin,
+            }
+        else:
+            workflow.resolution = {"resolution": resolution}
         workflow.error = None
         if recovery_claim is not None:
             return await self.transition_recovery_claim(

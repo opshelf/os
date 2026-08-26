@@ -11,7 +11,12 @@ from typing import Any
 from sqlalchemy import delete, func, select
 
 from openshelf_os_server.core.bin_storage import reserved_bin_locations
-from openshelf_os_server.database.models import Item, ItemLocation, MockRobotCommand
+from openshelf_os_server.database.models import (
+	Item,
+	ItemLocation,
+	MockRobotCommand,
+	StorageBinWorkflow,
+)
 from openshelf_os_server.database.session import AsyncSessionLocal
 
 logger = logging.getLogger(__name__)
@@ -80,6 +85,10 @@ class MockRobotRuntime:
 		self._lock = asyncio.Lock()
 		self._status_subscribers: list[asyncio.Queue[str]] = []
 		self._event_subscribers: list[asyncio.Queue[str]] = []
+		self._bin_io_box_occupied_override: bool | None = None
+
+	def set_bin_io_box_occupied(self, occupied: bool) -> None:
+		self._bin_io_box_occupied_override = occupied
 
 	async def start(self) -> None:
 		async with AsyncSessionLocal() as session:
@@ -404,6 +413,21 @@ class MockRobotRuntime:
 				select(ItemLocation.side, ItemLocation.shelf_idx, ItemLocation.cell_idx)
 			)
 			occupied = {(row.side, row.shelf_idx, row.cell_idx) for row in occupied_rows}
+			active_bin_state = (
+				await session.execute(
+					select(StorageBinWorkflow.state)
+					.where(
+						StorageBinWorkflow.state.notin_(("completed", "reconciled"))
+					)
+					.order_by(StorageBinWorkflow.created_at.desc())
+					.limit(1)
+				)
+			).scalar_one_or_none()
+			io_box_occupied = (
+				self._bin_io_box_occupied_override
+				if self._bin_io_box_occupied_override is not None
+				else active_bin_state in {"awaiting_item_scan", "awaiting_bin_scan"}
+			)
 
 		running = next((row for row in commands if row.status == "running"), None)
 		queued = [row for row in commands if row.status == "queued"]
@@ -443,8 +467,27 @@ class MockRobotRuntime:
 				"tool": {"z_axis": axis, "stage": axis, "rotate": axis},
 				"state": {"current_cell": None},
 				"storage": storage,
-				"cabinet_doors": {"left": "closed", "right": "closed"},
+				"cabinet_doors": {
+					"top_closed": True,
+					"bottom_closed": True,
+					"closed": True,
+					"top_open": False,
+					"bottom_open": False,
+					"open": False,
+				},
 				"io_door_open": False,
+				"scale": {
+					"enabled": True,
+					"available": True,
+					"weight_grams": 25.0 if io_box_occupied else 0.0,
+					"stable": True,
+					"valid": True,
+					"overload": False,
+					"zero": not io_box_occupied,
+					"occupied": io_box_occupied,
+					"threshold_grams": 5.0,
+					"updated_at": _utcnow().isoformat(),
+				},
 				"safety": {"ready": True},
 			},
 		}
