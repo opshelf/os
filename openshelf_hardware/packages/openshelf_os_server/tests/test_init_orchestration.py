@@ -1,9 +1,11 @@
+from dataclasses import replace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 import openshelf_os_server.core.robot as robot_module
 from openshelf_os_server.core.init_progress import OVERALL_READY, get_init_tracker
+from openshelf_os_server.core.printer_status import PrinterStatus, PrinterStatusProbeError
 
 
 def _phase_for(component: str) -> str | None:
@@ -121,24 +123,88 @@ def test_robot_health_is_degraded_when_motor_component_failed(monkeypatch):
     assert health["failed_components"] == ["y_axis"]
 
 
-def test_report_printer_status_failed_when_device_missing(monkeypatch):
+def _printer_status(**overrides: bool) -> PrinterStatus:
+    status = PrinterStatus(
+        raw=(0x12, 0x12, 0x12, 0x12),
+        offline=False,
+        waiting_for_online_recovery=False,
+        feed_button_active=False,
+        cover_open=False,
+        paper_out=False,
+        paper_near_end=False,
+        recoverable_error=False,
+        cutter_error=False,
+        unrecoverable_error=False,
+        auto_recoverable_error=False,
+    )
+    return replace(status, **overrides)
+
+
+def test_report_printer_status_failed_when_probe_fails(monkeypatch):
     get_init_tracker().reset()
     monkeypatch.setattr(robot_module, "_printer_enabled", lambda: True)
-    monkeypatch.setattr(robot_module.os.path, "exists", lambda _path: False)
+    monkeypatch.setattr(
+        robot_module,
+        "probe_printer_status",
+        MagicMock(side_effect=PrinterStatusProbeError("device not found: /dev/usb/lp0")),
+    )
 
     robot_module._report_printer_status()
 
     assert _phase_for("printer") == "failed"
+    assert _reason_for("printer") == "device not found: /dev/usb/lp0"
 
 
-def test_report_printer_status_ready_when_device_present(monkeypatch):
+def test_report_printer_status_ready_when_probe_is_healthy(monkeypatch):
     get_init_tracker().reset()
     monkeypatch.setattr(robot_module, "_printer_enabled", lambda: True)
-    monkeypatch.setattr(robot_module.os.path, "exists", lambda _path: True)
+    probe = MagicMock(return_value=_printer_status())
+    monkeypatch.setattr(robot_module, "probe_printer_status", probe)
 
     robot_module._report_printer_status()
 
     assert _phase_for("printer") == "ready"
+    probe.assert_called_once_with("/dev/usb/lp0")
+
+
+@pytest.mark.parametrize(
+    ("condition", "reason"),
+    [
+        ({"paper_out": True, "offline": True}, "paper out"),
+        ({"cover_open": True, "offline": True}, "cover open"),
+        ({"cutter_error": True, "offline": True}, "cutter error"),
+        ({"recoverable_error": True, "offline": True}, "recoverable printer error"),
+        ({"unrecoverable_error": True, "offline": True}, "unrecoverable printer error"),
+        ({"auto_recoverable_error": True, "offline": True}, "auto-recoverable printer error"),
+        ({"offline": True}, "printer offline"),
+    ],
+)
+def test_report_printer_status_failed_for_unhealthy_status(monkeypatch, condition, reason):
+    get_init_tracker().reset()
+    monkeypatch.setattr(robot_module, "_printer_enabled", lambda: True)
+    monkeypatch.setattr(robot_module, "probe_printer_status", MagicMock(return_value=_printer_status(**condition)))
+
+    robot_module._report_printer_status()
+
+    assert _phase_for("printer") == "failed"
+    assert _reason_for("printer") == reason
+
+
+def test_report_printer_status_ready_with_near_end_detail(monkeypatch):
+    get_init_tracker().reset()
+    monkeypatch.setattr(robot_module, "_printer_enabled", lambda: True)
+    monkeypatch.setattr(
+        robot_module,
+        "probe_printer_status",
+        MagicMock(return_value=_printer_status(paper_near_end=True)),
+    )
+
+    robot_module._report_printer_status()
+
+    snapshot = get_init_tracker().snapshot()
+    printer = next(entry for entry in snapshot["components"] if entry["component"] == "printer")
+    assert printer["phase"] == "ready"
+    assert printer["detail"] == "/dev/usb/lp0 (paper near end)"
 
 
 def test_report_printer_status_skipped_when_disabled(monkeypatch):
