@@ -20,6 +20,7 @@ from openshelf_os_server.core.init_progress import (
     OVERALL_READY,
     get_init_tracker,
 )
+from openshelf_os_server.core.printer_status import PrinterStatusProbeError, probe_printer_status
 from openshelf_os_server.core.robot_events import RobotEventListener
 from openshelf_os_server.core.storage import StorageService
 from openshelf_os_server.database.session import AsyncSessionLocal
@@ -71,10 +72,19 @@ def _report_printer_status() -> None:
         return
     tracker = get_init_tracker()
     device = _printer_device()
-    if os.path.exists(device) is True:
-        tracker.report("printer", "ready", detail=device)
-    else:
-        tracker.report("printer", "failed", reason=f"device not found: {device}")
+    try:
+        status = probe_printer_status(device)
+    except PrinterStatusProbeError as exc:
+        tracker.report("printer", "failed", reason=str(exc))
+        return
+
+    reason = status.failure_reason()
+    if reason is not None:
+        tracker.report("printer", "failed", reason=reason)
+        return
+
+    detail = f"{device} (paper near end)" if status.paper_near_end is True else device
+    tracker.report("printer", "ready", detail=detail)
 
 
 def validate_robot_config() -> None:
