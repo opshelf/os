@@ -15,6 +15,7 @@ from fastapi import HTTPException, status
 
 from openshelf_os.robot.commands import RetrieveItemCommand, StoreItemCommand
 from openshelf_os.robot.worker import RobotWorker
+from openshelf_os_server.core.logging_config import get_logger
 from openshelf_os_server.core.manual_motion import get_manual_motion_operation
 from openshelf_os_server.core.laser_auto_calibration import is_laser_auto_calibration_running
 from openshelf_os_server.database.models import (
@@ -26,6 +27,9 @@ from openshelf_os_server.database.models import (
 )
 from openshelf_os_server.database.session import AsyncSessionLocal
 from openshelf_os_server.settings import get_root_config
+
+
+logger = get_logger(__name__)
 
 
 ACTIVE_STATES = {
@@ -41,6 +45,28 @@ ACTIVE_STATES = {
 RECOVERY_RETRY_CLAIMED = "retry_claimed"
 RECOVERY_RECONCILE_CLAIMED = "reconcile_claimed"
 RECOVERY_CLAIMED_STATES = {RECOVERY_RETRY_CLAIMED, RECOVERY_RECONCILE_CLAIMED}
+
+
+def _report_post_return_failure(
+    workflow: StorageBinWorkflow,
+    bin_row: Optional[StorageBin],
+    error: str,
+    *,
+    phase: str,
+) -> None:
+    # The API config promotes ERROR logs to Sentry events in production and demo.
+    logger.error(
+        "bin_workflow_post_return_failure",
+        workflow_id=workflow.id,
+        workflow_state=workflow.state,
+        operation=workflow.operation,
+        bin_id=workflow.bin_id,
+        bin_barcode=bin_row.barcode if bin_row is not None else None,
+        item_id=workflow.item_id,
+        phase=phase,
+        error=error,
+        physical_return_completed=True,
+    )
 
 
 # One process-local admission point makes the durable workflow lock and robot
@@ -472,7 +498,9 @@ class BinStorageService:
             candidates = (
                 (
                     await self.session.execute(
-                        select(Item).where(Item.id.in_(candidate_ids)).order_by(Item.name, Item.upca)
+                        select(Item)
+                        .where(Item.id.in_(candidate_ids))
+                        .order_by(Item.name, Item.upca)
                     )
                 )
                 .scalars()
@@ -531,7 +559,9 @@ class BinStorageService:
         candidate_ids = set(member_ids)
         for prior_workflow in previous_workflows:
             if prior_workflow.operation == "restore":
-                candidate_ids.update((prior_workflow.resolution or {}).get("candidate_item_ids", []))
+                candidate_ids.update(
+                    (prior_workflow.resolution or {}).get("candidate_item_ids", [])
+                )
             elif (prior_workflow.resolution or {}).get("resolution") == "quarantined":
                 candidate_ids.add(prior_workflow.item_id)
         workflow = StorageBinWorkflow(
@@ -640,11 +670,15 @@ class BinStorageService:
         capacity = cls._volume(bin_row.inner_dimensions)
         item_volume = cls._volume(item.dimensions)
         member_volumes = [cls._volume(member.dimensions) for member in members]
-        if capacity is None or item_volume is None or any(
-            volume is None for volume in member_volumes
+        if (
+            capacity is None
+            or item_volume is None
+            or any(volume is None for volume in member_volumes)
         ):
             return False
-        return sum(volume for volume in member_volumes if volume is not None) + item_volume <= capacity
+        return (
+            sum(volume for volume in member_volumes if volume is not None) + item_volume <= capacity
+        )
 
     @classmethod
     def _contents_have_volume(cls, items: list[Item], bin_row: StorageBin) -> bool:
@@ -955,12 +989,26 @@ class BinStorageService:
         bin_row = await self.session.get(StorageBin, workflow.bin_id)
         item = await self.session.get(Item, workflow.item_id)
         if bin_row is None:
-            raise RuntimeError("Workflow bin no longer exists")
+            error = "Workflow bin no longer exists"
+            if self.physical_return_completed(workflow):
+                _report_post_return_failure(workflow, None, error, phase="inventory_finalization")
+            raise RuntimeError(error)
         if item is None:
-            raise RuntimeError("Workflow item no longer exists")
+            error = "Workflow item no longer exists"
+            if self.physical_return_completed(workflow):
+                _report_post_return_failure(
+                    workflow, bin_row, error, phase="inventory_finalization"
+                )
+            raise RuntimeError(error)
         if workflow.operation == "restore":
             completion_error = await self._restore_completion_error(workflow, bin_row)
             if completion_error is not None:
+                _report_post_return_failure(
+                    workflow,
+                    bin_row,
+                    completion_error,
+                    phase="inventory_finalization",
+                )
                 workflow.error = completion_error
                 await self.transition(workflow, "recovery_required", completion_error)
                 return
@@ -983,6 +1031,12 @@ class BinStorageService:
                 elif membership is None:
                     completion_error = await self._store_completion_error(workflow, bin_row, item)
                 if completion_error is not None:
+                    _report_post_return_failure(
+                        workflow,
+                        bin_row,
+                        completion_error,
+                        phase="inventory_finalization",
+                    )
                     workflow.error = completion_error
                     await self.transition(workflow, "recovery_required", completion_error)
                     return
@@ -1026,9 +1080,7 @@ class BinStorageService:
         if not confirmed_ids.issubset(candidate_ids):
             return "Confirmed bin contents include an unexpected item"
         items = (
-            (
-                await self.session.execute(select(Item).where(Item.id.in_(confirmed_ids)))
-            )
+            (await self.session.execute(select(Item).where(Item.id.in_(confirmed_ids))))
             .scalars()
             .all()
             if confirmed_ids
@@ -1079,9 +1131,7 @@ class BinStorageService:
             return "Bin workflow is not returning its checked-out bin"
         return await self._store_invariant_error(bin_row, item)
 
-    async def _store_invariant_error(
-        self, bin_row: StorageBin, item: Item
-    ) -> Optional[str]:
+    async def _store_invariant_error(self, bin_row: StorageBin, item: Item) -> Optional[str]:
         """Validate durable bin/item invariants without requiring live motion state."""
         if not bin_row.active or not self._fits(item, bin_row):
             return "Item no longer fits the configured storage bin"
@@ -1276,6 +1326,13 @@ class BinStorageService:
                 workflow, bin_row, target_item_in_bin
             )
             if reconciliation_error is not None:
+                if self.physical_return_completed(workflow):
+                    _report_post_return_failure(
+                        workflow,
+                        bin_row,
+                        reconciliation_error,
+                        phase="manual_reconciliation",
+                    )
                 await self._fail_reconciliation(
                     workflow,
                     error=reconciliation_error,
@@ -1293,7 +1350,9 @@ class BinStorageService:
                 if target_item_in_bin is None:
                     raise ValueError("target item state is required for a returned bin")
                 if target_item_in_bin and membership is None:
-                    self.session.add(StorageBinItem(bin_id=workflow.bin_id, item_id=workflow.item_id))
+                    self.session.add(
+                        StorageBinItem(bin_id=workflow.bin_id, item_id=workflow.item_id)
+                    )
                 if not target_item_in_bin and membership is not None:
                     await self.session.delete(membership)
         if bin_row:

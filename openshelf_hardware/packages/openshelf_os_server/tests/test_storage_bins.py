@@ -1660,6 +1660,167 @@ async def test_return_endpoint_requires_occupancy_and_explicit_store_action(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("operation", "target_item_in_bin"),
+    (("retrieve", False), ("store", True)),
+)
+async def test_interrupted_bin_motion_resumes_at_normal_return_action(
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+    target_item_in_bin: bool,
+) -> None:
+    monkeypatch.setattr(storage_router, "get_operating_mode", lambda: OperatingMode.production)
+    monkeypatch.setattr(storage_router.robot_core, "robot_instance", None)
+    worker = FakeWorker()
+    monkeypatch.setattr(storage_router.robot_core, "robot_worker", worker)
+
+    async with AsyncSessionLocal() as db:
+        item = await StorageService(db).create_item(
+            "123456789025", "Interrupted target", {"width": 10, "height": 10, "length": 10}
+        )
+        bin_row = StorageBin(
+            barcode="900000000025",
+            side="right_module",
+            shelf_idx=1,
+            cell_idx=2,
+            inner_dimensions={"width": 30, "height": 30, "length": 30},
+            max_items=2,
+            status="at_home",
+            active=True,
+        )
+        db.add(bin_row)
+        await db.flush()
+        if operation == "retrieve":
+            db.add(StorageBinItem(bin_id=bin_row.id, item_id=item.id))
+        await db.commit()
+
+        service = BinStorageService(db)
+        workflow = await service.begin(operation, item, None)
+        assert workflow is not None
+        await service.recover_interrupted_workflows()
+        assert workflow.state == "recovery_required"
+
+        returned = await storage_router.return_bin_workflow(
+            workflow.id,
+            storage_router.BinWorkflowReturn(target_item_in_bin=target_item_in_bin),
+            db,
+        )
+
+        assert returned["workflow"]["state"] == "returning_bin"
+        assert workflow.state == "returning_bin"
+        assert workflow.recovery_claim is None
+        assert workflow.resolution == {"target_item_in_bin": target_item_in_bin}
+        assert [command.command for command in worker.commands] == ["store_item"]
+
+
+@pytest.mark.anyio
+async def test_interrupted_retrieval_return_requires_io_occupancy_and_releases_claim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(storage_router, "get_operating_mode", lambda: OperatingMode.production)
+    monkeypatch.setattr(storage_router.robot_core, "robot_instance", None)
+    worker = FakeWorker()
+    worker.get_cached_scale_status = lambda: SimpleNamespace(occupied=False)
+    monkeypatch.setattr(storage_router.robot_core, "robot_worker", worker)
+
+    async with AsyncSessionLocal() as db:
+        item = await StorageService(db).create_item(
+            "123456789026", "Interrupted target", {"width": 10, "height": 10, "length": 10}
+        )
+        bin_row = StorageBin(
+            barcode="900000000026",
+            side="right_module",
+            shelf_idx=1,
+            cell_idx=2,
+            inner_dimensions={"width": 30, "height": 30, "length": 30},
+            max_items=2,
+            status="at_home",
+            active=True,
+        )
+        db.add(bin_row)
+        await db.flush()
+        db.add(StorageBinItem(bin_id=bin_row.id, item_id=item.id))
+        await db.commit()
+
+        service = BinStorageService(db)
+        workflow = await service.begin("retrieve", item, None)
+        assert workflow is not None
+        await service.transition(workflow, "recovery_required", "emergency stop")
+
+        with pytest.raises(HTTPException) as empty_box_error:
+            await storage_router.return_bin_workflow(
+                workflow.id,
+                storage_router.BinWorkflowReturn(target_item_in_bin=False),
+                db,
+            )
+
+        assert empty_box_error.value.status_code == 409
+        assert empty_box_error.value.detail == "Place the bin in the IO box before storing it"
+        assert workflow.state == "recovery_required"
+        assert workflow.recovery_claim is None
+        assert worker.commands == []
+
+
+@pytest.mark.anyio
+async def test_interrupted_return_enqueue_failure_stays_on_return_step_and_can_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(storage_router, "get_operating_mode", lambda: OperatingMode.production)
+    monkeypatch.setattr(storage_router.robot_core, "robot_instance", None)
+    worker = FakeWorker()
+    enqueue = AsyncMock(side_effect=RuntimeError("queue unavailable"))
+    worker.enqueue_command = enqueue
+    monkeypatch.setattr(storage_router.robot_core, "robot_worker", worker)
+
+    async with AsyncSessionLocal() as db:
+        item = await StorageService(db).create_item(
+            "123456789027", "Interrupted target", {"width": 10, "height": 10, "length": 10}
+        )
+        bin_row = StorageBin(
+            barcode="900000000027",
+            side="right_module",
+            shelf_idx=1,
+            cell_idx=2,
+            inner_dimensions={"width": 30, "height": 30, "length": 30},
+            max_items=2,
+            status="at_home",
+            active=True,
+        )
+        db.add(bin_row)
+        await db.flush()
+        db.add(StorageBinItem(bin_id=bin_row.id, item_id=item.id))
+        await db.commit()
+
+        service = BinStorageService(db)
+        workflow = await service.begin("retrieve", item, None)
+        assert workflow is not None
+        await service.transition(workflow, "recovery_required", "emergency stop")
+
+        with pytest.raises(HTTPException) as enqueue_error:
+            await storage_router.return_bin_workflow(
+                workflow.id,
+                storage_router.BinWorkflowReturn(target_item_in_bin=False),
+                db,
+            )
+
+        assert enqueue_error.value.status_code == 409
+        assert enqueue_error.value.detail == "queue unavailable"
+        assert workflow.state == "recovery_required"
+        assert workflow.error == "queue unavailable"
+        assert workflow.recovery_claim is None
+
+        enqueue.side_effect = None
+        returned = await storage_router.return_bin_workflow(
+            workflow.id,
+            storage_router.BinWorkflowReturn(target_item_in_bin=False),
+            db,
+        )
+
+        assert returned["workflow"]["state"] == "returning_bin"
+        assert enqueue.await_count == 2
+
+
+@pytest.mark.anyio
 async def test_store_target_is_reserved_from_item_and_location_mutations() -> None:
     current_user = SimpleNamespace(role=SimpleNamespace(name="admin"), access_level_id=None)
     async with AsyncSessionLocal() as db:
@@ -1912,6 +2073,8 @@ async def test_post_return_validation_failure_is_durable_reconcile_only_and_cann
 ) -> None:
     worker = FakeWorker()
     monkeypatch.setattr(storage_router.robot_core, "robot_worker", worker)
+    post_return_log = MagicMock()
+    monkeypatch.setattr(bin_storage.logger, "error", post_return_log)
     admin = SimpleNamespace(role=SimpleNamespace(name="admin"))
 
     async with AsyncSessionLocal() as db:
@@ -1948,6 +2111,18 @@ async def test_post_return_validation_failure_is_durable_reconcile_only_and_cann
         )
         assert workflow.state == "recovery_required"
         assert service.physical_return_completed(workflow)
+        post_return_log.assert_called_once_with(
+            "bin_workflow_post_return_failure",
+            workflow_id=workflow.id,
+            workflow_state="returning_bin",
+            operation="store",
+            bin_id=bin_row.id,
+            bin_barcode=bin_row.barcode,
+            item_id=item.id,
+            phase="inventory_finalization",
+            error="Item no longer fits the configured storage bin",
+            physical_return_completed=True,
+        )
         workflow_id = workflow.id
 
     # A new database session represents the durable state used after restart.
@@ -1970,14 +2145,29 @@ async def test_post_return_validation_failure_is_durable_reconcile_only_and_cann
         assert worker.commands == []
         assert (await db.execute(select(StorageBinItem))).scalar_one_or_none() is None
 
+        with pytest.raises(HTTPException) as return_error:
+            await storage_router.return_bin_workflow(
+                workflow.id,
+                storage_router.BinWorkflowReturn(target_item_in_bin=True),
+                db,
+            )
+
+        assert return_error.value.status_code == 409
+        assert (
+            return_error.value.detail
+            == "Physical bin return completed; mark the bin returned or unavailable"
+        )
+        assert workflow.state == "recovery_required"
+        assert workflow.recovery_claim is None
+        assert workflow.history == history_before_retry
+        assert worker.commands == []
+
         bin_row = await db.get(StorageBin, workflow.bin_id)
         assert bin_row is not None
         with pytest.raises(HTTPException) as reconciliation_error:
             await storage_router.reconcile_bin_workflow(
                 workflow.id,
-                storage_router.BinWorkflowReconcile(
-                    resolution="returned", target_item_in_bin=True
-                ),
+                storage_router.BinWorkflowReconcile(resolution="returned", target_item_in_bin=True),
                 db,
                 admin,
             )
@@ -2037,7 +2227,10 @@ async def test_returned_reconciliation_preserves_cross_bin_membership(
             )
 
         assert reconciliation_error.value.status_code == 409
-        assert reconciliation_error.value.detail == "Item is already associated with another storage bin"
+        assert (
+            reconciliation_error.value.detail
+            == "Item is already associated with another storage bin"
+        )
         membership = (
             await db.execute(select(StorageBinItem).where(StorageBinItem.item_id == item.id))
         ).scalar_one()
