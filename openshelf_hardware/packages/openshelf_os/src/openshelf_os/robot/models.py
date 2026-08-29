@@ -1,10 +1,24 @@
 
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional, List, Any
 from pydantic import BaseModel, Field
 
 from openshelf_os.robot.commands import RobotCommands
 from openshelf_os.robot.status import RobotStatus
+
+
+@dataclass(frozen=True)
+class CrashReportAttachment:
+    filename: str
+    data: bytes
+    content_type: str
+
+
+@dataclass
+class CrashReportArtifacts:
+    attachments: list[CrashReportAttachment] = field(default_factory=list)
+    context: dict[str, Any] = field(default_factory=dict)
 
 
 class WorkerError(BaseModel):
@@ -42,5 +56,4 @@ class WorkerStatus(BaseModel):
 class WorkerStatusWithQueue(WorkerStatus):
     queued_operations: List[QueuedOperation] = Field(default_factory=list)
     queue_length: int = 0
-
 

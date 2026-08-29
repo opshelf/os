@@ -1,0 +1,571 @@
+from __future__ import annotations
+
+import asyncio
+import threading
+from datetime import datetime, timezone
+from pathlib import Path
+from unittest.mock import AsyncMock, patch
+
+import cv2
+import numpy as np
+import pytest
+
+from openshelf_os_server.core.camera import camera_registry
+from openshelf_os_server.core.crash_video_recorder import (
+    MIB,
+    CrashVideoRecorder,
+    CrashVideoRecorderConfig,
+    RecordedCameraFrame,
+)
+
+
+class FakeCameraManager:
+    def __init__(self) -> None:
+        self.is_running = False
+        self.consumer_count = 0
+        self.background_consumer_count = 0
+        self.latest_frame: bytes | None = None
+        self.last_frame_at: float | None = None
+
+    async def start(self) -> None:
+        self.is_running = True
+
+    async def stop(self) -> None:
+        self.is_running = False
+
+    def increment_consumers(self) -> int:
+        self.consumer_count += 1
+        return self.consumer_count
+
+    def decrement_consumers(self) -> int:
+        self.consumer_count = max(0, self.consumer_count - 1)
+        return self.consumer_count
+
+    def increment_background_consumers(self) -> int:
+        self.background_consumer_count += 1
+        return self.background_consumer_count
+
+    def decrement_background_consumers(self) -> int:
+        self.background_consumer_count = max(0, self.background_consumer_count - 1)
+        return self.background_consumer_count
+
+    async def get_latest_frame(self) -> bytes | None:
+        return self.latest_frame
+
+
+def recorder_config(**overrides) -> CrashVideoRecorderConfig:
+    values = {
+        "lookback_seconds": 15,
+        "sample_fps": 3,
+        "max_width": 640,
+        "max_camera_buffer_bytes": 16 * MIB,
+        "max_attachment_bytes": 4 * MIB,
+        "max_total_attachment_bytes": 14 * MIB,
+    }
+    values.update(overrides)
+    return CrashVideoRecorderConfig(**values)
+
+
+@pytest.mark.parametrize(
+    ("configured_fps", "expected_fps"),
+    [(1, 1), (2, 2), (3, 3), (10, 3)],
+)
+def test_recorder_config_clamps_fps_to_supported_background_range(
+    monkeypatch: pytest.MonkeyPatch, configured_fps: int, expected_fps: int
+) -> None:
+    monkeypatch.setenv("CRASH_RECORDER_FPS", str(configured_fps))
+
+    assert CrashVideoRecorderConfig.from_env().sample_fps == expected_fps
+
+
+@pytest.mark.parametrize(
+    ("configured_width", "expected_width"),
+    [(160, 160), (320, 320), (640, 640), (1920, 640)],
+)
+def test_recorder_config_clamps_width_to_pi_safe_range(
+    monkeypatch: pytest.MonkeyPatch, configured_width: int, expected_width: int
+) -> None:
+    monkeypatch.setenv("CRASH_RECORDER_MAX_WIDTH", str(configured_width))
+
+    assert CrashVideoRecorderConfig.from_env().max_width == expected_width
+
+
+@pytest.mark.anyio
+async def test_recorder_keeps_camera_running_without_live_stream_consumers() -> None:
+    manager = FakeCameraManager()
+    recorder = CrashVideoRecorder(recorder_config())
+
+    with patch.dict(camera_registry, {"tool": manager}, clear=True):
+        await recorder.start()
+        assert manager.is_running is True
+        assert manager.consumer_count == 0
+        assert manager.background_consumer_count == 1
+
+        manager.latest_frame = b"jpeg"
+        manager.last_frame_at = 100.0
+        await recorder._sample_once(100.0)
+
+        assert [frame.data for frame in recorder._buffers["tool"]] == [b"jpeg"]
+
+        await recorder.stop()
+
+    assert manager.is_running is False
+    assert manager.consumer_count == 0
+    assert manager.background_consumer_count == 0
+
+
+def test_recorder_prunes_old_frames_and_enforces_camera_memory_limit() -> None:
+    recorder = CrashVideoRecorder(recorder_config(max_camera_buffer_bytes=7))
+
+    recorder._append_frame("tool", RecordedCameraFrame(80.0, b"old"), now=100.0)
+    recorder._append_frame("tool", RecordedCameraFrame(99.0, b"1234"), now=100.0)
+    recorder._append_frame("tool", RecordedCameraFrame(100.0, b"5678"), now=100.0)
+
+    frames = recorder._buffers["tool"]
+    assert [(frame.captured_at, frame.data) for frame in frames] == [(100.0, b"5678")]
+    assert recorder._buffer_bytes["tool"] == 4
+
+
+@pytest.mark.anyio
+async def test_reconcile_cameras_discards_unregistered_camera_frames() -> None:
+    manager = FakeCameraManager()
+    manager.is_running = True
+    manager.background_consumer_count = 1
+    recorder = CrashVideoRecorder(recorder_config())
+    recorder._owned_managers["tool"] = manager
+    recorder._append_frame("tool", RecordedCameraFrame(100.0, b"stale"), now=100.0)
+    recorder._last_frame_at["tool"] = 100.0
+
+    with patch.dict(camera_registry, {}, clear=True):
+        assert recorder._freeze_buffers(100.0) == {}
+
+        await recorder._reconcile_cameras()
+
+    assert "tool" not in recorder._owned_managers
+    assert "tool" not in recorder._buffers
+    assert "tool" not in recorder._buffer_bytes
+    assert "tool" not in recorder._last_frame_at
+    assert manager.background_consumer_count == 0
+    assert manager.is_running is False
+
+
+@pytest.mark.anyio
+async def test_reconcile_cameras_discards_frames_for_replaced_camera_id() -> None:
+    original_manager = FakeCameraManager()
+    original_manager.is_running = True
+    original_manager.background_consumer_count = 1
+    replacement_manager = FakeCameraManager()
+    recorder = CrashVideoRecorder(recorder_config())
+    recorder._owned_managers["tool"] = original_manager
+    recorder._append_frame("tool", RecordedCameraFrame(100.0, b"old"), now=100.0)
+    recorder._last_frame_at["tool"] = 100.0
+
+    with patch.dict(camera_registry, {"tool": replacement_manager}, clear=True):
+        assert recorder._freeze_buffers(100.0) == {}
+
+        await recorder._reconcile_cameras()
+
+        assert original_manager.background_consumer_count == 0
+        assert original_manager.is_running is False
+
+    assert recorder._owned_managers["tool"] is replacement_manager
+    assert list(recorder._buffers["tool"]) == []
+    assert recorder._buffer_bytes["tool"] == 0
+    assert "tool" not in recorder._last_frame_at
+
+
+@pytest.mark.anyio
+async def test_stop_releases_unregistered_manager_lease() -> None:
+    manager = FakeCameraManager()
+    manager.is_running = True
+    manager.background_consumer_count = 1
+    recorder = CrashVideoRecorder(recorder_config())
+    recorder._owned_managers["tool"] = manager
+
+    with patch.dict(camera_registry, {}, clear=True):
+        await recorder.stop()
+
+    assert manager.background_consumer_count == 0
+    assert manager.is_running is False
+
+
+@pytest.mark.anyio
+async def test_capture_returns_one_attachment_per_camera() -> None:
+    recorder = CrashVideoRecorder(recorder_config())
+    recorder._running = True
+    for camera_id in ("tool", "overview_one"):
+        recorder._append_frame(camera_id, RecordedCameraFrame(90.0, b"one"), now=100.0)
+        recorder._append_frame(camera_id, RecordedCameraFrame(100.0, b"two"), now=100.0)
+
+    with patch.object(
+        recorder,
+        "_encode_camera",
+        new=AsyncMock(side_effect=[b"tool-video", b"overview-video"]),
+    ):
+        with patch(
+            "openshelf_os_server.core.crash_video_recorder.time.monotonic", return_value=100.0
+        ):
+            artifacts = await recorder.capture("simulated motor fault")
+
+    assert len(artifacts.attachments) == 2
+    assert {
+        attachment.filename.split("-motion-crash-")[0] for attachment in artifacts.attachments
+    } == {
+        "tool",
+        "overview_one",
+    }
+    assert all(attachment.content_type == "video/webm" for attachment in artifacts.attachments)
+    assert artifacts.context["attachment_count"] == 2
+    assert artifacts.context["cameras"]["tool"]["attached"] is True
+    assert artifacts.context["cameras"]["overview_one"]["attached"] is True
+
+
+@pytest.mark.anyio
+async def test_capture_respects_total_attachment_budget() -> None:
+    recorder = CrashVideoRecorder(recorder_config(max_total_attachment_bytes=10))
+    recorder._running = True
+    for camera_id in ("tool", "overhead"):
+        recorder._append_frame(camera_id, RecordedCameraFrame(90.0, b"one"), now=100.0)
+        recorder._append_frame(camera_id, RecordedCameraFrame(100.0, b"two"), now=100.0)
+
+    encoder = AsyncMock(return_value=b"123456")
+    with patch.object(recorder, "_encode_camera", new=encoder):
+        with patch(
+            "openshelf_os_server.core.crash_video_recorder.time.monotonic", return_value=100.0
+        ):
+            artifacts = await recorder.capture("fault")
+
+    assert len(artifacts.attachments) == 1
+    assert artifacts.context["cameras"]["tool"]["attached"] is True
+    assert artifacts.context["cameras"]["overhead"]["error"] == "total_attachment_budget_exceeded"
+    assert encoder.await_args_list[0].kwargs["max_attachment_bytes"] == 10
+    assert encoder.await_args_list[1].kwargs["max_attachment_bytes"] == 4
+
+
+@pytest.mark.anyio
+async def test_capture_freezes_second_crash_before_waiting_for_encoder() -> None:
+    recorder = CrashVideoRecorder(recorder_config())
+    recorder._running = True
+    recorder._append_frame("tool", RecordedCameraFrame(90.0, b"before-a"), now=100.0)
+    recorder._append_frame("tool", RecordedCameraFrame(100.0, b"at-a"), now=100.0)
+    first_encode_started = asyncio.Event()
+    release_first_encode = asyncio.Event()
+    encoded_frame_data: list[list[bytes]] = []
+
+    async def encode_camera(
+        _camera_id: str,
+        frames: list[RecordedCameraFrame],
+        *,
+        max_attachment_bytes: int | None = None,
+    ) -> bytes:
+        del max_attachment_bytes
+        encoded_frame_data.append([frame.data for frame in frames])
+        if len(encoded_frame_data) == 1:
+            first_encode_started.set()
+            await release_first_encode.wait()
+        return b"video"
+
+    crash_times = iter(
+        [
+            datetime(1970, 1, 1, 0, 1, 40, tzinfo=timezone.utc),
+            datetime(1970, 1, 1, 0, 1, 50, tzinfo=timezone.utc),
+        ]
+    )
+
+    class FakeDatetime:
+        @classmethod
+        def now(cls, _tz: timezone) -> datetime:
+            return next(crash_times)
+
+    crash_monotonic_times = iter([100.0, 110.0])
+
+    class FakeTime:
+        @classmethod
+        def monotonic(cls) -> float:
+            return next(crash_monotonic_times)
+
+    with patch.object(recorder, "_encode_camera", new=encode_camera):
+        with patch("openshelf_os_server.core.crash_video_recorder.time", FakeTime):
+            with patch(
+                "openshelf_os_server.core.crash_video_recorder.datetime", FakeDatetime
+            ):
+                first_capture = asyncio.create_task(recorder.capture("first crash"))
+                await first_encode_started.wait()
+
+                recorder._append_frame(
+                    "tool", RecordedCameraFrame(105.0, b"before-b"), now=105.0
+                )
+                second_capture = asyncio.create_task(recorder.capture("second crash"))
+                await asyncio.sleep(0)
+                assert recorder._pending_captures == 2
+
+                recorder._append_frame(
+                    "tool", RecordedCameraFrame(111.0, b"after-b"), now=111.0
+                )
+                release_first_encode.set()
+                await first_capture
+                second_artifacts = await second_capture
+
+    assert encoded_frame_data == [
+        [b"before-a", b"at-a"],
+        [b"at-a", b"before-b"],
+    ]
+    assert second_artifacts.context["crash_at"] == "1970-01-01T00:01:50+00:00"
+
+
+@pytest.mark.anyio
+async def test_begin_capture_freezes_window_and_timestamp_before_later_frames() -> None:
+    recorder = CrashVideoRecorder(recorder_config())
+    recorder._running = True
+    recorder._append_frame("tool", RecordedCameraFrame(90.0, b"before"), now=100.0)
+    recorder._append_frame("tool", RecordedCameraFrame(100.0, b"at-fault"), now=100.0)
+    encoded_frames: list[list[bytes]] = []
+
+    async def encode_camera(
+        _camera_id: str,
+        frames: list[RecordedCameraFrame],
+        *,
+        max_attachment_bytes: int | None = None,
+    ) -> bytes:
+        del max_attachment_bytes
+        encoded_frames.append([frame.data for frame in frames])
+        return b"video"
+
+    fault_time = datetime(1970, 1, 1, 0, 1, 40, tzinfo=timezone.utc)
+    with patch.object(recorder, "_encode_camera", new=encode_camera):
+        with patch(
+            "openshelf_os_server.core.crash_video_recorder.time.monotonic", return_value=100.0
+        ):
+            with patch(
+                "openshelf_os_server.core.crash_video_recorder.datetime"
+            ) as mocked_datetime:
+                mocked_datetime.now.return_value = fault_time
+                prepared = recorder.begin_capture("fault")
+
+        recorder._append_frame("tool", RecordedCameraFrame(110.0, b"after"), now=110.0)
+        artifacts = await prepared
+
+    assert encoded_frames == [[b"before", b"at-fault"]]
+    assert artifacts.context["crash_at"] == "1970-01-01T00:01:40+00:00"
+    assert recorder._pending_captures == 0
+    assert prepared._frozen == {}
+
+
+@pytest.mark.anyio
+async def test_cancelled_unstarted_begin_capture_releases_its_pending_slot() -> None:
+    recorder = CrashVideoRecorder(recorder_config())
+    recorder._running = True
+    recorder._append_frame("tool", RecordedCameraFrame(99.0, b"one"), now=100.0)
+    recorder._append_frame("tool", RecordedCameraFrame(100.0, b"two"), now=100.0)
+
+    with patch(
+        "openshelf_os_server.core.crash_video_recorder.time.monotonic", return_value=100.0
+    ):
+        prepared = recorder.begin_capture("fault")
+
+    assert recorder._pending_captures == 1
+    prepared.cancel()
+    assert recorder._pending_captures == 0
+    assert prepared._frozen == {}
+    with pytest.raises(asyncio.CancelledError):
+        await prepared
+
+
+@pytest.mark.anyio
+async def test_cancelled_started_capture_keeps_pending_slot_until_encoding_finishes() -> None:
+    recorder = CrashVideoRecorder(recorder_config())
+    recorder._running = True
+    recorder._append_frame("tool", RecordedCameraFrame(99.0, b"one"), now=100.0)
+    recorder._append_frame("tool", RecordedCameraFrame(100.0, b"two"), now=100.0)
+    first_encode_started = asyncio.Event()
+    release_first_encode = asyncio.Event()
+
+    async def encode_camera(
+        _camera_id: str,
+        _frames: list[RecordedCameraFrame],
+        *,
+        max_attachment_bytes: int | None = None,
+    ) -> bytes:
+        del max_attachment_bytes
+        first_encode_started.set()
+        await release_first_encode.wait()
+        return b"video"
+
+    crash_monotonic_times = iter([100.0, 101.0])
+
+    class FakeTime:
+        @classmethod
+        def monotonic(cls) -> float:
+            return next(crash_monotonic_times)
+
+    with patch.object(recorder, "_encode_camera", new=encode_camera):
+        with patch("openshelf_os_server.core.crash_video_recorder.time", FakeTime):
+            first_capture = asyncio.create_task(recorder.capture("first crash"))
+            await first_encode_started.wait()
+            queued_capture = asyncio.create_task(recorder.capture("queued crash"))
+            await asyncio.sleep(0)
+
+            assert recorder._pending_captures == 2
+            saturated_artifacts = await recorder.capture("dropped crash")
+            assert saturated_artifacts.attachments == []
+            assert saturated_artifacts.context["status"] == "queue_saturated"
+            assert saturated_artifacts.context["reason"] == "dropped crash"
+
+            queued_capture.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await queued_capture
+            assert recorder._pending_captures == 2
+
+            release_first_encode.set()
+            await first_capture
+            await asyncio.sleep(0)
+
+    assert recorder._pending_captures == 0
+
+
+@pytest.mark.anyio
+async def test_cancelled_capture_holds_encoder_lock_and_pending_slot_until_thread_finishes() -> None:
+    recorder = CrashVideoRecorder(recorder_config())
+    recorder._running = True
+    recorder._append_frame("tool", RecordedCameraFrame(99.0, b"one"), now=100.0)
+    recorder._append_frame("tool", RecordedCameraFrame(100.0, b"two"), now=100.0)
+    first_encoder_started = threading.Event()
+    first_encoder_released = threading.Event()
+    second_encoder_started = threading.Event()
+    encoder_order: list[str] = []
+
+    def encode_camera_sync(
+        _camera_id: str,
+        _frames: list[RecordedCameraFrame],
+        *,
+        max_attachment_bytes: int | None = None,
+    ) -> bytes:
+        del max_attachment_bytes
+        if first_encoder_started.is_set() is False:
+            encoder_order.append("first_started")
+            first_encoder_started.set()
+            first_encoder_released.wait()
+            encoder_order.append("first_finished")
+        else:
+            assert encoder_order == ["first_started", "first_finished"]
+            encoder_order.append("second_started")
+            second_encoder_started.set()
+        return b"video"
+
+    crash_monotonic_times = iter([100.0, 101.0])
+
+    class FakeTime:
+        @classmethod
+        def monotonic(cls) -> float:
+            return next(crash_monotonic_times)
+
+    with patch.object(recorder, "_encode_camera_sync", new=encode_camera_sync):
+        with patch("openshelf_os_server.core.crash_video_recorder.time", FakeTime):
+            first_prepared = recorder.begin_capture("first crash")
+            first_capture = asyncio.ensure_future(first_prepared)
+            await asyncio.wait_for(asyncio.to_thread(first_encoder_started.wait), timeout=1)
+
+            first_capture.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await first_capture
+            assert recorder._pending_captures == 1
+            assert first_prepared._frozen
+
+            second_capture = asyncio.create_task(recorder.capture("second crash"))
+            await asyncio.sleep(0)
+            assert recorder._pending_captures == 2
+            assert second_encoder_started.is_set() is False
+
+            first_encoder_released.set()
+            await asyncio.wait_for(asyncio.to_thread(second_encoder_started.wait), timeout=1)
+            assert first_prepared._frozen == {}
+            await second_capture
+
+    assert encoder_order == ["first_started", "first_finished", "second_started"]
+    assert recorder._pending_captures == 0
+
+
+def test_opencv_encoder_writes_each_decoded_frame_before_decoding_next() -> None:
+    recorder = CrashVideoRecorder(recorder_config(max_width=4))
+    frames = [RecordedCameraFrame(float(index), b"jpeg") for index in range(3)]
+    pending_frame_ids: set[int] = set()
+    write_count = 0
+
+    def decode_frame(*_args: object) -> np.ndarray:
+        assert pending_frame_ids == set()
+        decoded = np.zeros((4, 4, 3), dtype=np.uint8)
+        pending_frame_ids.add(id(decoded))
+        return decoded
+
+    class FakeVideoWriter:
+        def __init__(self, output_name: str, *_args: object) -> None:
+            self.output_path = Path(output_name)
+
+        def isOpened(self) -> bool:
+            return True
+
+        def write(self, frame: np.ndarray) -> None:
+            nonlocal write_count
+            assert id(frame) in pending_frame_ids
+            pending_frame_ids.remove(id(frame))
+            write_count += 1
+
+        def release(self) -> None:
+            self.output_path.write_bytes(b"video")
+
+    with patch.object(cv2, "imdecode", side_effect=decode_frame):
+        with patch.object(cv2, "VideoWriter", FakeVideoWriter):
+            video = recorder._encode_camera_sync("tool", frames)
+
+    assert video == b"video"
+    assert write_count == 3
+    assert pending_frame_ids == set()
+
+
+def test_opencv_encoder_rejects_oversized_temp_file_before_reading_it() -> None:
+    recorder = CrashVideoRecorder(recorder_config(max_width=4))
+    frames = [RecordedCameraFrame(float(index), b"jpeg") for index in range(2)]
+
+    class FakeVideoWriter:
+        def __init__(self, output_name: str, *_args: object) -> None:
+            self.output_path = Path(output_name)
+
+        def isOpened(self) -> bool:
+            return True
+
+        def write(self, _frame: np.ndarray) -> None:
+            pass
+
+        def release(self) -> None:
+            self.output_path.write_bytes(b"too-large")
+
+    with patch.object(
+        cv2,
+        "imdecode",
+        side_effect=[
+            np.zeros((4, 4, 3), dtype=np.uint8),
+            np.zeros((4, 4, 3), dtype=np.uint8),
+        ],
+    ):
+        with patch.object(cv2, "VideoWriter", FakeVideoWriter):
+            with patch.object(Path, "read_bytes", side_effect=AssertionError):
+                with pytest.raises(ValueError, match="size budget"):
+                    recorder._encode_camera_sync(
+                        "tool", frames, max_attachment_bytes=4
+                    )
+
+
+@pytest.mark.anyio
+async def test_opencv_encoder_produces_browser_compatible_webm() -> None:
+    recorder = CrashVideoRecorder(recorder_config(max_width=64))
+    frames: list[RecordedCameraFrame] = []
+    for index in range(6):
+        image = np.full((48, 64, 3), index * 30, dtype=np.uint8)
+        ok, encoded = cv2.imencode(".jpg", image)
+        assert ok is True
+        frames.append(RecordedCameraFrame(float(index), encoded.tobytes()))
+
+    video = await recorder._encode_camera("tool", frames)
+
+    assert video.startswith(b"\x1aE\xdf\xa3")
+    assert len(video) > 100
