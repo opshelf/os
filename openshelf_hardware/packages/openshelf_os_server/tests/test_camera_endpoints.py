@@ -23,6 +23,7 @@ def _make_sizer_manager_mock(is_available: bool = True) -> MagicMock:
 	manager = MagicMock(spec=CameraStreamManager)
 	manager.is_running = True
 	manager.consumer_count = 2
+	manager.background_consumer_count = 0
 	manager.latest_frame = b"fake_frame"
 	manager.camera_type = "IOBoxSizerCamera"
 	manager.is_available = AsyncMock(return_value=is_available)
@@ -33,6 +34,7 @@ def _make_tool_manager_mock(is_available: bool = True) -> MagicMock:
 	manager = MagicMock(spec=ToolCameraStreamManager)
 	manager.is_running = False
 	manager.consumer_count = 0
+	manager.background_consumer_count = 0
 	manager.latest_frame = None
 	manager.is_available = AsyncMock(return_value=is_available)
 	return manager
@@ -66,6 +68,7 @@ async def test_list_cameras_with_sizer_camera(client: AsyncClient) -> None:
 	assert camera["online"] is True
 	assert camera["running"] is True
 	assert camera["consumers"] == 2
+	assert "background_consumers" not in camera
 	assert camera["has_frame"] is True
 
 
@@ -165,6 +168,7 @@ async def test_stream_camera_unavailable_when_no_frames_arrive(client: AsyncClie
 	manager = MagicMock(spec=ToolCameraStreamManager)
 	manager.is_running = True
 	manager.consumer_count = 0
+	manager.background_consumer_count = 0
 	manager.latest_frame = None
 	manager.first_frame_timeout = 0.2
 	manager.start = AsyncMock()
@@ -297,6 +301,19 @@ def test_tool_stream_manager_skips_source_frames_for_target_fps() -> None:
 	assert frames_to_skip == 5
 
 
+def test_raw_camera_uses_lower_fps_for_background_recorder() -> None:
+	manager = CameraStreamManager(camera=MagicMock())
+	manager.increment_background_consumers()
+
+	assert manager.effective_target_fps() == 3
+
+	manager.increment_consumers()
+	assert manager.effective_target_fps() == 12
+
+	manager.decrement_consumers()
+	assert manager.effective_target_fps() == 3
+
+
 @pytest.mark.anyio
 async def test_stream_manager_frame_is_stale_until_a_frame_is_captured() -> None:
 	manager = ToolCameraStreamManager(rtsp_url="rtsp://camera")
@@ -356,6 +373,8 @@ async def test_tool_camera_is_offline_when_rtsp_host_is_unreachable() -> None:
 async def test_tool_camera_is_online_while_delivering_fresh_frames() -> None:
 	manager = ToolCameraStreamManager(rtsp_url="rtsp://127.0.0.1:1/stream")
 	manager.is_running = True
+	manager.consumer_count = 0
+	manager.background_consumer_count = 0
 	manager.last_frame_at = time.monotonic()
 
 	assert await manager.is_available() is True
@@ -365,6 +384,8 @@ async def test_tool_camera_is_online_while_delivering_fresh_frames() -> None:
 async def test_stop_camera_stream_by_id_stops_manager_when_last_consumer_disconnects() -> None:
 	manager = MagicMock(spec=ToolCameraStreamManager)
 	manager.is_running = True
+	manager.consumer_count = 0
+	manager.background_consumer_count = 0
 	manager.decrement_consumers = MagicMock(return_value=0)
 	manager.stop = AsyncMock()
 
@@ -378,7 +399,24 @@ async def test_stop_camera_stream_by_id_stops_manager_when_last_consumer_disconn
 async def test_stop_camera_stream_by_id_keeps_manager_running_with_remaining_consumers() -> None:
 	manager = MagicMock(spec=ToolCameraStreamManager)
 	manager.is_running = True
+	manager.consumer_count = 1
+	manager.background_consumer_count = 0
 	manager.decrement_consumers = MagicMock(return_value=1)
+	manager.stop = AsyncMock()
+
+	with patch.dict(camera_registry, {"tool": manager}, clear=True):
+		await stop_camera_stream_by_id("tool")
+
+	manager.stop.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_stop_camera_stream_keeps_manager_running_for_background_recorder() -> None:
+	manager = MagicMock(spec=ToolCameraStreamManager)
+	manager.is_running = True
+	manager.consumer_count = 0
+	manager.background_consumer_count = 1
+	manager.decrement_consumers = MagicMock(return_value=0)
 	manager.stop = AsyncMock()
 
 	with patch.dict(camera_registry, {"tool": manager}, clear=True):
