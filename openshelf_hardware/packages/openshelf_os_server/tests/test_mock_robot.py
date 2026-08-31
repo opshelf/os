@@ -152,6 +152,8 @@ async def test_mock_status_has_eighty_cells_and_db_occupancy(
 		for shelf in status["robot_status"]["storage"][side]
 	) == 80
 	assert status["robot_status"]["gantry"]["x_axis"]["homed"] == 1
+	assert status["robot_status"]["scale"]["occupied"] is False
+	assert status["robot_status"]["cabinet_doors"]["closed"] is True
 
 
 @pytest.mark.anyio

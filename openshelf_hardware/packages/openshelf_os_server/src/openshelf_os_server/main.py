@@ -37,6 +37,7 @@ from openshelf_os_server.core.logging_config import configure_logging, get_logge
 from openshelf_os_server.core.robot import get_robot_health, init_robot_worker, stop_robot_worker
 from openshelf_os_server.core.init_progress import get_init_tracker
 from openshelf_os_server.core.storage import StorageService
+from openshelf_os_server.core.bin_storage import BinStorageService
 from openshelf_os_server.core.camera import (
 	init_camera_progress,
 	init_overhead_camera_manager,
@@ -651,6 +652,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 	async with AsyncSessionLocal() as db:
 		await onboarding.ensure_onboarding_state(db)
 	await _apply_mode_transition()
+
+	# Configured bin identities and homes must be durable before the app can
+	# serve requests. Interrupted motion is recovered here as well, before any
+	# runtime mode can serve requests or initialize hardware.
+	async with AsyncSessionLocal() as session:
+		bin_storage = BinStorageService(session)
+		await bin_storage.sync_config()
+		await bin_storage.recover_interrupted_workflows()
 
 	robot_init_task: Optional[asyncio.Task[None]] = None
 	camera_init_task: Optional[asyncio.Task[None]] = None

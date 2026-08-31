@@ -119,7 +119,9 @@ async def control_cabinet_release(
                 },
             )
 
-        async with manual_motion_guard(f"cabinet_release:{action}", worker=worker):
+        async with manual_motion_guard(
+            f"cabinet_release:{action}", worker=worker, check_bin_workflow=True
+        ):
             if action == "passive":
                 cabinet_status = await cabinet.set_passive()
             else:

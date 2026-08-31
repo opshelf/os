@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 import pytest
 from httpx import AsyncClient
@@ -5,6 +6,11 @@ from unittest.mock import patch, MagicMock, AsyncMock
 from fastapi import HTTPException
 from openshelf_os.common import ConfigError
 from openshelf_os.robot.commands import RetrieveItemCommand, StoreItemCommand
+from openshelf_os_server.core import bin_storage
+from openshelf_os_server.core.bin_storage import BinStorageService
+from openshelf_os_server.core.storage import StorageService
+from openshelf_os_server.database.models import Item, StorageBin, StorageBinWorkflow
+from openshelf_os_server.database.session import AsyncSessionLocal
 from openshelf_os_server.routers import robot as robot_router
 
 
@@ -29,6 +35,53 @@ def _mock_worker():
 	worker.enqueue_command = AsyncMock()
 	worker.get_cached_scale_status = MagicMock(return_value=None)
 	return worker
+
+
+async def _create_bin_workflow_resources(upca: str) -> tuple[int, int]:
+	async with AsyncSessionLocal() as db:
+		item = await StorageService(db).create_item(
+			upca, "Scale guard item", {"width": 10, "height": 10, "length": 10}
+		)
+		bin_row = StorageBin(
+			barcode=f"bin-{upca}",
+			side="left_module",
+			shelf_idx=0,
+			cell_idx=0,
+			inner_dimensions={"width": 30, "height": 30, "length": 30},
+			max_items=1,
+			status="at_home",
+			active=True,
+		)
+		db.add(bin_row)
+		await db.commit()
+		return item.id, bin_row.id
+
+
+async def _create_active_bin_workflow(upca: str) -> tuple[str, int, int]:
+	item_id, bin_id = await _create_bin_workflow_resources(upca)
+	async with AsyncSessionLocal() as db:
+		item = await db.get(Item, item_id)
+		assert item is not None
+		workflow = await BinStorageService(db).begin("store", item, None)
+		assert workflow is not None
+		await BinStorageService(db).transition(workflow, "awaiting_item_scan")
+		await db.commit()
+		return workflow.id, item_id, bin_id
+
+
+async def _delete_bin_workflow(workflow_id: str | None, item_id: int, bin_id: int) -> None:
+	async with AsyncSessionLocal() as db:
+		if workflow_id is not None:
+			workflow = await db.get(StorageBinWorkflow, workflow_id)
+			if workflow is not None:
+				await db.delete(workflow)
+		bin_row = await db.get(StorageBin, bin_id)
+		if bin_row is not None:
+			await db.delete(bin_row)
+		item = await db.get(Item, item_id)
+		if item is not None:
+			await db.delete(item)
+		await db.commit()
 
 
 @pytest.mark.anyio
@@ -239,6 +292,98 @@ async def test_set_scale_calibration_params_precision_validation(client: AsyncCl
 	assert response.status_code == 422
 
 
+@pytest.mark.parametrize(
+	("method", "path", "worker_method", "json_body"),
+	[
+		(
+			"post",
+			"/api/robot/debug/scale/calibration/params",
+			"set_scale_calibration_params",
+			{"full_scale": 6000, "calibration_weight": 500},
+		),
+		("post", "/api/robot/debug/scale/calibration/zero", "calibrate_scale_zero", None),
+		("post", "/api/robot/debug/scale/calibration/weight", "calibrate_scale_weight", None),
+		("post", "/api/robot/debug/scale/calibration/tare", "scale_tare", None),
+	],
+)
+@pytest.mark.anyio
+async def test_scale_mutations_reject_any_active_bin_workflow(
+	client: AsyncClient,
+	method: str,
+	path: str,
+	worker_method: str,
+	json_body: dict[str, int] | None,
+) -> None:
+	mock_worker = _mock_worker()
+	workflow_id, item_id, bin_id = await _create_active_bin_workflow(f"90000000{len(path):04d}")
+	try:
+		with patch("openshelf_os_server.routers.robot.get_settings", return_value=_mock_settings()):
+			with patch("openshelf_os_server.routers.robot.get_robot_worker", return_value=mock_worker):
+				request = getattr(client, method)
+				response = await request(path, **({"json": json_body} if json_body else {}))
+	finally:
+		await _delete_bin_workflow(workflow_id, item_id, bin_id)
+
+	assert response.status_code == 423
+	assert response.json()["detail"] == {
+		"message": "A storage bin must be returned before another robot command can run",
+		"code": "bin_workflow_active",
+		"workflow_id": workflow_id,
+	}
+	getattr(mock_worker, worker_method).assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_scale_tare_admission_serializes_bin_workflow_start(
+	client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	monkeypatch.setattr(bin_storage, "_command_admission_lock", asyncio.Lock())
+	mock_worker = _mock_worker()
+	mutation_started = asyncio.Event()
+	release_mutation = asyncio.Event()
+	workflow_attempted = asyncio.Event()
+	workflow_started = asyncio.Event()
+
+	async def blocking_tare() -> bool:
+		mutation_started.set()
+		await release_mutation.wait()
+		return True
+
+	mock_worker.scale_tare.side_effect = blocking_tare
+	item_upca = "900000000099"
+	item_id, bin_id = await _create_bin_workflow_resources(item_upca)
+	workflow_id: str | None = None
+
+	try:
+		async def begin_workflow() -> str:
+			workflow_attempted.set()
+			async with bin_storage.bin_workflow_command_admission_guard():
+				workflow_started.set()
+				async with AsyncSessionLocal() as db:
+					item = await db.get(Item, item_id)
+					assert item is not None
+					workflow = await BinStorageService(db).begin("store", item, None)
+					assert workflow is not None
+					return workflow.id
+
+		with patch("openshelf_os_server.routers.robot.get_settings", return_value=_mock_settings()):
+			with patch("openshelf_os_server.routers.robot.get_robot_worker", return_value=mock_worker):
+				tare_task = asyncio.create_task(client.post("/api/robot/debug/scale/calibration/tare"))
+				await mutation_started.wait()
+				workflow_task = asyncio.create_task(begin_workflow())
+				await workflow_attempted.wait()
+				await asyncio.sleep(0)
+				assert workflow_started.is_set() is False
+				release_mutation.set()
+				response = await tare_task
+				workflow_id = await workflow_task
+
+		assert response.status_code == 200
+		assert workflow_started.is_set() is True
+	finally:
+		await _delete_bin_workflow(workflow_id, item_id, bin_id)
+
+
 @pytest.mark.anyio
 async def test_calibrate_scale_zero_success(client: AsyncClient) -> None:
 	mock_worker = _mock_worker()
@@ -386,8 +531,10 @@ async def test_retrieve_command_bypasses_occupied_scale_with_global_safety_overr
 	worker.get_cached_scale_status.return_value = SimpleNamespace(occupied=True)
 	item_result = MagicMock()
 	item_result.scalar_one_or_none.return_value = SimpleNamespace(access_level_id=None)
+	no_active_workflow_result = MagicMock()
+	no_active_workflow_result.scalar_one_or_none.return_value = None
 	db = AsyncMock()
-	db.execute.return_value = item_result
+	db.execute.side_effect = [item_result, no_active_workflow_result]
 
 	with patch("openshelf_os_server.routers.robot.is_laser_auto_calibration_running", AsyncMock(return_value=False)):
 		await robot_router.robot_commands(
@@ -413,8 +560,10 @@ async def test_store_command_rejects_already_stored_item() -> None:
 	location_scalars.first.return_value = location
 	location_result = MagicMock()
 	location_result.scalars.return_value = location_scalars
+	no_reserved_bins_result = MagicMock()
+	no_reserved_bins_result.scalars.return_value.all.return_value = []
 	db = AsyncMock()
-	db.execute.side_effect = [item_result, location_result]
+	db.execute.side_effect = [no_reserved_bins_result, item_result, location_result]
 
 	with patch("openshelf_os_server.routers.robot.is_laser_auto_calibration_running", AsyncMock(return_value=False)):
 		with pytest.raises(HTTPException) as exc_info:
