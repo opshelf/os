@@ -1,6 +1,6 @@
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -8,6 +8,8 @@ from hardware.motor import MotorStatus
 from openshelf_os.common import AxisCoordinate
 from openshelf_os.exceptions import MovementError
 from openshelf_os.robot.core import Robot
+from openshelf_os.robot.models import CrashReportArtifacts, CrashReportAttachment, WorkerError
+import openshelf_os.robot.worker as robot_worker
 from openshelf_os.robot.worker import RobotWorker
 from openshelf_os.storage import StorageModuleCellLocation, StorageModuleSide
 from openshelf_os.tool import Tool
@@ -101,6 +103,231 @@ async def test_simulated_motor_crash_sets_structured_crash_context_and_error_que
     assert worker._crash_context["diagnostic_snapshot"]["motors"]["x_axis"]["motor_id"] == 1
     assert worker._error_queue[-1].context is not None
     assert worker._error_queue[-1].context["hardware_fault"]["needs_home_axes"] == ["x_axis"]
+
+
+@pytest.mark.asyncio
+async def test_simulated_motor_crash_collects_video_attachments_in_background() -> None:
+    RobotWorker._instance = None
+    robot = build_robot_for_diagnostics()
+    robot.simulate_motor_crash = lambda motor_name: True
+    attachment = CrashReportAttachment(
+        filename="tool-motion-crash.webm",
+        data=b"video",
+        content_type="video/webm",
+    )
+    provider = AsyncMock(return_value=CrashReportArtifacts(
+        attachments=[attachment],
+        context={"status": "captured", "attachment_count": 1},
+    ))
+    worker = RobotWorker(robot, crash_artifact_provider=provider)
+    worker._publish_status = AsyncMock()
+    worker._report_error = MagicMock()
+
+    assert await worker.simulate_motor_crash("x_axis") is True
+    await asyncio.gather(*list(worker._background_tasks))
+
+    provider.assert_awaited_once_with("Simulated motor fault on x_axis")
+    assert worker._error_queue[-1].context is not None
+    assert worker._error_queue[-1].context["crash_recorder"]["attachment_count"] == 1
+    worker._report_error.assert_called_once_with(
+        worker._error_queue[-1],
+        exc=None,
+        attachments=[attachment],
+        add_to_queue=False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_simulated_motor_crash_begins_capture_before_blocking_diagnostics() -> None:
+    RobotWorker._instance = None
+    robot = build_robot_for_diagnostics()
+    robot.simulate_motor_crash = lambda motor_name: True
+    diagnostics_started = asyncio.Event()
+    release_diagnostics = asyncio.Event()
+    frame_window = ["before-fault"]
+    frozen_windows: list[list[str]] = []
+
+    async def delayed_snapshot() -> dict[str, object]:
+        diagnostics_started.set()
+        await release_diagnostics.wait()
+        return {"motors": {}}
+
+    def begin_capture(_: str) -> asyncio.Future[CrashReportArtifacts]:
+        frozen_windows.append(list(frame_window))
+        completed = asyncio.get_running_loop().create_future()
+        completed.set_result(CrashReportArtifacts(context={"status": "captured"}))
+        return completed
+
+    robot.get_diagnostic_snapshot = delayed_snapshot
+    worker = RobotWorker(robot, crash_artifact_begin_provider=begin_capture)
+    worker._publish_status = AsyncMock()
+    worker._report_error = MagicMock()
+
+    crash_task = asyncio.create_task(worker.simulate_motor_crash("x_axis"))
+    await diagnostics_started.wait()
+    frame_window.append("after-fault")
+    assert frozen_windows == [["before-fault"]]
+
+    release_diagnostics.set()
+    assert await crash_task is True
+    await asyncio.gather(*list(worker._background_tasks))
+
+    assert worker._error_queue[-1].context["crash_recorder"]["status"] == "captured"
+
+
+@pytest.mark.asyncio
+async def test_cancelled_simulated_crash_diagnostics_release_capture_and_report_fault() -> None:
+    RobotWorker._instance = None
+    robot = build_robot_for_diagnostics()
+    robot.simulate_motor_crash = lambda motor_name: True
+    diagnostics_started = asyncio.Event()
+    prepared_capture = MagicMock()
+
+    async def blocked_snapshot() -> dict[str, object]:
+        diagnostics_started.set()
+        await asyncio.Event().wait()
+        return {"motors": {}}
+
+    robot.get_diagnostic_snapshot = blocked_snapshot
+    worker = RobotWorker(robot, crash_artifact_begin_provider=lambda _: prepared_capture)
+    worker._publish_status = AsyncMock()
+
+    def record_error(error: WorkerError, **_: object) -> None:
+        worker._add_error(error)
+
+    worker._report_error = MagicMock(side_effect=record_error)
+
+    crash_task = asyncio.create_task(worker.simulate_motor_crash("x_axis"))
+    await diagnostics_started.wait()
+    crash_task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await crash_task
+
+    prepared_capture.cancel.assert_called_once_with()
+    assert worker._is_crashed is True
+    assert worker.needs_home_axes() == ["x_axis"]
+    assert len(worker._error_queue) == 1
+    reported_error = worker._error_queue[0]
+    assert reported_error.context == worker._crash_context
+    assert reported_error.context["diagnostic_snapshot"] == {
+        "snapshot_error": "cancelled before diagnostics completed"
+    }
+    worker._report_error.assert_called_once_with(reported_error, exc=None)
+
+
+@pytest.mark.asyncio
+async def test_begin_capture_failure_is_reported_as_crash_recorder_context() -> None:
+    RobotWorker._instance = None
+    robot = build_robot_for_diagnostics()
+    robot.simulate_motor_crash = lambda motor_name: True
+
+    def fail_begin_capture(_: str) -> asyncio.Future[CrashReportArtifacts]:
+        raise RuntimeError("recorder unavailable")
+
+    worker = RobotWorker(robot, crash_artifact_begin_provider=fail_begin_capture)
+    worker._publish_status = AsyncMock()
+    worker._report_error = MagicMock()
+
+    assert await worker.simulate_motor_crash("x_axis") is True
+    await asyncio.gather(*list(worker._background_tasks))
+
+    assert worker._error_queue[-1].context["crash_recorder"] == {
+        "status": "failed",
+        "error": "recorder unavailable",
+        "error_type": "RuntimeError",
+    }
+
+
+@pytest.mark.asyncio
+async def test_cancelled_motion_crash_artifact_capture_reports_error_without_attachment() -> None:
+    RobotWorker._instance = None
+    robot = build_robot_for_diagnostics()
+    robot.simulate_motor_crash = lambda motor_name: True
+    artifact_capture_started = asyncio.Event()
+    release_artifact_capture = asyncio.Event()
+
+    async def wait_for_artifact_capture(_: str) -> CrashReportArtifacts:
+        artifact_capture_started.set()
+        await release_artifact_capture.wait()
+        return CrashReportArtifacts()
+
+    worker = RobotWorker(robot, crash_artifact_provider=wait_for_artifact_capture)
+    worker._publish_status = AsyncMock()
+    worker._report_error = MagicMock()
+
+    assert await worker.simulate_motor_crash("x_axis") is True
+    await artifact_capture_started.wait()
+    task = next(iter(worker._background_tasks))
+
+    await worker._cancel_background_tasks()
+
+    assert task.cancelled() is True
+    worker._report_error.assert_called_once_with(
+        worker._error_queue[-1],
+        exc=None,
+        add_to_queue=False,
+    )
+    assert len(worker._error_queue) == 1
+
+
+@pytest.mark.asyncio
+async def test_cancelled_motion_crash_report_before_task_starts_reports_error_without_attachment() -> None:
+    RobotWorker._instance = None
+    robot = build_robot_for_diagnostics()
+    robot.simulate_motor_crash = lambda motor_name: True
+    prepared_capture = asyncio.get_running_loop().create_future()
+
+    def begin_capture(_: str) -> asyncio.Future[CrashReportArtifacts]:
+        return prepared_capture
+
+    worker = RobotWorker(robot, crash_artifact_begin_provider=begin_capture)
+    worker._publish_status = AsyncMock()
+    worker._report_error = MagicMock()
+
+    assert await worker.simulate_motor_crash("x_axis") is True
+    task = next(iter(worker._background_tasks))
+
+    await worker._cancel_background_tasks()
+
+    assert task.cancelled() is True
+    assert prepared_capture.cancelled() is True
+    worker._report_error.assert_called_once_with(
+        worker._error_queue[-1],
+        exc=None,
+        add_to_queue=False,
+    )
+    assert len(worker._error_queue) == 1
+
+
+def test_error_report_adds_crash_video_attachments_to_sentry_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    RobotWorker._instance = None
+    robot = build_robot_for_diagnostics()
+    worker = RobotWorker(robot)
+    attachment = CrashReportAttachment(
+        filename="tool-motion-crash.webm",
+        data=b"video",
+        content_type="video/webm",
+    )
+    scope = MagicMock()
+    scope_context = MagicMock()
+    scope_context.__enter__.return_value = scope
+    monkeypatch.setattr(robot_worker.sentry_sdk, "push_scope", lambda: scope_context)
+    monkeypatch.setattr(robot_worker.sentry_sdk, "capture_message", lambda *args, **kwargs: None)
+
+    worker._report_error(
+        WorkerError(error_type="HardwareFault", message="fault"),
+        attachments=[attachment],
+        add_to_queue=False,
+    )
+
+    scope.add_attachment.assert_called_once_with(
+        bytes=b"video",
+        filename="tool-motion-crash.webm",
+        content_type="video/webm",
+    )
 
 
 @pytest.mark.asyncio

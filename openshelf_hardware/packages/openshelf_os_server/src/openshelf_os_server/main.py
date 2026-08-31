@@ -44,6 +44,10 @@ from openshelf_os_server.core.camera import (
 	init_tool_camera_manager,
 	stop_all_camera_streams,
 )
+from openshelf_os_server.core.crash_video_recorder import (
+	start_crash_video_recorder,
+	stop_crash_video_recorder,
+)
 from openshelf_os_server.core.iobox_sizer import get_iobox_sizer_status, init_iobox_sizer, stop_iobox_sizer
 from openshelf_os_server.core.mock_robot import (
 	get_mock_robot_runtime,
@@ -702,6 +706,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 		except Exception as e:
 			logger.warning("iobox_sizer_startup_failed", error=str(e), error_type=type(e).__name__, exc_info=True)
 
+	if is_mock is False:
+		await start_crash_video_recorder()
+
 	if len(camera_ids) > 0:
 		camera_init_task = asyncio.create_task(init_camera_progress(camera_ids))
 
@@ -728,6 +735,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 				pass
 			except Exception as e:
 				logger.warning("camera_init_task_shutdown_failed", error=str(e), exc_info=True)
+		try:
+			await stop_crash_video_recorder()
+		except Exception as e:
+			logger.warning("crash_video_recorder_shutdown_failed", error=str(e), error_type=type(e).__name__, exc_info=True)
 		try:
 			await stop_all_camera_streams()
 		except Exception as e:

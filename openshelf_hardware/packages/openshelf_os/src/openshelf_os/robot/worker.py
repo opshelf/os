@@ -7,6 +7,7 @@ import time
 import traceback
 import sentry_sdk
 
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Optional, List, Any, Dict
 from openshelf_os.robot.core import Robot
@@ -14,7 +15,13 @@ from openshelf_os.robot.commands import RobotCommands, StopCommand, HomeCommand,
 from openshelf_os.robot.status import (
     CabinetDoorState, RobotCommandSuccessful, RobotResponse, SafetyStatus, ScaleStatus,
 )
-from openshelf_os.robot.models import WorkerError, QueuedOperation, WorkerStatusWithQueue
+from openshelf_os.robot.models import (
+    CrashReportArtifacts,
+    CrashReportAttachment,
+    QueuedOperation,
+    WorkerError,
+    WorkerStatusWithQueue,
+)
 from openshelf_os.barcode_service import (
     DEFAULT_BARCODE_PORT,
     BarcodeService,
@@ -31,6 +38,9 @@ SCALE_WEIGHT_PUBLISH_DELTA_GRAMS = 1.0
 ESTOP_POLL_INTERVAL_SECONDS = 0.05
 ESTOP_UNAVAILABLE_REASON = "Emergency stop input unavailable"
 PHYSICAL_ESTOP_REASON = "Physical emergency stop triggered"
+
+CrashArtifactProvider = Callable[[str], Awaitable[CrashReportArtifacts]]
+CrashArtifactBeginProvider = Callable[[str], Awaitable[CrashReportArtifacts]]
 
 _MOTOR_ID_RE = re.compile(r"motor\s+(\d+)", re.IGNORECASE)
 
@@ -238,11 +248,18 @@ def _normalize_storage_payload(storage: Dict[str, Any]) -> Dict[str, Any]:
 class RobotWorker:
     _instance: Optional["RobotWorker"] = None
 
-    def __init__(self, robot: Robot):
+    def __init__(
+        self,
+        robot: Robot,
+        crash_artifact_provider: CrashArtifactProvider | None = None,
+        crash_artifact_begin_provider: CrashArtifactBeginProvider | None = None,
+    ):
         if RobotWorker._instance is not None:
             raise RuntimeError("RobotWorker is a singleton. Use `get_instance()` to access it.")
 
         self._robot = robot
+        self._crash_artifact_provider = crash_artifact_provider
+        self._crash_artifact_begin_provider = crash_artifact_begin_provider
         self._worker_task: Optional[asyncio.Task] = None
         self._scale_poll_task: Optional[asyncio.Task] = None
         self._estop_monitor_task: Optional[asyncio.Task] = None
@@ -517,16 +534,29 @@ class RobotWorker:
 
         if success is True:
             reason = f"Simulated motor fault on {motor_name}"
+            fault = RuntimeError(reason)
             self.set_needs_home(reason, axes=[motor_name])
-            context = await self._build_error_context(RuntimeError(reason), is_hardware_fault=True)
+            prepared_artifacts = self._begin_motion_crash_capture(reason)
+            try:
+                context = await self._build_error_context(fault, is_hardware_fault=True)
+            except asyncio.CancelledError:
+                self._report_cancelled_motion_crash_handoff(
+                    reason=reason,
+                    fault=fault,
+                    stack_trace="",
+                    artifact_capture=prepared_artifacts,
+                    report_exception=None,
+                )
+                raise
             self.set_crash_state(reason, context=context)
-            self._report_error(
+            self._queue_motion_crash_report(
                 WorkerError(
                     error_type="HardwareFault",
                     message=reason,
                     context=context,
                     stack_trace="",
-                )
+                ),
+                artifact_capture=prepared_artifacts,
             )
             await self._publish_status()
 
@@ -602,7 +632,70 @@ class RobotWorker:
         }
         return context
 
-    def _report_error(self, error: WorkerError, exc: Optional[Exception] = None) -> None:
+    def _build_cancelled_motion_crash_context(self, fault: Exception) -> dict[str, Any]:
+        elapsed_seconds = None
+        if self._command_started_at is not None:
+            elapsed_seconds = time.monotonic() - self._command_started_at
+
+        fault_context = getattr(fault, "fault_context", None)
+        if fault_context is None and getattr(fault, "__cause__", None) is not None:
+            fault_context = getattr(fault.__cause__, "fault_context", None)
+
+        return {
+            "command": self._current_command.model_dump(mode="json") if self._current_command else None,
+            "queued_operation": self._current_operation.model_dump(mode="json") if self._current_operation else None,
+            "elapsed_seconds": elapsed_seconds,
+            "operation_context": None,
+            "diagnostic_snapshot": {"snapshot_error": "cancelled before diagnostics completed"},
+            "hardware_fault": {
+                "is_hardware_fault": True,
+                "exception_type": type(fault).__name__,
+                "message": str(fault),
+                "needs_home_axes": self.needs_home_axes(),
+                "fault_context": fault_context,
+            },
+        }
+
+    def _cancel_motion_crash_capture(
+        self, artifact_capture: Awaitable[CrashReportArtifacts] | None
+    ) -> None:
+        cancel_capture = getattr(artifact_capture, "cancel", None)
+        if callable(cancel_capture):
+            try:
+                cancel_capture()
+            except Exception as capture_error:
+                logging.warning("Failed to cancel prepared motion crash capture: %s", capture_error)
+
+    def _report_cancelled_motion_crash_handoff(
+        self,
+        *,
+        reason: str,
+        fault: Exception,
+        stack_trace: str,
+        artifact_capture: Awaitable[CrashReportArtifacts] | None,
+        report_exception: Exception | None,
+    ) -> None:
+        self._cancel_motion_crash_capture(artifact_capture)
+        context = self._build_cancelled_motion_crash_context(fault)
+        self.set_crash_state(reason, context=context)
+        self._report_error(
+            WorkerError(
+                error_type="HardwareFault",
+                message=reason,
+                context=context,
+                stack_trace=stack_trace,
+            ),
+            exc=report_exception,
+        )
+
+    def _report_error(
+        self,
+        error: WorkerError,
+        exc: Optional[Exception] = None,
+        *,
+        attachments: list[CrashReportAttachment] | None = None,
+        add_to_queue: bool = True,
+    ) -> None:
         sentry_event_id: Optional[str] = None
         try:
             with sentry_sdk.push_scope() as scope:
@@ -631,6 +724,13 @@ class RobotWorker:
                 if error.stack_trace:
                     scope.set_extra("stack_trace", error.stack_trace)
 
+                for attachment in attachments or []:
+                    scope.add_attachment(
+                        bytes=attachment.data,
+                        filename=attachment.filename,
+                        content_type=attachment.content_type,
+                    )
+
                 if exc is not None:
                     sentry_event_id = sentry_sdk.capture_exception(exc)
                 else:
@@ -646,7 +746,111 @@ class RobotWorker:
                 error.context = {}
             error.context["sentry_event_id"] = sentry_event_id
 
+        if add_to_queue is True:
+            self._add_error(error)
+
+    async def _report_motion_crash(
+        self,
+        error: WorkerError,
+        exc: Exception | None,
+        report_state: dict[str, bool],
+        artifact_capture: Awaitable[CrashReportArtifacts] | None = None,
+    ) -> None:
+        artifacts = CrashReportArtifacts()
+        provider = self._crash_artifact_provider
+
+        if artifact_capture is not None:
+            try:
+                artifacts = await artifact_capture
+            except asyncio.CancelledError:
+                report_state["reported"] = True
+                self._report_error(error, exc=exc, add_to_queue=False)
+                raise
+            except Exception as artifact_error:
+                artifacts.context = {
+                    "status": "failed",
+                    "error": str(artifact_error),
+                    "error_type": type(artifact_error).__name__,
+                }
+                logging.warning(
+                    "Motion crash artifact capture failed: %s",
+                    artifact_error,
+                    exc_info=True,
+                )
+        elif provider is not None:
+            try:
+                artifacts = await provider(error.message)
+            except asyncio.CancelledError:
+                report_state["reported"] = True
+                self._report_error(error, exc=exc, add_to_queue=False)
+                raise
+            except Exception as artifact_error:
+                artifacts.context = {
+                    "status": "failed",
+                    "error": str(artifact_error),
+                    "error_type": type(artifact_error).__name__,
+                }
+                logging.warning(
+                    "Motion crash artifact capture failed: %s",
+                    artifact_error,
+                    exc_info=True,
+                )
+
+        if artifacts.context:
+            if error.context is None:
+                error.context = {}
+            error.context["crash_recorder"] = artifacts.context
+
+        report_state["reported"] = True
+        self._report_error(
+            error,
+            exc=exc,
+            attachments=artifacts.attachments,
+            add_to_queue=False,
+        )
+
+    def _queue_motion_crash_report(
+        self,
+        error: WorkerError,
+        exc: Exception | None = None,
+        artifact_capture: Awaitable[CrashReportArtifacts] | None = None,
+    ) -> None:
         self._add_error(error)
+        report_state = {"reported": False}
+        task = self._track_background_task(
+            self._report_motion_crash(error, exc, report_state, artifact_capture),
+            name="motion-crash-report",
+        )
+
+        def _report_if_cancelled_before_reporting(done_task: asyncio.Task[Any]) -> None:
+            if done_task.cancelled() is True and report_state["reported"] is False:
+                self._cancel_motion_crash_capture(artifact_capture)
+                report_state["reported"] = True
+                self._report_error(error, exc=exc, add_to_queue=False)
+
+        task.add_done_callback(_report_if_cancelled_before_reporting)
+
+    def _begin_motion_crash_capture(
+        self, reason: str
+    ) -> Awaitable[CrashReportArtifacts] | None:
+        provider = self._crash_artifact_begin_provider
+        if provider is None:
+            return None
+
+        try:
+            return provider(reason)
+        except Exception as artifact_error:
+            completed = asyncio.get_running_loop().create_future()
+            completed.set_result(
+                CrashReportArtifacts(
+                    context={
+                        "status": "failed",
+                        "error": str(artifact_error),
+                        "error_type": type(artifact_error).__name__,
+                    }
+                )
+            )
+            return completed
 
     def _clear_robot_operation_context(self) -> None:
         try:
@@ -1189,20 +1393,45 @@ class RobotWorker:
                                 self.set_needs_home(str(err))
                                 logging.warning("Hardware fault detected - robot in crash state: %s", type(err).__name__)
 
-                            error_context = await self._build_error_context(err, is_hardware_fault=is_hardware_fault)
+                            prepared_artifacts = (
+                                self._begin_motion_crash_capture(str(err))
+                                if is_hardware_fault
+                                else None
+                            )
+
+                            stack_trace = traceback.format_exc()
+                            try:
+                                error_context = await self._build_error_context(
+                                    err, is_hardware_fault=is_hardware_fault
+                                )
+                            except asyncio.CancelledError:
+                                if is_hardware_fault:
+                                    self._report_cancelled_motion_crash_handoff(
+                                        reason=str(err),
+                                        fault=err,
+                                        stack_trace=stack_trace,
+                                        artifact_capture=prepared_artifacts,
+                                        report_exception=err,
+                                    )
+                                raise
 
                             if is_hardware_fault:
                                 self.set_crash_state(str(err), context=error_context)
 
-                            self._report_error(
-                                WorkerError(
-                                    error_type="HardwareFault" if is_hardware_fault else "CommandExecutionError",
-                                    message=str(err),
-                                    context=error_context,
-                                    stack_trace=traceback.format_exc(),
-                                ),
-                                exc=err,
+                            worker_error = WorkerError(
+                                error_type="HardwareFault" if is_hardware_fault else "CommandExecutionError",
+                                message=str(err),
+                                context=error_context,
+                                stack_trace=stack_trace,
                             )
+                            if is_hardware_fault:
+                                self._queue_motion_crash_report(
+                                    worker_error,
+                                    exc=err,
+                                    artifact_capture=prepared_artifacts,
+                                )
+                            else:
+                                self._report_error(worker_error, exc=err)
 
                         self._clear_robot_operation_context()
                         self._remove_current_operation()

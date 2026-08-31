@@ -20,6 +20,10 @@ from openshelf_os_server.core.init_progress import (
     OVERALL_READY,
     get_init_tracker,
 )
+from openshelf_os_server.core.crash_video_recorder import (
+    begin_motion_crash_artifacts,
+    capture_motion_crash_artifacts,
+)
 from openshelf_os_server.core.printer_status import PrinterStatusProbeError, probe_printer_status
 from openshelf_os_server.core.robot_events import RobotEventListener
 from openshelf_os_server.core.storage import StorageService
@@ -185,7 +189,11 @@ async def init_robot_worker() -> None:
             robot.sync_occupied_cells(occupied_tuples)
             logger.info("Synced %d occupied cells from database", len(occupied_tuples))
 
-        worker = r_worker.RobotWorker(robot)
+        worker = r_worker.RobotWorker(
+            robot,
+            crash_artifact_provider=capture_motion_crash_artifacts,
+            crash_artifact_begin_provider=begin_motion_crash_artifacts,
+        )
         logger.info("Got Instance")
         await worker.connect()
         logger.info("Robot worker connected")
