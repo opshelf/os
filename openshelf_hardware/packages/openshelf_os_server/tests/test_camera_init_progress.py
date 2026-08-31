@@ -14,6 +14,7 @@ def _make_manager_mock(is_delivering_frames: bool) -> MagicMock:
 	manager = MagicMock(spec=ToolCameraStreamManager)
 	manager.is_running = False
 	manager.consumer_count = 0
+	manager.background_consumer_count = 0
 	manager.first_frame_timeout = 15.0
 
 	async def start() -> None:
