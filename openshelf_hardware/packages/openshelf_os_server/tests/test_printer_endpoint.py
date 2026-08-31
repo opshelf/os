@@ -14,7 +14,7 @@ async def test_print_label_skips_work_when_printer_is_disabled() -> None:
 
     with (
         patch.object(printer_router, "get_settings", return_value=settings),
-        patch.object(printer_router.printer, "print_barcode") as print_barcode,
+        patch.object(printer_router.printer, "print_label") as print_label,
         patch.object(printer_router.printer, "close") as close_printer,
     ):
         result = await printer_router.print_label("036000291452")
@@ -24,7 +24,7 @@ async def test_print_label_skips_work_when_printer_is_disabled() -> None:
         "upca": "036000291452",
         "printed": False,
     }
-    print_barcode.assert_not_called()
+    print_label.assert_not_called()
     close_printer.assert_not_called()
 
 
@@ -34,7 +34,7 @@ async def test_print_label_writes_barcode_when_printer_is_enabled() -> None:
 
     with (
         patch.object(printer_router, "get_settings", return_value=settings),
-        patch.object(printer_router.printer, "print_barcode") as print_barcode,
+        patch.object(printer_router.printer, "print_label") as print_label,
         patch.object(printer_router.printer, "close") as close_printer,
     ):
         result = await printer_router.print_label("036000291452")
@@ -44,7 +44,7 @@ async def test_print_label_writes_barcode_when_printer_is_enabled() -> None:
         "upca": "036000291452",
         "printed": True,
     }
-    print_barcode.assert_called_once_with(sym="UPC-A", payload="036000291452")
+    print_label.assert_called_once_with("036000291452")
     close_printer.assert_called_once_with()
 
 
@@ -52,9 +52,9 @@ async def test_print_label_writes_barcode_when_printer_is_enabled() -> None:
 async def test_print_label_simulates_hardware_in_mock_mode() -> None:
     with (
         patch.object(printer_router, "get_operating_mode", return_value=OperatingMode.mock),
-        patch.object(printer_router.printer, "print_barcode") as print_barcode,
+        patch.object(printer_router.printer, "print_label") as print_label,
     ):
         result = await printer_router.print_label("036000291452")
 
     assert result == {"message": "success", "upca": "036000291452", "printed": True}
-    print_barcode.assert_not_called()
+    print_label.assert_not_called()
