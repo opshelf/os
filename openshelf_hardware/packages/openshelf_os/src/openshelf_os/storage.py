@@ -363,11 +363,18 @@ class StorageGrid(BaseModel):
 
 		return items
 
-	def find_best_slot_for_item(self, item: CellItem) -> Optional[StorageModuleCellLocation]:
+	def find_best_slot_for_item(
+		self,
+		item: CellItem,
+		excluded_locations: Optional[set[tuple[str, int, int]]] = None,
+	) -> Optional[StorageModuleCellLocation]:
 		possible_slots: List[Tuple[StorageModuleCellLocation, Tuple[float, float, float, float, float]]] = []
+		excluded_locations = excluded_locations or set()
 
 		for shelf in self.left_module:
 			for cell in shelf.cells:
+				if (StorageModuleSide.LEFT.value, shelf.shelf_idx, cell.cell_idx) in excluded_locations:
+					continue
 				if cell.status == CellStatus.AVAILABLE and (
 					cell.dimensions.width >= item.dimensions.width
 					and cell.dimensions.length >= item.dimensions.length
@@ -399,6 +406,8 @@ class StorageGrid(BaseModel):
 
 		for shelf in self.right_module:
 			for cell in shelf.cells:
+				if (StorageModuleSide.RIGHT.value, shelf.shelf_idx, cell.cell_idx) in excluded_locations:
+					continue
 				if cell.status == CellStatus.AVAILABLE and (
 					cell.dimensions.width >= item.dimensions.width
 					and cell.dimensions.length >= item.dimensions.length
@@ -434,4 +443,3 @@ class StorageGrid(BaseModel):
 			return possible_slots[0][0]
 
 		return None
-

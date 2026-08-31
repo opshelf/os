@@ -338,6 +338,7 @@ async def test_store_fault_preserves_resolved_cell_and_coordinate_context() -> N
     robot._operation_context = {}
     robot._last_fault_context = None
     robot._demo_cell_map = None
+    robot._reserved_cell_locations = {("left_module", 1, 2)}
     location = StorageModuleCellLocation(side=StorageModuleSide.LEFT, shelf_idx=1, cell_idx=2)
     coordinate = AxisCoordinate(x=12.0, y=34.0, s=0, z_offset=1.5)
     async def did_get_weight() -> float:
@@ -345,7 +346,7 @@ async def test_store_fault_preserves_resolved_cell_and_coordinate_context() -> N
 
     robot._io = SimpleNamespace(get_weight=did_get_weight)
     robot._grid = SimpleNamespace(
-        find_best_slot_for_item=lambda item: location,
+        find_best_slot_for_item=lambda item, *, excluded_locations: location,
         get_cell_coordinate=lambda resolved_location: SimpleNamespace(to_axis_coordinate=lambda: coordinate),
         store_item=lambda resolved_location, item: None,
     )

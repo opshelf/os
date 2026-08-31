@@ -1,9 +1,60 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from fastapi import HTTPException
 
 from openshelf_os.storage import CalibrationCoordinate, Cell, CellStatus, Dimensions, Shelf, StorageGrid
+from openshelf_os_server.core import bin_storage
+from openshelf_os_server.routers import calibration
+
+
+def build_tool_parameters() -> calibration.Parameters:
+	return calibration.Parameters.model_validate(
+		{
+			"IDLE_POSITION": [0, 0],
+			"PICKUP_POSITION_L": [100, 200],
+			"PICKUP_POSITION_H": [110, 210],
+			"SCAN_POSITION": [0, 0],
+			"STAGE_EXTENSION_IO_BOX": 20.0,
+			"STAGE_NUDGE": 1.0,
+			"STAGE_EXTENSION_SHELF_FRONT": 30.0,
+			"STAGE_EXTENSION_SHELF_BACK": 31.0,
+			"Z_EXTENSION_PICK": 1.0,
+			"Z_EXTENSION_PLACE": 2.0,
+			"Z_EXTENSION_IO": 3.0,
+			"Z_MOVE_RPM": 800,
+			"Z_MOVE_ACCEL": 1200,
+			"ROTATION_FRONT": 45.0,
+			"ROTATION_BACK": 135.0,
+		}
+	)
+
+
+def build_parameter_config():
+	return SimpleNamespace(robot=SimpleNamespace(tool=SimpleNamespace(parameters=build_tool_parameters())))
+
+
+def build_parameter_worker(stage_limit: float = 170.0):
+	tool = SimpleNamespace(
+		_ms=SimpleNamespace(_params=SimpleNamespace(lim=stage_limit, lower_lim=0.0)),
+		_gs=SimpleNamespace(close=AsyncMock()),
+		home=AsyncMock(),
+	)
+	robot = SimpleNamespace(
+		_tool=tool,
+		_io=SimpleNamespace(home_door=AsyncMock()),
+		reload_parameters=Mock(),
+	)
+	return SimpleNamespace(
+		_robot=robot,
+		clear_needs_home=Mock(),
+		get_status_snapshot=AsyncMock(),
+	)
+
+
+def active_bin_workflow_error() -> HTTPException:
+	return HTTPException(status_code=423, detail={"code": "bin_workflow_active"})
 
 
 def build_grid(tmp_path) -> StorageGrid:
@@ -90,6 +141,61 @@ async def test_save_calibration_creates_missing_cell_from_existing_shelf(client,
 
 
 @pytest.mark.anyio
+async def test_save_calibration_rejects_configured_bin_home(client, tmp_path, monkeypatch) -> None:
+	grid = build_grid(tmp_path)
+	worker = build_worker(grid)
+	configured_bin = SimpleNamespace(
+		home_location=SimpleNamespace(side="left_module", shelf_idx=0, cell_idx=0)
+	)
+	monkeypatch.setattr(
+		bin_storage,
+		"get_root_config",
+		lambda: SimpleNamespace(storage=SimpleNamespace(bins=[configured_bin])),
+	)
+
+	with patch("openshelf_os_server.routers.calibration.get_robot_worker", AsyncMock(return_value=worker)):
+		response = await client.post(
+			"/api/calibration/save",
+			json={
+				"side": "left_module",
+				"shelf_idx": 0,
+				"cell_idx": 0,
+				"x": 475.0,
+				"y": 630.0,
+				"z_offset": 0.0,
+				"status": "available",
+			},
+		)
+
+	assert response.status_code == 409
+	assert response.json()["detail"] == "Storage bin homes cannot be changed through calibration"
+	assert grid.left_module[0].cells[0].status == CellStatus.AVAILABLE
+
+
+@pytest.mark.anyio
+async def test_calibration_test_guard_rejects_reserved_bin_home(monkeypatch, tmp_path) -> None:
+	grid = build_grid(tmp_path)
+	location = calibration.StorageModuleCellLocation(
+		side=calibration.StorageModuleSide.LEFT,
+		shelf_idx=0,
+		cell_idx=0,
+	)
+
+	class SessionContext:
+		async def __aenter__(self):
+			return object()
+
+		async def __aexit__(self, *_args):
+			return False
+
+	monkeypatch.setattr(calibration, "AsyncSessionLocal", SessionContext)
+	monkeypatch.setattr(calibration, "is_reserved_bin_location", AsyncMock(return_value=True))
+
+	with pytest.raises(HTTPException, match="Storage bin homes cannot be used for calibration tests"):
+		await calibration._ensure_cell_is_testable(grid, location)
+
+
+@pytest.mark.anyio
 async def test_save_calibration_creates_missing_shelf_and_cell_from_templates(client, tmp_path) -> None:
 	grid = build_grid(tmp_path)
 	worker = build_worker(grid)
@@ -143,6 +249,208 @@ async def test_save_calibration_rejects_negative_indices(client, tmp_path) -> No
 
 	assert response.status_code == 400
 	assert response.json()['detail'] == 'Invalid shelf_idx: -1'
+
+
+@pytest.mark.anyio
+async def test_save_calibration_does_not_mutate_grid_when_bin_workflow_is_active(tmp_path, monkeypatch) -> None:
+	grid = build_grid(tmp_path)
+	worker = build_worker(grid)
+	original_cell = grid.left_module[0].cells[0].model_copy(deep=True)
+
+	class SessionContext:
+		async def __aenter__(self):
+			return object()
+
+		async def __aexit__(self, *_args):
+			return False
+
+	monkeypatch.setattr(calibration, "AsyncSessionLocal", SessionContext)
+	monkeypatch.setattr(calibration, "is_reserved_bin_location", AsyncMock(return_value=False))
+	monkeypatch.setattr(
+		calibration,
+		"ensure_no_active_bin_workflow_for_motion",
+		AsyncMock(side_effect=active_bin_workflow_error()),
+	)
+
+	with patch("openshelf_os_server.routers.calibration.get_robot_worker", AsyncMock(return_value=worker)):
+		with pytest.raises(HTTPException) as error:
+			await calibration.save_calibration(
+				calibration.SaveRequest(
+					side=calibration.StorageModuleSide.LEFT,
+					shelf_idx=0,
+					cell_idx=0,
+					x=475.0,
+					y=630.0,
+					z_offset=0.0,
+					is_manual=True,
+					status="maintenance",
+				)
+			)
+
+	assert error.value.status_code == 423
+	assert grid.left_module[0].cells[0] == original_cell
+	assert not (tmp_path / "storage-grid.json").exists()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+	("save_function", "save_request", "expected_parameters"),
+	[
+		(
+			calibration.save_rotation_angles,
+			calibration.RotateSaveRequest(front=50.0, back=130.0),
+			{"ROTATION_FRONT": 50.0, "ROTATION_BACK": 130.0},
+		),
+		(
+			calibration.save_shelf_stage_extension,
+			calibration.ShelfStageExtensionSaveRequest(front=40.0, back=41.0),
+			{"STAGE_EXTENSION_SHELF_FRONT": 40.0, "STAGE_EXTENSION_SHELF_BACK": 41.0},
+		),
+	],
+)
+async def test_parameter_saves_reject_active_bin_without_persisting_or_reloading(
+	monkeypatch, save_function, save_request, expected_parameters
+) -> None:
+	config = build_parameter_config()
+	worker = build_parameter_worker()
+	original_parameters = config.robot.tool.parameters.model_dump()
+	save_config = Mock()
+	monkeypatch.setattr(calibration, "get_root_config", lambda: config)
+	monkeypatch.setattr(calibration, "save_root_config", save_config)
+	monkeypatch.setattr(calibration, "ensure_laser_auto_calibration_not_running", AsyncMock())
+	monkeypatch.setattr(
+		calibration,
+		"ensure_no_active_bin_workflow_for_motion",
+		AsyncMock(side_effect=active_bin_workflow_error()),
+	)
+	monkeypatch.setattr(calibration, "get_robot_worker", AsyncMock(return_value=worker))
+
+	with pytest.raises(HTTPException) as error:
+		await save_function(save_request)
+
+	assert error.value.status_code == 423
+	assert config.robot.tool.parameters.model_dump() == original_parameters
+	assert save_config.call_count == 0
+	assert worker._robot.reload_parameters.call_count == 0
+	for name, value in expected_parameters.items():
+		assert getattr(config.robot.tool.parameters, name) != value
+
+
+@pytest.mark.anyio
+async def test_iobox_save_rejects_active_bin_without_persisting_reloading_or_changing_cache(monkeypatch) -> None:
+	config = build_parameter_config()
+	worker = build_parameter_worker()
+	original_parameters = config.robot.tool.parameters.model_dump()
+	original_cache = calibration.IOBoxPositionResponse(
+		pickup_low_x=1.0,
+		pickup_low_y=2.0,
+		pickup_high_x=3.0,
+		pickup_high_y=4.0,
+		z_extension=5.0,
+		stage_extension=6.0,
+	)
+	save_config = Mock()
+	monkeypatch.setattr(calibration, "get_root_config", lambda: config)
+	monkeypatch.setattr(calibration, "save_root_config", save_config)
+	monkeypatch.setattr(calibration, "ensure_laser_auto_calibration_not_running", AsyncMock())
+	monkeypatch.setattr(bin_storage, "ensure_no_active_bin_workflow_for_motion", AsyncMock(side_effect=active_bin_workflow_error()))
+	monkeypatch.setattr(calibration, "get_robot_worker", AsyncMock(return_value=worker))
+	calibration._iobox_current = original_cache
+
+	try:
+		with pytest.raises(HTTPException) as error:
+			await calibration.save_iobox_calibration(
+				calibration.IOBoxSaveRequest(
+					pickup_low_x=120.0,
+					pickup_low_y=220.0,
+					pickup_high_x=130.0,
+					pickup_high_y=230.0,
+					z_extension=10.0,
+					stage_extension=25.0,
+				)
+			)
+
+		assert error.value.status_code == 423
+		assert config.robot.tool.parameters.model_dump() == original_parameters
+		assert save_config.call_count == 0
+		assert worker._robot.reload_parameters.call_count == 0
+		assert calibration._iobox_current is original_cache
+		worker._robot._tool.home.assert_not_awaited()
+	finally:
+		calibration._iobox_current = None
+
+
+@pytest.mark.anyio
+async def test_iobox_save_persists_reloads_and_updates_cache_after_admission(monkeypatch) -> None:
+	config = build_parameter_config()
+	worker = build_parameter_worker()
+	save_config = Mock()
+	monkeypatch.setattr(calibration, "get_root_config", lambda: config)
+	monkeypatch.setattr(calibration, "save_root_config", save_config)
+	monkeypatch.setattr(calibration, "ensure_laser_auto_calibration_not_running", AsyncMock())
+	monkeypatch.setattr(bin_storage, "ensure_no_active_bin_workflow_for_motion", AsyncMock())
+	monkeypatch.setattr(calibration, "get_robot_worker", AsyncMock(return_value=worker))
+	calibration._iobox_current = None
+
+	try:
+		assert await calibration.save_iobox_calibration(
+			calibration.IOBoxSaveRequest(
+				pickup_low_x=120.0,
+				pickup_low_y=220.0,
+				pickup_high_x=130.0,
+				pickup_high_y=230.0,
+				z_extension=10.0,
+				stage_extension=25.0,
+			)
+		) == {"success": True}
+
+		params = config.robot.tool.parameters
+		assert params.PICKUP_POSITION_L == (120, 220)
+		assert params.PICKUP_POSITION_H == (130, 230)
+		assert params.Z_EXTENSION_IO == 10.0
+		assert params.STAGE_EXTENSION_IO_BOX == 25.0
+		assert save_config.call_args.args == (config,)
+		assert worker._robot.reload_parameters.call_count == 1
+		assert calibration._iobox_current is not None
+		assert calibration._iobox_current.pickup_low_x == 120.0
+		assert calibration._iobox_current.stage_extension == 25.0
+	finally:
+		calibration._iobox_current = None
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+	("save_function", "save_request", "expected_parameters"),
+	[
+		(
+			calibration.save_rotation_angles,
+			calibration.RotateSaveRequest(front=50.0, back=130.0),
+			{"ROTATION_FRONT": 50.0, "ROTATION_BACK": 130.0},
+		),
+		(
+			calibration.save_shelf_stage_extension,
+			calibration.ShelfStageExtensionSaveRequest(front=40.0, back=41.0),
+			{"STAGE_EXTENSION_SHELF_FRONT": 40.0, "STAGE_EXTENSION_SHELF_BACK": 41.0},
+		),
+	],
+)
+async def test_parameter_saves_persist_and_reload_after_admission(
+	monkeypatch, save_function, save_request, expected_parameters
+) -> None:
+	config = build_parameter_config()
+	worker = build_parameter_worker()
+	save_config = Mock()
+	monkeypatch.setattr(calibration, "get_root_config", lambda: config)
+	monkeypatch.setattr(calibration, "save_root_config", save_config)
+	monkeypatch.setattr(calibration, "ensure_laser_auto_calibration_not_running", AsyncMock())
+	monkeypatch.setattr(calibration, "ensure_no_active_bin_workflow_for_motion", AsyncMock())
+	monkeypatch.setattr(calibration, "get_robot_worker", AsyncMock(return_value=worker))
+
+	assert await save_function(save_request) == {"success": True}
+	for name, value in expected_parameters.items():
+		assert getattr(config.robot.tool.parameters, name) == value
+	assert save_config.call_args.args == (config,)
+	assert worker._robot.reload_parameters.call_count == 1
 
 
 @pytest.mark.anyio

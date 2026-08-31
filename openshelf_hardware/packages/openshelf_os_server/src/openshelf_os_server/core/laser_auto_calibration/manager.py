@@ -13,6 +13,7 @@ from .angle_runner import AngleRunnerMixin
 from .stage_runner import StageRunnerMixin
 from .apply_runner import ApplyRunnerMixin
 from openshelf_os_server.core.logging_config import get_correlation_id
+from openshelf_os_server.core.manual_motion import manual_motion_guard
 from .snapshot_runner import SnapshotRunnerMixin
 
 
@@ -156,7 +157,10 @@ class LaserAutoCalibrationManager(
         )
 
         try:
-            await self._run_requested_scope(worker, requested_scope)
+            async with manual_motion_guard(
+                "laser_auto_calibration", worker=worker, check_bin_workflow=True
+            ):
+                await self._run_requested_scope(worker, requested_scope)
             await self._set_terminal_state("completed", None)
         except asyncio.CancelledError:
             current_task = asyncio.current_task()

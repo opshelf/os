@@ -9,10 +9,12 @@ import openshelf_os_server.core.robot as robot_core
 
 from openshelf_os.robot.worker import RobotWorker
 from openshelf_os_server.core.storage import StorageService
+from openshelf_os_server.core.bin_storage import BinStorageService, RobotEventPublisher
 from openshelf_os_server.database.models import Telemetry
 from openshelf_os_server.database.session import AsyncSessionLocal
 
 logger = logging.getLogger(__name__)
+EVENT_DRAIN_TIMEOUT_S = 5.0
 
 
 async def flush_telemetry(is_cycle: bool) -> None:
@@ -42,10 +44,36 @@ async def flush_telemetry(is_cycle: bool) -> None:
         logger.warning("Failed to flush telemetry: %s", err)
 
 
-async def process_robot_event(payload: dict[str, Any]) -> None:
+async def process_robot_event(
+    payload: dict[str, Any], worker: Optional[RobotEventPublisher] = None
+) -> None:
     """
     Handle a single robot event payload, updating storage state when retrieval completes.
     """
+    active_worker = worker or robot_core.robot_worker
+    if active_worker is not None:
+        bin_owned = False
+        try:
+            async with AsyncSessionLocal() as session:
+                bin_service = BinStorageService(session)
+                bin_owned = await bin_service.owns_robot_event(payload)
+                if payload.get("kind") == "label_scanned":
+                    if await bin_service.handle_scan(str(payload.get("payload", "")), active_worker):
+                        return
+                elif await bin_service.handle_robot_result(payload, active_worker):
+                    if (
+                        payload.get("command") == "store_item"
+                        and payload.get("message") == "success"
+                    ):
+                        await flush_telemetry(is_cycle=True)
+                    return
+        except Exception as err:
+            logger.exception("Failed to process bin workflow event: %s", err)
+
+        if bin_owned:
+            logger.warning("Skipping legacy mutation for bin-owned robot event: %s", payload)
+            return
+
     command = payload.get("command")
     message = payload.get("message")
 
@@ -72,6 +100,11 @@ async def process_robot_event(payload: dict[str, Any]) -> None:
             return
 
         async with AsyncSessionLocal() as session:
+            if await BinStorageService(session).targets_reserved_bin_identity(payload):
+                logger.warning(
+                    "Skipping legacy mutation for reserved bin retrieve event: %s", payload
+                )
+                return
             storage_service = StorageService(session)
             try:
                 removed = await storage_service.remove_item_location(upca, side, shelf_idx_int, cell_idx_int)
@@ -136,6 +169,9 @@ async def process_robot_event(payload: dict[str, Any]) -> None:
         )
 
         async with AsyncSessionLocal() as session:
+            if await BinStorageService(session).targets_reserved_bin_identity(payload):
+                logger.warning("Skipping legacy mutation for reserved bin store event: %s", payload)
+                return
             storage_service = StorageService(session)
             try:
                 existing_item = await storage_service.get_item(str(upca))
@@ -225,18 +261,36 @@ class RobotEventListener:
 
             self._task = None
 
+    async def drain(self) -> None:
+        """Wait briefly for events already emitted by the worker to be persisted."""
+        queue = self._queue
+        if queue is None:
+            return
+
+        try:
+            await asyncio.wait_for(queue.join(), timeout=EVENT_DRAIN_TIMEOUT_S)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Timed out draining robot events after %.1fs; stopping listener",
+                EVENT_DRAIN_TIMEOUT_S,
+            )
+
     async def _consume_events(self) -> None:
-        if self._queue is None:
+        queue = self._queue
+        if queue is None:
             return
 
         while True:
-            payload_json = await self._queue.get()
-            logger.info("Received robot event message: %s", payload_json[:200] if payload_json else None)
-
+            payload_json = await queue.get()
             try:
-                payload = json.loads(payload_json)
-            except Exception:
-                logger.warning("Received malformed robot event: %s", payload_json)
-                continue
+                logger.info("Received robot event message: %s", payload_json[:200] if payload_json else None)
 
-            await process_robot_event(payload)
+                try:
+                    payload = json.loads(payload_json)
+                except Exception:
+                    logger.warning("Received malformed robot event: %s", payload_json)
+                    continue
+
+                await process_robot_event(payload, self._worker)
+            finally:
+                queue.task_done()
