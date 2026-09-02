@@ -88,6 +88,16 @@ def fridge_settings() -> DemoFridgeSettings:
     return RootConfig.model_validate(config_dict()).demo.fridge
 
 
+def calibration_fridge_settings() -> DemoFridgeSettings:
+    data = copy.deepcopy(config_dict())
+    fridge = data["demo"]["fridge"]
+    fridge["enabled"] = False
+    fridge["motor"] = motor_config("fridge_door", 20, limit=950)
+    fridge.pop("door_positions_mm")
+    fridge["cells"] = []
+    return RootConfig.model_validate(data).demo.fridge
+
+
 def fridge_location() -> StorageModuleCellLocation:
     return StorageModuleCellLocation(
         side=StorageModuleSide.RIGHT,
@@ -104,6 +114,17 @@ def test_demo_fridge_config_accepts_explicit_positions_and_cell() -> None:
     assert fridge.door_positions_mm is not None
     assert fridge.door_positions_mm.closed == pytest.approx(100)
     assert fridge.cells[0].stage_extension_mm == pytest.approx(95)
+
+
+def test_demo_fridge_config_accepts_calibration_only_motor() -> None:
+    fridge = calibration_fridge_settings()
+
+    assert fridge.enabled is False
+    assert fridge.motor is not None
+    assert fridge.motor.motor_id == 20
+    assert fridge.motor.lim == pytest.approx(950)
+    assert fridge.door_positions_mm is None
+    assert fridge.cells == []
 
 
 @pytest.mark.parametrize(
@@ -161,6 +182,39 @@ async def test_fridge_home_moves_from_end_stop_to_explicit_closed_position(monke
 
     door.home.assert_awaited_once()
     door.move_to_position.assert_awaited_once_with(100, rpm=64)
+
+
+@pytest.mark.asyncio
+async def test_calibration_only_fridge_configures_without_startup_motion(monkeypatch) -> None:
+    door = AsyncMock()
+    monkeypatch.setattr(fridge_module, "Motor", lambda *_args, **_kwargs: door)
+    fridge = DemoFridge(
+        AsyncMock(),
+        calibration_fridge_settings(),
+        is_fully_retracted=AsyncMock(return_value=True),
+    )
+
+    await fridge.configure(home_on_init=True)
+
+    door.configure.assert_awaited_once()
+    door.home.assert_not_awaited()
+    door.move_to_position.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_calibration_only_fridge_manual_home_stops_at_endpoint(monkeypatch) -> None:
+    door = AsyncMock()
+    monkeypatch.setattr(fridge_module, "Motor", lambda *_args, **_kwargs: door)
+    fridge = DemoFridge(
+        AsyncMock(),
+        calibration_fridge_settings(),
+        is_fully_retracted=AsyncMock(return_value=True),
+    )
+
+    await fridge.home_door()
+
+    door.home.assert_awaited_once()
+    door.move_to_position.assert_not_awaited()
 
 
 @pytest.mark.asyncio

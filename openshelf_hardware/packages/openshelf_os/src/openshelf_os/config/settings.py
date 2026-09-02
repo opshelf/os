@@ -123,6 +123,12 @@ class DemoFridgeSettings(BaseModel):
 
     @model_validator(mode="after")
     def validate_enabled_fridge(self) -> "DemoFridgeSettings":
+        if self.motor is not None:
+            if self.motor.motor_name != "fridge_door":
+                raise ValueError("demo.fridge.motor.motor_name must be 'fridge_door'")
+            if self.motor.motor_id != 20:
+                raise ValueError("demo.fridge.motor.motor_id must be 20")
+
         if self.enabled is False:
             return self
 
@@ -130,10 +136,6 @@ class DemoFridgeSettings(BaseModel):
             raise ValueError("demo.fridge.motor is required when the fridge is enabled")
         if self.motor.enabled is False:
             raise ValueError("demo.fridge.motor must be enabled when the fridge is enabled")
-        if self.motor.motor_name != "fridge_door":
-            raise ValueError("demo.fridge.motor.motor_name must be 'fridge_door'")
-        if self.motor.motor_id != 20:
-            raise ValueError("demo.fridge.motor.motor_id must be 20")
         if self.door_positions_mm is None:
             raise ValueError(
                 "demo.fridge.door_positions_mm is required when the fridge is enabled"

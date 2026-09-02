@@ -101,7 +101,12 @@ class Robot:
         )
         self._cabinet = Cabinet(gpio=self._gpio)
         self._fridge: DemoFridge | None = None
-        if should_enable_demo_fridge() is True and self._config.demo.fridge.enabled is True:
+        fridge_motor = self._config.demo.fridge.motor
+        if (
+            should_enable_demo_fridge() is True
+            and fridge_motor is not None
+            and fridge_motor.enabled is True
+        ):
             self._fridge = DemoFridge(
                 motorcontroller=self._motorbus,
                 params=self._config.demo.fridge,

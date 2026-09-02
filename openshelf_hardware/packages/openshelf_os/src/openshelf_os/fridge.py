@@ -21,8 +21,8 @@ class DemoFridge:
         is_fully_retracted: Callable[[], Awaitable[bool]],
         safety=None,
     ) -> None:
-        if params.enabled is False or params.motor is None or params.door_positions_mm is None:
-            raise ConfigError("Demo fridge cannot be created from disabled or incomplete settings")
+        if params.motor is None or params.motor.enabled is False:
+            raise ConfigError("Demo fridge motor must be configured and enabled")
 
         self._params = params
         self._door = Motor(motorcontroller, params.motor, safety)
@@ -72,7 +72,7 @@ class DemoFridge:
         self._emit_init("configuring")
         try:
             await self._door.configure()
-            if home_on_init is True:
+            if home_on_init is True and self._params.enabled is True:
                 await self.home_door()
             else:
                 self._emit_init("ready")
@@ -102,20 +102,20 @@ class DemoFridge:
 
     async def home_door(self) -> None:
         positions = self._params.door_positions_mm
-        assert positions is not None
 
         try:
             await self._require_tool_retracted()
             async with self._motion_lock:
                 await self._door.home()
-                await self._door.move_to_position(
-                    positions.closed,
-                    rpm=self._params.motor.ret_rpm if self._params.motor is not None else None,
-                )
+                if positions is not None:
+                    await self._door.move_to_position(
+                        positions.closed,
+                        rpm=self._params.motor.ret_rpm if self._params.motor is not None else None,
+                    )
             self._emit_init("ready")
         except Exception as exc:
             self._emit_init("failed", detail="home", reason=str(exc))
-            raise MotorError(f"Failed to home and close fridge door: {exc}") from exc
+            raise MotorError(f"Failed to home fridge door: {exc}") from exc
 
     async def open_for_cell(self, location: StorageModuleCellLocation) -> None:
         cell = self.cell_settings(location)
@@ -128,7 +128,8 @@ class DemoFridge:
 
     async def open_door(self, direction: Literal["left", "right"]) -> None:
         positions = self._params.door_positions_mm
-        assert positions is not None
+        if positions is None:
+            raise ConfigError("Fridge door positions have not been calibrated")
         target = positions.open_left if direction == "left" else positions.open_right
 
         try:
@@ -139,7 +140,8 @@ class DemoFridge:
 
     async def close_door(self) -> None:
         positions = self._params.door_positions_mm
-        assert positions is not None
+        if positions is None:
+            raise ConfigError("Fridge door positions have not been calibrated")
 
         try:
             await self._require_tool_retracted()

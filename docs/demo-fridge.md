@@ -8,6 +8,36 @@ Configure the fridge under the top-level `demo` object. The values below are
 illustrative; measure the installed door travel, center, cell coordinate, and
 required stage reach before enabling it.
 
+For initial motor calibration, configure only the motor and leave `enabled`
+false. In demo or development mode this exposes `fridge_door` in the
+`FRIDGE MOTORS` section without enabling fridge storage workflows or automatic
+startup homing. Manual home establishes the endpoint but does not move to a
+closed position until `door_positions_mm` is configured.
+
+```json
+{
+  "demo": {
+    "fridge": {
+      "enabled": false,
+      "motor": {
+        "motor_name": "fridge_door",
+        "motor_id": 20,
+        "Ip": 36,
+        "rpm": 500,
+        "dr": 1,
+        "mpr": 80,
+        "accel": 500,
+        "ret_rpm": 64,
+        "lim": 950
+      }
+    }
+  }
+}
+```
+
+The 950 mm limit above applies to lb2-3's confirmed X-equivalent fridge axis;
+use the mechanically verified limit for other installations.
+
 ```json
 {
   "demo": {
@@ -64,9 +94,9 @@ stage setting in the demo configuration:
 ```
 
 Use the existing motors page to probe motor ID 20 and move it to measured targets.
-The `fridge_door` home action homes against the configured end and then moves to
-the explicit closed position. Fridge door move and home actions are rejected while
-the tool is not fully retracted.
+When calibrated positions are present, the `fridge_door` home action homes against
+the configured end and then moves to the explicit closed position. Fridge door
+move and home actions are rejected while the tool is not fully retracted.
 
 Each fridge barcode remains mapped to its configured grid location through
 `data/demo.json`; the fridge configuration is location-based so retrieval by
