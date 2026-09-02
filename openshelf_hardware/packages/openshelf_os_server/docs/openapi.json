@@ -5259,6 +5259,240 @@
         }
       }
     },
+    "/api/print/config": {
+      "get": {
+        "tags": [
+          "printer"
+        ],
+        "summary": "Get Printer Config",
+        "operationId": "get_printer_config_api_print_config_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrinterFeedConfig"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "printer"
+        ],
+        "summary": "Update Printer Config",
+        "operationId": "update_printer_config_api_print_config_put",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrinterFeedConfig"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrinterFeedConfig"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/print/status": {
+      "get": {
+        "tags": [
+          "printer"
+        ],
+        "summary": "Get Printer Status",
+        "operationId": "get_printer_status_api_print_status_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrinterStatusResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/print": {
+      "post": {
+        "tags": [
+          "printer"
+        ],
+        "summary": "Print Custom Label",
+        "operationId": "print_custom_label_api_print_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrintLabelRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrintLabelResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/print/{upca}": {
       "post": {
         "tags": [
@@ -10591,6 +10825,134 @@
           "slide_extension"
         ],
         "title": "PositionResponse"
+      },
+      "PrintLabelRequest": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[\\x20-\\x7E]+$",
+            "title": "Code"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code"
+        ],
+        "title": "PrintLabelRequest"
+      },
+      "PrintLabelResponse": {
+        "properties": {
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "printed": {
+            "type": "boolean",
+            "title": "Printed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "message",
+          "code",
+          "printed"
+        ],
+        "title": "PrintLabelResponse"
+      },
+      "PrinterFeedConfig": {
+        "properties": {
+          "feed_dots": {
+            "type": "integer",
+            "maximum": 128.0,
+            "minimum": 0.0,
+            "title": "Feed Dots"
+          }
+        },
+        "type": "object",
+        "required": [
+          "feed_dots"
+        ],
+        "title": "PrinterFeedConfig"
+      },
+      "PrinterStatusResponse": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "connected": {
+            "type": "boolean",
+            "title": "Connected"
+          },
+          "healthy": {
+            "type": "boolean",
+            "title": "Healthy"
+          },
+          "simulated": {
+            "type": "boolean",
+            "title": "Simulated",
+            "default": false
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "paper_out": {
+            "type": "boolean",
+            "title": "Paper Out",
+            "default": false
+          },
+          "paper_near_end": {
+            "type": "boolean",
+            "title": "Paper Near End",
+            "default": false
+          },
+          "cover_open": {
+            "type": "boolean",
+            "title": "Cover Open",
+            "default": false
+          },
+          "cutter_error": {
+            "type": "boolean",
+            "title": "Cutter Error",
+            "default": false
+          },
+          "recoverable_error": {
+            "type": "boolean",
+            "title": "Recoverable Error",
+            "default": false
+          },
+          "unrecoverable_error": {
+            "type": "boolean",
+            "title": "Unrecoverable Error",
+            "default": false
+          },
+          "auto_recoverable_error": {
+            "type": "boolean",
+            "title": "Auto Recoverable Error",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "enabled",
+          "connected",
+          "healthy"
+        ],
+        "title": "PrinterStatusResponse"
       },
       "PublicUserResponse": {
         "properties": {

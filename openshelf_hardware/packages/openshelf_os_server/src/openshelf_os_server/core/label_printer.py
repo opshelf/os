@@ -14,9 +14,8 @@ RIGHT_MARGIN_DOTS = 24
 TOP_MARGIN_DOTS = 0
 BOTTOM_MARGIN_DOTS = 64
 
-# The T9E-US ignores a feed command after a raster job. Blank raster rows make
-# the printer advance far enough for the finished label to clear the enclosure.
-FEED_DOTS = 22
+# The T9E-US ignores a feed command after a raster job. Configurable blank
+# raster rows advance the finished label far enough to clear the enclosure.
 
 # Kept in the job for compatibility with the printer, although its effective
 # darkness is stored in non-volatile printer configuration.
@@ -57,10 +56,12 @@ def render_label(payload: str) -> Image.Image:
     return label
 
 
-def _add_feed_rows(label: Image.Image) -> Image.Image:
+def _add_feed_rows(label: Image.Image, feed_dots: int) -> Image.Image:
+    if feed_dots < 0:
+        raise ValueError("feed_dots must be non-negative")
     raster = Image.new(
         "L",
-        (label.width, label.height + FEED_DOTS),
+        (label.width, label.height + feed_dots),
         255,
     )
     raster.paste(label, (0, 0))
@@ -88,9 +89,9 @@ def _pack_raster(image: Image.Image, *, threshold: int = 128) -> tuple[bytes, in
     return bytes(packed), bytes_per_row, height
 
 
-def build_label_job(payload: str) -> bytes:
+def build_label_job(payload: str, *, feed_dots: int) -> bytes:
     """Build the complete ESC/POS raster job for one label without doing I/O."""
-    packed, bytes_per_row, height = _pack_raster(_add_feed_rows(render_label(payload)))
+    packed, bytes_per_row, height = _pack_raster(_add_feed_rows(render_label(payload), feed_dots))
     raster_header = (
         GS
         + b"v0"

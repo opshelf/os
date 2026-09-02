@@ -1,5 +1,6 @@
 from unittest.mock import patch
 
+import pytest
 from PIL import Image, ImageOps
 
 from openshelf_os_server.core import label_printer
@@ -28,11 +29,16 @@ def test_render_label_uses_tuned_alignment() -> None:
 
 
 def test_build_label_job_adds_blank_raster_rows_for_feed() -> None:
-    job = label_printer.build_label_job("036000291452")
+    job = label_printer.build_label_job("036000291452", feed_dots=18)
 
-    expected_prefix = b"\x1b@\x1b7\x09\x50\x02\x1dv0\x00\x30\x00\xe1\x00"
+    expected_prefix = b"\x1b@\x1b7\x09\x50\x02\x1dv0\x00\x30\x00\xdd\x00"
     bytes_per_row = 48
-    raster_height = 225
+    raster_height = 221
     assert job.startswith(expected_prefix)
     assert len(job) == len(expected_prefix) + bytes_per_row * raster_height
-    assert job[-bytes_per_row * 22 :] == bytes(bytes_per_row * 22)
+    assert job[-bytes_per_row * 18 :] == bytes(bytes_per_row * 18)
+
+
+def test_build_label_job_rejects_negative_feed() -> None:
+    with pytest.raises(ValueError, match="feed_dots must be non-negative"):
+        label_printer.build_label_job("036000291452", feed_dots=-1)
