@@ -5,6 +5,7 @@ import os
 import re
 import time
 import traceback
+import uuid
 import sentry_sdk
 
 from collections.abc import Awaitable, Callable
@@ -48,6 +49,10 @@ PHYSICAL_ESTOP_REASON = "Physical emergency stop triggered"
 
 CrashArtifactProvider = Callable[[str], Awaitable[CrashReportArtifacts]]
 CrashArtifactBeginProvider = Callable[[str], Awaitable[CrashReportArtifacts]]
+CommandLifecycleCallback = Callable[
+    [str, QueuedOperation, Optional[dict[str, Any]]],
+    Awaitable[None],
+]
 
 _MOTOR_ID_RE = re.compile(r"motor\s+(\d+)", re.IGNORECASE)
 
@@ -136,6 +141,13 @@ def _normalize_command(command: Optional[Dict[str, Any]]) -> Optional[Dict[str, 
 
     normalized: Dict[str, Any] = {"command": command_name}
 
+    if command.get("command_id") is not None:
+        normalized["command_id"] = str(command["command_id"])
+    if command.get("request_id") is not None:
+        normalized["request_id"] = str(command["request_id"])
+    if command.get("visibility") == "internal":
+        normalized["visibility"] = "internal"
+
     if location is not None:
         normalized["location"] = location
 
@@ -162,14 +174,17 @@ def _transform_worker_status_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         if command is None:
             continue
 
-        normalized_operations.append(
-            {
-                "command": command,
-                "timestamp": operation.get("timestamp"),
-                "location": _normalize_location(operation.get("location")),
-                "item_data": operation.get("item_data"),
-            }
-        )
+        normalized_operation = {
+            "command": command,
+            "command_id": operation.get("command_id"),
+            "timestamp": operation.get("timestamp"),
+            "location": _normalize_location(operation.get("location")),
+            "item_data": operation.get("item_data"),
+        }
+        if operation.get("visibility") == "internal":
+            normalized_operation["visibility"] = "internal"
+
+        normalized_operations.append(normalized_operation)
 
     transformed["queued_operations"] = normalized_operations
     transformed["queue_length"] = payload.get("queue_length", len(normalized_operations))
@@ -260,6 +275,7 @@ class RobotWorker:
         robot: Robot,
         crash_artifact_provider: CrashArtifactProvider | None = None,
         crash_artifact_begin_provider: CrashArtifactBeginProvider | None = None,
+        command_lifecycle_callback: CommandLifecycleCallback | None = None,
     ):
         if RobotWorker._instance is not None:
             raise RuntimeError("RobotWorker is a singleton. Use `get_instance()` to access it.")
@@ -267,6 +283,7 @@ class RobotWorker:
         self._robot = robot
         self._crash_artifact_provider = crash_artifact_provider
         self._crash_artifact_begin_provider = crash_artifact_begin_provider
+        self._command_lifecycle_callback = command_lifecycle_callback
         self._worker_task: Optional[asyncio.Task] = None
         self._scale_poll_task: Optional[asyncio.Task] = None
         self._estop_monitor_task: Optional[asyncio.Task] = None
@@ -891,25 +908,29 @@ class RobotWorker:
             self._robot.set_operation_context_listener(self._on_operation_context_change)
 
     async def clear_commands(self) -> None:
-        while self._command_queue.empty() is False:
-            try:
-                self._command_queue.get_nowait()
-            except asyncio.QueueEmpty:
-                break
-
-        if self._current_operation is None:
-            self._queued_commands = []
-        else:
-            self._queued_commands = [self._current_operation]
-
+        await self._discard_queued_commands("Commands cleared")
         await self._publish_status()
 
-    async def enqueue_command(self, command: RobotCommands) -> None:
-        queued_operation = self._snapshot_command(command)
-
-        self._queued_commands.append(queued_operation)
-        await self._command_queue.put(queued_operation)
-        await self._publish_status()
+    async def enqueue_command(
+        self,
+        command: RobotCommands,
+        *,
+        command_id: Optional[str] = None,
+        visibility: Optional[str] = None,
+    ) -> None:
+        async with self._terminalization_lock:
+            queued_operation = self._snapshot_command(
+                command,
+                command_id=command_id,
+                visibility=visibility,
+                admission_generation=self._interruption_generation,
+            )
+            self._queued_commands.append(queued_operation)
+            self._command_queue.put_nowait(queued_operation)
+        try:
+            await self._publish_status()
+        except Exception as exc:
+            logging.warning("Failed to publish queued command status: %s", exc)
 
     async def subscribe_status(self) -> tuple[asyncio.Queue[str], Optional[str]]:
         queue: asyncio.Queue[str] = asyncio.Queue()
@@ -1025,12 +1046,17 @@ class RobotWorker:
         logging.info("Emergency stop triggered: %s", reason)
 
         async def _cleanup_after_stop() -> None:
-            await self._terminalize_current_command(
-                interruption_reason=f"Emergency stop: {reason}",
+            interruption_reason = f"Emergency stop: {reason}"
+            interruption_boundary = await self._terminalize_current_command(
+                interruption_reason=interruption_reason,
             )
+            assert interruption_boundary is not None
 
             await self._restore_y_brake_output()
-            await self._discard_queued_commands(f"Emergency stop: {reason}")
+            await self._discard_queued_commands(
+                interruption_reason,
+                interruption_boundary=interruption_boundary,
+            )
             await self._publish_status()
 
         self._track_background_task(_cleanup_after_stop(), name="emergency-stop-cleanup")
@@ -1211,7 +1237,14 @@ class RobotWorker:
                 exc=bridge_error,
             )
 
-    def _snapshot_command(self, command: RobotCommands) -> QueuedOperation:
+    def _snapshot_command(
+        self,
+        command: RobotCommands,
+        *,
+        command_id: Optional[str] = None,
+        visibility: Optional[str] = None,
+        admission_generation: int = 0,
+    ) -> QueuedOperation:
         metadata: dict[str, Any] = {}
         for attribute in ("metadata",):
             value = getattr(command, attribute, None)
@@ -1224,6 +1257,9 @@ class RobotWorker:
         return QueuedOperation(
             command=command,
             timestamp=datetime.now(timezone.utc),
+            admission_generation=admission_generation,
+            command_id=command_id or str(uuid.uuid4()),
+            visibility=visibility,
             location=location,
             item_data=item_data,
             metadata=metadata,
@@ -1254,9 +1290,12 @@ class RobotWorker:
         self,
         command: Optional[RobotCommands],
         error: str,
+        operation: Optional[QueuedOperation] = None,
+        *,
+        code: str = "command_interrupted",
     ) -> None:
-        """Publish a terminal, correlated failure for storage commands."""
-        if not isinstance(command, (RetrieveItemCommand, StoreItemCommand)):
+        """Publish a terminal, correlated failure and persist its lifecycle."""
+        if command is None:
             return
 
         upca: Optional[str] = command.upca if isinstance(command, RetrieveItemCommand) else None
@@ -1267,21 +1306,39 @@ class RobotWorker:
                 upca = str(item_upca)
             location = command.item.get("location")
 
-        await self.publish_event(
-            {
-                "command": command.command,
-                "message": "error",
-                "error": error,
-                "request_id": command.request_id,
-                "upca": upca,
-                "location": location,
-            }
-        )
+        payload: dict[str, Any] = {
+            "command": command.command,
+            "message": "failed",
+            "command_id": operation.command_id if operation is not None else None,
+            "error": error,
+            "code": code,
+            "request_id": getattr(command, "request_id", None),
+            "upca": upca,
+            "location": location,
+        }
+        if operation is not None and operation.visibility == "internal":
+            payload["visibility"] = "internal"
+        await self.publish_event(payload)
+        await self._notify_command_lifecycle("failed", operation, payload)
+
+    async def _notify_command_lifecycle(
+        self,
+        status: str,
+        operation: Optional[QueuedOperation],
+        result: Optional[dict[str, Any]],
+    ) -> None:
+        if operation is None or self._command_lifecycle_callback is None:
+            return
+        try:
+            await self._command_lifecycle_callback(status, operation, result)
+        except Exception as exc:
+            logging.exception("Failed to persist command lifecycle %s: %s", status, exc)
 
     async def _publish_completed_command_result(
         self,
         task: asyncio.Task[Any],
         command: Optional[RobotCommands],
+        operation: Optional[QueuedOperation] = None,
     ) -> None:
         """Publish a completed command using the normal worker-loop semantics."""
         try:
@@ -1308,22 +1365,31 @@ class RobotWorker:
                     logging.info("Needs-home flag cleared after successful homing")
 
             if isinstance(result, RobotCommandSuccessful):
-                if isinstance(command, (RetrieveItemCommand, StoreItemCommand)):
-                    payload = result.model_dump(mode="json")
-                    payload["request_id"] = command.request_id
-                    await self.publish_event(payload)
-                else:
-                    await self.publish_event(result.model_dump_json())
-            elif isinstance(command, (RetrieveItemCommand, StoreItemCommand)):
-                await self._publish_command_failure(command, result.error)
+                payload = result.model_dump(mode="json")
+                payload["command_id"] = operation.command_id if operation is not None else None
+                payload["request_id"] = getattr(command, "request_id", None)
+                if operation is not None and operation.visibility == "internal":
+                    payload["visibility"] = "internal"
+                await self.publish_event(payload)
+                await self._notify_command_lifecycle("succeeded", operation, payload)
             else:
-                await self.publish_event(result.model_dump_json())
+                await self._publish_command_failure(
+                    command,
+                    result.error,
+                    operation,
+                    code="execution_failed",
+                )
             logging.info("Published command result to event queue")
         except Exception as err:
             logging.warning("Command execution error: %s", err)
 
             try:
-                await self._publish_command_failure(command, str(err))
+                await self._publish_command_failure(
+                    command,
+                    str(err),
+                    operation,
+                    code="execution_error",
+                )
             except Exception as publish_error:
                 logging.warning("Failed to publish command failure: %s", publish_error)
 
@@ -1390,12 +1456,16 @@ class RobotWorker:
         self._current_command = None
         self._command_started_at = None
 
-    async def _terminalize_current_command(self, *, interruption_reason: Optional[str] = None) -> bool:
+    async def _terminalize_current_command(
+        self, *, interruption_reason: Optional[str] = None
+    ) -> Optional[int]:
         """Publish one terminal outcome and clear the matching in-flight command state."""
         async with self._terminalization_lock:
+            interruption_boundary: Optional[int] = None
             if interruption_reason is not None:
                 self._interruption_generation += 1
                 self._latest_interruption_reason = interruption_reason
+                interruption_boundary = self._interruption_generation
 
             task = self._current_task
             command = self._current_command
@@ -1403,18 +1473,18 @@ class RobotWorker:
 
             if task is None:
                 if interruption_reason is not None:
-                    await self._publish_command_failure(command, interruption_reason)
+                    await self._publish_command_failure(command, interruption_reason, operation)
                 self._clear_current_command_state(task, command, operation)
-                return command is not None
+                return interruption_boundary
 
             if task.done() is True:
                 if task.cancelled() is True:
                     if interruption_reason is not None:
-                        await self._publish_command_failure(command, interruption_reason)
+                        await self._publish_command_failure(command, interruption_reason, operation)
                 else:
-                    await self._publish_completed_command_result(task, command)
+                    await self._publish_completed_command_result(task, command, operation)
             elif interruption_reason is None:
-                return False
+                return None
             else:
                 logging.info("Cancelling current command task during %s", interruption_reason)
                 task.cancel()
@@ -1424,33 +1494,62 @@ class RobotWorker:
                     pass
                 except Exception as exc:
                     logging.warning("Cancelled task failed during cleanup: %s", exc)
-                await self._publish_command_failure(command, interruption_reason)
+                await self._publish_command_failure(command, interruption_reason, operation)
 
             self._clear_current_command_state(task, command, operation)
-            return True
+            return interruption_boundary
 
-    async def _discard_queued_commands(self, reason: str) -> None:
-        """Fail queued storage commands before removing them from the worker queue."""
+    async def _discard_queued_commands(
+        self,
+        reason: str,
+        *,
+        interruption_boundary: Optional[int] = None,
+    ) -> None:
+        """Fail queued commands admitted before the interruption boundary."""
         async with self._terminalization_lock:
-            queued_operations: list[QueuedOperation] = []
+            if interruption_boundary is None:
+                self._interruption_generation += 1
+                self._latest_interruption_reason = reason
+                interruption_boundary = self._interruption_generation
+
+            drained_operations: list[QueuedOperation] = []
             while self._command_queue.empty() is False:
                 try:
                     queued_operation = self._command_queue.get_nowait()
                 except asyncio.QueueEmpty:
                     break
-                queued_operations.append(queued_operation)
+                drained_operations.append(queued_operation)
 
-            for queued_operation in self._queued_commands:
-                if (
-                    queued_operation is not self._current_operation
-                    and all(queued_operation is not operation for operation in queued_operations)
-                ):
+            tracked_operations = [
+                queued_operation
+                for queued_operation in self._queued_commands
+                if queued_operation is not self._current_operation
+            ]
+            queued_operations = list(drained_operations)
+            for queued_operation in tracked_operations:
+                if all(queued_operation is not operation for operation in queued_operations):
                     queued_operations.append(queued_operation)
 
             for queued_operation in queued_operations:
-                await self._publish_command_failure(queued_operation.command, reason)
+                if queued_operation.admission_generation < interruption_boundary:
+                    await self._publish_command_failure(
+                        queued_operation.command,
+                        reason,
+                        queued_operation,
+                    )
 
-            self._queued_commands = [self._current_operation] if self._current_operation is not None else []
+            for queued_operation in drained_operations:
+                if queued_operation.admission_generation >= interruption_boundary:
+                    self._command_queue.put_nowait(queued_operation)
+
+            self._queued_commands = [
+                queued_operation
+                for queued_operation in self._queued_commands
+                if (
+                    queued_operation is self._current_operation
+                    or queued_operation.admission_generation >= interruption_boundary
+                )
+            ]
 
     async def _publish_status(self) -> None:
         try:
@@ -1498,6 +1597,11 @@ class RobotWorker:
 
         status_payload = status.model_dump(mode="json")
 
+        if self._current_operation is not None and isinstance(status_payload.get("current_command"), dict):
+            status_payload["current_command"]["command_id"] = self._current_operation.command_id
+            if self._current_operation.visibility == "internal":
+                status_payload["current_command"]["visibility"] = "internal"
+
         if status.error_queue:
             status_payload["error_queue"] = [
                 error.model_dump(mode="json", exclude_none=True) for error in status.error_queue
@@ -1525,7 +1629,6 @@ class RobotWorker:
             try:
                 if self._current_task is None:
                     loop_count += 1
-                    dequeue_interruption_generation = self._interruption_generation
 
                     if loop_count % 30 == 1:
                         logger.debug("process_commands polling, loop=%d", loop_count)
@@ -1541,11 +1644,12 @@ class RobotWorker:
 
                     command = queued_operation.command
                     async with self._terminalization_lock:
-                        if self._interruption_generation != dequeue_interruption_generation:
+                        if queued_operation.admission_generation != self._interruption_generation:
                             if any(operation is queued_operation for operation in self._queued_commands):
                                 await self._publish_command_failure(
                                     command,
                                     self._latest_interruption_reason or "Command interrupted",
+                                    queued_operation,
                                 )
                                 self._queued_commands = [
                                     operation
@@ -1555,6 +1659,7 @@ class RobotWorker:
                             continue
                         self._current_command = command
                         self._current_operation = queued_operation
+                    await self._notify_command_lifecycle("running", queued_operation, None)
                     await self._publish_status()
 
                     async with self._terminalization_lock:
@@ -1606,6 +1711,12 @@ class RobotWorker:
                         pass
 
                 self._clear_robot_operation_context()
+                await self._publish_command_failure(
+                    self._current_command,
+                    str(err),
+                    self._current_operation,
+                    code="worker_error",
+                )
                 try:
                     await self._publish_status()
                 except Exception as publish_err:

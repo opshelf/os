@@ -94,12 +94,18 @@ class MockRobotRuntime:
 		async with AsyncSessionLocal() as session:
 			now = _utcnow()
 			result = await session.execute(
-				select(MockRobotCommand).where(MockRobotCommand.status.in_(ACTIVE_STATUSES))
+				select(MockRobotCommand).where(
+					MockRobotCommand.runtime == "mock",
+					MockRobotCommand.status.in_(ACTIVE_STATUSES),
+				)
 			)
 			for row in result.scalars():
 				row.status = "failed"
 				row.result = {
 					"message": "failed",
+					"command": row.payload.get("command"),
+					"command_id": row.command_id,
+					"request_id": row.request_id,
 					"error": "Command interrupted by service restart",
 					"code": "service_restarted",
 				}
@@ -108,6 +114,7 @@ class MockRobotRuntime:
 			cutoff = now - timedelta(days=MOCK_COMMAND_RETENTION_DAYS)
 			await session.execute(
 				delete(MockRobotCommand).where(
+					MockRobotCommand.runtime == "mock",
 					MockRobotCommand.completed_at.isnot(None),
 					MockRobotCommand.completed_at < cutoff,
 				)
@@ -140,6 +147,7 @@ class MockRobotRuntime:
 			async with AsyncSessionLocal() as session:
 				await session.execute(
 					delete(MockRobotCommand).where(
+						MockRobotCommand.runtime == "mock",
 						MockRobotCommand.completed_at.isnot(None),
 						MockRobotCommand.completed_at
 						< _utcnow() - timedelta(days=MOCK_COMMAND_RETENTION_DAYS),
@@ -148,7 +156,10 @@ class MockRobotRuntime:
 				await session.commit()
 				if request_id is not None:
 					result = await session.execute(
-						select(MockRobotCommand).where(MockRobotCommand.request_id == request_id)
+						select(MockRobotCommand).where(
+							MockRobotCommand.runtime == "mock",
+							MockRobotCommand.request_id == request_id,
+						)
 					)
 					existing = result.scalar_one_or_none()
 					if existing is not None:
@@ -159,13 +170,17 @@ class MockRobotRuntime:
 				active_count = await session.scalar(
 					select(func.count())
 					.select_from(MockRobotCommand)
-					.where(MockRobotCommand.status.in_(ACTIVE_STATUSES))
+					.where(
+						MockRobotCommand.runtime == "mock",
+						MockRobotCommand.status.in_(ACTIVE_STATUSES),
+					)
 				)
 				if int(active_count or 0) >= MOCK_COMMAND_LIMIT:
 					raise MockQueueFullError
 
 				row = MockRobotCommand(
 					command_id=str(uuid.uuid4()),
+					runtime="mock",
 					request_id=request_id,
 					payload=payload,
 					status="queued",
@@ -189,7 +204,10 @@ class MockRobotRuntime:
 			count = await session.scalar(
 				select(func.count())
 				.select_from(MockRobotCommand)
-				.where(MockRobotCommand.status.in_(ACTIVE_STATUSES))
+				.where(
+					MockRobotCommand.runtime == "mock",
+					MockRobotCommand.status.in_(ACTIVE_STATUSES),
+				)
 			)
 			return bool(count)
 
@@ -199,6 +217,7 @@ class MockRobotRuntime:
 		async with AsyncSessionLocal() as session:
 			await session.execute(
 				delete(MockRobotCommand).where(
+					MockRobotCommand.runtime == "mock",
 					MockRobotCommand.completed_at.isnot(None),
 					MockRobotCommand.completed_at
 					< _utcnow() - timedelta(days=MOCK_COMMAND_RETENTION_DAYS),
@@ -206,7 +225,10 @@ class MockRobotRuntime:
 			)
 			await session.commit()
 			result = await session.execute(
-				select(MockRobotCommand).where(MockRobotCommand.request_id == request_id)
+				select(MockRobotCommand).where(
+					MockRobotCommand.runtime == "mock",
+					MockRobotCommand.request_id == request_id,
+				)
 			)
 			row = result.scalar_one_or_none()
 			if row is not None and row.payload != payload:
@@ -233,6 +255,8 @@ class MockRobotRuntime:
 				result = {
 					"message": "failed",
 					"command": row.payload.get("command"),
+					"command_id": row.command_id,
+					"request_id": row.request_id,
 					"error": str(exc),
 					"code": "execution_conflict",
 				}
@@ -245,7 +269,10 @@ class MockRobotRuntime:
 			async with AsyncSessionLocal() as session:
 				result = await session.execute(
 					select(MockRobotCommand)
-					.where(MockRobotCommand.status == "queued")
+					.where(
+						MockRobotCommand.runtime == "mock",
+						MockRobotCommand.status == "queued",
+					)
 					.order_by(MockRobotCommand.created_at, MockRobotCommand.command_id)
 					.limit(1)
 				)
@@ -405,7 +432,10 @@ class MockRobotRuntime:
 			commands = (
 				await session.execute(
 					select(MockRobotCommand)
-					.where(MockRobotCommand.status.in_(ACTIVE_STATUSES))
+					.where(
+						MockRobotCommand.runtime == "mock",
+						MockRobotCommand.status.in_(ACTIVE_STATUSES),
+					)
 					.order_by(MockRobotCommand.created_at, MockRobotCommand.command_id)
 				)
 			).scalars().all()
@@ -453,7 +483,9 @@ class MockRobotRuntime:
 			"mode": "mock",
 			"running": True,
 			"ready": True,
-			"current_command": running.payload if running is not None else None,
+			"current_command": (
+				{**running.payload, "command_id": running.command_id} if running is not None else None
+			),
 			"queued_operations": [
 				{"command_id": row.command_id, "command": row.payload, "timestamp": row.created_at.isoformat()}
 				for row in queued

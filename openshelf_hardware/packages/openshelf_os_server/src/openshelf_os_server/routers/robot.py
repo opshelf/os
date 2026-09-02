@@ -43,7 +43,15 @@ from openshelf_os_server.core.mock_robot import (
     MockQueueFullError,
     MockRequestConflictError,
     get_mock_robot_runtime,
-    serialize_mock_command,
+)
+from openshelf_os_server.core.command_lifecycle import (
+    CommandQueueFullError,
+    CommandRequestConflictError,
+    admit as admit_robot_command,
+    enqueue_persisted,
+    get_command as get_lifecycle_command,
+    replay as replay_robot_command,
+    serialize_command,
 )
 from openshelf_os_server.core.storage import StorageService
 from openshelf_os_server.core.bin_storage import (
@@ -273,16 +281,16 @@ class SafetyComponentOverrideRequest(BaseModel):
     bypass: bool
 
 
-class MockCommandAcceptedResponse(BaseModel):
+class CommandAcceptedResponse(BaseModel):
     message: Literal["success"]
     command_id: str
     status: Literal["queued", "running", "succeeded", "failed"]
 
 
-class MockCommandLifecycleResponse(BaseModel):
+class CommandLifecycleResponse(BaseModel):
     command_id: str
     request_id: Optional[str]
-    command: Literal["store_item", "retrieve_item"]
+    command: str
     status: Literal["queued", "running", "succeeded", "failed"]
     result: Optional[dict[str, Any]]
     created_at: datetime
@@ -314,6 +322,18 @@ async def get_command_worker_for_mode() -> RobotWorker | None:
         return None
     await check_robot_enabled()
     return await get_robot_worker_or_error()
+
+
+async def get_optional_command_worker_for_mode() -> RobotWorker | None:
+    """Resolve the worker without preempting durable idempotency replays."""
+    if get_operating_mode() == OperatingMode.mock:
+        return None
+    if get_settings().robot.enabled is False:
+        return None
+    try:
+        return await get_robot_worker()
+    except ValueError:
+        return None
 
 
 def _ensure_command_allowed_while_needs_home(command: RobotCommands, worker: RobotWorker) -> None:
@@ -442,38 +462,53 @@ async def _validate_mock_retrieve(
         )
 
 
-@router.post("/commands", dependencies=[Depends(get_relay_or_current_user)])
+@router.post(
+    "/commands",
+    dependencies=[Depends(get_relay_or_current_user)],
+    response_model=CommandAcceptedResponse,
+    responses={
+        409: {"description": "Idempotency conflict or command precondition failed"},
+        423: {"description": "A multi-item bin workflow currently owns the robot"},
+        429: {
+            "description": "The active command queue is full",
+            "headers": {"Retry-After": {"schema": {"type": "string"}}},
+        },
+    },
+)
 async def robot_commands(
     command: RobotCommands,
-    worker: RobotWorker | None = Depends(get_command_worker_for_mode),
+    worker: RobotWorker | None = Depends(get_optional_command_worker_for_mode),
     current_user: User = Depends(get_relay_or_current_user),
     db: AsyncSession = Depends(get_db),
-) -> SuccessResponse | MockCommandAcceptedResponse:
-    if get_operating_mode() == OperatingMode.mock:
+) -> CommandAcceptedResponse:
+    operating_mode = get_operating_mode()
+    submission_payload = command.model_dump(mode="json", exclude_none=True)
+    request_id = getattr(command, "request_id", None)
+    if operating_mode == OperatingMode.mock:
         if not isinstance(command, (StoreItemCommand, RetrieveItemCommand)):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Mock mode supports only store_item and retrieve_item",
             )
         runtime = get_mock_robot_runtime()
-        payload = command.model_dump(mode="json", exclude_none=True)
-        request_id = command.request_id
+        payload = submission_payload
+        try:
+            replay = await runtime.replay(payload, request_id)
+        except MockRequestConflictError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="request_id was already used with a different payload",
+            ) from exc
+        if replay is not None:
+            return CommandAcceptedResponse.model_validate(
+                {"message": "success", "command_id": replay.command_id, "status": replay.status}
+            )
+
         async with bin_workflow_command_admission_guard():
             # Direct unit callers often supply light-weight test doubles; API
             # requests always receive a real AsyncSession and enforce the durable lock.
             if isinstance(db, AsyncSession):
                 await _ensure_no_active_bin_workflow(command, db, current_user)
-            try:
-                replay = await runtime.replay(payload, request_id)
-            except MockRequestConflictError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="request_id was already used with a different payload",
-                ) from exc
-            if replay is not None:
-                return MockCommandAcceptedResponse.model_validate(
-                    {"message": "success", "command_id": replay.command_id, "status": replay.status}
-                )
 
         if isinstance(command, StoreItemCommand):
             await _validate_mock_store(command, db)
@@ -502,16 +537,31 @@ async def robot_commands(
                 ) from exc
             except ValueError as exc:
                 raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
-        return MockCommandAcceptedResponse.model_validate(
+        return CommandAcceptedResponse.model_validate(
             {"message": "success", "command_id": row.command_id, "status": row.status}
         )
 
+    try:
+        replay = await replay_robot_command(submission_payload, request_id)
+    except CommandRequestConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="request_id was already used with a different payload",
+        ) from exc
+    if replay is not None:
+        return CommandAcceptedResponse(
+            message="success",
+            command_id=replay.command_id,
+            status=cast(Any, replay.status),
+        )
+
+    await _ensure_laser_auto_calibration_not_running()
     if worker is None:
+        await check_robot_enabled()
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Robot is not initialized or failed to start",
         )
-    await _ensure_laser_auto_calibration_not_running()
     _ensure_command_allowed_while_needs_home(command, worker)
 
     if isinstance(command, StoreItemCommand):
@@ -551,7 +601,7 @@ async def robot_commands(
                         status_code=status.HTTP_409_CONFLICT,
                         detail="Item is stored in a bin; use the storage bin workflow",
                     )
-                command = StoreItemCommand(item=item_data)
+                command = StoreItemCommand(item=item_data, request_id=request_id)
             else:
                 logging.info("Item not found in db for upca: %s", upca)
 
@@ -643,21 +693,48 @@ async def robot_commands(
     async with bin_workflow_command_admission_guard():
         await _ensure_no_active_bin_workflow(command, db, current_user, worker)
         async with robot_command_enqueue_guard():
-            await worker.enqueue_command(command)
-    return SuccessResponse()
+            try:
+                row, was_replay = await admit_robot_command(
+                    submission_payload,
+                    request_id=request_id,
+                    correlation_id=correlation_id_var.get(),
+                )
+            except CommandRequestConflictError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="request_id was already used with a different payload",
+                ) from exc
+            except CommandQueueFullError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail="Robot command queue is full",
+                    headers={"Retry-After": "1"},
+                ) from exc
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail=str(exc),
+                ) from exc
+            if was_replay is False:
+                await enqueue_persisted(worker, command, row)
+    return CommandAcceptedResponse(
+        message="success",
+        command_id=row.command_id,
+        status=cast(Any, row.status),
+    )
 
 
-@router.get("/commands/{command_id}", dependencies=[Depends(get_relay_or_current_user)])
-async def get_robot_command(command_id: str) -> MockCommandLifecycleResponse:
-    if get_operating_mode() != OperatingMode.mock:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Robot command lifecycle polling is unavailable in this mode",
-        )
-    row = await get_mock_robot_runtime().get_command(command_id)
+@router.get(
+    "/commands/{command_id}",
+    dependencies=[Depends(get_relay_or_current_user)],
+    response_model=CommandLifecycleResponse,
+    responses={404: {"description": "Robot command not found"}},
+)
+async def get_robot_command(command_id: str) -> CommandLifecycleResponse:
+    row = await get_lifecycle_command(command_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Robot command not found")
-    return MockCommandLifecycleResponse.model_validate(serialize_mock_command(row))
+    return CommandLifecycleResponse.model_validate(serialize_command(row))
 
 
 @router.post("/start", dependencies=[Depends(get_current_user), Depends(require_permissions("robot:control")), Depends(check_robot_enabled)])

@@ -2126,15 +2126,23 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/components/schemas/SuccessResponse"
-                    },
-                    {
-                      "$ref": "#/components/schemas/MockCommandAcceptedResponse"
-                    }
-                  ],
-                  "title": "Response Robot Commands Api Robot Commands Post"
+                  "$ref": "#/components/schemas/CommandAcceptedResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idempotency conflict or command precondition failed"
+          },
+          "423": {
+            "description": "A multi-item bin workflow currently owns the robot"
+          },
+          "429": {
+            "description": "The active command queue is full",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
                 }
               }
             }
@@ -2197,10 +2205,13 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MockCommandLifecycleResponse"
+                  "$ref": "#/components/schemas/CommandLifecycleResponse"
                 }
               }
             }
+          },
+          "404": {
+            "description": "Robot command not found"
           },
           "422": {
             "description": "Validation Error",
@@ -8567,6 +8578,122 @@
         ],
         "title": "CalibrationStatusResponse"
       },
+      "CommandAcceptedResponse": {
+        "properties": {
+          "message": {
+            "type": "string",
+            "const": "success",
+            "title": "Message"
+          },
+          "command_id": {
+            "type": "string",
+            "title": "Command Id"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "succeeded",
+              "failed"
+            ],
+            "title": "Status"
+          }
+        },
+        "type": "object",
+        "required": [
+          "message",
+          "command_id",
+          "status"
+        ],
+        "title": "CommandAcceptedResponse"
+      },
+      "CommandLifecycleResponse": {
+        "properties": {
+          "command_id": {
+            "type": "string",
+            "title": "Command Id"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Id"
+          },
+          "command": {
+            "type": "string",
+            "title": "Command"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "succeeded",
+              "failed"
+            ],
+            "title": "Status"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "command_id",
+          "request_id",
+          "command",
+          "status",
+          "result",
+          "created_at",
+          "started_at",
+          "completed_at"
+        ],
+        "title": "CommandLifecycleResponse"
+      },
       "DemoCycleStatusResponse": {
         "properties": {
           "is_running": {
@@ -10246,126 +10373,6 @@
         ],
         "title": "LoginRequest",
         "description": "Login request model."
-      },
-      "MockCommandAcceptedResponse": {
-        "properties": {
-          "message": {
-            "type": "string",
-            "const": "success",
-            "title": "Message"
-          },
-          "command_id": {
-            "type": "string",
-            "title": "Command Id"
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "queued",
-              "running",
-              "succeeded",
-              "failed"
-            ],
-            "title": "Status"
-          }
-        },
-        "type": "object",
-        "required": [
-          "message",
-          "command_id",
-          "status"
-        ],
-        "title": "MockCommandAcceptedResponse"
-      },
-      "MockCommandLifecycleResponse": {
-        "properties": {
-          "command_id": {
-            "type": "string",
-            "title": "Command Id"
-          },
-          "request_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Request Id"
-          },
-          "command": {
-            "type": "string",
-            "enum": [
-              "store_item",
-              "retrieve_item"
-            ],
-            "title": "Command"
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "queued",
-              "running",
-              "succeeded",
-              "failed"
-            ],
-            "title": "Status"
-          },
-          "result": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Result"
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Created At"
-          },
-          "started_at": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Started At"
-          },
-          "completed_at": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Completed At"
-          }
-        },
-        "type": "object",
-        "required": [
-          "command_id",
-          "request_id",
-          "command",
-          "status",
-          "result",
-          "created_at",
-          "started_at",
-          "completed_at"
-        ],
-        "title": "MockCommandLifecycleResponse"
       },
       "ModeResponse": {
         "properties": {

@@ -32,6 +32,9 @@ class WorkerError(BaseModel):
 class QueuedOperation(BaseModel):
     command: RobotCommands
     timestamp: datetime
+    admission_generation: int = Field(default=0, exclude=True)
+    command_id: Optional[str] = None
+    visibility: Optional[str] = None
     location: Optional[dict[str, Any]] = None
     item_data: Optional[dict[str, Any]] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -56,4 +59,3 @@ class WorkerStatus(BaseModel):
 class WorkerStatusWithQueue(WorkerStatus):
     queued_operations: List[QueuedOperation] = Field(default_factory=list)
     queue_length: int = 0
-

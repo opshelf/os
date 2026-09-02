@@ -7,7 +7,30 @@ import pathlib
 import sys
 import unittest
 import types
+import uuid
 from unittest.mock import patch
+
+
+def assert_correlated_success(case, event, expected):
+    command_id = event.get("command_id")
+    case.assertIsInstance(command_id, str)
+    uuid.UUID(command_id)
+    normalized = dict(event)
+    normalized.pop("command_id")
+    case.assertEqual(normalized, expected)
+
+
+def assert_correlated_failure(case, event, expected, *, code="command_interrupted"):
+    command_id = event.get("command_id")
+    case.assertIsInstance(command_id, str)
+    uuid.UUID(command_id)
+    case.assertEqual(event.get("message"), "failed")
+    case.assertEqual(event.get("code"), code)
+    normalized = dict(event)
+    normalized.pop("command_id")
+    normalized.pop("code")
+    normalized["message"] = "error"
+    case.assertEqual(normalized, expected)
 
 BASE = pathlib.Path(__file__).resolve()
 sys.path.insert(0, str(BASE.parents[1] / "src"))
@@ -444,6 +467,117 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
 
         RobotWorker._instance = None
 
+    async def test_emergency_cleanup_preserves_command_admitted_during_brake_restore(self):
+        from openshelf_os.robot.commands import RetrieveItemCommand
+        from openshelf_os.robot.status import RobotCommandSuccessful
+        from openshelf_os.robot.worker import RobotWorker
+
+        robot = MockRobot()
+        RobotWorker._instance = None
+        worker = RobotWorker(robot)
+        events = await worker.subscribe_events()
+        brake_restore_started = asyncio.Event()
+        release_brake_restore = asyncio.Event()
+        cleanup_complete = asyncio.Event()
+        process_task = None
+
+        async def gated_brake_restore():
+            robot.restore_y_brake_output_calls += 1
+            brake_restore_started.set()
+            await release_brake_restore.wait()
+
+        original_discard_queued_commands = worker._discard_queued_commands
+
+        async def track_cleanup_discard(reason, *, interruption_boundary=None):
+            await original_discard_queued_commands(
+                reason,
+                interruption_boundary=interruption_boundary,
+            )
+            cleanup_complete.set()
+
+        async def no_safety_change(*, refresh=True):
+            return False
+
+        async def successful_handler(command):
+            robot.handled_commands.append(command)
+            return RobotCommandSuccessful(command=command.command, upca=command.upca)
+
+        queued_before_stop = RetrieveItemCommand(
+            request_id="bin-workflow-before-emergency-boundary",
+            upca="900000000013",
+            location={"side": "left_module", "shelf_idx": 2, "cell_idx": 4},
+        )
+        recovered_command = RetrieveItemCommand(
+            request_id="bin-workflow-after-emergency-boundary",
+            upca="900000000014",
+            location={"side": "right_module", "shelf_idx": 1, "cell_idx": 3},
+        )
+        robot.restore_y_brake_output = gated_brake_restore
+        robot.handle_command = successful_handler
+        worker._discard_queued_commands = track_cleanup_discard
+        worker._evaluate_safety_guard = no_safety_change
+        await worker.enqueue_command(queued_before_stop)
+
+        try:
+            await worker.emergency_stop("brake restore boundary")
+            await asyncio.wait_for(brake_restore_started.wait(), timeout=1)
+
+            await worker.enqueue_command(recovered_command)
+            release_brake_restore.set()
+            await asyncio.wait_for(cleanup_complete.wait(), timeout=1)
+
+            failed_event = {}
+            for _ in range(3):
+                failed_event = json.loads(await asyncio.wait_for(events.get(), timeout=1))
+                if failed_event.get("request_id") == queued_before_stop.request_id:
+                    break
+            assert_correlated_failure(self, failed_event, {
+                "command": "retrieve_item",
+                "message": "error",
+                "error": "Emergency stop: brake restore boundary",
+                "request_id": "bin-workflow-before-emergency-boundary",
+                "upca": "900000000013",
+                "location": {"side": "left_module", "shelf_idx": 2, "cell_idx": 4},
+            })
+            remaining_events = []
+            while events.empty() is False:
+                remaining_events.append(json.loads(events.get_nowait()))
+            self.assertFalse(any(
+                event.get("request_id") == recovered_command.request_id
+                and event.get("message") == "failed"
+                for event in remaining_events
+            ))
+            self.assertEqual(
+                [operation.command for operation in worker._queued_commands],
+                [recovered_command],
+            )
+            self.assertEqual(worker._command_queue.qsize(), 1)
+
+            worker._running = True
+            process_task = asyncio.create_task(worker.process_commands())
+            success_event = {}
+            for _ in range(3):
+                success_event = json.loads(await asyncio.wait_for(events.get(), timeout=1))
+                if success_event.get("request_id") == recovered_command.request_id:
+                    break
+            assert_correlated_success(self, success_event, {
+                "command": "retrieve_item",
+                "message": "success",
+                "location": None,
+                "upca": "900000000014",
+                "weight": None,
+                "request_id": "bin-workflow-after-emergency-boundary",
+            })
+            self.assertEqual(robot.handled_commands, [recovered_command])
+        finally:
+            worker._running = False
+            release_brake_restore.set()
+            if process_task is not None and process_task.done() is False:
+                process_task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await process_task
+            RobotWorker._instance = None
+
     async def test_emergency_stop_cleanup_restores_y_brake_output_when_cancelled_task_fails(self):
         from openshelf_os.robot.worker import RobotWorker
 
@@ -513,7 +647,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
             await worker.emergency_stop("test")
 
             event = json.loads(await asyncio.wait_for(events.get(), timeout=1))
-            self.assertEqual(event, {
+            assert_correlated_success(self, event, {
                 "command": "retrieve_item",
                 "message": "success",
                 "location": None,
@@ -564,7 +698,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
                 failures[event["request_id"]] = event
             if len(failures) == 2:
                 break
-        self.assertEqual(failures, {
+        expected_failures = {
             "bin-workflow-queued-retrieve": {
                 "command": "retrieve_item",
                 "message": "error",
@@ -581,7 +715,9 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
                 "upca": "900000000007",
                 "location": {"side": "left_module", "shelf_idx": 4, "cell_idx": 5},
             },
-        })
+        }
+        for request_id, expected in expected_failures.items():
+            assert_correlated_failure(self, failures[request_id], expected)
         self.assertEqual(worker._queued_commands, [])
         self.assertTrue(worker._command_queue.empty())
 
@@ -604,6 +740,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
             upca="900000000001",
             location={"side": "left_module", "shelf_idx": 1, "cell_idx": 2},
         )
+        worker._current_operation = worker._snapshot_command(worker._current_command)
         worker._current_task = asyncio.create_task(slow_command())
 
         await worker.emergency_stop("test")
@@ -613,7 +750,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
             event = json.loads(await asyncio.wait_for(events.get(), timeout=1))
             if event.get("command") == "retrieve_item":
                 break
-        self.assertEqual(event, {
+        assert_correlated_failure(self, event, {
             "command": "retrieve_item",
             "message": "error",
             "error": "Emergency stop: test",
@@ -657,14 +794,14 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
 
         try:
             event = json.loads(await asyncio.wait_for(events.get(), timeout=1))
-            self.assertEqual(event, {
+            assert_correlated_failure(self, event, {
                 "command": "retrieve_item",
                 "message": "error",
                 "error": "motor fault",
                 "request_id": "bin-workflow-2",
                 "upca": "900000000002",
                 "location": {"side": "right_module", "shelf_idx": 3, "cell_idx": 4},
-            })
+            }, code="execution_error")
         finally:
             worker._running = False
             process_task.cancel()
@@ -709,7 +846,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
 
         try:
             event = json.loads(await asyncio.wait_for(events.get(), timeout=1))
-            self.assertEqual(event, {
+            assert_correlated_success(self, event, {
                 "command": "retrieve_item",
                 "message": "success",
                 "location": None,
@@ -753,7 +890,11 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
 
         try:
             event = json.loads(await asyncio.wait_for(events.get(), timeout=1))
-            self.assertEqual(event, {"command": "home", "error": "home failed"})
+            self.assertEqual(event["command"], "home")
+            self.assertEqual(event["message"], "failed")
+            self.assertEqual(event["error"], "home failed")
+            self.assertEqual(event["code"], "execution_failed")
+            uuid.UUID(event["command_id"])
         finally:
             worker._running = False
             process_task.cancel()
@@ -801,7 +942,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
                 event = json.loads(await asyncio.wait_for(events.get(), timeout=1))
                 if event.get("request_id") == command.request_id:
                     break
-            self.assertEqual(event, {
+            assert_correlated_failure(self, event, {
                 "command": "retrieve_item",
                 "message": "error",
                 "error": "Emergency stop: dequeue window",
@@ -829,6 +970,164 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
             process_task.cancel()
             with self.assertRaises(asyncio.CancelledError):
                 await process_task
+            RobotWorker._instance = None
+
+    async def test_clear_fails_dequeued_command_before_admission(self):
+        from openshelf_os.robot.commands import RetrieveItemCommand
+        from openshelf_os.robot.worker import RobotWorker
+
+        class DequeueGate(asyncio.Queue):
+            def __init__(self):
+                super().__init__()
+                self.dequeued = asyncio.Event()
+                self.release_process = asyncio.Event()
+
+            async def get(self):
+                operation = await super().get()
+                self.dequeued.set()
+                await self.release_process.wait()
+                return operation
+
+        robot = MockRobot()
+        lifecycle_events = []
+        clear_terminalization_started = asyncio.Event()
+        release_clear_terminalization = asyncio.Event()
+
+        async def lifecycle_callback(status, operation, payload):
+            lifecycle_events.append((status, operation, payload))
+            clear_terminalization_started.set()
+            await release_clear_terminalization.wait()
+
+        RobotWorker._instance = None
+        worker = RobotWorker(robot, command_lifecycle_callback=lifecycle_callback)
+        events = await worker.subscribe_events()
+        queue = DequeueGate()
+        worker._command_queue = queue
+        process_task = None
+
+        async def no_status_publish():
+            return None
+
+        async def no_safety_change(*, refresh=True):
+            return False
+
+        command = RetrieveItemCommand(
+            request_id="bin-workflow-dequeued-clear",
+            upca="900000000011",
+            location={"side": "right_module", "shelf_idx": 4, "cell_idx": 1},
+        )
+        worker._publish_status = no_status_publish
+        worker._evaluate_safety_guard = no_safety_change
+        await worker.enqueue_command(command)
+        worker._running = True
+        process_task = asyncio.create_task(worker.process_commands())
+
+        try:
+            await asyncio.wait_for(queue.dequeued.wait(), timeout=1)
+            clear_task = asyncio.create_task(worker.clear_commands())
+            await asyncio.wait_for(clear_terminalization_started.wait(), timeout=1)
+
+            queue.release_process.set()
+            await asyncio.sleep(0)
+            self.assertIsNone(worker._current_operation)
+
+            release_clear_terminalization.set()
+            await clear_task
+
+            event = json.loads(await asyncio.wait_for(events.get(), timeout=1))
+            assert_correlated_failure(self, event, {
+                "command": "retrieve_item",
+                "message": "error",
+                "error": "Commands cleared",
+                "request_id": "bin-workflow-dequeued-clear",
+                "upca": "900000000011",
+                "location": {"side": "right_module", "shelf_idx": 4, "cell_idx": 1},
+            })
+            await asyncio.sleep(0.05)
+
+            self.assertEqual(robot.handled_commands, [])
+            self.assertTrue(events.empty())
+            self.assertEqual(worker._queued_commands, [])
+            self.assertTrue(worker._command_queue.empty())
+            self.assertIsNone(worker._current_command)
+            self.assertIsNone(worker._current_task)
+            self.assertEqual(len(lifecycle_events), 1)
+            self.assertEqual(lifecycle_events[0][0], "failed")
+            self.assertEqual(lifecycle_events[0][1].command_id, event["command_id"])
+        finally:
+            worker._running = False
+            queue.release_process.set()
+            release_clear_terminalization.set()
+            if process_task is not None and process_task.done() is False:
+                process_task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await process_task
+            RobotWorker._instance = None
+
+    async def test_clear_allows_command_enqueued_after_idle_waiter(self):
+        from openshelf_os.robot.commands import RetrieveItemCommand
+        from openshelf_os.robot.status import RobotCommandSuccessful
+        from openshelf_os.robot.worker import RobotWorker
+
+        class IdleWaiterQueue(asyncio.Queue):
+            def __init__(self):
+                super().__init__()
+                self.waiting = asyncio.Event()
+
+            async def get(self):
+                self.waiting.set()
+                return await super().get()
+
+        robot = MockRobot()
+        RobotWorker._instance = None
+        worker = RobotWorker(robot)
+        events = await worker.subscribe_events()
+        worker._command_queue = IdleWaiterQueue()
+        process_task = None
+
+        async def no_status_publish():
+            return None
+
+        async def no_safety_change(*, refresh=True):
+            return False
+
+        async def successful_handler(command):
+            robot.handled_commands.append(command)
+            return RobotCommandSuccessful(command=command.command, upca=command.upca)
+
+        worker._publish_status = no_status_publish
+        worker._evaluate_safety_guard = no_safety_change
+        robot.handle_command = successful_handler
+        worker._running = True
+        process_task = asyncio.create_task(worker.process_commands())
+
+        try:
+            await asyncio.wait_for(worker._command_queue.waiting.wait(), timeout=1)
+            await worker.clear_commands()
+
+            command = RetrieveItemCommand(
+                request_id="bin-workflow-after-idle-clear",
+                upca="900000000012",
+                location={"side": "left_module", "shelf_idx": 2, "cell_idx": 3},
+            )
+            await worker.enqueue_command(command)
+
+            event = json.loads(await asyncio.wait_for(events.get(), timeout=1))
+            assert_correlated_success(self, event, {
+                "command": "retrieve_item",
+                "message": "success",
+                "location": None,
+                "upca": "900000000012",
+                "weight": None,
+                "request_id": "bin-workflow-after-idle-clear",
+            })
+            self.assertEqual(robot.handled_commands, [command])
+        finally:
+            worker._running = False
+            if process_task is not None and process_task.done() is False:
+                process_task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await process_task
             RobotWorker._instance = None
 
     async def test_shutdown_fails_dequeued_storage_command_before_task_creation(self):
@@ -872,7 +1171,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
                 event = json.loads(await asyncio.wait_for(events.get(), timeout=1))
                 if event.get("request_id") == command.request_id:
                     break
-            self.assertEqual(event, {
+            assert_correlated_failure(self, event, {
                 "command": "retrieve_item",
                 "message": "error",
                 "error": "Robot stopped during shutdown",
@@ -930,7 +1229,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
         event = json.loads(await asyncio.wait_for(events.get(), timeout=1))
         self.assertTrue(task_cancelled.is_set())
         self.assertIsNone(worker._current_task)
-        self.assertEqual(event, {
+        assert_correlated_failure(self, event, {
             "command": "retrieve_item",
             "message": "error",
             "error": "Robot stopped during shutdown",
@@ -974,7 +1273,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
         await worker.shutdown()
 
         event = json.loads(await asyncio.wait_for(events.get(), timeout=1))
-        self.assertEqual(event, {
+        assert_correlated_success(self, event, {
             "command": "retrieve_item",
             "message": "success",
             "location": None,
