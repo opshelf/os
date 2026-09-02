@@ -60,3 +60,12 @@ def test_demo_features_are_enabled_only_in_demo_mode(monkeypatch) -> None:
 	assert module.should_enable_demo_features(module.OperatingMode.development) is False
 	assert module.should_enable_demo_features(module.OperatingMode.demo) is True
 	assert module.should_enable_demo_features(module.OperatingMode.production) is False
+
+
+def test_demo_fridge_is_available_for_demo_and_development(monkeypatch) -> None:
+	module = _import_operating_mode_module(monkeypatch)
+
+	assert module.should_enable_demo_fridge(module.OperatingMode.development) is True
+	assert module.should_enable_demo_fridge(module.OperatingMode.demo) is True
+	assert module.should_enable_demo_fridge(module.OperatingMode.mock) is False
+	assert module.should_enable_demo_fridge(module.OperatingMode.production) is False

@@ -51,3 +51,10 @@ def should_enable_demo_features(mode: OperatingMode | None = None) -> bool:
     current_mode = mode if mode is not None else get_operating_mode()
 
     return current_mode == OperatingMode.demo
+
+
+def should_enable_demo_fridge(mode: OperatingMode | None = None) -> bool:
+    """Allow explicit fridge configuration in demo and development runtimes."""
+    current_mode = mode if mode is not None else get_operating_mode()
+
+    return current_mode in {OperatingMode.demo, OperatingMode.development}

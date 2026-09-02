@@ -1,8 +1,8 @@
 # Demo fridge configuration
 
-The fridge integration is active only when the API is running in `demo` mode and
-`demo.fridge.enabled` is true in `openshelf_hardware/data/config.demo.json`.
-Production and development modes ignore the fridge settings.
+The fridge integration is available when the API is running in `demo` or
+`development` mode and `demo.fridge.enabled` is true in that mode's active
+configuration. Production and mock modes ignore the fridge settings.
 
 Configure the fridge under the top-level `demo` object. The values below are
 illustrative; measure the installed door travel, center, cell coordinate, and

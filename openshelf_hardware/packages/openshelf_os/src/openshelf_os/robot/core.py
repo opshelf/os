@@ -25,7 +25,7 @@ from openshelf_os.laser_calibration.scan import (
     ScanAnalysisResult, ScanBounds, analyze_scan_capture,
     build_axis_positions, build_shelves_from_scan, create_scan_capture,
 )
-from openshelf_os.operating_mode import should_enable_demo_features
+from openshelf_os.operating_mode import should_enable_demo_features, should_enable_demo_fridge
 from openshelf_os.robot.commands import (
     RobotCommands, StopCommand, InitializeCommand, IdleCommand, HomeCommand,
     MoveCommand, RetrieveItemCommand, StoreItemCommand,
@@ -101,7 +101,7 @@ class Robot:
         )
         self._cabinet = Cabinet(gpio=self._gpio)
         self._fridge: DemoFridge | None = None
-        if should_enable_demo_features() is True and self._config.demo.fridge.enabled is True:
+        if should_enable_demo_fridge() is True and self._config.demo.fridge.enabled is True:
             self._fridge = DemoFridge(
                 motorcontroller=self._motorbus,
                 params=self._config.demo.fridge,
