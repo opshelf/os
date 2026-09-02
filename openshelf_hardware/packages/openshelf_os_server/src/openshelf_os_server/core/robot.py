@@ -227,14 +227,17 @@ async def init_robot_worker() -> None:
             crash_artifact_begin_provider=begin_motion_crash_artifacts,
             command_lifecycle_callback=handle_worker_lifecycle,
         )
+        critical_motor_components = set(CRITICAL_MOTOR_COMPONENTS)
+        if "fridge_door" in robot.get_init_component_names():
+            critical_motor_components.add("fridge_door")
         failed = tracker.failed_components(degrading_only=True)
-        failed_motor_components = [component for component in failed if component in CRITICAL_MOTOR_COMPONENTS]
+        failed_motor_components = [component for component in failed if component in critical_motor_components]
         if home_on_init is False:
             if failed_motor_components:
                 reason = "Startup failed for motion components: " + ", ".join(failed_motor_components)
             else:
                 reason = "Automatic homing disabled on initialization"
-            worker.set_needs_home(reason, axes=sorted(CRITICAL_MOTOR_COMPONENTS))
+            worker.set_needs_home(reason, axes=sorted(critical_motor_components))
         elif failed_motor_components:
             reason = "Startup failed for motion components: " + ", ".join(failed_motor_components)
             worker.set_needs_home(reason, axes=failed_motor_components)

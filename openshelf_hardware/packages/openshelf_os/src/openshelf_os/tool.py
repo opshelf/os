@@ -6,7 +6,7 @@ import time
 import openshelf_os.common as c
 
 from enum import Enum
-from typing import Optional, Literal, List, Any, Callable
+from typing import Optional, Literal, List, Any, Awaitable, Callable
 from openshelf_os.common import Motor as MotorConfig
 from hardware.controller import SharedModbusController as Controller
 from hardware.laser import LaserSensor
@@ -414,16 +414,27 @@ class Tool:
     #  High-level operations
     # ------------------------------------------------------------------ #
 
-    async def pick(self, coordinate: c.AxisCoordinate) -> None:
+    async def pick(
+        self,
+        coordinate: c.AxisCoordinate,
+        *,
+        stage_extension_mm: float | None = None,
+        before_extend: Callable[[], Awaitable[None]] | None = None,
+        after_retract: Callable[[], Awaitable[None]] | None = None,
+    ) -> None:
         try:
             target_position: Literal["front", "back"] = "front" if coordinate.s == 0 else "back"
 
             await self._gs.safe_open()
             await self.move(coordinate)
             await self.rotate_to_position(target_position)
-            await self.extend_empty(coordinate)
+            if before_extend is not None:
+                await before_extend()
+            await self.extend_empty(coordinate, stage_extension_mm=stage_extension_mm)
             await self._gs.open()
             await self.retract()
+            if after_retract is not None:
+                await after_retract()
 
         except Exception as e:
             await self._handle_fault(e)
@@ -466,15 +477,26 @@ class Tool:
                 raise
             raise GripperError(f"Pick lift/place operation failed: {str(e)}") from e
 
-    async def place(self, coordinate: c.AxisCoordinate):
+    async def place(
+        self,
+        coordinate: c.AxisCoordinate,
+        *,
+        stage_extension_mm: float | None = None,
+        before_extend: Callable[[], Awaitable[None]] | None = None,
+        after_retract: Callable[[], Awaitable[None]] | None = None,
+    ) -> None:
         try:
             target_position: Literal["front", "back"] = "front" if coordinate.s == 0 else "back"
 
             await self.move(coordinate)
             await self.rotate_to_position(target_position)
-            await self.extend(coordinate)
+            if before_extend is not None:
+                await before_extend()
+            await self.extend(coordinate, stage_extension_mm=stage_extension_mm)
             await self._gs.close()
             await self.retract_empty()
+            if after_retract is not None:
+                await after_retract()
 
         except Exception as e:
             await self._handle_fault(e)
@@ -1121,12 +1143,21 @@ class Tool:
     #  Tool extension and retraction
     # ------------------------------------------------------------------ #
 
-    async def extend(self, coordinate: Optional[c.AxisCoordinate] = None) -> None:
+    async def extend(
+        self,
+        coordinate: Optional[c.AxisCoordinate] = None,
+        *,
+        stage_extension_mm: float | None = None,
+    ) -> None:
         if self._mg is None or self._ms is None:
             raise MotorError("Tool motors (z_axis, stage) required for extension")
 
         try:
-            slide_ext = await self._get_shelf_slide_extension(coordinate)
+            slide_ext = (
+                stage_extension_mm
+                if stage_extension_mm is not None
+                else await self._get_shelf_slide_extension(coordinate)
+            )
             grip_ext = await self.get_param("Z_EXTENSION_PLACE")
             grip_rpm = await self.get_param("Z_MOVE_RPM")
             grip_accel = await self.get_param("Z_MOVE_ACCEL")
@@ -1178,12 +1209,21 @@ class Tool:
 
             raise MovementError(f"Tool IO extension failed: {str(e)}") from e
 
-    async def extend_empty(self, coordinate: Optional[c.AxisCoordinate] = None) -> None:
+    async def extend_empty(
+        self,
+        coordinate: Optional[c.AxisCoordinate] = None,
+        *,
+        stage_extension_mm: float | None = None,
+    ) -> None:
         if self._mg is None or self._ms is None:
             raise MotorError("Tool motors (z_axis, stage) required for empty extension")
 
         try:
-            slide_ext = await self._get_shelf_slide_extension(coordinate)
+            slide_ext = (
+                stage_extension_mm
+                if stage_extension_mm is not None
+                else await self._get_shelf_slide_extension(coordinate)
+            )
             grip_ext = await self.get_param("Z_EXTENSION_PICK")
             grip_rpm = await self.get_param("Z_MOVE_RPM")
             grip_accel = await self.get_param("Z_MOVE_ACCEL")
@@ -1265,6 +1305,34 @@ class Tool:
             ),
         )
         await self._ms.idle()
+
+    async def is_fully_retracted(self, *, tolerance_mm: float = 1.0) -> bool:
+        """Return whether stage and Z are at their configured retract targets."""
+        if self._mg is None or self._ms is None:
+            return False
+
+        try:
+            z_homed = self._mg.is_homed()
+            stage_homed = self._ms.is_homed()
+            if z_homed is not True or stage_homed is not True:
+                return False
+
+            z_position, stage_position = await asyncio.gather(
+                self._mg.get_position(),
+                self._ms.get_position(),
+            )
+        except Exception:
+            return False
+
+        z_target = self._get_float_param("Z_RETRACT_POSITION_MM", DEFAULT_Z_RETRACT_TARGET_MM)
+        stage_target = self._get_float_param(
+            "STAGE_RETRACT_POSITION_MM",
+            DEFAULT_STAGE_RETRACT_TARGET_MM,
+        )
+        return (
+            float(z_position) <= z_target + tolerance_mm
+            and float(stage_position) <= stage_target + tolerance_mm
+        )
 
     async def tool_wait(
         self,

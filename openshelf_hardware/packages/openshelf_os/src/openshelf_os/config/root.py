@@ -64,6 +64,35 @@ class RootConfig(BaseModel):
         data["robot_app"] = {"enabled": robot_enabled}
         return data
 
+    @model_validator(mode="after")
+    def _validate_demo_fridge_stage_extensions(self) -> "RootConfig":
+        fridge = self.demo.fridge
+        if fridge.enabled is False:
+            return self
+
+        try:
+            stage = self.robot.tool.motors.by_name("stage")
+        except KeyError as exc:
+            raise ValueError(
+                "robot.tool.motors must contain an enabled stage motor when the demo fridge is enabled"
+            ) from exc
+
+        if stage.enabled is False:
+            raise ValueError("the stage motor must be enabled when the demo fridge is enabled")
+
+        lower_limit = float(stage.lower_lim)
+        upper_limit = float(stage.lim)
+        for cell in fridge.cells:
+            extension = float(cell.stage_extension_mm)
+            if extension < lower_limit or extension > upper_limit:
+                location = cell.location
+                raise ValueError(
+                    "demo fridge stage extension for "
+                    f"{location.side}:{location.shelf_idx}:{location.cell_idx} must be within "
+                    f"the stage motor limits [{lower_limit}, {upper_limit}]"
+                )
+
+        return self
 
     def get(self, dotted_path: str, default: Any = ...) -> Any:
         cur: Any = self

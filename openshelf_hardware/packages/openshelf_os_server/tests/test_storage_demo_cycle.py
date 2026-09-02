@@ -155,6 +155,61 @@ async def test_demo_start_leaves_nonreserved_mapping_unchanged(
 
 
 @pytest.mark.anyio
+async def test_demo_cycle_passes_mapped_location_to_normal_place_and_pick(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    location = _demo_location()
+    coord = MagicMock()
+    nudge = 12.5
+    worker = SimpleNamespace(_demo_cycling=True)
+
+    async def stop_after_pick(*_args, **_kwargs) -> None:
+        demo._stop_event.set()
+
+    robot = SimpleNamespace(
+        io_place=AsyncMock(),
+        io_pick=AsyncMock(side_effect=stop_after_pick),
+    )
+    worker._robot = robot
+
+    await demo._run_demo_cycle(worker, [(location, coord, nudge)])
+
+    robot.io_place.assert_awaited_once_with(
+        coord,
+        nudge_override=nudge,
+        location=location,
+    )
+    robot.io_pick.assert_awaited_once_with(coord, location=location)
+
+
+@pytest.mark.anyio
+async def test_demo_cycle_passes_mapped_location_to_stop_after_place_return(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    location = _demo_location()
+    coord = MagicMock()
+    worker = SimpleNamespace(_demo_cycling=True)
+
+    async def stop_after_place(*_args, **_kwargs) -> None:
+        demo._stop_event.set()
+
+    robot = SimpleNamespace(
+        io_place=AsyncMock(side_effect=stop_after_place),
+        io_pick=AsyncMock(),
+    )
+    worker._robot = robot
+
+    await demo._run_demo_cycle(worker, [(location, coord, None)])
+
+    robot.io_place.assert_awaited_once_with(
+        coord,
+        nudge_override=None,
+        location=location,
+    )
+    robot.io_pick.assert_awaited_once_with(coord, location=location)
+
+
+@pytest.mark.anyio
 async def test_demo_start_serializes_reservation_check_with_bin_workflow_admission(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

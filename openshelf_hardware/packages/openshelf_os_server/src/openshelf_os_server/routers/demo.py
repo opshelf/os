@@ -122,13 +122,13 @@ async def _run_demo_cycle(worker, cells: list[tuple[StorageModuleCellLocation, A
 				if _stop_event.is_set() is True:
 					break
 
-				await robot.io_place(coord, nudge_override=nudge)
+				await robot.io_place(coord, nudge_override=nudge, location=location)
 
 				if _stop_event.is_set() is True:
-					await robot.io_pick(coord)
+					await robot.io_pick(coord, location=location)
 					break
 
-				await robot.io_pick(coord)
+				await robot.io_pick(coord, location=location)
 
 				if _stop_event.is_set() is True:
 					break

@@ -1006,6 +1006,7 @@ class RobotWorker:
 
         tool = self._robot._tool
         io = self._robot._io
+        fridge = getattr(self._robot, "_fridge", None)
         axis_lookup = {
             "x_axis": tool._mx,
             "y_axis": tool._my,
@@ -1013,6 +1014,7 @@ class RobotWorker:
             "stage": tool._ms,
             "rotate": tool._mr,
             "door": io._md,
+            "fridge_door": fridge._door if fridge is not None else None,
         }
         for axis, motor in axis_lookup.items():
             if motor is not None and getattr(motor, "_motor_id", None) == motor_id:

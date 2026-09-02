@@ -86,7 +86,8 @@ def test_demo_config_only_sets_mapping_path():
 
     config = RootConfig.model_validate(data)
 
-    assert config.demo.model_dump() == {"cell_map_path": "data/custom-demo.json"}
+    assert config.demo.cell_map_path == "data/custom-demo.json"
+    assert config.demo.fridge.enabled is False
 
 
 def test_motor_rotation_safety_flag_defaults_to_disabled():

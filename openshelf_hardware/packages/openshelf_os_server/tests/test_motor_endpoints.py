@@ -58,6 +58,8 @@ def _mock_worker(motors: dict[str, AsyncMock] | None = None):
 	robot._tool.restore_safe_rotation_x_position = AsyncMock()
 	robot._tool.is_rotation_at_position = AsyncMock(return_value=False)
 	robot._tool.rotate_to_home_orientation = AsyncMock()
+	robot._tool.is_fully_retracted = AsyncMock(return_value=True)
+	robot._fridge = None
 	worker._robot = robot
 
 	return worker
@@ -139,6 +141,24 @@ async def test_move_motor_success(client: AsyncClient) -> None:
 	assert data["success"] is True
 	assert data["motor"] == "x_axis"
 	assert data["position_mm"] == pytest.approx(250.5)
+
+
+@pytest.mark.anyio
+async def test_move_fridge_door_requires_retracted_tool(client: AsyncClient) -> None:
+	fridge_door = _mock_motor(100.0)
+	mock_worker = _mock_worker({"fridge_door": fridge_door})
+	mock_worker._robot._tool.is_fully_retracted.return_value = False
+
+	with patch("openshelf_os_server.routers.robot.get_settings", return_value=_mock_settings()):
+		with patch("openshelf_os_server.routers.robot.get_robot_worker", return_value=mock_worker):
+			response = await client.post(
+				"/api/robot/debug/motors/fridge_door/move",
+				json={"position_mm": 150.0},
+			)
+
+	assert response.status_code == 409
+	assert response.json()["detail"]["code"] == "tool_not_retracted"
+	fridge_door.move_to_position.assert_not_awaited()
 
 
 @pytest.mark.anyio
@@ -403,6 +423,23 @@ async def test_home_rotate_motor_extends_stage_before_rotation(client: AsyncClie
 	mock_worker._robot._tool.rotate_to_home_orientation.assert_awaited_once_with(
 		should_ensure_safe_stage_extension=False,
 	)
+
+
+@pytest.mark.anyio
+async def test_home_fridge_door_uses_home_and_close_sequence(client: AsyncClient) -> None:
+	fridge_door = _mock_motor(100.0)
+	mock_worker = _mock_worker({"fridge_door": fridge_door})
+	mock_worker._robot._fridge = MagicMock()
+	mock_worker._robot._fridge.home_door = AsyncMock()
+
+	with patch("openshelf_os_server.routers.robot.get_settings", return_value=_mock_settings()):
+		with patch("openshelf_os_server.routers.robot.get_robot_worker", return_value=mock_worker):
+			response = await client.post("/api/robot/debug/motors/fridge_door/home")
+
+	assert response.status_code == 200
+	mock_worker._robot._fridge.home_door.assert_awaited_once()
+	fridge_door.home.assert_not_awaited()
+	mock_worker.clear_needs_home_axes.assert_called_once_with(["fridge_door"])
 
 
 @pytest.mark.anyio

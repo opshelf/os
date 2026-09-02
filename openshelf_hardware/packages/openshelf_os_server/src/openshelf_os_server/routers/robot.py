@@ -1134,6 +1134,17 @@ async def home_motor(
         async with manual_motion_guard(f"motor_home:{motor_name}", worker=worker):
             async with bin_workflow_command_admission_guard():
                 await _ensure_no_active_bin_workflow_mutation(db)
+            if (
+                motor_name == "fridge_door"
+                and await worker._robot._tool.is_fully_retracted() is False
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "message": "The tool must be fully retracted before homing the fridge door",
+                        "code": "tool_not_retracted",
+                    },
+                )
             if motor_name == "rotate":
                 original_x = await worker._robot._tool.ensure_safe_rotation_x_position()
                 try:
@@ -1142,6 +1153,14 @@ async def home_motor(
                     await motor.home()
                 finally:
                     await worker._robot._tool.restore_safe_rotation_x_position(original_x)
+            elif motor_name == "fridge_door":
+                fridge = getattr(worker._robot, "_fridge", None)
+                if fridge is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="Demo fridge is not enabled",
+                    )
+                await fridge.home_door()
             else:
                 await motor.clear_alarm()
                 if skip_pre_home_approach is True:
@@ -1239,6 +1258,17 @@ async def move_motor(
         async with manual_motion_guard(f"motor_move:{motor_name}", worker=worker):
             async with bin_workflow_command_admission_guard():
                 await _ensure_no_active_bin_workflow_mutation(db)
+            if (
+                motor_name == "fridge_door"
+                and await worker._robot._tool.is_fully_retracted() is False
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "message": "The tool must be fully retracted before moving the fridge door",
+                        "code": "tool_not_retracted",
+                    },
+                )
             if motor_name == "rotate":
                 if await worker._robot._tool.is_rotation_at_position(request.position_mm):
                     return {"success": True, "motor": motor_name, "position_mm": request.position_mm}

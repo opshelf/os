@@ -53,6 +53,7 @@ production keeps the legacy `base.db`, `config.json`, and `storage.json` filenam
 mock may copy the production configuration to `config.mock.json`, but it creates a fresh `base.mock.db` and never copies `base.db`, `storage.json`, items, or item locations. its first workspace therefore has empty inventory while retaining the seeded users, roles, and three access levels. later starts reuse `base.mock.db`, so item, command, and audit state survives container restarts without affecting production.
 
 demo additionally seeds only its demo database/storage workspace and restricts robot storage to the barcode-to-cell mappings in `openshelf_hardware/data/demo.json`.
+demo-only fridge setup and commissioning are documented in [`docs/demo-fridge.md`](docs/demo-fridge.md).
 
 useful variants:
 

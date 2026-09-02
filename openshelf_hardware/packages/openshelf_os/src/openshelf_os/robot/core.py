@@ -4,7 +4,7 @@ import logging
 import sentry_sdk
 
 from pathlib import Path as _Path
-from typing import Any, Callable, Dict, Iterable, Optional, List, TYPE_CHECKING
+from typing import Any, Callable, Dict, Iterable, Literal, Optional, List, TYPE_CHECKING
 
 from hardware.controller import SharedModbusController as Controller
 from hardware.curtain import MotionSafetyInterlock
@@ -19,6 +19,7 @@ from openshelf_os.serial_ports import (
     SCALE_PORT_CANDIDATES,
 )
 from openshelf_os.exceptions import ConfigError as CabinetConfigError, MotorError, MovementError, ToolError
+from openshelf_os.fridge import DemoFridge
 from openshelf_os.iobox import IOBox
 from openshelf_os.laser_calibration.scan import (
     ScanAnalysisResult, ScanBounds, analyze_scan_capture,
@@ -54,7 +55,15 @@ logger = logging.getLogger(__name__)
 # (component, phase, detail, reason)
 InitProgressReporter = Callable[[str, str, str, Optional[str]], None]
 
-_INIT_MOTOR_COMPONENTS = ["x_axis", "y_axis", "z_axis", "stage", "rotate", "door"]
+_INIT_MOTOR_COMPONENTS = [
+    "x_axis",
+    "y_axis",
+    "z_axis",
+    "stage",
+    "rotate",
+    "door",
+    "fridge_door",
+]
 
 
 class Robot:
@@ -91,6 +100,14 @@ class Robot:
             gpio=self._gpio,
         )
         self._cabinet = Cabinet(gpio=self._gpio)
+        self._fridge: DemoFridge | None = None
+        if should_enable_demo_features() is True and self._config.demo.fridge.enabled is True:
+            self._fridge = DemoFridge(
+                motorcontroller=self._motorbus,
+                params=self._config.demo.fridge,
+                safety=self._motion_safety,
+                is_fully_retracted=self._tool.is_fully_retracted,
+            )
 
         self._grid_path = resolve_grid_path(self._config, CONFIG_PATH)
         self._reserved_cell_locations: set[tuple[str, int, int]] = {
@@ -130,6 +147,9 @@ class Robot:
         self._init_reporter = reporter
         self._tool._init_reporter = reporter
         self._io._init_reporter = reporter
+        fridge = getattr(self, "_fridge", None)
+        if fridge is not None:
+            fridge._init_reporter = reporter
 
         def _bind(component: str) -> Callable[[str, str, Optional[str]], None]:
             def _emit(phase: str, detail: str = "", reason: Optional[str] = None) -> None:
@@ -243,6 +263,10 @@ class Robot:
                 if isolate is False:
                     raise
 
+        fridge = getattr(self, "_fridge", None)
+        if fridge is not None:
+            await fridge.configure(isolate=isolate, home_on_init=home_on_init)
+
         for name in _INIT_MOTOR_COMPONENTS:
             motor = self._get_motor_by_name(name)
             if motor is not None:
@@ -263,7 +287,18 @@ class Robot:
     async def shutdown(self) -> None:
         await self.stop()
 
-        for motor in [self._tool._mx, self._tool._my, self._tool._mg, self._tool._ms, self._tool._mr, self._io._md]:
+        motors = [
+            self._tool._mx,
+            self._tool._my,
+            self._tool._mg,
+            self._tool._ms,
+            self._tool._mr,
+            self._io._md,
+        ]
+        fridge = getattr(self, "_fridge", None)
+        if fridge is not None:
+            motors.append(fridge._door)
+        for motor in motors:
             if motor is not None:
                 motor.cleanup()
 
@@ -281,6 +316,9 @@ class Robot:
     async def stop(self) -> None:
         await self._tool.stop()
         await self._io.stop()
+        fridge = getattr(self, "_fridge", None)
+        if fridge is not None:
+            await fridge.stop()
         cabinet = getattr(self, "_cabinet", None)
         if cabinet is not None:
             await cabinet.stop()
@@ -561,7 +599,10 @@ class Robot:
 
     async def get_diagnostic_snapshot(self) -> dict[str, Any]:
         motors: dict[str, dict[str, Any]] = {}
-        for axis in ["x_axis", "y_axis", "z_axis", "stage", "rotate", "door"]:
+        axes = ["x_axis", "y_axis", "z_axis", "stage", "rotate", "door"]
+        if getattr(self, "_fridge", None) is not None:
+            axes.append("fridge_door")
+        for axis in axes:
             try:
                 motors[axis] = self._motor_diagnostic_snapshot(axis, self._get_motor_by_name(axis))
             except Exception as exc:
@@ -757,6 +798,18 @@ class Robot:
             if cabinet_doors_data is not None
             else None
         )
+        motors = {
+            "x_axis": gantry_status.x_axis,
+            "y_axis": gantry_status.y_axis,
+            "z_axis": tool_status.z_axis,
+            "stage": tool_status.stage or AxisTelemetry(),
+            "rotate": tool_status.rotate or AxisTelemetry(),
+            "door": await self._build_axis_status(getattr(self._io, "_md", None)),
+        }
+        fridge = getattr(self, "_fridge", None)
+        if fridge is not None:
+            motors["fridge_door"] = await self._build_axis_status(fridge._door)
+
         status = RobotStatus(
             gantry=gantry_status,
             tool=tool_status,
@@ -764,14 +817,7 @@ class Robot:
             storage=self._grid,
             cabinet_doors=cabinet_doors,
             io_door_open=self.get_door_state(),
-            motors={
-                "x_axis": gantry_status.x_axis,
-                "y_axis": gantry_status.y_axis,
-                "z_axis": tool_status.z_axis,
-                "stage": tool_status.stage or AxisTelemetry(),
-                "rotate": tool_status.rotate or AxisTelemetry(),
-                "door": await self._build_axis_status(getattr(self._io, "_md", None)),
-            },
+            motors=motors,
         )
         return status
 
@@ -833,7 +879,82 @@ class Robot:
     #  Pick and place
     # ------------------------------------------------------------------ #
 
-    async def io_place(self, coord: AxisCoordinate, nudge_override: float | None = None):
+    async def _access_storage_cell(
+        self,
+        operation: Literal["pick", "place"],
+        coord: AxisCoordinate,
+        location: StorageModuleCellLocation | None,
+    ) -> None:
+        fridge = getattr(self, "_fridge", None)
+        cell_settings = (
+            fridge.cell_settings(location)
+            if fridge is not None and location is not None
+            else None
+        )
+        tool_operation = self._tool.pick if operation == "pick" else self._tool.place
+
+        if fridge is None or cell_settings is None or location is None:
+            await tool_operation(coord)
+            return
+
+        door_may_be_open = False
+
+        async def open_door() -> None:
+            nonlocal door_may_be_open
+            door_may_be_open = True
+            self.set_operation_context(
+                phase=f"fridge.{operation}.open_{cell_settings.door_open_direction}_door",
+                target_cell=location,
+            )
+            await fridge.open_for_cell(location)
+
+        async def close_door() -> None:
+            nonlocal door_may_be_open
+            self.set_operation_context(
+                phase=f"fridge.{operation}.close_door",
+                target_cell=location,
+            )
+            await fridge.close_door()
+            door_may_be_open = False
+
+        try:
+            await tool_operation(
+                coord,
+                stage_extension_mm=cell_settings.stage_extension_mm,
+                before_extend=open_door,
+                after_retract=close_door,
+            )
+        except Exception:
+            retraction_verified = False
+            if door_may_be_open is True:
+                retraction_verified = await self._tool.is_fully_retracted()
+            if door_may_be_open is True and retraction_verified is True:
+                try:
+                    await fridge.close_door()
+                    door_may_be_open = False
+                except Exception as close_error:
+                    self._logger.warning(
+                        "Failed to close fridge door during safe recovery",
+                        extra={"error": str(close_error)},
+                    )
+
+            if door_may_be_open is True:
+                self._logger.error(
+                    "Fridge door remains open after failed storage access",
+                    extra={
+                        "operation": operation,
+                        "location": self._safe_model_dump(location),
+                        "tool_retraction_verified": retraction_verified,
+                    },
+                )
+            raise
+
+    async def io_place(
+        self,
+        coord: AxisCoordinate,
+        nudge_override: float | None = None,
+        location: StorageModuleCellLocation | None = None,
+    ) -> None:
         ppl = await self._tool.get_param("PICKUP_POSITION_L")
         pph = await self._tool.get_param("PICKUP_POSITION_H")
         if ppl is None or pph is None:
@@ -843,7 +964,7 @@ class Robot:
             raise ConfigError("Y-axis motor not configured")
 
         self.set_operation_context(phase="io_place.pick_from_shelf", target_coordinate=coord)
-        await self._tool.pick(coord)
+        await self._access_storage_cell("pick", coord, location)
         self.set_operation_context(phase="io_place.rotate_to_front")
         await self._tool.rotate_to_position("front")
         self.set_operation_context(phase="io_place.move_to_io_position")
@@ -861,14 +982,18 @@ class Robot:
         self.set_operation_context(phase="io_place.return_to_shelf_coordinate")
         await self._tool.move(coord)
         self.set_operation_context(phase="io_place.place_at_shelf_coordinate")
-        await self._tool.place(coord)
+        await self._access_storage_cell("place", coord, location)
 
         self.set_operation_context(phase="io_place.home_door")
         await self._io.home_door()
         self.set_operation_context(phase="io_place.clear_alarms")
         await self._tool.clear_alarms()
 
-    async def io_pick(self, coord: AxisCoordinate):
+    async def io_pick(
+        self,
+        coord: AxisCoordinate,
+        location: StorageModuleCellLocation | None = None,
+    ) -> None:
         ppl = await self._tool.get_param("PICKUP_POSITION_L")
         pph = await self._tool.get_param("PICKUP_POSITION_H")
         if ppl is None or pph is None:
@@ -878,7 +1003,7 @@ class Robot:
             raise ConfigError("Y-axis motor not configured")
 
         self.set_operation_context(phase="io_pick.pick_from_shelf_cell", target_coordinate=coord)
-        await self._tool.pick(coord)
+        await self._access_storage_cell("pick", coord, location)
         self.set_operation_context(phase="io_pick.rotate_to_front")
         await self._tool.rotate_to_position("front")
         self.set_operation_context(phase="io_pick.move_to_io_high_position")
@@ -896,7 +1021,7 @@ class Robot:
         self.set_operation_context(phase="io_pick.return_to_shelf_coordinate")
         await self._tool.move(coord)
         self.set_operation_context(phase="io_pick.place_back_at_shelf_coordinate")
-        await self._tool.place(coord)
+        await self._access_storage_cell("place", coord, location)
 
         self.set_operation_context(phase="io_pick.home_door")
         await self._io.home_door()
@@ -1013,7 +1138,11 @@ class Robot:
             coord = self._grid.get_cell_coordinate(location)
             self.set_operation_context(target_coordinate=coord.to_axis_coordinate())
             self._logger.info("Store: starting io_pick at %s", location)
-            await self.io_pick(coord.to_axis_coordinate())
+            fridge = getattr(self, "_fridge", None)
+            if fridge is not None and fridge.is_fridge_cell(location):
+                await self.io_pick(coord.to_axis_coordinate(), location=location)
+            else:
+                await self.io_pick(coord.to_axis_coordinate())
             self._logger.info("Store: io_pick completed")
             self.set_operation_context(phase="store.grid_update_commit")
             self._grid.store_item(location, item)
@@ -1140,7 +1269,11 @@ class Robot:
             if nudge_override is not None:
                 self.set_operation_context(nudge_override=nudge_override)
 
-            await self.io_place(coord, nudge_override=nudge_override)
+            fridge = getattr(self, "_fridge", None)
+            if fridge is not None and fridge.is_fridge_cell(location):
+                await self.io_place(coord, nudge_override=nudge_override, location=location)
+            else:
+                await self.io_place(coord, nudge_override=nudge_override)
             self.set_operation_context(phase="retrieve.grid_clear_commit")
             self._grid.clear_item(location)
             return RobotCommandSuccessful(command=command_name, location=location, upca=retrieved_upca)
@@ -1178,6 +1311,9 @@ class Robot:
             elif isinstance(command, HomeCommand):
                 await self._tool.home()
                 await self._io.home_door()
+                fridge = getattr(self, "_fridge", None)
+                if fridge is not None:
+                    await fridge.home_door()
                 result = RobotCommandSuccessful(command=command_name)
             elif isinstance(command, MoveCommand):
                 self.set_operation_context(command=command_name, phase="move", target_coordinate=command.coordinate)
@@ -1369,16 +1505,23 @@ class Robot:
     # ------------------------------------------------------------------ #
 
     def get_motor_names(self) -> Dict[str, List[str]]:
-        return {
+        names = {
             "io": ["door"],
             "tool": ["x_axis", "y_axis", "z_axis", "stage", "rotate"],
         }
+        if getattr(self, "_fridge", None) is not None:
+            names["io"].append("fridge_door")
+        return names
 
     def get_motor_info(self) -> Dict[str, List[Dict[str, object]]]:
         def _motor_dict(cfg):
             return {"name": cfg.motor_name, "motor_id": cfg.motor_id}
+        io_motors = [_motor_dict(m) for m in self._config.robot.io.motors.root if m.enabled]
+        fridge = getattr(self, "_fridge", None)
+        if fridge is not None:
+            io_motors.append(_motor_dict(fridge._door._params))
         return {
-            "io": [_motor_dict(m) for m in self._config.robot.io.motors.root if m.enabled],
+            "io": io_motors,
             "tool": [_motor_dict(m) for m in self._config.robot.tool.motors.root if m.enabled],
         }
 
@@ -1392,6 +1535,7 @@ class Robot:
         }
         io_motors = {
             "door": self._io._md,
+            "fridge_door": self._fridge._door if getattr(self, "_fridge", None) is not None else None,
         }
         return tool_motors.get(name) or io_motors.get(name)
 
