@@ -69,6 +69,7 @@ class SizesSettings(BaseModel):
 class PrinterSettings(BaseModel):
     enabled: bool = False
     queue: Optional[str] = None
+    feed_dots: int = Field(18, ge=0, le=128)
 
 
 class ScannerSettings(BaseModel):
