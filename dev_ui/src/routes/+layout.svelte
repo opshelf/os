@@ -26,6 +26,7 @@
 		{ href: '/scale', label: 'scale' },
 		{ href: '/sizer', label: 'sizer' },
 		{ href: '/scanner', label: 'scanner' },
+		{ href: '/printer', label: 'printer' },
 		{ href: '/motors', label: 'motors' },
 		{ href: '/wifi', label: 'wifi' }
 	];
