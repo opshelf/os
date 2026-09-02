@@ -55,6 +55,7 @@ from openshelf_os_server.core.mock_robot import (
 	start_mock_robot_runtime,
 	stop_mock_robot_runtime,
 )
+from openshelf_os_server.core.command_lifecycle import recover_interrupted_commands
 from openshelf_os_server.settings import Settings
 from openshelf_os_server.database.base import Base, engine, get_database_url
 from openshelf_os_server.database.session import AsyncSessionLocal, get_db
@@ -652,6 +653,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 	async with AsyncSessionLocal() as db:
 		await onboarding.ensure_onboarding_state(db)
 	await _apply_mode_transition()
+	interrupted_commands = await recover_interrupted_commands()
+	if interrupted_commands:
+		logger.warning("robot_commands_recovered", count=interrupted_commands)
 
 	# Configured bin identities and homes must be durable before the app can
 	# serve requests. Interrupted motion is recovered here as well, before any

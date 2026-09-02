@@ -12,6 +12,7 @@ from openshelf_os.laser_calibration import angle as angle_module
 from openshelf_os import laser_calibration as laser_module
 from openshelf_os.common import Parameters
 from openshelf_os.laser_calibration.scan import ScanBounds
+from openshelf_os.robot.commands import HomeCommand
 from openshelf_os.storage import StorageModuleSide
 from openshelf_os_server.core.laser_auto_calibration import (
     _build_angle_rotation_center_deg,
@@ -2055,7 +2056,7 @@ async def test_robot_commands_are_blocked_while_laser_auto_calibration_is_runnin
     ):
         with pytest.raises(HTTPException) as exc_info:
             await robot_router.robot_commands(
-                command=object(),
+                command=HomeCommand(),
                 worker=SimpleNamespace(),
                 current_user=SimpleNamespace(),
                 db=SimpleNamespace(),

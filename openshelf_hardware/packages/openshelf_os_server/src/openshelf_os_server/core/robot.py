@@ -29,6 +29,7 @@ from openshelf_os_server.core.printer_status import PrinterStatusProbeError, pro
 from openshelf_os_server.core.robot_events import RobotEventListener
 from openshelf_os_server.core.storage import StorageService
 from openshelf_os_server.core.bin_storage import BinStorageService, reserved_bin_locations
+from openshelf_os_server.core.command_lifecycle import handle_worker_lifecycle
 from openshelf_os_server.database.session import AsyncSessionLocal
 from openshelf_os_server.settings import get_root_config
 
@@ -224,6 +225,7 @@ async def init_robot_worker() -> None:
             robot,
             crash_artifact_provider=capture_motion_crash_artifacts,
             crash_artifact_begin_provider=begin_motion_crash_artifacts,
+            command_lifecycle_callback=handle_worker_lifecycle,
         )
         failed = tracker.failed_components(degrading_only=True)
         failed_motor_components = [component for component in failed if component in CRITICAL_MOTOR_COMPONENTS]

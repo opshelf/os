@@ -26,6 +26,7 @@ from openshelf_os_server.database.models import (
     StorageBinWorkflow,
 )
 from openshelf_os_server.database.session import AsyncSessionLocal
+from openshelf_os_server.core.command_lifecycle import enqueue_internal
 from openshelf_os_server.settings import get_root_config
 
 
@@ -936,7 +937,8 @@ class BinStorageService:
         bin_row = await self.session.get(StorageBin, workflow.bin_id)
         if bin_row is None:
             raise RuntimeError("Configured bin no longer exists")
-        await worker.enqueue_command(
+        await enqueue_internal(
+            worker,
             RetrieveItemCommand(
                 request_id=workflow.id,
                 upca=bin_row.barcode,
@@ -1318,10 +1320,10 @@ class BinStorageService:
             },
         )
         if command_admitted:
-            await worker.enqueue_command(command)
+            await enqueue_internal(worker, command)
         else:
             async with bin_workflow_command_admission_guard():
-                await worker.enqueue_command(command)
+                await enqueue_internal(worker, command)
 
     async def reconcile(
         self,

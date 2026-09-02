@@ -106,25 +106,33 @@ class AuditLog(Base):
 	user: Mapped[Optional["User"]] = relationship("User", back_populates="audit_logs")
 
 
-class MockRobotCommand(Base):
-	"""Durable command lifecycle used only by the mock robot runtime."""
-	__tablename__ = "mock_robot_commands"
+class RobotCommand(Base):
+	"""Durable lifecycle for commands accepted by either robot runtime."""
+	__tablename__ = "robot_commands"
 	__table_args__ = (
-		Index("ix_mock_robot_commands_status_created", "status", "created_at"),
-		Index("ix_mock_robot_commands_completed_at", "completed_at"),
+		UniqueConstraint("runtime", "request_id", name="uq_robot_commands_runtime_request_id"),
+		Index("ix_robot_commands_status_created", "status", "created_at"),
+		Index("ix_robot_commands_completed_at", "completed_at"),
 	)
 
 	command_id: Mapped[str] = mapped_column(String(36), primary_key=True)
-	request_id: Mapped[Optional[str]] = mapped_column(String(255), unique=True, nullable=True)
+	runtime: Mapped[str] = mapped_column(String(20), nullable=False, default="mock")
+	request_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 	payload: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False)
 	status: Mapped[str] = mapped_column(String(20), nullable=False)
 	result: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
 	correlation_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+	visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="public")
 	created_at: Mapped[datetime] = mapped_column(
 		UTCDateTime(), nullable=False, default=lambda: datetime.now(timezone.utc)
 	)
 	started_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime(), nullable=True)
 	completed_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime(), nullable=True)
+
+
+# Compatibility for code and third-party tests written against the original
+# mock-only name. The persisted table is now shared by both runtimes.
+MockRobotCommand = RobotCommand
 
 class Item(Base):
 	"""Item model for storing inventory items."""
