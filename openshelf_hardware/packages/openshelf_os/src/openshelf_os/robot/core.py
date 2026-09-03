@@ -18,7 +18,13 @@ from openshelf_os.serial_ports import (
     MOTOR_PORT_CANDIDATES,
     SCALE_PORT_CANDIDATES,
 )
-from openshelf_os.exceptions import ConfigError as CabinetConfigError, MotorError, MovementError, ToolError
+from openshelf_os.exceptions import (
+    ConfigError as CabinetConfigError,
+    FridgeSafetyError,
+    MotorError,
+    MovementError,
+    ToolError,
+)
 from openshelf_os.fridge import DemoFridge
 from openshelf_os.iobox import IOBox
 from openshelf_os.laser_calibration.scan import (
@@ -1156,6 +1162,8 @@ class Robot:
         except (MotorError, MovementError, ToolError) as err:
             self._capture_fault_context(err)
             raise
+        except FridgeSafetyError:
+            raise
         except Exception as exc:
             self._logger.exception("Store command failed for %s", resolved_item_name)
             sentry_sdk.capture_exception(exc)
@@ -1285,6 +1293,8 @@ class Robot:
         except (MotorError, MovementError, ToolError) as err:
             self._capture_fault_context(err)
             raise
+        except FridgeSafetyError:
+            raise
         except Exception as exc:
             self._logger.exception(
                 "Retrieve command failed at shelf %s cell %s",
@@ -1340,7 +1350,7 @@ class Robot:
                 result = RobotCommandError(command=command_name, error="Invalid Robot Command")
             self.clear_operation_context()
             return result
-        except (MotorError, MovementError, ToolError):
+        except (FridgeSafetyError, MotorError, MovementError, ToolError):
             raise
         except Exception as exc:
             self.clear_operation_context()

@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from openshelf_os.common import AxisCoordinate
-from openshelf_os.exceptions import MotorError, MovementError, ToolError
+from openshelf_os.exceptions import ConfigError, MotorError, MovementError, ToolError
+from openshelf_os.fridge import FridgeSafetyError
 from openshelf_os.storage import StorageModuleCellLocation
 from hardware.exceptions import MotorError as HardwareMotorError
 
@@ -23,7 +24,11 @@ from openshelf_os_server.database.session import AsyncSessionLocal
 from openshelf_os_server.routers.common import SuccessResponse
 from openshelf_os_server.core.storage_module import side_to_s
 from openshelf_os_server.routers.auth_deps import get_current_user
-from openshelf_os_server.routers.calibration import _ensure_ready, _clear_motors_for_move
+from openshelf_os_server.routers.calibration import (
+	_clear_motors_for_move,
+	_ensure_ready,
+	_raise_motor_error,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +139,9 @@ async def _run_demo_cycle(worker, cells: list[tuple[StorageModuleCellLocation, A
 					break
 	except asyncio.CancelledError:
 		logger.info("demo_cycle_cancelled")
+	except FridgeSafetyError as exc:
+		logger.warning("demo_cycle_fridge_safety_rejected: %s", exc)
+		await worker.get_status_snapshot(force_refresh=True)
 	except (MotorError, MovementError, ToolError, HardwareMotorError) as exc:
 		logger.error("demo_cycle_hardware_fault", exc_info=True)
 		worker.set_needs_home(f"Demo cycle hardware fault: {exc}")
@@ -232,3 +240,46 @@ async def get_demo_cycle_status() -> DemoCycleStatusResponse:
 		current_cell_index=_current_cell_index,
 		total_cells=_total_cells,
 	)
+
+
+@router.post("/fridge/{position}", response_model=SuccessResponse)
+async def move_demo_fridge_door(
+	position: Literal["left", "center", "right"],
+) -> SuccessResponse:
+	await ensure_laser_auto_calibration_not_running()
+	worker = await get_robot_worker_or_503()
+	_ensure_ready(worker)
+
+	fridge = getattr(worker._robot, "_fridge", None)
+	if fridge is None:
+		raise HTTPException(
+			status_code=status.HTTP_404_NOT_FOUND,
+			detail="Fridge door is not configured for this robot",
+		)
+
+	try:
+		async with manual_motion_guard(
+			f"demo_fridge_{position}",
+			worker=worker,
+			check_bin_workflow=True,
+		):
+			await fridge.move_door_to_named(position)
+	except ConfigError as exc:
+		raise HTTPException(
+			status_code=status.HTTP_409_CONFLICT,
+			detail=str(exc),
+		) from exc
+	except FridgeSafetyError as exc:
+		raise HTTPException(
+			status_code=status.HTTP_409_CONFLICT,
+			detail=str(exc),
+		) from exc
+	except (MotorError, HardwareMotorError) as exc:
+		await _raise_motor_error(
+			worker,
+			f"Fridge door movement failed: {exc}",
+			exc,
+			axes=["fridge_door"],
+		)
+
+	return SuccessResponse(message=f"fridge door moved to {position}")

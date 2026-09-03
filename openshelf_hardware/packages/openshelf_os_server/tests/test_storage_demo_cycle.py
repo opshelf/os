@@ -5,7 +5,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi import HTTPException
 
+from openshelf_os.common import AxisCoordinate
+from openshelf_os.exceptions import FridgeSafetyError
 from openshelf_os.storage import StorageModuleCellLocation, StorageModuleSide
+from openshelf_os.tool import Tool
 from openshelf_os_server.core import bin_storage
 from openshelf_os_server.core.storage import StorageService
 from openshelf_os_server.database.models import StorageBin, StorageBinItem
@@ -207,6 +210,43 @@ async def test_demo_cycle_passes_mapped_location_to_stop_after_place_return(
         location=location,
     )
     robot.io_pick.assert_awaited_once_with(coord, location=location)
+
+
+@pytest.mark.anyio
+async def test_demo_cycle_fridge_safety_rejection_does_not_mark_hardware_fault() -> None:
+    location = _demo_location()
+    worker = SimpleNamespace(
+        _demo_cycling=True,
+        set_needs_home=MagicMock(),
+        get_status_snapshot=AsyncMock(),
+    )
+
+    tool = Tool.__new__(Tool)
+    tool._gs = SimpleNamespace(close=AsyncMock())
+    tool.move = AsyncMock()
+    tool.rotate_to_position = AsyncMock()
+    tool.extend = AsyncMock()
+    tool.retract_empty = AsyncMock()
+    tool._handle_fault = AsyncMock()
+
+    async def reject_door_motion() -> None:
+        raise FridgeSafetyError("Tool must be fully retracted before moving fridge door")
+
+    async def io_place(coord, **_kwargs) -> None:
+        await tool.place(coord, before_extend=reject_door_motion)
+
+    worker._robot = SimpleNamespace(
+        io_place=AsyncMock(side_effect=io_place),
+        io_pick=AsyncMock(),
+    )
+
+    await demo._run_demo_cycle(worker, [(location, AxisCoordinate(10, 20, 1), None)])
+
+    tool._handle_fault.assert_not_awaited()
+    worker.set_needs_home.assert_not_called()
+    worker.get_status_snapshot.assert_awaited_once_with(force_refresh=True)
+    assert worker._demo_cycling is False
+    assert demo._is_running is False
 
 
 @pytest.mark.anyio

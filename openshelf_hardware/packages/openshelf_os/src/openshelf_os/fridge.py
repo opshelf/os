@@ -7,7 +7,7 @@ from typing import Awaitable, Callable, Literal, Optional
 from hardware.controller import SharedModbusController as Controller
 from hardware.motor import Motor
 from openshelf_os.config.settings import DemoFridgeCellSettings, DemoFridgeSettings
-from openshelf_os.exceptions import ConfigError, MotorError
+from openshelf_os.exceptions import ConfigError, FridgeSafetyError, MotorError
 from openshelf_os.storage import StorageModuleCellLocation
 
 
@@ -32,6 +32,18 @@ class DemoFridge:
         self._init_reporter: Optional[
             Callable[[str, str, str, Optional[str]], None]
         ] = None
+        self._cells = {
+            self._location_key_from_config(cell): cell
+            for cell in params.cells
+        }
+
+    def update_settings(self, params: DemoFridgeSettings) -> None:
+        """Apply saved door calibration without reconstructing the hardware object."""
+        if params.motor is None or params.motor.enabled is False:
+            raise ConfigError("Demo fridge motor must be configured and enabled")
+
+        self._params = params
+        self._door._params = params.motor
         self._cells = {
             self._location_key_from_config(cell): cell
             for cell in params.cells
@@ -96,23 +108,24 @@ class DemoFridge:
         try:
             is_retracted = await self._is_fully_retracted()
         except Exception as exc:
-            raise MotorError("Cannot verify tool retraction before moving fridge door") from exc
+            raise FridgeSafetyError(
+                "Cannot verify tool retraction before moving fridge door"
+            ) from exc
         if is_retracted is not True:
-            raise MotorError("Tool must be fully retracted before moving fridge door")
+            raise FridgeSafetyError(
+                "Tool must be fully retracted before moving fridge door"
+            )
 
     async def home_door(self) -> None:
-        positions = self._params.door_positions_mm
-
         try:
             await self._require_tool_retracted()
             async with self._motion_lock:
                 await self._door.home()
-                if positions is not None:
-                    await self._door.move_to_position(
-                        positions.closed,
-                        rpm=self._params.motor.ret_rpm if self._params.motor is not None else None,
-                    )
+                await self._move_door_to_locked(self.position_for_name("center"))
             self._emit_init("ready")
+        except FridgeSafetyError as exc:
+            self._emit_init("failed", detail="home", reason=str(exc))
+            raise
         except Exception as exc:
             self._emit_init("failed", detail="home", reason=str(exc))
             raise MotorError(f"Failed to home fridge door: {exc}") from exc
@@ -127,28 +140,50 @@ class DemoFridge:
         await self.open_door(cell.door_open_direction)
 
     async def open_door(self, direction: Literal["left", "right"]) -> None:
+        await self.move_door_to_named(direction)
+
+    def position_for_name(self, position: Literal["left", "center", "right"]) -> float:
         positions = self._params.door_positions_mm
-        if positions is None:
+        if positions is not None:
+            return {
+                "left": float(positions.open_left),
+                "center": float(positions.closed),
+                "right": float(positions.open_right),
+            }[position]
+
+        if position != "center":
             raise ConfigError("Fridge door positions have not been calibrated")
-        target = positions.open_left if direction == "left" else positions.open_right
+
+        motor = self._params.motor
+        if motor is None:
+            raise ConfigError("Fridge door motor has not been configured")
+        return (float(motor.lower_lim) + float(motor.lim)) / 2.0
+
+    async def move_door_to_named(
+        self,
+        position: Literal["left", "center", "right"],
+    ) -> None:
+        await self.move_door_to(self.position_for_name(position))
+
+    async def _move_door_to_locked(self, target: float) -> None:
+        motor = self._params.motor
+        if motor is None:
+            raise ConfigError("Fridge door motor has not been configured")
+        await self._door.move_to_position(target, rpm=motor.rpm)
+
+    async def move_door_to(self, target: float) -> None:
+        await self._require_tool_retracted()
 
         try:
             async with self._motion_lock:
-                await self._door.move_to_position(target)
+                await self._move_door_to_locked(target)
         except Exception as exc:
-            raise MotorError(f"Failed to open fridge door {direction}: {exc}") from exc
+            raise MotorError(f"Failed to move fridge door to {target}mm: {exc}") from exc
 
     async def close_door(self) -> None:
-        positions = self._params.door_positions_mm
-        if positions is None:
-            raise ConfigError("Fridge door positions have not been calibrated")
-
         try:
-            await self._require_tool_retracted()
-            async with self._motion_lock:
-                await self._door.move_to_position(
-                    positions.closed,
-                    rpm=self._params.motor.ret_rpm if self._params.motor is not None else None,
-                )
+            await self.move_door_to_named("center")
+        except FridgeSafetyError:
+            raise
         except Exception as exc:
             raise MotorError(f"Failed to close fridge door: {exc}") from exc

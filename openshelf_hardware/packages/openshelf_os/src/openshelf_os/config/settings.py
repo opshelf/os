@@ -129,19 +129,23 @@ class DemoFridgeSettings(BaseModel):
             if self.motor.motor_id != 20:
                 raise ValueError("demo.fridge.motor.motor_id must be 20")
 
-        if self.enabled is False:
-            return self
-
-        if self.motor is None:
+        if self.enabled is True and self.motor is None:
             raise ValueError("demo.fridge.motor is required when the fridge is enabled")
-        if self.motor.enabled is False:
+        if self.enabled is True and self.motor is not None and self.motor.enabled is False:
             raise ValueError("demo.fridge.motor must be enabled when the fridge is enabled")
-        if self.door_positions_mm is None:
+        if self.enabled is True and self.door_positions_mm is None:
             raise ValueError(
                 "demo.fridge.door_positions_mm is required when the fridge is enabled"
             )
-        if not self.cells:
+        if self.enabled is True and not self.cells:
             raise ValueError("demo.fridge.cells must contain at least one cell")
+
+        if self.door_positions_mm is None:
+            return self
+        if self.motor is None:
+            raise ValueError(
+                "demo.fridge.motor is required when fridge door positions are configured"
+            )
 
         lower_limit = float(self.motor.lower_lim)
         upper_limit = float(self.motor.lim)

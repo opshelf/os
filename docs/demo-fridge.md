@@ -11,8 +11,8 @@ required stage reach before enabling it.
 For initial motor calibration, configure only the motor and leave `enabled`
 false. In demo or development mode this exposes `fridge_door` in the
 `FRIDGE MOTORS` section without enabling fridge storage workflows or automatic
-startup homing. Manual home establishes the endpoint but does not move to a
-closed position until `door_positions_mm` is configured.
+startup homing. Every fridge home operation moves from the detected endpoint to
+the configured center, or to the midpoint of travel until positions are saved.
 
 ```json
 {
@@ -23,20 +23,21 @@ closed position until `door_positions_mm` is configured.
         "motor_name": "fridge_door",
         "motor_id": 20,
         "Ip": 36,
-        "rpm": 500,
+        "rpm": 200,
         "dr": 1,
         "mpr": 80,
-        "accel": 500,
+        "accel": 3000,
         "ret_rpm": 64,
-        "lim": 950
+        "lim": 814
       }
     }
   }
 }
 ```
 
-The 950 mm limit above applies to lb2-3's confirmed X-equivalent fridge axis;
-use the mechanically verified limit for other installations.
+The 814 mm limit above is the mechanically verified fridge door travel on
+lb2-3. Its initial positions are left 2.5 mm, center 407 mm, and right 811.5 mm.
+Use the mechanically verified limit for other installations.
 
 ```json
 {
@@ -48,17 +49,17 @@ use the mechanically verified limit for other installations.
         "motor_name": "fridge_door",
         "motor_id": 20,
         "Ip": 36,
-        "rpm": 500,
-        "dr": 0,
+        "rpm": 200,
+        "dr": 1,
         "mpr": 80,
-        "accel": 500,
+        "accel": 3000,
         "ret_rpm": 64,
-        "lim": 200
+        "lim": 814
       },
       "door_positions_mm": {
-        "open_left": 0,
-        "closed": 100,
-        "open_right": 200
+        "open_left": 2.5,
+        "closed": 407,
+        "open_right": 811.5
       },
       "cells": [
         {
@@ -93,10 +94,19 @@ stage setting in the demo configuration:
 }
 ```
 
-Use the existing motors page to probe motor ID 20 and move it to measured targets.
-When calibrated positions are present, the `fridge_door` home action homes against
-the configured end and then moves to the explicit closed position. Fridge door
-move and home actions are rejected while the tool is not fully retracted.
+Use the existing motors page to probe motor ID 20. Installation engineers can
+set, test, save, and reset the three named positions at `/calibration/fridge`.
+The `fridge_door` home action homes against the configured end and then always
+moves to center. Fridge door move and home actions are rejected while the tool
+is not fully retracted.
+Every absolute fridge-door move, including center, uses the configured `rpm`.
+Only the end-stop homing phase (and its internal approach) uses `Motor.home`'s
+existing `home_rpm` or `ret_rpm` behavior.
+
+In the demo UI, Ctrl+Left opens the door to the left position, Ctrl+Right opens
+it to the right position, and either Ctrl+Up or Ctrl+Down closes it at center.
+These shortcuts are active only in demo or development operating mode while the
+UI is unlocked, and are ignored while the user is typing in an input.
 
 Each fridge barcode remains mapped to its configured grid location through
 `data/demo.json`; the fridge configuration is location-based so retrieval by

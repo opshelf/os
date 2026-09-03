@@ -20,6 +20,11 @@ class ToolError(OpenshelfError):
     """Exception raised for tool-related errors."""
     pass
 
+
+class FridgeSafetyError(OpenshelfError):
+    """Door motion rejected because the tool position is not known to be safe."""
+    pass
+
 class GripperError(ToolError):
     """Exception raised for gripper-related errors."""
     pass

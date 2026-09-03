@@ -1141,6 +1141,40 @@ export async function saveRotationAngles(
 	});
 }
 
+export interface FridgeDoorCalibration {
+	left: number;
+	center: number;
+	right: number;
+	lower_limit: number;
+	upper_limit: number;
+}
+
+export async function getFridgeDoorCalibration(): Promise<FridgeDoorCalibration> {
+	return apiFetch<FridgeDoorCalibration>('/calibration/fridge');
+}
+
+export async function moveFridgeDoor(
+	position: number
+): Promise<{ success: boolean; position: number }> {
+	return apiFetch<{ success: boolean; position: number }>('/calibration/fridge/move', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ position })
+	});
+}
+
+export async function saveFridgeDoorCalibration(
+	left: number,
+	center: number,
+	right: number
+): Promise<{ success: boolean }> {
+	return apiFetch<{ success: boolean }>('/calibration/fridge/save', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ left, center, right })
+	});
+}
+
 export interface ShelfStageExtension {
 	front: number;
 	back: number;

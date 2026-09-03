@@ -7,11 +7,14 @@ import re
 from collections.abc import Awaitable, Callable
 from typing import Annotated, Literal, Optional, ParamSpec, TypeVar
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, FiniteFloat
 from sse_starlette.sse import EventSourceResponse
 
 from openshelf_os.common import AxisCoordinate
 from openshelf_os.common import Parameters
+from openshelf_os.config.settings import DemoFridgeDoorPositionsSettings
+from openshelf_os.fridge import FridgeSafetyError
+from openshelf_os.operating_mode import should_enable_demo_fridge
 from openshelf_os.tool import MAX_PICK_LIFT_MM
 from openshelf_os.storage import (
 	CalibrationCoordinate,
@@ -1764,6 +1767,177 @@ async def save_rotation_angles(request: RotateSaveRequest):
 			worker._robot.reload_parameters()
 		except ValueError:
 			pass
+
+	return {"success": True}
+
+
+FRIDGE_DOOR_EDGE_CLEARANCE_MM = 2.5
+
+
+class FridgeDoorCalibrationResponse(BaseModel):
+	left: float
+	center: float
+	right: float
+	lower_limit: float
+	upper_limit: float
+
+
+class FridgeDoorMoveRequest(BaseModel):
+	position: FiniteFloat
+
+
+class FridgeDoorSaveRequest(BaseModel):
+	left: FiniteFloat
+	center: FiniteFloat
+	right: FiniteFloat
+
+
+def _get_fridge_motor_config():
+	if should_enable_demo_fridge() is False:
+		raise HTTPException(
+			status_code=status.HTTP_404_NOT_FOUND,
+			detail="Fridge calibration is only available in demo or development mode",
+		)
+
+	config = get_root_config()
+	motor = config.demo.fridge.motor
+	if motor is None or motor.enabled is False:
+		raise HTTPException(
+			status_code=status.HTTP_404_NOT_FOUND,
+			detail="Fridge door motor is not configured",
+		)
+	return config, motor
+
+
+def _default_fridge_positions(lower_limit: float, upper_limit: float) -> tuple[float, float, float]:
+	left = lower_limit + FRIDGE_DOOR_EDGE_CLEARANCE_MM
+	center = (lower_limit + upper_limit) / 2.0
+	right = upper_limit - FRIDGE_DOOR_EDGE_CLEARANCE_MM
+	if not left < center < right:
+		raise HTTPException(
+			status_code=status.HTTP_400_BAD_REQUEST,
+			detail="Fridge door travel is too short for the required edge clearance",
+		)
+	return left, center, right
+
+
+def _validate_fridge_positions(
+	request: FridgeDoorSaveRequest,
+	*,
+	lower_limit: float,
+	upper_limit: float,
+) -> DemoFridgeDoorPositionsSettings:
+	if not lower_limit <= request.left < request.center < request.right <= upper_limit:
+		raise HTTPException(
+			status_code=status.HTTP_400_BAD_REQUEST,
+			detail=(
+				"Fridge positions must satisfy "
+				f"{lower_limit} <= left < center < right <= {upper_limit}"
+			),
+		)
+
+	return DemoFridgeDoorPositionsSettings(
+		open_left=request.left,
+		closed=request.center,
+		open_right=request.right,
+	)
+
+
+@router.get("/fridge", response_model=FridgeDoorCalibrationResponse)
+async def get_fridge_door_calibration() -> FridgeDoorCalibrationResponse:
+	config, motor = _get_fridge_motor_config()
+	lower_limit = float(motor.lower_lim)
+	upper_limit = float(motor.lim)
+	positions = config.demo.fridge.door_positions_mm
+
+	if positions is None:
+		left, center, right = _default_fridge_positions(lower_limit, upper_limit)
+	else:
+		left = float(positions.open_left)
+		center = float(positions.closed)
+		right = float(positions.open_right)
+
+	return FridgeDoorCalibrationResponse(
+		left=left,
+		center=center,
+		right=right,
+		lower_limit=lower_limit,
+		upper_limit=upper_limit,
+	)
+
+
+@router.post("/fridge/move")
+async def move_fridge_door_for_calibration(request: FridgeDoorMoveRequest):
+	await ensure_laser_auto_calibration_not_running()
+	worker = await get_robot_worker_or_503()
+	_ensure_ready(worker)
+
+	fridge = getattr(worker._robot, "_fridge", None)
+	if fridge is None:
+		raise HTTPException(
+			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+			detail="Fridge door is not available in the active runtime",
+		)
+
+	motor = fridge._door
+	lower_limit = float(motor._params.lower_lim)
+	upper_limit = float(motor._params.lim)
+	if request.position < lower_limit or request.position > upper_limit:
+		raise HTTPException(
+			status_code=status.HTTP_400_BAD_REQUEST,
+			detail=f"Fridge position must be within {lower_limit}-{upper_limit}mm",
+		)
+
+	try:
+		async with manual_motion_guard(
+			"calibration_fridge_door",
+			worker=worker,
+			check_bin_workflow=True,
+		):
+			await fridge.move_door_to(request.position)
+	except FridgeSafetyError as exc:
+		raise HTTPException(
+			status_code=status.HTTP_409_CONFLICT,
+			detail=str(exc),
+		) from exc
+	except (MotorError, HardwareMotorError) as exc:
+		await _raise_motor_error(
+			worker,
+			f"Fridge door movement failed: {exc}",
+			exc,
+			axes=["fridge_door"],
+		)
+
+	return {"success": True, "position": request.position}
+
+
+@router.post("/fridge/save")
+async def save_fridge_door_calibration(request: FridgeDoorSaveRequest):
+	await ensure_laser_auto_calibration_not_running()
+	config, motor = _get_fridge_motor_config()
+	positions = _validate_fridge_positions(
+		request,
+		lower_limit=float(motor.lower_lim),
+		upper_limit=float(motor.lim),
+	)
+
+	next_config = config.model_copy(deep=True)
+	next_config.demo.fridge.door_positions_mm = positions
+	next_config = type(config).model_validate(next_config.model_dump(mode="json"))
+
+	async with bin_workflow_command_admission_guard():
+		await ensure_no_active_bin_workflow_for_motion()
+		save_root_config(next_config)
+
+		try:
+			worker = await get_robot_worker()
+		except ValueError:
+			worker = None
+
+		if worker is not None:
+			fridge = getattr(worker._robot, "_fridge", None)
+			if fridge is not None:
+				fridge.update_settings(next_config.demo.fridge)
 
 	return {"success": True}
 

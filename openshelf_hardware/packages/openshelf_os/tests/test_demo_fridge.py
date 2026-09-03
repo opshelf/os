@@ -1,7 +1,8 @@
+import asyncio
 import copy
 import logging
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, call
 
 import pytest
 
@@ -9,9 +10,10 @@ import openshelf_os.fridge as fridge_module
 from openshelf_os.common import AxisCoordinate, RootConfig
 from openshelf_os.config.settings import DemoFridgeSettings
 from openshelf_os.exceptions import MotorError
-from openshelf_os.fridge import DemoFridge
+from openshelf_os.fridge import DemoFridge, FridgeSafetyError
 from openshelf_os.robot.commands import HomeCommand
 from openshelf_os.robot.core import Robot
+from openshelf_os.robot.worker import RobotWorker
 from openshelf_os.storage import StorageModuleCellLocation, StorageModuleSide
 from openshelf_os.tool import Tool
 
@@ -92,7 +94,7 @@ def calibration_fridge_settings() -> DemoFridgeSettings:
     data = copy.deepcopy(config_dict())
     fridge = data["demo"]["fridge"]
     fridge["enabled"] = False
-    fridge["motor"] = motor_config("fridge_door", 20, limit=950)
+    fridge["motor"] = motor_config("fridge_door", 20, limit=814)
     fridge.pop("door_positions_mm")
     fridge["cells"] = []
     return RootConfig.model_validate(data).demo.fridge
@@ -122,9 +124,20 @@ def test_demo_fridge_config_accepts_calibration_only_motor() -> None:
     assert fridge.enabled is False
     assert fridge.motor is not None
     assert fridge.motor.motor_id == 20
-    assert fridge.motor.lim == pytest.approx(950)
+    assert fridge.motor.lim == pytest.approx(814)
     assert fridge.door_positions_mm is None
     assert fridge.cells == []
+
+
+def test_calibration_only_fridge_validates_saved_door_positions() -> None:
+    data = copy.deepcopy(config_dict())
+    fridge = data["demo"]["fridge"]
+    fridge["enabled"] = False
+    fridge["cells"] = []
+    fridge["door_positions_mm"]["closed"] = 200
+
+    with pytest.raises(ValueError, match="positions must be distinct"):
+        RootConfig.model_validate(data)
 
 
 @pytest.mark.parametrize(
@@ -181,7 +194,7 @@ async def test_fridge_home_moves_from_end_stop_to_explicit_closed_position(monke
     await fridge.home_door()
 
     door.home.assert_awaited_once()
-    door.move_to_position.assert_awaited_once_with(100, rpm=64)
+    door.move_to_position.assert_awaited_once_with(100, rpm=500)
 
 
 @pytest.mark.asyncio
@@ -202,7 +215,7 @@ async def test_calibration_only_fridge_configures_without_startup_motion(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_calibration_only_fridge_manual_home_stops_at_endpoint(monkeypatch) -> None:
+async def test_calibration_only_fridge_manual_home_moves_to_derived_center(monkeypatch) -> None:
     door = AsyncMock()
     monkeypatch.setattr(fridge_module, "Motor", lambda *_args, **_kwargs: door)
     fridge = DemoFridge(
@@ -214,7 +227,7 @@ async def test_calibration_only_fridge_manual_home_stops_at_endpoint(monkeypatch
     await fridge.home_door()
 
     door.home.assert_awaited_once()
-    door.move_to_position.assert_not_awaited()
+    door.move_to_position.assert_awaited_once_with(407, rpm=500)
 
 
 @pytest.mark.asyncio
@@ -229,15 +242,51 @@ async def test_fridge_opens_configured_side_for_cell(monkeypatch) -> None:
 
     await fridge.open_for_cell(fridge_location())
 
-    door.move_to_position.assert_awaited_once_with(0)
+    door.move_to_position.assert_awaited_once_with(0, rpm=500)
 
     door.move_to_position.reset_mock()
     await fridge.open_door("right")
-    door.move_to_position.assert_awaited_once_with(200)
+    door.move_to_position.assert_awaited_once_with(200, rpm=500)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("method", ["home_door", "close_door"])
+async def test_fridge_positional_moves_always_use_configured_speed(monkeypatch) -> None:
+    door = AsyncMock()
+    monkeypatch.setattr(fridge_module, "Motor", lambda *_args, **_kwargs: door)
+    fridge = DemoFridge(
+        AsyncMock(),
+        fridge_settings(),
+        is_fully_retracted=AsyncMock(return_value=True),
+    )
+
+    await fridge.move_door_to_named("center")
+    await fridge.open_door("left")
+    await fridge.open_door("right")
+
+    assert door.move_to_position.await_args_list == [
+        call(100, rpm=500),
+        call(0, rpm=500),
+        call(200, rpm=500),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_fridge_close_uses_configured_speed(monkeypatch) -> None:
+    door = AsyncMock()
+    monkeypatch.setattr(fridge_module, "Motor", lambda *_args, **_kwargs: door)
+    fridge = DemoFridge(
+        AsyncMock(),
+        fridge_settings(),
+        is_fully_retracted=AsyncMock(return_value=True),
+    )
+
+    await fridge.close_door()
+
+    door.move_to_position.assert_awaited_once_with(100, rpm=500)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["home_door", "open_door", "close_door"])
 async def test_fridge_does_not_move_door_when_tool_retraction_is_unverified(
     monkeypatch,
     method: str,
@@ -250,9 +299,13 @@ async def test_fridge_does_not_move_door_when_tool_retraction_is_unverified(
         is_fully_retracted=AsyncMock(return_value=False),
     )
 
-    with pytest.raises(MotorError, match="fully retracted"):
-        await getattr(fridge, method)()
+    with pytest.raises(FridgeSafetyError, match="fully retracted") as error:
+        if method == "open_door":
+            await getattr(fridge, method)("left")
+        else:
+            await getattr(fridge, method)()
 
+    assert isinstance(error.value, MotorError) is False
     door.home.assert_not_awaited()
     door.move_to_position.assert_not_awaited()
 
@@ -267,10 +320,36 @@ async def test_fridge_does_not_close_when_tool_retraction_cannot_be_verified(mon
         is_fully_retracted=AsyncMock(side_effect=RuntimeError("tool telemetry unavailable")),
     )
 
-    with pytest.raises(MotorError, match="Cannot verify tool retraction"):
+    with pytest.raises(FridgeSafetyError, match="Cannot verify tool retraction"):
         await fridge.close_door()
 
     door.move_to_position.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_queued_home_safety_rejection_does_not_mark_hardware_fault(monkeypatch) -> None:
+    monkeypatch.setattr(RobotWorker, "_instance", None)
+    robot = Robot.__new__(Robot)
+    robot._tool = SimpleNamespace(home=AsyncMock())
+    robot._io = SimpleNamespace(home_door=AsyncMock())
+    robot._fridge = SimpleNamespace(
+        home_door=AsyncMock(
+            side_effect=FridgeSafetyError(
+                "Tool must be fully retracted before moving fridge door"
+            )
+        )
+    )
+    robot._operation_context = {}
+    robot._logger = Mock()
+    worker = RobotWorker(robot)
+
+    task = asyncio.create_task(robot.handle_command(HomeCommand()))
+    with pytest.raises(FridgeSafetyError):
+        await task
+    await worker._publish_completed_command_result(task, HomeCommand())
+
+    assert worker.needs_home() is False
+    assert worker._is_crashed is False
 
 
 @pytest.mark.asyncio
@@ -413,6 +492,46 @@ async def test_tool_pick_runs_access_callbacks_around_extension_and_retraction()
         AxisCoordinate(10, 20, 1),
         stage_extension_mm=95,
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("operation", "callback_name"),
+    [
+        ("pick", "before_extend"),
+        ("pick", "after_retract"),
+        ("place", "before_extend"),
+        ("place", "after_retract"),
+    ],
+)
+async def test_tool_access_callbacks_preserve_fridge_safety_rejections(
+    operation: str,
+    callback_name: str,
+) -> None:
+    tool = Tool.__new__(Tool)
+    tool._gs = SimpleNamespace(
+        safe_open=AsyncMock(),
+        open=AsyncMock(),
+        close=AsyncMock(),
+    )
+    tool.move = AsyncMock()
+    tool.rotate_to_position = AsyncMock()
+    tool.extend_empty = AsyncMock()
+    tool.extend = AsyncMock()
+    tool.retract = AsyncMock()
+    tool.retract_empty = AsyncMock()
+    tool._handle_fault = AsyncMock()
+
+    async def reject_door_motion() -> None:
+        raise FridgeSafetyError("Tool must be fully retracted before moving fridge door")
+
+    with pytest.raises(FridgeSafetyError, match="fully retracted"):
+        await getattr(tool, operation)(
+            AxisCoordinate(10, 20, 1),
+            **{callback_name: reject_door_motion},
+        )
+
+    tool._handle_fault.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -562,7 +681,7 @@ async def test_home_command_propagates_fridge_retraction_guard_error(monkeypatch
     )
     robot._operation_context = {}
 
-    with pytest.raises(MotorError, match="fully retracted"):
+    with pytest.raises(FridgeSafetyError, match="fully retracted"):
         await robot.handle_command(HomeCommand())
 
     door.home.assert_not_awaited()

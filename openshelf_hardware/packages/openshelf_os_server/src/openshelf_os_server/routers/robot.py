@@ -8,8 +8,11 @@ from datetime import datetime
 from typing import Any, AsyncGenerator, Callable, Iterable, List, Literal, NoReturn, Optional, cast
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from hardware.motor import Motor
 from pydantic import BaseModel, Field
 from openshelf_os.common import ConfigError
+from openshelf_os.exceptions import MotorError
+from openshelf_os.fridge import DemoFridge, FridgeSafetyError
 from openshelf_os.operating_mode import OperatingMode
 from openshelf_os.robot.commands import (
     HomeCommand,
@@ -1180,6 +1183,20 @@ async def home_motor(
             return {"success": True, "motor": motor_name}
     except HTTPException:
         raise
+    except FridgeSafetyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=_error_detail(str(exc), "tool_not_retracted"),
+        ) from exc
+    except MotorError as exc:
+        if motor_name == "fridge_door":
+            worker.set_needs_home(f"Motor home failed: {exc}", axes=["fridge_door"])
+            await worker.get_status_snapshot(force_refresh=True)
+        logging.error("Motor home failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=_error_detail(f"Motor home failed: {exc}", "motor_home_failed"),
+        ) from exc
     except Exception as exc:
         logging.error("Motor home failed: %s", exc)
         raise HTTPException(
@@ -1246,13 +1263,22 @@ async def move_motor(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    motor = worker._robot._get_motor_by_name(motor_name)
-
-    if motor is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Motor '{motor_name}' not found",
-        )
+    motor: Motor | None = None
+    fridge: DemoFridge | None = None
+    if motor_name == "fridge_door":
+        fridge = getattr(worker._robot, "_fridge", None)
+        if fridge is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Demo fridge is not enabled",
+            )
+    else:
+        motor = worker._robot._get_motor_by_name(motor_name)
+        if motor is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Motor '{motor_name}' not found",
+            )
 
     try:
         async with manual_motion_guard(f"motor_move:{motor_name}", worker=worker):
@@ -1269,21 +1295,39 @@ async def move_motor(
                         "code": "tool_not_retracted",
                     },
                 )
-            if motor_name == "rotate":
-                if await worker._robot._tool.is_rotation_at_position(request.position_mm):
-                    return {"success": True, "motor": motor_name, "position_mm": request.position_mm}
-
-                original_x = await worker._robot._tool.ensure_safe_rotation_x_position()
-                try:
-                    await worker._robot._tool.ensure_safe_rotation_stage_extension()
-                    await motor.move_to_position(request.position_mm)
-                finally:
-                    await worker._robot._tool.restore_safe_rotation_x_position(original_x)
+            if motor_name == "fridge_door":
+                if fridge is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="Demo fridge is not enabled",
+                    )
+                await fridge.move_door_to(request.position_mm)
             else:
-                await motor.move_to_position(request.position_mm)
+                if motor is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=f"Motor '{motor_name}' not found",
+                    )
+                if motor_name == "rotate":
+                    if await worker._robot._tool.is_rotation_at_position(request.position_mm):
+                        return {"success": True, "motor": motor_name, "position_mm": request.position_mm}
+
+                    original_x = await worker._robot._tool.ensure_safe_rotation_x_position()
+                    try:
+                        await worker._robot._tool.ensure_safe_rotation_stage_extension()
+                        await motor.move_to_position(request.position_mm)
+                    finally:
+                        await worker._robot._tool.restore_safe_rotation_x_position(original_x)
+                else:
+                    await motor.move_to_position(request.position_mm)
             return {"success": True, "motor": motor_name, "position_mm": request.position_mm}
     except HTTPException:
         raise
+    except FridgeSafetyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=_error_detail(str(exc), "tool_not_retracted"),
+        ) from exc
     except Exception as exc:
         logging.warning("Motor move failed: %s", exc)
         raise HTTPException(

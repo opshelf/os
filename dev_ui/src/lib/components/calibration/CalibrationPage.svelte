@@ -5,9 +5,10 @@
 	import CellCalibrationTest from '$lib/components/calibration/CellCalibrationTest.svelte';
 	import IOBoxCalibration from '$lib/components/calibration/IOBoxCalibration.svelte';
 	import RotationCalibration from '$lib/components/calibration/RotationCalibration.svelte';
+	import FridgeCalibration from '$lib/components/calibration/FridgeCalibration.svelte';
 	import { devicePath } from '$lib/nav';
 
-	type CalibrationView = 'cell_auto' | 'cell_manual' | 'io' | 'rotation' | 'test';
+	type CalibrationView = 'cell_auto' | 'cell_manual' | 'io' | 'rotation' | 'fridge' | 'test';
 
 	let { selectedView = 'cell_auto' }: { selectedView?: CalibrationView } = $props();
 
@@ -36,6 +37,7 @@
 	<a class:selected={selectedView === 'rotation'} href={tabHref('/calibration/tool-rotation')}>
 		rotation
 	</a>
+	<a class:selected={selectedView === 'fridge'} href={tabHref('/calibration/fridge')}>fridge</a>
 	<a class:selected={selectedView === 'test'} href={tabHref('/calibration/test')}>test</a>
 </div>
 
@@ -49,6 +51,8 @@
 	<IOBoxCalibration />
 {:else if selectedView === 'rotation'}
 	<RotationCalibration />
+{:else if selectedView === 'fridge'}
+	<FridgeCalibration />
 {/if}
 
 <style>

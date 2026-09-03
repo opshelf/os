@@ -16,7 +16,7 @@ from openshelf_os.common import load_config_file
 from openshelf_os.exceptions import (
     MotorError, ConfigError,
     GripperError, MovementError,
-    MotorWaitTimeoutError
+    MotorWaitTimeoutError, FridgeSafetyError,
 )
 
 
@@ -437,6 +437,8 @@ class Tool:
                 await after_retract()
 
         except Exception as e:
+            if isinstance(e, FridgeSafetyError):
+                raise
             await self._handle_fault(e)
             if isinstance(e, MovementError):
                 raise
@@ -499,6 +501,8 @@ class Tool:
                 await after_retract()
 
         except Exception as e:
+            if isinstance(e, FridgeSafetyError):
+                raise
             await self._handle_fault(e)
 
             if isinstance(e, MovementError):
