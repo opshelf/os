@@ -32,6 +32,18 @@ def test_derive_rotation_home_orientation_rejects_ambiguous_angles() -> None:
 
 
 @pytest.mark.asyncio
+async def test_is_rotated_back_compares_motor_to_configured_back_angle() -> None:
+    tool = Tool.__new__(Tool)
+    tool.get_param = AsyncMock(return_value=184.0)
+    tool.is_rotation_at_position = AsyncMock(return_value=True)
+
+    assert await tool.is_rotated_back() is True
+
+    tool.get_param.assert_awaited_once_with("ROTATION_BACK")
+    tool.is_rotation_at_position.assert_awaited_once_with(184.0)
+
+
+@pytest.mark.asyncio
 async def test_home_moves_rotate_to_front_after_homing_for_left_facing_device() -> None:
     rotate_motor = AsyncMock()
     rotate_motor.home = AsyncMock()

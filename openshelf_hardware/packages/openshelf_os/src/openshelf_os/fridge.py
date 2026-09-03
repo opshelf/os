@@ -20,6 +20,9 @@ class DemoFridge:
         params: DemoFridgeSettings,
         is_fully_retracted: Callable[[], Awaitable[bool]],
         safety=None,
+        *,
+        is_rotated_back: Callable[[], Awaitable[bool]] | None = None,
+        retract_tool: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         if params.motor is None or params.motor.enabled is False:
             raise ConfigError("Demo fridge motor must be configured and enabled")
@@ -27,6 +30,8 @@ class DemoFridge:
         self._params = params
         self._door = Motor(motorcontroller, params.motor, safety)
         self._is_fully_retracted = is_fully_retracted
+        self._is_rotated_back = is_rotated_back
+        self._retract_tool = retract_tool
         self._logger = logging.getLogger(__name__).getChild("DemoFridge")
         self._motion_lock = asyncio.Lock()
         self._init_reporter: Optional[
@@ -116,9 +121,49 @@ class DemoFridge:
                 "Tool must be fully retracted before moving fridge door"
             )
 
+    async def _prepare_tool_for_door_motion(self) -> None:
+        # Preserve the original guard for lightweight callers that do not have
+        # access to rotation state. Robot runtime always supplies both callbacks.
+        if self._is_rotated_back is None:
+            await self._require_tool_retracted()
+            return
+
+        try:
+            is_rotated_back = await self._is_rotated_back()
+        except Exception as exc:
+            raise FridgeSafetyError(
+                "Cannot verify tool rotation before moving fridge door"
+            ) from exc
+
+        if is_rotated_back is not True:
+            return
+
+        try:
+            is_retracted = await self._is_fully_retracted()
+        except Exception as exc:
+            raise FridgeSafetyError(
+                "Cannot verify tool retraction before moving fridge door"
+            ) from exc
+
+        if is_retracted is True:
+            return
+        if self._retract_tool is None:
+            raise FridgeSafetyError(
+                "Tool must be fully retracted before moving fridge door"
+            )
+
+        try:
+            await self._retract_tool()
+        except Exception as exc:
+            raise FridgeSafetyError(
+                "Failed to retract tool before moving fridge door"
+            ) from exc
+
+        await self._require_tool_retracted()
+
     async def home_door(self) -> None:
         try:
-            await self._require_tool_retracted()
+            await self._prepare_tool_for_door_motion()
             async with self._motion_lock:
                 await self._door.home()
                 await self._move_door_to_locked(self.position_for_name("center"))
@@ -172,7 +217,7 @@ class DemoFridge:
         await self._door.move_to_position(target, rpm=motor.rpm)
 
     async def move_door_to(self, target: float) -> None:
-        await self._require_tool_retracted()
+        await self._prepare_tool_for_door_motion()
 
         try:
             async with self._motion_lock:

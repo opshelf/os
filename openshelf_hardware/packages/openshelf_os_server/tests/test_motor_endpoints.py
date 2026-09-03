@@ -146,7 +146,7 @@ async def test_move_motor_success(client: AsyncClient) -> None:
 
 
 @pytest.mark.anyio
-async def test_move_fridge_door_requires_retracted_tool(client: AsyncClient) -> None:
+async def test_move_fridge_door_delegates_tool_preparation_to_fridge(client: AsyncClient) -> None:
 	fridge_door = _mock_motor(100.0)
 	mock_worker = _mock_worker({"fridge_door": fridge_door})
 	mock_worker._robot._fridge = MagicMock()
@@ -160,10 +160,10 @@ async def test_move_fridge_door_requires_retracted_tool(client: AsyncClient) -> 
 				json={"position_mm": 150.0},
 			)
 
-	assert response.status_code == 409
-	assert response.json()["detail"]["code"] == "tool_not_retracted"
+	assert response.status_code == 200
 	fridge_door.move_to_position.assert_not_awaited()
-	mock_worker._robot._fridge.move_door_to.assert_not_awaited()
+	mock_worker._robot._fridge.move_door_to.assert_awaited_once_with(150.0)
+	mock_worker._robot._tool.is_fully_retracted.assert_not_awaited()
 
 
 @pytest.mark.anyio
@@ -476,6 +476,7 @@ async def test_home_fridge_door_uses_home_and_close_sequence(client: AsyncClient
 	mock_worker = _mock_worker({"fridge_door": fridge_door})
 	mock_worker._robot._fridge = MagicMock()
 	mock_worker._robot._fridge.home_door = AsyncMock()
+	mock_worker._robot._tool.is_fully_retracted.return_value = False
 
 	with patch("openshelf_os_server.routers.robot.get_settings", return_value=_mock_settings()):
 		with patch("openshelf_os_server.routers.robot.get_robot_worker", return_value=mock_worker):
@@ -484,6 +485,7 @@ async def test_home_fridge_door_uses_home_and_close_sequence(client: AsyncClient
 	assert response.status_code == 200
 	mock_worker._robot._fridge.home_door.assert_awaited_once()
 	fridge_door.home.assert_not_awaited()
+	mock_worker._robot._tool.is_fully_retracted.assert_not_awaited()
 	mock_worker.clear_needs_home_axes.assert_called_once_with(["fridge_door"])
 
 

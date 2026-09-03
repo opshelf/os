@@ -1016,6 +1016,14 @@ class Tool:
 
         return abs(float(current_angle) - float(target_angle)) <= ROTATION_POSITION_EPSILON_DEG
 
+    async def is_rotated_back(self) -> bool:
+        """Return whether the rotate motor is at the configured back angle."""
+        rotation_back = await self.get_param("ROTATION_BACK")
+        if rotation_back is None:
+            raise ConfigError("Missing ROTATION_BACK parameter")
+
+        return await self.is_rotation_at_position(float(rotation_back))
+
     async def ensure_safe_rotation_stage_extension(self) -> bool:
         """Prepare the stage and verify both tool axes are safe for rotation.
 

@@ -118,6 +118,8 @@ class Robot:
                 params=self._config.demo.fridge,
                 safety=self._motion_safety,
                 is_fully_retracted=self._tool.is_fully_retracted,
+                is_rotated_back=self._tool.is_rotated_back,
+                retract_tool=self._tool.retract_empty,
             )
 
         self._grid_path = resolve_grid_path(self._config, CONFIG_PATH)

@@ -286,6 +286,113 @@ async def test_fridge_close_uses_configured_speed(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_fridge_retracts_extended_tool_before_moving_when_rotated_back(
+    monkeypatch,
+) -> None:
+    events: list[str] = []
+    retracted = False
+    door = AsyncMock()
+
+    async def is_fully_retracted() -> bool:
+        events.append("check_retracted")
+        return retracted
+
+    async def retract_tool() -> None:
+        nonlocal retracted
+        events.append("retract")
+        retracted = True
+
+    async def move_to_position(*_args, **_kwargs) -> None:
+        events.append("move_door")
+
+    door.move_to_position.side_effect = move_to_position
+    monkeypatch.setattr(fridge_module, "Motor", lambda *_args, **_kwargs: door)
+    fridge = DemoFridge(
+        AsyncMock(),
+        fridge_settings(),
+        is_fully_retracted=is_fully_retracted,
+        is_rotated_back=AsyncMock(return_value=True),
+        retract_tool=retract_tool,
+    )
+
+    await fridge.move_door_to_named("right")
+
+    assert events == ["check_retracted", "retract", "check_retracted", "move_door"]
+    door.move_to_position.assert_awaited_once_with(200, rpm=500)
+
+
+@pytest.mark.asyncio
+async def test_fridge_does_not_retract_tool_before_moving_when_not_rotated_back(
+    monkeypatch,
+) -> None:
+    door = AsyncMock()
+    is_fully_retracted = AsyncMock(return_value=False)
+    retract_tool = AsyncMock()
+    monkeypatch.setattr(fridge_module, "Motor", lambda *_args, **_kwargs: door)
+    fridge = DemoFridge(
+        AsyncMock(),
+        fridge_settings(),
+        is_fully_retracted=is_fully_retracted,
+        is_rotated_back=AsyncMock(return_value=False),
+        retract_tool=retract_tool,
+    )
+
+    await fridge.move_door_to_named("left")
+
+    is_fully_retracted.assert_not_awaited()
+    retract_tool.assert_not_awaited()
+    door.move_to_position.assert_awaited_once_with(0, rpm=500)
+
+
+@pytest.mark.asyncio
+async def test_fridge_does_not_move_when_tool_rotation_cannot_be_verified(
+    monkeypatch,
+) -> None:
+    door = AsyncMock()
+    is_fully_retracted = AsyncMock(return_value=False)
+    retract_tool = AsyncMock()
+    monkeypatch.setattr(fridge_module, "Motor", lambda *_args, **_kwargs: door)
+    fridge = DemoFridge(
+        AsyncMock(),
+        fridge_settings(),
+        is_fully_retracted=is_fully_retracted,
+        is_rotated_back=AsyncMock(side_effect=RuntimeError("rotation unavailable")),
+        retract_tool=retract_tool,
+    )
+
+    with pytest.raises(FridgeSafetyError, match="Cannot verify tool rotation"):
+        await fridge.move_door_to_named("left")
+
+    is_fully_retracted.assert_not_awaited()
+    retract_tool.assert_not_awaited()
+    door.move_to_position.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_fridge_does_not_move_when_back_facing_retraction_cannot_be_verified(
+    monkeypatch,
+) -> None:
+    door = AsyncMock()
+    is_fully_retracted = AsyncMock(side_effect=[False, False])
+    retract_tool = AsyncMock()
+    monkeypatch.setattr(fridge_module, "Motor", lambda *_args, **_kwargs: door)
+    fridge = DemoFridge(
+        AsyncMock(),
+        fridge_settings(),
+        is_fully_retracted=is_fully_retracted,
+        is_rotated_back=AsyncMock(return_value=True),
+        retract_tool=retract_tool,
+    )
+
+    with pytest.raises(FridgeSafetyError, match="fully retracted"):
+        await fridge.home_door()
+
+    retract_tool.assert_awaited_once()
+    door.home.assert_not_awaited()
+    door.move_to_position.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("method", ["home_door", "open_door", "close_door"])
 async def test_fridge_does_not_move_door_when_tool_retraction_is_unverified(
     monkeypatch,
